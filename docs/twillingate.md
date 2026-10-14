@@ -1641,11 +1641,13 @@ and `measures`, its rows of one family each. Every table has:
 | `platform`, `os`, `os_version`, `os_name`, `browser`, `browser_version`, `browser_locale`, `app_version`, `app_locale`, `device`, `device_model`, `country` | VARCHAR | as on the views (see [The event model](#the-event-model)) |
 | `display_width`, `display_height` | BIGINT | |
 | `consent` | BIGINT | 1, 0 or NULL |
-| `value`, `measure`, `sample_rate` | DOUBLE, VARCHAR, DOUBLE | measures |
+| `value`, `measure`, `sample_rate` | DOUBLE, VARCHAR, DOUBLE | `value` and `measure` are set on measures only; `sample_rate` is on every row, 1 unless the event was sampled |
 | `attr_<key>` | VARCHAR | one per attribute key any event carried, the key as sent |
 
-- **A field the event did not send is NULL,** not `''`, and an `attr_*`
-  column is NULL on every event without that key. `query` shows NULL as
+- **A field the event did not send is NULL,** not `''` (`value` and
+  `measure` are NULL outside measures; `sample_rate` is the exception,
+  1 unless the event was sampled), and an `attr_*` column is NULL on every
+  event without that key. `query` shows NULL as
   an empty string: test `IS NULL`, not `= ''`.
 - **Every key is a column, declared or not.** A key with characters other
   than letters, digits and `_` needs double quotes: `"attr_plan type"`.

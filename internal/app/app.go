@@ -157,23 +157,33 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	}
 
 	runner := jobs.New(st, cfg, reg, salter, logger, time.Now)
+	// The engine (raw-first D8): the ingest process's daily pass dumps and
+	// merges through it, the console's query reads the files through it.
+	// A child starts on the first request, so a process that needs none
+	// runs none.
+	opts, err := EngineOptions(cfg)
+	if err != nil {
+		stopPipe()
+		<-pipeDone
+		return err
+	}
+	eng, err := engine.New(opts)
+	if err != nil {
+		stopPipe()
+		<-pipeDone
+		return err
+	}
+	// Closed after the jobs runner and the HTTP surfaces return (Serve
+	// waits for both), its last users.
+	defer eng.Close()
 	if archiveLog != nil {
-		opts, err := EngineOptions(cfg)
-		if err != nil {
-			stopPipe()
-			<-pipeDone
-			return err
-		}
-		eng, err := engine.New(opts)
-		if err != nil {
-			stopPipe()
-			<-pipeDone
-			return err
-		}
-		// Closed after the jobs runner returns (Serve waits for it), which
-		// is the last user of the engine.
-		defer eng.Close()
 		runner.WithArchive(archive.New(archiveLog, eng, logger))
+	}
+	files, err := archive.NewReader(filepath.Join(dataDir, "raw"), eng)
+	if err != nil {
+		stopPipe()
+		<-pipeDone
+		return err
 	}
 	jobsCtx, stopJobs := context.WithCancel(context.Background())
 	jobsDone := make(chan struct{})
@@ -205,7 +215,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	var apiClose func() error
 	switch {
 	case runConsole && runIngest && cfg.Console.Addr == cfg.IngestAddr:
-		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger, nil)
+		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger, files)
 		if err != nil {
 			stopBackground()
 			return err
@@ -216,7 +226,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		api.RegisterOn(mux, protected, cfg, false, logger)
 		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, api.NotFoundPages(mux), "ingest,console"})
 	case runConsole:
-		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger, nil)
+		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger, files)
 		if err != nil {
 			stopBackground()
 			return err
