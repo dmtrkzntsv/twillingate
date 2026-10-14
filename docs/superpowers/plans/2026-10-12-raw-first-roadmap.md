@@ -175,17 +175,29 @@ Plan: `2026-10-13-raw-derived.md`.
   gives for the same views, and identities the names and counts SQLite
   gives.
 
-### PR 5b. The form carries its visit (D22)
+### PR 5b. Form attribution from the files (D22, revised)
 
-- SDK: each instance keeps its visit (the landing view's referrer and
-  UTMs, the visit's kind, group and session, renewed after 30 minutes
-  without a view) and sends it with `$form_submit`; the bundle is rebuilt
-  and committed.
-- Server: the form context accepts those keys; the environment comes from
-  the request's User-Agent as for views; `SessionAt` and its store method
-  go. A client that sends nothing (the Plausible shim, a plain HTML form, a
-  server-side sender) gets a submission without attribution.
-- Docs: `docs/twillingate.md`, forms and the SDK; `deploy/UPGRADES.md`.
+Plan: `2026-10-14-raw-visit.md`. D22 as written (the SDK sends the visit,
+the server looks nothing up) would lose attribution in the default setup:
+an anonymous instance without consent keeps nothing across page loads,
+and a plain HTML form has no SDK. The user chose, on 2026-10-14:
+
+- A job in the ingest process attributes each submission about a minute
+  after it arrives: the submitter's last non-direct session within
+  `FORMS_ATTRIBUTION_DAYS` (default 7), read from `sessions`, `views` and
+  `aliases` (5a) in one engine query; the event takes the newest view's
+  kind, group, session, environment and consent. The `$form_submit`
+  event is written by the job. Migration 041 queues submissions in
+  SQLite; `SessionAt` and its store method go.
+- Forms accept `$referrer` and `$utm_*`; when sent, they are the source.
+- SDK (`feat!`): with consent an anonymous instance keeps a visitor id
+  and sends it as `$install_id`, so its visits connect across days; the
+  connection hash of an anonymous visitor without consent changes at
+  midnight UTC, which bounds their lookback.
+- Correction: the environment is declared by the client and only
+  validated, never read from the User-Agent.
+- Docs: `docs/twillingate.md` (forms, Identity, consent),
+  `docs/deployment.md`, `deploy/UPGRADES.md`.
 
 ### PR 5c. Raw rows migrate into the files (D19)
 
