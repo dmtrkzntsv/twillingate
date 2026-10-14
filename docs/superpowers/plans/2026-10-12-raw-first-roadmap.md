@@ -190,9 +190,9 @@ Plan: `2026-10-13-raw-derived.md`.
 ### PR 5c. Raw rows migrate into the files (D19)
 
 Plan: `2026-10-14-raw-migrate.md`. Stacked on 5a, not 5b, which it does
-not touch. It runs in the daily pass at start, in the background, for the
-rows received before the process started, rather than before the server
-starts; see its "Decisions".
+not touch. Not run at boot: a one-time command, `twillingate events
+import`, run with the ingest service stopped (decided 2026-10-14); the
+ingest process locks `raw/` so the two never write at once.
 
 - Once per install, recorded in `meta`: every raw day SQLite holds that
   the files lack is streamed out of `events` as log lines (rows whose id
