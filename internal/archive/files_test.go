@@ -186,3 +186,48 @@ func TestListFilesDerivedWithoutEvents(t *testing.T) {
 		t.Errorf("due %v, orphans %v; want not due, both files orphans", pf.identitiesDue, pf.orphans)
 	}
 }
+
+// TestLatestDays: a month file counts as its last day, a day file or
+// segment, a log, a closed log and a claimed one as their day; the newest
+// wins per project, and derived files, temp files and other names count for
+// nothing.
+func TestLatestDays(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir,
+		"1/2026-02.parquet", // a month: counts as the 28th
+		"1/2026-02-10.parquet",
+		"1/2026-03-01.parquet",
+		"1/2026-03-02.1.parquet", // a segment
+		"1/2026-03-02.parquet.tmp",
+		"1/2026-04-01.parquet.tmp", // a write in progress: not a day
+		"1/sessions/2026-05.parquet",
+		"1/identities.parquet",
+		"2/2026-12.parquet", // the last day of a December
+		"2/2026-12-05.parquet",
+		"3/2026-10-04.log",
+		"3/2026-10-04.1.closed",
+		"3/2026-10-03.parquet",
+		"4/2026-10-05.1.parquet.dumping",
+		"4/2026-10-01.parquet",
+		"5/notes.txt",
+		"x/2026-10-05.log", // not a project directory
+	)
+	if err := os.MkdirAll(filepath.Join(dir, "6"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LatestDays(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[int64]string{1: "2026-03-02", 2: "2026-12-31", 3: "2026-10-04", 4: "2026-10-05"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("LatestDays = %v, want %v", got, want)
+	}
+	touch(t, dir, "1/2024-02.parquet")
+	if got, _ := LatestDays(dir); got[1] != "2026-03-02" {
+		t.Errorf("an older month made it %s", got[1])
+	}
+	if got, err := LatestDays(filepath.Join(dir, "none")); err != nil || len(got) != 0 {
+		t.Errorf("a missing raw/: %v, %v", got, err)
+	}
+}

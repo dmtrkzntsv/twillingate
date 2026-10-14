@@ -17,6 +17,7 @@ import (
 	"sync"
 
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -66,7 +67,35 @@ func NewReader(dir string, eng Engine) (*Reader, error) {
 }
 
 // Query runs one SELECT over the tables (engine.Query refuses anything
-// else) and returns at most maxRows rows (all when maxRows ≤ 0).
+// else) and returns at most maxRows rows (all when maxRows ≤ 0). It is
+// QueryScoped over every project, with no arguments.
+func (r *Reader) Query(ctx context.Context, sql string, maxRows int, rules Rules) (engine.Result, error) {
+	return r.QueryScoped(ctx, Scoped{SQL: sql, MaxRows: maxRows}, rules)
+}
+
+// Scoped is one query for QueryScoped.
+type Scoped struct {
+	SQL string
+	// Args are bound to the $names in SQL (engine.Engine.Query).
+	Args    []engine.Arg
+	MaxRows int
+	// Project, when not 0, limits all seven tables to its rows.
+	Project int64
+}
+
+// QueryScoped is Query with arguments and, for a project, the seven tables
+// shadowed by CTEs over its rows only:
+//
+//	WITH events AS NOT MATERIALIZED (SELECT * FROM main.events WHERE project_id = <id>),
+//	     views AS NOT MATERIALIZED (SELECT * FROM events WHERE family = 'views'), …,
+//	     sessions AS NOT MATERIALIZED (SELECT * FROM main.sessions WHERE project_id = <id>), …
+//	SELECT * FROM (<sql>
+//	)
+//
+// so a query written against the tables reads one project's rows without
+// a filter of its own, and the project's rows pass through the rules once.
+// <id> is the int64 printed here, not text from a caller. With Project 0
+// the SQL runs as it is.
 //
 // rules is the full rule set of every project, not the caller's share of
 // it: the tables live in the child, which every caller of the engine
@@ -78,19 +107,48 @@ func NewReader(dir string, eng Engine) (*Reader, error) {
 // child the engine retired in between (the query lands on a fresh one,
 // which has no tables); the query is retried once, on a fresh listing and
 // a rebuild if need be.
-func (r *Reader) Query(ctx context.Context, sql string, maxRows int, rules Rules) (engine.Result, error) {
-	res, err := r.query(ctx, sql, maxRows, rules)
+func (r *Reader) QueryScoped(ctx context.Context, q Scoped, rules Rules) (engine.Result, error) {
+	res, err := r.queryScoped(ctx, q, rules)
 	if vanished(err) || lostTables(err) {
-		res, err = r.query(ctx, sql, maxRows, rules)
+		res, err = r.queryScoped(ctx, q, rules)
 	}
 	return res, err
 }
 
-func (r *Reader) query(ctx context.Context, sql string, maxRows int, rules Rules) (engine.Result, error) {
+func (r *Reader) queryScoped(ctx context.Context, q Scoped, rules Rules) (engine.Result, error) {
 	if err := r.prepare(ctx, rules); err != nil {
 		return engine.Result{}, err
 	}
-	return r.eng.Query(ctx, sql, maxRows)
+	sql := q.SQL
+	if q.Project != 0 {
+		sql = scopedSQL(q.Project, sql)
+	}
+	return r.eng.Query(ctx, sql, q.MaxRows, q.Args...)
+}
+
+// scopedSQL is sql over the seven tables as project's rows only. The
+// newline before the closing paren ends a line comment sql may end with.
+func scopedSQL(project int64, sql string) string {
+	id := strconv.FormatInt(project, 10)
+	family := func(name string) string {
+		return name + " AS NOT MATERIALIZED (SELECT * FROM events WHERE family = '" + name + "')"
+	}
+	return "WITH events AS NOT MATERIALIZED (SELECT * FROM main.events WHERE project_id = " + id + "),\n" +
+		family("views") + ",\n" + family("product") + ",\n" +
+		"measures AS NOT MATERIALIZED (" + measuresSelect("events") + "),\n" +
+		"sessions AS NOT MATERIALIZED (SELECT * FROM main.sessions WHERE project_id = " + id + "),\n" +
+		"identities AS NOT MATERIALIZED (SELECT * FROM main.identities WHERE project_id = " + id + "),\n" +
+		"aliases AS NOT MATERIALIZED (SELECT * FROM main.aliases WHERE project_id = " + id + ")\n" +
+		"SELECT * FROM (" + enginesql.Trim(sql) + "\n)"
+}
+
+// measuresSelect is the measures table over events (a table or CTE): the
+// measures rows, and bucket, the log-scale bucket of value (base 1.04, so
+// about ±2% apart; -1000 for a value of 1e-17 or less), as the SQLite
+// views compute it.
+func measuresSelect(events string) string {
+	return "SELECT *, CASE WHEN value > 1e-17 THEN CAST(ceil(ln(value) / ln(1.04)) AS INTEGER) ELSE -1000 END AS bucket FROM " +
+		events + " WHERE family = 'measures'"
 }
 
 // missingTable matches the error of a query naming one of the reader's own
@@ -232,7 +290,7 @@ func (r *Reader) build(ctx context.Context, files map[int64]Files, rules Rules, 
 		"CREATE OR REPLACE VIEW events AS "+eventsView(cols, rules)+";\n"+
 		"CREATE OR REPLACE VIEW views AS SELECT * FROM events WHERE family = 'views';\n"+
 		"CREATE OR REPLACE VIEW product AS SELECT * FROM events WHERE family = 'product';\n"+
-		"CREATE OR REPLACE VIEW measures AS SELECT * FROM events WHERE family = 'measures';\n"+
+		"CREATE OR REPLACE VIEW measures AS "+measuresSelect("events")+";\n"+
 		"CREATE OR REPLACE VIEW sessions AS "+sessionsView(sessions, gaps)+";\n"+
 		"CREATE OR REPLACE VIEW identities AS "+derivedView(identitiesSelect, identitiesCombine, idFiles, idCurrent, idStale)+";\n"+
 		"CREATE OR REPLACE VIEW aliases AS "+derivedView(aliasesSelect, aliasesCombine, alFiles, alCurrent, alStale)+";\n"+

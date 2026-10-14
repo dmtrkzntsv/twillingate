@@ -90,7 +90,7 @@ func (e *vanishing) Query(ctx context.Context, sql string, maxRows int, args ...
 		e.fails--
 		return engine.Result{}, &engine.QueryError{Msg: `IO Error: No files found that match the pattern "/raw/1/2026-10-11.parquet"`}
 	}
-	return e.Engine.Query(ctx, sql, maxRows)
+	return e.Engine.Query(ctx, sql, maxRows, args...)
 }
 
 // TestReaderRetriesOnceWhenAFileVanished is Review Focus 1.
@@ -266,7 +266,7 @@ func (e *retired) Query(ctx context.Context, sql string, maxRows int, args ...en
 			return engine.Result{}, &engine.QueryError{Msg: e.msg}
 		}
 	}
-	return e.Engine.Query(ctx, sql, maxRows)
+	return e.Engine.Query(ctx, sql, maxRows, args...)
 }
 
 func TestReaderRebuildsAndRetriesOnAFreshChild(t *testing.T) {
@@ -520,5 +520,168 @@ func TestReaderDerivedTablesOnAnEmptyDirectory(t *testing.T) {
 	}
 	if got := ask(t, r, Rules{}, "SELECT count(*) FROM (DESCRIBE sessions)"); got != "[[17]]" {
 		t.Errorf("sessions has %s columns, want 17", got)
+	}
+}
+
+// askScoped runs sql scoped to project through r and returns its rows as
+// fmt prints them.
+func askScoped(t *testing.T, r *Reader, project int64, sql string, args ...engine.Arg) string {
+	t.Helper()
+	res, err := r.QueryScoped(context.Background(), Scoped{SQL: sql, Args: args, Project: project}, Rules{})
+	if err != nil {
+		t.Fatalf("%s: %v", sql, err)
+	}
+	return fmt.Sprint(res.Rows)
+}
+
+// scopedFixture has project 1 with two page views and a product event, by
+// user u1 and install i1, and project 2 with one page view, a measure and a
+// product event, all on one closed day and today's log.
+func scopedFixture(t *testing.T) fixture {
+	t.Helper()
+	f := newFixture(t)
+	two := func(e store.Event) store.Event { e.ProjectID = 2; return e }
+	v := 3.0
+	m := two(store.Event{ID: "m2", Family: store.FamilyMeasures, EventName: "load", Measure: store.MeasureTime, Value: &v,
+		TS: ts("2026-10-11T12:00:00Z"), ReceivedAt: ts("2026-10-11T12:00:00Z")})
+	pair := func(e store.Event) store.Event { e.UserID, e.InstallID = "u1", "i1"; return e }
+	f.write(t,
+		pair(pageView("a1", "a", "2026-10-11T10:00:00Z", "/")), pageView("a2", "b", "2026-10-12T10:00:00Z", "/"),
+		pair(evOf(1, "p1", "2026-10-11T11:00:00Z")),
+		two(pair(pageView("b1", "c", "2026-10-11T10:00:00Z", "/"))), m, two(evOf(1, "p2", "2026-10-12T11:00:00Z")))
+	f.maintain(t, "2026-10-12")
+	return f
+}
+
+const countAll = "SELECT (SELECT count(*) FROM events), (SELECT count(*) FROM views), (SELECT count(*) FROM product), " +
+	"(SELECT count(*) FROM measures), (SELECT count(*) FROM sessions), (SELECT count(*) FROM identities), (SELECT count(*) FROM aliases)"
+
+func TestScopedQuerySeesOneProject(t *testing.T) {
+	f := scopedFixture(t)
+	r := f.reader(t)
+	for _, c := range []struct {
+		project int64
+		want    string
+	}{
+		{0, "[[6 3 2 1 3 2 2]]"}, // no project: every table whole
+		{1, "[[3 2 1 0 2 1 1]]"},
+		{2, "[[3 1 1 1 1 1 1]]"},
+		{3, "[[0 0 0 0 0 0 0]]"},
+	} {
+		if got := askScoped(t, r, c.project, countAll); got != c.want {
+			t.Errorf("project %d: %s, want %s", c.project, got, c.want)
+		}
+	}
+	// A CTE of the caller's own reads the scoped table, and the scoped
+	// tables read each other's rows only: views is events' views.
+	if got := askScoped(t, r, 1, "WITH x AS (SELECT * FROM events) SELECT count(*) FROM x"); got != "[[3]]" {
+		t.Errorf("a CTE over events: %s, want [[3]]", got)
+	}
+	if got := askScoped(t, r, 2, "SELECT project_id, count(*) FROM views GROUP BY ALL;"); got != "[[2 1]]" {
+		t.Errorf("a trailing semicolon: %s, want [[2 1]]", got)
+	}
+	if got := askScoped(t, r, 2, "SELECT 1 -- a comment"); got != "[[1]]" {
+		t.Errorf("a trailing line comment: %s, want [[1]]", got)
+	}
+}
+
+// TestScopedQueryAppliesRulesOnce: the scoped tables read the events table
+// with the rules, the families included.
+func TestScopedQueryAppliesRulesOnce(t *testing.T) {
+	f := scopedFixture(t)
+	rules := Rules{Events: []store.EventRule{{ProjectID: 2, Family: store.FamilyMeasures, Name: "load", To: "paint", Action: store.EventRuleRename}}}
+	res, err := f.reader(t).QueryScoped(context.Background(), Scoped{SQL: "SELECT event_name FROM measures", Project: 2}, rules)
+	if err != nil || fmt.Sprint(res.Rows) != "[[paint]]" {
+		t.Fatalf("measures = %v, %v; want the renamed event", res.Rows, err)
+	}
+}
+
+func TestScopedQueryBindsArguments(t *testing.T) {
+	f := scopedFixture(t)
+	r := f.reader(t)
+	q := "SELECT count(*) FROM events WHERE day = CAST($tw_d AS DATE)"
+	if got := askScoped(t, r, 1, q, engine.Arg{Name: "tw_d", Value: "2026-10-11"}); got != "[[2]]" {
+		t.Errorf("project 1, 10-11: %s, want [[2]]", got)
+	}
+	if got := askScoped(t, r, 0, q, engine.Arg{Name: "tw_d", Value: "2026-10-11"}); got != "[[4]]" {
+		t.Errorf("all projects, 10-11: %s, want [[4]]", got)
+	}
+	// The engine's refusals reach the caller: an argument no $name uses.
+	var qe *engine.QueryError
+	if _, err := r.QueryScoped(context.Background(), Scoped{SQL: "SELECT 1", Args: []engine.Arg{{Name: "x", Value: "1"}}, Project: 1}, Rules{}); !errors.As(err, &qe) {
+		t.Errorf("an unused argument: err = %v, want the engine's refusal", err)
+	}
+}
+
+// TestScopedQueryAfterAFailedBuild: the retries of Query hold for a scoped
+// query, with its arguments passed on.
+func TestScopedQueryAfterAFailedBuild(t *testing.T) {
+	f := scopedFixture(t)
+	arg := engine.Arg{Name: "tw_d", Value: "2026-10-11"}
+	q := Scoped{SQL: "SELECT count(*) FROM events WHERE day = CAST($tw_d AS DATE)", Args: []engine.Arg{arg}, Project: 1}
+
+	eng := &vanishing{Engine: f.eng, fails: 1}
+	r, err := NewReader(f.log.Dir(), eng)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := r.QueryScoped(context.Background(), q, Rules{})
+	if err != nil || fmt.Sprint(res.Rows) != "[[2]]" {
+		t.Fatalf("after one vanished file: %v, %v; want the retry to answer 2", res.Rows, err)
+	}
+	eng.fails = 2
+	var qe *engine.QueryError
+	if _, err := r.QueryScoped(context.Background(), q, Rules{}); !errors.As(err, &qe) {
+		t.Fatalf("after two: err = %v; want the second failure returned", err)
+	}
+
+	for _, name := range []string{"events", "views", "sessions", "_tw_all", "_tw_hot"} {
+		lost := &retired{Engine: f.eng, msg: "Catalog Error: Table with name " + name + " does not exist!", fails: 1}
+		r, err := NewReader(f.log.Dir(), lost)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := r.QueryScoped(context.Background(), q, Rules{})
+		if err != nil || fmt.Sprint(res.Rows) != "[[2]]" {
+			t.Fatalf("%s lost: %v, %v; want a rebuild and the answer 2", name, res.Rows, err)
+		}
+	}
+}
+
+// TestMeasuresHaveBucket: the log-scale bucket of the SQLite migration:
+// ceil(ln(value) / ln(1.04)), and -1000 for a value of 1e-17 or less.
+func TestMeasuresHaveBucket(t *testing.T) {
+	f := newFixture(t)
+	var evs []store.Event
+	for i, v := range []float64{0, 1e-18, 1, 1.04, 100} {
+		v := v
+		evs = append(evs, store.Event{ID: fmt.Sprint("m", i), ProjectID: 1, Family: store.FamilyMeasures, EventName: "load", Measure: store.MeasureNumber, Value: &v,
+			TS: ts("2026-10-12T10:00:00Z"), ReceivedAt: ts("2026-10-12T10:00:00Z")})
+	}
+	f.write(t, append(evs, evOf(1, "p", "2026-10-12T10:00:00Z"))...)
+	r := f.reader(t)
+	want := "[[m0 -1000] [m1 -1000] [m2 0] [m3 1] [m4 118]]"
+	if got := ask(t, r, Rules{}, "SELECT id, bucket FROM measures ORDER BY id"); got != want {
+		t.Errorf("buckets = %s, want %s", got, want)
+	}
+	if got := askScoped(t, r, 1, "SELECT id, bucket FROM measures ORDER BY id"); got != want {
+		t.Errorf("scoped buckets = %s, want %s", got, want)
+	}
+	if got := ask(t, r, Rules{}, "SELECT typeof(bucket) FROM measures LIMIT 1"); got != "[[INTEGER]]" {
+		t.Errorf("type = %s, want INTEGER", got)
+	}
+	// Only measures have it.
+	if _, err := r.Query(context.Background(), "SELECT bucket FROM events", 0, Rules{}); err == nil {
+		t.Error("events has a bucket column")
+	}
+}
+
+func TestMeasuresWithNoFiles(t *testing.T) {
+	r := newFixture(t).reader(t)
+	if got := ask(t, r, Rules{}, "SELECT count(*), max(bucket) FROM measures"); got != "[[0 <nil>]]" {
+		t.Errorf("measures with no files: %s", got)
+	}
+	if got := askScoped(t, r, 1, "SELECT bucket FROM measures"); got != "[]" {
+		t.Errorf("scoped measures with no files: %s", got)
 	}
 }

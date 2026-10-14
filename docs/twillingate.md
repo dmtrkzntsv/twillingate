@@ -1680,6 +1680,7 @@ the reader's own and hold rows before the rules apply: query these seven.
 | `display_width`, `display_height` | BIGINT | |
 | `consent` | BIGINT | 1, 0 or NULL |
 | `value`, `measure`, `sample_rate` | DOUBLE, VARCHAR, DOUBLE | `value` and `measure` are set on measures only; `sample_rate` is on every row, 1 unless the event was sampled |
+| `bucket` | INTEGER | `measures` only: the log-scale bucket of `value`, `ceil(ln(value) / ln(1.04))`, or `-1000` for a `value` of `1e-17` or less. Group by it to build a histogram; a bucket's width is about 4% of its value |
 | `attr_<key>` | VARCHAR | one per attribute key any event carried, the key as sent |
 
 - **A field the event did not send is NULL,** not `''` (`value` and
