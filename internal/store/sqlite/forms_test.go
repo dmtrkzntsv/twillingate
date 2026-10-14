@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -422,6 +423,26 @@ func TestPendingSubmissionKeepsItsConnection(t *testing.T) {
 	attributeAll(t, db, nil)
 	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE pending_connection IS NOT NULL`); c != 0 {
 		t.Fatalf("%d attributed submissions keep their connection hash", c)
+	}
+}
+
+// A row whose pending event does not read is named in the error and
+// skipped; the others are still listed.
+func TestPendingSubmissionsSkipsAnUnreadableEvent(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	for _, id := range []string{"s0", "bad", "s2"} {
+		if _, _, err := db.WriteSubmission(ctx, newSub(id, nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	execAll(t, db, `UPDATE submissions SET pending_event='{' WHERE id='bad'`)
+	ps, err := db.PendingSubmissions(ctx, formsNow, 10)
+	if err == nil || !strings.Contains(err.Error(), "submission bad") {
+		t.Fatalf("err = %v, want one naming the bad submission", err)
+	}
+	if len(ps) != 2 || ps[0].ID != "s0" || ps[1].ID != "s2" {
+		t.Fatalf("pending = %+v, want s0 and s2", ps)
 	}
 }
 

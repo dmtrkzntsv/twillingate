@@ -478,7 +478,9 @@ type Store interface {
 	// first, for delete-by-search.
 	SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error)
 	// PendingSubmissions lists up to limit submissions received at or
-	// before `before` and not yet attributed, oldest first.
+	// before `before` and not yet attributed, oldest first. A row that
+	// does not read is skipped and named in the error, which then comes
+	// beside the rows that do.
 	PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]PendingSubmission, error)
 	// AttributeSubmission stores ev's referrer and UTMs as p's attribution
 	// and, when p.WriteEvent, writes ev, all in one transaction; wrote

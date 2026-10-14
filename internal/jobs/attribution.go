@@ -90,8 +90,11 @@ func (r *Runner) attributeSubmissions(ctx context.Context) {
 func (r *Runner) attributeBatch(ctx context.Context, now time.Time, givenUp *int) (n int, more bool) {
 	pending, err := r.store.PendingSubmissions(ctx, now.Add(-attributionDelay), attributionBatch)
 	if err != nil {
+		// Unreadable rows (named in err) are skipped; the rest go on.
 		r.logger.Error("form attribution: pending submissions", "error", err)
-		return 0, false
+		if len(pending) == 0 {
+			return 0, false
+		}
 	}
 	if len(pending) == 0 {
 		return 0, false

@@ -43,6 +43,7 @@ type pendingStore struct {
 	pending    []store.PendingSubmission
 	before     time.Time
 	attributed map[string]store.Event
+	err        error // returned beside the rows, as for unreadable ones
 }
 
 func (s *pendingStore) PendingSubmissions(_ context.Context, before time.Time, limit int) ([]store.PendingSubmission, error) {
@@ -53,7 +54,7 @@ func (s *pendingStore) PendingSubmissions(_ context.Context, before time.Time, l
 			out = append(out, p)
 		}
 	}
-	return out, nil
+	return out, s.err
 }
 
 func (s *pendingStore) AttributeSubmission(_ context.Context, p store.PendingSubmission, ev store.Event) (bool, error) {
@@ -236,5 +237,23 @@ func TestAttributeSubmissionsFailedLookupEndsTheTick(t *testing.T) {
 	attributionRunner(t, st, now).WithAttribution(a, &loggedEvents{}).attributeSubmissions(context.Background())
 	if len(a.asked) != 1 || len(st.attributed) != 0 {
 		t.Fatalf("%d lookups, %d attributed; want one failed lookup", len(a.asked), len(st.attributed))
+	}
+}
+
+// An unreadable pending row is logged as an error by its id, and the rows
+// read beside it are attributed all the same.
+func TestAttributeSubmissionsLogsUnreadableRows(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	st := &pendingStore{pending: []store.PendingSubmission{pendingAt("good", now.Add(-2*time.Minute), nil)},
+		err: errors.New("submission bad pending event: unexpected end of JSON input")}
+	r := attributionRunner(t, st, now).WithAttribution(&echoAttributor{}, &loggedEvents{})
+	var buf bytes.Buffer
+	r.logger = slog.New(slog.NewTextHandler(&buf, nil))
+	r.attributeSubmissions(context.Background())
+	if _, ok := st.attributed["good"]; !ok {
+		t.Error("the readable submission was not attributed")
+	}
+	if !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "submission bad") {
+		t.Errorf("log %q does not name the unreadable submission", buf.String())
 	}
 }

@@ -184,7 +184,9 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 }
 
 // PendingSubmissions lists up to limit submissions received at or before
-// `before` and not yet attributed, oldest first.
+// `before` and not yet attributed, oldest first. A row whose pending event
+// does not read is skipped and named in the error, beside the rows that
+// do: one bad row must not hold every other submission back.
 func (d *DB) PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]store.PendingSubmission, error) {
 	rows, err := d.db.QueryContext(ctx, `SELECT project_id, id, received_at, pending_event, pending_write, pending_connection
 		FROM submissions WHERE pending_event IS NOT NULL AND received_at <= ?
@@ -194,6 +196,7 @@ func (d *DB) PendingSubmissions(ctx context.Context, before time.Time, limit int
 	}
 	defer rows.Close()
 	var out []store.PendingSubmission
+	var bad []error
 	for rows.Next() {
 		var p store.PendingSubmission
 		var received, ev string
@@ -206,12 +209,16 @@ func (d *DB) PendingSubmissions(ctx context.Context, before time.Time, limit int
 			return nil, fmt.Errorf("submission %s received_at %q: %w", p.ID, received, err)
 		}
 		if err := json.Unmarshal([]byte(ev), &p.Event); err != nil {
-			return nil, fmt.Errorf("submission %s pending event: %w", p.ID, err)
+			bad = append(bad, fmt.Errorf("submission %s pending event: %w", p.ID, err))
+			continue
 		}
 		p.WriteEvent, p.ConnectionID = write == 1, connection.String
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, errors.Join(bad...)
 }
 
 // AttributeSubmission stores ev's referrer and UTMs as p's attribution
