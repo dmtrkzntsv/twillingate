@@ -216,6 +216,8 @@ ingest process locks `raw/` so the two never write at once.
 
 ### PR 5d. The switch: dashboards and tools on the files (D8)
 
+Plan: `2026-10-14-raw-switch.md`. Stacked on 5c (#183); 5b (#184) is a sibling.
+
 Breaking (`feat!`): widget SQL becomes DuckDB SQL over `events`,
 `sessions`, `identities` and `aliases`.
 
