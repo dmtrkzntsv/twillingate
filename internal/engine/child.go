@@ -85,6 +85,7 @@ func open(threads int, memory, spill, tempMax string, allow []string, parallel i
 		setup = append(setup, "SET GLOBAL max_temp_directory_size = "+sqlString(tempMax))
 	}
 	setup = append(setup,
+		"SET GLOBAL parquet_metadata_cache = true",
 		"SET GLOBAL allowed_directories = ["+strings.Join(dirs, ", ")+"]",
 		"SET GLOBAL autoinstall_known_extensions = false",
 		"SET GLOBAL autoload_known_extensions = false",
@@ -159,13 +160,29 @@ func serve(db *sql.DB, in io.Reader, w *replyWriter, parallel int) error {
 	}
 }
 
+// runScript runs a script on one connection and returns its error text. A script
+// that fails after its BEGIN leaves the transaction open on that pooled
+// connection, aborted, for whatever request gets it next: it is rolled back
+// here, on the same connection (a ROLLBACK with none open is refused, and
+// that is fine).
+func runScript(ctx context.Context, db *sql.DB, script string) string {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err.Error()
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, script); err != nil {
+		conn.ExecContext(context.WithoutCancel(ctx), "ROLLBACK")
+		return err.Error()
+	}
+	return ""
+}
+
 // run executes one request.
 func run(ctx context.Context, db *sql.DB, r request) reply {
 	rep := reply{ID: r.ID}
 	if r.Exec {
-		if _, err := db.ExecContext(ctx, r.SQL); err != nil {
-			rep.Err = err.Error()
-		}
+		rep.Err = runScript(ctx, db, r.SQL)
 		return rep
 	}
 	if err := readOnly(ctx, db, r.SQL); err != nil {

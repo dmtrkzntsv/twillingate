@@ -1441,7 +1441,7 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 | `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes) |
 | `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on projects whose clients send ids** |
-| `query` | `sql` | A single read-only `SELECT`/`WITH` against the views. Row-capped and time-limited; `meta` and SQLite's internal tables (`sqlite_master`, `dbstat`, …) are refused, whether named directly or as a quoted or single-quoted string. Non-ASCII names must be quoted |
+| `query` | `sql`, `source` (optional: `sqlite`, the default, or `files`) | A single read-only `SELECT`/`WITH`. Row-capped and time-limited. `sqlite` reads the views below; `meta` and SQLite's internal tables (`sqlite_master`, `dbstat`, …) are refused, whether named directly or as a quoted or single-quoted string, and non-ASCII names must be quoted. `files` reads the raw events through DuckDB: see [Writing SQL against the event files](#writing-sql-against-the-event-files) |
 
 **Managing** — `create_project`, `update_project`, `move_project`,
 `archive_project`, `restore_project`, `issue_ingest_key`, `list_ingest_keys`,
@@ -1534,7 +1534,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/measures` | `measures` | query: `from`, `to`, `name`, `attr_key` |
 | `GET` | `/api/projects/{project_id}/retention` | `retention` | query: `from`, `to`, `actor` |
 | `GET` | `/api/projects/{project_id}/identities` | `identities` | query: `from`, `to`, `kind`, `limit` |
-| `POST` | `/api/query` | `query` | body: `sql` |
+| `POST` | `/api/query` | `query` | body: `sql`, `source` |
 | `GET` | `/api/schema/views` | `schema://views` | — (text/plain) |
 
 Success is the tool's output as JSON, at 200 (201 where noted). Errors are
@@ -1546,9 +1546,10 @@ given twice are all 400: a filter is never dropped silently.
 
 ### Writing SQL against the views
 
-The `query` tool takes read-only SQL against the views below; it is
+The `query` tool takes read-only SQL against the views below (`source`
+`sqlite`, the default); it is
 row-capped (`CONSOLE_QUERY_ROWS_MAX`, default 1000) and time-limited
-(`CONSOLE_QUERY_TIMEOUT`, default `10s`). Read `schema://views` for the
+(`CONSOLE_QUERY_TIMEOUT`, default `30s`). Read `schema://views` for the
 authoritative column list; it is kept in step with the migrations and
 carries the caveats the DDL cannot express. Three matter most:
 
@@ -1614,3 +1615,65 @@ many groups per day (default 1000, 0 for all) and drops the rest with no
 Cost note: the views' live halves compute from raw rows, but only for the raw
 days the `WHERE` on `project_id` and `day` covers. Narrow ranges and the
 `agg_*` tables are cheaper.
+
+### Writing SQL against the event files
+
+`query` with `source: "files"` runs one read-only `SELECT` through DuckDB
+over the raw events twillingate keeps as files beside its database: every
+project's, received since the upgrade that began writing them, today's
+included (each `BUFFER_FLUSH_INTERVAL`). Same row cap and timeout as above;
+a query cannot write and cannot reach any other file. The dialect is
+DuckDB's ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction)),
+close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
+`day BETWEEN DATE '2026-01-01' AND DATE '2026-01-31'`, `GROUP BY ALL`,
+`DESCRIBE events` for the columns.
+
+Four tables: `events`, every event of every family, and `views`, `product`
+and `measures`, its rows of one family each. The `_tw_*` tables are the
+reader's own and hold rows before the rules apply: query these four. Every
+table has:
+
+| Column | Type | |
+| --- | --- | --- |
+| `id`, `project_id`, `family`, `event_name` | VARCHAR, BIGINT, VARCHAR, VARCHAR | filter `project_id` (ids from `list_projects`) |
+| `ts`, `received_at` | TIMESTAMP (UTC) | |
+| `day` | DATE | `ts`'s UTC day |
+| `kind`, `actor_id`, `actor_kind`, `user_id`, `group_id`, `session_id` | VARCHAR | |
+| `host`, `path`, `referrer_source`, `utm_source`, `utm_medium`, `utm_campaign` | VARCHAR | |
+| `platform`, `os`, `os_version`, `os_name`, `browser`, `browser_version`, `browser_locale`, `app_version`, `app_locale`, `device`, `device_model`, `country` | VARCHAR | as on the views (see [The event model](#the-event-model)) |
+| `display_width`, `display_height` | BIGINT | |
+| `consent` | BIGINT | 1, 0 or NULL |
+| `value`, `measure`, `sample_rate` | DOUBLE, VARCHAR, DOUBLE | `value` and `measure` are set on measures only; `sample_rate` is on every row, 1 unless the event was sampled |
+| `attr_<key>` | VARCHAR | one per attribute key any event carried, the key as sent |
+
+- **A field the event did not send is NULL,** not `''` (`value` and
+  `measure` are NULL outside measures; `sample_rate` is the exception,
+  1 unless the event was sampled), and an `attr_*` column is NULL on every
+  event without that key. `received_at` is NULL too on an event stored
+  without it. `query` shows NULL as an empty string: test `IS NULL`, not
+  `= ''`.
+- **Every key is a column, declared or not.** A key with characters other
+  than letters, digits and `_` needs double quotes: `"attr_plan type"`.
+  Column names are not case-sensitive: `attr_Plan` and `attr_plan` are one
+  column. Two such keys sent on the same day may read as `attr_plan` and
+  `attr_plan_1` for that day.
+- **Rules apply as you read.** An event renamed or merged reads under its
+  new name and a blocked one is absent, whenever its event was stored; an
+  attribute renamed or merged reads in its target's column (the target's
+  own value first) and a blocked key reads NULL, on product and measures
+  events. A rule on a key also covers the keys that differ from it only in
+  case, since they read as one column. Removing a rule brings the stored
+  names and values back.
+- **An event sent twice can show twice** when the copies landed in
+  different files (a resend after its day's log was closed), until its
+  month's files merge.
+- **Filter on `project_id` and `day` or `ts`:** the files are ordered by
+  family and time, and DuckDB skips what a filter excludes.
+
+The `v_*` views and `agg_*` tables are SQLite's: name one with `files` and
+the error says to pass `source: "sqlite"`. A query that runs out of the
+engine's memory (`ENGINE_MEMORY_LIMIT`) is refused with that cause: a
+`COUNT(DISTINCT …)` over a large group is the usual one, rewritten as a
+`GROUP BY` in a subquery whose rows are then counted.
+When the open logs themselves do not fit that limit, whatever the query,
+the error says so: raise `ENGINE_MEMORY_LIMIT`.

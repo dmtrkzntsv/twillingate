@@ -33,10 +33,13 @@ func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
 
-// TestDailyPassDumpsWhatSQLiteHolds: the day file holds every event SQLite
-// holds for the day, a retried batch and an approved form's submission
-// included (Review Focus 4).
-func TestDailyPassDumpsWhatSQLiteHolds(t *testing.T) {
+// TestFilesHoldWhatSQLiteHolds: the files hold every event SQLite holds,
+// a retried batch and an approved form's submission included (PR 3's
+// Review Focus 4), and the reader's events table answers the same counts
+// per day before the daily pass (every day from its log) and after it
+// (a day file and today's log). A query that tries to write through the
+// reader is refused and writes nothing.
+func TestFilesHoldWhatSQLiteHolds(t *testing.T) {
 	ctx := context.Background()
 	data := t.TempDir()
 	st := storetest.Open(t, filepath.Join(data, "twillingate.db"))
@@ -113,17 +116,6 @@ func TestDailyPassDumpsWhatSQLiteHolds(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer eng.Close()
-	pass, _ := civil.Parse("2026-10-12")
-	if err := archive.New(log, eng, slog.Default()).Maintain(ctx, pass, 1, 400); err != nil {
-		t.Fatal(err)
-	}
-
-	res, err := eng.Query(ctx, "SELECT count(*) FROM read_parquet('"+filepath.Join(log.Dir(), "1", "2026-10-11.parquet")+"')", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var files, sqlite int
-	fmt.Sscan(fmt.Sprint(res.Rows[0][0]), &files)
 	// A second, read-only handle on the same file (the modernc driver is
 	// registered through internal/store/sqlite): no accessor on store.Store
 	// for a test.
@@ -132,14 +124,64 @@ func TestDailyPassDumpsWhatSQLiteHolds(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer raw.Close()
-	if err := raw.QueryRow(`SELECT count(*) FROM events WHERE project_id=1 AND day='2026-10-11'`).Scan(&sqlite); err != nil {
+	var want []string
+	rows, err := raw.Query(`SELECT day, count(*) FROM events WHERE project_id = 1 GROUP BY day ORDER BY day`)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if files != sqlite || sqlite != 51 {
-		t.Fatalf("day file %d rows, SQLite %d; want both 51 (50 events once, plus the approved submission)", files, sqlite)
+	for rows.Next() {
+		var day string
+		var n int
+		if err := rows.Scan(&day, &n); err != nil {
+			t.Fatal(err)
+		}
+		want = append(want, fmt.Sprintf("[%s %d]", day, n))
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(want) != "[[2026-10-11 51] [2026-10-12 3]]" {
+		t.Fatalf("SQLite per day = %v; want 51 (50 events once, plus the approved submission) and 3", want)
+	}
+	files, err := archive.NewReader(log.Dir(), eng)
+	if err != nil {
+		t.Fatal(err)
+	}
+	perDay := func() string {
+		t.Helper()
+		res, err := files.Query(ctx, "SELECT CAST(day AS VARCHAR), count(*) FROM events WHERE project_id = 1 GROUP BY day ORDER BY day", 0, archive.Rules{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fmt.Sprint(res.Rows)
+	}
+	if got := perDay(); got != fmt.Sprint(want) {
+		t.Fatalf("files per day before the pass = %s, SQLite %v", got, want)
+	}
+
+	pass, _ := civil.Parse("2026-10-12")
+	if err := archive.New(log, eng, slog.Default()).Maintain(ctx, pass, 1, 400); err != nil {
+		t.Fatal(err)
+	}
+	res, err := eng.Query(ctx, "SELECT count(*) FROM read_parquet('"+filepath.Join(log.Dir(), "1", "2026-10-11.parquet")+"')", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(res.Rows) != "[[51]]" {
+		t.Fatalf("day file = %v rows, want 51", res.Rows)
 	}
 	if b, err := os.ReadFile(filepath.Join(log.Dir(), "1", "2026-10-12.log")); err != nil || len(splitLines(b)) != 3 {
 		t.Fatalf("today's log: %v, %d lines; want it open with 3", err, len(splitLines(b)))
+	}
+	if got := perDay(); got != fmt.Sprint(want) {
+		t.Fatalf("files per day after the pass = %s, SQLite %v", got, want)
+	}
+	out := filepath.Join(log.Dir(), "x.csv")
+	if _, err := files.Query(ctx, "COPY (SELECT 1) TO '"+out+"' (FORMAT csv)", 0, archive.Rules{}); err == nil {
+		t.Fatal("a COPY through the reader was accepted")
+	}
+	if _, err := os.Stat(out); !os.IsNotExist(err) {
+		t.Fatalf("%s exists: a refused query wrote it", out)
 	}
 }
 

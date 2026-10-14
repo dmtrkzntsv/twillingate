@@ -799,3 +799,15 @@ Ingest now also writes every event under `raw/` in the data directory: a log per
 - The engine child runs once a day for the dump and merge (`twillingate engine -check` shows it starts).
 
 Rollback: an older binary ignores `raw/`; delete it if you go back for good.
+
+### Upgrading to query on the event files
+
+No migration, nothing to run. Two visible changes:
+
+- `query` (MCP and `POST /api/query`) takes `source`: `sqlite`, the default,
+  reads the `v_*` views and `agg_*` tables as before; `files` reads the raw
+  events through DuckDB (`docs/twillingate.md`, "Writing SQL against the
+  event files"). The files hold the events received since the upgrade that
+  began writing `raw/`.
+- `CONSOLE_QUERY_TIMEOUT` defaults to `30s` (was `10s`), for `query` and
+  widget SQL alike. Set `CONSOLE_QUERY_TIMEOUT=10s` to keep the old bound.

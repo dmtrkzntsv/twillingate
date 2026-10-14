@@ -2,8 +2,9 @@
 // directory's raw/ (raw-first spec D2): an append-only NDJSON log per
 // project and UTC day, dumped to Parquet when the day closes, day files
 // merged into a month file once final, month files deleted at retention.
-// In this release SQLite still holds every event and nothing reads these
-// files; they fill so the next releases can read them.
+// SQLite still holds every event too; Reader answers SQL over the files
+// and open logs for the query tool's files source, and nothing else reads
+// them yet.
 //
 // Under raw/<project_id>/:
 //

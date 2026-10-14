@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -113,7 +114,7 @@ type ConsoleConfig struct {
 	Token         string
 	RedirectHosts []string      // token:// redirect=, callback hosts beyond loopback, claude.ai and chatgpt.com
 	Password      string        // token:// password=; set, it turns on the login server
-	QueryTimeout  time.Duration // CONSOLE_QUERY_TIMEOUT, default 10s
+	QueryTimeout  time.Duration // CONSOLE_QUERY_TIMEOUT, default 30s
 	QueryMaxRows  int           // CONSOLE_QUERY_ROWS_MAX, default 1000
 
 	// Insecure is token:// insecure=1: the console origin (resource) may
@@ -175,8 +176,12 @@ type Config struct {
 	// may lie: older ones are clamped to received − IngestLateDays. At most
 	// Retention.Events.RawDays, so a late event never reaches a day the
 	// daily pass has rolled up (raw-first spec, D3).
-	IngestLateDays      int
-	Database            string
+	IngestLateDays int
+	Database       string
+	// EventsDir (EVENTS_DIR) holds the event files (internal/archive):
+	// absolute, beside the database's file as raw/ unless set. The engine
+	// child may read and write all of it, so it never holds the database.
+	EventsDir           string
 	Geo                 string
 	IngestURL           string
 	Log                 LogConfig
@@ -324,10 +329,14 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		URL:          strings.TrimSuffix(e.str("CONSOLE_URL", c.IngestURL), "/"),
 		Database:     e.str("CONSOLE_DATABASE_DSN", c.Database),
 		AuthDSN:      e.str("CONSOLE_AUTH_DSN", ""),
-		QueryTimeout: e.dur("CONSOLE_QUERY_TIMEOUT", 10*time.Second),
+		QueryTimeout: e.dur("CONSOLE_QUERY_TIMEOUT", 30*time.Second),
 		QueryMaxRows: e.num("CONSOLE_QUERY_ROWS_MAX", 1000),
 	}
 	c.Console.DBPath = strings.TrimPrefix(c.Console.Database, "sqlite://")
+	c.EventsDir = e.str("EVENTS_DIR", filepath.Join(filepath.Dir(strings.TrimPrefix(c.Database, "sqlite://")), "raw"))
+	if abs, err := filepath.Abs(c.EventsDir); err == nil {
+		c.EventsDir = abs
+	}
 	if c.Console.AuthDSN != "" {
 		c.Console.authErr = c.parseConsoleAuthDSN()
 	}
@@ -386,6 +395,17 @@ func (c *Config) validate() error {
 	// The console reads with its own SQLite handles, whatever the store.
 	if !strings.HasPrefix(c.Console.Database, "sqlite://") {
 		return fmt.Errorf("config: CONSOLE_DATABASE_DSN must be sqlite://<path>: %q", c.Console.Database)
+	}
+	// The engine child may write where it may read: a database file inside
+	// EVENTS_DIR would be within reach of widget and query SQL.
+	for _, db := range []string{c.Database, c.Console.Database} {
+		path, err := filepath.Abs(strings.TrimPrefix(db, "sqlite://"))
+		if err != nil {
+			continue
+		}
+		if rel, err := filepath.Rel(c.EventsDir, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return fmt.Errorf("config: EVENTS_DIR (%s) must not hold the database (%s): the engine can read and write everything in it", c.EventsDir, path)
+		}
 	}
 	// Validate global retention (negative values only)
 	if rc := c.Retention.Events; rc.RawDays < 0 || rc.AggregateDays < 0 {

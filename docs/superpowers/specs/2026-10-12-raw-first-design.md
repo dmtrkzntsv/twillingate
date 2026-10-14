@@ -413,9 +413,10 @@ One server takes up to **1M events a month** and keeps raw events for up to
   - **New:** `RETENTION_DAYS` (default 400: days of events kept, as month
     files, D5); `INGEST_LATE_DAYS` (default 1, D3);
     `ENGINE_MEMORY_LIMIT` (default `512MB`, D8); `ENGINE_MAX_CHILDREN` (the
-    machine-wide cap, default 2, D8). Threads follow the CPUs, the raw
-    directory sits beside the SQLite file, the dump runs at day close: no
-    variable for any of them.
+    machine-wide cap, default 2, D8); `EVENTS_DIR` (default `raw/` beside
+    the SQLite file, added 2026-10-13 in PR 4 for flexibility; it may not
+    hold the database). Threads follow the CPUs and the dump runs at day
+    close: no variable for either.
   - **Unchanged:** `BUFFER_FLUSH_INTERVAL`, `BUFFER_FLUSH_MAX_EVENTS` and
     `BUFFER_CAPACITY` (the flush is now the log's fsync);
     `RETENTION_FORMS_DRAFT_DAYS`, `RETENTION_ARCHIVED_DAYS`;
@@ -624,6 +625,28 @@ Over 30 days A takes 0.14–1.8 s per query, C 3–120 ms. C's DuckDB file at
   FROM DATABASE` to a new file takes 151 s at 2 threads; `EXPORT DATABASE`
   to Parquet runs out of memory at 256 MB. A second process cannot open the
   file at all while one holds it, not even read-only.
+- **The reader over the files (PR 4, 2026-10-13):** `TestMeasureQueries`
+  (`go test -tags measure`) generates 36 months of one project, 1M rows a
+  month (36M rows, 978 MB of zstd Parquet in 36 month files; 50% views, 40%
+  product events with 8 attributes, 10% measures), and asks the `query`
+  tool's `Reader` eight questions through the child at 2 threads and 512 MB
+  on an Intel N150 (4 CPUs, 30 GB RAM, local NVMe), one cold run, the
+  child's footer cache warm after the first question. Targets: 30 s for a
+  3-year question, 1 s for a timeline. All met.
+
+  | Question (3 years) | Time | Rows |
+  |---|---|---|
+  | build (first query, `count(*)` over `events`) | 117 ms | 1 |
+  | views and visitors per day | 2.65 s | 1,096 |
+  | distinct users | 243 ms | 1 |
+  | plan × variant | 156 ms | 6 |
+  | plan × country | 142 ms | 12 |
+  | events per name per month | 523 ms | 289 |
+  | first rare event | 21 ms | 1 |
+  | one user's timeline | 306 ms | 252 |
+
+  Generating a month takes 3.0–3.9 s. The slowest is the per-day distinct
+  count over 18M view rows.
 
 CPU and memory in one Go process (`scripts/archive-bench/probe`: duckdb-go
 v2.10506.0 and modernc side by side), the 13 queries once warm, Linux arm64

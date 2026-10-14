@@ -501,3 +501,28 @@ func TestMergeFailsOnAnUnmatchedInput(t *testing.T) {
 		t.Fatal("the failed query left a file")
 	}
 }
+
+// TestLogSelectSkipsATornLineWhenTolerant is Review Focus 3 at the select:
+// a reader's select of an open log skips a torn last line, the dump's
+// select still fails on one (a dump never reads an unfinished log).
+func TestLogSelectSkipsATornLineWhenTolerant(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, evOf(1, "a", "2026-10-12T10:00:00Z"), evOf(1, "b", "2026-10-12T11:00:00Z"))
+	path := filepath.Join(f.log.Dir(), "1", "2026-10-12.log")
+	appendTo(t, path, `{"v":1,"id":"torn","fam`)
+	keys, err := newKeyScanner().keys(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	res, err := f.eng.Query(ctx, "SELECT id FROM ("+logSelect(path, columnsOf(keys), true)+") ORDER BY id", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fmt.Sprint(res.Rows) != "[[a] [b]]" {
+		t.Fatalf("rows = %v, want a and b", res.Rows)
+	}
+	if _, err := f.eng.Query(ctx, logSelect(path, columnsOf(keys), false), 0); err == nil || !strings.Contains(err.Error(), "Malformed JSON") {
+		t.Fatalf("strict select of a torn log: err = %v, want DuckDB's malformed JSON error", err)
+	}
+}

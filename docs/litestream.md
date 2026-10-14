@@ -9,7 +9,7 @@ the installer nor the compose file sets it up. This page does, for systemd
 and for docker compose. The examples use Cloudflare R2 and litestream 0.5;
 any S3-compatible store works.
 
-Litestream copies the database only. The event files under `raw/` (from the release that added `RETENTION_DAYS`) are not part of it; copy them on a schedule of your own (`docs/deployment.md`, "Back up and restore").
+Litestream copies the database only. The event files under `raw/` (from the release that added `RETENTION_DAYS`; `EVENTS_DIR` when set) are not part of it; copy them on a schedule of your own (`docs/deployment.md`, "Back up and restore").
 
 - [Bucket and credentials](#bucket-and-credentials)
 - [The configuration](#the-configuration)

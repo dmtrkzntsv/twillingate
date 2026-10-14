@@ -10,13 +10,14 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
 )
 
-// EngineOptions lays the engine out beside the database: raw/ is the one
-// directory its SQL reaches (PR 3 keeps the events there), engine/ holds
-// the spill directories and the slot locks. The SQLite file stays outside
-// raw/, so widget SQL never has a path to it (raw-first spec D8). The child's
-// SQL can write and delete inside raw/ (DuckDB's allowed directory is
-// read-write): before the engine has a caller (roadmap PR 3), requests other
-// than the dump must be refused unless they are read-only.
+// EngineOptions lays the engine out: EVENTS_DIR (raw/ beside the database
+// unless set) is the one directory its SQL reaches, engine/ beside the
+// database holds the spill directories and the slot locks, which every
+// process on the data directory shares. Config refuses an EVENTS_DIR that
+// holds the SQLite file, so widget SQL never has a path to it (raw-first
+// spec D8). The child's SQL can write and delete inside EVENTS_DIR
+// (DuckDB's allowed directory is read-write): only the archive's Exec
+// writes; Query refuses anything but one SELECT.
 func EngineOptions(cfg *config.Config) (engine.Options, error) {
 	// The running binary itself, even after an upgrade replaced the file
 	// on disk: os.Executable would name the new one, and the old server
@@ -32,7 +33,7 @@ func EngineOptions(cfg *config.Config) (engine.Options, error) {
 	return engine.Options{
 		Path:        self,
 		Args:        []string{"engine"},
-		AllowedDirs: []string{filepath.Join(data, "raw")},
+		AllowedDirs: []string{cfg.EventsDir},
 		SpillRoot:   filepath.Join(data, "engine", "spill"),
 		SlotDir:     filepath.Join(data, "engine", "slots"),
 		MaxChildren: cfg.Engine.MaxChildren,

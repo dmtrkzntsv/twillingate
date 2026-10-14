@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"math"
 	"os"
@@ -66,6 +67,17 @@ func TestChildAnswers(t *testing.T) {
 	if rep.Err != "" || len(rep.Columns) != 1 || rep.Columns[0] != "answer" ||
 		len(rep.Rows) != 1 || rep.Rows[0][0] != json.Number("42") {
 		t.Fatalf("reply = %+v", rep)
+	}
+}
+
+// TestChildCachesParquetFooters: every query binds every file of the
+// reader's union, so the child keeps the footers it read (archive files
+// never change in place: a merge replaces the month file by rename).
+func TestChildCachesParquetFooters(t *testing.T) {
+	c := startChild(t, childArgs(t.TempDir()))
+	rep := c.ask(t, request{ID: 1, SQL: "SELECT current_setting('parquet_metadata_cache')"})
+	if rep.Err != "" || fmt.Sprint(rep.Rows) != "[[true]]" {
+		t.Fatalf("parquet_metadata_cache = %v, %q; want true", rep.Rows, rep.Err)
 	}
 }
 
@@ -164,6 +176,22 @@ func TestChildExecKeepsState(t *testing.T) {
 	}
 	if rep := c.ask(t, request{ID: 2, SQL: "SELECT n FROM hot"}); rep.Err != "" || rep.Rows[0][0] != json.Number("7") {
 		t.Fatalf("reply = %+v", rep)
+	}
+}
+
+// TestChildExecRollsBackAFailedScript: a script that fails after its BEGIN
+// leaves nothing of it behind, and no transaction open on the connection
+// the pool hands the next request.
+func TestChildExecRollsBackAFailedScript(t *testing.T) {
+	c := startChild(t, childArgs(t.TempDir()))
+	if rep := c.ask(t, request{ID: 1, SQL: "BEGIN TRANSACTION; CREATE TABLE half(a INT); SELECT * FROM nowhere; COMMIT", Exec: true}); rep.Err == "" {
+		t.Fatal("the script failed to fail")
+	}
+	if rep := c.ask(t, request{ID: 2, SQL: "BEGIN TRANSACTION; COMMIT", Exec: true}); rep.Err != "" {
+		t.Fatalf("a transaction after the failed script: %s", rep.Err)
+	}
+	if rep := c.ask(t, request{ID: 3, SQL: "SELECT count(*) FROM half"}); rep.Err == "" {
+		t.Fatalf("the failed script's table survived: %+v", rep)
 	}
 }
 

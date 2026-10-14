@@ -242,7 +242,7 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 - Unquoted names are ASCII: quote any other (`"визиты"`). Strings and
   comments may hold any text.
 - Group in SQL: a widget gets at most `CONSOLE_QUERY_ROWS_MAX` rows (default
-  1000) and `CONSOLE_QUERY_TIMEOUT` (default 10s). A result cut at the cap draws
+  1000) and `CONSOLE_QUERY_TIMEOUT` (default 30s). A result cut at the cap draws
   as "partial". A pie keeps to five slices, the rest summed as `Other`,
   and a line chart to five lines: the palette has five colors.
 - A widget that follows neither switcher says in its title what it is fixed
@@ -1074,7 +1074,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | line.y: "n/a" is not number | Return a number, a `YYYY-MM-DD` day or text as the input asks; `CAST(… AS REAL)` where needed. An empty value (SQL `NULL`) always passes. |
 | refused: sql reads meta, which custom SQL may not read | Read the `v_*` views instead. The same holds for `sqlite_*`, `pragma_*` and `dbstat`, as a name or as a single-quoted string equal to one (`'meta'`, `'sqlite_master'`), and for `ATTACH`. |
 | refused: sql may use non-ASCII characters only inside quotes or comments | Quote the name: `"визиты"`. |
-| query exceeded CONSOLE_QUERY_TIMEOUT (10s); narrow the range or group the query | Group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |
+| query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the range or group the query | Group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |
 | SQLite's own error, such as a column that does not exist | Fix the query; try it with `query` first. |
 | markdown text is empty | Give the Markdown text. |
 | stat: … (a props schema error) | Match the props schema `list_components` returns; unknown props are refused. |

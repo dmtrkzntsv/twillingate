@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -181,6 +183,43 @@ func TestValidationErrors(t *testing.T) {
 		if _, err := FromEnv(func(k string) (string, bool) { v, ok := vars[k]; return v, ok }); err == nil {
 			t.Errorf("%s: expected error", name)
 		}
+	}
+}
+
+// TestEventsDir: the event files sit beside the database unless
+// EVENTS_DIR moves them; a relative path is made absolute, since the
+// engine child resolves paths from its own working directory.
+func TestEventsDir(t *testing.T) {
+	c, err := load(t, nil)
+	if err != nil || c.EventsDir != "/tmp/raw" {
+		t.Fatalf("default EventsDir = %v, %v; want /tmp/raw, beside /tmp/a.db", c, err)
+	}
+	c, err = load(t, map[string]string{"EVENTS_DIR": "/srv/events"})
+	if err != nil || c.EventsDir != "/srv/events" {
+		t.Fatalf("EventsDir = %v, %v; want /srv/events", c, err)
+	}
+	wd, _ := os.Getwd()
+	c, err = load(t, map[string]string{"EVENTS_DIR": "events"})
+	if err != nil || c.EventsDir != filepath.Join(wd, "events") {
+		t.Fatalf("relative EventsDir = %v, %v; want %s", c, err, filepath.Join(wd, "events"))
+	}
+}
+
+// TestEventsDirMustNotHoldTheDatabase: the engine child may read and write
+// all of EVENTS_DIR, so a database inside it would be within reach of
+// widget and query SQL (raw-first spec D8).
+func TestEventsDirMustNotHoldTheDatabase(t *testing.T) {
+	for name, vars := range map[string]map[string]string{
+		"the database's directory": {"EVENTS_DIR": "/tmp"},
+		"a parent of it":           {"EVENTS_DIR": "/"},
+		"the console's database's": {"EVENTS_DIR": "/srv/x", "CONSOLE_DATABASE_DSN": "sqlite:///srv/x/replica.db"},
+	} {
+		if _, err := load(t, vars); err == nil || !strings.Contains(err.Error(), "EVENTS_DIR") {
+			t.Errorf("%s: err = %v, want a refusal naming EVENTS_DIR", name, err)
+		}
+	}
+	if _, err := load(t, map[string]string{"EVENTS_DIR": "/tmp/rawer"}); err != nil {
+		t.Errorf("a sibling directory: %v", err)
 	}
 }
 
@@ -477,7 +516,7 @@ func TestMCPDefaults(t *testing.T) {
 	if cfg.Console.DBPath != "/tmp/x.db" {
 		t.Errorf("DBPath = %q", cfg.Console.DBPath)
 	}
-	if cfg.Console.QueryTimeout != 10*time.Second || cfg.Console.QueryMaxRows != 1000 {
+	if cfg.Console.QueryTimeout != 30*time.Second || cfg.Console.QueryMaxRows != 1000 {
 		t.Errorf("guards = %v %d", cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
 	}
 }
@@ -630,7 +669,7 @@ func TestConsoleDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 	if c.IngestAddr != "127.0.0.1:9" || c.Console.Addr != "127.0.0.1:9" || c.Console.DBPath != "/tmp/x.db" ||
-		c.Console.QueryTimeout != 10*time.Second || c.Console.QueryMaxRows != 1000 {
+		c.Console.QueryTimeout != 30*time.Second || c.Console.QueryMaxRows != 1000 {
 		t.Errorf("defaults = %+v / %+v", c.IngestAddr, c.Console)
 	}
 	if err := c.ValidateConsole(); err == nil || !strings.Contains(err.Error(), "CONSOLE_AUTH_DSN") {

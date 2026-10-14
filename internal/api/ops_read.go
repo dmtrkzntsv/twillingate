@@ -38,6 +38,9 @@ type host struct {
 	raw *rawCount
 	// ingestDisabled is INGEST_DISABLED, which limits reports.
 	ingestDisabled bool
+	// files runs SQL over the raw event files (archive.Reader); nil in a
+	// process without an engine, where query's files source is refused.
+	files Files
 }
 
 var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -270,7 +273,7 @@ func (h *host) register(r *registrar) {
 		Description: "Per-user or per-group activity with display names. This surfaces personal data on projects whose clients send ids."},
 		h.identities)
 	expose(r, spec{Name: "query", Annotations: ro, Method: "POST", Path: "/api/query",
-		Description: "Escape hatch: run one read-only SELECT/WITH against the v_* views and agg_* tables. Read schema://views first for columns and caveats. Row-capped and time-limited; the connection is read-only at the driver level."},
+		Description: "Escape hatch: run one read-only SELECT/WITH. source \"sqlite\" (the default) reads the v_* views and agg_* tables: read schema://views first. source \"files\" reads the raw events through DuckDB: the tables events, views, product and measures, one attr_<key> column per attribute key (docs://twillingate, \"Writing SQL against the event files\"). Row-capped and time-limited; read-only either way."},
 		h.runQuery)
 
 	expose(r, spec{Name: "create_project", Annotations: write, Method: "POST", Path: "/api/projects", Status: http.StatusCreated,

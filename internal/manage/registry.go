@@ -5,12 +5,14 @@
 package manage
 
 import (
+	"cmp"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -301,6 +303,29 @@ func (s *Snapshot) AttributeRules(projectID int64) store.AttributeRuleSet {
 // reader: callers must not modify it or its elements.
 func (s *Snapshot) AttributeRuleList(projectID int64) []store.AttributeRule {
 	return s.attrRuleList[projectID]
+}
+
+// RuleLists is every project's event rules, by project, family and name,
+// and attribute rules, by project and key: what the event files' tables
+// apply on read (raw-first D6). The slices are new; the rules are copies.
+func (s *Snapshot) RuleLists() ([]store.EventRule, []store.AttributeRule) {
+	var events []store.EventRule
+	for _, rs := range s.rules {
+		for _, r := range rs {
+			events = append(events, r)
+		}
+	}
+	slices.SortFunc(events, func(a, b store.EventRule) int {
+		return cmp.Or(cmp.Compare(a.ProjectID, b.ProjectID), cmp.Compare(a.Family, b.Family), cmp.Compare(a.Name, b.Name))
+	})
+	var attrs []store.AttributeRule
+	for _, list := range s.attrRuleList {
+		attrs = append(attrs, list...)
+	}
+	slices.SortFunc(attrs, func(a, b store.AttributeRule) int {
+		return cmp.Or(cmp.Compare(a.ProjectID, b.ProjectID), cmp.Compare(a.Key, b.Key))
+	})
+	return events, attrs
 }
 
 func (s *Snapshot) Project(id int64) *Project { return s.byID[id] }
