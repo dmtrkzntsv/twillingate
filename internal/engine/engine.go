@@ -20,6 +20,13 @@ import (
 // exits and gives its memory back (D8: "a few idle minutes").
 const DefaultIdleExit = 3 * time.Minute
 
+// DefaultMaxTempSize bounds a child's spill on the disk the SQLite file
+// shares (DuckDB's own default is 90% of the free space).
+const DefaultMaxTempSize = "4GB"
+
+// yieldPoll is how often an idle child checks whether another process waits for its slot.
+const yieldPoll = time.Second
+
 var (
 	// ErrSpawn: the child could not be started or did not get ready.
 	ErrSpawn = errors.New("engine: the child did not start")
@@ -57,6 +64,8 @@ type Options struct {
 	SlotDir     string
 	MaxChildren int
 	MemoryLimit string
+	// DuckDB max_temp_directory_size: the spill a child may write. "": DefaultMaxTempSize.
+	MaxTempSize string
 	Threads     int
 	Parallel    int
 	IdleExit    time.Duration
@@ -81,6 +90,7 @@ type child struct {
 	pending map[uint64]chan reply
 	busy    int
 	idle    *time.Timer
+	gen     uint64 // bumped when a request starts or ends: an idle callback armed before it is stale
 	slot    *slot
 	spill   string
 	done    chan struct{} // closed after exit, once the slot and spill are released
@@ -106,6 +116,9 @@ func New(o Options) (*Engine, error) {
 	}
 	if o.MemoryLimit == "" {
 		o.MemoryLimit = DefaultMemoryLimit
+	}
+	if o.MaxTempSize == "" {
+		o.MaxTempSize = DefaultMaxTempSize
 	}
 	if o.IdleExit <= 0 {
 		o.IdleExit = DefaultIdleExit
@@ -138,7 +151,9 @@ func (e *Engine) Query(ctx context.Context, sql string, maxRows int) (Result, er
 }
 
 // Exec runs sql for its effect on the child, such as a table later
-// queries read; the effect lasts as long as the child.
+// queries read; the effect lasts as long as the child. Exec runs any
+// statement; only the archive calls it. Queries from users go through
+// Query, which refuses writes.
 func (e *Engine) Exec(ctx context.Context, sql string) error {
 	_, err := e.do(ctx, request{SQL: sql, Exec: true})
 	return err
@@ -162,12 +177,15 @@ func (e *Engine) do(ctx context.Context, r request) (reply, error) {
 	}
 	select {
 	case rep := <-ch:
-		return answer(rep)
+		return e.outcome(rep)
 	case <-c.done:
 		select {
 		case rep := <-ch:
-			return answer(rep)
+			return e.outcome(rep)
 		default:
+			if e.isClosed() {
+				return reply{}, ErrClosed
+			}
 			return reply{}, ErrChildExited
 		}
 	case <-ctx.Done():
@@ -178,11 +196,22 @@ func (e *Engine) do(ctx context.Context, r request) (reply, error) {
 	}
 }
 
-func answer(rep reply) (reply, error) {
+// outcome turns a reply into the caller's result; a failure on an engine
+// that is closed reads as ErrClosed, since Close is what cut the request short.
+func (e *Engine) outcome(rep reply) (reply, error) {
 	if rep.Err != "" {
+		if e.isClosed() {
+			return reply{}, ErrClosed
+		}
 		return reply{}, &QueryError{Msg: rep.Err}
 	}
 	return rep, nil
+}
+
+func (e *Engine) isClosed() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.closed
 }
 
 // start returns the running child with one more request counted on it,
@@ -201,6 +230,7 @@ func (e *Engine) start(ctx context.Context) (*child, error) {
 	}
 	if c := e.child; c != nil {
 		c.busy++
+		c.gen++
 		if c.idle != nil {
 			c.idle.Stop()
 			c.idle = nil
@@ -234,16 +264,44 @@ func (e *Engine) finish(c *child, id uint64) {
 	defer e.mu.Unlock()
 	delete(c.pending, id)
 	c.busy--
+	c.gen++
 	if c.busy == 0 && e.child == c {
-		c.idle = time.AfterFunc(e.o.IdleExit, func() { e.retire(c) })
+		e.armIdle(c, time.Now().Add(e.o.IdleExit))
 	}
 }
 
+// armIdle (e.mu held) schedules the idle check: the child retires at
+// deadline, or as soon as another engine waits for a slot. The check
+// belongs to the child's current generation and does nothing once a
+// request has started or ended since.
+func (e *Engine) armIdle(c *child, deadline time.Time) {
+	wait := time.Until(deadline)
+	if wait > yieldPoll {
+		wait = yieldPoll
+	}
+	gen := c.gen
+	c.idle = time.AfterFunc(wait, func() { e.idleCheck(c, deadline, gen) })
+}
+
+// idleCheck is the timer's callback: re-arm while the deadline is ahead
+// and nobody waits, else retire.
+func (e *Engine) idleCheck(c *child, deadline time.Time, gen uint64) {
+	if time.Now().Before(deadline) && !waiting(e.o.SlotDir) {
+		e.mu.Lock()
+		if e.child == c && c.busy == 0 && c.gen == gen {
+			e.armIdle(c, deadline)
+		}
+		e.mu.Unlock()
+		return
+	}
+	e.retire(c, gen)
+}
+
 // retire tells an idle child to exit by closing its stdin, unless a
-// request arrived since the timer fired.
-func (e *Engine) retire(c *child) {
+// request started or ended since the timer was armed (gen).
+func (e *Engine) retire(c *child, gen uint64) {
 	e.mu.Lock()
-	if e.child != c || c.busy > 0 {
+	if e.child != c || c.busy > 0 || c.gen != gen {
 		e.mu.Unlock()
 		return
 	}
@@ -280,7 +338,7 @@ func (e *Engine) spawn(ctx context.Context) (*child, error) {
 	}()
 	args := append(slices.Clone(e.o.Args),
 		"-threads", strconv.Itoa(e.o.Threads), "-memory", e.o.MemoryLimit,
-		"-spill", spill, "-parallel", strconv.Itoa(e.o.Parallel))
+		"-spill", spill, "-temp-max", e.o.MaxTempSize, "-parallel", strconv.Itoa(e.o.Parallel))
 	for _, d := range e.o.AllowedDirs {
 		args = append(args, "-allow", d)
 	}

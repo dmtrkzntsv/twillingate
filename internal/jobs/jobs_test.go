@@ -429,6 +429,39 @@ func TestRunDailyPassPurgesArchivedAndReloadsRegistryOnProjectPurge(t *testing.T
 	}
 }
 
+// A purged project's archive directory goes with it.
+func TestRunDailyPassRemovesPurgedProjectsFromTheArchive(t *testing.T) {
+	vars := map[string]string{}
+	for k, v := range jobsVars {
+		vars[k] = v
+	}
+	vars["RETENTION_ARCHIVED_DAYS"] = "30"
+	cfg := configtest.Load(t, vars)
+	raw, path := openStoreAt(t)
+	t.Setenv("JOBS_TEST_DB", path)
+	reg := newRegistry(t, raw, cfg, jobsProjectSpecs)
+	ctx := context.Background()
+	ops := manage.NewOps(reg, raw)
+	if _, err := ops.CreateProject(ctx, "test", manage.ProjectSpec{Name: "Gone"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ops.ArchiveProject(ctx, "test", 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rawExec(t, `UPDATE projects SET archived_at = datetime('now', '-31 days') WHERE id=2`); err != nil {
+		t.Fatal(err)
+	}
+	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
+	a := &fakeArchive{}
+	r := New(raw, cfg, reg, identity.NewSalter(raw, now), slog.Default(), now).WithArchive(a)
+	if err := r.RunDailyPass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(a.removed, []int64{2}) {
+		t.Fatalf("RemoveProject calls = %v, want [2]", a.removed)
+	}
+}
+
 // RETENTION_ARCHIVED_DAYS=0 must keep archived items forever: the pass
 // must not even call PurgeArchived.
 func TestRunDailyPassSkipsPurgeWhenArchivedDaysIsZero(t *testing.T) {
@@ -1122,5 +1155,140 @@ func TestDailyPassDropsBlockedAttributeAggregates(t *testing.T) {
 	got := queryDays(t, `SELECT attr_key FROM agg_product_attrs WHERE project_id = ? ORDER BY attr_key`, pid)
 	if !slices.Equal(got, []string{"y"}) {
 		t.Errorf("attribute aggregate keys after the pass = %v, want [y]", got)
+	}
+}
+
+type fakeArchive struct {
+	calls   []string
+	removed []int64
+	dirs    []int64 // the project directories Projects reports
+}
+
+func (f *fakeArchive) Projects() ([]int64, error) { return f.dirs, nil }
+
+func (f *fakeArchive) Maintain(ctx context.Context, today civil.Date, lateDays, retentionDays int) error {
+	f.calls = append(f.calls, fmt.Sprintf("%s late=%d keep=%d", today, lateDays, retentionDays))
+	return nil
+}
+
+func (f *fakeArchive) RemoveProject(id int64) error {
+	f.removed = append(f.removed, id)
+	return nil
+}
+
+func TestDailyPassMaintainsTheArchive(t *testing.T) {
+	vars := map[string]string{"RETENTION_RAW_DAYS": "7", "RETENTION_AGGREGATE_DAYS": "365", "INGEST_LATE_DAYS": "2", "RETENTION_DAYS": "500"}
+	_, _, r := setup(t, vars, jobsProjectSpecs)
+	a := &fakeArchive{}
+	r.WithArchive(a)
+	if err := r.RunDailyPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.calls) != 1 || a.calls[0] != "2026-08-22 late=2 keep=500" {
+		t.Fatalf("Maintain calls = %v", a.calls)
+	}
+}
+
+func TestScheduledPassWaitsItsJitterBeforeTheArchive(t *testing.T) {
+	_, _, r := setup(t, jobsVars, jobsProjectSpecs)
+	a := &fakeArchive{}
+	r.WithArchive(a)
+	var waited time.Duration
+	r.jitter = func() time.Duration { return 7 * time.Minute }
+	r.sleep = func(ctx context.Context, d time.Duration) { waited = d }
+	r.now = func() time.Time { return time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC) }
+	r.runScheduled(context.Background())
+	if waited != 7*time.Minute || len(a.calls) != 1 {
+		t.Fatalf("waited %v, Maintain calls %d; want 7m then one call", waited, len(a.calls))
+	}
+}
+
+// The boot catch-up pass never waits: the jitter is for the 03:00 pass.
+func TestBootPassDoesNotWaitTheJitter(t *testing.T) {
+	_, _, r := setup(t, jobsVars, jobsProjectSpecs)
+	r.WithArchive(&fakeArchive{})
+	waited := false
+	r.sleep = func(ctx context.Context, d time.Duration) { waited = true }
+	if err := r.RunDailyPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if waited {
+		t.Fatal("RunDailyPass slept; only the scheduled pass is jittered")
+	}
+}
+
+// A shutdown during the jitter wait ends the scheduled pass before it starts:
+// nothing runs on a dead context, and the day stays open for the next boot.
+func TestScheduledPassCutShortByShutdownDoesNotRun(t *testing.T) {
+	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
+	a := &fakeArchive{}
+	r.WithArchive(a)
+	ctx, cancel := context.WithCancel(context.Background())
+	r.jitter = func() time.Duration { return time.Minute }
+	r.sleep = func(context.Context, time.Duration) { cancel() }
+	r.now = func() time.Time { return time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC) }
+	r.runScheduled(ctx)
+	if len(a.calls) != 0 {
+		t.Fatalf("Maintain ran after the shutdown: %v", a.calls)
+	}
+	if got := queryDays(t, `SELECT key FROM usage_history`); len(got) != 0 {
+		t.Fatalf("the pass ran after the shutdown: usage_history %v", got)
+	}
+	if r.lastAggDay != "" {
+		t.Fatalf("lastAggDay = %q, want it left open", r.lastAggDay)
+	}
+	_ = st
+}
+
+// A directory under raw/ whose project the registry does not know (purged by
+// another process) is removed; live and archived-but-not-purged projects keep
+// theirs.
+func TestRunDailyPassRemovesDirectoriesOfUnknownProjects(t *testing.T) {
+	cfg := configtest.Load(t, jobsVars)
+	st, path := openStoreAt(t)
+	t.Setenv("JOBS_TEST_DB", path)
+	reg := newRegistry(t, st, cfg, jobsProjectSpecs)
+	ctx := context.Background()
+	ops := manage.NewOps(reg, st)
+	if _, err := ops.CreateProject(ctx, "test", manage.ProjectSpec{Name: "Archived"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ops.ArchiveProject(ctx, "test", 2); err != nil {
+		t.Fatal(err)
+	}
+	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
+	a := &fakeArchive{dirs: []int64{1, 2, 99}}
+	r := New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now).WithArchive(a)
+	if err := r.RunDailyPass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(a.removed, []int64{99}) {
+		t.Fatalf("RemoveProject calls = %v, want [99]", a.removed)
+	}
+}
+
+// A project created by another process after this registry loaded is not
+// unknown: the sweep reloads before it compares.
+func TestRunDailyPassKeepsDirectoriesOfProjectsCreatedElsewhere(t *testing.T) {
+	cfg := configtest.Load(t, jobsVars)
+	st, path := openStoreAt(t)
+	t.Setenv("JOBS_TEST_DB", path)
+	reg := newRegistry(t, st, cfg, jobsProjectSpecs)
+	ctx := context.Background()
+	other := manage.NewOps(manage.New(st, slog.Default()), st) // another process's registry
+	if err := other.Reg.Reload(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.CreateProject(ctx, "test", manage.ProjectSpec{Name: "Elsewhere"}); err != nil {
+		t.Fatal(err)
+	}
+	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
+	a := &fakeArchive{dirs: []int64{2}}
+	r := New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now).WithArchive(a)
+	if err := r.RunDailyPass(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.removed) != 0 {
+		t.Fatalf("RemoveProject calls = %v, want none", a.removed)
 	}
 }

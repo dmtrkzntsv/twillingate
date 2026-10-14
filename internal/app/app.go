@@ -14,7 +14,9 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/api"
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
+	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/geo"
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/jobs"
@@ -126,9 +128,24 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	}
 	defer geoProvider.Close()
 
+	// The archive log (raw-first PR 3): the ingest process appends every
+	// event to raw/ beside SQLite; a console-only process writes none.
+	var sink pipeline.Sink = st
+	var forms server.FormStore = st
+	var archiveLog *archive.Log
+	if runIngest {
+		archiveLog, err = archive.OpenLog(filepath.Join(dataDir, "raw"))
+		if err != nil {
+			return err
+		}
+		defer archiveLog.Close()
+		sink = pipeline.Sinks{st, archiveLog}
+		forms = archivedForms{FormStore: st, log: archiveLog, logger: logger}
+	}
+
 	// The pipeline and jobs runner get their own contexts rather than ctx,
 	// so cancelling ctx does not tear them down before HTTP has drained.
-	buf := pipeline.New(cfg.Buffer, st, logger)
+	buf := pipeline.New(cfg.Buffer, sink, logger)
 	pipeCtx, stopPipe := context.WithCancel(context.Background())
 	pipeDone := make(chan struct{})
 	go func() { buf.Run(pipeCtx); close(pipeDone) }()
@@ -140,6 +157,24 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	}
 
 	runner := jobs.New(st, cfg, reg, salter, logger, time.Now)
+	if archiveLog != nil {
+		opts, err := EngineOptions(cfg)
+		if err != nil {
+			stopPipe()
+			<-pipeDone
+			return err
+		}
+		eng, err := engine.New(opts)
+		if err != nil {
+			stopPipe()
+			<-pipeDone
+			return err
+		}
+		// Closed after the jobs runner returns (Serve waits for it), which
+		// is the last user of the engine.
+		defer eng.Close()
+		runner.WithArchive(archive.New(archiveLog, eng, logger))
+	}
 	jobsCtx, stopJobs := context.WithCancel(context.Background())
 	jobsDone := make(chan struct{})
 	go func() { runner.Run(jobsCtx); close(jobsDone) }()
@@ -155,7 +190,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 
 	var ingestHandler *server.Server
 	if runIngest {
-		ingestHandler = server.New(cfg, reg, buf, geoProvider, salter, st, st, logger)
+		ingestHandler = server.New(cfg, reg, buf, geoProvider, salter, st, forms, logger)
 		if cfg.IngestDisabled {
 			logger.Warn("ingest is disabled (INGEST_DISABLED): every ingest route refuses events and form submissions with 429")
 		}

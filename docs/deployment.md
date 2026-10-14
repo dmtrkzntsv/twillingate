@@ -113,6 +113,7 @@ to it.
 | `INGEST_LATE_DAYS` | Days back a client timestamp may lie; an older one is clamped to this edge, counted, never dropped. At least 1 and at most `RETENTION_RAW_DAYS`, so a late event never lands in a day already rolled up. Default 1. |
 | `RETENTION_RAW_DAYS` | Days raw events of every family are kept before rollup. At least `INGEST_LATE_DAYS`. Default 30. |
 | `RETENTION_AGGREGATE_DAYS` | Days aggregates of every family (and actors, cohorts, identities) are kept. Default 400. |
+| `RETENTION_DAYS` | Days the raw event files under `raw/` in the data directory are kept, in whole months: a month file is deleted once its last day is older. At least 1. Default 400. |
 | `RETENTION_FORMS_DRAFT_DAYS` | Days a form created by its first submission accepts submissions as a draft; unless approved by then, it refuses them and the daily pass archives it. Read when a draft is created or restored, so a change moves no existing draft's window. At least 1. Default 7. |
 | `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data and its widget shares), a dashboard, a widget or a widget share is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
 | `ATTRIBUTE_VALUES_TOP_N` | Values kept per (project, day) in each views breakdown (paths, referrers, browsers, …) and kinds in `v_views_daily`, and distinct attribute values per (project, day, event, key), before the rest collapse into `(other)`. 0 keeps every value. Default 100. |
@@ -125,7 +126,7 @@ to it.
 | `CONSOLE_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `10s`. |
 | `CONSOLE_QUERY_ROWS_MAX` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
 | `ENGINE_MEMORY_LIMIT` | DuckDB's memory limit for each engine child, the process that answers analytics queries: `512MB`, `1GB`, `2GiB` (DuckDB's MB is 10^6 bytes). Outside GOMEMLIMIT, which bounds only the server. Default `512MB`. |
-| `ENGINE_MAX_CHILDREN` | Engine children running at once, across every process on one data directory. One `serve` process runs one child at a time, so this matters for a split install (ingest and console as two processes); a process waits for a free slot. Default 2. |
+| `ENGINE_MAX_CHILDREN` | Engine children running at once, across every process on one data directory. One `serve` process runs one child at a time, so this matters for a split install (ingest and console as two processes); a process waits for a free slot, and gets one within about a second from another process whose child is idle (an idle child yields its slot). Default 2. |
 | `REPORTING_CACHE_MAX_AGE` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default `15m`. |
 | `REPORTING_REFRESH_MAX_AGE` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_MAX_AGE`; must not exceed it when that is non-zero. Default `1m`. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_MAX_AGE`, `REPORTING_REFRESH_MAX_AGE`) while its window has focus; both 0 removes the option. |
 
@@ -421,9 +422,11 @@ which `usage` reads and which outlive the aggregates' retention) run daily at
 across those times skips no day. With `LOG_FILE` set, install
 `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.
 
+The ingest process also keeps every event as files under `raw/` in the data directory: a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Nothing reads the files yet; SQLite still answers every query.
+
 ### Back up and restore
 
-Everything twillingate keeps is in one SQLite file,
+Everything twillingate needs to run is in one SQLite file,
 `/var/lib/twillingate/twillingate.db` (in compose, `twillingate.db` in the
 `data` volume). SQLite's online backup copies it safely while the service
 runs; a plain `cp` of a live database can catch a half-written page and
@@ -433,6 +436,8 @@ off-host copy instead, seconds behind, run litestream beside the collector:
 <https://github.com/dmtrkzntsv/twillingate/blob/main/docs/litestream.md>
 sets it up for systemd and docker compose, with the restore drill and
 disaster recovery (not served over MCP; open it in the repository).
+
+From this release the data directory also holds `raw/`, the event files. Back them up with the database: copy the SQLite file first (`.backup`, as below), then `raw/` with any tool (`cp -a`, `rsync`, `restic`). The daily pass rewrites `raw/` (it renames closed logs, writes day files, merges a month's day files into the month file and deletes them), and a tool that lists the files before copying them can miss a month while it runs. Copy `raw/` outside the pass: not between 03:00 and 03:45 UTC, and not right after a start. Or run the copy again until it changes nothing. Between passes nothing changes there but the logs, which only grow, so a copy taken while the service runs is correct; a log's last line may be cut, and the next start drops it. Restore both before starting the service, and restore them from the same backup: the daily pass deletes the `raw/` directory of any project the database does not know, so a database older than a project's creation would delete that project's files.
 
 ```bash
 sudo -u twillingate sqlite3 /var/lib/twillingate/twillingate.db \

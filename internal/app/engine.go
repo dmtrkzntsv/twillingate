@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
@@ -17,9 +18,15 @@ import (
 // read-write): before the engine has a caller (roadmap PR 3), requests other
 // than the dump must be refused unless they are read-only.
 func EngineOptions(cfg *config.Config) (engine.Options, error) {
-	self, err := os.Executable()
-	if err != nil {
-		return engine.Options{}, fmt.Errorf("engine: %w", err)
+	// The running binary itself, even after an upgrade replaced the file
+	// on disk: os.Executable would name the new one, and the old server
+	// would spawn a child of another version.
+	self := "/proc/self/exe"
+	if runtime.GOOS != "linux" {
+		var err error
+		if self, err = os.Executable(); err != nil {
+			return engine.Options{}, fmt.Errorf("engine: %w", err)
+		}
 	}
 	data := filepath.Dir(DatabasePath(cfg.Database))
 	return engine.Options{
