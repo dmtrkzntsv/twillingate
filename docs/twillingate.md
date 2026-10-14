@@ -1628,12 +1628,13 @@ days the `WHERE` on `project_id` and `day` covers. Narrow ranges and the
 ### Writing SQL against the event files
 
 `query` with `source: "files"` runs one read-only `SELECT` through DuckDB
-over the raw events twillingate keeps as files beside its database: every
-project's, from the oldest raw day the database held when
-`twillingate events import` copied it into them (older history exists only
-as the `agg_*` tables; before that import, since the upgrade that began
-writing them), today's included (each `BUFFER_FLUSH_INTERVAL`). Same row cap and timeout as above;
-a query cannot write and cannot reach any other file. The dialect is
+over the raw events twillingate keeps as files beside its database. The
+files hold every project's events since the upgrade that began writing
+them. Once `twillingate events import` has run, they also hold the earlier
+raw days the database still held then. History older than that exists only
+in the `agg_*` tables. Today's events are included, each
+`BUFFER_FLUSH_INTERVAL`. Same row cap and timeout as above; a query cannot
+write and cannot reach any other file. The dialect is
 DuckDB's ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction)),
 close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
 `day BETWEEN DATE '2026-01-01' AND DATE '2026-01-31'`, `GROUP BY ALL`,
@@ -1677,7 +1678,9 @@ the reader's own and hold rows before the rules apply: query these seven.
   own value first) and a blocked key reads NULL, on product and measures
   events. A rule on a key also covers the keys that differ from it only in
   case, since they read as one column. Removing a rule brings the stored
-  names and values back.
+  names and values back, except on events imported from the database
+  (`twillingate events import`): they were stored with the names and keys
+  the database's rules had already applied.
 - **An event sent twice can show twice** when the copies landed in
   different files (a resend after its day's log was closed), until its
   month's files merge.
