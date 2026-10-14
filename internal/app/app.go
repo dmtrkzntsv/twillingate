@@ -129,12 +129,12 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	defer geoProvider.Close()
 
 	// The archive log (raw-first PR 3): the ingest process appends every
-	// event to raw/ beside SQLite; a console-only process writes none.
+	// event to EVENTS_DIR beside SQLite; a console-only process writes none.
 	var sink pipeline.Sink = st
 	var forms server.FormStore = st
 	var archiveLog *archive.Log
 	if runIngest {
-		archiveLog, err = archive.OpenLog(filepath.Join(dataDir, "raw"))
+		archiveLog, err = archive.OpenLog(cfg.EventsDir)
 		if err != nil {
 			return err
 		}
@@ -179,7 +179,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	if archiveLog != nil {
 		runner.WithArchive(archive.New(archiveLog, eng, logger))
 	}
-	files, err := archive.NewReader(filepath.Join(dataDir, "raw"), eng)
+	files, err := archive.NewReader(cfg.EventsDir, eng)
 	if err != nil {
 		stopPipe()
 		<-pipeDone

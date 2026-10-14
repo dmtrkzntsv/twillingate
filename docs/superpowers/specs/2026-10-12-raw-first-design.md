@@ -413,9 +413,10 @@ One server takes up to **1M events a month** and keeps raw events for up to
   - **New:** `RETENTION_DAYS` (default 400: days of events kept, as month
     files, D5); `INGEST_LATE_DAYS` (default 1, D3);
     `ENGINE_MEMORY_LIMIT` (default `512MB`, D8); `ENGINE_MAX_CHILDREN` (the
-    machine-wide cap, default 2, D8). Threads follow the CPUs, the raw
-    directory sits beside the SQLite file, the dump runs at day close: no
-    variable for any of them.
+    machine-wide cap, default 2, D8); `EVENTS_DIR` (default `raw/` beside
+    the SQLite file, added 2026-10-13 in PR 4 for flexibility; it may not
+    hold the database). Threads follow the CPUs and the dump runs at day
+    close: no variable for either.
   - **Unchanged:** `BUFFER_FLUSH_INTERVAL`, `BUFFER_FLUSH_MAX_EVENTS` and
     `BUFFER_CAPACITY` (the flush is now the log's fsync);
     `RETENTION_FORMS_DRAFT_DAYS`, `RETENTION_ARCHIVED_DAYS`;

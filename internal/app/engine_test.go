@@ -38,3 +38,20 @@ func TestEngineOptionsKeepTheDatabaseOutOfReach(t *testing.T) {
 		t.Errorf("options = %+v", o)
 	}
 }
+
+// TestEngineOptionsAllowEventsDir: the child reaches the event files
+// wherever EVENTS_DIR puts them, and nothing else; its spill and slots stay
+// beside the database, where every process on the data directory finds the
+// same slots.
+func TestEngineOptionsAllowEventsDir(t *testing.T) {
+	dir := t.TempDir()
+	events := filepath.Join(t.TempDir(), "events")
+	cfg := configtest.Load(t, map[string]string{"DATABASE_DSN": "sqlite://" + filepath.Join(dir, "twillingate.db"), "EVENTS_DIR": events})
+	o, err := EngineOptions(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(o.AllowedDirs) != 1 || o.AllowedDirs[0] != events || o.SlotDir != filepath.Join(dir, "engine", "slots") {
+		t.Fatalf("AllowedDirs = %v, SlotDir = %s; want only %s, slots beside the database", o.AllowedDirs, o.SlotDir, events)
+	}
+}
