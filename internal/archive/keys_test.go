@@ -165,3 +165,32 @@ func TestKeyScannerReadsAcrossChunks(t *testing.T) {
 		t.Fatalf("next = %d, want %d: just after the last complete line", got, complete)
 	}
 }
+
+// TestKeyScannerRescansAfterACutBack: a writer that cut a failed append
+// back truncates the log to the line before it, and the next append can
+// grow it past the offset already read, into the middle of a new line. The
+// scanner must not read on from there.
+func TestKeyScannerRescansAfterACutBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "2026-10-12.log")
+	first := `{"id":"1","attr_a":"x"}` + "\n"
+	second := `{"id":"2","attr_b":"y"}` + "\n"
+	appendTo(t, path, first+second)
+	s := newKeyScanner()
+	if _, err := s.keys(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Truncate(path, int64(len(first))); err != nil { // the second line, cut back
+		t.Fatal(err)
+	}
+	appendTo(t, path, `{"id":"3","attr_c":"z","attr_d":"w"}`+"\n"+`{"id":"4","attr_e":"v"}`+"\n")
+	keys, err := s.keys(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := sortedKeys(keys); !eq(got, []string{"attr_a", "attr_c", "attr_d", "attr_e", "id"}) {
+		t.Fatalf("keys = %v; want the new lines' keys and none of the cut line's", got)
+	}
+	if s.logs[path].next != int64(len(first))+int64(len(`{"id":"3","attr_c":"z","attr_d":"w"}`+"\n"+`{"id":"4","attr_e":"v"}`+"\n")) {
+		t.Fatalf("next = %d, want the end of the file", s.logs[path].next)
+	}
+}

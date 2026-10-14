@@ -36,7 +36,8 @@ func newKeyScanner() *keyScanner { return &keyScanner{logs: map[string]*scannedL
 // keys returns the keys of path's complete lines: up to its last newline,
 // so a line ingest is still writing is read on a later call. A file that
 // is not the one read before at path (os.SameFile), or is shorter than
-// what was read, is read from its start. A line that is not a JSON object
+// what was read, or does not end a line where the read stopped (a writer's
+// cut-back), is read from its start. A line that is not a JSON object
 // is skipped: the dump, not a reader, refuses it. The returned set is a
 // new copy: changing it does not change what the scanner holds.
 func (s *keyScanner) keys(path string) (map[string]bool, error) {
@@ -52,7 +53,7 @@ func (s *keyScanner) keys(path string) (map[string]bool, error) {
 		return nil, fmt.Errorf("archive: %w", err)
 	}
 	sl := s.logs[path]
-	if sl == nil || !os.SameFile(sl.info, st) || st.Size() < sl.next {
+	if sl == nil || !os.SameFile(sl.info, st) || st.Size() < sl.next || !endsLine(f, sl.next) {
 		sl = &scannedLog{keys: map[string]bool{}}
 		s.logs[path] = sl
 	}
@@ -63,6 +64,19 @@ func (s *keyScanner) keys(path string) (map[string]bool, error) {
 		}
 	}
 	return maps.Clone(sl.keys), nil
+}
+
+// endsLine reports whether the byte before off is a newline (true for off
+// 0): the writer cuts a failed append back, and the file can then grow past
+// the offset read on into the middle of a new line, so an offset is trusted
+// only where a line ends. An unreadable byte counts as no.
+func endsLine(f *os.File, off int64) bool {
+	if off == 0 {
+		return true
+	}
+	var b [1]byte
+	n, err := f.ReadAt(b[:], off-1)
+	return n == 1 && b[0] == '\n' && (err == nil || errors.Is(err, io.EOF))
 }
 
 // read adds the keys of the complete lines of f from sl.next up to size,
