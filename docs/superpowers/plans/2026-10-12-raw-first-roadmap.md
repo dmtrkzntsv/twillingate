@@ -118,6 +118,10 @@ Before the engine has a caller:
 
 ## PR 4. The tables, the engine's view, `query` on the files (D4, D8, D21)
 
+Plan: `2026-10-13-raw-query.md`. It keeps `query` on SQLite by default in
+this release (`source: "files"` opt-in) and keys unsanitized; see its
+"Decisions".
+
 - `engine.View(project, from, to)`: `events` = `read_parquet(files,
   union_by_name=true) UNION ALL BY NAME hot`, `hot` loaded once at spawn
   from the open logs; `views`, `product`, `measures` as views on it;
