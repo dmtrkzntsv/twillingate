@@ -138,24 +138,83 @@ this release (`source: "files"` opt-in) and keys unsanitized; see its
 
 ## PR 5. Dashboards on raw, the derived tables, the migration (D16–D19, D22)
 
-- `archive.Derive(project, day)`: `sessions/<day>.parquet` (D16),
-  `identities/<project>.parquet` and `aliases/<project>.parquet` (D17,
-  D18) at day close.
-- The 59 system widget `.sql` files ported to DuckDB SQL over `events`,
-  `sessions`, `identities`, `aliases`; `internal/reporting` validation and
-  loading on the engine (`components.json` unchanged); widget SQL from
-  users validated against the engine with the same `LIMIT 0` / `LIMIT 5`
-  pass; the `identities`, `views_*`, `product_*`, `measures`, `retention`
-  tools on the engine.
-- Ingest keeps `user_name`, `group_name` and every identifier on the row
-  (D17, D18); `UpsertIdentities` stops.
-- `migrate`: raw days streamed from `events` into logs and dumped (D19).
-- SDK: visit context on `$form_submit` (D22); `SessionAt` removed.
-- `docs/reporting.md`: the component table's examples in the new dialect,
-  the tables, the breaking change; `deploy/UPGRADES.md`: the upgrade day
-  (raw history migrates, aggregate history does not), `VACUUM`.
+Split on 2026-10-13 into four releases, each a working server, each with
+its own plan written when its predecessor lands. 5d is the one breaking day.
+
+Two corrections to the spec, found while planning:
+
+- **D18: the server cannot tell a visitor id from an install id.** The SDK
+  sends its persisted visitor id and a declared install id both as
+  `$install_id`, and ingest drops `$install_id` from the row whenever a
+  `$user_id` outranks it as the actor. So the row gains `install_id`, and
+  `aliases` holds `(user_id, install_id)` pairs; there is no `visitor_id`
+  column.
+- **D22: the SDK does not know the visit today.** It sends each view's
+  referrer and UTMs but keeps none of them, tracks no entry page, and
+  never makes a session id; `SessionAt` finds all of it on the server. 5b
+  makes the SDK keep the visit.
+
+### PR 5a. Everything on the event; sessions, identities, aliases (D16–D18)
+
+Plan: `2026-10-13-raw-derived.md`.
+
+- `store.Event` gains `InstallID`, `UserName`, `GroupName`; ingest and the
+  form handler set them; the log line and the tables gain `install_id`,
+  `user_name`, `group_name`. SQLite does not store them, and
+  `UpsertIdentities` stays: the SQLite widgets read `identities` until 5d.
+- The daily pass derives, per project, `sessions/<day>.parquet` (then
+  `sessions/<month>.parquet` once the month merges), `identities.parquet`
+  and `aliases.parquet`, each rewritten whenever the events files under
+  it are newer.
+- The reader exposes `sessions`, `identities` and `aliases`: the derived
+  files, plus what they do not cover yet (the open logs, a day dumped
+  since) computed on read.
+- Docs: the files SQL section, Identity, the directory in
+  `docs/deployment.md`.
+- Done when: sessions from the files give the numbers `agg_views_daily`
+  gives for the same views, and identities the names and counts SQLite
+  gives.
+
+### PR 5b. The form carries its visit (D22)
+
+- SDK: each instance keeps its visit (the landing view's referrer and
+  UTMs, the visit's kind, group and session, renewed after 30 minutes
+  without a view) and sends it with `$form_submit`; the bundle is rebuilt
+  and committed.
+- Server: the form context accepts those keys; the environment comes from
+  the request's User-Agent as for views; `SessionAt` and its store method
+  go. A client that sends nothing (the Plausible shim, a plain HTML form, a
+  server-side sender) gets a submission without attribution.
+- Docs: `docs/twillingate.md`, forms and the SDK; `deploy/UPGRADES.md`.
+
+### PR 5c. Raw rows migrate into the files (D19)
+
+- Once per install, recorded in `meta`: every raw day SQLite holds that
+  the files lack is streamed out of `events` as log lines (rows whose id
+  the files hold are skipped) and dumped like any other day. SQLite keeps
+  writing `events` until PR 6, so nothing is dropped.
+- History older than the raw window exists only as aggregates and does
+  not migrate; `deploy/UPGRADES.md` says so before 5d makes it matter.
+- Done when: the files hold, per day and project, every row SQLite holds.
+
+### PR 5d. The switch: dashboards and tools on the files (D8)
+
+Breaking (`feat!`): widget SQL becomes DuckDB SQL over `events`,
+`sessions`, `identities` and `aliases`.
+
+- The engine binds `:project`, `:from`, `:to`; reporting's sources take an
+  interface instead of `*readsql.DB`; a widget reads its project's files
+  for its range only; table filters (`tw_cell`, `tw_num`) as DuckDB macros.
+- The 59 system widgets ported; `identities`, `views_*`, `product_*`,
+  `measures` and `retention` tools on the engine; `query` defaults to
+  `files`; `UpsertIdentities` stops.
+- Users' widgets that fail on the engine stay and show their error with a
+  hint to rewrite them; the upgrade logs each one, and
+  `deploy/UPGRADES.md` says how to find them.
+- Docs: `docs/reporting.md` (the component examples in the new dialect,
+  the tables), `docs/twillingate.md`, `deploy/UPGRADES.md`.
 - Measured on landing: the Views dashboard over 1 year on a 2-CPU server
-  with the sessions table (target under 2 s).
+  (target under 2 s).
 - Done when: every system dashboard renders from the files with the
   numbers the SQLite path gave for the same range.
 
@@ -181,5 +240,5 @@ this release (`source: "files"` opt-in) and keys unsanitized; see its
 |---|---|---|
 | PR 2 | spawn-to-ready on the release runners | under 100 ms |
 | PR 3 | a cap day's log appended and fsynced per flush, on a 2-CPU server | no visible ingest cost |
-| PR 5 | Views dashboard, 1 year, 2 CPUs, with `sessions` | under 2 s |
+| PR 5d | Views dashboard, 1 year, 2 CPUs, with `sessions` | under 2 s |
 | PR 6 | idle RSS of a fresh install | ~17 MB, as today |
