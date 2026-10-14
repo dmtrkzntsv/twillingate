@@ -292,6 +292,9 @@ func eventsView(cols []string, rules Rules) string {
 	sources := map[keyKey][]string{} // the columns renamed into a target, in key order
 	var targets []keyKey
 	for _, r := range rules.Attributes {
+		if r.Action == store.EventRuleRename && strings.EqualFold(visible("attr_"+r.Key), visible("attr_"+r.To)) {
+			continue // one column already: the values read there as they are
+		}
 		col, ok := have[strings.ToLower(visible("attr_"+r.Key))]
 		if !ok {
 			continue

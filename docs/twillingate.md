@@ -1661,7 +1661,9 @@ table has:
   new name and a blocked one is absent, whenever its event was stored; an
   attribute renamed or merged reads in its target's column (the target's
   own value first) and a blocked key reads NULL, on product and measures
-  events. Removing a rule brings the stored names and values back.
+  events. A rule on a key also covers the keys that differ from it only in
+  case, since they read as one column. Removing a rule brings the stored
+  names and values back.
 - **An event sent twice can show twice** when the copies landed in
   different files (a resend after its day's log was closed), until its
   month's files merge.

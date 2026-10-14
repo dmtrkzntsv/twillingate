@@ -344,3 +344,33 @@ func TestReaderAppliesRulesOnKeysThatMeetOrCollide(t *testing.T) {
 		t.Fatalf("k1 and k2 renamed into t: %s, want the first key's value, else the second's", got)
 	}
 }
+
+// TestReaderRuleBetweenKeysThatDifferInCase: DuckDB reads attr_Plan and
+// attr_plan as one column, so a rule from one to the other has nothing to
+// move and must not blank the values the column holds.
+func TestReaderRuleBetweenKeysThatDifferInCase(t *testing.T) {
+	for _, c := range []struct{ name, from, to string }{
+		{"upper to lower", "Plan", "plan"},
+		{"lower to upper", "plan", "Plan"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			f := newFixture(t)
+			at := "2026-10-12T10:00:00Z"
+			a := evOf(1, "a", at)
+			a.Attributes = map[string]string{"plan": "pro"}
+			b := evOf(1, "b", at)
+			b.Attributes = map[string]string{"plan": "free"}
+			f.write(t, a, b)
+			r := f.reader(t)
+			q := "SELECT id, attr_plan FROM events ORDER BY id"
+			want := ask(t, r, Rules{}, q)
+			if want != "[[a pro] [b free]]" {
+				t.Fatalf("no rule: %s", want)
+			}
+			rules := Rules{Attributes: []store.AttributeRule{{ProjectID: 1, Key: c.from, Action: store.EventRuleRename, To: c.to}}}
+			if got := ask(t, r, rules, q); got != want {
+				t.Fatalf("rename %s to %s: %s, want %s", c.from, c.to, got, want)
+			}
+		})
+	}
+}
