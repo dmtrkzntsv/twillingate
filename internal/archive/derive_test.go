@@ -1,9 +1,13 @@
 package archive
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"testing"
+	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -164,5 +168,143 @@ func TestDerivedSelectsOverNothingAreTyped(t *testing.T) {
 		if fmt.Sprint(got) != tc.want {
 			t.Errorf("%s columns = %v\nwant %s", name, got, tc.want)
 		}
+	}
+}
+
+// TestMaintainDerivesTheClosedDays: the pass writes a session file per
+// dumped day, not for today's open log, and identities and aliases.
+func TestMaintainDerivesTheClosedDays(t *testing.T) {
+	f := newFixture(t)
+	f.write(t,
+		pageView("a1", "a", "2026-10-10T10:00:00Z", "/"), pageView("a2", "a", "2026-10-10T10:10:00Z", "/x"),
+		named(pageView("b1", "u1", "2026-10-11T10:00:00Z", "/"), "u1", "Ada", "", ""),
+		pageView("c1", "c", "2026-10-12T09:00:00Z", "/"))
+	f.maintain(t, "2026-10-12")
+	want := []string{aliasesFile, identitiesFile, "sessions/2026-10-10.parquet", "sessions/2026-10-11.parquet"}
+	if got := f.derived(t); !eq(got, want) {
+		t.Fatalf("derived = %v, want %v", got, want)
+	}
+	if got := f.values(t, "SELECT actor_id, views FROM read_parquet('"+f.project1("sessions/2026-10-10.parquet")+"')"); !eq(got, []string{"[a 2]"}) {
+		t.Fatalf("sessions of 2026-10-10 = %v", got)
+	}
+	if got := f.values(t, "SELECT id, name, views FROM read_parquet('"+f.project1(identitiesFile)+"')"); !eq(got, []string{"[u1 Ada 1]"}) {
+		t.Fatalf("identities = %v", got)
+	}
+}
+
+// TestALateEventRederivesItsDay is Review Focus 1 (the pass's half): a
+// segment newer than its day's session file makes the next pass rewrite
+// it from the day file and the segment together.
+func TestALateEventRederivesItsDay(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, pageView("a1", "a", "2026-10-11T10:00:00Z", "/"))
+	f.maintain(t, "2026-10-12")
+	old := time.Now().Add(-time.Hour)
+	if err := os.Chtimes(f.project1("sessions/2026-10-11.parquet"), old, old); err != nil {
+		t.Fatal(err)
+	}
+	f.write(t, pageView("b1", "b", "2026-10-11T23:00:00Z", "/"))
+	f.maintain(t, "2026-10-12")
+	if got := f.files(t); !eq(got, []string{"2026-10-11.1.parquet", "2026-10-11.parquet"}) {
+		t.Fatalf("files = %v, want the day file and a segment", got)
+	}
+	if got := f.values(t, "SELECT actor_id FROM read_parquet('"+f.project1("sessions/2026-10-11.parquet")+"') ORDER BY actor_id"); !eq(got, []string{"[a]", "[b]"}) {
+		t.Fatalf("sessions of 2026-10-11 = %v, want a's and the late b's", got)
+	}
+}
+
+// TestAMergedMonthHasOneSessionsFile: when a month merges, its session
+// days give way to one session file of the month.
+func TestAMergedMonthHasOneSessionsFile(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, pageView("a1", "a", "2026-09-29T10:00:00Z", "/"), pageView("b1", "b", "2026-09-30T10:00:00Z", "/"))
+	f.maintain(t, "2026-10-01") // dumps both days; September is not past the late window yet
+	if got := f.derived(t); !eq(got, []string{aliasesFile, identitiesFile, "sessions/2026-09-29.parquet", "sessions/2026-09-30.parquet"}) {
+		t.Fatalf("derived after the dump = %v", got)
+	}
+	f.maintain(t, "2026-10-12")
+	if got := f.derived(t); !eq(got, []string{aliasesFile, identitiesFile, "sessions/2026-09.parquet"}) {
+		t.Fatalf("derived after the merge = %v", got)
+	}
+	if got := f.values(t, "SELECT count(*) FROM read_parquet('"+f.project1("sessions/2026-09.parquet")+"')"); !eq(got, []string{"[2]"}) {
+		t.Fatalf("sessions of September = %v, want 2", got)
+	}
+}
+
+// TestAMonthMergedBeforeSessionsExistedGetsThem is Review Focus 2: an
+// install upgraded from v0.18.0 has month and day files and no derived
+// file; the first pass derives every one.
+func TestAMonthMergedBeforeSessionsExistedGetsThem(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, pageView("a1", "a", "2026-09-29T10:00:00Z", "/"), pageView("b1", "b", "2026-10-10T10:00:00Z", "/"))
+	f.maintain(t, "2026-10-12")
+	for _, n := range []string{sessionsDir, identitiesFile, aliasesFile} {
+		if err := os.RemoveAll(f.project1(n)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	f.maintain(t, "2026-10-12")
+	if got := f.derived(t); !eq(got, []string{aliasesFile, identitiesFile, "sessions/2026-09.parquet", "sessions/2026-10-10.parquet"}) {
+		t.Fatalf("derived = %v", got)
+	}
+}
+
+// TestRetentionTakesTheDerivedFilesAlong is Review Focus 3: a month that
+// retention deletes takes its session file along, and identities lose its
+// users although no events file is newer than them.
+func TestRetentionTakesTheDerivedFilesAlong(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, named(pageView("a1", "u1", "2026-07-10T10:00:00Z", "/"), "u1", "", "", ""),
+		named(pageView("b1", "u2", "2026-10-10T10:00:00Z", "/"), "u2", "", "", ""))
+	f.maintain(t, "2026-10-12")
+	if got := f.values(t, "SELECT id FROM read_parquet('"+f.project1(identitiesFile)+"') ORDER BY id"); !eq(got, []string{"[u1]", "[u2]"}) {
+		t.Fatalf("identities before = %v", got)
+	}
+	d, _ := civil.Parse("2026-10-12")
+	if err := f.a.Maintain(context.Background(), d, 1, 60); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.derived(t); !eq(got, []string{aliasesFile, identitiesFile, "sessions/2026-10-10.parquet"}) {
+		t.Fatalf("derived = %v, want July's sessions gone", got)
+	}
+	if got := f.values(t, "SELECT id FROM read_parquet('"+f.project1(identitiesFile)+"')"); !eq(got, []string{"[u2]"}) {
+		t.Fatalf("identities after = %v, want u1 gone with July", got)
+	}
+}
+
+// TestNoEventsFileNoDerivedFile: a project whose every month retention
+// deleted keeps no derived file.
+func TestNoEventsFileNoDerivedFile(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, pageView("a1", "a", "2026-07-10T10:00:00Z", "/"))
+	f.maintain(t, "2026-10-12")
+	d, _ := civil.Parse("2026-10-12")
+	if err := f.a.Maintain(context.Background(), d, 1, 60); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.derived(t); len(got) != 0 {
+		t.Fatalf("derived = %v, want none", got)
+	}
+}
+
+// TestDeriveReadsFilesWrittenBeforeTheNewColumns is Review Focus 5: a day
+// file without install_id, user_name and group_name (written by v0.18.0)
+// beside a new one derives without a binder error, its names NULL.
+func TestDeriveReadsFilesWrittenBeforeTheNewColumns(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, named(evOf(1, "p1", "2026-10-10T10:00:00Z"), "u1", "", "", ""),
+		named(evOf(1, "p2", "2026-10-11T10:00:00Z"), "u1", "Ada", "", ""))
+	f.maintain(t, "2026-10-12")
+	old := f.project1("2026-10-10.parquet")
+	if err := f.eng.Exec(context.Background(), "COPY (SELECT * EXCLUDE (install_id, user_name, group_name) FROM read_parquet('"+old+
+		"')) TO '"+old+".tmp' (FORMAT parquet)"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(old+".tmp", old); err != nil {
+		t.Fatal(err)
+	}
+	f.maintain(t, "2026-10-12")
+	if got := f.values(t, "SELECT id, name, events FROM read_parquet('"+f.project1(identitiesFile)+"')"); !eq(got, []string{"[u1 Ada 2]"}) {
+		t.Fatalf("identities = %v", got)
 	}
 }
