@@ -262,3 +262,36 @@ func TestRedirectAllowed(t *testing.T) {
 		}
 	}
 }
+
+// TestSnapshotRuleLists: every project's rules, ordered, for the event
+// files' tables, which apply them on read.
+func TestSnapshotRuleLists(t *testing.T) {
+	ops, _, reg := newOps(t)
+	ctx := context.Background()
+	a, err := ops.CreateProject(ctx, "t", ProjectSpec{Name: "A"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := ops.CreateProject(ctx, "t", ProjectSpec{Name: "B"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, err := range []error{
+		func() error { _, err := ops.BlockEvent(ctx, "t", b.ID, "product", "b"); return err }(),
+		func() error { _, _, err := ops.RenameEvent(ctx, "t", a.ID, "product", "z", "y"); return err }(),
+		func() error { _, err := ops.BlockAttribute(ctx, "t", b.ID, "k"); return err }(),
+		func() error { _, _, err := ops.RenameAttribute(ctx, "t", a.ID, "m", "n"); return err }(),
+	} {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	events, attrs := reg.Snapshot(ctx).RuleLists()
+	if len(events) != 2 || events[0].ProjectID != a.ID || events[0].Name != "z" || events[0].To != "y" ||
+		events[1].ProjectID != b.ID || events[1].Action != store.EventRuleBlock {
+		t.Fatalf("events = %+v", events)
+	}
+	if len(attrs) != 2 || attrs[0].Key != "m" || attrs[0].To != "n" || attrs[1].Key != "k" || attrs[1].Action != store.EventRuleBlock {
+		t.Fatalf("attributes = %+v", attrs)
+	}
+}
