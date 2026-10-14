@@ -398,20 +398,22 @@ func segment(dotN string) int {
 // spills, carries the rows.
 func mergeQuery(files []string) string { return mergeSelect(files, files) }
 
+// sqlList is paths as a SQL list of string literals.
+func sqlList(paths []string) string {
+	q := make([]string, len(paths))
+	for i, p := range paths {
+		q[i] = quote(p)
+	}
+	return "[" + strings.Join(q, ", ") + "]"
+}
+
 // mergeSelect reads files and keys each row by the position in order of
 // its file's name, as read_parquet reports it (the path as given, today).
 // A name that order does not hold would key the row NULL and the IN would
 // drop it, then the merge would delete its day: it fails the query instead.
 func mergeSelect(files, order []string) string {
-	list := func(paths []string) string {
-		q := make([]string, len(paths))
-		for i, p := range paths {
-			q[i] = quote(p)
-		}
-		return "[" + strings.Join(q, ", ") + "]"
-	}
-	rows := "read_parquet(" + list(files) + ", union_by_name=true, filename=true, file_row_number=true)"
-	key := "coalesce(list_position(" + list(order) + ", filename), error('archive: merge input not matched: ' || filename))" +
+	rows := "read_parquet(" + sqlList(files) + ", union_by_name=true, filename=true, file_row_number=true)"
+	key := "coalesce(list_position(" + sqlList(order) + ", filename), error('archive: merge input not matched: ' || filename))" +
 		" * 4294967296 + file_row_number"
 	firsts := "SELECT min(k) FROM (SELECT id, " + key + " AS k FROM " + rows + ") GROUP BY id"
 	return "SELECT * EXCLUDE (filename, file_row_number, k) FROM (SELECT *, " + key + " AS k FROM " + rows +
