@@ -1726,10 +1726,10 @@ you query. They describe the events as stored: rules do not apply to them.
 | `referrer_source`, `utm_source`, `utm_medium`, `utm_campaign` | VARCHAR | the first view's |
 
 A view with a `session_id` belongs to that session; any other starts a
-new one after 30 minutes without a view by the same actor, as the Views
-dashboard counts them, except that the dashboard folds the kinds past its cap
-into `(other)` first and the files do not. A view resent into a late file can
-count twice until its month merges, as for events.
+new one after 30 minutes without a view by the same actor. The Views
+dashboard's sessions, bounces and durations are this table's. A view
+resent into a late file can count twice until its month merges, as for
+events.
 
 `identities`, one row per user (`kind` `user`, from `user_id`) and per
 group (`kind` `group`, from `group_id`): `project_id`, `kind`, `id`,

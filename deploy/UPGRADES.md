@@ -1007,7 +1007,7 @@ What changes on the day:
   -- after
   SELECT count(*) AS value FROM product
   WHERE project_id = :project AND event_name = 'signup'
-    AND day BETWEEN :from - (:to - :from + 1) AND :from - 1
+    AND day BETWEEN :from - CAST(:to - :from + 1 AS INTEGER) AND :from - 1
 
   -- before: top countries
   SELECT country AS label, SUM(visitors) AS value FROM v_views_countries

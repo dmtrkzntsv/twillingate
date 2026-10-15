@@ -53,12 +53,15 @@ func oneComponent(t *testing.T, entryJSON string) Component {
 }
 
 // TestMain lets the test binary serve as the engine child archivetest's
-// files spawn (os.Executable), before it runs any test.
+// files spawn (os.Executable), before it runs any test, and removes the
+// system fixtures' template (systemTemplate) after the last.
 func TestMain(m *testing.M) {
 	if archivetest.Child() {
 		return
 	}
-	os.Exit(m.Run())
+	code := m.Run()
+	removeSystemTemplate()
+	os.Exit(code)
 }
 
 // storeDBs keeps each test store's read-only handle (newTestStore), by

@@ -180,12 +180,17 @@ result in SQL, and `widget_data` takes `filters`, `sort`, `distinct`,
   arguments on a widget that is not a remote table. A filter that matches
   nothing is not refused: no rows, `matched: 0`.
 
-A remote table returns every row, with no `LIMIT`:
+A remote table returns every row, with no `LIMIT`. This one turns every
+`attr_*` column into (key, value) rows; `attr_$`, a column no attribute
+can name (a `$` key is never an attribute), gives the unpivot a column
+when no event has carried an attribute yet, where `COLUMNS('^attr_')`
+alone matches nothing and the query fails. It is NULL, and `UNPIVOT`
+drops NULLs:
 
 ```
 add_widget {"dashboard_id": 3, "component": "table", "title": "Attribute values",
             "props": {"mode": "remote"},
-            "source": {"type": "sql", "content": "SELECT substr(attr_key, 6) AS \"Attribute\", day AS \"Day\", attr_value AS \"Value\", count(*) AS \"Count\" FROM (UNPIVOT (SELECT day, COLUMNS('^attr_') FROM product WHERE project_id = :project AND day BETWEEN :from AND :to) ON COLUMNS('^attr_') INTO NAME attr_key VALUE attr_value) GROUP BY ALL ORDER BY \"Attribute\", \"Day\" DESC, \"Count\" DESC"}}
+            "source": {"type": "sql", "content": "SELECT substr(attr_key, 6) AS \"Attribute\", day AS \"Day\", attr_value AS \"Value\", count(*) AS \"Count\" FROM (UNPIVOT (SELECT COLUMNS('^(day|attr_.*)$'), NULL::VARCHAR AS \"attr_$\" FROM product WHERE project_id = :project AND day BETWEEN :from AND :to) ON COLUMNS('^attr_') INTO NAME attr_key VALUE attr_value) GROUP BY ALL ORDER BY \"Attribute\", \"Day\" DESC, \"Count\" DESC"}}
 ```
 
 A viewer's filter and sort on it reach the server as:
@@ -285,8 +290,9 @@ today's events are in them within `BUFFER_FLUSH_INTERVAL`.
 - **An absent value is NULL, not `''`:** `x IS NOT NULL` keeps the rows
   that have one, `coalesce(x, '(none)')` names the others.
 - **Dates are DATEs:** `day`, `:from`, `:to` and `current_date` (today, UTC).
-  `:from - 1` is the day before the range, `:from - (:to - :from + 1)` the
-  first day of the range before it, `day - first_day` a number of days.
+  `:from - 1` is the day before the range, `day - first_day` a number of
+  days (a BIGINT). A DATE takes an INTEGER, not a BIGINT, so the first day
+  of the range before is `:from - CAST(:to - :from + 1 AS INTEGER)`.
   Return `day`, not `ts`, for a `day` input: a TIMESTAMP reads
   `2026-08-20 10:00:00`.
 - **Numbers:** `/` divides as DOUBLE (`5 / 2` is 2.5, `5 // 2` is 2).

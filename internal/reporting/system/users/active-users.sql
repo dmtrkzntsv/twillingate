@@ -1,4 +1,4 @@
-SELECT COUNT(DISTINCT d.id) AS value
-FROM v_identity_daily d
-WHERE d.project_id = :project AND d.kind = 'user' AND d.id != ''
-  AND d.day BETWEEN :from AND :to
+SELECT count(DISTINCT user_id) AS value
+FROM events
+WHERE project_id = :project AND family IN ('views', 'product') AND user_id <> ''
+  AND day BETWEEN :from AND :to
