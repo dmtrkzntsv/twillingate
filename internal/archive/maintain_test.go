@@ -79,7 +79,8 @@ func (f fixture) maintain(t *testing.T, today string) {
 	}
 }
 
-// files lists project 1's directory.
+// files lists project 1's events files and logs: the derived ones
+// (derive.go) are derived's.
 func (f fixture) files(t *testing.T) []string {
 	t.Helper()
 	entries, err := os.ReadDir(filepath.Join(f.log.Dir(), "1"))
@@ -88,9 +89,30 @@ func (f fixture) files(t *testing.T) []string {
 	}
 	var names []string
 	for _, e := range entries {
-		names = append(names, e.Name())
+		if n := e.Name(); n != sessionsDir && n != identitiesFile && n != aliasesFile {
+			names = append(names, n)
+		}
 	}
 	sort.Strings(names)
+	return names
+}
+
+// derived lists project 1's derived files, sessions/ ones prefixed.
+func (f fixture) derived(t *testing.T) []string {
+	t.Helper()
+	var names []string
+	for _, n := range []string{aliasesFile, identitiesFile} {
+		if exists(f.project1(n)) {
+			names = append(names, n)
+		}
+	}
+	entries, err := os.ReadDir(f.project1(sessionsDir))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		names = append(names, sessionsDir+"/"+e.Name())
+	}
 	return names
 }
 

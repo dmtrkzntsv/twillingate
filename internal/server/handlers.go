@@ -266,10 +266,19 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
+		// A name is kept only beside the id it names, as identityNames keeps it.
+		var userName, groupName string
+		if rv.UserID != "" {
+			userName = rv.UserName
+		}
+		if rv.GroupID != "" {
+			groupName = rv.GroupName
+		}
 		e := store.Event{
 			ID: id, ProjectID: p.ID, Family: family, EventName: name,
 			TS: ts, ReceivedAt: received, Kind: kind,
 			ActorID: actor, ActorKind: actorKind, UserID: user, GroupID: group, SessionID: rv.SessionID,
+			InstallID: rv.InstallID, UserName: userName, GroupName: groupName,
 			Host: rv.Host, Path: path,
 			UTMSource: rv.UTMSource, UTMMedium: rv.UTMMedium, UTMCampaign: rv.UTMCampaign,
 			Platform: platform, OS: osv, OSVersion: rv.OSVersion, OSName: osName,

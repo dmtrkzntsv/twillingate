@@ -1055,8 +1055,13 @@ that never returns, inflating active counts and dragging retention toward zero,
 so leave it out — the connection hash then gives one actor per device per day —
 and read retention from the `user` cohort. `$group_id` is stored raw because it
 identifies an organization, not a natural person; single-person groups are
-personal data. `$user_name` is kept only beside a `$user_id`. **The collector
-stores what it is sent.** What reaches it is decided by the tag's
+personal data. `$user_name` is kept only beside a `$user_id`.
+In the event files every event also keeps the `$install_id`, `$user_name`
+and `$group_name` it was sent with (each name only beside its id:
+`$user_name` beside `$user_id`, `$group_name` beside `$group_id`), for as long as `RETENTION_DAYS` keeps the
+event (`query` with `source: "files"`): the names are personal data there
+too.
+**The collector stores what it is sent.** What reaches it is decided by the tag's
 `data-identity` (or `identity` in code), so a project's privacy posture is the
 posture of its clients. The collector logs `project receives ids` the first
 time a project stores a `$user_id` or `$install_id` (once per kind per process),
@@ -1441,7 +1446,7 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 | `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes) |
 | `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on projects whose clients send ids** |
-| `query` | `sql`, `source` (optional: `sqlite`, the default, or `files`) | A single read-only `SELECT`/`WITH`. Row-capped and time-limited. `sqlite` reads the views below; `meta` and SQLite's internal tables (`sqlite_master`, `dbstat`, …) are refused, whether named directly or as a quoted or single-quoted string, and non-ASCII names must be quoted. `files` reads the raw events through DuckDB: see [Writing SQL against the event files](#writing-sql-against-the-event-files) |
+| `query` | `sql`, `source` (optional: `sqlite`, the default, or `files`) | A single read-only `SELECT`/`WITH`. Row-capped and time-limited. `sqlite` reads the views below; `meta` and SQLite's internal tables (`sqlite_master`, `dbstat`, …) are refused, whether named directly or as a quoted or single-quoted string, and non-ASCII names must be quoted. `files` reads the raw events and the tables derived from them through DuckDB: see [Writing SQL against the event files](#writing-sql-against-the-event-files) |
 
 **Managing** — `create_project`, `update_project`, `move_project`,
 `archive_project`, `restore_project`, `issue_ingest_key`, `list_ingest_keys`,
@@ -1628,10 +1633,11 @@ close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
 `day BETWEEN DATE '2026-01-01' AND DATE '2026-01-31'`, `GROUP BY ALL`,
 `DESCRIBE events` for the columns.
 
-Four tables: `events`, every event of every family, and `views`, `product`
-and `measures`, its rows of one family each. The `_tw_*` tables are the
-reader's own and hold rows before the rules apply: query these four. Every
-table has:
+Seven tables. `events` holds every event of every family; `views`,
+`product` and `measures` hold its rows of one family each. Three more are
+derived from the events (below the column list). The `_tw_*` tables are
+the reader's own and hold rows before the rules apply: query these seven.
+`events`, `views`, `product` and `measures` have:
 
 | Column | Type | |
 | --- | --- | --- |
@@ -1639,6 +1645,8 @@ table has:
 | `ts`, `received_at` | TIMESTAMP (UTC) | |
 | `day` | DATE | `ts`'s UTC day |
 | `kind`, `actor_id`, `actor_kind`, `user_id`, `group_id`, `session_id` | VARCHAR | |
+| `install_id` | VARCHAR | the client's `$install_id`, also when a `$user_id` is the actor |
+| `user_name`, `group_name` | VARCHAR | the names sent beside `user_id` and `group_id` (see [Identity](#identity)) |
 | `host`, `path`, `referrer_source`, `utm_source`, `utm_medium`, `utm_campaign` | VARCHAR | |
 | `platform`, `os`, `os_version`, `os_name`, `browser`, `browser_version`, `browser_locale`, `app_version`, `app_locale`, `device`, `device_model`, `country` | VARCHAR | as on the views (see [The event model](#the-event-model)) |
 | `display_width`, `display_height` | BIGINT | |
@@ -1669,6 +1677,39 @@ table has:
   month's files merge.
 - **Filter on `project_id` and `day` or `ts`:** the files are ordered by
   family and time, and DuckDB skips what a filter excludes.
+
+The derived tables are rebuilt by the daily pass from the files, and
+today's part (and any day the pass has not caught up with) is computed as
+you query. They describe the events as stored: rules do not apply to them.
+
+`sessions`, one row per session of views:
+
+| Column | Type | |
+| --- | --- | --- |
+| `project_id`, `day` | BIGINT, DATE | sessions are cut at midnight UTC |
+| `kind`, `actor_id`, `actor_kind` | VARCHAR | as on the views |
+| `session_id` | VARCHAR | the id the client declared, else NULL |
+| `started_at`, `ended_at` | TIMESTAMP | the first and last view |
+| `duration_sec`, `views` | BIGINT | seconds between them; 1 view is a bounce |
+| `entry_host`, `entry_path`, `exit_path` | VARCHAR | the first view's host and path, the last view's path |
+| `referrer_source`, `utm_source`, `utm_medium`, `utm_campaign` | VARCHAR | the first view's |
+
+A view with a `session_id` belongs to that session; any other starts a
+new one after 30 minutes without a view by the same actor, as the Views
+dashboard counts them, except that the dashboard folds the kinds past its cap
+into `(other)` first and the files do not. A view resent into a late file can
+count twice until its month merges, as for events.
+
+`identities`, one row per user (`kind` `user`, from `user_id`) and per
+group (`kind` `group`, from `group_id`): `project_id`, `kind`, `id`,
+`name` (sent with the latest event that carried one, NULL if never),
+`first_seen`, `last_seen` (TIMESTAMP), `views` and `events` (its views and
+product events). First and last seen reach back as far as the files do.
+
+`aliases`, one row per `user_id` and `install_id` sent on the same event:
+`project_id`, `user_id`, `install_id`, `first_seen`, `last_seen`, `events`.
+A person's events across devices, before and after signing in:
+`WHERE user_id = 'u1' OR install_id IN (SELECT install_id FROM aliases WHERE user_id = 'u1')`.
 
 The `v_*` views and `agg_*` tables are SQLite's: name one with `files` and
 the error says to pass `source: "sqlite"`. A query that runs out of the

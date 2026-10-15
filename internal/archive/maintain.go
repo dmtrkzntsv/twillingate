@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -26,7 +27,8 @@ type Execer interface {
 	Exec(ctx context.Context, sql string) error
 }
 
-// Archive maintains the files the Log fills.
+// Archive maintains the files the Log fills and derives the sessions,
+// identities and aliases from them.
 type Archive struct {
 	log    *Log
 	eng    Execer
@@ -48,7 +50,8 @@ var (
 // Maintain runs the file side of the daily pass for every project
 // directory: rotate and dump the logs of days before today, merge every
 // month whose last day is past the late window, delete months entirely
-// older than retentionDays. A project's failure is logged and the next
+// older than retentionDays, and derive the sessions, identities and aliases
+// (derive.go). A project's failure is logged and the next
 // one goes on (the daily pass's rule); only failing to list the projects
 // is returned.
 func (a *Archive) Maintain(ctx context.Context, today civil.Date, lateDays, retentionDays int) error {
@@ -130,17 +133,81 @@ func (a *Archive) maintainProject(ctx context.Context, project int64, today civi
 		return errors.Join(append(errs, err)...)
 	}
 	keep := today.AddDays(-retentionDays)
+	removed := false
 	for _, month := range months(names) {
 		last := lastDay(month)
 		if !keep.Before(last) {
 			if err := removeMonth(dir, names, month); err != nil {
 				errs = append(errs, err)
 			}
+			removed = true
 			continue
 		}
 		if last.AddDays(lateDays).Before(today) && !open(names, month) {
 			if err := a.merge(ctx, dir, names, month); err != nil {
 				errs = append(errs, err)
+			}
+		}
+	}
+	// 5. Derive the sessions, identities and aliases (raw-first D16–D18)
+	// from the files as the steps above left them.
+	if err := a.derive(ctx, dir, removed); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// derive writes every derived file projectOf finds missing or stale and
+// removes the ones no events file backs. force rewrites identities and
+// aliases even when current: the pass deleted files (retention), which no
+// modification time shows. A failed write is collected and the rest go on.
+func (a *Archive) derive(ctx context.Context, dir string, force bool) error {
+	names, err := list(dir)
+	if err != nil {
+		return err
+	}
+	pf, err := projectOf(dir, names)
+	if err != nil {
+		return err
+	}
+	var errs []error
+	sdir := filepath.Join(dir, sessionsDir)
+	if len(pf.deriveDays)+len(pf.deriveMonths) > 0 {
+		if err := os.MkdirAll(sdir, 0o750); err != nil {
+			return fmt.Errorf("archive: %w", err)
+		}
+		if err := syncFile(dir); err != nil {
+			return err
+		}
+	}
+	for _, day := range slices.Sorted(maps.Keys(pf.deriveDays)) {
+		if err := a.write(ctx, "COPY ("+sessionsSelect(eventsOf(pf.deriveDays[day]))+") TO ", filepath.Join(sdir, day+".parquet")); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, month := range slices.Sorted(maps.Keys(pf.deriveMonths)) {
+		if err := a.write(ctx, "COPY ("+sessionsSelect(eventsOf([]string{pf.deriveMonths[month]}))+") TO ", filepath.Join(sdir, month+".parquet")); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, p := range pf.orphans {
+		if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, fmt.Errorf("archive: %w", err))
+		}
+	}
+	if len(pf.Parquet) > 0 && (force || pf.identitiesDue) {
+		src := eventsOf(pf.Parquet)
+		for _, d := range []struct{ sel, file string }{{identitiesSelect(src), identitiesFile}, {aliasesSelect(src), aliasesFile}} {
+			out := filepath.Join(dir, d.file)
+			if err := a.write(ctx, "COPY ("+d.sel+") TO ", out); err != nil {
+				errs = append(errs, err)
+				// The old file is newer than every events file left after
+				// retention, so it would keep reading as current and keep
+				// expired users' names; missing, it is derived on read and
+				// rewritten by the next pass.
+				if err := os.Remove(out); err != nil && !errors.Is(err, os.ErrNotExist) {
+					errs = append(errs, fmt.Errorf("archive: %w", err))
+				}
 			}
 		}
 	}

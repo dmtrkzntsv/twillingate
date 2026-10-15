@@ -519,7 +519,7 @@ func TestFormEventPrefilled(t *testing.T) {
 	h := formServer(t, forms, slog.Default())
 	before := time.Now().UTC()
 	w := postURLEncoded(h, "contact", url.Values{
-		"email": {"a"}, "$user_id": {"u1"}, "$host": {"app.com"}, "$path": {"/contact"},
+		"email": {"a"}, "$user_id": {"u1"}, "$install_id": {"i1"}, "$host": {"app.com"}, "$path": {"/contact"},
 		"$id": {"018f1e5c-0000-7000-8000-000000000002"}, "$redirect": {"https://app.com/thanks"},
 	}, map[string]string{"Referer": "https://other.app.com/ignored"})
 	wantRedirect(t, w, "https://app.com/thanks#twillingate-form-success-contact")
@@ -532,6 +532,7 @@ func TestFormEventPrefilled(t *testing.T) {
 	want := store.Event{ID: sub.ID, ProjectID: 1, Family: store.FamilyProduct, EventName: store.FormSubmitEvent,
 		TS: sub.ReceivedAt, ReceivedAt: sub.ReceivedAt, Kind: "web",
 		ActorID: "u1", ActorKind: store.ActorUser, UserID: "u1", GroupID: "g1", SessionID: "s1",
+		InstallID: "i1",
 		Host: "app.com", Path: "/contact",
 		ReferrerSource: "google", UTMSource: "nl", UTMMedium: "email", UTMCampaign: "oct",
 		Platform: "web", OS: "macos", Browser: "safari", BrowserLocale: "en-US", Device: "desktop",

@@ -1014,6 +1014,27 @@ func TestBatchNamesAreDedupedAcrossEvents(t *testing.T) {
 	}
 }
 
+// TestEventsCarryIdsAndNames: every stored event keeps the client's
+// $install_id, also when a $user_id outranks it as the actor, and each name
+// beside the id it names (raw-first D17, D18). A name without its id is
+// dropped, as identities drops it.
+func TestEventsCarryIdsAndNames(t *testing.T) {
+	q, h := testServer(t)
+	post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada","$install_id":"i1","$group_id":"g1","$group_name":"Acme"},
+	  "events":[{"name":"a"},{"name":"b","attributes":{"$user_id":null}}]}`, nil)
+	if len(q.events) != 2 {
+		t.Fatalf("events = %d, want 2", len(q.events))
+	}
+	a, b := q.events[0], q.events[1]
+	if a.ActorID != "u1" || a.InstallID != "i1" || a.UserName != "Ada" || a.GroupName != "Acme" {
+		t.Errorf("event a = actor %q install %q user name %q group name %q; want u1, i1, Ada, Acme", a.ActorID, a.InstallID, a.UserName, a.GroupName)
+	}
+	if b.ActorID != "i1" || b.InstallID != "i1" || b.UserID != "" || b.UserName != "" || b.GroupName != "Acme" {
+		t.Errorf("event b = actor %q install %q user %q user name %q group name %q; want i1, i1, no user and no user name, Acme",
+			b.ActorID, b.InstallID, b.UserID, b.UserName, b.GroupName)
+	}
+}
+
 // --- removed endpoints, CORS, health ---
 
 func TestOldEndpointsAreGone(t *testing.T) {

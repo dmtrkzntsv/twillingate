@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -40,10 +41,11 @@ type Rules struct {
 }
 
 // Reader answers SQL over every project's files and open logs as the
-// tables events, views, product and measures (raw-first D4, D8). The
-// tables live in the engine's child: the logs loaded into _tw_hot, the
-// Parquet files read through the view _tw_all, the rules applied by the
-// view events. They are built on the first query and again whenever a
+// tables events, views, product and measures (raw-first D4, D8), and
+// sessions, identities and aliases (D16–D18): the derived files that are
+// current, the rest derived on read. The tables live in the engine's child:
+// the logs loaded into _tw_hot, the Parquet files read through the view
+// _tw_all, the rules applied by the view events. They are built on the first query and again whenever a
 // file, a log's size or the rules changed since: _tw_state records the
 // signature they were built from.
 type Reader struct {
@@ -94,7 +96,7 @@ func (r *Reader) query(ctx context.Context, sql string, maxRows int, rules Rules
 // missingTable matches the error of a query naming one of the reader's own
 // tables or views that the child does not have. A user's typo in a table
 // name is not one: only the names the reader defines.
-var missingTable = regexp.MustCompile(`(?:Table|View) with name "?(?:events|views|product|measures|_tw_[A-Za-z0-9_]*)"? does not exist`)
+var missingTable = regexp.MustCompile(`(?:Table|View) with name "?(?:events|views|product|measures|sessions|identities|aliases|_tw_[A-Za-z0-9_]*)"? does not exist`)
 
 // lostTables reports an error saying the reader's tables are not there:
 // the child was replaced since they were built.
@@ -144,7 +146,15 @@ func (r *Reader) prepare(ctx context.Context, rules Rules) error {
 func signature(files map[int64]Files, rules Rules) (string, error) {
 	h := sha256.New()
 	for _, id := range sortedIDs(files) {
-		for _, p := range append(slices.Clone(files[id].Parquet), files[id].Logs...) {
+		f := files[id]
+		paths := append(slices.Clone(f.Parquet), f.Logs...)
+		paths = append(paths, f.Sessions...)
+		for _, p := range []string{f.Identities, f.Aliases} {
+			if p != "" {
+				paths = append(paths, p)
+			}
+		}
+		for _, p := range paths {
 			st, err := os.Stat(p)
 			if err != nil {
 				return "", fmt.Errorf("archive: %w", err)
@@ -160,16 +170,33 @@ func signature(files map[int64]Files, rules Rules) (string, error) {
 
 // build loads the logs into _tw_hot_next, then, in one transaction, makes
 // it _tw_hot and defines _tw_all over the Parquet files and _tw_hot, then
-// events (with the rules), views, product and measures, and records sig.
+// events (with the rules), views, product and measures, sessions,
+// identities and aliases, and records sig.
 // A query that runs meanwhile on another connection of the child sees the
 // tables as they were or as they are now, never the new logs through the
 // old file list. Every fixed column is there at its type even with no file
 // and no log (emptyRow); v, the line format's version, is not.
 func (r *Reader) build(ctx context.Context, files map[int64]Files, rules Rules, sig string) error {
-	var parquet, logs []string
+	var parquet, logs, sessions, idFiles, alFiles, gaps []string
+	var idCurrent, idStale, alCurrent, alStale []int64
 	for _, id := range sortedIDs(files) {
-		parquet = append(parquet, files[id].Parquet...)
-		logs = append(logs, files[id].Logs...)
+		f := files[id]
+		parquet = append(parquet, f.Parquet...)
+		logs = append(logs, f.Logs...)
+		sessions = append(sessions, f.Sessions...)
+		for _, g := range f.SessionGaps {
+			gaps = append(gaps, fmt.Sprintf("(project_id = %d AND day BETWEEN DATE %s AND DATE %s)", id, quote(g.From), quote(g.To)))
+		}
+		if f.Identities != "" {
+			idFiles, idCurrent = append(idFiles, f.Identities), append(idCurrent, id)
+		} else {
+			idStale = append(idStale, id)
+		}
+		if f.Aliases != "" {
+			alFiles, alCurrent = append(alFiles, f.Aliases), append(alCurrent, id)
+		} else {
+			alStale = append(alStale, id)
+		}
 	}
 	hot := []string{emptyRow()}
 	for _, p := range logs {
@@ -206,8 +233,53 @@ func (r *Reader) build(ctx context.Context, files map[int64]Files, rules Rules, 
 		"CREATE OR REPLACE VIEW views AS SELECT * FROM events WHERE family = 'views';\n"+
 		"CREATE OR REPLACE VIEW product AS SELECT * FROM events WHERE family = 'product';\n"+
 		"CREATE OR REPLACE VIEW measures AS SELECT * FROM events WHERE family = 'measures';\n"+
+		"CREATE OR REPLACE VIEW sessions AS "+sessionsView(sessions, gaps)+";\n"+
+		"CREATE OR REPLACE VIEW identities AS "+derivedView(identitiesSelect, identitiesCombine, idFiles, idCurrent, idStale)+";\n"+
+		"CREATE OR REPLACE VIEW aliases AS "+derivedView(aliasesSelect, aliasesCombine, alFiles, alCurrent, alStale)+";\n"+
 		"CREATE OR REPLACE TABLE _tw_state AS SELECT "+quote(sig)+" AS sig;\n"+
 		"COMMIT")
+}
+
+// sessionsView is the sessions table: the current session files, and the
+// sessions of the gaps (the days no current file covers, as conditions on
+// project_id and day) derived from _tw_all. The typed empty SELECT fixes
+// every column's type when there is neither.
+func sessionsView(files, gaps []string) string {
+	union := []string{"SELECT * FROM (" + sessionsSelect("("+emptyRow()+")") + ")"}
+	if len(files) > 0 {
+		union = append(union, "SELECT * FROM read_parquet("+sqlList(files)+", union_by_name=true)")
+	}
+	if len(gaps) > 0 {
+		union = append(union, "SELECT * FROM ("+sessionsSelect("(SELECT * FROM _tw_all WHERE "+strings.Join(gaps, " OR ")+")")+")")
+	}
+	return strings.Join(union, " UNION ALL BY NAME ")
+}
+
+// derivedView is identities or aliases (sel and combine, derive.go): the
+// current files, one per project in current; what they lack, derived on
+// read from the open logs of those projects and from every event of the
+// projects in stale; folded into one row per key.
+func derivedView(sel, combine func(string) string, files []string, current, stale []int64) string {
+	parts := []string{"SELECT * FROM (" + sel("("+emptyRow()+")") + ")"}
+	if len(files) > 0 {
+		parts = append(parts, "SELECT * FROM read_parquet("+sqlList(files)+", union_by_name=true)")
+	}
+	live := "(SELECT * FROM _tw_all WHERE " + inProjects(stale) +
+		" UNION ALL BY NAME SELECT * EXCLUDE (v) FROM _tw_hot WHERE " + inProjects(current) + ")"
+	parts = append(parts, "SELECT * FROM ("+sel(live)+")")
+	return combine(strings.Join(parts, " UNION ALL BY NAME "))
+}
+
+// inProjects is a condition on project_id: one of ids (false for none).
+func inProjects(ids []int64) string {
+	if len(ids) == 0 {
+		return "false"
+	}
+	s := make([]string, len(ids))
+	for i, id := range ids {
+		s[i] = strconv.FormatInt(id, 10)
+	}
+	return "project_id IN (" + strings.Join(s, ", ") + ")"
 }
 
 // literal is s as a SQL string literal, with each NUL spelled chr(0): SQL
