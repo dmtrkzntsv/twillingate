@@ -131,7 +131,6 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	// The archive log (raw-first PR 3): the ingest process appends every
 	// event to EVENTS_DIR beside SQLite; a console-only process writes none.
 	var sink pipeline.Sink = st
-	var forms server.FormStore = st
 	var archiveLog *archive.Log
 	if runIngest {
 		archiveLog, err = archive.OpenLog(cfg.EventsDir)
@@ -140,7 +139,6 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		}
 		defer archiveLog.Close()
 		sink = pipeline.Sinks{st, archiveLog}
-		forms = archivedForms{FormStore: st, log: archiveLog, logger: logger}
 	}
 
 	// The pipeline and jobs runner get their own contexts rather than ctx,
@@ -185,6 +183,12 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		<-pipeDone
 		return err
 	}
+	if archiveLog != nil {
+		// Form attribution (raw-first PR 5b): the process that ingests
+		// looks each submission's source up in the files a minute after
+		// it arrives and writes its event to SQLite and the log.
+		runner.WithAttribution(files, archiveLog)
+	}
 	jobsCtx, stopJobs := context.WithCancel(context.Background())
 	jobsDone := make(chan struct{})
 	go func() { runner.Run(jobsCtx); close(jobsDone) }()
@@ -200,7 +204,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 
 	var ingestHandler *server.Server
 	if runIngest {
-		ingestHandler = server.New(cfg, reg, buf, geoProvider, salter, st, forms, logger)
+		ingestHandler = server.New(cfg, reg, buf, geoProvider, salter, st, st, logger)
 		if cfg.IngestDisabled {
 			logger.Warn("ingest is disabled (INGEST_DISABLED): every ingest route refuses events and form submissions with 429")
 		}

@@ -480,12 +480,27 @@ type Store interface {
 	// SubmissionIDsMatching returns every id FindSubmissions would, newest
 	// first, for delete-by-search.
 	SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error)
-	// SessionAt reads the actor's session at `at` (views gapped by at most
-	// 30 minutes, looking back at most a day) as the event a form
-	// submission writes: the newest view's kind, group, session id,
-	// environment and consent, with the session's first view's referrer and
-	// UTMs. Only those are set; nil when no view matches.
-	SessionAt(ctx context.Context, projectID int64, actorKind, actorID string, at time.Time) (*Event, error)
+	// PendingSubmissions lists up to limit submissions received at or
+	// before `before` and not yet attributed, oldest first. A row whose
+	// stored event does not read is listed with Err set and a zero Event,
+	// and counts toward limit; only a failed read is an error.
+	PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]PendingSubmission, error)
+	// AttributeSubmission stores ev's referrer and UTMs as p's attribution
+	// and, when p.WriteEvent, writes ev and leaves it in the outbox
+	// (UnloggedEvents), all in one transaction; wrote reports the event
+	// written. A submission no longer pending (deleted, or attributed
+	// already) changes nothing.
+	AttributeSubmission(ctx context.Context, p PendingSubmission, ev Event) (wrote bool, err error)
+	// UnloggedEvents lists up to limit events AttributeSubmission wrote
+	// and MarkLogged has not cleared yet, oldest first. A row that does
+	// not read is listed with Err set and a zero Event.
+	UnloggedEvents(ctx context.Context, limit int) ([]UnloggedEvent, error)
+	// UnloggedCount is how many events wait in the outbox: the backlog
+	// a failed log write reports.
+	UnloggedCount(ctx context.Context) (int, error)
+	// MarkLogged takes these (ProjectID, ID) events out of the outbox, in
+	// one transaction, once they are in the event files.
+	MarkLogged(ctx context.Context, keys []UnloggedEvent) error
 	// ReportingHash is the hash of the latest reporting_migrations row, ""
 	// if none has run yet. SyncReporting makes components and system
 	// dashboards (with their widgets) match s in one transaction.

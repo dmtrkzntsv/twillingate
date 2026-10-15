@@ -134,7 +134,7 @@ type submissionOut struct {
 	Fields     map[string]string `json:"fields"`
 	// The page, the visitor and the environment are on the $form_submit
 	// event, which has the same id.
-	Attribution store.Attribution `json:"attribution" jsonschema:"where the visit the submission arrived in came from, its first view's: referrer, utm_source, utm_medium, utm_campaign, each left out when empty; {} when no visit matched"`
+	Attribution store.Attribution `json:"attribution" jsonschema:"where the visit the submission arrived in came from: its last non-direct visit within ATTRIBUTION_DAYS (default 7), or the $referrer/$utm_* it sent: referrer, utm_source, utm_medium, utm_campaign, each left out when empty; {} until the attribution job has run (about a minute after arrival) and when the visit was direct"`
 }
 
 type findSubmissionsIn struct {
@@ -233,7 +233,7 @@ func (h *host) approveForm(ctx context.Context, in approveFormIn) (okOut, error)
 	if err := h.ops.ApproveForm(ctx, actorFrom(ctx), in.ProjectID, in.Name, in.ExpectedFields); err != nil {
 		return okOut{}, err
 	}
-	return okOut{Status: "approved; new submissions keep only the expected fields and each writes a $form_submit event"}, nil
+	return okOut{Status: "approved; new submissions keep only the expected fields and each writes a $form_submit event about a minute after it arrives"}, nil
 }
 
 func (h *host) updateForm(ctx context.Context, in updateFormIn) (okOut, error) {
@@ -441,7 +441,7 @@ func (h *host) registerForms(r *registrar) {
 		Description: "A project's forms, drafts first (archived: true lists the archived ones instead): name, status (draft or approved), purpose, return_url, fields (every field name sent), expected_fields (what an approved form keeps), draft_until, approved_at, closes_at, submissions (count), last_submitted_at, new_submissions (received after seen_at), seen_at (how far the console has read the form; reading over MCP never moves it), archived; and action_base, INGEST_URL + /ingest/forms (empty when INGEST_URL is not configured), so a plain HTML form's action is <action_base>/<name>?key=<key>. A form is created as a draft by its first submission to POST /ingest/forms/{name}; a draft keeps every field for RETENTION_FORMS_DRAFT_DAYS, then is archived unless approved, and its submissions never count as conversions. Approve one with approve_form."},
 		h.listForms)
 	expose(r, spec{Name: "approve_form", Annotations: write, Method: "POST", Path: f + "/approve",
-		Description: "Approve a draft form with expected_fields (one or more, from list_forms' fields): from now on its submissions keep only those fields, and each writes a $form_submit product event (attribute form = the name), its conversion. Submissions taken while it was a draft never count as conversions. Approving an approved form is refused (conflict; change its fields with update_form), and approval does not reopen a closed form."},
+		Description: "Approve a draft form with expected_fields (one or more, from list_forms' fields): from now on its submissions keep only those fields, and each writes a $form_submit product event (attribute form = the name), its conversion, about a minute after it arrives. Submissions taken while it was a draft never count as conversions. Approving an approved form is refused (conflict; change its fields with update_form), and approval does not reopen a closed form."},
 		h.approveForm)
 	expose(r, spec{Name: "update_form", Annotations: write, Method: "PATCH", Path: f,
 		Description: "Change a form: purpose; return_url (where a plain HTML form sends the visitor back without $redirect: an absolute http(s) URL whose origin is in the project's allowed_origins; empty clears it); closes_at (RFC 3339; submissions from then on are refused; null reopens); and, on an approved form, expected_fields (never empty). Fields you omit are kept. expected_fields on a draft is refused: approve it instead."},
@@ -459,7 +459,7 @@ func (h *host) registerForms(r *registrar) {
 		Description: "One active form's submissions as a table. Submissions hold personal data visitors typed. Columns: Received, then one per field (an approved form's expected fields in order, a draft's every field); a field named Received or id is shown as \"<name> (field)\". ids are the rows' submission ids, in order, for get_submission and delete_submissions. Takes widget_data's remote-table arguments (filters, sort, distinct, offset, limit), applied in SQL: matched counts the rows passing the filters, total the form's submissions. Newest first without a sort; every submission regardless of date (filter Received to narrow). A draft's submissions never count as conversions."},
 		h.listSubmissions)
 	expose(r, spec{Name: "get_submission", Annotations: ro, Method: "GET", Path: f + "/submissions/{id}",
-		Description: "One submission of an active form: every stored field (also ones the form no longer expects), received_at, and attribution (where the visit it arrived in came from: referrer, utm_source, utm_medium, utm_campaign, each left out when empty; {} when no visit matched). The page, the visitor and their environment are on its $form_submit event, which has the submission's id (approved forms only). Personal data."},
+		Description: "One submission of an active form: every stored field (also ones the form no longer expects), received_at, and attribution (where the visit it arrived in came from: the last non-direct visit of the visitor within ATTRIBUTION_DAYS (default 7), or the $referrer/$utm_* it sent; referrer, utm_source, utm_medium, utm_campaign, each left out when empty; {} until the attribution job has run, about a minute after arrival, and when the visit was direct). The page, the visitor and their environment are on its $form_submit event, which has the submission's id (approved forms only). Personal data."},
 		h.getSubmission)
 	expose(r, spec{Name: "find_submissions", Annotations: ro, Method: "GET", Path: p + "/submissions",
 		Description: "Find one person's submissions across every form of a project, archived ones included, for an access or erasure request: each submission with a field value containing search (at least 2 characters; ASCII case-insensitive, so É and é differ), newest first, with its form, fields, attribution and archived (true when its form is archived). Pages of limit (default 100, at most 500); pass next_cursor back as cursor. Personal data. delete_submissions with the same search deletes exactly these."},

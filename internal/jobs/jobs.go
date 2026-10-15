@@ -57,6 +57,27 @@ type Store interface {
 	// ExpireDrafts archives every active draft form whose draft_until is
 	// at or before now and returns how many.
 	ExpireDrafts(ctx context.Context, now time.Time) (int, error)
+	// PendingSubmissions lists up to limit submissions received at or
+	// before `before` and not yet attributed, oldest first. A row whose
+	// stored event does not read is listed with Err set and a zero Event,
+	// and counts toward limit; only a failed read is an error.
+	PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]store.PendingSubmission, error)
+	// AttributeSubmission stores ev's referrer and UTMs as p's attribution
+	// and, when p.WriteEvent, writes ev and leaves it in the outbox
+	// (UnloggedEvents), all in one transaction; wrote reports the event
+	// written. A submission no longer pending (deleted, or attributed
+	// already) changes nothing.
+	AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) (wrote bool, err error)
+	// UnloggedEvents lists up to limit events AttributeSubmission wrote
+	// and MarkLogged has not cleared yet, oldest first. A row that does
+	// not read is listed with Err set and a zero Event.
+	UnloggedEvents(ctx context.Context, limit int) ([]store.UnloggedEvent, error)
+	// UnloggedCount is how many events wait in the outbox: the backlog
+	// a failed log write reports.
+	UnloggedCount(ctx context.Context) (int, error)
+	// MarkLogged takes these (ProjectID, ID) events out of the outbox, in
+	// one transaction, once they are in the event files.
+	MarkLogged(ctx context.Context, keys []store.UnloggedEvent) error
 }
 
 // Archive is the file side of the pass (internal/archive): it runs only in
@@ -82,6 +103,14 @@ type Runner struct {
 
 	// archive is nil in a process that does not ingest.
 	archive Archive
+	// attributor and eventLog attribute form submissions; nil in a
+	// process that does not ingest (attribution.go).
+	attributor Attributor
+	eventLog   EventLog
+	// attributionTimeout bounds one lookup and attributionTickBudget one
+	// minute's batches; fields so a test can shorten them.
+	attributionTimeout    time.Duration
+	attributionTickBudget time.Duration
 	// jitter and sleep delay a scheduled pass; fields so a test need not wait.
 	jitter func() time.Duration
 	sleep  func(context.Context, time.Duration)
@@ -100,8 +129,10 @@ type Runner struct {
 
 func New(st Store, cfg *config.Config, reg *manage.Registry, salt Rotator, logger *slog.Logger, now func() time.Time) *Runner {
 	return &Runner{store: st, cfg: cfg, reg: reg, salt: salt, logger: logger, now: now,
-		topN:   cfg.AttributeValuesTopN,
-		jitter: func() time.Duration { return rand.N(archiveJitter) },
+		topN:                  cfg.AttributeValuesTopN,
+		attributionTimeout:    attributionTimeout,
+		attributionTickBudget: attributionTickBudget,
+		jitter:                func() time.Duration { return rand.N(archiveJitter) },
 		sleep: func(ctx context.Context, d time.Duration) {
 			select {
 			case <-time.After(d):
@@ -352,6 +383,8 @@ func (r *Runner) allRawDays(ctx context.Context, projectID int64, before civil.D
 // runScheduled fires whichever jobs are due at the current time. Split out
 // from Run so the day-boundary guards are testable without a real clock.
 func (r *Runner) runScheduled(ctx context.Context) {
+	// Form attribution runs on every tick (each minute).
+	r.attributeSubmissions(ctx)
 	now := r.now().UTC()
 	day := civil.Today(now).String()
 	if now.Hour() == 0 && r.lastSaltDay != day {

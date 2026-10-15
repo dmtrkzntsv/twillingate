@@ -10,7 +10,8 @@
  *    once, event-producing calls are held and run after init(), entry
  *    pageview first;
  *  - the identity mode decides what is SENT: an anonymous instance never
- *    sends $user_id, $user_name or $install_id;
+ *    sends $user_id or $user_name, and sends $install_id (a visitor id kept
+ *    on the device) only with consent;
  *  - attributes layer as derived < attrs() defaults < the call's own <
  *    listener returns, and null drops a key at the end.
  *
@@ -42,9 +43,11 @@ export interface InitOptions {
   key: string;
   /**
    * anonymous (default) or identified. Decides what the instance SENDS:
-   * anonymous never sends $user_id, $user_name or $install_id and
-   * identify()/installId() are inert; identified sends them and, with
-   * consent, persists the visitor id, user and group.
+   * anonymous never sends $user_id or $user_name, and identify() and
+   * setting installId() are inert; with consent it keeps a visitor id and
+   * sends it as $install_id (pseudonymous). identified sends the user and
+   * declared install id and, with consent, persists the visitor id, user
+   * and group.
    */
   identity?: "anonymous" | "identified";
   /**
@@ -785,9 +788,9 @@ export class Twillingate implements Subscriber {
 
   /**
    * With an argument, set the stable per-install id an app supplies as
-   * $install_id; without one, read what would be sent: the declared id,
-   * else the persisted visitor id, else null. Inert on an anonymous
-   * instance.
+   * $install_id; without one, read what would be sent: the declared id
+   * (identified only), else the visitor id kept with consent, else null.
+   * Setting one is inert on an anonymous instance.
    */
   installId(id?: string | null): string | null {
     if (id !== undefined) {
@@ -798,7 +801,7 @@ export class Twillingate implements Subscriber {
       this.declaredInstallId = id ? String(id) : null;
     }
     if (this.declaredInstallId) return this.declaredInstallId;
-    return this.identified && this.mayStore() ? this.driver.get(this.k.visitor) : null;
+    return this.mayStore() ? this.driver.get(this.k.visitor) : null;
   }
 
   /**
@@ -1113,12 +1116,14 @@ export class Twillingate implements Subscriber {
     }
   }
 
-  // Identity precedence: the declared install id, else the stored visitor
-  // id (identified, with consent), else nothing — the server then falls
-  // back to its rotating connection hash.
+  // Identity precedence: the declared install id (identified only), else
+  // the stored visitor id, kept with consent in either mode (anonymous
+  // with consent is pseudonymous: its visits connect, its person is never
+  // named), else nothing — the server then falls back to its rotating
+  // connection hash.
   private visitorId(): string | null {
     if (this.declaredInstallId) return this.declaredInstallId;
-    if (!this.identified || !this.mayStore()) return null;
+    if (!this.mayStore()) return null;
     let v = this.driver.get(this.k.visitor);
     if (!v) {
       v = uuid7();
@@ -1132,9 +1137,9 @@ export class Twillingate implements Subscriber {
     if (this.identified) {
       if (this.userId) a.$user_id = this.userId;
       if (this.userName) a.$user_name = this.userName;
-      const v = this.visitorId();
-      if (v) a.$install_id = v;
     }
+    const v = this.visitorId();
+    if (v) a.$install_id = v;
     if (this.groupId) a.$group_id = this.groupId;
     if (this.groupName) a.$group_name = this.groupName;
     a.$kind = this.kind;

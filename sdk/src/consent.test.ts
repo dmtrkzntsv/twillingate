@@ -399,7 +399,7 @@ describe("storage under consent", () => {
     }
   });
 
-  it("with consent, an anonymous instance persists the queue but never a visitor id or group", async () => {
+  it("with consent, an anonymous instance persists the queue and a visitor id but never a group", async () => {
     fetchImpl = failFetch;
     const t = tg({ consent: true });
     t.group("org_1");
@@ -407,7 +407,7 @@ describe("storage under consent", () => {
     t.flush();
     await drain();
     expect(JSON.parse(localStorage.getItem("twillingate_queue")!)).toHaveLength(1);
-    expect(localStorage.getItem("twillingate_visitor")).toBeNull();
+    expect(localStorage.getItem("twillingate_visitor")).toMatch(/^[0-9a-f-]{36}$/);
     expect(localStorage.getItem("twillingate_group")).toBeNull();
   });
 

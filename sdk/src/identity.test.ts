@@ -69,10 +69,37 @@ describe("anonymous mode", () => {
     const attrs = await lastAttributes(t);
     expect(attrs).not.toHaveProperty("$user_id");
     expect(attrs).not.toHaveProperty("$user_name");
-    expect(attrs).not.toHaveProperty("$install_id");
+    expect(attrs.$install_id).toBe(localStorage.getItem("twillingate_visitor"));
+    expect(attrs.$install_id).not.toBe("device-7");
+    expect(t.installId()).toBe(localStorage.getItem("twillingate_visitor"));
     expect(attrs).toMatchObject({ $group_id: "org_9", $group_name: "Acme" });
     expect(warn).toHaveBeenCalledTimes(1);
-    expect(t.installId()).toBeNull();
+  });
+
+  it("with consent, persists a visitor id and sends it as $install_id, never a user", async () => {
+    const t = tg({ consent: true });
+    const attrs = await lastAttributes(t);
+    const stored = localStorage.getItem("twillingate_visitor");
+    expect(stored).toMatch(/^[0-9a-f-]{36}$/);
+    expect(attrs.$install_id).toBe(stored);
+    expect(attrs).not.toHaveProperty("$user_id");
+    expect(t.installId()).toBe(stored);
+  });
+
+  it("keeps the same visitor id across page loads with consent", async () => {
+    const first = await lastAttributes(tg({ consent: true }));
+    runtime.reset();
+    const second = await lastAttributes(tg({ consent: true }));
+    expect(second.$install_id).toBe(first.$install_id);
+  });
+
+  it("withdrawn consent deletes the visitor id and stops sending it", async () => {
+    let granted = true;
+    const t = tg({ consent: () => granted });
+    expect((await lastAttributes(t)).$install_id).toBeTruthy();
+    granted = false;
+    const attrs = await lastAttributes(t);
+    expect(attrs).not.toHaveProperty("$install_id");
     expect(localStorage.getItem("twillingate_visitor")).toBeNull();
   });
 
