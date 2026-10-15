@@ -1066,7 +1066,9 @@ In the event files every event also keeps the `$install_id`, `$user_name`
 and `$group_name` it was sent with (each name only beside its id:
 `$user_name` beside `$user_id`, `$group_name` beside `$group_id`), for as long as `RETENTION_DAYS` keeps the
 event (`query` with `source: "files"`): the names are personal data there
-too.
+too. They are the only copy: the display names the Users and Groups
+dashboards show are the latest each id was sent with, read from the files'
+`identities` table, and ingest no longer writes names to the database.
 Events imported from the database (`twillingate events import`), which
 kept no names per event, carry the latest name it held, and an
 `$install_id` only where the install was the actor.

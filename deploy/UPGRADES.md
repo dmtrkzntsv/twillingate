@@ -1053,6 +1053,14 @@ What changes on the day:
   had `''`; `day`, `:from` and `:to` are DATEs.
 - `twillingate reporting dev` runs its widgets on the files in
   `EVENTS_DIR` (default `raw/` beside the `-db` database).
+- **Ingest stops writing display names to the database.** The names sent
+  beside `$user_id` and `$group_id` stay on each event in the files, where
+  the Users and Groups dashboards and the files' `identities` table read
+  them; the database's `identities` table (`source: "sqlite"`) keeps the
+  names it held at the upgrade.
 
 Rollback: the previous release's binary reads the database as before.
 Widgets rewritten for the files fail on it, as SQLite SQL now fails here.
+Names sent while this release ran are missing from the database's
+`identities` table, so the previous release's `identities` tool and Users
+and Groups dashboards show them only once a client sends them again.

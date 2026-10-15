@@ -191,7 +191,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 
 	var ingestHandler *server.Server
 	if runIngest {
-		ingestHandler = server.New(cfg, reg, buf, geoProvider, salter, st, st, logger)
+		ingestHandler = server.New(cfg, reg, buf, geoProvider, salter, st, logger)
 		if cfg.IngestDisabled {
 			logger.Warn("ingest is disabled (INGEST_DISABLED): every ingest route refuses events and form submissions with 429")
 		}
