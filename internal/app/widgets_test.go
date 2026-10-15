@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/config/configtest"
+	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -199,6 +201,63 @@ func TestCheckUserWidgetsLogsWhatFailsOnTheFiles(t *testing.T) {
 	}
 	if e, _ := got["error"].(string); !strings.Contains(e, "v_views_daily") || !strings.Contains(e, "widget SQL is DuckDB SQL") {
 		t.Errorf("error = %q, want DuckDB's message naming v_views_daily, with the hint", e)
+	}
+}
+
+// failingFiles is the console's Files whose every query fails with err.
+type failingFiles struct {
+	reporting.Files
+	err     error
+	queries int
+}
+
+func (f *failingFiles) Query(context.Context, archive.Scoped) (engine.Result, error) {
+	f.queries++
+	return engine.Result{}, f.err
+}
+
+// TestCheckUserWidgetsTellsResourceFailures: a check that runs out of time
+// or memory, or whose child dies, says nothing of the widget's SQL. It is
+// logged as a widget that could not be checked, never as one that fails,
+// and the check stops there rather than load the engine further.
+func TestCheckUserWidgetsTellsResourceFailures(t *testing.T) {
+	f := newWidgetsFixture(t)
+	ctx := context.Background()
+	f.write(t, "e1", 1, store.FamilyViews, "2026-08-20")
+	if _, err := f.st.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "Mine", SortKey: "z", Sidebar: true},
+		[]store.Widget{
+			{Component: "stat", SortKey: "a", Width: 3, Height: 4, Name: "one", Title: "One", Props: "{}", SourceType: "sql",
+				Source: "SELECT count(*) AS value FROM views WHERE project_id = :project"},
+			{Component: "stat", SortKey: "b", Width: 3, Height: 4, Name: "two", Title: "Two", Props: "{}", SourceType: "sql",
+				Source: "SELECT count(*) AS value FROM views"},
+		}, store.AuditEntry{Actor: "test", Action: "dashboard.create"}); err != nil {
+		t.Fatal(err)
+	}
+	for name, err := range map[string]error{
+		"timeout":            context.DeadlineExceeded,
+		"out of memory":      &engine.QueryError{Msg: "Out of Memory Error: failed to allocate data of size 64.0 MiB (476.8 MiB/476.8 MiB used)"},
+		"logs out of memory": fmt.Errorf("%w: %w", archive.ErrLoadingLogs, &engine.QueryError{Msg: "Out of Memory Error: x"}),
+		"child exited":       fmt.Errorf("engine: query: %w", engine.ErrChildExited),
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := &failingFiles{Files: f.files(t), err: err}
+			var out bytes.Buffer
+			checkUserWidgets(ctx, f.st, files, slog.New(slog.NewJSONHandler(&out, nil)))
+			if strings.Contains(out.String(), "widget SQL fails") {
+				t.Errorf("a resource failure logged as a failing widget:\n%s", out.String())
+			}
+			var got map[string]any
+			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+				t.Fatalf("want one log line: %v\n%s", err, out.String())
+			}
+			if msg, _ := got["msg"].(string); !strings.HasPrefix(msg, "could not check widget on the event files") ||
+				got["title"] != "One" || got["reason"] == "" {
+				t.Errorf("logged %v", got)
+			}
+			if files.queries != 1 {
+				t.Errorf("%d queries, want the check to stop after the first", files.queries)
+			}
+		})
 	}
 }
 

@@ -68,15 +68,17 @@ func runFiles(ctx context.Context, files Files, q archive.Scoped) (engine.Result
 // DuckDB's own message passes through, with the hint when it names
 // SQLite's. Anything else (the child could not start) stays an internal
 // error. api's filesError is the query tool's own wording of the same.
+// The timeout, running out of memory and a child that died are a
+// resourceErr: refused all the same, but no verdict on the SQL.
 func filesErr(files Files, err error) error {
 	var qe *engine.QueryError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		return store.Refuse(store.ErrInvalid, "%s", enginesql.Timeout(files.Timeout()))
+		return &resourceErr{store.Refuse(store.ErrInvalid, "%s", enginesql.Timeout(files.Timeout())), err}
 	case errors.Is(err, archive.ErrLoadingLogs) && errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
-		return store.Refuse(store.ErrInvalid, "%s", enginesql.LogsOutOfMemory)
+		return &resourceErr{store.Refuse(store.ErrInvalid, "%s", enginesql.LogsOutOfMemory), err}
 	case errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
-		return store.Refuse(store.ErrInvalid, "%s", enginesql.OutOfMemory)
+		return &resourceErr{store.Refuse(store.ErrInvalid, "%s", enginesql.OutOfMemory), err}
 	case errors.As(err, &qe):
 		msg := oneLine(qe.Msg)
 		if sqliteNames.MatchString(msg) {
@@ -84,9 +86,32 @@ func filesErr(files Files, err error) error {
 		}
 		return store.Refuse(store.ErrInvalid, "%s", msg)
 	case errors.Is(err, engine.ErrChildExited):
-		return store.Refuse(store.ErrInvalid, "%s", enginesql.ChildExited)
+		return &resourceErr{store.Refuse(store.ErrInvalid, "%s", enginesql.ChildExited), err}
 	}
 	return err
+}
+
+// resourceErr is the refusal of a query that ran out of time or memory,
+// or whose child died under it: what a person reads, and an
+// errors.Is(store.ErrInvalid) like any refusal, but no failure of the SQL
+// itself. It keeps the engine's error as cause, so a check of the SQL
+// (CheckUserWidgets, Migrate) can tell the two apart (resourceCause).
+type resourceErr struct {
+	refusal error
+	cause   error
+}
+
+func (e *resourceErr) Error() string { return e.refusal.Error() }
+func (e *resourceErr) Unwrap() error { return e.refusal }
+
+// resourceCause is the engine's error behind err when err is a
+// resourceErr, nil otherwise.
+func resourceCause(err error) error {
+	var re *resourceErr
+	if errors.As(err, &re) {
+		return re.cause
+	}
+	return nil
 }
 
 // oneLine is DuckDB's message on one line, as SQLite's were, without its
@@ -152,11 +177,18 @@ func count(v any) (int, error) {
 	return n, nil
 }
 
-// WidgetFailure is a user's sql widget whose SQL the event files refuse.
+// WidgetFailure is a user's sql widget whose SQL the event files refuse,
+// or, Unchecked, one whose check could not run.
 type WidgetFailure struct {
 	WidgetID, DashboardID int64
 	Title                 string
 	Err                   error
+	// Unchecked: the check ran out of time or memory, or the engine's
+	// child died under it (resourceErr), which says nothing of the SQL.
+	// The check stops there: the engine is short of time or memory now,
+	// most often on the boot pass of an upgrade, and the next query
+	// would add to it. It is the last failure returned.
+	Unchecked bool
 }
 
 // CheckUserWidgets runs the check Migrate runs on the system widgets (the
@@ -164,9 +196,10 @@ type WidgetFailure struct {
 // needs) on every live sql widget of every live user dashboard, and
 // returns those refused, in dashboard and widget order: most often SQL
 // written for SQLite before the switch. A widget whose component was
-// removed is left out; its dashboard says so already. An error that is
-// no refusal of a widget (the engine did not start) stops the check and
-// is returned with the failures found so far.
+// removed is left out; its dashboard says so already. A check that could
+// not run (WidgetFailure.Unchecked) ends the list and the check. An error
+// that is no refusal of a widget (the engine did not start) stops the
+// check and is returned with the failures found so far.
 func CheckUserWidgets(ctx context.Context, st Store, files Files) ([]WidgetFailure, error) {
 	svc := &Service{st: st, files: files, sources: newSources(files, false, time.Now), now: time.Now}
 	comps, err := svc.components(ctx)
@@ -194,6 +227,8 @@ func CheckUserWidgets(ctx context.Context, st Store, files Files) ([]WidgetFailu
 		err := svc.sources["sql"].Validate(ctx, w.Source, comp)
 		switch {
 		case err == nil:
+		case resourceCause(err) != nil:
+			return append(out, WidgetFailure{WidgetID: w.ID, DashboardID: w.DashboardID, Title: w.Title, Err: err, Unchecked: true}), nil
 		case errors.Is(err, store.ErrInvalid):
 			out = append(out, WidgetFailure{WidgetID: w.ID, DashboardID: w.DashboardID, Title: w.Title, Err: err})
 		default:

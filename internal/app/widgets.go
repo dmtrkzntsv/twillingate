@@ -99,10 +99,18 @@ func openFiles(cfg *config.Config) (*engine.Engine, *archive.Reader, error) {
 // the switch fails its shape check here, once at start, rather than only
 // on the dashboard of whoever opens it next. Nothing is rewritten or
 // archived. It runs in the background: each check is a query, and the
-// console does not wait for them.
+// console does not wait for them. A check that ran out of time or memory
+// (the boot pass of an upgrade loads the closed logs meanwhile) is no
+// verdict on the widget: it is logged under its own message, the rest go
+// unchecked, and the next start checks them all again.
 func checkUserWidgets(ctx context.Context, st reporting.Store, files reporting.Files, logger *slog.Logger) {
 	failed, err := reporting.CheckUserWidgets(ctx, st, files)
 	for _, f := range failed {
+		if f.Unchecked {
+			logger.Warn("could not check widget on the event files; the widgets after it go unchecked until the next start",
+				"widget_id", f.WidgetID, "dashboard_id", f.DashboardID, "title", f.Title, "reason", f.Err.Error())
+			continue
+		}
 		logger.Warn("widget SQL fails on the event files", "widget_id", f.WidgetID,
 			"dashboard_id", f.DashboardID, "title", f.Title, "error", f.Err.Error())
 	}

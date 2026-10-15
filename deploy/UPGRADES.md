@@ -1008,6 +1008,11 @@ What changes on the day:
   ```
 
   Each line names `widget_id`, `dashboard_id`, `title` and the error.
+  A check that runs out of time or memory, or whose engine child dies,
+  says nothing of the widget's SQL: it is logged as `could not check
+  widget on the event files`, with the `reason`, and the check stops
+  there. That is likely while the first start's pass loads the closed
+  logs; the next start checks every widget again.
   Rewrite them with `update_widget` (an agent can, given
   `docs://reporting`). Three common rewrites:
 

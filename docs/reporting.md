@@ -1232,7 +1232,9 @@ the widgets users had made. Such a widget fails with DuckDB's error and
 the hint "widget SQL is DuckDB SQL over events, views, product, measures,
 sessions, identities and aliases; see docs://reporting". The console also
 logs each one when it starts (`widget SQL fails on the event files`, with
-`widget_id`, `dashboard_id` and `title`). Rewrite it by the
+`widget_id`, `dashboard_id` and `title`); a widget whose check ran out of
+time or memory is logged as `could not check widget on the event files`
+instead, and checked again at the next start. Rewrite it by the
 [Tables](#tables) section and the [Examples](#examples): `v_views_daily`
 becomes `views` grouped by day, `v_product_daily` `product` grouped by
 day and `event_name`, `v_measures_daily` `measures` with `bucket`,

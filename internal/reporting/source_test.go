@@ -231,6 +231,12 @@ func TestFilesErrors(t *testing.T) {
 		if strings.Contains(err.Error(), notes) {
 			t.Errorf("%s: the source adds the release notes pointer; WidgetData does", name)
 		}
+		// Time, memory and the child are no verdict on the SQL: a check of
+		// it tells them from DuckDB's refusals by their cause.
+		resource := name == "timeout" || name == "out of memory" || name == "logs out of memory" || name == "child exited"
+		if cause := resourceCause(err); (cause != nil) != resource || resource && !errors.Is(cause, c.err) {
+			t.Errorf("%s: resourceCause = %v, want the cause only for time, memory and the child", name, cause)
+		}
 	}
 }
 
