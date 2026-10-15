@@ -518,6 +518,9 @@ func TestAttributedEventWaitsUnloggedUntilMarked(t *testing.T) {
 	if us, err := db.UnloggedEvents(ctx, 10); err != nil || len(us) != 0 {
 		t.Fatalf("unlogged before attribution = %+v, %v", us, err)
 	}
+	if n, err := db.UnloggedCount(ctx); err != nil || n != 0 {
+		t.Fatalf("unlogged count before attribution = %d, %v", n, err)
+	}
 	attributeAll(t, db, func(ev store.Event) store.Event { ev.ReferrerSource = "google"; return ev })
 	us, err := db.UnloggedEvents(ctx, 10)
 	if err != nil || len(us) != 2 || us[0].ID != "s1" || us[1].ID != "s2" {
@@ -530,8 +533,14 @@ func TestAttributedEventWaitsUnloggedUntilMarked(t *testing.T) {
 	if one, _ := db.UnloggedEvents(ctx, 1); len(one) != 1 || one[0].ID != "s1" {
 		t.Fatalf("limit 1 = %+v, want s1", one)
 	}
+	if n, err := db.UnloggedCount(ctx); err != nil || n != 2 {
+		t.Fatalf("unlogged count = %d, %v; want 2", n, err)
+	}
 	if err := db.MarkLogged(ctx, us[:1]); err != nil {
 		t.Fatal(err)
+	}
+	if n, err := db.UnloggedCount(ctx); err != nil || n != 1 {
+		t.Fatalf("unlogged count after marking s1 = %d, %v; want 1", n, err)
 	}
 	if left, err := db.UnloggedEvents(ctx, 10); err != nil || len(left) != 1 || left[0].ID != "s2" {
 		t.Fatalf("unlogged after marking s1 = %+v, %v; want s2", left, err)

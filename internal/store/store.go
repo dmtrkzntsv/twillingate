@@ -492,6 +492,9 @@ type Store interface {
 	// and MarkLogged has not cleared yet, oldest first. A row that does
 	// not read is listed with Err set and a zero Event.
 	UnloggedEvents(ctx context.Context, limit int) ([]UnloggedEvent, error)
+	// UnloggedCount is how many events wait in the outbox: the backlog
+	// a failed log write reports.
+	UnloggedCount(ctx context.Context) (int, error)
 	// MarkLogged takes these (ProjectID, ID) events out of the outbox, in
 	// one transaction, once they are in the event files.
 	MarkLogged(ctx context.Context, keys []UnloggedEvent) error

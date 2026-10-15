@@ -58,14 +58,27 @@ type pendingStore struct {
 	asWritten  map[string]bool // p.WriteEvent as AttributeSubmission got it
 	outbox     []store.UnloggedEvent
 	outboxRead int // UnloggedEvents calls
+	// readErr, markErr and countErr fail UnloggedEvents, MarkLogged and
+	// UnloggedCount while set.
+	readErr, markErr, countErr error
 }
 
 func (s *pendingStore) UnloggedEvents(_ context.Context, limit int) ([]store.UnloggedEvent, error) {
 	s.outboxRead++
+	if s.readErr != nil {
+		return nil, s.readErr
+	}
 	return slices.Clone(s.outbox[:min(limit, len(s.outbox))]), nil
 }
 
+func (s *pendingStore) UnloggedCount(context.Context) (int, error) {
+	return len(s.outbox), s.countErr
+}
+
 func (s *pendingStore) MarkLogged(_ context.Context, keys []store.UnloggedEvent) error {
+	if s.markErr != nil {
+		return s.markErr
+	}
 	s.outbox = slices.DeleteFunc(s.outbox, func(u store.UnloggedEvent) bool {
 		return slices.ContainsFunc(keys, func(k store.UnloggedEvent) bool { return k.ProjectID == u.ProjectID && k.ID == u.ID })
 	})
@@ -372,13 +385,75 @@ func TestAttributeSubmissionsRetriesAFailedLogWrite(t *testing.T) {
 	if len(st.attributed) != 2 || len(st.outbox) != 2 || len(log.evs) != 0 {
 		t.Fatalf("attributed %d, %d unlogged, %d logged; want 2, 2, 0", len(st.attributed), len(st.outbox), len(log.evs))
 	}
-	if !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "disk full") {
-		t.Errorf("log %q does not report the failed write", buf.String())
+	if !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "disk full") ||
+		!strings.Contains(buf.String(), "backlog=2") {
+		t.Errorf("log %q does not report the failed write with its backlog", buf.String())
 	}
-	log.fail = nil
+	// A backlog that cannot be counted leaves it out of the line.
+	buf.Reset()
+	st.countErr = errors.New("database is locked")
+	r.attributeSubmissions(context.Background())
+	if !strings.Contains(buf.String(), "disk full") || strings.Contains(buf.String(), "backlog=") {
+		t.Errorf("log %q: want the write error without a backlog", buf.String())
+	}
+	st.countErr, log.fail = nil, nil
 	r.attributeSubmissions(context.Background())
 	if len(log.evs) != 2 || len(st.outbox) != 0 || log.evs[0].ReferrerSource != "google" {
 		t.Fatalf("%d logged (%+v), %d left unlogged; want both logged and marked", len(log.evs), log.evs, len(st.outbox))
+	}
+}
+
+// outboxOf is a store whose outbox holds n readable events.
+func outboxOf(n int) *pendingStore {
+	st := &pendingStore{}
+	for i := 0; i < n; i++ {
+		id := fmt.Sprintf("e%04d", i)
+		st.outbox = append(st.outbox, store.UnloggedEvent{ProjectID: 1, ID: id, Event: store.Event{ID: id, ProjectID: 1}})
+	}
+	return st
+}
+
+// A failed outbox read is logged once and ends the flush: nothing is
+// written, nothing marked.
+func TestAttributeSubmissionsOutboxReadErrorMarksNothing(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	st := outboxOf(2)
+	st.readErr = errors.New("database is locked")
+	log := &loggedEvents{}
+	r := attributionRunner(t, st, now).WithAttribution(&echoAttributor{}, log)
+	var buf bytes.Buffer
+	r.logger = slog.New(slog.NewTextHandler(&buf, nil))
+	r.attributeSubmissions(context.Background())
+	if n := strings.Count(buf.String(), "database is locked"); n != 1 || !strings.Contains(buf.String(), "level=ERROR") {
+		t.Errorf("%d error lines for the failed read, want 1:\n%s", n, buf.String())
+	}
+	if len(log.calls) != 0 || len(st.outbox) != 2 || st.outboxRead != 1 {
+		t.Fatalf("calls %v, %d left, %d reads; want no write, both left, one read", log.calls, len(st.outbox), st.outboxRead)
+	}
+}
+
+// A failed mark after a written page is logged and ends the flush; the
+// next tick writes that page again (the log and the dump drop the
+// repeats by id) and marks it.
+func TestAttributeSubmissionsMarkErrorStopsTheFlush(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	st := outboxOf(outboxPage + 1)
+	st.markErr = errors.New("database is locked")
+	log := &loggedEvents{}
+	r := attributionRunner(t, st, now).WithAttribution(&echoAttributor{}, log)
+	var buf bytes.Buffer
+	r.logger = slog.New(slog.NewTextHandler(&buf, nil))
+	r.attributeSubmissions(context.Background())
+	if !slices.Equal(log.calls, []int{outboxPage}) || len(st.outbox) != outboxPage+1 {
+		t.Fatalf("calls %v, %d left; want one page written, nothing marked", log.calls, len(st.outbox))
+	}
+	if !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "database is locked") {
+		t.Errorf("log %q does not report the failed mark", buf.String())
+	}
+	st.markErr = nil
+	r.attributeSubmissions(context.Background())
+	if !slices.Equal(log.calls, []int{outboxPage, outboxPage, 1}) || len(st.outbox) != 0 {
+		t.Fatalf("calls %v, %d left; want the page rewritten, then the rest, all marked", log.calls, len(st.outbox))
 	}
 }
 

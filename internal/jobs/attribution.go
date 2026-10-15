@@ -18,8 +18,9 @@ type Attributor interface {
 
 // EventLog appends events to the archive log (*archive.Log): a
 // submission's event goes to SQLite and the files alike. A line written
-// twice is harmless: the log drops a repeated id for ten minutes, and the
-// dump keeps one row per id after that.
+// twice is harmless: the log drops a repeated id for ten minutes; after
+// that the dump drops it within a log, and the month merge across a
+// day's segments.
 type EventLog interface {
 	WriteEvents(ctx context.Context, evs []store.Event) error
 }
@@ -93,8 +94,12 @@ func (r *Runner) attributeSubmissions(ctx context.Context) {
 // tick's budget (from started) lasts, and marks each page logged once it
 // is written: delivery at least once, so a crash or a failed write
 // between SQLite and the files is retried the next minute, never lost.
-// An event that does not read is logged as an error and marked with its
-// page. Without a log, the events wait.
+// A page is written whole, so a write that fails for any one project or
+// day holds back every project's form events until it clears, retried
+// each minute; its likely causes (a full disk, permissions) are global
+// anyway. The error line reports the backlog. An event that does not
+// read is logged as an error and marked with its page. Without a log,
+// the events wait.
 func (r *Runner) flushOutbox(ctx context.Context, started time.Time) {
 	if r.eventLog == nil {
 		return
@@ -119,7 +124,11 @@ func (r *Runner) flushOutbox(ctx context.Context, started time.Time) {
 		}
 		if len(evs) > 0 {
 			if err := r.eventLog.WriteEvents(ctx, evs); err != nil {
-				r.logger.Error("form attribution: events not logged, retrying next minute", "events", len(evs), "error", err)
+				args := []any{"events", len(evs), "error", err}
+				if backlog, cerr := r.store.UnloggedCount(ctx); cerr == nil {
+					args = append(args, "backlog", backlog)
+				}
+				r.logger.Error("form attribution: events not logged, retrying next minute", args...)
 				return
 			}
 		}

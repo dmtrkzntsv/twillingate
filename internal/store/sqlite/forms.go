@@ -306,6 +306,14 @@ func (d *DB) UnloggedEvents(ctx context.Context, limit int) ([]store.UnloggedEve
 	return out, nil
 }
 
+// UnloggedCount is how many events wait in the outbox, counted over its
+// partial index.
+func (d *DB) UnloggedCount(ctx context.Context) (int, error) {
+	var n int
+	err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM submissions WHERE unlogged_event IS NOT NULL`).Scan(&n)
+	return n, err
+}
+
 // MarkLogged takes these (ProjectID, ID) events out of the outbox, in one
 // transaction. A key no longer in it changes nothing.
 func (d *DB) MarkLogged(ctx context.Context, keys []store.UnloggedEvent) error {
