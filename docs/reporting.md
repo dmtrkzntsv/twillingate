@@ -276,10 +276,10 @@ today's events are in them within `BUFFER_FLUSH_INTERVAL`.
 | --- | --- | --- |
 | `events` | event of any family | anything across families: activity of `views` and `product` together |
 | `views` | page or screen view | visitors (`count(DISTINCT actor_id)`), views (`count(*)`), and the breakdowns: `path`, `host`, `referrer_source`, `utm_source`/`utm_medium`/`utm_campaign`, `country`, `os`/`os_version`, `browser`/`browser_version`, `platform`/`app_version`, `device`/`device_model`, `display_width`/`display_height`, `consent` |
-| `product` | product event | events by `event_name`, the users behind them (`count(DISTINCT user_id)`), groups (`group_id`), and each attribute as a column `attr_<key>` |
-| `measures` | measure sample | `value` (`measure` is `time`, in ms, or `number`), `sample_rate`, and `bucket`, its log-scale bucket (see [Percentiles from measures](#percentiles-from-measures)) |
+| `product` | product event | events by `event_name`, the users behind them (`count(DISTINCT actor_id)`, as the system dashboards count active users, so a custom widget's figure matches theirs; `user_id` counts only signed-in people), groups (`group_id`), and each attribute as a column `attr_<key>` |
+| `measures` | measure sample | `value` (`measure` is `time`, in ms, `size`, in bytes, or `number`), `sample_rate`, and `bucket`, its log-scale bucket (see [Percentiles from measures](#percentiles-from-measures)) |
 | `sessions` | session of views | sessions (`count(*)`), bounces (`views = 1`), `duration_sec`, the entry and exit pages, the first view's referrer and UTMs |
-| `identities` | user or group | `name`, and `first_seen`, the first day the files hold for it: new users |
+| `identities` | user or group | `name`, and `first_seen`, the first event the files hold for it: new users. It is a TIMESTAMP: compare `first_seen::DATE` with `day` |
 | `aliases` | user id and install id sent together | one person's events across devices |
 
 - **A widget reads one project.** When its SQL uses `:project`, every
