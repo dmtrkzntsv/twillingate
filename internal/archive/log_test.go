@@ -400,3 +400,92 @@ func TestRotateReturnsStatErrors(t *testing.T) {
 		t.Fatal("Rotate hangs on a Stat error")
 	}
 }
+
+// TestWriteClosedLeavesAClosedLog: WriteClosed writes the events as the
+// next free <day>.<n>.closed, the lines WriteEvents writes for them, and
+// Rotate then takes the number after it. Nothing is left under another
+// name, and the recent ids are not touched: ingest still logs the same id.
+func TestWriteClosedLeavesAClosedLog(t *testing.T) {
+	l := openLog(t)
+	ctx := context.Background()
+	if err := l.WriteEvents(ctx, []store.Event{ev("a", 1, "2026-10-11T10:00:00Z")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := l.Rotate(1, "2026-10-11"); err != nil {
+		t.Fatal(err)
+	}
+	evs := []store.Event{ev("b", 1, "2026-10-11T09:00:00Z"), ev("c", 1, "2026-10-11T11:00:00Z")}
+	path, err := l.WriteClosed(1, "2026-10-11", evs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(l.Dir(), "1")
+	if want := filepath.Join(dir, "2026-10-11.2.closed"); path != want {
+		t.Fatalf("path = %s, want %s", path, want)
+	}
+	other := openLog(t)
+	if err := other.WriteEvents(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := lines(t, path), lines(t, filepath.Join(other.Dir(), "1", "2026-10-11.log")); !reflect.DeepEqual(got, want) {
+		t.Fatalf("lines = %v, want WriteEvents' %v", got, want)
+	}
+	if err := l.WriteEvents(ctx, []store.Event{ev("b", 1, "2026-10-11T09:00:00Z")}); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(lines(t, filepath.Join(dir, "2026-10-11.log"))); n != 1 {
+		t.Fatalf("ingest's log holds %d lines, want 1: WriteClosed must not mark ids as seen", n)
+	}
+	if next, err := l.Rotate(1, "2026-10-11"); err != nil || next != filepath.Join(dir, "2026-10-11.3.closed") {
+		t.Fatalf("Rotate after WriteClosed = %s, %v; want .3.closed", next, err)
+	}
+	names, _ := os.ReadDir(dir)
+	var got []string
+	for _, n := range names {
+		got = append(got, n.Name())
+	}
+	if want := []string{"2026-10-11.1.closed", "2026-10-11.2.closed", "2026-10-11.3.closed"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("files = %v, want %v", got, want)
+	}
+}
+
+// TestWriteClosedRefusesAnotherDayOrProject: an event the day's dump would
+// file under the wrong day or project fails the call, and nothing is
+// written. No events write nothing.
+func TestWriteClosedRefusesAnotherDayOrProject(t *testing.T) {
+	l := openLog(t)
+	for _, e := range []store.Event{ev("a", 1, "2026-10-12T00:00:00Z"), ev("a", 2, "2026-10-11T10:00:00Z")} {
+		if _, err := l.WriteClosed(1, "2026-10-11", []store.Event{ev("ok", 1, "2026-10-11T10:00:00Z"), e}); err == nil {
+			t.Fatalf("WriteClosed accepted %s of project %d on %s", e.ID, e.ProjectID, Day(e.TS))
+		}
+	}
+	if path, err := l.WriteClosed(1, "2026-10-11", nil); err != nil || path != "" {
+		t.Fatalf("WriteClosed(nil) = %q, %v; want nothing", path, err)
+	}
+	if _, err := os.Stat(filepath.Join(l.Dir(), "1")); !os.IsNotExist(err) {
+		t.Fatalf("project directory: %v; want none written", err)
+	}
+}
+
+// TestOpenLogLocksTheDirectory: while one Log is open on a directory,
+// opening another fails with ErrLocked (the server and the import command,
+// or two ingest processes, never write raw/ at once); once it is closed,
+// the next one opens.
+func TestOpenLogLocksTheDirectory(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "raw")
+	l, err := OpenLog(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenLog(dir); !errors.Is(err, ErrLocked) {
+		t.Fatalf("second OpenLog: %v, want ErrLocked", err)
+	}
+	if err := l.Close(); err != nil {
+		t.Fatal(err)
+	}
+	again, err := OpenLog(dir)
+	if err != nil {
+		t.Fatalf("OpenLog after Close: %v", err)
+	}
+	again.Close()
+}

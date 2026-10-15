@@ -179,6 +179,11 @@ than that copy: the daily pass deletes the files of any project the database
 does not know. A restore to the latest state never is; one to an earlier
 `-timestamp` needs a `raw/` copy taken before that time.
 
+Then, still before the collector starts, run `twillingate events import
+-force` as the service user (in the commands below). The replica is newer
+than your copy of `raw/`, so the database holds events the files lack; the
+import copies them in.
+
 **systemd.** Install twillingate (`install.sh`), put the same credentials in
 `/etc/twillingate/twillingate.env`, and set litestream up as
 [above](#systemd) but without starting it (`systemctl enable`, not
@@ -189,6 +194,7 @@ sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; litestream resto
   -config /etc/litestream.yml -o /var/lib/twillingate/twillingate.db \
   /var/lib/twillingate/twillingate.db'
 sudo -u twillingate sqlite3 /var/lib/twillingate/twillingate.db 'PRAGMA quick_check;'
+sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate events import -force'
 sudo systemctl start twillingate litestream
 ```
 
@@ -202,6 +208,7 @@ sudo systemctl start twillingate litestream
 docker compose run --rm --no-deps --entrypoint true twillingate
 docker compose run --rm --no-deps litestream restore -config /etc/litestream.yml \
   -o /var/lib/twillingate/twillingate.db /var/lib/twillingate/twillingate.db
+docker compose run --rm --no-deps twillingate events import -force
 docker compose up -d
 docker compose exec twillingate twillingate project list   # your projects are back
 ```

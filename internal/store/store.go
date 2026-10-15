@@ -299,6 +299,9 @@ type Store interface {
 	ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
 	ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
 	MeasureDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
+	// RawEvents returns a project's raw rows of one day, as the event
+	// files hold an event (sqlite.DB.RawEvents).
+	RawEvents(ctx context.Context, projectID int64, day civil.Date) ([]Event, error)
 	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date, topN int) error
 	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error

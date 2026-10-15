@@ -39,6 +39,7 @@ discarded.
 | `twillingate serve` | Both, on one listener unless `CONSOLE_ADDR` says otherwise |
 | `twillingate project`, `key`, `form`, `config` | Registry management |
 | `twillingate migrate` | Applies schema migrations and exits |
+| `twillingate events import` | Once, with the ingest service stopped: copies the raw rows the database holds into the event files (`deploy/UPGRADES.md`) |
 
 Which of those run, and how, is the operator's choice — see [Configure the
 collector](deployment.md#configure-the-collector).
@@ -1061,6 +1062,9 @@ and `$group_name` it was sent with (each name only beside its id:
 `$user_name` beside `$user_id`, `$group_name` beside `$group_id`), for as long as `RETENTION_DAYS` keeps the
 event (`query` with `source: "files"`): the names are personal data there
 too.
+Events imported from the database (`twillingate events import`), which
+kept no names per event, carry the latest name it held, and an
+`$install_id` only where the install was the actor.
 **The collector stores what it is sent.** What reaches it is decided by the tag's
 `data-identity` (or `identity` in code), so a project's privacy posture is the
 posture of its clients. The collector logs `project receives ids` the first
@@ -1624,10 +1628,13 @@ days the `WHERE` on `project_id` and `day` covers. Narrow ranges and the
 ### Writing SQL against the event files
 
 `query` with `source: "files"` runs one read-only `SELECT` through DuckDB
-over the raw events twillingate keeps as files beside its database: every
-project's, received since the upgrade that began writing them, today's
-included (each `BUFFER_FLUSH_INTERVAL`). Same row cap and timeout as above;
-a query cannot write and cannot reach any other file. The dialect is
+over the raw events twillingate keeps as files beside its database. The
+files hold every project's events since the upgrade that began writing
+them. Once `twillingate events import` has run, they also hold the earlier
+raw days the database still held then. History older than that exists only
+in the `agg_*` tables. Today's events are included, each
+`BUFFER_FLUSH_INTERVAL`. Same row cap and timeout as above; a query cannot
+write and cannot reach any other file. The dialect is
 DuckDB's ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction)),
 close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
 `day BETWEEN DATE '2026-01-01' AND DATE '2026-01-31'`, `GROUP BY ALL`,
@@ -1645,8 +1652,8 @@ the reader's own and hold rows before the rules apply: query these seven.
 | `ts`, `received_at` | TIMESTAMP (UTC) | |
 | `day` | DATE | `ts`'s UTC day |
 | `kind`, `actor_id`, `actor_kind`, `user_id`, `group_id`, `session_id` | VARCHAR | |
-| `install_id` | VARCHAR | the client's `$install_id`, also when a `$user_id` is the actor |
-| `user_name`, `group_name` | VARCHAR | the names sent beside `user_id` and `group_id` (see [Identity](#identity)) |
+| `install_id` | VARCHAR | the client's `$install_id`, also when a `$user_id` is the actor; on events imported from the database, only when the install was the actor |
+| `user_name`, `group_name` | VARCHAR | the names sent beside `user_id` and `group_id` (see [Identity](#identity)); on events imported from the database, the latest name it held |
 | `host`, `path`, `referrer_source`, `utm_source`, `utm_medium`, `utm_campaign` | VARCHAR | |
 | `platform`, `os`, `os_version`, `os_name`, `browser`, `browser_version`, `browser_locale`, `app_version`, `app_locale`, `device`, `device_model`, `country` | VARCHAR | as on the views (see [The event model](#the-event-model)) |
 | `display_width`, `display_height` | BIGINT | |
@@ -1671,7 +1678,9 @@ the reader's own and hold rows before the rules apply: query these seven.
   own value first) and a blocked key reads NULL, on product and measures
   events. A rule on a key also covers the keys that differ from it only in
   case, since they read as one column. Removing a rule brings the stored
-  names and values back.
+  names and values back, except on events imported from the database
+  (`twillingate events import`): they were stored with the names and keys
+  the database's rules had already applied.
 - **An event sent twice can show twice** when the copies landed in
   different files (a resend after its day's log was closed), until its
   month's files merge.

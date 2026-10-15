@@ -834,3 +834,82 @@ No migration, nothing to run. What changes:
 
 Rollback: an older binary ignores the derived files and reads the new
 fields as extra columns; delete the derived files if you go back for good.
+
+### Upgrading to imported event files (no migration, one command)
+
+No schema migration. After upgrading, run one command once, with the
+ingest service stopped: it copies into `raw/` every raw row the database
+holds that the files do not.
+
+- The rows it copies are the events from before the upgrade that began
+  writing `raw/`, back to the oldest day the raw window
+  (`RETENTION_RAW_DAYS`) still holds, and any batch the log missed since.
+- Run it soon. Each day it waits, the oldest raw day leaves
+  `RETENTION_RAW_DAYS` and can no longer be imported.
+- It takes about 30 s per million rows. The next start's pass turns what
+  it copied into day files, about 0.2 s a day.
+- `EVENTS_DIR` must be on a filesystem that supports `flock`: most local
+  filesystems do, some FUSE and SMB mounts do not. The ingest server now
+  refuses to start otherwise.
+
+```sh
+# systemd
+sudo systemctl stop twillingate
+sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate events import'
+sudo systemctl start twillingate
+
+# compose
+docker compose stop twillingate
+docker compose run --rm twillingate events import
+docker compose start twillingate
+```
+
+Stop the service first, whichever version runs. The command refuses
+while a server of this version or later runs, since that server holds
+`raw/.lock`. The release before this one holds no lock, so the command
+cannot see it. On a split install, stop the ingest process; the console
+may keep running. If the service was started while the import ran, it
+refused to start, because `raw/` was locked: start it again after the
+import (`sudo systemctl start twillingate`).
+
+Run it as the service user, who owns the database file. The command
+refuses any other user: files it wrote as root would lock the service out
+of `raw/`. The systemd lines above use `sudo -u twillingate`. Compose's
+`run` already uses the image's user.
+
+The command prints one line for each project that had days to import,
+and `imported N of M rows` when done. If a day fails, it says which and
+exits 1; run it again, and what is already copied is skipped. Once it
+has succeeded, the `meta` row `events_imported` records when, and the
+command only says so. `-force` copies again, for example after restoring
+an older `raw/`.
+
+- History older than the raw window exists in the database only as daily
+  aggregates (`agg_*`). They cannot become events, so they are not
+  imported. Nothing changes today: dashboards still read the database.
+  Once a later release moves the dashboards onto the files, they start at
+  the oldest raw day the database holds now:
+  `sqlite3 /var/lib/twillingate/twillingate.db "SELECT min(day) FROM events"`.
+- An imported row has an install id only where the install was the actor
+  (an `$install_id` outranked by a `$user_id` was never stored). It has the
+  latest name the database holds for its user and group, not the name sent
+  with it.
+- An imported row carries its event name and attribute keys as the
+  database holds them, after the rules it applied. Ingest applies the
+  rules before writing either store, and a rename also rewrote the
+  database's older rows. An imported row keeps a renamed name even if
+  that rule is later removed.
+- Check it per project, after the start, on the days both hold before
+  today. The files also hold days the database has already rolled up, and
+  today's counts move while ingest runs. On the files, `query` with
+  `source: "files"`:
+  `SELECT day, count(*) FROM events WHERE project_id = 1 AND day < current_date GROUP BY ALL ORDER BY day`.
+  On the database (systemd):
+  `sqlite3 /var/lib/twillingate/twillingate.db "SELECT day, count(*) FROM events WHERE project_id = 1 AND day < date('now') GROUP BY day"`.
+  The compose image has no `sqlite3`: use `query` with `source: "sqlite"`,
+  which reads the raw rows through `raw_views`, `raw_product` and
+  `raw_measures`, or copy the file out of the volume:
+  `SELECT day, count(*) FROM (SELECT project_id, day FROM raw_views UNION ALL SELECT project_id, day FROM raw_product UNION ALL SELECT project_id, day FROM raw_measures) WHERE project_id = 1 AND day < date('now') GROUP BY day`.
+
+Rollback: an older binary reads the imported days like any other day
+file, and ignores `raw/.lock`; nothing to undo.

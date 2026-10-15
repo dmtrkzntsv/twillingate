@@ -103,7 +103,7 @@ to it.
 | `INGEST_DISABLED` | `true` (or `1`) stops ingest completely while the console keeps running: `POST /ingest/events`, the legacy `POST /api/events` and `POST /ingest/forms/{name}` refuse every request with `429`, `ingest is disabled` and `Retry-After: 3600`, before the body is read or the key looked up, so nothing is written. The SDK drops a batch refused with a 4xx rather than queueing it. Preflights, the SDK scripts and `/healthz` answer as usual; `limits` reports `ingest_disabled` and the console's Projects page says so. For a migration, a restore or an abuse incident. When the ingest and console surfaces run as separate processes, set it for both: the refusal is the ingest process's setting, while the console's banner and `limits` read the console process's own. Takes `true`/`false`, `1`/`0`; anything else refuses the boot. Default `false`. |
 | `INGEST_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets and MCP integration guidance are built from it; unset, they carry a placeholder. Also the default for `CONSOLE_URL`. With [several hostnames](#one-collector-several-hostnames), the default one. |
 | `DATABASE_DSN` | Store DSN. Only `sqlite://<path>` today. Required. |
-| `EVENTS_DIR` | Directory of the event files: a log per project and day, then Parquet day and month files. Default `raw/` beside the database's file (`/var/lib/twillingate/raw`). The engine reads and writes everything in it, so it may not hold the database. On a split install, give both processes the same value. To move it, stop the service, move the directory, set the variable, start. |
+| `EVENTS_DIR` | Directory of the event files: a log per project and day, then Parquet day and month files. Default `raw/` beside the database's file (`/var/lib/twillingate/raw`). The engine reads and writes everything in it, so it may not hold the database. On a split install, give both processes the same value. It must be on a filesystem that supports `flock` (most local filesystems; not some FUSE or SMB mounts): the ingest process holds `.lock` in it, and refuses to start where it cannot. A second ingest process, or `twillingate events import`, refuses while one runs. To move it, stop the service, move the directory, set the variable, start. |
 | `GEO_DSN` | Country lookup: `cloudflare://` (header), `maxmind://<license-key>`, or `none://`. |
 | `LOG_LEVEL` | `debug`, `info`, `warn`, `error`. Default `info`. |
 | `LOG_FORMAT` | `json` or `text`. Default `json`. |
@@ -406,6 +406,7 @@ a loopback address, without a login; its usage is in
 | Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash` — restarts the running service and reports the old and new version |
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v0.9.2` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
+| Import the database's raw rows into the event files (once, after the upgrade that brings it) | stop the ingest service, `twillingate events import`, start it ([UPGRADES.md](https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md)) |
 | Check the engine | `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate engine -check'` (the service user and its environment: as root it creates a root-owned `raw/` and `engine/` the service cannot write) starts an engine child the way the server does and runs one query: `engine ok: 42 in 63 ms (spawn and first query), DuckDB v1.5.6`. A failure names what stopped it (a missing library, `ENGINE_MEMORY_LIMIT`, all `ENGINE_MAX_CHILDREN` slots busy for 30 s). |
 | Upgrade across a schema change | [Back up](#back-up-and-restore) first: migrations 012, 014, 015 and 016 are irreversible. Pre-checks and what changes on the day: <https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md> (not served over MCP; open it in the repository) |
 | Database size | `du -h /var/lib/twillingate/twillingate.db` |
@@ -423,7 +424,7 @@ which `usage` reads and which outlive the aggregates' retention) run daily at
 across those times skips no day. With `LOG_FILE` set, install
 `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.
 
-The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. `query` with `source: "files"` reads them and the tables derived from them; widgets and every other tool still read SQLite.
+The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began are copied in once, by hand, with `twillingate events import` (stop the ingest service first). The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. `query` with `source: "files"` reads them and the tables derived from them; widgets and every other tool still read SQLite.
 
 ### Back up and restore
 
@@ -455,6 +456,16 @@ stop the service, put the copy at `/var/lib/twillingate/twillingate.db`
 owned by the service user, delete any `twillingate.db-wal` and
 `twillingate.db-shm` beside it, and start the service. A copy from an older
 release migrates on start.
+
+If the restored database is newer than the restored `raw/` (a Litestream
+restore, say), run `twillingate events import -force` as the service user
+before starting the service: it copies the rows the database holds and the
+files lack.
+
+```bash
+sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate events import -force'
+docker compose run --rm --no-deps twillingate events import -force   # compose
+```
 
 Any `sqlite3` that opens the file (the backup and check above, a host cron,
 litestream's restore drill) must be SQLite 3.35+ built with math functions:

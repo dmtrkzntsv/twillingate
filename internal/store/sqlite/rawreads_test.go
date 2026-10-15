@@ -13,9 +13,10 @@ import (
 var rawRead = regexp.MustCompile(`\b(FROM|JOIN)\s+events\b`)
 
 // Nothing reads the raw events table except raw_views, raw_product,
-// raw_measures, v_events_flat (which holds every family on purpose) and
-// v_identity_daily, whose live half groups views and product rows in one
-// aggregate over the table (025_live_halves.sql) and names both families.
+// raw_measures, v_events_flat and RawEvents (raw_events.go), which hold every
+// family on purpose (RawEvents names all three), and v_identity_daily, whose
+// live half groups views and product rows in one aggregate over the table
+// (025_live_halves.sql) and names both families.
 // Everything else reads through the family views, so a product query can
 // never count pageviews by forgetting a filter.
 func TestRawTableIsReadOnlyThroughFamilyViews(t *testing.T) {
@@ -47,7 +48,7 @@ func TestRawTableIsReadOnlyThroughFamilyViews(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") || f == "flatview.go" {
+		if strings.HasSuffix(f, "_test.go") || f == "flatview.go" || f == "raw_events.go" {
 			continue
 		}
 		src, err := os.ReadFile(f)
