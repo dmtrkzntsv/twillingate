@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/api"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
@@ -31,9 +30,9 @@ const (
 // registry the widgets read the files without the projects' event and
 // attribute rules.
 func ReportingDev(ctx context.Context, dirs []string, dbPath, eventsDir, addr string, logger *slog.Logger) error {
-	// Widget SQL here is as custom as in the console: it may not read
-	// what the console's custom SQL may not.
-	db, err := readsql.Open(dbPath, devQueryTimeout, devQueryMaxRows, api.CustomSQLRefused()...)
+	// The handle serves devListProjects' own query only: widget SQL runs
+	// on the event files.
+	db, err := readsql.Open(dbPath, devQueryTimeout, devQueryMaxRows)
 	if err != nil {
 		return err
 	}

@@ -96,7 +96,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		return err
 	}
 	defer eng.Close()
-	if err := migrate(ctx, cfg, st, files); err != nil {
+	if err := migrate(ctx, cfg, st, files, ""); err != nil {
 		return err
 	}
 	// The views' live halves read their caps from meta with a scalar
@@ -131,9 +131,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		logger.Warn("no projects configured; create one with `twillingate project create` or an API management operation")
 	}
 	if runConsole {
-		if err := warnImport(ctx, st, logger); err != nil {
-			return err
-		}
+		warnImport(ctx, st, cfg.EventsDir, logger)
 	}
 
 	salter := identity.NewSalter(st, time.Now)

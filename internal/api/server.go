@@ -25,8 +25,8 @@ const (
 	mcpPath      = "/mcp"
 )
 
-// CustomSQLRefused names the tables every handle that runs custom SQL (the
-// query tool, widget SQL, and `reporting dev`'s previews) refuses to read:
+// CustomSQLRefused names the tables every handle that runs custom SQL on
+// SQLite (the query tool's sqlite source) refuses to read:
 // submissions hold what visitors typed into forms, and only the server's
 // own SQL, on the second handle, reads them. A fresh slice each call.
 func CustomSQLRefused() []string { return []string{"submissions"} }

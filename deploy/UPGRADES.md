@@ -956,9 +956,10 @@ the files' tables (`docs/reporting.md`, "Tables"). Before upgrading:
 - **Run the import first.** If `twillingate events import` has not run
   (see "Upgrading to imported event files" above), run it on the
   previous release, or right after the upgrade with the ingest service
-  stopped. Until it has, the
-  dashboards show only what the files hold, and the console logs at start:
-  `the events SQLite holds were never imported into the event files`.
+  stopped. Until it has, the dashboards show only what the files hold,
+  and the console logs at start, naming the projects whose raw rows in
+  the database reach back before their files: `SQLite holds raw events
+  older than the event files`.
 - **Check the engine:** `twillingate engine -check`, as the service user.
   The reporting migrator now validates the system dashboards on the files
   whenever a release changes them, so an engine child that cannot start
@@ -966,7 +967,10 @@ the files' tables (`docs/reporting.md`, "Tables"). Before upgrading:
   now fails the start of the console, and of the CLI commands that open
   the database (`migrate`, `project`, `key`, `form`, `events import`),
   where it used to fail only the first query on the files. A start with
-  no change to the system dashboards runs no engine child for it.
+  no change to the system dashboards runs no engine child for it. Run
+  those commands as the service user: one that would start a child as
+  anyone but the database file's owner (root, say) is refused, since the
+  child's `engine/` and `raw/` would then belong to that user.
 
 What changes on the day:
 
@@ -976,6 +980,19 @@ What changes on the day:
   stay in the database, readable with `query` and `source: "sqlite"`, but
   no widget reads them. From the upgrade on, the files keep
   `RETENTION_DAYS` (default 400) of history.
+- **What counts from the first day the files hold restarts there,** the
+  oldest imported day (the upgrade day without an import):
+  - New users, New groups and First seen on the Users and Groups
+    dashboards: everyone already in that first day counts as new on it;
+  - retention cohorts begin on it, so D30 and D45 stay empty until the
+    first cohorts are 30 and 45 days old. With the default
+    `RETENTION_RAW_DAYS` of 30, the 90d Retention dashboard is mostly
+    empty at first.
+- **No `(other)` rows:** view kinds, breakdowns and attribute values past
+  `ATTRIBUTE_VALUES_TOP_N`, and users and groups past `IDENTITIES_TOP_N`,
+  each show as their own row.
+- **Retention counts yesterday from 00:00 UTC,** as soon as the day ends,
+  rather than after the 03:00 UTC pass.
 - **Widgets you or an agent made break** when their SQL reads SQLite's
   views. Nothing rewrites or archives them. Each shows DuckDB's error on
   its dashboard, with the hint "widget SQL is DuckDB SQL over events,
@@ -993,31 +1010,44 @@ What changes on the day:
   `docs://reporting`). Three common rewrites:
 
   ```sql
-  -- before: visitors per day
+  -- before: visitors per day (distinct per day and kind, added up)
   SELECT day AS x, SUM(visitors) AS y FROM v_views_daily
   WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY day ORDER BY day
-  -- after
-  SELECT day AS x, count(DISTINCT actor_id) AS y FROM views
-  WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY day ORDER BY day
+  -- after: the same figure
+  SELECT day AS x, SUM(visitors) AS y FROM (
+    SELECT day, kind, count(DISTINCT actor_id) AS visitors FROM views
+    WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY day, kind)
+  GROUP BY day ORDER BY day
 
-  -- before: signups, with the previous period
-  SELECT SUM(count) AS value FROM v_product_daily
-  WHERE project_id = :project AND event_name = 'signup'
-    AND day BETWEEN date(:from, '-' || (julianday(:to) - julianday(:from) + 1) || ' days') AND date(:from, '-1 day')
+  -- before: signups in the range and in as many days before it
+  SELECT (SELECT SUM(count) FROM v_product_daily
+          WHERE project_id = :project AND event_name = 'signup'
+            AND day BETWEEN :from AND :to) AS value,
+         (SELECT SUM(count) FROM v_product_daily
+          WHERE project_id = :project AND event_name = 'signup'
+            AND day BETWEEN date(:from, '-' || (julianday(:to) - julianday(:from) + 1) || ' days')
+                        AND date(:from, '-1 day')) AS previous
   -- after
-  SELECT count(*) AS value FROM product
+  SELECT count(*) FILTER (WHERE day >= :from) AS value,
+         count(*) FILTER (WHERE day < :from) AS previous
+  FROM product
   WHERE project_id = :project AND event_name = 'signup'
-    AND day BETWEEN :from - CAST(:to - :from + 1 AS INTEGER) AND :from - 1
+    AND day BETWEEN :from - CAST(:to - :from + 1 AS INTEGER) AND :to
 
-  -- before: top countries
+  -- before: top countries (visitors distinct per day, added up)
   SELECT country AS label, SUM(visitors) AS value FROM v_views_countries
   WHERE project_id = :project AND day BETWEEN :from AND :to AND country != ''
   GROUP BY country ORDER BY value DESC LIMIT 10
-  -- after
-  SELECT country AS label, count(DISTINCT actor_id) AS value FROM views
-  WHERE project_id = :project AND day BETWEEN :from AND :to AND country IS NOT NULL
+  -- after: the same figure
+  SELECT country AS label, SUM(visitors) AS value FROM (
+    SELECT day, country, count(DISTINCT actor_id) AS visitors FROM views
+    WHERE project_id = :project AND day BETWEEN :from AND :to AND country IS NOT NULL
+    GROUP BY day, country)
   GROUP BY country ORDER BY value DESC LIMIT 10
   ```
+
+  `count(DISTINCT actor_id)` over the whole range, without the per-day
+  subquery, counts each visitor once instead: a different, smaller figure.
 
   A field the event did not send is NULL in the files, where the database
   had `''`; `day`, `:from` and `:to` are DATEs.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -201,33 +202,76 @@ func TestCheckUserWidgetsLogsWhatFailsOnTheFiles(t *testing.T) {
 	}
 }
 
-// TestWarnImport: SQLite's raw rows with no events_imported row warn;
-// with the row, or with no raw rows, nothing is logged.
+// TestWarnImport: the console warns, naming the projects, when SQLite
+// holds raw days older than the event files (or raw rows of a project with
+// no files); a fresh install, whose files began with its first event,
+// does not, and the import's row silences it.
 func TestWarnImport(t *testing.T) {
 	f := newWidgetsFixture(t)
 	ctx := context.Background()
-	warned := func() bool {
+	warned := func() string {
 		t.Helper()
 		var out bytes.Buffer
-		if err := warnImport(ctx, f.st, slog.New(slog.NewTextHandler(&out, nil))); err != nil {
+		warnImport(ctx, f.st, f.cfg.EventsDir, slog.New(slog.NewTextHandler(&out, nil)))
+		if strings.Contains(out.String(), "level=ERROR") {
+			t.Fatal(out.String())
+		}
+		if !strings.Contains(out.String(), "twillingate events import") {
+			return ""
+		}
+		return out.String()
+	}
+	held := func(id string, project int64, day string) {
+		t.Helper()
+		ts, err := time.Parse("2006-01-02", day)
+		if err != nil {
 			t.Fatal(err)
 		}
-		return strings.Contains(out.String(), "twillingate events import")
+		if err := f.st.WriteEvents(ctx, []store.Event{{ID: id, ProjectID: project, Family: store.FamilyViews, EventName: "$page_view",
+			TS: ts.Add(12 * time.Hour), Kind: "web", ActorID: "a", ActorKind: store.ActorInstall, SampleRate: 1}}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if warned() {
-		t.Error("an empty database warns")
+	if got := warned(); got != "" {
+		t.Errorf("an empty install warns: %s", got)
 	}
-	if err := f.st.WriteEvents(ctx, []store.Event{{ID: "e1", ProjectID: 1, Family: store.FamilyViews, EventName: "$page_view",
-		TS: time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC), Kind: "web", ActorID: "a", ActorKind: store.ActorInstall, SampleRate: 1}}); err != nil {
-		t.Fatal(err)
+	// A fresh install: every event both in SQLite and in the files.
+	held("e1", 1, "2026-08-20")
+	f.write(t, "e1", 1, store.FamilyViews, "2026-08-20")
+	if got := warned(); got != "" {
+		t.Errorf("a fresh install warns: %s", got)
 	}
-	if !warned() {
-		t.Error("raw rows and no import do not warn")
+	// An upgraded one: SQLite reaches back before the files' first day.
+	held("e0", 1, "2026-08-15")
+	if got := warned(); !strings.Contains(got, "projects=[1]") {
+		t.Errorf("rows before the files' first day: %q, want a warning naming project 1", got)
+	}
+	held("d0", 2, "2026-08-21")
+	if got := warned(); !strings.Contains(got, "projects=\"[1 2]\"") && !strings.Contains(got, "projects=[1 2]") {
+		t.Errorf("a project with rows and no files: %q, want a warning naming projects 1 and 2", got)
 	}
 	if err := f.st.SetMeta(ctx, eventsImportedKey, "2026-10-14T00:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	if warned() {
-		t.Error("an import's row does not silence the warning")
+	if got := warned(); got != "" {
+		t.Errorf("an import's row does not silence the warning: %s", got)
+	}
+}
+
+// failingMarks is importMarks whose reads fail.
+type failingMarks struct{}
+
+func (failingMarks) GetMeta(context.Context, string) (string, error) { return "", nil }
+func (failingMarks) OldestRawDays(context.Context) (map[int64]string, error) {
+	return nil, errors.New("disk I/O error")
+}
+
+// TestWarnImportLogsAFailure: the check is advice, so a store that cannot
+// answer is logged at error and the console starts all the same.
+func TestWarnImportLogsAFailure(t *testing.T) {
+	var out bytes.Buffer
+	warnImport(context.Background(), failingMarks{}, t.TempDir(), slog.New(slog.NewTextHandler(&out, nil)))
+	if !strings.Contains(out.String(), "level=ERROR") || !strings.Contains(out.String(), "disk I/O error") {
+		t.Errorf("log = %q, want the error at level ERROR", out.String())
 	}
 }

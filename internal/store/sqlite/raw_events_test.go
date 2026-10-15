@@ -104,18 +104,31 @@ func TestRawEventsReadsOlderRows(t *testing.T) {
 	}
 }
 
-// TestHasRawEvents: false on an empty database, true once a row is held.
-func TestHasRawEvents(t *testing.T) {
+// TestOldestRawDays: nothing on an empty database; each project's oldest
+// day once rows are held, whatever their family.
+func TestOldestRawDays(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
-	if held, err := d.HasRawEvents(ctx); err != nil || held {
-		t.Fatalf("empty: held %v, err %v; want false", held, err)
+	if got, err := d.OldestRawDays(ctx); err != nil || len(got) != 0 {
+		t.Fatalf("empty: %v, %v; want none", got, err)
 	}
-	if err := d.WriteEvents(ctx, []store.Event{{ID: "a", ProjectID: 1, Family: store.FamilyProduct,
-		EventName: "signup", TS: rawAt("2026-10-11T10:00:00Z"), ActorID: "u1", ActorKind: store.ActorUser, SampleRate: 1}}); err != nil {
+	row := func(id string, project int64, family store.Family, at string) store.Event {
+		e := store.Event{ID: id, ProjectID: project, Family: family, EventName: "signup", TS: rawAt(at),
+			ActorID: "u1", ActorKind: store.ActorUser, SampleRate: 1}
+		if family == store.FamilyViews {
+			e.EventName = "$page_view"
+		}
+		return e
+	}
+	if err := d.WriteEvents(ctx, []store.Event{
+		row("a", 1, store.FamilyProduct, "2026-10-11T10:00:00Z"),
+		row("b", 1, store.FamilyViews, "2026-10-09T10:00:00Z"),
+		row("c", 2, store.FamilyProduct, "2026-10-12T10:00:00Z"),
+	}); err != nil {
 		t.Fatal(err)
 	}
-	if held, err := d.HasRawEvents(ctx); err != nil || !held {
-		t.Fatalf("one row: held %v, err %v; want true", held, err)
+	got, err := d.OldestRawDays(ctx)
+	if want := map[int64]string{1: "2026-10-09", 2: "2026-10-12"}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("OldestRawDays = %v, %v; want %v", got, err, want)
 	}
 }

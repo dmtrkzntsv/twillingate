@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
@@ -113,23 +114,50 @@ func checkUserWidgets(ctx context.Context, st reporting.Store, files reporting.F
 // importMarks is the slice of the store warnImport reads.
 type importMarks interface {
 	GetMeta(ctx context.Context, key string) (string, error)
-	HasRawEvents(ctx context.Context) (bool, error)
+	OldestRawDays(ctx context.Context) (map[int64]string, error)
 }
 
-// warnImport logs when SQLite holds raw rows and `twillingate events
-// import` has never run (Decision 13): the dashboards read only the event
-// files, so until the import copies SQLite's history into them they show
-// only what arrived since the files began.
-func warnImport(ctx context.Context, st importMarks, logger *slog.Logger) error {
-	done, err := st.GetMeta(ctx, eventsImportedKey)
-	if err != nil || done != "" {
-		return err
+// warnImport logs, at start, the projects whose raw rows in SQLite reach
+// further back than the event files in eventsDir (Decision 13): an oldest
+// raw day before the files' oldest day, or raw rows and no file at all.
+// The dashboards read only the files, so until `twillingate events import`
+// copies those days in they show only what the files hold. A fresh
+// install, whose files began with its first event, has nothing to warn
+// about; once the import has run (the events_imported row) nothing is
+// checked. A month file counts from its first day, so a project whose
+// oldest file is a month file warns only for days before that month.
+// It is advice: a failure to read either side is logged, not returned.
+func warnImport(ctx context.Context, st importMarks, eventsDir string, logger *slog.Logger) {
+	behind, err := importBehind(ctx, st, eventsDir)
+	if err != nil {
+		logger.Error("checking whether SQLite holds events the event files lack", "error", err)
+		return
 	}
-	held, err := st.HasRawEvents(ctx)
-	if err != nil || !held {
-		return err
+	if len(behind) > 0 {
+		logger.Warn("SQLite holds raw events older than the event files: dashboards show only what the files hold; "+
+			"run `twillingate events import` with ingest stopped", "projects", behind)
 	}
-	logger.Warn("the events SQLite holds were never imported into the event files: dashboards show only what the files hold; " +
-		"run `twillingate events import` with ingest stopped")
-	return nil
+}
+
+// importBehind is warnImport's list of projects, in id order.
+func importBehind(ctx context.Context, st importMarks, eventsDir string) ([]int64, error) {
+	if done, err := st.GetMeta(ctx, eventsImportedKey); err != nil || done != "" {
+		return nil, err
+	}
+	held, err := st.OldestRawDays(ctx)
+	if err != nil {
+		return nil, err
+	}
+	files, err := archive.OldestDays(eventsDir)
+	if err != nil {
+		return nil, err
+	}
+	var behind []int64
+	for id, day := range held {
+		if first, ok := files[id]; !ok || day < first {
+			behind = append(behind, id)
+		}
+	}
+	slices.Sort(behind)
+	return behind, nil
 }

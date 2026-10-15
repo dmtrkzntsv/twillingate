@@ -231,3 +231,30 @@ func TestLatestDays(t *testing.T) {
 		t.Errorf("a missing raw/: %v, %v", got, err)
 	}
 }
+
+// TestOldestDays: each project's oldest day by name, a month file from
+// its first day; what is no events file is left out.
+func TestOldestDays(t *testing.T) {
+	dir := t.TempDir()
+	touch(t, dir,
+		"1/2026-02.parquet", // a month: counts as the 1st
+		"1/2026-02-10.parquet",
+		"1/sessions/2025-05.parquet",
+		"2/2026-12-05.parquet",
+		"2/2026-12-04.parquet.tmp",
+		"3/2026-10-04.log",
+		"3/2026-10-05.1.closed",
+		"4/notes.txt",
+	)
+	got, err := OldestDays(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[int64]string{1: "2026-02-01", 2: "2026-12-05", 3: "2026-10-04"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Errorf("OldestDays = %v, want %v", got, want)
+	}
+	if got, err := OldestDays(filepath.Join(dir, "none")); err != nil || len(got) != 0 {
+		t.Errorf("a missing raw/: %v, %v", got, err)
+	}
+}
