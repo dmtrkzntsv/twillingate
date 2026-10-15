@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
@@ -209,7 +208,7 @@ func newSystemFixture(t *testing.T) systemFixture {
 	today := civil.Today(time.Now().UTC())
 	pid := mustCreateProject(t, st, "demo")
 	other := mustCreateProject(t, st, "neighbour")
-	copyTree(t, systemTemplate(t, pid, other, today), files.Dir)
+	archivetest.CopyDir(t, systemTemplate(t, pid, other, today), files.Dir)
 	return systemFixture{svc: New(st, files, Options{}), st: st, files: files, project: pid, neighbour: other, today: today}
 }
 
@@ -249,7 +248,7 @@ func systemTemplate(t *testing.T, project, neighbour int64, today civil.Date) st
 	if err != nil {
 		t.Fatal(err)
 	}
-	copyTree(t, f.Dir, dir)
+	archivetest.CopyDir(t, f.Dir, dir)
 	systemFiles.dir, systemFiles.project, systemFiles.neighbour, systemFiles.today = dir, project, neighbour, today
 	return dir
 }
@@ -258,41 +257,6 @@ func systemTemplate(t *testing.T, project, neighbour int64, today civil.Date) st
 func removeSystemTemplate() {
 	if systemFiles.dir != "" {
 		os.RemoveAll(systemFiles.dir)
-	}
-}
-
-// copyTree copies every file under src into dst but the log's lock,
-// keeping modification times: a derived file is current only while no
-// events file it comes from is newer.
-func copyTree(t *testing.T, src, dst string) {
-	t.Helper()
-	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil || rel == "." || d.Name() == ".lock" {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		b, err := os.ReadFile(path)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(target, b, 0o644); err != nil {
-			return err
-		}
-		return os.Chtimes(target, info.ModTime(), info.ModTime())
-	})
-	if err != nil {
-		t.Fatal(err)
 	}
 }
 
@@ -387,6 +351,141 @@ func TestRetentionMilestonesMatchCurve(t *testing.T) {
 			}
 		}
 	}
+}
+
+// TestRetentionKindIsSticky: an actor first seen as an install that later
+// signs in under the same actor_id is cohorted on its first day, counts
+// under install until the day it is first a user and under user from then
+// on, even on a later day it is an install again: the rule store's
+// UpsertActors and AggregateRetentionDay applied. The same events go into
+// SQLite and through those two, day by day, and the Cohorts widget must
+// read what v_retention reads.
+func TestRetentionKindIsSticky(t *testing.T) {
+	ctx := context.Background()
+	st, files := newTestStoreAndFiles(t, 1000)
+	if err := Migrate(ctx, st, files); err != nil {
+		t.Fatal(err)
+	}
+	pid := mustCreateProject(t, st, "sticky")
+	today := civil.Today(time.Now().UTC())
+	cohort := today.AddDays(-10)
+	var evs []store.Event
+	view := func(actor, kind string, off int) {
+		e := event(t, fmt.Sprintf("%s-%d-%s", actor, off, kind), pid, store.FamilyViews, "$page_view", cohort.AddDays(off).String())
+		e.ActorID, e.ActorKind = actor, kind
+		evs = append(evs, e)
+	}
+	view("x", "connection", -1) // before x is cohorted: no row
+	view("x", "install", 0)
+	view("x", "install", 2)
+	view("x", "user", 5) // a user from here on
+	view("x", "install", 7)
+	view("u", "user", 0)
+	view("u", "user", 2)
+	view("u", "user", 5)
+	view("i", "install", 0)
+	view("i", "install", 5)
+	files.Write(t, evs...)
+	if err := st.WriteEvents(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	type retention interface {
+		UpsertActors(context.Context, int64, civil.Date) error
+		AggregateRetentionDay(context.Context, int64, civil.Date) error
+	}
+	for d := cohort.AddDays(-1); d.Before(today); d = d.AddDays(1) {
+		if err := st.(retention).UpsertActors(ctx, pid, d); err != nil {
+			t.Fatal(err)
+		}
+		if err := st.(retention).AggregateRetentionDay(ctx, pid, d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	want, err := storeDB(t, st).Query(ctx, `SELECT cohort_day, actor_kind, day_offset, cohort_size, actors
+		FROM v_retention WHERE project_id = ? AND day_offset BETWEEN 0 AND 45 AND cohort_day BETWEEN ? AND ?
+		ORDER BY cohort_day DESC, actor_kind, day_offset`, pid, cohort.AddDays(-3).String(), cohort.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := New(st, files, Options{})
+	got, err := svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, svc, 5, "cohorts"), ProjectID: pid,
+		From: cohort.AddDays(-3).String(), To: cohort.String()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := got.Data.(readsql.Result)
+	var rows [][]string
+	for _, r := range res.Rows {
+		rows = append(rows, r[:5])
+	}
+	if !reflect.DeepEqual(rows, want.Rows) {
+		t.Errorf("Cohorts:\n got  %v\n want %v (v_retention)", rows, want.Rows)
+	}
+	// x is under install at offset 2 and under user at 5 and 7.
+	for _, w := range [][]string{{"install", "2", "1"}, {"install", "5", "1"}, {"user", "5", "2"}, {"user", "7", "1"}} {
+		found := false
+		for _, r := range rows {
+			if r[1] == w[0] && r[2] == w[1] {
+				found = true
+				if r[4] != w[2] {
+					t.Errorf("%s at offset %s: %s returned, want %s", w[0], w[1], r[4], w[2])
+				}
+			}
+		}
+		if !found {
+			t.Errorf("no %s row at offset %s in %v", w[0], w[1], rows)
+		}
+	}
+}
+
+// TestRetentionWidgetsShareTheirCTE: the five Retention widgets each carry
+// the same retention CTE, and the four curves the same text but for the
+// kind; a fix to one that misses the others fails here.
+func TestRetentionWidgetsShareTheirCTE(t *testing.T) {
+	read := func(name string) string {
+		t.Helper()
+		b, err := fs.ReadFile(systemFS, "system/retention/"+name+".sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	cte := func(name string) string {
+		t.Helper()
+		q := read(name)
+		start, end := strings.Index(q, "WITH acts AS ("), strings.Index(q, "\nretention AS (")
+		if start < 0 || end < 0 {
+			t.Fatalf("%s has no acts ... retention CTE", name)
+		}
+		return q[start : strings.Index(q[end:], "\n)")+end]
+	}
+	want := cte("cohorts")
+	for _, name := range []string{"install-milestones", "install-retention", "signed-in-milestones", "signed-in-retention"} {
+		if got := cte(name); got != want {
+			t.Errorf("%s's retention CTE differs from cohorts':\n%s\nwant\n%s", name, got, want)
+		}
+	}
+	for _, pair := range [][2]string{{"install-milestones", "signed-in-milestones"}, {"install-retention", "signed-in-retention"}} {
+		if a, b := read(pair[0]), strings.ReplaceAll(read(pair[1]), "actor_kind = 'user' AND", "actor_kind = 'install' AND"); a != b {
+			t.Errorf("%s and %s differ in more than the kind", pair[0], pair[1])
+		}
+	}
+}
+
+// systemWidgetOf finds system dashboard id's widget name on svc.
+func systemWidgetOf(t *testing.T, svc *Service, id int64, name string) int64 {
+	t.Helper()
+	d, err := svc.Dashboard(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, w := range d.Widgets {
+		if w.Name == name {
+			return w.ID
+		}
+	}
+	t.Fatalf("dashboard %d has no widget %s", id, name)
+	return 0
 }
 
 // attributeValuesWidget finds the Product dashboard's attribute-values

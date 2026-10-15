@@ -77,9 +77,7 @@ func newHostFiles(t *testing.T, reg *manage.Registry) *hostFiles {
 	t.Helper()
 	dir := t.TempDir()
 	raw := filepath.Join(dir, "raw")
-	if err := os.CopyFS(raw, os.DirFS(hostTemplateRaw)); err != nil {
-		t.Fatal(err)
-	}
+	archivetest.CopyDir(t, hostTemplateRaw, raw) // keeps the times the derived files' freshness reads
 	eng, err := hostEngine(dir, raw)
 	if err != nil {
 		t.Fatal(err)

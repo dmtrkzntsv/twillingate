@@ -5,6 +5,7 @@ package archivetest
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -99,6 +100,42 @@ func (f *Files) Maintain(t testing.TB, today string) {
 		t.Fatal(err)
 	}
 	if err := f.Archive.Maintain(context.Background(), d, 1, 400); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// CopyDir copies every file under src (a raw/ directory) into dst, made if
+// missing, but the log's lock, keeping modification times: a derived file
+// is current only while no events file it comes from is newer, so a copy
+// that stamps every file anew would leave the derived files stale.
+func CopyDir(t testing.TB, src, dst string) {
+	t.Helper()
+	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil || d.Name() == ".lock" {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(target, b, 0o644); err != nil {
+			return err
+		}
+		return os.Chtimes(target, info.ModTime(), info.ModTime())
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 }

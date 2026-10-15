@@ -3,7 +3,9 @@ package archivetest
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -43,5 +45,45 @@ func TestWritesTwoDaysAndReadsThemBack(t *testing.T) {
 	res, err = f.Reader.Query(context.Background(), "SELECT count(*) FROM events", 0, archive.Rules{})
 	if err != nil || fmt.Sprint(res.Rows) != "[[3]]" {
 		t.Fatalf("all projects = %v, %v", res.Rows, err)
+	}
+}
+
+// TestCopyDirKeepsTimes: a copy reads as the template did, its derived
+// files current, because every file keeps its modification time; the
+// log's lock stays behind.
+func TestCopyDirKeepsTimes(t *testing.T) {
+	f := New(t)
+	f.Write(t, event("a", 1, "2026-10-11T10:00:00Z"), event("b", 1, "2026-10-12T10:00:00Z"))
+	f.Maintain(t, "2026-10-12")
+	dst := filepath.Join(t.TempDir(), "raw")
+	CopyDir(t, f.Dir, dst)
+	n := 0
+	err := filepath.WalkDir(f.Dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return err
+		}
+		rel, _ := filepath.Rel(f.Dir, path)
+		got, err := os.Stat(filepath.Join(dst, rel))
+		if d.Name() == ".lock" {
+			if err == nil {
+				t.Errorf("the lock was copied")
+			}
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		want, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if !got.ModTime().Equal(want.ModTime()) || got.Size() != want.Size() {
+			t.Errorf("%s: %v %d bytes, want %v %d", rel, got.ModTime(), got.Size(), want.ModTime(), want.Size())
+		}
+		n++
+		return nil
+	})
+	if err != nil || n == 0 {
+		t.Fatalf("walked %d files: %v", n, err)
 	}
 }
