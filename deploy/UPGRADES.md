@@ -837,7 +837,7 @@ fields as extra columns; delete the derived files if you go back for good.
 
 ### Upgrading to form attribution from the files (migration 041)
 
-Migration 041 adds three columns to `submissions`; nothing to run. What
+Migration 041 adds four columns to `submissions`; nothing to run. What
 changes:
 
 - A submission's `attribution` is found about a minute after it arrives,
@@ -865,4 +865,5 @@ changes:
 
 Rollback: an older binary ignores the new columns and attributes on
 arrival again. Submissions still pending at the rollback keep `{}` and
-get no event.
+get no event, and events still waiting to be logged at the rollback
+reach SQLite but not the event files.

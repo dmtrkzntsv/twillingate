@@ -108,21 +108,30 @@ func TestFilesHoldWhatSQLiteHolds(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The jobs runner writes the event to SQLite when the submission is
-	// attributed, and to the log after it.
+	// attributed, leaving it in the outbox, then flushes the outbox to the
+	// log and marks it logged.
 	pending, err := st.PendingSubmissions(ctx, day.AddDate(0, 0, 1), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, p := range pending {
-		wrote, err := st.AttributeSubmission(ctx, p, p.Event)
-		if err != nil {
+		if _, err := st.AttributeSubmission(ctx, p, p.Event); err != nil {
 			t.Fatal(err)
 		}
-		if wrote {
-			if err := log.WriteEvents(ctx, []store.Event{p.Event}); err != nil {
-				t.Fatal(err)
-			}
-		}
+	}
+	unlogged, err := st.UnloggedEvents(ctx, 1000)
+	if err != nil || len(unlogged) != 1 || unlogged[0].Err != nil {
+		t.Fatalf("unlogged = %+v, %v; want the approved form's one event", unlogged, err)
+	}
+	evs := make([]store.Event, len(unlogged))
+	for i, u := range unlogged {
+		evs[i] = u.Event
+	}
+	if err := log.WriteEvents(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkLogged(ctx, unlogged); err != nil {
+		t.Fatal(err)
 	}
 
 	self, _ := os.Executable()

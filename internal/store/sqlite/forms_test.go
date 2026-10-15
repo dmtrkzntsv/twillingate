@@ -500,6 +500,108 @@ func TestAttributeSubmissionAfterDeleteWritesNothing(t *testing.T) {
 	}
 }
 
+// An approved form's attributed event also waits in the outbox
+// (unlogged_event) until the job has written it to the event files;
+// MarkLogged takes it out. A draft's submission never reaches it.
+func TestAttributedEventWaitsUnloggedUntilMarked(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, _, err := db.WriteSubmission(ctx, newSub("s0", nil)); err != nil {
+		t.Fatal(err)
+	}
+	approve(t, db, `[]`)
+	for _, id := range []string{"s1", "s2"} {
+		if _, _, err := db.WriteSubmission(ctx, newSub(id, nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if us, err := db.UnloggedEvents(ctx, 10); err != nil || len(us) != 0 {
+		t.Fatalf("unlogged before attribution = %+v, %v", us, err)
+	}
+	attributeAll(t, db, func(ev store.Event) store.Event { ev.ReferrerSource = "google"; return ev })
+	us, err := db.UnloggedEvents(ctx, 10)
+	if err != nil || len(us) != 2 || us[0].ID != "s1" || us[1].ID != "s2" {
+		t.Fatalf("unlogged = %+v, %v; want s1 and s2, not the draft's s0", us, err)
+	}
+	if u := us[0]; u.Err != nil || u.ProjectID != 1 || u.Event.ID != "s1" || u.Event.ProjectID != 1 ||
+		u.Event.ReferrerSource != "google" || u.Event.EventName != store.FormSubmitEvent || !u.Event.TS.Equal(formsNow) {
+		t.Fatalf("unlogged s1 = %+v, want the event as written", u)
+	}
+	if one, _ := db.UnloggedEvents(ctx, 1); len(one) != 1 || one[0].ID != "s1" {
+		t.Fatalf("limit 1 = %+v, want s1", one)
+	}
+	if err := db.MarkLogged(ctx, us[:1]); err != nil {
+		t.Fatal(err)
+	}
+	if left, err := db.UnloggedEvents(ctx, 10); err != nil || len(left) != 1 || left[0].ID != "s2" {
+		t.Fatalf("unlogged after marking s1 = %+v, %v; want s2", left, err)
+	}
+	if err := db.MarkLogged(ctx, nil); err != nil {
+		t.Fatalf("marking nothing: %v", err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id IN ('s1','s2')`); c != 2 {
+		t.Fatalf("%d events in SQLite, want 2: marking touches only the outbox", c)
+	}
+}
+
+// Deleting a submission takes its unlogged event with it, as it takes
+// the event SQLite holds.
+func TestDeletedSubmissionLeavesTheOutbox(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, _, err := db.WriteSubmission(ctx, newSub("s0", nil)); err != nil {
+		t.Fatal(err)
+	}
+	approve(t, db, `[]`)
+	if _, _, err := db.WriteSubmission(ctx, newSub("s1", nil)); err != nil {
+		t.Fatal(err)
+	}
+	attributeAll(t, db, nil)
+	if us, _ := db.UnloggedEvents(ctx, 10); len(us) != 1 {
+		t.Fatalf("unlogged = %+v, want s1", us)
+	}
+	if _, err := db.DeleteSubmissions(ctx, 1, []string{"s1"}, store.AuditEntry{Actor: "t", Action: "submission.delete", Subject: "form/1/contact"}); err != nil {
+		t.Fatal(err)
+	}
+	if us, err := db.UnloggedEvents(ctx, 10); err != nil || len(us) != 0 {
+		t.Fatalf("unlogged after delete = %+v, %v", us, err)
+	}
+}
+
+// An outbox row that does not read comes back with its error and a zero
+// event, so the job can mark it rather than meet it every minute.
+func TestUnloggedEventsReturnsAnUnreadableRowWithItsError(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, _, err := db.WriteSubmission(ctx, newSub("s0", nil)); err != nil {
+		t.Fatal(err)
+	}
+	approve(t, db, `[]`)
+	for _, id := range []string{"s1", "s2"} {
+		if _, _, err := db.WriteSubmission(ctx, newSub(id, nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	attributeAll(t, db, nil)
+	execAll(t, db, `UPDATE submissions SET unlogged_event='{' WHERE id='s1'`)
+	us, err := db.UnloggedEvents(ctx, 10)
+	if err != nil || len(us) != 2 {
+		t.Fatalf("unlogged = %+v, %v; want s1 and s2", us, err)
+	}
+	if u := us[0]; u.ID != "s1" || u.ProjectID != 1 || u.Err == nil || !reflect.DeepEqual(u.Event, store.Event{}) {
+		t.Fatalf("unreadable = %+v, want its key and error beside a zero event", u)
+	}
+	if us[1].Err != nil || us[1].Event.ID != "s2" {
+		t.Fatalf("readable = %+v", us[1])
+	}
+	if err := db.MarkLogged(ctx, us); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := db.UnloggedEvents(ctx, 10); len(left) != 0 {
+		t.Fatalf("unlogged after marking = %+v", left)
+	}
+}
+
 // A row as migration 041 finds it (pending_event NULL) is attributed.
 func TestSubmissionsFromBeforeTheMigrationAreNotPending(t *testing.T) {
 	db := newTestDB(t)

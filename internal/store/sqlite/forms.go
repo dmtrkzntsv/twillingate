@@ -223,8 +223,10 @@ func (d *DB) PendingSubmissions(ctx context.Context, before time.Time, limit int
 }
 
 // AttributeSubmission stores ev's referrer and UTMs as p's attribution
-// and, when p.WriteEvent, writes ev, in one transaction; wrote reports
-// the event written. A submission no longer pending changes nothing.
+// and, when p.WriteEvent, writes ev and leaves it in the outbox
+// (unlogged_event) for the job to append to the event files, in one
+// transaction; wrote reports the event written. A submission no longer
+// pending changes nothing.
 func (d *DB) AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) (bool, error) {
 	var attribution any // NULL: nothing found
 	if a := (store.Attribution{Referrer: ev.ReferrerSource, UTMSource: ev.UTMSource,
@@ -235,12 +237,21 @@ func (d *DB) AttributeSubmission(ctx context.Context, p store.PendingSubmission,
 		}
 		attribution = string(b)
 	}
+	var unlogged any // NULL: no event to log
+	if p.WriteEvent {
+		b, err := json.Marshal(ev)
+		if err != nil {
+			return false, fmt.Errorf("submission %s event: %w", p.ID, err)
+		}
+		unlogged = string(b)
+	}
 	var wrote bool
 	var fresh []receivedKey
 	var gen uint64
 	err := d.tx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE submissions SET attribution=?, pending_event=NULL, pending_write=NULL,
-			pending_connection=NULL WHERE project_id=? AND id=? AND pending_event IS NOT NULL`, attribution, p.ProjectID, p.ID)
+		res, err := tx.ExecContext(ctx, `UPDATE submissions SET attribution=?, unlogged_event=?, pending_event=NULL,
+			pending_write=NULL, pending_connection=NULL WHERE project_id=? AND id=? AND pending_event IS NOT NULL`,
+			attribution, unlogged, p.ProjectID, p.ID)
 		if err != nil {
 			return err
 		}
@@ -265,6 +276,51 @@ func (d *DB) AttributeSubmission(ctx context.Context, p store.PendingSubmission,
 		d.seen.remember(fresh, gen)
 	}
 	return wrote, nil
+}
+
+// UnloggedEvents lists up to limit events AttributeSubmission wrote and
+// MarkLogged has not cleared, oldest first. A row whose event does not
+// read is listed with Err set and a zero Event, so the job can mark it.
+func (d *DB) UnloggedEvents(ctx context.Context, limit int) ([]store.UnloggedEvent, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT project_id, id, unlogged_event FROM submissions
+		WHERE unlogged_event IS NOT NULL ORDER BY received_at, project_id, id LIMIT ?`, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.UnloggedEvent
+	for rows.Next() {
+		var u store.UnloggedEvent
+		var ev string
+		if err := rows.Scan(&u.ProjectID, &u.ID, &ev); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(ev), &u.Event); err != nil {
+			u.Event, u.Err = store.Event{}, fmt.Errorf("submission %s unlogged event: %w", u.ID, err)
+		}
+		out = append(out, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// MarkLogged takes these (ProjectID, ID) events out of the outbox, in one
+// transaction. A key no longer in it changes nothing.
+func (d *DB) MarkLogged(ctx context.Context, keys []store.UnloggedEvent) error {
+	if len(keys) == 0 {
+		return nil
+	}
+	return d.tx(ctx, func(tx *sql.Tx) error {
+		for _, k := range keys {
+			if _, err := tx.ExecContext(ctx, `UPDATE submissions SET unlogged_event=NULL WHERE project_id=? AND id=?`,
+				k.ProjectID, k.ID); err != nil {
+				return fmt.Errorf("mark event of submission %s logged: %w", k.ID, err)
+			}
+		}
+		return nil
+	})
 }
 
 // fmtTime is t as the text the forms tables store.

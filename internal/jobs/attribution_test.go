@@ -31,21 +31,45 @@ func (f *fakeAttributor) Attribute(_ context.Context, ls []archive.Lookup, days 
 	return f.found, f.err
 }
 
-type loggedEvents struct{ evs []store.Event }
+// loggedEvents is an event log that records each call; while fail is
+// set, a call fails and writes nothing.
+type loggedEvents struct {
+	evs   []store.Event
+	calls []int // events per call, failed ones included
+	fail  error
+}
 
 func (l *loggedEvents) WriteEvents(_ context.Context, evs []store.Event) error {
+	l.calls = append(l.calls, len(evs))
+	if l.fail != nil {
+		return l.fail
+	}
 	l.evs = append(l.evs, evs...)
 	return nil
 }
 
-// pendingStore is a real store with the two attribution methods over a
-// list of pending submissions.
+// pendingStore is a real store with the attribution methods over a list
+// of pending submissions and an outbox the written events wait in.
 type pendingStore struct {
 	store.Store
 	pending    []store.PendingSubmission
 	before     time.Time
 	attributed map[string]store.Event
 	asWritten  map[string]bool // p.WriteEvent as AttributeSubmission got it
+	outbox     []store.UnloggedEvent
+	outboxRead int // UnloggedEvents calls
+}
+
+func (s *pendingStore) UnloggedEvents(_ context.Context, limit int) ([]store.UnloggedEvent, error) {
+	s.outboxRead++
+	return slices.Clone(s.outbox[:min(limit, len(s.outbox))]), nil
+}
+
+func (s *pendingStore) MarkLogged(_ context.Context, keys []store.UnloggedEvent) error {
+	s.outbox = slices.DeleteFunc(s.outbox, func(u store.UnloggedEvent) bool {
+		return slices.ContainsFunc(keys, func(k store.UnloggedEvent) bool { return k.ProjectID == u.ProjectID && k.ID == u.ID })
+	})
+	return nil
 }
 
 func (s *pendingStore) PendingSubmissions(_ context.Context, before time.Time, limit int) ([]store.PendingSubmission, error) {
@@ -64,6 +88,9 @@ func (s *pendingStore) AttributeSubmission(_ context.Context, p store.PendingSub
 		s.attributed, s.asWritten = map[string]store.Event{}, map[string]bool{}
 	}
 	s.attributed[p.ID], s.asWritten[p.ID] = ev, p.WriteEvent
+	if p.WriteEvent {
+		s.outbox = append(s.outbox, store.UnloggedEvent{ProjectID: p.ProjectID, ID: p.ID, Event: ev})
+	}
 	return p.WriteEvent, nil
 }
 
@@ -116,8 +143,8 @@ func TestAttributeSubmissions(t *testing.T) {
 	if ev := st.attributed["sent"]; ev.ReferrerSource != "" || ev.UTMSource != "nl" || ev.OS != "ios" {
 		t.Errorf("sent = %+v: the client's source wins, the newest view still applies", ev)
 	}
-	if len(log.evs) != 2 {
-		t.Errorf("%d events logged, want 2", len(log.evs))
+	if len(log.evs) != 2 || len(st.outbox) != 0 {
+		t.Errorf("%d events logged, %d left in the outbox; want 2 and none", len(log.evs), len(st.outbox))
 	}
 }
 
@@ -213,8 +240,8 @@ func TestAttributeSubmissionsDrainsABacklogInOneTick(t *testing.T) {
 	if len(st.attributed) != 250 || !slices.Equal(a.asked, []int{100, 100, 50}) {
 		t.Fatalf("attributed %d in lookups of %v, want 250 in 100, 100, 50", len(st.attributed), a.asked)
 	}
-	if len(log.evs) != 250 {
-		t.Errorf("%d events logged, want 250", len(log.evs))
+	if len(log.evs) != 250 || !slices.Equal(log.calls, []int{250}) || len(st.outbox) != 0 {
+		t.Errorf("%d events logged in calls of %v, %d left; want 250 in one call, none left", len(log.evs), log.calls, len(st.outbox))
 	}
 }
 
@@ -309,18 +336,98 @@ func TestAttributeSubmissionsDrainsPastUnreadableRows(t *testing.T) {
 }
 
 // A draft's submission (WriteEvent false) is attributed, and its event is
-// neither written nor logged.
+// neither written nor logged: it never reaches the outbox.
 func TestAttributeSubmissionsLogsOnlyWrittenEvents(t *testing.T) {
 	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
 	draft := pendingAt("draft", now.Add(-2*time.Minute), nil)
 	draft.WriteEvent = false
 	st := &pendingStore{pending: []store.PendingSubmission{draft, pendingAt("approved", now.Add(-2*time.Minute), nil)}}
-	log := &loggedEvents{}
-	attributionRunner(t, st, now).WithAttribution(&echoAttributor{}, log).attributeSubmissions(context.Background())
+	log := &loggedEvents{fail: errors.New("disk full")} // keeps the outbox as attribution left it
+	r := attributionRunner(t, st, now).WithAttribution(&echoAttributor{}, log)
+	r.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	r.attributeSubmissions(context.Background())
 	if ev, ok := st.attributed["draft"]; !ok || ev.ReferrerSource != "google" {
 		t.Errorf("draft = %+v, %v; want attributed", ev, ok)
 	}
+	if len(st.outbox) != 1 || st.outbox[0].ID != "approved" {
+		t.Errorf("outbox = %+v, want only the approved submission's event", st.outbox)
+	}
+	log.fail = nil
+	r.attributeSubmissions(context.Background())
 	if len(log.evs) != 1 || log.evs[0].ID != "approved" {
 		t.Errorf("logged %+v, want only the approved submission's event", log.evs)
+	}
+}
+
+// A failed log write is logged and leaves the outbox as it was; the next
+// tick, with nothing left to attribute, logs the events and marks them.
+func TestAttributeSubmissionsRetriesAFailedLogWrite(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	st := &pendingStore{pending: manyPending(2, now.Add(-2*time.Minute))}
+	log := &loggedEvents{fail: errors.New("disk full")}
+	r := attributionRunner(t, st, now).WithAttribution(&echoAttributor{}, log)
+	var buf bytes.Buffer
+	r.logger = slog.New(slog.NewTextHandler(&buf, nil))
+	r.attributeSubmissions(context.Background())
+	if len(st.attributed) != 2 || len(st.outbox) != 2 || len(log.evs) != 0 {
+		t.Fatalf("attributed %d, %d unlogged, %d logged; want 2, 2, 0", len(st.attributed), len(st.outbox), len(log.evs))
+	}
+	if !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "disk full") {
+		t.Errorf("log %q does not report the failed write", buf.String())
+	}
+	log.fail = nil
+	r.attributeSubmissions(context.Background())
+	if len(log.evs) != 2 || len(st.outbox) != 0 || log.evs[0].ReferrerSource != "google" {
+		t.Fatalf("%d logged (%+v), %d left unlogged; want both logged and marked", len(log.evs), log.evs, len(st.outbox))
+	}
+}
+
+// The outbox is flushed a page at a time while full pages keep coming;
+// an event that does not read is logged as an error and marked with
+// the rest, never written.
+func TestAttributeSubmissionsFlushesTheOutbox(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	st := &pendingStore{}
+	for i := 0; i < 2*outboxPage+500; i++ {
+		id := fmt.Sprintf("e%04d", i)
+		st.outbox = append(st.outbox, store.UnloggedEvent{ProjectID: 1, ID: id, Event: store.Event{ID: id, ProjectID: 1}})
+	}
+	st.outbox[3] = store.UnloggedEvent{ProjectID: 1, ID: "e0003", Err: errors.New("submission e0003 unlogged event: unexpected end of JSON input")}
+	log := &loggedEvents{}
+	r := attributionRunner(t, st, now).WithAttribution(&echoAttributor{}, log)
+	var buf bytes.Buffer
+	r.logger = slog.New(slog.NewTextHandler(&buf, nil))
+	r.attributeSubmissions(context.Background())
+	if !slices.Equal(log.calls, []int{outboxPage - 1, outboxPage, 500}) || len(st.outbox) != 0 {
+		t.Fatalf("logged in calls of %v, %d left; want %d, %d and 500, none left", log.calls, len(st.outbox), outboxPage-1, outboxPage)
+	}
+	if !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "submission=e0003") {
+		t.Errorf("log %q does not name the unreadable event", buf.String())
+	}
+}
+
+// A spent budget ends the flush after the page it is in; a runner
+// without a log leaves the outbox alone.
+func TestAttributeSubmissionsOutboxBudgetAndNoLog(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	fill := func() *pendingStore {
+		st := &pendingStore{}
+		for i := 0; i < outboxPage+1; i++ {
+			st.outbox = append(st.outbox, store.UnloggedEvent{ProjectID: 1, ID: fmt.Sprintf("e%04d", i)})
+		}
+		return st
+	}
+	st := fill()
+	log := &loggedEvents{}
+	r := attributionRunner(t, st, now).WithAttribution(&echoAttributor{}, log)
+	r.attributionTickBudget = time.Nanosecond
+	r.attributeSubmissions(context.Background())
+	if !slices.Equal(log.calls, []int{outboxPage}) || len(st.outbox) != 1 {
+		t.Fatalf("logged in calls of %v, %d left; want one page, one left", log.calls, len(st.outbox))
+	}
+	st = fill()
+	attributionRunner(t, st, now).WithAttribution(&echoAttributor{}, nil).attributeSubmissions(context.Background())
+	if st.outboxRead != 0 || len(st.outbox) != outboxPage+1 {
+		t.Fatalf("a runner without a log read the outbox %d times, left %d", st.outboxRead, len(st.outbox))
 	}
 }

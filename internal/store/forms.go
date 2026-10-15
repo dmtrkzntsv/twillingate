@@ -137,3 +137,15 @@ type PendingSubmission struct {
 	// the job can clear it rather than meet it again every minute.
 	Err error
 }
+
+// UnloggedEvent is a submission's $form_submit event written to SQLite
+// and not yet to the event files: the outbox the attribution job flushes.
+// MarkLogged reads only ProjectID and ID.
+type UnloggedEvent struct {
+	ProjectID int64
+	ID        string
+	Event     Event
+	// Err is why the stored event could not be read; Event is zero when
+	// it is set. It is still listed, so the job can mark it logged.
+	Err error
+}

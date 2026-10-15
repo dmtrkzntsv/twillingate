@@ -17,7 +17,9 @@ type Attributor interface {
 }
 
 // EventLog appends events to the archive log (*archive.Log): a
-// submission's event goes to SQLite and the files alike.
+// submission's event goes to SQLite and the files alike. A line written
+// twice is harmless: the log drops a repeated id for ten minutes, and the
+// dump keeps one row per id after that.
 type EventLog interface {
 	WriteEvents(ctx context.Context, evs []store.Event) error
 }
@@ -48,9 +50,13 @@ const attributionBatch = 100
 // wait for the next minute.
 const attributionTickBudget = 30 * time.Second
 
+// outboxPage bounds the events one flush of the outbox reads and logs in
+// one write.
+const outboxPage = 1000
+
 // WithAttribution makes the runner attribute form submissions each
-// minute, looking them up through a and writing their events to log too.
-// Only a process that ingests has both.
+// minute, looking them up through a and writing their events to log too
+// (nil: they stay in the outbox). Only a process that ingests has both.
 func (r *Runner) WithAttribution(a Attributor, log EventLog) *Runner {
 	r.attributor, r.eventLog = a, log
 	return r
@@ -61,6 +67,7 @@ func (r *Runner) WithAttribution(a Attributor, log EventLog) *Runner {
 // batches keep coming and attributionTickBudget lasts. A failed lookup
 // ends the tick and is retried the next minute; the submissions past
 // attributionGiveUp are attributed without it, counted in one error line.
+// Then it flushes the outbox to the event log (flushOutbox).
 func (r *Runner) attributeSubmissions(ctx context.Context) {
 	if r.attributor == nil {
 		return
@@ -78,11 +85,59 @@ func (r *Runner) attributeSubmissions(ctx context.Context) {
 		r.logger.Error(fmt.Sprintf("form attribution: %d submissions given up after an hour without a lookup; attributed with what their clients sent", givenUp),
 			"submissions", givenUp)
 	}
+	r.flushOutbox(ctx, started)
+}
+
+// flushOutbox appends the events AttributeSubmission wrote to SQLite to
+// the event log, a page at a time while full pages keep coming and the
+// tick's budget (from started) lasts, and marks each page logged once it
+// is written: delivery at least once, so a crash or a failed write
+// between SQLite and the files is retried the next minute, never lost.
+// An event that does not read is logged as an error and marked with its
+// page. Without a log, the events wait.
+func (r *Runner) flushOutbox(ctx context.Context, started time.Time) {
+	if r.eventLog == nil {
+		return
+	}
+	for {
+		us, err := r.store.UnloggedEvents(ctx, outboxPage)
+		if err != nil {
+			r.logger.Error("form attribution: unlogged events", "error", err)
+			return
+		}
+		if len(us) == 0 {
+			return
+		}
+		evs := make([]store.Event, 0, len(us))
+		for _, u := range us {
+			if u.Err != nil {
+				r.logger.Error("form attribution: unreadable unlogged event; kept in SQLite only",
+					"project", u.ProjectID, "submission", u.ID, "error", u.Err)
+				continue
+			}
+			evs = append(evs, u.Event)
+		}
+		if len(evs) > 0 {
+			if err := r.eventLog.WriteEvents(ctx, evs); err != nil {
+				r.logger.Error("form attribution: events not logged, retrying next minute", "events", len(evs), "error", err)
+				return
+			}
+		}
+		if err := r.store.MarkLogged(ctx, us); err != nil {
+			// Logged but still unlogged: the next minute writes them again,
+			// which the log and the dump drop by id.
+			r.logger.Error("form attribution: mark logged", "events", len(us), "error", err)
+			return
+		}
+		if len(us) < outboxPage || time.Since(started) >= r.attributionTickBudget || ctx.Err() != nil {
+			return
+		}
+	}
 }
 
 // attributeBatch attributes up to attributionBatch pending submissions:
-// one lookup for all of them, one transaction each, then the written
-// events to the log. n is how many were pending; more is false when the
+// one lookup for all of them, one transaction each, which leaves the
+// written events in the outbox. n is how many were pending; more is false when the
 // next batch would not move on: the read or the lookup failed, or a
 // submission stayed pending (its write failed), so the next read would
 // return it again. givenUp counts the submissions attributed without a
@@ -121,7 +176,6 @@ func (r *Runner) attributeBatch(ctx context.Context, now time.Time, givenUp *int
 	for _, f := range found {
 		byKey[key(f.ProjectID, f.ID)] = f
 	}
-	var written []store.Event
 	for _, p := range pending {
 		if p.Err != nil {
 			if !r.clearUnreadable(ctx, p) {
@@ -135,22 +189,13 @@ func (r *Runner) attributeBatch(ctx context.Context, now time.Time, givenUp *int
 			continue
 		}
 		ev := attributed(p.Event, f)
-		wrote, err := r.store.AttributeSubmission(ctx, p, ev)
-		if err != nil {
+		if _, err := r.store.AttributeSubmission(ctx, p, ev); err != nil {
 			r.logger.Error("form attribution: write", "project", p.ProjectID, "submission", p.ID, "error", err)
 			more = false
 			continue
 		}
 		if !ok {
 			*givenUp++
-		}
-		if wrote {
-			written = append(written, ev)
-		}
-	}
-	if len(written) > 0 && r.eventLog != nil {
-		if err := r.eventLog.WriteEvents(ctx, written); err != nil {
-			r.logger.Error("form attribution: events not logged", "events", len(written), "error", err)
 		}
 	}
 	return len(pending), more

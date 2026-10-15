@@ -7,7 +7,16 @@
 -- the views sent before consent gave the visitor an id. All three are
 -- NULL once attributed, as they are for every submission from before
 -- this migration.
+--
+-- The event the job writes to events also waits here (unlogged_event,
+-- JSON, set in the same transaction) until the job has appended it to
+-- the event files: an outbox, so a crash or a failed log write between
+-- the two is retried, never lost. NULL once logged, for a submission
+-- whose event is not written, and for every submission from before this
+-- migration.
 ALTER TABLE submissions ADD COLUMN pending_event TEXT;
 ALTER TABLE submissions ADD COLUMN pending_write INTEGER;
 ALTER TABLE submissions ADD COLUMN pending_connection TEXT;
+ALTER TABLE submissions ADD COLUMN unlogged_event TEXT;
 CREATE INDEX submissions_pending ON submissions (received_at) WHERE pending_event IS NOT NULL;
+CREATE INDEX submissions_unlogged ON submissions (received_at) WHERE unlogged_event IS NOT NULL;

@@ -63,10 +63,18 @@ type Store interface {
 	// and counts toward limit; only a failed read is an error.
 	PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]store.PendingSubmission, error)
 	// AttributeSubmission stores ev's referrer and UTMs as p's attribution
-	// and, when p.WriteEvent, writes ev, all in one transaction; wrote
-	// reports the event written. A submission no longer pending (deleted,
-	// or attributed already) changes nothing.
+	// and, when p.WriteEvent, writes ev and leaves it in the outbox
+	// (UnloggedEvents), all in one transaction; wrote reports the event
+	// written. A submission no longer pending (deleted, or attributed
+	// already) changes nothing.
 	AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) (wrote bool, err error)
+	// UnloggedEvents lists up to limit events AttributeSubmission wrote
+	// and MarkLogged has not cleared yet, oldest first. A row that does
+	// not read is listed with Err set and a zero Event.
+	UnloggedEvents(ctx context.Context, limit int) ([]store.UnloggedEvent, error)
+	// MarkLogged takes these (ProjectID, ID) events out of the outbox, in
+	// one transaction, once they are in the event files.
+	MarkLogged(ctx context.Context, keys []store.UnloggedEvent) error
 }
 
 // Archive is the file side of the pass (internal/archive): it runs only in
