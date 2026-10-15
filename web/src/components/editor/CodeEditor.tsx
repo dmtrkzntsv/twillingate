@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { autocompletion, closeBrackets, closeBracketsKeymap, closeCompletion, completionKeymap } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
 import { markdown } from '@codemirror/lang-markdown'
-import { sql, SQLite } from '@codemirror/lang-sql'
+import { sql, PostgreSQL } from '@codemirror/lang-sql'
 import { bracketMatching, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
 import { tags as t } from '@lezer/highlight'
 import { Compartment, EditorState, Prec } from '@codemirror/state'
@@ -50,7 +50,8 @@ const highlight = HighlightStyle.define([
 ])
 
 /**
- * CodeMirror 6 for a widget's SQL (SQLite, completion of the views, their
+ * CodeMirror 6 for a widget's SQL (DuckDB's, in the PostgreSQL dialect,
+ * the closest CodeMirror has; completion of the event files' tables, their
  * columns and the three parameters) or its markdown. Mod-Enter runs.
  * Uncontrolled inside: `value` seeds it and replaces the text only when it
  * differs from what the editor holds (a reset), so the text typed in does not
@@ -110,8 +111,8 @@ export default function CodeEditor({ language, value, onChange, onRun, tables, l
       effects: lang.reconfigure(
         language === 'sql'
           ? [
-              sql({ dialect: SQLite, schema: sqlNamespace(latest.current.tables ?? []), upperCaseKeywords: true }),
-              SQLite.language.data.of({ autocomplete: paramCompletions }),
+              sql({ dialect: PostgreSQL, schema: sqlNamespace(latest.current.tables ?? []), upperCaseKeywords: true }),
+              PostgreSQL.language.data.of({ autocomplete: paramCompletions }),
             ]
           : markdown(),
       ),
