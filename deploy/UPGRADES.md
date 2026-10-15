@@ -946,3 +946,83 @@ Rollback: an older binary ignores the new columns and attributes on
 arrival again. Submissions still pending at the rollback keep `{}` and
 get no event, and events still waiting to be logged at the rollback
 reach SQLite but not the event files.
+
+### Upgrading to dashboards on the event files (no migration)
+
+No schema migration. Dashboards now read the event files under `raw/`
+through the engine, not the database, and widget SQL is DuckDB SQL over
+the files' tables (`docs/reporting.md`, "Tables"). Before upgrading:
+
+- **Run the import first.** If `twillingate events import` has not run
+  (see "Upgrading to imported event files" above), run it on the
+  previous release, or right after the upgrade with the ingest service
+  stopped. Until it has, the
+  dashboards show only what the files hold, and the console logs at start:
+  `the events SQLite holds were never imported into the event files`.
+- **Check the engine:** `twillingate engine -check`, as the service user.
+  The reporting migrator now validates the system dashboards on the files
+  whenever a release changes them, so an engine child that cannot start
+  (say, `engine/` beside the database not writable by the service user)
+  now fails the start of the console, and of the CLI commands that open
+  the database (`migrate`, `project`, `key`, `form`, `events import`),
+  where it used to fail only the first query on the files. A start with
+  no change to the system dashboards runs no engine child for it.
+
+What changes on the day:
+
+- **History older than the raw window is gone from the dashboards.** They
+  start at the oldest raw day the database held at the import
+  (`RETENTION_RAW_DAYS` before it); the daily aggregates older than that
+  stay in the database, readable with `query` and `source: "sqlite"`, but
+  no widget reads them. From the upgrade on, the files keep
+  `RETENTION_DAYS` (default 400) of history.
+- **Widgets you or an agent made break** when their SQL reads SQLite's
+  views. Nothing rewrites or archives them. Each shows DuckDB's error on
+  its dashboard, with the hint "widget SQL is DuckDB SQL over events,
+  views, product, measures, sessions, identities and aliases; see
+  docs://reporting". The console also checks every one in the background
+  at start and logs each that fails:
+
+  ```sh
+  journalctl -u twillingate | grep "widget SQL fails"
+  docker compose logs twillingate | grep "widget SQL fails"
+  ```
+
+  Each line names `widget_id`, `dashboard_id`, `title` and the error.
+  Rewrite them with `update_widget` (an agent can, given
+  `docs://reporting`). Three common rewrites:
+
+  ```sql
+  -- before: visitors per day
+  SELECT day AS x, SUM(visitors) AS y FROM v_views_daily
+  WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY day ORDER BY day
+  -- after
+  SELECT day AS x, count(DISTINCT actor_id) AS y FROM views
+  WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY day ORDER BY day
+
+  -- before: signups, with the previous period
+  SELECT SUM(count) AS value FROM v_product_daily
+  WHERE project_id = :project AND event_name = 'signup'
+    AND day BETWEEN date(:from, '-' || (julianday(:to) - julianday(:from) + 1) || ' days') AND date(:from, '-1 day')
+  -- after
+  SELECT count(*) AS value FROM product
+  WHERE project_id = :project AND event_name = 'signup'
+    AND day BETWEEN :from - (:to - :from + 1) AND :from - 1
+
+  -- before: top countries
+  SELECT country AS label, SUM(visitors) AS value FROM v_views_countries
+  WHERE project_id = :project AND day BETWEEN :from AND :to AND country != ''
+  GROUP BY country ORDER BY value DESC LIMIT 10
+  -- after
+  SELECT country AS label, count(DISTINCT actor_id) AS value FROM views
+  WHERE project_id = :project AND day BETWEEN :from AND :to AND country IS NOT NULL
+  GROUP BY country ORDER BY value DESC LIMIT 10
+  ```
+
+  A field the event did not send is NULL in the files, where the database
+  had `''`; `day`, `:from` and `:to` are DATEs.
+- `twillingate reporting dev` runs its widgets on the files in
+  `EVENTS_DIR` (default `raw/` beside the `-db` database).
+
+Rollback: the previous release's binary reads the database as before.
+Widgets rewritten for the files fail on it, as SQLite SQL now fails here.

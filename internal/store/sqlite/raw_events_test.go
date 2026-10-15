@@ -103,3 +103,19 @@ func TestRawEventsReadsOlderRows(t *testing.T) {
 		t.Fatalf("Attributes = %v, want %v", got[0].Attributes, want)
 	}
 }
+
+// TestHasRawEvents: false on an empty database, true once a row is held.
+func TestHasRawEvents(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	if held, err := d.HasRawEvents(ctx); err != nil || held {
+		t.Fatalf("empty: held %v, err %v; want false", held, err)
+	}
+	if err := d.WriteEvents(ctx, []store.Event{{ID: "a", ProjectID: 1, Family: store.FamilyProduct,
+		EventName: "signup", TS: rawAt("2026-10-11T10:00:00Z"), ActorID: "u1", ActorKind: store.ActorUser, SampleRate: 1}}); err != nil {
+		t.Fatal(err)
+	}
+	if held, err := d.HasRawEvents(ctx); err != nil || !held {
+		t.Fatalf("one row: held %v, err %v; want true", held, err)
+	}
+}

@@ -16,7 +16,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/api"
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/geo"
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/jobs"
@@ -85,7 +84,19 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		return err
 	}
 	defer st.Close()
-	if err := Migrate(ctx, cfg, st); err != nil {
+	// The engine (raw-first D8): the reporting migrator validates the
+	// system widgets on the event files through it, the ingest process's
+	// daily pass dumps and merges through it, the console's widgets and
+	// query read the files through it. A child starts on the first
+	// request, so a process that needs none runs none. Closed after the
+	// jobs runner and the HTTP surfaces return (Serve waits for both), its
+	// last users.
+	eng, files, err := openFiles(cfg)
+	if err != nil {
+		return err
+	}
+	defer eng.Close()
+	if err := migrate(ctx, cfg, st, files); err != nil {
 		return err
 	}
 	// The views' live halves read their caps from meta with a scalar
@@ -118,6 +129,11 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	ops.FormDraftDays = cfg.Forms.DraftDays
 	if len(reg.Snapshot(ctx).Projects()) == 0 {
 		logger.Warn("no projects configured; create one with `twillingate project create` or an API management operation")
+	}
+	if runConsole {
+		if err := warnImport(ctx, st, logger); err != nil {
+			return err
+		}
 	}
 
 	salter := identity.NewSalter(st, time.Now)
@@ -155,35 +171,8 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	}
 
 	runner := jobs.New(st, cfg, reg, salter, logger, time.Now)
-	// The engine (raw-first D8): the ingest process's daily pass dumps and
-	// merges through it, the console's query reads the files through it.
-	// A child starts on the first request, so a process that needs none
-	// runs none.
-	opts, err := EngineOptions(cfg)
-	if err != nil {
-		stopPipe()
-		<-pipeDone
-		return err
-	}
-	eng, err := engine.New(opts)
-	if err != nil {
-		stopPipe()
-		<-pipeDone
-		return err
-	}
-	// Closed after the jobs runner and the HTTP surfaces return (Serve
-	// waits for both), its last users.
-	defer eng.Close()
 	if archiveLog != nil {
 		runner.WithArchive(archive.New(archiveLog, eng, logger))
-	}
-	files, err := archive.NewReader(cfg.EventsDir, eng)
-	if err != nil {
-		stopPipe()
-		<-pipeDone
-		return err
-	}
-	if archiveLog != nil {
 		// Form attribution (raw-first PR 5b): the process that ingests
 		// looks each submission's source up in the files a minute after
 		// it arrives and writes its event to SQLite and the log.
@@ -217,9 +206,10 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	// each surface gets a listener of its own.
 	var surfaces []httpSurface
 	var apiClose func() error
+	widgets := newWidgetFiles(cfg, files, reg)
 	switch {
 	case runConsole && runIngest && cfg.Console.Addr == cfg.IngestAddr:
-		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger, files)
+		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger, files, widgets)
 		if err != nil {
 			stopBackground()
 			return err
@@ -230,7 +220,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		api.RegisterOn(mux, protected, cfg, false, logger)
 		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, api.NotFoundPages(mux), "ingest,console"})
 	case runConsole:
-		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger, files)
+		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger, files, widgets)
 		if err != nil {
 			stopBackground()
 			return err
@@ -291,6 +281,17 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		logger.Info("serving", "addr", s.addr, "surfaces", s.label, "projects", len(reg.Snapshot(ctx).Projects()))
 	}
 
+	// The users' widgets are checked once the console answers, in the
+	// background: Serve does not wait for the queries, only for the check
+	// to stop before the engine closes.
+	checkDone := make(chan struct{})
+	checkCtx, stopCheck := context.WithCancel(context.Background())
+	if runConsole {
+		go func() { checkUserWidgets(checkCtx, st, widgets, logger); close(checkDone) }()
+	} else {
+		close(checkDone)
+	}
+
 	remaining := len(srvs)
 	var listenErr error
 	select {
@@ -309,6 +310,8 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	}
 	stopSummary()
 	<-summaryDone
+	stopCheck()
+	<-checkDone
 	stopJobs()
 	<-jobsDone
 	stopPipe() // triggers final flush

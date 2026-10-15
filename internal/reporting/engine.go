@@ -29,7 +29,8 @@ type Files interface {
 }
 
 // errNoFiles fails a sql widget on a Service given no Files, rather than
-// a nil dereference.
+// a nil dereference. app wires Files everywhere; api's tests of the
+// handler's routing and auth build one without, and run no widget.
 var errNoFiles = errors.New("reporting: sql widgets run on the event files, and this process has none")
 
 // sqliteHint follows an error that names what only SQLite had (Decision
@@ -150,4 +151,55 @@ func count(v any) (int, error) {
 		return 0, fmt.Errorf("reporting: page count %v: %w", v, err)
 	}
 	return n, nil
+}
+
+// WidgetFailure is a user's sql widget whose SQL the event files refuse.
+type WidgetFailure struct {
+	WidgetID, DashboardID int64
+	Title                 string
+	Err                   error
+}
+
+// CheckUserWidgets runs the check Migrate runs on the system widgets (the
+// sample project and week bound, no rows, the columns the component
+// needs) on every live sql widget of every live user dashboard, and
+// returns those refused, in dashboard and widget order: most often SQL
+// written for SQLite before the switch. A widget whose component was
+// removed is left out; its dashboard says so already. An error that is
+// no refusal of a widget (the engine did not start) stops the check and
+// is returned with the failures found so far.
+func CheckUserWidgets(ctx context.Context, st Store, files Files) ([]WidgetFailure, error) {
+	svc := &Service{st: st, files: files, sources: newSources(files, false, time.Now), now: time.Now}
+	comps, err := svc.components(ctx)
+	if err != nil {
+		return nil, err
+	}
+	ds, err := st.ListDashboards(ctx)
+	if err != nil {
+		return nil, err
+	}
+	live := map[int64]bool{}
+	for _, d := range ds {
+		live[d.ID] = d.Owner == store.OwnerUser && d.ArchivedAt == ""
+	}
+	ws, err := st.ListWidgets(ctx, 0)
+	if err != nil {
+		return nil, err
+	}
+	var out []WidgetFailure
+	for _, w := range ws {
+		comp, ok := comps[w.Component]
+		if !live[w.DashboardID] || w.ArchivedAt != "" || w.SourceType != "sql" || !ok {
+			continue
+		}
+		err := svc.sources["sql"].Validate(ctx, w.Source, comp)
+		switch {
+		case err == nil:
+		case errors.Is(err, store.ErrInvalid):
+			out = append(out, WidgetFailure{WidgetID: w.ID, DashboardID: w.DashboardID, Title: w.Title, Err: err})
+		default:
+			return out, err
+		}
+	}
+	return out, nil
 }

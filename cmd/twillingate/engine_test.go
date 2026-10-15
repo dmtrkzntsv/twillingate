@@ -10,7 +10,6 @@ import (
 func TestEngineCheckSpawnsAChild(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("DATABASE_DSN", "sqlite://"+filepath.Join(dir, "twillingate.db"))
-	t.Setenv(asBinary, "1")
 	var out strings.Builder
 	if code := run([]string{"engine", "-check"}, &out); code != 0 {
 		t.Fatalf("exit %d: %s", code, out.String())

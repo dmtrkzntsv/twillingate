@@ -302,6 +302,8 @@ type Store interface {
 	// RawEvents returns a project's raw rows of one day, as the event
 	// files hold an event (sqlite.DB.RawEvents).
 	RawEvents(ctx context.Context, projectID int64, day civil.Date) ([]Event, error)
+	// HasRawEvents reports whether any raw row is held, of any project.
+	HasRawEvents(ctx context.Context) (bool, error)
 	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date, topN int) error
 	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error

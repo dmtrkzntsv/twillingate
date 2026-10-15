@@ -89,6 +89,15 @@ func (d *DB) RawEvents(ctx context.Context, projectID int64, day civil.Date) ([]
 	return out, rows.Err()
 }
 
+// HasRawEvents reports whether SQLite holds any raw row, of any project
+// and family: what `twillingate events import` would copy into the files.
+func (d *DB) HasRawEvents(ctx context.Context) (bool, error) {
+	var held bool
+	err := d.db.QueryRowContext(ctx,
+		`SELECT EXISTS (SELECT 1 FROM events WHERE family IN ('views', 'product', 'measures'))`).Scan(&held)
+	return held, err
+}
+
 // rawAttributes reads an attributes blob: a string value as is, any other
 // JSON value (a number or a boolean an older row may hold) as its text,
 // null dropped. An empty object is nil, as an event built without

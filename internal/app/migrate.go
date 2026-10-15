@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
@@ -21,10 +22,23 @@ var _ reporting.Store = store.Store(nil)
 // (serve, migrate, project) calls this rather than st.Migrate directly, so
 // a CLI-only install stays in sync with the release too.
 //
-// The reporting migrator validates the system widgets on the event
-// files; it is given none yet, so a release whose system definition
-// changed fails here until the engine is wired in.
+// The reporting migrator validates every system widget on the event
+// files, so Migrate builds an engine on this binary for it, closed before
+// it returns. The engine spawns its child only when a query runs, which
+// is only when the release's system definition changed: most runs spawn
+// none.
 func Migrate(ctx context.Context, cfg *config.Config, st store.Store) error {
+	eng, reader, err := openFiles(cfg)
+	if err != nil {
+		return err
+	}
+	defer eng.Close()
+	return migrate(ctx, cfg, st, reader)
+}
+
+// migrate is Migrate on the caller's reader: serve's, whose engine the
+// console goes on using.
+func migrate(ctx context.Context, cfg *config.Config, st store.Store, reader *archive.Reader) error {
 	if err := st.Migrate(ctx); err != nil {
 		return err
 	}
@@ -38,5 +52,5 @@ func Migrate(ctx context.Context, cfg *config.Config, st store.Store) error {
 	if err := st.RebuildFlatView(ctx, reg.Snapshot(ctx).DeclaredAttributeKeys()); err != nil {
 		return fmt.Errorf("rebuild v_events_flat: %w", err)
 	}
-	return reporting.Migrate(ctx, st, nil)
+	return reporting.Migrate(ctx, st, newWidgetFiles(cfg, reader, reg))
 }

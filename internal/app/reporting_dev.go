@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/api"
+	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 )
@@ -22,12 +23,14 @@ const (
 )
 
 // ReportingDev runs `twillingate reporting dev`: a read-only handle on
-// dbPath, for the project switcher, and reporting.DevHandler, serving
-// addr until ctx is cancelled. Its sql widgets get no event files yet,
-// so they fail until the engine is wired in. There is no
+// dbPath, for the project switcher, an engine on this binary over the
+// event files in eventsDir, where its sql widgets run, and
+// reporting.DevHandler, serving addr until ctx is cancelled. There is no
 // store, no registry and no auth here — cmd/twillingate/reporting.go has
-// already refused a non-loopback addr before this is called.
-func ReportingDev(ctx context.Context, dirs []string, dbPath, addr string, logger *slog.Logger) error {
+// already refused a non-loopback addr before this is called. Without a
+// registry the widgets read the files without the projects' event and
+// attribute rules.
+func ReportingDev(ctx context.Context, dirs []string, dbPath, eventsDir, addr string, logger *slog.Logger) error {
 	// Widget SQL here is as custom as in the console: it may not read
 	// what the console's custom SQL may not.
 	db, err := readsql.Open(dbPath, devQueryTimeout, devQueryMaxRows, api.CustomSQLRefused()...)
@@ -35,8 +38,17 @@ func ReportingDev(ctx context.Context, dirs []string, dbPath, addr string, logge
 		return err
 	}
 	defer db.Close()
+	cfg := &config.Config{Database: "sqlite://" + dbPath, EventsDir: eventsDir,
+		Engine:  config.EngineConfig{MemoryLimit: config.DefaultEngineMemoryLimit, MaxChildren: config.DefaultEngineMaxChildren},
+		Console: config.ConsoleConfig{QueryTimeout: devQueryTimeout, QueryMaxRows: devQueryMaxRows}}
+	eng, reader, err := openFiles(cfg)
+	if err != nil {
+		return err
+	}
+	defer eng.Close()
+	files := newWidgetFiles(cfg, reader, nil)
 
-	srv := &http.Server{Addr: addr, Handler: reporting.DevHandler(dirs, nil, db), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: reporting.DevHandler(dirs, files, db), ReadHeaderTimeout: 5 * time.Second}
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.ListenAndServe() }()
 	logger.Info("reporting dev serving", "addr", addr, "dirs", dirs)

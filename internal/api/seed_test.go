@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
@@ -23,9 +24,14 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// TestMain runs the package's tests, then removes the seeded template's
-// temp dir (see hostTemplate) once every test has finished with it.
+// TestMain serves as the engine child when the test hosts' engines spawn
+// it (archivetest.Child), and otherwise runs the package's tests, then
+// removes the seeded template's temp dir (see hostTemplate) once every
+// test has finished with it.
 func TestMain(m *testing.M) {
+	if archivetest.Child() {
+		return
+	}
 	code := m.Run()
 	if hostTemplateDir != "" {
 		os.RemoveAll(hostTemplateDir)
@@ -37,14 +43,18 @@ var (
 	hostTemplateOnce sync.Once
 	hostTemplateDir  string
 	hostTemplatePath string
+	// hostTemplateRaw is the template's event files, which each host
+	// copies (newHostFiles).
+	hostTemplateRaw string
 )
 
-// hostTemplate builds newTestHost's database once per test binary and
-// returns its path: migrated, seeded, and with the release's components
-// and system dashboards installed, as app.Migrate leaves a real one.
-// Validating every system widget's SQL takes seconds under -race, which
-// per test would put this package past go test's default timeout, so
-// newTestHost copies this file instead.
+// hostTemplate builds newTestHost's database and event files once per
+// test binary and returns the database's path: migrated, seeded, and with
+// the release's components and system dashboards installed, as
+// app.Migrate leaves a real one, beside raw/ (hostTemplateRaw), the same
+// history as events (hostEvents). Validating every system widget's SQL
+// takes seconds under -race, which per test would put this package past
+// go test's default timeout, so newTestHost copies these instead.
 func hostTemplate(t *testing.T) string {
 	t.Helper()
 	hostTemplateOnce.Do(func() {
@@ -149,18 +159,22 @@ func hostTemplate(t *testing.T) string {
 			t.Fatal(err)
 		}
 
-		db, err := readsql.Open(path, 5*time.Second, 1000)
+		raw := filepath.Join(dir, "raw")
+		if err := writeHostFiles(ctx, filepath.Join(dir, "engine"), raw); err != nil {
+			t.Fatal(err)
+		}
+		files, closeFiles, err := templateFiles(ctx, filepath.Join(dir, "engine"), raw, st)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := reporting.Migrate(ctx, st, nil); err != nil {
+		err = reporting.Migrate(ctx, st, files)
+		closeFiles()
+		if err != nil {
 			t.Fatal(err)
 		}
+		hostTemplateRaw = raw
 		// Closing checkpoints the WAL into the main file, so copying that
 		// one file carries everything.
-		if err := db.Close(); err != nil {
-			t.Fatal(err)
-		}
 		if err := st.Close(); err != nil {
 			t.Fatal(err)
 		}
@@ -176,7 +190,8 @@ func hostTemplate(t *testing.T) string {
 // docs (id 2) — two days of web aggregates and one raw hit, and returns a
 // connected in-memory MCP client session against the assembled tool host,
 // on its own copy of hostTemplate (so with the system dashboards, ids 1
-// up). A project a test creates on top is id 3.
+// up) and of its event files, where the widgets run. A project a test
+// creates on top is id 3.
 func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	t.Helper()
 	path := t.TempDir() + "/mcp.db"
@@ -209,7 +224,7 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 		t.Fatal(err)
 	}
 	h := &host{db: db, subs: subs, reg: reg, ops: manage.NewOps(reg, st),
-		rep:       reporting.New(st, nil, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example"}),
+		rep:       reporting.New(st, newHostFiles(t, reg), reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example"}),
 		ingestURL: "https://collector.test", logger: logger, rawDays: config.DefaultRawDays,
 		limits: limitsFrom(&config.Config{AttributeValuesTopN: config.DefaultAttributeValuesTopN, IdentitiesTopN: config.DefaultIdentitiesTopN})}
 	// host itself carries no path (production has no need for one once

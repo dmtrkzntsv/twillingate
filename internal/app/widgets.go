@@ -1,0 +1,135 @@
+package app
+
+import (
+	"context"
+	"log/slog"
+	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/config"
+	"github.com/dmtrkzntsv/twillingate/internal/engine"
+	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting"
+)
+
+// widgetFiles is reporting.Files over the console's event files: each
+// query under CONSOLE_QUERY_TIMEOUT, with the registry's rules, scoped to
+// the widget's project, and pages of at most CONSOLE_QUERY_ROWS_MAX rows,
+// as the query tool reads the same files.
+type widgetFiles struct {
+	reader  *archive.Reader
+	dir     string // EVENTS_DIR, where SampleProject reads the file names
+	timeout time.Duration
+	maxRows int
+	// reg gives the rules and which projects are live. nil (reporting
+	// dev, which has no registry) applies no rules and counts every
+	// project with files as live.
+	reg *manage.Registry
+}
+
+var _ reporting.Files = (*widgetFiles)(nil)
+
+func newWidgetFiles(cfg *config.Config, reader *archive.Reader, reg *manage.Registry) *widgetFiles {
+	return &widgetFiles{reader: reader, dir: cfg.EventsDir, timeout: cfg.Console.QueryTimeout,
+		maxRows: cfg.Console.QueryMaxRows, reg: reg}
+}
+
+// Query runs sql under its own deadline: reporting runs a widget's load
+// detached from the request that asked for it, so this is the only one.
+func (f *widgetFiles) Query(ctx context.Context, sql string, args []engine.Arg, maxRows int, project int64) (engine.Result, error) {
+	ctx, cancel := context.WithTimeout(ctx, f.timeout)
+	defer cancel()
+	var rules archive.Rules
+	if f.reg != nil {
+		rules.Events, rules.Attributes = f.reg.Snapshot(ctx).RuleLists()
+	}
+	return f.reader.QueryScoped(ctx, archive.Scoped{SQL: sql, Args: args, MaxRows: maxRows, Project: project}, rules)
+}
+
+// SampleProject is the live project whose files hold the newest day (a
+// tie goes to the lowest id), from the file names alone, so it costs no
+// query; 0 when no live project has any.
+func (f *widgetFiles) SampleProject(ctx context.Context) (int64, error) {
+	days, err := archive.LatestDays(f.dir)
+	if err != nil {
+		return 0, err
+	}
+	live := func(int64) bool { return true }
+	if f.reg != nil {
+		snap := f.reg.Snapshot(ctx)
+		live = func(id int64) bool { p := snap.Project(id); return p != nil && !p.Archived }
+	}
+	var id int64
+	var newest string
+	for pid, day := range days {
+		if live(pid) && (day > newest || day == newest && pid < id) {
+			id, newest = pid, day
+		}
+	}
+	return id, nil
+}
+
+func (f *widgetFiles) Timeout() time.Duration { return f.timeout }
+func (f *widgetFiles) MaxRows() int           { return f.maxRows }
+
+// openFiles builds the engine on this binary (EngineOptions) and a reader
+// over EVENTS_DIR. Neither starts anything: the engine spawns its child on
+// the first query, so a caller that never queries never spawns one. The
+// caller closes the engine.
+func openFiles(cfg *config.Config) (*engine.Engine, *archive.Reader, error) {
+	opts, err := EngineOptions(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	eng, err := engine.New(opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	reader, err := archive.NewReader(cfg.EventsDir, eng)
+	if err != nil {
+		eng.Close()
+		return nil, nil, err
+	}
+	return eng, reader, nil
+}
+
+// checkUserWidgets logs every user's sql widget whose SQL fails on the
+// event files (Decision 10): a widget written in SQLite's dialect before
+// the switch fails its shape check here, once at start, rather than only
+// on the dashboard of whoever opens it next. Nothing is rewritten or
+// archived. It runs in the background: each check is a query, and the
+// console does not wait for them.
+func checkUserWidgets(ctx context.Context, st reporting.Store, files reporting.Files, logger *slog.Logger) {
+	failed, err := reporting.CheckUserWidgets(ctx, st, files)
+	for _, f := range failed {
+		logger.Warn("widget SQL fails on the event files", "widget_id", f.WidgetID,
+			"dashboard_id", f.DashboardID, "title", f.Title, "error", f.Err.Error())
+	}
+	if err != nil && ctx.Err() == nil {
+		logger.Error("checking the users' widgets on the event files", "error", err)
+	}
+}
+
+// importMarks is the slice of the store warnImport reads.
+type importMarks interface {
+	GetMeta(ctx context.Context, key string) (string, error)
+	HasRawEvents(ctx context.Context) (bool, error)
+}
+
+// warnImport logs when SQLite holds raw rows and `twillingate events
+// import` has never run (Decision 13): the dashboards read only the event
+// files, so until the import copies SQLite's history into them they show
+// only what arrived since the files began.
+func warnImport(ctx context.Context, st importMarks, logger *slog.Logger) error {
+	done, err := st.GetMeta(ctx, eventsImportedKey)
+	if err != nil || done != "" {
+		return err
+	}
+	held, err := st.HasRawEvents(ctx)
+	if err != nil || !held {
+		return err
+	}
+	logger.Warn("the events SQLite holds were never imported into the event files: dashboards show only what the files hold; " +
+		"run `twillingate events import` with ingest stopped")
+	return nil
+}
