@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Builds twillingate, seeds one demo project, and runs `serve` for the
 # Playwright e2e suite (see playwright.config.ts, which runs this as its
-# webServer and waits on /healthz). Everything lives under a scratch
+# webServer and waits for the line it prints once the event files settle,
+# below). Everything lives under a scratch
 # directory so runs never collide with a developer's local/twillingate.db.
 set -euo pipefail
 
