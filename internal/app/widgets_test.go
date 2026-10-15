@@ -261,6 +261,52 @@ func TestCheckUserWidgetsTellsResourceFailures(t *testing.T) {
 	}
 }
 
+// TestMigrateChecksTheSystemWidgetsPastTheConsoleTimeout: the boot's
+// check of the system widgets is no viewer's query. A CONSOLE_QUERY_TIMEOUT
+// far shorter than starting the engine's child leaves it whole: the
+// recorded hash is the release's, not one marked unchecked.
+func TestMigrateChecksTheSystemWidgetsPastTheConsoleTimeout(t *testing.T) {
+	f := newWidgetsFixture(t)
+	ctx := context.Background()
+	f.cfg.Console.QueryTimeout = time.Nanosecond
+	if err := Migrate(ctx, f.cfg, f.st); err != nil {
+		t.Fatal(err)
+	}
+	hash, err := f.st.ReportingHash(ctx)
+	if err != nil || hash == "test" || strings.HasPrefix(hash, "unchecked") {
+		t.Errorf("ReportingHash = %q, %v; want the release's, every widget checked", hash, err)
+	}
+}
+
+// TestMigrateStartsWhenTheSystemCheckCannotRun: a check of the system
+// widgets that runs out of time or memory, or whose child dies, is logged
+// as an error and the start goes on, so the daily pass that frees the
+// engine runs; a refusal of their SQL still stops it.
+func TestMigrateStartsWhenTheSystemCheckCannotRun(t *testing.T) {
+	f := newWidgetsFixture(t)
+	ctx := context.Background()
+	for name, cause := range map[string]error{
+		"timeout":       context.DeadlineExceeded,
+		"out of memory": fmt.Errorf("%w: %w", archive.ErrLoadingLogs, &engine.QueryError{Msg: "Out of Memory Error: x"}),
+		"child exited":  engine.ErrChildExited,
+	} {
+		t.Run(name, func(t *testing.T) {
+			var out bytes.Buffer
+			files := &failingFiles{Files: f.files(t), err: cause}
+			if err := migrateReporting(ctx, f.st, files, slog.New(slog.NewTextHandler(&out, nil))); err != nil {
+				t.Fatalf("err = %v, want the start to go on", err)
+			}
+			if !strings.Contains(out.String(), "level=ERROR") || !strings.Contains(out.String(), "could not check the system dashboards") {
+				t.Errorf("logged %q, want the error", out.String())
+			}
+		})
+	}
+	files := &failingFiles{Files: f.files(t), err: &engine.QueryError{Msg: "Binder Error: Referenced column \"nope\" not found"}}
+	if err := migrateReporting(ctx, f.st, files, slog.New(slog.DiscardHandler)); err == nil || errors.Is(err, reporting.ErrUnchecked) {
+		t.Errorf("DuckDB's refusal: err = %v, want the start stopped", err)
+	}
+}
+
 // TestWarnImport: the console warns, naming the projects, when SQLite
 // holds raw days older than the event files (or raw rows of a project with
 // no files); a fresh install, whose files began with its first event,

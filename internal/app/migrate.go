@@ -2,8 +2,11 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
@@ -33,6 +36,15 @@ var _ reporting.Store = store.Store(nil)
 // by root, which the service user then cannot open. Migrate checks just
 // before that first query, so a command run as root on a release that
 // changed nothing goes on as before.
+//
+// That check is part of the boot, not a viewer's query: each of its
+// queries runs under migrateQueryTimeout rather than
+// CONSOLE_QUERY_TIMEOUT. On an upgrade's first start its first query
+// loads every log the daily pass has not dumped yet, which can take
+// minutes or more memory than the engine has; a check that cannot run
+// for that (reporting.ErrUnchecked) is logged and the start goes on, so
+// the pass runs and the next start checks again. A refusal of a system
+// widget's SQL still fails the start.
 func Migrate(ctx context.Context, cfg *config.Config, st store.Store) error {
 	eng, reader, err := openFiles(cfg)
 	if err != nil {
@@ -60,11 +72,33 @@ func migrate(ctx context.Context, cfg *config.Config, st store.Store, reader *ar
 	if err := st.RebuildFlatView(ctx, reg.Snapshot(ctx).DeclaredAttributeKeys()); err != nil {
 		return fmt.Errorf("rebuild v_events_flat: %w", err)
 	}
-	var files reporting.Files = newWidgetFiles(cfg, reader, reg)
+	boot := newWidgetFiles(cfg, reader, reg)
+	boot.timeout = migrateQueryTimeout
+	var files reporting.Files = boot
 	if owner != "" {
 		files = &ownerFiles{Files: files, path: owner}
 	}
-	return reporting.Migrate(ctx, st, files)
+	return migrateReporting(ctx, st, files, NewLogger(cfg.Log))
+}
+
+// migrateQueryTimeout bounds each query of the reporting migrator's check
+// of the system widgets: long enough for the first to load a month of
+// logs at the cap that the daily pass has not dumped yet, short enough
+// that a start which cannot load them goes on (ErrUnchecked) while ingest
+// waits.
+const migrateQueryTimeout = 5 * time.Minute
+
+// migrateReporting runs the reporting migrator on files. A check of the
+// system widgets that could not run for want of time or memory is logged
+// as an error and the start goes on; the next start checks again.
+func migrateReporting(ctx context.Context, st store.Store, files reporting.Files, logger *slog.Logger) error {
+	err := reporting.Migrate(ctx, st, files)
+	if errors.Is(err, reporting.ErrUnchecked) {
+		logger.Error("could not check the system dashboards on the event files; starting without, so the daily pass can run",
+			"error", err.Error())
+		return nil
+	}
+	return err
 }
 
 // ownerFiles is Files that refuses its first query, the one that spawns

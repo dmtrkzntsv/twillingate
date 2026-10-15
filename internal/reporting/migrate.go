@@ -5,7 +5,9 @@
 // it does nothing — the common case, every boot after the first on a
 // given release. Otherwise it parses the manifest, loads the system
 // directories, validates every widget's SQL on the event files, and
-// hands the result to store.SyncReporting in one transaction.
+// hands the result to store.SyncReporting in one transaction. A check
+// that could not run for want of time or memory syncs all the same, and
+// the next run checks again (ErrUnchecked).
 //
 // Unlike create_dashboard (which defaults an omitted range to "7d"), a
 // system dashboard.json must give one explicitly: the release is
@@ -20,6 +22,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash"
 	"io/fs"
@@ -33,6 +36,23 @@ import (
 
 //go:embed system
 var systemFS embed.FS
+
+// ErrUnchecked is Migrate's error when it synced the release's system
+// dashboards without checking every widget's SQL on the event files: a
+// query ran out of time or memory, or the engine's child died under it
+// (resourceErr), which says nothing of the SQL. On an upgrade's first
+// start that is most likely the logs the daily pass has not dumped yet,
+// which the first query loads whole; failing the start would stop that
+// pass from ever running. The widgets after it are checked without a
+// query (paramsOnly), and the sync is recorded under a hash no run
+// matches, so the next one checks them all again. A refusal of the SQL
+// itself still fails Migrate: a release whose system SQL is broken must
+// not start.
+var ErrUnchecked = errors.New("reporting: the system widgets' SQL was not all checked on the event files")
+
+// uncheckedPrefix marks the hash of a sync recorded with ErrUnchecked:
+// it never equals hashSystem's, so the next run syncs and checks again.
+const uncheckedPrefix = "unchecked:"
 
 // Migrate syncs this release's embedded system definition (systemFS,
 // Manifest()) into st, validating every system widget's SQL on files.
@@ -84,6 +104,7 @@ func migrateFrom(ctx context.Context, st Store, files Files, system fs.FS, manif
 	// :from/:to still needs sample dates bound before the LIMIT 0 query,
 	// or the engine refuses a parameter with no argument.
 	svc := &Service{st: st, files: files, sources: newSources(files, false, time.Now), now: time.Now}
+	var unchecked error
 
 	dashboards := make([]store.SystemDashboard, 0, len(fds))
 	if len(fds) > 0 {
@@ -110,7 +131,19 @@ func migrateFrom(ctx context.Context, st Store, files Files, system fs.FS, manif
 			for j, fw := range fd.Widgets {
 				w := storeWidget(fw, widgetKeys[j], compsByName)
 				if err := svc.validateWidget(ctx, compsByName, w); err != nil {
-					return fmt.Errorf("reporting: system dashboard %d widget %s: %w", fd.ID, fw.Name, err)
+					cause := resourceCause(err)
+					if cause == nil {
+						return fmt.Errorf("reporting: system dashboard %d widget %s: %w", fd.ID, fw.Name, err)
+					}
+					// The engine's own words: the refusal's advice is for
+					// a person's query, not the release's.
+					reason := cause.Error()
+					if errors.Is(cause, context.DeadlineExceeded) {
+						reason = fmt.Sprintf("its query took over %s", files.Timeout())
+					}
+					unchecked = fmt.Errorf("%w: system dashboard %d widget %s: %s; the next start checks them again",
+						ErrUnchecked, fd.ID, fw.Name, reason)
+					svc.sources["sql"] = paramsOnly{svc.sources["sql"]}
 				}
 				widgets = append(widgets, w)
 			}
@@ -127,10 +160,26 @@ func migrateFrom(ctx context.Context, st Store, files Files, system fs.FS, manif
 		rows = append(rows, c.row())
 	}
 
-	return st.SyncReporting(ctx, store.ReportingSync{
+	if unchecked != nil {
+		hash = uncheckedPrefix + hash
+	}
+	if err := st.SyncReporting(ctx, store.ReportingSync{
 		Hash: hash, Version: version.Version,
 		Components: rows, Dashboards: dashboards,
-	})
+	}); err != nil {
+		return err
+	}
+	return unchecked
+}
+
+// paramsOnly is the sql source with a Validate that runs no query: the
+// check Migrate makes of the widgets after one whose query could not run,
+// which still refuses what the scanner refuses.
+type paramsOnly struct{ SourceType }
+
+func (paramsOnly) Validate(_ context.Context, content string, _ Component) error {
+	_, err := checkSQLParams(content)
+	return err
 }
 
 // storeWidget converts fw to the store row Migrate writes, defaulting a

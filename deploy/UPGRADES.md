@@ -955,13 +955,34 @@ No schema migration. Dashboards now read the event files under `raw/`
 through the engine, not the database, and widget SQL is DuckDB SQL over
 the files' tables (`docs/reporting.md`, "Tables"). Before upgrading:
 
-- **Run the import first.** If `twillingate events import` has not run
-  (see "Upgrading to imported event files" above), run it on the
-  previous release, or right after the upgrade with the ingest service
-  stopped. Until it has, the dashboards show only what the files hold,
-  and the console logs at start, naming the projects whose raw rows in
-  the database reach back before their files: `SQLite holds raw events
-  older than the event files`.
+- **Run the import first, on the previous release, and start that
+  release once before upgrading.** If `twillingate events import` has not
+  run (see "Upgrading to imported event files" above), run it with the
+  previous release's binary, start the service again, and wait for its
+  first pass to turn the imported days into day files. The pass is done
+  when no project's directory under `raw/` holds a `.log`, `.closed` or
+  `.dumping` file for a day before today (UTC):
+
+  ```sh
+  # systemd
+  ls /var/lib/twillingate/raw/*/ | grep -E '\.(log|closed|dumping)$'
+  # compose
+  docker compose exec twillingate sh -c "ls /var/lib/twillingate/raw/*/ | grep -E '\.(log|closed|dumping)$'"
+  ```
+
+  lists only files named for today. Then upgrade. This release's start
+  checks the system dashboards on the files before it serves anything,
+  ingest included, and its first query loads every log not yet dumped,
+  which on a month at the cap takes minutes and can exceed
+  `ENGINE_MEMORY_LIMIT`. If that query takes over 5 minutes or runs out
+  of memory, the start logs `could not check the system dashboards on
+  the event files` and goes on without the check, and the dashboards
+  answer slowly until this release's own pass ends; the next start
+  checks again. Until the import has run, the
+  dashboards show only what the files hold, and the console logs at
+  start, naming the projects whose raw rows in the database reach back
+  before their files: `SQLite holds raw events older than the event
+  files`.
 - **Check the engine:** `twillingate engine -check`, as the service user.
   The reporting migrator now validates the system dashboards on the files
   whenever a release changes them, so an engine child that cannot start

@@ -3,6 +3,8 @@ package reporting
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,6 +13,8 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -333,6 +337,115 @@ func TestMigrateFromInvalidSystemWidgetFailsAndWritesNothing(t *testing.T) {
 	for _, w := range got {
 		if w.Name == "users" && w.Source != "SELECT 1 AS value\n" {
 			t.Errorf("widget source changed by failed migration: %q", w.Source)
+		}
+	}
+}
+
+// countingFiles is Files that counts its queries and, with err set, fails
+// each with it rather than run it.
+type countingFiles struct {
+	Files
+	err     error
+	queries int
+}
+
+func (f *countingFiles) Query(ctx context.Context, q archive.Scoped) (engine.Result, error) {
+	f.queries++
+	if f.err != nil {
+		return engine.Result{}, f.err
+	}
+	return f.Files.Query(ctx, q)
+}
+
+// TestMigrateFromResourceFailureSyncsAndChecksAgain: a system widget's
+// check that runs out of time or memory, or whose child dies, does not
+// fail the start (the pass that would free the engine runs only after
+// it). Migrate syncs the release, checks the widgets after it without a
+// query, says so with ErrUnchecked, and the next run checks them all.
+func TestMigrateFromResourceFailureSyncsAndChecksAgain(t *testing.T) {
+	ctx := context.Background()
+	manifest := testManifest(t)
+	for name, cause := range map[string]error{
+		"timeout":            context.DeadlineExceeded,
+		"out of memory":      &engine.QueryError{Msg: "Out of Memory Error: failed to allocate data of size 64.0 MiB"},
+		"logs out of memory": fmt.Errorf("%w: %w", archive.ErrLoadingLogs, &engine.QueryError{Msg: "Out of Memory Error: x"}),
+		"child exited":       engine.ErrChildExited,
+	} {
+		t.Run(name, func(t *testing.T) {
+			st, files := newTestStoreAndFiles(t, 1000)
+			system, dir := systemFSCopy(t)
+			addSystemWidget(t, dir, "visits", "SELECT 2 AS value")
+
+			failing := &countingFiles{Files: files, err: cause}
+			err := migrateFrom(ctx, st, failing, system, manifest)
+			if !errors.Is(err, ErrUnchecked) || !strings.Contains(err.Error(), "widget users") {
+				t.Fatalf("err = %v, want ErrUnchecked naming widget users", err)
+			}
+			if failing.queries != 1 {
+				t.Errorf("%d queries, want none after the first failed", failing.queries)
+			}
+			ws, err := st.ListWidgets(ctx, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(ws) != 2 {
+				t.Errorf("dashboard 1 widgets = %d, want the release's 2 synced", len(ws))
+			}
+			hash, err := st.ReportingHash(ctx)
+			if err != nil || !strings.HasPrefix(hash, uncheckedPrefix) {
+				t.Fatalf("ReportingHash = %q, %v; want it marked unchecked", hash, err)
+			}
+
+			// The next run checks every widget again, and records the hash.
+			working := &countingFiles{Files: files}
+			if err := migrateFrom(ctx, st, working, system, manifest); err != nil {
+				t.Fatal(err)
+			}
+			if working.queries != 2 {
+				t.Errorf("next run: %d queries, want both widgets checked", working.queries)
+			}
+			if hash, _ := st.ReportingHash(ctx); strings.HasPrefix(hash, uncheckedPrefix) {
+				t.Errorf("ReportingHash after a full check = %q, still unchecked", hash)
+			}
+		})
+	}
+}
+
+// TestMigrateFromResourceFailureStillRefusesSQL: SQL refused for itself
+// fails the start, before a resource failure or after one, where the
+// scanner still reads it.
+func TestMigrateFromResourceFailureStillRefusesSQL(t *testing.T) {
+	ctx := context.Background()
+	st, files := newTestStoreAndFiles(t, 1000)
+	system, dir := systemFSCopy(t)
+	addSystemWidget(t, dir, "visits", "SELECT ? AS value")
+	err := migrateFrom(ctx, st, &countingFiles{Files: files, err: context.DeadlineExceeded}, system, testManifest(t))
+	if errors.Is(err, ErrUnchecked) || !errors.Is(err, store.ErrInvalid) || !strings.Contains(err.Error(), "widget visits") {
+		t.Errorf("after a timeout: err = %v, want widget visits refused", err)
+	}
+
+	err = migrateFrom(ctx, st, &countingFiles{Files: files,
+		err: &engine.QueryError{Msg: "Binder Error: Referenced column \"nope\" not found"}}, system, testManifest(t))
+	if errors.Is(err, ErrUnchecked) || !errors.Is(err, store.ErrInvalid) || !strings.Contains(err.Error(), "widget users") {
+		t.Errorf("DuckDB's refusal: err = %v, want widget users refused", err)
+	}
+	if hash, _ := st.ReportingHash(ctx); hash != "" {
+		t.Errorf("ReportingHash = %q, want nothing synced", hash)
+	}
+}
+
+// addSystemWidget adds a stat widget name with sql to the copied
+// retention dashboard under dir, after its users widget.
+func addSystemWidget(t *testing.T, dir, name, sql string) {
+	t.Helper()
+	ret := filepath.Join(dir, "retention")
+	for file, body := range map[string]string{
+		name + ".json":   `{"component": "stat", "title": "Visits", "props": {"format": "number"}}`,
+		name + ".sql":    sql,
+		"dashboard.json": `{"id": 1, "title": "Retention", "range": "30d", "sidebar": true, "project_tab": true, "layout": [{"widget": "users"}, {"widget": "` + name + `"}]}`,
+	} {
+		if err := os.WriteFile(filepath.Join(ret, file), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
 		}
 	}
 }
