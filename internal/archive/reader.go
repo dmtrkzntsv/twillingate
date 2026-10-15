@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
@@ -105,15 +106,35 @@ type Scoped struct {
 // A file the daily pass removed between the listing and the query (a dump
 // deletes its log, a merge its days) fails the attempt, and so does a
 // child the engine retired in between (the query lands on a fresh one,
-// which has no tables); the query is retried once, on a fresh listing and
-// a rebuild if need be.
+// which has no tables). Each attempt lists the files afresh and rebuilds
+// the tables if need be, so the next one sees what the pass left. A pass
+// that works through months of closed logs (the boot after an upgrade)
+// removes files for as long as it runs, so the query is retried up to
+// maxAttempts times, backing off from retryBackoff to retryBackoffMax
+// between attempts, until it succeeds, fails otherwise, or ctx is done.
+// The last error is returned.
 func (r *Reader) QueryScoped(ctx context.Context, q Scoped, rules Rules) (engine.Result, error) {
-	res, err := r.queryScoped(ctx, q, rules)
-	if vanished(err) || lostTables(err) {
-		res, err = r.queryScoped(ctx, q, rules)
+	backoff := retryBackoff
+	for attempt := 1; ; attempt++ {
+		res, err := r.queryScoped(ctx, q, rules)
+		if err == nil || !(vanished(err) || lostTables(err)) || attempt == maxAttempts {
+			return res, err
+		}
+		select {
+		case <-ctx.Done():
+			return res, err
+		case <-time.After(backoff):
+		}
+		backoff = min(backoff*2, retryBackoffMax)
 	}
-	return res, err
 }
+
+// The retry bounds of QueryScoped; variables so a test can shorten them.
+var (
+	maxAttempts     = 10
+	retryBackoff    = 50 * time.Millisecond
+	retryBackoffMax = time.Second
+)
 
 func (r *Reader) queryScoped(ctx context.Context, q Scoped, rules Rules) (engine.Result, error) {
 	if err := r.prepare(ctx, rules); err != nil {

@@ -93,23 +93,88 @@ func (e *vanishing) Query(ctx context.Context, sql string, maxRows int, args ...
 	return e.Engine.Query(ctx, sql, maxRows, args...)
 }
 
-// TestReaderRetriesOnceWhenAFileVanished is Review Focus 1.
-func TestReaderRetriesOnceWhenAFileVanished(t *testing.T) {
+// fastRetries shortens QueryScoped's backoff for a test.
+func fastRetries(t *testing.T) {
+	t.Helper()
+	was := retryBackoff
+	retryBackoff = time.Millisecond
+	t.Cleanup(func() { retryBackoff = was })
+}
+
+// TestReaderRetriesWhileAFileKeepsVanishing is Review Focus 1: a pass that
+// removes files for a while fails several attempts in a row, and the query
+// answers once it stops.
+func TestReaderRetriesWhileAFileKeepsVanishing(t *testing.T) {
+	fastRetries(t)
 	f := newFixture(t)
 	f.write(t, evOf(1, "a", "2026-10-11T10:00:00Z"))
-	eng := &vanishing{Engine: f.eng, fails: 1}
+	for _, fails := range []int{1, 2, maxAttempts - 1} {
+		eng := &vanishing{Engine: f.eng, fails: fails}
+		r, err := NewReader(f.log.Dir(), eng)
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, err := r.Query(context.Background(), "SELECT count(*) FROM events", 0, Rules{})
+		if err != nil || fmt.Sprint(res.Rows) != "[[1]]" {
+			t.Fatalf("after %d vanished files: %v, %v; want the retries to answer 1", fails, res.Rows, err)
+		}
+	}
+}
+
+// A query that keeps failing stops at the bound, with the last error.
+func TestReaderStopsRetryingAtTheBound(t *testing.T) {
+	fastRetries(t)
+	f := newFixture(t)
+	f.write(t, evOf(1, "a", "2026-10-11T10:00:00Z"))
+	eng := &vanishing{Engine: f.eng, fails: 1000}
 	r, err := NewReader(f.log.Dir(), eng)
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := r.Query(context.Background(), "SELECT count(*) FROM events", 0, Rules{})
-	if err != nil || fmt.Sprint(res.Rows) != "[[1]]" {
-		t.Fatalf("after one vanished file: %v, %v; want the retry to answer 1", res.Rows, err)
-	}
-	eng.fails = 2
 	var qe *engine.QueryError
 	if _, err := r.Query(context.Background(), "SELECT count(*) FROM events", 0, Rules{}); !errors.As(err, &qe) {
-		t.Fatalf("after two: err = %v; want the second failure returned, not a third try", err)
+		t.Fatalf("err = %v; want the last failure returned", err)
+	}
+	if tries := 1000 - eng.fails; tries != maxAttempts {
+		t.Fatalf("%d attempts, want %d", tries, maxAttempts)
+	}
+}
+
+// cancelling cancels the context of the query when the file vanishes.
+type cancelling struct {
+	*vanishing
+	cancel context.CancelFunc
+}
+
+func (e *cancelling) Query(ctx context.Context, sql string, maxRows int, args ...engine.Arg) (engine.Result, error) {
+	res, err := e.vanishing.Query(ctx, sql, maxRows, args...)
+	if vanished(err) {
+		e.cancel()
+	}
+	return res, err
+}
+
+// A cancelled context ends the loop between attempts, with the last error.
+func TestReaderRetriesStopWhenTheContextIsDone(t *testing.T) {
+	was := retryBackoff
+	retryBackoff = time.Hour
+	t.Cleanup(func() { retryBackoff = was })
+	f := newFixture(t)
+	f.write(t, evOf(1, "a", "2026-10-11T10:00:00Z"))
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	v := &vanishing{Engine: f.eng, fails: 1000}
+	r, err := NewReader(f.log.Dir(), &cancelling{vanishing: v, cancel: cancel})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start := time.Now()
+	var qe *engine.QueryError
+	if _, err := r.Query(ctx, "SELECT count(*) FROM events", 0, Rules{}); !errors.As(err, &qe) {
+		t.Fatalf("err = %v; want the failure of the attempt before the cancel", err)
+	}
+	if tries := 1000 - v.fails; tries != 1 || time.Since(start) > 5*time.Second {
+		t.Fatalf("%d attempts in %v; want 1, stopped by the context", tries, time.Since(start))
 	}
 }
 
@@ -616,6 +681,7 @@ func TestScopedQueryBindsArguments(t *testing.T) {
 // TestScopedQueryAfterAFailedBuild: the retries of Query hold for a scoped
 // query, with its arguments passed on.
 func TestScopedQueryAfterAFailedBuild(t *testing.T) {
+	fastRetries(t)
 	f := scopedFixture(t)
 	arg := engine.Arg{Name: "tw_d", Value: "2026-10-11"}
 	q := Scoped{SQL: "SELECT count(*) FROM events WHERE day = CAST($tw_d AS DATE)", Args: []engine.Arg{arg}, Project: 1}
@@ -629,10 +695,10 @@ func TestScopedQueryAfterAFailedBuild(t *testing.T) {
 	if err != nil || fmt.Sprint(res.Rows) != "[[2]]" {
 		t.Fatalf("after one vanished file: %v, %v; want the retry to answer 2", res.Rows, err)
 	}
-	eng.fails = 2
+	eng.fails = 1000
 	var qe *engine.QueryError
 	if _, err := r.QueryScoped(context.Background(), q, Rules{}); !errors.As(err, &qe) {
-		t.Fatalf("after two: err = %v; want the second failure returned", err)
+		t.Fatalf("a file that keeps vanishing: err = %v; want the last failure returned", err)
 	}
 
 	for _, name := range []string{"events", "views", "sessions", "_tw_all", "_tw_hot"} {
