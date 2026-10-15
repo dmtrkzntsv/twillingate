@@ -116,6 +116,16 @@ func TestProductAttributesReturnsRows(t *testing.T) {
 	if !sawPlatform {
 		t.Errorf("missing the $platform row: %s", out)
 	}
+	// The reserved keys a declaration once had to unlock break down too,
+	// undeclared: u2's signup came on /pricing from the newsletter.
+	for _, want := range []string{
+		`["2026-08-21","signup","$path","/pricing","1","1","1"]`,
+		`["2026-08-21","signup","$utm_source","newsletter","1","1","1"]`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s: %s", want, out)
+		}
+	}
 	// event filter branch
 	res = callTool(t, cs, "product_attributes", map[string]any{
 		"project_id": 1, "from": "2026-08-01", "to": "2026-08-31", "event": "signup"})
@@ -194,13 +204,23 @@ func TestIdentities(t *testing.T) {
 		t.Errorf("identities missing id or name: %s", out)
 	}
 	// Busiest first: u1's view and two signups; then the ids with two
-	// actions by id, r01 first.
+	// actions by id, r01 first. Actors and users are distinct per day and
+	// added up, as v_identity_daily summed: u1 is active on three days
+	// (as actor u1 on 08-20 and 08-21, a1 on 08-26), so 3 and 3, not the
+	// 2 actors and 1 user of the whole range.
 	var tbl tableOut
 	if err := json.Unmarshal([]byte(out), &tbl); err != nil {
 		t.Fatal(err)
 	}
-	if len(tbl.Rows) < 2 || !slices.Equal(tbl.Rows[0], []string{"u1", "Jane Doe", "2", "1", "1", "2"}) || tbl.Rows[1][0] != "r01" {
-		t.Errorf("rows = %v, want u1 (Jane Doe, 2 actors, 1 user, 1 view, 2 events) then r01", tbl.Rows)
+	if len(tbl.Rows) < 2 || !slices.Equal(tbl.Rows[0], []string{"u1", "Jane Doe", "3", "3", "1", "2"}) || tbl.Rows[1][0] != "r01" {
+		t.Errorf("rows = %v, want u1 (Jane Doe, 3 actors, 3 users, 1 view, 2 events) then r01", tbl.Rows)
+	}
+	// u9 viewed on two days: 2 actors and 2 users summed, 1 of each over
+	// the range.
+	res = callTool(t, cs, "identities", map[string]any{
+		"project_id": 1, "kind": "user", "from": "2026-08-23", "to": "2026-08-24"})
+	if out := textOf(res); !strings.Contains(out, `"rows":[["u9","","2","2","2","0"]]`) {
+		t.Errorf("u9 over 08-23..24 = %s, want 2 actors, 2 users, 2 views", out)
 	}
 	res = callTool(t, cs, "identities", map[string]any{
 		"project_id": 1, "kind": "user", "from": "2026-08-01", "to": "2026-08-31", "limit": 1})
@@ -250,7 +270,7 @@ func TestProductAttributesWithoutAnyAttribute(t *testing.T) {
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
-	if out := textOf(res); !strings.Contains(out, `["2026-08-20","open","$platform","ios","1","1","0"]`) {
+	if out := textOf(res); !strings.Contains(out, `"rows":[["2026-08-20","open","$platform","ios","1","1","0"]]`) {
 		t.Errorf("want the $platform row alone: %s", out)
 	}
 	args["attr_key"] = "plan"

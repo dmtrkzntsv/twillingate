@@ -130,13 +130,17 @@ type hostSession struct {
 //   - A cohort of 10 users on 2026-08-01, 4 of them back on 2026-08-08.
 //   - One view of shop.example.com on 2026-08-22, the project's second
 //     host.
+//   - User u9 views /docs on 2026-08-23 and again on 2026-08-24, and
+//     actor m02 views /home on 2026-08-25 as web and as app: figures
+//     summed per day differ there from a count over the range (u9 is 2
+//     visitors of /docs over 08-23..24, m02 2 visitors on 08-25).
 //   - signup: 5 events by 4 users on 2026-08-20 (plan pro), 2 on
 //     2026-08-21 (plan team): one by u1 in group g1, Jane Doe of Acme
-//     Inc, one by u2 in group g2, as agg_product_attrs' team row (2
-//     events, 2 users, 2 groups).
+//     Inc, one by u2 in group g2 (on /pricing, from the newsletter), as
+//     agg_product_attrs' team row (2 events, 2 users, 2 groups).
 //   - Measures: checkout_api time 200 ms twice (the chrome one with tier
-//     gold) and $cls 0 three times on 2026-08-20, then 300 ms and 0 on
-//     2026-08-21, as the live rows.
+//     gold) and $cls 0 three times on 2026-08-20, then 300 ms (on
+//     /checkout) and 0 on 2026-08-21, as the live rows.
 func hostEvents() []store.Event {
 	var evs []store.Event
 	n := 0
@@ -205,6 +209,14 @@ func hostEvents() []store.Event {
 	})
 	add(store.Event{Family: store.FamilyViews, EventName: "$page_view", TS: at("2026-08-22", 0), Kind: "web",
 		ActorID: "s01", Host: "shop.example.com", Path: "/cart", Platform: "web"})
+	for _, day := range []string{"2026-08-23", "2026-08-24"} {
+		add(store.Event{Family: store.FamilyViews, EventName: "$page_view", TS: at(day, 0), Kind: "web",
+			ActorID: "u9", ActorKind: store.ActorUser, UserID: "u9", Host: "blog.example.com", Path: "/docs", Platform: "web"})
+	}
+	for _, kind := range []string{"web", "app"} {
+		add(store.Event{Family: store.FamilyViews, EventName: "$page_view", TS: at("2026-08-25", 0), Kind: kind,
+			ActorID: "m02", Path: "/home", Platform: "web"})
+	}
 	add(store.Event{Family: store.FamilyViews, EventName: "$page_view", TS: at("2026-08-26", 7200), Kind: "web",
 		ActorID: "a1", ActorKind: store.ActorUser, UserID: "u1", Host: "blog.example.com", Path: "/live",
 		Platform: "web", Consent: store.ConsentGiven})
@@ -229,7 +241,7 @@ func hostEvents() []store.Event {
 		Platform: "web", Attributes: map[string]string{"plan": "team"}})
 	add(store.Event{Family: store.FamilyProduct, EventName: "signup", TS: at("2026-08-21", 3660), Kind: "web",
 		ActorID: "u2", ActorKind: store.ActorUser, UserID: "u2", GroupID: "g2",
-		Platform: "web", Attributes: map[string]string{"plan": "team"}})
+		Platform: "web", Path: "/pricing", UTMSource: "newsletter", Attributes: map[string]string{"plan": "team"}})
 	measure := func(day string, sec int, name, kind, browser string, value float64) {
 		add(store.Event{Family: store.FamilyMeasures, EventName: name, TS: at(day, sec), Kind: "web",
 			ActorID: "a1", ActorKind: store.ActorUser, UserID: "u1", Platform: "web", Browser: browser,
@@ -242,6 +254,7 @@ func hostEvents() []store.Event {
 		measure("2026-08-20", 120+i*60, "$cls", store.MeasureNumber, "chrome", 0)
 	}
 	measure("2026-08-21", 7200, "checkout_api", store.MeasureTime, "chrome", 300)
+	evs[len(evs)-1].Path = "/checkout"
 	measure("2026-08-21", 7200, "$cls", store.MeasureNumber, "chrome", 0)
 	return evs
 }

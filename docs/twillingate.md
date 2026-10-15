@@ -103,7 +103,7 @@ twillingate key disable -project-id 1 -label ios-2025
 | `name` | Display name. Required; free text, need not be unique; change it with `project update -name`. |
 | `ingest_keys` | One or more `{key, label, disabled}` credentials. Required. |
 | `allowed_origins` | Origins allowed to post for this project. `*` is a wildcard — `https://*.example.com` covers every subdomain, a bare `*` allows any origin. Add `tauri://localhost` or `app://.` for Electron/Tauri. |
-| `attributes` | Custom product-event attribute keys to break down; a repeated key is kept once. Answered ordered by key. |
+| `attributes` | Custom product-event attribute keys the database breaks down (the event files break every key down, declared or not; see [Attribute breakdowns](#attribute-breakdowns)); a repeated key is kept once. Answered ordered by key. |
 
 ### Attribute breakdowns
 
@@ -111,30 +111,39 @@ twillingate key disable -project-id 1 -label ios-2025
 twillingate project update -id 1 -attr plan -attr tier
 ```
 
-A declared key gets a value breakdown (counts and unique users/groups per
-value, per event, per day) in `agg_product_attrs` / `v_product_attrs`. A
-declared custom key also gets an `attr_*` column in `v_events_flat`; a declared
+`product_attributes`, `measures` (by `attr_key`) and the dashboards read
+the [event files](#writing-sql-against-the-event-files), where every key the
+events carried breaks down without being declared: each custom attribute
+key, and the reserved keys `$platform`, `$os`, `$app_version`,
+`$app_locale`, `$kind`, `$browser`, `$device`, `$browser_locale`,
+`$country` (the country ingest derives from the connection's IP, never sent
+by a client), `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`,
+`$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`, each
+read from its column. Nothing is capped there and there is no `(other)`
+row.
+
+Declaring a key matters only to the database's rollups, which the
+[deprecated](#writing-sql-against-the-views-deprecated) `source: "sqlite"`
+views read. There a declared key gets a value breakdown (counts and unique
+users/groups per value, per event, per day) in `agg_product_attrs` /
+`v_product_attrs`. A declared custom key also gets an `attr_*` column in `v_events_flat`; a declared
 reserved key is already a typed column there. Undeclared keys are still
 stored and reachable via `json_extract(attributes, '$.junk')`; declaring one
 later does not backfill. `ATTRIBUTE_VALUES_TOP_N` (default 100, 0 for no cap,
 set [server-side](deployment.md#configure-the-collector)) keeps the top N values per
 key and collapses the tail into one `(other)` row whose unique counts are
 recomputed from raw, so **a client sending the literal `(other)` loses its own
-count**. Never declare an unbounded custom key such as a session id. `$platform`,
-`$os`, `$app_version`, `$app_locale`, `$kind`, `$browser`, `$device`,
-`$browser_locale` and `$country` (the country ingest derives from the
-connection's IP, never sent by a client) roll up automatically and need no
-declaration. Nine more
-reserved keys can be declared like a custom key to get the same per-value
-breakdown: `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`,
-`$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`. The
-top-N cap keeps a declared `$path` bounded. Declaring any other `$` key is
-refused. Rollups run whether or not a project declares attributes; declaring
+count**. Never declare an unbounded custom key such as a session id. In the
+database, the first nine reserved keys above roll up automatically; the other
+nine (`$host` to `$device_model`) roll up only once declared like a custom
+key, and the top-N cap keeps a declared `$path` bounded there. Declaring any
+other `$` key is refused. Rollups run whether or not a project declares attributes; declaring
 only adds the per-value breakdown and the `attr_*` columns.
 
 Declaring an attribute makes it a breakdown: the key's row in the project's
-attributes catalog is marked, and the daily rollup keeps per-value rows for it,
-so `product_attributes` can break events down by it. The catalog holds one row
+attributes catalog is marked, and the database's daily rollup keeps per-value
+rows for it in `v_product_attrs`. `product_attributes` needs no declaration:
+it reads the files, where every key the events carried breaks down. The catalog holds one row
 per key the project received within the raw window, plus every breakdown,
 received or not. `attributes` is the catalog's breakdown keys, ordered by key
 whatever order they were written in; writing it marks the keys listed and
@@ -817,11 +826,12 @@ tools below do.
    expected_fields}`. From then on a field outside the list is dropped on
    arrival, and every submission writes a `$form_submit` product event about
    a minute after it arrives, with the attribute `form` (the form's name):
-   count conversions with `product_events`, and per form with `product_attributes` once `form` is
-   declared in the project's `attributes`. The event carries what is known
-   about the visitor (the page, the visit's referrer and UTMs, its session
-   and environment), so declaring `$utm_source` and the rest breaks
-   conversions down by campaign too, also once the days are rolled up.
+   count conversions with `product_events`, and per form with
+   `product_attributes`, which breaks `form` down like every key the events
+   carried, without a declaration. The event carries what is known about
+   the visitor (the page, the visit's referrer and UTMs, its session and
+   environment), so `$utm_source`, `$path` and the rest break conversions
+   down by campaign and page too.
 4. **Settle it** with `update_form`: a `purpose`; a `return_url` (where a
    plain form sends the visitor back without `$redirect`, an allowed target
    as for the redirect); `closes_at`, after which submissions are refused
@@ -1473,10 +1483,10 @@ history starts where the files' does; `limits`, `cap_usage`,
 | `views_overview` | `kind` (optional) | Per day: visitors (distinct per day and kind, added up), views, and the `sessions` table's sessions, bounces, `duration_sec`, `bounce_rate` and `avg_session_sec`, summed across kinds unless `kind` filters one. Today included |
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows of one dimension (the table below), busiest by visitors (distinct per day and value, added up over the range). Two-key dimensions return both columns. A value not sent reads as empty |
 | `product_events` | `event` (optional filter) | Count and unique users (distinct per day) per event name and day, plus daily totals |
-| `product_attributes` | `event` (optional filter) | Count, unique users and unique groups (`0` when no group was involved) per event, day and value of every attribute key the events carried, declared or not, and of `$platform`, `$os`, `$app_version`, `$app_locale`, `$kind`, `$browser`, `$device`, `$browser_locale` and `$country` |
-| `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by `$device`, `$browser`, `$os`, `$country`, `$platform`, `$app_version`, `$browser_locale`, `$app_locale`, `$kind` or any key the measures carried; a key none carried gives no rows |
+| `product_attributes` | `event` (optional filter) | Count, unique users and unique groups (`0` when no group was involved) per event, day and value of every key the events carried, with no declaration needed: each custom attribute key and the eighteen reserved keys listed in [Attribute breakdowns](#attribute-breakdowns), `$path` and `$utm_source` among them |
+| `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys `product_attributes` breaks down (`$browser`, `$path`, …); a key none carried gives no rows |
 | `retention` | `actor` (`user` or `install`) | Cohort curves for the cohorts that began in the range, every offset, counted over the days before today (UTC), plus `aggregated_through`, the newest such day with views or product events — cohorts and offsets after it are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
-| `identities` | `kind` (`user` or `group`), `limit` (default 50) | Per user or group, busiest first (views plus product events in the range): its distinct `actors`, `users` (1 for a user, its distinct members for a group), `views`, `events` and the display `name` sent with its latest event. **Surfaces personal data on projects whose clients send ids** |
+| `identities` | `kind` (`user` or `group`), `limit` (default 50) | Per user or group, busiest first (views plus product events in the range): its `actors` and `users` (itself for a user, its members for a group), each distinct per day and added up over the days, its `views`, `events` and the display `name` sent with its latest event. **Surfaces personal data on projects whose clients send ids** |
 | `query` | `sql`, `source` (optional: `files`, the default, or `sqlite`, deprecated) | A single read-only `SELECT`/`WITH`. Row-capped and time-limited. `files` reads the raw events and the tables derived from them through DuckDB: see [Writing SQL against the event files](#writing-sql-against-the-event-files). `sqlite` reads the database's views ([deprecated](#writing-sql-against-the-views-deprecated), removed in a later release); `meta` and SQLite's internal tables (`sqlite_master`, `dbstat`, …) are refused, whether named directly or as a quoted or single-quoted string, and non-ASCII names must be quoted |
 
 `views_breakdown`'s dimensions, the columns each returns and what it reads

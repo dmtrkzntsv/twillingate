@@ -1059,16 +1059,16 @@ What changes on the day:
   as the dashboards, so their history starts where the dashboards' does,
   with no `(other)` rows. Their inputs and output columns are unchanged.
   What reads differently:
-  - `product_attributes` lists every attribute key the events carried,
-    declared or not; `unique_groups` is `0`, never empty, when no group
-    was involved;
-  - `measures` with `attr_key` breaks down by any key the measures
-    carried; a key none carried gives no rows;
+  - every key the events carried breaks down, with no declaration needed:
+    `product_attributes` lists each custom attribute key and the reserved
+    keys `$host`, `$path`, `$referrer`, `$utm_*`, `$os_version`,
+    `$browser_version` and `$device_model` as well as the nine it always
+    had, and `measures` takes any of them as `attr_key` (a key none
+    carried gives no rows); `unique_groups` is `0`, never empty, when no
+    group was involved;
   - `retention`'s `aggregated_through` is the newest day before today
     (UTC) with views or product events, rather than the 03:00 UTC pass's
-    last day;
-  - `identities` counts each id's `actors` and a group's `users` once over
-    the range, rather than adding up each day's.
+    last day.
 - **`query` reads the files by default.** Without `source`, its SQL is
   DuckDB SQL over the files' tables; a query naming a `v_*` view or an
   `agg_*` table fails with a hint to pass `source: "sqlite"`. That source

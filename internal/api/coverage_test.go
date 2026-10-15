@@ -15,8 +15,8 @@ func TestFilesTableTruncatesErrorsAndTimesOut(t *testing.T) {
 	ctx := context.Background()
 	blog := rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}
 
-	// truncation: blog's view days (2026-08-01, -08, -20, -21, -22 and
-	// -26), capped to 1.
+	// truncation: blog's view days (2026-08-01, -08, -20 to -26), capped
+	// to 1.
 	setGuards(t, h, h.db.Timeout(), 1)
 	out, err := h.filesTable(ctx, blog, `SELECT DISTINCT day FROM views WHERE project_id = :project AND day BETWEEN :from AND :to`, nil)
 	if err != nil {

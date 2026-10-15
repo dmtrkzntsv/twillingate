@@ -161,7 +161,15 @@ func TestMeasuresBreaksDownByAnyKey(t *testing.T) {
 	if gold["event_name"] != "checkout_api" || gold["samples"] != "1" || gold["mean"] != "200" {
 		t.Errorf("tier gold = %v, want checkout_api's one 200 ms sample", gold)
 	}
-	for _, key := range []string{"TIER", "plan", "never_sent", `we"ird`, "$host"} {
+	// A reserved key reads its column, declared or not.
+	res = callTool(t, cs, "measures", args("$path"))
+	if res.IsError {
+		t.Fatalf("$path: %s", textOf(res))
+	}
+	if page := measuresRow(t, textOf(res), "attr_value", "/checkout"); page["samples"] != "1" || page["mean"] != "300" {
+		t.Errorf("$path /checkout = %v, want checkout_api's one 300 ms sample", page)
+	}
+	for _, key := range []string{"TIER", "plan", "never_sent", `we"ird`, "$nope"} {
 		res := callTool(t, cs, "measures", args(key))
 		if res.IsError {
 			t.Errorf("%s: %s", key, textOf(res))

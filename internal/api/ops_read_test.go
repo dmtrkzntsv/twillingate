@@ -211,3 +211,26 @@ func TestViewsBreakdownHostsDimension(t *testing.T) {
 		}
 	}
 }
+
+// TestViewsFiguresAreSummedPerDay pins the views tools to the figures
+// SQLite's views gave: visitors distinct per day (and kind), added up over
+// the range, not distinct over it. u9 views /docs on two days; m02 views
+// as web and as app on one (hostEvents).
+func TestViewsFiguresAreSummedPerDay(t *testing.T) {
+	_, cs := newTestHost(t)
+	res := callTool(t, cs, "views_breakdown", map[string]any{
+		"project_id": 1, "from": "2026-08-23", "to": "2026-08-24", "dimension": "paths"})
+	if out := textOf(res); res.IsError || !strings.Contains(out, `"rows":[["/docs","2","2"]]`) {
+		t.Errorf("paths over 08-23..24 = %s, want /docs with 2 visitors (one a day) and 2 views", out)
+	}
+	res = callTool(t, cs, "views_overview", map[string]any{
+		"project_id": 1, "from": "2026-08-25", "to": "2026-08-25"})
+	if out := textOf(res); res.IsError || !strings.Contains(out, `"rows":[["2026-08-25","2","2",`) {
+		t.Errorf("overview of 08-25 = %s, want 2 visitors (one per kind) and 2 views", out)
+	}
+	res = callTool(t, cs, "views_overview", map[string]any{
+		"project_id": 1, "from": "2026-08-25", "to": "2026-08-25", "kind": "app"})
+	if out := textOf(res); res.IsError || !strings.Contains(out, `"rows":[["2026-08-25","1","1",`) {
+		t.Errorf("app overview of 08-25 = %s, want 1 visitor and 1 view", out)
+	}
+}

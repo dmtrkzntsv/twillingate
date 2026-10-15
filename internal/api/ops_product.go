@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 )
@@ -59,10 +61,10 @@ ORDER BY day`, nil)
 
 // productAttributes breaks the product events down by every attribute key
 // they carried (one attr_<key> column each, unpivoted as the Product
-// dashboard's attribute values are) and by the system keys, read from
-// their typed columns under "attr_$…" names no key can produce (ingest
-// never stores a $ key as an attribute), so the unpivot always has a
-// column. The COLUMNS pattern takes the fixed columns too: one that
+// dashboard's attribute values are) and by every reserved key in
+// keyColumns, read from its typed column under an "attr_$…" name no key
+// can produce (ingest never stores a $ key as an attribute), so the
+// unpivot always has a column. The COLUMNS pattern takes the fixed columns too: one that
 // matched nothing (no event ever carried an attribute) would be an error.
 // The unpivot drops NULLs, a key an event did not carry.
 func (h *host) productAttributes(ctx context.Context, in productEventsIn) (tableOut, error) {
@@ -77,11 +79,7 @@ func (h *host) productAttributes(ctx context.Context, in productEventsIn) (table
 	q := `WITH a AS (
   UNPIVOT (
     SELECT COLUMNS('^(day|event_name|actor_id|group_id|attr_.*)$'),
-           nullif(platform, '') AS "attr_$platform", nullif(os, '') AS "attr_$os",
-           nullif(app_version, '') AS "attr_$app_version", nullif(app_locale, '') AS "attr_$app_locale",
-           nullif(kind, '') AS "attr_$kind", nullif(browser, '') AS "attr_$browser",
-           nullif(device, '') AS "attr_$device", nullif(browser_locale, '') AS "attr_$browser_locale",
-           nullif(country, '') AS "attr_$country"
+           ` + reservedKeys() + `
     FROM product
     WHERE project_id = :project AND day BETWEEN :from AND :to` + cond + `
   )
@@ -93,6 +91,20 @@ FROM a
 GROUP BY day, event_name, col, attr_value
 ORDER BY day, "count" DESC, event_name, attr_key, attr_value`
 	return h.filesTable(ctx, in.rangeIn, q, vals)
+}
+
+// reservedKeys selects each reserved key's column, empty read as NULL, as
+// "attr_<key>", in key order.
+func reservedKeys() string {
+	keys := make([]string, 0, len(keyColumns))
+	for k := range keyColumns {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for i, k := range keys {
+		keys[i] = "nullif(" + keyColumns[k] + `, '') AS "attr_` + k + `"`
+	}
+	return strings.Join(keys, ",\n           ")
 }
 
 type retentionIn struct {
@@ -119,6 +131,9 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 	if p == nil {
 		return retentionOut{}, h.unknownProjectErr(ctx, in.ProjectID)
 	}
+	// One deadline for both queries.
+	ctx, cancel := context.WithTimeout(ctx, h.db.Timeout())
+	defer cancel()
 	// The Retention dashboard's cohorts (retention/cohorts.sql), every
 	// offset: an actor identified by a $user_id or a stable $install_id
 	// joins the cohort of its first day with either, and is returned at
@@ -159,7 +174,10 @@ ORDER BY r.cohort_day, r.day_offset`, map[string]enginesql.Value{":actor": {Type
 	// never as zero.
 	through, err := h.filesTable(ctx, in.rangeIn, `SELECT max(day) FROM events
 WHERE project_id = :project AND family IN ('views', 'product') AND day < current_date`, nil)
-	if err == nil && len(through.Rows) == 1 {
+	if err != nil {
+		return retentionOut{}, err
+	}
+	if len(through.Rows) == 1 {
 		out.AggregatedThrough = through.Rows[0][0]
 	}
 	if out.Note == "" {
@@ -185,26 +203,30 @@ func (h *host) identities(ctx context.Context, in identitiesIn) (tableOut, error
 	if limit <= 0 {
 		limit = 50
 	}
-	// Per id over the range: its actors, its users (itself for a user, its
-	// members for a group), its views and product events; the name the
-	// identities table derives from the events.
+	// v_identity_daily summed over the range, as before the files: per day
+	// and id, its actors and its users (itself for a user, its members for
+	// a group), its views and product events; then each added up over the
+	// days. The name is the one the identities table derives from the
+	// events.
 	id, users := "user_id", "1"
 	if in.Kind == "group" {
 		id, users = "group_id", "count(DISTINCT user_id)"
 	}
 	return h.filesTable(ctx, in.rangeIn, `WITH d AS (
-  SELECT `+id+` AS id, count(DISTINCT actor_id) AS actors, `+users+` AS users,
+  SELECT `+id+` AS id, day, count(DISTINCT actor_id) AS actors, `+users+` AS users,
          count(*) FILTER (WHERE family = 'views') AS views,
          count(*) FILTER (WHERE family = 'product') AS events
   FROM events
   WHERE project_id = :project AND family IN ('views', 'product') AND `+id+` <> ''
     AND day BETWEEN :from AND :to
-  GROUP BY 1
+  GROUP BY 1, day
 )
-SELECT d.id, COALESCE(i.name, '') AS name, d.actors, d.users, d.views, d.events
+SELECT d.id, COALESCE(i.name, '') AS name, SUM(d.actors) AS actors, SUM(d.users) AS users,
+       SUM(d.views) AS views, SUM(d.events) AS events
 FROM d
 LEFT JOIN identities i ON i.project_id = :project AND i.kind = :kind AND i.id = d.id
-ORDER BY d.views + d.events DESC, d.id
+GROUP BY d.id, i.name
+ORDER BY SUM(d.views) + SUM(d.events) DESC, d.id
 LIMIT :limit`, map[string]enginesql.Value{
 		":kind":  {Type: "VARCHAR", Text: in.Kind},
 		":limit": {Type: "BIGINT", Text: strconv.Itoa(limit)},
