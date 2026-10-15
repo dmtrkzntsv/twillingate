@@ -847,9 +847,12 @@ holds that the files do not.
 - Run it soon. Each day it waits, the oldest raw day leaves
   `RETENTION_RAW_DAYS` and can no longer be imported.
 - It takes about 30 s per million rows. The next start's pass turns what
-  it copied into day files, about 0.2 s a day, and derives their tables.
-  Until that pass ends (a minute or so for a month of a busy project),
-  dashboards and queries over the files answer slowly.
+  it copied into day files and derives their tables: for one month at
+  the cap (985,000 rows), about 6.5 minutes on a loaded 4-core host, with
+  the engine child at about 950 MB. Until that pass ends, dashboards and
+  queries over the files answer slowly: each query loads the closed logs
+  the pass has not reached yet, so a small host sees its memory peak
+  then.
 - `EVENTS_DIR` must be on a filesystem that supports `flock`: most local
   filesystems do, some FUSE and SMB mounts do not. The ingest server now
   refuses to start otherwise.
@@ -1016,6 +1019,10 @@ What changes on the day:
   each show as their own row.
 - **Retention counts yesterday from 00:00 UTC,** as soon as the day ends,
   rather than after the 03:00 UTC pass.
+- **The console's engine child serves every widget,** not only `query`
+  on the files, so it runs whenever someone opens a dashboard. Its RSS
+  can exceed `ENGINE_MEMORY_LIMIT`, which bounds DuckDB's own buffers:
+  120–280 MB for one month at the cap, 0.8–1.4 GB over a year of it.
 - **Widgets you or an agent made break** when their SQL reads SQLite's
   views. Nothing rewrites or archives them. Each shows DuckDB's error on
   its dashboard, with the hint "widget SQL is DuckDB SQL over events,
