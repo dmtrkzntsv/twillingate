@@ -198,6 +198,7 @@ func TestWriteSubmissionApprovedKeepsExpectedAndWritesEvent(t *testing.T) {
 	if want := []string{"name", "tracking"}; !reflect.DeepEqual(formFieldNames(t, db), want) {
 		t.Fatalf("fields = %v, want %v (dropped names stay recorded)", formFieldNames(t, db), want)
 	}
+	attributeAll(t, db, nil)
 	var id, family, name, ts, day, kind, actorKind, actorID, host, path, attrs string
 	if err := db.db.QueryRow(`SELECT id, family, event_name, ts, day, kind, actor_kind, actor_id, host, path, attributes
 		FROM events`).Scan(&id, &family, &name, &ts, &day, &kind, &actorKind, &actorID, &host, &path, &attrs); err != nil {
@@ -332,91 +333,293 @@ func TestWriteSubmissionIsPerProject(t *testing.T) {
 	}
 }
 
-func addView(t *testing.T, db *DB, id string, project int64, actor string, at time.Time, path, ref, src, med, camp string) {
+// attributeAll runs what the jobs runner does for every pending
+// submission, with the event as found returns it (nil: as it waits).
+func attributeAll(t *testing.T, db *DB, found func(store.Event) store.Event) {
 	t.Helper()
-	err := db.WriteEvents(context.Background(), []store.Event{{
-		ID: id, ProjectID: project, Family: store.FamilyViews, TS: at, ReceivedAt: at,
-		ActorKind: "user", ActorID: actor, Path: path, ReferrerSource: ref,
-		UTMSource: src, UTMMedium: med, UTMCampaign: camp,
-	}})
+	ps, err := db.PendingSubmissions(context.Background(), formsNow.Add(100*24*time.Hour), 100)
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, p := range ps {
+		ev := p.Event
+		if found != nil {
+			ev = found(ev)
+		}
+		if _, err := db.AttributeSubmission(context.Background(), p, ev); err != nil {
+			t.Fatal(err)
+		}
+	}
 }
 
-func TestSessionAt(t *testing.T) {
+// A submission waits with the event the request built; an approved
+// form's gets written by AttributeSubmission, with the attribution, and
+// only once.
+func TestSubmissionWaitsForItsAttribution(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	at := formsNow
-	// t-60m is a session of its own (40 minutes before the next view);
-	// t-20m and t-5m are one session.
-	addView(t, db, "v1", 1, "a1", at.Add(-60*time.Minute), "/old", "old", "", "", "")
-	addView(t, db, "v2", 1, "a1", at.Add(-20*time.Minute), "/landing", "google", "news", "email", "launch")
-	if err := db.WriteEvents(ctx, []store.Event{{
-		ID: "v3", ProjectID: 1, Family: store.FamilyViews, TS: at.Add(-5 * time.Minute), ReceivedAt: at,
-		Kind: "web", ActorKind: "user", ActorID: "a1", GroupID: "g1", SessionID: "s1", Path: "/contact",
-		ReferrerSource: "example.com", Platform: "web", OS: "macos", OSVersion: "15", OSName: "macOS",
-		Browser: "safari", BrowserVersion: "18", BrowserLocale: "en-US", AppVersion: "1.2", AppLocale: "en",
-		Device: "desktop", DeviceModel: "mac", DisplayWidth: 1440, DisplayHeight: 900, Consent: store.ConsentGiven,
-	}}); err != nil {
+	if _, _, err := db.WriteSubmission(ctx, newSub("s0", map[string]string{"name": "Ann"})); err != nil {
 		t.Fatal(err)
 	}
-	addView(t, db, "v4", 1, "other", at.Add(-10*time.Minute), "/elsewhere", "", "", "", "")
-	addView(t, db, "v5", 2, "a1", at.Add(-10*time.Minute), "/project2", "", "", "", "")
+	approve(t, db, `["name"]`)
+	if _, _, err := db.WriteSubmission(ctx, newSub("s1", map[string]string{"name": "Bob"})); err != nil {
+		t.Fatal(err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product`); c != 0 {
+		t.Fatalf("%d events written before attribution", c)
+	}
+	ps, err := db.PendingSubmissions(ctx, formsNow, 10)
+	if err != nil || len(ps) != 2 {
+		t.Fatalf("pending = %+v, %v", ps, err)
+	}
+	if ps[0].ID != "s0" || ps[0].WriteEvent || ps[1].ID != "s1" || !ps[1].WriteEvent ||
+		ps[1].Event.ActorID != "a1" || ps[1].Event.EventName != store.FormSubmitEvent || !ps[1].ReceivedAt.Equal(formsNow) {
+		t.Fatalf("pending = %+v", ps)
+	}
+	if early, _ := db.PendingSubmissions(ctx, formsNow.Add(-time.Second), 10); len(early) != 0 {
+		t.Fatalf("pending before its arrival = %+v", early)
+	}
+	attributeAll(t, db, func(ev store.Event) store.Event { ev.ReferrerSource, ev.UTMSource = "google", "cpc"; return ev })
+	var attr string
+	if err := db.db.QueryRow(`SELECT attribution FROM submissions WHERE id='s1'`).Scan(&attr); err != nil ||
+		attr != `{"referrer":"google","utm_source":"cpc"}` {
+		t.Fatalf("attribution = %q, %v", attr, err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id='s1' AND referrer_source='google'`); c != 1 {
+		t.Fatalf("%d attributed events for s1", c)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id='s0'`); c != 0 {
+		t.Fatal("a draft's submission wrote an event")
+	}
+	if left, _ := db.PendingSubmissions(ctx, formsNow.Add(time.Hour), 10); len(left) != 0 {
+		t.Fatalf("still pending: %+v", left)
+	}
+	if wrote, err := db.AttributeSubmission(ctx, ps[1], ps[1].Event); err != nil || wrote {
+		t.Fatalf("second AttributeSubmission wrote=%v err=%v", wrote, err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id='s1'`); c != 1 {
+		t.Fatalf("%d events for s1 after a second attribution", c)
+	}
+}
 
-	got, err := db.SessionAt(ctx, 1, "user", "a1", at)
+// The connection hash ingest computed waits with the submission; a
+// submission without one reads back "".
+func TestPendingSubmissionKeepsItsConnection(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	n := newSub("s0", nil)
+	n.ConnectionID = "h1"
+	if _, _, err := db.WriteSubmission(ctx, n); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.WriteSubmission(ctx, newSub("s1", nil)); err != nil {
+		t.Fatal(err)
+	}
+	ps, err := db.PendingSubmissions(ctx, formsNow, 10)
+	if err != nil || len(ps) != 2 || ps[0].ConnectionID != "h1" || ps[1].ConnectionID != "" {
+		t.Fatalf("pending = %+v, %v", ps, err)
+	}
+	attributeAll(t, db, nil)
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE pending_connection IS NOT NULL`); c != 0 {
+		t.Fatalf("%d attributed submissions keep their connection hash", c)
+	}
+}
+
+// A row whose pending event does not read comes back with its error, and
+// with what else it read, so the job can clear it; it counts toward the
+// limit like any other row, and is no error of the call.
+func TestPendingSubmissionsReturnsAnUnreadableEventWithItsError(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	for _, id := range []string{"s0", "s1", "s2"} {
+		n := newSub(id, nil)
+		n.ConnectionID = "h-" + id
+		if _, _, err := db.WriteSubmission(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	approve(t, db, `[]`)
+	execAll(t, db, `UPDATE submissions SET pending_event='{', pending_write=1 WHERE id='s1'`)
+	ps, err := db.PendingSubmissions(ctx, formsNow, 10)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("err = %v, want none: an unreadable row is not a failed call", err)
 	}
-	// The newest view's environment, the landing view's attribution.
-	want := &store.Event{Kind: "web", GroupID: "g1", SessionID: "s1",
-		ReferrerSource: "google", UTMSource: "news", UTMMedium: "email", UTMCampaign: "launch",
-		Platform: "web", OS: "macos", OSVersion: "15", OSName: "macOS",
-		Browser: "safari", BrowserVersion: "18", BrowserLocale: "en-US", AppVersion: "1.2", AppLocale: "en",
-		Device: "desktop", DeviceModel: "mac", DisplayWidth: 1440, DisplayHeight: 900, Consent: store.ConsentGiven}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("session = %+v\nwant %+v", got, want)
+	if len(ps) != 3 || ps[0].ID != "s0" || ps[1].ID != "s1" || ps[2].ID != "s2" {
+		t.Fatalf("pending = %+v, want s0, s1 and s2", ps)
 	}
-
-	// A view after `at` is not part of the session so far.
-	addView(t, db, "v6", 1, "a1", at.Add(time.Minute), "/later", "later", "", "", "")
-	if got, _ = db.SessionAt(ctx, 1, "user", "a1", at); got == nil || got.SessionID != "s1" || got.ReferrerSource != "google" {
-		t.Fatalf("session = %+v", got)
+	bad := ps[1]
+	if bad.Err == nil || bad.ProjectID != 1 || !bad.ReceivedAt.Equal(formsNow) || bad.ConnectionID != "h-s1" {
+		t.Fatalf("bad = %+v, want its error beside its project, arrival and connection", bad)
 	}
-
-	got, err = db.SessionAt(ctx, 1, "user", "nobody", at)
-	if err != nil || got != nil {
-		t.Fatalf("no views: %+v, %v", got, err)
+	if !reflect.DeepEqual(bad.Event, store.Event{}) || bad.WriteEvent {
+		t.Fatalf("bad = %+v, want a zero event that is not to be written", bad)
+	}
+	if ps[0].Err != nil || ps[2].Err != nil {
+		t.Fatalf("readable rows carry an error: %v, %v", ps[0].Err, ps[2].Err)
+	}
+	if ps, err := db.PendingSubmissions(ctx, formsNow, 2); err != nil || len(ps) != 2 || ps[1].ID != "s1" {
+		t.Fatalf("limit 2 = %+v, %v; want s0 and s1", ps, err)
+	}
+	// The job clears it as attributed with nothing: no attribution, no
+	// event, its fields kept, out of the queue.
+	if wrote, err := db.AttributeSubmission(ctx, bad, store.Event{}); err != nil || wrote {
+		t.Fatalf("clearing wrote=%v err=%v", wrote, err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE id='s1' AND pending_event IS NULL
+		AND attribution IS NULL AND fields='{}'`); c != 1 {
+		t.Fatal("the cleared submission is not kept unattributed")
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id='s1'`); c != 0 {
+		t.Fatal("clearing an unreadable submission wrote an event")
+	}
+	if ps, _ := db.PendingSubmissions(ctx, formsNow, 10); len(ps) != 2 {
+		t.Fatalf("pending after clearing = %+v, want s0 and s2", ps)
 	}
 }
 
-func TestSessionAtReachesBackAcrossMidnight(t *testing.T) {
-	db := newTestDB(t)
-	at := time.Date(2026, 10, 6, 0, 10, 0, 0, time.UTC)
-	addView(t, db, "v1", 1, "a1", at.Add(-20*time.Minute), "/late", "late", "", "", "")
-	addView(t, db, "v2", 1, "a1", at.Add(-5*time.Minute), "/later", "later", "", "", "")
-	got, err := db.SessionAt(context.Background(), 1, "user", "a1", at)
-	if err != nil || got == nil || got.ReferrerSource != "late" {
-		t.Fatalf("session = %+v, %v", got, err)
-	}
-}
-
-// TestSessionAtGapIsInclusive: a view exactly 30 minutes before the next
-// is the same session; one second more starts another.
-func TestSessionAtGapIsInclusive(t *testing.T) {
+// Erasure before the job: the submission is gone, and its event is never
+// written.
+func TestAttributeSubmissionAfterDeleteWritesNothing(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	addView(t, db, "v1", 1, "a1", formsNow.Add(-40*time.Minute-time.Second), "/first", "first", "", "", "")
-	addView(t, db, "v2", 1, "a1", formsNow.Add(-10*time.Minute), "/second", "second", "", "", "")
-	got, err := db.SessionAt(ctx, 1, "user", "a1", formsNow)
-	if err != nil || got == nil || got.ReferrerSource != "second" {
-		t.Fatalf("31m gap: %+v, %v", got, err)
+	if _, _, err := db.WriteSubmission(ctx, newSub("s0", nil)); err != nil {
+		t.Fatal(err)
 	}
-	addView(t, db, "v0", 1, "a2", formsNow.Add(-40*time.Minute), "/edge", "edge", "", "", "")
-	addView(t, db, "v3", 1, "a2", formsNow.Add(-10*time.Minute), "/second", "second", "", "", "")
-	got, err = db.SessionAt(ctx, 1, "user", "a2", formsNow)
-	if err != nil || got == nil || got.ReferrerSource != "edge" {
-		t.Fatalf("30m gap: %+v, %v", got, err)
+	approve(t, db, `[]`)
+	if _, _, err := db.WriteSubmission(ctx, newSub("s1", nil)); err != nil {
+		t.Fatal(err)
+	}
+	ps, _ := db.PendingSubmissions(ctx, formsNow, 10)
+	execAll(t, db, `DELETE FROM submissions WHERE id='s1'`)
+	wrote, err := db.AttributeSubmission(ctx, ps[1], ps[1].Event)
+	if err != nil || wrote {
+		t.Fatalf("wrote=%v err=%v", wrote, err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product`); c != 0 {
+		t.Fatalf("%d events for a deleted submission", c)
+	}
+}
+
+// An approved form's attributed event also waits in the outbox
+// (unlogged_event) until the job has written it to the event files;
+// MarkLogged takes it out. A draft's submission never reaches it.
+func TestAttributedEventWaitsUnloggedUntilMarked(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, _, err := db.WriteSubmission(ctx, newSub("s0", nil)); err != nil {
+		t.Fatal(err)
+	}
+	approve(t, db, `[]`)
+	for _, id := range []string{"s1", "s2"} {
+		if _, _, err := db.WriteSubmission(ctx, newSub(id, nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if us, err := db.UnloggedEvents(ctx, 10); err != nil || len(us) != 0 {
+		t.Fatalf("unlogged before attribution = %+v, %v", us, err)
+	}
+	if n, err := db.UnloggedCount(ctx); err != nil || n != 0 {
+		t.Fatalf("unlogged count before attribution = %d, %v", n, err)
+	}
+	attributeAll(t, db, func(ev store.Event) store.Event { ev.ReferrerSource = "google"; return ev })
+	us, err := db.UnloggedEvents(ctx, 10)
+	if err != nil || len(us) != 2 || us[0].ID != "s1" || us[1].ID != "s2" {
+		t.Fatalf("unlogged = %+v, %v; want s1 and s2, not the draft's s0", us, err)
+	}
+	if u := us[0]; u.Err != nil || u.ProjectID != 1 || u.Event.ID != "s1" || u.Event.ProjectID != 1 ||
+		u.Event.ReferrerSource != "google" || u.Event.EventName != store.FormSubmitEvent || !u.Event.TS.Equal(formsNow) {
+		t.Fatalf("unlogged s1 = %+v, want the event as written", u)
+	}
+	if one, _ := db.UnloggedEvents(ctx, 1); len(one) != 1 || one[0].ID != "s1" {
+		t.Fatalf("limit 1 = %+v, want s1", one)
+	}
+	if n, err := db.UnloggedCount(ctx); err != nil || n != 2 {
+		t.Fatalf("unlogged count = %d, %v; want 2", n, err)
+	}
+	if err := db.MarkLogged(ctx, us[:1]); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := db.UnloggedCount(ctx); err != nil || n != 1 {
+		t.Fatalf("unlogged count after marking s1 = %d, %v; want 1", n, err)
+	}
+	if left, err := db.UnloggedEvents(ctx, 10); err != nil || len(left) != 1 || left[0].ID != "s2" {
+		t.Fatalf("unlogged after marking s1 = %+v, %v; want s2", left, err)
+	}
+	if err := db.MarkLogged(ctx, nil); err != nil {
+		t.Fatalf("marking nothing: %v", err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id IN ('s1','s2')`); c != 2 {
+		t.Fatalf("%d events in SQLite, want 2: marking touches only the outbox", c)
+	}
+}
+
+// Deleting a submission takes its unlogged event with it, as it takes
+// the event SQLite holds.
+func TestDeletedSubmissionLeavesTheOutbox(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, _, err := db.WriteSubmission(ctx, newSub("s0", nil)); err != nil {
+		t.Fatal(err)
+	}
+	approve(t, db, `[]`)
+	if _, _, err := db.WriteSubmission(ctx, newSub("s1", nil)); err != nil {
+		t.Fatal(err)
+	}
+	attributeAll(t, db, nil)
+	if us, _ := db.UnloggedEvents(ctx, 10); len(us) != 1 {
+		t.Fatalf("unlogged = %+v, want s1", us)
+	}
+	if _, err := db.DeleteSubmissions(ctx, 1, []string{"s1"}, store.AuditEntry{Actor: "t", Action: "submission.delete", Subject: "form/1/contact"}); err != nil {
+		t.Fatal(err)
+	}
+	if us, err := db.UnloggedEvents(ctx, 10); err != nil || len(us) != 0 {
+		t.Fatalf("unlogged after delete = %+v, %v", us, err)
+	}
+}
+
+// An outbox row that does not read comes back with its error and a zero
+// event, so the job can mark it rather than meet it every minute.
+func TestUnloggedEventsReturnsAnUnreadableRowWithItsError(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	if _, _, err := db.WriteSubmission(ctx, newSub("s0", nil)); err != nil {
+		t.Fatal(err)
+	}
+	approve(t, db, `[]`)
+	for _, id := range []string{"s1", "s2"} {
+		if _, _, err := db.WriteSubmission(ctx, newSub(id, nil)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	attributeAll(t, db, nil)
+	execAll(t, db, `UPDATE submissions SET unlogged_event='{' WHERE id='s1'`)
+	us, err := db.UnloggedEvents(ctx, 10)
+	if err != nil || len(us) != 2 {
+		t.Fatalf("unlogged = %+v, %v; want s1 and s2", us, err)
+	}
+	if u := us[0]; u.ID != "s1" || u.ProjectID != 1 || u.Err == nil || !reflect.DeepEqual(u.Event, store.Event{}) {
+		t.Fatalf("unreadable = %+v, want its key and error beside a zero event", u)
+	}
+	if us[1].Err != nil || us[1].Event.ID != "s2" {
+		t.Fatalf("readable = %+v", us[1])
+	}
+	if err := db.MarkLogged(ctx, us); err != nil {
+		t.Fatal(err)
+	}
+	if left, _ := db.UnloggedEvents(ctx, 10); len(left) != 0 {
+		t.Fatalf("unlogged after marking = %+v", left)
+	}
+}
+
+// A row as migration 041 finds it (pending_event NULL) is attributed.
+func TestSubmissionsFromBeforeTheMigrationAreNotPending(t *testing.T) {
+	db := newTestDB(t)
+	if _, _, err := db.WriteSubmission(context.Background(), newSub("old", nil)); err != nil {
+		t.Fatal(err)
+	}
+	execAll(t, db, `UPDATE submissions SET pending_event=NULL, pending_write=NULL`)
+	if ps, err := db.PendingSubmissions(context.Background(), formsNow.Add(time.Hour), 10); err != nil || len(ps) != 0 {
+		t.Fatalf("pending = %+v, %v", ps, err)
 	}
 }
 
@@ -455,6 +658,7 @@ func TestWriteSubmissionEventShapeIsTheStores(t *testing.T) {
 	if _, _, err := db.WriteSubmission(ctx, n); err != nil {
 		t.Fatal(err)
 	}
+	attributeAll(t, db, nil)
 	var id, name, ts, attrs string
 	var project int64
 	if err := db.db.QueryRow(`SELECT id, project_id, event_name, ts, attributes FROM raw_product`).
@@ -495,23 +699,6 @@ func TestWriteSubmissionRetryOfStoredIDSucceedsAfterClose(t *testing.T) {
 	}
 	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions`); c != 1 {
 		t.Fatalf("%d submissions", c)
-	}
-}
-
-// TestSessionAtNeedsACurrentSession: the newest view must be within
-// 30 minutes of `at`, the gap rule's own boundary.
-func TestSessionAtNeedsACurrentSession(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	addView(t, db, "v1", 1, "a1", formsNow.Add(-31*time.Minute), "/old", "old", "", "", "")
-	addView(t, db, "v2", 1, "a2", formsNow.Add(-30*time.Minute), "/edge", "edge", "", "", "")
-	got, err := db.SessionAt(ctx, 1, "user", "a1", formsNow)
-	if err != nil || got != nil {
-		t.Fatalf("31m: %+v, %v", got, err)
-	}
-	got, err = db.SessionAt(ctx, 1, "user", "a2", formsNow)
-	if err != nil || got == nil || got.ReferrerSource != "edge" {
-		t.Fatalf("30m: %+v, %v", got, err)
 	}
 }
 
@@ -835,6 +1022,7 @@ func TestDeleteSubmissionsRemovesRowAndRawEvent(t *testing.T) {
 	other = newSub("s1", map[string]string{"email": "o@x.io"})
 	other.Submission.ProjectID, other.Event.ProjectID = 2, 2
 	mustWrite(t, db, other)
+	attributeAll(t, db, nil)
 	if c := countRows(t, db, `SELECT COUNT(*) FROM events`); c != 4 {
 		t.Fatalf("setup: %d events, want 4", c)
 	}

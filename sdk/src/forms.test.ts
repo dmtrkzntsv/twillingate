@@ -311,6 +311,16 @@ describe("identity on a form", () => {
     expect(Object.keys(calls[0].body.attributes).sort()).toEqual(["$host", "$path"]);
   });
 
+  it("submitForm on an anonymous instance with consent sends the stored visitor id as $install_id", async () => {
+    const t = tg({ consent: true });
+    const p = t.submitForm("contact", { email: "a@b.c" });
+    await settle();
+    await p;
+    const visitor = localStorage.getItem("twillingate_visitor");
+    expect(visitor).toMatch(/^[0-9a-f-]{36}$/);
+    expect(calls[0].body.attributes).toEqual({ $host: "example.com", $path: "/pricing", $install_id: visitor });
+  });
+
   it("an opted-out visitor's submission is still sent, without identity keys", async () => {
     const t = new Twillingate();
     t.identify("u_1");

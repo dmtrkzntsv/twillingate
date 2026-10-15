@@ -913,3 +913,36 @@ an older `raw/`.
 
 Rollback: an older binary reads the imported days like any other day
 file, and ignores `raw/.lock`; nothing to undo.
+
+### Upgrading to form attribution from the files (migration 041)
+
+Migration 041 adds four columns to `submissions`; nothing to run. What
+changes:
+
+- A submission's `attribution` is found about a minute after it arrives,
+  by a job that reads the event files: the submitter's last visit with
+  a referrer or a UTM within `ATTRIBUTION_DAYS` (default 7), no
+  longer the current visit's landing from the database's raw views. The
+  submitter includes the install ids seen with its user, so a visit made
+  before signing in counts. Until the job runs, `attribution` is `{}`.
+- An approved form's `$form_submit` event is written by that job, about
+  a minute after the submission, with the submission's arrival as its
+  `ts`.
+- Forms accept `$referrer`, `$utm_source`, `$utm_medium` and
+  `$utm_campaign`; any of them makes the submission's own the source.
+- Submissions from before the upgrade keep their attribution and events.
+- **Anonymous tags with consent now send a visitor id.** An instance
+  with `identity` anonymous (the default) and consent given persists a
+  visitor id and sends it as `$install_id`: pseudonymous, never a user.
+  Such a site's returning visitors become one actor across days, so its
+  unique visitors over more than a day drop from the upgrade on, and the
+  collector logs `project receives ids` for it. A site whose privacy
+  notice promises no identifier under consent should update it or keep
+  consent off. A plain HTML form on such a site is matched to the views
+  only through the connection hash, so it misses the visits made after
+  consent: use a tagged form or send `$install_id` from it.
+
+Rollback: an older binary ignores the new columns and attributes on
+arrival again. Submissions still pending at the rollback keep `{}` and
+get no event, and events still waiting to be logged at the rollback
+reach SQLite but not the event files.

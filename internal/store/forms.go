@@ -66,11 +66,11 @@ func KeepFields(f Form, fields map[string]string) map[string]string {
 	return kept
 }
 
-// Attribution is where the visit a submission arrived in came from: its
-// first view's referrer and campaign. The submission keeps it, as a JSON
-// object with empty values left out, for as long as it is kept, so a new
-// key is a new field here and no migration; its $form_submit event carries
-// the same values.
+// Attribution is where the visit a submission arrived in came from: the
+// referrer and campaign of the submitter's last non-direct visit. The
+// submission keeps it, as a JSON object with empty values left out, for as
+// long as it is kept, so a new key is a new field here and no migration;
+// its $form_submit event carries the same values.
 type Attribution struct {
 	Referrer    string `json:"referrer,omitempty"`
 	UTMSource   string `json:"utm_source,omitempty"`
@@ -92,14 +92,18 @@ type Submission struct {
 }
 
 // NewSubmission is what ingest hands the store: the submission, the
-// draft_until a newly created form gets, and the event to write when the
-// form turns out approved (its ID, TS, ProjectID, Family product,
-// EventName "$form_submit", Attributes {"form": name} already set; the
-// store writes it only on an approved form).
+// draft_until a newly created form gets, and the event as the request
+// knows it (StoredEvent gives its final shape). The store keeps it with
+// the submission, pending, and AttributeSubmission writes it once the
+// source is found, only on a form approved on arrival.
 type NewSubmission struct {
 	Submission Submission
 	DraftUntil time.Time
 	Event      Event
+	// ConnectionID is the connection hash of the request (the actor a
+	// view sent without an id gets), whatever actor Event has: the lookup
+	// follows it to the views sent before consent gave the visitor an id.
+	ConnectionID string
 }
 
 // StoredEvent is the $form_submit event an approved form's submission is
@@ -115,4 +119,33 @@ func (n NewSubmission) StoredEvent() Event {
 		ev.ReceivedAt = sub.ReceivedAt
 	}
 	return ev
+}
+
+// PendingSubmission is a submission waiting for its attribution: the
+// $form_submit event the request built (StoredEvent's shape: the actor,
+// the page, the country, what the client sent of its source), and
+// whether to write it, decided by the form being approved on arrival.
+type PendingSubmission struct {
+	ProjectID    int64
+	ID           string
+	ReceivedAt   time.Time
+	Event        Event
+	WriteEvent   bool
+	ConnectionID string // NewSubmission.ConnectionID, "" if none
+	// Err is why the stored event could not be read; Event is zero and
+	// WriteEvent false when it is set. The submission is still listed, so
+	// the job can clear it rather than meet it again every minute.
+	Err error
+}
+
+// UnloggedEvent is a submission's $form_submit event written to SQLite
+// and not yet to the event files: the outbox the attribution job flushes.
+// MarkLogged reads only ProjectID and ID.
+type UnloggedEvent struct {
+	ProjectID int64
+	ID        string
+	Event     Event
+	// Err is why the stored event could not be read; Event is zero when
+	// it is set. It is still listed, so the job can mark it logged.
+	Err error
 }

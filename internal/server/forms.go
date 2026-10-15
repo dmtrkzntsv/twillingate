@@ -16,6 +16,8 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/dmtrkzntsv/twillingate/internal/enrich"
+	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/internal/wire"
@@ -39,8 +41,12 @@ const (
 
 // formContext is the reserved half of a submission: $ fields on the form
 // path, $ attributes on JSON. Their meanings match events; Redirect is read
-// on the form path only.
-type formContext struct{ ID, UserID, InstallID, Host, Path, Redirect string }
+// on the form path only. Referrer and the UTMs are the visit's source when
+// the client knows it (a site's hidden fields, a server-side sender).
+type formContext struct {
+	ID, UserID, InstallID, Host, Path, Redirect string
+	Referrer, UTMSource, UTMMedium, UTMCampaign string
+}
 
 // set records one context key, reporting whether k is one. Values are cut
 // as event attributes are, except $redirect, which a cut would turn into
@@ -57,6 +63,14 @@ func (c *formContext) set(k, v string, redirect bool) bool {
 		c.Host = truncate(v, wire.MaxAttrValue)
 	case "$path":
 		c.Path = truncate(v, wire.MaxAttrValue)
+	case "$referrer":
+		c.Referrer = truncate(v, wire.MaxAttrValue)
+	case "$utm_source":
+		c.UTMSource = truncate(v, wire.MaxAttrValue)
+	case "$utm_medium":
+		c.UTMMedium = truncate(v, wire.MaxAttrValue)
+	case "$utm_campaign":
+		c.UTMCampaign = truncate(v, wire.MaxAttrValue)
 	case "$redirect":
 		if !redirect {
 			return false
@@ -381,6 +395,9 @@ func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	actor, actorKind, user, _ := resolveIdentity(resolved{UserID: fc.UserID, InstallID: fc.InstallID},
 		salt, ip, r.UserAgent(), strconv.FormatInt(p.ID, 10))
+	// The actor a view sent without an id gets, whatever this one is: the
+	// lookup follows it to the views sent before consent gave an id.
+	connection := identity.VisitorHash(salt, ip, r.UserAgent(), strconv.FormatInt(p.ID, 10))
 	// Only a plain form falls back to the Referer: the SDK leaves $host
 	// and $path out on purpose (masking failed, autoAttributes off), and
 	// the Referer would put back the URL it kept out.
@@ -389,19 +406,13 @@ func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 		referer = r.Referer()
 	}
 	host, path := pageOf(fc, referer)
-	// The event carries everything known about the visitor: the newest
-	// view of the visit it arrived in gives the kind, group, session and
-	// environment, the visit's first view the referrer and UTMs. The
-	// submission keeps only the attribution beside the fields.
-	var ev store.Event
-	sess, err := s.forms.SessionAt(ctx, p.ID, actorKind, actor, received)
-	switch {
-	case err != nil:
-		// The session is context, not the submission: store it without one.
-		s.logger.Warn("form session lookup failed", "project", p.ID, "form", name, "error", err)
-	case sess != nil:
-		ev = *sess
-	}
+	// The event as the request knows it: the actor, the page, the country
+	// and the source the client sent, if any. The jobs runner finds the
+	// rest in the event files (the submitter's last non-direct visit, the
+	// newest view's details) and writes the submission's attribution, and
+	// the event when its form was approved on arrival.
+	ev := store.Event{ReferrerSource: enrich.CleanReferrer(fc.Referrer, host),
+		UTMSource: fc.UTMSource, UTMMedium: fc.UTMMedium, UTMCampaign: fc.UTMCampaign}
 	ev.ID, ev.ProjectID, ev.Family, ev.EventName = id, p.ID, store.FamilyProduct, store.FormSubmitEvent
 	ev.TS, ev.ReceivedAt = received, received
 	ev.ActorID, ev.ActorKind, ev.UserID, ev.InstallID = actor, actorKind, user, fc.InstallID
@@ -410,11 +421,10 @@ func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 	form, inserted, err := s.forms.WriteSubmission(ctx, store.NewSubmission{
 		Submission: store.Submission{
 			ProjectID: p.ID, ID: id, Form: name, ReceivedAt: received, Fields: body.fields,
-			Attribution: store.Attribution{Referrer: ev.ReferrerSource,
-				UTMSource: ev.UTMSource, UTMMedium: ev.UTMMedium, UTMCampaign: ev.UTMCampaign},
 		},
-		DraftUntil: received.AddDate(0, 0, s.cfg.Forms.DraftDays),
-		Event:      ev, // written by the store only when the form is approved
+		DraftUntil:   received.AddDate(0, 0, s.cfg.Forms.DraftDays),
+		Event:        ev, // pending until the jobs runner attributes it (store.PendingSubmission)
+		ConnectionID: connection,
 	})
 	switch {
 	case errors.Is(err, store.ErrFormClosed):

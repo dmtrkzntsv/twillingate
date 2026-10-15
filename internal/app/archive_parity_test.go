@@ -89,8 +89,8 @@ func TestFilesHoldWhatSQLiteHolds(t *testing.T) {
 	}
 
 	// An approved form: its first submission creates it as a draft (no
-	// event), approval, then a second submission writes the event.
-	forms := archivedForms{FormStore: st, log: log, logger: slog.Default()}
+	// event), approval, then a second submission whose event the
+	// attribution job writes.
 	sub := func(id string, at time.Time) store.NewSubmission {
 		return store.NewSubmission{
 			Submission: store.Submission{ProjectID: 1, ID: id, Form: "contact", ReceivedAt: at, Fields: map[string]string{"email": "a@x.io"}},
@@ -98,13 +98,39 @@ func TestFilesHoldWhatSQLiteHolds(t *testing.T) {
 			Event:      store.Event{ID: id, ProjectID: 1, Family: store.FamilyProduct, EventName: store.FormSubmitEvent, TS: at, ReceivedAt: at},
 		}
 	}
-	if _, _, err := forms.WriteSubmission(ctx, sub("00000000-0000-4000-a000-000000000001", day.Add(2*time.Hour))); err != nil {
+	if _, _, err := st.WriteSubmission(ctx, sub("00000000-0000-4000-a000-000000000001", day.Add(2*time.Hour))); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.ApproveForm(ctx, 1, "contact", []string{"email"}, day.Add(3*time.Hour), store.AuditEntry{Actor: "test", Action: "form.approve", Subject: "form/1/contact"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := forms.WriteSubmission(ctx, sub("00000000-0000-4000-a000-000000000002", day.Add(4*time.Hour))); err != nil {
+	if _, _, err := st.WriteSubmission(ctx, sub("00000000-0000-4000-a000-000000000002", day.Add(4*time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	// The jobs runner writes the event to SQLite when the submission is
+	// attributed, leaving it in the outbox, then flushes the outbox to the
+	// log and marks it logged.
+	pending, err := st.PendingSubmissions(ctx, day.AddDate(0, 0, 1), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range pending {
+		if _, err := st.AttributeSubmission(ctx, p, p.Event); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unlogged, err := st.UnloggedEvents(ctx, 1000)
+	if err != nil || len(unlogged) != 1 || unlogged[0].Err != nil {
+		t.Fatalf("unlogged = %+v, %v; want the approved form's one event", unlogged, err)
+	}
+	evs := make([]store.Event, len(unlogged))
+	for i, u := range unlogged {
+		evs[i] = u.Event
+	}
+	if err := log.WriteEvents(ctx, evs); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.MarkLogged(ctx, unlogged); err != nil {
 		t.Fatal(err)
 	}
 

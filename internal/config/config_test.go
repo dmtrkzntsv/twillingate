@@ -170,6 +170,8 @@ func TestValidationErrors(t *testing.T) {
 		"negative breakdowns max":               base(map[string]string{"ATTRIBUTE_BREAKDOWNS_MAX": "-1"}),
 		"zero form draft days":                  base(map[string]string{"RETENTION_FORMS_DRAFT_DAYS": "0"}),
 		"negative form draft days":              base(map[string]string{"RETENTION_FORMS_DRAFT_DAYS": "-3"}),
+		"zero attribution days":                 base(map[string]string{"ATTRIBUTION_DAYS": "0"}),
+		"attribution days past retention":       base(map[string]string{"RETENTION_DAYS": "30", "ATTRIBUTION_DAYS": "31"}),
 		"bad integer":                           base(map[string]string{"BUFFER_CAPACITY": "many"}),
 		"invalid duration":                      base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
 		"negative cache age":                    base(map[string]string{"REPORTING_CACHE_MAX_AGE": "-1s"}),
@@ -227,6 +229,32 @@ func TestRetentionDaysFromEnv(t *testing.T) {
 	c, err := load(t, map[string]string{"RETENTION_DAYS": "1095"})
 	if err != nil || c.Retention.Days != 1095 {
 		t.Fatalf("Retention.Days = %v, %v; want 1095", c, err)
+	}
+}
+
+func TestFormsAttributionDaysDefault(t *testing.T) {
+	c, err := load(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Forms.AttributionDays != 7 {
+		t.Errorf("AttributionDays = %d, want 7", c.Forms.AttributionDays)
+	}
+}
+
+// Unset, ATTRIBUTION_DAYS follows a RETENTION_DAYS below its default, so
+// such an install still boots; set explicitly past RETENTION_DAYS, it is
+// refused.
+func TestAttributionDaysWithinShortRetention(t *testing.T) {
+	c, err := load(t, map[string]string{"RETENTION_DAYS": "3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Forms.AttributionDays != 3 {
+		t.Errorf("AttributionDays = %d, want 3", c.Forms.AttributionDays)
+	}
+	if _, err := load(t, map[string]string{"RETENTION_DAYS": "3", "ATTRIBUTION_DAYS": "5"}); err == nil {
+		t.Error("ATTRIBUTION_DAYS=5 past RETENTION_DAYS=3 was accepted")
 	}
 }
 

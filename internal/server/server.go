@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/geo"
@@ -32,10 +31,9 @@ type NameStore interface {
 // FormStore is the slice of store.Store the form endpoint needs. A
 // submission is written straight through, never through the Enqueuer: the
 // buffer drops its oldest entries when full and flushes later, and a
-// submission (and its $form_submit) must be there when the answer says so.
+// submission must be there when the answer says so.
 type FormStore interface {
 	WriteSubmission(ctx context.Context, n store.NewSubmission) (store.Form, bool, error)
-	SessionAt(ctx context.Context, projectID int64, actorKind, actorID string, at time.Time) (*store.Event, error)
 }
 
 // keyCounters accumulates per-key-label ingest counts for the per-minute

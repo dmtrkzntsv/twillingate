@@ -25,9 +25,10 @@ screen views from apps and CLIs) and custom product events through one endpoint,
 rolls them up nightly, and exposes the result as dashboards at `/app/`, a
 read-only SQL surface, and an API (MCP or HTTP). It is cookieless by default:
 the served SDK's `anonymous` default writes nothing to a visitor's device
-unless the tag declares consent, and then only its retry queue, never an
-identifier. The collector stores the identifiers it is sent; a visitor who
-sends none is a hash of the connection under a key that rotates at midnight.
+unless the tag declares consent, and then a visitor id (pseudonymous, never
+a user) and its retry queue. The collector stores the identifiers it is sent;
+a visitor who sends none is a hash of the connection under a key that rotates
+at midnight.
 IP addresses and User-Agent strings are never stored — the IP becomes a
 country at ingest, the User-Agent is checked for crawlers, and both are then
 discarded.
@@ -338,7 +339,7 @@ whichever hostname loaded it.
 | Attribute | `init()` option | Meaning |
 | --- | --- | --- |
 | `data-key` | `key` | The project's ingest key. Required to auto-init; without it the tag loads dormant for `init()` from code. Public by design. |
-| `data-identity` | `identity` | `anonymous` (default) or `identified`. Decides what the instance **sends**: anonymous never sends `$user_id`, `$user_name` or `$install_id`, and `identify()` is inert; identified sends them and, with [consent](#consent-and-storage), persists the visitor id, user and group. |
+| `data-identity` | `identity` | `anonymous` (default) or `identified`. Decides what the instance **sends**: anonymous never sends `$user_id` or `$user_name`, and `identify()` is inert; with [consent](#consent-and-storage) it keeps a visitor id and sends it as `$install_id` (pseudonymous). identified sends the user and a declared install id and, with consent, persists the visitor id, user and group. |
 | `data-auto="off"` | `autoPageviews` | Disable automatic pageviews; drive them with `twillingate.page()`. Both default on. |
 | `data-mask-url` | `maskUrl` | Rewrite the URL before it is sent. See [Masking](#masking-urls). |
 | `data-routing` | `routing` | `history` (default) or `hash`. See [Routing](#routing). |
@@ -420,7 +421,7 @@ twillingate.measure("checkout_api", 340, "time", { endpoint: "/api/checkout" });
 | `attrs(obj)` | Default attributes under every event. Successive calls merge; `attrs(null)` clears. |
 | `identify(user, name?)` | Sets `$user_id` and the optional `$user_name`. Inert on an anonymous instance, with one warning; persisted on an identified instance with consent. Events already sent stay unattributed. |
 | `group(id, name?)` | Sets `$group_id` and the optional `$group_name` in every mode; persisted with consent on an identified instance. |
-| `installId(id?)` | The stable per-install id an app supplies as `$install_id`. With no argument returns what would be sent: the declared id, else the persisted visitor id, else `null`. Inert on an anonymous instance. |
+| `installId(id?)` | The stable per-install id an app supplies as `$install_id`. With no argument returns what would be sent: the declared id (identified only), else the visitor id kept with consent, else `null`. Setting one is inert on an anonymous instance. |
 | `reset()` | **Required on logout.** Clears user, group, names, the visitor id and the retry queue. |
 | `flush()` | Force-send the queue. |
 | `consent(granted?)` | `true` / `false` pins storage consent over whatever was declared, `null` hands control back, no argument reads it. See [Consent and storage](#consent-and-storage). |
@@ -492,10 +493,13 @@ Default `false`: records live in memory, nothing is read or written except the
 `twillingate_ignore` and `twillingate_debug` flags, anything an earlier session
 stored under this instance's keys is deleted, and a failed batch is retried from
 memory (on `online`, once more via `sendBeacon` when the page hides or unloads)
-and lost if the tab closes first. With consent an `identified` instance persists
-the visitor id, user and group in `twillingate_visitor` (or
-`<instance>_visitor`), and any instance persists the retry queue; an `anonymous`
-instance sends no identifier, so consent only unlocks its queue.
+and lost if the tab closes first. With consent any instance persists a visitor
+id in `twillingate_visitor` (or `<instance>_visitor`) and sends it as
+`$install_id`, so a returning visitor's visits connect (and a form submission
+finds its source across days); an `identified` instance also persists the user
+and group, and any instance the retry queue. An `anonymous` instance with
+consent is pseudonymous: it never sends a user, and its visitor id names no
+one.
 
 | `data-consent` / `consent` | Meaning |
 | --- | --- |
@@ -649,8 +653,9 @@ conversion once the form is approved). `taggedEvents: false` does not turn it
 off. The SDK reads the form like the browser would: a `File` entry and every
 name starting with `$` are left out, and a repeated name is joined with `", "`.
 The body carries a fresh `id`, the page's `$host` and `$path` (as the
-instance's `maskUrl` and routing have it for events) and, on an identified
-instance, the `$user_id` and `$install_id` events carry. An opted-out visitor
+instance's `maskUrl` and routing have it for events), `$user_id` on an
+identified instance, and `$install_id` whenever the instance sends one
+(identified, or anonymous with consent), as events carry them. An opted-out visitor
 (`optOut`, `twillingate_ignore`) still sends the submission, which they asked
 for, without those two keys.
 
@@ -810,9 +815,9 @@ tools below do.
    name submissions sent.
 3. **Approve it** with the fields to keep: `approve_form {project_id, name,
    expected_fields}`. From then on a field outside the list is dropped on
-   arrival, and every submission writes a `$form_submit` product event with
-   the attribute `form` (the form's name): count conversions with
-   `product_events`, and per form with `product_attributes` once `form` is
+   arrival, and every submission writes a `$form_submit` product event about
+   a minute after it arrives, with the attribute `form` (the form's name):
+   count conversions with `product_events`, and per form with `product_attributes` once `form` is
    declared in the project's `attributes`. The event carries what is known
    about the visitor (the page, the visit's referrer and UTMs, its session
    and environment), so declaring `$utm_source` and the rest breaks
@@ -836,7 +841,7 @@ tools below do.
 | Change one | `twillingate form update` | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty |
 | Archive / restore | `twillingate form archive` / `restore` | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions from every list, table and export (a search still finds them); a restored draft gets another `RETENTION_FORMS_DRAFT_DAYS` |
 | Read a form's table | `twillingate form export` (CSV) | `list_submissions` | `{project_id, name, filters, sort, distinct, offset, limit}`; returns `columns`, `rows`, `ids`, `matched`, `total`, `offset`, `limit` |
-| Read one submission | — | `get_submission` | `{project_id, name, id}`; every stored field (ones no longer expected too), `received_at`, `attribution` (`referrer`, `utm_source`, `utm_medium`, `utm_campaign`, each left out when empty; `{}` when no visit matched) |
+| Read one submission | — | `get_submission` | `{project_id, name, id}`; every stored field (ones no longer expected too), `received_at`, `attribution` (`referrer`, `utm_source`, `utm_medium`, `utm_campaign`, each left out when empty; the last non-direct visit within `ATTRIBUTION_DAYS`, or what the submission sent; `{}` until the job has run, about a minute after arrival, and when the visit was direct) |
 | Find a person | — | `find_submissions` | `{project_id, search, limit, cursor}`; `search` at least 2 characters; returns `submissions` (each as `get_submission` answers it, with its `form` and `archived`, true when that form is archived) and `next_cursor` |
 | Delete submissions | `twillingate form erase` | `delete_submissions` | `{project_id}` with exactly one of `ids`, `form` with `filters`, or `search`; returns `deleted` |
 
@@ -1043,7 +1048,7 @@ declare no kind and are never filtered.
 
 | The tag says | `$user_id`, `$install_id`, `$user_name` | `$group_id`, `$group_name` |
 | --- | --- | --- |
-| `anonymous` (default) | never sent | sent, stored raw |
+| `anonymous` (default) | `$user_id`, `$user_name` never sent; `$install_id` sent only with [consent](#consent-and-storage): a visitor id the SDK keeps on the device, pseudonymous | sent, stored raw |
 | `identified` | sent, stored as given | sent, stored raw |
 | a client posting by hand | stored as given, whatever it sends | stored raw |
 
@@ -1069,7 +1074,8 @@ kept no names per event, carry the latest name it held, and an
 `data-identity` (or `identity` in code), so a project's privacy posture is the
 posture of its clients. The collector logs `project receives ids` the first
 time a project stores a `$user_id` or `$install_id` (once per kind per process),
-which is how to confirm a marketing site's tag sends nothing.
+which is how to confirm a marketing site's tag sends nothing. An anonymous tag
+with consent sends its visitor id, so that line appears for it too.
 
 ---
 
@@ -1176,7 +1182,7 @@ sending measures must upgrade the server first.
 
 | Group | Keys | Sent automatically by the JS SDK |
 | --- | --- | --- |
-| Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` | `$install_id` (identified instance with consent), `$consent` |
+| Identity | `$install_id` `$user_id` `$user_name` `$group_id` `$group_name` `$session_id` `$consent` | `$install_id` (instance with consent), `$consent` |
 | Environment | `$kind` `$platform` `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$device` `$device_model` `$app_version` `$app_locale` `$browser_locale` `$display_width` `$display_height` | `$kind`, `$platform` (`web` for the web kind), `$os` `$os_version` `$os_name` `$browser` `$browser_version` `$browser_locale` `$device` `$display_width` `$display_height` |
 | Location | `$host` `$path` `$screen` `$utm_source` `$utm_medium` `$utm_campaign` `$referrer` | `$host` `$path` (web kind) or `$screen` (app kind) on views and, from the last view, on product events; `$referrer` `$utm_source` `$utm_medium` `$utm_campaign` on web views only |
 | Sampling | `$sample_rate` | on every Web Vital: the `vitals` rate, `1` included |
@@ -1311,18 +1317,32 @@ submissions for `RETENTION_FORMS_DRAFT_DAYS` (default 7) and keeps every field t
 send. An approved form keeps only its expected fields and writes, beside each
 submission, a `$form_submit` product event with the submission's `id`, its
 time as `ts` and the form's name as its one attribute, `form`; a draft's
-submissions write none. Both are written before the answer, never buffered.
+submissions write none. The submission is written before the answer, never
+buffered; its attribution and its event follow about a minute later (below).
 
 **A submission and its event.** The submission keeps what the visitor
 typed, when it arrived and where the visit came from: its `attribution`,
-a JSON object of the referrer and UTM source, medium and campaign of the
-first view of the visitor's current session (views at most 30 minutes
-apart, looking back a day), each left out when empty, `{}` when no view of
-the actor matches. Everything else is on the event, which has the
-submission's id: the actor, the page (`$host`, `$path`), the country, the
-same referrer and UTMs, and the newest view's `$kind`, group, session id,
-environment and consent. So the submission's attribution outlives the raw
-window, and the event's details are counted like any product event's.
+a JSON object of the referrer and UTM source, medium and campaign, each
+left out when empty, `{}` when the visit was direct. About a minute after
+the submission arrives the collector looks the source up in the event
+files: the last visit with a referrer or a UTM (last non-direct) that
+started within `ATTRIBUTION_DAYS` (default 7) before it, of the
+submission's actor, of the `$install_id` it was sent with, of the
+request's connection hash (so the views a visitor sent before consent
+gave them an id count, the same UTC day), and, for a
+`$user_id`, of every install id seen on one event with it (`aliases`), so
+a visit made before signing in counts. Until then `attribution` is `{}`.
+Around 03:00 UTC the daily pass can hold the lookup back by up to about
+half an hour.
+A submission that sends `$referrer` or a `$utm_*` key gives those four
+itself and the lookup none. An anonymous visitor without consent is a
+connection hash that changes at midnight UTC, so for them the lookup ends
+there. Everything else is on the event, which has the submission's id and
+its arrival as `ts`: the actor, the page (`$host`, `$path`), the country,
+the same referrer and UTMs, and the `$kind`, group, session id,
+environment and consent of the actor's newest view in the window. So the
+submission's attribution outlives the raw window, and the event's details
+are counted like any product event's.
 
 Two body styles, chosen by `Content-Type`:
 
@@ -1363,8 +1383,9 @@ what they mean on events:
 | Key | Meaning |
 | --- | --- |
 | `$id` | The submission's UUID. A retry with the same id is stored once and answered as a success, even if the form closed in between; omitted, the collector makes one |
-| `$user_id`, `$install_id` | The event's actor, resolved as on events: `$user_id`, else `$install_id`, else the connection hash, so a JS-free post from the browser that sent the visit's views gets the same actor as those views, and their session |
+| `$user_id`, `$install_id` | The event's actor, resolved as on events: `$user_id`, else `$install_id`, else the connection hash. A JS-free post is matched to the visit's views through the connection hash, which covers the views sent without an id (no consent) and, on a consented anonymous or identified site, the views sent before consent, the same UTC day; for full coverage on such a site use a tagged form (`data-twillingate-form`) or send `$install_id` (a hidden field filled from `twillingate.installId()`) |
 | `$host`, `$path` | The page the form is on, the event's; on a plain form each defaults to the `Referer`'s, on JSON an absent one stays empty |
+| `$referrer`, `$utm_source`, `$utm_medium`, `$utm_campaign` | The visit's source: a referrer URL (cleaned as on views, so one from the form's own `$host` is no source) and campaign. Any of them makes the four the submission's attribution instead of the lookup's; a site that copies UTMs into hidden fields names them `$utm_*` |
 | `$redirect` | Plain form only: where to send the visitor back |
 
 Any other `$` key is dropped, and a field named like a context key without

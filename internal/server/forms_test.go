@@ -195,8 +195,6 @@ type fakeForms struct {
 	calls  []store.NewSubmission
 	closed bool  // every new submission is refused with ErrFormClosed
 	err    error // every call fails with err
-	session  *store.Event
-	sessions [][2]string // (actor kind, actor id) per SessionAt call
 }
 
 func newFakeForms() *fakeForms {
@@ -225,17 +223,6 @@ func (f *fakeForms) WriteSubmission(_ context.Context, n store.NewSubmission) (s
 	f.forms[sub.Form] = form
 	f.subs[sub.ID] = n
 	return form, true, nil
-}
-
-func (f *fakeForms) SessionAt(_ context.Context, _ int64, actorKind, actorID string, _ time.Time) (*store.Event, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.sessions = append(f.sessions, [2]string{actorKind, actorID})
-	if f.session == nil {
-		return nil, nil
-	}
-	e := *f.session
-	return &e, nil
 }
 
 // formServer is a server over one project (allowed origin testOrigin, key
@@ -502,20 +489,13 @@ func TestFormBodyTooLarge(t *testing.T) {
 	}
 }
 
-// The handler fills the event the store writes on an approved form: the
+// The handler fills the event the store holds for an approved form: the
 // submission's id, instant and actor, family product, $form_submit, the
-// page, the country and only the form's name as attribute, over what the
-// visit's session says about the visitor. The submission keeps the
-// session's attribution beside the fields.
+// page, the country and only the form's name as attribute. The source,
+// the session and the environment are the jobs runner's to find.
 func TestFormEventPrefilled(t *testing.T) {
 	forms := newFakeForms()
 	forms.forms["contact"] = store.Form{ProjectID: 1, Name: "contact", Status: store.FormApproved}
-	forms.session = &store.Event{Kind: "web", GroupID: "g1", SessionID: "s1",
-		ReferrerSource: "google", UTMSource: "nl", UTMMedium: "email", UTMCampaign: "oct",
-		Platform: "web", OS: "macos", Browser: "safari", BrowserLocale: "en-US", Device: "desktop",
-		DisplayWidth: 1440, DisplayHeight: 900, Consent: store.ConsentGiven,
-		// The session's own location and time never reach the event.
-		Host: "landing.app.com", Path: "/landing", ActorID: "someone", Attributes: map[string]string{"x": "y"}}
 	h := formServer(t, forms, slog.Default())
 	before := time.Now().UTC()
 	w := postURLEncoded(h, "contact", url.Values{
@@ -525,18 +505,13 @@ func TestFormEventPrefilled(t *testing.T) {
 	wantRedirect(t, w, "https://app.com/thanks#twillingate-form-success-contact")
 	n := forms.calls[0]
 	sub, ev := n.Submission, n.Event
-	wantAttr := store.Attribution{Referrer: "google", UTMSource: "nl", UTMMedium: "email", UTMCampaign: "oct"}
-	if sub.ID != "018f1e5c-0000-7000-8000-000000000002" || sub.Attribution != wantAttr {
+	if sub.ID != "018f1e5c-0000-7000-8000-000000000002" || sub.Attribution != (store.Attribution{}) {
 		t.Errorf("submission = %+v", sub)
 	}
 	want := store.Event{ID: sub.ID, ProjectID: 1, Family: store.FamilyProduct, EventName: store.FormSubmitEvent,
-		TS: sub.ReceivedAt, ReceivedAt: sub.ReceivedAt, Kind: "web",
-		ActorID: "u1", ActorKind: store.ActorUser, UserID: "u1", GroupID: "g1", SessionID: "s1",
-		InstallID: "i1",
-		Host: "app.com", Path: "/contact",
-		ReferrerSource: "google", UTMSource: "nl", UTMMedium: "email", UTMCampaign: "oct",
-		Platform: "web", OS: "macos", Browser: "safari", BrowserLocale: "en-US", Device: "desktop",
-		DisplayWidth: 1440, DisplayHeight: 900, Country: "DE", Consent: store.ConsentGiven,
+		TS: sub.ReceivedAt, ReceivedAt: sub.ReceivedAt,
+		ActorID: "u1", ActorKind: store.ActorUser, UserID: "u1", InstallID: "i1",
+		Host: "app.com", Path: "/contact", Country: "DE",
 		Attributes: map[string]string{"form": "contact"}}
 	if !reflect.DeepEqual(ev, want) || sub.ReceivedAt.Before(before) {
 		t.Errorf("event = %+v\nwant    %+v", ev, want)
@@ -544,14 +519,44 @@ func TestFormEventPrefilled(t *testing.T) {
 	if d := n.DraftUntil.Sub(sub.ReceivedAt); d != 7*24*time.Hour {
 		t.Errorf("draft_until is %v after received, want RETENTION_FORMS_DRAFT_DAYS (7 days)", d)
 	}
-	if len(forms.sessions) != 1 || forms.sessions[0] != [2]string{store.ActorUser, "u1"} {
-		t.Errorf("SessionAt calls = %v", forms.sessions)
+}
+
+// The source a submission sends is its pending event's: the referrer
+// cleaned against its $host as on views, the UTMs as sent; the
+// submission's attribution waits for the job.
+func TestFormSentAttributionIsTheEvents(t *testing.T) {
+	forms := newFakeForms()
+	h := formServer(t, forms, slog.Default())
+	postJSON(h, "contact", `{"key":"`+testKey+`","fields":{"email":"a"},"attributes":{"$host":"app.com",`+
+		`"$referrer":"https://blog.example.org/post","$utm_source":"hn"}}`, nil)
+	ev := forms.calls[0].Event
+	if ev.ReferrerSource != "blog.example.org" || ev.UTMSource != "hn" || ev.UTMMedium != "" {
+		t.Errorf("event source = %q %q %q", ev.ReferrerSource, ev.UTMSource, ev.UTMMedium)
+	}
+	if a := forms.calls[0].Submission.Attribution; a != (store.Attribution{}) {
+		t.Errorf("attribution at arrival = %+v, want none: the job writes it", a)
 	}
 }
 
-// With no session the event still has the submission's id, actor and page,
-// and the submission no attribution.
-func TestFormEventWithoutSession(t *testing.T) {
+// Hidden $utm_* fields on a plain form are context, not fields; a
+// referrer from the form's own host is no source.
+func TestFormSentAttributionOnAPlainForm(t *testing.T) {
+	forms := newFakeForms()
+	h := formServer(t, forms, slog.Default())
+	postURLEncoded(h, "contact", url.Values{"email": {"a"}, "$redirect": {"https://app.com/"},
+		"$host": {"app.com"}, "$referrer": {"https://www.app.com/pricing"}, "$utm_campaign": {"oct"}}, nil)
+	n := forms.calls[0]
+	if ev := n.Event; ev.ReferrerSource != "" || ev.UTMCampaign != "oct" {
+		t.Errorf("event source = %q, campaign %q", ev.ReferrerSource, ev.UTMCampaign)
+	}
+	if _, ok := n.Submission.Fields["$utm_campaign"]; ok || len(n.Submission.Fields) != 1 {
+		t.Errorf("fields = %v", n.Submission.Fields)
+	}
+}
+
+// Without anything sent the event still has the submission's id, actor and
+// page, and the submission no attribution.
+func TestFormEventWithoutSource(t *testing.T) {
 	forms := newFakeForms()
 	h := formServer(t, forms, slog.Default())
 	postURLEncoded(h, "contact", url.Values{"email": {"a"}, "$redirect": {"https://app.com/"}},
@@ -584,6 +589,33 @@ func TestFormConnectionActorMatchesViews(t *testing.T) {
 	ev := forms.calls[0].Event
 	if ev.ActorKind != store.ActorConnection || ev.ActorID != q.views[0].ActorID {
 		t.Errorf("event actor %s/%s, view actor %s/%s", ev.ActorKind, ev.ActorID, q.views[0].ActorKind, q.views[0].ActorID)
+	}
+	if forms.calls[0].ConnectionID != q.views[0].ActorID {
+		t.Errorf("connection id %q, view actor %q", forms.calls[0].ConnectionID, q.views[0].ActorID)
+	}
+}
+
+// A submission sent with an install id still carries the connection hash,
+// so its lookup also finds the views sent before consent gave them one.
+func TestFormWithAnInstallIDKeepsTheConnectionHash(t *testing.T) {
+	forms := newFakeForms()
+	cfg := configtest.Load(t, nil)
+	reg := newTestRegistry(t, []manage.ProjectSpec{{Name: "App", AllowedOrigins: []string{testOrigin}}},
+		map[int][2]string{0: {testKey, "web"}})
+	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
+	q := &fakeQueue{}
+	h := New(cfg, reg, q, g, fixedSalt{}, q, forms, slog.Default())
+	post(h, envelopeOf(`{"name":"$page_view","attributes":{"$path":"/"}}`), nil)
+	postURLEncoded(h, "contact", url.Values{"email": {"a"}, "$install_id": {"i1"}, "$redirect": {"https://app.com/"}}, nil)
+	if len(q.views) != 1 || len(forms.calls) != 1 {
+		t.Fatalf("views %d, submissions %d", len(q.views), len(forms.calls))
+	}
+	n := forms.calls[0]
+	if n.Event.ActorKind != store.ActorInstall || n.Event.ActorID != "i1" {
+		t.Errorf("event actor %s/%s, want install/i1", n.Event.ActorKind, n.Event.ActorID)
+	}
+	if q.views[0].ActorKind != store.ActorConnection || n.ConnectionID != q.views[0].ActorID {
+		t.Errorf("connection id %q, view actor %s/%s", n.ConnectionID, q.views[0].ActorKind, q.views[0].ActorID)
 	}
 }
 
