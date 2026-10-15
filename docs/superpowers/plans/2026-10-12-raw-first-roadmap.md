@@ -245,10 +245,14 @@ to 7 views, 40% product events with 8 attributes, 10% measures), derives
 its `sessions/`, `identities` and `aliases` files with the daily pass
 (11.5 s), and runs every SQL widget of a system dashboard through
 `reporting.Service.WidgetData`, cache off, over the last 365 days (Views,
-20 widgets, 5.9M views, 2.5M visitors) or 90 (Retention, 5 widgets). The
+20 widgets, 5.9M views, 2.5M visitor-days: the sum of per-day distinct
+counts, from 300k distinct actors) or 90 (Retention, 5 widgets). The
 engine child runs at 2 threads and `ENGINE_MEMORY_LIMIT=512MB`, on an Intel
 N150 (4 CPUs, shared with other sessions: load average 3.6 to 8.4 during
-the run, so read the times as upper bounds). The first query builds the
+the run, which makes the times upper bounds; the OS page cache was warm,
+the files having just been written, which pushes the other way). The
+generator is a model, not real traffic: 300k actors, no bots, arrivals
+uniform over the month. The first query builds the
 tables in 76 ms; `reporting.Migrate`'s check of all 59 widgets at `LIMIT 0`
 takes 0.8 s.
 
@@ -261,8 +265,15 @@ takes 0.8 s.
 | Retention, two at a time | 9.3 s | 1,275 MB |
 | Retention, all 5 at once | 10.2 s | 1,420 MB |
 
-Four threads, same data and load: Views 7.2 s one at a time, 7.0 s all at
-once; Retention 7.3 s and 9.1 s. So the miss is not a matter of two CPUs.
+Four threads, same data and load (2 passes per mode, not 3; the
+all-at-once mode ran at engine `parallel` 1, not the default of 2 for 4
+threads): Views 7.2 s one at a time, 7.0 s all at once; Retention 7.3 s and
+9.1 s. More threads on a loaded 4-CPU box helped by about a third; the
+target is still missed by about 3.5 times.
+
+The child exceeded the 512 MB limit: Views peaked at about 0.8 GB,
+Retention at 1.2 to 1.4 GB (the limit covers DuckDB's buffers, not
+everything the process holds).
 
 Views, one at a time (first pass), slowest first: `top-pages` 1,631 ms,
 `display-resolutions` 878, `browsers` 819, `devices` 804, `operating-systems`
@@ -271,13 +282,19 @@ Views, one at a time (first pass), slowest first: `top-pages` 1,631 ms,
 581, `consent-share` 551, `referrers` 514, `campaigns` 192,
 `visitors-by-app-version` 167, `views` 48, `avg-session-length` 33,
 `bounce-rate` 30, `avg-session` 27. The four that read `sessions` or only
-count rows take 27 to 48 ms; the others scan a year of views for
-`count(DISTINCT actor_id)` per day and dimension, 0.5 to 1.6 s each, and
-add up. Retention's five widgets take 2.1 to 3.4 s each: their `acts` CTE
+count rows take 27 to 48 ms; 14 of the others scan a year of
+views for `count(DISTINCT actor_id)` per day and dimension, 0.5 to 1.6 s
+each (`campaigns` 192 ms and `visitors-by-app-version` 167 ms scan less),
+and add up. Retention's five widgets take 2.1 to 3.4 s each: their `acts` CTE
 has no lower bound on the day (`day <= :to + 45` only), so each scans the
 project's whole history up to the range's end to find a visitor's first
 day, whatever the preset. The fix is a follow-up, not 5d's: the sum of the
 widgets, not one outlier, is the cost.
+
+How far this represents a real install: the stat widgets (`visitors`,
+`views`) also read the previous period, so a second-year install scans
+about twice as much for those; Retention scans the whole history, so a
+3-year install costs about 3 times as much.
 
 ## PR 6. Removal (D11, D12, D20, D23)
 
