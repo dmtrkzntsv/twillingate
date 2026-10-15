@@ -233,9 +233,51 @@ Breaking (`feat!`): widget SQL becomes DuckDB SQL over `events`,
 - Docs: `docs/reporting.md` (the component examples in the new dialect,
   the tables), `docs/twillingate.md`, `deploy/UPGRADES.md`.
 - Measured on landing: the Views dashboard over 1 year on a 2-CPU server
-  (target under 2 s).
+  (target under 2 s). **Missed, 5 times over** (below).
 - Done when: every system dashboard renders from the files with the
   numbers the SQLite path gave for the same range.
+
+**Measured on 2026-10-14 (the 5d plan's Task 8):** `TestMeasureDashboards`
+(`go test -tags measure -run TestMeasureDashboards -v -timeout 2h
+./internal/app`) generates 12 months of one project, 1M rows a month (12M
+rows, 478 MB of zstd Parquet in 12 month files; 50% views in sessions of 1
+to 7 views, 40% product events with 8 attributes, 10% measures), derives
+its `sessions/`, `identities` and `aliases` files with the daily pass
+(11.5 s), and runs every SQL widget of a system dashboard through
+`reporting.Service.WidgetData`, cache off, over the last 365 days (Views,
+20 widgets, 5.9M views, 2.5M visitors) or 90 (Retention, 5 widgets). The
+engine child runs at 2 threads and `ENGINE_MEMORY_LIMIT=512MB`, on an Intel
+N150 (4 CPUs, shared with other sessions: load average 3.6 to 8.4 during
+the run, so read the times as upper bounds). The first query builds the
+tables in 76 ms; `reporting.Migrate`'s check of all 59 widgets at `LIMIT 0`
+takes 0.8 s.
+
+| Dashboard, mode (threads 2) | Wall, best of 3 passes | Child peak RSS |
+|---|---|---|
+| Views, one at a time | **10.8 s** (passes: 10.8, 10.8, 11.5) | 772 MB |
+| Views, two at a time (engine `parallel` 2) | 10.9 s | 815 MB |
+| Views, all 20 at once, as a browser sends them (`parallel` 1) | 18.6 s (load rose to 8) | 776 MB |
+| Retention, 90 days, one at a time | 10.2 s (passes: 12.8, 10.2, 11.0) | 1,211 MB |
+| Retention, two at a time | 9.3 s | 1,275 MB |
+| Retention, all 5 at once | 10.2 s | 1,420 MB |
+
+Four threads, same data and load: Views 7.2 s one at a time, 7.0 s all at
+once; Retention 7.3 s and 9.1 s. So the miss is not a matter of two CPUs.
+
+Views, one at a time (first pass), slowest first: `top-pages` 1,631 ms,
+`display-resolutions` 878, `browsers` 819, `devices` 804, `operating-systems`
+713, `hosts` 690, `visitors-and-views` 674, `visitors-by-kind` 664,
+`consent-states` 646, `visitors` 596, `countries` 584, `visitors-by-country`
+581, `consent-share` 551, `referrers` 514, `campaigns` 192,
+`visitors-by-app-version` 167, `views` 48, `avg-session-length` 33,
+`bounce-rate` 30, `avg-session` 27. The four that read `sessions` or only
+count rows take 27 to 48 ms; the others scan a year of views for
+`count(DISTINCT actor_id)` per day and dimension, 0.5 to 1.6 s each, and
+add up. Retention's five widgets take 2.1 to 3.4 s each: their `acts` CTE
+has no lower bound on the day (`day <= :to + 45` only), so each scans the
+project's whole history up to the range's end to find a visitor's first
+day, whatever the preset. The fix is a follow-up, not 5d's: the sum of the
+widgets, not one outlier, is the cost.
 
 ## PR 6. Removal (D11, D12, D20, D23)
 
@@ -259,5 +301,5 @@ Breaking (`feat!`): widget SQL becomes DuckDB SQL over `events`,
 |---|---|---|
 | PR 2 | spawn-to-ready on the release runners | under 100 ms |
 | PR 3 | a cap day's log appended and fsynced per flush, on a 2-CPU server | no visible ingest cost |
-| PR 5d | Views dashboard, 1 year, 2 CPUs, with `sessions` | under 2 s |
+| PR 5d | Views dashboard, 1 year, 2 CPUs, with `sessions` | under 2 s. **Taken 2026-10-14: 10.8 s** (Retention, 90 days: 10.2 s). Follow-up needed |
 | PR 6 | idle RSS of a fresh install | ~17 MB, as today |
