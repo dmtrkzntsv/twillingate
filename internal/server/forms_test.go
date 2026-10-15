@@ -242,7 +242,7 @@ func formServerAllowing(t *testing.T, forms *fakeForms, logger *slog.Logger, ori
 		map[int][2]string{0: {testKey, "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
-	return New(cfg, reg, q, g, fixedSalt{}, q, forms, logger)
+	return New(cfg, reg, q, g, fixedSalt{}, forms, logger)
 }
 
 // postForm sends one request to /ingest/forms/<name><query> with a Chrome
@@ -580,7 +580,7 @@ func TestFormConnectionActorMatchesViews(t *testing.T) {
 		map[int][2]string{0: {testKey, "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
-	h := New(cfg, reg, q, g, fixedSalt{}, q, forms, slog.Default())
+	h := New(cfg, reg, q, g, fixedSalt{}, forms, slog.Default())
 	post(h, envelopeOf(`{"name":"$page_view","attributes":{"$path":"/"}}`), nil)
 	postURLEncoded(h, "contact", url.Values{"email": {"a"}, "$redirect": {"https://app.com/"}}, nil)
 	if len(q.views) != 1 || len(forms.calls) != 1 {
@@ -604,7 +604,7 @@ func TestFormWithAnInstallIDKeepsTheConnectionHash(t *testing.T) {
 		map[int][2]string{0: {testKey, "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
-	h := New(cfg, reg, q, g, fixedSalt{}, q, forms, slog.Default())
+	h := New(cfg, reg, q, g, fixedSalt{}, forms, slog.Default())
 	post(h, envelopeOf(`{"name":"$page_view","attributes":{"$path":"/"}}`), nil)
 	postURLEncoded(h, "contact", url.Values{"email": {"a"}, "$install_id": {"i1"}, "$redirect": {"https://app.com/"}}, nil)
 	if len(q.views) != 1 || len(forms.calls) != 1 {

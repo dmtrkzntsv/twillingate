@@ -1,24 +1,23 @@
--- First day each group appears in the retained history. users is distinct
--- per day, so the range figure is the busiest day's: the same person on two
--- days cannot be told apart from two people.
-WITH firsts AS (
-  SELECT id, MIN(day) AS first_day
-  FROM v_identity_daily
-  WHERE project_id = :project AND kind = 'group' AND id != ''
-  GROUP BY id
+-- Actions are the views and product events sent with the group_id. Users
+-- are distinct per day, so the range figure is the busiest day's: the same
+-- person on two days cannot be told apart from two people. First seen is
+-- the first event the files hold for the group (identities), which also
+-- names it.
+WITH d AS (
+  SELECT group_id AS id, day, count(*) AS actions, count(DISTINCT nullif(user_id, '')) AS users
+  FROM events
+  WHERE project_id = :project AND family IN ('views', 'product') AND group_id <> ''
+    AND day BETWEEN :from AND :to
+  GROUP BY group_id, day
 )
 SELECT COALESCE(i.name, d.id) AS "Group",
-       SUM(d.views + d.events) AS "Actions",
+       SUM(d.actions) AS "Actions",
        MAX(d.users) AS "Peak daily users",
-       COUNT(DISTINCT d.day) AS "Active days",
-       MIN(f.first_day) AS "First seen",
+       count(DISTINCT d.day) AS "Active days",
+       MIN(i.first_seen::DATE) AS "First seen",
        MAX(d.day) AS "Last seen"
-FROM v_identity_daily d
-JOIN firsts f ON f.id = d.id
-LEFT JOIN identities i
-  ON i.project_id = d.project_id AND i.kind = 'group' AND i.id = d.id
-WHERE d.project_id = :project AND d.kind = 'group' AND d.id != ''
-  AND d.day BETWEEN :from AND :to
+FROM d
+LEFT JOIN identities i ON i.project_id = :project AND i.kind = 'group' AND i.id = d.id
 GROUP BY d.id, i.name
-ORDER BY SUM(d.views + d.events) DESC
+ORDER BY SUM(d.actions) DESC, d.id
 LIMIT 100

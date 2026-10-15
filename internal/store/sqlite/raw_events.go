@@ -89,6 +89,28 @@ func (d *DB) RawEvents(ctx context.Context, projectID int64, day civil.Date) ([]
 	return out, rows.Err()
 }
 
+// OldestRawDays is each project's oldest day with a raw row SQLite holds,
+// of any family: where what `twillingate events import` would copy into the
+// files begins. A project with none is left out.
+func (d *DB) OldestRawDays(ctx context.Context) (map[int64]string, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT project_id, MIN(day) FROM events WHERE family IN ('views', 'product', 'measures') GROUP BY project_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[int64]string{}
+	for rows.Next() {
+		var id int64
+		var day string
+		if err := rows.Scan(&id, &day); err != nil {
+			return nil, err
+		}
+		out[id] = day
+	}
+	return out, rows.Err()
+}
+
 // rawAttributes reads an attributes blob: a string value as is, any other
 // JSON value (a number or a boolean an older row may hold) as its text,
 // null dropped. An empty object is nil, as an event built without

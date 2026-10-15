@@ -2,16 +2,20 @@ package api
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -45,6 +49,13 @@ type host struct {
 
 var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 
+// isDay reports a calendar date as YYYY-MM-DD: the tools cast from and to
+// to DATE, which refuses a day like 2026-02-30.
+func isDay(s string) bool {
+	_, err := time.Parse(time.DateOnly, s)
+	return err == nil && dayRe.MatchString(s)
+}
+
 type rangeIn struct {
 	ProjectID int64  `json:"project_id" jsonschema:"project id; call list_projects first"`
 	From      string `json:"from" jsonschema:"start day inclusive, YYYY-MM-DD"`
@@ -55,7 +66,7 @@ type rangeIn struct {
 // model to recover from (endpoint spec §10): an unknown project lists
 // the valid ids and names instead of just refusing.
 func (h *host) checkRange(ctx context.Context, in rangeIn) error {
-	if !dayRe.MatchString(in.From) || !dayRe.MatchString(in.To) {
+	if !isDay(in.From) || !isDay(in.To) {
 		return invalidf("from and to must be YYYY-MM-DD, got %q and %q", in.From, in.To)
 	}
 	if h.reg.Snapshot(ctx).Project(in.ProjectID) == nil {
@@ -84,19 +95,63 @@ type tableOut struct {
 	Note      string     `json:"note,omitempty"`
 }
 
-func (h *host) table(ctx context.Context, q string, args ...any) (tableOut, error) {
-	res, err := h.db.Run(ctx, q, args...)
+// filesTable runs one of the tools' own queries on the event files (DuckDB
+// SQL over the tables of archive.Reader), scoped to in's project: q's
+// :project, :from and :to are bound as BIGINT and DATEs, any other :name
+// from vals. Every cell reads as SQLite's did (tw_cell: NULL as "", 3 not
+// 3.0).
+func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[string]enginesql.Value) (tableOut, error) {
+	all := map[string]enginesql.Value{
+		":project": {Type: "BIGINT", Text: strconv.FormatInt(in.ProjectID, 10)},
+		":from":    {Type: "DATE", Text: in.From},
+		":to":      {Type: "DATE", Text: in.To},
+	}
+	for k, v := range vals {
+		all[k] = v
+	}
+	bound, args, err := enginesql.Bind(q, all)
 	if err != nil {
-		if errors.Is(err, readsql.ErrTimeout) {
-			return tableOut{}, invalidf("query exceeded %s; narrow the date range", h.db.Timeout())
-		}
 		return tableOut{}, err
 	}
-	out := tableOut{Columns: res.Columns, Rows: res.Rows, Truncated: res.Truncated}
+	res, err := h.runFiles(ctx, archive.Scoped{SQL: enginesql.Text(bound), Args: args, MaxRows: h.db.MaxRows(), Scope: true, Project: in.ProjectID})
+	if err != nil {
+		return tableOut{}, err
+	}
+	out := tableOut{Columns: res.Columns, Rows: cellRows(res.Rows), Truncated: res.Truncated}
 	if res.Truncated {
 		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — narrow the range or raise the limit", h.db.MaxRows())
 	}
 	return out, nil
+}
+
+// runFiles runs q on the event files under CONSOLE_QUERY_TIMEOUT, with the
+// registry's rules, for the tools' own SQL: a failure reads as filesError
+// words it.
+func (h *host) runFiles(ctx context.Context, q archive.Scoped) (engine.Result, error) {
+	if h.files == nil {
+		return engine.Result{}, invalidf("the event files cannot be queried by this process")
+	}
+	timeout := h.db.Timeout()
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	events, attrs := h.reg.Snapshot(ctx).RuleLists()
+	res, err := h.files.QueryScoped(ctx, q, archive.Rules{Events: events, Attributes: attrs})
+	if err != nil {
+		return engine.Result{}, filesError(err, timeout)
+	}
+	return res, nil
+}
+
+// cellRows is an engine result's rows as text (cellText), never nil.
+func cellRows(rows [][]any) [][]string {
+	out := make([][]string, len(rows))
+	for i, row := range rows {
+		out[i] = make([]string, len(row))
+		for j, v := range row {
+			out[i][j] = cellText(v)
+		}
+	}
+	return out
 }
 
 // ---- list_projects ----
@@ -139,45 +194,68 @@ func (h *host) viewsOverview(ctx context.Context, in overviewIn) (tableOut, erro
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return tableOut{}, err
 	}
-	q := `SELECT day, SUM(visitors) AS visitors, SUM(views) AS views, SUM(sessions) AS sessions,
-		SUM(bounces) AS bounces, SUM(duration_sec) AS duration_sec,
-		ROUND(CAST(SUM(bounces) AS REAL)/MAX(SUM(sessions),1), 3) AS bounce_rate,
-		CAST(SUM(duration_sec)/MAX(SUM(sessions),1) AS INTEGER) AS avg_session_sec
-		FROM v_views_daily WHERE project_id=? AND day BETWEEN ? AND ?`
-	args := []any{in.ProjectID, in.From, in.To}
+	kind, vals := "", map[string]enginesql.Value(nil)
 	if in.Kind != "" {
-		q += ` AND kind=?`
-		args = append(args, in.Kind)
+		kind, vals = ` AND kind = :kind`, map[string]enginesql.Value{":kind": {Type: "VARCHAR", Text: in.Kind}}
 	}
-	out, err := h.table(ctx, q+` GROUP BY day ORDER BY day`, args...)
-	return out, err
+	// Visitors are distinct per day and kind, added up over a day's kinds;
+	// sessions, bounces and durations are the sessions table's, as the
+	// Views dashboard reads them.
+	q := `WITH v AS (
+  SELECT day, count(DISTINCT actor_id) AS visitors, count(*) AS views
+  FROM views WHERE project_id = :project AND day BETWEEN :from AND :to` + kind + `
+  GROUP BY day, kind
+), vd AS (
+  SELECT day, SUM(visitors) AS visitors, SUM(views) AS views FROM v GROUP BY day
+), sd AS (
+  SELECT day, count(*) AS sessions, count(*) FILTER (WHERE views = 1) AS bounces,
+         COALESCE(SUM(duration_sec), 0) AS duration_sec
+  FROM sessions WHERE project_id = :project AND day BETWEEN :from AND :to` + kind + `
+  GROUP BY day
+)
+SELECT vd.day, vd.visitors, vd.views, COALESCE(sd.sessions, 0) AS sessions,
+       COALESCE(sd.bounces, 0) AS bounces, COALESCE(sd.duration_sec, 0) AS duration_sec,
+       ROUND(COALESCE(sd.bounces, 0)::DOUBLE / greatest(COALESCE(sd.sessions, 0), 1), 3) AS bounce_rate,
+       CAST(COALESCE(sd.duration_sec, 0) // greatest(COALESCE(sd.sessions, 0), 1) AS BIGINT) AS avg_session_sec
+FROM vd LEFT JOIN sd ON sd.day = vd.day
+ORDER BY vd.day`
+	return h.filesTable(ctx, in.rangeIn, q, vals)
 }
 
 // ---- views_breakdown ----
 
-// viewsDimension is one breakdown: the view it reads and the key columns
-// it groups by (one or two). kinds has no view of its own; it reads the
-// daily table.
+// viewsDimension is one breakdown of the views table: the columns it
+// returns, each with its key expression (an absent value reads as the empty
+// string, as SQLite's views stored it), and the views it leaves out, if any.
 type viewsDimension struct {
-	view string
-	cols []string
+	cols  []string
+	exprs []string
+	where string
 }
 
+// orEmpty is a nullable column as a key: NULL (not sent) reads as empty.
+func orEmpty(col string) string { return "COALESCE(" + col + ", '')" }
+
 var viewsDimensions = map[string]viewsDimension{
-	"kinds":        {"v_views_daily", []string{"kind"}},
-	"paths":        {"v_views_paths", []string{"path"}},
-	"hosts":        {"v_views_hosts", []string{"host"}},
-	"referrers":    {"v_views_referrers", []string{"source"}},
-	"utm":          {"v_views_utm", []string{"utm_source", "utm_medium", "utm_campaign"}},
-	"countries":    {"v_views_countries", []string{"country"}},
-	"platforms":    {"v_views_platforms", []string{"platform"}},
-	"os":           {"v_views_os", []string{"os", "os_version"}},
-	"browsers":     {"v_views_browsers", []string{"browser", "browser_version"}},
-	"app_versions": {"v_views_app_versions", []string{"platform", "app_version"}},
-	"devices":      {"v_views_devices", []string{"device", "device_model"}},
-	"displays":     {"v_views_displays", []string{"display"}},
-	"consent":      {"v_views_consent", []string{"consent"}},
-	"locales":      {"v_views_locales", []string{"browser_locale", "app_locale"}},
+	"kinds":     {cols: []string{"kind"}, exprs: []string{orEmpty("kind")}},
+	"paths":     {cols: []string{"path"}, exprs: []string{orEmpty("path")}},
+	"hosts":     {cols: []string{"host"}, exprs: []string{orEmpty("host")}},
+	"referrers": {cols: []string{"source"}, exprs: []string{orEmpty("referrer_source")}},
+	"utm": {cols: []string{"utm_source", "utm_medium", "utm_campaign"},
+		exprs: []string{orEmpty("utm_source"), orEmpty("utm_medium"), orEmpty("utm_campaign")},
+		where: "(utm_source <> '' OR utm_medium <> '' OR utm_campaign <> '')"},
+	"countries":    {cols: []string{"country"}, exprs: []string{orEmpty("country")}},
+	"platforms":    {cols: []string{"platform"}, exprs: []string{orEmpty("platform")}},
+	"os":           {cols: []string{"os", "os_version"}, exprs: []string{orEmpty("os"), orEmpty("os_version")}},
+	"browsers":     {cols: []string{"browser", "browser_version"}, exprs: []string{orEmpty("browser"), orEmpty("browser_version")}},
+	"app_versions": {cols: []string{"platform", "app_version"}, exprs: []string{orEmpty("platform"), "app_version"}, where: "app_version <> ''"},
+	"devices":      {cols: []string{"device", "device_model"}, exprs: []string{orEmpty("device"), orEmpty("device_model")}},
+	"displays": {cols: []string{"display"}, exprs: []string{"concat(display_width, 'x', display_height)"},
+		where: "display_width > 0 AND display_height > 0"},
+	"consent": {cols: []string{"consent"},
+		exprs: []string{"CASE consent WHEN 1 THEN 'given' WHEN 0 THEN 'none' ELSE 'unknown' END"}},
+	"locales": {cols: []string{"browser_locale", "app_locale"}, exprs: []string{orEmpty("browser_locale"), orEmpty("app_locale")},
+		where: "(browser_locale <> '' OR app_locale <> '')"},
 }
 
 // dimensionNames lists the enum, sorted, for the schema text and errors.
@@ -208,13 +286,29 @@ func (h *host) viewsBreakdown(ctx context.Context, in breakdownIn) (tableOut, er
 	if limit <= 0 {
 		limit = 20
 	}
+	// Visitors are distinct per day and key, added up over the range, as
+	// the views' breakdowns kept them.
+	keys := make([]string, len(dim.cols))
+	pos := make([]string, len(dim.cols))
+	for i, c := range dim.cols {
+		keys[i] = dim.exprs[i] + " AS " + c
+		pos[i] = strconv.Itoa(i + 1)
+	}
+	where := ""
+	if dim.where != "" {
+		where = " AND " + dim.where
+	}
 	cols := strings.Join(dim.cols, ", ")
-	out, err := h.table(ctx, `SELECT `+cols+`,
-		SUM(visitors) AS visitors, SUM(views) AS views
-		FROM `+dim.view+` WHERE project_id=? AND day BETWEEN ? AND ?
-		GROUP BY `+cols+` ORDER BY visitors DESC LIMIT ?`,
-		in.ProjectID, in.From, in.To, limit)
-	return out, err
+	q := `WITH d AS (
+  SELECT ` + strings.Join(keys, ", ") + `, count(DISTINCT actor_id) AS visitors, count(*) AS views
+  FROM views WHERE project_id = :project AND day BETWEEN :from AND :to` + where + `
+  GROUP BY day, ` + strings.Join(pos, ", ") + `
+)
+SELECT ` + cols + `, SUM(visitors) AS visitors, SUM(views) AS views
+FROM d GROUP BY ` + cols + `
+ORDER BY SUM(visitors) DESC, SUM(views) DESC, ` + cols + `
+LIMIT :limit`
+	return h.filesTable(ctx, in.rangeIn, q, map[string]enginesql.Value{":limit": {Type: "BIGINT", Text: strconv.Itoa(limit)}})
 }
 
 // register exposes every operation once, for MCP and (where a route is
@@ -252,28 +346,28 @@ func (h *host) register(r *registrar) {
 		Description: "Usage per project over a range (default the last 30 days, at most 400): views, product events and measure samples per day (every day, zeros included) and in total, when the newest raw row arrived, the oldest day with data, raw and rolled-up day counts, an estimate of the disk the project's rows take (measured daily by the daily pass, which also runs at start: size is the latest, with the day it was measured_at, null until the first measurement; each series day carries that day's total_bytes, null on days not measured), and, with project_id only (null otherwise), declared attributes no event carried. Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention; later days are counted live. Without project_id, every project. Each series day also carries the project's declared_attributes and, counted the night after while the day's rows are raw and kept once rolled up, the distinct attribute_keys and attribute_values received and the attribute_values_folded into (other); null on days not stored. Also the database's size now and per day (database_series, null on days not measured)."},
 		h.usage)
 	expose(r, spec{Name: "views_overview", Annotations: ro, Method: "GET", Path: p + "/views/overview",
-		Description: "Daily views for one project: visitors, views, sessions, bounces, duration, with derived bounce_rate and avg_session_sec. Sums every kind (web, app, cli, …) unless kind is given. Includes yesterday and today (live)."},
+		Description: "Daily views for one project: visitors (distinct per day and kind, added up), views, sessions, bounces, duration, with derived bounce_rate and avg_session_sec. Sums every kind (web, app, cli, …) unless kind is given. Read from the event files, today included."},
 		h.viewsOverview)
 	expose(r, spec{Name: "views_breakdown", Annotations: ro, Method: "GET", Path: p + "/views/breakdown",
-		Description: "Top values for one dimension of a project's views over a date range: kinds, paths, hosts, referrers, utm, countries, platforms, os, browsers, app_versions, devices, displays, consent or locales. Two-key dimensions (os, browsers, app_versions, devices, locales) return both columns. os, browser and device values are lower-case closed vocabularies with other (outside the list) and unknown (not declared) as distinct floors; platform is the surface (web, ios, electron, …) and never empty. consent is given, none or unknown (sent without $consent, or stored before it existed); none also includes views sent before the visitor answered a consent prompt. locales pairs the browser's language ($browser_locale) with the product's ($app_locale), either empty when not sent; views that sent neither are left out."},
+		Description: "Top values for one dimension of a project's views over a date range, from the event files; visitors are distinct per day and value, added up: kinds, paths, hosts, referrers, utm, countries, platforms, os, browsers, app_versions, devices, displays, consent or locales. Two-key dimensions (os, browsers, app_versions, devices, locales) return both columns. os, browser and device values are lower-case closed vocabularies with other (outside the list) and unknown (not declared) as distinct floors; platform is the surface (web, ios, electron, …) and never empty. consent is given, none or unknown (sent without $consent, or stored before it existed); none also includes views sent before the visitor answered a consent prompt. locales pairs the browser's language ($browser_locale) with the product's ($app_locale), either empty when not sent; views that sent neither are left out. A value not sent reads as empty."},
 		h.viewsBreakdown)
 	expose(r, spec{Name: "product_events", Annotations: ro, Method: "GET", Path: p + "/product/events",
-		Description: "Product events per day: count and unique users per event name, plus daily totals. Unconditional — no attribute declaration is required to see it."},
+		Description: "Product events per day, from the event files: count and unique users per event name, plus daily totals. Unconditional — no attribute declaration is required to see it."},
 		h.productEvents)
 	expose(r, spec{Name: "product_attributes", Annotations: ro, Method: "GET", Path: p + "/product/attributes",
-		Description: "Attribute breakdowns for product events: count, unique users and unique groups per value, per event, per day. unique_groups is empty for days rolled up before it was measured and 0 when it was measured and no group was involved. The system dimensions $platform, $os, $app_version, $app_locale, $kind, $browser, $device, $browser_locale and $country (derived from the connection's IP) are always included. A custom key, or one of $host, $path, $referrer, $utm_source, $utm_medium, $utm_campaign, $os_version, $browser_version and $device_model, only appears once the project declares it in attributes (see update_project)."},
+		Description: "Attribute breakdowns for product events, from the event files: count, unique users and unique groups (0 when no group was involved) per value, per event, per day. Every key the events carried breaks down, with no declaration needed: each custom attribute key, and the reserved keys $platform, $os, $app_version, $app_locale, $kind, $browser, $device, $browser_locale, $country (derived from the connection's IP), $host, $path, $referrer, $utm_source, $utm_medium, $utm_campaign, $os_version, $browser_version and $device_model."},
 		h.productAttributes)
 	expose(r, spec{Name: "measures", Annotations: ro, Method: "GET", Path: p + "/measures",
-		Description: "Performance measures and Web Vitals: per metric, samples, estimated count, mean and p50/p75/p95 from log-scale histograms (about ±2%). time is milliseconds, size bytes, number unitless. attr_key breaks each metric down by one attribute."},
+		Description: "Performance measures and Web Vitals, from the event files: per metric, samples, estimated count, mean and p50/p75/p95 from log-scale histograms (about ±2%). time is milliseconds, size bytes, number unitless. attr_key breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys product_attributes lists ($browser, $path, $utm_source, …); a key none carried gives no rows."},
 		h.measures)
 	expose(r, spec{Name: "retention", Annotations: ro, Method: "GET", Path: p + "/retention",
-		Description: "D1/D7/D30-style cohort curves, cohorted by how the actor was identified: actor=user or actor=install. Returns aggregated_through: cohorts after it are absent (refreshed 03:00 UTC), not zero. Empty for a project whose clients send neither $user_id nor $install_id."},
+		Description: "D1/D7/D30-style cohort curves from the event files, cohorted by how the actor was identified: actor=user or actor=install. Days before today (UTC) only: today is partial. Returns aggregated_through, the newest day counted: cohorts after it are absent, not zero. Empty for a project whose clients send neither $user_id nor $install_id."},
 		h.retention)
 	expose(r, spec{Name: "identities", Annotations: ro, Method: "GET", Path: p + "/identities",
-		Description: "Per-user or per-group activity with display names. This surfaces personal data on projects whose clients send ids."},
+		Description: "Per-user or per-group activity over the range, from the event files: per id, its actors and users (distinct per day, added up over the days), views and product events, busiest first, with the display name sent with its latest event. This surfaces personal data on projects whose clients send ids."},
 		h.identities)
 	expose(r, spec{Name: "query", Annotations: ro, Method: "POST", Path: "/api/query",
-		Description: "Escape hatch: run one read-only SELECT/WITH. source \"sqlite\" (the default) reads the v_* views and agg_* tables: read schema://views first. source \"files\" reads the raw events through DuckDB: the tables events, views, product and measures, one attr_<key> column per attribute key (docs://twillingate, \"Writing SQL against the event files\"). Row-capped and time-limited; read-only either way."},
+		Description: "Escape hatch: run one read-only SELECT/WITH. source \"files\" (the default) reads the raw events through DuckDB: the tables events, views, product, measures, sessions, identities and aliases, one attr_<key> column per attribute key; read schema://views first (docs://twillingate, \"Writing SQL against the event files\"). source \"sqlite\" reads the v_* views and agg_* tables: deprecated, removed in a later release. Row-capped and time-limited; read-only either way."},
 		h.runQuery)
 
 	expose(r, spec{Name: "create_project", Annotations: write, Method: "POST", Path: "/api/projects", Status: http.StatusCreated,

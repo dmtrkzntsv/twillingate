@@ -269,3 +269,75 @@ func keysOf[V any](m map[string]V) []string {
 	slices.Sort(keys)
 	return keys
 }
+
+// LatestDays is each project's newest day with events in dir (YYYY-MM-DD),
+// from the file names alone: a month file counts as its last day, a day
+// file, segment, log or claimed log as its day. A project with none is
+// left out, as is a missing dir's; a project directory that vanishes
+// while listing (a purge) is skipped.
+func LatestDays(dir string) (map[int64]string, error) {
+	return projectDays(dir, func(name string) string { return dayOf(name, true) },
+		func(day, cur string) bool { return day > cur })
+}
+
+// OldestDays is LatestDays' other end: each project's oldest day with
+// events in dir, where a month file counts as its first day (the names
+// say no more; its first event may be later).
+func OldestDays(dir string) (map[int64]string, error) {
+	return projectDays(dir, func(name string) string { return dayOf(name, false) },
+		func(day, cur string) bool { return cur == "" || day < cur })
+}
+
+// projectDays is, for each project directory in dir, the day of its file
+// names (day) that wins over every other (better), a name with no day
+// left out.
+func projectDays(dir string, day func(string) string, better func(day, cur string) bool) (map[int64]string, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[int64]string{}, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("archive: %w", err)
+	}
+	out := map[int64]string{}
+	for _, e := range entries {
+		id, err := strconv.ParseInt(e.Name(), 10, 64)
+		if err != nil || !e.IsDir() {
+			continue
+		}
+		names, err := list(filepath.Join(dir, e.Name()))
+		if errors.Is(err, os.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, n := range names {
+			if d := day(n); d != "" && better(d, out[id]) {
+				out[id] = d
+			}
+		}
+	}
+	return out, nil
+}
+
+// dayOf is the day name holds events of, or "" when it is no events file
+// or log: for a month file, its last day (last) or its first.
+func dayOf(name string, last bool) string {
+	if m := monthFileName.FindStringSubmatch(name); m != nil {
+		first, err := civil.Parse(m[1] + "-01")
+		if err != nil {
+			return ""
+		}
+		if !last {
+			return first.String()
+		}
+		return first.Time().AddDate(0, 1, -1).Format("2006-01-02")
+	}
+	for _, re := range []*regexp.Regexp{dayFileName, logName, closedName, dumpingName} {
+		if m := re.FindStringSubmatch(name); m != nil {
+			return m[1]
+		}
+	}
+	return ""
+}

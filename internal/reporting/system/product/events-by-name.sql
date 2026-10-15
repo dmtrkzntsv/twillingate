@@ -3,15 +3,15 @@
 -- dozens. The Events table below lists every one.
 WITH top AS (
   SELECT event_name
-  FROM v_product_daily
+  FROM product
   WHERE project_id = :project
     AND day BETWEEN :from AND :to
   GROUP BY event_name
-  ORDER BY SUM(count) DESC, event_name
+  ORDER BY count(*) DESC, event_name
   LIMIT 5
 )
-SELECT day AS x, event_name AS series, SUM(count) AS y
-FROM v_product_daily
+SELECT day AS x, event_name AS series, count(*) AS y
+FROM product
 WHERE project_id = :project
   AND day BETWEEN :from AND :to
   AND event_name IN (SELECT event_name FROM top)

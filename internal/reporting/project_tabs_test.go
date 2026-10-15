@@ -107,7 +107,7 @@ func TestProjectTabsOrder(t *testing.T) {
 // first, as "actor action".
 func auditRowsLike(t *testing.T, svc *Service, like string) []string {
 	t.Helper()
-	res, err := svc.db.Run(context.Background(),
+	res, err := svcDB(t, svc).Run(context.Background(),
 		`SELECT actor, action FROM audit_log WHERE action LIKE '`+like+`' ORDER BY rowid`)
 	if err != nil {
 		t.Fatal(err)

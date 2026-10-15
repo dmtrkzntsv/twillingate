@@ -2,9 +2,12 @@ package api
 
 import (
 	"context"
+	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -17,12 +20,18 @@ func TestSchemaResources(t *testing.T) {
 	}
 	text := res.Contents[0].Text
 	for _, want := range []string{
+		"events(id, project_id", "measures(", ", bucket)", "attr_<key>", "NULL, not ''", "DATE", "raw history",
 		"v_views_daily", "v_retention", "YYYY-MM-DD",
 		"03:00 UTC", "$user_id", "includes yesterday",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("schema://views missing %q", want)
 		}
+	}
+	// The files lead; SQLite's views follow under their deprecation.
+	files, deprecated := strings.Index(text, "  events("), strings.Index(text, "Deprecated: query with source sqlite")
+	if files < 0 || deprecated < files || strings.Index(text, "v_views_daily(") < deprecated {
+		t.Errorf("schema://views: the files' tables must come first, then the deprecated v_* views:\n%s", text)
 	}
 	pres, err := cs.ReadResource(context.Background(),
 		&mcp.ReadResourceParams{URI: "schema://projects"})
@@ -34,5 +43,57 @@ func TestSchemaResources(t *testing.T) {
 	}
 	if strings.Contains(pres.Contents[0].Text, "Identity") || strings.Contains(pres.Contents[0].Text, "identity") {
 		t.Errorf("schema://projects still lists identity: %s", pres.Contents[0].Text)
+	}
+}
+
+// tableLines reads schemaViews' table lines as the console's editor does
+// (web/src/lib/schema-views.ts): an indented name(col, col, …).
+func tableLines(text string) map[string][]string {
+	line := regexp.MustCompile(`^\s+([a-z_][a-z0-9_]*)\(([^)]*)\)`)
+	out := map[string][]string{}
+	for _, l := range strings.Split(text, "\n") {
+		m := line.FindStringSubmatch(l)
+		if m == nil {
+			continue
+		}
+		var cols []string
+		for _, c := range strings.Split(m[2], ",") {
+			if c = strings.TrimSpace(c); c != "" {
+				cols = append(cols, c)
+			}
+		}
+		out[m[1]] = cols
+	}
+	return out
+}
+
+// TestSchemaViewsMatchesTheFiles binds the files' part of schema://views
+// to the tables the reader defines: each of the seven, with exactly its
+// fixed columns in order (the attr_<key> columns, which vary, aside), and
+// no other table before the deprecated part.
+func TestSchemaViewsMatchesTheFiles(t *testing.T) {
+	h, _ := newTestHost(t)
+	listed := tableLines(schemaFiles)
+	tables := []string{"events", "views", "product", "measures", "sessions", "identities", "aliases"}
+	if len(listed) != len(tables) {
+		t.Errorf("schemaFiles lists %d tables, want the files' %d: %v", len(listed), len(tables), listed)
+	}
+	for _, table := range tables {
+		res, err := h.runFiles(context.Background(), archive.Scoped{SQL: "SELECT column_name FROM (DESCRIBE SELECT * FROM " + table + ")"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cols []string
+		for _, row := range res.Rows {
+			if c, _ := row[0].(string); !strings.HasPrefix(c, "attr_") {
+				cols = append(cols, c)
+			}
+		}
+		if !slices.Equal(listed[table], cols) {
+			t.Errorf("schemaFiles lists %s(%s), the files have (%s)", table, strings.Join(listed[table], ", "), strings.Join(cols, ", "))
+		}
+	}
+	if !strings.HasPrefix(schemaViews, schemaFiles) {
+		t.Error("schema://views does not lead with schemaFiles")
 	}
 }

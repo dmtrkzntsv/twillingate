@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -125,5 +126,43 @@ func TestMigrateFailsWhenTheFlatViewCannotBeRebuilt(t *testing.T) {
 	err := Migrate(context.Background(), cfg, st)
 	if err == nil || !strings.Contains(err.Error(), "v_events_flat") {
 		t.Fatalf("Migrate = %v, want the rebuild's error", err)
+	}
+}
+
+// TestMigrateRefusesAnotherUserBeforeTheEngine: a command run as anyone but
+// the database file's owner (root, say) is refused before the reporting
+// migrator's first query spawns an engine child, which would leave
+// engine/ and raw/ owned by that user. On a release that changed nothing
+// it spawns nothing, so it goes on.
+func TestMigrateRefusesAnotherUserBeforeTheEngine(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	cfg := testConfig(t, freePort(t), filepath.Join(dir, "migrate.db"))
+	st, err := store.Open(cfg.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	owner := geteuid
+	t.Cleanup(func() { geteuid = owner })
+	geteuid = func() int { return os.Geteuid() + 1 }
+
+	err = Migrate(ctx, cfg, st)
+	if err == nil || !strings.Contains(err.Error(), "service user") || !strings.Contains(err.Error(), "twillingate migrate") {
+		t.Fatalf("err = %v, want a refusal naming the service user and the command", err)
+	}
+	for _, d := range []string{filepath.Join(dir, "engine"), cfg.EventsDir} {
+		if _, err := os.Stat(d); !os.IsNotExist(err) {
+			t.Errorf("stat %s: %v, want it not to exist: a refused run spawned a child", d, err)
+		}
+	}
+
+	geteuid = owner
+	if err := Migrate(ctx, cfg, st); err != nil {
+		t.Fatalf("as the owner: %v", err)
+	}
+	geteuid = func() int { return os.Geteuid() + 1 }
+	if err := Migrate(ctx, cfg, st); err != nil {
+		t.Fatalf("another user, nothing to check: %v", err)
 	}
 }

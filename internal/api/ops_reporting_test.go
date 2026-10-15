@@ -13,8 +13,9 @@ import (
 )
 
 // visitorsSQL follows both switchers, so a widget built from it gives its
-// dashboard a project and a range switcher.
-const visitorsSQL = `SELECT SUM(visitors) AS value FROM v_views_daily WHERE project_id = :project AND day BETWEEN :from AND :to`
+// dashboard a project and a range switcher. On the host's files it reads
+// 28 for blog on 2026-08-20..21 (hostEvents).
+const visitorsSQL = `SELECT count(DISTINCT actor_id) AS value FROM views WHERE project_id = :project AND day BETWEEN :from AND :to`
 
 // toolJSON calls a tool, fails the test on a tool error, and decodes its
 // output into out.

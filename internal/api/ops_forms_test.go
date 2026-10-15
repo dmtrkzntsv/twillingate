@@ -474,7 +474,7 @@ func TestDeleteSubmissionsSelectors(t *testing.T) {
 		}
 	}
 	// The custom-SQL handle still cannot read the table.
-	if msg := refused(t, cs, "query", map[string]any{"sql": "select * from submissions"}); !strings.Contains(msg, "submissions") {
+	if msg := refused(t, cs, "query", map[string]any{"sql": "select * from submissions", "source": "sqlite"}); !strings.Contains(msg, "submissions") {
 		t.Errorf("query refusal: %s", msg)
 	}
 }

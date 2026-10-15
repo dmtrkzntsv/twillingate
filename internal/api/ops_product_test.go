@@ -1,9 +1,16 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 func TestProductEvents(t *testing.T) {
@@ -49,11 +56,11 @@ func TestProductAttributesReturnsRows(t *testing.T) {
 	if !strings.Contains(out, "plan") || !strings.Contains(out, "pro") {
 		t.Errorf("missing attribute row: %s", out)
 	}
-	// unique_groups flows through as the last column. A NULL cell (the
-	// "pro" row, rolled up before 016) decodes to the empty string; a
-	// measured cell (the "team" row, seeded with 2) decodes to its
-	// integer. Decode the table rather than substring-matching so a NULL
-	// rendered as "0", "<nil>" or "null" would fail this test.
+	// unique_groups flows through as the last column: 0 for the "pro"
+	// events, which no group sent (the files count groups on every day;
+	// SQLite's NULL for days rolled up before migration 016 has no
+	// counterpart), 2 for "team". Decode the table rather than
+	// substring-matching.
 	var table struct {
 		Columns []string   `json:"columns"`
 		Rows    [][]string `json:"rows"`
@@ -86,8 +93,8 @@ func TestProductAttributesReturnsRows(t *testing.T) {
 		switch row[attrValueIdx] {
 		case "pro":
 			sawPro = true
-			if got := row[groupsIdx]; got != "" {
-				t.Errorf("pro row (pre-016, unmeasured) unique_groups = %q, want empty", got)
+			if got := row[groupsIdx]; got != "0" {
+				t.Errorf("pro row unique_groups = %q, want 0", got)
 			}
 		case "team":
 			sawTeam = true
@@ -98,6 +105,26 @@ func TestProductAttributesReturnsRows(t *testing.T) {
 	}
 	if !sawPro || !sawTeam {
 		t.Fatalf("missing pro or team row: %s", out)
+	}
+	// The system keys come from the typed columns, declared or not.
+	var sawPlatform bool
+	for _, row := range table.Rows {
+		if row[2] == "$platform" && row[attrValueIdx] == "web" {
+			sawPlatform = true
+		}
+	}
+	if !sawPlatform {
+		t.Errorf("missing the $platform row: %s", out)
+	}
+	// The reserved keys a declaration once had to unlock break down too,
+	// undeclared: u2's signup came on /pricing from the newsletter.
+	for _, want := range []string{
+		`["2026-08-21","signup","$path","/pricing","1","1","1"]`,
+		`["2026-08-21","signup","$utm_source","newsletter","1","1","1"]`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s: %s", want, out)
+		}
 	}
 	// event filter branch
 	res = callTool(t, cs, "product_attributes", map[string]any{
@@ -121,6 +148,20 @@ func TestRetentionReturnsCurveAndAggregatedThrough(t *testing.T) {
 	for _, want := range []string{"2026-08-01", "cohort_size", "aggregated_through"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q: %s", want, out)
+		}
+	}
+	// agg_retention's cohort: 10 users on 2026-08-01, 4 back a week later;
+	// the files reach through 2026-08-26, the newest day with activity.
+	var got retentionOut
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.AggregatedThrough != "2026-08-26" {
+		t.Errorf("aggregated_through = %q, want 2026-08-26", got.AggregatedThrough)
+	}
+	for _, want := range [][]string{{"2026-08-01", "0", "10", "10"}, {"2026-08-01", "7", "4", "10"}} {
+		if !slices.ContainsFunc(got.Rows, func(r []string) bool { return slices.Equal(r, want) }) {
+			t.Errorf("missing row %v: %v", want, got.Rows)
 		}
 	}
 }
@@ -162,10 +203,78 @@ func TestIdentities(t *testing.T) {
 	if !strings.Contains(out, "u1") || !strings.Contains(out, "Jane Doe") {
 		t.Errorf("identities missing id or name: %s", out)
 	}
+	// Busiest first: u1's view and two signups; then the ids with two
+	// actions by id, r01 first. Actors and users are distinct per day and
+	// added up, as v_identity_daily summed: u1 is active on three days
+	// (as actor u1 on 08-20 and 08-21, a1 on 08-26), so 3 and 3, not the
+	// 2 actors and 1 user of the whole range.
+	var tbl tableOut
+	if err := json.Unmarshal([]byte(out), &tbl); err != nil {
+		t.Fatal(err)
+	}
+	if len(tbl.Rows) < 2 || !slices.Equal(tbl.Rows[0], []string{"u1", "Jane Doe", "3", "3", "1", "2"}) || tbl.Rows[1][0] != "r01" {
+		t.Errorf("rows = %v, want u1 (Jane Doe, 3 actors, 3 users, 1 view, 2 events) then r01", tbl.Rows)
+	}
+	// u9 viewed on two days: 2 actors and 2 users summed, 1 of each over
+	// the range.
+	res = callTool(t, cs, "identities", map[string]any{
+		"project_id": 1, "kind": "user", "from": "2026-08-23", "to": "2026-08-24"})
+	if out := textOf(res); !strings.Contains(out, `"rows":[["u9","","2","2","2","0"]]`) {
+		t.Errorf("u9 over 08-23..24 = %s, want 2 actors, 2 users, 2 views", out)
+	}
+	res = callTool(t, cs, "identities", map[string]any{
+		"project_id": 1, "kind": "user", "from": "2026-08-01", "to": "2026-08-31", "limit": 1})
+	if err := json.Unmarshal([]byte(textOf(res)), &tbl); err != nil || len(tbl.Rows) != 1 {
+		t.Errorf("limit 1 = %v (%v)", tbl.Rows, err)
+	}
 	if !strings.Contains(out, "views") || !strings.Contains(out, "events") {
 		t.Errorf("identities missing views/events columns: %s", out)
 	}
 	if strings.Contains(out, "hits") {
 		t.Errorf("identities must not carry the retired hits column: %s", out)
+	}
+}
+
+// TestProductAttributesWithoutAnyAttribute: on files where no event ever
+// carried an attribute (no attr_* column at all), the system keys still
+// break down and measures' attr_key finds no column, without an error.
+func TestProductAttributesWithoutAnyAttribute(t *testing.T) {
+	h, cs := newTestHost(t)
+	dir := t.TempDir()
+	raw := filepath.Join(dir, "raw")
+	log, err := archive.OpenLog(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := 5.0
+	if err := log.WriteEvents(context.Background(), []store.Event{
+		{ID: "0190ffff-0000-7000-8000-000000000001", ProjectID: 1, Family: store.FamilyProduct, EventName: "open",
+			TS: time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC), ActorID: "x", ActorKind: store.ActorInstall, Platform: "ios", SampleRate: 1},
+		{ID: "0190ffff-0000-7000-8000-000000000002", ProjectID: 1, Family: store.FamilyMeasures, EventName: "load",
+			TS: time.Date(2026, 8, 20, 9, 0, 0, 0, time.UTC), ActorID: "x", ActorKind: store.ActorInstall, Platform: "ios",
+			Value: &value, Measure: store.MeasureTime, SampleRate: 1},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	log.Close()
+	eng, err := hostEngine(dir, raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { eng.Close() })
+	if h.files, err = archive.NewReader(raw, eng); err != nil {
+		t.Fatal(err)
+	}
+	args := map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-20"}
+	res := callTool(t, cs, "product_attributes", args)
+	if res.IsError {
+		t.Fatalf("error: %s", textOf(res))
+	}
+	if out := textOf(res); !strings.Contains(out, `"rows":[["2026-08-20","open","$platform","ios","1","1","0"]]`) {
+		t.Errorf("want the $platform row alone: %s", out)
+	}
+	args["attr_key"] = "plan"
+	if res := callTool(t, cs, "measures", args); res.IsError || !strings.Contains(textOf(res), `"rows":[]`) {
+		t.Errorf("measures by a key no file has = %s", textOf(res))
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -69,10 +70,17 @@ func cmdReportingDev(args []string, stdout io.Writer) int {
 		return 2
 	}
 
+	// Where the console reads the event files: EVENTS_DIR, or raw/ beside
+	// the database, as config's default.
+	eventsDir := os.Getenv("EVENTS_DIR")
+	if eventsDir == "" {
+		eventsDir = filepath.Join(filepath.Dir(dbPath), "raw")
+	}
+
 	logger := app.NewLogger(config.LogConfig{})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := app.ReportingDev(ctx, dirs, dbPath, *addr, logger); err != nil {
+	if err := app.ReportingDev(ctx, dirs, dbPath, eventsDir, *addr, logger); err != nil {
 		fmt.Fprintln(stdout, err)
 		return 1
 	}

@@ -109,7 +109,7 @@ func (s *Service) WidgetData(ctx context.Context, in DataRequest) (WidgetData, e
 	// only the one goroutine that happens to run it, so it must not carry
 	// any one caller's cancellation — a client disconnecting partway
 	// through must not turn into a false CONSOLE_QUERY_TIMEOUT for every
-	// other request sharing the same load. readsql applies its own
+	// other request sharing the same load. Files applies its own
 	// deadline (CONSOLE_QUERY_TIMEOUT) regardless.
 	loadCtx := context.WithoutCancel(ctx)
 
@@ -149,7 +149,7 @@ func (s *Service) WidgetData(ctx context.Context, in DataRequest) (WidgetData, e
 // argument. Shared by WidgetData and reporting dev's data handler, so
 // the two cannot disagree on which widgets page or how.
 func (s *Service) loader(w store.Widget, src SourceType, p Params, in DataRequest) (view, func(context.Context) (any, error), error) {
-	v, err := parseView(in, s.db.MaxRows())
+	v, err := parseView(in, s.maxRows())
 	if err != nil {
 		return view{}, nil, err
 	}

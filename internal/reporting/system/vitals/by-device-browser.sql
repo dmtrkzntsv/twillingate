@@ -1,13 +1,23 @@
--- $device and $browser are system dimensions, kept in the aggregates for
--- every day. Samples counts the page loads that reported LCP.
-WITH h AS (
-  SELECT attr_key, attr_value, event_name, bucket, approx_value,
-         SUM(samples) AS samples, SUM(weight) AS w
-  FROM v_measures_attrs
+-- The device type and the browser each page load reported. Samples counts
+-- the page loads that reported LCP; each p75 weighs a sample by
+-- 1 / sample_rate.
+WITH m AS (
+  SELECT '$device' AS attr_key, device AS attr_value, event_name, bucket, sample_rate
+  FROM measures
   WHERE project_id = :project AND day BETWEEN :from AND :to
-    AND attr_key IN ('$device', '$browser')
-    AND event_name IN ('$lcp', '$inp', '$cls')
-  GROUP BY attr_key, attr_value, event_name, bucket, approx_value
+    AND event_name IN ('$lcp', '$inp', '$cls') AND device <> ''
+  UNION ALL
+  SELECT '$browser', browser, event_name, bucket, sample_rate
+  FROM measures
+  WHERE project_id = :project AND day BETWEEN :from AND :to
+    AND event_name IN ('$lcp', '$inp', '$cls') AND browser <> ''
+),
+h AS (
+  SELECT attr_key, attr_value, event_name, bucket,
+         CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,
+         count(*) AS samples, SUM(1 / sample_rate) AS w
+  FROM m
+  GROUP BY attr_key, attr_value, event_name, bucket
 ),
 c AS (
   SELECT attr_key, attr_value, event_name, samples, approx_value,

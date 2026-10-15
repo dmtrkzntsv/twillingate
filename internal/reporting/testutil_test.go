@@ -10,8 +10,8 @@ import (
 )
 
 // newTestService opens a fresh, migrated store with testdata's components
-// synced in and no system dashboards, and returns a Service over it (and
-// a read-only readsql.DB on the same file, so sql widgets validate).
+// synced in and no system dashboards, and returns a Service over it and
+// an empty raw/ directory with an engine, so sql widgets validate.
 func newTestService(t *testing.T) *Service {
 	t.Helper()
 	svc, _ := newTestServiceOpts(t, Options{}, 1000)
@@ -19,13 +19,13 @@ func newTestService(t *testing.T) *Service {
 }
 
 // newTestServiceOpts is newTestService with caller-chosen Options (an
-// injected clock, configured cache ages) and read-only row cap, and also
-// returns the store directly — for a data/cache test that seeds rows
-// (agg_views_daily) or a project no reporting.Store method exposes.
+// injected clock, configured cache ages) and row cap, and also returns
+// the store directly — for a test that makes a project no
+// reporting.Store method exposes. Events go to filesOf(svc).
 func newTestServiceOpts(t *testing.T, opt Options, maxRows int) (*Service, store.Store) {
 	t.Helper()
-	st, db := newTestStoreAndReadDBMaxRows(t, maxRows)
-	svc := New(st, db, opt)
+	st, files := newTestStoreAndFiles(t, maxRows)
+	svc := New(st, files, opt)
 	syncReporting(t, svc, nil)
 	return svc, st
 }
@@ -157,7 +157,7 @@ func liveNames(t *testing.T, svc *Service, dashboardID int64) []string {
 // "actor action".
 func auditRows(t *testing.T, svc *Service) []string {
 	t.Helper()
-	res, err := svc.db.Run(context.Background(),
+	res, err := svcDB(t, svc).Run(context.Background(),
 		`SELECT actor, action FROM audit_log
 		 WHERE action LIKE 'dashboard.%' OR action LIKE 'widget.%' ORDER BY rowid`)
 	if err != nil {

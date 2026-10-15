@@ -18,8 +18,8 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// geteuid is the effective uid ImportEvents checks against the database
-// file's owner; a test replaces it.
+// geteuid is the effective uid ImportEvents and Migrate check against the
+// database file's owner; a test replaces it.
 var geteuid = os.Geteuid
 
 // eventsImportedKey is the meta row ImportEvents writes when done: the
@@ -63,7 +63,7 @@ func ImportEvents(ctx context.Context, cfg *config.Config, st store.Store, force
 	}
 	// Before OpenLog, which creates raw/ and raw/.lock: a run checkOwner
 	// refuses must not leave files the service user cannot open.
-	if err := checkOwner(DatabasePath(cfg.Database), geteuid()); err != nil {
+	if err := checkOwner(DatabasePath(cfg.Database), geteuid(), "events import"); err != nil {
 		return err
 	}
 	log, err := archive.OpenLog(cfg.EventsDir)
@@ -107,9 +107,10 @@ func imported(done string, force bool, out io.Writer) bool {
 
 // checkOwner refuses a run whose effective uid is not the owner of the
 // database file at path: the closed logs, project directories and engine
-// directories the import creates would belong to that user, and the
-// service user could not write them afterwards.
-func checkOwner(path string, euid int) error {
+// directories the run creates would belong to that user, and the
+// service user could not write them afterwards. command is the one to
+// show run as the service user.
+func checkOwner(path string, euid int, command string) error {
 	info, err := os.Stat(path)
 	if err != nil {
 		return err
@@ -118,7 +119,7 @@ func checkOwner(path string, euid int) error {
 	if !ok || int(st.Uid) == euid {
 		return nil
 	}
-	return fmt.Errorf("%s belongs to uid %d, not %d: run it as the service user, as in sudo -u twillingate twillingate events import", path, st.Uid, euid)
+	return fmt.Errorf("%s belongs to uid %d, not %d: run it as the service user, as in sudo -u twillingate twillingate %s", path, st.Uid, euid, command)
 }
 
 // importEvents hands every project's days of raw rows to imp, in order,

@@ -51,8 +51,8 @@ func (h *host) reportingGuide(ctx context.Context, _ struct{}) (guideOut, error)
 		fmt.Fprintf(&b, "- props: %s\n\n", compactJSON(c.Props))
 	}
 
-	b.WriteString("## Views\n\n")
-	b.WriteString(schemaViews)
+	b.WriteString("## Tables\n\n")
+	b.WriteString(schemaFiles)
 	b.WriteString("\n\n")
 
 	b.WriteString("## Projects\n\nActive projects, the values :project takes:\n\n| project_id | name |\n| --- | --- |\n")

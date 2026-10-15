@@ -5,7 +5,8 @@ The page is read-only: a person opens it, picks a project and a date range, and
 reads. Agents are its only authors, through the tools and routes below. The MCP
 endpoint serves this file verbatim as `docs://reporting`; `reporting_guide`
 returns its live parts (components, views, projects, dashboards) with its
-[Workflow](#workflow) and [Rules](#rules) in one call.
+[Workflow](#workflow) and [Rules](#rules) in one call. Widget SQL is DuckDB
+SQL over the event files: [Tables](#tables) lists what it reads.
 
 Collecting data and querying it with `query` are in
 [twillingate.md](twillingate.md); running the collector and enabling the console
@@ -14,6 +15,7 @@ are in [deployment.md](deployment.md).
 - [Concepts](#concepts)
 - [Workflow](#workflow)
 - [Rules](#rules)
+- [Tables](#tables)
 - [Tools](#tools)
 - [HTTP API](#http-api)
 - [Components](#components)
@@ -64,8 +66,9 @@ Retention · Web Vitals · Measures.
 - the **component** is how it is drawn (`line`, `stat`, `table`, …; see
   [Components](#components));
 - the **source** is `{"type": "sql" | "md", "content": "…"}`: a read-only query
-  against the `v_*` views, or Markdown text. The component says which source
-  types it accepts and which columns its query must return.
+  in DuckDB SQL over the event files' tables (see [Tables](#tables)), or
+  Markdown text. The component says which source types it accepts and which
+  columns its query must return.
 
 A widget also has a `name`, unique on its dashboard (derived from the title
 when you omit it: lower case, `-` for each run of other characters, `-2`, `-3`,
@@ -124,8 +127,9 @@ reuses one only up to `REPORTING_REFRESH_MAX_AGE` old (default `1m`), and
 can turn on auto-refresh from a dashboard's top-right "…" menu: the page
 then reloads it every `auto_refresh_seconds` (the longer of the two, so
 each reload runs the queries again), only while its window has focus. Changing a
-widget's source starts it on new entries. Widget queries run under the same
-guards as `query`: read-only, `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_ROWS_MAX`.
+widget's source starts it on new entries. Widget queries run on the event files
+under the same guards as `query` with `source: "files"`: one read-only
+`SELECT`, `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_ROWS_MAX`.
 
 ### Filtering and paging a table
 
@@ -176,32 +180,37 @@ result in SQL, and `widget_data` takes `filters`, `sort`, `distinct`,
   arguments on a widget that is not a remote table. A filter that matches
   nothing is not refused: no rows, `matched: 0`.
 
-A remote table returns every row, with no `LIMIT`:
+A remote table returns every row, with no `LIMIT`. This one turns every
+`attr_*` column into (key, value) rows; `attr_$`, a column no attribute
+can name (a `$` key is never an attribute), gives the unpivot a column
+when no event has carried an attribute yet, where `COLUMNS('^attr_')`
+alone matches nothing and the query fails. It is NULL, and `UNPIVOT`
+drops NULLs:
 
 ```
 add_widget {"dashboard_id": 3, "component": "table", "title": "Attribute values",
             "props": {"mode": "remote"},
-            "source": {"type": "sql", "content": "SELECT attr_key AS \"Attribute\", day AS \"Day\", attr_value AS \"Value\", SUM(count) AS \"Count\" FROM v_product_attrs WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY attr_key, day, attr_value ORDER BY attr_key, day DESC, \"Count\" DESC"}}
+            "source": {"type": "sql", "content": "SELECT substr(attr_key, 6) AS \"Attribute\", day AS \"Day\", attr_value AS \"Value\", count(*) AS \"Count\" FROM (UNPIVOT (SELECT COLUMNS('^(day|attr_.*)$'), NULL::VARCHAR AS \"attr_$\" FROM product WHERE project_id = :project AND day BETWEEN :from AND :to) ON COLUMNS('^attr_') INTO NAME attr_key VALUE attr_value) GROUP BY ALL ORDER BY \"Attribute\", \"Day\" DESC, \"Count\" DESC"}}
 ```
 
 A viewer's filter and sort on it reach the server as:
 
 ```
 widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026-09-30",
-             "filters": "[{\"column\":\"Attribute\",\"op\":\"in\",\"value\":[\"$os\",\"plan\"]}]",
+             "filters": "[{\"column\":\"Attribute\",\"op\":\"in\",\"value\":[\"plan\",\"tier\"]}]",
              "sort": "Count:desc", "limit": 100}
 ```
 
 ## Workflow
 
 1. **Call `reporting_guide`.** It names the running version, the components
-   and the columns each one reads, the views, the active projects and the
+   and the columns each one reads, the tables, the active projects and the
    dashboards there are.
-2. **Explore with `query`** against the `v_*` views (`schema://views` lists
-   their columns), for one project and a few days, until the numbers are the
-   ones the widget should show.
+2. **Explore with `query`** (its default source, `files`) over the event files'
+   tables ([Tables](#tables)), for one project and a few days, until the
+   numbers are the ones the widget should show.
 3. **Pick a component** and alias the query's columns to its inputs:
-   `SELECT day AS x, SUM(views) AS y …` for `line`. [Examples](#examples) has
+   `SELECT day AS x, count(*) AS y …` for `line`. [Examples](#examples) has
    one query per component.
 4. **Choose what the widget follows:** `WHERE project_id = :project` follows
    the project switcher, `day BETWEEN :from AND :to` the range switcher;
@@ -232,15 +241,15 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
   `sidebar` on one. `archive_dashboard` takes one away.
 - A query returns exactly the columns the component reads, named by alias; a
   column marked optional may be left out, and only `table` takes any columns.
-- The only parameters are `:project`, `:from` and `:to`. `day` is text,
-  `YYYY-MM-DD` in UTC: compare it as a string (`day BETWEEN :from AND :to`).
-- Read the `v_*` views. Custom SQL may read any table except `meta` and
-  SQLite's own (`sqlite_*`, `pragma_*`, `dbstat`), and only reads. SQLite
-  takes a quoted string as a name, so a single-quoted string that is one
-  of those names (`'meta'`, `'sqlite_master'`) is refused too; `'metadata'`
-  and `'%meta%'` pass.
-- Unquoted names are ASCII: quote any other (`"визиты"`). Strings and
-  comments may hold any text.
+- Widget SQL is DuckDB SQL, one `SELECT`, over the seven tables in
+  [Tables](#tables). The `v_*` views and `agg_*` tables are SQLite's, and a
+  widget cannot read them.
+- The only parameters are `:project`, a BIGINT, and `:from` and `:to`,
+  DATEs in UTC like `day`: `day BETWEEN :from AND :to`, and `:to - :from + 1`
+  is the range's length in days. `?`, `$1` and `$name` are refused.
+  Outside strings and comments, a `:` before a letter reads as a parameter
+  (`::` casts are fine): write a slice `list[a : b]` and a lambda
+  `lambda x: x + 1`, with a space after the colon.
 - Group in SQL: a widget gets at most `CONSOLE_QUERY_ROWS_MAX` rows (default
   1000) and `CONSOLE_QUERY_TIMEOUT` (default 30s). A result cut at the cap draws
   as "partial". A pie keeps to five slices, the rest summed as `Other`,
@@ -253,11 +262,67 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 - Undo is archiving. Archived user dashboards and widgets are deleted
   `RETENTION_ARCHIVED_DAYS` after archiving (default 30).
 
+## Tables
+
+Widget SQL is DuckDB SQL ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction))
+over the raw events twillingate keeps as files beside its database: the
+seven tables `query` reads by default (`source: "files"`). Their columns, and how
+rules apply to them, are in [twillingate.md](twillingate.md#writing-sql-against-the-event-files).
+The files hold the events since the upgrade that began writing them, and
+the raw days the database still held when `twillingate events import` ran;
+today's events are in them within `BUFFER_FLUSH_INTERVAL`.
+
+| Table | One row per | A widget reads it for |
+| --- | --- | --- |
+| `events` | event of any family | anything across families: activity of `views` and `product` together |
+| `views` | page or screen view | visitors (`count(DISTINCT actor_id)`), views (`count(*)`), and the breakdowns: `path`, `host`, `referrer_source`, `utm_source`/`utm_medium`/`utm_campaign`, `country`, `os`/`os_version`, `browser`/`browser_version`, `platform`/`app_version`, `device`/`device_model`, `display_width`/`display_height`, `consent` |
+| `product` | product event | events by `event_name`, the users behind them (`count(DISTINCT actor_id)`, as the system dashboards count active users, so a custom widget's figure matches theirs; `user_id` counts only signed-in people), groups (`group_id`), and each attribute as a column `attr_<key>` |
+| `measures` | measure sample | `value` (`measure` is `time`, in ms, `size`, in bytes, or `number`), `sample_rate`, and `bucket`, its log-scale bucket (see [Percentiles from measures](#percentiles-from-measures)) |
+| `sessions` | session of views | sessions (`count(*)`), bounces (`views = 1`), `duration_sec`, the entry and exit pages, the first view's referrer and UTMs |
+| `identities` | user or group | `name`, and `first_seen`, the first event the files hold for it: new users. It is a TIMESTAMP: compare `first_seen::DATE` with `day` |
+| `aliases` | user id and install id sent together | one person's events across devices |
+
+- **A widget reads one project.** When its SQL uses `:project`, every
+  table holds that project's rows only. Write `WHERE project_id = :project`
+  all the same: it is what makes the widget follow the project switcher,
+  and says so to whoever reads the SQL. A widget without `:project` reads
+  every project.
+- **An absent value is NULL, not `''`:** `x IS NOT NULL` keeps the rows
+  that have one, `coalesce(x, '(none)')` names the others.
+- **Dates are DATEs:** `day`, `:from`, `:to` and `current_date` (today, UTC).
+  `:from - 1` is the day before the range, `day - first_day` a number of
+  days (a BIGINT). A DATE takes an INTEGER, not a BIGINT, so the first day
+  of the range before is `:from - CAST(:to - :from + 1 AS INTEGER)`.
+  Return `day`, not `ts`, for a `day` input: a TIMESTAMP reads
+  `2026-08-20 10:00:00`.
+- **Numbers:** `/` divides as DOUBLE (`5 / 2` is 2.5, `5 // 2` is 2).
+  Write `x::DOUBLE / y` for a share: a literal `1.0` is a DECIMAL.
+- **Cells are DuckDB's text of each value:** `2.0` reads `2`, a DATE
+  `2026-08-20`, a list `[1, 2]`, NULL empty.
+- **Visitors.** The system dashboards count visitors per day, then sum the
+  days: a person on three days counts three times, as on the views before.
+  `count(DISTINCT actor_id)` over the whole range counts each person once.
+  Choose one and say which in the title when it matters.
+
+**Cost.** A widget's query runs on the files each time its cached result
+is older than `REPORTING_CACHE_MAX_AGE`:
+
+- Filter on `day`. The files are kept per project and per day or month,
+  and DuckDB skips what a `day` condition excludes; a query without one
+  reads the project's whole history.
+- Group in SQL and return what is drawn: rows past `CONSOLE_QUERY_ROWS_MAX`
+  are cut.
+- `count(DISTINCT …)` over a long range keeps every value in memory, and
+  a query past `ENGINE_MEMORY_LIMIT` is refused. Count the rows of a
+  `GROUP BY` subquery instead, or narrow the range.
+- Today comes from the open logs, loaded again whenever they have grown;
+  past days come from Parquet files.
+
 ## Tools
 
 | Tool | Input | Returns |
 | --- | --- | --- |
-| `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the views, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
+| `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the event files' tables, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
 | `list_components` | none | `source_types` and `components`: each one's `description`, `accepts`, `inputs`, `props` schema, `default_width` and `default_height` |
 | `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, `group_title` (the group's name; absent when it has none, and the first live tab's title stands in), stored `project_id` and `range`, live `widgets` count, `archived_at`, `sidebar` (its group is in the sidebar; only a system group is ever out of it) and `project_tab` (a system dashboard that projects created from now on get as a tab; always false on your own); plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and `auto_refresh_seconds`, how often the page reloads a dashboard with auto-refresh on (absent: never) |
 | `get_dashboard` | `dashboard_id` | the dashboard, its `group_id` and `group_title` (the group's name; absent when it has none), its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), and its live `widgets` in order |
@@ -352,7 +417,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 ## Components
 
 Each component reads the columns its query returns, by name: alias them
-(`SELECT day AS x, SUM(visitors) AS y …`). A column type is `number`, `text` or
+(`SELECT day AS x, count(*) AS y …`). A column type is `number`, `text` or
 `day` (`YYYY-MM-DD`). A column marked optional may be left out; a column the
 component does not read is refused, except by `table`, which shows whatever
 the query returns. `format` is `number`, `percent` or `duration` everywhere it
@@ -416,8 +481,8 @@ closes the section with the one query pattern measures need.
 Views in the range, with a sparkline of the days under the number:
 
 ```sql
-SELECT day AS x, SUM(views) AS value
-FROM v_views_daily
+SELECT day AS x, count(*) AS value
+FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to
 GROUP BY day
 ORDER BY day
@@ -430,9 +495,10 @@ Props: `{"format": "number", "aggregate": "sum"}`
 Visitors per day, one line per kind (`web`, `app`, …):
 
 ```sql
-SELECT day AS x, kind AS series, visitors AS y
-FROM v_views_daily
+SELECT day AS x, kind AS series, count(DISTINCT actor_id) AS y
+FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to
+GROUP BY day, kind
 ORDER BY day
 ```
 
@@ -443,10 +509,11 @@ Props: `{"curve": "monotone"}`
 Views per day, stacked by platform:
 
 ```sql
-SELECT day AS x, platform AS series, views AS y
-FROM v_views_platforms
+SELECT day AS x, coalesce(platform, '(none)') AS series, count(*) AS y
+FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to
-ORDER BY day
+GROUP BY 1, 2
+ORDER BY x
 ```
 
 Props: `{"stacked": true}`
@@ -456,8 +523,8 @@ Props: `{"stacked": true}`
 The ten most frequent product events, as horizontal bars:
 
 ```sql
-SELECT event_name AS x, SUM(count) AS y
-FROM v_product_daily
+SELECT event_name AS x, count(*) AS y
+FROM product
 WHERE project_id = :project AND day BETWEEN :from AND :to
 GROUP BY event_name
 ORDER BY y DESC
@@ -471,9 +538,9 @@ Props: `{"horizontal": true}`
 Top pages by views:
 
 ```sql
-SELECT path AS label, SUM(views) AS value
-FROM v_views_paths
-WHERE project_id = :project AND day BETWEEN :from AND :to
+SELECT path AS label, count(*) AS value
+FROM views
+WHERE project_id = :project AND day BETWEEN :from AND :to AND path IS NOT NULL
 GROUP BY path
 ORDER BY value DESC
 LIMIT 10
@@ -487,14 +554,14 @@ Visitors by device, the six largest and the rest as `Other`:
 
 ```sql
 WITH d AS (
-  SELECT device, SUM(visitors) AS v
-  FROM v_views_devices
+  SELECT coalesce(device, 'unknown') AS device, count(DISTINCT actor_id) AS v
+  FROM views
   WHERE project_id = :project AND day BETWEEN :from AND :to
-  GROUP BY device
+  GROUP BY 1
 ), ranked AS (
-  SELECT device, v, ROW_NUMBER() OVER (ORDER BY v DESC) AS n FROM d
+  SELECT device, v, row_number() OVER (ORDER BY v DESC) AS n FROM d
 )
-SELECT CASE WHEN n <= 6 THEN device ELSE 'Other' END AS label, SUM(v) AS value
+SELECT CASE WHEN n <= 6 THEN device ELSE 'Other' END AS label, sum(v) AS value
 FROM ranked
 GROUP BY label
 ORDER BY value DESC
@@ -507,12 +574,11 @@ Props: `{"donut": true}`
 Views by day of the week:
 
 ```sql
-SELECT substr('SunMonTueWedThuFriSat', 1 + 3 * strftime('%w', day), 3) AS axis,
-       SUM(views) AS value
-FROM v_views_daily
+SELECT strftime(day, '%a') AS axis, count(*) AS value
+FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to
-GROUP BY strftime('%w', day)
-ORDER BY strftime('%w', day)
+GROUP BY axis, dayofweek(day)
+ORDER BY dayofweek(day)
 ```
 
 Props: `{"format": "number"}`
@@ -523,10 +589,10 @@ Props: `{"format": "number"}`
 month:
 
 ```sql
-SELECT 'Signups' AS label, COALESCE(SUM(count), 0) AS value, 100 AS max
-FROM v_product_daily
+SELECT 'Signups' AS label, count(*) AS value, 100 AS max
+FROM product
 WHERE project_id = :project AND event_name = 'signup'
-  AND day >= date('now', 'start of month')
+  AND day >= date_trunc('month', current_date)
 ```
 
 Props: `{"format": "number"}`
@@ -536,8 +602,8 @@ Props: `{"format": "number"}`
 Pages, visitors against views:
 
 ```sql
-SELECT SUM(visitors) AS x, SUM(views) AS y
-FROM v_views_paths
+SELECT count(DISTINCT actor_id) AS x, count(*) AS y
+FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to
 GROUP BY path
 ```
@@ -552,16 +618,16 @@ come in query order, so the query orders them and returns only `step` and
 
 ```sql
 SELECT step, value FROM (
-  SELECT 1 AS n, 'Visited' AS step, COALESCE(SUM(visitors), 0) AS value
-  FROM v_views_daily
+  SELECT 1 AS n, 'Visited' AS step, count(DISTINCT actor_id) AS value
+  FROM views
   WHERE project_id = :project AND day BETWEEN :from AND :to
   UNION ALL
-  SELECT 2, 'Signed up', COALESCE(SUM(unique_users), 0)
-  FROM v_product_daily
+  SELECT 2, 'Signed up', count(DISTINCT user_id)
+  FROM product
   WHERE project_id = :project AND day BETWEEN :from AND :to AND event_name = 'signup'
   UNION ALL
-  SELECT 3, 'Subscribed', COALESCE(SUM(unique_users), 0)
-  FROM v_product_daily
+  SELECT 3, 'Subscribed', count(DISTINCT user_id)
+  FROM product
   WHERE project_id = :project AND day BETWEEN :from AND :to AND event_name = 'subscribed'
 )
 ORDER BY n
@@ -575,28 +641,46 @@ Visitors as bars and the bounce rate as a line, on two axes. `percent`
 formats a fraction, so `0.25` reads 25%:
 
 ```sql
-SELECT day AS x, SUM(visitors) AS bar,
-       SUM(bounces) * 1.0 / NULLIF(SUM(sessions), 0) AS line
-FROM v_views_daily
-WHERE project_id = :project AND day BETWEEN :from AND :to
-GROUP BY day
-ORDER BY day
+SELECT v.day AS x, v.visitors AS bar, s.bounces::DOUBLE / nullif(s.sessions, 0) AS line
+FROM (SELECT day, count(DISTINCT actor_id) AS visitors
+      FROM views
+      WHERE project_id = :project AND day BETWEEN :from AND :to
+      GROUP BY day) v
+LEFT JOIN (SELECT day, count(*) AS sessions, count(*) FILTER (WHERE views = 1) AS bounces
+           FROM sessions
+           WHERE project_id = :project AND day BETWEEN :from AND :to
+           GROUP BY day) s ON s.day = v.day
+ORDER BY x
 ```
 
 Props: `{"bar_format": "number", "line_format": "percent"}`
 
 ### `heatmap`
 
-Retention of signed-in users: cohorts that started in the range, by days
-since. A cohort's later days are absent until they have happened:
+Retention of signed-in users: the users first seen in the range, by days
+since. A day counts once it is over, so a cohort's later days are absent
+until they have happened:
 
 ```sql
-SELECT cohort_day AS x, day_offset AS y, actors * 1.0 / cohort_size AS value
-FROM v_retention
-WHERE project_id = :project AND actor_kind = 'user'
-  AND day_offset IN (0, 1, 7, 14, 30)
-  AND cohort_day BETWEEN :from AND :to
-ORDER BY cohort_day, day_offset
+WITH cohort AS (
+  SELECT id AS user_id, first_seen::DATE AS cohort_day
+  FROM identities
+  WHERE project_id = :project AND kind = 'user' AND first_seen::DATE BETWEEN :from AND :to
+), active AS (
+  SELECT DISTINCT user_id, day
+  FROM events
+  WHERE project_id = :project AND family IN ('views', 'product')
+    AND day BETWEEN :from AND current_date - 1
+), grid AS (
+  SELECT c.cohort_day, a.day - c.cohort_day AS day_offset, count(*) AS users
+  FROM cohort c JOIN active a ON a.user_id = c.user_id
+  GROUP BY 1, 2
+)
+SELECT cohort_day AS x, day_offset AS y,
+       users::DOUBLE / first_value(users) OVER (PARTITION BY cohort_day ORDER BY day_offset) AS value
+FROM grid
+WHERE day_offset IN (0, 1, 7, 14, 30)
+ORDER BY x, y
 ```
 
 Props: `{"format": "percent", "labels": true}`
@@ -606,9 +690,9 @@ Props: `{"format": "percent", "labels": true}`
 "Views, last 12 months": follows the project, fixed to the last year:
 
 ```sql
-SELECT day, SUM(views) AS value
-FROM v_views_daily
-WHERE project_id = :project AND day >= date('now', '-364 days')
+SELECT day, count(*) AS value
+FROM views
+WHERE project_id = :project AND day >= current_date - 364
 GROUP BY day
 ORDER BY day
 ```
@@ -620,9 +704,9 @@ Props: `{"format": "number"}`
 Visitors by country:
 
 ```sql
-SELECT country, SUM(visitors) AS value
-FROM v_views_countries
-WHERE project_id = :project AND day BETWEEN :from AND :to
+SELECT country, count(DISTINCT actor_id) AS value
+FROM views
+WHERE project_id = :project AND day BETWEEN :from AND :to AND country IS NOT NULL
 GROUP BY country
 ```
 
@@ -633,34 +717,34 @@ Props: `{"format": "number"}`
 Visitors by browser, then version:
 
 ```sql
-SELECT browser AS parent, browser_version AS label, SUM(visitors) AS value
-FROM v_views_browsers
-WHERE project_id = :project AND day BETWEEN :from AND :to
-GROUP BY browser, browser_version
+SELECT browser AS parent, coalesce(browser_version, '?') AS label, count(DISTINCT actor_id) AS value
+FROM views
+WHERE project_id = :project AND day BETWEEN :from AND :to AND browser IS NOT NULL
+GROUP BY 1, 2
 ```
 
 Props: `{"format": "number"}`
 
 ### `sankey`
 
-Arrivals by referrer and landing page, then events by the page they were sent
-from. The two kinds of row share the page names, so each page is one node in
-the middle. It reads raw rows, so it reaches back only as far as
-`RETENTION_RAW_DAYS`; each stage keeps its top rows, since a ribbon
-too thin to see is noise:
+Arrivals by referrer and page, then events by the page they were sent from.
+The two kinds of row share the page names, so each page is one node in the
+middle. Each stage keeps its top rows, since a ribbon too thin to see is
+noise:
 
 ```sql
 SELECT * FROM (
-  SELECT referrer_source AS source, path AS target, COUNT(*) AS value
-  FROM raw_views
-  WHERE project_id = :project AND day BETWEEN :from AND :to AND referrer_source <> ''
+  SELECT referrer_source AS source, path AS target, count(*) AS value
+  FROM views
+  WHERE project_id = :project AND day BETWEEN :from AND :to
+    AND referrer_source IS NOT NULL AND path IS NOT NULL
   GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 15
 )
 UNION ALL
 SELECT * FROM (
-  SELECT path, event_name, COUNT(*)
-  FROM raw_product
-  WHERE project_id = :project AND day BETWEEN :from AND :to AND path <> ''
+  SELECT path, event_name, count(*)
+  FROM product
+  WHERE project_id = :project AND day BETWEEN :from AND :to AND path IS NOT NULL
   GROUP BY 1, 2 ORDER BY 3 DESC LIMIT 15
 )
 ```
@@ -681,8 +765,8 @@ rows returned (at most `CONSOLE_QUERY_ROWS_MAX`), so a `LIMIT`ed query
 decides which rows those are:
 
 ```sql
-SELECT path AS "Page", SUM(visitors) AS "Visitors", SUM(views) AS "Views"
-FROM v_views_paths
+SELECT path AS "Page", count(DISTINCT actor_id) AS "Visitors", count(*) AS "Views"
+FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to
 GROUP BY path
 ORDER BY 3 DESC
@@ -696,36 +780,41 @@ Props: `{"formats": {"Visitors": "number", "Views": "number"}, "colorscale": ["V
 A note at the top of a dashboard, as an `md` source:
 
 ```markdown
-**Visitors** count each person once per day. Figures for today and
-yesterday are live and settle after the 03:00 UTC pass.
+**Visitors** count each person once per day. Today's figures grow as its
+events arrive.
 ```
 
 Props: `{}`
 
 ### Percentiles from measures
 
-Measures are stored as log-scale histograms, not values, so a percentile is
-read from buckets: `approx_value` is a bucket's value (within about 2%, 0 for
-the zero bucket) and `weight` its estimated count, with sampled rows counted
-`1 / sample_rate` times. Sum `weight` per bucket, run it up in bucket order,
-and take the first bucket whose running weight reaches the share wanted. The
-Web Vitals and Measures system dashboards are built this way. A name sent as
-two kinds (`measure`) is two series, so group by both. p75 per metric:
+Each measure sample is a row of `measures`, and a percentile is read from
+its log-scale histogram: `bucket` is a sample's bucket (base 1.04), whose
+value is `2 * pow(1.04, bucket) / 2.04` (within about 2%; 0 for bucket
+`-1000`, a value of 0), and a sampled row counts `1 / sample_rate` times.
+Sum that weight per bucket, run it up in bucket order, and take the first
+bucket whose running weight reaches the share wanted. The Web Vitals and
+Measures system dashboards are built this way. A name sent as two kinds
+(`measure`) is two series, so group by both. p75 per metric:
 
 ```sql
-WITH h AS (SELECT event_name, measure, bucket, approx_value, SUM(weight) AS w FROM v_measures_daily
-           WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY 1, 2, 3, 4),
-     c AS (SELECT *, SUM(w) OVER (PARTITION BY event_name, measure ORDER BY bucket) AS run,
-                     SUM(w) OVER (PARTITION BY event_name, measure) AS total FROM h)
-SELECT event_name, measure, MIN(approx_value) FILTER (WHERE run >= 0.75 * total) AS p75,
-       SUM(w) AS est_count
-FROM c GROUP BY 1, 2;
+WITH h AS (SELECT event_name, measure, bucket, sum(1 / sample_rate) AS w
+           FROM measures
+           WHERE project_id = :project AND day BETWEEN :from AND :to
+           GROUP BY 1, 2, 3),
+     c AS (SELECT *, sum(w) OVER (PARTITION BY event_name, measure ORDER BY bucket) AS run,
+                     sum(w) OVER (PARTITION BY event_name, measure) AS total FROM h)
+SELECT event_name, measure,
+       min(CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END)
+         FILTER (WHERE run >= 0.75 * total) AS p75,
+       sum(w) AS est_count
+FROM c GROUP BY 1, 2
 ```
 
 Use `0.5` or `0.95` for p50 or p95, add `day` to the grouping and the
-`PARTITION BY` for one value per day, and read `v_measures_attrs` with
-`attr_key` and `attr_value` for one per browser, device or declared key.
-The mean is exact: `SUM(sum) / SUM(weight)`. A `time` measure is in
+`PARTITION BY` for one value per day, and `browser`, `device` or an
+`attr_<key>` column for one per value. The mean is exact:
+`sum(value / sample_rate) / sum(1 / sample_rate)`. A `time` measure is in
 milliseconds; show it with the `number` format and put "(ms)" in the title,
 since `duration` renders seconds.
 
@@ -735,9 +824,9 @@ A `sql` source can use three named parameters, and no others:
 
 | Parameter | Value | Using it means |
 | --- | --- | --- |
-| `:project` | the selected project's id | the widget follows the project switcher |
-| `:from` | the first day of the selected range, `YYYY-MM-DD` | the widget follows the range switcher |
-| `:to` | the last day of the selected range, `YYYY-MM-DD` | the widget follows the range switcher |
+| `:project` | the selected project's id, a BIGINT | the widget follows the project switcher, and its tables hold that project's rows only |
+| `:from` | the first day of the selected range, a DATE | the widget follows the range switcher |
+| `:to` | the last day of the selected range, a DATE | the widget follows the range switcher |
 
 A widget that uses none of them is fixed, and should say what it is fixed to
 in its title:
@@ -745,7 +834,7 @@ in its title:
 | | SQL uses it: follows the switcher | SQL does not: fixed |
 | --- | --- | --- |
 | **project** | `WHERE project_id = :project` | one project (`WHERE project_id = 7`), several, or all, e.g. one `series` per project from `projects.name` |
-| **range** | `WHERE day BETWEEN :from AND :to` | all time, a window relative to now (`date('now', '-12 months')`), or set dates |
+| **range** | `WHERE day BETWEEN :from AND :to` | all time, a window relative to now (`day >= current_date - 364`), or set dates (`DATE '2026-01-01'`) |
 
 A project's page has no project switcher: a tab there gives every widget
 that follows `:project` that project. A widget that does not follow it shows
@@ -1071,11 +1160,13 @@ widget's name (`widget visitors: …`), and nothing is created.
 | sql uses :path; widgets get only :project, :from and :to | Write the value into the SQL, or use one of the three. |
 | line needs y (number); columns are x, visitors | Alias the column to the input: `visitors AS y`. |
 | visitors is not an input of line | Drop the column, or alias it to an input; only `table` takes any columns. |
-| line.y: "n/a" is not number | Return a number, a `YYYY-MM-DD` day or text as the input asks; `CAST(… AS REAL)` where needed. An empty value (SQL `NULL`) always passes. |
-| refused: sql reads meta, which custom SQL may not read | Read the `v_*` views instead. The same holds for `sqlite_*`, `pragma_*` and `dbstat`, as a name or as a single-quoted string equal to one (`'meta'`, `'sqlite_master'`), and for `ATTACH`. |
-| refused: sql may use non-ASCII characters only inside quotes or comments | Quote the name: `"визиты"`. |
-| query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the range or group the query | Group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |
-| SQLite's own error, such as a column that does not exist | Fix the query; try it with `query` first. |
+| line.y: "n/a" is not number | Return a number, a `YYYY-MM-DD` day or text as the input asks; `CAST(… AS DOUBLE)` where needed. An empty value (SQL `NULL`) always passes. |
+| Catalog Error: Table with name v_views_daily does not exist! …; widget SQL is DuckDB SQL over events, views, product, measures, sessions, identities and aliases; see docs://reporting | The widget was written for SQLite, before widgets moved to the event files. Rewrite it over [Tables](#tables); see [When widgets break after an update](#when-widgets-break-after-an-update). The same hint follows `julianday`, `strftime('%s', …)`, `date(x, '-1 day')` and the `identities` columns the files do not have. |
+| ? is not a parameter here; use :name | Use `:project`, `:from` or `:to`, or write the value into the SQL. `$1` and `$name` are refused the same way. |
+| sql must be a single statement; remove what follows the ';' | One `SELECT` (or `WITH … SELECT`). An unterminated string or comment and an unmatched `(` or `)` are refused too. |
+| query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the date range, or aggregate | Filter on `day`, group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |
+| the query ran out of the engine's memory (ENGINE_MEMORY_LIMIT) … | Count the rows of a `GROUP BY` subquery rather than `count(DISTINCT …)` over a large group, or narrow the range. |
+| DuckDB's own error, such as a column that does not exist (`Binder Error: Referenced column "visitors" not found …`) | Fix the query; try it with `query` and `source: "files"` first. |
 | markdown text is empty | Give the Markdown text. |
 | stat: … (a props schema error) | Match the props schema `list_components` returns; unknown props are refused. |
 | validating "arguments": … (an MCP input schema error) | The path and message name the field; match `list_components`. The path is the schema's, not the widget's: for `create_dashboard` it points into `widgets/items`, not at a particular widget, so find the value it names in your own input. Over REST the same mistake gets the server's own refusal. |
@@ -1110,7 +1201,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 
 ## When widgets break after an update
 
-A release can rename a view's columns or remove a component, and widgets
+A release can change the tables' columns or remove a component, and widgets
 written against the old ones stop working:
 
 - a query that no longer runs, or whose rows no longer fit the component,
@@ -1129,10 +1220,26 @@ To fix them:
    https://github.com/dmtrkzntsv/twillingate/releases (one page per tag,
    `…/releases/tag/v<version>`). They name renamed view columns and removed
    components.
-3. Rewrite the SQL with `update_widget` (check the new columns in
-   `schema://views`), or switch a removed component's widgets to another
-   component. `list_widgets` with `component` finds every widget on one.
+3. Rewrite the SQL with `update_widget` (check the columns with `query`,
+   `source: "files"`, and `DESCRIBE views`), or switch a removed
+   component's widgets to another component. `list_widgets` with
+   `component` finds every widget on one.
 4. Check each with `widget_data`.
+
+**Widgets written for SQLite.** Widget SQL used to be SQLite's, over the
+`v_*` views; it is now DuckDB's, over the event files, and nothing rewrote
+the widgets users had made. Such a widget fails with DuckDB's error and
+the hint "widget SQL is DuckDB SQL over events, views, product, measures,
+sessions, identities and aliases; see docs://reporting". The console also
+logs each one when it starts (`widget SQL fails on the event files`, with
+`widget_id`, `dashboard_id` and `title`); a widget whose check ran out of
+time or memory is logged as `could not check widget on the event files`
+instead, and checked again at the next start. Rewrite it by the
+[Tables](#tables) section and the [Examples](#examples): `v_views_daily`
+becomes `views` grouped by day, `v_product_daily` `product` grouped by
+day and `event_name`, `v_measures_daily` `measures` with `bucket`,
+`date(:from, '-1 day')` becomes `:from - 1`, and a `''` test an
+`IS NULL` one.
 
 A component that comes back in a later release does not reattach itself: set
 it again with `update_widget`. System dashboards are fixed by the release
@@ -1166,6 +1273,10 @@ Open `http://127.0.0.1:3100/`, which redirects to the dashboards at `/app/`.
 - `-db` defaults to `DATABASE_DSN`'s path. The database is opened read-only
   and never written: the view route answers but stores nothing, and the page
   offers no writes (no "…" menus, dragging or Restore buttons).
+- Widget SQL runs on the event files in `EVENTS_DIR` (default `raw/` beside
+  the database), through an engine child of the binary as in the console,
+  but without the projects' event and attribute rules: a renamed event
+  reads under the name it was stored with.
 - `-addr` is refused unless it is a loopback address, and a request naming
   any other host (`Host:`) gets `403`, so a page elsewhere cannot reach it
   by pointing its own name at `127.0.0.1`. There is no login: the page finds

@@ -25,10 +25,6 @@ import (
 // that builds SQL needs an entry, and an entry needs such a function.
 var dynamic = map[string]string{
 	"api/ops_limits.go:capUsage":                           "the capped view and its dimension column are filled in with Sprintf",
-	"api/ops_measures.go:measures":                         "the source view, the attribute columns and the attribute filter are joined in only when an attribute key is asked for",
-	"api/ops_product.go:productAttributes":                 "the event filter is appended only when an event is asked for",
-	"api/ops_read.go:viewsBreakdown":                       "the select list and the view are joined from the requested dimension",
-	"api/ops_read.go:viewsOverview":                        "the kind filter is appended only when a kind is asked for",
 	"shared/readsql/page.go:QueryPage":                     "wraps the caller's query in the page's filters, sort and window",
 	"shared/readsql/page.go:countWhenEmpty":                "wraps the caller's query to count its rows",
 	"shared/readsql/readsql.go:QueryLimit":                 "wraps the caller's query to cap its rows",

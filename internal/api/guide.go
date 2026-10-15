@@ -100,9 +100,9 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 	writeFormsGuide(&b, in.Platform, base, key)
 
 	if len(p.Attributes) > 0 {
-		fmt.Fprintf(&b, "Declared product attributes (broken down in v_events_flat and product_attributes): %v.\n", p.Attributes)
+		fmt.Fprintf(&b, "Declared product attributes (broken down in the database's deprecated views; product_attributes breaks down every key the events carry, declared or not): %v.\n", p.Attributes)
 	} else {
-		b.WriteString("No product attributes declared: events are counted per day, but no\nattribute breakdowns are exposed — call update_project with e.g.\n{\"attributes\":[\"plan\"]} to declare which keys to break down.\n")
+		b.WriteString("No product attributes declared: none is needed. product_attributes and\nwidgets break down every key the events carry; declaring keys with\nupdate_project (e.g. {\"attributes\":[\"plan\"]}) only adds their breakdowns\nto the database's deprecated views.\n")
 	}
 	b.WriteString("\nDeeper reference: docs://twillingate — The event model (semantics),\nInstrument a website (snippet API), The wire format (batching, retries,\noffline replay).\n")
 	return guideOut{Markdown: b.String()}, nil

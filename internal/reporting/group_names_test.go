@@ -19,7 +19,7 @@ func groupTitle(t *testing.T, svc *Service, id int64) string {
 // groupNameRows is how many dashboard_groups rows exist.
 func groupNameRows(t *testing.T, svc *Service) int {
 	t.Helper()
-	res, err := svc.db.Run(context.Background(), `SELECT COUNT(*) FROM dashboard_groups`)
+	res, err := svcDB(t, svc).Run(context.Background(), `SELECT COUNT(*) FROM dashboard_groups`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func groupNameRows(t *testing.T, svc *Service) int {
 // dashboard has (spec D4, D10).
 func assertNoOrphanNames(t *testing.T, svc *Service, step string) {
 	t.Helper()
-	res, err := svc.db.Run(context.Background(), `SELECT group_id FROM dashboard_groups g
+	res, err := svcDB(t, svc).Run(context.Background(), `SELECT group_id FROM dashboard_groups g
 		WHERE NOT EXISTS (SELECT 1 FROM dashboards d WHERE d.group_id = g.group_id)`)
 	if err != nil {
 		t.Fatal(err)

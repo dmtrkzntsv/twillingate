@@ -35,7 +35,7 @@ func disabledServer(t *testing.T, value string) (*fakeQueue, *fakeForms, *Server
 		map[int][2]string{0: {testKey, "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q, forms := &fakeQueue{}, newFakeForms()
-	return q, forms, New(cfg, reg, q, g, fixedSalt{}, q, forms, slog.Default())
+	return q, forms, New(cfg, reg, q, g, fixedSalt{}, forms, slog.Default())
 }
 
 // ingestRoutes are every route that takes events or form submissions.
@@ -88,7 +88,7 @@ func TestIngestDisabledRefusesEveryIngestRoute(t *testing.T) {
 					t.Errorf("%s: the body was read", tc.name)
 				}
 			}
-			if n := len(q.events) + len(q.views) + len(q.measures) + len(q.identities); n != 0 {
+			if n := len(q.events) + len(q.views) + len(q.measures); n != 0 {
 				t.Errorf("%d rows enqueued by a disabled server", n)
 			}
 			if len(forms.calls) != 0 {
