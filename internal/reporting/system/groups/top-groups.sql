@@ -17,7 +17,7 @@ SELECT COALESCE(i.name, d.id) AS "Group",
        MIN(i.first_seen::DATE) AS "First seen",
        MAX(d.day) AS "Last seen"
 FROM d
-JOIN identities i ON i.kind = 'group' AND i.id = d.id
+LEFT JOIN identities i ON i.project_id = :project AND i.kind = 'group' AND i.id = d.id
 GROUP BY d.id, i.name
 ORDER BY SUM(d.actions) DESC, d.id
 LIMIT 100

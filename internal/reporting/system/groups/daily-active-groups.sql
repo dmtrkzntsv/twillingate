@@ -6,7 +6,7 @@ WITH daily AS (
          count(DISTINCT e.group_id) FILTER (WHERE e.day = i.first_seen::DATE) AS new_count,
          count(DISTINCT e.group_id) FILTER (WHERE e.day > i.first_seen::DATE) AS returning_count
   FROM events e
-  JOIN identities i ON i.kind = 'group' AND i.id = e.group_id
+  JOIN identities i ON i.project_id = :project AND i.kind = 'group' AND i.id = e.group_id
   WHERE e.project_id = :project AND e.family IN ('views', 'product') AND e.group_id <> ''
     AND e.day BETWEEN :from AND :to
   GROUP BY e.day

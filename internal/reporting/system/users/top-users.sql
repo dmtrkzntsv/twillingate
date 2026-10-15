@@ -18,7 +18,7 @@ SELECT COALESCE(i.name, d.id) AS "User",
        MIN(i.first_seen::DATE) AS "First seen",
        MAX(d.day) AS "Last seen"
 FROM d
-JOIN identities i ON i.kind = 'user' AND i.id = d.id
+LEFT JOIN identities i ON i.project_id = :project AND i.kind = 'user' AND i.id = d.id
 GROUP BY d.id, i.name
 ORDER BY SUM(d.views + d.events) DESC, d.id
 LIMIT 100
