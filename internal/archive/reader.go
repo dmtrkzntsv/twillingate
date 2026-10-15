@@ -80,12 +80,15 @@ type Scoped struct {
 	// Args are bound to the $names in SQL (engine.Engine.Query).
 	Args    []engine.Arg
 	MaxRows int
-	// Project, when not 0, limits all seven tables to its rows.
+	// Scope limits all seven tables to Project's rows; without it the
+	// query reads every project's. A scope on a project with no rows (0
+	// among them: no project has that id) reads none.
+	Scope   bool
 	Project int64
 }
 
-// QueryScoped is Query with arguments and, for a project, the seven tables
-// shadowed by CTEs over its rows only:
+// QueryScoped is Query with arguments and, with Scope, the seven tables
+// shadowed by CTEs over Project's rows only:
 //
 //	WITH events AS NOT MATERIALIZED (SELECT * FROM main.events WHERE project_id = <id>),
 //	     views AS NOT MATERIALIZED (SELECT * FROM events WHERE family = 'views'), …,
@@ -95,8 +98,14 @@ type Scoped struct {
 //
 // so a query written against the tables reads one project's rows without
 // a filter of its own, and the project's rows pass through the rules once.
-// <id> is the int64 printed here, not text from a caller. With Project 0
+// <id> is the int64 printed here, not text from a caller. Without Scope
 // the SQL runs as it is.
+//
+// Scoping is not isolation: the CTEs shadow the tables' names, and SQL
+// that names main.events, _tw_all or read_parquet reads past them, every
+// project's rows included. It keeps SQL written against the tables on
+// one project; it is no boundary against SQL written to leave it, so the
+// SQL must come from someone allowed to read every project.
 //
 // rules is the full rule set of every project, not the caller's share of
 // it: the tables live in the child, which every caller of the engine
@@ -141,7 +150,7 @@ func (r *Reader) queryScoped(ctx context.Context, q Scoped, rules Rules) (engine
 		return engine.Result{}, err
 	}
 	sql := q.SQL
-	if q.Project != 0 {
+	if q.Scope {
 		sql = scopedSQL(q.Project, sql)
 	}
 	return r.eng.Query(ctx, sql, q.MaxRows, q.Args...)
@@ -165,8 +174,8 @@ func scopedSQL(project int64, sql string) string {
 
 // measuresSelect is the measures table over events (a table or CTE): the
 // measures rows, and bucket, the log-scale bucket of value (base 1.04, so
-// about ±2% apart; -1000 for a value of 1e-17 or less), as the SQLite
-// views compute it.
+// buckets about 4% wide; -1000 for a value of 1e-17 or less), as the
+// SQLite views compute it.
 func measuresSelect(events string) string {
 	return "SELECT *, CASE WHEN value > 1e-17 THEN CAST(ceil(ln(value) / ln(1.04)) AS INTEGER) ELSE -1000 END AS bucket FROM " +
 		events + " WHERE family = 'measures'"

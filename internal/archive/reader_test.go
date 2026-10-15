@@ -588,11 +588,11 @@ func TestReaderDerivedTablesOnAnEmptyDirectory(t *testing.T) {
 	}
 }
 
-// askScoped runs sql scoped to project through r and returns its rows as
-// fmt prints them.
+// askScoped runs sql scoped to project through r (0: unscoped, every
+// project) and returns its rows as fmt prints them.
 func askScoped(t *testing.T, r *Reader, project int64, sql string, args ...engine.Arg) string {
 	t.Helper()
-	res, err := r.QueryScoped(context.Background(), Scoped{SQL: sql, Args: args, Project: project}, Rules{})
+	res, err := r.QueryScoped(context.Background(), Scoped{SQL: sql, Args: args, Scope: project != 0, Project: project}, Rules{})
 	if err != nil {
 		t.Fatalf("%s: %v", sql, err)
 	}
@@ -637,6 +637,12 @@ func TestScopedQuerySeesOneProject(t *testing.T) {
 			t.Errorf("project %d: %s, want %s", c.project, got, c.want)
 		}
 	}
+	// A scope on project 0, which no project has, reads nothing rather
+	// than every project.
+	res, err := r.QueryScoped(context.Background(), Scoped{SQL: countAll, Scope: true}, Rules{})
+	if err != nil || fmt.Sprint(res.Rows) != "[[0 0 0 0 0 0 0]]" {
+		t.Errorf("scoped to project 0: %v, %v; want every table empty", res.Rows, err)
+	}
 	// A CTE of the caller's own reads the scoped table, and the scoped
 	// tables read each other's rows only: views is events' views.
 	if got := askScoped(t, r, 1, "WITH x AS (SELECT * FROM events) SELECT count(*) FROM x"); got != "[[3]]" {
@@ -655,7 +661,7 @@ func TestScopedQuerySeesOneProject(t *testing.T) {
 func TestScopedQueryAppliesRulesOnce(t *testing.T) {
 	f := scopedFixture(t)
 	rules := Rules{Events: []store.EventRule{{ProjectID: 2, Family: store.FamilyMeasures, Name: "load", To: "paint", Action: store.EventRuleRename}}}
-	res, err := f.reader(t).QueryScoped(context.Background(), Scoped{SQL: "SELECT event_name FROM measures", Project: 2}, rules)
+	res, err := f.reader(t).QueryScoped(context.Background(), Scoped{SQL: "SELECT event_name FROM measures", Scope: true, Project: 2}, rules)
 	if err != nil || fmt.Sprint(res.Rows) != "[[paint]]" {
 		t.Fatalf("measures = %v, %v; want the renamed event", res.Rows, err)
 	}
@@ -673,7 +679,7 @@ func TestScopedQueryBindsArguments(t *testing.T) {
 	}
 	// The engine's refusals reach the caller: an argument no $name uses.
 	var qe *engine.QueryError
-	if _, err := r.QueryScoped(context.Background(), Scoped{SQL: "SELECT 1", Args: []engine.Arg{{Name: "x", Value: "1"}}, Project: 1}, Rules{}); !errors.As(err, &qe) {
+	if _, err := r.QueryScoped(context.Background(), Scoped{SQL: "SELECT 1", Args: []engine.Arg{{Name: "x", Value: "1"}}, Scope: true, Project: 1}, Rules{}); !errors.As(err, &qe) {
 		t.Errorf("an unused argument: err = %v, want the engine's refusal", err)
 	}
 }
@@ -684,7 +690,7 @@ func TestScopedQueryAfterAFailedBuild(t *testing.T) {
 	fastRetries(t)
 	f := scopedFixture(t)
 	arg := engine.Arg{Name: "tw_d", Value: "2026-10-11"}
-	q := Scoped{SQL: "SELECT count(*) FROM events WHERE day = CAST($tw_d AS DATE)", Args: []engine.Arg{arg}, Project: 1}
+	q := Scoped{SQL: "SELECT count(*) FROM events WHERE day = CAST($tw_d AS DATE)", Args: []engine.Arg{arg}, Scope: true, Project: 1}
 
 	eng := &vanishing{Engine: f.eng, fails: 1}
 	r, err := NewReader(f.log.Dir(), eng)

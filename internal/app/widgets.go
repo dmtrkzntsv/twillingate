@@ -37,14 +37,14 @@ func newWidgetFiles(cfg *config.Config, reader *archive.Reader, reg *manage.Regi
 
 // Query runs sql under its own deadline: reporting runs a widget's load
 // detached from the request that asked for it, so this is the only one.
-func (f *widgetFiles) Query(ctx context.Context, sql string, args []engine.Arg, maxRows int, project int64) (engine.Result, error) {
+func (f *widgetFiles) Query(ctx context.Context, q archive.Scoped) (engine.Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
 	var rules archive.Rules
 	if f.reg != nil {
 		rules.Events, rules.Attributes = f.reg.Snapshot(ctx).RuleLists()
 	}
-	return f.reader.QueryScoped(ctx, archive.Scoped{SQL: sql, Args: args, MaxRows: maxRows, Project: project}, rules)
+	return f.reader.QueryScoped(ctx, q, rules)
 }
 
 // SampleProject is the live project whose files hold the newest day (a

@@ -112,10 +112,10 @@ type testFiles struct {
 	maxRows int
 }
 
-func (f *testFiles) Query(ctx context.Context, sql string, args []engine.Arg, maxRows int, project int64) (engine.Result, error) {
+func (f *testFiles) Query(ctx context.Context, q archive.Scoped) (engine.Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
-	return f.Reader.QueryScoped(ctx, archive.Scoped{SQL: sql, Args: args, MaxRows: maxRows, Project: project}, archive.Rules{})
+	return f.Reader.QueryScoped(ctx, q, archive.Rules{})
 }
 
 func (f *testFiles) SampleProject(ctx context.Context) (int64, error) {

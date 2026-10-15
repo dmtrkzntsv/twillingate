@@ -114,7 +114,7 @@ func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[st
 	if err != nil {
 		return tableOut{}, err
 	}
-	res, err := h.runFiles(ctx, archive.Scoped{SQL: enginesql.Text(bound), Args: args, MaxRows: h.db.MaxRows(), Project: in.ProjectID})
+	res, err := h.runFiles(ctx, archive.Scoped{SQL: enginesql.Text(bound), Args: args, MaxRows: h.db.MaxRows(), Scope: true, Project: in.ProjectID})
 	if err != nil {
 		return tableOut{}, err
 	}

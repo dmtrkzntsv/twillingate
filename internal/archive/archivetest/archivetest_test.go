@@ -38,7 +38,7 @@ func TestWritesTwoDaysAndReadsThemBack(t *testing.T) {
 	if err != nil || fmt.Sprint(days) != "map[1:2026-10-12 2:2026-10-12]" {
 		t.Fatalf("latest days = %v, %v", days, err)
 	}
-	res, err := f.Reader.QueryScoped(context.Background(), archive.Scoped{SQL: "SELECT CAST(day AS VARCHAR), count(*) FROM events GROUP BY day ORDER BY day", Project: 1}, archive.Rules{})
+	res, err := f.Reader.QueryScoped(context.Background(), archive.Scoped{SQL: "SELECT CAST(day AS VARCHAR), count(*) FROM events GROUP BY day ORDER BY day", Scope: true, Project: 1}, archive.Rules{})
 	if err != nil || fmt.Sprint(res.Rows) != "[[2026-10-11 1] [2026-10-12 1]]" {
 		t.Fatalf("project 1 by day = %v, %v", res.Rows, err)
 	}

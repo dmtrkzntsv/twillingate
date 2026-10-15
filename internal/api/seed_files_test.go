@@ -30,12 +30,11 @@ type hostFiles struct {
 	maxRows int
 }
 
-func (f *hostFiles) Query(ctx context.Context, sql string, args []engine.Arg, maxRows int, project int64) (engine.Result, error) {
+func (f *hostFiles) Query(ctx context.Context, q archive.Scoped) (engine.Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, f.timeout)
 	defer cancel()
 	events, attrs := f.reg.Snapshot(ctx).RuleLists()
-	return f.reader.QueryScoped(ctx, archive.Scoped{SQL: sql, Args: args, MaxRows: maxRows, Project: project},
-		archive.Rules{Events: events, Attributes: attrs})
+	return f.reader.QueryScoped(ctx, q, archive.Rules{Events: events, Attributes: attrs})
 }
 
 func (f *hostFiles) SampleProject(ctx context.Context) (int64, error) {

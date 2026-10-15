@@ -19,9 +19,9 @@ import (
 
 // Files is where sql widgets run: the event files through the engine.
 type Files interface {
-	// Query runs one SELECT scoped to project (0: every project) under the
-	// console's timeout, returning at most maxRows rows (0: all).
-	Query(ctx context.Context, sql string, args []engine.Arg, maxRows int, project int64) (engine.Result, error)
+	// Query runs q's SELECT, scoped to its project when q.Scope, under the
+	// console's timeout, returning at most q.MaxRows rows (0: all).
+	Query(ctx context.Context, q archive.Scoped) (engine.Result, error)
 	// SampleProject is the live project with the newest events, 0 when none.
 	SampleProject(ctx context.Context) (int64, error)
 	Timeout() time.Duration
@@ -50,12 +50,12 @@ var sqliteNames = regexp.MustCompile(`(?i)` +
 	`|arguments provided to DATE function` +
 	`|column "(last_seen_day|updated_at)"`)
 
-// runFiles runs sql on files, an error classified by filesErr.
-func runFiles(ctx context.Context, files Files, sql string, args []engine.Arg, maxRows int, project int64) (engine.Result, error) {
+// runFiles runs q on files, an error classified by filesErr.
+func runFiles(ctx context.Context, files Files, q archive.Scoped) (engine.Result, error) {
 	if files == nil {
 		return engine.Result{}, errNoFiles
 	}
-	res, err := files.Query(ctx, sql, args, maxRows, project)
+	res, err := files.Query(ctx, q)
 	if err != nil {
 		return engine.Result{}, filesErr(files, err)
 	}

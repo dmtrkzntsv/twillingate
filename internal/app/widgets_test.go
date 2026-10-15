@@ -132,7 +132,7 @@ func TestWidgetFilesApplyTheRules(t *testing.T) {
 	files := f.files(t)
 	count := func() string {
 		t.Helper()
-		res, err := files.Query(ctx, "SELECT count(*) AS n FROM product WHERE event_name = 'signup'", nil, 0, 1)
+		res, err := files.Query(ctx, archive.Scoped{SQL: "SELECT count(*) AS n FROM product WHERE event_name = 'signup'", Scope: true, Project: 1})
 		if err != nil {
 			t.Fatal(err)
 		}

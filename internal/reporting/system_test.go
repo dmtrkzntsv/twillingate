@@ -265,7 +265,7 @@ func removeSystemTemplate() {
 func (f systemFixture) rows(t *testing.T, q string) [][]string {
 	t.Helper()
 	res, err := f.files.Reader.QueryScoped(context.Background(),
-		archive.Scoped{SQL: enginesql.Text(q), Project: f.project}, archive.Rules{})
+		archive.Scoped{SQL: enginesql.Text(q), Scope: true, Project: f.project}, archive.Rules{})
 	if err != nil {
 		t.Fatalf("%s: %v", q, err)
 	}

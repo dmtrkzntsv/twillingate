@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
@@ -165,25 +166,31 @@ func checkSQLParams(content string) ([]string, error) {
 }
 
 // bindSQL binds p's values to the parameters content uses (params, from
-// checkSQLParams) and returns the project to scope the query to: p's,
-// when content reads :project, and otherwise 0, every project, as a
-// widget that never names one read on SQLite (Decision 2).
-func bindSQL(content string, params []string, p Params) (string, []engine.Arg, int64, error) {
+// checkSQLParams) and returns the bound query: scoped to p's project when
+// content reads :project, even to one with no rows (project 0 among them,
+// which reads none), and otherwise over every project, as a widget that
+// never names one read on SQLite (Decision 2).
+func bindSQL(content string, params []string, p Params) (archive.Scoped, error) {
 	bound, args, err := enginesql.Bind(content, map[string]enginesql.Value{
 		":project": {Type: "BIGINT", Text: strconv.FormatInt(p.ProjectID, 10)},
 		":from":    {Type: "DATE", Text: p.From},
 		":to":      {Type: "DATE", Text: p.To},
 	})
 	if err != nil {
-		return "", nil, 0, refuseText(err)
+		return archive.Scoped{}, refuseText(err)
 	}
-	var project int64
+	q := archive.Scoped{SQL: bound, Args: args}
 	for _, name := range params {
 		if name == ":project" {
-			project = p.ProjectID
+			q.Scope, q.Project = true, p.ProjectID
 		}
 	}
-	return bound, args, project, nil
+	return q, nil
+}
+
+// rerun is a query on q's scope: sql with its args, at most maxRows rows.
+func rerun(q archive.Scoped, sql string, args []engine.Arg, maxRows int) archive.Scoped {
+	return archive.Scoped{SQL: sql, Args: args, MaxRows: maxRows, Scope: q.Scope, Project: q.Project}
 }
 
 func (s *sqlSource) Validate(ctx context.Context, content string, c Component) error {
@@ -214,12 +221,12 @@ func (s *sqlSource) Validate(ctx context.Context, content string, c Component) e
 		p.From = now.AddDate(0, 0, -6).Format("2006-01-02")
 		p.To = now.Format("2006-01-02")
 	}
-	bound, args, project, err := bindSQL(content, params, p)
+	q, err := bindSQL(content, params, p)
 	if err != nil {
 		return err
 	}
 
-	res, err := runFiles(ctx, s.files, enginesql.Shape(bound), args, 0, project)
+	res, err := runFiles(ctx, s.files, rerun(q, enginesql.Shape(q.SQL), q.Args, 0))
 	if err != nil {
 		return err
 	}
@@ -230,7 +237,7 @@ func (s *sqlSource) Validate(ctx context.Context, content string, c Component) e
 		return nil
 	}
 
-	sample, err := runFiles(ctx, s.files, enginesql.Text(bound), args, 5, project)
+	sample, err := runFiles(ctx, s.files, rerun(q, enginesql.Text(q.SQL), q.Args, 5))
 	if err != nil {
 		return err
 	}
@@ -252,7 +259,7 @@ func (s *sqlSource) Load(ctx context.Context, content string, p Params) (any, er
 // text: at most Files.MaxRows of them, Truncated when more follow.
 // Shared by Load and Preview.
 func loadRows(ctx context.Context, files Files, content string, params []string, p Params) (readsql.Result, error) {
-	bound, args, project, err := bindSQL(content, params, p)
+	q, err := bindSQL(content, params, p)
 	if err != nil {
 		return readsql.Result{}, err
 	}
@@ -261,7 +268,7 @@ func loadRows(ctx context.Context, files Files, content string, params []string,
 	}
 	// One row past the cap tells a full result from a cut one.
 	maxRows := files.MaxRows()
-	res, err := runFiles(ctx, files, enginesql.Text(bound), args, maxRows+1, project)
+	res, err := runFiles(ctx, files, rerun(q, enginesql.Text(q.SQL), q.Args, maxRows+1))
 	if err != nil {
 		return readsql.Result{}, err
 	}
@@ -294,26 +301,26 @@ func (s *sqlSource) LoadPage(ctx context.Context, content string, p Params, pg r
 	if err != nil {
 		return readsql.PageResult{}, err
 	}
-	bound, args, project, err := bindSQL(content, params, p)
+	q, err := bindSQL(content, params, p)
 	if err != nil {
 		return readsql.PageResult{}, err
 	}
 	if s.files == nil {
 		return readsql.PageResult{}, errNoFiles
 	}
-	shape, err := runFiles(ctx, s.files, enginesql.Shape(bound), args, 0, project)
+	shape, err := runFiles(ctx, s.files, rerun(q, enginesql.Shape(q.SQL), q.Args, 0))
 	if err != nil {
 		return readsql.PageResult{}, err
 	}
 	cols := shape.Columns
-	stmt, err := enginesql.Page(bound, args, cols, pg, s.files.MaxRows())
+	stmt, err := enginesql.Page(q.SQL, q.Args, cols, pg, s.files.MaxRows())
 	if err != nil {
 		// content passed the scanner above, the only refusal of the text
 		// itself, so a refusal here is of pg: most often a column the
 		// query does not return.
 		return readsql.PageResult{}, viewRefusal{refuseText(err)}
 	}
-	res, err := runFiles(ctx, s.files, stmt.SQL, stmt.Args, 0, project)
+	res, err := runFiles(ctx, s.files, rerun(q, stmt.SQL, stmt.Args, 0))
 	if err != nil {
 		return readsql.PageResult{}, err
 	}
@@ -333,7 +340,7 @@ func (s *sqlSource) LoadPage(ctx context.Context, content string, p Params, pg r
 		for i, row := range res.Rows {
 			out.Rows[i] = textRow(row[:keep])
 		}
-	} else if err := s.countEmpty(ctx, &out, bound, args, cols, pg, project); err != nil {
+	} else if err := s.countEmpty(ctx, &out, q, cols, pg); err != nil {
 		return readsql.PageResult{}, err
 	}
 	out.Truncated = out.Matched > pg.Offset+len(out.Rows)
@@ -342,9 +349,10 @@ func (s *sqlSource) LoadPage(ctx context.Context, content string, p Params, pg r
 
 // countEmpty fills Matched and Total for a page with no rows, which has
 // no row to carry them. Offset 0 with no rows means nothing matched; a
-// page past the end still has to count what it skipped.
-func (s *sqlSource) countEmpty(ctx context.Context, out *readsql.PageResult, bound string, args []engine.Arg, cols []string, pg readsql.Page, project int64) error {
-	total, matched, err := enginesql.Count(bound, args, cols, pg)
+// page past the end still has to count what it skipped. q is the bound
+// query, bindSQL's.
+func (s *sqlSource) countEmpty(ctx context.Context, out *readsql.PageResult, q archive.Scoped, cols []string, pg readsql.Page) error {
+	total, matched, err := enginesql.Count(q.SQL, q.Args, cols, pg)
 	if err != nil {
 		return viewRefusal{refuseText(err)}
 	}
@@ -355,7 +363,7 @@ func (s *sqlSource) countEmpty(ctx context.Context, out *readsql.PageResult, bou
 		if c.stmt.SQL == "" {
 			continue
 		}
-		res, err := runFiles(ctx, s.files, c.stmt.SQL, c.stmt.Args, 0, project)
+		res, err := runFiles(ctx, s.files, rerun(q, c.stmt.SQL, c.stmt.Args, 0))
 		if err != nil {
 			return err
 		}

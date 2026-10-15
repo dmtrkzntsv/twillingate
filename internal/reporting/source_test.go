@@ -22,6 +22,7 @@ type fakeCall struct {
 	sql     string
 	args    []engine.Arg
 	maxRows int
+	scope   bool
 	project int64
 }
 
@@ -34,10 +35,10 @@ type fakeFiles struct {
 	maxRows int
 }
 
-func (f *fakeFiles) Query(_ context.Context, sql string, args []engine.Arg, maxRows int, project int64) (engine.Result, error) {
-	f.calls = append(f.calls, fakeCall{sql, args, maxRows, project})
+func (f *fakeFiles) Query(_ context.Context, q archive.Scoped) (engine.Result, error) {
+	f.calls = append(f.calls, fakeCall{q.SQL, q.Args, q.MaxRows, q.Scope, q.Project})
 	if f.answer != nil {
-		return f.answer(sql, maxRows)
+		return f.answer(q.SQL, q.MaxRows)
 	}
 	return engine.Result{Columns: []string{"value"}, Rows: [][]any{{"1"}}}, nil
 }
@@ -101,8 +102,8 @@ func TestSQLValidateBindsTheSampleProjectAndWeek(t *testing.T) {
 	bound := "SELECT count(*) AS value FROM views WHERE project_id = CAST($tw_project AS BIGINT) AND day BETWEEN CAST($tw_from AS DATE) AND CAST($tw_to AS DATE)"
 	args := []engine.Arg{{Name: "tw_project", Value: "7"}, {Name: "tw_from", Value: "2026-10-09"}, {Name: "tw_to", Value: "2026-10-15"}}
 	want := []fakeCall{
-		{enginesql.Shape(bound), args, 0, 7},
-		{enginesql.Text(bound), args, 5, 7},
+		{enginesql.Shape(bound), args, 0, true, 7},
+		{enginesql.Text(bound), args, 5, true, 7},
 	}
 	if !reflect.DeepEqual(f.calls, want) {
 		t.Errorf("calls = %+v\nwant  %+v", f.calls, want)
@@ -113,7 +114,7 @@ func TestSQLValidateBindsTheSampleProjectAndWeek(t *testing.T) {
 	if err := s.Validate(context.Background(), "SELECT 1 AS value", testComponents(t)["stat"]); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.calls) != 2 || f.calls[0].project != 0 || f.calls[0].args != nil {
+	if len(f.calls) != 2 || f.calls[0].scope || f.calls[0].args != nil {
 		t.Errorf("calls = %+v, want two unscoped, without arguments", f.calls)
 	}
 }
@@ -137,9 +138,30 @@ func TestSQLLoadBindsOnlyUsedParams(t *testing.T) {
 	if _, err := s.Load(context.Background(), "select :project as p", Params{ProjectID: 3, From: "2026-01-01", To: "2026-01-02"}); err != nil {
 		t.Fatal(err)
 	}
-	want := []fakeCall{{enginesql.Text("select CAST($tw_project AS BIGINT) as p"), []engine.Arg{{Name: "tw_project", Value: "3"}}, 11, 3}}
+	want := []fakeCall{{enginesql.Text("select CAST($tw_project AS BIGINT) as p"), []engine.Arg{{Name: "tw_project", Value: "3"}}, 11, true, 3}}
 	if !reflect.DeepEqual(f.calls, want) {
 		t.Errorf("calls = %+v\nwant  %+v", f.calls, want)
+	}
+}
+
+// TestSQLProjectZeroScopesToNoRows: a widget that follows :project is
+// scoped even when the project is 0 (a request without one, or an install
+// whose files hold no live project's events), which reads no rows rather
+// than every project's.
+func TestSQLProjectZeroScopesToNoRows(t *testing.T) {
+	f := &fakeFiles{maxRows: 10} // SampleProject: 0
+	s := &sqlSource{files: f}
+	content := "SELECT count(*) AS value FROM views WHERE project_id = :project"
+	if _, err := s.Load(context.Background(), content, Params{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Validate(context.Background(), content, testComponents(t)["stat"]); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range f.calls {
+		if !c.scope || c.project != 0 {
+			t.Errorf("call %+v: want scoped to project 0", c)
+		}
 	}
 }
 

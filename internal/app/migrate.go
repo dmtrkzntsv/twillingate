@@ -77,7 +77,7 @@ type ownerFiles struct {
 	err  error
 }
 
-func (f *ownerFiles) Query(ctx context.Context, sql string, args []engine.Arg, maxRows int, project int64) (engine.Result, error) {
+func (f *ownerFiles) Query(ctx context.Context, q archive.Scoped) (engine.Result, error) {
 	f.once.Do(func() {
 		if err := checkOwner(f.path, geteuid(), "migrate"); err != nil {
 			f.err = fmt.Errorf("this release changed the system dashboards, which are checked with an engine child "+
@@ -87,5 +87,5 @@ func (f *ownerFiles) Query(ctx context.Context, sql string, args []engine.Arg, m
 	if f.err != nil {
 		return engine.Result{}, f.err
 	}
-	return f.Files.Query(ctx, sql, args, maxRows, project)
+	return f.Files.Query(ctx, q)
 }
