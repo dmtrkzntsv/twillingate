@@ -7,7 +7,8 @@ const BASE_URL = `http://127.0.0.1:${PORT}`
  * Drives a seeded `twillingate serve` in a real Chromium browser: login,
  * every system dashboard, tab selection, the standalone shell and the
  * widget grid (see e2e/app.spec.ts). `webServer` builds and seeds a fresh
- * instance per run (e2e/serve.sh) and this config waits on its /healthz.
+ * instance per run (e2e/serve.sh) and this config waits for the line it
+ * prints once the event files settle.
  *
  * e2e/arrange.spec.ts hides the whole system group 1 (Reports) from the
  * sidebar and shows it again as part of its flow, which every other spec
@@ -39,9 +40,12 @@ export default defineConfig({
   ],
   webServer: {
     command: './e2e/serve.sh',
-    url: `${BASE_URL}/healthz`,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120_000,
+    // Ready when serve.sh says the boot pass has finished (it settles the
+    // event files first); /healthz answers well before that. With no url,
+    // a stale server on the port makes serve fail to bind, loudly, instead
+    // of being reused.
+    wait: { stdout: /e2e: event files settled/ },
+    timeout: 360_000,
     stdout: 'pipe',
     stderr: 'pipe',
     // SIGTERM, not the default SIGKILL, so serve.sh removes its scratch

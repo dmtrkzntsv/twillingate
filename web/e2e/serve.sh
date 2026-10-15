@@ -53,4 +53,52 @@ python3 "$root/scripts/seed-demo.py" "$db"
 
 "$bin" serve &
 pid=$!
+
+# Settle. The first start after the import runs the boot pass in the
+# background: it dumps every imported day into Parquet, merges the months
+# and derives the tables, and until it ends every query over the files is
+# slow (the seed's 180 raw days are far more than an upgrade's ~30). So the
+# suite starts only when this script prints the line playwright.config.ts
+# waits for. Assumes the files sit under EVENTS_DIR, which defaults to raw/
+# beside the database, one numbered directory per project, and that the
+# pass is done when
+#   - no log (.log), closed log (.closed) or claimed log (.dumping) is left
+#     for a day before today (UTC), and
+#   - every project directory holds its derived identities.parquet and
+#     aliases.parquet, and
+#   - the listing held still between two polls.
+events_dir="${EVENTS_DIR:-$(dirname "$db")/raw}"
+today="$(date -u +%F)"
+settled() {
+  local dir day
+  for dir in "$events_dir"/[0-9]*/; do
+    [ -d "$dir" ] || continue
+    [ -f "${dir}identities.parquet" ] && [ -f "${dir}aliases.parquet" ] || return 1
+    for f in "$dir"*.log "$dir"*.closed "$dir"*.dumping; do
+      [ -e "$f" ] || continue
+      day="$(basename "$f")"
+      [[ "${day:0:10}" < "$today" ]] && return 1
+    done
+  done
+  return 0
+}
+listing() { find "$events_dir" -type f -printf '%P %s %T@\n' 2>/dev/null | sort || true; }
+
+last=""
+ok=""
+for _ in $(seq 1 120); do
+  kill -0 "$pid" 2>/dev/null || { echo "e2e: serve exited before the files settled" >&2; exit 1; }
+  now="$(listing)"
+  if settled && [ -n "$now" ] && [ "$now" = "$last" ]; then ok=1; break; fi
+  last="$now"
+  sleep 2
+done
+if [ -z "$ok" ]; then
+  echo "e2e: the event files under $events_dir did not settle within 240s" >&2
+  kill -TERM "$pid" 2>/dev/null || true
+  wait "$pid" || true
+  exit 1
+fi
+echo "e2e: event files settled"
+
 wait "$pid"
