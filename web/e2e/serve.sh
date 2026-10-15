@@ -45,6 +45,33 @@ set +a
 # undeclared for projects.spec.ts to add as a breakdown.
 "$bin" project create -name dev -attr team_size -attr role
 python3 "$root/scripts/seed-demo.py" "$db"
+# Widget SQL reads the event files, not SQLite: copy the seeded raw rows
+# into them before serve starts (import wants ingest stopped, and the daily
+# pass would roll the days older than the raw window up first).
+"$bin" events import
+
+# serve's boot pass dumps the imported logs into Parquet and merges the
+# months, and a query that lists a log just before the dump removes it fails
+# (the reader retries once, which a burst of 180 dumps outruns). So a first
+# serve, on a side port, does that work and stops, and the one the suite
+# talks to starts on files that are settled.
+INGEST_ADDR='127.0.0.1:18081' "$bin" serve &
+pid=$!
+files="$scratch/raw"
+# Settled: the derived files exist, no log is left to dump, and the listing
+# held still for two seconds (the merges come after the dumps).
+last=""
+for _ in $(seq 1 300); do
+  now="$(find "$files" -type f -printf '%P %s\n' 2>/dev/null | sort || true)"
+  if [ -f "$files/1/identities.parquet" ] && [ -f "$files/1/aliases.parquet" ] \
+    && ! grep -qE '\.(dumping|closed)( |$)' <<<"$now" && [ "$now" = "$last" ]; then
+    break
+  fi
+  last="$now"
+  sleep 2
+done
+kill -TERM "$pid" 2>/dev/null || true
+wait "$pid" || true
 
 "$bin" serve &
 pid=$!
