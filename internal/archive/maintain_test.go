@@ -131,6 +131,48 @@ func (f fixture) rows(t *testing.T, name string) (int, int) {
 
 func eq(a, b []string) bool { return fmt.Sprint(a) == fmt.Sprint(b) }
 
+// TestMaintainLogsWhatThePassDid: a pass that succeeds says so, with what
+// it did, so the journal shows it ran (it logged only failures before).
+func TestMaintainLogsWhatThePassDid(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, evOf(1, "a", "2026-09-29T10:00:00Z"), evOf(1, "b", "2026-09-30T10:00:00Z"), evOf(2, "c", "2026-10-02T10:00:00Z"))
+	var buf strings.Builder
+	a := New(f.log, f.eng, slog.New(slog.NewTextHandler(&buf, nil)))
+	today, _ := civil.Parse("2026-10-02")
+	if err := a.Maintain(context.Background(), today, 1, 400); err != nil {
+		t.Fatal(err)
+	}
+	line := buf.String()
+	for _, want := range []string{"archive: pass", "projects=2", "dumped=2", "merged=1", "expired_months=0", "failed_projects=0"} {
+		if !strings.Contains(line, want) {
+			t.Errorf("log = %q; missing %s", line, want)
+		}
+	}
+}
+
+// TestMaintainWritesFilesOnlyTheServiceReads: every Parquet file the pass
+// writes (day, month and derived files) is 0640 like the logs, whatever
+// the process's umask.
+func TestMaintainWritesFilesOnlyTheServiceReads(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, evOf(1, "a", "2026-09-29T10:00:00Z"), evOf(1, "b", "2026-10-01T10:00:00Z"))
+	f.maintain(t, "2026-10-02")
+	n := 0
+	err := filepath.WalkDir(filepath.Join(f.log.Dir(), "1"), func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".parquet") {
+			return err
+		}
+		n++
+		if st, err := os.Stat(p); err != nil || st.Mode().Perm() != 0o640 {
+			t.Errorf("%s: mode %v, %v; want 0640", p, st.Mode().Perm(), err)
+		}
+		return nil
+	})
+	if err != nil || n < 2 {
+		t.Fatalf("walked %d Parquet files, %v; want the month file and derived files", n, err)
+	}
+}
+
 func TestMaintainDumpsClosedDaysOnly(t *testing.T) {
 	f := newFixture(t)
 	f.write(t, evOf(1, "a", "2026-10-11T10:00:00Z"), evOf(1, "b", "2026-10-11T11:00:00Z"), evOf(1, "c", "2026-10-12T09:00:00Z"))
@@ -358,7 +400,7 @@ func TestOneFailingDumpStopsNothingElse(t *testing.T) {
 	f.write(t, evOf(1, "old", "2025-08-15T10:00:00Z"), evOf(1, "a", "2026-08-30T10:00:00Z"), evOf(1, "c", "2026-10-11T10:00:00Z"))
 	f.writeFile(t, "2026-08-31.1.closed", "[1]\n") // valid JSON, not an object
 	d, _ := civil.Parse("2026-10-12")
-	if err := f.a.maintainProject(context.Background(), 1, d, 1, 400); err == nil {
+	if err := f.a.maintainProject(context.Background(), 1, d, 1, 400, &passStats{}); err == nil {
 		t.Fatal("maintainProject returned nil with a log it cannot read")
 	}
 	want := []string{"2026-08-30.parquet", "2026-08-31.parquet.dumping", "2026-10-11.parquet"}

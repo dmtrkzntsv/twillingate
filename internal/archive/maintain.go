@@ -51,20 +51,31 @@ var (
 // one goes on (the daily pass's rule); only failing to list the projects
 // is returned.
 func (a *Archive) Maintain(ctx context.Context, today civil.Date, lateDays, retentionDays int) error {
+	began := time.Now()
 	projects, err := a.Projects()
 	if err != nil {
 		return err
 	}
+	var st passStats
 	for _, project := range projects {
-		if err := a.maintainProject(ctx, project, today, lateDays, retentionDays); err != nil {
+		if err := a.maintainProject(ctx, project, today, lateDays, retentionDays, &st); err != nil {
+			st.failed++
 			a.logger.Error("archive: maintenance", "project", project, "error", err)
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 	}
+	a.logger.Info("archive: pass", "projects", len(projects), "dumped", st.dumped, "merged", st.merged,
+		"expired_months", st.expired, "derived", st.derived, "failed_projects", st.failed,
+		"took", time.Since(began).Round(time.Millisecond))
 	return nil
 }
+
+// passStats is what one Maintain did, for its log line: logs dumped, months
+// merged, months deleted by retention, derived files written, and projects
+// with a failed step.
+type passStats struct{ dumped, merged, expired, derived, failed int }
 
 // Projects lists, in ascending order, the ids of the projects with a
 // directory under raw/.
@@ -83,7 +94,7 @@ func (a *Archive) Projects() ([]int64, error) {
 	return ids, nil
 }
 
-func (a *Archive) maintainProject(ctx context.Context, project int64, today civil.Date, lateDays, retentionDays int) error {
+func (a *Archive) maintainProject(ctx context.Context, project int64, today civil.Date, lateDays, retentionDays int, st *passStats) error {
 	dir := filepath.Join(a.log.Dir(), strconv.FormatInt(project, 10))
 	names, err := list(dir)
 	if err != nil {
@@ -119,6 +130,8 @@ func (a *Archive) maintainProject(ctx context.Context, project int64, today civi
 		if dumpingName.MatchString(n) {
 			if err := a.dump(ctx, dir, n); err != nil {
 				errs = append(errs, err)
+			} else {
+				st.dumped++
 			}
 		}
 	}
@@ -135,19 +148,23 @@ func (a *Archive) maintainProject(ctx context.Context, project int64, today civi
 		if !keep.Before(last) {
 			if err := removeMonth(dir, names, month); err != nil {
 				errs = append(errs, err)
+			} else {
+				st.expired++
 			}
 			removed = true
 			continue
 		}
 		if last.AddDays(lateDays).Before(today) && !open(names, month) {
-			if err := a.merge(ctx, dir, names, month); err != nil {
+			if merged, err := a.merge(ctx, dir, names, month); err != nil {
 				errs = append(errs, err)
+			} else if merged {
+				st.merged++
 			}
 		}
 	}
 	// 5. Derive the sessions, identities and aliases (raw-first D16–D18)
 	// from the files as the steps above left them.
-	if err := a.derive(ctx, dir, removed); err != nil {
+	if err := a.derive(ctx, dir, removed, st); err != nil {
 		errs = append(errs, err)
 	}
 	return errors.Join(errs...)
@@ -157,7 +174,7 @@ func (a *Archive) maintainProject(ctx context.Context, project int64, today civi
 // removes the ones no events file backs. force rewrites identities and
 // aliases even when current: the pass deleted files (retention), which no
 // modification time shows. A failed write is collected and the rest go on.
-func (a *Archive) derive(ctx context.Context, dir string, force bool) error {
+func (a *Archive) derive(ctx context.Context, dir string, force bool, st *passStats) error {
 	names, err := list(dir)
 	if err != nil {
 		return err
@@ -179,11 +196,15 @@ func (a *Archive) derive(ctx context.Context, dir string, force bool) error {
 	for _, day := range slices.Sorted(maps.Keys(pf.deriveDays)) {
 		if err := a.write(ctx, "COPY ("+sessionsSelect(eventsOf(pf.deriveDays[day]))+") TO ", filepath.Join(sdir, day+".parquet")); err != nil {
 			errs = append(errs, err)
+		} else {
+			st.derived++
 		}
 	}
 	for _, month := range slices.Sorted(maps.Keys(pf.deriveMonths)) {
 		if err := a.write(ctx, "COPY ("+sessionsSelect(eventsOf([]string{pf.deriveMonths[month]}))+") TO ", filepath.Join(sdir, month+".parquet")); err != nil {
 			errs = append(errs, err)
+		} else {
+			st.derived++
 		}
 	}
 	for _, p := range pf.orphans {
@@ -204,7 +225,9 @@ func (a *Archive) derive(ctx context.Context, dir string, force bool) error {
 				if err := os.Remove(out); err != nil && !errors.Is(err, os.ErrNotExist) {
 					errs = append(errs, fmt.Errorf("archive: %w", err))
 				}
+				continue
 			}
+			st.derived++
 		}
 	}
 	return errors.Join(errs...)
@@ -410,7 +433,8 @@ func logKeys(path string) (map[string]bool, error) {
 
 // merge writes every day file and segment of month, with the month file
 // if a crashed merge left one, as the month file, then deletes the days.
-func (a *Archive) merge(ctx context.Context, dir string, names []string, month string) error {
+// It reports whether the month had days to merge.
+func (a *Archive) merge(ctx context.Context, dir string, names []string, month string) (bool, error) {
 	var days []string
 	for _, n := range names {
 		if m := dayFileName.FindStringSubmatch(n); m != nil && strings.HasPrefix(m[1], month+"-") {
@@ -418,7 +442,7 @@ func (a *Archive) merge(ctx context.Context, dir string, names []string, month s
 		}
 	}
 	if len(days) == 0 {
-		return nil
+		return false, nil
 	}
 	slices.SortFunc(days, func(x, y string) int {
 		mx, my := dayFileName.FindStringSubmatch(x), dayFileName.FindStringSubmatch(y)
@@ -435,14 +459,14 @@ func (a *Archive) merge(ctx context.Context, dir string, names []string, month s
 		inputs = append(inputs, filepath.Join(dir, n))
 	}
 	if err := a.write(ctx, "COPY ("+mergeQuery(inputs)+") TO ", filepath.Join(dir, month+".parquet")); err != nil {
-		return err
+		return false, err
 	}
 	for _, n := range days {
 		if err := os.Remove(filepath.Join(dir, n)); err != nil {
-			return fmt.Errorf("archive: %w", err)
+			return false, fmt.Errorf("archive: %w", err)
 		}
 	}
-	return nil
+	return true, nil
 }
 
 // segment is a day file's segment number from its ".<n>" (0 for the day
@@ -482,14 +506,18 @@ func mergeSelect(files, order []string) string {
 		") WHERE k IN (" + firsts + ") ORDER BY family, ts"
 }
 
-// write runs copyTo (a COPY … TO, missing its target) into out.tmp, fsyncs
-// it, renames it over out and fsyncs the directory: a reader sees the old
-// file or the whole new one, and a crash leaves at most a .tmp.
+// write runs copyTo (a COPY … TO, missing its target) into out.tmp, makes
+// it 0640 like the logs (DuckDB creates it under the process's umask),
+// fsyncs it, renames it over out and fsyncs the directory: a reader sees
+// the old file or the whole new one, and a crash leaves at most a .tmp.
 func (a *Archive) write(ctx context.Context, copyTo, out string) error {
 	tmp := out + ".tmp"
 	os.Remove(tmp)
 	if err := a.eng.Exec(ctx, copyTo+quote(tmp)+" (FORMAT parquet, COMPRESSION zstd)"); err != nil {
 		return fmt.Errorf("archive: %s: %w", filepath.Base(out), err)
+	}
+	if err := os.Chmod(tmp, 0o640); err != nil {
+		return fmt.Errorf("archive: %w", err)
 	}
 	if err := syncFile(tmp); err != nil {
 		return err
