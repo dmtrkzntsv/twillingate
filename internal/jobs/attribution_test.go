@@ -5,7 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -43,7 +45,7 @@ type pendingStore struct {
 	pending    []store.PendingSubmission
 	before     time.Time
 	attributed map[string]store.Event
-	err        error // returned beside the rows, as for unreadable ones
+	asWritten  map[string]bool // p.WriteEvent as AttributeSubmission got it
 }
 
 func (s *pendingStore) PendingSubmissions(_ context.Context, before time.Time, limit int) ([]store.PendingSubmission, error) {
@@ -54,14 +56,14 @@ func (s *pendingStore) PendingSubmissions(_ context.Context, before time.Time, l
 			out = append(out, p)
 		}
 	}
-	return out, s.err
+	return out, nil
 }
 
 func (s *pendingStore) AttributeSubmission(_ context.Context, p store.PendingSubmission, ev store.Event) (bool, error) {
 	if s.attributed == nil {
-		s.attributed = map[string]store.Event{}
+		s.attributed, s.asWritten = map[string]store.Event{}, map[string]bool{}
 	}
-	s.attributed[p.ID] = ev
+	s.attributed[p.ID], s.asWritten[p.ID] = ev, p.WriteEvent
 	return p.WriteEvent, nil
 }
 
@@ -240,21 +242,69 @@ func TestAttributeSubmissionsFailedLookupEndsTheTick(t *testing.T) {
 	}
 }
 
-// An unreadable pending row is logged as an error by its id, and the rows
-// read beside it are attributed all the same.
-func TestAttributeSubmissionsLogsUnreadableRows(t *testing.T) {
+func unreadable(id string, at time.Time) store.PendingSubmission {
+	return store.PendingSubmission{ProjectID: 1, ID: id, ReceivedAt: at, ConnectionID: "h1", WriteEvent: true,
+		Err: errors.New("submission " + id + " pending event: unexpected end of JSON input")}
+}
+
+// An unreadable pending row is logged as an error once, by its project
+// and id, and cleared: attributed with nothing and no event (whatever
+// WriteEvent says), so it leaves the queue. It is not looked up; the
+// rows read beside it are attributed all the same.
+func TestAttributeSubmissionsClearsUnreadableRows(t *testing.T) {
 	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
-	st := &pendingStore{pending: []store.PendingSubmission{pendingAt("good", now.Add(-2*time.Minute), nil)},
-		err: errors.New("submission bad pending event: unexpected end of JSON input")}
-	r := attributionRunner(t, st, now).WithAttribution(&echoAttributor{}, &loggedEvents{})
+	st := &pendingStore{pending: []store.PendingSubmission{
+		unreadable("bad", now.Add(-2*time.Minute)), pendingAt("good", now.Add(-2*time.Minute), nil)}}
+	a := &echoAttributor{}
+	log := &loggedEvents{}
+	r := attributionRunner(t, st, now).WithAttribution(a, log)
 	var buf bytes.Buffer
 	r.logger = slog.New(slog.NewTextHandler(&buf, nil))
+	r.attributeSubmissions(context.Background())
 	r.attributeSubmissions(context.Background())
 	if _, ok := st.attributed["good"]; !ok {
 		t.Error("the readable submission was not attributed")
 	}
-	if !strings.Contains(buf.String(), "level=ERROR") || !strings.Contains(buf.String(), "submission bad") {
-		t.Errorf("log %q does not name the unreadable submission", buf.String())
+	if ev, ok := st.attributed["bad"]; !ok || !reflect.DeepEqual(ev, store.Event{}) || st.asWritten["bad"] {
+		t.Errorf("bad = %+v, %v, write %v; want cleared with a zero event, not written", ev, ok, st.asWritten["bad"])
+	}
+	if !slices.Equal(a.asked, []int{1}) {
+		t.Errorf("lookups of %v, want one of the readable row only", a.asked)
+	}
+	var lines int
+	for _, l := range strings.Split(buf.String(), "\n") {
+		if strings.Contains(l, "level=ERROR") && strings.Contains(l, "submission=bad") &&
+			strings.Contains(l, "project=1") && strings.Contains(l, "unexpected end of JSON input") {
+			lines++
+		}
+	}
+	if lines != 1 {
+		t.Errorf("%d error lines for the unreadable submission, want 1:\n%s", lines, buf.String())
+	}
+	for _, ev := range log.evs {
+		if ev.ID == "bad" || ev.ID == "" {
+			t.Errorf("logged %+v for the unreadable submission", ev)
+		}
+	}
+}
+
+// Unreadable rows count as processed: a batch of them does not end the
+// tick, so the rows behind them are attributed in the same minute.
+func TestAttributeSubmissionsDrainsPastUnreadableRows(t *testing.T) {
+	now := time.Date(2026, 10, 14, 12, 0, 0, 0, time.UTC)
+	at := now.Add(-2 * time.Minute)
+	var pending []store.PendingSubmission
+	for i := 0; i < 100; i++ {
+		pending = append(pending, unreadable(fmt.Sprintf("bad%03d", i), at))
+	}
+	pending = append(pending, manyPending(50, at)...)
+	st := &pendingStore{pending: pending}
+	a := &echoAttributor{}
+	r := attributionRunner(t, st, now).WithAttribution(a, &loggedEvents{})
+	r.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	r.attributeSubmissions(context.Background())
+	if len(st.attributed) != 150 || !slices.Equal(a.asked, []int{50}) {
+		t.Fatalf("processed %d in lookups of %v, want 150 with one lookup of 50", len(st.attributed), a.asked)
 	}
 }
 

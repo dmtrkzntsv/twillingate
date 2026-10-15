@@ -86,31 +86,35 @@ func (r *Runner) attributeSubmissions(ctx context.Context) {
 // next batch would not move on: the read or the lookup failed, or a
 // submission stayed pending (its write failed), so the next read would
 // return it again. givenUp counts the submissions attributed without a
-// lookup.
+// lookup. A submission whose stored event does not read is logged and
+// cleared (clearUnreadable), never looked up.
 func (r *Runner) attributeBatch(ctx context.Context, now time.Time, givenUp *int) (n int, more bool) {
 	pending, err := r.store.PendingSubmissions(ctx, now.Add(-attributionDelay), attributionBatch)
 	if err != nil {
-		// Unreadable rows (named in err) are skipped; the rest go on.
 		r.logger.Error("form attribution: pending submissions", "error", err)
-		if len(pending) == 0 {
-			return 0, false
-		}
+		return 0, false
 	}
 	if len(pending) == 0 {
 		return 0, false
 	}
-	ls := make([]archive.Lookup, len(pending))
-	for i, p := range pending {
-		ls[i] = archive.Lookup{ProjectID: p.ProjectID, ID: p.ID, ActorKind: p.Event.ActorKind,
-			ActorID: p.Event.ActorID, InstallID: p.Event.InstallID, ConnectionID: p.ConnectionID, At: p.ReceivedAt}
+	more = true
+	ls := make([]archive.Lookup, 0, len(pending))
+	for _, p := range pending {
+		if p.Err == nil {
+			ls = append(ls, archive.Lookup{ProjectID: p.ProjectID, ID: p.ID, ActorKind: p.Event.ActorKind,
+				ActorID: p.Event.ActorID, InstallID: p.Event.InstallID, ConnectionID: p.ConnectionID, At: p.ReceivedAt})
+		}
 	}
-	events, attrs := r.reg.Snapshot(ctx).RuleLists()
-	lookupCtx, cancel := context.WithTimeout(ctx, r.attributionTimeout)
-	found, err := r.attributor.Attribute(lookupCtx, ls, r.cfg.Forms.AttributionDays, archive.Rules{Events: events, Attributes: attrs})
-	cancel()
-	more = err == nil
-	if err != nil {
-		r.logger.Warn("form attribution: lookup failed, retrying next minute", "submissions", len(pending), "error", err)
+	var found []archive.Found
+	if len(ls) > 0 {
+		events, attrs := r.reg.Snapshot(ctx).RuleLists()
+		lookupCtx, cancel := context.WithTimeout(ctx, r.attributionTimeout)
+		found, err = r.attributor.Attribute(lookupCtx, ls, r.cfg.Forms.AttributionDays, archive.Rules{Events: events, Attributes: attrs})
+		cancel()
+		if err != nil {
+			more = false
+			r.logger.Warn("form attribution: lookup failed, retrying next minute", "submissions", len(ls), "error", err)
+		}
 	}
 	key := func(project int64, id string) string { return strconv.FormatInt(project, 10) + "/" + id }
 	byKey := make(map[string]archive.Found, len(found))
@@ -119,6 +123,12 @@ func (r *Runner) attributeBatch(ctx context.Context, now time.Time, givenUp *int
 	}
 	var written []store.Event
 	for _, p := range pending {
+		if p.Err != nil {
+			if !r.clearUnreadable(ctx, p) {
+				more = false
+			}
+			continue
+		}
 		f, ok := byKey[key(p.ProjectID, p.ID)]
 		if !ok && now.Sub(p.ReceivedAt) < attributionGiveUp {
 			more = false
@@ -144,6 +154,22 @@ func (r *Runner) attributeBatch(ctx context.Context, now time.Time, givenUp *int
 		}
 	}
 	return len(pending), more
+}
+
+// clearUnreadable takes a submission whose stored event does not read
+// out of the queue: it is logged once, as an error, and attributed with
+// nothing and no event, keeping its fields. Left pending, it would come
+// back every minute, take a batch slot each time and log again. ok is
+// false when the clearing write failed (logged; retried next minute).
+func (r *Runner) clearUnreadable(ctx context.Context, p store.PendingSubmission) (ok bool) {
+	r.logger.Error("form attribution: unreadable submission event; kept without attribution or event",
+		"project", p.ProjectID, "submission", p.ID, "error", p.Err)
+	p.Event, p.WriteEvent = store.Event{}, false
+	if _, err := r.store.AttributeSubmission(ctx, p, store.Event{}); err != nil {
+		r.logger.Error("form attribution: write", "project", p.ProjectID, "submission", p.ID, "error", err)
+		return false
+	}
+	return true
 }
 
 // attributed is a submission's event with what the files found: the

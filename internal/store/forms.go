@@ -132,4 +132,8 @@ type PendingSubmission struct {
 	Event        Event
 	WriteEvent   bool
 	ConnectionID string // NewSubmission.ConnectionID, "" if none
+	// Err is why the stored event could not be read; Event is zero and
+	// WriteEvent false when it is set. The submission is still listed, so
+	// the job can clear it rather than meet it again every minute.
+	Err error
 }

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
-	"strings"
 	"testing"
 	"time"
 
@@ -426,23 +425,55 @@ func TestPendingSubmissionKeepsItsConnection(t *testing.T) {
 	}
 }
 
-// A row whose pending event does not read is named in the error and
-// skipped; the others are still listed.
-func TestPendingSubmissionsSkipsAnUnreadableEvent(t *testing.T) {
+// A row whose pending event does not read comes back with its error, and
+// with what else it read, so the job can clear it; it counts toward the
+// limit like any other row, and is no error of the call.
+func TestPendingSubmissionsReturnsAnUnreadableEventWithItsError(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	for _, id := range []string{"s0", "bad", "s2"} {
-		if _, _, err := db.WriteSubmission(ctx, newSub(id, nil)); err != nil {
+	for _, id := range []string{"s0", "s1", "s2"} {
+		n := newSub(id, nil)
+		n.ConnectionID = "h-" + id
+		if _, _, err := db.WriteSubmission(ctx, n); err != nil {
 			t.Fatal(err)
 		}
 	}
-	execAll(t, db, `UPDATE submissions SET pending_event='{' WHERE id='bad'`)
+	approve(t, db, `[]`)
+	execAll(t, db, `UPDATE submissions SET pending_event='{', pending_write=1 WHERE id='s1'`)
 	ps, err := db.PendingSubmissions(ctx, formsNow, 10)
-	if err == nil || !strings.Contains(err.Error(), "submission bad") {
-		t.Fatalf("err = %v, want one naming the bad submission", err)
+	if err != nil {
+		t.Fatalf("err = %v, want none: an unreadable row is not a failed call", err)
 	}
-	if len(ps) != 2 || ps[0].ID != "s0" || ps[1].ID != "s2" {
-		t.Fatalf("pending = %+v, want s0 and s2", ps)
+	if len(ps) != 3 || ps[0].ID != "s0" || ps[1].ID != "s1" || ps[2].ID != "s2" {
+		t.Fatalf("pending = %+v, want s0, s1 and s2", ps)
+	}
+	bad := ps[1]
+	if bad.Err == nil || bad.ProjectID != 1 || !bad.ReceivedAt.Equal(formsNow) || bad.ConnectionID != "h-s1" {
+		t.Fatalf("bad = %+v, want its error beside its project, arrival and connection", bad)
+	}
+	if !reflect.DeepEqual(bad.Event, store.Event{}) || bad.WriteEvent {
+		t.Fatalf("bad = %+v, want a zero event that is not to be written", bad)
+	}
+	if ps[0].Err != nil || ps[2].Err != nil {
+		t.Fatalf("readable rows carry an error: %v, %v", ps[0].Err, ps[2].Err)
+	}
+	if ps, err := db.PendingSubmissions(ctx, formsNow, 2); err != nil || len(ps) != 2 || ps[1].ID != "s1" {
+		t.Fatalf("limit 2 = %+v, %v; want s0 and s1", ps, err)
+	}
+	// The job clears it as attributed with nothing: no attribution, no
+	// event, its fields kept, out of the queue.
+	if wrote, err := db.AttributeSubmission(ctx, bad, store.Event{}); err != nil || wrote {
+		t.Fatalf("clearing wrote=%v err=%v", wrote, err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE id='s1' AND pending_event IS NULL
+		AND attribution IS NULL AND fields='{}'`); c != 1 {
+		t.Fatal("the cleared submission is not kept unattributed")
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id='s1'`); c != 0 {
+		t.Fatal("clearing an unreadable submission wrote an event")
+	}
+	if ps, _ := db.PendingSubmissions(ctx, formsNow, 10); len(ps) != 2 {
+		t.Fatalf("pending after clearing = %+v, want s0 and s2", ps)
 	}
 }
 
