@@ -847,7 +847,9 @@ holds that the files do not.
 - Run it soon. Each day it waits, the oldest raw day leaves
   `RETENTION_RAW_DAYS` and can no longer be imported.
 - It takes about 30 s per million rows. The next start's pass turns what
-  it copied into day files, about 0.2 s a day.
+  it copied into day files, about 0.2 s a day, and derives their tables.
+  Until that pass ends (a minute or so for a month of a busy project),
+  dashboards and queries over the files answer slowly.
 - `EVENTS_DIR` must be on a filesystem that supports `flock`: most local
   filesystems do, some FUSE and SMB mounts do not. The ingest server now
   refuses to start otherwise.
