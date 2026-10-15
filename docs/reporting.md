@@ -1164,7 +1164,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | Catalog Error: Table with name v_views_daily does not exist! …; widget SQL is DuckDB SQL over events, views, product, measures, sessions, identities and aliases; see docs://reporting | The widget was written for SQLite, before widgets moved to the event files. Rewrite it over [Tables](#tables); see [When widgets break after an update](#when-widgets-break-after-an-update). The same hint follows `julianday`, `strftime('%s', …)`, `date(x, '-1 day')` and the `identities` columns the files do not have. |
 | ? is not a parameter here; use :name | Use `:project`, `:from` or `:to`, or write the value into the SQL. `$1` and `$name` are refused the same way. |
 | sql must be a single statement; remove what follows the ';' | One `SELECT` (or `WITH … SELECT`). An unterminated string or comment and an unmatched `(` or `)` are refused too. |
-| query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the range or group the query | Filter on `day`, group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |
+| query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the date range, or aggregate | Filter on `day`, group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |
 | the query ran out of the engine's memory (ENGINE_MEMORY_LIMIT) … | Count the rows of a `GROUP BY` subquery rather than `count(DISTINCT …)` over a large group, or narrow the range. |
 | DuckDB's own error, such as a column that does not exist (`Binder Error: Referenced column "visitors" not found …`) | Fix the query; try it with `query` and `source: "files"` first. |
 | markdown text is empty | Give the Markdown text. |

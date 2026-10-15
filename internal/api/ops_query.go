@@ -104,7 +104,7 @@ func filesError(err error, timeout time.Duration) error {
 	var qe *engine.QueryError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		return invalidf("query exceeded %s (CONSOLE_QUERY_TIMEOUT); narrow it with a WHERE on project_id and day, or aggregate", timeout)
+		return invalidf("%s", enginesql.Timeout(timeout))
 	case errors.Is(err, archive.ErrLoadingLogs) && errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
 		return invalidf("%s", enginesql.LogsOutOfMemory)
 	case errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):

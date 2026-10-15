@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -126,8 +125,8 @@ func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[st
 }
 
 // runFiles runs q on the event files under CONSOLE_QUERY_TIMEOUT, with the
-// registry's rules, for the tools' own SQL: a timeout asks for a narrower
-// range, any other failure reads as filesError words it.
+// registry's rules, for the tools' own SQL: a failure reads as filesError
+// words it.
 func (h *host) runFiles(ctx context.Context, q archive.Scoped) (engine.Result, error) {
 	if h.files == nil {
 		return engine.Result{}, invalidf("the event files cannot be queried by this process")
@@ -137,10 +136,7 @@ func (h *host) runFiles(ctx context.Context, q archive.Scoped) (engine.Result, e
 	defer cancel()
 	events, attrs := h.reg.Snapshot(ctx).RuleLists()
 	res, err := h.files.QueryScoped(ctx, q, archive.Rules{Events: events, Attributes: attrs})
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return engine.Result{}, invalidf("query exceeded %s; narrow the date range", timeout)
-	case err != nil:
+	if err != nil {
 		return engine.Result{}, filesError(err, timeout)
 	}
 	return res, nil

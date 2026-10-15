@@ -206,7 +206,7 @@ func TestFilesErrors(t *testing.T) {
 		want string // the whole message, or "" for a pass-through
 	}{
 		"timeout": {context.DeadlineExceeded,
-			"query exceeded CONSOLE_QUERY_TIMEOUT (5s); narrow the range or group the query"},
+			enginesql.Timeout(5 * time.Second)},
 		"out of memory": {&engine.QueryError{Msg: "Out of Memory Error: failed to allocate"}, enginesql.OutOfMemory},
 		"logs out of memory": {fmt.Errorf("%w: %w", archive.ErrLoadingLogs, &engine.QueryError{Msg: "Out of Memory Error: x"}),
 			enginesql.LogsOutOfMemory},
@@ -321,7 +321,7 @@ func TestSQLValidateTimesOut(t *testing.T) {
 	f.timeout = 50 * time.Millisecond
 	s := &sqlSource{files: f, sampleRows: true}
 	err := s.Validate(context.Background(), "SELECT sum(hash(i)) AS value FROM range(100000000000) t(i)", stat)
-	wantRefusal(t, err, store.ErrInvalid, "query exceeded CONSOLE_QUERY_TIMEOUT (50ms); narrow the range or group the query")
+	wantRefusal(t, err, store.ErrInvalid, enginesql.Timeout(50*time.Millisecond))
 }
 
 func TestSQLValidateChecksColumnsViaLimitZero(t *testing.T) {

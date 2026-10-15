@@ -72,8 +72,7 @@ func filesErr(files Files, err error) error {
 	var qe *engine.QueryError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		return store.Refuse(store.ErrInvalid,
-			"query exceeded CONSOLE_QUERY_TIMEOUT (%s); narrow the range or group the query", files.Timeout())
+		return store.Refuse(store.ErrInvalid, "%s", enginesql.Timeout(files.Timeout()))
 	case errors.Is(err, archive.ErrLoadingLogs) && errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
 		return store.Refuse(store.ErrInvalid, "%s", enginesql.LogsOutOfMemory)
 	case errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
