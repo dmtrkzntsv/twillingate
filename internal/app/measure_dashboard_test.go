@@ -214,7 +214,7 @@ func TestMeasureDashboards(t *testing.T) {
 		}{
 			{"one at a time (engine parallel 1)", 1, 1},
 			{"two at a time (engine parallel 2)", 2, 2},
-			{"all at once, as a browser sends them (engine parallel 1, the default at 2 threads)", 1, len(sqlWidgets)},
+			{"all at once, as a browser sends them (engine parallel 1; the engine's default at 2 threads)", 1, len(sqlWidgets)},
 		} {
 			eng, reader := newEngine(mode.parallel)
 			svc := reporting.New(st, newWidgetFiles(cfg, reader, reg), reporting.Options{})

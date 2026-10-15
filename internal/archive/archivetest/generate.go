@@ -34,7 +34,7 @@ type Generated struct {
 // file exists, so a directory kept between runs is generated once. A file
 // appears only whole (written aside, then renamed). The engine needs
 // room for the sort: eng is better opened with a memory limit above the
-// measured one. It does not derive anything: Files.Maintain does.
+// measured one. It does not derive anything: archive.Archive.Maintain does.
 func (g Generated) Generate(t testing.TB, eng *engine.Engine, dir string) {
 	t.Helper()
 	pdir := filepath.Join(dir, strconv.FormatInt(g.Project, 10))
