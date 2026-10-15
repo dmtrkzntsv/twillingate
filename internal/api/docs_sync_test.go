@@ -157,15 +157,45 @@ func TestDocumentMatchesSDK(t *testing.T) {
 	}
 }
 
-// TestDocumentCoversEveryViewsDimension keeps the query guidance honest: a
-// new breakdown dimension that nobody documents is one an agent never uses.
+// TestDocumentCoversEveryViewsDimension keeps the breakdown guidance
+// honest: docs/twillingate.md's dimension table lists every dimension
+// views_breakdown takes with exactly the columns it returns, and nothing
+// else. A new dimension nobody documents is one an agent never uses; a
+// documented one that is gone is a failed call.
 func TestDocumentCoversEveryViewsDimension(t *testing.T) {
-	for _, d := range viewsDimensions {
-		if !strings.Contains(docs.Twillingate, d.view) {
-			t.Errorf("view %s is queryable but not named in docs/twillingate.md", d.view)
+	const header = "| Dimension | Columns | Reads |"
+	i := strings.Index(docs.Twillingate, header)
+	if i < 0 {
+		t.Fatalf("docs/twillingate.md has no %q table", header)
+	}
+	documented := map[string][]string{}
+	tick := regexp.MustCompile("`([^`]+)`")
+	for _, line := range strings.Split(docs.Twillingate[i:], "\n")[2:] {
+		if !strings.HasPrefix(line, "|") {
+			break
 		}
-		if !strings.Contains(schemaViews, d.view) {
-			t.Errorf("view %s is queryable but not named in schema://views", d.view)
+		cells := strings.Split(line, "|")
+		if len(cells) < 4 {
+			t.Fatalf("dimension row %q has too few cells", line)
+		}
+		name := strings.Trim(strings.TrimSpace(cells[1]), "`")
+		for _, m := range tick.FindAllStringSubmatch(cells[2], -1) {
+			documented[name] = append(documented[name], m[1])
+		}
+	}
+	for name, d := range viewsDimensions {
+		cols, ok := documented[name]
+		if !ok {
+			t.Errorf("dimension %s is queryable but not in docs/twillingate.md's dimension table", name)
+			continue
+		}
+		if !slices.Equal(cols, d.cols) {
+			t.Errorf("dimension %s returns %v, docs/twillingate.md says %v", name, d.cols, cols)
+		}
+	}
+	for name := range documented {
+		if _, ok := viewsDimensions[name]; !ok {
+			t.Errorf("docs/twillingate.md documents dimension %s, which views_breakdown does not take", name)
 		}
 	}
 }

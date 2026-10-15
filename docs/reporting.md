@@ -204,9 +204,9 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 ## Workflow
 
 1. **Call `reporting_guide`.** It names the running version, the components
-   and the columns each one reads, the views, the active projects and the
+   and the columns each one reads, the tables, the active projects and the
    dashboards there are.
-2. **Explore with `query`** and `source: "files"` over the event files'
+2. **Explore with `query`** (its default source, `files`) over the event files'
    tables ([Tables](#tables)), for one project and a few days, until the
    numbers are the ones the widget should show.
 3. **Pick a component** and alias the query's columns to its inputs:
@@ -266,7 +266,7 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 
 Widget SQL is DuckDB SQL ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction))
 over the raw events twillingate keeps as files beside its database: the
-seven tables `query` reads with `source: "files"`. Their columns, and how
+seven tables `query` reads by default (`source: "files"`). Their columns, and how
 rules apply to them, are in [twillingate.md](twillingate.md#writing-sql-against-the-event-files).
 The files hold the events since the upgrade that began writing them, and
 the raw days the database still held when `twillingate events import` ran;
@@ -322,7 +322,7 @@ is older than `REPORTING_CACHE_MAX_AGE`:
 
 | Tool | Input | Returns |
 | --- | --- | --- |
-| `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the views, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
+| `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the event files' tables, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
 | `list_components` | none | `source_types` and `components`: each one's `description`, `accepts`, `inputs`, `props` schema, `default_width` and `default_height` |
 | `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, `group_title` (the group's name; absent when it has none, and the first live tab's title stands in), stored `project_id` and `range`, live `widgets` count, `archived_at`, `sidebar` (its group is in the sidebar; only a system group is ever out of it) and `project_tab` (a system dashboard that projects created from now on get as a tab; always false on your own); plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and `auto_refresh_seconds`, how often the page reloads a dashboard with auto-refresh on (absent: never) |
 | `get_dashboard` | `dashboard_id` | the dashboard, its `group_id` and `group_title` (the group's name; absent when it has none), its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), and its live `widgets` in order |

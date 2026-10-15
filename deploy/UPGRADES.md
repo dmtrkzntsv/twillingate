@@ -1053,11 +1053,33 @@ What changes on the day:
   had `''`; `day`, `:from` and `:to` are DATEs.
 - `twillingate reporting dev` runs its widgets on the files in
   `EVENTS_DIR` (default `raw/` beside the `-db` database).
+- **The analytics tools read the files too:** `views_overview`,
+  `views_breakdown`, `product_events`, `product_attributes`, `measures`,
+  `retention` and `identities` (MCP and REST) answer from the same tables
+  as the dashboards, so their history starts where the dashboards' does,
+  with no `(other)` rows. Their inputs and output columns are unchanged.
+  What reads differently:
+  - `product_attributes` lists every attribute key the events carried,
+    declared or not; `unique_groups` is `0`, never empty, when no group
+    was involved;
+  - `measures` with `attr_key` breaks down by any key the measures
+    carried; a key none carried gives no rows;
+  - `retention`'s `aggregated_through` is the newest day before today
+    (UTC) with views or product events, rather than the 03:00 UTC pass's
+    last day;
+  - `identities` counts each id's `actors` and a group's `users` once over
+    the range, rather than adding up each day's.
+- **`query` reads the files by default.** Without `source`, its SQL is
+  DuckDB SQL over the files' tables; a query naming a `v_*` view or an
+  `agg_*` table fails with a hint to pass `source: "sqlite"`. That source
+  still reads the database, deprecated: a later release removes it.
+  `schema://views` (and `GET /api/schema/views`) lists the files' tables
+  first, then the deprecated views.
 - **Ingest stops writing display names to the database.** The names sent
   beside `$user_id` and `$group_id` stay on each event in the files, where
-  the Users and Groups dashboards and the files' `identities` table read
-  them; the database's `identities` table (`source: "sqlite"`) keeps the
-  names it held at the upgrade.
+  `identities`, the Users and Groups dashboards and the files' `identities`
+  table read them; the database's `identities` table (`source: "sqlite"`)
+  keeps the names it held at the upgrade.
 
 Rollback: the previous release's binary reads the database as before.
 Widgets rewritten for the files fail on it, as SQLite SQL now fails here.

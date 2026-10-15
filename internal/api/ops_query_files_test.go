@@ -17,15 +17,16 @@ import (
 type fakeFiles struct {
 	sql      string
 	maxRows  int
+	project  int64
 	rules    archive.Rules
 	deadline bool
 	res      engine.Result
 	err      error
 }
 
-func (f *fakeFiles) Query(ctx context.Context, sql string, maxRows int, rules archive.Rules) (engine.Result, error) {
+func (f *fakeFiles) QueryScoped(ctx context.Context, q archive.Scoped, rules archive.Rules) (engine.Result, error) {
 	_, f.deadline = ctx.Deadline()
-	f.sql, f.maxRows, f.rules = sql, maxRows, rules
+	f.sql, f.maxRows, f.project, f.rules = q.SQL, q.MaxRows, q.Project, rules
 	return f.res, f.err
 }
 
@@ -47,8 +48,9 @@ func TestQueryFilesSourceRunsOnTheFiles(t *testing.T) {
 	if want := `[["3","","true","2026-10-12T10:00:00Z","[\"a\",1]"]]`; mustJSON(t, out.Rows) != want {
 		t.Fatalf("rows = %s, want %s", mustJSON(t, out.Rows), want)
 	}
-	if files.sql != "SELECT count(*) FROM events" || files.maxRows != h.db.MaxRows() || !files.deadline {
-		t.Fatalf("files got sql %q, maxRows %d, deadline %v; want the SQL, CONSOLE_QUERY_ROWS_MAX and a deadline", files.sql, files.maxRows, files.deadline)
+	if files.sql != "SELECT count(*) FROM events" || files.maxRows != h.db.MaxRows() || !files.deadline || files.project != 0 {
+		t.Fatalf("files got sql %q, maxRows %d, deadline %v, project %d; want the SQL, CONSOLE_QUERY_ROWS_MAX, a deadline and every project",
+			files.sql, files.maxRows, files.deadline, files.project)
 	}
 }
 
@@ -121,15 +123,25 @@ func TestQueryFilesSourceErrors(t *testing.T) {
 
 func TestQuerySourceChoices(t *testing.T) {
 	h, cs := newTestHost(t)
-	if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1", "source": "duck"}); !res.IsError || !strings.Contains(textOf(res), `source must be "sqlite" or "files"`) {
+	if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1", "source": "duck"}); !res.IsError || !strings.Contains(textOf(res), `source must be "files" or "sqlite"`) {
 		t.Errorf("source duck: %s", textOf(res))
 	}
-	if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1", "source": "files"}); !res.IsError || !strings.Contains(textOf(res), "cannot be queried") {
-		t.Errorf("files without a reader: %s", textOf(res))
+	// No source reads the files: the host's own, where blog's 2026-08-20
+	// views are 45.
+	res := callTool(t, cs, "query", map[string]any{"sql": "SELECT count(*) AS n FROM views WHERE project_id = 1 AND day = DATE '2026-08-20'"})
+	if res.IsError || !strings.Contains(textOf(res), `[["45"]]`) {
+		t.Errorf("no source: %s", textOf(res))
 	}
+	// sqlite, deprecated, still reads the views and never the files.
 	h.files = &fakeFiles{err: errors.New("must not be called")}
-	res := callTool(t, cs, "query", map[string]any{"sql": "SELECT project_id FROM v_views_daily LIMIT 1", "source": "sqlite"})
+	res = callTool(t, cs, "query", map[string]any{"sql": "SELECT project_id FROM v_views_daily LIMIT 1", "source": "sqlite"})
 	if res.IsError {
 		t.Errorf("source sqlite: %s", textOf(res))
+	}
+	h.files = nil
+	for _, source := range []string{"", "files"} {
+		if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1", "source": source}); !res.IsError || !strings.Contains(textOf(res), "cannot be queried") {
+			t.Errorf("source %q without a reader: %s", source, textOf(res))
+		}
 	}
 }

@@ -234,8 +234,12 @@ func TestRESTWritesAndRefusals(t *testing.T) {
 	if rec := serveREST(t, r, "GET", "/api/projects/1/views/overview?from=2026-08-20&to=2026-08-21&colour=red", ""); rec.Code != 400 {
 		t.Errorf("unknown parameter = %d", rec.Code)
 	}
-	if rec := serveREST(t, r, "POST", "/api/query", `{"sql":"SELECT day, visitors FROM v_views_daily WHERE project_id=1"}`); rec.Code != 200 {
+	if rec := serveREST(t, r, "POST", "/api/query", `{"sql":"SELECT day, count(*) FROM views WHERE project_id=1 GROUP BY day"}`); rec.Code != 200 ||
+		!strings.Contains(rec.Body.String(), "2026-08-20") {
 		t.Errorf("query = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := serveREST(t, r, "POST", "/api/query", `{"sql":"SELECT day, visitors FROM v_views_daily WHERE project_id=1","source":"sqlite"}`); rec.Code != 200 {
+		t.Errorf("query on sqlite = %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := serveREST(t, r, "POST", "/api/query", `{"sql":"ATTACH 'x' AS y"}`); rec.Code != 400 {
 		t.Errorf("attach = %d", rec.Code)

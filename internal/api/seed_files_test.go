@@ -128,10 +128,15 @@ type hostSession struct {
 //     the app views are ios 2.4.1's.
 //   - The live hit h1 on 2026-08-26 (u1, /live, consent given).
 //   - A cohort of 10 users on 2026-08-01, 4 of them back on 2026-08-08.
+//   - One view of shop.example.com on 2026-08-22, the project's second
+//     host.
 //   - signup: 5 events by 4 users on 2026-08-20 (plan pro), 2 on
-//     2026-08-21 (plan team) by u1 in group g1, Jane Doe of Acme Inc.
-//   - Measures: checkout_api time 200 ms twice and $cls 0 three times on
-//     2026-08-20, then 300 ms and 0 on 2026-08-21, as the live rows.
+//     2026-08-21 (plan team): one by u1 in group g1, Jane Doe of Acme
+//     Inc, one by u2 in group g2, as agg_product_attrs' team row (2
+//     events, 2 users, 2 groups).
+//   - Measures: checkout_api time 200 ms twice (the chrome one with tier
+//     gold) and $cls 0 three times on 2026-08-20, then 300 ms and 0 on
+//     2026-08-21, as the live rows.
 func hostEvents() []store.Event {
 	var evs []store.Event
 	n := 0
@@ -155,7 +160,7 @@ func hostEvents() []store.Event {
 		}
 		return d.Add(8*time.Hour + time.Duration(sec)*time.Second)
 	}
-	paths := []string{"/post-1", "/post-2", "/settings"}
+	paths := []string{"/post-2", "/post-1", "/settings"} // /post-1 the busiest, as agg_views_paths has it
 	// views writes each actor's sessions on day, two hours apart, the
 	// views of one evenly over its seconds.
 	views := func(day, kind, prefix string, actors [][]hostSession) {
@@ -198,6 +203,8 @@ func hostEvents() []store.Event {
 	views("2026-08-20", "app", "a20-", [][]hostSession{
 		{two, three}, {two, three}, {two}, {two}, {three}, {three},
 	})
+	add(store.Event{Family: store.FamilyViews, EventName: "$page_view", TS: at("2026-08-22", 0), Kind: "web",
+		ActorID: "s01", Host: "shop.example.com", Path: "/cart", Platform: "web"})
 	add(store.Event{Family: store.FamilyViews, EventName: "$page_view", TS: at("2026-08-26", 7200), Kind: "web",
 		ActorID: "a1", ActorKind: store.ActorUser, UserID: "u1", Host: "blog.example.com", Path: "/live",
 		Platform: "web", Consent: store.ConsentGiven})
@@ -217,17 +224,19 @@ func hostEvents() []store.Event {
 			ActorID: user, ActorKind: store.ActorUser, UserID: user, Platform: "web",
 			Attributes: map[string]string{"plan": "pro"}})
 	}
-	for i := range 2 {
-		add(store.Event{Family: store.FamilyProduct, EventName: "signup", TS: at("2026-08-21", 3600+i*60), Kind: "web",
-			ActorID: "u1", ActorKind: store.ActorUser, UserID: "u1", UserName: "Jane Doe", GroupID: "g1", GroupName: "Acme Inc",
-			Platform: "web", Attributes: map[string]string{"plan": "team"}})
-	}
+	add(store.Event{Family: store.FamilyProduct, EventName: "signup", TS: at("2026-08-21", 3600), Kind: "web",
+		ActorID: "u1", ActorKind: store.ActorUser, UserID: "u1", UserName: "Jane Doe", GroupID: "g1", GroupName: "Acme Inc",
+		Platform: "web", Attributes: map[string]string{"plan": "team"}})
+	add(store.Event{Family: store.FamilyProduct, EventName: "signup", TS: at("2026-08-21", 3660), Kind: "web",
+		ActorID: "u2", ActorKind: store.ActorUser, UserID: "u2", GroupID: "g2",
+		Platform: "web", Attributes: map[string]string{"plan": "team"}})
 	measure := func(day string, sec int, name, kind, browser string, value float64) {
 		add(store.Event{Family: store.FamilyMeasures, EventName: name, TS: at(day, sec), Kind: "web",
 			ActorID: "a1", ActorKind: store.ActorUser, UserID: "u1", Platform: "web", Browser: browser,
 			Value: &value, Measure: kind})
 	}
 	measure("2026-08-20", 0, "checkout_api", store.MeasureTime, "chrome", 200)
+	evs[len(evs)-1].Attributes = map[string]string{"tier": "gold"}
 	measure("2026-08-20", 60, "checkout_api", store.MeasureTime, "firefox", 200)
 	for i := range 3 {
 		measure("2026-08-20", 120+i*60, "$cls", store.MeasureNumber, "chrome", 0)

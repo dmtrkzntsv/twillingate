@@ -6,7 +6,7 @@ import { parseSchemaViews } from './schema-views'
 
 // jsdom replaces the URL global, so import.meta.url cannot build a file path here.
 const goSource = readFileSync(resolve(import.meta.dirname, '../../../internal/api/resources.go'), 'utf8')
-const text = goSource.match(/const schemaViews = `([\s\S]*?)`/)?.[1] ?? ''
+const text = goSource.match(/const schemaSQLite = `([\s\S]*?)`/)?.[1] ?? ''
 
 describe('parseSchemaViews', () => {
   it('reads every view the API documents, with its columns', () => {
