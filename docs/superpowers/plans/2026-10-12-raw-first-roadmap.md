@@ -213,6 +213,15 @@ ingest process locks `raw/` so the two never write at once.
 - History older than the raw window exists only as aggregates and does
   not migrate; `deploy/UPGRADES.md` says so before 5d makes it matter.
 - Done when: the files hold, per day and project, every row SQLite holds.
+- Measured on 2026-10-14, on the bench set (`scripts/archive-bench`: 985,500
+  rows over 30 days, 591,157 in project 1 and 394,343 in project 2, 240k
+  view actors; a 606 MB database), on the N150 at load average 3 to 10
+  from other sessions: `twillingate migrate` 1.2 s; `events import`
+  **100 s** (271 MB peak RSS), leaving 734 MB of closed logs under `raw/`;
+  the first `serve`, whose boot pass dumps, merges and derives them, took
+  **390 s** to settle (child peak RSS about 950 MB), leaving 57 MiB of
+  Parquet, a tenth of the database. Until the pass ends every query over
+  the files is slow (`deploy/UPGRADES.md` says so). One run, no repeat.
 
 ### PR 5d. The switch: dashboards and tools on the files (D8)
 
@@ -291,7 +300,43 @@ project's whole history up to the range's end to find a visitor's first
 day, whatever the preset. The fix is a follow-up, not 5d's: the sum of the
 widgets, not one outlier, is the cost.
 
-How far this represents a real install: the stat widgets (`visitors`,
+**Second data point, the bench set (30 days at the cap, realistic
+cardinality):** the same test on the files the import and the boot pass
+left (985,500 rows; project 2 `site` has the views, 394k of them from 202k
+anonymous actors; project 1 `app` has 98k views, 444k product events and
+49k measures from users), `MEASURE_DB=… MEASURE_PROJECTS=2,1
+MEASURE_RUNS=1:7,1:30,5:30 MEASURE_TO=2026-10-11`, threads 2, 512 MB, cache
+off, load average 1.8 to 2.4 at the start of each mode (lighter than the
+first run). **The Views dashboard meets the target at this size.** Best of
+3 passes, wall time:
+
+| Dashboard, range | One at a time | Two at a time | All at once | Child peak RSS |
+|---|---|---|---|---|
+| Views, project 2, 7 days | 0.59 s | 0.37 s | 0.57 s | 136–152 MB |
+| Views, project 2, 30 days | **1.21 s** | 0.85 s | 1.17 s | 201–244 MB |
+| Views, project 1, 7 days | 0.49 s | 0.29 s | 0.47 s | 117–124 MB |
+| Views, project 1, 30 days | 0.65 s | 0.38 s | 0.61 s | 133–140 MB |
+| Retention, project 2, 30 days | 0.39 s | 0.30 s | 0.38 s | 145–207 MB |
+| Retention, project 1, 30 days | 0.73 s | 0.64 s | 0.72 s | 200–282 MB |
+
+The slowest Views widgets on project 2 at 30 days, one at a time:
+`top-pages` 170 ms, `display-resolutions` 91, `browsers` 87,
+`operating-systems` 88, `countries` 82; the rest 16 to 75 ms. First query
+(build) 75 to 117 ms. Two at a time is faster than one at a time here (the
+child has 2 threads and a widget this size uses fewer). Empty
+results, not worked around: in Retention, `signed-in-retention`,
+`install-retention` and `cohorts` of project 2 return no rows, and
+`install-retention` of project 1 too; project 2's actors are all
+anonymous and retention counts users and installs only, and project 1's
+views and product events come from users, with no installs. The cause is the data's actor kinds, not the clock (the data ends
+on 2026-10-11 and `current_date` was 2026-10-14; I did not isolate its
+effect). In Views, `visitors-by-app-version` returns no rows on both
+projects (no app versions sent), `referrers` and `campaigns` none on
+project 1, and `consent-share` reads 0 (no consent sent). Read with the first run: the cost grows with the rows
+scanned, about 1.2 s for 400k views in 30 days against 10.8 s for 6M in a
+year.
+
+How far the first run represents a real install: the stat widgets (`visitors`,
 `views`) also read the previous period, so a second-year install scans
 about twice as much for those; Retention scans the whole history, so a
 3-year install costs about 3 times as much.
@@ -318,5 +363,5 @@ about twice as much for those; Retention scans the whole history, so a
 |---|---|---|
 | PR 2 | spawn-to-ready on the release runners | under 100 ms |
 | PR 3 | a cap day's log appended and fsynced per flush, on a 2-CPU server | no visible ingest cost |
-| PR 5d | Views dashboard, 1 year, 2 CPUs, with `sessions` | under 2 s. **Taken 2026-10-14: 10.8 s** (Retention, 90 days: 10.2 s). Follow-up needed |
+| PR 5d | Views dashboard, 1 year, 2 CPUs, with `sessions` | under 2 s. **Taken 2026-10-14: 10.8 s** (Retention, 90 days: 10.2 s). Follow-up needed. Bench set, 30 days: 1.2 s, met |
 | PR 6 | idle RSS of a fresh install | ~17 MB, as today |
