@@ -13,7 +13,9 @@
 // 3) is how many times each mode runs the dashboard after the first query
 // built the tables; MEASURE_THREADS (default 2) is the engine's. Every
 // widget runs through reporting.Service.WidgetData with the cache off, over
-// the last 365 days (Views) or 90 (Retention) ending 2026-09-30.
+// the last 365 days (Views) or 90 (Retention) ending 2026-09-30;
+// MEASURE_RUNS (below) picks other dashboards and ranges, MEASURE_RUNS=2:365
+// the Product dashboard over the year.
 //
 // To measure an install's own files instead (nothing is generated, derived
 // or created; the database is opened as it is and reporting.Migrate may
@@ -226,6 +228,8 @@ func TestMeasureDashboards(t *testing.T) {
 	runs := []measureRun{{1, 365}, {5, 90}}
 	if existing != "" {
 		runs = parseRuns(t, envOr("MEASURE_RUNS", "1:7,1:30,5:30"))
+	} else if spec := os.Getenv("MEASURE_RUNS"); spec != "" {
+		runs = parseRuns(t, spec)
 	}
 	projects := []int64{1}
 	if existing != "" {
@@ -245,7 +249,7 @@ func TestMeasureDashboards(t *testing.T) {
 				name string
 				days int
 				span string
-			}{r.dashboard, map[int64]string{1: "Views", 5: "Retention"}[r.dashboard], r.days, fmt.Sprintf("%d days", r.days)}
+			}{r.dashboard, map[int64]string{1: "Views", 2: "Product", 5: "Retention"}[r.dashboard], r.days, fmt.Sprintf("%d days", r.days)}
 			if d.name == "" {
 				d.name = fmt.Sprintf("dashboard %d", d.id)
 			}
