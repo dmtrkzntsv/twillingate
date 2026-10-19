@@ -300,6 +300,14 @@ project's whole history up to the range's end to find a visitor's first
 day, whatever the preset. The fix is a follow-up, not 5d's: the sum of the
 widgets, not one outlier, is the cost.
 
+Retention fixed in 5d itself (2026-10-19): most of its cost was every
+anonymous actor in that scan, though only users and installs join a
+cohort. With `acts` restricted to `actor_kind IN ('user', 'install')`,
+Retention at 90 days takes 2.1 s one at a time and 1.3 s all at once, and
+the child peaks at 113 to 181 MB (load 5.5). Parity is unchanged. Views and
+Product (whose `attribute-values` runs out of memory at a year) are
+`docs/superpowers/specs/2026-10-19-raw-daily-design.md`'s.
+
 **Second data point, the bench set (30 days at the cap, realistic
 cardinality):** the same test on the files the import and the boot pass
 left (985,500 rows; project 2 `site` has the views, 394k of them from 202k

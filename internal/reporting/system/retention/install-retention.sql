@@ -17,7 +17,11 @@
 WITH acts AS (
   SELECT DISTINCT actor_id, actor_kind, day
   FROM events
+  -- Only actors a cohort can hold: an anonymous actor's id is a daily hash,
+  -- never a user's or an install's, and reading them all was most of the
+  -- dashboard's cost.
   WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''
+    AND actor_kind IN ('user', 'install')
     AND day < current_date AND day <= :to + 45
 ),
 firsts AS (
