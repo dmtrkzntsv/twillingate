@@ -1129,6 +1129,9 @@ What changes on the day:
     had, and `measures` takes any of them as `attr_key` (a key none
     carried gives no rows); `unique_groups` is `0`, never empty, when no
     group was involved;
+  - `product_attributes` refuses a range longer than 92 days: its rows
+    are per day, event and value, which over a year runs out of the
+    engine's memory. Ask `query` for longer ranges;
   - `retention`'s `aggregated_through` is the newest day before today
     (UTC) with views or product events, rather than the 03:00 UTC pass's
     last day.

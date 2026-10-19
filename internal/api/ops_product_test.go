@@ -278,3 +278,23 @@ func TestProductAttributesWithoutAnyAttribute(t *testing.T) {
 		t.Errorf("measures by a key no file has = %s", textOf(res))
 	}
 }
+
+// TestProductAttributesRefusesMoreThanAQuarter: its per-day rows over a
+// year run out of the engine's memory, so a longer range is refused with
+// a way out, and a quarter still answers.
+func TestProductAttributesRefusesMoreThanAQuarter(t *testing.T) {
+	_, cs := newTestHost(t)
+	res := callTool(t, cs, "product_attributes", map[string]any{
+		"project_id": 1, "from": "2026-05-27", "to": "2026-08-27"})
+	if !res.IsError {
+		t.Fatalf("93 days answered: %s", textOf(res))
+	}
+	if out := textOf(res); !strings.Contains(out, "at most 92 days") || !strings.Contains(out, "query") {
+		t.Errorf("refusal = %s, want the limit and the way out", out)
+	}
+	res = callTool(t, cs, "product_attributes", map[string]any{
+		"project_id": 1, "from": "2026-05-28", "to": "2026-08-27"})
+	if res.IsError {
+		t.Fatalf("92 days refused: %s", textOf(res))
+	}
+}

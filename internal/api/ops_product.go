@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 )
@@ -59,6 +60,12 @@ ORDER BY day`, nil)
 	return productEventsOut{Events: events, Totals: totals}, nil
 }
 
+// productAttributesMaxDays bounds product_attributes' range: its rows are
+// per day, event and value, so a year at the cap is millions of groups,
+// each with two distinct counts DuckDB cannot spill, and it runs out of
+// ENGINE_MEMORY_LIMIT (measured 2026-10-19). A quarter fits.
+const productAttributesMaxDays = 92
+
 // productAttributes breaks the product events down by every attribute key
 // they carried (one attr_<key> column each, unpivoted as the Product
 // dashboard's attribute values are) and by every reserved key in
@@ -70,6 +77,13 @@ ORDER BY day`, nil)
 func (h *host) productAttributes(ctx context.Context, in productEventsIn) (tableOut, error) {
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return tableOut{}, err
+	}
+	from, _ := time.Parse(time.DateOnly, in.From)
+	to, _ := time.Parse(time.DateOnly, in.To)
+	if days := int(to.Sub(from).Hours()/24) + 1; days > productAttributesMaxDays {
+		return tableOut{}, invalidf("product_attributes covers at most %d days a call, got %d: its rows are per day, event and value, and a longer range "+
+			"runs out of the engine's memory before the row cap would cut it anyway. Narrow from and to, or ask query (source files) "+
+			"for a coarser grouping, such as each value over the whole range", productAttributesMaxDays, days)
 	}
 	p := h.reg.Snapshot(ctx).Project(in.ProjectID)
 	if p == nil {
