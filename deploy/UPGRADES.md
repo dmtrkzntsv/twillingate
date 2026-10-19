@@ -837,9 +837,9 @@ fields as extra columns; delete the derived files if you go back for good.
 
 ### Upgrading to imported event files (no migration, one command)
 
-No schema migration. After upgrading, run one command once, with the
-ingest service stopped: it copies into `raw/` every raw row the database
-holds that the files do not.
+No schema migration. After upgrading (v0.19.0 is the first release with
+the command), run one command once, with the ingest service stopped: it
+copies into `raw/` every raw row the database holds that the files do not.
 
 - The rows it copies are the events from before the upgrade that began
   writing `raw/`, back to the oldest day the raw window
@@ -958,22 +958,40 @@ No schema migration. Dashboards now read the event files under `raw/`
 through the engine, not the database, and widget SQL is DuckDB SQL over
 the files' tables (`docs/reporting.md`, "Tables"). Before upgrading:
 
-- **Run the import first, on the previous release, and start that
-  release once before upgrading.** If `twillingate events import` has not
-  run (see "Upgrading to imported event files" above), run it with the
-  previous release's binary, start the service again, and wait for its
-  first pass to turn the imported days into day files. The pass is done
-  when no project's directory under `raw/` holds a `.log`, `.closed` or
-  `.dumping` file for a day before today (UTC):
+- **Run the import first, on v0.19.0, and start v0.19.0 once before
+  upgrading.** v0.19.0 is the first release with `twillingate events
+  import`. If the import has not run (see "Upgrading to imported event
+  files" above), run it with v0.19.0's binary, start the service again,
+  and wait for its first pass to turn the imported days into day files.
+  From an older release, upgrade to v0.19.0 first, run the import there,
+  let that pass finish, then upgrade to this release. The pass is done
+  when no project's directory under `EVENTS_DIR` (default `raw/` beside
+  the database) holds a closed log (`.closed`), a claimed one
+  (`.dumping`) or an import's partial one (`.import`). Run the check as
+  the service user, since the data directory is readable by it only:
 
   ```sh
   # systemd
-  ls /var/lib/twillingate/raw/*/ | grep -E '\.(log|closed|dumping)$'
+  sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env
+    dir=${EVENTS_DIR:-$(dirname "${DATABASE_DSN#sqlite://}")/raw}
+    left=$(find "$dir" -mindepth 2 -maxdepth 2 \( -name "*.closed" -o -name "*.dumping" -o -name "*.import" \)) || exit 1
+    if [ -n "$left" ]; then echo "not dumped yet:"; echo "$left"; else echo "done: nothing left to dump in $dir"; fi'
   # compose
-  docker compose exec twillingate sh -c "ls /var/lib/twillingate/raw/*/ | grep -E '\.(log|closed|dumping)$'"
+  docker compose exec twillingate sh -c '
+    dir=${EVENTS_DIR:-$(dirname "${DATABASE_DSN#sqlite://}")/raw}
+    left=$(find "$dir" -mindepth 2 -maxdepth 2 \( -name "*.closed" -o -name "*.dumping" -o -name "*.import" \)) || exit 1
+    if [ -n "$left" ]; then echo "not dumped yet:"; echo "$left"; else echo "done: nothing left to dump in $dir"; fi'
   ```
 
-  lists only files named for today. Then upgrade. This release's start
+  It prints `done: nothing left to dump in …` once the pass has ended,
+  and otherwise the files still waiting; an error (no such directory,
+  permission denied) means the check did not run. A `.log` is a day's
+  open log: it is not listed, since an event that comes late for a past
+  day opens that day's log again. A `.import` stays only when an import
+  stopped part way; no pass reads it, so run `twillingate events import`
+  again, which rewrites it and skips what is already copied; one that
+  stays after the import succeeded holds nothing the files lack, and can
+  be deleted. Then upgrade. This release's start
   checks the system dashboards on the files before it serves anything,
   ingest included, and its first query loads every log not yet dumped,
   which on a month at the cap takes minutes and can exceed
