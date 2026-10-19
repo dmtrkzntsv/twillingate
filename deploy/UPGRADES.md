@@ -1035,6 +1035,10 @@ What changes on the day:
 - **No `(other)` rows:** view kinds, breakdowns and attribute values past
   `ATTRIBUTE_VALUES_TOP_N`, and users and groups past `IDENTITIES_TOP_N`,
   each show as their own row.
+- **The Product dashboard's attribute table lists each value once over
+  the range,** now "Attribute values", with exact Users and Groups for
+  the range in place of "Users (at least)" and "Groups (at least)", and
+  no longer a row per day.
 - **Retention counts yesterday from 00:00 UTC,** as soon as the day ends,
   rather than after the 03:00 UTC pass.
 - **The console's engine child serves every widget,** not only `query`

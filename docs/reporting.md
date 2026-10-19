@@ -190,7 +190,7 @@ drops NULLs:
 ```
 add_widget {"dashboard_id": 3, "component": "table", "title": "Attribute values",
             "props": {"mode": "remote"},
-            "source": {"type": "sql", "content": "SELECT substr(attr_key, 6) AS \"Attribute\", day AS \"Day\", attr_value AS \"Value\", count(*) AS \"Count\" FROM (UNPIVOT (SELECT COLUMNS('^(day|attr_.*)$'), NULL::VARCHAR AS \"attr_$\" FROM product WHERE project_id = :project AND day BETWEEN :from AND :to) ON COLUMNS('^attr_') INTO NAME attr_key VALUE attr_value) GROUP BY ALL ORDER BY \"Attribute\", \"Day\" DESC, \"Count\" DESC"}}
+            "source": {"type": "sql", "content": "SELECT substr(attr_key, 6) AS \"Attribute\", attr_value AS \"Value\", count(*) AS \"Count\" FROM (UNPIVOT (SELECT COLUMNS('^(day|attr_.*)$'), NULL::VARCHAR AS \"attr_$\" FROM product WHERE project_id = :project AND day BETWEEN :from AND :to) ON COLUMNS('^attr_') INTO NAME attr_key VALUE attr_value) GROUP BY attr_key, attr_value ORDER BY \"Attribute\", \"Count\" DESC, \"Value\""}}
 ```
 
 A viewer's filter and sort on it reach the server as:
@@ -314,7 +314,9 @@ is older than `REPORTING_CACHE_MAX_AGE`:
   are cut.
 - `count(DISTINCT …)` over a long range keeps every value in memory, and
   a query past `ENGINE_MEMORY_LIMIT` is refused. Count the rows of a
-  `GROUP BY` subquery instead, or narrow the range.
+  `GROUP BY` subquery instead, which spills to disk (the Product
+  dashboard's "Attribute values" counts its users and groups so, per
+  attribute value over a year), or narrow the range.
 - Today comes from the open logs, loaded again whenever they have grown;
   past days come from Parquet files.
 

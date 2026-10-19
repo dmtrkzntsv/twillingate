@@ -1,22 +1,13 @@
--- Summed across events: a value's count is how often it appeared on any
--- event that day. unique_users and unique_groups are per event and cannot
--- be summed (one person or one group firing two events would count twice),
--- so the largest single-event figure is shown, a floor on the true number.
--- unique_groups is NULL for days rolled up before the collector measured
--- it; MAX() skips those, so such a day shows an empty cell, not 0.
---
--- Only the project's own attributes: the `$` keys (environment, location)
--- are counted per event, and summed across events they repeat the Views
--- dashboard with worse numbers (a floor on users, not a count). They stay
--- in v_product_attrs for widgets that read them per event.
---
--- Every (attribute, day, value) in the range: the table is remote, so the
--- viewer's filters, sort and page run over all of them in SQL.
-SELECT attr_key AS "Attribute", day AS "Day", attr_value AS "Value", SUM(count) AS "Count",
-       MAX(unique_users) AS "Users (at least)", MAX(unique_groups) AS "Groups (at least)"
-FROM v_product_attrs
-WHERE project_id = :project
-  AND day BETWEEN :from AND :to
-  AND attr_key NOT LIKE '$%'
-GROUP BY attr_key, day, attr_value
-ORDER BY attr_key, day DESC, "Count" DESC, attr_value
+-- The widget's figures from SQLite's raw rows rather than v_product_attrs,
+-- whose users and groups are distinct per (day, event) and cannot be made
+-- distinct over the range: one row per (attribute, value), Count the
+-- events carrying it, Users and Groups distinct over the range. Only the
+-- project's own attributes: the `$` keys are typed columns on the files.
+SELECT j.key AS "Attribute", j.value AS "Value", COUNT(*) AS "Count",
+       COUNT(DISTINCT e.actor_id) AS "Users", COUNT(DISTINCT NULLIF(e.group_id, '')) AS "Groups"
+FROM raw_product e, json_each(e.attributes) j
+WHERE e.project_id = :project
+  AND e.day BETWEEN :from AND :to
+  AND j.key NOT LIKE '$%'
+GROUP BY j.key, j.value
+ORDER BY "Attribute", "Count" DESC, "Value"

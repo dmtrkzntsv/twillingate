@@ -512,25 +512,65 @@ func systemWidget(t *testing.T, f systemFixture, id int64, name string) int64 {
 	return 0
 }
 
-// TestAttributeValuesKeepEveryDay: "Attribute values by day" is a
-// remote table over every (attribute, day, value) of the range's product
-// events, so a quiet day keeps its own values however busy another day
-// was. Paging through it, for every preset, yields exactly the
-// (attribute, day, value) triples the files hold and every day they hold
-// one on.
-func TestAttributeValuesKeepEveryDay(t *testing.T) {
+// TestAttributeValuesCountEachValueOnce: "Attribute values" is a remote
+// table with one row per (attribute, value) of the range's product events,
+// however many days carried it. Paging through it, for every preset,
+// yields exactly the (attribute, value) pairs the files hold, a quiet value
+// among a burst of others included. And its figures are exact for the
+// range: Count the events carrying the value, Users and Groups distinct
+// over the whole range, not per day or event, with no group a 0.
+func TestAttributeValuesCountEachValueOnce(t *testing.T) {
 	ctx := context.Background()
 	f := newSystemFixture(t)
 	id := attributeValuesWidget(t, f)
 	// One day far busier than the rest: 120 values of their own, as a
 	// launch or a backfill leaves them, in a log of that past day.
-	var burst []store.Event
+	var extra []store.Event
 	for i := 0; i < 120; i++ {
 		e := event(t, fmt.Sprintf("burst-%d", i), f.project, store.FamilyProduct, "click", f.today.AddDays(-10).String())
 		e.Attributes = map[string]string{"ref": fmt.Sprintf("r%03d", i)}
-		burst = append(burst, e)
+		extra = append(extra, e)
 	}
-	f.files.Write(t, burst...)
+	// coupon, a key only these events carry, on three days in the 7d range:
+	// SAVE to u1 twice on one day and once on another in group g1, and to
+	// u2 with no group, two events of different names; FREE to u3 in g2
+	// and u4 in g3; SPRING once with no group. Before the range and in the
+	// neighbour project, SAVE again from others, which must not count.
+	coupon := func(id, actor, group, name string, back int, value string, project int64) {
+		e := event(t, id, project, store.FamilyProduct, name, f.today.AddDays(-back).String())
+		e.ActorID, e.GroupID, e.Attributes = actor, group, map[string]string{"coupon": value}
+		extra = append(extra, e)
+	}
+	coupon("c1", "u1", "g1", "checkout", 1, "SAVE", f.project)
+	coupon("c2", "u1", "g1", "checkout", 1, "SAVE", f.project)
+	coupon("c3", "u1", "g1", "checkout", 3, "SAVE", f.project)
+	coupon("c4", "u2", "", "signup", 2, "SAVE", f.project)
+	coupon("c5", "u3", "g2", "checkout", 1, "FREE", f.project)
+	coupon("c6", "u4", "g3", "checkout", 4, "FREE", f.project)
+	coupon("c7", "u1", "", "checkout", 2, "SPRING", f.project)
+	coupon("c8", "u9", "g9", "checkout", 20, "SAVE", f.project)
+	coupon("c9", "u8", "g8", "checkout", 1, "SAVE", f.neighbour)
+	f.files.Write(t, extra...)
+
+	from, to := presetDates("7d", f.today)
+	got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: id, ProjectID: f.project, From: from, To: to,
+		Filters: `[{"column":"Attribute","op":"=","value":"coupon"}]`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := got.Data.(readsql.Result)
+	if want := []string{"Attribute", "Value", "Count", "Users", "Groups"}; !slices.Equal(res.Columns, want) {
+		t.Fatalf("columns %v, want %v", res.Columns, want)
+	}
+	want := [][]string{
+		{"coupon", "SAVE", "4", "2", "1"},
+		{"coupon", "FREE", "2", "2", "2"},
+		{"coupon", "SPRING", "1", "1", "0"},
+	}
+	if !slices.EqualFunc(res.Rows, want, slices.Equal) {
+		t.Errorf("coupon over 7d: rows %v, want %v", res.Rows, want)
+	}
+
 	for _, preset := range systemPresets {
 		from, to := presetDates(preset, f.today)
 		shown := map[string]bool{}
@@ -546,26 +586,29 @@ func TestAttributeValuesKeepEveryDay(t *testing.T) {
 			}
 			matched = got.Page.Matched
 			for i := range res.Rows {
-				shown[column(t, res, i, "Day")] = true
+				pair := column(t, res, i, "Attribute") + "=" + column(t, res, i, "Value")
+				if shown[pair] {
+					t.Errorf("%s: %s appears twice", preset, pair)
+				}
+				shown[pair] = true
 			}
 			collected += len(res.Rows)
 			if len(res.Rows) < 50 {
 				break
 			}
 		}
-		values := fmt.Sprintf(`SELECT DISTINCT attr_key, day, attr_value FROM (UNPIVOT (
-			SELECT day, COLUMNS('^attr_') FROM product WHERE day BETWEEN DATE '%s' AND DATE '%s'
-		) ON COLUMNS('^attr_') INTO NAME attr_key VALUE attr_value)`, from, to)
-		if want := f.count(t, "SELECT count(*) FROM ("+values+")"); collected != matched || matched != want {
-			t.Errorf("%s: collected %d rows, Page.Matched %d, the files hold %d", preset, collected, matched, want)
+		pairs := f.rows(t, fmt.Sprintf(`SELECT DISTINCT substr(attr_key, 6), attr_value FROM (UNPIVOT (
+			SELECT COLUMNS('^attr_') FROM product WHERE day BETWEEN DATE '%s' AND DATE '%s'
+		) ON COLUMNS('^attr_') INTO NAME attr_key VALUE attr_value)`, from, to))
+		if collected != matched || matched != len(pairs) {
+			t.Errorf("%s: collected %d rows, Page.Matched %d, the files hold %d pairs", preset, collected, matched, len(pairs))
 		}
-		days := f.rows(t, "SELECT DISTINCT day FROM ("+values+") ORDER BY day")
-		if preset == "90d" && len(days) < 30 {
-			t.Errorf("90d: the files hold attribute values on %d days; the seed does not exercise paging", len(days))
+		if preset == "30d" && len(pairs) < 120 {
+			t.Errorf("30d: the files hold %d attribute values; the seed does not exercise paging", len(pairs))
 		}
-		for _, r := range days {
-			if !shown[r[0]] {
-				t.Errorf("%s: day %s has attribute values but the widget shows none", preset, r[0])
+		for _, r := range pairs {
+			if !shown[r[0]+"="+r[1]] {
+				t.Errorf("%s: %s=%s is in the files but the widget does not show it", preset, r[0], r[1])
 			}
 		}
 	}
@@ -643,7 +686,7 @@ func docSection(t *testing.T, doc, heading string) string {
 }
 
 // TestAttributeValuesFilterByAliases: the table's filters and sort name
-// the columns the viewer sees ("Attribute", "Users (at least)"), not the
+// the columns the viewer sees ("Attribute", "Users"), not the
 // query's own, and run over every row rather than a page of them.
 func TestAttributeValuesFilterByAliases(t *testing.T) {
 	ctx := context.Background()
@@ -676,7 +719,7 @@ func TestAttributeValuesFilterByAliases(t *testing.T) {
 	got, err := f.svc.WidgetData(ctx, DataRequest{
 		WidgetID: id, ProjectID: f.project, From: from, To: to,
 		Filters: `[{"column":"Attribute","op":"in","value":["$app_version","plan"]}]`,
-		Sort:    "Users (at least):desc",
+		Sort:    "Users:desc",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -690,26 +733,26 @@ func TestAttributeValuesFilterByAliases(t *testing.T) {
 		if a := column(t, res, i, "Attribute"); a != "plan" {
 			t.Errorf("row %d: Attribute %q; a filter for $app_version and plan shows plan alone", i, a)
 		}
-		cell := column(t, res, i, "Users (at least)")
+		cell := column(t, res, i, "Users")
 		if cell == "" { // NULL sorts last in a descending sort
 			empty = true
 			continue
 		}
 		if empty {
-			t.Errorf("row %d: a value follows an empty Users (at least) cell", i)
+			t.Errorf("row %d: a value follows an empty Users cell", i)
 		}
 		n, err := strconv.ParseFloat(cell, 64)
 		if err != nil {
-			t.Fatalf("row %d: Users (at least) %q: %v", i, cell, err)
+			t.Fatalf("row %d: Users %q: %v", i, cell, err)
 		}
 		if numbers > 0 && n > prev {
-			t.Errorf("row %d: Users (at least) %v follows %v; the sort is not descending", i, n, prev)
+			t.Errorf("row %d: Users %v follows %v; the sort is not descending", i, n, prev)
 		}
 		prev = n
 		numbers++
 	}
 	if numbers < 2 {
-		t.Errorf("%d Users (at least) values; too few to check the sort", numbers)
+		t.Errorf("%d Users values; too few to check the sort", numbers)
 	}
 }
 
