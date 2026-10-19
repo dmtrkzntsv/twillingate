@@ -100,15 +100,22 @@ func openFiles(cfg *config.Config) (*engine.Engine, *archive.Reader, error) {
 // on the dashboard of whoever opens it next. Nothing is rewritten or
 // archived. It runs in the background: each check is a query, and the
 // console does not wait for them. A check that ran out of time or memory
-// (the boot pass of an upgrade loads the closed logs meanwhile) is no
-// verdict on the widget: it is logged under its own message, the rest go
-// unchecked, and the next start checks them all again.
+// is no verdict on the widget: it is logged under its own message and the
+// next start checks it again. A plain timeout skips only that widget;
+// running out of memory, a dead child or a timeout loading the logs (the
+// boot pass of an upgrade loads the closed logs meanwhile) leave the rest
+// unchecked too.
 func checkUserWidgets(ctx context.Context, st reporting.Store, files reporting.Files, logger *slog.Logger) {
 	failed, err := reporting.CheckUserWidgets(ctx, st, files)
 	for _, f := range failed {
-		if f.Unchecked {
+		if f.Stopped {
 			logger.Warn("could not check widget on the event files; the widgets after it go unchecked until the next start",
 				"widget_id", f.WidgetID, "dashboard_id", f.DashboardID, "title", f.Title, "reason", f.Err.Error())
+			continue
+		}
+		if f.Unchecked {
+			logger.Warn("could not check widget on the event files", "widget_id", f.WidgetID,
+				"dashboard_id", f.DashboardID, "title", f.Title, "reason", f.Err.Error())
 			continue
 		}
 		logger.Warn("widget SQL fails on the event files", "widget_id", f.WidgetID,

@@ -204,22 +204,30 @@ func TestCheckUserWidgetsLogsWhatFailsOnTheFiles(t *testing.T) {
 	}
 }
 
-// failingFiles is the console's Files whose every query fails with err.
+// failingFiles is the console's Files whose every query fails with err,
+// or with only set, the first only queries, the rest running on Files.
 type failingFiles struct {
 	reporting.Files
 	err     error
+	only    int
 	queries int
 }
 
-func (f *failingFiles) Query(context.Context, archive.Scoped) (engine.Result, error) {
+func (f *failingFiles) Query(ctx context.Context, q archive.Scoped) (engine.Result, error) {
 	f.queries++
+	if f.only > 0 && f.queries > f.only {
+		return f.Files.Query(ctx, q)
+	}
 	return engine.Result{}, f.err
 }
 
 // TestCheckUserWidgetsTellsResourceFailures: a check that runs out of time
 // or memory, or whose child dies, says nothing of the widget's SQL. It is
-// logged as a widget that could not be checked, never as one that fails,
-// and the check stops there rather than load the engine further.
+// logged as a widget that could not be checked, never as one that fails.
+// A plain timeout is that widget's own, and the check goes on: the next
+// widget's SQL, written for SQLite, is still logged as failing. Running
+// out of memory, a dead child, or a timeout loading the open logs say the
+// engine is short, and the check stops there rather than load it further.
 func TestCheckUserWidgetsTellsResourceFailures(t *testing.T) {
 	f := newWidgetsFixture(t)
 	ctx := context.Background()
@@ -229,33 +237,54 @@ func TestCheckUserWidgetsTellsResourceFailures(t *testing.T) {
 			{Component: "stat", SortKey: "a", Width: 3, Height: 4, Name: "one", Title: "One", Props: "{}", SourceType: "sql",
 				Source: "SELECT count(*) AS value FROM views WHERE project_id = :project"},
 			{Component: "stat", SortKey: "b", Width: 3, Height: 4, Name: "two", Title: "Two", Props: "{}", SourceType: "sql",
-				Source: "SELECT count(*) AS value FROM views"},
+				Source: "SELECT SUM(visitors) AS value FROM v_views_daily WHERE project_id = :project"},
 		}, store.AuditEntry{Actor: "test", Action: "dashboard.create"}); err != nil {
 		t.Fatal(err)
 	}
-	for name, err := range map[string]error{
-		"timeout":            context.DeadlineExceeded,
-		"out of memory":      &engine.QueryError{Msg: "Out of Memory Error: failed to allocate data of size 64.0 MiB (476.8 MiB/476.8 MiB used)"},
-		"logs out of memory": fmt.Errorf("%w: %w", archive.ErrLoadingLogs, &engine.QueryError{Msg: "Out of Memory Error: x"}),
-		"child exited":       fmt.Errorf("engine: query: %w", engine.ErrChildExited),
+	const (
+		skipped = "could not check widget on the event files"
+		stopped = skipped + "; the widgets after it go unchecked until the next start"
+	)
+	for name, tc := range map[string]struct {
+		err  error
+		stop bool
+	}{
+		"timeout":            {err: context.DeadlineExceeded},
+		"logs timeout":       {err: fmt.Errorf("%w: %w", archive.ErrLoadingLogs, context.DeadlineExceeded), stop: true},
+		"out of memory":      {err: &engine.QueryError{Msg: "Out of Memory Error: failed to allocate data of size 64.0 MiB (476.8 MiB/476.8 MiB used)"}, stop: true},
+		"logs out of memory": {err: fmt.Errorf("%w: %w", archive.ErrLoadingLogs, &engine.QueryError{Msg: "Out of Memory Error: x"}), stop: true},
+		"child exited":       {err: fmt.Errorf("engine: query: %w", engine.ErrChildExited), stop: true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			files := &failingFiles{Files: f.files(t), err: err}
+			files := &failingFiles{Files: f.files(t), err: tc.err, only: 1}
 			var out bytes.Buffer
 			checkUserWidgets(ctx, f.st, files, slog.New(slog.NewJSONHandler(&out, nil)))
-			if strings.Contains(out.String(), "widget SQL fails") {
-				t.Errorf("a resource failure logged as a failing widget:\n%s", out.String())
+			var lines []map[string]any
+			for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+				var m map[string]any
+				if err := json.Unmarshal([]byte(l), &m); err != nil {
+					t.Fatalf("log line %q: %v", l, err)
+				}
+				lines = append(lines, m)
 			}
-			var got map[string]any
-			if err := json.Unmarshal(out.Bytes(), &got); err != nil {
-				t.Fatalf("want one log line: %v\n%s", err, out.String())
+			want, queries := 2, 2
+			if tc.stop {
+				want, queries = 1, 1
 			}
-			if msg, _ := got["msg"].(string); !strings.HasPrefix(msg, "could not check widget on the event files") ||
-				got["title"] != "One" || got["reason"] == "" {
-				t.Errorf("logged %v", got)
+			if len(lines) != want || files.queries != queries {
+				t.Fatalf("%d queries, logged %d lines; want %d and %d:\n%s", files.queries, len(lines), queries, want, out.String())
 			}
-			if files.queries != 1 {
-				t.Errorf("%d queries, want the check to stop after the first", files.queries)
+			msg := skipped
+			if tc.stop {
+				msg = stopped
+			}
+			if got := lines[0]; got["msg"] != msg || got["title"] != "One" || got["reason"] == "" || got["error"] != nil {
+				t.Errorf("logged %v, want %q for One with its reason", got, msg)
+			}
+			if !tc.stop {
+				if got := lines[1]; got["msg"] != "widget SQL fails on the event files" || got["title"] != "Two" {
+					t.Errorf("logged %v, want Two failing after the timeout", got)
+				}
 			}
 		})
 	}

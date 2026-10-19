@@ -1234,7 +1234,9 @@ sessions, identities and aliases; see docs://reporting". The console also
 logs each one when it starts (`widget SQL fails on the event files`, with
 `widget_id`, `dashboard_id` and `title`); a widget whose check ran out of
 time or memory is logged as `could not check widget on the event files`
-instead, and checked again at the next start. Rewrite it by the
+instead, and checked again at the next start. A timeout skips only that
+widget; running out of memory, or an engine child that died, ends the
+check there, and the widgets after it wait for the next start. Rewrite it by the
 [Tables](#tables) section and the [Examples](#examples): `v_views_daily`
 becomes `views` grouped by day, `v_product_daily` `product` grouped by
 day and `event_name`, `v_measures_daily` `measures` with `bucket`,

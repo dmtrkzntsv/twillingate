@@ -45,9 +45,13 @@ var systemFS embed.FS
 // which the first query loads whole; failing the start would stop that
 // pass from ever running. The widgets after it are checked without a
 // query (paramsOnly), and the sync is recorded under a hash no run
-// matches, so the next one checks them all again. A refusal of the SQL
-// itself still fails Migrate: a release whose system SQL is broken must
-// not start.
+// matches, so the next one checks them all again. A plain timeout stops
+// the queries too, unlike CheckUserWidgets, which skips only that widget:
+// this check holds the start, ingest included, for up to the boot's
+// timeout per query, and its SQL is the release's own, tested on a
+// shape-only query, so one that runs that long says the engine is short,
+// not that the widget is slow. A refusal of the SQL itself still fails
+// Migrate: a release whose system SQL is broken must not start.
 var ErrUnchecked = errors.New("reporting: the system widgets' SQL was not all checked on the event files")
 
 // uncheckedPrefix marks the hash of a sync recorded with ErrUnchecked:

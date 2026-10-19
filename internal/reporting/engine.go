@@ -185,10 +185,24 @@ type WidgetFailure struct {
 	Err                   error
 	// Unchecked: the check ran out of time or memory, or the engine's
 	// child died under it (resourceErr), which says nothing of the SQL.
-	// The check stops there: the engine is short of time or memory now,
-	// most often on the boot pass of an upgrade, and the next query
-	// would add to it. It is the last failure returned.
+	// A plain timeout is that widget's own: its SQL may just be slow on
+	// the sample week, so the check goes on to the next. Running out of
+	// memory, a child that died, or a timeout while loading the open logs
+	// (archive.ErrLoadingLogs) say the engine itself is short, most often
+	// on the boot pass of an upgrade, and the next query would add to it:
+	// the check stops there, and that failure is the last returned
+	// (Stopped).
 	Unchecked bool
+	// Stopped: this Unchecked failure ended the check, and the widgets
+	// after it went unchecked.
+	Stopped bool
+}
+
+// stopsCheck reports whether cause, a resourceErr's, says the engine
+// itself is short (WidgetFailure.Unchecked) rather than that one widget's
+// query ran past the timeout.
+func stopsCheck(cause error) bool {
+	return !errors.Is(cause, context.DeadlineExceeded) || errors.Is(cause, archive.ErrLoadingLogs)
 }
 
 // CheckUserWidgets runs the check Migrate runs on the system widgets (the
@@ -197,9 +211,11 @@ type WidgetFailure struct {
 // returns those refused, in dashboard and widget order: most often SQL
 // written for SQLite before the switch. A widget whose component was
 // removed is left out; its dashboard says so already. A check that could
-// not run (WidgetFailure.Unchecked) ends the list and the check. An error
-// that is no refusal of a widget (the engine did not start) stops the
-// check and is returned with the failures found so far.
+// not run is returned as WidgetFailure.Unchecked: a plain timeout skips
+// that widget, and one the engine was short for (Stopped) ends the list
+// and the check. An error that is no refusal of a widget (the engine did
+// not start, ctx ended) stops the check and is returned with the failures
+// found so far.
 func CheckUserWidgets(ctx context.Context, st Store, files Files) ([]WidgetFailure, error) {
 	svc := &Service{st: st, files: files, sources: newSources(files, false, time.Now), now: time.Now}
 	comps, err := svc.components(ctx)
@@ -227,8 +243,14 @@ func CheckUserWidgets(ctx context.Context, st Store, files Files) ([]WidgetFailu
 		err := svc.sources["sql"].Validate(ctx, w.Source, comp)
 		switch {
 		case err == nil:
+		case ctx.Err() != nil:
+			return out, ctx.Err()
 		case resourceCause(err) != nil:
-			return append(out, WidgetFailure{WidgetID: w.ID, DashboardID: w.DashboardID, Title: w.Title, Err: err, Unchecked: true}), nil
+			stop := stopsCheck(resourceCause(err))
+			out = append(out, WidgetFailure{WidgetID: w.ID, DashboardID: w.DashboardID, Title: w.Title, Err: err, Unchecked: true, Stopped: stop})
+			if stop {
+				return out, nil
+			}
 		case errors.Is(err, store.ErrInvalid):
 			out = append(out, WidgetFailure{WidgetID: w.ID, DashboardID: w.DashboardID, Title: w.Title, Err: err})
 		default:

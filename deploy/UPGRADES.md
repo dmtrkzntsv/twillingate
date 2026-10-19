@@ -1038,9 +1038,15 @@ What changes on the day:
   Each line names `widget_id`, `dashboard_id`, `title` and the error.
   A check that runs out of time or memory, or whose engine child dies,
   says nothing of the widget's SQL: it is logged as `could not check
-  widget on the event files`, with the `reason`, and the check stops
-  there. That is likely while the first start's pass loads the closed
-  logs; the next start checks every widget again.
+  widget on the event files`, with the `reason`, and the next start
+  checks that widget again. A timeout (`CONSOLE_QUERY_TIMEOUT`, on the
+  sample week) skips only that widget, and the check goes on. Running out
+  of memory, a dead engine child, or a timeout while loading the open
+  logs ends the check there (`the widgets after it go unchecked until the
+  next start`). That is likely on the first start, while the boot pass
+  still dumps the closed logs: restart the service once that pass has
+  ended (the check above prints `done`), then grep again for the full
+  list of `widget SQL fails on the event files` lines.
   Rewrite them with `update_widget` (an agent can, given
   `docs://reporting`). Three common rewrites:
 
