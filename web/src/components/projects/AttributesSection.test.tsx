@@ -60,6 +60,21 @@ describe('AttributesSection', () => {
     expect(within(section).getByRole('heading')).toHaveTextContent(/^Attributes$/)
   })
 
+  it('asks for the last 92 days of a longer range and says so', async () => {
+    renderSection({ range: { from: '2026-01-01', to: '2026-08-01' } })
+    const section = screen.getByRole('region', { name: 'Attributes' })
+    await within(section).findByText('order_id')
+    expect(endpoints.listAttributes).toHaveBeenCalledWith(1, { from: '2026-05-02', to: '2026-08-01' })
+    expect(within(section).getByText(/last 92 days of the range \(2026-05-02 to 2026-08-01\)/)).toBeInTheDocument()
+  })
+
+  it('asks for a range of 92 days as it is, without a caption', async () => {
+    renderSection({ range: { from: '2026-05-02', to: '2026-08-01' } })
+    await screen.findByText('order_id')
+    expect(endpoints.listAttributes).toHaveBeenCalledWith(1, { from: '2026-05-02', to: '2026-08-01' })
+    expect(screen.queryByText(/last 92 days/)).not.toBeInTheDocument()
+  })
+
   it('marks a blocked key as Events marks a blocked event', async () => {
     renderSection()
     await screen.findByText('Blocked')

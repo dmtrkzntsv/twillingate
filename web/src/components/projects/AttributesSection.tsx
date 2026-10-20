@@ -34,6 +34,15 @@ interface Props {
 
 const copy = ruleCopy('attribute')
 
+/** list_attributes covers at most this many days (both ends counted) a call. */
+const MAX_DAYS = 92
+
+/** The last MAX_DAYS days of the range: the whole of it when it fits. */
+function clampRange(range: { from: string; to: string }): { from: string; to: string } {
+  const earliest = new Date(Date.parse(`${range.to}T00:00:00Z`) - (MAX_DAYS - 1) * 86_400_000).toISOString().slice(0, 10)
+  return range.from < earliest ? { from: earliest, to: range.to } : range
+}
+
 /**
  * A project's attribute keys over the range, busiest first, each with what it
  * received and the rules on it: rename, merge and block (both confirmed) and
@@ -48,7 +57,9 @@ export default function AttributesSection({ project, range, pending, onRename, o
   const [blocking, setBlocking] = useState<{ key: string; open: boolean } | null>(null)
   const [aliasing, setAliasing] = useState<{ key: string; open: boolean } | null>(null)
   const [unaliasing, setUnaliasing] = useState<{ key: string; to: string; open: boolean } | null>(null)
-  const { data, error, refetch } = useQuery(attributesQuery(project.project_id, range))
+  const asked = clampRange(range)
+  const clamped = asked.from !== range.from
+  const { data, error, refetch } = useQuery(attributesQuery(project.project_id, asked))
   const rows = data?.attributes ?? []
   // The server lists only the busiest received keys; say so when it left some out.
   const receivedListed = rows.filter((r) => r.received).length
@@ -61,6 +72,9 @@ export default function AttributesSection({ project, range, pending, onRename, o
       <header>
         <h2 className="text-base font-semibold">Attributes</h2>
       </header>
+      {clamped && (
+        <p className="text-xs text-muted-foreground">Showing the last {MAX_DAYS} days of the range ({asked.from} to {asked.to}).</p>
+      )}
       {data && rows.length === 0 && <p className="text-sm text-muted-foreground">No attributes received in this range.</p>}
       {rows.length > 0 && (
         <Table>
