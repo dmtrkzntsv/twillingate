@@ -41,14 +41,20 @@ const sqliteHint = "widget SQL is DuckDB SQL over events, views, product, measur
 // sqliteNames matches DuckDB's errors, as it words them, for SQLite's
 // tables (v_*, agg_*, raw_*), the SQLite functions DuckDB lacks
 // (julianday) or reads otherwise (strftime has no %s, date takes no
-// modifiers), and the identities columns the files' table does not have.
-// json_extract needs no entry: DuckDB's takes SQLite's arguments.
+// modifiers), the identities columns the files' table does not have, and
+// events' JSON attributes column, which the files split into attr_<key>
+// columns (json_extract itself runs: DuckDB's takes SQLite's arguments).
+// SQLite's two-argument MAX and MIN (GREATEST and LEAST here) and any
+// syntax error get it too: after the switch, SQL that no longer parses
+// is most often SQLite's (a JOIN without ON, for one).
 var sqliteNames = regexp.MustCompile(`(?i)` +
 	`Table with name (v|agg|raw)_\w+` +
 	`|Function with name julianday\b` +
 	`|format for strftime` +
 	`|arguments provided to DATE function` +
-	`|column "(last_seen_day|updated_at)"`)
+	`|column "(last_seen_day|updated_at|attributes)"` +
+	`|argument types '(max|min)\(\w+, ` +
+	`|syntax error at or near`)
 
 // runFiles runs q on files, an error classified by filesErr.
 func runFiles(ctx context.Context, files Files, q archive.Scoped) (engine.Result, error) {
