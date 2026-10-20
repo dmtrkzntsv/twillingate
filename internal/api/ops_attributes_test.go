@@ -3,76 +3,97 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-func ptr[T any](v T) *T { return &v }
-
-// list_attributes lists the range's received keys merged with the
-// project's breakdown keys (events 0, max_values null when not received),
-// sorted by events then key, with the values cap and the breakdown budget.
-func TestListAttributes(t *testing.T) {
+// TestListAttributesReadsTheFiles: each key the range's product events
+// and measures carried in the event files, with how many carried it and
+// its distinct values, busiest first, rules applied as the reader applies
+// them (a key merged into another counts there and is its alias). A key
+// only a rule names (blocked, or a rename target) is listed received:
+// false, a blocked key's rows hidden; views, another project's events
+// and SQLite's usage rows are not read.
+func TestListAttributesReadsTheFiles(t *testing.T) {
 	h, cs := newTestHost(t)
 	ctx := context.Background()
-	// Project 1 breaks down plan (the fixture's) and never_sent; plan was
-	// received on two days, order_id on one day not yet counted (today's).
-	for _, q := range []string{
-		`INSERT OR REPLACE INTO project_attributes (project_id, key, breakdown) VALUES (1, 'plan', 1), (1, 'never_sent', 1)`,
-		`INSERT INTO usage_attributes (project_id, day, attr_key, events, max_values) VALUES
-		 (1,'2026-10-01','plan',5,3), (1,'2026-10-02','plan',2,4), (1,'2026-10-02','order_id',9,NULL), (1,'2026-10-02','zz_new_today',0,NULL),
-		 (1,'2026-09-30','old_key',1,1), (2,'2026-10-02','other_project',4,1)`,
+	// The template's files carry plan on signup (pro x5 on 08-20, team x2
+	// on 08-21) and tier on one checkout_api measure (gold, 08-20).
+	at := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	writeHostEvents(t, h,
+		store.Event{ProjectID: 1, Family: store.FamilyProduct, EventName: "upgrade", TS: at,
+			Attributes: map[string]string{"plan": "free", "ref": "x", "noisy": "1"}},
+		store.Event{ProjectID: 1, Family: store.FamilyProduct, EventName: "upgrade", TS: at,
+			Attributes: map[string]string{"old_ref": "y"}},
+		store.Event{ProjectID: 1, Family: store.FamilyViews, EventName: "$page_view", Kind: "web", Path: "/", TS: at,
+			Attributes: map[string]string{"view_key": "v"}},
+		store.Event{ProjectID: 2, Family: store.FamilyProduct, EventName: "signup", TS: at,
+			Attributes: map[string]string{"other_project": "z"}},
+		store.Event{ProjectID: 1, Family: store.FamilyProduct, EventName: "late", TS: at.AddDate(0, 0, 2),
+			Attributes: map[string]string{"after_the_range": "z"}})
+	if _, err := rawExec(h.ops.St, `INSERT INTO usage_attributes (project_id, day, attr_key, events, max_values) VALUES (1,'2026-08-20','sqlite_only',9,1)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []func() error{
+		func() error { _, _, err := h.ops.MergeAttribute(ctx, "test", 1, "old_ref", "ref"); return err },
+		func() error { _, _, err := h.ops.RenameAttribute(ctx, "test", 1, "tier_old", "tier2"); return err },
+		func() error { _, err := h.ops.BlockAttribute(ctx, "test", 1, "noisy"); return err },
+		func() error { _, err := h.ops.BlockAttribute(ctx, "test", 1, "debug_blob"); return err },
 	} {
-		if _, err := rawExec(h.ops.St, q); err != nil {
+		if err := step(); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if err := h.reg.Reload(ctx); err != nil {
-		t.Fatal(err)
-	}
-	out, err := h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-10-01", To: "2026-10-02"}})
+	out, err := h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-21"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := []attributeOut{
-		{Key: "order_id", Events: 9, MaxValues: nil, Received: true},
-		{Key: "plan", Events: 7, MaxValues: ptr(int64(4)), Received: true, Breakdown: true},
-		// First received today: ingest records it with events 0 until the
-		// daily pass counts the day; listed before a key none carried.
-		{Key: "zz_new_today", Events: 0, MaxValues: nil, Received: true},
-		{Key: "never_sent", Events: 0, MaxValues: nil, Breakdown: true},
+		{Key: "plan", Events: 8, Values: 3, Received: true},
+		{Key: "ref", Events: 2, Values: 2, Received: true, Aliases: []string{"old_ref"}},
+		{Key: "tier", Events: 1, Values: 1, Received: true},
+		{Key: "debug_blob", Blocked: true},
+		{Key: "noisy", Blocked: true},
+		{Key: "tier2", Aliases: []string{"tier_old"}},
 	}
 	if !reflect.DeepEqual(out.Attributes, want) {
 		t.Errorf("attributes = %+v, want %+v", out.Attributes, want)
 	}
-	if out.KeysTotal != 3 {
-		t.Errorf("keys_total = %d, want 3", out.KeysTotal)
+	if out.KeysTotal != 3 || out.ProjectID != 1 || out.From != "2026-08-20" || out.To != "2026-08-21" {
+		t.Errorf("keys_total %d, range %+v; want 3 keys over 2026-08-20..21", out.KeysTotal, out)
 	}
-	if out.From != "2026-10-01" || out.To != "2026-10-02" || out.ProjectID != 1 {
-		t.Errorf("range = %+v", out)
-	}
-	if out.ValuesCap != h.valuesCap || out.BreakdownsMax != h.breakdownsMax || out.BreakdownsUsed != 2 {
-		t.Errorf("budget = %+v", out)
-	}
-	// An unknown project, or none, is refused like every project tool.
-	for _, id := range []int64{0, 999} {
-		if _, err := h.listAttributes(ctx, attributesIn{ProjectID: id}); err == nil {
-			t.Errorf("project %d accepted", id)
+	// The old fields are gone; aliases is left out when empty.
+	b, _ := json.Marshal(out)
+	for _, gone := range []string{"breakdown", "max_values", "values_cap", "breakdowns_used", "breakdowns_max"} {
+		if strings.Contains(string(b), `"`+gone+`"`) {
+			t.Errorf("the answer still carries %s: %s", gone, b)
 		}
 	}
-	// The MCP tool answers the same keys.
+	var m map[string]any
+	b, _ = json.Marshal(out.Attributes[0])
+	_ = json.Unmarshal(b, &m)
+	if _, has := m["aliases"]; has {
+		t.Errorf("a key without aliases carries the field: %s", b)
+	}
+
+	// The MCP tool and the route answer the same keys.
 	var mcpOut listAttributesOut
 	if err := json.Unmarshal([]byte(textOf(callTool(t, cs, "list_attributes",
-		map[string]any{"project_id": 1, "from": "2026-10-01", "to": "2026-10-02"}))), &mcpOut); err != nil {
+		map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21"}))), &mcpOut); err != nil {
 		t.Fatal(err)
 	}
 	if !reflect.DeepEqual(mcpOut.Attributes, want) {
 		t.Errorf("MCP attributes = %+v", mcpOut.Attributes)
 	}
-	// So does the route, with project_id in the path.
 	r := newTestRegistrar(t, h)
-	rec := serveREST(t, r, "GET", "/api/projects/1/attributes?from=2026-10-01&to=2026-10-02", "")
+	rec := serveREST(t, r, "GET", "/api/projects/1/attributes?from=2026-08-20&to=2026-08-21", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET attributes = %d %s", rec.Code, rec.Body)
 	}
@@ -86,109 +107,91 @@ func TestListAttributes(t *testing.T) {
 	if rec := serveREST(t, r, "GET", "/api/projects/99/attributes", ""); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown project = %d %s, want 404", rec.Code, rec.Body)
 	}
-	// The old tool and route are gone.
-	if rec := serveREST(t, r, "GET", "/api/received-attributes?project_id=1", ""); rec.Code != http.StatusNotFound {
-		t.Errorf("GET /api/received-attributes = %d, want 404", rec.Code)
+	for _, id := range []int64{0, 999} {
+		if _, err := h.listAttributes(ctx, attributesIn{ProjectID: id}); !errors.Is(err, manage.ErrNotFound) {
+			t.Errorf("project %d: %v, want not found", id, err)
+		}
 	}
-	tools, err := cs.ListTools(ctx, nil)
+	// A project with no attribute in its files answers none.
+	empty, err := h.listAttributes(ctx, attributesIn{ProjectID: 2, usageRangeIn: usageRangeIn{From: "2026-08-01", To: "2026-08-20"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tool := range tools.Tools {
-		if tool.Name == "received_attributes" {
-			t.Error("received_attributes is still an MCP tool")
-		}
-	}
-}
-
-// Rules show on the keys they touch: a blocked key is listed even with
-// nothing received, the keys renamed or merged into a key are its
-// aliases (the target listed even with nothing in the range, so every
-// rule can be found), and a key renamed away is not listed, even when a
-// usage row still names it, nor counted in keys_total.
-func TestListAttributesShowsRules(t *testing.T) {
-	h, _ := newTestHost(t)
-	ctx := context.Background()
-	if _, err := rawExec(h.ops.St, `INSERT INTO usage_attributes (project_id, day, attr_key, events, max_values) VALUES
-		(1,'2026-10-01','plan',5,3), (1,'2026-10-01','noisy',4,2)`); err != nil {
-		t.Fatal(err)
-	}
-	for _, step := range []func() error{
-		func() error { _, _, err := h.ops.MergeAttribute(ctx, "test", 1, "planType", "plan"); return err },
-		func() error { _, _, err := h.ops.MergeAttribute(ctx, "test", 1, "Plan", "plan"); return err },
-		func() error { _, _, err := h.ops.RenameAttribute(ctx, "test", 1, "tier_old", "tier"); return err },
-		func() error { _, err := h.ops.BlockAttribute(ctx, "test", 1, "noisy"); return err },
-		func() error { _, err := h.ops.BlockAttribute(ctx, "test", 1, "debug_blob"); return err },
-	} {
-		if err := step(); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// A row naming a key renamed away, as one counted before the rule.
-	if _, err := rawExec(h.ops.St, `INSERT INTO usage_attributes (project_id, day, attr_key, events, max_values) VALUES
-		(1,'2026-10-02','planType',50,1)`); err != nil {
-		t.Fatal(err)
-	}
-	out, err := h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-10-01", To: "2026-10-02"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []attributeOut{
-		{Key: "plan", Events: 5, MaxValues: ptr(int64(3)), Received: true, Breakdown: true, Aliases: []string{"Plan", "planType"}},
-		{Key: "noisy", Events: 4, MaxValues: ptr(int64(2)), Received: true, Blocked: true},
-		{Key: "debug_blob", Blocked: true},
-		{Key: "tier", Aliases: []string{"tier_old"}},
-	}
-	if !reflect.DeepEqual(out.Attributes, want) {
-		t.Errorf("attributes = %+v, want %+v", out.Attributes, want)
-	}
-	if out.KeysTotal != 2 {
-		t.Errorf("keys_total = %d, want 2 (planType renamed away)", out.KeysTotal)
-	}
-	// aliases is left out when empty.
-	b, _ := json.Marshal(out.Attributes[1])
-	var m map[string]any
-	_ = json.Unmarshal(b, &m)
-	if _, has := m["aliases"]; has {
-		t.Errorf("a key without aliases carries the field: %s", b)
+	if len(empty.Attributes) != 0 || empty.KeysTotal != 0 {
+		t.Errorf("docs before its event = %+v, want no keys", empty)
 	}
 }
 
 // Past attributeKeysLimit the answer lists only the busiest keys (ties by
-// key), plus every breakdown key with its own counts, and keys_total
-// counts them all, rather than failing on the row cap.
+// key), plus every key a rule names with its own counts, and keys_total
+// counts them all.
 func TestListAttributesCapsTheKeys(t *testing.T) {
 	h, _ := newTestHost(t)
 	ctx := context.Background()
 	defer func(n int) { attributeKeysLimit = n }(attributeKeysLimit)
 	attributeKeysLimit = 2
-	for _, q := range []string{
-		`INSERT OR REPLACE INTO project_attributes (project_id, key, breakdown) VALUES (1, 'plan', 1), (1, 'never_sent', 1)`,
-		`INSERT INTO usage_attributes (project_id, day, attr_key, events, max_values) VALUES
-		 (1,'2026-10-01','id_1',9,1), (1,'2026-10-02','id_1',1,1), (1,'2026-10-01','id_2',8,1),
-		 (1,'2026-10-01','id_3',8,1), (1,'2026-10-01','plan',3,2), (1,'2026-10-01','id_4',5,1)`,
-	} {
-		if _, err := rawExec(h.ops.St, q); err != nil {
-			t.Fatal(err)
-		}
+	at := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	var evs []store.Event
+	for _, k := range []string{"id_1", "id_1", "id_1", "id_2", "id_2", "id_3", "id_3"} {
+		evs = append(evs, store.Event{ProjectID: 1, Family: store.FamilyProduct, EventName: "e", TS: at,
+			Attributes: map[string]string{k: "v"}})
 	}
-	if err := h.reg.Reload(ctx); err != nil {
+	writeHostEvents(t, h, evs...)
+	if _, _, err := h.ops.RenameAttribute(ctx, "test", 1, "tier_old", "tier"); err != nil {
 		t.Fatal(err)
 	}
-	out, err := h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-10-01", To: "2026-10-02"}})
+	out, err := h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-21", To: "2026-08-21"}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	// id_2, id_3 and the template's plan (team x2) tie at 2: id_2 comes
+	// first by key, the other two are past the limit.
 	want := []attributeOut{
-		{Key: "id_1", Events: 10, MaxValues: ptr(int64(1)), Received: true},
-		{Key: "id_2", Events: 8, MaxValues: ptr(int64(1)), Received: true},
-		{Key: "plan", Events: 3, MaxValues: ptr(int64(2)), Received: true, Breakdown: true},
-		{Key: "never_sent", Breakdown: true},
+		{Key: "id_1", Events: 3, Values: 1, Received: true},
+		{Key: "id_2", Events: 2, Values: 1, Received: true},
+		{Key: "tier", Aliases: []string{"tier_old"}},
 	}
 	if !reflect.DeepEqual(out.Attributes, want) {
 		t.Errorf("attributes = %+v, want %+v", out.Attributes, want)
 	}
-	if out.KeysTotal != 5 {
-		t.Errorf("keys_total = %d, want 5", out.KeysTotal)
+	if out.KeysTotal != 4 {
+		t.Errorf("keys_total = %d, want 4 (id_1, id_2, id_3, plan)", out.KeysTotal)
+	}
+
+	// A rule's key past the limit keeps its own counts.
+	if _, _, err := h.ops.MergeAttribute(ctx, "test", 1, "plan_old", "id_3"); err != nil {
+		t.Fatal(err)
+	}
+	out, err = h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-21", To: "2026-08-21"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := out.Attributes[2]; got.Key != "id_3" || got.Events != 2 || !got.Received {
+		t.Errorf("attributes = %+v, want id_3 with its 2 events after the busiest two", out.Attributes)
+	}
+}
+
+// TestListAttributesRefusesPast92Days: list_attributes reads every value
+// of the range, so it covers at most product_attributes' 92 days a call;
+// its default, the last 30 days, fits.
+func TestListAttributesRefusesPast92Days(t *testing.T) {
+	h, cs := newTestHost(t)
+	ctx := context.Background()
+	_, err := h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-05-01", To: "2026-08-01"}})
+	if !errors.Is(err, manage.ErrInvalid) || !strings.Contains(err.Error(), "92 days") {
+		t.Errorf("93 days: %v, want refused naming 92 days", err)
+	}
+	if _, err := h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-05-02", To: "2026-08-01"}}); err != nil {
+		t.Errorf("92 days: %v", err)
+	}
+	out, err := h.listAttributes(ctx, attributesIn{ProjectID: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if from, _ := time.Parse(time.DateOnly, out.From); out.To != time.Now().UTC().Format(time.DateOnly) || from.AddDate(0, 0, 29).Format(time.DateOnly) != out.To {
+		t.Errorf("default range %s..%s, want the last 30 days", out.From, out.To)
+	}
+	if res := callTool(t, cs, "list_attributes", map[string]any{"project_id": 1, "from": "2026-01-01", "to": "2026-08-01"}); !res.IsError {
+		t.Errorf("MCP 213 days = %s, want refused", textOf(res))
 	}
 }

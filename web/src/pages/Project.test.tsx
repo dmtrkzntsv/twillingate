@@ -42,10 +42,10 @@ beforeEach(() => {
   ] })
   vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [] })
   vi.spyOn(endpoints, 'listAttributes').mockResolvedValue({
-    project_id: 4, from: 'a', to: 'b', values_cap: 50, breakdowns_used: 1, breakdowns_max: 50, keys_total: 2,
+    project_id: 4, from: 'a', to: 'b', keys_total: 2,
     attributes: [
-      { key: 'plan', events: 900, max_values: 3, received: true, breakdown: true, blocked: false },
-      { key: 'tier', events: 20, max_values: 2, received: true, breakdown: false, blocked: false },
+      { key: 'plan', events: 900, values: 3, received: true, blocked: false },
+      { key: 'tier', events: 20, values: 2, received: true, blocked: false },
     ],
   })
   vi.spyOn(endpoints, 'eventNames').mockResolvedValue({ events: [{ family: 'product', name: 'checkout', events: 120 }] })

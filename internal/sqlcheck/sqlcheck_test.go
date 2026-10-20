@@ -40,9 +40,6 @@ var dynamic = map[string]string{
 	"store/sqlite/reporting.go:ListWidgets":                "the WHERE and ORDER BY are appended depending on whether a dashboard is given",
 	"store/sqlite/reporting.go:UpdateWidget":               "the SET list holds only the columns being written",
 	"store/sqlite/retention.go:UpsertActors":               "the source table is filled in with Sprintf",
-	"store/sqlite/usage_attributes.go:countReceived":       "receivedSQL is assembled once at startup by a function",
-	"store/sqlite/usage_history.go:countAttributes":        "foldedSQL is assembled once at startup by a function",
-	"store/sqlite/usage_history.go:measureSizes":           "the table names come from the database",
 }
 
 // minSites guards the scan: finding far fewer SQL sites than the tree

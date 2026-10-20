@@ -166,35 +166,12 @@ func (c Consent) Value() (driver.Value, error) {
 // constant here, measured in internal/store/sqlite/usage_history.go, never
 // a migration.
 const (
-	// Per project, on the day measured: its estimated disk use in raw rows
-	// (events) and in everything rolled up (agg_*, actors, identities).
-	StatRawBytes       = "raw_bytes"
-	StatAggregateBytes = "aggregate_bytes"
-	// Per project, for the day counted (every day before the pass's): its
-	// views, product events and measure samples.
-	StatViews    = "views"
-	StatEvents   = "events"
-	StatMeasures = "measures"
 	// Server-wide (project 0), on the day measured: the database file's
 	// size, page_count × page_size.
 	StatDatabaseBytes = "database_bytes"
-	// Per project, on the day measured: how many attributes it declares.
-	StatDeclaredAttributes = "declared_attributes"
-	// Per project, for the day counted while its rows are raw (kept once
-	// they are rolled up, which keeps only what the caps let through): the
-	// distinct attribute keys and key/value pairs received, declared or
-	// not, and the values the attribute views fold into (other), summed
-	// over every event (and measure) and aggregated key.
-	StatAttributeKeys         = "attribute_keys"
-	StatAttributeValues       = "attribute_values"
-	StatAttributeValuesFolded = "attribute_values_folded"
-	// Server-wide (project 0), on the day measured: each cap in force, as
-	// its meta row names it (0 = no cap), so a day's folds can be read
-	// against the cap that made them. ATTRIBUTE_VALUES_TOP_N's row keeps
-	// its earlier name, attributes_top_n.
-	StatCapAttributes = "attributes_top_n"
-	StatCapIdentities = "identities_top_n"
-	StatCapBreakdowns = "attribute_breakdowns_max"
+	// Per project, on the day measured: the bytes of its event files
+	// (archive.Sizes), written by the pass of the process that keeps them.
+	StatFileBytes = "file_bytes"
 )
 
 // Actor kinds: how an actor id was derived. Only user and install actors
@@ -332,8 +309,10 @@ type Store interface {
 	PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error
 	IncrementalVacuum(ctx context.Context) error
 	// RecordUsageHistory writes now's UTC day of usage_history, replacing
-	// that day's rows and keeping earlier days as history.
-	RecordUsageHistory(ctx context.Context, now time.Time) error
+	// that day's rows and keeping earlier days as history: the database's
+	// size, and each project's file bytes when fileBytes is non-nil (a
+	// process with no event files passes nil and leaves them alone).
+	RecordUsageHistory(ctx context.Context, now time.Time, fileBytes map[int64]int64) error
 	ProjectIDs(ctx context.Context) ([]int64, error) // all rows incl. archived, ascending
 	RebuildFlatView(ctx context.Context, keys []string) error
 	GetMeta(ctx context.Context, key string) (string, error) // "" if absent

@@ -115,7 +115,7 @@ func TestAttributeRulesBlockOverMCP(t *testing.T) {
 	for _, a := range list.Attributes {
 		if a.Key == "session_id" {
 			found = true
-			if !a.Blocked || a.Received || a.Breakdown {
+			if !a.Blocked || a.Received {
 				t.Errorf("session_id = %+v, want blocked, not received", a)
 			}
 		}

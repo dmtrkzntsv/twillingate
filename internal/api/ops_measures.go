@@ -2,9 +2,9 @@ package api
 
 import (
 	"context"
-	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 )
 
 type measuresIn struct {
@@ -84,18 +84,18 @@ func (h *host) measureAttr(ctx context.Context, key string) (string, error) {
 	if col, ok := keyColumns[key]; ok {
 		return "nullif(" + col + ", '')", nil
 	}
-	// A NUL reads as the six characters \u0000 in a column name, as the
-	// files store it.
-	name := "attr_" + strings.ReplaceAll(key, "\x00", `\u0000`)
 	res, err := h.runFiles(ctx, archive.Scoped{SQL: "SELECT column_name FROM (DESCRIBE SELECT * FROM measures)"})
 	if err != nil {
 		return "", err
 	}
+	cols := make([]string, 0, len(res.Rows))
 	for _, row := range res.Rows {
-		// Column names are not case-sensitive: attr_Plan is attr_plan.
-		if col, _ := row[0].(string); strings.EqualFold(col, name) {
-			return `"` + strings.ReplaceAll(col, `"`, `""`) + `"`, nil
+		if c, ok := row[0].(string); ok {
+			cols = append(cols, c)
 		}
+	}
+	if col, ok := enginesql.AttrColumn(cols, key); ok {
+		return col, nil
 	}
 	return "CAST(NULL AS VARCHAR)", nil
 }

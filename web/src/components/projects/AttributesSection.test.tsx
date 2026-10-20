@@ -8,14 +8,13 @@ import AttributesSection from './AttributesSection'
 const project = { project_id: 1, name: 'dev', allowed_origins: [], attributes: ['plan', 'never_sent'] } as Project
 const range = { from: '2026-09-05', to: '2026-10-04' }
 const answer: ProjectAttributes = {
-  project_id: 1, from: '2026-09-05', to: '2026-10-04', values_cap: 50, breakdowns_used: 2, breakdowns_max: 10, keys_total: 4,
+  project_id: 1, from: '2026-09-05', to: '2026-10-04', keys_total: 4,
   attributes: [
-    { key: 'order_id', events: 980, max_values: 412, received: true, breakdown: false, blocked: false },
-    { key: 'plan', events: 900, max_values: 3, received: true, breakdown: true, blocked: false, aliases: ['planType'] },
-    { key: 'tier', events: 20, max_values: 2, received: true, breakdown: false, blocked: false },
-    { key: '$host', events: 15, max_values: 1, received: true, breakdown: false, blocked: false },
-    { key: 'never_sent', events: 0, max_values: null, received: false, breakdown: true, blocked: false },
-    { key: 'debug', events: 0, max_values: null, received: false, breakdown: false, blocked: true },
+    { key: 'order_id', events: 980, values: 412, received: true, blocked: false },
+    { key: 'plan', events: 900, values: 3, received: true, blocked: false, aliases: ['planType'] },
+    { key: 'tier', events: 20, values: 2, received: true, blocked: false },
+    { key: '$host', events: 15, values: 1, received: true, blocked: false },
+    { key: 'debug', events: 0, values: 0, received: false, blocked: true },
   ],
 }
 
@@ -46,28 +45,22 @@ describe('AttributesSection', () => {
     vi.spyOn(endpoints, 'listAttributes').mockResolvedValue(answer)
   })
 
-  it('lists every key busiest first with what it received, its switch, and the budget in the header', async () => {
+  it('lists every key busiest first with what it received and its switch, then the breakdowns nothing carried', async () => {
     renderSection()
     const section = screen.getByRole('region', { name: 'Attributes' })
     await within(section).findByRole('switch', { name: 'Break down plan' })
     expect(endpoints.listAttributes).toHaveBeenCalledWith(1, { from: '2026-09-05', to: '2026-10-04' })
     const rows = within(section).getAllByRole('row').slice(1)
-    expect(rows.map((r) => r.querySelector('code')?.textContent)).toEqual(['order_id', 'plan', 'tier', '$host', 'never_sent', 'debug'])
+    expect(rows.map((r) => r.querySelector('code')?.textContent)).toEqual(['order_id', 'plan', 'tier', '$host', 'debug', 'never_sent'])
     // The Received text sits in its column and, folded, under the key for phones.
     expect(within(row('plan')).getAllByText('900 events · 3 values')).toHaveLength(2)
-    expect(within(row('order_id')).getAllByText('980 events · 412 values · folds past 50')).toHaveLength(2)
+    expect(within(row('order_id')).getAllByText('980 events · 412 values')).toHaveLength(2)
     expect(within(row('never_sent')).getAllByText('not received')).toHaveLength(2)
     expect(within(section).getByRole('switch', { name: 'Break down plan' })).toBeChecked()
     expect(within(section).getByRole('switch', { name: 'Break down never_sent' })).toBeChecked()
     expect(within(section).getByRole('switch', { name: 'Break down order_id' })).not.toBeChecked()
     expect(within(section).getByRole('switch', { name: 'Break down $host' })).not.toBeChecked()
-    expect(within(section).getByRole('heading')).toHaveTextContent('Attributes · 2 of 10 in use')
-  })
-
-  it('says "N in use" when there is no limit', async () => {
-    vi.spyOn(endpoints, 'listAttributes').mockResolvedValue({ ...answer, breakdowns_max: 0 })
-    renderSection()
-    expect(await screen.findByText(/· 2 in use/)).toBeInTheDocument()
+    expect(within(section).getByRole('heading')).toHaveTextContent(/^Attributes$/)
   })
 
   it('switching a key on saves the breakdowns with it added', async () => {
@@ -84,22 +77,14 @@ describe('AttributesSection', () => {
     expect(onSaveBreakdowns).toHaveBeenCalledWith(['plan', 'never_sent', '$host'])
   })
 
-  it('saves from the listed breakdowns, not the project row, which may lag', async () => {
+  it('reads the switches from the project\'s breakdowns', async () => {
     const user = userEvent.setup()
-    const { onSaveBreakdowns } = renderSection({ project: { project_id: 1, name: 'dev', allowed_origins: [], attributes: ['stale'] } as Project })
-    await user.click(await screen.findByRole('switch', { name: 'Break down tier' }))
-    expect(onSaveBreakdowns).toHaveBeenCalledWith(['plan', 'never_sent', 'tier'])
-  })
-
-  it('sends a key once when switched on again while the list still shows it off', async () => {
-    // The first save already reached the project row; the attributes list has not refetched.
-    const user = userEvent.setup()
-    const { onSaveBreakdowns } = renderSection({ project: { ...project, attributes: ['plan', 'never_sent', 'tier'] } })
-    const tier = await screen.findByRole('switch', { name: 'Break down tier' })
-    await user.click(tier)
-    await user.click(tier)
-    expect(onSaveBreakdowns).toHaveBeenCalledTimes(2)
-    for (const call of onSaveBreakdowns.mock.calls) expect(call[0]).toEqual(['plan', 'never_sent', 'tier'])
+    const { onSaveBreakdowns } = renderSection({ project: { ...project, attributes: ['tier'] } })
+    expect(await screen.findByRole('switch', { name: 'Break down tier' })).toBeChecked()
+    expect(screen.getByRole('switch', { name: 'Break down plan' })).not.toBeChecked()
+    expect(screen.queryByRole('switch', { name: 'Break down never_sent' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('switch', { name: 'Break down plan' }))
+    expect(onSaveBreakdowns).toHaveBeenCalledWith(['tier', 'plan'])
   })
 
   it('asks before switching a key off, then saves the list without it', async () => {
@@ -122,17 +107,7 @@ describe('AttributesSection', () => {
     expect(screen.queryByText('Stop breaking down undefined?')).not.toBeInTheDocument()
   })
 
-  it('disables switching on at the limit, never switching off, and blocked rows always', async () => {
-    vi.spyOn(endpoints, 'listAttributes').mockResolvedValue({ ...answer, breakdowns_used: 10 })
-    renderSection()
-    await screen.findByText(/10 of 10 in use/)
-    expect(screen.getByRole('switch', { name: 'Break down tier' })).toBeDisabled()
-    expect(screen.getByRole('switch', { name: 'Break down tier' })).toHaveAttribute('title', '10 of 10 in use')
-    expect(screen.getByRole('switch', { name: 'Break down plan' })).toBeEnabled()
-    expect(screen.getByRole('switch', { name: 'Break down debug' })).toBeDisabled()
-  })
-
-  it('disables a blocked key under the limit too', async () => {
+  it('disables a blocked key', async () => {
     renderSection()
     expect(await screen.findByRole('switch', { name: 'Break down debug' })).toBeDisabled()
     expect(screen.getByRole('switch', { name: 'Break down tier' })).toBeEnabled()
@@ -265,7 +240,7 @@ describe('AttributesSection', () => {
   })
 
   it('says an empty range has none', async () => {
-    vi.spyOn(endpoints, 'listAttributes').mockResolvedValue({ ...answer, attributes: [], keys_total: 0, breakdowns_used: 0 })
+    vi.spyOn(endpoints, 'listAttributes').mockResolvedValue({ ...answer, attributes: [], keys_total: 0 })
     renderSection({ project: { ...project, attributes: [] } })
     expect(await screen.findByText('No attributes received in this range.')).toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()

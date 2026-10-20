@@ -329,28 +329,20 @@ export interface UsageDay {
   views: number
   events: number
   measures: number
-  /** The project's size as the daily pass measured it that day; null on a day not measured. */
+  /** The project's event file bytes as the daily pass measured them that day; null on a day not measured. */
   total_bytes: number | null
-  /** Declared attributes on a day the daily pass measured; null otherwise. */
-  declared_attributes: number | null
-  /** Distinct attribute keys and key/value pairs received, and values folded into (other): counted the night after, null until then. */
-  attribute_keys: number | null
-  attribute_values: number | null
-  attribute_values_folded: number | null
 }
 
 export interface ProjectUsage {
   project_id: number
   series: UsageDay[]
   totals: { views: number; events: number; measures: number }
+  /** When the newest event in the project's files arrived, whatever the range; null with none. */
   last_received_at: string | null
+  /** The oldest day the project's event files hold; null with none. */
   first_day: string | null
-  raw_days: number
-  rolled_up_days: number
-  /** The latest the daily pass measured (it also runs at start), measured_at a UTC day; null until the first measurement. */
-  size: { raw_bytes: number; aggregate_bytes: number; total_bytes: number; measured_at: string } | null
-  /** Only computed for one project (asked with project_id); null in the all-projects answer. */
-  unused_attributes: string[] | null
+  /** The event file bytes the daily pass last measured (it also runs at start), measured_at a UTC day; null until the first measurement. */
+  size: { total_bytes: number; measured_at: string } | null
 }
 
 export interface UsageResponse {
@@ -406,28 +398,27 @@ export interface EventName {
 }
 
 /**
- * One attribute key of a project over a range, with the rules on it. `max_values` is null before the nightly count.
+ * One attribute key of a project over a range, read from the event files, with the rules on it.
  * `$` keys are listed too: they take a breakdown, never a rule.
  */
 export interface ProjectAttribute {
   key: string
-  /** As the daily pass counted them: today's arrive the night after, so a key first received today has 0. */
+  /** Product events and measures that carried it over the range. */
   events: number
-  max_values: number | null
-  /** Whether any event in the range carried it; false for a breakdown, blocked key or rename target none carried. */
+  /** Its distinct values over the range. */
+  values: number
+  /** Whether any event in the range carried it; false for a blocked key or rename target none carried. */
   received: boolean
-  /** Whether the project breaks the key down (its `attributes`). */
-  breakdown: boolean
-  /** Whether a block rule strips it from events as they arrive. */
+  /** Whether a block rule hides it from every read. */
   blocked: boolean
   /** The keys renamed or merged into this one; absent when there are none. */
   aliases?: string[]
 }
 
 /**
- * A project's attribute keys over a range, busiest first, with the breakdown budget (`breakdowns_max` 0 is no limit).
- * `attributes` holds the 500 busiest received keys, every breakdown, every blocked key and every rename target;
- * `keys_total` counts every key received, keys renamed away left out.
+ * A project's attribute keys over a range (at most 92 days), busiest first:
+ * `attributes` holds the 500 busiest received keys and every key a rule names;
+ * `keys_total` counts every key received.
  */
 export interface ProjectAttributes {
   project_id: number
@@ -435,9 +426,6 @@ export interface ProjectAttributes {
   to: string
   attributes: ProjectAttribute[]
   keys_total: number
-  values_cap: number
-  breakdowns_used: number
-  breakdowns_max: number
 }
 
 /** An attribute rule: `key` is stored as `to` as it arrives, or (a block, no `to`) stripped from events. */

@@ -226,7 +226,6 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	files := newHostFiles(t, reg)
 	h := &host{db: db, subs: subs, reg: reg, ops: manage.NewOps(reg, st), files: files.reader,
 		eventsDir: files.dir, queryTimeout: 5 * time.Second, queryRows: 1000,
-		valuesCap: config.DefaultAttributeValuesTopN, breakdownsMax: config.DefaultAttributeBreakdownsMax,
 		rep:       reporting.New(st, files, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example"}),
 		ingestURL: "https://collector.test", logger: logger, limits: limitsFrom(&config.Config{})}
 	// host itself carries no path (production has no need for one once

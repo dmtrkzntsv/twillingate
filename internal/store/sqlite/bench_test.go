@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -370,33 +369,6 @@ func BenchmarkRenameAttribute(b *testing.B) {
 	}
 }
 
-// BenchmarkCountReceived runs the nightly usage_attributes recount
-// (countReceived, inside RecordUsageHistory' transaction, while ingest
-// waits) over a raw window of 30 days x 2,000 web product events as the SDK
-// sends them (5 custom attributes, host, path, OS and browser versions, and
-// the other environment columns that widen a row), plus 30 days x 200
-// measure samples. It guards the one-pass shape of receivedSQL.
-func BenchmarkCountReceived(b *testing.B) {
-	db := setupBenchDB(b)
-	ctx := context.Background()
-	start, days := seedReceivedWindow(b, db)
-	today := start.AddDate(0, 0, days).Format("2006-01-02")
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		if err := db.tx(ctx, func(tx *sql.Tx) error { return countReceived(ctx, tx, today) }); err != nil {
-			b.Fatal(err)
-		}
-	}
-	b.StopTimer()
-	var n int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM usage_attributes WHERE max_values IS NOT NULL`).Scan(&n); err != nil {
-		b.Fatal(err)
-	}
-	if n != days*10 { // key0..key4, $host, $path, $os_version, $browser_version, $device_model
-		b.Fatalf("recount wrote %d rows, want %d", n, days*10)
-	}
-}
-
 // seedReceivedWindow writes 30 days x 2,000 web product events as the SDK
 // sends them (5 custom attributes key0..key4, host, path, OS and browser
 // versions, and the other environment columns that widen a row), plus 30
@@ -447,50 +419,3 @@ func seedReceivedWindow(b *testing.B, db *DB) (time.Time, int) {
 	return start, days
 }
 
-// BenchmarkPruneCatalog times the nightly catalog prune (pruneCatalogs,
-// inside RecordUsageHistory's transaction, while ingest waits) for a
-// project with 10,000 keys received on each of 30 days (300,000
-// usage_attributes rows) and 1,000 catalog rows no usage row holds any
-// more, which it deletes. No ANALYZE runs, as none does in production: the
-// prune must not be quadratic in the key count on an un-analyzed database.
-func BenchmarkPruneCatalog(b *testing.B) {
-	db := setupBenchDB(b)
-	ctx := context.Background()
-	const keys, days, stale = 10000, 30, 1000
-	if _, err := db.db.ExecContext(ctx, `WITH RECURSIVE k(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM k WHERE i + 1 < ?1),
-		d(j) AS (SELECT 0 UNION ALL SELECT j + 1 FROM d WHERE j + 1 < ?2)
-		INSERT INTO usage_attributes (project_id, day, attr_key, events)
-		SELECT ?3, date('2026-08-01', '+' || j || ' days'), 'key' || i, 1 FROM k, d`, keys, days, benchProject); err != nil {
-		b.Fatal(err)
-	}
-	if _, err := db.db.ExecContext(ctx, `INSERT INTO project_attributes (project_id, key)
-		SELECT DISTINCT project_id, attr_key FROM usage_attributes`); err != nil {
-		b.Fatal(err)
-	}
-	plant := func() {
-		if _, err := db.db.ExecContext(ctx, `WITH RECURSIVE k(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM k WHERE i + 1 < ?1)
-			INSERT INTO project_attributes (project_id, key) SELECT ?2, 'gone' || i FROM k`, stale, benchProject); err != nil {
-			b.Fatal(err)
-		}
-	}
-	count := func() (n int) {
-		if err := db.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM project_attributes`).Scan(&n); err != nil {
-			b.Fatal(err)
-		}
-		return n
-	}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		b.StopTimer()
-		plant()
-		b.StartTimer()
-		if err := db.tx(ctx, func(tx *sql.Tx) error { return pruneCatalogs(ctx, tx) }); err != nil {
-			b.Fatal(err)
-		}
-		b.StopTimer()
-		if n := count(); n != keys {
-			b.Fatalf("catalog holds %d rows after the prune, want %d", n, keys)
-		}
-		b.StartTimer()
-	}
-}

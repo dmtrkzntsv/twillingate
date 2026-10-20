@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"reflect"
 	"sort"
@@ -142,121 +141,6 @@ func TestReceivedSeenKeepsTheNewestTwoDays(t *testing.T) {
 	}
 }
 
-// The pass recounts every raw day before today exactly, fills max_values
-// with the busiest (event, measure) partition's distinct values, leaves
-// today's row as ingest wrote it (events 0), and drops days whose raw rows
-// are gone.
-func TestRecordUsageHistoryRecountsReceivedAttributes(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	var evs []store.Event
-	// 2026-08-02: signup carries plan free/pro/team (3 values), upgrade
-	// carries plan pro (1): max_values 3, events 4.
-	for i, plan := range []string{"free", "pro", "team"} {
-		evs = append(evs, store.Event{ID: fmt.Sprintf("s%d", i), ProjectID: 1, Family: store.FamilyProduct,
-			EventName: "signup", TS: ts("2026-08-02T10:00:00Z"), ActorID: "a", Attributes: map[string]string{"plan": plan}})
-	}
-	evs = append(evs, store.Event{ID: "u1", ProjectID: 1, Family: store.FamilyProduct, EventName: "upgrade",
-		TS: ts("2026-08-02T12:00:00Z"), ActorID: "a", Attributes: map[string]string{"plan": "pro"}})
-	// 2026-08-04 is "today" for the pass: recorded by ingest only.
-	evs = append(evs, store.Event{ID: "t1", ProjectID: 1, Family: store.FamilyProduct, EventName: "signup",
-		TS: ts("2026-08-04T09:00:00Z"), ActorID: "a", Attributes: map[string]string{"plan": "pro"}})
-	if err := db.WriteEvents(ctx, evs); err != nil {
-		t.Fatal(err)
-	}
-	// A stale row for a day with no raw rows left (rolled up): pruned.
-	if _, err := db.db.Exec(`INSERT INTO usage_attributes VALUES (1, '2026-07-01', 'plan', 9, 2)`); err != nil {
-		t.Fatal(err)
-	}
-	// Ingest's events 0 (here a stray number) for a raw day: counted.
-	if _, err := db.db.Exec(`UPDATE usage_attributes SET events = 99 WHERE day = '2026-08-02'`); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.RecordUsageHistory(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := db.db.Query(`SELECT day, attr_key, events, max_values FROM usage_attributes ORDER BY day, attr_key`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var got []string
-	for rows.Next() {
-		var day, key string
-		var n int64
-		var mv sql.NullInt64
-		if err := rows.Scan(&day, &key, &n, &mv); err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, fmt.Sprintf("%s/%s=%d/%v", day, key, n, mv))
-	}
-	want := []string{"2026-08-02/plan=4/{3 true}", "2026-08-04/plan=0/{0 false}"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %v\nwant %v", got, want)
-	}
-}
-
-// The recount partitions by (family, event, measure, key): a product event
-// and a measure sharing the name "boot", and two measures under it, are
-// separate partitions, so max_values is the busiest one, never their
-// union; events sum across them. The reserved columns count under their
-// declarable keys ($path, $device_model) next to the custom ones.
-func TestRecordUsageHistoryRecountsPartitionsAndReservedColumns(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	v := 1.0
-	day := ts("2026-08-02T10:00:00Z")
-	product := func(id, build, path, model string) store.Event {
-		return store.Event{ID: id, ProjectID: 1, Family: store.FamilyProduct, EventName: "boot", TS: day,
-			ActorID: "a", Path: path, DeviceModel: model, Attributes: map[string]string{"build": build}}
-	}
-	measure := func(id, m, build, path, model string) store.Event {
-		return store.Event{ID: id, ProjectID: 1, Family: store.FamilyMeasures, EventName: "boot", TS: day,
-			ActorID: "a", Measure: m, Value: &v, Path: path, DeviceModel: model, Attributes: map[string]string{"build": build}}
-	}
-	evs := []store.Event{
-		// product boot: build {a, b}, $path {/home, /settings}, $device_model {Pixel 8}
-		product("p1", "a", "/home", "Pixel 8"),
-		product("p2", "b", "/settings", ""),
-		// measure boot/time: build {a, c, d}, $device_model {iPhone15,2}
-		measure("m1", store.MeasureTime, "a", "", "iPhone15,2"),
-		measure("m2", store.MeasureTime, "c", "", "iPhone15,2"),
-		measure("m3", store.MeasureTime, "d", "", "iPhone15,2"),
-		// measure boot/size: build {e}, $path {/home}, $device_model {Pixel 8}
-		measure("m4", store.MeasureSize, "e", "/home", "Pixel 8"),
-	}
-	if err := db.WriteEvents(ctx, evs); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.RecordUsageHistory(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
-		t.Fatal(err)
-	}
-	rows, err := db.db.Query(`SELECT attr_key, events, max_values FROM usage_attributes
-		WHERE project_id = 1 AND day = '2026-08-02' ORDER BY attr_key`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	var got []string
-	for rows.Next() {
-		var key string
-		var n, mv int64
-		if err := rows.Scan(&key, &n, &mv); err != nil {
-			t.Fatal(err)
-		}
-		got = append(got, fmt.Sprintf("%s=%d/%d", key, n, mv))
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	// Merged partitions would give build 5 values (or 4 for the two
-	// measures together) and $device_model 2.
-	want := []string{"$device_model=5/1", "$path=3/2", "build=6/3"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %v\nwant %v", got, want)
-	}
-}
-
 // catalogRows reads project_attributes as "project/key=breakdown" lines, sorted.
 func catalogRows(t *testing.T, db *DB) []string {
 	t.Helper()
@@ -300,37 +184,3 @@ func TestWriteEventsAddsCatalogRows(t *testing.T) {
 	}
 }
 
-// The daily pass adds the keys usage_attributes holds that the catalog
-// misses (never for a project that no longer exists), and drops the
-// non-breakdown rows with no usage row; a breakdown row stays. Each
-// project's prune reads its own usage rows only: project 2's a goes,
-// though project 1 received an a.
-func TestCountReceivedHealsAndPrunesCatalog(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	if id := seedDeclaredProject(t, db, nil); id != 1 {
-		t.Fatalf("project id %d, want 1", id)
-	}
-	if id := seedDeclaredProject(t, db, nil); id != 2 {
-		t.Fatalf("project id %d, want 2", id)
-	}
-	for _, q := range []string{
-		`INSERT INTO project_attributes (project_id, key, breakdown) VALUES (2, 'a', 0)`,
-		`INSERT INTO usage_attributes (project_id, day, attr_key, events) VALUES (1, '2026-08-04', 'a', 0)`,
-		// A project deleted since: usage_attributes has no foreign key.
-		`INSERT INTO usage_attributes (project_id, day, attr_key, events) VALUES (9999, '2026-08-04', 'orphan', 0)`,
-		`INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'gone', 0)`,
-		`INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'kept', 1)`,
-	} {
-		if _, err := db.db.Exec(q); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := db.RecordUsageHistory(ctx, ts("2026-08-04T03:00:00Z")); err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"1/a=0", "1/kept=1"}
-	if got := catalogRows(t, db); !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %v\nwant %v", got, want)
-	}
-}

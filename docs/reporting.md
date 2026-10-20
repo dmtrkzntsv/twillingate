@@ -1041,9 +1041,9 @@ a tab of a project's page (`/app/projects/{project_id}`).
 - **A project page is tabs.** The dashboards are the tabs, in one order per
   project, then **+**, which adds one. `list_project_tabs` lists them. The
   page opens on the tab last used for that project in the browser, else the
-  first. Settings (the project's usage, origins, breakdowns and keys) and
-  Forms are not dashboards and are never listed: they are buttons beside the
-  tabs, Settings behind the gear.
+  first. Settings (the project's usage and file size, origins, event and
+  attribute rules, breakdowns and keys) and Forms are not dashboards and are
+  never listed: they are buttons beside the tabs, Settings behind the gear.
   - Each project keeps its own list: `add_project_tab`,
     `remove_project_tab` and `move_project_tab` change one project's page
     and no other.

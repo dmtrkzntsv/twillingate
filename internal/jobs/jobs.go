@@ -44,9 +44,10 @@ type Store interface {
 	PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error
 	RebuildFlatView(ctx context.Context, keys []string) error
 	IncrementalVacuum(ctx context.Context) error
-	// RecordUsageHistory stores the usage_history measurements (each
-	// project's disk use) as of now.
-	RecordUsageHistory(ctx context.Context, now time.Time) error
+	// RecordUsageHistory stores the usage_history measurements as of now:
+	// the database's size, and each project's file bytes when fileBytes
+	// is non-nil.
+	RecordUsageHistory(ctx context.Context, now time.Time, fileBytes map[int64]int64) error
 	// PurgeArchived deletes every project, dashboard, widget and widget
 	// share archived more than days ago. days <= 0 purges nothing.
 	PurgeArchived(ctx context.Context, days int) (store.PurgeResult, error)
@@ -85,6 +86,8 @@ type Archive interface {
 	// Projects lists the projects with a directory under raw/.
 	Projects() ([]int64, error)
 	Maintain(ctx context.Context, today civil.Date, lateDays, retentionDays int) error
+	// Sizes is each project's file bytes, by project id.
+	Sizes() (map[int64]int64, error)
 	RemoveProject(id int64) error
 }
 
@@ -145,7 +148,8 @@ func (r *Runner) WithArchive(a Archive) *Runner { r.archive = a; return r }
 
 // RunDailyPass rolls up every day that has aged out of the raw window,
 // prunes aggregates past their retention, refreshes the flat view,
-// reclaims free pages and measures the server's stats (project sizes).
+// reclaims free pages, maintains the archive and measures the database's
+// size and each project's file bytes.
 //
 // Per-project failures are logged and skipped rather than returned: one
 // broken project must not stop maintenance for the rest. Only failures to
@@ -302,16 +306,26 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 	if err := r.store.IncrementalVacuum(ctx); err != nil {
 		r.logger.Error("incremental vacuum failed", "error", err)
 	}
-	// Last, so the sizes are those left after the pruning and the vacuum.
-	// Run calls this pass at boot, in the background, so sizes exist shortly
-	// after every start, not only after the first 03:00.
-	if err := r.store.RecordUsageHistory(ctx, r.now()); err != nil {
-		r.logger.Error("record usage history", "error", err)
-	}
+	// The sizes last, so they are those left after the vacuum and the
+	// archive's dumps, merges and expiry. Run calls this pass at boot, in
+	// the background, so sizes exist shortly after every start, not only
+	// after the first 03:00. Without an archive (a process that keeps no
+	// event files) only the database is measured; a failed measurement of
+	// the files leaves them out the same way.
+	var fileBytes map[int64]int64
 	if r.archive != nil {
 		if err := r.archive.Maintain(ctx, today, r.cfg.IngestLateDays, r.cfg.Retention.Days); err != nil {
 			r.logger.Error("archive maintenance", "error", err)
 		}
+		sizes, err := r.archive.Sizes()
+		if err != nil {
+			r.logger.Error("archive sizes", "error", err)
+		} else {
+			fileBytes = sizes
+		}
+	}
+	if err := r.store.RecordUsageHistory(ctx, r.now(), fileBytes); err != nil {
+		r.logger.Error("record usage history", "error", err)
 	}
 	return nil
 }

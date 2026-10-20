@@ -3,8 +3,6 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
@@ -157,99 +155,6 @@ func writeReceived(ctx context.Context, tx *sql.Tx, keys []receivedKey) error {
 			return err
 		}
 		if _, err := catalog.ExecContext(ctx, k.project, k.key); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// receivedSQL lists every (project, day, family, event, measure, key,
-// value) the raw product and measure rows before ?1 carry: their JSON
-// attributes and the declarable reserved columns that are set. Each raw row
-// is read once: jsonb_patch lays the set columns over the attributes as one
-// object (a null in a merge patch removes the key, so an empty column adds
-// nothing) and json_each walks it; one arm per column instead re-read every
-// raw page ten times (the JSONB forms skip rendering the merged text). r.
-// qualifies the row's columns, since json_each has a path column too. A
-// custom key cannot shadow a reserved one: ingest drops every `$` key it
-// does not route to a column (server.resolveAttributes), so stored
-// attributes hold no `$` key.
-var receivedSQL = func() string {
-	cols := []struct{ key, col string }{
-		{"$host", "host"}, {"$path", "path"}, {"$referrer", "referrer_source"},
-		{"$utm_source", "utm_source"}, {"$utm_medium", "utm_medium"}, {"$utm_campaign", "utm_campaign"},
-		{"$os_version", "os_version"}, {"$browser_version", "browser_version"}, {"$device_model", "device_model"},
-	}
-	var pairs []string
-	for _, c := range cols {
-		pairs = append(pairs, "'"+c.key+"', NULLIF(r."+c.col+", '')")
-	}
-	keyed := `json_each(jsonb_patch(CASE WHEN json_valid(r.attributes) THEN r.attributes ELSE '{}' END,
-		jsonb_object(` + strings.Join(pairs, ", ") + `))) j`
-	arm := func(view string) string {
-		return `SELECT r.project_id, r.day, r.family, r.event_name, r.measure, j.key AS k, j.value AS v
-		FROM ` + view + ` r, ` + keyed + ` WHERE r.day < ?1`
-	}
-	return arm("raw_product") + `
-	UNION ALL ` + arm("raw_measures")
-}()
-
-// countReceived rewrites usage_attributes for every day before today:
-// the days whose raw product or measure rows remain get exact counts and
-// max_values (the most distinct values in one (family, event, measure)
-// partition, the partition ATTRIBUTE_VALUES_TOP_N caps); the rest, days
-// already rolled up, are dropped. Today stays as ingest counts it.
-func countReceived(ctx context.Context, tx *sql.Tx, today string) error {
-	if _, err := tx.ExecContext(ctx, `DELETE FROM usage_attributes WHERE day < ?1`, today); err != nil {
-		return fmt.Errorf("usage attributes: %w", err)
-	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO usage_attributes (project_id, day, attr_key, events, max_values)
-		SELECT project_id, day, k, SUM(n), MAX(vals) FROM (
-		  SELECT project_id, day, k, COUNT(*) AS n, COUNT(DISTINCT v) AS vals
-		  FROM (`+receivedSQL+`)
-		  GROUP BY project_id, day, family, event_name, measure, k
-		) GROUP BY project_id, day, k`, today)
-	if err != nil {
-		return fmt.Errorf("usage attributes: %w", err)
-	}
-	// The catalog follows usage_attributes: heal a key whose catalog row
-	// was lost (only for projects that still exist: usage_attributes has no
-	// foreign key, so it can hold a deleted project's rows), then drop the
-	// rows that are no breakdown and have no usage row left (spec D3).
-	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO project_attributes (project_id, key)
-		SELECT DISTINCT project_id, attr_key FROM usage_attributes
-		WHERE project_id IN (SELECT id FROM projects)`); err != nil {
-		return fmt.Errorf("attribute catalog: %w", err)
-	}
-	if err := pruneCatalogs(ctx, tx); err != nil {
-		return fmt.Errorf("attribute catalog: %w", err)
-	}
-	return nil
-}
-
-// pruneCatalogs runs pruneCatalog for every project. The ids are read
-// first: the transaction's one connection cannot run the deletes while a
-// result set is open on it.
-func pruneCatalogs(ctx context.Context, tx *sql.Tx) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id FROM projects`)
-	if err != nil {
-		return err
-	}
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
-	for _, id := range ids {
-		if err := pruneCatalog(ctx, tx, id); err != nil {
 			return err
 		}
 	}

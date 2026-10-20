@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -127,27 +129,52 @@ func mustTime(s string) time.Time {
 
 func mustDay(s string) civil.Date { d, _ := civil.Parse(s); return d }
 
-// The pass ends by measuring the server's stats at its own clock: a project
-// with rows has its sizes stored.
+// The pass ends by measuring the database at its own clock. With no
+// archive (a process that keeps no event files) it records the
+// database's size alone.
 func TestRunDailyPassRecordsUsageHistory(t *testing.T) {
-	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
-	if err := st.WriteEvents(context.Background(), []store.Event{
-		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: mustTime("2026-08-21T10:00:00Z"), ReceivedAt: mustTime("2026-08-21T10:00:00Z"),
-			Kind: "web", ActorKind: store.ActorConnection, ActorID: "v", Path: "/"},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	_, _, r := setup(t, jobsVars, jobsProjectSpecs)
 	if err := r.RunDailyPass(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	got := queryDays(t, `SELECT key || ' ' || project_id || ' ' || measured_at FROM usage_history ORDER BY key`)
-	// Sizes, the database's, the declared attributes and the caps for the
-	// pass day, and the counts of the days before it.
-	want := []string{"aggregate_bytes 1 2026-08-22", "attribute_breakdowns_max 0 2026-08-22", "attributes_top_n 0 2026-08-22", "database_bytes 0 2026-08-22",
-		"declared_attributes 1 2026-08-22", "identities_top_n 0 2026-08-22", "raw_bytes 1 2026-08-22",
-		"views 1 2026-08-21"}
-	if !slices.Equal(got, want) {
+	if want := []string{"database_bytes 0 2026-08-22"}; !slices.Equal(got, want) {
 		t.Errorf("usage_history = %v, want %v", got, want)
+	}
+}
+
+// TestPassRecordsTheArchiveSizes: with an archive the pass records each
+// project's file bytes as the archive measures them once its maintenance
+// is done; a failed measurement is logged and the database's size is
+// still recorded.
+func TestPassRecordsTheArchiveSizes(t *testing.T) {
+	_, _, r := setup(t, jobsVars, jobsProjectSpecs)
+	a := &fakeArchive{sizes: map[int64]int64{1: 4096, 2: 10}}
+	r.WithArchive(a)
+	if err := r.RunDailyPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(a.calls, []string{"2026-08-22 late=1 keep=400", "sizes"}) {
+		t.Errorf("archive calls = %v, want the maintenance, then the sizes", a.calls)
+	}
+	got := queryDays(t, `SELECT key || ' ' || project_id || ' ' || measured_at || ' ' || value FROM usage_history WHERE key = 'file_bytes' ORDER BY project_id`)
+	if want := []string{"file_bytes 1 2026-08-22 4096", "file_bytes 2 2026-08-22 10"}; !slices.Equal(got, want) {
+		t.Errorf("file bytes = %v, want %v", got, want)
+	}
+
+	var buf bytes.Buffer
+	r.logger = slog.New(slog.NewTextHandler(&buf, nil))
+	a.sizesErr = errors.New("boom")
+	r.now = func() time.Time { return time.Date(2026, 8, 23, 4, 0, 0, 0, time.UTC) }
+	if err := r.RunDailyPass(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "archive sizes") || !strings.Contains(buf.String(), "boom") {
+		t.Errorf("log = %q, want the failed measurement", buf.String())
+	}
+	got = queryDays(t, `SELECT key || ' ' || project_id FROM usage_history WHERE measured_at = '2026-08-23' ORDER BY key`)
+	if want := []string{"database_bytes 0"}; !slices.Equal(got, want) {
+		t.Errorf("after a failed measurement = %v, want the database's size alone", got)
 	}
 }
 
@@ -1159,9 +1186,11 @@ func TestDailyPassDropsBlockedAttributeAggregates(t *testing.T) {
 }
 
 type fakeArchive struct {
-	calls   []string
-	removed []int64
-	dirs    []int64 // the project directories Projects reports
+	calls    []string
+	removed  []int64
+	dirs     []int64 // the project directories Projects reports
+	sizes    map[int64]int64
+	sizesErr error
 }
 
 func (f *fakeArchive) Projects() ([]int64, error) { return f.dirs, nil }
@@ -1169,6 +1198,11 @@ func (f *fakeArchive) Projects() ([]int64, error) { return f.dirs, nil }
 func (f *fakeArchive) Maintain(ctx context.Context, today civil.Date, lateDays, retentionDays int) error {
 	f.calls = append(f.calls, fmt.Sprintf("%s late=%d keep=%d", today, lateDays, retentionDays))
 	return nil
+}
+
+func (f *fakeArchive) Sizes() (map[int64]int64, error) {
+	f.calls = append(f.calls, "sizes")
+	return f.sizes, f.sizesErr
 }
 
 func (f *fakeArchive) RemoveProject(id int64) error {
@@ -1184,8 +1218,8 @@ func TestDailyPassMaintainsTheArchive(t *testing.T) {
 	if err := r.RunDailyPass(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(a.calls) != 1 || a.calls[0] != "2026-08-22 late=2 keep=500" {
-		t.Fatalf("Maintain calls = %v", a.calls)
+	if len(a.calls) != 2 || a.calls[0] != "2026-08-22 late=2 keep=500" {
+		t.Fatalf("archive calls = %v", a.calls)
 	}
 }
 
@@ -1198,8 +1232,8 @@ func TestScheduledPassWaitsItsJitterBeforeTheArchive(t *testing.T) {
 	r.sleep = func(ctx context.Context, d time.Duration) { waited = d }
 	r.now = func() time.Time { return time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC) }
 	r.runScheduled(context.Background())
-	if waited != 7*time.Minute || len(a.calls) != 1 {
-		t.Fatalf("waited %v, Maintain calls %d; want 7m then one call", waited, len(a.calls))
+	if waited != 7*time.Minute || len(a.calls) != 2 {
+		t.Fatalf("waited %v, archive calls %d; want 7m, then the maintenance and the sizes", waited, len(a.calls))
 	}
 }
 

@@ -10,11 +10,11 @@ import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import type { Project } from '@/lib/api'
+import type { Project, ProjectAttribute } from '@/lib/api'
 import { attributesQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import AliasDialog from './AliasDialog'
-import { describeKey, usedLabel } from './breakdowns'
+import { describeKey } from './breakdowns'
 import LoadError from './LoadError'
 import MergeDialog from './MergeDialog'
 import RenameDialog from './RenameDialog'
@@ -52,13 +52,14 @@ export default function AttributesSection({ project, range, pending, onSaveBreak
   const [unaliasing, setUnaliasing] = useState<{ key: string; to: string; open: boolean } | null>(null)
   const [unbreaking, setUnbreaking] = useState<{ key: string; open: boolean } | null>(null)
   const { data, error, refetch } = useQuery(attributesQuery(project.project_id, range))
-  const rows = data?.attributes ?? []
-  // The saved list is built from what the switches show: every breakdown key
-  // is always listed, so the rows hold them all, and a key switched on twice
-  // before the list refetches is sent once.
-  const breakdowns = rows.filter((r) => r.breakdown).map((r) => r.key)
-  const atLimit = data !== undefined && data.breakdowns_max > 0 && data.breakdowns_used >= data.breakdowns_max
-  const budget = data ? usedLabel(data.breakdowns_used, data.breakdowns_max) : ''
+  // The switches show the project's own breakdown list; a breakdown key
+  // nothing in the range carried is listed after the received keys.
+  const breakdowns = project.attributes ?? []
+  const listed: ProjectAttribute[] = data?.attributes ?? []
+  const rows: ProjectAttribute[] = data
+    ? [...listed, ...breakdowns.filter((k) => !listed.some((r) => r.key === k))
+        .map((key) => ({ key, events: 0, values: 0, received: false, blocked: false }))]
+    : []
   // The server lists only the busiest received keys; say so when it left some out.
   const receivedListed = rows.filter((r) => r.received).length
   // What a rename or alias must know: the keys with data, and the blocked ones.
@@ -72,10 +73,7 @@ export default function AttributesSection({ project, range, pending, onSaveBreak
   return (
     <section aria-label="Attributes" className="flex flex-col gap-3 rounded-lg border p-4">
       <header>
-        <h2 className="text-base font-semibold">
-          Attributes
-          {data && <span className="text-sm font-normal text-muted-foreground"> · {budget}</span>}
-        </h2>
+        <h2 className="text-base font-semibold">Attributes</h2>
       </header>
       {data && rows.length === 0 && <p className="text-sm text-muted-foreground">No attributes received in this range.</p>}
       {rows.length > 0 && (
@@ -91,7 +89,7 @@ export default function AttributesSection({ project, range, pending, onSaveBreak
           <TableBody>
             {rows.map((r) => {
               const aliases = r.aliases ?? []
-              const received = describeKey(r, data?.values_cap ?? 0)
+              const received = describeKey(r)
               const custom = !r.key.startsWith('$')
               return (
                 <TableRow key={r.key} className={cn(r.blocked ? 'bg-destructive/5 hover:bg-destructive/10' : aliases.length > 0 && 'bg-sky-500/5 hover:bg-sky-500/10')}>
@@ -127,9 +125,8 @@ export default function AttributesSection({ project, range, pending, onSaveBreak
                   <TableCell>
                     <Switch
                       aria-label={`Break down ${r.key}`}
-                      checked={r.breakdown}
-                      disabled={pending || r.blocked || (!r.breakdown && atLimit)}
-                      title={!r.breakdown && atLimit ? budget : undefined}
+                      checked={breakdowns.includes(r.key)}
+                      disabled={pending || r.blocked}
                       onCheckedChange={(on) => toggle(r.key, on)}
                     />
                   </TableCell>

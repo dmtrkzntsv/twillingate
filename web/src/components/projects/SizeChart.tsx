@@ -6,7 +6,7 @@ import { formatBytes } from '@/lib/units'
 
 const config: ChartConfig = { total_bytes: { label: 'Data size' } }
 
-/** The project's measured size per day; days not measured are bridged, never drawn as zero. */
+/** The project's event file bytes per day as measured; days not measured are bridged, never drawn as zero. */
 export default function SizeChart({ series }: { series: UsageDay[] }) {
   const measured = series.flatMap((d) => (d.total_bytes === null ? [] : [d.total_bytes]))
   if (measured.length === 0) return <p className="text-sm text-muted-foreground">No size measured in this range.</p>

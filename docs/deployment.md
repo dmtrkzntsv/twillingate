@@ -422,15 +422,13 @@ with a server on the same data directory.
 Every CLI command on a systemd host needs the unit's environment:
 `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate project list'`.
 Aggregation, pruning, incremental vacuum and the daily history in
-`usage_history` (each project's disk use, declared attributes, views,
-events and measure samples, and attribute keys, values and values folded
-into `(other)` per day, and the database's size and the caps in force,
-which `usage` reads and which outlive the aggregates' retention) run daily at
+`usage_history` (the database's size and, in the process that keeps the
+event files, each project's file bytes, per day, which `usage` reads) run daily at
 03:00 UTC and the visitor salt rotates at 00:00 UTC; a catch-up pass at startup means downtime
 across those times skips no day. With `LOG_FILE` set, install
 `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.
 
-The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began are copied in once, by hand, with `twillingate events import` (stop the ingest service first). The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (every widget's SQL), `query`, the analytics tools (`views_overview` through `identities`), the count of events in `limits` and the console's event names and newest days read them and the tables derived from them; `list_attributes` and `usage` still read SQLite.
+The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began are copied in once, by hand, with `twillingate events import` (stop the ingest service first). The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (every widget's SQL), `query`, the analytics tools (`views_overview` through `identities`), the count of events in `limits`, `list_attributes`, `usage` and the console's event names and newest days read them and the tables derived from them.
 
 ### Back up and restore
 

@@ -6,7 +6,6 @@ import { ChartContainer, ChartTooltip, type ChartConfig } from '@/components/ui/
 import { legend, tooltip } from '@/components/chart-parts'
 import { axis, formatTick, grid, MAX_BAR, niceTicks, seriesColor, valueAxis } from '@/lib/chart'
 import { formatValue } from '@/lib/format'
-import type { UsageDay } from '@/lib/api'
 import { usageQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { formatAgo, formatBytes, formatDay } from '@/lib/units'
@@ -30,30 +29,7 @@ function Tile({ label, value, hint }: { label: string; value: string; hint?: str
   )
 }
 
-/**
- * The project's attributes over the range: the latest declared count, and
- * from the days the daily pass counted, the busiest day's keys and values
- * received and every value folded into (other).
- */
-function AttributesTile({ series }: { series: UsageDay[] }) {
-  const declared = series.findLast((d) => d.declared_attributes !== null)?.declared_attributes
-  const counted = series.filter((d) => d.attribute_values !== null)
-  const max = (pick: (d: UsageDay) => number | null) => Math.max(...counted.map((d) => pick(d) ?? 0))
-  const folded = counted.reduce((n, d) => n + (d.attribute_values_folded ?? 0), 0)
-  return (
-    <Tile
-      label="Attributes"
-      value={declared === undefined || declared === null ? '—' : `${declared} declared`}
-      hint={
-        counted.length === 0
-          ? 'received values are counted nightly'
-          : `up to ${max((d) => d.attribute_keys).toLocaleString()} keys and ${max((d) => d.attribute_values).toLocaleString()} values a day · ${folded.toLocaleString()} folded into (other)`
-      }
-    />
-  )
-}
-
-/** Events per day by family, the measured size per day, and tiles for total, freshness, size and days kept. */
+/** Events per day by family, the measured file size per day, and tiles for total, freshness, size and the first day kept. */
 export default function UsageSection({ projectId, range }: { projectId: number; range: { from: string; to: string } }) {
   const { data, error, isError, isPlaceholderData, refetch } = useQuery({
     ...usageQuery({ project_id: projectId, from: range.from, to: range.to }),
@@ -74,8 +50,8 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
       ) : !s ? (
         <div aria-hidden className="flex flex-col gap-3">
           <Skeleton className="h-56 w-full" />
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            {[0, 1, 2, 3, 4].map((i) => <Skeleton key={i} className="h-20" />)}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-20" />)}
           </div>
         </div>
       ) : (
@@ -110,16 +86,13 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
             <h3 className="text-sm font-medium">Data size</h3>
             <SizeChart series={s.series} />
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <Tile label="Events" value={(s.totals.views + s.totals.events + s.totals.measures).toLocaleString()}
               hint={`${s.totals.views.toLocaleString()} views · ${s.totals.events.toLocaleString()} product · ${s.totals.measures.toLocaleString()} measures`} />
             <Tile label="Last received" value={s.last_received_at ? formatAgo(s.last_received_at) : 'Nothing received yet'} />
             <Tile label="Data size" value={s.size ? formatBytes(s.size.total_bytes) : 'Not measured yet'}
-              hint={s.size
-                ? `${formatBytes(s.size.raw_bytes)} raw · ${formatBytes(s.size.aggregate_bytes)} aggregates · estimate, measured ${formatDay(s.size.measured_at)}`
-                : 'measured by the daily pass'} />
-            <AttributesTile series={s.series} />
-            <Tile label="Days kept" value={`${s.raw_days + s.rolled_up_days}`} hint={`${s.raw_days} raw · ${s.rolled_up_days} rolled up${s.first_day ? ` · since ${s.first_day}` : ''}`} />
+              hint={s.size ? `event files, measured ${formatDay(s.size.measured_at)}` : 'measured by the daily pass'} />
+            <Tile label="First day" value={s.first_day ?? '—'} hint={s.first_day ? 'the oldest day the event files hold' : 'nothing kept yet'} />
           </div>
         </div>
       )}

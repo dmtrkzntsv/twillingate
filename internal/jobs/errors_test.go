@@ -164,11 +164,11 @@ func (f *faultyStore) IncrementalVacuum(ctx context.Context) error {
 	return f.Store.IncrementalVacuum(ctx)
 }
 
-func (f *faultyStore) RecordUsageHistory(ctx context.Context, now time.Time) error {
+func (f *faultyStore) RecordUsageHistory(ctx context.Context, now time.Time, fileBytes map[int64]int64) error {
 	if f.shouldFail("RecordUsageHistory") {
 		return errBoom
 	}
-	return f.Store.RecordUsageHistory(ctx, now)
+	return f.Store.RecordUsageHistory(ctx, now, fileBytes)
 }
 
 // setupFaulty is setup, but returns a *Runner built over a faultyStore so

@@ -131,7 +131,7 @@ func TestOperationsOnClosedDB(t *testing.T) {
 			return db.PruneAggregates(ctx, 1, day("2026-01-01"))
 		},
 		"IncrementalVacuum":  func() error { return db.IncrementalVacuum(ctx) },
-		"RecordUsageHistory": func() error { return db.RecordUsageHistory(ctx, time.Now()) },
+		"RecordUsageHistory": func() error { return db.RecordUsageHistory(ctx, time.Now(), map[int64]int64{1: 1}) },
 		"AggregateViewDay":   func() error { return db.AggregateViewDay(ctx, 1, day("2026-01-01"), defaultAttrsTopN) },
 		"Migrate":            func() error { return db.Migrate(ctx) },
 		"WriteEvents(views)": func() error {

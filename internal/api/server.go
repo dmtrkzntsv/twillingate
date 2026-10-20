@@ -54,8 +54,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	h := &host{db: db, subs: subs, reg: reg, ops: ops, rep: rep,
 		ingestURL: cfg.IngestURL, logger: logger, limits: limitsFrom(cfg),
 		ingestDisabled: cfg.IngestDisabled, files: files, eventsDir: cfg.EventsDir,
-		queryTimeout: cfg.Console.QueryTimeout, queryRows: cfg.Console.QueryMaxRows,
-		valuesCap: cfg.AttributeValuesTopN, breakdownsMax: cfg.AttributeBreakdownsMax}
+		queryTimeout: cfg.Console.QueryTimeout, queryRows: cfg.Console.QueryMaxRows}
 	if files != nil {
 		h.events = h.newHostEventCount()
 		// Counted from the start, so the first limits read (the Projects
