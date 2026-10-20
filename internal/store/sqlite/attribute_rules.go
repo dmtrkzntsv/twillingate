@@ -4,23 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
-
-// jsonPath is the SQLite JSON path of one top-level key, quoted so that a
-// dot, a slash or a space in the key is part of its name, never a step
-// into a nested object. SQLite reads a quoted label as a JSON string, so a
-// backslash and a double quote are escaped: unescaped, `a\b` would read as
-// "a" and a backspace, and match nothing. manage refuses a key containing
-// `"` (spec D5); escaping it here is defensive. The path is always bound as
-// a parameter.
-func jsonPath(key string) string {
-	return `$."` + jsonPathEscaper.Replace(key) + `"`
-}
-
-var jsonPathEscaper = strings.NewReplacer(`\`, `\\`, `"`, `\"`)
 
 // LoadAttributeRules is every attribute rule (rules with kind 'attribute'),
 // by project and key: the registry snapshot loads them (list_attributes
@@ -44,22 +30,16 @@ func (d *DB) LoadAttributeRules(ctx context.Context) ([]store.AttributeRule, err
 	return out, rows.Err()
 }
 
-// RenameAttribute renames an attribute key of one project's product and
-// measures events (spec D6, D7): in one transaction the raw rows, the
-// attribute aggregates, usage_attributes, the catalog and the rules move
-// from `from` to `to`. A raw row carrying both keeps `to`'s value (the
-// target wins). A `to` that is blocked is store.ErrConflict, merge or not;
-// a `to` with stored data is store.ErrConflict unless merge is set, and
-// merged rows are summed (D8). It returns the rows rewritten per table.
-// After the commit the project's remembered usage triples are forgotten,
-// the usage rows having moved.
-func (d *DB) RenameAttribute(ctx context.Context, projectID int64, from, to string, merge bool,
-	a store.AuditEntry) (map[string]int64, error) {
+// RenameAttribute keeps a rename rule from `from` to `to` on one project's
+// product and measures events, which the event files apply on read (spec
+// D6, D7): no event is rewritten. The catalog row moves with it. A `to`
+// that is blocked is store.ErrConflict; whether `to` already has data is
+// manage's to ask the files.
+func (d *DB) RenameAttribute(ctx context.Context, projectID int64, from, to string, a store.AuditEntry) error {
 	if from == to {
-		return nil, fmt.Errorf("rename attribute %s: from and to are the same key: %w", from, store.ErrInvalid)
+		return fmt.Errorf("rename attribute %s: from and to are the same key: %w", from, store.ErrInvalid)
 	}
-	rewritten := map[string]int64{}
-	err := d.tx(ctx, func(tx *sql.Tx) error {
+	return d.tx(ctx, func(tx *sql.Tx) error {
 		var blocked bool
 		if err := tx.QueryRowContext(ctx,
 			`SELECT EXISTS(SELECT 1 FROM rules WHERE project_id=?1 AND kind='attribute' AND family='event' AND name=?2 AND action='block')`,
@@ -69,43 +49,6 @@ func (d *DB) RenameAttribute(ctx context.Context, projectID int64, from, to stri
 		if blocked {
 			return fmt.Errorf("rename attribute %s to %s: %s is blocked; to stop receiving %s, block it: %w",
 				from, to, to, from, store.ErrConflict)
-		}
-		if !merge {
-			var has bool
-			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM usage_attributes WHERE project_id=?1 AND attr_key=?2)
-				OR EXISTS(SELECT 1 FROM agg_product_attrs WHERE project_id=?1 AND attr_key=?2)
-				OR EXISTS(SELECT 1 FROM agg_measures_attrs WHERE project_id=?1 AND attr_key=?2)`,
-				projectID, to).Scan(&has); err != nil {
-				return fmt.Errorf("rename attribute: look for %s: %w", to, err)
-			}
-			if has {
-				return fmt.Errorf("rename attribute %s to %s: %s already has data; merge %s into it instead: %w",
-					from, to, to, from, store.ErrConflict)
-			}
-		}
-		res, err := tx.ExecContext(ctx, `UPDATE events SET attributes = CASE
-			  WHEN json_type(attributes, ?3) IS NULL
-			    THEN json_set(json_remove(attributes, ?2), ?3, json_extract(attributes, ?2))
-			  ELSE json_remove(attributes, ?2) END
-			WHERE project_id = ?1 AND family IN ('product', 'measures') AND json_type(attributes, ?2) IS NOT NULL`,
-			projectID, jsonPath(from), jsonPath(to))
-		if err != nil {
-			return fmt.Errorf("rename attribute events: %w", err)
-		}
-		if rewritten["events"], err = res.RowsAffected(); err != nil {
-			return err
-		}
-		for _, m := range attributeMoves {
-			res, err := tx.ExecContext(ctx, m.upsert, projectID, from, to)
-			if err != nil {
-				return fmt.Errorf("rename attribute %s: %w", m.table, err)
-			}
-			if rewritten[m.table], err = res.RowsAffected(); err != nil {
-				return fmt.Errorf("rename attribute %s: %w", m.table, err)
-			}
-			if _, err := tx.ExecContext(ctx, m.remove, projectID, from); err != nil {
-				return fmt.Errorf("rename attribute %s: %w", m.table, err)
-			}
 		}
 		if err := renameCatalog(ctx, tx, projectID, from, to); err != nil {
 			return err
@@ -132,45 +75,6 @@ func (d *DB) RenameAttribute(ctx context.Context, projectID int64, from, to stri
 		}
 		return auditAndBump(ctx, tx, a)
 	})
-	if err != nil {
-		return nil, err
-	}
-	d.seen.forget(projectID)
-	return rewritten, nil
-}
-
-// attributeMoves are the per-key tables a rename moves, as aggregateMoves
-// for event names but keyed on attr_key: an upsert of the source rows
-// under the new key, summing the rows that meet (a merge, D7, D8), then a
-// delete of the source rows. The WHERE true is required by SQLite's parser
-// for an upsert from a SELECT. In usage_attributes a NULL max_values (not
-// yet counted) yields to a number; the next daily pass recounts the day.
-var attributeMoves = []struct{ table, upsert, remove string }{
-	{"agg_product_attrs",
-		`INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups)
-		 SELECT project_id, day, event_name, ?3, attr_value, count, unique_users, unique_groups FROM agg_product_attrs
-		 WHERE project_id=?1 AND attr_key=?2 AND true
-		 ON CONFLICT (project_id, day, event_name, attr_key, attr_value) DO UPDATE SET
-		   count = count + excluded.count, unique_users = unique_users + excluded.unique_users,
-		   unique_groups = unique_groups + excluded.unique_groups`,
-		`DELETE FROM agg_product_attrs WHERE project_id=?1 AND attr_key=?2`},
-	{"agg_measures_attrs",
-		`INSERT INTO agg_measures_attrs (project_id, day, event_name, measure, attr_key, attr_value, bucket, samples, weight, sum)
-		 SELECT project_id, day, event_name, measure, ?3, attr_value, bucket, samples, weight, sum FROM agg_measures_attrs
-		 WHERE project_id=?1 AND attr_key=?2 AND true
-		 ON CONFLICT (project_id, day, event_name, measure, attr_key, attr_value, bucket) DO UPDATE SET
-		   samples = samples + excluded.samples, weight = weight + excluded.weight, sum = sum + excluded.sum`,
-		`DELETE FROM agg_measures_attrs WHERE project_id=?1 AND attr_key=?2`},
-	{"usage_attributes",
-		`INSERT INTO usage_attributes (project_id, day, attr_key, events, max_values)
-		 SELECT project_id, day, ?3, events, max_values FROM usage_attributes
-		 WHERE project_id=?1 AND attr_key=?2 AND true
-		 ON CONFLICT (project_id, day, attr_key) DO UPDATE SET
-		   events = events + excluded.events,
-		   max_values = CASE WHEN max_values IS NULL THEN excluded.max_values
-		                     WHEN excluded.max_values IS NULL THEN max_values
-		                     ELSE max(max_values, excluded.max_values) END`,
-		`DELETE FROM usage_attributes WHERE project_id=?1 AND attr_key=?2`},
 }
 
 // renameCatalog moves `from`'s catalog row to `to` (D7): `to` is a
@@ -201,13 +105,13 @@ func renameCatalog(ctx context.Context, tx *sql.Tx, projectID int64, from, to st
 	return nil
 }
 
-// BlockAttribute keeps a block rule for key (D10): ingest and the store
-// strip the key from later events, the daily pass drops its aggregates
-// (D12), and it is no longer a breakdown. A block replaces a rename rule of
+// BlockAttribute keeps a block rule for key (D10): ingest strips the key
+// from later events, the event files read none of its values, and it is
+// no longer a breakdown. A block replaces a rename rule of
 // the same key; a rename pointing at the key stays. Blocking a blocked key
 // changes nothing but the audit row.
 func (d *DB) BlockAttribute(ctx context.Context, projectID int64, key string, a store.AuditEntry) error {
-	err := d.tx(ctx, func(tx *sql.Tx) error {
+	return d.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO rules (project_id, kind, family, name, action) VALUES (?, 'attribute', 'event', ?, 'block')
 			 ON CONFLICT (project_id, kind, family, name) DO UPDATE SET
@@ -221,16 +125,10 @@ func (d *DB) BlockAttribute(ctx context.Context, projectID int64, key string, a 
 		}
 		return auditAndBump(ctx, tx, a)
 	})
-	if err != nil {
-		return err
-	}
-	d.seen.forget(projectID)
-	return nil
 }
 
-// RemoveAttributeRule deletes the rule for key (D14): a removed rename
-// stops mapping (history stays where it went), a removed block stops
-// stripping. It is store.ErrNotFound when the key has no rule.
+// RemoveAttributeRule deletes the rule for key (D14): the event files
+// stop applying it on read, and ingest stops stripping it. It is store.ErrNotFound when the key has no rule.
 func (d *DB) RemoveAttributeRule(ctx context.Context, projectID int64, key string, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,

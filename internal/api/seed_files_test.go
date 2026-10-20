@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -56,6 +58,37 @@ func (f *hostFiles) SampleProject(ctx context.Context) (int64, error) {
 
 func (f *hostFiles) Timeout() time.Duration { return f.timeout }
 func (f *hostFiles) MaxRows() int           { return f.maxRows }
+
+// hostPresence is manage.Presence over a test host's event files, as
+// app's filePresence is over the console's: the target in the project's
+// whole history, with the registry's rules as they stand when asked.
+type hostPresence struct{ files *hostFiles }
+
+func (p hostPresence) HasEvents(ctx context.Context, projectID int64, family store.Family, name string) (bool, error) {
+	res, err := p.files.Query(ctx, archive.Scoped{SQL: `SELECT 1 FROM events WHERE project_id = CAST($p AS BIGINT) AND family = $f AND event_name = $n LIMIT 1`,
+		Args: []engine.Arg{{Name: "p", Value: strconv.FormatInt(projectID, 10)}, {Name: "f", Value: string(family)}, {Name: "n", Value: name}}})
+	return len(res.Rows) > 0, err
+}
+
+func (p hostPresence) HasAttribute(ctx context.Context, projectID int64, key string) (bool, error) {
+	res, err := p.files.Query(ctx, archive.Scoped{SQL: "SELECT column_name FROM (DESCRIBE SELECT * FROM events)"})
+	if err != nil {
+		return false, err
+	}
+	var cols []string
+	for _, row := range res.Rows {
+		if c, ok := row[0].(string); ok {
+			cols = append(cols, c)
+		}
+	}
+	col, ok := enginesql.AttrColumn(cols, key)
+	if !ok {
+		return false, nil
+	}
+	res, err = p.files.Query(ctx, archive.Scoped{SQL: "SELECT 1 FROM events WHERE project_id = CAST($p AS BIGINT) AND " + col + " IS NOT NULL LIMIT 1",
+		Args: []engine.Arg{{Name: "p", Value: strconv.FormatInt(projectID, 10)}}})
+	return len(res.Rows) > 0, err
+}
 
 // hostEngine is an engine on this test binary (TestMain serves the child,
 // archivetest.Child) over raw, its spill and slots under dir. It starts no

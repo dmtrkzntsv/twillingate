@@ -402,28 +402,28 @@ func (h *host) register(r *registrar) {
 		Description: "List a project's event rules: renames (name → to) and blocks, product and measures families."},
 		h.listEventRules)
 	expose(r, spec{Name: "rename_event", Annotations: write, Method: "POST", Path: p + "/event-rules/rename",
-		Description: "Rename a product or measures event to a name not in use: rewrites its stored events and aggregates, and stores later events sent under the old name under the new one. Refused onto a name with events (merge_event folds one event into another) or a blocked name. Widget SQL naming the old event is not rewritten."},
+		Description: "Rename a product or measures event to a name not in use: every read of the event files shows its events under the new name, history included, and ingest stores later events sent under the old name under the new one. Refused onto a name the files already have events of, rules applied (merge_event folds one event into another), or a blocked name. Widget SQL naming the old event is not rewritten."},
 		h.renameEvent)
 	expose(r, spec{Name: "merge_event", Annotations: destroy, Method: "POST", Path: p + "/event-rules/merge",
-		Description: "Merge a product or measures event into another of the same family: rewrites its stored events and aggregates under the target, and stores later events sent under the old name under the target. Cannot be undone; merged days' unique counts become an upper bound. The old name need not have events (an alias for an app version still in the field). Refused onto a blocked name. Widget SQL naming the old event is not rewritten."},
+		Description: "Merge a product or measures event into another of the same family: every read of the event files counts its events under the target, history included, and ingest stores later events sent under the old name under the target, which removing the rule does not split again. The old name need not have events (an alias for an app version still in the field). Refused onto a blocked name. Widget SQL naming the old event is not rewritten."},
 		h.mergeEvent)
 	expose(r, spec{Name: "block_event", Annotations: destroyIdem, Method: "POST", Path: p + "/event-rules/block",
-		Description: "Block a product or measures event: ingest accepts and drops it (with a warning), the next daily pass deletes its aggregates, and its stored raw events expire with the raw window. Nothing else is deleted. remove_event_rule unblocks."},
+		Description: "Block a product or measures event: ingest accepts and drops it (with a warning), and every read of the event files leaves its stored events out, history included. Nothing is deleted. remove_event_rule unblocks."},
 		h.blockEvent)
 	expose(r, spec{Name: "remove_event_rule", Annotations: idem, Method: "POST", Path: p + "/event-rules/remove",
-		Description: "Remove a project's rule for an event name: a rename stops mapping (history stays renamed), a block lets the event be stored again."},
+		Description: "Remove a project's rule for an event name: reads of the event files stop applying it, so events stored before the rule show as sent again (ingest stored the later ones as the rule said), and a block lets the event be stored again."},
 		h.removeEventRule)
 	expose(r, spec{Name: "rename_attribute", Annotations: write, Method: "POST", Path: p + "/attribute-rules/rename",
-		Description: "Rename a custom attribute key of a project's product and measures events to a key not in use: rewrites its stored events, aggregates and usage, keeps its breakdown, and stores later events sent with the old key under the new one (the new key's value wins when an event carries both). Refused onto a key with data (merge_attribute folds one key into another) or a blocked key, and for $ keys. Widget SQL naming the old key is not rewritten."},
+		Description: "Rename a custom attribute key of a project's product and measures events to a key not in use: every read of the event files shows its values under the new key, history included, it keeps its breakdown, and ingest stores later events sent with the old key under the new one (the new key's value wins when an event carries both). Refused onto a key the files already have values of, rules applied (merge_attribute folds one key into another), or a blocked key, and for $ keys. Widget SQL naming the old key is not rewritten."},
 		h.renameAttribute)
 	expose(r, spec{Name: "merge_attribute", Annotations: destroy, Method: "POST", Path: p + "/attribute-rules/merge",
-		Description: "Merge a custom attribute key into another: rewrites its stored events (the target's value wins where an event carries both), aggregates and usage under the target, and stores later events sent with the old key under the target. Cannot be undone; merged days' unique counts become an upper bound. The old key need not have data (an alias for an app version still in the field). Refused onto a blocked key, and for $ keys. Widget SQL naming the old key is not rewritten."},
+		Description: "Merge a custom attribute key into another: every read of the event files shows its values under the target, history included (the target's value wins where an event carries both), and ingest stores later events sent with the old key under the target, which removing the rule does not split again. The old key need not have data (an alias for an app version still in the field). Refused onto a blocked key, and for $ keys. Widget SQL naming the old key is not rewritten."},
 		h.mergeAttribute)
 	expose(r, spec{Name: "block_attribute", Annotations: destroyIdem, Method: "POST", Path: p + "/attribute-rules/block",
-		Description: "Block a custom attribute key: ingest strips it from events (with a warning) and stores the events without it, it stops being a breakdown, and the next daily pass deletes its aggregates; stored raw events keep it until their day leaves the raw window. Nothing else is deleted. remove_attribute_rule unblocks."},
+		Description: "Block a custom attribute key: ingest strips it from events (with a warning) and stores the events without it, it stops being a breakdown, and every read of the event files leaves its stored values out, history included. Nothing is deleted. remove_attribute_rule unblocks."},
 		h.blockAttribute)
 	expose(r, spec{Name: "remove_attribute_rule", Annotations: idem, Method: "POST", Path: p + "/attribute-rules/remove",
-		Description: "Remove a project's rule for an attribute key: a rename stops mapping (history stays renamed), a block lets the key be stored again."},
+		Description: "Remove a project's rule for an attribute key: reads of the event files stop applying it, so events stored before the rule show the key as sent again (ingest stored the later ones as the rule said), and a block lets the key be stored again."},
 		h.removeAttributeRule)
 	restOnly(r, spec{Name: "event_names", Method: "GET", Path: p + "/event-names",
 		Description: "A project's product and measures event names in a range with their event counts, the busiest 200, busiest first. For the console's Settings page; not an MCP tool (product_events and measures answer agents)."},

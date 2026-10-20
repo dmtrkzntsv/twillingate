@@ -1544,12 +1544,12 @@ func TestIngestAppliesEventRules(t *testing.T) {
 	ctx := context.Background()
 	ops := manage.NewOps(reg, st)
 	pid := reg.Snapshot(ctx).Projects()[0].ID
-	if _, _, err := ops.RenameEvent(ctx, "t", pid, "product", "old", "new"); err != nil {
+	if _, err := ops.RenameEvent(ctx, "t", pid, "product", "old", "new"); err != nil {
 		t.Fatal(err)
 	}
 	// x is renamed to spam before spam is blocked: a block on the target
 	// refuses the rename itself.
-	if _, _, err := ops.RenameEvent(ctx, "t", pid, "product", "x", "spam"); err != nil {
+	if _, err := ops.RenameEvent(ctx, "t", pid, "product", "x", "spam"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ops.BlockEvent(ctx, "t", pid, "product", "spam"); err != nil {
@@ -1600,7 +1600,7 @@ func TestIngestAppliesAttributeRules(t *testing.T) {
 	ctx := context.Background()
 	ops := manage.NewOps(reg, st)
 	pid := reg.Snapshot(ctx).Projects()[0].ID
-	if _, _, err := ops.RenameAttribute(ctx, "t", pid, "a", "b"); err != nil {
+	if _, err := ops.RenameAttribute(ctx, "t", pid, "a", "b"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ops.BlockAttribute(ctx, "t", pid, "x"); err != nil {

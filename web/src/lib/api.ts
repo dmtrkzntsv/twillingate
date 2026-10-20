@@ -656,18 +656,18 @@ export const endpoints = {
   eventRules: (id: number) => api<{ rules: EventRule[] }>(`/api/projects/${id}/event-rules`),
   eventNames: (id: number, q: RangeQuery) => api<{ events: EventName[] }>(`/api/projects/${id}/event-names${toQuery(q)}`),
   renameEvent: (id: number, body: { family: EventFamily; from: string; to: string }) =>
-    api<{ rule: EventRule; rewritten: Record<string, number> }>(`/api/projects/${id}/event-rules/rename`, json('POST', body)),
+    api<{ rule: EventRule }>(`/api/projects/${id}/event-rules/rename`, json('POST', body)),
   mergeEvent: (id: number, body: { family: EventFamily; from: string; to: string }) =>
-    api<{ rule: EventRule; rewritten: Record<string, number> }>(`/api/projects/${id}/event-rules/merge`, json('POST', body)),
+    api<{ rule: EventRule }>(`/api/projects/${id}/event-rules/merge`, json('POST', body)),
   blockEvent: (id: number, body: { family: EventFamily; name: string }) =>
     api<{ rule: EventRule }>(`/api/projects/${id}/event-rules/block`, json('POST', body)),
   removeEventRule: (id: number, body: { family: EventFamily; name: string }) =>
     api<{ status: string }>(`/api/projects/${id}/event-rules/remove`, json('POST', body)),
   listAttributes: (id: number, q: RangeQuery) => api<ProjectAttributes>(`/api/projects/${id}/attributes${toQuery(q)}`),
   renameAttribute: (id: number, body: { from: string; to: string }) =>
-    api<{ rule: AttributeRule; rewritten: Record<string, number> }>(`/api/projects/${id}/attribute-rules/rename`, json('POST', body)),
+    api<{ rule: AttributeRule }>(`/api/projects/${id}/attribute-rules/rename`, json('POST', body)),
   mergeAttribute: (id: number, body: { from: string; to: string }) =>
-    api<{ rule: AttributeRule; rewritten: Record<string, number> }>(`/api/projects/${id}/attribute-rules/merge`, json('POST', body)),
+    api<{ rule: AttributeRule }>(`/api/projects/${id}/attribute-rules/merge`, json('POST', body)),
   blockAttribute: (id: number, body: { key: string }) =>
     api<{ rule: AttributeRule }>(`/api/projects/${id}/attribute-rules/block`, json('POST', body)),
   removeAttributeRule: (id: number, body: { key: string }) =>

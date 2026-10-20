@@ -8,29 +8,21 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// writeAttrEvent stores one product event carrying attrs, so the keys have
-// data (usage_attributes) for a rename to meet.
-func writeAttrEvent(t *testing.T, st store.Store, project int64, id string, attrs map[string]string) {
-	t.Helper()
-	at := time.Date(2026, 10, 10, 10, 0, 0, 0, time.UTC)
-	err := st.WriteEvents(context.Background(), []store.Event{{
-		Family: store.FamilyProduct, ID: id, ProjectID: project, EventName: "clicked",
-		TS: at, ReceivedAt: at, Kind: "app", ActorID: "a", ActorKind: store.ActorConnection,
-		Attributes: attrs}})
-	if err != nil {
-		t.Fatal(err)
+// writeAttrEvent has the event files hold an event sent with attrs' keys.
+func writeAttrEvent(ops *Ops, project int64, attrs map[string]string) {
+	for k := range attrs {
+		presence(ops).sendKey(project, k)
 	}
 }
 
 func TestAttributeRuleRefusals(t *testing.T) {
-	ops, st, _, p, _ := ruleOps(t)
+	ops, _, _, p, _ := ruleOps(t)
 	ctx := context.Background()
-	writeAttrEvent(t, st, p, "e1", map[string]string{"taken": "x"})
+	writeAttrEvent(ops, p, map[string]string{"taken": "x"})
 
 	for name, c := range map[string]struct{ from, to string }{
 		"empty from":  {"", "b"},
@@ -46,10 +38,10 @@ func TestAttributeRuleRefusals(t *testing.T) {
 		"long to":     {"a", strings.Repeat("k", 65)},
 	} {
 		t.Run("rename "+name, func(t *testing.T) {
-			if _, _, err := ops.RenameAttribute(ctx, "t", p, c.from, c.to); !errors.Is(err, ErrInvalid) {
+			if _, err := ops.RenameAttribute(ctx, "t", p, c.from, c.to); !errors.Is(err, ErrInvalid) {
 				t.Fatalf("rename err = %v, want ErrInvalid", err)
 			}
-			if _, _, err := ops.MergeAttribute(ctx, "t", p, c.from, c.to); !errors.Is(err, ErrInvalid) {
+			if _, err := ops.MergeAttribute(ctx, "t", p, c.from, c.to); !errors.Is(err, ErrInvalid) {
 				t.Fatalf("merge err = %v, want ErrInvalid", err)
 			}
 		})
@@ -74,10 +66,10 @@ func TestAttributeRuleRefusals(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if _, _, err := ops.RenameAttribute(ctx, "t", 999, "a", "b"); !errors.Is(err, ErrNotFound) {
+	if _, err := ops.RenameAttribute(ctx, "t", 999, "a", "b"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("rename in unknown project: err = %v, want ErrNotFound", err)
 	}
-	if _, _, err := ops.MergeAttribute(ctx, "t", 999, "a", "b"); !errors.Is(err, ErrNotFound) {
+	if _, err := ops.MergeAttribute(ctx, "t", 999, "a", "b"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("merge in unknown project: err = %v, want ErrNotFound", err)
 	}
 	if _, err := ops.BlockAttribute(ctx, "t", 999, "a"); !errors.Is(err, ErrNotFound) {
@@ -89,10 +81,10 @@ func TestAttributeRuleRefusals(t *testing.T) {
 	if err := ops.RemoveAttributeRule(ctx, "t", p, "nothing"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("remove a missing rule: err = %v, want ErrNotFound", err)
 	}
-	if _, _, err := ops.RenameAttribute(ctx, "t", p, "a", "taken"); !errors.Is(err, ErrConflict) {
+	if _, err := ops.RenameAttribute(ctx, "t", p, "a", "taken"); !errors.Is(err, ErrConflict) {
 		t.Errorf("rename onto a key with data: err = %v, want ErrConflict", err)
 	}
-	if _, _, err := ops.MergeAttribute(ctx, "t", p, "a", "taken"); err != nil {
+	if _, err := ops.MergeAttribute(ctx, "t", p, "a", "taken"); err != nil {
 		t.Errorf("merge onto a key with data: %v", err)
 	}
 	if got := ops.Reg.Snapshot(ctx).AttributeRuleList(p); len(got) != 1 || got[0].Key != "a" {
@@ -101,7 +93,7 @@ func TestAttributeRuleRefusals(t *testing.T) {
 }
 
 func TestAttributeRulesReachSnapshot(t *testing.T) {
-	ops, st, reg, p, _ := ruleOps(t)
+	ops, _, reg, p, _ := ruleOps(t)
 	ctx := context.Background()
 	other, err := ops.CreateProject(ctx, "t", ProjectSpec{Name: "docs"})
 	if err != nil {
@@ -113,18 +105,15 @@ func TestAttributeRulesReachSnapshot(t *testing.T) {
 	if got := reg.Snapshot(ctx).AttributeRuleList(p); len(got) != 0 {
 		t.Fatalf("a project with no rules lists %v", got)
 	}
-	writeAttrEvent(t, st, p, "e1", map[string]string{"old": "x"})
+	writeAttrEvent(ops, p, map[string]string{"old": "x"})
 
-	rule, counts, err := ops.RenameAttribute(ctx, "t", p, "old", "new")
+	rule, err := ops.RenameAttribute(ctx, "t", p, "old", "new")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rule.ProjectID != p || rule.Key != "old" || rule.Action != store.EventRuleRename ||
 		rule.To != "new" || rule.CreatedAt == "" {
 		t.Errorf("rename rule = %+v", rule)
-	}
-	if counts["events"] != 1 {
-		t.Errorf("counts = %v, want one event rewritten", counts)
 	}
 	block, err := ops.BlockAttribute(ctx, "t", p, "junk")
 	if err != nil {
@@ -161,12 +150,12 @@ func TestAttributeRulesReachSnapshot(t *testing.T) {
 }
 
 func TestAttributeRuleAudit(t *testing.T) {
-	ops, st, _, p, path := ruleOps(t)
+	ops, _, _, p, path := ruleOps(t)
 	ctx := context.Background()
-	writeAttrEvent(t, st, p, "e1", map[string]string{"c": "x", "d": "y"})
+	writeAttrEvent(ops, p, map[string]string{"c": "x", "d": "y"})
 	steps := []func() error{
-		func() error { _, _, err := ops.RenameAttribute(ctx, "alice", p, "a", "b"); return err },
-		func() error { _, _, err := ops.MergeAttribute(ctx, "alice", p, "c", "d"); return err },
+		func() error { _, err := ops.RenameAttribute(ctx, "alice", p, "a", "b"); return err },
+		func() error { _, err := ops.MergeAttribute(ctx, "alice", p, "c", "d"); return err },
 		func() error { _, err := ops.BlockAttribute(ctx, "bob", p, "m"); return err },
 		func() error { return ops.RemoveAttributeRule(ctx, "bob", p, "m") },
 	}
@@ -215,7 +204,7 @@ func TestRuledBreakdownsAreRefused(t *testing.T) {
 	if _, err := ops.BlockAttribute(ctx, "t", p, "junk"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := ops.RenameAttribute(ctx, "t", p, "old", "new"); err != nil {
+	if _, err := ops.RenameAttribute(ctx, "t", p, "old", "new"); err != nil {
 		t.Fatal(err)
 	}
 	for _, keys := range [][]string{{"junk"}, {"old"}, {"plan", "junk"}, {"old", "plan"}} {
@@ -267,7 +256,7 @@ func TestMergingBreakdownsFreesBudget(t *testing.T) {
 	if got := reg.Snapshot(ctx).BreakdownsInUse(); got != 2 {
 		t.Fatalf("in use = %d, want 2", got)
 	}
-	if _, _, err := ops.MergeAttribute(ctx, "t", p, "plan", "tier"); err != nil {
+	if _, err := ops.MergeAttribute(ctx, "t", p, "plan", "tier"); err != nil {
 		t.Fatal(err)
 	}
 	snap := reg.Snapshot(ctx)

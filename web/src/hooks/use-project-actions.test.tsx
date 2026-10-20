@@ -115,8 +115,8 @@ describe('useProjectActions', () => {
   })
 
   it('renames, merges, blocks and removes event rules with their toasts, refetching rules, names and usage', async () => {
-    vi.spyOn(endpoints, 'renameEvent').mockResolvedValue({ rule: { family: 'product', name: 'a', action: 'rename', to: 'b' }, rewritten: {} })
-    vi.spyOn(endpoints, 'mergeEvent').mockResolvedValue({ rule: { family: 'product', name: 'a', action: 'rename', to: 'b' }, rewritten: {} })
+    vi.spyOn(endpoints, 'renameEvent').mockResolvedValue({ rule: { family: 'product', name: 'a', action: 'rename', to: 'b' } })
+    vi.spyOn(endpoints, 'mergeEvent').mockResolvedValue({ rule: { family: 'product', name: 'a', action: 'rename', to: 'b' } })
     vi.spyOn(endpoints, 'blockEvent').mockResolvedValue({ rule: { family: 'product', name: 'x', action: 'block' } })
     vi.spyOn(endpoints, 'removeEventRule').mockResolvedValue({ status: 'removed' })
     const { client, wrapper: w } = wrapper()
@@ -171,8 +171,8 @@ describe('useProjectActions', () => {
   })
 
   it('renames, merges, blocks and removes attribute rules with their toasts, refetching attributes, projects and usage', async () => {
-    vi.spyOn(endpoints, 'renameAttribute').mockResolvedValue({ rule: { key: 'a', action: 'rename', to: 'b' }, rewritten: {} })
-    vi.spyOn(endpoints, 'mergeAttribute').mockResolvedValue({ rule: { key: 'a', action: 'rename', to: 'b' }, rewritten: {} })
+    vi.spyOn(endpoints, 'renameAttribute').mockResolvedValue({ rule: { key: 'a', action: 'rename', to: 'b' } })
+    vi.spyOn(endpoints, 'mergeAttribute').mockResolvedValue({ rule: { key: 'a', action: 'rename', to: 'b' } })
     vi.spyOn(endpoints, 'blockAttribute').mockResolvedValue({ rule: { key: 'x', action: 'block' } })
     vi.spyOn(endpoints, 'removeAttributeRule').mockResolvedValue({ status: 'removed' })
     const { client, wrapper: w } = wrapper()

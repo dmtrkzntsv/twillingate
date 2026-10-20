@@ -49,8 +49,7 @@ type eventNameIn struct {
 }
 
 type renameEventOut struct {
-	Rule      eventRuleOut     `json:"rule"`
-	Rewritten map[string]int64 `json:"rewritten" jsonschema:"rows rewritten per table"`
+	Rule eventRuleOut `json:"rule"`
 }
 
 type blockEventOut struct {
@@ -90,24 +89,21 @@ func (h *host) listEventRules(ctx context.Context, in idIn) (listEventRulesOut, 
 }
 
 func (h *host) renameEvent(ctx context.Context, in renameEventIn) (renameEventOut, error) {
-	rule, rewritten, err := h.ops.RenameEvent(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.From, in.To)
-	return h.movedOut(ctx, in.ProjectID, rule, rewritten, err)
+	rule, err := h.ops.RenameEvent(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.From, in.To)
+	return h.movedOut(ctx, in.ProjectID, rule, err)
 }
 
 func (h *host) mergeEvent(ctx context.Context, in mergeEventIn) (renameEventOut, error) {
-	rule, rewritten, err := h.ops.MergeEvent(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.From, in.To)
-	return h.movedOut(ctx, in.ProjectID, rule, rewritten, err)
+	rule, err := h.ops.MergeEvent(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.From, in.To)
+	return h.movedOut(ctx, in.ProjectID, rule, err)
 }
 
-// movedOut answers a rename or a merge: the rule and the rows rewritten.
-func (h *host) movedOut(ctx context.Context, id int64, rule store.EventRule, rewritten map[string]int64, err error) (renameEventOut, error) {
+// movedOut answers a rename or a merge: the rule.
+func (h *host) movedOut(ctx context.Context, id int64, rule store.EventRule, err error) (renameEventOut, error) {
 	if err != nil {
 		return renameEventOut{}, h.ruleErr(ctx, id, err)
 	}
-	if rewritten == nil {
-		rewritten = map[string]int64{}
-	}
-	return renameEventOut{Rule: ruleOut(rule), Rewritten: rewritten}, nil
+	return renameEventOut{Rule: ruleOut(rule)}, nil
 }
 
 func (h *host) blockEvent(ctx context.Context, in eventNameIn) (blockEventOut, error) {

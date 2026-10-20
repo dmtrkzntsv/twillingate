@@ -52,10 +52,9 @@ func (c receivedKeys) add(e store.Event, day string) {
 // to INSERT OR IGNORE, which writes nothing when the row exists. Empty
 // after a restart, when each key costs one ignored insert per day.
 //
-// An attribute rename moves usage rows to another key, so it forgets the
-// project's triples (forget). gen counts the forgets: a batch remembers
-// only if none happened since it listed its unseen triples, since a rename
-// can commit between the batch's commit and its remember.
+// gen is the generation a batch lists its unseen triples at, and a batch
+// remembers only at the current one. Nothing moves usage rows any more (a
+// rename keeps only its rule), so it stays at zero until the table goes.
 type receivedSeen struct {
 	mu     sync.Mutex
 	keys   map[receivedKey]struct{}
@@ -109,20 +108,6 @@ func (s *receivedSeen) remember(written []receivedKey, gen uint64) {
 	for _, k := range written {
 		if k.day >= floor {
 			s.keys[k] = struct{}{}
-		}
-	}
-}
-
-// forget drops the project's triples, after a rename moved its usage rows
-// (spec D7): the next batch that carries one of its keys inserts the row
-// again, or finds it there.
-func (s *receivedSeen) forget(projectID int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.gen++
-	for k := range s.keys {
-		if k.project == projectID {
-			delete(s.keys, k)
 		}
 	}
 }

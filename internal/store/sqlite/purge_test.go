@@ -204,7 +204,7 @@ func TestPurgeArchivedDeletesProjectData(t *testing.T) {
 	if err := db.BlockAttribute(ctx, id, "email", audit); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.RenameAttribute(ctx, id, "tier", "plan", true, audit); err != nil {
+	if err := db.RenameAttribute(ctx, id, "tier", "plan", audit); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecForTest(

@@ -62,11 +62,11 @@ Projects live in a registry table, managed through the CLI or, over the API
 | Issue an ingest key | `twillingate key issue` | `issue_ingest_key` | `{project_id, label}`; returns the key **and** a paste-ready snippet |
 | List keys | `twillingate key list` | `list_ingest_keys` | `{project_id}` |
 | Disable / enable a key | `twillingate key disable` / `enable` | `disable_ingest_key` / `enable_ingest_key` | `{project_id, label}` |
-| Rename an event | — | `rename_event` | `{project_id, family, from, to}`; `family` is `product` or `measures`; returns the rule and the rows rewritten per table. See [Event rules](#event-rules) |
+| Rename an event | — | `rename_event` | `{project_id, family, from, to}`; `family` is `product` or `measures`; returns the rule. See [Event rules](#event-rules) |
 | Merge an event into another | — | `merge_event` | `{project_id, family, from, to}`; returns what `rename_event` does |
 | Block an event | — | `block_event` | `{project_id, family, name}` |
 | List / remove event rules | — | `list_event_rules` / `remove_event_rule` | `{project_id}` / `{project_id, family, name}` |
-| Rename an attribute | — | `rename_attribute` | `{project_id, from, to}`; custom keys only; returns the rule and the rows rewritten per table. See [Attribute rules](#attribute-rules) |
+| Rename an attribute | — | `rename_attribute` | `{project_id, from, to}`; custom keys only; returns the rule. See [Attribute rules](#attribute-rules) |
 | Merge an attribute into another | — | `merge_attribute` | `{project_id, from, to}`; returns what `rename_attribute` does |
 | Block an attribute | — | `block_attribute` | `{project_id, key}` |
 | Remove an attribute rule | — | `remove_attribute_rule` | `{project_id, key}`; `list_attributes` shows each rule on the keys it touches |
@@ -178,20 +178,27 @@ blocked one, is `conflict`. A name has at most one rule: blocking a renamed
 name replaces the rename, and renaming a blocked name replaces the block. Every
 rule operation is audited.
 
-`rename_event {project_id, family, from, to}` gives an event a name not in use:
-it rewrites the stored events and the family's aggregates from `from` to `to`
-in one transaction, keeps a rule, and returns it with `rewritten`, the rows
-changed per table. Events sent later under `from`, by an app version still in
-the field, are stored under `to`; they carry no warning. A name with no stored
-events is accepted: the rule alone is written. If `to` already has events or
-aggregates, the rename is refused: merge instead.
+A rule is applied on read: the event files keep every event as it was sent,
+and every read of them (dashboards, `query`, the analytics tools) applies the
+project's rules at once, history included. Ingest applies them too, so an
+event sent after the rule is stored as the rule says. Nothing stored is
+rewritten, and no rule operation waits on the size of the history.
+
+`rename_event {project_id, family, from, to}` gives an event a name not in use
+and returns the rule. Events sent later under `from`, by an app version still
+in the field, are stored under `to`; they carry no warning. A name with no
+stored events is accepted. Before writing the rule, the rename looks in the
+event files for an event of `to` in the project's whole history, read through
+the rules as they stand: if there is one, the rename is refused, merge
+instead. So a name only a rule fills counts too: once `A` is renamed to `B`,
+renaming `C` to `B` is refused and merging `C` into `B` is not. If the files
+cannot be read (the engine is down or the look-up times out), the rename fails
+with a server error and nothing is written.
 
 `merge_event {project_id, family, from, to}` does the same onto an event that
-may already have events, and answers the same. A merge cannot be undone. Raw
-events merge exactly; aggregates meet on their key and their counts, samples
-and sums add, but `unique_users` and `unique_groups` on merged days become an
-upper bound (someone who sent both names counts twice), and a merged day's
-attribute breakdown may hold more than `ATTRIBUTE_VALUES_TOP_N` values.
+may already have events, and answers the same, without looking in the files.
+Every read counts both names' events under `to`, so unique users and groups
+over merged days are exact.
 
 - **Chains and renaming back.** Renaming or merging B into C retargets every
   rule `A → B` to `A → C`, so a rule's target is never another rule's source.
@@ -207,22 +214,20 @@ attribute breakdown may hold more than `ATTRIBUTE_VALUES_TOP_N` values.
 - Ingest accepts the event and drops it, so a client sees `2xx` and does not
   retry, and the response carries a [warning](#responses-and-retry). Blocking
   `B` also drops events renamed to `B`.
-- The daily pass never aggregates a blocked name, and at its next run deletes
-  the name's existing aggregates (`agg_product_daily`, `agg_product_attrs`,
-  `agg_measures_daily`, `agg_measures_attrs`). Daily totals
-  (`agg_product_totals`) are not split by event and keep their values.
-- Nothing is deleted on request: the name's stored raw events stay readable
-  until their day leaves the raw window (`RETENTION_RAW_DAYS`).
+- Every read of the event files leaves the name's stored events out, history
+  included, from the moment the block is written.
+- Nothing is deleted: the stored events stay in the files until their month
+  leaves `RETENTION_DAYS`.
 - Events queued in the seconds before the block commits may still be stored.
 
-`remove_event_rule {project_id, family, name}` deletes the rule for `name`. A
-rename or merge stops mapping, and the history it rewrote stays where it went. A block stops
-dropping: events are stored again, and raw days still inside the window
-aggregate as usual. Removing a block before the next daily pass loses nothing;
-after it, the aggregated history of the name is gone. `list_event_rules
-{project_id}` answers `rules`, each `{family, name, action, to, created_at}`
-with `action` `rename` (left by a rename or a merge) or `block`, and no `to`
-for a block.
+`remove_event_rule {project_id, family, name}` deletes the rule for `name`, and
+reads stop applying it. Events stored before a rename or merge read under
+their own name again; those ingest stored under the target while the rule held
+stay there. A removed block shows the name's stored events again, and new ones
+are stored; those sent while it was blocked were dropped and stay gone.
+`list_event_rules {project_id}` answers `rules`, each `{family, name, action,
+to, created_at}` with `action` `rename` (left by a rename or a merge) or
+`block`, and no `to` for a block.
 
 The console lists a project's event names for these tools on its Settings page,
 from `GET /api/projects/{project_id}/event-names`, a route with no MCP tool
@@ -246,45 +251,35 @@ key that already has data, or renaming or merging onto a blocked one, is
 rename, and renaming a blocked key replaces the block. Every rule operation is
 audited.
 
-`rename_attribute {project_id, from, to}` gives a key a name not in use. In
-one transaction it rewrites everything that names `from` and keeps a rule; it
-returns the rule with `rewritten`, the rows changed in `events`,
-`agg_product_attrs`, `agg_measures_attrs` and `usage_attributes`:
+A rule is applied on read, as an event rule is: the event files keep every
+event as it was sent, and every read of them applies the project's attribute
+rules at once, history included. Ingest applies them too. Nothing stored is
+rewritten.
 
-- **Raw events** of the project's product and measures families that carry
-  `from`: its value moves to `to`. Where an event carries both, **the target
-  wins**: `to`'s value is kept and `from` is removed.
-- **`agg_product_attrs` and `agg_measures_attrs`**: rows for `from` become
-  rows for `to`.
-- **Usage**: the per-day key counts `list_attributes` reads
-  (`usage_attributes`).
-- **The catalog** (not counted in `rewritten`): `from`'s row goes, and `to`
-  is a breakdown if either was, so the `attr_*` column follows the key and the
-  breakdown budget never grows.
+`rename_attribute {project_id, from, to}` gives a key a name not in use and
+returns the rule:
 
-A rename or a merge rewrites the project's raw product and measures rows in
-that one transaction, so its time grows with them: about 20 µs a raw row on
-modest hardware, some 1.5 s per 66,000 rows. Ingest is buffered meanwhile: events wait in the write buffer, and a very long rewrite
-on a huge project can fill it (`BUFFER_CAPACITY`), past which events are
-dropped.
+- **Reads** of the project's product and measures events show `from`'s
+  values under `to`, history included, and `from` reads as absent. Where an
+  event carries both, **the target wins**: `to`'s value is kept.
+- **Later events** sent with `from`, by an app version still in the field, are
+  stored with `to`, with no warning. The target wins there too: an event that
+  sends both keeps `to`'s value, and of several keys renamed to one target
+  that arrive without it, the first in key order wins.
+- **The catalog**: `from`'s row goes, and `to` is a breakdown if either was,
+  so the `attr_*` column follows the key and the breakdown budget never grows.
 
-Events sent later with `from`, by an app version still in the field, are
-stored with `to`, with no warning. The target wins there too: an event that
-sends both keeps `to`'s value, and of several keys renamed to one target that
-arrive without it, the first in key order wins. A key with no stored data is
-accepted: the rule alone is written. If `to` already has data (a usage row in
-the raw window, or aggregates), the rename is refused: merge instead.
+A key with no stored values is accepted. Before writing the rule, the rename
+looks in the event files for a value of `to` in the project's whole history,
+read through the rules as they stand: if there is one, the rename is refused,
+merge instead. A key only a rule fills counts too, as for events. If the
+files cannot be read, the rename fails with a server error and nothing is
+written.
 
 `merge_attribute {project_id, from, to}` does the same onto a key that may
-already have data, and answers the same. `from` needs no data: that is how an
-alias is added for an app version not yet shipped. A merge cannot be undone.
-Raw events merge exactly; aggregates meet on their key and their counts,
-samples, weights and sums add, but `unique_users` and `unique_groups` on
-merged days become an upper bound (someone whose events carried both keys
-counts twice), and a merged day may hold more than `ATTRIBUTE_VALUES_TOP_N`
-values for the key. The merged days' usage is an upper bound too, until the
-next daily pass recounts it from the raw events. Merging two breakdowns
-leaves one, freeing a place in the budget.
+already have values, and answers the same, without looking in the files.
+`from` needs no values: that is how an alias is added for an app version not
+yet shipped. Merging two breakdowns leaves one, freeing a place in the budget.
 
 - **Chains and renaming back.** Renaming or merging B into C retargets every
   rule `A → B` to `A → C`, so a rule's target is never another rule's source.
@@ -293,32 +288,26 @@ leaves one, freeing a place in the budget.
 - **Never onto a blocked key.** Neither a rename nor a merge drops what it
   moves: to stop receiving a key, block it.
 - **Widget SQL is not rewritten.** A widget or `query` that names the old key
-  (`json_extract(attributes, '$.old')`, `attr_old`) finds nothing from the
-  rename on; edit it.
+  (`attr_old`) finds nothing from the rename on; edit it.
 
 `block_attribute {project_id, key}` strips a key from events, never the
 events:
 
 - Ingest stores the event without the key, and the response carries a
   [warning](#responses-and-retry), once per key per batch, on the first event
-  that carried it. Blocking `B` also strips keys renamed to `B`. Events queued
-  before the block commits are stripped too: the store applies the rules again
-  as it writes.
+  that carried it. Blocking `B` also strips keys renamed to `B`.
 - The key stops being a breakdown, and with it go its `attr_*` column and its
   place in the budget.
-- The daily pass never aggregates a blocked key, and at its next run deletes
-  the key's existing rows in `agg_product_attrs` and `agg_measures_attrs`.
-- Nothing is deleted on request: stored raw events keep the key until their
-  day leaves the raw window (`RETENTION_RAW_DAYS`). The event files keep it
-  too, but every read of them hides it, so `list_attributes` lists it as not
-  received.
+- Every read of the event files hides the key's stored values, history
+  included, so `list_attributes` lists it as not received. Nothing is
+  deleted: the files keep the values until their month leaves
+  `RETENTION_DAYS`.
 
-`remove_attribute_rule {project_id, key}` deletes the rule for `key`. A rename
-or merge stops mapping, and the history it rewrote stays where it went. A
-block stops stripping: the key is stored again. Removing a block before the
-next daily pass keeps the key's aggregates; after it, the key's aggregated
-breakdown is gone for good. Either way, events stored while the key was
-blocked stay without it.
+`remove_attribute_rule {project_id, key}` deletes the rule for `key`, and
+reads stop applying it. Events stored before a rename or merge show the key as
+sent again; those ingest stored with the target while the rule held keep it. A
+removed block shows the key's stored values again, and new ones are stored;
+events stored while it was blocked stay without it.
 
 `list_attributes` shows each rule on the keys it touches, so every rule can be
 found there: a blocked key is marked `blocked`; the keys renamed or merged into
@@ -1574,11 +1563,11 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `POST` | `/api/projects/{project_id}/keys/{label}/disable` | `disable_ingest_key` | — |
 | `POST` | `/api/projects/{project_id}/keys/{label}/enable` | `enable_ingest_key` | — |
 | `GET` | `/api/projects/{project_id}/event-rules` | `list_event_rules` | — → `{"rules":[{"family","name","action","to","created_at"}]}`; `to` is absent for a block |
-| `POST` | `/api/projects/{project_id}/event-rules/rename` | `rename_event` | body: `family`, `from`, `to` → `{"rule":{…},"rewritten":{"events":3,…}}` |
+| `POST` | `/api/projects/{project_id}/event-rules/rename` | `rename_event` | body: `family`, `from`, `to` → `{"rule":{…}}` |
 | `POST` | `/api/projects/{project_id}/event-rules/merge` | `merge_event` | body: `family`, `from`, `to` → as `rename_event` |
 | `POST` | `/api/projects/{project_id}/event-rules/block` | `block_event` | body: `family`, `name` → `{"rule":{…}}` |
 | `POST` | `/api/projects/{project_id}/event-rules/remove` | `remove_event_rule` | body: `family`, `name` → `{"status":"removed"}`; a body because names may contain `/` |
-| `POST` | `/api/projects/{project_id}/attribute-rules/rename` | `rename_attribute` | body: `from`, `to` → `{"rule":{"key","action","to","created_at"},"rewritten":{"events":3,…}}` |
+| `POST` | `/api/projects/{project_id}/attribute-rules/rename` | `rename_attribute` | body: `from`, `to` → `{"rule":{"key","action","to","created_at"}}` |
 | `POST` | `/api/projects/{project_id}/attribute-rules/merge` | `merge_attribute` | body: `from`, `to` → as `rename_attribute` |
 | `POST` | `/api/projects/{project_id}/attribute-rules/block` | `block_attribute` | body: `key` → `{"rule":{…}}`; `to` is absent for a block |
 | `POST` | `/api/projects/{project_id}/attribute-rules/remove` | `remove_attribute_rule` | body: `key` → `{"status":"removed"}`; a body because keys may contain `/` |

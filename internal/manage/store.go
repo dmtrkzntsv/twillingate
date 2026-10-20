@@ -29,13 +29,13 @@ type Store interface {
 	// Event rules: audited by the store from the AuditEntry passed, with a
 	// config bump so other processes reload the snapshot.
 	LoadEventRules(ctx context.Context) ([]store.EventRule, error)
-	RenameEvent(ctx context.Context, projectID int64, family store.Family, from, to string, merge bool, a store.AuditEntry) (map[string]int64, error)
+	RenameEvent(ctx context.Context, projectID int64, family store.Family, from, to string, a store.AuditEntry) error
 	BlockEvent(ctx context.Context, projectID int64, family store.Family, name string, a store.AuditEntry) error
 	RemoveEventRule(ctx context.Context, projectID int64, family store.Family, name string, a store.AuditEntry) error
 
 	// Attribute rules: the same, for custom attribute keys.
 	LoadAttributeRules(ctx context.Context) ([]store.AttributeRule, error)
-	RenameAttribute(ctx context.Context, projectID int64, from, to string, merge bool, a store.AuditEntry) (map[string]int64, error)
+	RenameAttribute(ctx context.Context, projectID int64, from, to string, a store.AuditEntry) error
 	BlockAttribute(ctx context.Context, projectID int64, key string, a store.AuditEntry) error
 	RemoveAttributeRule(ctx context.Context, projectID int64, key string, a store.AuditEntry) error
 

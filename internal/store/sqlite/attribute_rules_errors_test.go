@@ -15,9 +15,8 @@ func TestAttributeRuleOperationsReportStoreErrors(t *testing.T) {
 	abort := func(event, table string) string {
 		return `CREATE TRIGGER broken ` + event + ` ON ` + table + ` BEGIN SELECT RAISE(ABORT, 'broken'); END`
 	}
-	merge := func(db *DB) error {
-		_, err := db.RenameAttribute(ctx, 1, "a", "b", true, attrAudit)
-		return err
+	rename := func(db *DB) error {
+		return db.RenameAttribute(ctx, 1, "a", "b", attrAudit)
 	}
 	inTx := func(fn func(tx *sql.Tx) error) func(db *DB) error {
 		return func(db *DB) error { return db.tx(ctx, fn) }
@@ -32,29 +31,19 @@ func TestAttributeRuleOperationsReportStoreErrors(t *testing.T) {
 			_, err := db.LoadAttributeRules(ctx)
 			return err
 		}},
-		{"rename looks for a block", []string{`DROP TABLE rules`}, merge},
-		{"rename looks for the target's data", []string{`DROP TABLE usage_attributes`}, func(db *DB) error {
-			_, err := db.RenameAttribute(ctx, 1, "a", "b", false, attrAudit)
-			return err
-		}},
-		{"rename rewrites raw rows", []string{`DROP TABLE events`}, merge},
-		{"rename moves aggregates", []string{`DROP TABLE agg_product_attrs`}, merge},
-		{"rename removes the old aggregates", []string{
-			`INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users) VALUES (1, '2026-10-01', 'e', 'a', 'v', 1, 1)`,
-			abort("BEFORE DELETE", "agg_product_attrs"),
-		}, merge},
-		{"rename reads the catalog", []string{`DROP TABLE project_attributes`}, merge},
-		{"rename removes the old catalog row", []string{catalogA, abort("BEFORE DELETE", "project_attributes")}, merge},
-		{"rename adds the new catalog row", []string{catalogA, abort("BEFORE INSERT", "project_attributes")}, merge},
+		{"rename looks for a block", []string{`DROP TABLE rules`}, rename},
+		{"rename reads the catalog", []string{`DROP TABLE project_attributes`}, rename},
+		{"rename removes the old catalog row", []string{catalogA, abort("BEFORE DELETE", "project_attributes")}, rename},
+		{"rename adds the new catalog row", []string{catalogA, abort("BEFORE INSERT", "project_attributes")}, rename},
 		{"rename clears the target's rule", []string{
 			`INSERT INTO rules (project_id, kind, family, name, action, to_name) VALUES (1, 'attribute', 'event', 'b', 'rename', 'c')`,
 			abort("BEFORE DELETE", "rules"),
-		}, merge},
+		}, rename},
 		{"rename repoints the rules that pointed at it", []string{
 			`INSERT INTO rules (project_id, kind, family, name, action, to_name) VALUES (1, 'attribute', 'event', 'x', 'rename', 'a')`,
 			abort("BEFORE UPDATE", "rules"),
-		}, merge},
-		{"rename keeps its rule", []string{abort("BEFORE INSERT", "rules")}, merge},
+		}, rename},
+		{"rename keeps its rule", []string{abort("BEFORE INSERT", "rules")}, rename},
 		{"block keeps its rule", []string{abort("BEFORE INSERT", "rules")}, func(db *DB) error {
 			return db.BlockAttribute(ctx, 1, "a", attrAudit)
 		}},
@@ -67,15 +56,6 @@ func TestAttributeRuleOperationsReportStoreErrors(t *testing.T) {
 		{"insert reads the rules", []string{`DROP TABLE rules`}, inTx(func(tx *sql.Tx) error {
 			_, err := attributeRules(ctx, tx, []store.Event{{Family: store.FamilyProduct, ProjectID: 1}})
 			return err
-		})},
-		{"drop looks for attribute blocks", []string{`DROP TABLE rules`}, inTx(func(tx *sql.Tx) error {
-			return dropBlockedAttributeRows(ctx, tx, 1)
-		})},
-		{"drop deletes blocked keys", []string{
-			`INSERT INTO rules (project_id, kind, family, name, action) VALUES (1, 'attribute', 'event', 'x', 'block')`,
-			`DROP TABLE agg_product_attrs`,
-		}, inTx(func(tx *sql.Tx) error {
-			return dropBlockedAttributeRows(ctx, tx, 1)
 		})},
 	}
 	for _, c := range cases {

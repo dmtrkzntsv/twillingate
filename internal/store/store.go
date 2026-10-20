@@ -285,20 +285,16 @@ type Store interface {
 	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date, topN int) error
 	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
 	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
-	// DropBlockedAggregates deletes the project's per-event aggregates of
-	// every blocked event name (event rules D11), and the attribute
-	// aggregates of every blocked attribute key (project attributes D12).
-	DropBlockedAggregates(ctx context.Context, projectID int64) error
 	// Event rules (migration 039): LoadEventRules reads them all; the
 	// three mutations are audited from a in the same transaction.
 	LoadEventRules(ctx context.Context) ([]EventRule, error)
-	RenameEvent(ctx context.Context, projectID int64, family Family, from, to string, merge bool, a AuditEntry) (map[string]int64, error)
+	RenameEvent(ctx context.Context, projectID int64, family Family, from, to string, a AuditEntry) error
 	BlockEvent(ctx context.Context, projectID int64, family Family, name string, a AuditEntry) error
 	RemoveEventRule(ctx context.Context, projectID int64, family Family, name string, a AuditEntry) error
 	// Attribute rules: the same two actions on custom attribute keys,
 	// audited the same way.
 	LoadAttributeRules(ctx context.Context) ([]AttributeRule, error)
-	RenameAttribute(ctx context.Context, projectID int64, from, to string, merge bool, a AuditEntry) (map[string]int64, error)
+	RenameAttribute(ctx context.Context, projectID int64, from, to string, a AuditEntry) error
 	BlockAttribute(ctx context.Context, projectID int64, key string, a AuditEntry) error
 	RemoveAttributeRule(ctx context.Context, projectID int64, key string, a AuditEntry) error
 	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error

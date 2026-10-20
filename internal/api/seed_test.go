@@ -233,6 +233,7 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	// test side remembers it here, keyed by the host it belongs to.
 	testDBPaths[h] = path
 	h.events = h.newHostEventCount()
+	h.ops.Presence = hostPresence{files}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "analytics", Version: "test"},
 		&mcp.ServerOptions{Instructions: serverInstructions})

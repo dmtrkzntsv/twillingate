@@ -42,8 +42,8 @@ func TestListAttributesReadsTheFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, step := range []func() error{
-		func() error { _, _, err := h.ops.MergeAttribute(ctx, "test", 1, "old_ref", "ref"); return err },
-		func() error { _, _, err := h.ops.RenameAttribute(ctx, "test", 1, "tier_old", "tier2"); return err },
+		func() error { _, err := h.ops.MergeAttribute(ctx, "test", 1, "old_ref", "ref"); return err },
+		func() error { _, err := h.ops.RenameAttribute(ctx, "test", 1, "tier_old", "tier2"); return err },
 		func() error { _, err := h.ops.BlockAttribute(ctx, "test", 1, "noisy"); return err },
 		func() error { _, err := h.ops.BlockAttribute(ctx, "test", 1, "debug_blob"); return err },
 	} {
@@ -137,7 +137,7 @@ func TestListAttributesCapsTheKeys(t *testing.T) {
 			Attributes: map[string]string{k: "v"}})
 	}
 	writeHostEvents(t, h, evs...)
-	if _, _, err := h.ops.RenameAttribute(ctx, "test", 1, "tier_old", "tier"); err != nil {
+	if _, err := h.ops.MergeAttribute(ctx, "test", 1, "tier_old", "tier"); err != nil {
 		t.Fatal(err)
 	}
 	out, err := h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-21", To: "2026-08-21"}})
@@ -159,7 +159,7 @@ func TestListAttributesCapsTheKeys(t *testing.T) {
 	}
 
 	// A rule's key past the limit keeps its own counts.
-	if _, _, err := h.ops.MergeAttribute(ctx, "test", 1, "plan_old", "id_3"); err != nil {
+	if _, err := h.ops.MergeAttribute(ctx, "test", 1, "plan_old", "id_3"); err != nil {
 		t.Fatal(err)
 	}
 	out, err = h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-21", To: "2026-08-21"}})

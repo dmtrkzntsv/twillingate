@@ -35,6 +35,10 @@ type Ops struct {
 	// accepts submissions. Set by the caller after NewOps; below 1 means
 	// the default of 7.
 	FormDraftDays int
+	// Presence tells a rename whether its target already has events or
+	// values in the event files. Set by the caller after NewOps; nil (a
+	// process with no engine) skips the check.
+	Presence Presence
 
 	now func() time.Time
 }

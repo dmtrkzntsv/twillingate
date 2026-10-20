@@ -18,7 +18,7 @@ export interface ProjectActions {
   renameEvent(id: number, body: { family: EventFamily; from: string; to: string }): Promise<boolean | 'conflict'>
   /** Merges event `from` into event `to`, as it arrives and in what is stored; resolves true when done. */
   mergeEvent(id: number, body: { family: EventFamily; from: string; to: string }): Promise<boolean>
-  /** Drops an event as it arrives; the daily pass deletes its aggregates. */
+  /** Drops an event as it arrives and hides its stored events from every read. */
   blockEvent(id: number, body: { family: EventFamily; name: string }): Promise<boolean>
   /** Removes an event's rename or block rule. */
   removeEventRule(id: number, body: { family: EventFamily; name: string }): Promise<boolean>
@@ -31,7 +31,7 @@ export interface ProjectActions {
   renameAttribute(id: number, body: { from: string; to: string }): Promise<boolean | 'conflict'>
   /** Merges key `from` into key `to`, as it arrives and in what is stored; resolves true when done. */
   mergeAttribute(id: number, body: { from: string; to: string }): Promise<boolean>
-  /** Strips a key from events as they arrive; the daily pass deletes its aggregates. */
+  /** Strips a key from events as they arrive and hides its stored values from every read. */
   blockAttribute(id: number, body: { key: string }): Promise<boolean>
   /** Removes a key's rename or block rule. */
   removeAttributeRule(id: number, body: { key: string }): Promise<boolean>

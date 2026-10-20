@@ -52,13 +52,12 @@ func TestEventRulesRenameAndRemoveOverREST(t *testing.T) {
 		t.Fatalf("rename = %d %s", rec.Code, rec.Body)
 	}
 	var renamed struct {
-		Rule      ruleRow          `json:"rule"`
-		Rewritten map[string]int64 `json:"rewritten"`
+		Rule ruleRow `json:"rule"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &renamed); err != nil {
 		t.Fatalf("decode: %v\n%s", err, rec.Body)
 	}
-	if renamed.Rule.Name != name || renamed.Rule.To != "checkout" || renamed.Rule.Action != "rename" || renamed.Rewritten == nil {
+	if renamed.Rule.Name != name || renamed.Rule.To != "checkout" || renamed.Rule.Action != "rename" {
 		t.Errorf("rename = %s", rec.Body)
 	}
 
@@ -164,33 +163,15 @@ func TestEventRulesRefusalsOverREST(t *testing.T) {
 		t.Errorf("list of an unknown project = %d %s, want 404 naming the valid projects", rec.Code, rec.Body)
 	}
 
-	// Renaming onto a name that has events is refused, merging is not:
-	// "signup" has aggregated rows in project 1.
+	// Renaming onto a name that has events in the files is refused,
+	// merging is not: "signup" has events in project 1.
 	body := `{"family":"product","from":"old","to":"signup"}`
 	rec := serveREST(t, r, "POST", "/api/projects/1/event-rules/rename", body)
-	if rec.Code != http.StatusConflict {
+	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "signup already has events; merge old into it instead") {
 		t.Fatalf("rename onto an existing name = %d %s, want 409", rec.Code, rec.Body)
 	}
-	if _, err := rawExec(h.ops.St, `INSERT INTO agg_product_daily (project_id, day, event_name, count, unique_users)
-		VALUES (1,'2026-08-19','old',2,1)`); err != nil {
-		t.Fatal(err)
-	}
-	rec = serveREST(t, r, "POST", "/api/projects/1/event-rules/merge", body)
-	if rec.Code != http.StatusOK {
+	if rec := serveREST(t, r, "POST", "/api/projects/1/event-rules/merge", body); rec.Code != http.StatusOK {
 		t.Fatalf("merge = %d %s", rec.Code, rec.Body)
-	}
-	var out struct {
-		Rewritten map[string]int64 `json:"rewritten"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatal(err)
-	}
-	var sum int64
-	for _, n := range out.Rewritten {
-		sum += n
-	}
-	if out.Rewritten["agg_product_daily"] != 1 || sum < 1 {
-		t.Errorf("rewritten = %v, want agg_product_daily 1", out.Rewritten)
 	}
 
 	// Nothing merges into a blocked name.
@@ -239,7 +220,7 @@ func TestEventNamesReadTheFiles(t *testing.T) {
 	if _, err := h.ops.BlockEvent(ctx, "test", 3, "product", "spam"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := h.ops.RenameEvent(ctx, "test", 3, "product", "old", "c"); err != nil {
+	if _, err := h.ops.RenameEvent(ctx, "test", 3, "product", "old", "c"); err != nil {
 		t.Fatal(err)
 	}
 	// A row in SQLite alone is not read.

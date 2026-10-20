@@ -332,7 +332,7 @@ func seedBenchAttributeRules(b *testing.B, db *DB) {
 	for _, r := range [][2]string{
 		{"old_plan", "plan"}, {"tier", "plan"}, {"ver", "version"}, {"lang", "locale"}, {"key01", "key01_renamed"},
 	} {
-		if _, err := db.RenameAttribute(ctx, benchProject, r[0], r[1], false, a); err != nil {
+		if err := db.RenameAttribute(ctx, benchProject, r[0], r[1], a); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -341,81 +341,5 @@ func seedBenchAttributeRules(b *testing.B, db *DB) {
 			b.Fatal(err)
 		}
 	}
-}
-
-// BenchmarkRenameAttribute times one RenameAttribute of key0, which every
-// event of the BenchmarkCountReceived window carries (30 days x 2,000
-// product events and 200 measure samples): the raw rewrite of 66,000 rows
-// and the usage rows, in one transaction while ingest waits. Iterations
-// rename key0 to keyX and back.
-func BenchmarkRenameAttribute(b *testing.B) {
-	db := setupBenchDB(b)
-	seedReceivedWindow(b, db)
-	ctx := context.Background()
-	a := store.AuditEntry{Actor: "bench", Action: "attribute.rename"}
-	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
-		from, to := "key0", "keyX"
-		if i%2 == 1 {
-			from, to = to, from
-		}
-		got, err := db.RenameAttribute(ctx, benchProject, from, to, false, a)
-		if err != nil {
-			b.Fatal(err)
-		}
-		if got["events"] != 30*2200 {
-			b.Fatalf("rewrote %d rows, want %d", got["events"], 30*2200)
-		}
-	}
-}
-
-// seedReceivedWindow writes 30 days x 2,000 web product events as the SDK
-// sends them (5 custom attributes key0..key4, host, path, OS and browser
-// versions, and the other environment columns that widen a row), plus 30
-// days x 200 measure samples carrying key0, for benchProject. It returns
-// the first day and the number of days.
-func seedReceivedWindow(b *testing.B, db *DB) (time.Time, int) {
-	b.Helper()
-	ctx := context.Background()
-	const (
-		days     = 30
-		perDay   = 2000
-		measures = 200
-	)
-	start := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
-	boot := 120.0
-	for d := 0; d < days; d++ {
-		dayStart := start.AddDate(0, 0, d)
-		batch := make([]store.Event, 0, perDay+measures)
-		for i := 0; i < perDay; i++ {
-			ts := dayStart.Add(time.Duration(i) * (24 * time.Hour / perDay))
-			attrs := make(map[string]string, 5)
-			for k := 0; k < 5; k++ {
-				attrs[fmt.Sprintf("key%d", k)] = fmt.Sprintf("v%d", (i+k)%(7*(k+1)))
-			}
-			actor := fmt.Sprintf("%064x", i%500)
-			batch = append(batch, store.Event{Family: store.FamilyProduct,
-				ID: fmt.Sprintf("0192f1c4-%02d%02x-7c3e-9a51-%012x", d, i%256, i), ProjectID: benchProject,
-				EventName: fmt.Sprintf("event-%d", i%5), TS: ts, ReceivedAt: ts,
-				ActorID: actor, ActorKind: store.ActorUser, UserID: fmt.Sprintf("user-%04d", i%500),
-				SessionID: fmt.Sprintf("0192f1c4-%04x-7c3e-9a51-0242ac120002", i%300), Host: "app.example.com",
-				Path: fmt.Sprintf("/p/%d", i%50), Platform: "web", OS: "macos", OSVersion: []string{"14.5", "15.0"}[i%2], OSName: "macOS",
-				Browser: "chrome", BrowserVersion: []string{"128.0", "129.0", "130.0"}[i%3],
-				BrowserLocale: "en-US", Device: "desktop", DisplayWidth: 1512, DisplayHeight: 982,
-				Country: "CA", AppVersion: "2.4.1", Attributes: attrs})
-		}
-		for i := 0; i < measures; i++ {
-			ts := dayStart.Add(time.Duration(i) * (24 * time.Hour / measures))
-			batch = append(batch, store.Event{Family: store.FamilyMeasures,
-				ID: fmt.Sprintf("cm-%02d-%04d", d, i), ProjectID: benchProject,
-				EventName: "boot", Measure: store.MeasureTime, Value: &boot, TS: ts, ReceivedAt: ts,
-				ActorID: fmt.Sprintf("actor-%04d", i%500), ActorKind: store.ActorUser,
-				DeviceModel: fmt.Sprintf("model-%d", i%9), Attributes: map[string]string{"key0": "x"}})
-		}
-		if err := db.WriteEvents(ctx, batch); err != nil {
-			b.Fatalf("seed day %d: %v", d, err)
-		}
-	}
-	return start, days
 }
 
