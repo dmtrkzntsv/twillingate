@@ -1109,6 +1109,19 @@ What changes on the day:
   GROUP BY country ORDER BY value DESC LIMIT 10
   ```
 
+  And the one-line rewrites most widgets need:
+
+  | SQLite | DuckDB over the files |
+  | --- | --- |
+  | `json_extract(attributes, '$.plan')` | `attr_plan` (one column per key; quote odd keys: `"attr_plan type"`) |
+  | first day from `v_identity_daily` (`MIN(day)`) | `identities.first_seen::DATE` |
+  | `date(x, '-6 days', 'weekday 1')` (Monday of the week) | `date_trunc('week', x)::DATE` |
+  | `date(x, '+7 days')`, `date('now', '-90 days')` | `x + 7`, `current_date - 90` |
+  | `julianday(a) - julianday(b)` | `a - b` (days, BIGINT) |
+  | `MAX(a, b)`, `MIN(a, b)` (two arguments) | `GREATEST(a, b)`, `LEAST(a, b)` |
+  | `WITH RECURSIVE days(n) AS (…)` | `range(1, 31)` |
+  | `JOIN t` with no `ON` | `CROSS JOIN t` |
+
   `count(DISTINCT actor_id)` over the whole range, without the per-day
   subquery, counts each visitor once instead: a different, smaller figure.
 

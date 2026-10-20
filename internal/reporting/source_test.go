@@ -246,18 +246,21 @@ func TestSQLiteHintOnTheEngine(t *testing.T) {
 	s := &sqlSource{files: newTestFiles(t), sampleRows: true}
 	table := testComponents(t)["table"]
 	for content, hint := range map[string]bool{
-		"SELECT * FROM v_views_daily":                       true,
-		"SELECT * FROM agg_views_daily":                     true,
-		"SELECT * FROM raw_views":                           true,
-		"SELECT julianday(day) AS d FROM events":            true,
-		"SELECT strftime('%s', ts) AS s FROM events":        true,
-		"SELECT date(day, '+1 day') AS d FROM events":       true,
-		"SELECT last_seen_day FROM identities":              true,
-		"SELECT updated_at FROM identities":                 true,
-		"SELECT * FROM meta":                                false, // no such table, SQLite's or not
-		"SELECT nope FROM events":                           false,
-		"SELECT day + 'x' AS d FROM events":                 false,
-		"SELECT count(*) AS n FROM views WHERE day > :from": false, // runs
+		"SELECT * FROM v_views_daily":                                true,
+		"SELECT * FROM agg_views_daily":                              true,
+		"SELECT * FROM raw_views":                                    true,
+		"SELECT julianday(day) AS d FROM events":                     true,
+		"SELECT strftime('%s', ts) AS s FROM events":                 true,
+		"SELECT date(day, '+1 day') AS d FROM events":                true,
+		"SELECT last_seen_day FROM identities":                       true,
+		"SELECT updated_at FROM identities":                          true,
+		"SELECT json_extract(attributes, '$.plan') AS p FROM events": true,
+		"SELECT 1 AS n FROM events e JOIN views v WHERE e.id = v.id": true,
+		"SELECT MAX(day, day) AS d FROM events":                      true,
+		"SELECT * FROM meta":                                         false, // no such table, SQLite's or not
+		"SELECT nope FROM events":                                    false,
+		"SELECT day + 'x' AS d FROM events":                          false,
+		"SELECT count(*) AS n FROM views WHERE day > :from":          false, // runs
 	} {
 		err := s.Validate(context.Background(), content, table)
 		if strings.HasSuffix(content, ":from") {
