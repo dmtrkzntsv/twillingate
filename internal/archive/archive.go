@@ -2,7 +2,7 @@
 // directory's raw/ (raw-first spec D2): an append-only NDJSON log per
 // project and UTC day, dumped to Parquet when the day closes, day files
 // merged into a month file once final, month files deleted at retention.
-// SQLite still holds every event too; the daily pass also derives the
+// SQLite holds no events; the daily pass also derives the
 // sessions, identities and aliases tables from the files; Reader answers
 // SQL over the files and open logs, and the tables derived from them, for
 // the query tool's files source, and nothing else reads them yet.

@@ -165,10 +165,10 @@ logs litestream`); `no matching backups found` against a bucket you know is
 written means a version mismatch.
 
 Your copy of `raw/` is not in the bucket; check it the same day. List each
-project's newest day file, which should be a day or two old:
+project's newest dated file (a day file, or a month file once the month is final), which should be a day or two old:
 
 ```bash
-ls /path/to/your/raw-copy/*/ | sort | tail
+for d in /path/to/your/raw-copy/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done
 ```
 
 ## Restore after losing the host

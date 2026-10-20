@@ -453,7 +453,14 @@ sudo -u twillingate sqlite3 /var/lib/twillingate/twillingate.db \
   ".backup '/var/lib/twillingate/backup.db'"
 sqlite3 /var/lib/twillingate/backup.db 'PRAGMA quick_check;'         # expect: ok
 sqlite3 /var/lib/twillingate/backup.db "SELECT COUNT(*) FROM projects;"   # expect: your project count
-ls /var/lib/twillingate/raw/*/ | sort | tail                              # each project's newest day file
+```
+
+List each project's newest dated file (a day file, or a month file once the month is final); it should be today's or yesterday's. The files are `0640`, so run it as the service user:
+
+```bash
+sudo -u twillingate sh -c 'for d in /var/lib/twillingate/raw/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done'
+# compose (the image has sh, grep and sort)
+docker compose exec twillingate sh -c 'for d in /var/lib/twillingate/raw/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done'
 ```
 
 The image carries no `sqlite3`: under compose, `docker compose stop
