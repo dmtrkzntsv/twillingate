@@ -52,7 +52,7 @@ func TestListAttributes(t *testing.T) {
 	if out.From != "2026-10-01" || out.To != "2026-10-02" || out.ProjectID != 1 {
 		t.Errorf("range = %+v", out)
 	}
-	if out.ValuesCap != h.capOf(settingAttrs) || out.BreakdownsMax != h.capOf(settingBreakdowns) || out.BreakdownsUsed != 2 {
+	if out.ValuesCap != h.valuesCap || out.BreakdownsMax != h.breakdownsMax || out.BreakdownsUsed != 2 {
 		t.Errorf("budget = %+v", out)
 	}
 	// An unknown project, or none, is refused like every project tool.

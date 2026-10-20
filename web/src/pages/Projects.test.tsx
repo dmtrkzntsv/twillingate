@@ -47,10 +47,10 @@ beforeEach(() => {
   ] })
   vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [{ project_id: 4, label: 'web', key: 'ak_1', state: 'active' }] })
   vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [
-    { group: 'retention', name: 'Raw events', setting: 'RETENTION_RAW_DAYS', value: 7, default: 30, unit: 'days', description: 'raw events are kept this long' },
-    { group: 'caps', name: 'Attribute values', setting: 'ATTRIBUTE_VALUES_TOP_N', value: 0, default: 100, zero: 'no cap', description: 'values per views breakdown and per attribute key' },
+    { group: 'retention', name: 'Event files', setting: 'RETENTION_DAYS', value: 7, default: 400, unit: 'days', description: 'the event files are kept this long' },
+    { group: 'retention', name: 'Archived items', setting: 'RETENTION_ARCHIVED_DAYS', value: 0, default: 30, unit: 'days', zero: 'kept forever', description: 'deleted this long after archiving' },
     { group: 'ingest', name: 'Request body', value: 262144, unit: 'bytes', description: 'a larger request is refused with 413' },
-  ], raw_events: { held: 48210, window_days: 7 } })
+  ], events_30d: { count: 48210, from: '2026-09-04', to: '2026-10-03' } })
 })
 
 function renderPage() {
@@ -163,20 +163,20 @@ describe('Projects', () => {
     renderPage()
     const panel = await screen.findByRole('region', { name: 'Limits' })
     const groups = within(panel).getAllByRole('region').map((r) => r.getAttribute('aria-label'))
-    expect(groups).toEqual(['Retention', 'Caps', 'Ingest'])
+    expect(groups).toEqual(['Retention', 'Ingest'])
     const retention = within(panel).getByRole('region', { name: 'Retention' })
     expect(within(retention).getByText('7 days')).toBeInTheDocument()
-    expect(within(retention).getByText('RETENTION_RAW_DAYS')).toBeInTheDocument()
-    expect(within(retention).getByText(/default 30 days/)).toBeInTheDocument()
+    expect(within(retention).getByText('RETENTION_DAYS')).toBeInTheDocument()
+    expect(within(retention).getByText(/default 400 days/)).toBeInTheDocument()
     // The variable sits under the value, above the description.
-    const variable = within(retention).getByText('RETENTION_RAW_DAYS').closest('dd')!
-    const description = within(retention).getByText('raw events are kept this long')
+    const variable = within(retention).getByText('RETENTION_DAYS').closest('dd')!
+    const description = within(retention).getByText('the event files are kept this long')
     expect(variable.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(within(panel).getByText('no cap')).toBeInTheDocument()
+    expect(within(panel).getByText('kept forever')).toBeInTheDocument()
     const ingest = within(panel).getByRole('region', { name: 'Ingest' })
     expect(within(ingest).getByText('256 KiB')).toBeInTheDocument()
     expect(within(ingest).queryByText(/default/)).not.toBeInTheDocument()
-    expect(within(panel).getByText('Raw events held: 48,210 (the last 7 days)')).toBeInTheDocument()
+    expect(within(panel).getByText('Events in the last 30 days: 48,210')).toBeInTheDocument()
   })
 
   it('creates a project and shows its key and snippet once', async () => {

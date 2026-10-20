@@ -89,12 +89,6 @@ export const eventNamesQuery = (id: number, q: RangeQuery) => ({
   queryFn: () => endpoints.eventNames(id, q),
 })
 
-/** How a project's data meets the caps over a range. */
-export const capUsageQuery = (id: number, q: RangeQuery) => ({
-  queryKey: ['cap-usage', id, q.from ?? '', q.to ?? ''],
-  queryFn: () => endpoints.capUsage(id, q),
-})
-
 /** Widget shares, live or archived, of one widget or of all of them. */
 export const widgetSharesQuery = (q: { widget_id?: number; state?: ShareState }) => ({
   queryKey: ['widget-shares', q.state ?? 'all', q.widget_id ?? 'all'] as const,

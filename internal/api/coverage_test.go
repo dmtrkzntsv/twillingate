@@ -17,7 +17,7 @@ func TestFilesTableTruncatesErrorsAndTimesOut(t *testing.T) {
 
 	// truncation: blog's view days (2026-08-01, -08, -20 to -26), capped
 	// to 1.
-	setGuards(t, h, h.db.Timeout(), 1)
+	setGuards(t, h, h.queryTimeout, 1)
 	out, err := h.filesTable(ctx, blog, `SELECT DISTINCT day FROM views WHERE project_id = :project AND day BETWEEN :from AND :to`, nil)
 	if err != nil {
 		t.Fatalf("truncation case: %v", err)
@@ -25,7 +25,7 @@ func TestFilesTableTruncatesErrorsAndTimesOut(t *testing.T) {
 	if !out.Truncated || out.Note == "" || len(out.Rows) != 1 {
 		t.Errorf("out = %+v, want one row, Truncated, with a Note", out)
 	}
-	setGuards(t, h, h.db.Timeout(), 1000)
+	setGuards(t, h, h.queryTimeout, 1000)
 
 	// plain SQL error, not a timeout: must not carry the "exceeded" wording.
 	_, err = h.filesTable(ctx, blog, `SELECT no_such_column FROM views WHERE project_id = :project`, nil)
@@ -37,7 +37,7 @@ func TestFilesTableTruncatesErrorsAndTimesOut(t *testing.T) {
 	}
 
 	// timeout: a runaway query against a host with a tiny deadline.
-	setGuards(t, h, 20*time.Millisecond, h.db.MaxRows())
+	setGuards(t, h, 20*time.Millisecond, h.queryRows)
 	_, err = h.filesTable(ctx, blog, `SELECT count(*) FROM range(100000000000) a WHERE a.range % 7 = :project`, nil)
 	if err == nil {
 		t.Fatal("runaway query did not time out")

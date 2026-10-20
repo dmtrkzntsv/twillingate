@@ -24,8 +24,6 @@ interface Props {
   project: Project
   /** The range the page shows: what each key received in it. */
   range: { from: string; to: string }
-  /** RETENTION_RAW_DAYS, for the block dialog. */
-  rawDays?: number
   pending?: boolean
   /** Saves the project's whole new breakdown list; resolves true when saved. */
   onSaveBreakdowns: (attributes: string[]) => Promise<boolean>
@@ -45,7 +43,7 @@ const copy = ruleCopy('attribute')
  * (both confirmed) and unblock, aliases added and removed. A `$` key takes
  * the switch only: rules cover custom keys.
  */
-export default function AttributesSection({ project, range, rawDays, pending, onSaveBreakdowns, onRename, onMerge, onBlock, onRemove, onAddAlias }: Props) {
+export default function AttributesSection({ project, range, pending, onSaveBreakdowns, onRename, onMerge, onBlock, onRemove, onAddAlias }: Props) {
   // The keys outlive their dialogs' close animations, so a title does not flash "Block undefined?".
   const [renaming, setRenaming] = useState<{ key: string; open: boolean } | null>(null)
   const [merging, setMerging] = useState<{ key: string; open: boolean } | null>(null)
@@ -215,7 +213,7 @@ export default function AttributesSection({ project, range, rawDays, pending, on
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="wrap-anywhere">{blocking && copy.block.title({ name: blocking.key })}</AlertDialogTitle>
-            <AlertDialogDescription className="wrap-anywhere">{blocking && copy.block.description({ name: blocking.key }, rawDays)}</AlertDialogDescription>
+            <AlertDialogDescription className="wrap-anywhere">{blocking && copy.block.description({ name: blocking.key })}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

@@ -42,7 +42,7 @@ func (h *host) measures(ctx context.Context, in measuresIn) (tableOut, error) {
 	// by and partition add attr_value to the grouping when attr_key narrows
 	// to one breakdown.
 	// One deadline for the column lookup and the query together.
-	ctx, cancel := context.WithTimeout(ctx, h.db.Timeout())
+	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
 	dim, by, partition := "", "", ""
 	if in.AttrKey != "" {

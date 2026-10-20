@@ -146,7 +146,7 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 		return retentionOut{}, h.unknownProjectErr(ctx, in.ProjectID)
 	}
 	// One deadline for both queries.
-	ctx, cancel := context.WithTimeout(ctx, h.db.Timeout())
+	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
 	// The Retention dashboard's cohorts (retention/cohorts.sql), every
 	// offset: an actor identified by a $user_id or a stable $install_id

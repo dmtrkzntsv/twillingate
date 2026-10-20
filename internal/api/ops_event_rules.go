@@ -125,24 +125,24 @@ func (h *host) removeEventRule(ctx context.Context, in eventNameIn) (okOut, erro
 	return okOut{Status: "removed"}, nil
 }
 
-// eventNames feeds the console's Settings page: every product and measures
-// name with events in the range, busiest 200 first (a project sending
-// generated names would otherwise exceed the row cap h.run refuses at).
-// Product counts events; measures count samples. $ names are left out: rules
-// refuse them.
+// eventNamesSQL is every product and measures name of the range in the
+// event files, busiest 200 first, rules applied (a project sending
+// generated names would otherwise exceed the row cap). Product counts
+// events; measures count samples. $ names are left out: rules refuse them.
+const eventNamesSQL = `SELECT family, event_name, count(*) FROM events WHERE family IN ('product','measures') AND project_id = :project AND day BETWEEN :from AND :to AND event_name NOT LIKE '$%' GROUP BY ALL ORDER BY 3 DESC, 2 LIMIT 200`
+
+// eventNames feeds the console's Settings page with eventNamesSQL's names.
+// A result past the row cap is refused, never a partial list.
 func (h *host) eventNames(ctx context.Context, in rangeIn) (eventNamesOut, error) {
 	if err := h.checkRange(ctx, in); err != nil {
 		return eventNamesOut{}, err
 	}
-	res, err := h.run(ctx, `SELECT family, name, events FROM (
-		SELECT 'product' AS family, event_name AS name, SUM(count) AS events
-		  FROM v_product_daily WHERE project_id=?1 AND day BETWEEN ?2 AND ?3 AND event_name NOT LIKE '$%' GROUP BY event_name
-		UNION ALL
-		SELECT 'measures', event_name, SUM(samples)
-		  FROM v_measures_daily WHERE project_id=?1 AND day BETWEEN ?2 AND ?3 AND event_name NOT LIKE '$%' GROUP BY event_name)
-		ORDER BY events DESC, name LIMIT 200`, in.ProjectID, in.From, in.To)
+	res, err := h.filesTable(ctx, in, eventNamesSQL, nil)
 	if err != nil {
 		return eventNamesOut{}, err
+	}
+	if res.Truncated {
+		return eventNamesOut{}, invalidf("too many rows; narrow the date range")
 	}
 	out := eventNamesOut{Events: make([]eventNameOut, 0, len(res.Rows))}
 	for _, row := range res.Rows {

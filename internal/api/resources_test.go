@@ -21,17 +21,10 @@ func TestSchemaResources(t *testing.T) {
 	text := res.Contents[0].Text
 	for _, want := range []string{
 		"events(id, project_id", "measures(", ", bucket)", "attr_<key>", "NULL, not ''", "DATE", "raw history",
-		"v_views_daily", "v_retention", "YYYY-MM-DD",
-		"03:00 UTC", "$user_id", "includes yesterday",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("schema://views missing %q", want)
 		}
-	}
-	// The files lead; SQLite's views follow under their deprecation.
-	files, deprecated := strings.Index(text, "  events("), strings.Index(text, "Deprecated: query with source sqlite")
-	if files < 0 || deprecated < files || strings.Index(text, "v_views_daily(") < deprecated {
-		t.Errorf("schema://views: the files' tables must come first, then the deprecated v_* views:\n%s", text)
 	}
 	pres, err := cs.ReadResource(context.Background(),
 		&mcp.ReadResourceParams{URI: "schema://projects"})
@@ -43,6 +36,30 @@ func TestSchemaResources(t *testing.T) {
 	}
 	if strings.Contains(pres.Contents[0].Text, "Identity") || strings.Contains(pres.Contents[0].Text, "identity") {
 		t.Errorf("schema://projects still lists identity: %s", pres.Contents[0].Text)
+	}
+}
+
+// TestSchemaViewsIsTheFilesOnly: schema://views and its route describe the
+// event files alone; SQLite's v_* views and their deprecation are gone.
+func TestSchemaViewsIsTheFilesOnly(t *testing.T) {
+	h, cs := newTestHost(t)
+	if schemaViews != schemaFiles {
+		t.Error("schemaViews is not schemaFiles")
+	}
+	res, err := cs.ReadResource(context.Background(), &mcp.ReadResourceParams{URI: "schema://views"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec := serveREST(t, newTestRegistrar(t, h), "GET", "/api/schema/views", "")
+	for name, text := range map[string]string{"resource": res.Contents[0].Text, "route": rec.Body.String()} {
+		if text != schemaFiles {
+			t.Errorf("%s is not the files' schema:\n%s", name, text)
+		}
+		for _, gone := range []string{"v_views_daily", "agg_", "Deprecated", "source sqlite"} {
+			if strings.Contains(text, gone) {
+				t.Errorf("%s names %q", name, gone)
+			}
+		}
 	}
 }
 

@@ -289,11 +289,10 @@ export interface WidgetShare {
   archived_at: string | null
 }
 
-export type CapSetting = 'ATTRIBUTE_VALUES_TOP_N' | 'IDENTITIES_TOP_N'
 
 /** A limit in force: a setting (with its environment variable and default) or one of the wire format's fixed limits. */
 export interface Limit {
-  group: 'retention' | 'caps' | 'ingest'
+  group: 'retention' | 'ingest'
   name: string
   /** Absent for a fixed limit. */
   setting?: string
@@ -303,43 +302,26 @@ export interface Limit {
   default?: number
   /** Absent for a count or a plain number. */
   unit?: 'days' | 'bytes' | 'characters' | 'seconds'
-  /** What 0 means when it is not the number: no cap, kept forever. */
+  /** What 0 means when it is not the number: kept forever. */
   zero?: string
   description: string
 }
 
-/** The raw events the server stores now, of every family and project, in its raw window (RETENTION_RAW_DAYS). */
-export interface RawEvents {
-  held: number
-  window_days: number
+/** The events in the event files from `from` through `to` (the 30 days ending today, UTC), of every family and project. */
+export interface Events30d {
+  count: number
+  from: string
+  to: string
 }
 
 /**
- * The limits answer: the limits in force, the raw events held (absent when the server could not count them), and
- * whether INGEST_DISABLED refuses every ingest route (absent from a server older than the switch).
+ * The limits answer: the limits in force, the events of the last 30 days (absent when the server could not count
+ * them), and whether INGEST_DISABLED refuses every ingest route (absent from a server older than the switch).
  */
 export interface LimitsResponse {
   limits: Limit[]
-  raw_events?: RawEvents
+  events_30d?: Events30d
   ingest_disabled?: boolean
-}
-
-export interface CapUsageRow {
-  setting: CapSetting
-  dimension: string
-  cap: number
-  max_values_per_day: number
-  max_day: string
-  days: number
-  days_capped: number
-  folded_share: number | null
-}
-
-export interface CapUsage {
-  project_id: number
-  from: string
-  to: string
-  dimensions: CapUsageRow[]
 }
 
 export interface UsageDay {
@@ -702,7 +684,6 @@ export const endpoints = {
     api<{ rule: AttributeRule }>(`/api/projects/${id}/attribute-rules/block`, json('POST', body)),
   removeAttributeRule: (id: number, body: { key: string }) =>
     api<{ status: string }>(`/api/projects/${id}/attribute-rules/remove`, json('POST', body)),
-  capUsage: (id: number, q: RangeQuery) => api<CapUsage>(`/api/projects/${id}/cap-usage${toQuery(q)}`),
   widgetShares: (q: { widget_id?: number; state?: ShareState }) => api<{ shares: WidgetShare[] }>(`/api/widget-shares${toQuery(q)}`),
   // No Content-Type here: the browser sets multipart/form-data with its boundary for a FormData body.
   createWidgetShare: (form: FormData) => api<WidgetShare>('/api/widget-shares', { method: 'POST', body: form }),

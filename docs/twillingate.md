@@ -122,11 +122,10 @@ by a client), `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`,
 read from its column. Nothing is capped there and there is no `(other)`
 row.
 
-Declaring a key matters only to the database's rollups, which the
-[deprecated](#writing-sql-against-the-views-deprecated) `source: "sqlite"`
-views read. There a declared key gets a value breakdown (counts and unique
-users/groups per value, per event, per day) in `agg_product_attrs` /
-`v_product_attrs`. A declared custom key also gets an `attr_*` column in `v_events_flat`; a declared
+Declaring a key matters only to the database's rollups, which no tool
+reads since `query`'s `source: "sqlite"` was removed. There a declared key
+gets a value breakdown (counts and unique users/groups per value, per
+event, per day) in `agg_product_attrs` / `v_product_attrs`. A declared custom key also gets an `attr_*` column in `v_events_flat`; a declared
 reserved key is already a typed column there. Undeclared keys are still
 stored and reachable via `json_extract(attributes, '$.junk')`; declaring one
 later does not backfill. `ATTRIBUTE_VALUES_TOP_N` (default 100, 0 for no cap,
@@ -1461,7 +1460,7 @@ form submissions](#collect-form-submissions).
 
 ## Answer questions with the data
 
-A connected session gets sixty-five tools: the thirty-two below, the nine
+A connected session gets sixty-four tools: the thirty-one below, the nine
 in [Collect form submissions](#collect-form-submissions), and twenty-four
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
@@ -1472,14 +1471,14 @@ be malformed, and they already apply the caveats below. All the reading tools
 take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted. The
 analytics tools (`views_overview` through `identities`) read the [event
 files](#writing-sql-against-the-event-files), as the dashboards do, so their
-history starts where the files' does; `limits`, `cap_usage`,
-`list_attributes` and `usage` still read the database.
+history starts where the files' does. `query` and the count of events in
+`limits` read them too; `list_attributes` and `usage` still read the
+database.
 
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
 | `list_projects` | none | Every project with its `project_id`, name, `archived` and `archived_at` (RFC 3339, only when archived), `allowed_origins` and `attributes` (its breakdown keys, ordered by key), in the order `move_project` sets. Call this first — every other tool needs a `project_id` |
-| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in three groups: `retention` (`RETENTION_RAW_DAYS`, `RETENTION_AGGREGATE_DAYS`, `RETENTION_DAYS`, `RETENTION_ARCHIVED_DAYS`, `RETENTION_FORMS_DRAFT_DAYS`), `caps` (`ATTRIBUTE_VALUES_TOP_N`, which caps views breakdowns and attribute values alike, `ATTRIBUTE_BREAKDOWNS_MAX`, `IDENTITIES_TOP_N`) and `ingest`: `INGEST_LATE_DAYS`, then the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`no cap`, `kept forever`). The output also carries `raw_events`, `{held, window_days}`: the raw events stored, of every family and project (what the server's disk and its dashboards' scans of the raw window follow), counted at most every 5 minutes (a full scan of the raw rows, seconds on a server holding millions): a call past the 5 minutes answers the previous count and starts the next, one past 10 waits for it, so the count is never more than 10 minutes old; and `window_days`, `RETENTION_RAW_DAYS`. Absent when the last count failed, `CONSOLE_QUERY_TIMEOUT` included; a failure is logged once and kept for the same 5 minutes. And `ingest_disabled`, `true` when `INGEST_DISABLED` is set and every ingest route refuses with `429` |
-| `cap_usage` | `from`, `to` (optional: the last 30 days) | Per capped dimension — views breakdowns and kinds, attribute keys, `users`/`groups` — the busiest day's values against the `cap`, `days` with data, `days_capped` (an `(other)` row; for users and groups, the cap reached) and `folded_share` |
+| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in two groups: `retention` (`RETENTION_DAYS`, `RETENTION_ARCHIVED_DAYS`, `RETENTION_FORMS_DRAFT_DAYS`) and `ingest`: `INGEST_LATE_DAYS`, then the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`kept forever`). Nothing is capped. The output also carries `events_30d`, `{count, from, to}`: the events in the event files from `from` through `to` (the 30 days ending today, UTC), of every family and project, rules applied (what the server's disk and its dashboards' scans of a month follow), counted at most every 5 minutes: a call past the 5 minutes answers the previous count and starts the next, one past 10 waits for it, so the count is never more than 10 minutes old. Absent when the last count failed, `CONSOLE_QUERY_TIMEOUT` included (a failure is logged once and kept for the same 5 minutes), and on a server that cannot read the files. And `ingest_disabled`, `true` when `INGEST_DISABLED` is set and every ingest route refuses with `429` |
 | `list_attributes` | `from`, `to` (optional: the last 30 days) | The project's attributes, busiest first: each key's `events` and `max_values` (the busiest event's distinct values on one day, against `ATTRIBUTE_VALUES_TOP_N`), counted by the daily pass so today's arrive the night after (a key first received today has `events` 0 and `max_values` `null`), `received`, `breakdown`, `blocked` and `aliases` (the keys renamed or merged into it; absent when none) — for the 500 busiest keys plus every breakdown key, every blocked key and every key with aliases (`received` false when none carried it); a key renamed away is listed only in its target's `aliases`. Also `keys_total` (the distinct keys received, keys renamed away left out), `values_cap`, `breakdowns_used` and `breakdowns_max` (`ATTRIBUTE_BREAKDOWNS_MAX`). Kept for the raw window only |
 | `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project: `views`, product `events` and measure `samples` per day and in total, `last_received_at`, `first_day` (the oldest day with data, stored counts included), `raw_days`, `rolled_up_days`, an estimated `size` (raw rows and aggregates, measured daily by the daily pass, which also runs at start: the newest, with the day it was `measured_at`; `null` until the first measurement) and each day's measured `total_bytes` in the series (`null` on days not measured), `unused_attributes` (breakdown keys no event carried; computed only with `project_id`, `null` for the all-projects answer); plus the database's size on disk now and per day (`database_series`). Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention. Each series day also carries `declared_attributes` and, counted the night after while the day's rows are raw and kept once rolled up, the distinct `attribute_keys` and `attribute_values` received and the `attribute_values_folded` into `(other)` (`null` on days not stored) |
 | `views_overview` | `kind` (optional) | Per day: visitors (distinct per day and kind, added up), views, and the `sessions` table's sessions, bounces, `duration_sec`, `bounce_rate` and `avg_session_sec`, summed across kinds unless `kind` filters one. Today included |
@@ -1489,7 +1488,7 @@ history starts where the files' does; `limits`, `cap_usage`,
 | `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys `product_attributes` breaks down (`$browser`, `$path`, …); a key none carried gives no rows |
 | `retention` | `actor` (`user` or `install`) | Cohort curves for the cohorts that began in the range, every offset, counted over the days before today (UTC), plus `aggregated_through`, the newest such day with views or product events — cohorts and offsets after it are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` (default 50) | Per user or group, busiest first (views plus product events in the range): its `actors` and `users` (itself for a user, its members for a group), each distinct per day and added up over the days, its `views`, `events` and the display `name` sent with its latest event. **Surfaces personal data on projects whose clients send ids** |
-| `query` | `sql`, `source` (optional: `files`, the default, or `sqlite`, deprecated) | A single read-only `SELECT`/`WITH`. Row-capped and time-limited. `files` reads the raw events and the tables derived from them through DuckDB: see [Writing SQL against the event files](#writing-sql-against-the-event-files). `sqlite` reads the database's views ([deprecated](#writing-sql-against-the-views-deprecated), removed in a later release); `meta` and SQLite's internal tables (`sqlite_master`, `dbstat`, …) are refused, whether named directly or as a quoted or single-quoted string, and non-ASCII names must be quoted |
+| `query` | `sql`, `source` (optional: `files`, the default and the only one) | A single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them: see [Writing SQL against the event files](#writing-sql-against-the-event-files). Row-capped and time-limited. `source: "sqlite"` was removed with the database's events and is refused (`invalid`); `source` itself stays for one release, so a client sending `files` keeps working |
 
 `views_breakdown`'s dimensions, the columns each returns and what it reads
 from the `views` table:
@@ -1521,7 +1520,7 @@ described in [Set up a project](#set-up-a-project).
 **Resources:** `docs://twillingate` (this document), `docs://deployment`
 (installing and configuring the collector), `docs://reporting` (building
 dashboards), `schema://views` (the authoritative column list of the event
-files' tables, then the deprecated views — read it before writing SQL),
+files' tables — read it before writing SQL),
 `schema://projects` (the live registry) and the reporting
 snapshots `schema://components`, `schema://dashboards` and
 `schema://widgets`. Enabling the console, choosing an auth mode and pointing
@@ -1561,10 +1560,9 @@ curl -H "Authorization: Bearer $TOKEN" \
 | Method | Path | Mirrors | Input |
 |---|---|---|---|
 | `GET` | `/api/projects` | `list_projects` | — |
-| `GET` | `/api/project-activity` | `project_activity`, REST only: no MCP tool | — → `{"projects":[{"project_id","last_event_day","new_submissions","forms","draft_forms"}]}` for every live project: the newest day with data (null with none), the submissions to live forms the console has not read, its live forms, and how many of them are drafts waiting to be approved |
+| `GET` | `/api/project-activity` | `project_activity`, REST only: no MCP tool | — → `{"projects":[{"project_id","last_event_day","new_submissions","forms","draft_forms"}]}` for every live project: the newest day file in the event files (a month file counts as its last day; null with none), the submissions to live forms the console has not read, its live forms, and how many of them are drafts waiting to be approved |
 | `GET` | `/api/limits` | `limits` | — |
 | `GET` | `/api/usage` | `usage` | query: `project_id`, `from`, `to` |
-| `GET` | `/api/projects/{project_id}/cap-usage` | `cap_usage` | query: `from`, `to` |
 | `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","max_values","received","breakdown","blocked","aliases"}],"keys_total","values_cap","breakdowns_used","breakdowns_max"}`; `aliases` is absent when empty |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
@@ -1616,12 +1614,11 @@ given twice are all 400: a filter is never dropped silently.
 ### Writing SQL against the event files
 
 `query` runs one read-only `SELECT` through DuckDB over the raw events
-twillingate keeps as files beside its database (its default source,
-`files`); the analytics tools and the dashboards read the same tables. The
+twillingate keeps as files beside its database; the analytics tools and the
+dashboards read the same tables. The
 files hold every project's events since the upgrade that began writing
 them. Once `twillingate events import` has run, they also hold the earlier
-raw days the database still held then. History older than that exists only
-in the database's `agg_*` tables ([deprecated](#writing-sql-against-the-views-deprecated)).
+raw days the database still held then; nothing older can be queried.
 Today's events are included, each `BUFFER_FLUSH_INTERVAL`. A query is
 row-capped (`CONSOLE_QUERY_ROWS_MAX`, default 1000) and time-limited
 (`CONSOLE_QUERY_TIMEOUT`, default `30s`); it cannot write and cannot reach
@@ -1712,83 +1709,10 @@ product events). First and last seen reach back as far as the files do.
 A person's events across devices, before and after signing in:
 `WHERE user_id = 'u1' OR install_id IN (SELECT install_id FROM aliases WHERE user_id = 'u1')`.
 
-The `v_*` views and `agg_*` tables are SQLite's: name one here and the
-error says to pass `source: "sqlite"`. A query that runs out of the
+The `v_*` views and `agg_*` tables went with the database's events: name
+one here and the error says so and lists the tables the files hold. A query that runs out of the
 engine's memory (`ENGINE_MEMORY_LIMIT`) is refused with that cause: a
 `COUNT(DISTINCT …)` over a large group is the usual one, rewritten as a
 `GROUP BY` in a subquery whose rows are then counted.
 When the open logs themselves do not fit that limit, whatever the query,
 the error says so: raise `ENGINE_MEMORY_LIMIT`.
-
-### Writing SQL against the views (deprecated)
-
-**Deprecated, removed in a later release:** query the [event
-files](#writing-sql-against-the-event-files) instead: the analytics tools
-and the dashboards read the files. `query` with `source: "sqlite"` takes
-read-only SQLite SQL against the views below, under the same row cap and
-timeout. `schema://views` lists them after the files' tables, with the
-caveats the DDL cannot express. Three matter most:
-
-1. `day` columns are TEXT `'YYYY-MM-DD'` (UTC). Compare and `BETWEEN` as
-   strings.
-2. Every `v_*` view includes yesterday and today: each stitches aggregated
-   history (`agg_*` tables) to a live half computed from raw rows.
-3. **`v_retention` has no live half.** It refreshes at the 03:00 UTC daily pass;
-   cohort days after that are ABSENT, not zero. It holds cohorts only for
-   actors identified by `$user_id` or `$install_id`; a project whose clients
-   send neither has none. Each actor is cohorted by how it was
-   identified, `user` (sent a `$user_id`) or `install` (a stable
-   `$install_id`); a connection-hash actor is not cohorted. On a client that
-   mints an install id per page load the `install` curve reads near zero — read
-   the `user` curve. Cohorts counted before migration 011 have no `user` rows
-   and sit wholly under `install`.
-
-Every view carries a `project_id` column — always filter on it; the ids are
-the ones `list_projects` returns. The views family
-is `v_views_daily` (per kind), `v_views_paths`, `v_views_hosts`,
-`v_views_referrers`, `v_views_utm`, `v_views_countries`, `v_views_platforms`,
-`v_views_os`, `v_views_browsers`, `v_views_app_versions` (keyed by `platform`
-and `app_version`), `v_views_devices`, `v_views_displays`, `v_views_consent`
-(`given`, `none` or `unknown`, where `unknown` is every view stored before
-migration 018 or sent without `$consent`) and `v_views_locales` (keyed by
-`browser_locale` and `app_locale`, `''` where one was not sent; a view sending
-neither is left out, and no day rolled up before migration 019 has rows);
-every other dimension is
-capped at `ATTRIBUTE_VALUES_TOP_N` values per day (default 100, 0 for no cap;
-a changed cap applies to days rolled up after it, the past keeps its own),
-the tail is one `(other)` row whose visitors
-are distinct actors, not a sum, and `consent` never reaches it — it only ever
-has three values. `os`, `browser` and `device` are lower-case
-closed vocabularies (see [Declaring the
-environment](#declaring-the-environment)) where `other` is a real value outside
-the list and `(other)` is the cap. Product events have `v_product_daily`,
-`v_product_totals` and `v_product_attrs` (whose `unique_groups` is NULL, not
-zero, for days rolled up before it was measured — `MAX()` skips it, `SUM()`
-would too, a `COALESCE` to 0 would lie). Measures (performance timings, sizes
-and counts, including Web Vitals) have `raw_measures`, `v_measures_daily`
-and `v_measures_attrs` (keyed the same way as `v_product_daily` /
-`v_product_attrs`, plus `measure` — `time`, `size` or `number` — and
-`bucket`/`approx_value` from the log-scale histogram; the `measures` tool
-does the percentile math over them). `raw_views`, `raw_product`,
-`raw_measures` and `v_events_flat` are all views over the one raw table, so
-each now carries every family's columns: `value`, `measure` and
-`sample_rate` are NULL, `''` and `1` on `raw_views`/`raw_product` rows (they
-only mean something on a measure), and `raw_*` additionally carries `bucket`,
-the log-scale bucket `value` falls in (NULL outside measures). `v_events_flat`
-holds every raw row of every family (views, product events and measures)
-with every typed column of the raw row: its `family` column — filter
-`family = 'product'` for product events alone, `family = 'measures'` for
-measures — `kind`, the identity, location and environment columns (`path`,
-`os`, `country`, …), its `consent` column (1, 0 or NULL), the raw
-`attributes` JSON, `value`, `measure`, `sample_rate`, and one `attr_*` column
-per declared custom attribute.
-`v_identity_daily` and `identities` join user and group activity to display
-names (ingest no longer writes `identities`: names sent since the upgrade to
-the event files are in the files only); `v_identity_daily` keeps the busiest `IDENTITIES_TOP_N` users and as
-many groups per day (default 1000, 0 for all) and drops the rest with no
-`(other)` row, so do not sum it for totals.
-`v_retention` is keyed by `actor_kind`.
-
-Cost note: the views' live halves compute from raw rows, but only for the raw
-days the `WHERE` on `project_id` and `day` covers. Narrow ranges and the
-`agg_*` tables are cheaper.

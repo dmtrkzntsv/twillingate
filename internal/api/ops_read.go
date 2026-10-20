@@ -22,8 +22,8 @@ import (
 
 type host struct {
 	db *readsql.DB
-	// subs reads the tables db refuses (CustomSQLRefused), for SQL the
-	// server builds; never given user-written SQL.
+	// subs reads submissions, for SQL the server builds; never given
+	// user-written SQL.
 	subs *readsql.DB
 	reg  *manage.Registry
 	ops  *manage.Ops
@@ -33,18 +33,25 @@ type host struct {
 	// placeholder + tell the operator".
 	ingestURL string
 	logger    *slog.Logger
-	// limits are the caps in force (limitsFrom); limits and cap_usage read them.
+	// limits are the limits in force (limitsFrom), which limits reports.
 	limits []limitOut
-	// rawDays is RETENTION_RAW_DAYS, the window limits' raw_events
-	// count falls in.
-	rawDays int
-	// raw caches the raw events held (rawcount.go).
-	raw *rawCount
+	// valuesCap and breakdownsMax are ATTRIBUTE_VALUES_TOP_N and
+	// ATTRIBUTE_BREAKDOWNS_MAX, which list_attributes reports.
+	valuesCap, breakdownsMax int
+	// events caches the last 30 days' events (eventcount.go); nil in a
+	// process without an engine, where limits leaves events_30d out.
+	events *eventCount
 	// ingestDisabled is INGEST_DISABLED, which limits reports.
 	ingestDisabled bool
 	// files runs SQL over the raw event files (archive.Reader); nil in a
-	// process without an engine, where query's files source is refused.
+	// process without an engine, where the tools that read them refuse.
 	files Files
+	// eventsDir is EVENTS_DIR, whose file names say each project's days.
+	eventsDir string
+	// queryTimeout and queryRows are CONSOLE_QUERY_TIMEOUT and
+	// CONSOLE_QUERY_ROWS_MAX, which every query on the files runs under.
+	queryTimeout time.Duration
+	queryRows    int
 }
 
 var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -113,13 +120,13 @@ func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[st
 	if err != nil {
 		return tableOut{}, err
 	}
-	res, err := h.runFiles(ctx, archive.Scoped{SQL: enginesql.Text(bound), Args: args, MaxRows: h.db.MaxRows(), Scope: true, Project: in.ProjectID})
+	res, err := h.runFiles(ctx, archive.Scoped{SQL: enginesql.Text(bound), Args: args, MaxRows: h.queryRows, Scope: true, Project: in.ProjectID})
 	if err != nil {
 		return tableOut{}, err
 	}
 	out := tableOut{Columns: res.Columns, Rows: cellRows(res.Rows), Truncated: res.Truncated}
 	if res.Truncated {
-		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — narrow the range or raise the limit", h.db.MaxRows())
+		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — narrow the range or raise the limit", h.queryRows)
 	}
 	return out, nil
 }
@@ -131,7 +138,7 @@ func (h *host) runFiles(ctx context.Context, q archive.Scoped) (engine.Result, e
 	if h.files == nil {
 		return engine.Result{}, invalidf("the event files cannot be queried by this process")
 	}
-	timeout := h.db.Timeout()
+	timeout := h.queryTimeout
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	events, attrs := h.reg.Snapshot(ctx).RuleLists()
@@ -331,14 +338,11 @@ func (h *host) register(r *registrar) {
 		Description: "List projects with id, name, allowed origins and declared attributes, in the order move_project sets. Call this first: every other tool takes a project_id from here."},
 		h.listProjects)
 	restOnly(r, spec{Name: "project_activity", Method: "GET", Path: "/api/project-activity",
-		Description: "Per live project: last_event_day (the newest day with views, product events or measures, raw or rolled up; null with none) new_submissions (submissions to live forms the console hasn't read), forms (live forms) and draft_forms (live forms still drafts, waiting to be approved). For the console's badges; not an MCP tool."},
+		Description: "Per live project: last_event_day (the newest day file in the event files, a month file counting as its last day; null with none), new_submissions (submissions to live forms the console hasn't read), forms (live forms) and draft_forms (live forms still drafts, waiting to be approved). For the console's badges; not an MCP tool."},
 		h.projectActivity)
 	expose(r, spec{Name: "limits", Annotations: ro, Method: "GET", Path: "/api/limits",
-		Description: "The limits in force, grouped: retention (days raw events, aggregates, event files and archived items are kept), caps (ATTRIBUTE_VALUES_TOP_N, the values kept per views breakdown and day and per attribute key, event and day; users and groups per day; and ATTRIBUTE_BREAKDOWNS_MAX, the attributes all active projects declare together; 0 means no cap) and ingest (INGEST_LATE_DAYS, how far back a client timestamp may lie before it is clamped, then the wire format's fixed limits: body, batch, attributes, timestamps, measures). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here. Also raw_events: held, the raw events stored across every project and family (what the server's disk and dashboard scans follow), counted at most every 5 minutes (never more than 10 minutes old), and window_days, the raw window they fall in (RETENTION_RAW_DAYS); absent when the last count failed. And ingest_disabled: true when INGEST_DISABLED is set and every ingest route refuses events and form submissions."},
+		Description: "The limits in force, grouped: retention (days the event files, archived items and form drafts are kept) and ingest (INGEST_LATE_DAYS, how far back a client timestamp may lie before it is clamped, then the wire format's fixed limits: body, batch, attributes, timestamps, measures). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here. Also events_30d: count, the events in the event files from from through to (the 30 days ending today, UTC), of every family and project, counted at most every 5 minutes (never more than 10 minutes old); absent when the last count failed. And ingest_disabled: true when INGEST_DISABLED is set and every ingest route refuses events and form submissions."},
 		h.listLimits)
-	expose(r, spec{Name: "cap_usage", Annotations: ro, Method: "GET", Path: p + "/cap-usage",
-		Description: "How a project's data meets the caps over a range (default the last 30 days, at most 400): per views breakdown, attribute key, and users/groups, the busiest day's values against the cap, days with data, days folded into (other) (users and groups: days that reached the cap), and the share of views, counts or samples folded. Days already rolled up keep only the kept values and their (other) rows, so values per day stay near the cap there (cap + 1 for single-key breakdowns and attributes, cap plus one per leading key for two-key breakdowns)."},
-		h.capUsage)
 	expose(r, spec{Name: "list_attributes", Annotations: ro, Method: "GET", Path: p + "/attributes",
 		Description: "A project's attributes: the keys its product events and measures carried over a range (default the last 30 days, at most 400; only the raw window is kept, RETENTION_RAW_DAYS), with its breakdowns and attribute rules. Per key the events that carried it and max_values (the most distinct values one event (or measure) had on one day, which ATTRIBUTE_VALUES_TOP_N caps), both as the daily pass counted them, so today's arrive the night after (a key first received today has events 0 and max_values null); whether any event carried it (received), whether the project breaks it down (breakdown), whether block_attribute strips it (blocked), and its aliases, the keys renamed or merged into it. Lists the 500 busiest keys plus every breakdown key, every blocked key and every key others are renamed to (received false when none carried it); a key renamed away is listed only in its target's aliases. keys_total counts the distinct keys received. Also values_cap (ATTRIBUTE_VALUES_TOP_N), breakdowns_used (breakdown keys across active projects) and breakdowns_max (ATTRIBUTE_BREAKDOWNS_MAX, 0 = no limit). Switch a breakdown with update_project's attributes."},
 		h.listAttributes)
@@ -367,7 +371,7 @@ func (h *host) register(r *registrar) {
 		Description: "Per-user or per-group activity over the range, from the event files: per id, its actors and users (distinct per day, added up over the days), views and product events, busiest first, with the display name sent with its latest event. This surfaces personal data on projects whose clients send ids."},
 		h.identities)
 	expose(r, spec{Name: "query", Annotations: ro, Method: "POST", Path: "/api/query",
-		Description: "Escape hatch: run one read-only SELECT/WITH. source \"files\" (the default) reads the raw events through DuckDB: the tables events, views, product, measures, sessions, identities and aliases, one attr_<key> column per attribute key; read schema://views first (docs://twillingate, \"Writing SQL against the event files\"). source \"sqlite\" reads the v_* views and agg_* tables: deprecated, removed in a later release. Row-capped and time-limited; read-only either way."},
+		Description: "Escape hatch: run one read-only SELECT/WITH in DuckDB SQL over the event files: the tables events, views, product, measures, sessions, identities and aliases, one attr_<key> column per attribute key; read schema://views first (docs://twillingate, \"Writing SQL against the event files\"). source is optional: \"files\", the default, is the only one; \"sqlite\" was removed with the database's events and is refused. Row-capped and time-limited; read-only."},
 		h.runQuery)
 
 	expose(r, spec{Name: "create_project", Annotations: write, Method: "POST", Path: "/api/projects", Status: http.StatusCreated,

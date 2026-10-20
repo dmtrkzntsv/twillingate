@@ -473,8 +473,8 @@ func TestDeleteSubmissionsSelectors(t *testing.T) {
 			t.Errorf("audit detail %q holds a search or filter value", d)
 		}
 	}
-	// The custom-SQL handle still cannot read the table.
-	if msg := refused(t, cs, "query", map[string]any{"sql": "select * from submissions", "source": "sqlite"}); !strings.Contains(msg, "submissions") {
+	// Custom SQL runs on the event files, which hold no submissions.
+	if msg := refused(t, cs, "query", map[string]any{"sql": "select * from submissions"}); !strings.Contains(msg, "submissions") {
 		t.Errorf("query refusal: %s", msg)
 	}
 }

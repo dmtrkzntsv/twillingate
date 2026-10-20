@@ -61,7 +61,7 @@ func (h *host) listAttributes(ctx context.Context, in attributesIn) (listAttribu
 		return listAttributesOut{}, h.unknownProjectErr(ctx, in.ProjectID)
 	}
 	out := listAttributesOut{ProjectID: p.ID, From: fromD.String(), To: toD.String(), Attributes: []attributeOut{},
-		ValuesCap: h.capOf(settingAttrs), BreakdownsUsed: snap.BreakdownsInUse(), BreakdownsMax: h.capOf(settingBreakdowns)}
+		ValuesCap: h.valuesCap, BreakdownsUsed: snap.BreakdownsInUse(), BreakdownsMax: h.breakdownsMax}
 
 	breakdown := map[string]bool{}
 	for _, k := range p.Attributes {

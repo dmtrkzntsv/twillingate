@@ -109,7 +109,7 @@ export default function Projects() {
             </div>
           </SortableContext>
         </DndContext>
-        {limitsData && <LimitsPanel limits={limitsData.limits} rawEvents={limitsData.raw_events} />}
+        {limitsData && <LimitsPanel limits={limitsData.limits} events30d={limitsData.events_30d} />}
       </div>
       <ProjectFormDialog
         open={creating}

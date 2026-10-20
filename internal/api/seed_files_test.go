@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -279,3 +280,35 @@ func templateFiles(ctx context.Context, dir, raw string, st store.Store) (*hostF
 }
 
 var _ reporting.Files = (*hostFiles)(nil)
+
+// hostEventN numbers the events writeHostEvents writes, so no two share an id.
+var hostEventN atomic.Int64
+
+// writeHostEvents appends evs to the logs of h's event files, which the
+// reader reads as the open logs of their days: each gets an id, its
+// received_at, and an install actor and a sample rate of 1 when unset.
+func writeHostEvents(t *testing.T, h *host, evs ...store.Event) {
+	t.Helper()
+	log, err := archive.OpenLog(h.eventsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	for i := range evs {
+		e := &evs[i]
+		e.ID = fmt.Sprintf("0190dddd-0000-7000-8000-%012d", hostEventN.Add(1))
+		if e.ActorID == "" {
+			e.ActorID = "a1"
+		}
+		if e.ActorKind == "" {
+			e.ActorKind = store.ActorInstall
+		}
+		if e.SampleRate == 0 {
+			e.SampleRate = 1
+		}
+		e.ReceivedAt = e.TS
+	}
+	if err := log.WriteEvents(context.Background(), evs); err != nil {
+		t.Fatal(err)
+	}
+}

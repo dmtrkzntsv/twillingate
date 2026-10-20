@@ -3,17 +3,19 @@ package api
 import (
 	"context"
 	"strconv"
+
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
 )
 
 // Project activity (spec 2026-10-08 D6, D7): per live project, the newest
-// day with data, the form submissions the console hasn't read, and its live
-// forms with the drafts among them, which wait to be approved. Kept off
-// list_projects, which reads only the registry snapshot because the web
-// app waits on it before loading any widget.
+// day of its event files, the form submissions the console hasn't read,
+// and its live forms with the drafts among them, which wait to be
+// approved. Kept off list_projects, which reads only the registry
+// snapshot because the web app waits on it before loading any widget.
 
 type projectActivityOut struct {
 	ProjectID      int64   `json:"project_id"`
-	LastEventDay   *string `json:"last_event_day" jsonschema:"the newest day with views, product events or measures, raw or rolled up; null with none"`
+	LastEventDay   *string `json:"last_event_day" jsonschema:"the newest day file in the event files, a month file counting as its last day; null with none"`
 	NewSubmissions int     `json:"new_submissions" jsonschema:"submissions to live forms received after each form's seen_at"`
 	Forms          int     `json:"forms" jsonschema:"live (not archived) forms"`
 	DraftForms     int     `json:"draft_forms" jsonschema:"live forms still drafts, waiting to be approved"`
@@ -25,23 +27,17 @@ type projectActivityListOut struct {
 
 func (h *host) projectActivity(ctx context.Context, _ struct{}) (projectActivityListOut, error) {
 	out := projectActivityListOut{Projects: []projectActivityOut{}}
+	// The file names say each project's newest day: no file is opened.
+	days, err := archive.LatestDays(h.eventsDir)
+	if err != nil {
+		return out, err
+	}
 	for _, p := range h.reg.Snapshot(ctx).Projects() {
 		if p.Archived {
 			continue
 		}
 		a := projectActivityOut{ProjectID: p.ID}
-		// The newest day of each family is one index seek.
-		res, err := h.run(ctx, `SELECT MAX(d) FROM (
-			SELECT MAX(day) AS d FROM raw_views WHERE project_id = ?1
-			UNION ALL SELECT MAX(day) FROM raw_product WHERE project_id = ?1
-			UNION ALL SELECT MAX(day) FROM raw_measures WHERE project_id = ?1
-			UNION ALL SELECT MAX(day) FROM agg_views_daily WHERE project_id = ?1
-			UNION ALL SELECT MAX(day) FROM agg_product_totals WHERE project_id = ?1
-			UNION ALL SELECT MAX(day) FROM agg_measures_daily WHERE project_id = ?1)`, p.ID)
-		if err != nil {
-			return out, err
-		}
-		if d := res.Rows[0][0]; d != "" {
+		if d, ok := days[p.ID]; ok {
 			a.LastEventDay = &d
 		}
 		// Submissions are read through h.subs, the handle that may.

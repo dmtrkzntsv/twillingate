@@ -208,7 +208,7 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	}
 	t.Cleanup(func() { st.Close() })
 	ctx := context.Background()
-	db, err := readsql.Open(path, 5*time.Second, 1000, CustomSQLRefused()...)
+	db, err := readsql.Open(path, 5*time.Second, 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,14 +225,15 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	}
 	files := newHostFiles(t, reg)
 	h := &host{db: db, subs: subs, reg: reg, ops: manage.NewOps(reg, st), files: files.reader,
+		eventsDir: files.dir, queryTimeout: 5 * time.Second, queryRows: 1000,
+		valuesCap: config.DefaultAttributeValuesTopN, breakdownsMax: config.DefaultAttributeBreakdownsMax,
 		rep:       reporting.New(st, files, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example"}),
-		ingestURL: "https://collector.test", logger: logger, rawDays: config.DefaultRawDays,
-		limits: limitsFrom(&config.Config{AttributeValuesTopN: config.DefaultAttributeValuesTopN, IdentitiesTopN: config.DefaultIdentitiesTopN})}
+		ingestURL: "https://collector.test", logger: logger, limits: limitsFrom(&config.Config{})}
 	// host itself carries no path (production has no need for one once
 	// opened); setGuards needs it to reopen with different guards, so the
 	// test side remembers it here, keyed by the host it belongs to.
 	testDBPaths[h] = path
-	h.raw = h.newHostRawCount()
+	h.events = h.newHostEventCount()
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "analytics", Version: "test"},
 		&mcp.ServerOptions{Instructions: serverInstructions})
@@ -275,23 +276,23 @@ func seedDB(t *testing.T) string {
 // newTestHost. Production's host carries no such field.
 var testDBPaths = map[*host]string{}
 
-// setGuards reopens h's database with a different timeout and/or row cap
-// for one test — host carries neither directly, only the readsql.DB does
-// (readsql.DB.Timeout/MaxRows) — and closes the replaced handle on
+// setGuards sets h's timeout and row cap for one test: the event files'
+// (queryTimeout, queryRows), and SQLite's, by reopening h's database with
+// them (readsql.DB.Timeout/MaxRows) and closing the replaced handle on
 // cleanup. h.register already bound its tool methods to h itself, so
-// swapping h.db here is visible to the next tool call.
+// swapping them here is visible to the next tool call.
 func setGuards(t *testing.T, h *host, timeout time.Duration, maxRows int) {
 	t.Helper()
 	path, ok := testDBPaths[h]
 	if !ok {
 		t.Fatal("setGuards: h was not built by newTestHost")
 	}
-	db, err := readsql.Open(path, timeout, maxRows, CustomSQLRefused()...)
+	db, err := readsql.Open(path, timeout, maxRows)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	h.db = db
+	h.db, h.queryTimeout, h.queryRows = db, timeout, maxRows
 }
 
 // newTestRegistrar registers h's operations on a fresh MCP server and REST

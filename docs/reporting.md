@@ -242,8 +242,8 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 - A query returns exactly the columns the component reads, named by alias; a
   column marked optional may be left out, and only `table` takes any columns.
 - Widget SQL is DuckDB SQL, one `SELECT`, over the seven tables in
-  [Tables](#tables). The `v_*` views and `agg_*` tables are SQLite's, and a
-  widget cannot read them.
+  [Tables](#tables). The `v_*` views and `agg_*` tables went with the
+  database's events, and nothing reads them.
 - The only parameters are `:project`, a BIGINT, and `:from` and `:to`,
   DATEs in UTC like `day`: `day BETWEEN :from AND :to`, and `:to - :from + 1`
   is the range's length in days. `?`, `$1` and `$name` are refused.
@@ -1168,7 +1168,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | sql must be a single statement; remove what follows the ';' | One `SELECT` (or `WITH … SELECT`). An unterminated string or comment and an unmatched `(` or `)` are refused too. |
 | query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the date range, or aggregate | Filter on `day`, group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |
 | the query ran out of the engine's memory (ENGINE_MEMORY_LIMIT) … | Count the rows of a `GROUP BY` subquery rather than `count(DISTINCT …)` over a large group, or narrow the range. |
-| DuckDB's own error, such as a column that does not exist (`Binder Error: Referenced column "visitors" not found …`) | Fix the query; try it with `query` and `source: "files"` first. |
+| DuckDB's own error, such as a column that does not exist (`Binder Error: Referenced column "visitors" not found …`) | Fix the query; try it with `query` first. |
 | markdown text is empty | Give the Markdown text. |
 | stat: … (a props schema error) | Match the props schema `list_components` returns; unknown props are refused. |
 | validating "arguments": … (an MCP input schema error) | The path and message name the field; match `list_components`. The path is the schema's, not the widget's: for `create_dashboard` it points into `widgets/items`, not at a particular widget, so find the value it names in your own input. Over REST the same mistake gets the server's own refusal. |
@@ -1222,8 +1222,8 @@ To fix them:
    https://github.com/dmtrkzntsv/twillingate/releases (one page per tag,
    `…/releases/tag/v<version>`). They name renamed view columns and removed
    components.
-3. Rewrite the SQL with `update_widget` (check the columns with `query`,
-   `source: "files"`, and `DESCRIBE views`), or switch a removed
+3. Rewrite the SQL with `update_widget` (check the columns with `query`
+   and `DESCRIBE views`), or switch a removed
    component's widgets to another component. `list_widgets` with
    `component` finds every widget on one.
 4. Check each with `widget_data`.

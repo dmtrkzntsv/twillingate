@@ -24,7 +24,7 @@ function renderSection(props: Partial<Parameters<typeof EventsSection>[0]> = {})
   const onBlock = vi.fn().mockResolvedValue(true)
   const onRemove = vi.fn().mockResolvedValue(true)
   const onAddAlias = vi.fn().mockResolvedValue(true)
-  renderWithProviders(<EventsSection project={project} range={range} rawDays={7} onRename={onRename} onMerge={onMerge} onBlock={onBlock} onRemove={onRemove} onAddAlias={onAddAlias} {...props} />)
+  renderWithProviders(<EventsSection project={project} range={range} onRename={onRename} onMerge={onMerge} onBlock={onBlock} onRemove={onRemove} onAddAlias={onAddAlias} {...props} />)
   return { onRename, onMerge, onBlock, onRemove, onAddAlias }
 }
 
@@ -358,24 +358,23 @@ describe('EventsSection', () => {
     expect(await screen.findByText(/Widgets whose SQL names the old event are not changed\./)).toBeInTheDocument()
   })
 
-  it('confirms before blocking, naming the daily pass and the raw days', async () => {
+  it('confirms before blocking, saying past events are hidden at once', async () => {
     const user = userEvent.setup()
-    const { onBlock } = renderSection({ rawDays: 14 })
+    const { onBlock } = renderSection()
     await openMenu(user, 'signup', 'Block…')
     expect(await screen.findByText('Block signup?')).toBeInTheDocument()
-    expect(screen.getByText(/next daily pass \(03:00 UTC\)/)).toBeInTheDocument()
-    expect(screen.getByText(/within 14 days/)).toBeInTheDocument()
+    expect(screen.getByText(/hidden from every report at once, past events included; new ones are not stored/)).toBeInTheDocument()
+    expect(screen.queryByText(/daily pass|expire|retention/)).not.toBeInTheDocument()
     expect(onBlock).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Block event' }))
     expect(onBlock).toHaveBeenCalledWith({ family: 'product', name: 'signup' })
   })
 
-  it('names the retention window when the raw days are unknown, and blocks nothing on Cancel', async () => {
+  it('blocks nothing on Cancel', async () => {
     const user = userEvent.setup()
-    const { onBlock } = renderSection({ rawDays: undefined })
+    const { onBlock } = renderSection()
     await openMenu(user, 'signup', 'Block…')
-    expect(await screen.findByText(/within the raw retention window/)).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }))
     expect(onBlock).not.toHaveBeenCalled()
   })
 

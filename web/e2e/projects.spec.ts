@@ -87,7 +87,7 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await expect(page.getByRole('article', { name })).toBeVisible()
 })
 
-test('shows usage and cap impact for the seeded project', async ({ page }) => {
+test('shows usage for the seeded project', async ({ page }) => {
   await login(page)
   await page.goto('/app/projects')
   await page.getByRole('article', { name: 'dev' }).getByRole('link', { name: 'dev' }).click()
@@ -95,8 +95,6 @@ test('shows usage and cap impact for the seeded project', async ({ page }) => {
   const usage = page.getByRole('region', { name: 'Usage' })
   await expect(usage.getByText('Events', { exact: true })).toBeVisible()
   await expect(usage.locator('.recharts-bar-rectangle').first()).toBeVisible()
-  // cap_usage reads every capped view for the range: the slowest card on the page.
-  await expect(page.getByRole('region', { name: 'Cap impact' }).getByRole('row').nth(1)).toBeVisible({ timeout: 20_000 })
 })
 
 test('lists Projects first in the sidebar, with the projects under it, closed state remembered', async ({ page }) => {

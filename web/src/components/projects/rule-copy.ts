@@ -58,13 +58,10 @@ export function ruleCopy(noun: RuleNoun) {
     },
     block: {
       title: (t: RuleTarget) => `Block ${t.name}?`,
-      /** `rawDays` is RETENTION_RAW_DAYS, when known. */
-      description: (t: RuleTarget, rawDays?: number) => {
-        const within = rawDays ? `${rawDays} days` : 'the raw retention window'
-        return event
-          ? `Events named ${withContext(t)} are dropped when they arrive. The next daily pass (03:00 UTC) deletes its aggregated history; stored raw events expire within ${within}. Remove the rule to receive it again.`
-          : `${t.name} is stripped from events when they arrive, and stops being a breakdown. The next daily pass (03:00 UTC) deletes its aggregated history; stored raw events keep it until they expire within ${within}. Remove the rule to receive it again.`
-      },
+      description: (t: RuleTarget) =>
+        event
+          ? `Events named ${withContext(t)} are hidden from every report at once, past events included; new ones are not stored. Remove the rule to receive it again.`
+          : `${t.name} is hidden from every report at once, past events included; new ones are not stored, and it stops being a breakdown. Remove the rule to receive it again.`,
       action: event ? 'Block event' : 'Block attribute',
     },
   }

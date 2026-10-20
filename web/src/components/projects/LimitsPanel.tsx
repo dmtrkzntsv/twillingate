@@ -1,14 +1,13 @@
-import type { Limit, RawEvents } from '@/lib/api'
+import type { Events30d, Limit } from '@/lib/api'
 
 const GROUPS: { group: Limit['group']; title: string; note: string }[] = [
   { group: 'retention', title: 'Retention', note: 'How long data is kept.' },
-  { group: 'caps', title: 'Caps', note: 'Values kept per day before the rest fold into (other).' },
   { group: 'ingest', title: 'Ingest', note: 'The late window, set in the environment, then the wire format’s limits, the same on every server.' },
 ]
 
 const plural = (n: number, one: string, many: string) => `${n.toLocaleString()} ${n === 1 ? one : many}`
 
-/** A limit's value in its unit: 30 days, 256 KiB, 5 min, 1e15; 0 reads as what it means (no cap, kept forever). */
+/** A limit's value in its unit: 30 days, 256 KiB, 5 min, 1e15; 0 reads as what it means (kept forever). */
 export function formatLimit(l: Pick<Limit, 'value' | 'unit' | 'zero'>, value = l.value): string {
   if (value === 0 && l.zero) return l.zero
   switch (l.unit) {
@@ -26,29 +25,16 @@ export function formatLimit(l: Pick<Limit, 'value' | 'unit' | 'zero'>, value = l
 }
 
 /**
- * The raw window the held count falls in. RETENTION_RAW_DAYS 0 keeps only today's rows raw: the daily pass
- * rolls up every earlier day, and ingest clamps older timestamps to the time received.
+ * The limits in force by group: retention (set in the environment, each with its default), then the late window and
+ * the fixed ingest limits; and, when the server could count them, the events of the last 30 days.
  */
-function rawWindow(days: number): string {
-  if (days === 0) return 'today'
-  return days === 1 ? 'the last day' : `the last ${days.toLocaleString()} days`
-}
-
-/**
- * The limits in force by group: retention and caps (set in the environment, each with its default), then the fixed
- * ingest limits; and, when the server could count them, the raw events it holds in its raw window.
- */
-export default function LimitsPanel({ limits, rawEvents }: { limits: Limit[]; rawEvents?: RawEvents }) {
+export default function LimitsPanel({ limits, events30d }: { limits: Limit[]; events30d?: Events30d }) {
   return (
     <section aria-label="Limits" className="flex flex-col gap-4 rounded-lg border p-4">
       <header>
         <h2 className="text-base font-semibold">Limits</h2>
-        <p className="text-sm text-muted-foreground">Retention and caps are set in twillingate.env.</p>
-        {rawEvents && (
-          <p className="text-sm">
-            Raw events held: {rawEvents.held.toLocaleString()} ({rawWindow(rawEvents.window_days)})
-          </p>
-        )}
+        <p className="text-sm text-muted-foreground">Retention and the late window are set in twillingate.env.</p>
+        {events30d && <p className="text-sm">Events in the last 30 days: {events30d.count.toLocaleString()}</p>}
       </header>
       {GROUPS.map(({ group, title, note }) => {
         const items = limits.filter((l) => l.group === group)

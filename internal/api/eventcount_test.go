@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-// fakeCount is a count rawCount runs: it answers next (or fails with err),
+// fakeCount is a count eventCount runs: it answers next (or fails with err),
 // counting its calls, and blocks until release is closed when release is set.
 type fakeCount struct {
 	calls   atomic.Int32
@@ -38,18 +38,18 @@ func (f *fakeCount) set(n int64, err error, release chan struct{}) {
 	f.mu.Unlock()
 }
 
-// testRawCount is a rawCount over f on a clock the test moves, recording
+// testEventCount is a eventCount over f on a clock the test moves, recording
 // the failures it reports.
-func testRawCount(f *fakeCount) (*rawCount, *time.Time, *atomic.Int32) {
+func testEventCount(f *fakeCount) (*eventCount, *time.Time, *atomic.Int32) {
 	now := time.Date(2026, 10, 9, 12, 0, 0, 0, time.UTC)
 	var failures atomic.Int32
-	c := newRawCount(f.count, func(error) { failures.Add(1) })
+	c := newEventCount(f.count, func(error) { failures.Add(1) })
 	c.now = func() time.Time { return now }
 	return c, &now, &failures
 }
 
 // settle waits for the count in flight, if any.
-func (c *rawCount) settle() {
+func (c *eventCount) settle() {
 	c.mu.Lock()
 	done := c.running
 	c.mu.Unlock()
@@ -59,19 +59,19 @@ func (c *rawCount) settle() {
 }
 
 // Two reads within the TTL run one count; one past it runs the next.
-func TestRawCountRunsOnceWithinTheTTL(t *testing.T) {
+func TestEventCountRunsOnceWithinTheTTL(t *testing.T) {
 	f := &fakeCount{next: 42}
-	c, now, _ := testRawCount(f)
+	c, now, _ := testEventCount(f)
 	for range 3 {
 		if n, err := c.get(context.Background()); n != 42 || err != nil {
 			t.Fatalf("get = %d, %v; want 42", n, err)
 		}
-		*now = now.Add(rawCountTTL / 4)
+		*now = now.Add(eventCountTTL / 4)
 	}
 	if got := f.calls.Load(); got != 1 {
 		t.Fatalf("%d counts within the TTL, want 1", got)
 	}
-	*now = now.Add(rawCountTTL)
+	*now = now.Add(eventCountTTL)
 	c.get(context.Background())
 	c.settle()
 	if got := f.calls.Load(); got != 2 {
@@ -80,11 +80,11 @@ func TestRawCountRunsOnceWithinTheTTL(t *testing.T) {
 }
 
 // The first reads after boot wait for one shared count, not one each.
-func TestRawCountFirstReadsShareOneCount(t *testing.T) {
+func TestEventCountFirstReadsShareOneCount(t *testing.T) {
 	f := &fakeCount{}
 	release := make(chan struct{})
 	f.set(7, nil, release)
-	c, _, _ := testRawCount(f)
+	c, _, _ := testEventCount(f)
 	var wg sync.WaitGroup
 	got := make([]int64, 10)
 	for i := range got {
@@ -113,15 +113,15 @@ func TestRawCountFirstReadsShareOneCount(t *testing.T) {
 
 // Past the TTL a read answers the previous count at once and refreshes in
 // the background; the next read after the refresh has the new count.
-func TestRawCountServesTheStaleCountWhileRefreshing(t *testing.T) {
+func TestEventCountServesTheStaleCountWhileRefreshing(t *testing.T) {
 	f := &fakeCount{next: 5}
-	c, now, _ := testRawCount(f)
+	c, now, _ := testEventCount(f)
 	if n, _ := c.get(context.Background()); n != 5 {
 		t.Fatalf("first get = %d, want 5", n)
 	}
 	release := make(chan struct{})
 	f.set(9, nil, release)
-	*now = now.Add(rawCountTTL + time.Second)
+	*now = now.Add(eventCountTTL + time.Second)
 	for range 3 {
 		if n, err := c.get(context.Background()); n != 5 || err != nil {
 			t.Fatalf("get while refreshing = %d, %v; want the stale 5", n, err)
@@ -139,12 +139,12 @@ func TestRawCountServesTheStaleCountWhileRefreshing(t *testing.T) {
 
 // A count older than twice the TTL is not answered: the read waits for the
 // refresh, so a reader polling rarely never gets an hours-old count.
-func TestRawCountWaitsOnACountTooOldToServe(t *testing.T) {
+func TestEventCountWaitsOnACountTooOldToServe(t *testing.T) {
 	f := &fakeCount{next: 5}
-	c, now, _ := testRawCount(f)
+	c, now, _ := testEventCount(f)
 	c.get(context.Background())
 	f.set(9, nil, nil)
-	*now = now.Add(2 * rawCountTTL)
+	*now = now.Add(2 * eventCountTTL)
 	if n, _ := c.get(context.Background()); n != 9 {
 		t.Fatalf("get two TTLs on = %d, want the fresh 9", n)
 	}
@@ -155,10 +155,10 @@ func TestRawCountWaitsOnACountTooOldToServe(t *testing.T) {
 
 // A failed count is kept for the TTL like a good one: reported once, not
 // recounted or re-reported per read; past the TTL it is tried again.
-func TestRawCountCachesAFailure(t *testing.T) {
+func TestEventCountCachesAFailure(t *testing.T) {
 	boom := errors.New("query timed out")
 	f := &fakeCount{err: boom}
-	c, now, failures := testRawCount(f)
+	c, now, failures := testEventCount(f)
 	for range 3 {
 		if _, err := c.get(context.Background()); !errors.Is(err, boom) {
 			t.Fatalf("get = %v, want %v", err, boom)
@@ -167,14 +167,14 @@ func TestRawCountCachesAFailure(t *testing.T) {
 	if f.calls.Load() != 1 || failures.Load() != 1 {
 		t.Fatalf("counts, failures = %d, %d; want 1, 1", f.calls.Load(), failures.Load())
 	}
-	*now = now.Add(rawCountTTL)
+	*now = now.Add(eventCountTTL)
 	c.get(context.Background())
 	c.settle()
 	if f.calls.Load() != 2 || failures.Load() != 2 {
 		t.Fatalf("after the TTL: counts, failures = %d, %d; want 2, 2", f.calls.Load(), failures.Load())
 	}
 	f.set(3, nil, nil)
-	*now = now.Add(rawCountTTL)
+	*now = now.Add(eventCountTTL)
 	c.get(context.Background())
 	c.settle()
 	if n, err := c.get(context.Background()); n != 3 || err != nil {
@@ -183,9 +183,9 @@ func TestRawCountCachesAFailure(t *testing.T) {
 }
 
 // warm starts the first count, so the first read finds it done.
-func TestRawCountWarm(t *testing.T) {
+func TestEventCountWarm(t *testing.T) {
 	f := &fakeCount{next: 11}
-	c, _, _ := testRawCount(f)
+	c, _, _ := testEventCount(f)
 	c.warm()
 	c.settle()
 	if f.calls.Load() != 1 {
@@ -198,11 +198,11 @@ func TestRawCountWarm(t *testing.T) {
 
 // A reader that gives up waiting for the first count gets its context's
 // error; the count goes on and serves the next read.
-func TestRawCountFirstReadHonoursItsContext(t *testing.T) {
+func TestEventCountFirstReadHonoursItsContext(t *testing.T) {
 	f := &fakeCount{}
 	release := make(chan struct{})
 	f.set(4, nil, release)
-	c, _, _ := testRawCount(f)
+	c, _, _ := testEventCount(f)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	if _, err := c.get(ctx); !errors.Is(err, context.Canceled) {

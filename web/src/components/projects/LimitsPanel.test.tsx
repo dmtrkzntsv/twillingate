@@ -31,26 +31,22 @@ describe('formatLimit', () => {
 })
 
 describe('LimitsPanel', () => {
-  const limits: Limit[] = [{ group: 'retention', name: 'Raw events', value: 30, unit: 'days', description: 'kept' }]
+  const limits: Limit[] = [{ group: 'retention', name: 'Event files', value: 400, unit: 'days', description: 'kept' }]
 
-  it('says how many raw events the server holds, and in how many days', () => {
-    render(<LimitsPanel limits={limits} rawEvents={{ held: 1234567, window_days: 30 }} />)
+  it('says how many events the last 30 days hold', () => {
+    render(<LimitsPanel limits={limits} events30d={{ count: 1234567, from: '2026-09-21', to: '2026-10-20' }} />)
     const panel = screen.getByRole('region', { name: 'Limits' })
-    expect(within(panel).getByText('Raw events held: 1,234,567 (the last 30 days)')).toBeInTheDocument()
+    expect(within(panel).getByText('Events in the last 30 days: 1,234,567')).toBeInTheDocument()
   })
 
-  it('says a one-day window in the singular', () => {
-    render(<LimitsPanel limits={limits} rawEvents={{ held: 0, window_days: 1 }} />)
-    expect(screen.getByText('Raw events held: 0 (the last day)')).toBeInTheDocument()
-  })
-
-  it('says today for a raw window of 0 days, which keeps only today raw', () => {
-    render(<LimitsPanel limits={limits} rawEvents={{ held: 12, window_days: 0 }} />)
-    expect(screen.getByText('Raw events held: 12 (today)')).toBeInTheDocument()
-  })
-
-  it('says nothing about raw events when the server could not count them', () => {
+  it('says nothing about the events when the server could not count them', () => {
     render(<LimitsPanel limits={limits} />)
-    expect(screen.queryByText(/Raw events held/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Events in the last 30 days/)).not.toBeInTheDocument()
+  })
+
+  it('has no caps group', () => {
+    render(<LimitsPanel limits={limits} />)
+    expect(screen.queryByRole('region', { name: 'Caps' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/caps/i)).not.toBeInTheDocument()
   })
 })

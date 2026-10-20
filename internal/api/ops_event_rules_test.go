@@ -6,8 +6,10 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 type ruleRow struct {
@@ -206,30 +208,45 @@ type nameRow struct {
 	Events int64  `json:"events"`
 }
 
-func TestEventNames(t *testing.T) {
+// TestEventNamesReadTheFiles: the product and measures names of the
+// range in the event files, busiest first, rules applied: a blocked name
+// is left out and a renamed one counts under its new name. SQLite's
+// events are not read.
+func TestEventNamesReadTheFiles(t *testing.T) {
 	h, _ := newTestHost(t)
 	r := newTestRegistrar(t, h)
-	if _, err := h.ops.CreateProject(t.Context(), "test", manage.ProjectSpec{Name: "events"}); err != nil {
+	ctx := t.Context()
+	if _, err := h.ops.CreateProject(ctx, "test", manage.ProjectSpec{Name: "events"}); err != nil {
 		t.Fatal(err)
 	}
 	const pid = "3"
-	seed := func(id, family, name, extra string) {
-		t.Helper()
-		q := `INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, path, family, event_name, value, measure, sample_rate)
-			VALUES (?, 3, '2026-09-10T10:00:00Z', '2026-09-10', '2026-09-10T10:00:00Z', 'web', 'a1', 'user', '/', ?, ?, ` + extra + `)`
-		if _, err := rawExec(h.ops.St, q, id, family, name); err != nil {
-			t.Fatal(err)
-		}
+	at := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	product := func(name string) store.Event {
+		return store.Event{ProjectID: 3, Family: store.FamilyProduct, EventName: name, Kind: "web", TS: at}
 	}
-	seed("n1", "product", "a", "NULL, '', 1")
-	seed("n2", "product", "a", "NULL, '', 1")
-	seed("n3", "product", "b", "NULL, '', 1")
-	for _, id := range []string{"m1", "m2", "m3"} {
-		seed(id, "measures", "m", "120.0, 'time', 1")
+	measure := func(name string) store.Event {
+		v := 120.0
+		return store.Event{ProjectID: 3, Family: store.FamilyMeasures, EventName: name, Kind: "web", TS: at,
+			Value: &v, Measure: store.MeasureTime}
 	}
-	// $ names belong to the server and take no rule: left out.
-	seed("s1", "product", "$form_submit", "NULL, '', 1")
-	seed("s2", "measures", "$lcp", "900.0, 'time', 1")
+	writeHostEvents(t, h,
+		product("a"), product("a"), product("b"),
+		measure("m"), measure("m"), measure("m"),
+		// $ names belong to the server and take no rule: left out.
+		product("$form_submit"), measure("$lcp"),
+		// Blocked: left out. Renamed to "c": counted as "c".
+		product("spam"), product("old"), product("old"), product("old"), product("old"))
+	if _, err := h.ops.BlockEvent(ctx, "test", 3, "product", "spam"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := h.ops.RenameEvent(ctx, "test", 3, "product", "old", "c"); err != nil {
+		t.Fatal(err)
+	}
+	// A row in SQLite alone is not read.
+	if _, err := rawExec(h.ops.St, `INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, path, family, event_name, sample_rate)
+		VALUES ('n9', 3, '2026-09-10T10:00:00Z', '2026-09-10', '2026-09-10T10:00:00Z', 'web', 'a1', 'user', '/', 'product', 'sqlite_only', 1)`); err != nil {
+		t.Fatal(err)
+	}
 
 	rec := serveREST(t, r, "GET", "/api/projects/"+pid+"/event-names?from=2026-09-01&to=2026-09-30", "")
 	if rec.Code != http.StatusOK {
@@ -241,7 +258,7 @@ func TestEventNames(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
 		t.Fatal(err)
 	}
-	want := []nameRow{{"measures", "m", 3}, {"product", "a", 2}, {"product", "b", 1}}
+	want := []nameRow{{"product", "c", 4}, {"measures", "m", 3}, {"product", "a", 2}, {"product", "b", 1}}
 	if len(out.Events) != len(want) {
 		t.Fatalf("events = %+v, want %+v", out.Events, want)
 	}
@@ -279,20 +296,13 @@ func TestEventNamesKeepsTheBusiest200(t *testing.T) {
 	const pid = "3"
 	// 201 names with one event each, plus a second event for "n000" so the
 	// order has a head; "n200" sorts last and is the one left out.
-	var rows []string
-	var args []any
-	add := func(id, name string) {
-		rows = append(rows, `(?, 3, '2026-09-10T10:00:00Z', '2026-09-10', '2026-09-10T10:00:00Z', 'web', 'a1', 'user', '/', 'product', ?, NULL, '', 1)`)
-		args = append(args, id, name)
-	}
+	at := time.Date(2026, 9, 10, 10, 0, 0, 0, time.UTC)
+	var evs []store.Event
 	for i := 0; i <= 200; i++ {
-		add(fmt.Sprintf("e%d", i), fmt.Sprintf("n%03d", i))
+		evs = append(evs, store.Event{ProjectID: 3, Family: store.FamilyProduct, EventName: fmt.Sprintf("n%03d", i), Kind: "web", TS: at})
 	}
-	add("extra", "n000")
-	q := `INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, path, family, event_name, value, measure, sample_rate) VALUES ` + strings.Join(rows, ",")
-	if _, err := rawExec(h.ops.St, q, args...); err != nil {
-		t.Fatal(err)
-	}
+	evs = append(evs, store.Event{ProjectID: 3, Family: store.FamilyProduct, EventName: "n000", Kind: "web", TS: at})
+	writeHostEvents(t, h, evs...)
 	rec := serveREST(t, r, "GET", "/api/projects/"+pid+"/event-names?from=2026-09-01&to=2026-09-30", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("event-names = %d %s", rec.Code, rec.Body)
