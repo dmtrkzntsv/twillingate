@@ -117,13 +117,6 @@ func setup(t *testing.T, vars map[string]string, specs []manage.ProjectSpec) (st
 	return st, reg, New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now)
 }
 
-func mustTime(s string) time.Time {
-	t, _ := time.Parse(time.RFC3339, s)
-	return t
-}
-
-func mustDay(s string) civil.Date { d, _ := civil.Parse(s); return d }
-
 // TestPassWithoutArchiveRecordsTheDatabaseOnly: the pass ends by
 // measuring the database at its own clock. With no archive (a process
 // that keeps no event files, such as a console-only one) it records the
@@ -131,9 +124,12 @@ func mustDay(s string) civil.Date { d, _ := civil.Parse(s); return d }
 // wrote.
 func TestPassWithoutArchiveRecordsTheDatabaseOnly(t *testing.T) {
 	_, _, r := setup(t, jobsVars, jobsProjectSpecs)
+	if _, err := rawExec(t, `INSERT INTO usage_history (key, project_id, measured_at, value) VALUES ('file_bytes', 1, '2026-08-22', 777)`); err != nil {
+		t.Fatal(err)
+	}
 	r.RunDailyPass(context.Background())
-	got := queryDays(t, `SELECT key || ' ' || project_id || ' ' || measured_at FROM usage_history ORDER BY key`)
-	if want := []string{"database_bytes 0 2026-08-22"}; !slices.Equal(got, want) {
+	got := queryDays(t, `SELECT key || ' ' || project_id || ' ' || measured_at || ' ' || CASE key WHEN 'file_bytes' THEN value ELSE '' END FROM usage_history ORDER BY key`)
+	if want := []string{"database_bytes 0 2026-08-22 ", "file_bytes 1 2026-08-22 777"}; !slices.Equal(got, want) {
 		t.Errorf("usage_history = %v, want %v", got, want)
 	}
 }
