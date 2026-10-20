@@ -114,7 +114,7 @@ func (s *receivedSeen) remember(written []receivedKey, gen uint64) {
 
 // writeReceived inserts the triples ingest has not seen yet, with events 0
 // until the daily pass counts their day; a row already there (a restart,
-// or a late event for an older day) is left as it is. Each key also gets
+// or a late event for an older day) is left as it is.
 func writeReceived(ctx context.Context, tx *sql.Tx, keys []receivedKey) error {
 	if len(keys) == 0 {
 		return nil

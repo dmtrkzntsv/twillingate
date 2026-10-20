@@ -85,8 +85,7 @@ func (o *Ops) moveAttribute(ctx context.Context, actor, action string, projectID
 }
 
 // BlockAttribute strips a key: later events do not store it, the event
-// files read none of its values, history included, and it is no longer a
-// breakdown.
+// files read none of its values, history included.
 func (o *Ops) BlockAttribute(ctx context.Context, actor string, projectID int64, key string) (store.AttributeRule, error) {
 	if err := o.attrTarget(ctx, projectID, key); err != nil {
 		return store.AttributeRule{}, err

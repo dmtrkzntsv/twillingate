@@ -65,7 +65,7 @@ func (h *host) listAttributes(ctx context.Context, in attributesIn) (listAttribu
 
 	blocked := map[string]bool{}
 	aliases := map[string][]string{}
-	var named []string // listed even past the busiest
+	var named []string                               // listed even past the busiest
 	for _, r := range snap.AttributeRuleList(p.ID) { // ordered by key, so are the aliases
 		switch r.Action {
 		case store.EventRuleBlock:

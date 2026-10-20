@@ -182,4 +182,3 @@ func TestWriteEventsAddsNoCatalogRows(t *testing.T) {
 		t.Fatalf("catalog rows = %v, want none", got)
 	}
 }
-

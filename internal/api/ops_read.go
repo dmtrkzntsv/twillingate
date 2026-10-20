@@ -371,10 +371,10 @@ func (h *host) register(r *registrar) {
 		h.runQuery)
 
 	expose(r, spec{Name: "create_project", Annotations: write, Method: "POST", Path: "/api/projects", Status: http.StatusCreated,
-		Description: "Create a project and (by default) its first ingest key; returns a paste-ready embed snippet (confirm the collector hostname with the user). Set skip_key to suppress the key. Each declared attribute is a breakdown, counted against ATTRIBUTE_BREAKDOWNS_MAX across active projects; pick keys from list_attributes."},
+		Description: "Create a project and (by default) its first ingest key; returns a paste-ready embed snippet (confirm the collector hostname with the user). Set skip_key to suppress the key. Attributes need no declaring: every key the events carry breaks down in the event files."},
 		h.createProject)
 	expose(r, spec{Name: "update_project", Annotations: write, Method: "PATCH", Path: "/api/projects/{project_id}",
-		Description: "Update a project's name, allowed origins and/or declared product-event attributes (breakdown keys for flat-view columns and attribute rollups). Fields you omit are left unchanged; allowed_origins and attributes replace the whole list when given, and an explicit empty allowed_origins clears it. Each declared attribute is a breakdown, counted against ATTRIBUTE_BREAKDOWNS_MAX across active projects; pick keys from list_attributes."},
+		Description: "Update a project's name and/or allowed origins. Fields you omit are left unchanged; allowed_origins replaces the whole list when given, and an explicit empty allowed_origins clears it."},
 		h.updateProject)
 	expose(r, spec{Name: "move_project", Annotations: idem, Method: "POST", Path: "/api/projects/{project_id}/move",
 		Description: "Put a project right after another (after: a project id, archived ones included; 0 first) in the order list_projects, the console and the CLI show. A new project comes last."},
@@ -413,13 +413,13 @@ func (h *host) register(r *registrar) {
 		Description: "Remove a project's rule for an event name: reads of the event files stop applying it, so events stored before the rule show as sent again (ingest stored the later ones as the rule said), and a block lets the event be stored again."},
 		h.removeEventRule)
 	expose(r, spec{Name: "rename_attribute", Annotations: write, Method: "POST", Path: p + "/attribute-rules/rename",
-		Description: "Rename a custom attribute key of a project's product and measures events to a key not in use: every read of the event files shows its values under the new key, history included, it keeps its breakdown, and ingest stores later events sent with the old key under the new one (the new key's value wins when an event carries both). Refused onto a key the files already have values of, rules applied (merge_attribute folds one key into another), or a blocked key, and for $ keys. Widget SQL naming the old key is not rewritten."},
+		Description: "Rename a custom attribute key of a project's product and measures events to a key not in use: every read of the event files shows its values under the new key, history included, and ingest stores later events sent with the old key under the new one (the new key's value wins when an event carries both). Refused onto a key the files already have values of, rules applied (merge_attribute folds one key into another), or a blocked key, and for $ keys. Widget SQL naming the old key is not rewritten."},
 		h.renameAttribute)
 	expose(r, spec{Name: "merge_attribute", Annotations: destroy, Method: "POST", Path: p + "/attribute-rules/merge",
 		Description: "Merge a custom attribute key into another: every read of the event files shows its values under the target, history included (the target's value wins where an event carries both), and ingest stores later events sent with the old key under the target, which removing the rule does not split again. The old key need not have data (an alias for an app version still in the field). Refused onto a blocked key, and for $ keys. Widget SQL naming the old key is not rewritten."},
 		h.mergeAttribute)
 	expose(r, spec{Name: "block_attribute", Annotations: destroyIdem, Method: "POST", Path: p + "/attribute-rules/block",
-		Description: "Block a custom attribute key: ingest strips it from events (with a warning) and stores the events without it, it stops being a breakdown, and every read of the event files leaves its stored values out, history included. Nothing is deleted. remove_attribute_rule unblocks."},
+		Description: "Block a custom attribute key: ingest strips it from events (with a warning) and stores the events without it, and every read of the event files leaves its stored values out, history included. Nothing is deleted. remove_attribute_rule unblocks."},
 		h.blockAttribute)
 	expose(r, spec{Name: "remove_attribute_rule", Annotations: idem, Method: "POST", Path: p + "/attribute-rules/remove",
 		Description: "Remove a project's rule for an attribute key: reads of the event files stop applying it, so events stored before the rule show the key as sent again (ingest stored the later ones as the rule said), and a block lets the key be stored again."},

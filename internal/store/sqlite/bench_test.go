@@ -342,4 +342,3 @@ func seedBenchAttributeRules(b *testing.B, db *DB) {
 		}
 	}
 }
-
