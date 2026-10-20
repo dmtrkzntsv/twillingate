@@ -115,14 +115,16 @@ test-compose:
 # project name in scripts/seed-demo.py (dev, marketing, docs, app, legacy):
 # create them first with `./twillingate project create -name <name>`; whether
 # a profile sends ids (and so fills the users, groups and retention pages) is
-# its `ids` key in the script. Re-running replaces the seeded rows rather than
-# stacking another copy on top.
+# its `ids` key in the script. The events go into raw/ beside the database as
+# closed logs; the first start dumps them to Parquet. Re-running replaces the
+# closed logs not yet dumped, so seed into an empty raw/ after a start.
 seed-demo: local/.env build
 	@DATABASE_DSN="sqlite://$(PWD)/local/twillingate.db" ./$(BIN) migrate
 	python3 scripts/seed-demo.py local/twillingate.db
 	@echo
-	@echo "Cohorts are computed by the daily pass; run 'make run' once to"
-	@echo "trigger the boot catch-up so the retention page has data."
+	@echo "The seeded days are closed logs under local/raw/. The first start"
+	@echo "('make run') dumps them to Parquet and derives the sessions and"
+	@echo "identities, so the dashboards and retention have data once it ends."
 
 clean:
 	rm -rf $(BIN) dist local coverage.out
