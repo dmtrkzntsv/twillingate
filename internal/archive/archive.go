@@ -5,7 +5,7 @@
 // SQLite holds no events; the daily pass also derives the
 // sessions, identities and aliases tables from the files; Reader answers
 // SQL over the files and open logs, and the tables derived from them, for
-// the query tool's files source, and nothing else reads them yet.
+// the query tool's files source.
 //
 // Under raw/<project_id>/:
 //

@@ -214,7 +214,6 @@ type Store interface {
 	// size, and each project's file bytes when fileBytes is non-nil (a
 	// process with no event files passes nil and leaves them alone).
 	RecordUsageHistory(ctx context.Context, now time.Time, fileBytes map[int64]int64) error
-	ProjectIDs(ctx context.Context) ([]int64, error)         // all rows incl. archived, ascending
 	GetMeta(ctx context.Context, key string) (string, error) // "" if absent
 	SetMeta(ctx context.Context, key, value string) error
 	LoadRegistry(ctx context.Context) ([]RegistryProject, []RegistryKey, error)
@@ -369,8 +368,8 @@ type Store interface {
 	PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]PendingSubmission, error)
 	// AttributeSubmission stores ev's referrer and UTMs as p's attribution
 	// and, when p.WriteEvent, leaves ev in the outbox (UnloggedEvents),
-	// all in one transaction; wrote reports the outbox filled. A submission no longer pending (deleted, or attributed
-	// already) changes nothing.
+	// all in one transaction; wrote reports the outbox filled. A submission no
+	// longer pending (deleted, or attributed already) changes nothing.
 	AttributeSubmission(ctx context.Context, p PendingSubmission, ev Event) (wrote bool, err error)
 	// UnloggedEvents lists up to limit events AttributeSubmission wrote
 	// and MarkLogged has not cleared yet, oldest first. A row that does

@@ -154,7 +154,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		runner.WithArchive(archive.New(archiveLog, eng, logger))
 		// Form attribution (raw-first PR 5b): the process that ingests
 		// looks each submission's source up in the files a minute after
-		// it arrives and writes its event to SQLite and the log.
+		// it arrives and writes its event to the log.
 		runner.WithAttribution(files, archiveLog)
 	}
 	jobsCtx, stopJobs := context.WithCancel(context.Background())

@@ -22,7 +22,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/config/configtest"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
 )
@@ -39,8 +38,6 @@ func freePort(t *testing.T) string {
 	l.Close()
 	return addr
 }
-
-func mustDay(s string) civil.Date { d, _ := civil.Parse(s); return d }
 
 // seedProject writes a project and ingest key straight into the registry
 // (bypassing HTTP/CLI) before Serve boots, since the running server only
@@ -193,7 +190,7 @@ func TestServeEndToEnd(t *testing.T) {
 	}
 	// The seeded project must still be there after a full boot/shutdown
 	// cycle: Serve reads it, never rewrites the registry.
-	ids, err := st.ProjectIDs(bg)
+	ids, err := st.(importStore).ProjectIDs(bg)
 	if err != nil {
 		t.Fatal(err)
 	}
