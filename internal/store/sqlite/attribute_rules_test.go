@@ -155,6 +155,29 @@ func TestRenameAttributeOntoBlockedIsConflict(t *testing.T) {
 	renameAttr(t, db, 1, "a", "c")
 }
 
+// A target renamed to a third key is refused, as for event names; renaming
+// back onto the key it maps to is allowed.
+func TestRenameAttributeRefusesARenamedTarget(t *testing.T) {
+	db := ruleDB(t)
+	renameAttr(t, db, 1, "a", "b")
+	renameAttr(t, db, 1, "b", "x")
+	want := loadAttrRules(t, db)
+	audit := count(t, db, `SELECT COUNT(*) FROM audit_log`)
+	err := db.RenameAttribute(context.Background(), 1, "c", "b", attrAudit)
+	if !errors.Is(err, store.ErrConflict) || !strings.Contains(err.Error(), "b is renamed to x: rename into x, or remove that rule first") {
+		t.Fatalf("err = %v, want ErrConflict naming x", err)
+	}
+	if got := loadAttrRules(t, db); !reflect.DeepEqual(got, want) {
+		t.Errorf("rules = %v, want unchanged %v", got, want)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM audit_log`); n != audit {
+		t.Errorf("audit rows = %d, want %d", n, audit)
+	}
+	// Another project's rename of b does not count.
+	renameAttr(t, db, 2, "c", "b")
+	renameAttr(t, db, 1, "x", "b")
+}
+
 func TestRenameAttributeSameKeyIsInvalid(t *testing.T) {
 	db := ruleDB(t)
 	if err := db.RenameAttribute(context.Background(), 1, "a", "a", attrAudit); !errors.Is(err, store.ErrInvalid) {

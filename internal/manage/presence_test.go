@@ -144,3 +144,34 @@ func TestRenameWithoutPresence(t *testing.T) {
 		t.Errorf("rename with no presence: %v", err)
 	}
 }
+
+// A rename or a merge onto a name or key that is itself renamed to a third
+// one is a conflict; nothing is written.
+func TestMoveOntoARenamedTargetIsAConflict(t *testing.T) {
+	ops, _, reg, p, _ := ruleOps(t)
+	ctx := context.Background()
+	for _, step := range []func() error{
+		func() error { _, err := ops.RenameEvent(ctx, "t", p, "product", "a", "b"); return err },
+		func() error { _, err := ops.RenameEvent(ctx, "t", p, "product", "b", "x"); return err },
+		func() error { _, err := ops.RenameAttribute(ctx, "t", p, "a", "b"); return err },
+		func() error { _, err := ops.RenameAttribute(ctx, "t", p, "b", "x"); return err },
+	} {
+		if err := step(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	events, attrs := reg.Snapshot(ctx).RuleLists()
+	for name, move := range map[string]func() error{
+		"rename event":     func() error { _, err := ops.RenameEvent(ctx, "t", p, "product", "c", "b"); return err },
+		"merge event":      func() error { _, err := ops.MergeEvent(ctx, "t", p, "product", "c", "b"); return err },
+		"rename attribute": func() error { _, err := ops.RenameAttribute(ctx, "t", p, "c", "b"); return err },
+		"merge attribute":  func() error { _, err := ops.MergeAttribute(ctx, "t", p, "c", "b"); return err },
+	} {
+		if err := move(); !errors.Is(err, ErrConflict) {
+			t.Errorf("%s: err = %v, want ErrConflict", name, err)
+		}
+	}
+	if e, a := reg.Snapshot(ctx).RuleLists(); len(e) != len(events) || len(a) != len(attrs) {
+		t.Errorf("refusals wrote rules: %v %v", e, a)
+	}
+}

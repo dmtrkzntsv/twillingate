@@ -203,7 +203,9 @@ over merged days are exact.
 - **Chains and renaming back.** Renaming or merging B into C retargets every
   rule `A → B` to `A → C`, so a rule's target is never another rule's source.
   Renaming `B` to `A` while `A → B` exists deletes that rule first, so `A` is
-  no longer mapped away.
+  no longer mapped away. Renaming or merging onto a name that is itself
+  renamed to a third one (`B → X`, then `C` into `B`) is `conflict`: rename
+  into `X`, or remove that rule first.
 - **Never onto a blocked name.** Neither a rename nor a merge drops what it
   moves: to stop receiving an event, block it.
 - **Widget SQL is not rewritten.** A widget or `query` that names the old event
@@ -284,7 +286,9 @@ yet shipped. Merging two breakdowns leaves one, freeing a place in the budget.
 - **Chains and renaming back.** Renaming or merging B into C retargets every
   rule `A → B` to `A → C`, so a rule's target is never another rule's source.
   Renaming `B` to `A` while `A → B` exists deletes that rule first, so `A` is
-  no longer mapped away.
+  no longer mapped away. Renaming or merging onto a key that is itself
+  renamed to a third one is `conflict`: rename into that one, or remove its
+  rule first.
 - **Never onto a blocked key.** Neither a rename nor a merge drops what it
   moves: to stop receiving a key, block it.
 - **Widget SQL is not rewritten.** A widget or `query` that names the old key

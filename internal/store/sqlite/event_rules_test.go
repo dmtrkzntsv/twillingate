@@ -117,6 +117,32 @@ func TestRenameEventChainsCollapseAndRenameBack(t *testing.T) {
 	}
 }
 
+// A target renamed to a third name is refused: collapsing the chain would
+// delete that rule, and the history stored before it would read under the
+// target again. Renaming back onto the name it maps to is allowed.
+func TestRenameEventRefusesARenamedTarget(t *testing.T) {
+	db := ruleDB(t)
+	p := store.FamilyProduct
+	rename(t, db, 1, p, "a", "b")
+	rename(t, db, 1, p, "b", "x")
+	want := loadRules(t, db)
+	audit := count(t, db, `SELECT COUNT(*) FROM audit_log`)
+	err := db.RenameEvent(context.Background(), 1, p, "c", "b", ruleAudit)
+	if !errors.Is(err, store.ErrConflict) || !strings.Contains(err.Error(), "b is renamed to x: rename into x, or remove that rule first") {
+		t.Fatalf("err = %v, want ErrConflict naming x", err)
+	}
+	if got := loadRules(t, db); !reflect.DeepEqual(got, want) {
+		t.Errorf("rules = %v, want unchanged %v", got, want)
+	}
+	if n := count(t, db, `SELECT COUNT(*) FROM audit_log`); n != audit {
+		t.Errorf("audit rows = %d, want %d", n, audit)
+	}
+	// Another family's rename of b does not count.
+	rename(t, db, 1, store.FamilyMeasures, "c", "b")
+	// Renaming x back to b drops b's rule, as the chain tests show.
+	rename(t, db, 1, p, "x", "b")
+}
+
 // Renaming a blocked name replaces its block; blocking a rename's target
 // later leaves the rename pointing at it (ingest then drops both names).
 func TestRenameEventReplacesBlockAndKeepsTargetBlock(t *testing.T) {

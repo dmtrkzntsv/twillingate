@@ -35,8 +35,10 @@ func (d *DB) LoadEventRules(ctx context.Context) ([]store.EventRule, error) {
 // project, which the event files apply on read (raw-first D6): no event is
 // rewritten. Chains are collapsed (D5): no rule's target is itself a
 // rename rule's name. A `to` that is blocked is store.ErrConflict: a
-// rename or merge never drops what it moves. Whether `to` already has
-// events is manage's to ask the files.
+// rename or merge never drops what it moves. A `to` that is itself
+// renamed to a third name is store.ErrConflict too: the collapse would
+// delete that rule and bring its history back under `to`. Whether `to`
+// already has events is manage's to ask the files.
 func (d *DB) RenameEvent(ctx context.Context, projectID int64, family store.Family,
 	from, to string, a store.AuditEntry) error {
 	if from == to {
@@ -52,6 +54,19 @@ func (d *DB) RenameEvent(ctx context.Context, projectID int64, family store.Fami
 		if blocked {
 			return fmt.Errorf("rename %s to %s: %s is blocked; to stop receiving %s, block it: %w",
 				from, to, to, from, store.ErrConflict)
+		}
+		// A target renamed to a third name would lose that rule below,
+		// and the history stored before it would read under the target
+		// again: refused. Renaming back (to → from) is allowed.
+		var onward string
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(MAX(to_name), '') FROM rules WHERE project_id=?1 AND kind='event' AND family=?2 AND name=?3 AND action='rename'`,
+			projectID, string(family), to).Scan(&onward); err != nil {
+			return fmt.Errorf("rename: look for a rename of %s: %w", to, err)
+		}
+		if onward != "" && onward != from {
+			return fmt.Errorf("rename %s to %s: %s is renamed to %s: rename into %s, or remove that rule first: %w",
+				from, to, to, onward, onward, store.ErrConflict)
 		}
 		// D5: the target is no longer mapped away (a block on it stays);
 		// every rule that pointed at `from` now points at `to`.

@@ -33,8 +33,8 @@ func (d *DB) LoadAttributeRules(ctx context.Context) ([]store.AttributeRule, err
 // RenameAttribute keeps a rename rule from `from` to `to` on one project's
 // product and measures events, which the event files apply on read (spec
 // D6, D7): no event is rewritten. The catalog row moves with it. A `to`
-// that is blocked is store.ErrConflict; whether `to` already has data is
-// manage's to ask the files.
+// that is blocked, or renamed to a third key, is store.ErrConflict;
+// whether `to` already has data is manage's to ask the files.
 func (d *DB) RenameAttribute(ctx context.Context, projectID int64, from, to string, a store.AuditEntry) error {
 	if from == to {
 		return fmt.Errorf("rename attribute %s: from and to are the same key: %w", from, store.ErrInvalid)
@@ -49,6 +49,18 @@ func (d *DB) RenameAttribute(ctx context.Context, projectID int64, from, to stri
 		if blocked {
 			return fmt.Errorf("rename attribute %s to %s: %s is blocked; to stop receiving %s, block it: %w",
 				from, to, to, from, store.ErrConflict)
+		}
+		// As for event names: a target renamed to a third key is refused,
+		// renaming back (to → from) is allowed.
+		var onward string
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COALESCE(MAX(to_name), '') FROM rules WHERE project_id=?1 AND kind='attribute' AND family='event' AND name=?2 AND action='rename'`,
+			projectID, to).Scan(&onward); err != nil {
+			return fmt.Errorf("rename attribute: look for a rename of %s: %w", to, err)
+		}
+		if onward != "" && onward != from {
+			return fmt.Errorf("rename attribute %s to %s: %s is renamed to %s: rename into %s, or remove that rule first: %w",
+				from, to, to, onward, onward, store.ErrConflict)
 		}
 		if err := renameCatalog(ctx, tx, projectID, from, to); err != nil {
 			return err
