@@ -837,9 +837,9 @@ fields as extra columns; delete the derived files if you go back for good.
 
 ### Upgrading to imported event files (no migration, one command)
 
-No schema migration. After upgrading, run one command once, with the
-ingest service stopped: it copies into `raw/` every raw row the database
-holds that the files do not.
+No schema migration. After upgrading (v0.19.0 is the first release with
+the command), run one command once, with the ingest service stopped: it
+copies into `raw/` every raw row the database holds that the files do not.
 
 - The rows it copies are the events from before the upgrade that began
   writing `raw/`, back to the oldest day the raw window
@@ -847,7 +847,12 @@ holds that the files do not.
 - Run it soon. Each day it waits, the oldest raw day leaves
   `RETENTION_RAW_DAYS` and can no longer be imported.
 - It takes about 30 s per million rows. The next start's pass turns what
-  it copied into day files, about 0.2 s a day.
+  it copied into day files and derives their tables: for one month at
+  the cap (985,000 rows), about 6.5 minutes on a loaded 4-core host, with
+  the engine child at about 950 MB. Until that pass ends, dashboards and
+  queries over the files answer slowly: each query loads the closed logs
+  the pass has not reached yet, so a small host sees its memory peak
+  then.
 - `EVENTS_DIR` must be on a filesystem that supports `flock`: most local
   filesystems do, some FUSE and SMB mounts do not. The ingest server now
   refuses to start otherwise.
@@ -946,3 +951,204 @@ Rollback: an older binary ignores the new columns and attributes on
 arrival again. Submissions still pending at the rollback keep `{}` and
 get no event, and events still waiting to be logged at the rollback
 reach SQLite but not the event files.
+
+### Upgrading to dashboards on the event files (no migration)
+
+No schema migration. Dashboards now read the event files under `raw/`
+through the engine, not the database, and widget SQL is DuckDB SQL over
+the files' tables (`docs/reporting.md`, "Tables"). Before upgrading:
+
+- **Run the import first, on v0.19.0, and start v0.19.0 once before
+  upgrading.** v0.19.0 is the first release with `twillingate events
+  import`. If the import has not run (see "Upgrading to imported event
+  files" above), run it with v0.19.0's binary, start the service again,
+  and wait for its first pass to turn the imported days into day files.
+  From an older release, upgrade to v0.19.0 first, run the import there,
+  let that pass finish, then upgrade to this release. The pass is done
+  when no project's directory under `EVENTS_DIR` (default `raw/` beside
+  the database) holds a closed log (`.closed`), a claimed one
+  (`.dumping`) or an import's partial one (`.import`). Run the check as
+  the service user, since the data directory is readable by it only:
+
+  ```sh
+  # systemd
+  sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env
+    dir=${EVENTS_DIR:-$(dirname "${DATABASE_DSN#sqlite://}")/raw}
+    left=$(find "$dir" -mindepth 2 -maxdepth 2 \( -name "*.closed" -o -name "*.dumping" -o -name "*.import" \)) || exit 1
+    if [ -n "$left" ]; then echo "not dumped yet:"; echo "$left"; else echo "done: nothing left to dump in $dir"; fi'
+  # compose
+  docker compose exec twillingate sh -c '
+    dir=${EVENTS_DIR:-$(dirname "${DATABASE_DSN#sqlite://}")/raw}
+    left=$(find "$dir" -mindepth 2 -maxdepth 2 \( -name "*.closed" -o -name "*.dumping" -o -name "*.import" \)) || exit 1
+    if [ -n "$left" ]; then echo "not dumped yet:"; echo "$left"; else echo "done: nothing left to dump in $dir"; fi'
+  ```
+
+  It prints `done: nothing left to dump in …` once the pass has ended,
+  and otherwise the files still waiting; an error (no such directory,
+  permission denied) means the check did not run. A `.log` is a day's
+  open log: it is not listed, since an event that comes late for a past
+  day opens that day's log again. A `.import` stays only when an import
+  stopped part way; no pass reads it, so run `twillingate events import`
+  again, which rewrites it and skips what is already copied; one that
+  stays after the import succeeded holds nothing the files lack, and can
+  be deleted. Then upgrade. This release's start
+  checks the system dashboards on the files before it serves anything,
+  ingest included, and its first query loads every log not yet dumped,
+  which on a month at the cap takes minutes and can exceed
+  `ENGINE_MEMORY_LIMIT`. If that query takes over 5 minutes or runs out
+  of memory, the start logs `could not check the system dashboards on
+  the event files` and goes on without the check, and the dashboards
+  answer slowly until this release's own pass ends; the next start
+  checks again. Until the import has run, the
+  dashboards show only what the files hold, and the console logs at
+  start, naming the projects whose raw rows in the database reach back
+  before their files: `SQLite holds raw events older than the event
+  files`.
+- **Check the engine:** `twillingate engine -check`, as the service user.
+  The reporting migrator now validates the system dashboards on the files
+  whenever a release changes them, so an engine child that cannot start
+  (say, `engine/` beside the database not writable by the service user)
+  now fails the start of the console, and of the CLI commands that open
+  the database (`migrate`, `project`, `key`, `form`, `events import`),
+  where it used to fail only the first query on the files. A start with
+  no change to the system dashboards runs no engine child for it. Run
+  those commands as the service user: one that would start a child as
+  anyone but the database file's owner (root, say) is refused, since the
+  child's `engine/` and `raw/` would then belong to that user.
+
+What changes on the day:
+
+- **History older than the raw window is gone from the dashboards.** They
+  start at the oldest raw day the database held at the import
+  (`RETENTION_RAW_DAYS` before it); the daily aggregates older than that
+  stay in the database, readable with `query` and `source: "sqlite"`, but
+  no widget reads them. From the upgrade on, the files keep
+  `RETENTION_DAYS` (default 400) of history.
+- **What counts from the first day the files hold restarts there,** the
+  oldest imported day (the upgrade day without an import):
+  - New users, New groups and First seen on the Users and Groups
+    dashboards: everyone already in that first day counts as new on it;
+  - retention cohorts begin on it, so D30 and D45 stay empty until the
+    first cohorts are 30 and 45 days old. With the default
+    `RETENTION_RAW_DAYS` of 30, the 90d Retention dashboard is mostly
+    empty at first.
+- **No `(other)` rows:** view kinds, breakdowns and attribute values past
+  `ATTRIBUTE_VALUES_TOP_N`, and users and groups past `IDENTITIES_TOP_N`,
+  each show as their own row.
+- **The Product dashboard's attribute table lists each value once over
+  the range,** now "Attribute values", with exact Users and Groups for
+  the range in place of "Users (at least)" and "Groups (at least)", and
+  no longer a row per day.
+- **Retention counts yesterday from 00:00 UTC,** as soon as the day ends,
+  rather than after the 03:00 UTC pass.
+- **The console's engine child serves every widget,** not only `query`
+  on the files, so it runs whenever someone opens a dashboard. Its RSS
+  can exceed `ENGINE_MEMORY_LIMIT`, which bounds DuckDB's own buffers:
+  120–280 MB for one month at the cap, 0.8–1.4 GB over a year of it.
+- **Widgets you or an agent made break** when their SQL reads SQLite's
+  views. Nothing rewrites or archives them. Each shows DuckDB's error on
+  its dashboard, with the hint "widget SQL is DuckDB SQL over events,
+  views, product, measures, sessions, identities and aliases; see
+  docs://reporting". The console also checks every one in the background
+  at start and logs each that fails:
+
+  ```sh
+  journalctl -u twillingate | grep "widget SQL fails"
+  docker compose logs twillingate | grep "widget SQL fails"
+  ```
+
+  Each line names `widget_id`, `dashboard_id`, `title` and the error.
+  A check that runs out of time or memory, or whose engine child dies,
+  says nothing of the widget's SQL: it is logged as `could not check
+  widget on the event files`, with the `reason`, and the next start
+  checks that widget again. A timeout (`CONSOLE_QUERY_TIMEOUT`, on the
+  sample week) skips only that widget, and the check goes on. Running out
+  of memory, a dead engine child, or a timeout while loading the open
+  logs ends the check there (`the widgets after it go unchecked until the
+  next start`). That is likely on the first start, while the boot pass
+  still dumps the closed logs: restart the service once that pass has
+  ended (the check above prints `done`), then grep again for the full
+  list of `widget SQL fails on the event files` lines.
+  Rewrite them with `update_widget` (an agent can, given
+  `docs://reporting`). Three common rewrites:
+
+  ```sql
+  -- before: visitors per day (distinct per day and kind, added up)
+  SELECT day AS x, SUM(visitors) AS y FROM v_views_daily
+  WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY day ORDER BY day
+  -- after: the same figure
+  SELECT day AS x, SUM(visitors) AS y FROM (
+    SELECT day, kind, count(DISTINCT actor_id) AS visitors FROM views
+    WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY day, kind)
+  GROUP BY day ORDER BY day
+
+  -- before: signups in the range and in as many days before it
+  SELECT (SELECT SUM(count) FROM v_product_daily
+          WHERE project_id = :project AND event_name = 'signup'
+            AND day BETWEEN :from AND :to) AS value,
+         (SELECT SUM(count) FROM v_product_daily
+          WHERE project_id = :project AND event_name = 'signup'
+            AND day BETWEEN date(:from, '-' || (julianday(:to) - julianday(:from) + 1) || ' days')
+                        AND date(:from, '-1 day')) AS previous
+  -- after
+  SELECT count(*) FILTER (WHERE day >= :from) AS value,
+         count(*) FILTER (WHERE day < :from) AS previous
+  FROM product
+  WHERE project_id = :project AND event_name = 'signup'
+    AND day BETWEEN :from - CAST(:to - :from + 1 AS INTEGER) AND :to
+
+  -- before: top countries (visitors distinct per day, added up)
+  SELECT country AS label, SUM(visitors) AS value FROM v_views_countries
+  WHERE project_id = :project AND day BETWEEN :from AND :to AND country != ''
+  GROUP BY country ORDER BY value DESC LIMIT 10
+  -- after: the same figure
+  SELECT country AS label, SUM(visitors) AS value FROM (
+    SELECT day, country, count(DISTINCT actor_id) AS visitors FROM views
+    WHERE project_id = :project AND day BETWEEN :from AND :to AND country IS NOT NULL
+    GROUP BY day, country)
+  GROUP BY country ORDER BY value DESC LIMIT 10
+  ```
+
+  `count(DISTINCT actor_id)` over the whole range, without the per-day
+  subquery, counts each visitor once instead: a different, smaller figure.
+
+  A field the event did not send is NULL in the files, where the database
+  had `''`; `day`, `:from` and `:to` are DATEs.
+- `twillingate reporting dev` runs its widgets on the files in
+  `EVENTS_DIR` (default `raw/` beside the `-db` database).
+- **The analytics tools read the files too:** `views_overview`,
+  `views_breakdown`, `product_events`, `product_attributes`, `measures`,
+  `retention` and `identities` (MCP and REST) answer from the same tables
+  as the dashboards, so their history starts where the dashboards' does,
+  with no `(other)` rows. Their inputs and output columns are unchanged.
+  What reads differently:
+  - every key the events carried breaks down, with no declaration needed:
+    `product_attributes` lists each custom attribute key and the reserved
+    keys `$host`, `$path`, `$referrer`, `$utm_*`, `$os_version`,
+    `$browser_version` and `$device_model` as well as the nine it always
+    had, and `measures` takes any of them as `attr_key` (a key none
+    carried gives no rows); `unique_groups` is `0`, never empty, when no
+    group was involved;
+  - `product_attributes` refuses a range longer than 92 days: its rows
+    are per day, event and value, which over a year runs out of the
+    engine's memory. Ask `query` for longer ranges;
+  - `retention`'s `aggregated_through` is the newest day before today
+    (UTC) with views or product events, rather than the 03:00 UTC pass's
+    last day.
+- **`query` reads the files by default.** Without `source`, its SQL is
+  DuckDB SQL over the files' tables; a query naming a `v_*` view or an
+  `agg_*` table fails with a hint to pass `source: "sqlite"`. That source
+  still reads the database, deprecated: a later release removes it.
+  `schema://views` (and `GET /api/schema/views`) lists the files' tables
+  first, then the deprecated views.
+- **Ingest stops writing display names to the database.** The names sent
+  beside `$user_id` and `$group_id` stay on each event in the files, where
+  `identities`, the Users and Groups dashboards and the files' `identities`
+  table read them; the database's `identities` table (`source: "sqlite"`)
+  keeps the names it held at the upgrade.
+
+Rollback: the previous release's binary reads the database as before.
+Widgets rewritten for the files fail on it, as SQLite SQL now fails here.
+Names sent while this release ran are missing from the database's
+`identities` table, so the previous release's `identities` tool and Users
+and Groups dashboards show them only once a client sends them again.

@@ -69,7 +69,7 @@ test('builds a dashboard from a project and edits its widget', async ({ page, re
     await page.getByRole('option', { name: 'line', exact: true }).click()
     await typeSQL(
       page,
-      'SELECT day AS x, SUM(views) AS y FROM v_views_daily WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY day'
+      'SELECT day AS x, count(DISTINCT actor_id) AS y FROM views WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY day'
     )
     // The query reads :project and :from/:to, so the editor offers both.
     await expect(dialog.getByRole('combobox', { name: 'Project' })).toBeVisible()
@@ -106,11 +106,11 @@ test('builds a dashboard from a project and edits its widget', async ({ page, re
     await surfaces.dblclick()
     await expect(surfaces).toHaveAttribute('aria-valuenow', String(tall))
     await halves.dblclick()
-    await typeSQL(page, 'SELECT day AS x FROM v_views_daily WHERE project_id = :project LIMIT 3')
+    await typeSQL(page, 'SELECT day AS x FROM views WHERE project_id = :project LIMIT 3')
     await expect(dialog.getByRole('button', { name: /^Range: / })).toHaveCount(0)
     await dialog.getByRole('button', { name: /Run query/ }).click()
     await expect(dialog.getByText(/line needs y/)).toBeVisible()
-    await typeSQL(page, 'SELECT day AS x, views AS y FROM v_views_daily WHERE project_id = :project LIMIT 3')
+    await typeSQL(page, 'SELECT day AS x, count(*) AS y FROM views WHERE project_id = :project GROUP BY day LIMIT 3')
     await expect(dialog.getByText('Changed since last run')).toBeVisible()
     await dialog.getByRole('button', { name: 'Save' }).click()
     await expect(dialog).toBeHidden()

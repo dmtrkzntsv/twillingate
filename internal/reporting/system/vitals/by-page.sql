@@ -1,13 +1,12 @@
--- Reads raw_measures: path is a typed column there, while the aggregates
--- carry $path only when the project declares it. Samples counts the page
--- loads that reported LCP; each p75 weighs a sample by 1 / sample_rate.
+-- The page each load reported. Samples counts the page loads that
+-- reported LCP; each p75 weighs a sample by 1 / sample_rate.
 WITH h AS (
   SELECT path, event_name, bucket,
          CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,
-         COUNT(*) AS samples, SUM(1.0 / sample_rate) AS w
-  FROM raw_measures
+         count(*) AS samples, SUM(1 / sample_rate) AS w
+  FROM measures
   WHERE project_id = :project AND day BETWEEN :from AND :to
-    AND event_name IN ('$lcp', '$inp', '$cls') AND path != ''
+    AND event_name IN ('$lcp', '$inp', '$cls') AND path <> ''
   GROUP BY path, event_name, bucket
 ),
 c AS (

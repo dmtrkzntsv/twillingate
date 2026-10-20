@@ -25,8 +25,8 @@ const (
 	mcpPath      = "/mcp"
 )
 
-// CustomSQLRefused names the tables every handle that runs custom SQL (the
-// query tool, widget SQL, and `reporting dev`'s previews) refuses to read:
+// CustomSQLRefused names the tables every handle that runs custom SQL on
+// SQLite (the query tool's sqlite source) refuses to read:
 // submissions hold what visitors typed into forms, and only the server's
 // own SQL, on the second handle, reads them. A fresh slice each call.
 func CustomSQLRefused() []string { return []string{"submissions"} }
@@ -41,9 +41,10 @@ func CustomSQLRefused() []string { return []string{"submissions"} }
 // mounts nothing itself: NewHandler wraps it with its own mux for the
 // standalone listener, and app calls it directly to mount on the ingest
 // surface's mux via RegisterOn. rst is the store reporting reads and
-// writes; widget queries run on the same read-only handle, and so under the
-// same CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_ROWS_MAX, as the query tool.
-func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, files Files) (http.Handler, func() error, error) {
+// writes; files is where the query tool reads the event files, and
+// widgets where sql widgets run on them, under the same
+// CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_ROWS_MAX as the query tool.
+func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, files Files, widgets reporting.Files) (http.Handler, func() error, error) {
 	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows, CustomSQLRefused()...)
 	if err != nil {
 		return nil, nil, err
@@ -54,7 +55,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 		return nil, nil, err
 	}
 	closeAll := func() error { return errors.Join(db.Close(), subs.Close()) }
-	rep := reporting.New(rst, db, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge,
+	rep := reporting.New(rst, widgets, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge,
 		ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL})
 	h := &host{db: db, subs: subs, reg: reg, ops: ops, rep: rep,
 		ingestURL: cfg.IngestURL, logger: logger, limits: limitsFrom(cfg), rawDays: cfg.Retention.Events.RawDays,
@@ -113,8 +114,8 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 // server's routes in token mode with a password configured; a browser
 // opening any other address gets the console's 404 page (NotFoundPages).
 // The func() error closes the read DB.
-func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, files Files) (http.Handler, func() error, error) {
-	protected, closeDB, err := Build(ctx, cfg, reg, ops, rst, logger, files)
+func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, files Files, widgets reporting.Files) (http.Handler, func() error, error) {
+	protected, closeDB, err := Build(ctx, cfg, reg, ops, rst, logger, files, widgets)
 	if err != nil {
 		return nil, nil, err
 	}

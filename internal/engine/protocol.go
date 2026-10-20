@@ -8,6 +8,8 @@ type request struct {
 	Exec    bool   `json:"exec,omitempty"`
 	MaxRows int    `json:"max_rows,omitempty"`
 	Cancel  bool   `json:"cancel,omitempty"`
+	// Args are the named arguments of SQL, bound as $name.
+	Args map[string]string `json:"args,omitempty"`
 }
 
 // reply is one line the child writes to stdout: first {"ready":true} (or

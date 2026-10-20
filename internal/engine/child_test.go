@@ -145,6 +145,69 @@ func TestChildCapsReplySize(t *testing.T) {
 	}
 }
 
+// TestCellMacros: tw_cell and tw_num are the SQL twins of readsql's
+// cell and decimal: a NULL is "", a number reads as SQLite's cells read
+// it (100, not 100.0), a number is read only from text that is one, and a
+// value past a double is not a number.
+func TestCellMacros(t *testing.T) {
+	c := startChild(t, childArgs(t.TempDir()))
+	for i, tc := range []struct {
+		expr string
+		want any
+	}{
+		{"tw_cell(NULL)", ""},
+		{"tw_cell(1.5::DOUBLE)", "1.5"},
+		{"tw_cell(100.0::DOUBLE)", "100"},
+		{"tw_cell(12.5::DOUBLE)", "12.5"},
+		{"tw_cell(1.5::FLOAT)", "1.5"},
+		{"tw_cell(3.50::DECIMAL(5,2))", "3.5"},
+		{"tw_cell(1e21::DOUBLE)", "1e+21"},
+		{"tw_cell(2.0e-7::DOUBLE)", "2e-07"},
+		{"tw_cell(5::BIGINT)", "5"},
+		{"tw_cell('x.0')", "x.0"},
+		{"tw_cell(DATE '2026-01-01')", "2026-01-01"},
+		{"tw_cell([1,2])", "[1, 2]"},
+		{"tw_cell({'a': 1})", "{'a': 1}"},
+		{"tw_num('12')", json.Number("12")},
+		{"tw_num(100.0::DOUBLE)", json.Number("100")},
+		{"tw_num('abc')", nil},
+		{"tw_num('1e400')", nil},
+		{"tw_num(DATE '2026-01-01')", nil},
+	} {
+		rep := c.ask(t, request{ID: uint64(i + 1), SQL: "SELECT " + tc.expr})
+		if rep.Err != "" || len(rep.Rows) != 1 || len(rep.Rows[0]) != 1 {
+			t.Errorf("%s: reply = %+v", tc.expr, rep)
+			continue
+		}
+		if got := rep.Rows[0][0]; got != tc.want {
+			t.Errorf("%s = %#v, want %#v", tc.expr, rep.Rows[0][0], tc.want)
+		}
+	}
+}
+
+func TestChildBindsArguments(t *testing.T) {
+	c := startChild(t, childArgs(t.TempDir()))
+	rep := c.ask(t, request{ID: 1, SQL: "SELECT $b || $a", Args: map[string]string{"a": "x", "b": "y"}})
+	if rep.Err != "" || fmt.Sprint(rep.Rows) != "[[yx]]" {
+		t.Fatalf("reply = %+v", rep)
+	}
+}
+
+// TestChildCannotRedefineTheMacros: a query is one SELECT, so the macros
+// are the ones the child defined.
+func TestChildCannotRedefineTheMacros(t *testing.T) {
+	c := startChild(t, childArgs(t.TempDir()))
+	for i, sql := range []string{
+		"CREATE MACRO tw_num(x) AS 0",
+		"CREATE OR REPLACE MACRO tw_cell(x) AS ''",
+		"DROP MACRO tw_num",
+	} {
+		if err := c.ask(t, request{ID: uint64(i + 1), SQL: sql}).Err; !strings.Contains(err, "one SELECT") {
+			t.Errorf("%s: err = %q, want a refusal naming one SELECT", sql, err)
+		}
+	}
+}
+
 func TestChildReportsSQLErrorsAndCarriesOn(t *testing.T) {
 	c := startChild(t, childArgs(t.TempDir()))
 	if rep := c.ask(t, request{ID: 1, SQL: "SELECT nope"}); !strings.Contains(rep.Err, "nope") {

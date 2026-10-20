@@ -41,10 +41,10 @@ func countedShareEnv(t *testing.T) (*shareEnv, *countingStore, http.Handler) {
 	t.Helper()
 	e := &shareEnv{now: new(time.Time)}
 	*e.now = time.Date(2026, 10, 6, 12, 0, 0, 0, time.UTC)
-	st, db := newTestStoreAndReadDBMaxRows(t, 1000)
+	st, files := newTestStoreAndFiles(t, 1000)
 	cs := &countingStore{Store: st}
 	e.st = st
-	e.svc = New(cs, db, Options{
+	e.svc = New(cs, files, Options{
 		ShareBaseURL: "https://c.example", ArchivedDays: 30,
 		Now: func() time.Time { return *e.now },
 	})

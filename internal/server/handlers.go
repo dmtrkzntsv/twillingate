@@ -90,21 +90,20 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	maxAge := s.cfg.MaxEventAge()
 
 	var res ingestResult
-	var names []store.Identity
 	var sawUser, sawInstall bool
-	// noteRow records an id kind seen and any display name carried by a row
-	// that is actually stored — called once beside each Enqueue call below,
-	// never for a row that is rejected or bot-filtered, so a batch that
-	// stores nothing leaves no trace in the identities table or the
-	// "project receives ids" log.
-	noteRow := func(actorKind string, rv resolved) {
+	// noteRow records an id kind seen on a row that is actually stored —
+	// called once beside each Enqueue call below, never for a row that is
+	// rejected or bot-filtered, so a batch that stores nothing leaves no
+	// trace in the "project receives ids" log. Display names ride on the
+	// events themselves (user_name, group_name), which the event files'
+	// identities table reads (raw-first D17).
+	noteRow := func(actorKind string) {
 		switch actorKind {
 		case store.ActorUser:
 			sawUser = true
 		case store.ActorInstall:
 			sawInstall = true
 		}
-		names = append(names, identityNames(rv)...)
 	}
 	// Attribute rules (spec 2026-10-11, D9): one lookup per batch; a project
 	// without rules pays nothing more per event than an emptiness check.
@@ -266,7 +265,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		// A name is kept only beside the id it names, as identityNames keeps it.
+		// A name is kept only beside the id it names: $user_name without
+		// $user_id names nothing.
 		var userName, groupName string
 		if rv.UserID != "" {
 			userName = rv.UserName
@@ -315,15 +315,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 			res.warn(i, "$display_height %q is not a positive integer, ignored", rv.displayHeightRaw)
 		}
 		s.queue.Enqueue(e)
-		noteRow(actorKind, rv)
+		noteRow(actorKind)
 		res.Accepted++
 	}
 
-	if names = dedupeIdentities(names, p.ID); len(names) > 0 {
-		if err := s.names.UpsertIdentities(r.Context(), names); err != nil {
-			s.logger.Error("identity upsert failed", "error", err)
-		}
-	}
 	s.counters.record(label, res.Accepted, res.Rejected)
 	if sawUser {
 		s.noteIDs(p.ID, store.ActorUser)
@@ -361,39 +356,6 @@ func resolveIdentity(rv resolved, salt, ip, ua, hashKey string) (actor, actorKin
 		actor, actorKind = identity.VisitorHash(salt, ip, ua, hashKey), store.ActorConnection
 	}
 	return actor, actorKind, rv.UserID, rv.GroupID
-}
-
-// identityNames collects display names to upsert. A name is kept only
-// beside the id it names: $user_name without $user_id names nothing.
-func identityNames(rv resolved) []store.Identity {
-	var out []store.Identity
-	if rv.GroupID != "" && rv.GroupName != "" {
-		out = append(out, store.Identity{Kind: store.KindGroup, ID: rv.GroupID, Name: rv.GroupName})
-	}
-	if rv.UserID != "" && rv.UserName != "" {
-		out = append(out, store.Identity{Kind: store.KindUser, ID: rv.UserID, Name: rv.UserName})
-	}
-	return out
-}
-
-// dedupeIdentities collapses the repeats a batch-level name produces across
-// every event, and stamps the project.
-func dedupeIdentities(in []store.Identity, projectID int64) []store.Identity {
-	if len(in) == 0 {
-		return nil
-	}
-	seen := make(map[string]bool, len(in))
-	out := in[:0]
-	for _, i := range in {
-		k := i.Kind + "\x00" + i.ID
-		if seen[k] {
-			continue
-		}
-		seen[k] = true
-		i.ProjectID = projectID
-		out = append(out, i)
-	}
-	return out
 }
 
 // eventID validates a client-supplied UUID or generates one. Supplying an id

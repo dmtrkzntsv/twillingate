@@ -52,6 +52,14 @@ func devDir(t *testing.T, widgets ...struct{ name, component, ext, content strin
 	return root
 }
 
+// newDevHandler is DevHandler over dirs, an empty raw/ and a fresh
+// store's projects.
+func newDevHandler(t *testing.T, dirs []string) http.Handler {
+	t.Helper()
+	st, files := newTestStoreAndFiles(t, 1000)
+	return DevHandler(dirs, files, storeDB(t, st))
+}
+
 // devRequest is a request as a browser on this machine sends it: to a
 // loopback host, the only kind reporting dev answers.
 func devRequest(method, path string) *http.Request {
@@ -76,7 +84,7 @@ func getJSON(t *testing.T, h http.Handler, path string, out any) *http.Response 
 
 func TestDevHandlerListsDashboardAndReportsBrokenOnes(t *testing.T) {
 	root := devDir(t, struct{ name, component, ext, content string }{"note", "markdown", "md", "hello"})
-	h := DevHandler([]string{root}, newTestReadDB(t))
+	h := newDevHandler(t, []string{root})
 
 	var out Dashboards
 	res := getJSON(t, h, "/api/dashboards", &out)
@@ -102,7 +110,7 @@ func TestDevHandlerListsDashboardAndReportsBrokenOnes(t *testing.T) {
 
 func TestDevHandlerDashboardDetail(t *testing.T) {
 	root := devDir(t, struct{ name, component, ext, content string }{"note", "markdown", "md", "hello"})
-	h := DevHandler([]string{root}, newTestReadDB(t))
+	h := newDevHandler(t, []string{root})
 
 	var list Dashboards
 	getJSON(t, h, "/api/dashboards", &list)
@@ -127,7 +135,7 @@ func TestDevHandlerDashboardDetail(t *testing.T) {
 
 func TestDevHandlerVersionChangesWhenAFileIsEdited(t *testing.T) {
 	root := devDir(t, struct{ name, component, ext, content string }{"count", "table", "sql", "SELECT 'a' AS x"})
-	h := DevHandler([]string{root}, newTestReadDB(t))
+	h := newDevHandler(t, []string{root})
 
 	var v1 map[string]string
 	getJSON(t, h, "/api/dev/version", &v1)
@@ -170,7 +178,7 @@ func TestDevHandlerVersionChangesWhenAFileIsEdited(t *testing.T) {
 
 func TestDevHandlerInvalidWidgetAnswers400(t *testing.T) {
 	root := devDir(t, struct{ name, component, ext, content string }{"bogus", "does-not-exist", "sql", "SELECT 1"})
-	h := DevHandler([]string{root}, newTestReadDB(t))
+	h := newDevHandler(t, []string{root})
 
 	widgetID := strconv.FormatInt(firstDevDashboardID*1000+1, 10)
 	var body map[string]map[string]string
@@ -188,7 +196,7 @@ func TestDevHandlerInvalidWidgetAnswers400(t *testing.T) {
 
 func TestDevHandlerUnknownWidgetIs404(t *testing.T) {
 	root := devDir(t)
-	h := DevHandler([]string{root}, newTestReadDB(t))
+	h := newDevHandler(t, []string{root})
 	res := getJSON(t, h, "/api/widgets/999999/data", nil)
 	if res.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", res.StatusCode)
@@ -196,7 +204,7 @@ func TestDevHandlerUnknownWidgetIs404(t *testing.T) {
 }
 
 func TestDevHandlerRootOpensTheDashboards(t *testing.T) {
-	h := DevHandler([]string{devDir(t)}, newTestReadDB(t))
+	h := newDevHandler(t, []string{devDir(t)})
 	res := getJSON(t, h, "/", nil)
 	if res.StatusCode != http.StatusFound || res.Header.Get("Location") != "/app/" {
 		t.Fatalf("GET / = %d to %q, want 302 to /app/", res.StatusCode, res.Header.Get("Location"))
@@ -205,7 +213,7 @@ func TestDevHandlerRootOpensTheDashboards(t *testing.T) {
 
 func TestDevHandlerComponentsAndProjectsAndView(t *testing.T) {
 	root := devDir(t)
-	h := DevHandler([]string{root}, newTestReadDB(t))
+	h := newDevHandler(t, []string{root})
 
 	var comps struct {
 		SourceTypes []string `json:"source_types"`
@@ -240,7 +248,7 @@ func TestDevHandlerComponentsAndProjectsAndView(t *testing.T) {
 // TestDevHandlerAnswersOnlyLoopbackHosts: a page that rebinds its own DNS
 // name to 127.0.0.1 still sends that name in Host, and is refused.
 func TestDevHandlerAnswersOnlyLoopbackHosts(t *testing.T) {
-	h := DevHandler([]string{devDir(t)}, newTestReadDB(t))
+	h := newDevHandler(t, []string{devDir(t)})
 	for host, want := range map[string]int{
 		"127.0.0.1:3100":     http.StatusOK,
 		"localhost:3100":     http.StatusOK,
@@ -274,7 +282,7 @@ func TestDevHandlerSystemRangeIdsPreviewAsSystem(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(sys, "dashboard.json"), []byte(`{"id":5,"title":"Sys","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := DevHandler([]string{root}, newTestReadDB(t))
+	h := newDevHandler(t, []string{root})
 
 	var out Dashboards
 	getJSON(t, h, "/api/dashboards", &out)
@@ -326,7 +334,7 @@ func TestDevHandlerGroupTabs(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h := DevHandler([]string{root}, newTestReadDB(t))
+	h := newDevHandler(t, []string{root})
 
 	want := []string{"Views", "Product", "Users", "Groups", "Retention"}
 
@@ -384,7 +392,7 @@ func TestDevHandlerGroupTitleFromFounderOnly(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	h := DevHandler([]string{root}, newTestReadDB(t))
+	h := newDevHandler(t, []string{root})
 
 	var list Dashboards
 	getJSON(t, h, "/api/dashboards", &list)
@@ -403,14 +411,14 @@ func TestDevHandlerGroupTitleFromFounderOnly(t *testing.T) {
 // TestDevHandlerListsArchivedProjects: /api/projects answers as
 // list_projects does, archived projects included and flagged.
 func TestDevHandlerListsArchivedProjects(t *testing.T) {
-	st, db := newTestStoreAndReadDB(t)
+	st, files := newTestStoreAndFiles(t, 1000)
 	live := mustCreateProject(t, st, "live")
 	gone := mustCreateProject(t, st, "gone")
 	if err := st.SetProjectArchived(context.Background(), gone, true,
 		store.AuditEntry{Actor: "test", Action: "project.archive"}); err != nil {
 		t.Fatal(err)
 	}
-	h := DevHandler([]string{devDir(t)}, db)
+	h := DevHandler([]string{devDir(t)}, files, storeDB(t, st))
 
 	var out devProjectsOut
 	getJSON(t, h, "/api/projects", &out)

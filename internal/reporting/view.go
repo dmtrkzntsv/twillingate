@@ -33,7 +33,7 @@ type PageInfo struct {
 	Filters  []FilterSpec `json:"filters"`
 }
 
-// view is a DataRequest's paging arguments, parsed: page for readsql,
+// view is a DataRequest's paging arguments, parsed: page for the wrap,
 // echo for the envelope (Matched and Total are filled after the run),
 // and present when the caller sent any of them, which only a remote
 // table accepts.
@@ -61,7 +61,7 @@ func remoteTable(w store.Widget) bool {
 // parseView parses in's paging arguments against a page size cap of
 // maxRows. It refuses what it can tell from the arguments alone (the
 // filters' JSON and operators, the sort's shape, the ranges); a column
-// the query does not return is left to QueryPage, which knows the
+// the query does not return is left to the page wrap, which knows the
 // columns.
 func parseView(in DataRequest, maxRows int) (view, error) {
 	v := view{
@@ -126,7 +126,7 @@ func parseView(in DataRequest, maxRows int) (view, error) {
 		v.page.Sort = &readsql.Sort{Column: in.Sort[:i], Desc: dir == "desc"}
 		v.echo.Sort = in.Sort
 	}
-	// Refused here as well as in QueryPage, so the refusal reads as the
+	// Refused here as well as in the page wrap, so the refusal reads as the
 	// caller's arguments rather than as a load that failed.
 	if in.Distinct != "" && in.Sort != "" {
 		return view{}, store.Refuse(store.ErrInvalid, "distinct and sort cannot be combined; drop one")

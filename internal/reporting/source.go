@@ -2,14 +2,15 @@ package reporting
 
 import (
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/engine"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -22,14 +23,14 @@ type Params struct {
 	From, To  string
 }
 
-// SourceType is one kind of widget content: SQL against the store, or
+// SourceType is one kind of widget content: SQL over the event files, or
 // Markdown text. Validate is checked once, when a widget is saved;
 // Load runs on every read, with the viewer's chosen project and range.
 type SourceType interface {
 	Name() string
 	// Validate refuses content that does not fit c: a sql source checks
-	// it against the database (params, shape, sample rows); refusals are
-	// store.ErrInvalid.
+	// it against the event files (params, shape, sample rows); refusals
+	// are store.ErrInvalid.
 	Validate(ctx context.Context, content string, c Component) error
 	// Load runs content and returns the value a widget's component
 	// renders: readsql.Result for sql, Markdown for md.
@@ -50,16 +51,16 @@ type Markdown struct {
 	Markdown string `json:"markdown"`
 }
 
-// newSources builds the registered source types against db and clock
+// newSources builds the registered source types against files and clock
 // now. sampleRows controls whether sql's Validate also runs a sample
 // query and checks its rows' types (true for a widget actually being
-// saved; false where only the query's shape matters). db and now may be
-// nil when the result is only used to enumerate or check registered
+// saved; false where only the query's shape matters). files and now may
+// be nil when the result is only used to enumerate or check registered
 // names (validSourceType, sortedSourceNames) — no method that touches
 // either is called in that case.
-func newSources(db *readsql.DB, sampleRows bool, now func() time.Time) map[string]SourceType {
+func newSources(files Files, sampleRows bool, now func() time.Time) map[string]SourceType {
 	return map[string]SourceType{
-		"sql": &sqlSource{db: db, sampleRows: sampleRows, now: now},
+		"sql": &sqlSource{files: files, sampleRows: sampleRows, now: now},
 		"md":  mdSource{},
 	}
 }
@@ -102,10 +103,11 @@ func (mdSource) Load(_ context.Context, content string, _ Params) (any, error) {
 	return Markdown{Markdown: content}, nil
 }
 
-// sqlSource is the sql SourceType: a SELECT run read-only through
-// readsql, parameterized on at most :project, :from and :to.
+// sqlSource is the sql SourceType: a SELECT in DuckDB SQL run on the
+// event files through Files, parameterized on at most :project, :from
+// and :to.
 type sqlSource struct {
-	db         *readsql.DB
+	files      Files
 	sampleRows bool
 	now        func() time.Time // stands in for time.Now in tests; nil means time.Now
 }
@@ -127,7 +129,7 @@ func (s *sqlSource) clock() time.Time {
 var allowedParams = map[string]bool{":project": true, ":from": true, ":to": true}
 
 func (s *sqlSource) Follows(content string) (project, rng bool) {
-	params, err := s.db.Check(content)
+	params, err := enginesql.Params(content)
 	if err != nil {
 		return false, false
 	}
@@ -142,13 +144,17 @@ func (s *sqlSource) Follows(content string) (project, rng bool) {
 	return
 }
 
-// checkSQLParams runs Check on content and refuses any named parameter
-// outside allowedParams, returning the ones it uses. Shared by a widget's
-// Validate and Preview, so the two refuse the same SQL the same way.
-func checkSQLParams(db *readsql.DB, content string) ([]string, error) {
-	params, err := db.Check(content)
+// checkSQLParams refuses content enginesql's scanner refuses, empty
+// content, and any named parameter outside allowedParams, returning the
+// ones it uses. Shared by a widget's Validate, Load and Preview, so they
+// refuse the same SQL the same way.
+func checkSQLParams(content string) ([]string, error) {
+	params, err := enginesql.Params(content)
 	if err != nil {
-		return nil, store.Refuse(store.ErrInvalid, "%s", err)
+		return nil, refuseText(err)
+	}
+	if strings.TrimSpace(enginesql.Trim(content)) == "" {
+		return nil, store.Refuse(store.ErrInvalid, "sql must not be empty")
 	}
 	for _, p := range params {
 		if !allowedParams[p] {
@@ -159,39 +165,70 @@ func checkSQLParams(db *readsql.DB, content string) ([]string, error) {
 	return params, nil
 }
 
+// bindSQL binds p's values to the parameters content uses (params, from
+// checkSQLParams) and returns the bound query: scoped to p's project when
+// content reads :project, even to one with no rows (project 0 among them,
+// which reads none), and otherwise over every project, as a widget that
+// never names one read on SQLite (Decision 2).
+func bindSQL(content string, params []string, p Params) (archive.Scoped, error) {
+	bound, args, err := enginesql.Bind(content, map[string]enginesql.Value{
+		":project": {Type: "BIGINT", Text: strconv.FormatInt(p.ProjectID, 10)},
+		":from":    {Type: "DATE", Text: p.From},
+		":to":      {Type: "DATE", Text: p.To},
+	})
+	if err != nil {
+		return archive.Scoped{}, refuseText(err)
+	}
+	q := archive.Scoped{SQL: bound, Args: args}
+	for _, name := range params {
+		if name == ":project" {
+			q.Scope, q.Project = true, p.ProjectID
+		}
+	}
+	return q, nil
+}
+
+// rerun is a query on q's scope: sql with its args, at most maxRows rows.
+func rerun(q archive.Scoped, sql string, args []engine.Arg, maxRows int) archive.Scoped {
+	return archive.Scoped{SQL: sql, Args: args, MaxRows: maxRows, Scope: q.Scope, Project: q.Project}
+}
+
 func (s *sqlSource) Validate(ctx context.Context, content string, c Component) error {
-	params, err := checkSQLParams(s.db, content)
+	params, err := checkSQLParams(content)
 	if err != nil {
 		return err
 	}
 
-	// The sample values must be computed — and bound — before the very
-	// first run: SQLite errors "missing named argument" for a named
-	// parameter the statement mentions but no argument was given for, so
-	// even the LIMIT 0 shape check needs them whenever content uses
-	// :project, :from or :to, not only the sampleRows path below.
+	// The engine refuses a parameter with no argument, so even the shape
+	// check needs the sample values whenever content uses :project,
+	// :from or :to, not only the sampleRows run below.
 	needsProject, needsRange := s.Follows(content)
-	var projectID int64
-	var from, to string
+	var p Params
 	if needsProject {
-		projectID, err = sampleProject(ctx, s.db)
+		if s.files == nil {
+			return errNoFiles
+		}
+		p.ProjectID, err = s.files.SampleProject(ctx)
 		if err != nil {
-			if errors.Is(err, readsql.ErrTimeout) {
-				return refuseSQLErr(s.db, err)
+			if errors.Is(err, context.DeadlineExceeded) {
+				return filesErr(s.files, err)
 			}
 			return err // an infrastructure error, not a refusal of content
 		}
 	}
 	if needsRange {
 		now := s.clock().UTC()
-		from = now.AddDate(0, 0, -6).Format("2006-01-02")
-		to = now.Format("2006-01-02")
+		p.From = now.AddDate(0, 0, -6).Format("2006-01-02")
+		p.To = now.Format("2006-01-02")
 	}
-	args := bindArgs(params, projectID, from, to)
-
-	res, err := s.db.QueryLimit(ctx, content, 0, args...)
+	q, err := bindSQL(content, params, p)
 	if err != nil {
-		return refuseSQLErr(s.db, err)
+		return err
+	}
+
+	res, err := runFiles(ctx, s.files, rerun(q, enginesql.Shape(q.SQL), q.Args, 0))
+	if err != nil {
+		return err
 	}
 	if err := c.checkColumns(res.Columns); err != nil {
 		return err
@@ -200,26 +237,46 @@ func (s *sqlSource) Validate(ctx context.Context, content string, c Component) e
 		return nil
 	}
 
-	sample, err := s.db.QueryLimit(ctx, content, 5, args...)
+	sample, err := runFiles(ctx, s.files, rerun(q, enginesql.Text(q.SQL), q.Args, 5))
 	if err != nil {
-		return refuseSQLErr(s.db, err)
+		return err
 	}
 	if len(sample.Rows) == 0 {
 		return nil
 	}
-	return c.checkRows(sample)
+	return c.checkRows(textResult(sample))
 }
 
 func (s *sqlSource) Load(ctx context.Context, content string, p Params) (any, error) {
-	params, err := s.db.Check(content)
+	params, err := checkSQLParams(content)
 	if err != nil {
-		return nil, store.Refuse(store.ErrInvalid, "%s", err)
+		return nil, err
 	}
-	res, err := s.db.Query(ctx, content, bindArgs(params, p.ProjectID, p.From, p.To)...)
+	return loadRows(ctx, s.files, content, params, p)
+}
+
+// loadRows runs content, its params bound to p's values, for its rows as
+// text: at most Files.MaxRows of them, Truncated when more follow.
+// Shared by Load and Preview.
+func loadRows(ctx context.Context, files Files, content string, params []string, p Params) (readsql.Result, error) {
+	q, err := bindSQL(content, params, p)
 	if err != nil {
-		return nil, refuseSQLErr(s.db, err)
+		return readsql.Result{}, err
 	}
-	return res, nil
+	if files == nil {
+		return readsql.Result{}, errNoFiles
+	}
+	// One row past the cap tells a full result from a cut one.
+	maxRows := files.MaxRows()
+	res, err := runFiles(ctx, files, rerun(q, enginesql.Text(q.SQL), q.Args, maxRows+1))
+	if err != nil {
+		return readsql.Result{}, err
+	}
+	out := textResult(res)
+	if len(out.Rows) > maxRows {
+		out.Rows, out.Truncated = out.Rows[:maxRows], true
+	}
+	return out, nil
 }
 
 // pageLoader is a source type that can load one page of its content
@@ -236,79 +293,86 @@ type viewRefusal struct{ error }
 func (e viewRefusal) Unwrap() error { return e.error }
 
 // LoadPage is Load for a remote table: content filtered, sorted and paged
-// by pg in the database, with the matched and total counts.
+// by pg in the engine, with the matched and total counts, as readsql's
+// QueryPage does on SQLite: the shape for the columns, the page, and the
+// two counts when the page has no row to carry them.
 func (s *sqlSource) LoadPage(ctx context.Context, content string, p Params, pg readsql.Page) (readsql.PageResult, error) {
-	params, err := s.db.Check(content)
+	params, err := checkSQLParams(content)
 	if err != nil {
-		return readsql.PageResult{}, store.Refuse(store.ErrInvalid, "%s", err)
+		return readsql.PageResult{}, err
 	}
-	res, err := s.db.QueryPage(ctx, content, pg, bindArgs(params, p.ProjectID, p.From, p.To)...)
-	if errors.Is(err, readsql.ErrRefused) {
-		// content passed Check just above, the only refusal of the text
-		// itself (a timeout is ErrTimeout), so a refusal from QueryPage is
-		// of pg: most often a column the query does not return.
-		return readsql.PageResult{}, viewRefusal{store.Refuse(store.ErrInvalid, "%s", err)}
-	}
+	q, err := bindSQL(content, params, p)
 	if err != nil {
-		return readsql.PageResult{}, refuseSQLErr(s.db, err)
+		return readsql.PageResult{}, err
 	}
-	return res, nil
+	if s.files == nil {
+		return readsql.PageResult{}, errNoFiles
+	}
+	shape, err := runFiles(ctx, s.files, rerun(q, enginesql.Shape(q.SQL), q.Args, 0))
+	if err != nil {
+		return readsql.PageResult{}, err
+	}
+	cols := shape.Columns
+	stmt, err := enginesql.Page(q.SQL, q.Args, cols, pg, s.files.MaxRows())
+	if err != nil {
+		// content passed the scanner above, the only refusal of the text
+		// itself, so a refusal here is of pg: most often a column the
+		// query does not return.
+		return readsql.PageResult{}, viewRefusal{refuseText(err)}
+	}
+	res, err := runFiles(ctx, s.files, rerun(q, stmt.SQL, stmt.Args, 0))
+	if err != nil {
+		return readsql.PageResult{}, err
+	}
+
+	out := readsql.PageResult{Result: readsql.Result{Columns: cols, Rows: make([][]string, len(res.Rows))}}
+	if pg.Distinct != "" {
+		out.Columns = []string{"value", "rows"}
+	}
+	keep := len(out.Columns)
+	if len(res.Rows) > 0 {
+		if out.Matched, err = count(res.Rows[0][keep]); err != nil {
+			return readsql.PageResult{}, err
+		}
+		if out.Total, err = count(res.Rows[0][keep+1]); err != nil {
+			return readsql.PageResult{}, err
+		}
+		for i, row := range res.Rows {
+			out.Rows[i] = textRow(row[:keep])
+		}
+	} else if err := s.countEmpty(ctx, &out, q, cols, pg); err != nil {
+		return readsql.PageResult{}, err
+	}
+	out.Truncated = out.Matched > pg.Offset+len(out.Rows)
+	return out, nil
 }
 
-// bindArgs builds the sql.Named arguments for exactly the params content
-// uses (params is Check's own list, already refused down to the
-// project/from/to allow-list by the time this is called), so a widget
-// that never mentions :project need not have one bound.
-func bindArgs(params []string, projectID int64, from, to string) []any {
-	var args []any
-	for _, p := range params {
-		switch p {
-		case ":project":
-			args = append(args, sql.Named("project", projectID))
-		case ":from":
-			args = append(args, sql.Named("from", from))
-		case ":to":
-			args = append(args, sql.Named("to", to))
+// countEmpty fills Matched and Total for a page with no rows, which has
+// no row to carry them. Offset 0 with no rows means nothing matched; a
+// page past the end still has to count what it skipped. q is the bound
+// query, bindSQL's.
+func (s *sqlSource) countEmpty(ctx context.Context, out *readsql.PageResult, q archive.Scoped, cols []string, pg readsql.Page) error {
+	total, matched, err := enginesql.Count(q.SQL, q.Args, cols, pg)
+	if err != nil {
+		return viewRefusal{refuseText(err)}
+	}
+	for _, c := range []struct {
+		stmt enginesql.Stmt
+		n    *int
+	}{{total, &out.Total}, {matched, &out.Matched}} {
+		if c.stmt.SQL == "" {
+			continue
+		}
+		res, err := runFiles(ctx, s.files, rerun(q, c.stmt.SQL, c.stmt.Args, 0))
+		if err != nil {
+			return err
+		}
+		if len(res.Rows) != 1 || len(res.Rows[0]) != 1 {
+			return errors.New("reporting: a page count returned no single cell")
+		}
+		if *c.n, err = count(res.Rows[0][0]); err != nil {
+			return err
 		}
 	}
-	return args
-}
-
-// refuseSQLErr classifies a readsql error from running a widget's own
-// content as store.ErrInvalid: a timeout names the environment variable
-// a person can act on, everything else (Check's own refusal, or
-// SQLite's syntax error text) passes through as the message.
-func refuseSQLErr(db *readsql.DB, err error) error {
-	if errors.Is(err, readsql.ErrTimeout) {
-		return store.Refuse(store.ErrInvalid,
-			"query exceeded CONSOLE_QUERY_TIMEOUT (%s); narrow the range or group the query", db.Timeout())
-	}
-	return store.Refuse(store.ErrInvalid, "%s", err)
-}
-
-// sampleProject picks the project with the most recent data (views,
-// product or measures), for a sample run of a widget's SQL when no dashboard
-// selection exists yet. It reads projects and events directly — trusted
-// Go SQL, not checked custom SQL — which is why it may read a table
-// widget SQL itself may not. Its own errors are not store refusals (the
-// caller decides: a timeout still becomes one, anything else is this
-// package's own infrastructure failing, not a problem with the widget).
-func sampleProject(ctx context.Context, db *readsql.DB) (int64, error) {
-	res, err := db.Run(ctx, `
-SELECT p.id FROM projects p WHERE p.archived_at IS NULL
-ORDER BY MAX(COALESCE((SELECT MAX(day) FROM events WHERE family='views' AND project_id=p.id),''),
-             COALESCE((SELECT MAX(day) FROM events WHERE family='product' AND project_id=p.id),''),
-             COALESCE((SELECT MAX(day) FROM events WHERE family='measures' AND project_id=p.id),'')) DESC, p.id
-LIMIT 1`)
-	if err != nil {
-		return 0, err
-	}
-	if len(res.Rows) == 0 {
-		return 0, nil
-	}
-	id, err := strconv.ParseInt(res.Rows[0][0], 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("reporting: sampleProject: %w", err)
-	}
-	return id, nil
+	return nil
 }

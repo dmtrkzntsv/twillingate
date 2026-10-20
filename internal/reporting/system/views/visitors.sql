@@ -1,16 +1,13 @@
--- Reads agg_views_daily and raw_views, the two halves v_views_daily
--- stitches, rather than the view itself: the view's live half sessionizes
--- every raw view of every project before any filter applies.
+-- Visitors as the Visitors and views chart counts them: distinct per day
+-- and kind, added up over the days. previous is the same count over as
+-- many days just before :from.
 WITH daily AS (
-  SELECT day, kind, visitors, views
-  FROM agg_views_daily
-  WHERE project_id = :project AND day BETWEEN date(:from, '-' || (julianday(:to) - julianday(:from) + 1) || ' days') AND :to
-  UNION ALL
-  SELECT day, kind, COUNT(DISTINCT actor_id), COUNT(*)
-  FROM raw_views
-  WHERE project_id = :project AND day BETWEEN date(:from, '-' || (julianday(:to) - julianday(:from) + 1) || ' days') AND :to
+  SELECT day, kind, count(DISTINCT actor_id) AS visitors
+  FROM views
+  WHERE project_id = :project
+    AND day BETWEEN :from - CAST(:to - :from + 1 AS INTEGER) AND :to
   GROUP BY day, kind
 )
-SELECT COALESCE(SUM(CASE WHEN day >= :from THEN visitors END), 0) AS value,
-       COALESCE(SUM(CASE WHEN day < :from THEN visitors END), 0) AS previous
+SELECT COALESCE(SUM(visitors) FILTER (WHERE day >= :from), 0) AS value,
+       COALESCE(SUM(visitors) FILTER (WHERE day < :from), 0) AS previous
 FROM daily

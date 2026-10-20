@@ -50,17 +50,22 @@ func TestReportingGuideIsLive(t *testing.T) {
 	for _, want := range []string{
 		"v0.12.3", reporting.ReleasesURL, reporting.ReleasesURL + "/tag/v0.12.3",
 		"Source types: md, sql",
-		"v_views_daily(project_id, day",
+		"## Tables", "  views(id, project_id", ", bucket)",
 		"| 1 | blog |", "| 2 | docs |",
 		"| 1001 | Signups this quarter | user | 1001 | yes | no |", "| 1 | Views | system | 1 | yes | no |",
 		"| 2 | Product | system | 1 | yes | no |", // a tab of Views' group
-		`"format"`,                          // props schemas, verbatim
+		`"format"`, // props schemas, verbatim
 		"default 6 × 8",
 		"System dashboards are never archived", // the Dashboards intro
 	} {
 		if !strings.Contains(md, want) {
 			t.Errorf("the guide lacks %q", want)
 		}
+	}
+	// Widget SQL reads the files only: SQLite's deprecated views are
+	// schema://views' business, not the guide's.
+	if strings.Contains(md, "v_views_daily(") {
+		t.Error("the guide lists SQLite's views, which widget SQL cannot read")
 	}
 }
 

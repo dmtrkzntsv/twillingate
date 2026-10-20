@@ -7,28 +7,28 @@ import (
 	"time"
 )
 
-// ---- ops_read.go: table() and checkRange() branches not reached via
-// the happy-path *Overview/*Breakdown tests ----
+// ---- ops_read.go: filesTable() and checkRange() branches not reached
+// via the happy-path *Overview/*Breakdown tests ----
 
-func TestTableTruncatesErrorsAndTimesOut(t *testing.T) {
+func TestFilesTableTruncatesErrorsAndTimesOut(t *testing.T) {
 	h, _ := newTestHost(t)
 	ctx := context.Background()
+	blog := rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}
 
-	// truncation: three rows for blog (2026-08-20, -21 aggregated plus the
-	// live hit on -26), capped to 1.
+	// truncation: blog's view days (2026-08-01, -08, -20 to -26), capped
+	// to 1.
 	setGuards(t, h, h.db.Timeout(), 1)
-	out, err := h.table(ctx, `SELECT day FROM v_views_daily WHERE project_id=? AND day BETWEEN ? AND ?`,
-		int64(1), "2026-08-01", "2026-08-31")
+	out, err := h.filesTable(ctx, blog, `SELECT DISTINCT day FROM views WHERE project_id = :project AND day BETWEEN :from AND :to`, nil)
 	if err != nil {
 		t.Fatalf("truncation case: %v", err)
 	}
-	if !out.Truncated || out.Note == "" {
-		t.Errorf("out = %+v, want Truncated with a Note", out)
+	if !out.Truncated || out.Note == "" || len(out.Rows) != 1 {
+		t.Errorf("out = %+v, want one row, Truncated, with a Note", out)
 	}
 	setGuards(t, h, h.db.Timeout(), 1000)
 
 	// plain SQL error, not a timeout: must not carry the "exceeded" wording.
-	_, err = h.table(ctx, `SELECT no_such_column FROM v_views_daily WHERE project_id=?`, int64(1))
+	_, err = h.filesTable(ctx, blog, `SELECT no_such_column FROM views WHERE project_id = :project`, nil)
 	if err == nil {
 		t.Fatal("bad column did not error")
 	}
@@ -36,15 +36,22 @@ func TestTableTruncatesErrorsAndTimesOut(t *testing.T) {
 		t.Errorf("plain SQL error worded as a timeout: %v", err)
 	}
 
-	// timeout: a runaway recursive query against a host with a tiny deadline.
+	// timeout: a runaway query against a host with a tiny deadline.
 	setGuards(t, h, 20*time.Millisecond, h.db.MaxRows())
-	_, err = h.table(ctx,
-		`WITH RECURSIVE r(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM r) SELECT COUNT(*) FROM r`)
+	_, err = h.filesTable(ctx, blog, `SELECT count(*) FROM range(100000000000) a WHERE a.range % 7 = :project`, nil)
 	if err == nil {
 		t.Fatal("runaway query did not time out")
 	}
 	if !strings.Contains(err.Error(), "exceeded") || !strings.Contains(err.Error(), "narrow the date range") {
 		t.Errorf("timeout error not worded as expected: %v", err)
+	}
+}
+
+func TestCheckRangeRejectsImpossibleDay(t *testing.T) {
+	_, cs := newTestHost(t)
+	res := callTool(t, cs, "views_overview", map[string]any{"project_id": 1, "from": "2026-02-30", "to": "2026-03-01"})
+	if !res.IsError || !strings.Contains(textOf(res), "YYYY-MM-DD") {
+		t.Errorf("2026-02-30 = %v %s, want the YYYY-MM-DD refusal", res.IsError, textOf(res))
 	}
 }
 
@@ -201,6 +208,10 @@ func TestIdentitiesGroupKind(t *testing.T) {
 	out := textOf(res)
 	if !strings.Contains(out, "g1") || !strings.Contains(out, "Acme Inc") {
 		t.Errorf("group identity missing: %s", out)
+	}
+	// A group's users are its distinct members: u1 for g1.
+	if !strings.Contains(out, `["g1","Acme Inc","1","1","0","1"]`) {
+		t.Errorf("g1 row: %s", out)
 	}
 }
 

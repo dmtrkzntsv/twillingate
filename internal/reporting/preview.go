@@ -51,7 +51,7 @@ func (s *Service) Preview(ctx context.Context, in PreviewIn) (Preview, error) {
 		return Preview{}, store.Refuse(store.ErrInvalid,
 			"%s does not accept sql; it accepts %s", comp.Name, joinAnd(comp.Accepts))
 	}
-	params, err := checkSQLParams(s.db, in.Source.Content)
+	params, err := checkSQLParams(in.Source.Content)
 	if err != nil {
 		return Preview{}, err
 	}
@@ -60,9 +60,9 @@ func (s *Service) Preview(ctx context.Context, in PreviewIn) (Preview, error) {
 		return Preview{}, err
 	}
 	start := time.Now()
-	res, err := s.db.Query(ctx, in.Source.Content, bindArgs(params, p.ProjectID, p.From, p.To)...)
+	res, err := loadRows(ctx, s.files, in.Source.Content, params, p)
 	if err != nil {
-		return Preview{}, refuseSQLErr(s.db, err)
+		return Preview{}, err
 	}
 	out := Preview{Result: res, ElapsedMS: time.Since(start).Milliseconds()}
 	props := in.Props

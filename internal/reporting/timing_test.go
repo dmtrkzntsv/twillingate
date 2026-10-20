@@ -4,11 +4,15 @@ import (
 	"context"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
+	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 )
@@ -18,28 +22,40 @@ import (
 const timingLimit = 10 * time.Second
 
 // TestSystemDashboardTiming measures every system widget cold (no cache)
-// for every preset against a real database, opt-in: it runs only when
-// REPORTING_TIMING_DB names a database file, e.g.
+// for every preset against real event files, opt-in: it runs only when
+// REPORTING_TIMING_EVENTS_DIR names a raw/ directory, e.g.
 //
-//	REPORTING_TIMING_DB=$PWD/local/twillingate.db go test ./internal/reporting/ -run Timing -v
+//	REPORTING_TIMING_EVENTS_DIR=$PWD/local/raw go test ./internal/reporting/ -run Timing -v
 //
-// It reads the embedded system definition directly (the database need
-// not have been synced with this build), picks the project with the most
-// recent data, logs "dashboard/widget preset duration rows" slowest
-// first, and fails if any single load exceeds timingLimit.
+// It reads the embedded system definition directly, picks the project
+// with the newest events, logs "dashboard/widget preset duration rows"
+// slowest first, and fails if any single load exceeds timingLimit. The
+// engine has DuckDB's default memory limit and four threads.
 func TestSystemDashboardTiming(t *testing.T) {
-	path := os.Getenv("REPORTING_TIMING_DB")
-	if path == "" {
-		t.Skip("REPORTING_TIMING_DB is not set")
+	dir := os.Getenv("REPORTING_TIMING_EVENTS_DIR")
+	if dir == "" {
+		t.Skip("REPORTING_TIMING_EVENTS_DIR is not set")
 	}
 	ctx := context.Background()
-	// The read timeout sits well above timingLimit, so a slow widget is
-	// measured and reported rather than cut off.
-	db, err := readsql.Open(path, 10*timingLimit, 1000)
+	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
+	tmp := t.TempDir()
+	eng, err := engine.New(engine.Options{Path: self, Env: []string{archivetest.ChildEnv + "=1"},
+		AllowedDirs: []string{dir}, SpillRoot: filepath.Join(tmp, "spill"), SlotDir: filepath.Join(tmp, "slots"),
+		MaxChildren: 1, Threads: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer eng.Close()
+	reader, err := archive.NewReader(dir, eng)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The read timeout sits well above timingLimit, so a slow widget is
+	// measured and reported rather than cut off.
+	files := &testFiles{Files: &archivetest.Files{Dir: dir, Eng: eng, Reader: reader}, timeout: 10 * timingLimit, maxRows: 1000}
 
 	system, err := fs.Sub(systemFS, "system")
 	if err != nil {
@@ -49,16 +65,22 @@ func TestSystemDashboardTiming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	projectID, err := sampleProject(ctx, db)
+	days, err := archive.LatestDays(dir)
 	if err != nil {
 		t.Fatal(err)
 	}
+	var projectID int64
+	for id, day := range days {
+		if projectID == 0 || day > days[projectID] || day == days[projectID] && id < projectID {
+			projectID = id
+		}
+	}
 	if projectID == 0 {
-		t.Fatal("no active project in the database")
+		t.Fatal("no project with events in the directory")
 	}
 	t.Logf("project %d", projectID)
 
-	src := newSources(db, false, time.Now)["sql"]
+	src := newSources(files, false, time.Now)["sql"]
 	today := civil.Today(time.Now().UTC())
 	type timing struct {
 		widget, preset string

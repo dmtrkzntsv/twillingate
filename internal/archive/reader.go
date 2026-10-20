@@ -15,15 +15,17 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // Engine is the slice of engine.Engine a Reader uses.
 type Engine interface {
 	Exec(ctx context.Context, sql string) error
-	Query(ctx context.Context, sql string, maxRows int) (engine.Result, error)
+	Query(ctx context.Context, sql string, maxRows int, args ...engine.Arg) (engine.Result, error)
 }
 
 // ErrLoadingLogs marks a failure to load the open logs into the child's
@@ -66,7 +68,44 @@ func NewReader(dir string, eng Engine) (*Reader, error) {
 }
 
 // Query runs one SELECT over the tables (engine.Query refuses anything
-// else) and returns at most maxRows rows (all when maxRows ≤ 0).
+// else) and returns at most maxRows rows (all when maxRows ≤ 0). It is
+// QueryScoped over every project, with no arguments.
+func (r *Reader) Query(ctx context.Context, sql string, maxRows int, rules Rules) (engine.Result, error) {
+	return r.QueryScoped(ctx, Scoped{SQL: sql, MaxRows: maxRows}, rules)
+}
+
+// Scoped is one query for QueryScoped.
+type Scoped struct {
+	SQL string
+	// Args are bound to the $names in SQL (engine.Engine.Query).
+	Args    []engine.Arg
+	MaxRows int
+	// Scope limits all seven tables to Project's rows; without it the
+	// query reads every project's. A scope on a project with no rows (0
+	// among them: no project has that id) reads none.
+	Scope   bool
+	Project int64
+}
+
+// QueryScoped is Query with arguments and, with Scope, the seven tables
+// shadowed by CTEs over Project's rows only:
+//
+//	WITH events AS NOT MATERIALIZED (SELECT * FROM main.events WHERE project_id = <id>),
+//	     views AS NOT MATERIALIZED (SELECT * FROM events WHERE family = 'views'), …,
+//	     sessions AS NOT MATERIALIZED (SELECT * FROM main.sessions WHERE project_id = <id>), …
+//	SELECT * FROM (<sql>
+//	)
+//
+// so a query written against the tables reads one project's rows without
+// a filter of its own, and the project's rows pass through the rules once.
+// <id> is the int64 printed here, not text from a caller. Without Scope
+// the SQL runs as it is.
+//
+// Scoping is not isolation: the CTEs shadow the tables' names, and SQL
+// that names main.events, _tw_all or read_parquet reads past them, every
+// project's rows included. It keeps SQL written against the tables on
+// one project; it is no boundary against SQL written to leave it, so the
+// SQL must come from someone allowed to read every project.
 //
 // rules is the full rule set of every project, not the caller's share of
 // it: the tables live in the child, which every caller of the engine
@@ -76,21 +115,70 @@ func NewReader(dir string, eng Engine) (*Reader, error) {
 // A file the daily pass removed between the listing and the query (a dump
 // deletes its log, a merge its days) fails the attempt, and so does a
 // child the engine retired in between (the query lands on a fresh one,
-// which has no tables); the query is retried once, on a fresh listing and
-// a rebuild if need be.
-func (r *Reader) Query(ctx context.Context, sql string, maxRows int, rules Rules) (engine.Result, error) {
-	res, err := r.query(ctx, sql, maxRows, rules)
-	if vanished(err) || lostTables(err) {
-		res, err = r.query(ctx, sql, maxRows, rules)
+// which has no tables). Each attempt lists the files afresh and rebuilds
+// the tables if need be, so the next one sees what the pass left. A pass
+// that works through months of closed logs (the boot after an upgrade)
+// removes files for as long as it runs, so the query is retried up to
+// maxAttempts times, backing off from retryBackoff to retryBackoffMax
+// between attempts, until it succeeds, fails otherwise, or ctx is done.
+// The last error is returned.
+func (r *Reader) QueryScoped(ctx context.Context, q Scoped, rules Rules) (engine.Result, error) {
+	backoff := retryBackoff
+	for attempt := 1; ; attempt++ {
+		res, err := r.queryScoped(ctx, q, rules)
+		if err == nil || !(vanished(err) || lostTables(err)) || attempt == maxAttempts {
+			return res, err
+		}
+		select {
+		case <-ctx.Done():
+			return res, err
+		case <-time.After(backoff):
+		}
+		backoff = min(backoff*2, retryBackoffMax)
 	}
-	return res, err
 }
 
-func (r *Reader) query(ctx context.Context, sql string, maxRows int, rules Rules) (engine.Result, error) {
+// The retry bounds of QueryScoped; variables so a test can shorten them.
+var (
+	maxAttempts     = 10
+	retryBackoff    = 50 * time.Millisecond
+	retryBackoffMax = time.Second
+)
+
+func (r *Reader) queryScoped(ctx context.Context, q Scoped, rules Rules) (engine.Result, error) {
 	if err := r.prepare(ctx, rules); err != nil {
 		return engine.Result{}, err
 	}
-	return r.eng.Query(ctx, sql, maxRows)
+	sql := q.SQL
+	if q.Scope {
+		sql = scopedSQL(q.Project, sql)
+	}
+	return r.eng.Query(ctx, sql, q.MaxRows, q.Args...)
+}
+
+// scopedSQL is sql over the seven tables as project's rows only. The
+// newline before the closing paren ends a line comment sql may end with.
+func scopedSQL(project int64, sql string) string {
+	id := strconv.FormatInt(project, 10)
+	family := func(name string) string {
+		return name + " AS NOT MATERIALIZED (SELECT * FROM events WHERE family = '" + name + "')"
+	}
+	return "WITH events AS NOT MATERIALIZED (SELECT * FROM main.events WHERE project_id = " + id + "),\n" +
+		family("views") + ",\n" + family("product") + ",\n" +
+		"measures AS NOT MATERIALIZED (" + measuresSelect("events") + "),\n" +
+		"sessions AS NOT MATERIALIZED (SELECT * FROM main.sessions WHERE project_id = " + id + "),\n" +
+		"identities AS NOT MATERIALIZED (SELECT * FROM main.identities WHERE project_id = " + id + "),\n" +
+		"aliases AS NOT MATERIALIZED (SELECT * FROM main.aliases WHERE project_id = " + id + ")\n" +
+		"SELECT * FROM (" + enginesql.Trim(sql) + "\n)"
+}
+
+// measuresSelect is the measures table over events (a table or CTE): the
+// measures rows, and bucket, the log-scale bucket of value (base 1.04, so
+// buckets about 4% wide; -1000 for a value of 1e-17 or less), as the
+// SQLite views compute it.
+func measuresSelect(events string) string {
+	return "SELECT *, CASE WHEN value > 1e-17 THEN CAST(ceil(ln(value) / ln(1.04)) AS INTEGER) ELSE -1000 END AS bucket FROM " +
+		events + " WHERE family = 'measures'"
 }
 
 // missingTable matches the error of a query naming one of the reader's own
@@ -232,7 +320,7 @@ func (r *Reader) build(ctx context.Context, files map[int64]Files, rules Rules, 
 		"CREATE OR REPLACE VIEW events AS "+eventsView(cols, rules)+";\n"+
 		"CREATE OR REPLACE VIEW views AS SELECT * FROM events WHERE family = 'views';\n"+
 		"CREATE OR REPLACE VIEW product AS SELECT * FROM events WHERE family = 'product';\n"+
-		"CREATE OR REPLACE VIEW measures AS SELECT * FROM events WHERE family = 'measures';\n"+
+		"CREATE OR REPLACE VIEW measures AS "+measuresSelect("events")+";\n"+
 		"CREATE OR REPLACE VIEW sessions AS "+sessionsView(sessions, gaps)+";\n"+
 		"CREATE OR REPLACE VIEW identities AS "+derivedView(identitiesSelect, identitiesCombine, idFiles, idCurrent, idStale)+";\n"+
 		"CREATE OR REPLACE VIEW aliases AS "+derivedView(aliasesSelect, aliasesCombine, alFiles, alCurrent, alStale)+";\n"+

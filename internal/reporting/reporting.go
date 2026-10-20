@@ -21,7 +21,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -81,12 +80,12 @@ type Options struct {
 }
 
 // Service is the reporting surface's composition root: the store slice
-// it reads and writes, the read-only database sql widgets query, the
+// it reads and writes, the event files sql widgets query, the
 // registered source types content is checked and run against, and the
 // two-age cache their loaded values are served from.
 type Service struct {
 	st           Store
-	db           *readsql.DB
+	files        Files // nil: sql widgets fail (errNoFiles)
 	sources      map[string]SourceType
 	now          func() time.Time
 	cache        *cache
@@ -108,22 +107,31 @@ type Service struct {
 	placeMu sync.Mutex
 }
 
-// New builds a Service. db is the read-only handle sql widgets run
-// against (internal/shared/readsql); widgets are validated with a sample
-// query, so New always registers sql with sampleRows true.
-func New(st Store, db *readsql.DB, opt Options) *Service {
+// New builds a Service. files is where sql widgets run; widgets are
+// validated with a sample query, so New always registers sql with
+// sampleRows true.
+func New(st Store, files Files, opt Options) *Service {
 	now := opt.Now
 	if now == nil {
 		now = time.Now
 	}
 	return &Service{
 		st:           st,
-		db:           db,
-		sources:      newSources(db, true, now),
+		files:        files,
+		sources:      newSources(files, true, now),
 		now:          now,
 		cache:        newCache(opt.CacheAge, opt.RefreshAge, now),
 		archivedDays: opt.ArchivedDays,
 		shareBase:    strings.TrimRight(opt.ShareBaseURL, "/"),
 		shares:       newShareCache(now, shareImageBytes),
 	}
+}
+
+// maxRows is CONSOLE_QUERY_ROWS_MAX, a page's size cap; 0 without files,
+// where no page loads anyway.
+func (s *Service) maxRows() int {
+	if s.files == nil {
+		return 0
+	}
+	return s.files.MaxRows()
 }

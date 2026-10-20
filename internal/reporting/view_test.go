@@ -90,8 +90,8 @@ func TestRemoteTableDefaultsToTheCap(t *testing.T) {
 	id := mustRemoteTable(t, svc, threeRows)
 
 	res, page := pageOf(t, svc, DataRequest{WidgetID: id})
-	if page.Limit != svc.db.MaxRows() {
-		t.Errorf("page.limit = %d, want MaxRows %d", page.Limit, svc.db.MaxRows())
+	if page.Limit != svc.maxRows() {
+		t.Errorf("page.limit = %d, want MaxRows %d", page.Limit, svc.maxRows())
 	}
 	if len(res.Rows) != 3 || res.Truncated || page.Matched != 3 || page.Total != 3 {
 		t.Errorf("rows = %v (truncated %v), page = %+v; want all three", res.Rows, res.Truncated, page)
@@ -149,7 +149,7 @@ func TestViewRefusals(t *testing.T) {
 		{"unknown sort column", DataRequest{Sort: "Zed:asc"}, "Key, N"},
 		{"negative offset", DataRequest{Offset: -1}, "offset"},
 		{"negative limit", DataRequest{Limit: -1}, "CONSOLE_QUERY_ROWS_MAX"},
-		{"limit over the cap", DataRequest{Limit: svc.db.MaxRows() + 1}, "CONSOLE_QUERY_ROWS_MAX"},
+		{"limit over the cap", DataRequest{Limit: svc.maxRows() + 1}, "CONSOLE_QUERY_ROWS_MAX"},
 		{"distinct with sort", DataRequest{Distinct: "N", Sort: "N:asc"}, "distinct"},
 		{"unknown distinct column", DataRequest{Distinct: "Zed"}, "Key, N"},
 	} {
@@ -176,9 +176,8 @@ func TestViewRefusals(t *testing.T) {
 // the release notes pointer that view refusals leave out.
 func TestRemoteTableBrokenQueryNamesReleaseNotes(t *testing.T) {
 	svc := newTestService(t)
-	rawExecOn(t, svc, "CREATE TABLE probe(n INTEGER)")
-	id := mustRemoteTable(t, svc, `SELECT n AS "N" FROM probe`)
-	rawExecOn(t, svc, "DROP TABLE probe")
+	id := mustRemoteTable(t, svc, `SELECT CAST(event_name AS INTEGER) AS "N" FROM product`)
+	probe(t, svc, "x") // a row the query cannot read
 
 	_, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: id, Sort: "N:asc"})
 	if !errors.Is(err, store.ErrInvalid) {
@@ -196,13 +195,12 @@ func TestRemoteTableCacheKeyPerView(t *testing.T) {
 	now := time.Now()
 	svc, _ := newTestServiceOpts(t,
 		Options{CacheAge: time.Minute, RefreshAge: time.Second, Now: func() time.Time { return now }}, 1000)
-	rawExecOn(t, svc, "CREATE TABLE probe(n INTEGER)")
-	rawExecOn(t, svc, "INSERT INTO probe(n) VALUES (1), (2)")
-	id := mustRemoteTable(t, svc, `SELECT n AS "N" FROM probe`)
+	probe(t, svc, "1", "2")
+	id := mustRemoteTable(t, svc, `SELECT CAST(event_name AS INTEGER) AS "N" FROM product`)
 
 	asc := DataRequest{WidgetID: id, Sort: "N:asc"}
 	before, _ := pageOf(t, svc, asc)
-	rawExecOn(t, svc, "INSERT INTO probe(n) VALUES (3)")
+	probe(t, svc, "3")
 
 	again, _ := pageOf(t, svc, asc)
 	if !reflect.DeepEqual(again.Rows, before.Rows) {
@@ -217,7 +215,7 @@ func TestRemoteTableCacheKeyPerView(t *testing.T) {
 	spaced := DataRequest{WidgetID: id, Filters: `[ {"column": "N", "op": ">", "value": "0"} ]`}
 	tight := DataRequest{WidgetID: id, Filters: `[{"column":"N","op":">","value":"0"}]`}
 	first, _ := pageOf(t, svc, spaced)
-	rawExecOn(t, svc, "INSERT INTO probe(n) VALUES (4)")
+	probe(t, svc, "4")
 	second, _ := pageOf(t, svc, tight)
 	if !reflect.DeepEqual(first.Rows, second.Rows) {
 		t.Errorf("one filter spelled two ways: rows %v then %v, want one cache entry", first.Rows, second.Rows)
@@ -273,6 +271,30 @@ func TestRemoteTableDistinct(t *testing.T) {
 	}
 }
 
+// TestRemoteTableEmptyPageCounts: a page with no row has none to carry
+// the counts, which are then counted on their own: past the end the
+// matched rows (or values) the page skipped, at offset 0 none matched.
+func TestRemoteTableEmptyPageCounts(t *testing.T) {
+	svc := newTestService(t)
+	id := mustRemoteTable(t, svc, threeRows+` UNION ALL SELECT 'a', 9`)
+	for name, c := range map[string]struct {
+		req            DataRequest
+		matched, total int
+	}{
+		"past the end":       {DataRequest{Offset: 10}, 4, 4},
+		"filtered past it":   {DataRequest{Offset: 10, Filters: `[{"column":"N","op":">","value":"2"}]`}, 2, 4},
+		"distinct past it":   {DataRequest{Offset: 10, Distinct: "Key"}, 3, 4},
+		"nothing matches":    {DataRequest{Filters: `[{"column":"Key","op":"=","value":"z"}]`}, 0, 4},
+		"no distinct values": {DataRequest{Distinct: "Key", Filters: `[{"column":"N","op":">","value":"100"}]`}, 0, 4},
+	} {
+		c.req.WidgetID = id
+		res, page := pageOf(t, svc, c.req)
+		if len(res.Rows) != 0 || res.Rows == nil || res.Truncated || page.Matched != c.matched || page.Total != c.total {
+			t.Errorf("%s: rows %v (truncated %v), page %+v; want [] of %d matched, %d in all", name, res.Rows, res.Truncated, page, c.matched, c.total)
+		}
+	}
+}
+
 // TestDevWidgetDataPagesRemoteTables: reporting dev's data handler takes
 // the same paging arguments from its query string as widget_data, and
 // refuses a limit that is not an integer.
@@ -282,7 +304,7 @@ func TestDevWidgetDataPagesRemoteTables(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "ok", "t.json"), []byte(cfg), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	h := DevHandler([]string{root}, newTestReadDB(t))
+	h := newDevHandler(t, []string{root})
 	path := "/api/widgets/" + strconv.FormatInt(firstDevDashboardID*1000+1, 10) + "/data"
 
 	var got struct {

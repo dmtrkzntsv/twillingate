@@ -259,14 +259,14 @@ func TestCheckOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner := int(info.Sys().(*syscall.Stat_t).Uid)
-	if err := checkOwner(path, owner); err != nil {
+	if err := checkOwner(path, owner, "events import"); err != nil {
 		t.Fatalf("the owner: %v, want nil", err)
 	}
-	err = checkOwner(path, owner+1)
+	err = checkOwner(path, owner+1, "events import")
 	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("uid %d", owner)) || !strings.Contains(err.Error(), "service user") {
 		t.Fatalf("another uid: %v, want a refusal naming uid %d and the service user", err, owner)
 	}
-	if err := checkOwner(filepath.Join(t.TempDir(), "missing.db"), owner); err == nil {
+	if err := checkOwner(filepath.Join(t.TempDir(), "missing.db"), owner, "events import"); err == nil {
 		t.Fatal("a missing database file passed")
 	}
 }

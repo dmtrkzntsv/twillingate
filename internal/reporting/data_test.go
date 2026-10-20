@@ -14,26 +14,28 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// seedViewsDaily inserts one agg_views_daily row per day given, for
-// projectID, so a widget's sql has something real to read.
-func seedViewsDaily(t *testing.T, st store.Store, projectID int64, days ...string) {
+// seedViews writes i+1 views on the i-th day given, for projectID, so a
+// widget's sql has something real to read.
+func seedViews(t *testing.T, svc *Service, projectID int64, days ...string) {
 	t.Helper()
+	f := filesOf(t, svc)
 	for i, day := range days {
-		rawExec(t, st, `INSERT INTO agg_views_daily (project_id, day, kind, visitors, views, sessions, bounces, duration_sec)
-			VALUES (?, ?, 'web', ?, ?, ?, 0, 0)`, projectID, day, 10+i, 20+i, 5+i)
+		for n := range i + 1 {
+			mustWriteEvent(t, f, fmt.Sprintf("v-%d-%s-%d", projectID, day, n), projectID, store.FamilyViews, day)
+		}
 	}
 }
 
 // statWidget is a "stat" widget reading a single number for :project.
 func statWidget(name string) WidgetSpec {
 	return WidgetSpec{Name: name, Component: "stat", Title: name, Source: Source{Type: "sql",
-		Content: "SELECT SUM(views) AS value FROM agg_views_daily WHERE project_id=:project"}}
+		Content: "SELECT count(*) AS value FROM views WHERE project_id = :project"}}
 }
 
 // lineWidget is a "line" widget reading a day/value series for :from/:to.
 func lineWidget(name string) WidgetSpec {
 	return WidgetSpec{Name: name, Component: "line", Title: name, Source: Source{Type: "sql",
-		Content: "SELECT day AS x, views AS y FROM agg_views_daily WHERE day BETWEEN :from AND :to"}}
+		Content: "SELECT day AS x, count(*) AS y FROM views WHERE day BETWEEN :from AND :to GROUP BY day ORDER BY day"}}
 }
 
 // tableWidget is a "table" widget with fixed content and open columns:
@@ -42,13 +44,16 @@ func tableWidget(name, content string) WidgetSpec {
 	return WidgetSpec{Name: name, Component: "table", Title: name, Source: Source{Type: "sql", Content: content}}
 }
 
-// rawExecOn reaches through svc's own store, for a test that only has
-// the Service (not the store.Store it wraps) in hand. svc.st's dynamic
-// type is always the concrete *sqlite.DB, which implements store.Store
-// in full, so the assertion holds for every Service a test builds.
-func rawExecOn(t *testing.T, svc *Service, q string, args ...any) {
+// probe writes one product event per name, in project 1 today, for a
+// widget reading event_name as its value: names stand in for the rows of
+// a table, since widget SQL cannot write one.
+func probe(t *testing.T, svc *Service, names ...string) {
 	t.Helper()
-	rawExec(t, svc.st.(store.Store), q, args...)
+	f := filesOf(t, svc)
+	day := time.Now().UTC().Format("2006-01-02")
+	for _, name := range names {
+		f.Write(t, event(t, "probe-"+name, 1, store.FamilyProduct, name, day))
+	}
 }
 
 func TestWidgetDataUnknownWidgetRefused(t *testing.T) {
@@ -88,7 +93,7 @@ func TestWidgetDataRemovedComponent(t *testing.T) {
 func TestWidgetDataFollowsProjectRequired(t *testing.T) {
 	svc, st := newTestServiceOpts(t, Options{}, 1000)
 	projectID := mustCreateProject(t, st, "p1")
-	seedViewsDaily(t, st, projectID, "2026-08-20")
+	seedViews(t, svc, projectID, "2026-08-20")
 	d := mustCreate(t, svc, "DD", statWidget("s"))
 	id := d.Widgets[0].ID
 
@@ -111,7 +116,7 @@ func TestWidgetDataFollowsProjectRequired(t *testing.T) {
 func TestWidgetDataFollowsRangeRules(t *testing.T) {
 	svc, st := newTestServiceOpts(t, Options{}, 1000)
 	projectID := mustCreateProject(t, st, "p1")
-	seedViewsDaily(t, st, projectID, "2026-08-20", "2026-08-21")
+	seedViews(t, svc, projectID, "2026-08-20", "2026-08-21")
 	d := mustCreate(t, svc, "DD", lineWidget("l"))
 	id := d.Widgets[0].ID
 	ctx := context.Background()
@@ -145,7 +150,7 @@ func TestWidgetDataRefusesFromAfterToday(t *testing.T) {
 	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
 	svc, st := newTestServiceOpts(t, Options{Now: func() time.Time { return now }}, 1000)
 	projectID := mustCreateProject(t, st, "p1")
-	seedViewsDaily(t, st, projectID, "2026-09-20")
+	seedViews(t, svc, projectID, "2026-09-20")
 	d := mustCreate(t, svc, "DD", lineWidget("l"))
 	id := d.Widgets[0].ID
 
@@ -157,7 +162,7 @@ func TestWidgetDataClampsFutureTo(t *testing.T) {
 	now := time.Date(2026, 9, 26, 12, 0, 0, 0, time.UTC)
 	svc, st := newTestServiceOpts(t, Options{Now: func() time.Time { return now }}, 1000)
 	projectID := mustCreateProject(t, st, "p1")
-	seedViewsDaily(t, st, projectID, "2026-09-20")
+	seedViews(t, svc, projectID, "2026-09-20")
 	d := mustCreate(t, svc, "DD", lineWidget("l"))
 	id := d.Widgets[0].ID
 
@@ -203,11 +208,11 @@ func TestWidgetDataMarkdown(t *testing.T) {
 
 func TestWidgetDataLoadFailureNamesReleaseNotes(t *testing.T) {
 	svc := newTestService(t)
-	d := mustCreate(t, svc, "DD", tableWidget("t", "SELECT * FROM agg_views_daily"))
+	d := mustCreate(t, svc, "DD", tableWidget("t", "SELECT CAST(event_name AS INTEGER) AS n FROM product"))
 	id := d.Widgets[0].ID
-	// Break the table the widget's sql reads, the way a release changing
-	// the schema underneath an already-saved widget would.
-	rawExecOn(t, svc, "DROP TABLE agg_views_daily")
+	// A row the widget's sql cannot read, standing in for a release that
+	// changes what an already-saved widget reads underneath it.
+	probe(t, svc, "x")
 
 	_, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: id})
 	if !errors.Is(err, store.ErrInvalid) {
@@ -220,16 +225,15 @@ func TestWidgetDataLoadFailureNamesReleaseNotes(t *testing.T) {
 
 func TestWidgetDataRowsNoLongerFitComponentNamesReleaseNotes(t *testing.T) {
 	svc := newTestService(t)
-	rawExecOn(t, svc, "CREATE TABLE probe(value TEXT)")
-	rawExecOn(t, svc, "INSERT INTO probe(value) VALUES ('1'), ('2')") // fits number; Validate's own sample passes
+	probe(t, svc, "1", "2") // fits number; Validate's own sample passes
 	d := mustCreate(t, svc, "DD", WidgetSpec{Name: "s", Component: "stat", Title: "s",
-		Source: Source{Type: "sql", Content: "SELECT value FROM probe"}})
+		Source: Source{Type: "sql", Content: "SELECT event_name AS value FROM product"}})
 	id := d.Widgets[0].ID
 
-	// A release (or, here, a direct mutation standing in for one) leaves
-	// a row that no longer fits stat's declared "value" column, after the
+	// A release (or, here, a new event standing in for one) leaves a row
+	// that no longer fits stat's declared "value" column, after the
 	// widget already validated against the good rows above.
-	rawExecOn(t, svc, "UPDATE probe SET value='not-a-number' WHERE value='1'")
+	probe(t, svc, "not-a-number")
 
 	_, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: id})
 	if !errors.Is(err, store.ErrInvalid) {
@@ -247,8 +251,8 @@ func TestWidgetDataTruncated(t *testing.T) {
 	for i := 1; i <= 10; i++ {
 		days = append(days, "2026-08-"+twoDigit(i))
 	}
-	seedViewsDaily(t, st, projectID, days...)
-	d := mustCreate(t, svc, "DD", tableWidget("t", "SELECT day, views FROM agg_views_daily"))
+	seedViews(t, svc, projectID, days...)
+	d := mustCreate(t, svc, "DD", tableWidget("t", "SELECT day, count(*) AS views FROM views GROUP BY day"))
 	id := d.Widgets[0].ID
 
 	got, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: id})
@@ -283,16 +287,15 @@ func TestWidgetDataChecksRowsPerWidgetDespiteASharedCacheAge(t *testing.T) {
 	now := time.Now()
 	svc, _ := newTestServiceOpts(t,
 		Options{CacheAge: time.Minute, RefreshAge: time.Minute, Now: func() time.Time { return now }}, 1000)
-	rawExecOn(t, svc, "CREATE TABLE probe(value TEXT)")
-	rawExecOn(t, svc, "INSERT INTO probe(value) VALUES ('1')") // numeric: fits stat's Validate-time sample
-	content := "SELECT value FROM probe"
+	probe(t, svc, "1") // numeric: fits stat's Validate-time sample
+	content := "SELECT event_name AS value FROM product"
 
 	dTable := mustCreate(t, svc, "D1", tableWidget("t", content))
 	dStat := mustCreate(t, svc, "D2", WidgetSpec{Name: "s", Component: "stat", Title: "s",
 		Source: Source{Type: "sql", Content: content}})
 	tableID, statID := dTable.Widgets[0].ID, dStat.Widgets[0].ID
 
-	rawExecOn(t, svc, "UPDATE probe SET value='not-a-number'")
+	probe(t, svc, "not-a-number")
 
 	ctx := context.Background()
 	if _, err := svc.WidgetData(ctx, DataRequest{WidgetID: tableID}); err != nil {
@@ -378,7 +381,7 @@ func TestWidgetDataCachedAtAndRefreshAfter(t *testing.T) {
 	svc, st := newTestServiceOpts(t,
 		Options{CacheAge: time.Minute, RefreshAge: refreshAge, Now: func() time.Time { return now }}, 1000)
 	projectID := mustCreateProject(t, st, "p1")
-	seedViewsDaily(t, st, projectID, "2026-08-20")
+	seedViews(t, svc, projectID, "2026-08-20")
 	d := mustCreate(t, svc, "DD", statWidget("s"))
 	id := d.Widgets[0].ID
 

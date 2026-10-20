@@ -11,10 +11,15 @@ import (
 // as its own child: `engine -check` runs `<self> engine …`.
 const asBinary = "TWILLINGATE_TEST_AS_BINARY"
 
+// TestMain sets asBinary for the whole run once it is past the check, so
+// every engine a command builds (app.EngineOptions: this binary, run as
+// `<self> engine …`) spawns a child that serves: a command that opens the
+// store migrates, and the reporting migrator queries the event files.
 func TestMain(m *testing.M) {
 	if os.Getenv(asBinary) == "1" {
 		os.Exit(run(os.Args[1:], os.Stdout))
 	}
+	os.Setenv(asBinary, "1")
 	os.Exit(m.Run())
 }
 

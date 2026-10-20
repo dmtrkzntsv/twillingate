@@ -144,3 +144,45 @@ func TestMeasuresRejectsBadDate(t *testing.T) {
 		t.Errorf("error = %q, want a YYYY-MM-DD complaint", msg)
 	}
 }
+
+// TestMeasuresBreaksDownByAnyKey: attr_key reads any key's attr_<key>
+// column, declared or not, and a key no measure carried (or no event at
+// all) gives no rows, not an error.
+func TestMeasuresBreaksDownByAnyKey(t *testing.T) {
+	_, cs := newTestHost(t)
+	args := func(key string) map[string]any {
+		return map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "attr_key": key}
+	}
+	res := callTool(t, cs, "measures", args("tier"))
+	if res.IsError {
+		t.Fatalf("error: %s", textOf(res))
+	}
+	gold := measuresRow(t, textOf(res), "attr_value", "gold")
+	if gold["event_name"] != "checkout_api" || gold["samples"] != "1" || gold["mean"] != "200" {
+		t.Errorf("tier gold = %v, want checkout_api's one 200 ms sample", gold)
+	}
+	// A reserved key reads its column, declared or not.
+	res = callTool(t, cs, "measures", args("$path"))
+	if res.IsError {
+		t.Fatalf("$path: %s", textOf(res))
+	}
+	if page := measuresRow(t, textOf(res), "attr_value", "/checkout"); page["samples"] != "1" || page["mean"] != "300" {
+		t.Errorf("$path /checkout = %v, want checkout_api's one 300 ms sample", page)
+	}
+	for _, key := range []string{"TIER", "plan", "never_sent", `we"ird`, "$nope"} {
+		res := callTool(t, cs, "measures", args(key))
+		if res.IsError {
+			t.Errorf("%s: %s", key, textOf(res))
+			continue
+		}
+		var tbl struct {
+			Rows [][]string `json:"rows"`
+		}
+		if err := json.Unmarshal([]byte(textOf(res)), &tbl); err != nil {
+			t.Fatal(err)
+		}
+		if want := key == "TIER"; (len(tbl.Rows) == 1) != want {
+			t.Errorf("%s: rows %v; a key reads its column whatever its case, and a key no measure carried reads none", key, tbl.Rows)
+		}
+	}
+}

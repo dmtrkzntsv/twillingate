@@ -8,12 +8,15 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/config/configtest"
 	"github.com/dmtrkzntsv/twillingate/internal/geo"
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
@@ -24,11 +27,10 @@ import (
 )
 
 type fakeQueue struct {
-	mu         sync.Mutex
-	views      []store.Event
-	events     []store.Event
-	measures   []store.Event
-	identities []store.Identity
+	mu       sync.Mutex
+	views    []store.Event
+	events   []store.Event
+	measures []store.Event
 }
 
 func (f *fakeQueue) Enqueue(e store.Event) {
@@ -42,15 +44,6 @@ func (f *fakeQueue) Enqueue(e store.Event) {
 		f.events = append(f.events, e)
 	}
 	f.mu.Unlock()
-}
-
-// UpsertIdentities lets the queue double as the NameStore, so a test can
-// assert on events and names together.
-func (f *fakeQueue) UpsertIdentities(_ context.Context, ids []store.Identity) error {
-	f.mu.Lock()
-	f.identities = append(f.identities, ids...)
-	f.mu.Unlock()
-	return nil
 }
 
 type fixedSalt struct{}
@@ -135,7 +128,7 @@ func newServerWithLogger(t *testing.T, logger *slog.Logger) (*fakeQueue, *Server
 		map[int][2]string{0: {testKey, "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
-	return q, New(cfg, reg, q, g, fixedSalt{}, q, newFakeForms(), logger)
+	return q, New(cfg, reg, q, g, fixedSalt{}, newFakeForms(), logger)
 }
 
 // newTestServer is newServer for a test that only needs the server.
@@ -779,7 +772,7 @@ func TestEventAgeClampUsesLateWindow(t *testing.T) {
 		map[int][2]string{0: {"ak_clamped", "web"}, 1: {"ak_normal", "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
-	h := New(cfg, reg, q, g, fixedSalt{}, q, newFakeForms(), slog.Default())
+	h := New(cfg, reg, q, g, fixedSalt{}, newFakeForms(), slog.Default())
 
 	oldTS := time.Now().UTC().AddDate(0, 0, -10).Format(time.RFC3339)
 	recentTS := time.Now().UTC().AddDate(0, 0, -1).Format(time.RFC3339)
@@ -829,7 +822,7 @@ func TestRaisedRawWindowDoesNotMoveTheClamp(t *testing.T) {
 		map[int][2]string{0: {"ak_raised", "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
-	h := New(cfg, reg, q, g, fixedSalt{}, q, newFakeForms(), slog.Default())
+	h := New(cfg, reg, q, g, fixedSalt{}, newFakeForms(), slog.Default())
 
 	oldTS := time.Now().UTC().AddDate(0, 0, -40).Format(time.RFC3339)
 	w := post(h, `{"key":"ak_raised","events":[{"name":"$page_view","ts":"`+oldTS+`","attributes":{"$path":"/x"}}]}`, nil)
@@ -911,20 +904,8 @@ func TestIdsAreStoredAsSent(t *testing.T) {
 	if v.GroupID != "org9" {
 		t.Errorf("group_id = %q; groups are stored raw", v.GroupID)
 	}
-	if len(q.identities) != 2 {
-		t.Fatalf("identities = %+v; want the user and the group name", q.identities)
-	}
-	var user, group bool
-	for _, id := range q.identities {
-		switch {
-		case id.Kind == store.KindUser && id.ID == "u1" && id.Name == "Ada" && id.ProjectID == 1:
-			user = true
-		case id.Kind == store.KindGroup && id.ID == "org9" && id.Name == "Acme" && id.ProjectID == 1:
-			group = true
-		}
-	}
-	if !user || !group {
-		t.Errorf("identities = %+v; want Ada for u1 and Acme for org9", q.identities)
+	if v.UserName != "Ada" || v.GroupName != "Acme" {
+		t.Errorf("names = %q, %q; want Ada and Acme on the view", v.UserName, v.GroupName)
 	}
 }
 
@@ -947,8 +928,8 @@ func TestUserNameNeedsAUserId(t *testing.T) {
 	q, h := testServer(t)
 	post(h, `{"key":"`+testKey+`","attributes":{"$user_name":"Ada","$group_id":"g","$group_name":"G"},
 	  "events":[{"name":"a"}]}`, nil)
-	if len(q.identities) != 1 || q.identities[0].Kind != store.KindGroup {
-		t.Errorf("identities = %+v; a name without an id names nothing", q.identities)
+	if len(q.events) != 1 || q.events[0].UserName != "" || q.events[0].GroupName != "G" {
+		t.Errorf("events = %+v; a name without an id names nothing", q.events)
 	}
 }
 
@@ -980,37 +961,70 @@ func TestFirstIdsAreLoggedOncePerKind(t *testing.T) {
 	}
 }
 
-// A name arrives only beside a row that is stored: a rejected view and a
-// bot-filtered view carry no identity into the identities table.
-func TestNamesFollowStoredRowsOnly(t *testing.T) {
-	q, h := testServer(t)
-	// no $path and no $screen: the view is rejected
-	post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada"},
-	  "events":[{"name":"$page_view"}]}`, nil)
-	if len(q.views) != 0 || len(q.identities) != 0 {
-		t.Fatalf("rejected view stored views=%d identities=%+v", len(q.views), q.identities)
-	}
-	// a crawler: accepted and silently dropped, names included
-	post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada"},
-	  "events":[{"name":"$page_view","attributes":{"$path":"/"}}]}`,
-		map[string]string{"User-Agent": "Googlebot/2.1 (+http://www.google.com/bot.html)"})
-	if len(q.views) != 0 || len(q.identities) != 0 {
-		t.Fatalf("bot view stored views=%d identities=%+v", len(q.views), q.identities)
-	}
-	// a stored view carries the name
-	post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada"},
-	  "events":[{"name":"$page_view","attributes":{"$path":"/"}}]}`, nil)
-	if len(q.views) != 1 || len(q.identities) != 1 || q.identities[0].Name != "Ada" {
-		t.Fatalf("stored view: views=%d identities=%+v", len(q.views), q.identities)
-	}
+// identityRecorder is a store that would take display names: the ingest
+// handler is given it as its FormStore, as app gives the SQLite store,
+// and must never call UpsertIdentities on it.
+type identityRecorder struct {
+	*fakeForms
+	mu    sync.Mutex
+	calls int
 }
 
-func TestBatchNamesAreDedupedAcrossEvents(t *testing.T) {
-	q, h := testServer(t)
-	post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada","$group_id":"g","$group_name":"G"},
-	  "events":[{"name":"a"},{"name":"b"},{"name":"c"}]}`, nil)
-	if len(q.identities) != 2 {
-		t.Errorf("identities = %+v; want one user and one group, not one pair per event", q.identities)
+func (r *identityRecorder) UpsertIdentities(context.Context, []store.Identity) error {
+	r.mu.Lock()
+	r.calls++
+	r.mu.Unlock()
+	return nil
+}
+
+// TestIngestWritesNoIdentities: ingest no longer writes display names to
+// SQLite's identities table (raw-first 5d). The names ride on the events,
+// and the archive log, the event files' source, carries them.
+func TestIngestWritesNoIdentities(t *testing.T) {
+	cfg := configtest.Load(t, nil)
+	reg := newTestRegistry(t, []manage.ProjectSpec{{Name: "App", AllowedOrigins: []string{testOrigin}}},
+		map[int][2]string{0: {testKey, "web"}})
+	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
+	q, rec := &fakeQueue{}, &identityRecorder{fakeForms: newFakeForms()}
+	h := New(cfg, reg, q, g, fixedSalt{}, rec, slog.Default())
+	if w := post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada","$group_id":"g1","$group_name":"Acme"},
+	  "events":[{"name":"a"},{"name":"$page_view","attributes":{"$path":"/"}}]}`, nil); w.Code != http.StatusAccepted {
+		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
+	}
+	if rec.calls != 0 {
+		t.Errorf("UpsertIdentities called %d times, want none", rec.calls)
+	}
+	if len(q.events) != 1 || len(q.views) != 1 {
+		t.Fatalf("events %d, views %d; want 1 and 1", len(q.events), len(q.views))
+	}
+	dir := t.TempDir()
+	log, err := archive.OpenLog(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := log.WriteEvents(context.Background(), append(q.events, q.views...)); err != nil {
+		t.Fatal(err)
+	}
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	logs, err := filepath.Glob(filepath.Join(dir, "*", "*.log"))
+	if err != nil || len(logs) == 0 {
+		t.Fatalf("no log under %s: %v", dir, err)
+	}
+	var text string
+	for _, p := range logs {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		text += string(b)
+	}
+	if n := strings.Count(text, `"user_name":"Ada"`); n != 2 {
+		t.Errorf("the log carries user_name on %d events, want 2:\n%s", n, text)
+	}
+	if n := strings.Count(text, `"group_name":"Acme"`); n != 2 {
+		t.Errorf("the log carries group_name on %d events, want 2:\n%s", n, text)
 	}
 }
 
@@ -1543,7 +1557,7 @@ func TestIngestAppliesEventRules(t *testing.T) {
 	}
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
-	s := New(configtest.Load(t, nil), reg, q, g, fixedSalt{}, q, newFakeForms(), slog.Default())
+	s := New(configtest.Load(t, nil), reg, q, g, fixedSalt{}, newFakeForms(), slog.Default())
 
 	w := post(s, envelopeOf(`{"name":"old"},{"name":"spam"},{"name":"keep"},
 		{"name":"spam","family":"measures","value":1,"measure":"number"}`), nil)
@@ -1594,7 +1608,7 @@ func TestIngestAppliesAttributeRules(t *testing.T) {
 	}
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
 	q := &fakeQueue{}
-	s := New(configtest.Load(t, nil), reg, q, g, fixedSalt{}, q, newFakeForms(), slog.Default())
+	s := New(configtest.Load(t, nil), reg, q, g, fixedSalt{}, newFakeForms(), slog.Default())
 
 	w := post(s, envelopeOf(`
 		{"name":"e0","attributes":{"a":"1","b":"2"}},

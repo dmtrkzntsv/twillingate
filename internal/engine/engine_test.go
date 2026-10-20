@@ -99,6 +99,61 @@ func TestExecThenQuery(t *testing.T) {
 	}
 }
 
+func TestQueryBindsNamedArguments(t *testing.T) {
+	e := newEngine(t, testOptions(t))
+	res, err := e.Query(context.Background(),
+		"SELECT CAST($a AS BIGINT) + 1 AS n, CAST($d AS DATE) AS d", 0,
+		Arg{"a", "41"}, Arg{"d", "2026-01-02"})
+	if err != nil || len(res.Rows) != 1 || fmt.Sprint(res.Rows[0]) != "[42 2026-01-02]" {
+		t.Fatalf("Query = %+v, %v; want [[42 2026-01-02]]", res, err)
+	}
+}
+
+// TestQueryArgumentsMustMatchTheParameters: duckdb-go binds an argument
+// whose name matches no parameter by position, so the child checks the
+// names itself; each of these is the caller's bug and a *QueryError.
+func TestQueryArgumentsMustMatchTheParameters(t *testing.T) {
+	e := newEngine(t, testOptions(t))
+	for name, c := range map[string]struct {
+		sql  string
+		args []Arg
+	}{
+		"missing":     {"SELECT CAST($a AS BIGINT)", nil},
+		"missing one": {"SELECT CAST($a AS BIGINT), CAST($b AS BIGINT)", []Arg{{"a", "1"}}},
+		"misnamed":    {"SELECT CAST($a AS BIGINT) AS n", []Arg{{"b", "7"}}},
+		"extra":       {"SELECT CAST($a AS BIGINT) AS n", []Arg{{"a", "7"}, {"b", "8"}}},
+		"unused":      {"SELECT 1", []Arg{{"a", "7"}}},
+		"positional":  {"SELECT CAST(? AS BIGINT)", []Arg{{"a", "7"}}},
+		"dollar one":  {"SELECT CAST($1 AS BIGINT)", []Arg{{"1", "7"}}},
+		"twice":       {"SELECT CAST($a AS BIGINT)", []Arg{{"a", "7"}, {"a", "8"}}},
+	} {
+		res, err := e.Query(context.Background(), c.sql, 0, c.args...)
+		var qe *QueryError
+		if !errors.As(err, &qe) {
+			t.Errorf("%s: Query = %+v, %v; want a *QueryError", name, res, err)
+		}
+	}
+	// The same names, in any order and used more than once, bind.
+	res, err := e.Query(context.Background(),
+		"SELECT CAST($b AS BIGINT) - CAST($a AS BIGINT) + CAST($a AS BIGINT)", 0, Arg{"a", "1"}, Arg{"b", "9"})
+	if err != nil || fmt.Sprint(res.Rows) != "[[9]]" {
+		t.Fatalf("Query = %+v, %v; want [[9]]", res, err)
+	}
+}
+
+// TestChildRunsInUTC: the process's own zone (TZ) must not reach the
+// SQL, or the same date would mean different instants on different hosts.
+func TestChildRunsInUTC(t *testing.T) {
+	o := testOptions(t)
+	o.Env = append(o.Env, "TZ=America/Los_Angeles")
+	e := newEngine(t, o)
+	res, err := e.Query(context.Background(),
+		"SELECT current_setting('TimeZone'), CAST(TIMESTAMPTZ '2026-01-02 00:00:00+00' AS VARCHAR)", 0)
+	if err != nil || fmt.Sprint(res.Rows[0]) != "[UTC 2026-01-02 00:00:00+00]" {
+		t.Fatalf("Query = %+v, %v; want UTC", res, err)
+	}
+}
+
 // TestIdleChildExits: an idle child leaves, freeing its slot and its spill
 // directory, and the next query starts another.
 func TestIdleChildExits(t *testing.T) {

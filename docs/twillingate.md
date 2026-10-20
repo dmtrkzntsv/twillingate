@@ -103,7 +103,7 @@ twillingate key disable -project-id 1 -label ios-2025
 | `name` | Display name. Required; free text, need not be unique; change it with `project update -name`. |
 | `ingest_keys` | One or more `{key, label, disabled}` credentials. Required. |
 | `allowed_origins` | Origins allowed to post for this project. `*` is a wildcard — `https://*.example.com` covers every subdomain, a bare `*` allows any origin. Add `tauri://localhost` or `app://.` for Electron/Tauri. |
-| `attributes` | Custom product-event attribute keys to break down; a repeated key is kept once. Answered ordered by key. |
+| `attributes` | Custom product-event attribute keys the database breaks down (the event files break every key down, declared or not; see [Attribute breakdowns](#attribute-breakdowns)); a repeated key is kept once. Answered ordered by key. |
 
 ### Attribute breakdowns
 
@@ -111,30 +111,39 @@ twillingate key disable -project-id 1 -label ios-2025
 twillingate project update -id 1 -attr plan -attr tier
 ```
 
-A declared key gets a value breakdown (counts and unique users/groups per
-value, per event, per day) in `agg_product_attrs` / `v_product_attrs`. A
-declared custom key also gets an `attr_*` column in `v_events_flat`; a declared
+`product_attributes`, `measures` (by `attr_key`) and the dashboards read
+the [event files](#writing-sql-against-the-event-files), where every key the
+events carried breaks down without being declared: each custom attribute
+key, and the reserved keys `$platform`, `$os`, `$app_version`,
+`$app_locale`, `$kind`, `$browser`, `$device`, `$browser_locale`,
+`$country` (the country ingest derives from the connection's IP, never sent
+by a client), `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`,
+`$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`, each
+read from its column. Nothing is capped there and there is no `(other)`
+row.
+
+Declaring a key matters only to the database's rollups, which the
+[deprecated](#writing-sql-against-the-views-deprecated) `source: "sqlite"`
+views read. There a declared key gets a value breakdown (counts and unique
+users/groups per value, per event, per day) in `agg_product_attrs` /
+`v_product_attrs`. A declared custom key also gets an `attr_*` column in `v_events_flat`; a declared
 reserved key is already a typed column there. Undeclared keys are still
 stored and reachable via `json_extract(attributes, '$.junk')`; declaring one
 later does not backfill. `ATTRIBUTE_VALUES_TOP_N` (default 100, 0 for no cap,
 set [server-side](deployment.md#configure-the-collector)) keeps the top N values per
 key and collapses the tail into one `(other)` row whose unique counts are
 recomputed from raw, so **a client sending the literal `(other)` loses its own
-count**. Never declare an unbounded custom key such as a session id. `$platform`,
-`$os`, `$app_version`, `$app_locale`, `$kind`, `$browser`, `$device`,
-`$browser_locale` and `$country` (the country ingest derives from the
-connection's IP, never sent by a client) roll up automatically and need no
-declaration. Nine more
-reserved keys can be declared like a custom key to get the same per-value
-breakdown: `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`,
-`$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`. The
-top-N cap keeps a declared `$path` bounded. Declaring any other `$` key is
-refused. Rollups run whether or not a project declares attributes; declaring
+count**. Never declare an unbounded custom key such as a session id. In the
+database, the first nine reserved keys above roll up automatically; the other
+nine (`$host` to `$device_model`) roll up only once declared like a custom
+key, and the top-N cap keeps a declared `$path` bounded there. Declaring any
+other `$` key is refused. Rollups run whether or not a project declares attributes; declaring
 only adds the per-value breakdown and the `attr_*` columns.
 
 Declaring an attribute makes it a breakdown: the key's row in the project's
-attributes catalog is marked, and the daily rollup keeps per-value rows for it,
-so `product_attributes` can break events down by it. The catalog holds one row
+attributes catalog is marked, and the database's daily rollup keeps per-value
+rows for it in `v_product_attrs`. `product_attributes` needs no declaration:
+it reads the files, where every key the events carried breaks down. The catalog holds one row
 per key the project received within the raw window, plus every breakdown,
 received or not. `attributes` is the catalog's breakdown keys, ordered by key
 whatever order they were written in; writing it marks the keys listed and
@@ -817,11 +826,12 @@ tools below do.
    expected_fields}`. From then on a field outside the list is dropped on
    arrival, and every submission writes a `$form_submit` product event about
    a minute after it arrives, with the attribute `form` (the form's name):
-   count conversions with `product_events`, and per form with `product_attributes` once `form` is
-   declared in the project's `attributes`. The event carries what is known
-   about the visitor (the page, the visit's referrer and UTMs, its session
-   and environment), so declaring `$utm_source` and the rest breaks
-   conversions down by campaign too, also once the days are rolled up.
+   count conversions with `product_events`, and per form with
+   `product_attributes`, which breaks `form` down like every key the events
+   carried, without a declaration. The event carries what is known about
+   the visitor (the page, the visit's referrer and UTMs, its session and
+   environment), so `$utm_source`, `$path` and the rest break conversions
+   down by campaign and page too.
 4. **Settle it** with `update_form`: a `purpose`; a `return_url` (where a
    plain form sends the visitor back without `$redirect`, an allowed target
    as for the redirect); `closes_at`, after which submissions are refused
@@ -1065,8 +1075,10 @@ personal data. `$user_name` is kept only beside a `$user_id`.
 In the event files every event also keeps the `$install_id`, `$user_name`
 and `$group_name` it was sent with (each name only beside its id:
 `$user_name` beside `$user_id`, `$group_name` beside `$group_id`), for as long as `RETENTION_DAYS` keeps the
-event (`query` with `source: "files"`): the names are personal data there
-too.
+event (`query`): the names are personal data there too. They are the only
+copy: the display names the `identities` tool and the Users and Groups
+dashboards show are the latest each id was sent with, read from the files'
+`identities` table, and ingest no longer writes names to the database.
 Events imported from the database (`twillingate events import`), which
 kept no names per event, carry the latest name it held, and an
 `$install_id` only where the install was the actor.
@@ -1455,7 +1467,11 @@ dashboard, call `reporting_guide` first.
 
 Reach for a purpose-built tool before `query` — they are cheaper, they cannot
 be malformed, and they already apply the caveats below. All the reading tools
-take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
+take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted. The
+analytics tools (`views_overview` through `identities`) read the [event
+files](#writing-sql-against-the-event-files), as the dashboards do, so their
+history starts where the files' does; `limits`, `cap_usage`,
+`list_attributes` and `usage` still read the database.
 
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
@@ -1464,14 +1480,34 @@ take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted.
 | `cap_usage` | `from`, `to` (optional: the last 30 days) | Per capped dimension — views breakdowns and kinds, attribute keys, `users`/`groups` — the busiest day's values against the `cap`, `days` with data, `days_capped` (an `(other)` row; for users and groups, the cap reached) and `folded_share` |
 | `list_attributes` | `from`, `to` (optional: the last 30 days) | The project's attributes, busiest first: each key's `events` and `max_values` (the busiest event's distinct values on one day, against `ATTRIBUTE_VALUES_TOP_N`), counted by the daily pass so today's arrive the night after (a key first received today has `events` 0 and `max_values` `null`), `received`, `breakdown`, `blocked` and `aliases` (the keys renamed or merged into it; absent when none) — for the 500 busiest keys plus every breakdown key, every blocked key and every key with aliases (`received` false when none carried it); a key renamed away is listed only in its target's `aliases`. Also `keys_total` (the distinct keys received, keys renamed away left out), `values_cap`, `breakdowns_used` and `breakdowns_max` (`ATTRIBUTE_BREAKDOWNS_MAX`). Kept for the raw window only |
 | `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project: `views`, product `events` and measure `samples` per day and in total, `last_received_at`, `first_day` (the oldest day with data, stored counts included), `raw_days`, `rolled_up_days`, an estimated `size` (raw rows and aggregates, measured daily by the daily pass, which also runs at start: the newest, with the day it was `measured_at`; `null` until the first measurement) and each day's measured `total_bytes` in the series (`null` on days not measured), `unused_attributes` (breakdown keys no event carried; computed only with `project_id`, `null` for the all-projects answer); plus the database's size on disk now and per day (`database_series`). Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention. Each series day also carries `declared_attributes` and, counted the night after while the day's rows are raw and kept once rolled up, the distinct `attribute_keys` and `attribute_values` received and the `attribute_values_folded` into `(other)` (`null` on days not stored) |
-| `views_overview` | `kind` (optional) | Visitors, views, sessions, bounces, average session length per day, summed across kinds unless `kind` filters one |
-| `views_breakdown` | `dimension`, `limit` (default 20) | Top rows for one of `kinds`, `paths`, `hosts`, `referrers`, `utm`, `countries`, `platforms`, `os`, `browsers`, `app_versions`, `devices`, `displays`, `consent`, `locales`. Two-key dimensions return both columns. `consent` is `given`, `none` or `unknown`. `locales` pairs `browser_locale` with `app_locale`, either empty when not sent. |
-| `product_events` | `event` (optional filter) | Count and unique users per event name, plus daily totals |
-| `product_attributes` | `event`, `key` | Count, unique users and unique groups per value of a declared attribute. `$platform`, `$os`, `$app_version`, `$app_locale`, `$kind`, `$browser`, `$device`, `$browser_locale` and `$country` are always available; a custom key, or one of `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`, `$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`, only appears once the project declares it. `unique_groups` is empty for days rolled up before it was measured and `0` when it was measured and no group was involved |
-| `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes) |
-| `retention` | `actor` (`user` or `install`) | Cohort curves, plus `aggregated_through` — cohorts after that day are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
-| `identities` | `kind` (`user` or `group`), `limit` | Per-user or per-group activity with display names. **Surfaces personal data on projects whose clients send ids** |
-| `query` | `sql`, `source` (optional: `sqlite`, the default, or `files`) | A single read-only `SELECT`/`WITH`. Row-capped and time-limited. `sqlite` reads the views below; `meta` and SQLite's internal tables (`sqlite_master`, `dbstat`, …) are refused, whether named directly or as a quoted or single-quoted string, and non-ASCII names must be quoted. `files` reads the raw events and the tables derived from them through DuckDB: see [Writing SQL against the event files](#writing-sql-against-the-event-files) |
+| `views_overview` | `kind` (optional) | Per day: visitors (distinct per day and kind, added up), views, and the `sessions` table's sessions, bounces, `duration_sec`, `bounce_rate` and `avg_session_sec`, summed across kinds unless `kind` filters one. Today included |
+| `views_breakdown` | `dimension`, `limit` (default 20) | Top rows of one dimension (the table below), busiest by visitors (distinct per day and value, added up over the range). Two-key dimensions return both columns. A value not sent reads as empty |
+| `product_events` | `event` (optional filter) | Count and unique users (distinct per day) per event name and day, plus daily totals |
+| `product_attributes` | `event` (optional filter) | At most 92 days a call (a longer range is refused: use `query` for it). Count, unique users and unique groups (`0` when no group was involved) per event, day and value of every key the events carried, with no declaration needed: each custom attribute key and the eighteen reserved keys listed in [Attribute breakdowns](#attribute-breakdowns), `$path` and `$utm_source` among them |
+| `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys `product_attributes` breaks down (`$browser`, `$path`, …); a key none carried gives no rows |
+| `retention` | `actor` (`user` or `install`) | Cohort curves for the cohorts that began in the range, every offset, counted over the days before today (UTC), plus `aggregated_through`, the newest such day with views or product events — cohorts and offsets after it are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
+| `identities` | `kind` (`user` or `group`), `limit` (default 50) | Per user or group, busiest first (views plus product events in the range): its `actors` and `users` (itself for a user, its members for a group), each distinct per day and added up over the days, its `views`, `events` and the display `name` sent with its latest event. **Surfaces personal data on projects whose clients send ids** |
+| `query` | `sql`, `source` (optional: `files`, the default, or `sqlite`, deprecated) | A single read-only `SELECT`/`WITH`. Row-capped and time-limited. `files` reads the raw events and the tables derived from them through DuckDB: see [Writing SQL against the event files](#writing-sql-against-the-event-files). `sqlite` reads the database's views ([deprecated](#writing-sql-against-the-views-deprecated), removed in a later release); `meta` and SQLite's internal tables (`sqlite_master`, `dbstat`, …) are refused, whether named directly or as a quoted or single-quoted string, and non-ASCII names must be quoted |
+
+`views_breakdown`'s dimensions, the columns each returns and what it reads
+from the `views` table:
+
+| Dimension | Columns | Reads |
+| --- | --- | --- |
+| `kinds` | `kind` | `web`, `app`, `cli`, … |
+| `paths` | `path` | |
+| `hosts` | `host` | |
+| `referrers` | `source` | `referrer_source` |
+| `utm` | `utm_source`, `utm_medium`, `utm_campaign` | views that sent any of the three |
+| `countries` | `country` | |
+| `platforms` | `platform` | `web`, `ios`, `electron`, …, never empty |
+| `os` | `os`, `os_version` | `os` is a lower-case closed vocabulary with `other` (outside the list) and `unknown` (not declared) |
+| `browsers` | `browser`, `browser_version` | `browser` as `os` |
+| `app_versions` | `platform`, `app_version` | views that sent `$app_version`, keyed by platform |
+| `devices` | `device`, `device_model` | `device` as `os` |
+| `displays` | `display` | `display_width` × `display_height` as `1920x1080`, where both were sent |
+| `consent` | `consent` | `given`, `none` (also views sent before the visitor answered a prompt) or `unknown` (sent without `$consent`) |
+| `locales` | `browser_locale`, `app_locale` | the browser's language and the product's; views that sent neither are left out |
 
 **Managing** — `create_project`, `update_project`, `move_project`,
 `archive_project`, `restore_project`, `issue_ingest_key`, `list_ingest_keys`,
@@ -1482,8 +1518,9 @@ described in [Set up a project](#set-up-a-project).
 
 **Resources:** `docs://twillingate` (this document), `docs://deployment`
 (installing and configuring the collector), `docs://reporting` (building
-dashboards), `schema://views` (the authoritative column list — read it before
-writing SQL), `schema://projects` (the live registry) and the reporting
+dashboards), `schema://views` (the authoritative column list of the event
+files' tables, then the deprecated views — read it before writing SQL),
+`schema://projects` (the live registry) and the reporting
 snapshots `schema://components`, `schema://dashboards` and
 `schema://widgets`. Enabling the console, choosing an auth mode and pointing
 a client at it are in [deployment.md](deployment.md#the-console).
@@ -1574,14 +1611,121 @@ token is 401. An unknown query parameter, an unknown field in a JSON body, a
 query string that does not parse (a bad `%` escape, a bare `;`) and a parameter
 given twice are all 400: a filter is never dropped silently.
 
-### Writing SQL against the views
+### Writing SQL against the event files
 
-The `query` tool takes read-only SQL against the views below (`source`
-`sqlite`, the default); it is
+`query` runs one read-only `SELECT` through DuckDB over the raw events
+twillingate keeps as files beside its database (its default source,
+`files`); the analytics tools and the dashboards read the same tables. The
+files hold every project's events since the upgrade that began writing
+them. Once `twillingate events import` has run, they also hold the earlier
+raw days the database still held then. History older than that exists only
+in the database's `agg_*` tables ([deprecated](#writing-sql-against-the-views-deprecated)).
+Today's events are included, each `BUFFER_FLUSH_INTERVAL`. A query is
 row-capped (`CONSOLE_QUERY_ROWS_MAX`, default 1000) and time-limited
-(`CONSOLE_QUERY_TIMEOUT`, default `30s`). Read `schema://views` for the
-authoritative column list; it is kept in step with the migrations and
-carries the caveats the DDL cannot express. Three matter most:
+(`CONSOLE_QUERY_TIMEOUT`, default `30s`); it cannot write and cannot reach
+any other file. `schema://views` lists the tables' columns. The dialect is
+DuckDB's ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction)),
+close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
+`day BETWEEN DATE '2026-01-01' AND DATE '2026-01-31'`, `GROUP BY ALL`,
+`DESCRIBE events` for the columns.
+
+Seven tables. `events` holds every event of every family; `views`,
+`product` and `measures` hold its rows of one family each. Three more are
+derived from the events (below the column list). The `_tw_*` tables are
+the reader's own and hold rows before the rules apply: query these seven.
+`events`, `views`, `product` and `measures` have:
+
+| Column | Type | |
+| --- | --- | --- |
+| `id`, `project_id`, `family`, `event_name` | VARCHAR, BIGINT, VARCHAR, VARCHAR | filter `project_id` (ids from `list_projects`) |
+| `ts`, `received_at` | TIMESTAMP (UTC) | |
+| `day` | DATE | `ts`'s UTC day |
+| `kind`, `actor_id`, `actor_kind`, `user_id`, `group_id`, `session_id` | VARCHAR | |
+| `install_id` | VARCHAR | the client's `$install_id`, also when a `$user_id` is the actor; on events imported from the database, only when the install was the actor |
+| `user_name`, `group_name` | VARCHAR | the names sent beside `user_id` and `group_id` (see [Identity](#identity)); on events imported from the database, the latest name it held |
+| `host`, `path`, `referrer_source`, `utm_source`, `utm_medium`, `utm_campaign` | VARCHAR | |
+| `platform`, `os`, `os_version`, `os_name`, `browser`, `browser_version`, `browser_locale`, `app_version`, `app_locale`, `device`, `device_model`, `country` | VARCHAR | as on the views (see [The event model](#the-event-model)) |
+| `display_width`, `display_height` | BIGINT | |
+| `consent` | BIGINT | 1, 0 or NULL |
+| `value`, `measure`, `sample_rate` | DOUBLE, VARCHAR, DOUBLE | `value` and `measure` are set on measures only; `sample_rate` is on every row, 1 unless the event was sampled |
+| `bucket` | INTEGER | `measures` only: the log-scale bucket of `value`, `ceil(ln(value) / ln(1.04))`, or `-1000` for a `value` of `1e-17` or less. Group by it to build a histogram; a bucket's width is about 4% of its value |
+| `attr_<key>` | VARCHAR | one per attribute key any event carried, the key as sent |
+
+- **A field the event did not send is NULL,** not `''` (`value` and
+  `measure` are NULL outside measures; `sample_rate` is the exception,
+  1 unless the event was sampled), and an `attr_*` column is NULL on every
+  event without that key. `received_at` is NULL too on an event stored
+  without it. `query` shows NULL as an empty string: test `IS NULL`, not
+  `= ''`.
+- **Every key is a column, declared or not.** A key with characters other
+  than letters, digits and `_` needs double quotes: `"attr_plan type"`.
+  Column names are not case-sensitive: `attr_Plan` and `attr_plan` are one
+  column. Two such keys sent on the same day may read as `attr_plan` and
+  `attr_plan_1` for that day.
+- **Rules apply as you read.** An event renamed or merged reads under its
+  new name and a blocked one is absent, whenever its event was stored; an
+  attribute renamed or merged reads in its target's column (the target's
+  own value first) and a blocked key reads NULL, on product and measures
+  events. A rule on a key also covers the keys that differ from it only in
+  case, since they read as one column. Removing a rule brings the stored
+  names and values back, except on events imported from the database
+  (`twillingate events import`): they were stored with the names and keys
+  the database's rules had already applied.
+- **An event sent twice can show twice** when the copies landed in
+  different files (a resend after its day's log was closed), until its
+  month's files merge.
+- **Filter on `project_id` and `day` or `ts`:** the files are ordered by
+  family and time, and DuckDB skips what a filter excludes.
+
+The derived tables are rebuilt by the daily pass from the files, and
+today's part (and any day the pass has not caught up with) is computed as
+you query. They describe the events as stored: rules do not apply to them.
+
+`sessions`, one row per session of views:
+
+| Column | Type | |
+| --- | --- | --- |
+| `project_id`, `day` | BIGINT, DATE | sessions are cut at midnight UTC |
+| `kind`, `actor_id`, `actor_kind` | VARCHAR | as on the views |
+| `session_id` | VARCHAR | the id the client declared, else NULL |
+| `started_at`, `ended_at` | TIMESTAMP | the first and last view |
+| `duration_sec`, `views` | BIGINT | seconds between them; 1 view is a bounce |
+| `entry_host`, `entry_path`, `exit_path` | VARCHAR | the first view's host and path, the last view's path |
+| `referrer_source`, `utm_source`, `utm_medium`, `utm_campaign` | VARCHAR | the first view's |
+
+A view with a `session_id` belongs to that session; any other starts a
+new one after 30 minutes without a view by the same actor. The Views
+dashboard's sessions, bounces and durations are this table's. A view
+resent into a late file can count twice until its month merges, as for
+events.
+
+`identities`, one row per user (`kind` `user`, from `user_id`) and per
+group (`kind` `group`, from `group_id`): `project_id`, `kind`, `id`,
+`name` (sent with the latest event that carried one, NULL if never),
+`first_seen`, `last_seen` (TIMESTAMP), `views` and `events` (its views and
+product events). First and last seen reach back as far as the files do.
+
+`aliases`, one row per `user_id` and `install_id` sent on the same event:
+`project_id`, `user_id`, `install_id`, `first_seen`, `last_seen`, `events`.
+A person's events across devices, before and after signing in:
+`WHERE user_id = 'u1' OR install_id IN (SELECT install_id FROM aliases WHERE user_id = 'u1')`.
+
+The `v_*` views and `agg_*` tables are SQLite's: name one here and the
+error says to pass `source: "sqlite"`. A query that runs out of the
+engine's memory (`ENGINE_MEMORY_LIMIT`) is refused with that cause: a
+`COUNT(DISTINCT …)` over a large group is the usual one, rewritten as a
+`GROUP BY` in a subquery whose rows are then counted.
+When the open logs themselves do not fit that limit, whatever the query,
+the error says so: raise `ENGINE_MEMORY_LIMIT`.
+
+### Writing SQL against the views (deprecated)
+
+**Deprecated, removed in a later release:** query the [event
+files](#writing-sql-against-the-event-files) instead: the analytics tools
+and the dashboards read the files. `query` with `source: "sqlite"` takes
+read-only SQLite SQL against the views below, under the same row cap and
+timeout. `schema://views` lists them after the files' tables, with the
+caveats the DDL cannot express. Three matter most:
 
 1. `day` columns are TEXT `'YYYY-MM-DD'` (UTC). Compare and `BETWEEN` as
    strings.
@@ -1637,7 +1781,8 @@ measures — `kind`, the identity, location and environment columns (`path`,
 `attributes` JSON, `value`, `measure`, `sample_rate`, and one `attr_*` column
 per declared custom attribute.
 `v_identity_daily` and `identities` join user and group activity to display
-names; `v_identity_daily` keeps the busiest `IDENTITIES_TOP_N` users and as
+names (ingest no longer writes `identities`: names sent since the upgrade to
+the event files are in the files only); `v_identity_daily` keeps the busiest `IDENTITIES_TOP_N` users and as
 many groups per day (default 1000, 0 for all) and drops the rest with no
 `(other)` row, so do not sum it for totals.
 `v_retention` is keyed by `actor_kind`.
@@ -1645,106 +1790,3 @@ many groups per day (default 1000, 0 for all) and drops the rest with no
 Cost note: the views' live halves compute from raw rows, but only for the raw
 days the `WHERE` on `project_id` and `day` covers. Narrow ranges and the
 `agg_*` tables are cheaper.
-
-### Writing SQL against the event files
-
-`query` with `source: "files"` runs one read-only `SELECT` through DuckDB
-over the raw events twillingate keeps as files beside its database. The
-files hold every project's events since the upgrade that began writing
-them. Once `twillingate events import` has run, they also hold the earlier
-raw days the database still held then. History older than that exists only
-in the `agg_*` tables. Today's events are included, each
-`BUFFER_FLUSH_INTERVAL`. Same row cap and timeout as above; a query cannot
-write and cannot reach any other file. The dialect is
-DuckDB's ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction)),
-close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
-`day BETWEEN DATE '2026-01-01' AND DATE '2026-01-31'`, `GROUP BY ALL`,
-`DESCRIBE events` for the columns.
-
-Seven tables. `events` holds every event of every family; `views`,
-`product` and `measures` hold its rows of one family each. Three more are
-derived from the events (below the column list). The `_tw_*` tables are
-the reader's own and hold rows before the rules apply: query these seven.
-`events`, `views`, `product` and `measures` have:
-
-| Column | Type | |
-| --- | --- | --- |
-| `id`, `project_id`, `family`, `event_name` | VARCHAR, BIGINT, VARCHAR, VARCHAR | filter `project_id` (ids from `list_projects`) |
-| `ts`, `received_at` | TIMESTAMP (UTC) | |
-| `day` | DATE | `ts`'s UTC day |
-| `kind`, `actor_id`, `actor_kind`, `user_id`, `group_id`, `session_id` | VARCHAR | |
-| `install_id` | VARCHAR | the client's `$install_id`, also when a `$user_id` is the actor; on events imported from the database, only when the install was the actor |
-| `user_name`, `group_name` | VARCHAR | the names sent beside `user_id` and `group_id` (see [Identity](#identity)); on events imported from the database, the latest name it held |
-| `host`, `path`, `referrer_source`, `utm_source`, `utm_medium`, `utm_campaign` | VARCHAR | |
-| `platform`, `os`, `os_version`, `os_name`, `browser`, `browser_version`, `browser_locale`, `app_version`, `app_locale`, `device`, `device_model`, `country` | VARCHAR | as on the views (see [The event model](#the-event-model)) |
-| `display_width`, `display_height` | BIGINT | |
-| `consent` | BIGINT | 1, 0 or NULL |
-| `value`, `measure`, `sample_rate` | DOUBLE, VARCHAR, DOUBLE | `value` and `measure` are set on measures only; `sample_rate` is on every row, 1 unless the event was sampled |
-| `attr_<key>` | VARCHAR | one per attribute key any event carried, the key as sent |
-
-- **A field the event did not send is NULL,** not `''` (`value` and
-  `measure` are NULL outside measures; `sample_rate` is the exception,
-  1 unless the event was sampled), and an `attr_*` column is NULL on every
-  event without that key. `received_at` is NULL too on an event stored
-  without it. `query` shows NULL as an empty string: test `IS NULL`, not
-  `= ''`.
-- **Every key is a column, declared or not.** A key with characters other
-  than letters, digits and `_` needs double quotes: `"attr_plan type"`.
-  Column names are not case-sensitive: `attr_Plan` and `attr_plan` are one
-  column. Two such keys sent on the same day may read as `attr_plan` and
-  `attr_plan_1` for that day.
-- **Rules apply as you read.** An event renamed or merged reads under its
-  new name and a blocked one is absent, whenever its event was stored; an
-  attribute renamed or merged reads in its target's column (the target's
-  own value first) and a blocked key reads NULL, on product and measures
-  events. A rule on a key also covers the keys that differ from it only in
-  case, since they read as one column. Removing a rule brings the stored
-  names and values back, except on events imported from the database
-  (`twillingate events import`): they were stored with the names and keys
-  the database's rules had already applied.
-- **An event sent twice can show twice** when the copies landed in
-  different files (a resend after its day's log was closed), until its
-  month's files merge.
-- **Filter on `project_id` and `day` or `ts`:** the files are ordered by
-  family and time, and DuckDB skips what a filter excludes.
-
-The derived tables are rebuilt by the daily pass from the files, and
-today's part (and any day the pass has not caught up with) is computed as
-you query. They describe the events as stored: rules do not apply to them.
-
-`sessions`, one row per session of views:
-
-| Column | Type | |
-| --- | --- | --- |
-| `project_id`, `day` | BIGINT, DATE | sessions are cut at midnight UTC |
-| `kind`, `actor_id`, `actor_kind` | VARCHAR | as on the views |
-| `session_id` | VARCHAR | the id the client declared, else NULL |
-| `started_at`, `ended_at` | TIMESTAMP | the first and last view |
-| `duration_sec`, `views` | BIGINT | seconds between them; 1 view is a bounce |
-| `entry_host`, `entry_path`, `exit_path` | VARCHAR | the first view's host and path, the last view's path |
-| `referrer_source`, `utm_source`, `utm_medium`, `utm_campaign` | VARCHAR | the first view's |
-
-A view with a `session_id` belongs to that session; any other starts a
-new one after 30 minutes without a view by the same actor, as the Views
-dashboard counts them, except that the dashboard folds the kinds past its cap
-into `(other)` first and the files do not. A view resent into a late file can
-count twice until its month merges, as for events.
-
-`identities`, one row per user (`kind` `user`, from `user_id`) and per
-group (`kind` `group`, from `group_id`): `project_id`, `kind`, `id`,
-`name` (sent with the latest event that carried one, NULL if never),
-`first_seen`, `last_seen` (TIMESTAMP), `views` and `events` (its views and
-product events). First and last seen reach back as far as the files do.
-
-`aliases`, one row per `user_id` and `install_id` sent on the same event:
-`project_id`, `user_id`, `install_id`, `first_seen`, `last_seen`, `events`.
-A person's events across devices, before and after signing in:
-`WHERE user_id = 'u1' OR install_id IN (SELECT install_id FROM aliases WHERE user_id = 'u1')`.
-
-The `v_*` views and `agg_*` tables are SQLite's: name one with `files` and
-the error says to pass `source: "sqlite"`. A query that runs out of the
-engine's memory (`ENGINE_MEMORY_LIMIT`) is refused with that cause: a
-`COUNT(DISTINCT …)` over a large group is the usual one, rewritten as a
-`GROUP BY` in a subquery whose rows are then counted.
-When the open logs themselves do not fit that limit, whatever the query,
-the error says so: raise `ENGINE_MEMORY_LIMIT`.

@@ -12,21 +12,23 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 )
 
 type queryIn struct {
-	SQL    string `json:"sql" jsonschema:"a single read-only SELECT or WITH query; for source sqlite read schema://views first, for source files docs://twillingate (Writing SQL against the event files)"`
-	Source string `json:"source,omitempty" jsonschema:"optional: sqlite (the default) for the v_* views and agg_* tables; files for the raw events through DuckDB (events, views, product, measures)"`
+	SQL    string `json:"sql" jsonschema:"a single read-only SELECT or WITH query in DuckDB SQL over the event files' tables (read schema://views first); with source sqlite, SQLite SQL over the v_* views"`
+	Source string `json:"source,omitempty" jsonschema:"optional: files (the default) for the event files through DuckDB: events, views, product, measures, sessions, identities, aliases; sqlite for the v_* views and agg_* tables, deprecated and removed in a later release"`
 }
 
-// Files runs SQL over the raw event files (archive.Reader).
+// Files runs SQL over the raw event files (archive.Reader): query's SQL
+// over every project, the analytics tools' own SQL scoped to one.
 type Files interface {
-	Query(ctx context.Context, sql string, maxRows int, rules archive.Rules) (engine.Result, error)
+	QueryScoped(ctx context.Context, q archive.Scoped, rules archive.Rules) (engine.Result, error)
 }
 
-// runQuery runs in.SQL on SQLite (source sqlite, the default) or on the
-// event files (source files). On SQLite it applies the four guard layers
+// runQuery runs in.SQL on the event files (source files, the default) or
+// on SQLite (source sqlite, deprecated). On SQLite it applies the four guard layers
 // of endpoint spec §8, all inside readsql.Query: the pool is mode=ro +
 // query_only + _defensive; the text is checked and refused (ATTACH; meta
 // and SQLite internals; a second statement — readsql.Check tracks paren
@@ -39,11 +41,11 @@ type Files interface {
 // sentinel errors map back to the wording this tool has always used.
 func (h *host) runQuery(ctx context.Context, in queryIn) (tableOut, error) {
 	switch in.Source {
-	case "", "sqlite":
-	case "files":
+	case "", "files":
 		return h.runFilesQuery(ctx, in.SQL)
+	case "sqlite":
 	default:
-		return tableOut{}, invalidf(`source must be "sqlite" or "files", got %q`, in.Source)
+		return tableOut{}, invalidf(`source must be "files" or "sqlite", got %q`, in.Source)
 	}
 	h.logger.Debug("mcp query", "sql", in.SQL) // debug only, never info (spec §8)
 	res, err := h.db.Query(ctx, in.SQL)
@@ -78,17 +80,12 @@ func (h *host) runFilesQuery(ctx context.Context, sql string) (tableOut, error) 
 	ctx, cancel := context.WithTimeout(ctx, h.db.Timeout())
 	defer cancel()
 	events, attrs := h.reg.Snapshot(ctx).RuleLists()
-	res, err := h.files.Query(ctx, sql, h.db.MaxRows(), archive.Rules{Events: events, Attributes: attrs})
+	res, err := h.files.QueryScoped(ctx, archive.Scoped{SQL: sql, MaxRows: h.db.MaxRows()},
+		archive.Rules{Events: events, Attributes: attrs})
 	if err != nil {
 		return tableOut{}, filesError(err, h.db.Timeout())
 	}
-	out := tableOut{Columns: res.Columns, Rows: make([][]string, len(res.Rows))}
-	for i, row := range res.Rows {
-		out.Rows[i] = make([]string, len(row))
-		for j, v := range row {
-			out.Rows[i][j] = cellText(v)
-		}
-	}
+	out := tableOut{Columns: res.Columns, Rows: cellRows(res.Rows)}
 	if res.Truncated {
 		out.Truncated = true
 		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — add a WHERE or aggregate", h.db.MaxRows())
@@ -107,19 +104,18 @@ func filesError(err error, timeout time.Duration) error {
 	var qe *engine.QueryError
 	switch {
 	case errors.Is(err, context.DeadlineExceeded):
-		return invalidf("query exceeded %s (CONSOLE_QUERY_TIMEOUT); narrow it with a WHERE on project_id and day, or aggregate", timeout)
-	case errors.Is(err, archive.ErrLoadingLogs) && errors.As(err, &qe) && strings.HasPrefix(qe.Msg, "Out of Memory Error"):
-		return invalidf("the open logs do not fit the engine's memory (ENGINE_MEMORY_LIMIT) while they are loaded for a query, whatever the query is: raise ENGINE_MEMORY_LIMIT")
-	case errors.As(err, &qe) && strings.HasPrefix(qe.Msg, "Out of Memory Error"):
-		return invalidf("the query ran out of the engine's memory (ENGINE_MEMORY_LIMIT). A COUNT(DISTINCT …) over a large group is the usual cause: " +
-			"select the distinct values with a GROUP BY in a subquery, then count its rows; or narrow the range")
+		return invalidf("%s", enginesql.Timeout(timeout))
+	case errors.Is(err, archive.ErrLoadingLogs) && errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
+		return invalidf("%s", enginesql.LogsOutOfMemory)
+	case errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
+		return invalidf("%s", enginesql.OutOfMemory)
 	case errors.As(err, &qe) && sqliteTable.MatchString(qe.Msg):
-		return invalidf(`%s; the v_*, raw_* and agg_* tables are SQLite's: pass source "sqlite" for them. The files hold events, views, product and measures`,
+		return invalidf(`%s; the v_*, raw_* and agg_* tables are SQLite's: pass source "sqlite" for them (deprecated). The files hold events, views, product, measures, sessions, identities and aliases`,
 			strings.SplitN(qe.Msg, "\n", 2)[0])
 	case errors.As(err, &qe):
 		return invalidf("SQL error (DuckDB): %s", qe.Msg)
 	case errors.Is(err, engine.ErrChildExited):
-		return invalidf("the query engine stopped while running the query, most likely out of memory (ENGINE_MEMORY_LIMIT); narrow the query")
+		return invalidf("%s", enginesql.ChildExited)
 	}
 	return err
 }

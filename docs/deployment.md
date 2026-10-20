@@ -148,10 +148,10 @@ leftover one is ignored, so rename any still in `twillingate.env`.
 
 ### Raspberry Pi and low-resource hosts
 
-- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. One `serve` process runs one child at a time (the ingest process for the daily pass's files, the console's for `query` on the files); on a split install, lower `ENGINE_MEMORY_LIMIT` rather than raise `ENGINE_MAX_CHILDREN`.
+- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. One `serve` process runs one child at a time (the ingest process for the daily pass's files and the form-attribution lookup, the console's for every dashboard widget load and for `query` on the files, so the console's child is the busy one); on a split install, lower `ENGINE_MEMORY_LIMIT` rather than raise `ENGINE_MAX_CHILDREN`.
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Set `GOMEMLIMIT` (unit and compose files ship `128MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory.
-- Lower `RETENTION_RAW_DAYS` (say `7`): raw events are the largest table in the file, and the live halves of the `v_*` views scan the raw days each query's range covers.
+- Lower `RETENTION_RAW_DAYS` (say `7`): raw events are the largest table in the database file, and the deprecated `sqlite` source of `query` scans the raw days each query's range covers. Dashboards read the event files, which `RETENTION_DAYS` keeps.
 - Keep `ATTRIBUTE_VALUES_TOP_N` and `IDENTITIES_TOP_N` on (not 0). Aggregates are kept `RETENTION_AGGREGATE_DAYS` (400 days by default), and a breakdown that carries ids (a path like `/orders/81723`) grows them by a row per id per day once its cap is 0.
 
 ## The console
@@ -396,7 +396,10 @@ address, so behind a further proxy or CDN use `client_ip` with
 
 `twillingate reporting dev` previews dashboard files against a database on
 a loopback address, without a login; its usage is in
-[reporting.md](reporting.md#local-development).
+[reporting.md](reporting.md#local-development). It runs its own engine
+child with the default `ENGINE_MEMORY_LIMIT` and `ENGINE_MAX_CHILDREN`,
+taking a slot in the `engine/slots` directory beside `-db`, which it shares
+with a server on the same data directory.
 
 ## Operate and recover
 
@@ -410,7 +413,7 @@ a loopback address, without a login; its usage is in
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v0.9.2` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
 | Import the database's raw rows into the event files (once, after the upgrade that brings it) | stop the ingest service, `twillingate events import`, start it ([UPGRADES.md](https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md)) |
-| Check the engine | `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate engine -check'` (the service user and its environment: as root it creates a root-owned `raw/` and `engine/` the service cannot write) starts an engine child the way the server does and runs one query: `engine ok: 42 in 63 ms (spawn and first query), DuckDB v1.5.6`. A failure names what stopped it (a missing library, `ENGINE_MEMORY_LIMIT`, all `ENGINE_MAX_CHILDREN` slots busy for 30 s). |
+| Check the engine | `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate engine -check'` (the service user and its environment: as root it creates a root-owned `raw/` and `engine/` the service cannot write) starts an engine child the way the server does and runs one query: `engine ok: 42 in 63 ms (spawn and first query), DuckDB v1.5.6`. A failure names what stopped it (a missing library, `ENGINE_MEMORY_LIMIT`, all `ENGINE_MAX_CHILDREN` slots busy for 30 s). The start of `serve`, and of every command that opens the database, runs a child too when the release changed the system dashboards (it checks them on the event files), and fails when it cannot start one; a check that runs out of time or memory is logged and the start goes on. |
 | Upgrade across a schema change | [Back up](#back-up-and-restore) first: migrations 012, 014, 015 and 016 are irreversible. Pre-checks and what changes on the day: <https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md> (not served over MCP; open it in the repository) |
 | Database size | `du -h /var/lib/twillingate/twillingate.db` |
 | Recent config changes | `sqlite3 …/twillingate.db "SELECT * FROM audit_log ORDER BY ts DESC LIMIT 20"` |
@@ -427,7 +430,7 @@ which `usage` reads and which outlive the aggregates' retention) run daily at
 across those times skips no day. With `LOG_FILE` set, install
 `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.
 
-The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began are copied in once, by hand, with `twillingate events import` (stop the ingest service first). The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. `query` with `source: "files"` reads them and the tables derived from them; widgets and every other tool still read SQLite.
+The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began are copied in once, by hand, with `twillingate events import` (stop the ingest service first). The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (every widget's SQL), `query` (its default source) and the analytics tools (`views_overview` through `identities`) read them and the tables derived from them; `limits`, `cap_usage`, `list_attributes`, `usage` and `query` with `source: "sqlite"` (deprecated) still read SQLite.
 
 ### Back up and restore
 

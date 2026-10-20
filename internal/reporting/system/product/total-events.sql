@@ -1,8 +1,7 @@
-SELECT
-  (SELECT COALESCE(SUM(total_events), 0) FROM v_product_totals
-    WHERE project_id = :project
-      AND day BETWEEN :from AND :to) AS value,
-  (SELECT COALESCE(SUM(total_events), 0) FROM v_product_totals
-    WHERE project_id = :project
-      AND day BETWEEN date(:from, '-' || (julianday(:to) - julianday(:from) + 1) || ' days')
-                      AND date(:from, '-1 day')) AS previous
+-- Product events in the range; previous is the same count over as many
+-- days just before :from.
+SELECT count(*) FILTER (WHERE day >= :from) AS value,
+       count(*) FILTER (WHERE day < :from) AS previous
+FROM product
+WHERE project_id = :project
+  AND day BETWEEN :from - CAST(:to - :from + 1 AS INTEGER) AND :to

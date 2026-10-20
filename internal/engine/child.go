@@ -11,15 +11,19 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"maps"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 
-	_ "github.com/duckdb/duckdb-go/v2" // registers the "duckdb" driver
+	duckdb "github.com/duckdb/duckdb-go/v2" // registers the "duckdb" driver
 )
 
 // DefaultMemoryLimit is ENGINE_MEMORY_LIMIT's default (D8): at 256 MB a
@@ -60,6 +64,26 @@ func ServeChild(args []string, in io.Reader, out io.Writer) error {
 	return serve(db, in, w, *parallel)
 }
 
+// cellMacros are the SQL twins of readsql's cell and decimal, so a
+// widget's SQL and the Go code that reads its result agree on what a cell
+// is and what a number is. tw_cell reads a number as SQLite's cells read
+// it: a DOUBLE, FLOAT or DECIMAL goes through DOUBLE's text and loses a
+// trailing ".0" (100, not 100.0; 3.5, not 3.50), so the cells and the
+// filters on them match what users saw before the files. They live in the
+// one in-memory database the pool shares, so every connection sees them;
+// a query cannot replace them, since readOnly refuses anything but a
+// SELECT.
+var cellMacros = []string{
+	`CREATE MACRO tw_cell(x) AS coalesce(CASE
+		WHEN typeof(x) IN ('DOUBLE', 'FLOAT') OR typeof(x) LIKE 'DECIMAL%'
+		THEN regexp_replace(CAST(TRY_CAST(x AS DOUBLE) AS VARCHAR), '\.0$', '')
+		ELSE CAST(x AS VARCHAR) END, '')`,
+	`CREATE MACRO tw_num(x) AS CASE
+		WHEN regexp_full_match(tw_cell(x), '-?[0-9]+(\.[0-9]+)?([eE][-+]?[0-9]+)?')
+		 AND isfinite(TRY_CAST(tw_cell(x) AS DOUBLE))
+		THEN TRY_CAST(tw_cell(x) AS DOUBLE) END`,
+}
+
 // open starts an in-memory DuckDB and locks it down. Every setting is
 // GLOBAL, so it holds on each connection the pool opens later, and
 // lock_configuration stops SQL from changing any of them back. Directories
@@ -84,6 +108,10 @@ func open(threads int, memory, spill, tempMax string, allow []string, parallel i
 	if tempMax != "" {
 		setup = append(setup, "SET GLOBAL max_temp_directory_size = "+sqlString(tempMax))
 	}
+	// UTC, whatever TZ the process has: a date and the instants it spans
+	// mean the same on every host.
+	setup = append(setup, "SET GLOBAL TimeZone = 'UTC'")
+	setup = append(setup, cellMacros...)
 	setup = append(setup,
 		"SET GLOBAL parquet_metadata_cache = true",
 		"SET GLOBAL allowed_directories = ["+strings.Join(dirs, ", ")+"]",
@@ -189,7 +217,19 @@ func run(ctx context.Context, db *sql.DB, r request) reply {
 		rep.Err = err.Error()
 		return rep
 	}
-	rows, err := db.QueryContext(ctx, r.SQL)
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		rep.Err = err.Error()
+		return rep
+	}
+	defer conn.Close()
+	if len(r.Args) > 0 {
+		if err := checkParams(ctx, conn, r.SQL, r.Args); err != nil {
+			rep.Err = err.Error()
+			return rep
+		}
+	}
+	rows, err := conn.QueryContext(ctx, r.SQL, namedArgs(r.Args)...)
 	if err != nil {
 		rep.Err = err.Error()
 		return rep
@@ -224,6 +264,66 @@ func run(ctx context.Context, db *sql.DB, r request) reply {
 		return reply{ID: r.ID, Err: err.Error()}
 	}
 	return rep
+}
+
+// checkParams refuses a query whose parameters are not exactly the args.
+// duckdb-go binds an argument whose name matches no parameter by its
+// position instead, so a typo ($tw_form for $tw_from) would silently take
+// another argument's value. The names come from preparing the statement
+// (duckdb-go's Stmt.ParamName, reached through conn.Raw), which is how
+// DuckDB itself parsed them; a positional ? or $1 is named "1" there.
+// A query without args is not checked: the driver refuses a missing one.
+func checkParams(ctx context.Context, conn *sql.Conn, q string, args map[string]string) error {
+	var names []string
+	err := conn.Raw(func(dc any) error {
+		p, ok := dc.(driver.ConnPrepareContext)
+		if !ok {
+			return errors.New("the driver cannot prepare")
+		}
+		st, err := p.PrepareContext(ctx, q)
+		if err != nil {
+			return err
+		}
+		defer st.Close()
+		s, ok := st.(*duckdb.Stmt)
+		if !ok {
+			return errors.New("the driver returned another statement type")
+		}
+		for i := 1; i <= s.NumInput(); i++ {
+			name, err := s.ParamName(i)
+			if err != nil {
+				return err
+			}
+			names = append(names, name)
+		}
+		return nil
+	})
+	if err != nil {
+		return fmt.Errorf("engine: %w", err)
+	}
+	for _, n := range names {
+		if _, err := strconv.Atoi(n); err == nil {
+			return errors.New("engine: a query binds named parameters only ($name), not ? or $1")
+		}
+		if _, ok := args[n]; !ok {
+			return fmt.Errorf("engine: the query uses $%s, which no argument binds", n)
+		}
+	}
+	for _, k := range slices.Sorted(maps.Keys(args)) {
+		if !slices.Contains(names, k) {
+			return fmt.Errorf("engine: the argument %s is not a parameter of the query", k)
+		}
+	}
+	return nil
+}
+
+// namedArgs is args as sql.Named values, in name order.
+func namedArgs(args map[string]string) []any {
+	out := make([]any, 0, len(args))
+	for _, k := range slices.Sorted(maps.Keys(args)) {
+		out = append(out, sql.Named(k, args[k]))
+	}
+	return out
 }
 
 // readOnly lets one SELECT through (DESCRIBE, SHOW, SUMMARIZE, FROM and

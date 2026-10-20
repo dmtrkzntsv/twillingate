@@ -11,7 +11,7 @@ import (
 func TestQueryToolSelects(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "query", map[string]any{
-		"sql": "SELECT project_id, day, visitors FROM v_views_daily WHERE project_id=1 ORDER BY day"})
+		"sql": "SELECT project_id, day, visitors FROM v_views_daily WHERE project_id=1 ORDER BY day", "source": "sqlite"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -46,7 +46,7 @@ func TestQueryToolBlocksWrites(t *testing.T) {
 		fmt.Sprintf("select 1 where 0); PRAGMA query_only=0; VACUUM INTO '%s'; select * from (select 1", vacuumTarget),
 		"select 1); CREATE TEMP VIEW v_retention AS SELECT 'poisoned' AS cohort_day; select * from (select 1",
 	} {
-		res := callTool(t, cs, "query", map[string]any{"sql": q})
+		res := callTool(t, cs, "query", map[string]any{"sql": q, "source": "sqlite"})
 		if !res.IsError {
 			t.Errorf("accepted: %s", q)
 		}
@@ -61,7 +61,7 @@ func TestQueryToolBlocksWrites(t *testing.T) {
 // "refused: " sentinel prefix leaking through.
 func TestQueryToolRefusesMeta(t *testing.T) {
 	_, cs := newTestHost(t)
-	res := callTool(t, cs, "query", map[string]any{"sql": "select * from meta"})
+	res := callTool(t, cs, "query", map[string]any{"sql": "select * from meta", "source": "sqlite"})
 	if !res.IsError {
 		t.Fatal("select * from meta was accepted")
 	}
@@ -84,7 +84,7 @@ func TestQueryToolRefusesSubmissions(t *testing.T) {
 		"select 1 from events e join submissions s on s.id = e.id",
 		"select * from (select * from submissions)",
 	} {
-		res := callTool(t, cs, "query", map[string]any{"sql": q})
+		res := callTool(t, cs, "query", map[string]any{"sql": q, "source": "sqlite"})
 		if !res.IsError {
 			t.Errorf("%q was accepted", q)
 			continue
@@ -100,12 +100,20 @@ func TestQueryToolCapsRows(t *testing.T) {
 	h, cs := newTestHost(t)
 	setGuards(t, h, h.db.Timeout(), 1)
 	res := callTool(t, cs, "query", map[string]any{
-		"sql": "WITH n(i) AS (VALUES (1),(2),(3)) SELECT i FROM n"})
+		"sql": "WITH n(i) AS (VALUES (1),(2),(3)) SELECT i FROM n", "source": "sqlite"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
 	out := textOf(res)
 	if !strings.Contains(out, "truncated") || !strings.Contains(out, "PARTIAL") {
 		t.Errorf("truncation not flagged: %s", out)
+	}
+	// The files, the default source, keep the same cap.
+	res = callTool(t, cs, "query", map[string]any{"sql": "SELECT * FROM range(3)"})
+	if res.IsError {
+		t.Fatalf("files: %s", textOf(res))
+	}
+	if out := textOf(res); !strings.Contains(out, "truncated") || !strings.Contains(out, "PARTIAL") {
+		t.Errorf("files: truncation not flagged: %s", out)
 	}
 }

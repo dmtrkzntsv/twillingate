@@ -1,12 +1,12 @@
 {
   "component": "table",
-  "title": "Attribute values by day",
+  "title": "Attribute values",
   "props": {
     "mode": "remote",
     "formats": {
       "Count": "number",
-      "Users (at least)": "number",
-      "Groups (at least)": "number"
+      "Users": "number",
+      "Groups": "number"
     },
     "colorscale": [
       "Count"
