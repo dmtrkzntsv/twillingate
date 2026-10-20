@@ -894,8 +894,9 @@ with those filters (at least one; to remove a whole form, archive it); and
 forms too, so an erasure request leaves no copy behind; each submission it
 finds says `archived: true` when its form is archived. Search matches a field's
 value anywhere in it, case-insensitively for ASCII letters only (`É` and `é`
-differ). A deleted submission's `$form_submit` event is removed from the raw
-window only: days already rolled up keep their counts. The audit log records
+differ). A deleted submission's `$form_submit` event stays in the event files: it
+holds the form's name, the actor and the attribution, never a field, so
+the count of conversions is kept. The audit log records
 the selector's kind (`ids`, `search`, or `filters` with the form's name) and
 the number of submissions actually deleted (a delete that removes nothing is
 recorded too, with 0), never the search text, the filter values or the submissions'
@@ -1330,7 +1331,8 @@ send. An approved form keeps only its expected fields and writes, beside each
 submission, a `$form_submit` product event with the submission's `id`, its
 time as `ts` and the form's name as its one attribute, `form`; a draft's
 submissions write none. The submission is written before the answer, never
-buffered; its attribution and its event follow about a minute later (below).
+buffered; its attribution and its event follow about a minute later (below), the event
+into the event files alone.
 
 **A submission and its event.** The submission keeps what the visitor
 typed, when it arrived and where the visit came from: its `attribution`,

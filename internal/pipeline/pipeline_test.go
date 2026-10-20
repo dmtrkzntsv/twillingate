@@ -270,26 +270,3 @@ func TestFlushSizeCountsAllKinds(t *testing.T) {
 	cancel()
 	<-done
 }
-
-type recordSink struct {
-	name  string
-	calls *[]string
-	err   error
-}
-
-func (s recordSink) WriteEvents(ctx context.Context, evs []store.Event) error {
-	*s.calls = append(*s.calls, s.name)
-	return s.err
-}
-
-func TestSinksWriteInOrderAndStopAtTheFirstError(t *testing.T) {
-	var calls []string
-	boom := errors.New("boom")
-	s := Sinks{recordSink{"sqlite", &calls, nil}, recordSink{"log", &calls, boom}, recordSink{"never", &calls, nil}}
-	if err := s.WriteEvents(context.Background(), []store.Event{{ID: "a"}}); !errors.Is(err, boom) {
-		t.Fatalf("err = %v, want boom", err)
-	}
-	if strings.Join(calls, ",") != "sqlite,log" {
-		t.Fatalf("calls = %v, want sqlite then log, and nothing after the failure", calls)
-	}
-}

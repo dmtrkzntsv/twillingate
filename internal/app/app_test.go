@@ -3,12 +3,18 @@ package app
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -181,13 +187,9 @@ func TestServeEndToEnd(t *testing.T) {
 	}
 	defer st.Close()
 	bg := context.Background()
-	days, err := st.ViewDaysBefore(bg, 1, mustDay("2100-01-01"))
-	if err != nil || len(days) != 1 {
-		t.Fatalf("view not persisted: %v %v", days, err)
-	}
-	pdays, err := st.ProductDaysBefore(bg, 1, mustDay("2100-01-01"))
-	if err != nil || len(pdays) != 1 {
-		t.Fatalf("event not persisted: %v %v", pdays, err)
+	names := logEventNames(t, cfg.EventsDir)
+	if want := []string{"$page_view", "$screen_view", "signup", "signup"}; !slices.Equal(names, want) {
+		t.Fatalf("logged events = %v, want %v", names, want)
 	}
 	// The seeded project must still be there after a full boot/shutdown
 	// cycle: Serve reads it, never rewrites the registry.
@@ -241,17 +243,8 @@ func TestServeRestartsOnExistingDatabase(t *testing.T) {
 	run(`{"key":"ak_test","events":[{"name":"$pageview","attributes":{"$host":"app.com","$path":"/one"}}]}`)
 	run(`{"key":"ak_test","events":[{"name":"$pageview","attributes":{"$host":"app.com","$path":"/two"}}]}`)
 
-	st, err := store.Open("sqlite://" + dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	days, err := st.ViewDaysBefore(bg, 1, mustDay("2100-01-01"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(days) != 1 {
-		t.Fatalf("days = %v, want one day holding both hits", days)
+	if names := logEventNames(t, testConfig(t, "127.0.0.1:0", dbPath).EventsDir); len(names) != 2 {
+		t.Fatalf("logged events = %v, want both hits kept across the restart", names)
 	}
 }
 
@@ -543,14 +536,91 @@ func TestServeNeverPersistsIPOrUserAgent(t *testing.T) {
 	}
 	// Sanity: the hit really was recorded, so the assertions above are not
 	// passing merely because nothing was written.
-	st, err := store.Open("sqlite://" + dbPath)
+	if names := logEventNames(t, cfg.EventsDir); len(names) != 1 {
+		t.Fatalf("hit not logged: %v", names)
+	}
+}
+
+// logEventNames lists the name of every event the log files under dir
+// hold (the NDJSON of open and closed segments), sorted.
+func logEventNames(t *testing.T, dir string) []string {
+	t.Helper()
+	var names []string
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || strings.HasSuffix(path, ".parquet") || strings.HasSuffix(path, ".tmp") {
+			return err
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, ln := range bytes.Split(b, []byte("\n")) {
+			if len(ln) == 0 {
+				continue
+			}
+			var row struct {
+				Name string `json:"event_name"`
+			}
+			if err := json.Unmarshal(ln, &row); err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			names = append(names, row.Name)
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// TestIngestWritesTheLogOnly: a served batch lands in raw/ and SQLite's
+// events stay empty (raw-first PR 6).
+func TestIngestWritesTheLogOnly(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "logonly.db")
+	addr := freePort(t)
+	cfg := testConfig(t, addr, dbPath)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- Serve(ctx, cfg, slog.Default(), true, false) }()
+	base := "http://" + addr
+	waitHealthy(t, base)
+	req, err := http.NewRequest("POST", base+"/ingest/events", strings.NewReader(
+		`{"key":"ak_test","events":[{"name":"$page_view","attributes":{"$host":"app.com","$path":"/a"}},{"name":"signup"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
-	days, err := st.ViewDaysBefore(context.Background(), 1, mustDay("2100-01-01"))
-	if err != nil || len(days) != 1 {
-		t.Fatalf("hit not persisted: %v %v", days, err)
+	req.Header.Set("Origin", "https://app.com")
+	req.Header.Set("User-Agent", chromeUA)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 202 {
+		t.Fatalf("hit: %d", resp.StatusCode)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serve: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve did not shut down")
+	}
+	if names := logEventNames(t, cfg.EventsDir); !slices.Equal(names, []string{"$page_view", "signup"}) {
+		t.Fatalf("logged events = %v", names)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM events`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("events rows = %d, %v; want 0", n, err)
 	}
 }
 

@@ -144,23 +144,27 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 
 	// The archive log (raw-first PR 3): the ingest process appends every
 	// event to EVENTS_DIR beside SQLite; a console-only process writes none.
-	var sink pipeline.Sink = st
+	// The log is the only sink; only the ingest process enqueues, so a
+	// process without ingest builds no buffer.
 	var archiveLog *archive.Log
+	var buf *pipeline.Buffer
+	pipeCtx, stopPipe := context.WithCancel(context.Background())
+	pipeDone := make(chan struct{})
 	if runIngest {
 		archiveLog, err = archive.OpenLog(cfg.EventsDir)
 		if err != nil {
+			stopPipe()
 			return err
 		}
 		defer archiveLog.Close()
-		sink = pipeline.Sinks{st, archiveLog}
+		// The pipeline and jobs runner get their own contexts rather than
+		// ctx, so cancelling ctx does not tear them down before HTTP has
+		// drained.
+		buf = pipeline.New(cfg.Buffer, archiveLog, logger)
+		go func() { buf.Run(pipeCtx); close(pipeDone) }()
+	} else {
+		close(pipeDone)
 	}
-
-	// The pipeline and jobs runner get their own contexts rather than ctx,
-	// so cancelling ctx does not tear them down before HTTP has drained.
-	buf := pipeline.New(cfg.Buffer, sink, logger)
-	pipeCtx, stopPipe := context.WithCancel(context.Background())
-	pipeDone := make(chan struct{})
-	go func() { buf.Run(pipeCtx); close(pipeDone) }()
 
 	// A project with no active ingest key can receive nothing. That is a
 	// legitimate retired state, so warn rather than refuse to start.

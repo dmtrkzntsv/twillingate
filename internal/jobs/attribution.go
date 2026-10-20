@@ -17,7 +17,7 @@ type Attributor interface {
 }
 
 // EventLog appends events to the archive log (*archive.Log): a
-// submission's event goes to SQLite and the files alike. A line written
+// submission's event goes to the files alone. A line written
 // twice is harmless: the log drops a repeated id for ten minutes; after
 // that the dump drops it within a log, and the month merge across a
 // day's segments.
@@ -89,11 +89,11 @@ func (r *Runner) attributeSubmissions(ctx context.Context) {
 	r.flushOutbox(ctx, started)
 }
 
-// flushOutbox appends the events AttributeSubmission wrote to SQLite to
+// flushOutbox appends the events AttributeSubmission left in the outbox to
 // the event log, a page at a time while full pages keep coming and the
 // tick's budget (from started) lasts, and marks each page logged once it
 // is written: delivery at least once, so a crash or a failed write
-// between SQLite and the files is retried the next minute, never lost.
+// between the outbox and the files is retried the next minute, never lost.
 // A page is written whole, so a write that fails for any one project or
 // day holds back every project's form events until it clears, retried
 // each minute; its likely causes (a full disk, permissions) are global
@@ -116,7 +116,7 @@ func (r *Runner) flushOutbox(ctx context.Context, started time.Time) {
 		evs := make([]store.Event, 0, len(us))
 		for _, u := range us {
 			if u.Err != nil {
-				r.logger.Error("form attribution: unreadable unlogged event; kept in SQLite only",
+				r.logger.Error("form attribution: unreadable unlogged event; kept in the outbox only",
 					"project", u.ProjectID, "submission", u.ID, "error", u.Err)
 				continue
 			}

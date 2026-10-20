@@ -63,9 +63,8 @@ type Store interface {
 	// and counts toward limit; only a failed read is an error.
 	PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]store.PendingSubmission, error)
 	// AttributeSubmission stores ev's referrer and UTMs as p's attribution
-	// and, when p.WriteEvent, writes ev and leaves it in the outbox
-	// (UnloggedEvents), all in one transaction; wrote reports the event
-	// written. A submission no longer pending (deleted, or attributed
+	// and, when p.WriteEvent, leaves ev in the outbox (UnloggedEvents),
+	// all in one transaction; wrote reports the outbox filled. A submission no longer pending (deleted, or attributed
 	// already) changes nothing.
 	AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) (wrote bool, err error)
 	// UnloggedEvents lists up to limit events AttributeSubmission wrote

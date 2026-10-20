@@ -13,7 +13,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
-	"github.com/dmtrkzntsv/twillingate/internal/pipeline"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/internal/store/storetest"
@@ -39,184 +38,6 @@ func TestMain(m *testing.M) {
 	}
 	os.Setenv(appEngineChild, "1")
 	os.Exit(m.Run())
-}
-
-// TestFilesHoldWhatSQLiteHolds: the files hold every event SQLite holds,
-// a retried batch and an approved form's submission included (PR 3's
-// Review Focus 4), and the reader's events table answers the same counts
-// per day before the daily pass (every day from its log) and after it
-// (a day file and today's log). A query that tries to write through the
-// reader is refused and writes nothing.
-func TestFilesHoldWhatSQLiteHolds(t *testing.T) {
-	ctx := context.Background()
-	data := t.TempDir()
-	st := storetest.Open(t, filepath.Join(data, "twillingate.db"))
-	reg := manage.New(st, slog.Default())
-	if err := reg.Reload(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := manage.NewOps(reg, st).CreateProject(ctx, "test", manage.ProjectSpec{Name: "App"}); err != nil {
-		t.Fatal(err)
-	}
-	log, err := archive.OpenLog(filepath.Join(data, "raw"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer log.Close()
-	sinks := pipeline.Sinks{st, log}
-
-	day := time.Date(2026, 10, 11, 0, 0, 0, 0, time.UTC)
-	var batch []store.Event
-	for i := 0; i < 50; i++ {
-		at := day.Add(time.Duration(i) * time.Minute)
-		e := store.Event{ID: fmt.Sprintf("00000000-0000-4000-8000-%012d", i), ProjectID: 1, TS: at, ReceivedAt: at}
-		switch i % 3 {
-		case 0:
-			e.Family, e.EventName, e.Kind, e.ActorID, e.ActorKind, e.Path = store.FamilyViews, "$page_view", "web", "v", store.ActorConnection, "/"
-		case 1:
-			e.Family, e.EventName, e.UserID, e.Attributes = store.FamilyProduct, "signup", "u", map[string]string{"plan": "pro"}
-		default:
-			v := float64(i)
-			e.Family, e.EventName, e.Measure, e.Value = store.FamilyMeasures, "load", store.MeasureTime, &v
-		}
-		batch = append(batch, e)
-	}
-	for i := 0; i < 2; i++ { // the second is a retry: neither SQLite nor the log may count it twice
-		if err := sinks.WriteEvents(ctx, batch); err != nil {
-			t.Fatal(err)
-		}
-	}
-	var today []store.Event
-	for i := 0; i < 3; i++ {
-		at := day.AddDate(0, 0, 1).Add(time.Duration(i) * time.Hour)
-		today = append(today, store.Event{ID: fmt.Sprintf("00000000-0000-4000-9000-%012d", i), ProjectID: 1,
-			Family: store.FamilyProduct, EventName: "x", TS: at, ReceivedAt: at})
-	}
-	if err := sinks.WriteEvents(ctx, today); err != nil {
-		t.Fatal(err)
-	}
-
-	// An approved form: its first submission creates it as a draft (no
-	// event), approval, then a second submission whose event the
-	// attribution job writes.
-	sub := func(id string, at time.Time) store.NewSubmission {
-		return store.NewSubmission{
-			Submission: store.Submission{ProjectID: 1, ID: id, Form: "contact", ReceivedAt: at, Fields: map[string]string{"email": "a@x.io"}},
-			DraftUntil: at.Add(7 * 24 * time.Hour),
-			Event:      store.Event{ID: id, ProjectID: 1, Family: store.FamilyProduct, EventName: store.FormSubmitEvent, TS: at, ReceivedAt: at},
-		}
-	}
-	if _, _, err := st.WriteSubmission(ctx, sub("00000000-0000-4000-a000-000000000001", day.Add(2*time.Hour))); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.ApproveForm(ctx, 1, "contact", []string{"email"}, day.Add(3*time.Hour), store.AuditEntry{Actor: "test", Action: "form.approve", Subject: "form/1/contact"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := st.WriteSubmission(ctx, sub("00000000-0000-4000-a000-000000000002", day.Add(4*time.Hour))); err != nil {
-		t.Fatal(err)
-	}
-	// The jobs runner writes the event to SQLite when the submission is
-	// attributed, leaving it in the outbox, then flushes the outbox to the
-	// log and marks it logged.
-	pending, err := st.PendingSubmissions(ctx, day.AddDate(0, 0, 1), 10)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, p := range pending {
-		if _, err := st.AttributeSubmission(ctx, p, p.Event); err != nil {
-			t.Fatal(err)
-		}
-	}
-	unlogged, err := st.UnloggedEvents(ctx, 1000)
-	if err != nil || len(unlogged) != 1 || unlogged[0].Err != nil {
-		t.Fatalf("unlogged = %+v, %v; want the approved form's one event", unlogged, err)
-	}
-	evs := make([]store.Event, len(unlogged))
-	for i, u := range unlogged {
-		evs[i] = u.Event
-	}
-	if err := log.WriteEvents(ctx, evs); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.MarkLogged(ctx, unlogged); err != nil {
-		t.Fatal(err)
-	}
-
-	self, _ := os.Executable()
-	eng, err := engine.New(engine.Options{Path: self, Env: []string{appEngineChild + "=1"},
-		AllowedDirs: []string{log.Dir()}, SpillRoot: filepath.Join(data, "engine", "spill"), SlotDir: filepath.Join(data, "engine", "slots"),
-		MaxChildren: 1, MemoryLimit: "256MB", Threads: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer eng.Close()
-	// A second, read-only handle on the same file (the modernc driver is
-	// registered through internal/store/sqlite): no accessor on store.Store
-	// for a test.
-	raw, err := sql.Open("sqlite", "file:"+filepath.Join(data, "twillingate.db")+"?mode=ro")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer raw.Close()
-	var want []string
-	rows, err := raw.Query(`SELECT day, count(*) FROM events WHERE project_id = 1 GROUP BY day ORDER BY day`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for rows.Next() {
-		var day string
-		var n int
-		if err := rows.Scan(&day, &n); err != nil {
-			t.Fatal(err)
-		}
-		want = append(want, fmt.Sprintf("[%s %d]", day, n))
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	if fmt.Sprint(want) != "[[2026-10-11 51] [2026-10-12 3]]" {
-		t.Fatalf("SQLite per day = %v; want 51 (50 events once, plus the approved submission) and 3", want)
-	}
-	files, err := archive.NewReader(log.Dir(), eng)
-	if err != nil {
-		t.Fatal(err)
-	}
-	perDay := func() string {
-		t.Helper()
-		res, err := files.Query(ctx, "SELECT CAST(day AS VARCHAR), count(*) FROM events WHERE project_id = 1 GROUP BY day ORDER BY day", 0, archive.Rules{})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return fmt.Sprint(res.Rows)
-	}
-	if got := perDay(); got != fmt.Sprint(want) {
-		t.Fatalf("files per day before the pass = %s, SQLite %v", got, want)
-	}
-
-	pass, _ := civil.Parse("2026-10-12")
-	if err := archive.New(log, eng, slog.Default()).Maintain(ctx, pass, 1, 400); err != nil {
-		t.Fatal(err)
-	}
-	res, err := eng.Query(ctx, "SELECT count(*) FROM read_parquet('"+filepath.Join(log.Dir(), "1", "2026-10-11.parquet")+"')", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fmt.Sprint(res.Rows) != "[[51]]" {
-		t.Fatalf("day file = %v rows, want 51", res.Rows)
-	}
-	if b, err := os.ReadFile(filepath.Join(log.Dir(), "1", "2026-10-12.log")); err != nil || len(splitLines(b)) != 3 {
-		t.Fatalf("today's log: %v, %d lines; want it open with 3", err, len(splitLines(b)))
-	}
-	if got := perDay(); got != fmt.Sprint(want) {
-		t.Fatalf("files per day after the pass = %s, SQLite %v", got, want)
-	}
-	out := filepath.Join(log.Dir(), "x.csv")
-	if _, err := files.Query(ctx, "COPY (SELECT 1) TO '"+out+"' (FORMAT csv)", 0, archive.Rules{}); err == nil {
-		t.Fatal("a COPY through the reader was accepted")
-	}
-	if _, err := os.Stat(out); !os.IsNotExist(err) {
-		t.Fatalf("%s exists: a refused query wrote it", out)
-	}
 }
 
 func splitLines(b []byte) [][]byte {
@@ -284,7 +105,7 @@ func TestDerivedTablesMatchSQLite(t *testing.T) {
 		grouped,
 		ev(store.FamilyProduct, "web", "u2", "u2", "", 14*h),
 	}
-	if err := (pipeline.Sinks{st, log}).WriteEvents(ctx, evs); err != nil {
+	if err := (bothSinks{st, log}).WriteEvents(ctx, evs); err != nil {
 		t.Fatal(err)
 	}
 	// As ingest does beside the events (handlers.go, identityNames).

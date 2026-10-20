@@ -223,10 +223,10 @@ func (d *DB) PendingSubmissions(ctx context.Context, before time.Time, limit int
 }
 
 // AttributeSubmission stores ev's referrer and UTMs as p's attribution
-// and, when p.WriteEvent, writes ev and leaves it in the outbox
-// (unlogged_event) for the job to append to the event files, in one
-// transaction; wrote reports the event written. A submission no longer
-// pending changes nothing.
+// and, when p.WriteEvent, leaves ev in the outbox (unlogged_event) for
+// the job to append to the event files, in one transaction; wrote
+// reports the outbox filled. The event is never a row of SQLite's
+// events. A submission no longer pending changes nothing.
 func (d *DB) AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) (bool, error) {
 	var attribution any // NULL: nothing found
 	if a := (store.Attribution{Referrer: ev.ReferrerSource, UTMSource: ev.UTMSource,
@@ -246,8 +246,6 @@ func (d *DB) AttributeSubmission(ctx context.Context, p store.PendingSubmission,
 		unlogged = string(b)
 	}
 	var wrote bool
-	var fresh []receivedKey
-	var gen uint64
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE submissions SET attribution=?, unlogged_event=?, pending_event=NULL,
 			pending_write=NULL, pending_connection=NULL WHERE project_id=? AND id=? AND pending_event IS NOT NULL`,
@@ -258,22 +256,11 @@ func (d *DB) AttributeSubmission(ctx context.Context, p store.PendingSubmission,
 		if n, err := res.RowsAffected(); err != nil || n != 1 {
 			return err // deleted or attributed already
 		}
-		if !p.WriteEvent {
-			return nil
-		}
-		keys, err := insertEvents(ctx, tx, []store.Event{ev})
-		if err != nil {
-			return err
-		}
-		fresh, gen = d.seen.unseen(keys)
-		wrote = true
-		return writeReceived(ctx, tx, fresh)
+		wrote = p.WriteEvent
+		return nil
 	})
 	if err != nil {
 		return false, err
-	}
-	if wrote {
-		d.seen.remember(fresh, gen)
 	}
 	return wrote, nil
 }
@@ -552,38 +539,23 @@ func (d *DB) ExpireDrafts(ctx context.Context, now time.Time) (int, error) {
 	return expired, nil
 }
 
-// deleteEvent deletes the raw $form_submit event of the submission id
-// received on day (its key is family, project, day, id), if it is still
-// raw: a day already rolled up keeps its aggregates.
-func deleteEvent(ctx context.Context, tx *sql.Tx, projectID int64, day, id string) error {
-	_, err := tx.ExecContext(ctx,
-		`DELETE FROM events WHERE family='product' AND project_id=? AND day=? AND id=? AND event_name=?`,
-		projectID, day, id, store.FormSubmitEvent)
-	return err
-}
-
-// DeleteSubmissions deletes the submissions with these ids and their raw
-// events in one transaction, and audits it with a.Detail plus the count
+// DeleteSubmissions deletes the submissions with these ids in one
+// transaction (their $form_submit events stay in the event files, which
+// hold no field), and audits it with a.Detail plus the count
 // it deleted, " (<n> deleted)", 0 included.
 func (d *DB) DeleteSubmissions(ctx context.Context, projectID int64, ids []string, a store.AuditEntry) (int, error) {
 	var deleted int
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		for _, id := range ids {
-			var day string
-			switch err := tx.QueryRowContext(ctx, `SELECT substr(received_at,1,10) FROM submissions WHERE project_id=? AND id=?`,
-				projectID, id).Scan(&day); {
-			case errors.Is(err, sql.ErrNoRows):
-				continue
-			case err != nil:
-				return err
-			}
-			if err := deleteEvent(ctx, tx, projectID, day, id); err != nil {
-				return fmt.Errorf("delete event of submission %s: %w", id, err)
-			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM submissions WHERE project_id=? AND id=?`, projectID, id); err != nil {
+			res, err := tx.ExecContext(ctx, `DELETE FROM submissions WHERE project_id=? AND id=?`, projectID, id)
+			if err != nil {
 				return fmt.Errorf("delete submission %s: %w", id, err)
 			}
-			deleted++
+			n, err := res.RowsAffected()
+			if err != nil {
+				return err
+			}
+			deleted += int(n)
 		}
 		a.Detail += fmt.Sprintf(" (%d deleted)", deleted)
 		return audit(ctx, tx, a)
@@ -594,32 +566,9 @@ func (d *DB) DeleteSubmissions(ctx context.Context, projectID int64, ids []strin
 	return deleted, nil
 }
 
-// deleteFormData deletes the form's submissions with their raw events,
-// then the form row, within tx. The caller audits.
+// deleteFormData deletes the form's submissions, then the form row,
+// within tx. The caller audits.
 func deleteFormData(ctx context.Context, tx *sql.Tx, projectID int64, name string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT id, substr(received_at,1,10) FROM submissions WHERE project_id=? AND form=?`,
-		projectID, name)
-	if err != nil {
-		return err
-	}
-	type sub struct{ id, day string }
-	var subs []sub
-	for rows.Next() {
-		var s sub
-		if err := rows.Scan(&s.id, &s.day); err != nil {
-			rows.Close()
-			return err
-		}
-		subs = append(subs, s)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return err
-	}
-	for _, s := range subs {
-		if err := deleteEvent(ctx, tx, projectID, s.day, s.id); err != nil {
-			return fmt.Errorf("delete event of submission %s: %w", s.id, err)
-		}
-	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM submissions WHERE project_id=? AND form=?`, projectID, name); err != nil {
 		return fmt.Errorf("delete submissions: %w", err)
 	}

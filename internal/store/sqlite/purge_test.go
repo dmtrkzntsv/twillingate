@@ -471,7 +471,7 @@ func TestPurgeArchivedDeletesGroupNameWithLastDashboard(t *testing.T) {
 	}
 }
 
-func TestPurgeArchivedDeletesAgedFormsWithSubmissionsAndRawEvents(t *testing.T) {
+func TestPurgeArchivedDeletesAgedFormsWithSubmissions(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	mk := func(projectID int64, form, id string) {
@@ -520,12 +520,9 @@ func TestPurgeArchivedDeletesAgedFormsWithSubmissionsAndRawEvents(t *testing.T) 
 	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions`); c != 4 {
 		t.Fatalf("%d submissions left, want 4", c)
 	}
-	// The purged forms' raw events went too; the other two forms' stay.
-	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE event_name='$form_submit'`); c != 2 {
-		t.Fatalf("%d form events left, want 2", c)
-	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE id LIKE '%-old%'`); c != 0 {
-		t.Fatalf("%d events of purged forms left", c)
+	// The purged forms' queued events went with their submissions.
+	if us, err := db.UnloggedEvents(ctx, 100); err != nil || len(us) != 2 {
+		t.Fatalf("unlogged = %+v, %v; want the other two forms' events", us, err)
 	}
 	rows := auditRows(t, db, "form.purge")
 	if len(rows) != 2 {

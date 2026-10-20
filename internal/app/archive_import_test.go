@@ -87,7 +87,7 @@ func TestImportFillsTheFilesFromSQLite(t *testing.T) {
 	o1 := row("o1", "2026-10-01T10:00:00Z")
 	o1.ActorID, o1.ActorKind = "i1", store.ActorInstall
 
-	both := pipeline.Sinks{st, log}
+	both := bothSinks{st, log}
 	// September 30 reached both stores and September was merged without s1.
 	if err := both.WriteEvents(ctx, []store.Event{row("s2", "2026-09-30T10:00:00Z")}); err != nil {
 		t.Fatal(err)
@@ -182,4 +182,17 @@ func TestImportFillsTheFilesFromSQLite(t *testing.T) {
 	if got := eventsFiles(); !slices.Equal(got, wantFiles) {
 		t.Fatalf("files after a second import = %v, want %v", got, wantFiles)
 	}
+}
+
+// bothSinks writes a batch to SQLite and the log, as ingest did before
+// raw-first PR 6: these tests seed both stores with it.
+type bothSinks []pipeline.Sink
+
+func (s bothSinks) WriteEvents(ctx context.Context, evs []store.Event) error {
+	for _, k := range s {
+		if err := k.WriteEvents(ctx, evs); err != nil {
+			return err
+		}
+	}
+	return nil
 }
