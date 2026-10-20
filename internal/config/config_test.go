@@ -52,9 +52,6 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.Forms.DraftDays != DefaultFormDraftDays || DefaultFormDraftDays != 7 {
 		t.Errorf("Forms.DraftDays = %d (default %d), want 7", c.Forms.DraftDays, DefaultFormDraftDays)
 	}
-	if len(c.Removed) != 0 {
-		t.Errorf("Removed = %v, want none", c.Removed)
-	}
 	if c.Reporting.CacheAge != 900*time.Second || c.Reporting.RefreshAge != 60*time.Second {
 		t.Errorf("Reporting = %+v", c.Reporting)
 	}
@@ -304,8 +301,8 @@ func TestOldRetentionNamesHaveNoEffect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Retention.Days != 400 || len(c.Removed) != 0 {
-		t.Fatalf("old names changed retention or were reported: %+v %v", c.Retention, c.Removed)
+	if c.Retention.Days != 400 {
+		t.Fatalf("old names changed retention: %+v", c.Retention)
 	}
 }
 
@@ -808,9 +805,9 @@ func TestMaxEventAgeIsTheLateWindow(t *testing.T) {
 	}
 }
 
-// A retired variable never stops the boot, whatever its value: it is
-// ignored and listed, in the order of removedVars. An empty one is unset.
-func TestRemovedVariablesAreReportedNotRefused(t *testing.T) {
+// The variables raw-first PR 6 retired are ignored like any unknown
+// one, whatever their value: an old env file still boots.
+func TestRetiredVariablesAreIgnored(t *testing.T) {
 	c, err := load(t, map[string]string{
 		"IDENTITIES_TOP_N": "-1", "RETENTION_EVENTS_AGGREGATE_DAYS": "90", "RETENTION_RAW_DAYS": "0",
 		"RETENTION_AGGREGATE_DAYS": "60", "RETENTION_EVENTS_RAW_DAYS": "14",
@@ -818,14 +815,8 @@ func TestRemovedVariablesAreReportedNotRefused(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"RETENTION_RAW_DAYS", "RETENTION_AGGREGATE_DAYS", "RETENTION_EVENTS_RAW_DAYS",
-		"RETENTION_EVENTS_AGGREGATE_DAYS", "ATTRIBUTE_VALUES_TOP_N", "ATTRIBUTE_BREAKDOWNS_MAX", "IDENTITIES_TOP_N"}
-	if !slices.Equal(c.Removed, want) {
-		t.Errorf("Removed = %v, want %v", c.Removed, want)
-	}
-	c, err = load(t, map[string]string{"RETENTION_RAW_DAYS": ""})
-	if err != nil || len(c.Removed) != 0 {
-		t.Errorf("empty value: Removed = %v, err = %v", c.Removed, err)
+	if c.Retention.Days != DefaultRetentionDays {
+		t.Errorf("Retention.Days = %d, want %d", c.Retention.Days, DefaultRetentionDays)
 	}
 }
 

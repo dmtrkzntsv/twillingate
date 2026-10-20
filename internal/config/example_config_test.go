@@ -47,7 +47,4 @@ func TestExamplesLoad(t *testing.T) {
 	if cfg.Retention.Days != 400 {
 		t.Errorf("retention = %+v", cfg.Retention)
 	}
-	if len(cfg.Removed) != 0 {
-		t.Errorf("the example sets removed variables: %v", cfg.Removed)
-	}
 }

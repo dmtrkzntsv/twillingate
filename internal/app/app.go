@@ -78,9 +78,6 @@ type httpSurface struct {
 // only then is the pipeline cancelled — its cancellation is what triggers
 // the final flush, so it must come last or buffered events would be lost.
 func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runIngest, runConsole bool) error {
-	for _, name := range cfg.Removed {
-		logger.Warn(name + " is no longer used: events are kept in the event files for RETENTION_DAYS, and nothing is capped")
-	}
 	st, err := store.Open(cfg.Database)
 	if err != nil {
 		return err

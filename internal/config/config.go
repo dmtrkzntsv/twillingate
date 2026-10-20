@@ -167,9 +167,6 @@ type Config struct {
 	Log       LogConfig
 	Buffer    BufferConfig
 	Retention Retention
-	// Removed lists, in the order of removedVars, every retired variable
-	// set to a non-empty value: ignored, and reported at boot.
-	Removed   []string
 	Forms     FormsConfig
 	Reporting ReportingConfig
 	Engine    EngineConfig
@@ -251,7 +248,6 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 	e := &env{lookup: lookup}
 	retentionDays := e.num("RETENTION_DAYS", DefaultRetentionDays)
 	c := &Config{
-		Removed:    removedSet(lookup),
 		IngestAddr: e.str("INGEST_ADDR", "127.0.0.1:8080"),
 		// A complete stop of ingest: every route that takes events or
 		// form submissions refuses with 429; the console is unaffected.
@@ -335,24 +331,6 @@ var renamed = []struct{ old, repl string }{
 	{"FORMS_DRAFT_DAYS", "RETENTION_FORMS_DRAFT_DAYS"},
 	{"REPORTING_CACHE_SECONDS", "REPORTING_CACHE_MAX_AGE (a duration: 900 is 15m)"},
 	{"REPORTING_REFRESH_SECONDS", "REPORTING_REFRESH_MAX_AGE (a duration: 60 is 1m)"},
-}
-
-// removedVars are the variables that no longer do anything: events are kept
-// in the event files for RETENTION_DAYS and nothing is capped. A set one is
-// ignored and listed in Config.Removed, so an old env file still boots.
-var removedVars = []string{"RETENTION_RAW_DAYS", "RETENTION_AGGREGATE_DAYS", "RETENTION_EVENTS_RAW_DAYS",
-	"RETENTION_EVENTS_AGGREGATE_DAYS", "ATTRIBUTE_VALUES_TOP_N", "ATTRIBUTE_BREAKDOWNS_MAX", "IDENTITIES_TOP_N"}
-
-// removedSet returns the removed variables set to a non-empty value, as
-// refuseRenamed treats an empty one as unset.
-func removedSet(lookup func(string) (string, bool)) []string {
-	var set []string
-	for _, name := range removedVars {
-		if v, ok := lookup(name); ok && v != "" {
-			set = append(set, name)
-		}
-	}
-	return set
 }
 
 // refuseRenamed treats an empty value as unset, as env.str does, so a

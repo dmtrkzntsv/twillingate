@@ -141,7 +141,7 @@ Roadmap: `docs/superpowers/plans/2026-10-12-raw-first-roadmap.md`, PR 6. This pl
    ```
 
    The field stays for one release, so a client that sends `"files"` keeps working. `schemaSQLite` and `CustomSQLRefused` go.
-10. **Removed variables** are listed in `config.Removed` and logged at boot, one warning each:
+10. **Removed variables** are listed in `config.Removed` and logged at boot, one warning each (amended 2026-10-20, #193: they are ignored silently instead, like any unknown variable; no list, no warning):
 
     ```
     <NAME> is no longer used: events are kept in the event files for RETENTION_DAYS, and nothing is capped

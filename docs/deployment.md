@@ -140,13 +140,6 @@ The old names refuse the boot, naming their replacement: `LISTEN_ADDR`
 `deploy/UPGRADES.md`). The older `MCP_*` names are no longer checked; a
 leftover one is ignored, so rename any still in `twillingate.env`.
 
-Removed in this release: `RETENTION_RAW_DAYS`, `RETENTION_AGGREGATE_DAYS`,
-`RETENTION_EVENTS_RAW_DAYS`, `RETENTION_EVENTS_AGGREGATE_DAYS`,
-`ATTRIBUTE_VALUES_TOP_N`, `ATTRIBUTE_BREAKDOWNS_MAX` and `IDENTITIES_TOP_N`.
-Events are kept in the event files for `RETENTION_DAYS`, and nothing is
-capped. A leftover one does not stop the boot: `serve` ignores it and logs
-one warning per name.
-
 ### Raspberry Pi and low-resource hosts
 
 - A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. One `serve` process runs one child at a time (the ingest process for the daily pass's files and the form-attribution lookup, the console's for every dashboard widget load and for `query` on the files, so the console's child is the busy one); on a split install, lower `ENGINE_MEMORY_LIMIT` rather than raise `ENGINE_MAX_CHILDREN`.

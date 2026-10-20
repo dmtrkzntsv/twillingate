@@ -643,36 +643,3 @@ func runServeAndCollectLogs(t *testing.T, cfg *config.Config) string {
 	}
 	return logs.String()
 }
-
-// A retired variable in an old env file does not stop the boot: it is
-// ignored, and each one set is reported once.
-func TestBootWarnsOncePerRemovedVariable(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "removed.db")
-	addr := freePort(t)
-	testConfig(t, addr, dbPath) // seeds the project
-	env := map[string]string{
-		"INGEST_ADDR":  addr,
-		"DATABASE_DSN": "sqlite://" + dbPath,
-	}
-	names := []string{"RETENTION_RAW_DAYS", "RETENTION_AGGREGATE_DAYS", "RETENTION_EVENTS_RAW_DAYS",
-		"RETENTION_EVENTS_AGGREGATE_DAYS", "ATTRIBUTE_VALUES_TOP_N", "ATTRIBUTE_BREAKDOWNS_MAX", "IDENTITIES_TOP_N"}
-	for _, n := range names {
-		env[n] = "5"
-	}
-	logs := runServeAndCollectLogs(t, configtest.Load(t, env))
-	for _, n := range names {
-		want := n + " is no longer used: events are kept in the event files for RETENTION_DAYS, and nothing is capped"
-		if got := strings.Count(logs, want); got != 1 {
-			t.Errorf("%q logged %d times, want 1:\n%s", n, got, logs)
-		}
-		warned := false
-		for _, line := range strings.Split(logs, "\n") {
-			if strings.Contains(line, want) && strings.Contains(line, "level=WARN") {
-				warned = true
-			}
-		}
-		if !warned {
-			t.Errorf("%q is not on a level=WARN line:\n%s", n, logs)
-		}
-	}
-}
