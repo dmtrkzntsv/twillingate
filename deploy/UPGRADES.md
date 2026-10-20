@@ -1179,6 +1179,10 @@ projects, keys, rules, forms, dashboards and the audit log; every event
 lives in the event files under `raw/` (`EVENTS_DIR`) for `RETENTION_DAYS`.
 A fresh install never creates an `events` table.
 
+From 042 on, Litestream (or any copy of the database) holds no events: the
+`raw/` copy schedule is your event backup, and a host lost between two
+copies loses the events since the last one.
+
 Before upgrading:
 
 - **Back up the database** (`docs/deployment.md`, "Back up and restore").
@@ -1213,6 +1217,17 @@ Before upgrading:
   docker compose run --rm --no-deps twillingate events import
   docker compose start twillingate
   ```
+
+  An install that already ran `events import` (v0.19 or v0.20) needs
+  nothing. Check before swapping binaries, so the installer's restart does
+  not fail into "did not come back up":
+
+  ```sh
+  sudo -u twillingate sqlite3 /var/lib/twillingate/twillingate.db \
+    "SELECT value FROM meta WHERE key='events_imported'"
+  ```
+
+  A value means it ran; no row means run the import above.
 
   To see whether it ran, `twillingate events import` says when; a fresh
   install with no events needs nothing. Once the database is past 042, the
@@ -1288,7 +1303,7 @@ What changes on the day:
   `docs/twillingate.md`, "Writing SQL against the event files").
 
 Rollback: none past 042. An older binary fails to start, since its
-start builds a view over the dropped `events` table. To go back, restore the backup taken
-before the upgrade: the events ingested since are in `raw/`, where the
-release before this one reads them for its dashboards, but not in that
-database.
+start builds a view over the dropped `events` table. To go back, restore
+the backup taken before the upgrade: the events ingested since are in
+`raw/`, where the release before this one reads them for its dashboards,
+but not in that database.

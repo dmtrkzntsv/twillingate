@@ -1,15 +1,21 @@
 # Backing up with litestream
 
-Everything twillingate needs to run is in one SQLite file,
-`/var/lib/twillingate/twillingate.db`. [Litestream](https://litestream.io)
-streams that file's write-ahead log to S3-compatible storage as it is
-written, so the off-host copy is seconds behind. It runs beside the
-collector, not inside it: twillingate never reads its settings, and neither
-the installer nor the compose file sets it up. This page does, for systemd
-and for docker compose. The examples use Cloudflare R2 and litestream 0.5;
-any S3-compatible store works.
+Twillingate's settings (projects, keys, rules, forms, dashboards, the audit
+log) are in one SQLite file, `/var/lib/twillingate/twillingate.db`. Its events
+are not: from migration 042 they live only in the files under `raw/`.
+[Litestream](https://litestream.io) streams the database's write-ahead log to
+S3-compatible storage as it is written, so that off-host copy is seconds
+behind, but it holds no events; they are only as fresh as your own copy of
+`raw/`. It runs beside the collector, not inside it: twillingate never reads
+its settings, and neither the installer nor the compose file sets it up. This
+page does, for systemd and for docker compose. The examples use Cloudflare R2
+and litestream 0.5; any S3-compatible store works.
 
-Litestream copies the database only. The event files under `raw/` (from the release that added `RETENTION_DAYS`; `EVENTS_DIR` when set) are not part of it; copy them on a schedule of your own (`docs/deployment.md`, "Back up and restore").
+Litestream copies the database only, so a host lost between two copies of
+`raw/` loses the events since the last. The event files under `raw/` (from the
+release that added `RETENTION_DAYS`; `EVENTS_DIR` when set) are not part of it;
+copy them on a schedule of your own (`docs/deployment.md`, "Back up and
+restore").
 
 - [Bucket and credentials](#bucket-and-credentials)
 - [The configuration](#the-configuration)

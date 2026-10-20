@@ -1263,7 +1263,7 @@ is a poison batch to drop**; the `202` is returned **before** the write, so
 | `$sample_rate` | `0.0001` to `1` (else stored as `1`) |
 
 The `limits` tool lists these, and the [form limits](#form-submissions),
-beside the retention and cap settings in force.
+beside the retention settings in force.
 
 ### Origin and CORS
 
