@@ -198,48 +198,26 @@ func snapshotProject(t *testing.T, id int64) *manage.Project {
 	return p
 }
 
-// TestProjectAttrFlag proves the repeatable -attr flag on `project create`
-// reaches storage, not merely the output.
-func TestProjectAttrFlag(t *testing.T) {
+// TestProjectCLIHasNoAttrFlag: breakdowns are not declared any more, so
+// -attr is an unknown flag on create and on update.
+func TestProjectCLIHasNoAttrFlag(t *testing.T) {
 	withDB(t)
 	var out bytes.Buffer
-	if code := run([]string{"project", "create", "-name", "blog",
-		"-attr", "plan", "-attr", "tier"}, &out); code != 0 {
+	if code := run([]string{"project", "create", "-name", "blog", "-attr", "plan"}, &out); code != 2 {
+		t.Fatalf("create -attr = %d, want 2: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), "flag provided but not defined: -attr") {
+		t.Errorf("create output = %q", out.String())
+	}
+	out.Reset()
+	if code := run([]string{"project", "create", "-name", "blog"}, &out); code != 0 {
 		t.Fatalf("create = %d: %s", code, out.String())
 	}
-	attrs := snapshotProject(t, 1).Attributes
-	if len(attrs) != 2 || attrs[0] != "plan" || attrs[1] != "tier" {
-		t.Fatalf("Attributes = %v, want [plan tier]", attrs)
-	}
-}
-
-// TestProjectAttrUpdateMergeSemantics is the CLI-level guard for the merge
-// rule -attr must follow, matching -origin exactly (docs/twillingate.md):
-// omitting -attr on `project update` leaves the current list untouched, and
-// supplying it at all replaces the whole list wholesale.
-func TestProjectAttrUpdateMergeSemantics(t *testing.T) {
-	withDB(t)
-	var out bytes.Buffer
-	if code := run([]string{"project", "create", "-name", "blog",
-		"-attr", "plan", "-attr", "tier"}, &out); code != 0 {
-		t.Fatalf("create: exit %d: %s", code, out.String())
-	}
-
-	// update without -attr must leave the declared attributes untouched
 	out.Reset()
-	if code := run([]string{"project", "update", "-id", "1", "-name", "Blog Renamed"}, &out); code != 0 {
-		t.Fatalf("update: exit %d: %s", code, out.String())
+	if code := run([]string{"project", "update", "-id", "1", "-attr", "plan"}, &out); code != 2 {
+		t.Fatalf("update -attr = %d, want 2: %s", code, out.String())
 	}
-	if attrs := snapshotProject(t, 1).Attributes; len(attrs) != 2 {
-		t.Fatalf("update without -attr changed declared attributes: %v", attrs)
-	}
-
-	// update with -attr must replace the whole list, not merge into it
-	out.Reset()
-	if code := run([]string{"project", "update", "-id", "1", "-attr", "solo"}, &out); code != 0 {
-		t.Fatalf("update -attr: exit %d: %s", code, out.String())
-	}
-	if attrs := snapshotProject(t, 1).Attributes; len(attrs) != 1 || attrs[0] != "solo" {
-		t.Fatalf("update -attr merged instead of replacing: %v", attrs)
+	if !strings.Contains(out.String(), "flag provided but not defined: -attr") {
+		t.Errorf("update output = %q", out.String())
 	}
 }

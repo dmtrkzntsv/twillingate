@@ -252,7 +252,6 @@ export interface Project {
   /** When it was archived (RFC 3339); absent while live. */
   archived_at?: string
   allowed_origins: string[]
-  attributes?: string[]
 }
 
 export interface IngestKey {
@@ -357,7 +356,6 @@ export interface UsageResponse {
 export interface CreateProjectBody {
   name: string
   allowed_origins?: string[]
-  attributes?: string[]
 }
 
 export interface CreatedProject {
@@ -399,7 +397,7 @@ export interface EventName {
 
 /**
  * One attribute key of a project over a range, read from the event files, with the rules on it.
- * `$` keys are listed too: they take a breakdown, never a rule.
+ * `$` keys are listed too; rules cover custom keys only.
  */
 export interface ProjectAttribute {
   key: string

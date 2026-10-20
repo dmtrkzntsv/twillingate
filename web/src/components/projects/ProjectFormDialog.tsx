@@ -17,7 +17,7 @@ interface Props {
   pending?: boolean
 }
 
-/** Name and allowed origins (`*` for any): creating a project or editing one. Breakdowns have their own section on the project page. */
+/** Name and allowed origins (`*` for any): creating a project or editing one. */
 export default function ProjectFormDialog({ open, onOpenChange, title, submitLabel, initial, onSubmit, pending }: Props) {
   const nameId = useId()
   const [name, setName] = useState(initial?.name ?? '')

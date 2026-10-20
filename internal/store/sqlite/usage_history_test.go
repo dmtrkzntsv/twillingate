@@ -88,7 +88,7 @@ func TestRecordUsageHistoryWritesFileBytes(t *testing.T) {
 func TestDeleteProjectDataRemovesUsageHistory(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	id, err := db.CreateProject(ctx, store.RegistryProject{Name: "a", AllowedOrigins: "[]", Attributes: "[]"},
+	id, err := db.CreateProject(ctx, store.RegistryProject{Name: "a", AllowedOrigins: "[]"},
 		store.AuditEntry{Actor: "t", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)

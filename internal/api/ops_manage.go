@@ -17,11 +17,6 @@ import (
 type createProjectIn struct {
 	Name           string   `json:"name" jsonschema:"display name (required); need not be unique"`
 	AllowedOrigins []string `json:"allowed_origins,omitempty" jsonschema:"origins allowed to post events. * is a wildcard: https://*.example.com covers every subdomain, a bare * allows any origin"`
-	// Attributes declares which product-event attribute keys are broken
-	// down (attr_ columns in v_events_flat for custom keys,
-	// agg_product_attrs rollups). Rollups
-	// always run regardless of this list.
-	Attributes []string `json:"attributes,omitempty" jsonschema:"attribute keys to break down, each counted against ATTRIBUTE_BREAKDOWNS_MAX across active projects (pick them from list_attributes); a custom key also gets an attr_ column in v_events_flat, a reserved $ key is already a typed column there"`
 	// SkipKey rather than IssueKey: JSON booleans have no "unset", and
 	// the zero value must give the default behaviour (issue a key).
 	SkipKey bool `json:"skip_key,omitempty" jsonschema:"set true to NOT issue a first ingest key"`
@@ -31,7 +26,6 @@ type updateProjectIn struct {
 	ProjectID      int64    `json:"project_id" jsonschema:"project id; call list_projects first"`
 	Name           string   `json:"name,omitempty" jsonschema:"new display name; omit to keep"`
 	AllowedOrigins []string `json:"allowed_origins,omitempty" jsonschema:"replaces the whole list; an explicit [] clears it; omit to keep"`
-	Attributes     []string `json:"attributes,omitempty" jsonschema:"breakdown keys, each counted against ATTRIBUTE_BREAKDOWNS_MAX across active projects (pick them from list_attributes); replaces the whole list; omit to keep"`
 }
 
 type projectToolOut struct {
@@ -46,7 +40,7 @@ type projectToolOut struct {
 // caller can fix the input and retry without meeting a keyless leftover.
 func (h *host) createProject(ctx context.Context, in createProjectIn) (projectToolOut, error) {
 	spec := manage.ProjectSpec{Name: in.Name,
-		AllowedOrigins: in.AllowedOrigins, Attributes: in.Attributes}
+		AllowedOrigins: in.AllowedOrigins}
 	var p *manage.Project
 	var key string
 	var err error
@@ -76,7 +70,7 @@ func (h *host) createProject(ctx context.Context, in createProjectIn) (projectTo
 func (h *host) updateProject(ctx context.Context, in updateProjectIn) (projectToolOut, error) {
 	p, err := h.ops.UpdateProject(ctx, actorFrom(ctx), manage.ProjectSpec{
 		ID: in.ProjectID, Name: in.Name,
-		AllowedOrigins: in.AllowedOrigins, Attributes: in.Attributes})
+		AllowedOrigins: in.AllowedOrigins})
 	if err != nil {
 		return projectToolOut{}, h.projectErr(ctx, in.ProjectID, err)
 	}

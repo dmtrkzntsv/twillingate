@@ -197,7 +197,7 @@ func rawExec(t *testing.T, st store.Store, q string, args ...any) {
 func mustCreateProject(t *testing.T, st store.Store, name string) int64 {
 	t.Helper()
 	id, err := st.CreateProject(context.Background(),
-		store.RegistryProject{Name: name, AllowedOrigins: "[]", Attributes: "[]"},
+		store.RegistryProject{Name: name, AllowedOrigins: "[]"},
 		store.AuditEntry{Actor: "test", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)

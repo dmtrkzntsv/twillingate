@@ -88,16 +88,16 @@ func TestUpdateMergesAndClearsOriginsOnlyWhenAsked(t *testing.T) {
 	}
 	ops := NewOps(reg, st)
 	p, err := ops.CreateProject(ctx, "test", ProjectSpec{Name: "Blog",
-		AllowedOrigins: []string{"https://blog.example.com"}, Attributes: []string{"plan"}})
+		AllowedOrigins: []string{"https://blog.example.com"}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// A name-only update keeps origins and attributes.
+	// A name-only update keeps the origins.
 	u, err := ops.UpdateProject(ctx, "test", ProjectSpec{ID: p.ID, Name: "Renamed"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if u.Name != "Renamed" || len(u.AllowedOrigins) != 1 || len(u.Attributes) != 1 {
+	if u.Name != "Renamed" || len(u.AllowedOrigins) != 1 {
 		t.Fatalf("name-only update changed more than the name: %+v", u)
 	}
 	// A non-nil empty origins list clears; nil keeps.
@@ -222,44 +222,5 @@ func TestCreateProjectWithKey(t *testing.T) {
 	}
 	if n := len(reg.Snapshot(ctx).Projects()); n != 1 {
 		t.Errorf("projects = %d, want 1", n)
-	}
-}
-
-func TestDeclaringSystemKeys(t *testing.T) {
-	ops, _, _ := newOps(t)
-	ctx := context.Background()
-	p, err := ops.CreateProject(ctx, "api", ProjectSpec{Name: "Site", Attributes: []string{"plan", "$path", "$utm_source"}})
-	if err != nil {
-		t.Fatalf("declarable $ keys refused: %v", err)
-	}
-	for _, bad := range []string{"$os", "$user_id", "$session_id", "$consent", "$os_name", "$display_width", "$nope"} {
-		_, err := ops.UpdateProject(ctx, "api", ProjectSpec{ID: p.ID, Attributes: []string{"plan", bad}})
-		if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), bad) || !strings.Contains(err.Error(), "$path") {
-			t.Errorf("declaring %s: err = %v, want ErrInvalid naming it and listing the declarable keys", bad, err)
-		}
-	}
-}
-
-// A project that declared a now-refused $ key before 020 cannot be edited
-// in any other way until the key goes, and the refusal says which key.
-func TestLegacyRefusedDeclarationBlocksRename(t *testing.T) {
-	ops, st, reg := newOps(t)
-	ctx := context.Background()
-	p, err := ops.CreateProject(ctx, "api", ProjectSpec{Name: "Site"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Plant the legacy declaration through the store, bypassing manage's
-	// validation, as a pre-020 binary would have written it.
-	if err := st.UpdateProject(ctx, store.RegistryProject{ID: p.ID, Name: "Site", AllowedOrigins: "[]",
-		Attributes: `["plan","$os"]`}, store.AuditEntry{Actor: "test", Action: "project.update"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := reg.Reload(ctx); err != nil {
-		t.Fatal(err)
-	}
-	_, err = ops.UpdateProject(ctx, "api", ProjectSpec{ID: p.ID, Name: "Renamed"})
-	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "$os") {
-		t.Fatalf("rename with a legacy $os declaration: err = %v, want ErrInvalid naming $os", err)
 	}
 }

@@ -21,7 +21,6 @@ func TestAttributeRuleOperationsReportStoreErrors(t *testing.T) {
 	inTx := func(fn func(tx *sql.Tx) error) func(db *DB) error {
 		return func(db *DB) error { return db.tx(ctx, fn) }
 	}
-	catalogA := `INSERT INTO project_attributes (project_id, key) VALUES (1, 'a')`
 	cases := []struct {
 		name   string
 		breaks []string
@@ -32,9 +31,6 @@ func TestAttributeRuleOperationsReportStoreErrors(t *testing.T) {
 			return err
 		}},
 		{"rename looks for a block", []string{`DROP TABLE rules`}, rename},
-		{"rename reads the catalog", []string{`DROP TABLE project_attributes`}, rename},
-		{"rename removes the old catalog row", []string{catalogA, abort("BEFORE DELETE", "project_attributes")}, rename},
-		{"rename adds the new catalog row", []string{catalogA, abort("BEFORE INSERT", "project_attributes")}, rename},
 		{"rename clears the target's rule", []string{
 			`INSERT INTO rules (project_id, kind, family, name, action, to_name) VALUES (1, 'attribute', 'event', 'b', 'rename', 'c')`,
 			abort("BEFORE DELETE", "rules"),
@@ -45,9 +41,6 @@ func TestAttributeRuleOperationsReportStoreErrors(t *testing.T) {
 		}, rename},
 		{"rename keeps its rule", []string{abort("BEFORE INSERT", "rules")}, rename},
 		{"block keeps its rule", []string{abort("BEFORE INSERT", "rules")}, func(db *DB) error {
-			return db.BlockAttribute(ctx, 1, "a", attrAudit)
-		}},
-		{"block clears the breakdown", []string{catalogA, abort("BEFORE UPDATE", "project_attributes")}, func(db *DB) error {
 			return db.BlockAttribute(ctx, 1, "a", attrAudit)
 		}},
 		{"remove deletes the rule", []string{`DROP TABLE rules`}, func(db *DB) error {

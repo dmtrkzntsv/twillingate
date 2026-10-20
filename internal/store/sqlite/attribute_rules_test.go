@@ -95,8 +95,8 @@ func usageRows(t *testing.T, db *DB) []string {
 		FROM usage_attributes ORDER BY project_id, day, attr_key`)
 }
 
-// A rename writes its rule, its audit row and the catalog move, and
-// touches no event: with the events table, the attribute aggregates and
+// A rename writes its rule and its audit row, and touches no event and no
+// catalog row: with the events table, the attribute aggregates and
 // usage_attributes gone, it still succeeds.
 func TestRenameAttributeWritesOnlyRules(t *testing.T) {
 	db := ruleDB(t)
@@ -107,8 +107,8 @@ func TestRenameAttributeWritesOnlyRules(t *testing.T) {
 
 	renameAttr(t, db, 1, "a", "c")
 
-	if got, want := catalogRows(t, db), []string{"1/b=0", "1/c=1", "2/a=0"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("catalog = %v, want %v", got, want)
+	if got, want := catalogRows(t, db), []string{"1/a=1", "1/b=0", "2/a=0"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("catalog = %v, want it untouched %v", got, want)
 	}
 	if got, want := loadAttrRules(t, db), []store.AttributeRule{attrRule(1, "a", store.EventRuleRename, "c")}; !reflect.DeepEqual(got, want) {
 		t.Errorf("rules = %v, want %v", got, want)
@@ -119,18 +119,6 @@ func TestRenameAttributeWritesOnlyRules(t *testing.T) {
 	// The event rules are another kind: none was written.
 	if rules := loadRules(t, db); len(rules) != 0 {
 		t.Errorf("event rules = %v, want none", rules)
-	}
-
-	// Merging a breakdown into a key that is none makes the target one;
-	// merging a key that is no breakdown into one that is keeps it.
-	renameAttr(t, db, 1, "c", "b")
-	if got, want := catalogRows(t, db), []string{"1/b=1", "2/a=0"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("catalog after c>b = %v, want %v", got, want)
-	}
-	execAll(t, db, `INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'z', 0)`)
-	renameAttr(t, db, 1, "z", "b")
-	if got, want := catalogRows(t, db), []string{"1/b=1", "2/a=0"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("catalog after z>b = %v, want %v", got, want)
 	}
 }
 
@@ -231,8 +219,7 @@ func TestBlockAttribute(t *testing.T) {
 	db := ruleDB(t)
 	ctx := context.Background()
 	renameAttr(t, db, 1, "z", "a")
-	execAll(t, db, `INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'a', 1)
-		ON CONFLICT (project_id, key) DO UPDATE SET breakdown = 1`)
+	execAll(t, db, `INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'a', 1)`)
 	blockAttr(t, db, 1, "a")
 	want := []store.AttributeRule{
 		attrRule(1, "a", store.EventRuleBlock, ""),
@@ -241,8 +228,8 @@ func TestBlockAttribute(t *testing.T) {
 	if got := loadAttrRules(t, db); !reflect.DeepEqual(got, want) {
 		t.Errorf("rules = %v, want %v", got, want)
 	}
-	if got, want := catalogRows(t, db), []string{"1/a=0"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("catalog = %v, want %v", got, want)
+	if got, want := catalogRows(t, db), []string{"1/a=1"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("catalog = %v, want it untouched %v", got, want)
 	}
 	if n := count(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='attribute.block'`); n != 1 {
 		t.Errorf("audit rows = %d, want 1", n)
@@ -291,8 +278,6 @@ func TestWriteEventsMapsAttributes(t *testing.T) {
 	db := ruleDB(t)
 	renameAttr(t, db, 1, "a", "b")
 	blockAttr(t, db, 1, "x")
-	execAll(t, db, `DELETE FROM project_attributes`)
-
 	writeAttrs(t, db, 1, store.FamilyProduct, "p1", map[string]string{"a": "1", "x": "2", "y": "3"})
 	writeAttrs(t, db, 1, store.FamilyMeasures, "m1", map[string]string{"a": "4"})
 	writeAttrs(t, db, 1, store.FamilyViews, "v1", map[string]string{"a": "5", "x": "6"})
@@ -312,7 +297,7 @@ func TestWriteEventsMapsAttributes(t *testing.T) {
 	}; !reflect.DeepEqual(got, want) {
 		t.Errorf("usage_attributes = %v, want %v", got, want)
 	}
-	if got, want := catalogRows(t, db), []string{"1/b=0", "1/y=0", "2/a=0", "2/x=0"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("catalog = %v, want %v", got, want)
+	if got := catalogRows(t, db); len(got) != 0 {
+		t.Errorf("catalog = %v, want no rows written", got)
 	}
 }

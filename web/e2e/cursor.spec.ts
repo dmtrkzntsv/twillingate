@@ -12,9 +12,8 @@ const TOKEN = 'e2e-token'
 // that ends up with another cursor. A deliberate exception goes in ALLOWED
 // with the reason: a drag handle's grab, the sidebar's edge rail, whose
 // resize cursor says it toggles the sidebar by its edge, and a widget's
-// resize corner, whose cursor says it drags the corner. A disabled control
-// (a blocked attribute's breakdown switch) is not clickable and shows
-// not-allowed.
+// resize corner, whose cursor says it drags the corner. A disabled control is
+// not clickable and shows not-allowed.
 const CLICKABLE = [
   "button:not(:disabled):not([aria-disabled='true'])",
   "a[href]:not([aria-disabled='true'])",

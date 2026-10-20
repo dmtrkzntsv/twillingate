@@ -69,7 +69,7 @@ func migrate(ctx context.Context, cfg *config.Config, st store.Store, reader *ar
 	if err := reg.Reload(ctx); err != nil {
 		return err
 	}
-	if err := st.RebuildFlatView(ctx, reg.Snapshot(ctx).DeclaredAttributeKeys()); err != nil {
+	if err := st.RebuildFlatView(ctx, nil); err != nil {
 		return fmt.Errorf("rebuild v_events_flat: %w", err)
 	}
 	boot := newWidgetFiles(cfg, reader, reg)

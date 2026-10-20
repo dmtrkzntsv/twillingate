@@ -54,7 +54,7 @@ Projects live in a registry table, managed through the CLI or, over the API
 
 | Operation | CLI | MCP tool | Tool arguments |
 | --- | --- | --- | --- |
-| Create a project | `twillingate project create` | `create_project` | `{name, allowed_origins, attributes}`; `name` required; `skip_key: true` issues no first key; returns the new `project_id` |
+| Create a project | `twillingate project create` | `create_project` | `{name, allowed_origins}`; `name` required; `skip_key: true` issues no first key; returns the new `project_id` |
 | Change one | `twillingate project update` | `update_project` | `{project_id, …}`; merges, so an omitted field keeps its value and `allowed_origins: []` clears the list |
 | List them | `twillingate project list` | `list_projects` | none; in the order you set, a new project last |
 | Reorder them | `twillingate project move` | `move_project` | `{project_id, after}`; `after` is the project to follow, archived ones included, `0` puts it first. The console does the same by dragging a card on the Projects page or a project in the sidebar |
@@ -83,7 +83,7 @@ for a project, all its data) once it has been archived longer than
 
 ```bash
 twillingate project create -name "My App" \
-  -origin https://myapp.com -attr plan -attr tier
+  -origin https://myapp.com
 twillingate project list                                 # id  name
 twillingate project update -id 1 -origin https://myapp.com -origin https://www.myapp.com
 twillingate project update -id 1 -clear-origins
@@ -94,7 +94,7 @@ twillingate key list -project-id 1
 twillingate key disable -project-id 1 -label ios-2025
 ```
 
-`-origin` and `-attr` replace the whole list rather than merging;
+`-origin` replaces the whole list rather than merging;
 `-clear-origins` (or `allowed_origins: []`) empties the origins.
 
 | Key | Meaning |
@@ -103,56 +103,25 @@ twillingate key disable -project-id 1 -label ios-2025
 | `name` | Display name. Required; free text, need not be unique; change it with `project update -name`. |
 | `ingest_keys` | One or more `{key, label, disabled}` credentials. Required. |
 | `allowed_origins` | Origins allowed to post for this project. `*` is a wildcard — `https://*.example.com` covers every subdomain, a bare `*` allows any origin. Add `tauri://localhost` or `app://.` for Electron/Tauri. |
-| `attributes` | Custom product-event attribute keys the database breaks down (the event files break every key down, declared or not; see [Attribute breakdowns](#attribute-breakdowns)); a repeated key is kept once. Answered ordered by key. |
 
-### Attribute breakdowns
+### Attributes
 
-```bash
-twillingate project update -id 1 -attr plan -attr tier
-```
+A project declares no attributes. `product_attributes`, `measures` (by
+`attr_key`) and the dashboards read the
+[event files](#writing-sql-against-the-event-files), where every key the
+events carried breaks down: each custom attribute key, and the reserved keys
+`$platform`, `$os`, `$app_version`, `$app_locale`, `$kind`, `$browser`,
+`$device`, `$browser_locale`, `$country` (the country ingest derives from the
+connection's IP, never sent by a client), `$host`, `$path`, `$referrer`,
+`$utm_source`, `$utm_medium`, `$utm_campaign`, `$os_version`,
+`$browser_version` and `$device_model`, each read from its column. Nothing is
+capped there and there is no `(other)` row. Sending a key is all it takes;
+`create_project`, `update_project` and `project create`/`update` have no field
+or flag for it, and `list_projects` answers none.
 
-`product_attributes`, `measures` (by `attr_key`) and the dashboards read
-the [event files](#writing-sql-against-the-event-files), where every key the
-events carried breaks down without being declared: each custom attribute
-key, and the reserved keys `$platform`, `$os`, `$app_version`,
-`$app_locale`, `$kind`, `$browser`, `$device`, `$browser_locale`,
-`$country` (the country ingest derives from the connection's IP, never sent
-by a client), `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`,
-`$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`, each
-read from its column. Nothing is capped there and there is no `(other)`
-row.
-
-Declaring a key matters only to the database's rollups, which no tool
-reads since `query`'s `source: "sqlite"` was removed. There a declared key
-gets a value breakdown (counts and unique users/groups per value, per
-event, per day) in `agg_product_attrs` / `v_product_attrs`. A declared custom key also gets an `attr_*` column in `v_events_flat`; a declared
-reserved key is already a typed column there. Undeclared keys are still
-stored and reachable via `json_extract(attributes, '$.junk')`; declaring one
-later does not backfill. `ATTRIBUTE_VALUES_TOP_N` (default 100, 0 for no cap,
-set [server-side](deployment.md#configure-the-collector)) keeps the top N values per
-key and collapses the tail into one `(other)` row whose unique counts are
-recomputed from raw, so **a client sending the literal `(other)` loses its own
-count**. Never declare an unbounded custom key such as a session id. In the
-database, the first nine reserved keys above roll up automatically; the other
-nine (`$host` to `$device_model`) roll up only once declared like a custom
-key, and the top-N cap keeps a declared `$path` bounded there. Declaring any
-other `$` key is refused. Rollups run whether or not a project declares attributes; declaring
-only adds the per-value breakdown and the `attr_*` columns.
-
-Declaring an attribute makes it a breakdown: the key's row in the project's
-attributes catalog is marked, and the database's daily rollup keeps per-value
-rows for it in `v_product_attrs`. `product_attributes` needs no declaration:
-it reads the files, where every key the events carried breaks down. The catalog holds one row
-per key the project received within the raw window, plus every breakdown,
-received or not. `attributes` is the catalog's breakdown keys, ordered by key
-whatever order they were written in; writing it marks the keys listed and
-unmarks the rest. Pick keys from `list_attributes`, which lists the keys
-events actually carry. A key that is blocked or
-renamed away cannot be a breakdown (`conflict`, naming the rule; see
-[Attribute rules](#attribute-rules)).
-`ATTRIBUTE_BREAKDOWNS_MAX` (default 50) bounds the attributes all active
-projects declare together; a create or update that adds attributes past it is
-refused (`invalid`), while a save that adds none always passes.
+`list_attributes` lists the keys a project's events carried over a range,
+with each key's events and distinct values; see [Attribute rules](#attribute-rules)
+to rename, merge or block one.
 
 ### Ingest keys
 
@@ -268,8 +237,6 @@ returns the rule:
   stored with `to`, with no warning. The target wins there too: an event that
   sends both keeps `to`'s value, and of several keys renamed to one target
   that arrive without it, the first in key order wins.
-- **The catalog**: `from`'s row goes, and `to` is a breakdown if either was,
-  so the `attr_*` column follows the key and the breakdown budget never grows.
 
 A key with no stored values is accepted. Before writing the rule, the rename
 looks in the event files for a value of `to` in the project's whole history,
@@ -281,7 +248,7 @@ written.
 `merge_attribute {project_id, from, to}` does the same onto a key that may
 already have values, and answers the same, without looking in the files.
 `from` needs no values: that is how an alias is added for an app version not
-yet shipped. Merging two breakdowns leaves one, freeing a place in the budget.
+yet shipped.
 
 - **Chains and renaming back.** Renaming or merging B into C retargets every
   rule `A → B` to `A → C`, so a rule's target is never another rule's source.
@@ -300,8 +267,6 @@ events:
 - Ingest stores the event without the key, and the response carries a
   [warning](#responses-and-retry), once per key per batch, on the first event
   that carried it. Blocking `B` also strips keys renamed to `B`.
-- The key stops being a breakdown, and with it go its `attr_*` column and its
-  place in the budget.
 - Every read of the event files hides the key's stored values, history
   included, so `list_attributes` lists it as not received. Nothing is
   deleted: the files keep the values until their month leaves
@@ -999,7 +964,7 @@ keys, validated the same way; the JS SDK sends them on every batch.
 ### Product (everything else)
 
 Any other name is a custom product event; don't `$`-prefix your own names.
-Attributes are free-form — see [Attribute breakdowns](#attribute-breakdowns) for
+Attributes are free-form — see [Attributes](#attributes) for
 which keys get their own column and value breakdown.
 
 ```js
@@ -1477,7 +1442,7 @@ history starts where the files' does. `query`, the count of events in
 | `views_overview` | `kind` (optional) | Per day: visitors (distinct per day and kind, added up), views, and the `sessions` table's sessions, bounces, `duration_sec`, `bounce_rate` and `avg_session_sec`, summed across kinds unless `kind` filters one. Today included |
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows of one dimension (the table below), busiest by visitors (distinct per day and value, added up over the range). Two-key dimensions return both columns. A value not sent reads as empty |
 | `product_events` | `event` (optional filter) | Count and unique users (distinct per day) per event name and day, plus daily totals |
-| `product_attributes` | `event` (optional filter) | At most 92 days a call (a longer range is refused: use `query` for it). Count, unique users and unique groups (`0` when no group was involved) per event, day and value of every key the events carried, with no declaration needed: each custom attribute key and the eighteen reserved keys listed in [Attribute breakdowns](#attribute-breakdowns), `$path` and `$utm_source` among them |
+| `product_attributes` | `event` (optional filter) | At most 92 days a call (a longer range is refused: use `query` for it). Count, unique users and unique groups (`0` when no group was involved) per event, day and value of every key the events carried, with no declaration needed: each custom attribute key and the eighteen reserved keys listed in [Attributes](#attributes), `$path` and `$utm_source` among them |
 | `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys `product_attributes` breaks down (`$browser`, `$path`, …); a key none carried gives no rows |
 | `retention` | `actor` (`user` or `install`) | Cohort curves for the cohorts that began in the range, every offset, counted over the days before today (UTC), plus `aggregated_through`, the newest such day with views or product events — cohorts and offsets after it are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` (default 50) | Per user or group, busiest first (views plus product events in the range): its `actors` and `users` (itself for a user, its members for a group), each distinct per day and added up over the days, its `views`, `events` and the display `name` sent with its latest event. **Surfaces personal data on projects whose clients send ids** |

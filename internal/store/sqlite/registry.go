@@ -40,12 +40,8 @@ func (d *DB) ConfigVersion(ctx context.Context) (int64, error) {
 func (d *DB) LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store.RegistryKey, error) {
 	// archived_at is stored as datetime('now') writes it (see purge.go);
 	// it is read as RFC 3339, the form every other archived_at takes.
-	// Attributes is the catalog's breakdown keys, ordered by key, as the
-	// JSON array the registry has always carried.
 	rows, err := d.db.QueryContext(ctx, `SELECT p.id, p.name,
 		p.allowed_origins,
-		COALESCE((SELECT json_group_array(key ORDER BY key) FROM project_attributes a
-			WHERE a.project_id = p.id AND a.breakdown = 1), '[]'),
 		p.archived_at IS NOT NULL,
 		COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.archived_at), ''), p.sort_key
 		FROM projects p ORDER BY p.sort_key, p.id`)
@@ -57,7 +53,7 @@ func (d *DB) LoadRegistry(ctx context.Context) ([]store.RegistryProject, []store
 	for rows.Next() {
 		var p store.RegistryProject
 		if err := rows.Scan(&p.ID, &p.Name,
-			&p.AllowedOrigins, &p.Attributes, &p.Archived, &p.ArchivedAt, &p.SortKey); err != nil {
+			&p.AllowedOrigins, &p.Archived, &p.ArchivedAt, &p.SortKey); err != nil {
 			return nil, nil, err
 		}
 		ps = append(ps, p)
@@ -157,35 +153,7 @@ func insertProject(ctx context.Context, tx *sql.Tx, p store.RegistryProject) (in
 	if err != nil {
 		return 0, err
 	}
-	if err := syncBreakdowns(ctx, tx, id, p.Attributes); err != nil {
-		return 0, fmt.Errorf("create project %q: %w", p.Name, err)
-	}
 	return id, nil
-}
-
-// syncBreakdowns makes the catalog's breakdown flags match list (a JSON
-// array of keys): listed keys get a row with breakdown 1, the project's
-// other rows get 0. Rows left with no breakdown stay while usage_attributes
-// still holds the key; the rest go now, as the daily pass would prune them
-// (spec D3). An empty string is no list, as the column's '[]' default had
-// it.
-func syncBreakdowns(ctx context.Context, tx *sql.Tx, projectID int64, list string) error {
-	if list == "" {
-		list = "[]"
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE project_attributes SET breakdown = 0
-		WHERE project_id = ?1 AND breakdown = 1 AND key NOT IN (SELECT value FROM json_each(?2))`, projectID, list); err != nil {
-		return fmt.Errorf("breakdowns: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO project_attributes (project_id, key, breakdown)
-		SELECT ?1, value, 1 FROM json_each(?2) WHERE type = 'text' AND true
-		ON CONFLICT (project_id, key) DO UPDATE SET breakdown = 1`, projectID, list); err != nil {
-		return fmt.Errorf("breakdowns: %w", err)
-	}
-	if err := pruneCatalog(ctx, tx, projectID); err != nil {
-		return fmt.Errorf("breakdowns: %w", err)
-	}
-	return nil
 }
 
 func (d *DB) UpdateProject(ctx context.Context, p store.RegistryProject, a store.AuditEntry) error {
@@ -198,11 +166,6 @@ func (d *DB) UpdateProject(ctx context.Context, p store.RegistryProject, a store
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
 			return fmt.Errorf("update project: unknown id %d: %w", p.ID, store.ErrNotFound)
-		}
-		if !p.KeepBreakdowns {
-			if err := syncBreakdowns(ctx, tx, p.ID, p.Attributes); err != nil {
-				return fmt.Errorf("update project %d: %w", p.ID, err)
-			}
 		}
 		return auditAndBump(ctx, tx, a)
 	})
@@ -301,7 +264,11 @@ func (d *DB) SetIngestKeyDisabled(ctx context.Context, projectID int64, label st
 // both directions, so a forgotten addition or a stale entry fails loudly
 // instead of silently orphaning rows on DeleteProjectData.
 var projectTables = []string{
-	"events", "usage_attributes", "project_attributes",
+	"events", "usage_attributes",
+	// No code reads or writes project_attributes any more, but databases
+	// from before keep its rows until migration 042 drops the table, and
+	// its foreign key would refuse the project's deletion.
+	"project_attributes",
 	"agg_views_daily", "agg_views_paths", "agg_views_hosts", "agg_views_referrers",
 	"agg_views_utm", "agg_views_countries", "agg_views_platforms", "agg_views_os",
 	"agg_views_browsers", "agg_views_app_versions", "agg_views_devices", "agg_views_displays",

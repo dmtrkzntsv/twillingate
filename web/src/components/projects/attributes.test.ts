@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { describeKey } from './breakdowns'
+import { describeKey } from './attributes'
 
 describe('describeKey', () => {
   it('says what a key received over the range, and when it is not received', () => {

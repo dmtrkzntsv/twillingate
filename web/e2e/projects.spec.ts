@@ -117,41 +117,6 @@ test('lists Projects first in the sidebar, with the projects under it, closed st
   await expect(projects).toHaveCount(0)
 })
 
-test('switches a breakdown on for an attribute the seeded project received, then off', async ({ page }) => {
-  // Login, the wait below and the cleanup share one test limit, which must
-  // outlast the wait's own 90s or the default 30s would cut it short.
-  test.setTimeout(120_000)
-  await login(page)
-  await page.goto('/app/projects')
-  await page.getByRole('article', { name: 'dev' }).getByRole('link', { name: 'dev' }).click()
-  await page.getByRole('link', { name: 'Settings', exact: true }).click()
-  const attributes = page.getByRole('region', { name: 'Attributes' })
-  const row = attributes.getByRole('row', { name: /Break down plan\b/ })
-  // The pass that counts the seeded days runs after the server starts listening
-  // (about 20s on a loaded host), so reload, which refetches the keys, until
-  // `plan` is listed. The wait is bounded by the toPass timeout (90s), inside
-  // the test's 120s limit set above.
-  await expect(async () => {
-    try {
-      await expect(row).toBeVisible({ timeout: 3_000 })
-    } catch (e) {
-      await page.reload()
-      throw e
-    }
-  }).toPass({ timeout: 90_000, intervals: [2_000] })
-  await expect(row.getByRole('cell', { name: /events · \d+ values?/ })).toBeVisible()
-  // plan stays undeclared in the seed; the switch declares it. It turns on
-  // once the attributes are fetched again, so wait for it.
-  const plan = attributes.getByRole('switch', { name: 'Break down plan', exact: true })
-  await expect(plan).not.toBeChecked()
-  await plan.click()
-  await expect(plan).toBeChecked()
-  // Leave the seed as it was for the other tests.
-  await plan.click()
-  await page.getByRole('button', { name: 'Remove breakdown' }).click()
-  await expect(plan).not.toBeChecked()
-})
-
 /** Creates a project over REST, archived afterwards so it leaves the grid to the other specs. */
 async function createProject(request: APIRequestContext, name: string): Promise<number> {
   const res = await request.post('/api/projects', { headers: { Authorization: `Bearer ${TOKEN}` }, data: { name, skip_key: true } })

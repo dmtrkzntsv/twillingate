@@ -79,7 +79,7 @@ func (o *Ops) moveAttribute(ctx context.Context, actor, action string, projectID
 		Actor: actor, Action: action, Subject: attrSubject(projectID, from), Detail: "to " + to}); err != nil {
 		return store.AttributeRule{}, err
 	}
-	o.afterWrite(ctx, true, projectID)
+	o.afterWrite(ctx, projectID)
 	return o.writtenAttributeRule(ctx, store.AttributeRule{ProjectID: projectID, Key: from,
 		Action: store.EventRuleRename, To: to}), nil
 }
@@ -95,7 +95,7 @@ func (o *Ops) BlockAttribute(ctx context.Context, actor string, projectID int64,
 		Actor: actor, Action: "attribute.block", Subject: attrSubject(projectID, key)}); err != nil {
 		return store.AttributeRule{}, err
 	}
-	o.afterWrite(ctx, true, projectID)
+	o.afterWrite(ctx, projectID)
 	return o.writtenAttributeRule(ctx, store.AttributeRule{ProjectID: projectID, Key: key,
 		Action: store.EventRuleBlock}), nil
 }
@@ -112,7 +112,7 @@ func (o *Ops) RemoveAttributeRule(ctx context.Context, actor string, projectID i
 		Actor: actor, Action: "attribute.rule_remove", Subject: attrSubject(projectID, key)}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, true, projectID)
+	o.afterWrite(ctx, projectID)
 	return nil
 }
 
@@ -131,24 +131,4 @@ func (o *Ops) writtenAttributeRule(ctx context.Context, r store.AttributeRule) s
 		}
 	}
 	return r
-}
-
-// checkRuledBreakdowns refuses a breakdown list naming a key the project
-// has ruled away: a blocked key is stripped from every event, and a
-// renamed one is stored under its target, so neither could ever fill a
-// column.
-func (o *Ops) checkRuledBreakdowns(ctx context.Context, projectID int64, keys []string) error {
-	set := o.Reg.Snapshot(ctx).AttributeRules(projectID)
-	if set.Empty() {
-		return nil
-	}
-	for _, k := range keys {
-		if set.Blocked[k] {
-			return fmt.Errorf("attribute %q is blocked; remove the block to declare it: %w", k, ErrConflict)
-		}
-		if to, ok := set.Renamed[k]; ok {
-			return fmt.Errorf("attribute %q is renamed to %q; declare that instead: %w", k, to, ErrConflict)
-		}
-	}
-	return nil
 }

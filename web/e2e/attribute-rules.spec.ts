@@ -14,7 +14,7 @@ async function login(page: Page): Promise<void> {
   await page.waitForURL(/\/app\/projects$/)
 }
 
-test('switches breakdowns on and renames, merges, blocks and unblocks attributes from a project settings page', async ({ page, request }) => {
+test('renames, merges, blocks and unblocks attributes from a project settings page', async ({ page, request }) => {
   // A login, a wait for the write buffer's flush and a dozen UI steps.
   test.setTimeout(120_000)
   const headers = { Authorization: `Bearer ${TOKEN}` }
@@ -35,17 +35,12 @@ test('switches breakdowns on and renames, merges, blocks and unblocks attributes
     const row = (name: string) => rows.getByRole('row', { name: new RegExp(`\\b${name}\\b`) })
     for (const k of ['planType', 'plan', 'debug']) await expect(row(k)).toBeVisible()
 
-    // Break plan down: its switch turns on once the list is fetched again, and the project declares it.
-    const planSwitch = attributes.getByRole('switch', { name: 'Break down plan', exact: true })
-    await expect(planSwitch).not.toBeChecked()
-    await planSwitch.click()
-    await expect(planSwitch).toBeChecked()
-    await page.reload()
-    await expect(attributes.getByRole('switch', { name: 'Break down plan', exact: true })).toBeChecked()
+    // Every key breaks down in the event files: no switch, and no declared list on the project.
+    await expect(attributes.getByRole('switch')).toHaveCount(0)
     const listed = await request.get('/api/projects', { headers })
     expect(listed.ok(), await listed.text()).toBeTruthy()
     const { projects } = (await listed.json()) as { projects: { project_id: number; attributes?: string[] }[] }
-    expect(projects.find((p) => p.project_id === id)?.attributes).toEqual(['plan'])
+    expect(projects.find((p) => p.project_id === id)?.attributes).toBeUndefined()
 
     // Rename planType: its stored values move to the new key, which lists the old one as an alias.
     await attributes.getByRole('button', { name: 'Actions for planType' }).click()
@@ -67,17 +62,14 @@ test('switches breakdowns on and renames, merges, blocks and unblocks attributes
     // Aliases follow the chain: planType was renamed to plan_type, which is now merged into plan.
     await expect(row('plan').getByRole('button', { name: 'Remove alias plan_type' })).toBeVisible()
     await expect(row('plan').getByRole('button', { name: 'Remove alias planType' })).toBeVisible()
-    // The breakdown stays on the target.
-    await expect(attributes.getByRole('switch', { name: 'Break down plan', exact: true })).toBeChecked()
 
-    // Block debug: confirmed, marked on its row with its switch off the table, and stripped on arrival.
+    // Block debug: confirmed, marked on its row, and stripped on arrival.
     await attributes.getByRole('button', { name: 'Actions for debug' }).click()
     await page.getByRole('menuitem', { name: 'Block…' }).click()
     await expect(page.getByRole('alertdialog', { name: 'Block debug?' })).toBeVisible()
     await page.getByRole('button', { name: 'Block attribute' }).click()
     await expect(page.getByText('Blocked debug')).toBeVisible()
     await expect(row('debug').getByText('Blocked', { exact: true })).toBeVisible()
-    await expect(attributes.getByRole('switch', { name: 'Break down debug' })).toBeDisabled()
     await attributes.getByRole('button', { name: 'Actions for debug' }).click()
     await expect(page.getByRole('menuitem', { name: 'Unblock' })).toBeVisible()
     await expect(page.getByRole('menuitem', { name: 'Block…' })).toHaveCount(0)
@@ -88,12 +80,11 @@ test('switches breakdowns on and renames, merges, blocks and unblocks attributes
     expect(again.accepted).toBe(1)
     expect(again.warnings?.map((w) => w.reason)).toEqual(['attribute "debug" is blocked in this project, dropped'])
 
-    // Unblock debug from its row: the mark and the disabled switch go.
+    // Unblock debug from its row: the mark goes.
     await attributes.getByRole('button', { name: 'Actions for debug' }).click()
     await page.getByRole('menuitem', { name: 'Unblock' }).click()
     await expect(page.getByText('Removed the rule for debug')).toBeVisible()
     await expect(attributes.getByText('Blocked', { exact: true })).toHaveCount(0)
-    await expect(attributes.getByRole('switch', { name: 'Break down debug' })).toBeEnabled()
   } finally {
     // Archived, so later specs' Projects page does not grow by one card per run.
     await request.post(`/api/projects/${id}/archive`, { headers })

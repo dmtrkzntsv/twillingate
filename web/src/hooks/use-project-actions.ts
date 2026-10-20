@@ -43,12 +43,12 @@ export interface ProjectActions {
   pending: boolean
 }
 
-/** What a project write changes: the list, its keys, the usage cards, and the attributes' breakdown switches and budget. */
-const PROJECT_WRITE = ['projects', 'keys', 'usage', 'attributes']
+/** What a project write changes: the list, its keys, and the usage cards. */
+const PROJECT_WRITE = ['projects', 'keys', 'usage']
 /** What an event rule changes: the rules, the names listed, and the usage counts. */
 const EVENT_WRITE = ['event-rules', 'event-names', 'usage']
-/** What an attribute rule changes: the attributes listed, the project's breakdowns (a rename moves one), and the usage counts. */
-const ATTRIBUTE_WRITE = ['attributes', 'projects', 'usage']
+/** What an attribute rule changes: the attributes listed, and the usage counts. */
+const ATTRIBUTE_WRITE = ['attributes', 'usage']
 /** What a key write changes. */
 const KEY_WRITE = ['keys']
 
@@ -72,8 +72,8 @@ export function useProjectActions(): ProjectActions {
         const out = await fn()
         toast.success(done)
         const refetches = changed.map((key) => client.invalidateQueries({ queryKey: [key] }))
-        // Pending holds until the project list has refetched: breakdowns
-        // send the whole attribute list, so a second write in that gap would
+        // Pending holds until the project list has refetched: an origins
+        // save sends the whole list, so a second write in that gap would
         // build on the old list and undo the first.
         if (changed.includes('projects')) await refetches[changed.indexOf('projects')]
         return out

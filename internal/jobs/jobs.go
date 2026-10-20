@@ -212,7 +212,6 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	snap := r.reg.Snapshot(ctx)
 	for _, id := range ids {
 		// Cohorts, actors and identity rollups read raw rows across both
 		// raw tables and never delete them, so they run over every day
@@ -260,9 +259,8 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		attrs := snap.AttributesFor(id)
 		for _, day := range prodDays {
-			if err := r.store.AggregateProductDay(ctx, id, day, attrs, r.topN); err != nil {
+			if err := r.store.AggregateProductDay(ctx, id, day, nil, r.topN); err != nil {
 				r.logger.Error("aggregate product failed", "project", id, "day", day.String(), "error", err)
 			}
 		}
@@ -276,7 +274,7 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 			return err
 		}
 		for _, day := range measureDays {
-			if err := r.store.AggregateMeasureDay(ctx, id, day, attrs, r.topN); err != nil {
+			if err := r.store.AggregateMeasureDay(ctx, id, day, nil, r.topN); err != nil {
 				r.logger.Error("aggregate measures failed", "project", id, "day", day.String(), "error", err)
 			}
 		}
@@ -292,7 +290,7 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 		}
 	}
 
-	if err := r.store.RebuildFlatView(ctx, snap.DeclaredAttributeKeys()); err != nil {
+	if err := r.store.RebuildFlatView(ctx, nil); err != nil {
 		r.logger.Error("flat view rebuild failed", "error", err)
 	}
 	if err := r.store.IncrementalVacuum(ctx); err != nil {

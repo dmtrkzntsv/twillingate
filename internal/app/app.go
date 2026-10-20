@@ -112,7 +112,6 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		n   int
 	}{
 		{"attributes_top_n", cfg.AttributeValuesTopN},
-		{"attribute_breakdowns_max", cfg.AttributeBreakdownsMax},
 		{"identities_top_n", cfg.IdentitiesTopN},
 	} {
 		if err := st.SetMeta(ctx, m.key, strconv.Itoa(m.n)); err != nil {
@@ -125,7 +124,6 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		return err
 	}
 	ops := manage.NewOps(reg, st)
-	ops.BreakdownsMax = cfg.AttributeBreakdownsMax
 	ops.FormDraftDays = cfg.Forms.DraftDays
 	ops.Presence = &filePresence{reader: files, reg: reg, timeout: cfg.Console.QueryTimeout}
 	if len(reg.Snapshot(ctx).Projects()) == 0 {

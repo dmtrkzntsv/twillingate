@@ -183,7 +183,7 @@ func setupBenchDB(b *testing.B) *DB {
 	// Registered, as every project with events is: the attribute views
 	// read each project's keys from its row.
 	id, err := db.CreateProject(ctx, store.RegistryProject{
-		Name: "bench", AllowedOrigins: "[]", Attributes: "[]"},
+		Name: "bench", AllowedOrigins: "[]"},
 		store.AuditEntry{Actor: "bench", Action: "project.create"})
 	if err != nil {
 		b.Fatal(err)

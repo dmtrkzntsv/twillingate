@@ -27,10 +27,6 @@ type Ops struct {
 	// moveMu keeps two moves in this process from placing against the
 	// same snapshot.
 	moveMu sync.Mutex
-	// BreakdownsMax is ATTRIBUTE_BREAKDOWNS_MAX: the attributes all active
-	// projects may declare together; 0 is no limit. Set by the caller
-	// after NewOps.
-	BreakdownsMax int
 	// FormDraftDays is RETENTION_FORMS_DRAFT_DAYS: how long a restored draft form
 	// accepts submissions. Set by the caller after NewOps; below 1 means
 	// the default of 7.
@@ -45,40 +41,19 @@ type Ops struct {
 
 func NewOps(reg *Registry, st Store) *Ops { return &Ops{Reg: reg, St: st, now: time.Now} }
 
-// rebuildFlatView refreshes v_events_flat from the registry's CURRENT
-// snapshot, so a config edit (a new or changed attribute list) reaches BI
-// tools immediately rather than waiting for the next daily pass. Callers
-// must Reg.Reload first.
-//
-// Errors are logged, not returned: a view rebuild is a side effect of the
-// operation, not the thing the caller asked for, so it must never fail
-// project creation or update over a rebuild hiccup — the nightly pass is
-// the repair net.
-func (o *Ops) rebuildFlatView(ctx context.Context) {
-	keys := o.Reg.Snapshot(ctx).DeclaredAttributeKeys()
-	if err := o.St.RebuildFlatView(ctx, keys); err != nil {
-		o.Reg.logger.Warn("flat view rebuild failed", "error", err)
-	}
-}
-
 // afterWrite refreshes the in-process snapshot once a write touching the
-// given projects has committed and, when rebuildView is set, the flat view
-// with it. A failed reload is logged rather than returned: the write
+// given projects has committed. A failed reload is logged rather than returned: the write
 // already happened, and reporting it as failed would send the caller into
 // a retry that collides with it. Instead those projects are withheld —
 // their keys authorize nothing — until the next read reloads, so a revoked
-// key or archived project never keeps ingesting on a stale snapshot. The
-// flat view waits for the next write or the daily pass. Reports whether
+// key or archived project never keeps ingesting on a stale snapshot. Reports whether
 // the snapshot now reflects the write.
-func (o *Ops) afterWrite(ctx context.Context, rebuildView bool, ids ...int64) bool {
+func (o *Ops) afterWrite(ctx context.Context, ids ...int64) bool {
 	if err := o.Reg.Reload(ctx); err != nil {
 		o.Reg.logger.Warn("registry reload after write failed; refusing the affected projects' events until the next read reloads",
 			"projects", ids, "error", err)
 		o.Reg.withhold(ids...)
 		return false
-	}
-	if rebuildView {
-		o.rebuildFlatView(ctx)
 	}
 	return true
 }
@@ -96,7 +71,7 @@ func (o *Ops) written(ctx context.Context, spec ProjectSpec, reloaded bool) *Pro
 	// for the caller's next read.
 	cur := o.Reg.snap.Load().Project(spec.ID)
 	p := &Project{ID: spec.ID, Name: spec.Name,
-		AllowedOrigins: spec.AllowedOrigins, Attributes: spec.Attributes}
+		AllowedOrigins: spec.AllowedOrigins}
 	if cur != nil {
 		p.Archived = cur.Archived
 	}
@@ -114,14 +89,10 @@ type ProjectSpec struct {
 	ID             int64
 	Name           string
 	AllowedOrigins []string
-	Attributes     []string
 }
 
 // validate checks a complete spec: the one a caller built for create, or
-// the merged one UpdateProject built over the current row. It also
-// collapses duplicate attributes, keeping the first of each in order, so
-// what is stored, counted and held against ATTRIBUTE_BREAKDOWNS_MAX is one
-// entry per key.
+// the merged one UpdateProject built over the current row.
 func (sp *ProjectSpec) validate() error {
 	if strings.TrimSpace(sp.Name) == "" {
 		return fmt.Errorf("%w: name must not be empty", ErrInvalid)
@@ -131,22 +102,12 @@ func (sp *ProjectSpec) validate() error {
 			return fmt.Errorf("%w: allowed_origins must not contain an empty origin", ErrInvalid)
 		}
 	}
-	for _, a := range sp.Attributes {
-		if !strings.HasPrefix(a, "$") {
-			continue
-		}
-		if _, ok := store.DeclarableAttributes[a]; !ok {
-			return fmt.Errorf("%w: attribute %s cannot be declared; the reserved keys a project may declare are %s",
-				ErrInvalid, a, strings.Join(store.DeclarableAttributeKeys(), ", "))
-		}
-	}
-	sp.Attributes = dedupe(sp.Attributes)
 	return nil
 }
 
 // dedupe returns keys without repeats, first occurrences in order. It
 // returns keys itself when there are none, and never writes to it: the
-// slice may be the registry snapshot's.
+// slice may be a snapshot's.
 func dedupe(keys []string) []string {
 	seen := make(map[string]bool, len(keys))
 	for i, k := range keys {
@@ -174,15 +135,8 @@ func (sp *ProjectSpec) row() (store.RegistryProject, error) {
 	if err != nil {
 		return store.RegistryProject{}, err
 	}
-	attrs, err := json.Marshal(sp.Attributes)
-	if sp.Attributes == nil {
-		attrs, err = []byte("[]"), nil
-	}
-	if err != nil {
-		return store.RegistryProject{}, err
-	}
 	return store.RegistryProject{ID: sp.ID, Name: sp.Name,
-		AllowedOrigins: string(origins), Attributes: string(attrs)}, nil
+		AllowedOrigins: string(origins)}, nil
 }
 
 func (o *Ops) CreateProject(ctx context.Context, actor string, spec ProjectSpec) (*Project, error) {
@@ -217,9 +171,6 @@ func (o *Ops) create(ctx context.Context, actor string, spec ProjectSpec, write 
 	if err := spec.validate(); err != nil {
 		return nil, err
 	}
-	if err := o.checkBreakdowns(ctx, nil, spec.Attributes); err != nil {
-		return nil, err
-	}
 	row, err := spec.row()
 	if err != nil {
 		return nil, err
@@ -229,7 +180,7 @@ func (o *Ops) create(ctx context.Context, actor string, spec ProjectSpec, write 
 		return nil, err
 	}
 	spec.ID = id
-	return o.written(ctx, spec, o.afterWrite(ctx, true, id)), nil
+	return o.written(ctx, spec, o.afterWrite(ctx, id)), nil
 }
 
 // UpdateProject merges spec over the current row (see ProjectSpec) and
@@ -245,77 +196,18 @@ func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec)
 	if spec.AllowedOrigins == nil {
 		spec.AllowedOrigins = cur.AllowedOrigins
 	}
-	// Without attributes the update leaves the catalog alone: the snapshot's
-	// list may predate a rule that just changed it (a block or rename), and
-	// writing it back would re-mark the key.
-	keep := spec.Attributes == nil
-	if keep {
-		spec.Attributes = cur.Attributes
-	}
 	if err := spec.validate(); err != nil {
 		return nil, err
-	}
-	if !keep {
-		if err := o.checkRuledBreakdowns(ctx, spec.ID, spec.Attributes); err != nil {
-			return nil, err
-		}
-		if err := o.checkBreakdowns(ctx, cur, spec.Attributes); err != nil {
-			return nil, err
-		}
 	}
 	row, err := spec.row()
 	if err != nil {
 		return nil, err
 	}
-	row.KeepBreakdowns = keep
 	if err := o.St.UpdateProject(ctx, row, store.AuditEntry{
 		Actor: actor, Action: "project.update", Subject: idSubject(spec.ID)}); err != nil {
 		return nil, err
 	}
-	return o.written(ctx, spec, o.afterWrite(ctx, true, spec.ID)), nil
-}
-
-// checkBreakdowns refuses a save that adds attributes when the active
-// projects would then declare more than BreakdownsMax together. A save
-// that adds none always passes, so a server over the limit can still be
-// edited down. The project counts as active whatever its state, so
-// adding to an archived project cannot dodge the limit.
-func (o *Ops) checkBreakdowns(ctx context.Context, cur *Project, next []string) error {
-	if o.BreakdownsMax <= 0 {
-		return nil
-	}
-	had := map[string]bool{}
-	var curKeys []string
-	if cur != nil {
-		curKeys = cur.Attributes
-	}
-	for _, k := range curKeys {
-		had[k] = true
-	}
-	distinct := map[string]bool{}
-	added := 0
-	for _, k := range next {
-		if distinct[k] {
-			continue
-		}
-		distinct[k] = true
-		if !had[k] {
-			added++
-		}
-	}
-	if added == 0 {
-		return nil
-	}
-	used := o.Reg.Snapshot(ctx).BreakdownsInUse()
-	others := used
-	if cur != nil && !cur.Archived {
-		others -= len(curKeys)
-	}
-	if others+len(distinct) > o.BreakdownsMax {
-		return fmt.Errorf("%w: %d of %d attribute breakdowns are in use; this adds %d (ATTRIBUTE_BREAKDOWNS_MAX)",
-			ErrInvalid, used, o.BreakdownsMax, added)
-	}
-	return nil
+	return o.written(ctx, spec, o.afterWrite(ctx, spec.ID)), nil
 }
 
 func idSubject(id int64) string { return strconv.FormatInt(id, 10) }
@@ -327,7 +219,7 @@ func (o *Ops) ArchiveProject(ctx context.Context, actor string, id int64) error 
 		Actor: actor, Action: "project.archive", Subject: idSubject(id)}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, false, id)
+	o.afterWrite(ctx, id)
 	return nil
 }
 
@@ -336,7 +228,7 @@ func (o *Ops) RestoreProject(ctx context.Context, actor string, id int64) error 
 		Actor: actor, Action: "project.restore", Subject: idSubject(id)}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, false, id)
+	o.afterWrite(ctx, id)
 	return nil
 }
 
@@ -370,7 +262,7 @@ func (o *Ops) MoveProject(ctx context.Context, actor string, id, after int64) er
 		Subject: idSubject(id), Detail: fmt.Sprintf("after %d", after)}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, false)
+	o.afterWrite(ctx)
 	return nil
 }
 
@@ -423,7 +315,7 @@ func (o *Ops) IssueIngestKey(ctx context.Context, actor string, projectID int64,
 		Actor: actor, Action: "key.issue", Subject: keySubject(projectID, label)}); err != nil {
 		return "", err
 	}
-	o.afterWrite(ctx, false, projectID)
+	o.afterWrite(ctx, projectID)
 	return key, nil
 }
 
@@ -432,7 +324,7 @@ func (o *Ops) DisableIngestKey(ctx context.Context, actor string, projectID int6
 		Actor: actor, Action: "key.disable", Subject: keySubject(projectID, label)}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, false, projectID)
+	o.afterWrite(ctx, projectID)
 	return nil
 }
 
@@ -441,7 +333,7 @@ func (o *Ops) EnableIngestKey(ctx context.Context, actor string, projectID int64
 		Actor: actor, Action: "key.enable", Subject: keySubject(projectID, label)}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, false, projectID)
+	o.afterWrite(ctx, projectID)
 	return nil
 }
 
@@ -458,7 +350,7 @@ func (o *Ops) DeleteProject(ctx context.Context, actor string, id int64) error {
 	if err := o.St.IncrementalVacuum(ctx); err != nil {
 		o.Reg.logger.Warn("vacuum after project delete failed", "project_id", id, "error", err)
 	}
-	o.afterWrite(ctx, false, id)
+	o.afterWrite(ctx, id)
 	return nil
 }
 

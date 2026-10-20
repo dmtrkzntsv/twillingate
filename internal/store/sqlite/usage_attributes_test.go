@@ -162,9 +162,9 @@ func catalogRows(t *testing.T, db *DB) []string {
 	return out
 }
 
-// Ingest adds a catalog row for each key a product or measure row carried,
-// declarable reserved keys included; views add none.
-func TestWriteEventsAddsCatalogRows(t *testing.T) {
+// Ingest keeps no catalog: project_attributes is read and written by nothing
+// until migration 042 drops it.
+func TestWriteEventsAddsNoCatalogRows(t *testing.T) {
 	db := newTestDB(t)
 	if id := seedDeclaredProject(t, db, nil); id != 1 {
 		t.Fatalf("project id %d, want 1", id)
@@ -178,9 +178,8 @@ func TestWriteEventsAddsCatalogRows(t *testing.T) {
 	if err := db.WriteEvents(context.Background(), evs); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"1/$host=0", "1/plan=0"}
-	if got := catalogRows(t, db); !reflect.DeepEqual(got, want) {
-		t.Fatalf("got %v\nwant %v", got, want)
+	if got := catalogRows(t, db); len(got) != 0 {
+		t.Fatalf("catalog rows = %v, want none", got)
 	}
 }
 

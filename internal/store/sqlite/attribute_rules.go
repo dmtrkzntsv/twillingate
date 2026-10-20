@@ -62,9 +62,6 @@ func (d *DB) RenameAttribute(ctx context.Context, projectID int64, from, to stri
 			return fmt.Errorf("rename attribute %s to %s: %s is renamed to %s: rename into %s, or remove that rule first: %w",
 				from, to, to, onward, onward, store.ErrConflict)
 		}
-		if err := renameCatalog(ctx, tx, projectID, from, to); err != nil {
-			return err
-		}
 		// The target is no longer mapped away (a block on it was refused
 		// above); every rule that pointed at `from` now points at `to`; a
 		// block or rename on `from` becomes this rename.
@@ -89,38 +86,9 @@ func (d *DB) RenameAttribute(ctx context.Context, projectID int64, from, to stri
 	})
 }
 
-// renameCatalog moves `from`'s catalog row to `to` (D7): `to` is a
-// breakdown after if either was, so a rename or merge never adds to the
-// breakdown budget. A `from` with no row (an alias for keys not sent yet)
-// adds nothing.
-func renameCatalog(ctx context.Context, tx *sql.Tx, projectID int64, from, to string) error {
-	var had, breakdown bool
-	if err := tx.QueryRowContext(ctx,
-		`SELECT COUNT(*) > 0, COALESCE(MAX(breakdown), 0) FROM project_attributes WHERE project_id=? AND key=?`,
-		projectID, from).Scan(&had, &breakdown); err != nil {
-		return fmt.Errorf("rename attribute catalog: %w", err)
-	}
-	if !had {
-		return nil
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM project_attributes WHERE project_id=? AND key=?`, projectID, from); err != nil {
-		return fmt.Errorf("rename attribute catalog: %w", err)
-	}
-	q := `INSERT OR IGNORE INTO project_attributes (project_id, key) VALUES (?, ?)`
-	if breakdown {
-		q = `INSERT INTO project_attributes (project_id, key, breakdown) VALUES (?, ?, 1)
-			ON CONFLICT (project_id, key) DO UPDATE SET breakdown = 1`
-	}
-	if _, err := tx.ExecContext(ctx, q, projectID, to); err != nil {
-		return fmt.Errorf("rename attribute catalog: %w", err)
-	}
-	return nil
-}
-
 // BlockAttribute keeps a block rule for key (D10): ingest strips the key
-// from later events, the event files read none of its values, and it is
-// no longer a breakdown. A block replaces a rename rule of
-// the same key; a rename pointing at the key stays. Blocking a blocked key
+// from later events and the event files read none of its values. A block
+// replaces a rename rule of the same key; a rename pointing at the key stays. Blocking a blocked key
 // changes nothing but the audit row.
 func (d *DB) BlockAttribute(ctx context.Context, projectID int64, key string, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
@@ -129,10 +97,6 @@ func (d *DB) BlockAttribute(ctx context.Context, projectID int64, key string, a 
 			 ON CONFLICT (project_id, kind, family, name) DO UPDATE SET
 			   action='block', to_name=NULL, created_at=excluded.created_at WHERE action <> 'block'`,
 			projectID, key); err != nil {
-			return fmt.Errorf("block attribute %s: %w", key, err)
-		}
-		if _, err := tx.ExecContext(ctx,
-			`UPDATE project_attributes SET breakdown = 0 WHERE project_id=? AND key=?`, projectID, key); err != nil {
 			return fmt.Errorf("block attribute %s: %w", key, err)
 		}
 		return auditAndBump(ctx, tx, a)

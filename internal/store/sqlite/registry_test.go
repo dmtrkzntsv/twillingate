@@ -3,7 +3,6 @@ package sqlite
 import (
 	"context"
 	"errors"
-	"reflect"
 	"sort"
 	"testing"
 	"time"
@@ -64,8 +63,7 @@ func TestUpdateProjectAppliesFieldsAndAudits(t *testing.T) {
 	v0, _ := d.ConfigVersion(ctx)
 
 	updated := store.RegistryProject{ID: id, Name: "Renamed blog",
-		AllowedOrigins: `["https://blog.example.com","https://www.blog.example.com"]`,
-		Attributes:     `["plan"]`}
+		AllowedOrigins: `["https://blog.example.com","https://www.blog.example.com"]`}
 	if err := d.UpdateProject(ctx, updated, store.AuditEntry{
 		Actor: "cli", Action: "project.update", Subject: "1"}); err != nil {
 		t.Fatal(err)
@@ -80,7 +78,7 @@ func TestUpdateProjectAppliesFieldsAndAudits(t *testing.T) {
 	}
 	got := ps[0]
 	if got.Name != "Renamed blog" ||
-		got.AllowedOrigins != updated.AllowedOrigins || got.Attributes != updated.Attributes {
+		got.AllowedOrigins != updated.AllowedOrigins {
 		t.Fatalf("LoadRegistry after update = %+v", got)
 	}
 
@@ -265,26 +263,6 @@ func TestMigrationUpgradeFrom004(t *testing.T) {
 
 	if allowedOrigins != "[]" {
 		t.Errorf("allowed_origins = %q, want '[]'", allowedOrigins)
-	}
-}
-
-// TestProjectsAttributesDefaultsToEmptyArray asserts the new column's
-// NOT NULL DEFAULT '[]', for a row inserted (via ExecForTest, bypassing the
-// application write path) without ever mentioning it.
-func TestProjectsAttributesDefaultsToEmptyArray(t *testing.T) {
-	db := newTestDB(t) // existing helper; applies all migrations
-	ctx := context.Background()
-	if _, err := db.ExecForTest(
-		`INSERT INTO projects (name, allowed_origins)
-		 VALUES ('Blog','[]')`); err != nil {
-		t.Fatal(err)
-	}
-	ps, _, err := db.LoadRegistry(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ps) != 1 || ps[0].Attributes != "[]" {
-		t.Fatalf("Attributes = %q, want \"[]\"", ps[0].Attributes)
 	}
 }
 
@@ -653,11 +631,11 @@ func TestInsertProjectReturnsIncreasingIds(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "test", Action: "project.create"}
-	first, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", AllowedOrigins: "[]", Attributes: "[]"}, audit)
+	first, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", AllowedOrigins: "[]"}, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", AllowedOrigins: "[]", Attributes: "[]"}, audit)
+	second, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", AllowedOrigins: "[]"}, audit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -676,7 +654,7 @@ func TestInsertProjectReturnsIncreasingIds(t *testing.T) {
 func TestInsertKeyConflictIsTyped(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
-	id, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", AllowedOrigins: "[]", Attributes: "[]"},
+	id, err := db.CreateProject(ctx, store.RegistryProject{Name: "Blog", AllowedOrigins: "[]"},
 		store.AuditEntry{Actor: "test", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -690,7 +668,7 @@ func TestInsertKeyConflictIsTyped(t *testing.T) {
 		t.Fatalf("duplicate label err = %v, want ErrConflict from UNIQUE (project_id, label)", err)
 	}
 	// Same label on another project is fine.
-	other, _ := db.CreateProject(ctx, store.RegistryProject{Name: "Shop", AllowedOrigins: "[]", Attributes: "[]"},
+	other, _ := db.CreateProject(ctx, store.RegistryProject{Name: "Shop", AllowedOrigins: "[]"},
 		store.AuditEntry{Actor: "test", Action: "project.create"})
 	if err := db.InsertIngestKey(ctx, store.RegistryKey{Key: "ak_3", ProjectID: other, Label: "web"}, audit); err != nil {
 		t.Fatalf("same label on another project: %v", err)
@@ -701,7 +679,7 @@ func TestProjectIDsAscending(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	for _, n := range []string{"c", "a", "b"} {
-		if _, err := db.CreateProject(ctx, store.RegistryProject{Name: n, AllowedOrigins: "[]", Attributes: "[]"},
+		if _, err := db.CreateProject(ctx, store.RegistryProject{Name: n, AllowedOrigins: "[]"},
 			store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
 			t.Fatal(err)
 		}
@@ -712,92 +690,5 @@ func TestProjectIDsAscending(t *testing.T) {
 	}
 	if len(ids) != 3 || ids[0] != 1 || ids[1] != 2 || ids[2] != 3 {
 		t.Fatalf("ids = %v, want [1 2 3]", ids)
-	}
-}
-
-// A project's attributes are its catalog's breakdown keys (spec D3, D4):
-// create and update set breakdown 1 on the listed keys and 0 on the rest,
-// a key no longer listed stays in the catalog while usage_attributes holds
-// it and goes otherwise, and the registry reads the list back by key.
-func TestProjectBreakdownsLiveInTheCatalog(t *testing.T) {
-	d := openRegistryDB(t)
-	ctx := context.Background()
-	audit := store.AuditEntry{Actor: "cli", Action: "project.update"}
-	id, err := d.CreateProject(ctx, store.RegistryProject{Name: "Blog", AllowedOrigins: `[]`,
-		Attributes: `["plan","$host","tier"]`}, audit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	attrs := func() string {
-		t.Helper()
-		ps, _, err := d.LoadRegistry(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		for _, p := range ps {
-			if p.ID == id {
-				return p.Attributes
-			}
-		}
-		t.Fatalf("project %d not loaded", id)
-		return ""
-	}
-	if got, want := attrs(), `["$host","plan","tier"]`; got != want {
-		t.Errorf("attributes after create = %s, want %s (by key)", got, want)
-	}
-	// tier was received, $host was not: dropping both from the list keeps
-	// tier's catalog row without a breakdown and removes $host's.
-	if _, err := d.db.Exec(`INSERT INTO usage_attributes (project_id, day, attr_key, events) VALUES (?, '2026-10-01', 'tier', 0)`, id); err != nil {
-		t.Fatal(err)
-	}
-	if err := d.UpdateProject(ctx, store.RegistryProject{ID: id, Name: "Blog", AllowedOrigins: `[]`,
-		Attributes: `["plan","seats"]`}, audit); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := attrs(), `["plan","seats"]`; got != want {
-		t.Errorf("attributes after update = %s, want %s", got, want)
-	}
-	if got, want := queryStrings(t, d, `SELECT key, breakdown FROM project_attributes ORDER BY key`),
-		[]string{"plan|1", "seats|1", "tier|0"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("project_attributes = %q, want %q", got, want)
-	}
-	if err := d.UpdateProject(ctx, store.RegistryProject{ID: id, Name: "Blog", AllowedOrigins: `[]`,
-		Attributes: `[]`}, audit); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := attrs(), `[]`; got != want {
-		t.Errorf("attributes after clearing = %s, want %s", got, want)
-	}
-	if got, want := queryStrings(t, d, `SELECT key, breakdown FROM project_attributes ORDER BY key`),
-		[]string{"tier|0"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("project_attributes after clearing = %q, want %q", got, want)
-	}
-}
-
-// KeepBreakdowns (an update that did not send attributes) leaves the
-// catalog as it is: Attributes is ignored, and a row the sync would prune
-// (no breakdown, no usage row) stays.
-func TestUpdateKeepingBreakdownsLeavesTheCatalog(t *testing.T) {
-	d := openRegistryDB(t)
-	ctx := context.Background()
-	audit := store.AuditEntry{Actor: "cli", Action: "project.update"}
-	id, err := d.CreateProject(ctx, store.RegistryProject{Name: "Blog", AllowedOrigins: `[]`,
-		Attributes: `["plan"]`}, audit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := d.db.Exec(`INSERT INTO project_attributes (project_id, key) VALUES (?, 'orphan')`, id); err != nil {
-		t.Fatal(err)
-	}
-	if err := d.UpdateProject(ctx, store.RegistryProject{ID: id, Name: "Renamed", AllowedOrigins: `[]`,
-		Attributes: `["stale"]`, KeepBreakdowns: true}, audit); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := queryStrings(t, d, `SELECT key, breakdown FROM project_attributes ORDER BY key`),
-		[]string{"orphan|0", "plan|1"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("project_attributes = %q, want %q", got, want)
-	}
-	if got := queryStrings(t, d, `SELECT name FROM projects`); !reflect.DeepEqual(got, []string{"Renamed"}) {
-		t.Errorf("name = %q, want Renamed", got)
 	}
 }

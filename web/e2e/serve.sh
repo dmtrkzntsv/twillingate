@@ -41,10 +41,7 @@ set -a
 set +a
 
 "$bin" migrate
-# team_size and role, two of the custom attributes seed-demo.py puts on
-# product events, fill the Product dashboard's attribute table; plan stays
-# undeclared for projects.spec.ts to add as a breakdown.
-"$bin" project create -name dev -attr team_size -attr role
+"$bin" project create -name dev
 # Widget SQL reads the event files, not SQLite: the seed writes its events as
 # closed logs under EVENTS_DIR (raw/ beside the database by default). Serve
 # starts at once, as on upgrade day: its boot pass dumps and merges them while

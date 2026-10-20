@@ -61,7 +61,7 @@ export function ruleCopy(noun: RuleNoun) {
       description: (t: RuleTarget) =>
         event
           ? `Events named ${withContext(t)} are hidden from every report at once, past events included; new ones are not stored. Remove the rule to receive it again.`
-          : `${t.name} is hidden from every report at once, past events included; new ones are not stored, and it stops being a breakdown. Remove the rule to receive it again.`,
+          : `${t.name} is hidden from every report at once, past events included; new ones are not stored. Remove the rule to receive it again.`,
       action: event ? 'Block event' : 'Block attribute',
     },
   }

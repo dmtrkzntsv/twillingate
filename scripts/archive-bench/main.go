@@ -5,7 +5,7 @@
 //
 //	go build -o /tmp/archive-bench .
 //	DATABASE_DSN=sqlite:///path/base.db twillingate migrate
-//	twillingate project create -name app -attr access_state -attr deployment -attr mode
+//	twillingate project create -name app
 //	twillingate project create -name site
 //	/tmp/archive-bench gen base.db 2023-10-13 1096 32850 500
 //

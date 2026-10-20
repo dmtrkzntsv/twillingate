@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"net/url"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,7 +25,6 @@ type Project struct {
 	ID             int64
 	Name           string
 	AllowedOrigins []string
-	Attributes     []string
 	Archived       bool
 	ArchivedAt     string // RFC 3339 UTC, "" = live
 	SortKey        string // its place in the order
@@ -141,11 +139,6 @@ func (r *Registry) Reload(ctx context.Context) error {
 		if rp.AllowedOrigins != "" {
 			if err := json.Unmarshal([]byte(rp.AllowedOrigins), &p.AllowedOrigins); err != nil {
 				return fmt.Errorf("manage: project %d allowed_origins: %w", rp.ID, err)
-			}
-		}
-		if rp.Attributes != "" {
-			if err := json.Unmarshal([]byte(rp.Attributes), &p.Attributes); err != nil {
-				return fmt.Errorf("manage: project %d attributes: %w", rp.ID, err)
 			}
 		}
 		s.byID[p.ID] = p
@@ -435,47 +428,5 @@ func (s *Snapshot) KeylessProjects() []*Project {
 			out = append(out, p)
 		}
 	}
-	return out
-}
-
-// AttributesFor returns the project's declared attribute keys. Unknown ids
-// return nil, matching the archived-project fallback.
-func (s *Snapshot) AttributesFor(id int64) []string {
-	p := s.byID[id]
-	if p == nil {
-		return nil
-	}
-	return p.Attributes
-}
-
-// BreakdownsInUse is how many attributes the active projects declare
-// together: each is an attribute breakdown, held against
-// ATTRIBUTE_BREAKDOWNS_MAX. Archived projects receive nothing, so theirs
-// don't count.
-func (s *Snapshot) BreakdownsInUse() int {
-	n := 0
-	for _, p := range s.ordered {
-		if !p.Archived {
-			n += len(p.Attributes)
-		}
-	}
-	return n
-}
-
-// DeclaredAttributeKeys is the sorted, deduplicated union of every
-// project's declared keys — the column set of v_events_flat. Archived
-// projects are included: archiving keeps their data queryable.
-func (s *Snapshot) DeclaredAttributeKeys() []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, p := range s.ordered {
-		for _, k := range p.Attributes {
-			if !seen[k] {
-				seen[k] = true
-				out = append(out, k)
-			}
-		}
-	}
-	sort.Strings(out)
 	return out
 }

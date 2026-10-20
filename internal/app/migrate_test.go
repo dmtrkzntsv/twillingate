@@ -94,13 +94,12 @@ func migratedWith(t *testing.T, stmts ...string) (store.Store, *config.Config) {
 	return st, cfg
 }
 
-// Migrate rebuilds v_events_flat from the declared attributes, so a
-// database whose view a migration dropped comes back with its attr_
-// columns before anything serves, from serve and the CLI alike.
+// Migrate rebuilds v_events_flat, so a database whose view a migration
+// dropped comes back before anything serves, from serve and the CLI alike.
+// No attribute is declared any more, so it has no attr_ columns.
 func TestMigrateRebuildsTheFlatView(t *testing.T) {
 	st, cfg := migratedWith(t,
 		`INSERT INTO projects (name, allowed_origins) VALUES ('blog', '[]')`,
-		`INSERT INTO project_attributes (project_id, key, breakdown) SELECT id, 'plan', 1 FROM projects WHERE name = 'blog'`,
 		`DROP VIEW v_events_flat`)
 	if err := Migrate(context.Background(), cfg, st); err != nil {
 		t.Fatal(err)
@@ -111,11 +110,11 @@ func TestMigrateRebuildsTheFlatView(t *testing.T) {
 	}
 	defer raw.Close()
 	var n int
-	if err := raw.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('v_events_flat') WHERE name = 'attr_plan'`).Scan(&n); err != nil {
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('v_events_flat') WHERE name = 'ts'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 1 {
-		t.Fatal("v_events_flat has no attr_plan after Migrate")
+		t.Fatal("v_events_flat is missing after Migrate")
 	}
 }
 

@@ -105,7 +105,7 @@ func (o *Ops) moveEvent(ctx context.Context, actor, action string, projectID int
 		Actor: actor, Action: action, Subject: ruleSubject(projectID, f, from), Detail: "to " + to}); err != nil {
 		return store.EventRule{}, err
 	}
-	o.afterWrite(ctx, false, projectID)
+	o.afterWrite(ctx, projectID)
 	return o.writtenRule(ctx, store.EventRule{ProjectID: projectID, Family: f, Name: from,
 		Action: store.EventRuleRename, To: to}), nil
 }
@@ -121,7 +121,7 @@ func (o *Ops) BlockEvent(ctx context.Context, actor string, projectID int64, fam
 		Actor: actor, Action: "event.block", Subject: ruleSubject(projectID, f, name)}); err != nil {
 		return store.EventRule{}, err
 	}
-	o.afterWrite(ctx, false, projectID)
+	o.afterWrite(ctx, projectID)
 	return o.writtenRule(ctx, store.EventRule{ProjectID: projectID, Family: f, Name: name,
 		Action: store.EventRuleBlock}), nil
 }
@@ -139,7 +139,7 @@ func (o *Ops) RemoveEventRule(ctx context.Context, actor string, projectID int64
 		Actor: actor, Action: "event.rule_remove", Subject: ruleSubject(projectID, f, name)}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, false, projectID)
+	o.afterWrite(ctx, projectID)
 	return nil
 }
 

@@ -72,7 +72,7 @@ func hostTemplate(t *testing.T) string {
 		ctx := context.Background()
 		for _, name := range []string{"blog", "docs"} {
 			if _, err := st.CreateProject(ctx, store.RegistryProject{
-				Name: name, AllowedOrigins: "[]", Attributes: "[]"},
+				Name: name, AllowedOrigins: "[]"},
 				store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
 				t.Fatal(err)
 			}
@@ -263,7 +263,7 @@ func seedDB(t *testing.T) string {
 		t.Fatal(err)
 	}
 	if _, err := st.CreateProject(context.Background(), store.RegistryProject{
-		Name: "My blog", AllowedOrigins: "[]", Attributes: "[]"},
+		Name: "My blog", AllowedOrigins: "[]"},
 		store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
 		t.Fatal(err)
 	}

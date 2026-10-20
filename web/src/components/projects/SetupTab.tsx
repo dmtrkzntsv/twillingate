@@ -30,7 +30,7 @@ interface Props {
 
 /**
  * A project's Settings page (project landing D4): its usage, allowed origins,
- * events, attributes (with their breakdown switches) and keys, with
+ * events, attributes and keys, with
  * Archive or Restore. The range is the URL's, which every tab of the
  * project shares (D8), else 7 days.
  */
@@ -72,7 +72,6 @@ export default function SetupTab({ project, dash, actions }: Props) {
         project={project}
         range={range}
         pending={actions.pending}
-        onSaveBreakdowns={(attributes) => actions.update(id, { attributes })}
         onRename={(body) => actions.renameAttribute(id, body)}
         onMerge={(body) => actions.mergeAttribute(id, body)}
         onBlock={(body) => actions.blockAttribute(id, body)}

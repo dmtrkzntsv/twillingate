@@ -27,8 +27,7 @@ import (
 )
 
 var jobsProjectSpecs = []manage.ProjectSpec{
-	{Name: "App", AllowedOrigins: []string{"https://a.com"},
-		Attributes: []string{"plan"}},
+	{Name: "App", AllowedOrigins: []string{"https://a.com"}},
 }
 
 // jobsVars pins the retention windows the assertions below rely on: a
@@ -349,8 +348,8 @@ func TestMeasuresDoNotCreateActors(t *testing.T) {
 	}
 }
 
-// The pass must rebuild v_events_flat from the keys actually present, so a
-// newly seen attribute becomes queryable without a restart.
+// The pass rebuilds v_events_flat with no declared columns: no key is
+// declared any more, so a received attribute adds no attr_ column.
 func TestRunDailyPassRebuildsFlatView(t *testing.T) {
 	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
 	ctx := context.Background()
@@ -370,12 +369,12 @@ func TestRunDailyPassRebuildsFlatView(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer raw.Close()
-	var plan string
-	if err := raw.QueryRow(`SELECT attr_plan FROM v_events_flat WHERE id='1'`).Scan(&plan); err != nil {
-		t.Fatalf("v_events_flat not rebuilt with the discovered key: %v", err)
+	var n, attr int
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM v_events_flat WHERE id='1'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("v_events_flat rows = %d, err = %v, want 1", n, err)
 	}
-	if plan != "pro" {
-		t.Errorf("attr_plan = %q, want pro", plan)
+	if err := raw.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('v_events_flat') WHERE name = 'attr_plan'`).Scan(&attr); err != nil || attr != 0 {
+		t.Errorf("attr_plan columns = %d, err = %v, want none", attr, err)
 	}
 }
 

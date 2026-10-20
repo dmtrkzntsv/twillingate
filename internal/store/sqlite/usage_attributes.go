@@ -115,10 +115,6 @@ func (s *receivedSeen) remember(written []receivedKey, gen uint64) {
 // writeReceived inserts the triples ingest has not seen yet, with events 0
 // until the daily pass counts their day; a row already there (a restart,
 // or a late event for an older day) is left as it is. Each key also gets
-// its catalog row (project_attributes), added only here, for the triples
-// the cache has not seen, so a known key costs nothing more. The catalog
-// row is skipped for a project that no longer exists (purged while its
-// events were buffered): the foreign key would otherwise fail the batch.
 func writeReceived(ctx context.Context, tx *sql.Tx, keys []receivedKey) error {
 	if len(keys) == 0 {
 		return nil
@@ -129,32 +125,10 @@ func writeReceived(ctx context.Context, tx *sql.Tx, keys []receivedKey) error {
 		return err
 	}
 	defer stmt.Close()
-	catalog, err := tx.PrepareContext(ctx, `INSERT OR IGNORE INTO project_attributes (project_id, key)
-		SELECT ?1, ?2 WHERE EXISTS (SELECT 1 FROM projects WHERE id = ?1)`)
-	if err != nil {
-		return err
-	}
-	defer catalog.Close()
 	for _, k := range keys {
 		if _, err := stmt.ExecContext(ctx, k.project, k.day, k.key); err != nil {
 			return err
 		}
-		if _, err := catalog.ExecContext(ctx, k.project, k.key); err != nil {
-			return err
-		}
 	}
 	return nil
-}
-
-// pruneCatalog drops the project's catalog rows that are no breakdown and
-// that no usage_attributes row holds any more (spec D3). The subquery is
-// uncorrelated: SQLite reads the project's usage keys once into a set,
-// where a correlated NOT EXISTS probes usage_attributes per catalog row by
-// its project_id prefix alone (the key comes after day in its primary
-// key), which is quadratic in the key count on a database never analyzed.
-func pruneCatalog(ctx context.Context, tx *sql.Tx, projectID int64) error {
-	_, err := tx.ExecContext(ctx, `DELETE FROM project_attributes
-		WHERE project_id = ?1 AND breakdown = 0
-		AND key NOT IN (SELECT attr_key FROM usage_attributes WHERE project_id = ?1)`, projectID)
-	return err
 }

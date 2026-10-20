@@ -73,11 +73,11 @@ func TestIntegrationGuidePlatforms(t *testing.T) {
 	if !res.IsError || !strings.Contains(textOf(res), "web") {
 		t.Errorf("bad platform: %v %s", res.IsError, textOf(res))
 	}
-	// no-attributes-declared pointer
+	// attributes need no declaring
 	res = callTool(t, cs, "integration_guide", map[string]any{
 		"project_id": 2, "platform": "web"})
-	if out := textOf(res); !strings.Contains(out, "No product attributes declared") {
-		t.Errorf("no-attributes-declared guidance missing: %s", out)
+	if out := textOf(res); !strings.Contains(out, "Attributes need no declaring") {
+		t.Errorf("no-declaring guidance missing: %s", out)
 	}
 }
 
@@ -149,29 +149,6 @@ func TestIntegrationGuideDoesNotReferenceStaleDocsURIs(t *testing.T) {
 	}
 	if !strings.Contains(desc, "docs://twillingate") {
 		t.Errorf("integration_guide description should point at docs://twillingate: %s", desc)
-	}
-}
-
-func TestUpdateProjectSetsAttributes(t *testing.T) {
-	h, cs := newTestHost(t)
-	res := callTool(t, cs, "update_project", map[string]any{
-		"project_id": 1, "attributes": []string{"plan", "tier"},
-	})
-	if res.IsError {
-		t.Fatalf("error: %s", textOf(res))
-	}
-	p := h.reg.Snapshot(context.Background()).Project(1)
-	if len(p.Attributes) != 2 || p.Attributes[0] != "plan" || p.Attributes[1] != "tier" {
-		t.Fatalf("attributes not set: %+v", p.Attributes)
-	}
-	// omitted on a later update -> preserved
-	if res := callTool(t, cs, "update_project", map[string]any{
-		"project_id": 1, "name": "renamed"}); res.IsError {
-		t.Fatalf("rename: %s", textOf(res))
-	}
-	p = h.reg.Snapshot(context.Background()).Project(1)
-	if len(p.Attributes) != 2 {
-		t.Fatal("attributes lost on unrelated update")
 	}
 }
 

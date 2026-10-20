@@ -121,7 +121,7 @@ func TestSystemWidgetsMatchSQLite(t *testing.T) {
 	var evs []store.Event
 	for seed, name := range []string{"parity-a", "parity-b"} {
 		id, err := st.CreateProject(ctx,
-			store.RegistryProject{Name: name, AllowedOrigins: "[]", Attributes: `["plan"]`},
+			store.RegistryProject{Name: name, AllowedOrigins: "[]"},
 			store.AuditEntry{Actor: "test", Action: "project.create"})
 		if err != nil {
 			t.Fatal(err)

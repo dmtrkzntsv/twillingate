@@ -8,13 +8,12 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import type { Project, ProjectAttribute } from '@/lib/api'
+import type { Project } from '@/lib/api'
 import { attributesQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import AliasDialog from './AliasDialog'
-import { describeKey } from './breakdowns'
+import { describeKey } from './attributes'
 import LoadError from './LoadError'
 import MergeDialog from './MergeDialog'
 import RenameDialog from './RenameDialog'
@@ -25,8 +24,6 @@ interface Props {
   /** The range the page shows: what each key received in it. */
   range: { from: string; to: string }
   pending?: boolean
-  /** Saves the project's whole new breakdown list; resolves true when saved. */
-  onSaveBreakdowns: (attributes: string[]) => Promise<boolean>
   /** Each resolves true when done; a refusal is already toasted (except a rename's 'conflict', which points to merging). */
   onRename: (body: { from: string; to: string }) => Promise<boolean | 'conflict'>
   onMerge: (body: { from: string; to: string }) => Promise<boolean>
@@ -39,37 +36,26 @@ const copy = ruleCopy('attribute')
 
 /**
  * A project's attribute keys over the range, busiest first, each with what it
- * received, its breakdown switch and the rules on it: rename, merge and block
- * (both confirmed) and unblock, aliases added and removed. A `$` key takes
- * the switch only: rules cover custom keys.
+ * received and the rules on it: rename, merge and block (both confirmed) and
+ * unblock, aliases added and removed. Every key breaks down in the event
+ * files, so there is nothing to switch on; rules cover custom keys, so a `$`
+ * key has no menu.
  */
-export default function AttributesSection({ project, range, pending, onSaveBreakdowns, onRename, onMerge, onBlock, onRemove, onAddAlias }: Props) {
+export default function AttributesSection({ project, range, pending, onRename, onMerge, onBlock, onRemove, onAddAlias }: Props) {
   // The keys outlive their dialogs' close animations, so a title does not flash "Block undefined?".
   const [renaming, setRenaming] = useState<{ key: string; open: boolean } | null>(null)
   const [merging, setMerging] = useState<{ key: string; open: boolean } | null>(null)
   const [blocking, setBlocking] = useState<{ key: string; open: boolean } | null>(null)
   const [aliasing, setAliasing] = useState<{ key: string; open: boolean } | null>(null)
   const [unaliasing, setUnaliasing] = useState<{ key: string; to: string; open: boolean } | null>(null)
-  const [unbreaking, setUnbreaking] = useState<{ key: string; open: boolean } | null>(null)
   const { data, error, refetch } = useQuery(attributesQuery(project.project_id, range))
-  // The switches show the project's own breakdown list; a breakdown key
-  // nothing in the range carried is listed after the received keys.
-  const breakdowns = project.attributes ?? []
-  const listed: ProjectAttribute[] = data?.attributes ?? []
-  const rows: ProjectAttribute[] = data
-    ? [...listed, ...breakdowns.filter((k) => !listed.some((r) => r.key === k))
-        .map((key) => ({ key, events: 0, values: 0, received: false, blocked: false }))]
-    : []
+  const rows = data?.attributes ?? []
   // The server lists only the busiest received keys; say so when it left some out.
   const receivedListed = rows.filter((r) => r.received).length
   // What a rename or alias must know: the keys with data, and the blocked ones.
   const taken = rows.filter((r) => r.received).map((r) => r.key)
   const blocked = rows.filter((r) => r.blocked).map((r) => r.key)
   const target = (k: string | undefined) => (k === undefined ? null : { name: k })
-  const toggle = (key: string, on: boolean) => {
-    if (on) void onSaveBreakdowns([...new Set([...breakdowns, key])])
-    else setUnbreaking({ key, open: true })
-  }
   return (
     <section aria-label="Attributes" className="flex flex-col gap-3 rounded-lg border p-4">
       <header>
@@ -82,7 +68,6 @@ export default function AttributesSection({ project, range, pending, onSaveBreak
             <TableRow>
               <TableHead>Attribute</TableHead>
               <TableHead className="hidden sm:table-cell">Received</TableHead>
-              <TableHead>Breakdown</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
@@ -121,14 +106,6 @@ export default function AttributesSection({ project, range, pending, onSaveBreak
                   <TableCell className="hidden text-xs whitespace-normal text-muted-foreground sm:table-cell">
                     {received}
                     {r.blocked && <span className="block">no longer stored</span>}
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      aria-label={`Break down ${r.key}`}
-                      checked={breakdowns.includes(r.key)}
-                      disabled={pending || r.blocked}
-                      onCheckedChange={(on) => toggle(r.key, on)}
-                    />
                   </TableCell>
                   <TableCell className="text-right">
                     {custom && (
@@ -215,20 +192,6 @@ export default function AttributesSection({ project, range, pending, onSaveBreak
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => { const k = blocking!.key; setBlocking({ key: k, open: false }); void onBlock({ key: k }) }}>{copy.block.action}</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={unbreaking?.open === true} onOpenChange={(o) => !o && setUnbreaking((d) => d && { ...d, open: false })}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="wrap-anywhere">Stop breaking down {unbreaking?.key}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Days already rolled up keep their rows; days rolled up from now on won't have it, and adding it back later won't fill the gap.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { const k = unbreaking!.key; setUnbreaking({ key: k, open: false }); void onSaveBreakdowns(breakdowns.filter((a) => a !== k)) }}>Remove breakdown</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

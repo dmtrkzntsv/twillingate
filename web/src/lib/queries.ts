@@ -71,7 +71,7 @@ export const usageQuery = (q: RangeQuery & { project_id?: number }) => ({
   queryFn: () => endpoints.usage({ project_id: q.project_id, from: q.from, to: q.to }),
 })
 
-/** A project's attribute keys over a range, busiest first, with their rules and the breakdown budget. */
+/** A project's attribute keys over a range, busiest first, with their rules. */
 export const attributesQuery = (id: number, q: RangeQuery) => ({
   queryKey: ['attributes', id, q.from ?? '', q.to ?? ''],
   queryFn: () => endpoints.listAttributes(id, { from: q.from, to: q.to }),

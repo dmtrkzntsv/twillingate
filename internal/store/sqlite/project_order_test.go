@@ -28,7 +28,7 @@ func createProjects(t *testing.T, d *DB, names ...string) []int64 {
 	t.Helper()
 	var ids []int64
 	for _, n := range names {
-		id, err := d.CreateProject(context.Background(), store.RegistryProject{Name: n, AllowedOrigins: "[]", Attributes: "[]"},
+		id, err := d.CreateProject(context.Background(), store.RegistryProject{Name: n, AllowedOrigins: "[]"},
 			store.AuditEntry{Actor: "cli", Action: "project.create"})
 		if err != nil {
 			t.Fatal(err)
@@ -145,7 +145,7 @@ func TestMigration034KeysProjectsInIDOrder(t *testing.T) {
 	if err := db.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	id, err := db.CreateProject(context.Background(), store.RegistryProject{Name: "new", AllowedOrigins: "[]", Attributes: "[]"},
+	id, err := db.CreateProject(context.Background(), store.RegistryProject{Name: "new", AllowedOrigins: "[]"},
 		store.AuditEntry{Actor: "cli", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)

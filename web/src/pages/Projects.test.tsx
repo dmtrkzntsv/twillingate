@@ -30,7 +30,7 @@ beforeEach(() => {
   vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList())
   vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [
     { project_id: 4, name: 'econumo.com', allowed_origins: ['https://econumo.com'] },
-    { project_id: 5, name: 'quiet.dev', allowed_origins: [], attributes: ['plan'] },
+    { project_id: 5, name: 'quiet.dev', allowed_origins: [] },
     { project_id: 3, name: 'legacy', archived: true, allowed_origins: [] },
   ] })
   vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: '2026-09-03', to: '2026-10-02', database_bytes: 2_100_000_000, database_series: [

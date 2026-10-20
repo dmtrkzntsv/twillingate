@@ -32,7 +32,7 @@ beforeEach(() => {
   Object.values(actions).forEach((f) => typeof f === 'function' && f.mockReset())
   vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList({ purge_after_days: 30 }))
   vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [
-    { project_id: 4, name: 'econumo.com', allowed_origins: ['https://econumo.com'], attributes: ['plan'] },
+    { project_id: 4, name: 'econumo.com', allowed_origins: ['https://econumo.com'] },
     { project_id: 7, name: 'shop', allowed_origins: ['https://shop.example'] },
     { project_id: 3, name: 'legacy', archived: true, allowed_origins: [] },
   ] })
@@ -132,27 +132,6 @@ describe('Project', () => {
     expect(names.indexOf('Allowed origins')).toBeLessThan(names.indexOf('Events'))
     expect(names.indexOf('Attributes')).toBe(names.indexOf('Events') + 1)
     expect(names.indexOf('Attributes')).toBeLessThan(names.indexOf('Ingest keys'))
-  })
-
-  it('switches a breakdown off through PATCH after confirming', async () => {
-    const user = userEvent.setup()
-    actions.update.mockResolvedValue(true)
-    renderAt('/projects/4/settings')
-    const section = await screen.findByRole('region', { name: 'Attributes' })
-    expect(await within(section).findAllByText('900 events · 3 values')).not.toHaveLength(0)
-    await user.click(within(section).getByRole('switch', { name: 'Break down plan' }))
-    expect(actions.update).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Remove breakdown' }))
-    expect(actions.update).toHaveBeenCalledWith(4, { attributes: [] })
-  })
-
-  it('switches a breakdown on through PATCH with the full new list', async () => {
-    const user = userEvent.setup()
-    actions.update.mockResolvedValue(true)
-    renderAt('/projects/4/settings')
-    const section = await screen.findByRole('region', { name: 'Attributes' })
-    await user.click(await within(section).findByRole('switch', { name: 'Break down tier' }))
-    expect(actions.update).toHaveBeenCalledWith(4, { attributes: ['plan', 'tier'] })
   })
 
   it('blocks an attribute, hiding its past events at once', async () => {
