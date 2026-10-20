@@ -42,38 +42,16 @@ func TestMigrationsNeverNameProcessOwnedObjects(t *testing.T) {
 	}
 }
 
-// A pending migration finds no v_events_flat and leaves none, whatever the
-// view held: the caller's rebuild after migrating is what brings the
-// declared attribute columns back.
+// A pending migration finds no v_events_flat and leaves none: a database
+// from before raw-first PR 6 may hold the view the process built then, and
+// nothing builds it any more.
 func TestMigrateDropsProcessOwnedViews(t *testing.T) {
 	db := newTestDBAt(t, 36)
-	ctx := context.Background()
-	if err := db.RebuildFlatView(ctx, []string{"plan"}); err != nil {
+	execAll(t, db, `CREATE VIEW v_events_flat AS SELECT id, json_extract(attributes, '$."plan"') AS attr_plan FROM events`)
+	if err := db.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !viewColumns(t, db, "v_events_flat")["attr_plan"] {
-		t.Fatal("fixture: no attr_plan before migrating")
-	}
-	// Through the latest, not a pinned version: the second half needs
-	// nothing left pending.
-	if err := db.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if def, err := db.flatViewDefinition(ctx); err != nil || def != "" {
-		t.Fatalf("v_events_flat after a migration = %q (%v), want it dropped", def, err)
-	}
-	if err := db.RebuildFlatView(ctx, []string{"plan"}); err != nil {
-		t.Fatal(err)
-	}
-	if !viewColumns(t, db, "v_events_flat")["attr_plan"] {
-		t.Fatal("the rebuild did not bring attr_plan back")
-	}
-
-	// With nothing pending the migrator leaves the view alone.
-	if err := db.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if !viewColumns(t, db, "v_events_flat")["attr_plan"] {
-		t.Fatal("Migrate with nothing pending dropped the view")
+	if got := queryStrings(t, db, `SELECT name FROM sqlite_master WHERE name = 'v_events_flat'`); len(got) != 0 {
+		t.Fatalf("v_events_flat after migrating: %v, want it dropped", got)
 	}
 }

@@ -575,8 +575,8 @@ func logEventNames(t *testing.T, dir string) []string {
 	return names
 }
 
-// TestIngestWritesTheLogOnly: a served batch lands in raw/ and SQLite's
-// events stay empty (raw-first PR 6).
+// TestIngestWritesTheLogOnly: a served batch lands in raw/, and SQLite has
+// no events table to write (raw-first PR 6).
 func TestIngestWritesTheLogOnly(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "logonly.db")
 	addr := freePort(t)
@@ -619,8 +619,8 @@ func TestIngestWritesTheLogOnly(t *testing.T) {
 	}
 	defer db.Close()
 	var n int
-	if err := db.QueryRow(`SELECT count(*) FROM events`).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("events rows = %d, %v; want 0", n, err)
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name = 'events'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("events tables = %d, %v; want none", n, err)
 	}
 }
 

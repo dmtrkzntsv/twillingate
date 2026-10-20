@@ -15,7 +15,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
-	"github.com/dmtrkzntsv/twillingate/internal/pipeline"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/internal/store/storetest"
@@ -32,7 +31,7 @@ import (
 func TestImportFillsTheFilesFromSQLite(t *testing.T) {
 	ctx := context.Background()
 	data := t.TempDir()
-	st := storetest.Open(t, filepath.Join(data, "twillingate.db"))
+	st := storetest.OpenLegacy(t, filepath.Join(data, "twillingate.db"))
 	reg := manage.New(st, slog.Default())
 	if err := reg.Reload(ctx); err != nil {
 		t.Fatal(err)
@@ -87,30 +86,34 @@ func TestImportFillsTheFilesFromSQLite(t *testing.T) {
 	o1 := row("o1", "2026-10-01T10:00:00Z")
 	o1.ActorID, o1.ActorKind = "i1", store.ActorInstall
 
-	both := bothSinks{st, log}
-	// September 30 reached both stores and September was merged without s1.
-	if err := both.WriteEvents(ctx, []store.Event{row("s2", "2026-09-30T10:00:00Z")}); err != nil {
-		t.Fatal(err)
+	// both writes to SQLite and the log, as ingest did before raw-first
+	// PR 6.
+	both := func(evs ...store.Event) {
+		t.Helper()
+		insertLegacy(t, st, evs...)
+		if err := log.WriteEvents(ctx, evs); err != nil {
+			t.Fatal(err)
+		}
 	}
+	// September 30 reached both stores and September was merged without s1.
+	both(row("s2", "2026-09-30T10:00:00Z"))
 	pass("2026-10-05")
 	// September is already one month file, without s1 (Review Focus 1).
 	if got, want := eventsFiles(), []string{"2026-09.parquet"}; !slices.Equal(got, want) {
 		t.Fatalf("files after the first pass = %v, want %v", got, want)
 	}
 	// October 1 and 11 are split: one row in both stores, one only in SQLite.
-	if err := both.WriteEvents(ctx, []store.Event{row("o2", "2026-10-01T11:00:00Z"), row("t2", "2026-10-11T02:00:00Z")}); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.WriteEvents(ctx, []store.Event{s1, o1, row("t1", "2026-10-11T01:00:00Z")}); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.UpsertIdentities(ctx, []store.Identity{{ProjectID: 1, Kind: store.KindUser, ID: "u1", Name: "Ada"}}); err != nil {
+	both(row("o2", "2026-10-01T11:00:00Z"), row("t2", "2026-10-11T02:00:00Z"))
+	insertLegacy(t, st, s1, o1, row("t1", "2026-10-11T01:00:00Z"))
+	if _, err := st.(interface {
+		ExecForTest(q string, args ...any) (sql.Result, error)
+	}).ExecForTest(`INSERT INTO identities (project_id, kind, id, name) VALUES (1, 'user', 'u1', 'Ada')`); err != nil {
 		t.Fatal(err)
 	}
 
 	now := at("2026-10-11T04:00:00Z")
 	var out bytes.Buffer
-	if err := importEvents(ctx, st, a, 400, now, &out); err != nil {
+	if err := importEvents(ctx, st.(importStore), a, 400, now, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(out.Bytes(), []byte("imported 3 of 6 rows")) {
@@ -173,7 +176,7 @@ func TestImportFillsTheFilesFromSQLite(t *testing.T) {
 		t.Fatalf("files = %v, want %v", got, wantFiles)
 	}
 	out.Reset()
-	if err := importEvents(ctx, st, a, 400, now, &out); err != nil {
+	if err := importEvents(ctx, st.(importStore), a, 400, now, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Contains(out.Bytes(), []byte("imported 0 of 6 rows")) {
@@ -182,17 +185,4 @@ func TestImportFillsTheFilesFromSQLite(t *testing.T) {
 	if got := eventsFiles(); !slices.Equal(got, wantFiles) {
 		t.Fatalf("files after a second import = %v, want %v", got, wantFiles)
 	}
-}
-
-// bothSinks writes a batch to SQLite and the log, as ingest did before
-// raw-first PR 6: these tests seed both stores with it.
-type bothSinks []pipeline.Sink
-
-func (s bothSinks) WriteEvents(ctx context.Context, evs []store.Event) error {
-	for _, k := range s {
-		if err := k.WriteEvents(ctx, evs); err != nil {
-			return err
-		}
-	}
-	return nil
 }

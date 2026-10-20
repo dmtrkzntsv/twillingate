@@ -24,35 +24,31 @@ import (
 // constant. TestDynamicSitesAreListed checks it both ways: a function
 // that builds SQL needs an entry, and an entry needs such a function.
 var dynamic = map[string]string{
-	"shared/readsql/page.go:QueryPage":                     "wraps the caller's query in the page's filters, sort and window",
-	"shared/readsql/page.go:countWhenEmpty":                "wraps the caller's query to count its rows",
-	"shared/readsql/readsql.go:QueryLimit":                 "wraps the caller's query to cap its rows",
-	"store/sqlite/aggregate_measures.go:rollupMeasureAttr": "the attribute expression and its presence filter are passed in",
-	"store/sqlite/aggregate_product.go:rollupAttrValue":    "the attribute expression and its presence filter are passed in",
-	"store/sqlite/aggregate_views.go:AggregateViewDay":     "each dimension builds its own rollup statement",
-	"store/sqlite/aggregate_views.go:daysBefore":           "the source table is filled in with Sprintf",
-	"store/sqlite/flatview.go:RebuildFlatView":             "the view's columns are the attribute keys received",
-	"store/sqlite/forms.go:FindSubmissions":                "the FROM and WHERE come from the search, and a cursor condition is appended",
-	"store/sqlite/forms.go:SubmissionIDsMatching":          "the FROM and WHERE come from the search",
-	"store/sqlite/identities.go:AggregateIdentityDay":      "the raw column (user_id or group_id) is filled in with Sprintf",
-	"store/sqlite/migrate.go:migrateThrough":               "runs each embedded migration file as read; every test that migrates runs them",
-	"store/sqlite/prune.go:PruneAggregates":                "the aggregate table is filled in with Sprintf",
-	"store/sqlite/reporting.go:ListWidgets":                "the WHERE and ORDER BY are appended depending on whether a dashboard is given",
-	"store/sqlite/reporting.go:UpdateWidget":               "the SET list holds only the columns being written",
-	"store/sqlite/retention.go:UpsertActors":               "the source table is filled in with Sprintf",
+	"shared/readsql/page.go:QueryPage":            "wraps the caller's query in the page's filters, sort and window",
+	"shared/readsql/page.go:countWhenEmpty":       "wraps the caller's query to count its rows",
+	"shared/readsql/readsql.go:QueryLimit":        "wraps the caller's query to cap its rows",
+	"store/sqlite/forms.go:FindSubmissions":       "the FROM and WHERE come from the search, and a cursor condition is appended",
+	"store/sqlite/forms.go:SubmissionIDsMatching": "the FROM and WHERE come from the search",
+	"store/sqlite/migrate.go:migrateThrough":      "runs each embedded migration file as read; every test that migrates runs them",
+	"store/sqlite/reporting.go:ListWidgets":       "the WHERE and ORDER BY are appended depending on whether a dashboard is given",
+	"store/sqlite/reporting.go:UpdateWidget":      "the SET list holds only the columns being written",
 }
 
 // minSites guards the scan: finding far fewer SQL sites than the tree
 // holds means the scan broke, not that the code lost its queries.
-const minSites = 150
+const minSites = 160
 
-// migrationSteps lists the files, relative to internal/, that hold Go
-// migration steps (dataSteps in store/sqlite/migrate.go). Their SQL runs
-// inside its migration, against that version's schema rather than the
-// current one (migration 015's step reads a table the same migration
-// drops), so it is not checked here: every test that migrates runs it.
+// migrationSteps lists the files, relative to internal/, whose SQL runs
+// against an older schema than the current one, so it is not checked here.
+// A Go migration step (dataSteps in store/sqlite/migrate.go) runs inside
+// its migration, against that version's schema (migration 015's step reads
+// a table the same migration drops): every test that migrates runs it.
+// legacy_events.go reads the events table migration 042 drops, for
+// `twillingate events import` and 042's pre-check, on a schema through
+// sqlite.LastEventsVersion: store/sqlite's tests run it there.
 var migrationSteps = map[string]bool{
-	"store/sqlite/migration015.go": true,
+	"store/sqlite/migration015.go":  true,
+	"store/sqlite/legacy_events.go": true,
 }
 
 // migrationFile matches a Go migration step's file name.

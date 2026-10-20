@@ -321,8 +321,7 @@ func (h *host) register(r *registrar) {
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	// DestructiveHint is *bool in the SDK. Nothing here is destructive but
 	// merge_event and merge_attribute (a merge cannot be split again) and
-	// block_event and block_attribute (the next daily pass deletes the
-	// aggregates), which ask the operator.
+	// block_event and block_attribute, which ask the operator.
 	no, yes := false, true
 	write := &mcp.ToolAnnotations{DestructiveHint: &no}
 	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
@@ -331,7 +330,7 @@ func (h *host) register(r *registrar) {
 	const p = "/api/projects/{project_id}"
 
 	expose(r, spec{Name: "list_projects", Annotations: ro, Method: "GET", Path: "/api/projects",
-		Description: "List projects with id, name, allowed origins and declared attributes, in the order move_project sets. Call this first: every other tool takes a project_id from here."},
+		Description: "List projects with id, name and allowed origins, in the order move_project sets. Call this first: every other tool takes a project_id from here."},
 		h.listProjects)
 	restOnly(r, spec{Name: "project_activity", Method: "GET", Path: "/api/project-activity",
 		Description: "Per live project: last_event_day (the newest day file in the event files, a month file counting as its last day; null with none), new_submissions (submissions to live forms the console hasn't read), forms (live forms) and draft_forms (live forms still drafts, waiting to be approved). For the console's badges; not an MCP tool."},

@@ -93,16 +93,18 @@ func openSnapshot(t *testing.T, v int) *DB {
 	return db
 }
 
+// newTestDBAt opens a temp database migrated only through version v.
+func newTestDBAt(t *testing.T, v int) *DB {
+	t.Helper()
+	return openSnapshot(t, v)
+}
+
 func newTestDB(t *testing.T) *DB {
 	t.Helper()
 	db := openSnapshot(t, math.MaxInt)
 	// A no-op at the version the snapshot already carries; kept so this
-	// test path still matches how production opens an existing database,
-	// rebuild of the process-owned flat view included (app.Migrate).
+	// test path still matches how production opens an existing database.
 	if err := db.Migrate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.RebuildFlatView(context.Background(), nil); err != nil {
 		t.Fatal(err)
 	}
 	return db
@@ -164,10 +166,8 @@ func TestMigrateIsIdempotent(t *testing.T) {
 func TestSchemaTablesExist(t *testing.T) {
 	db := newTestDB(t)
 	for _, table := range []string{
-		"meta", "projects", "events",
-		"agg_views_daily", "agg_views_paths", "agg_views_referrers", "agg_views_countries",
-		"agg_views_devices", "agg_views_browsers", "agg_views_os", "agg_views_utm",
-		"agg_product_daily", "agg_product_totals", "agg_product_attrs",
+		"meta", "projects", "ingest_keys", "rules", "audit_log", "usage_history",
+		"components", "dashboards", "widgets", "project_tabs", "widget_shares", "forms", "submissions",
 	} {
 		var name string
 		err := db.db.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&name)
@@ -176,8 +176,6 @@ func TestSchemaTablesExist(t *testing.T) {
 		}
 	}
 }
-
-// --- app analytics schema (migrations 003/004) ---
 
 func hasColumn(t *testing.T, db *DB, table, column string) bool {
 	t.Helper()
@@ -206,68 +204,6 @@ func hasTable(t *testing.T, db *DB, name string) bool {
 		t.Fatal(err)
 	}
 	return n > 0
-}
-
-func TestMigration003Schema(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-
-	for _, table := range []string{
-		"events", "actors", "agg_retention", "identities", "agg_identity_daily",
-	} {
-		var n int
-		if err := db.db.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, table).Scan(&n); err != nil {
-			t.Fatalf("%s: %v", table, err)
-		}
-		if n != 1 {
-			t.Errorf("table %s missing", table)
-		}
-	}
-
-	for _, c := range []struct{ table, column string }{
-		{"events", "kind"}, {"events", "family"}, {"events", "display_width"},
-		{"events", "actor_id"}, {"events", "user_id"},
-		{"events", "group_id"}, {"events", "actor_kind"}, {"events", "os"},
-		{"events", "app_version"}, {"events", "received_at"},
-	} {
-		if !hasColumn(t, db, c.table, c.column) {
-			t.Errorf("%s.%s missing", c.table, c.column)
-		}
-	}
-	// 012 renamed the old events.platform (an OS by another name) to os;
-	// 015 reintroduced platform as a distinct column meaning the surface.
-	// Both must be present, and os must not have been lost to the rename.
-	if !hasColumn(t, db, "events", "platform") {
-		t.Error("events.platform missing; 015 adds it beside os")
-	}
-}
-
-func TestMigrationViews(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	for _, view := range []string{
-		"v_views_daily", "v_views_paths", "v_views_hosts", "v_views_referrers", "v_views_utm",
-		"v_views_countries", "v_views_platforms", "v_views_os", "v_views_browsers",
-		"v_views_app_versions",
-		"v_views_devices", "v_views_displays", "v_views_consent",
-		"v_product_daily", "v_product_totals", "v_product_attrs",
-		"raw_measures", "v_measures_daily", "v_measures_attrs",
-		"v_identity_daily", "v_retention",
-	} {
-		var n int
-		if err := db.db.QueryRowContext(ctx,
-			`SELECT COUNT(*) FROM sqlite_master WHERE type='view' AND name=?`, view).Scan(&n); err != nil {
-			t.Fatalf("%s: %v", view, err)
-		}
-		if n != 1 {
-			t.Errorf("view %s missing", view)
-		}
-		// Every view must be queryable, not merely present.
-		if _, err := db.db.ExecContext(ctx, `SELECT * FROM `+view+` LIMIT 1`); err != nil {
-			t.Errorf("view %s not queryable: %v", view, err)
-		}
-	}
 }
 
 func TestMigrationsAreIdempotent(t *testing.T) {

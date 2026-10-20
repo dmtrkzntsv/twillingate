@@ -3,7 +3,6 @@ package sqlite
 import (
 	"context"
 	"errors"
-	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -22,45 +21,6 @@ func ruleDB(t *testing.T) *DB {
 		`INSERT OR IGNORE INTO projects (id, name, sort_key) VALUES (1, 'p1', 'a1')`,
 		`INSERT OR IGNORE INTO projects (id, name, sort_key) VALUES (2, 'p2', 'a2')`)
 	return db
-}
-
-// writeNamed stores n events of one name; ids are unique per (project,
-// family, name, i).
-func writeNamed(t *testing.T, db *DB, project int64, family store.Family, name string, n int) {
-	t.Helper()
-	var evs []store.Event
-	for i := 0; i < n; i++ {
-		e := store.Event{Family: family, ID: fmt.Sprintf("%d-%s-%s-%d", project, family, name, i),
-			ProjectID: project, EventName: name, TS: ts("2026-10-10T10:00:00Z"),
-			ReceivedAt: ts("2026-10-10T10:00:00Z"), Kind: "app", ActorID: "a", ActorKind: store.ActorConnection}
-		if family == store.FamilyMeasures {
-			v := 1.5
-			e.Value, e.Measure = &v, "m"
-		}
-		evs = append(evs, e)
-	}
-	if err := db.WriteEvents(context.Background(), evs); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func rawNames(t *testing.T, db *DB, project int64, family store.Family) map[string]int {
-	t.Helper()
-	rows, err := db.db.Query(`SELECT event_name, COUNT(*) FROM events WHERE project_id=? AND family=? GROUP BY event_name`, project, string(family))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	out := map[string]int{}
-	for rows.Next() {
-		var n string
-		var c int
-		if err := rows.Scan(&n, &c); err != nil {
-			t.Fatal(err)
-		}
-		out[n] = c
-	}
-	return out
 }
 
 func loadRules(t *testing.T, db *DB) []store.EventRule {
@@ -199,13 +159,9 @@ func TestRenameEventRefusesBlockedTarget(t *testing.T) {
 	}
 }
 
-// A rename writes its rule and audit row and touches no event: with the
-// events table and every view over it gone, it still succeeds.
+// A rename writes its rule and audit row, and nothing else.
 func TestRenameEventWritesOnlyRules(t *testing.T) {
 	db := ruleDB(t)
-	execAll(t, db, `DROP VIEW raw_product`, `DROP VIEW raw_measures`, `DROP VIEW raw_views`, `DROP TABLE events`,
-		`DROP TABLE agg_product_daily`, `DROP TABLE agg_product_attrs`,
-		`DROP TABLE agg_measures_daily`, `DROP TABLE agg_measures_attrs`)
 	rename(t, db, 1, store.FamilyProduct, "a", "b")
 	rename(t, db, 1, store.FamilyMeasures, "m", "n")
 	want := []store.EventRule{
@@ -278,23 +234,6 @@ func TestRemoveEventRule(t *testing.T) {
 	}
 }
 
-func TestWriteEventsAppliesRenameRules(t *testing.T) {
-	db := ruleDB(t)
-	rename(t, db, 1, store.FamilyProduct, "a", "c")
-	writeNamed(t, db, 1, store.FamilyProduct, "a", 1)
-	writeNamed(t, db, 1, store.FamilyMeasures, "a", 1)
-	writeNamed(t, db, 2, store.FamilyProduct, "a", 1)
-	if got, want := rawNames(t, db, 1, store.FamilyProduct), map[string]int{"c": 1}; !reflect.DeepEqual(got, want) {
-		t.Errorf("project 1 product = %v, want %v", got, want)
-	}
-	if got, want := rawNames(t, db, 1, store.FamilyMeasures), map[string]int{"a": 1}; !reflect.DeepEqual(got, want) {
-		t.Errorf("project 1 measures = %v, want %v", got, want)
-	}
-	if got, want := rawNames(t, db, 2, store.FamilyProduct), map[string]int{"a": 1}; !reflect.DeepEqual(got, want) {
-		t.Errorf("project 2 product = %v, want %v", got, want)
-	}
-}
-
 func TestDeleteProjectDataRemovesEventRules(t *testing.T) {
 	db := ruleDB(t)
 	rename(t, db, 2, store.FamilyProduct, "a", "c")
@@ -306,116 +245,5 @@ func TestDeleteProjectDataRemovesEventRules(t *testing.T) {
 	}
 	if rules := loadRules(t, db); len(rules) != 0 {
 		t.Errorf("rules = %v, want none", rules)
-	}
-}
-
-// writeWithAttr stores n events of one name carrying plan=pro, so the
-// rollup has an attribute breakdown to write.
-func writeWithAttr(t *testing.T, db *DB, family store.Family, name string, n int) {
-	t.Helper()
-	var evs []store.Event
-	for i := 0; i < n; i++ {
-		e := store.Event{Family: family, ID: fmt.Sprintf("%s-%s-%d", family, name, i),
-			ProjectID: 1, EventName: name, TS: ts("2026-10-10T10:00:00Z"),
-			ReceivedAt: ts("2026-10-10T10:00:00Z"), Kind: "app", ActorID: "a", ActorKind: store.ActorConnection,
-			Attributes: map[string]string{"plan": "pro"}}
-		if family == store.FamilyMeasures {
-			v := 1.5
-			e.Value, e.Measure = &v, "m"
-		}
-		evs = append(evs, e)
-	}
-	if err := db.WriteEvents(context.Background(), evs); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func countOf(t *testing.T, db *DB, query string, args ...any) int {
-	t.Helper()
-	var n int
-	if err := db.db.QueryRow(query, args...).Scan(&n); err != nil {
-		t.Fatalf("%s: %v", query, err)
-	}
-	return n
-}
-
-// A blocked name is deleted with the day instead of rolled up (D10): the
-// totals count only what was kept.
-func TestAggregateProductDaySkipsBlocked(t *testing.T) {
-	db := ruleDB(t)
-	ctx := context.Background()
-	writeWithAttr(t, db, store.FamilyProduct, "keep", 2)
-	writeWithAttr(t, db, store.FamilyProduct, "spam", 3)
-	if err := db.BlockEvent(ctx, 1, store.FamilyProduct, "spam", ruleAudit); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AggregateProductDay(ctx, 1, day("2026-10-10"), []string{"plan"}, defaultAttrsTopN); err != nil {
-		t.Fatal(err)
-	}
-	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_product_daily WHERE project_id=1 AND day='2026-10-10' AND event_name='keep' AND count=2`); got != 1 {
-		t.Errorf("keep daily rows = %d, want 1 with count 2", got)
-	}
-	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_product_daily WHERE project_id=1 AND event_name='spam'`); got != 0 {
-		t.Errorf("spam daily rows = %d, want 0", got)
-	}
-	if got := countOf(t, db, `SELECT total_events FROM agg_product_totals WHERE project_id=1 AND day='2026-10-10'`); got != 2 {
-		t.Errorf("total_events = %d, want 2", got)
-	}
-	if got := countOf(t, db, `SELECT COUNT(*) FROM raw_product WHERE project_id=1 AND day='2026-10-10'`); got != 0 {
-		t.Errorf("raw product rows left = %d, want 0", got)
-	}
-	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_product_attrs WHERE project_id=1 AND event_name='spam'`); got != 0 {
-		t.Errorf("spam attr rows = %d, want 0", got)
-	}
-	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_product_attrs WHERE project_id=1 AND event_name='keep'`); got == 0 {
-		t.Error("keep attr rows missing")
-	}
-}
-
-// A day holding only blocked names ends with no raw rows and no totals row
-// (no phantom day of zero events).
-func TestAggregateProductDayAllBlocked(t *testing.T) {
-	db := ruleDB(t)
-	ctx := context.Background()
-	writeNamed(t, db, 1, store.FamilyProduct, "spam", 3)
-	if err := db.BlockEvent(ctx, 1, store.FamilyProduct, "spam", ruleAudit); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AggregateProductDay(ctx, 1, day("2026-10-10"), nil, defaultAttrsTopN); err != nil {
-		t.Fatal(err)
-	}
-	if got := countOf(t, db, `SELECT COUNT(*) FROM raw_product WHERE project_id=1 AND day='2026-10-10'`); got != 0 {
-		t.Errorf("raw product rows left = %d, want 0", got)
-	}
-	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_product_totals WHERE project_id=1 AND day='2026-10-10'`); got != 0 {
-		t.Errorf("totals rows = %d, want 0", got)
-	}
-	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_product_daily WHERE project_id=1`); got != 0 {
-		t.Errorf("daily rows = %d, want 0", got)
-	}
-}
-
-func TestAggregateMeasureDaySkipsBlocked(t *testing.T) {
-	db := ruleDB(t)
-	ctx := context.Background()
-	writeWithAttr(t, db, store.FamilyMeasures, "fast", 2)
-	writeWithAttr(t, db, store.FamilyMeasures, "slow", 3)
-	if err := db.BlockEvent(ctx, 1, store.FamilyMeasures, "slow", ruleAudit); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.AggregateMeasureDay(ctx, 1, day("2026-10-10"), []string{"plan"}, defaultAttrsTopN); err != nil {
-		t.Fatal(err)
-	}
-	if got := countOf(t, db, `SELECT SUM(samples) FROM agg_measures_daily WHERE project_id=1 AND event_name='fast'`); got != 2 {
-		t.Errorf("fast samples = %d, want 2", got)
-	}
-	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_measures_daily WHERE project_id=1 AND event_name='slow'`); got != 0 {
-		t.Errorf("slow daily rows = %d, want 0", got)
-	}
-	if got := countOf(t, db, `SELECT COUNT(*) FROM agg_measures_attrs WHERE project_id=1 AND event_name='slow'`); got != 0 {
-		t.Errorf("slow attr rows = %d, want 0", got)
-	}
-	if got := countOf(t, db, `SELECT COUNT(*) FROM raw_measures WHERE project_id=1 AND day='2026-10-10'`); got != 0 {
-		t.Errorf("raw measure rows left = %d, want 0", got)
 	}
 }

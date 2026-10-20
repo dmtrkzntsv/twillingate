@@ -223,11 +223,6 @@ func TestEventNamesReadTheFiles(t *testing.T) {
 	if _, err := h.ops.RenameEvent(ctx, "test", 3, "product", "old", "c"); err != nil {
 		t.Fatal(err)
 	}
-	// A row in SQLite alone is not read.
-	if _, err := rawExec(h.ops.St, `INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, path, family, event_name, sample_rate)
-		VALUES ('n9', 3, '2026-09-10T10:00:00Z', '2026-09-10', '2026-09-10T10:00:00Z', 'web', 'a1', 'user', '/', 'product', 'sqlite_only', 1)`); err != nil {
-		t.Fatal(err)
-	}
 
 	rec := serveREST(t, r, "GET", "/api/projects/"+pid+"/event-names?from=2026-09-01&to=2026-09-30", "")
 	if rec.Code != http.StatusOK {

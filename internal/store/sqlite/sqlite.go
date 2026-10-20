@@ -15,8 +15,6 @@ func init() { store.Register("sqlite", open) }
 
 type DB struct {
 	db *sql.DB
-	// seen is the received attribute keys ingest has written (WriteEvents).
-	seen receivedSeen
 }
 
 func open(dsn string) (store.Store, error) {

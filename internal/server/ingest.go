@@ -200,7 +200,7 @@ func mergeAttributes(batch, event map[string]any) map[string]any {
 // stored: the `$` namespace is reserved for system fields, so a `$` key this
 // server does not recognize is a client bug, and silently storing it as data
 // would hide that. Every other attribute is kept, however many: the body
-// limit bounds an event, and only declared keys reach the aggregates.
+// limit bounds an event.
 func resolveAttributes(m map[string]any) (r resolved, unknown, overlong []string) {
 	r = resolved{Custom: map[string]string{}}
 	for k, v := range m {

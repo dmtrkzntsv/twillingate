@@ -16,6 +16,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
 )
 
 // geteuid is the effective uid ImportEvents and Migrate check against the
@@ -23,11 +24,19 @@ import (
 var geteuid = os.Geteuid
 
 // eventsImportedKey is the meta row ImportEvents writes when done: the
-// time it finished (RFC 3339, UTC).
-const eventsImportedKey = "events_imported"
+// time it finished (RFC 3339, UTC). Migration 042 reads it to tell an
+// imported database from one whose events only SQLite holds.
+const eventsImportedKey = sqlite.EventsImportedKey
 
-// importStore is the slice of the store the import reads and marks.
+// importStore is the slice of the store the import migrates, reads and
+// marks: SQLite's (*sqlite.DB), whose reads of the events table are valid
+// only through sqlite.LastEventsVersion.
 type importStore interface {
+	// MigrateThrough applies the pending migrations up to v and no further.
+	MigrateThrough(ctx context.Context, v int) error
+	// EventsDropped reports whether migration 042 has dropped the events
+	// table.
+	EventsDropped(ctx context.Context) (bool, error)
 	ProjectIDs(ctx context.Context) ([]int64, error)
 	ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
 	ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
@@ -45,20 +54,34 @@ type dayImporter interface {
 
 // ImportEvents is `twillingate events import` (raw-first D19, PR 5c): it
 // copies into the event files every raw row SQLite holds that they do not,
-// once. With events_imported set it says when that was and returns, unless
+// once, so that migration 042 may drop the events table. On a database
+// past sqlite.LastEventsVersion it says the table is gone and returns. With
+// events_imported set it says when the import ran and returns, unless
 // force. Otherwise it goes in this order. First it refuses when run as
 // anyone but the database file's owner: files it wrote as root would lock
 // the service user out of raw/. Then it takes the events directory as the
 // ingest server does, so it refuses (archive.ErrLocked) while the server
-// runs: nothing else may write events or raw/ while it reads. Only then does
-// it migrate the schema, as `migrate` does, so it can run before the new
-// binary's first start. A run refused for either reason has written nothing
-// to raw/ (not even the directory or its lock) or to the database. The
-// closed logs it leaves are the next start's pass to dump.
+// runs: nothing else may write events or raw/ while it reads. Only then
+// does it migrate the schema, through sqlite.LastEventsVersion and no
+// further, so it can run before the new binary's first start, whose
+// migration 042 then drops what it copied. A run refused for either reason
+// has written nothing to raw/ (not even the directory or its lock) or to
+// the database. The closed logs it leaves are the next start's pass to
+// dump.
 func ImportEvents(ctx context.Context, cfg *config.Config, st store.Store, force bool, out io.Writer) error {
+	ist, ok := st.(importStore)
+	if !ok {
+		return fmt.Errorf("events import: the store %T holds no events table to import", st)
+	}
+	if dropped, err := ist.EventsDropped(ctx); err != nil {
+		return err
+	} else if dropped {
+		fmt.Fprintln(out, "the events table was dropped by migration 042; nothing to import")
+		return nil
+	}
 	// A database older than the meta table cannot answer yet; the check
 	// after the migration does.
-	if done, err := st.GetMeta(ctx, eventsImportedKey); err == nil && imported(done, force, out) {
+	if done, err := ist.GetMeta(ctx, eventsImportedKey); err == nil && imported(done, force, out) {
 		return nil
 	}
 	// Before OpenLog, which creates raw/ and raw/.lock: a run checkOwner
@@ -74,10 +97,10 @@ func ImportEvents(ctx context.Context, cfg *config.Config, st store.Store, force
 		return err
 	}
 	defer log.Close()
-	if err := Migrate(ctx, cfg, st); err != nil {
+	if err := ist.MigrateThrough(ctx, sqlite.LastEventsVersion); err != nil {
 		return err
 	}
-	if done, err := st.GetMeta(ctx, eventsImportedKey); err != nil {
+	if done, err := ist.GetMeta(ctx, eventsImportedKey); err != nil {
 		return err
 	} else if imported(done, force, out) {
 		return nil
@@ -92,7 +115,7 @@ func ImportEvents(ctx context.Context, cfg *config.Config, st store.Store, force
 	}
 	defer eng.Close()
 	a := archive.New(log, eng, slog.New(slog.NewTextHandler(out, nil)))
-	return importEvents(ctx, st, a, cfg.Retention.Days, time.Now(), out)
+	return importEvents(ctx, ist, a, cfg.Retention.Days, time.Now(), out)
 }
 
 // imported says, when done holds the time an import finished and force is
@@ -177,7 +200,7 @@ func importEvents(ctx context.Context, st importStore, imp dayImporter, retentio
 	if err := st.SetMeta(ctx, eventsImportedKey, now.UTC().Format(time.RFC3339)); err != nil {
 		return err
 	}
-	fmt.Fprintf(out, "imported %d of %d rows; the next start dumps them into day files\n", written, rows)
+	fmt.Fprintf(out, "imported %d of %d rows; the next start dumps them into day files and drops the events table\n", written, rows)
 	return nil
 }
 

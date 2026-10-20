@@ -264,18 +264,6 @@ func (d *DB) SetIngestKeyDisabled(ctx context.Context, projectID int64, label st
 // both directions, so a forgotten addition or a stale entry fails loudly
 // instead of silently orphaning rows on DeleteProjectData.
 var projectTables = []string{
-	"events", "usage_attributes",
-	// No code reads or writes project_attributes any more, but databases
-	// from before keep its rows until migration 042 drops the table, and
-	// its foreign key would refuse the project's deletion.
-	"project_attributes",
-	"agg_views_daily", "agg_views_paths", "agg_views_hosts", "agg_views_referrers",
-	"agg_views_utm", "agg_views_countries", "agg_views_platforms", "agg_views_os",
-	"agg_views_browsers", "agg_views_app_versions", "agg_views_devices", "agg_views_displays",
-	"agg_views_consent", "agg_views_locales",
-	"agg_product_daily", "agg_product_totals", "agg_product_attrs",
-	"agg_measures_daily", "agg_measures_attrs",
-	"actors", "agg_retention", "identities", "agg_identity_daily",
 	"ingest_keys", "rules", "usage_history", "project_tabs", "widget_shares", "forms", "submissions",
 }
 

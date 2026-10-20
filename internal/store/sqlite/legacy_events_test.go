@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
@@ -9,6 +10,50 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
+
+// legacyDB opens a database at LastEventsVersion, the last schema with
+// the events table: where the import's reads run.
+func legacyDB(t *testing.T) *DB {
+	t.Helper()
+	return newTestDBAt(t, LastEventsVersion)
+}
+
+// insertLegacy writes evs into events as ingest did through 041, for the
+// import's reads to find.
+func insertLegacy(t *testing.T, db *DB, evs ...store.Event) {
+	t.Helper()
+	for _, e := range evs {
+		attrs := e.Attributes
+		if attrs == nil {
+			attrs = map[string]string{}
+		}
+		blob, err := json.Marshal(attrs)
+		if err != nil {
+			t.Fatal(err)
+		}
+		rate := e.SampleRate
+		if rate == 0 {
+			rate = 1
+		}
+		if _, err := db.db.Exec(`INSERT INTO events
+			(id, project_id, family, event_name, ts, day, received_at, kind,
+			 actor_id, actor_kind, user_id, group_id, session_id,
+			 host, path, referrer_source, utm_source, utm_medium, utm_campaign,
+			 platform, os, os_version, os_name, browser, browser_version, browser_locale,
+			 app_version, app_locale, device, device_model, display_width, display_height,
+			 country, consent, attributes, value, measure, sample_rate)
+			VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+			e.ID, e.ProjectID, string(e.Family), e.EventName,
+			e.TS.UTC().Format(tsFormat), e.TS.UTC().Format("2006-01-02"), e.ReceivedAt.UTC().Format(tsFormat), e.Kind,
+			e.ActorID, e.ActorKind, e.UserID, e.GroupID, e.SessionID,
+			e.Host, e.Path, e.ReferrerSource, e.UTMSource, e.UTMMedium, e.UTMCampaign,
+			e.Platform, e.OS, e.OSVersion, e.OSName, e.Browser, e.BrowserVersion, e.BrowserLocale,
+			e.AppVersion, e.AppLocale, e.Device, e.DeviceModel, e.DisplayWidth, e.DisplayHeight,
+			e.Country, e.Consent, string(blob), e.Value, e.Measure, rate); err != nil {
+			t.Fatalf("event %s: %v", e.ID, err)
+		}
+	}
+}
 
 func rawAt(s string) time.Time {
 	t, err := time.Parse(time.RFC3339, s)
@@ -19,11 +64,11 @@ func rawAt(s string) time.Time {
 }
 
 // TestRawEventsReadsBackWhatWasWritten: a day's rows come back as the
-// events WriteEvents stored, in (ts, id) order, with the install id where
+// events ingest stored, in (ts, id) order, with the install id where
 // the install was the actor and the latest names identities holds
 // (raw-first D19, PR 5c Decision 4).
 func TestRawEventsReadsBackWhatWasWritten(t *testing.T) {
-	d := newTestDB(t)
+	d := legacyDB(t)
 	ctx := context.Background()
 	v := 12.5
 	evs := []store.Event{
@@ -46,15 +91,8 @@ func TestRawEventsReadsBackWhatWasWritten(t *testing.T) {
 		{ID: "e", ProjectID: 2, Family: store.FamilyProduct, EventName: "x", TS: rawAt("2026-10-11T09:00:00Z"),
 			ReceivedAt: rawAt("2026-10-11T09:00:00Z"), ActorID: "h", Platform: "web", SampleRate: 1},
 	}
-	if err := d.WriteEvents(ctx, evs); err != nil {
-		t.Fatal(err)
-	}
-	if err := d.UpsertIdentities(ctx, []store.Identity{
-		{ProjectID: 1, Kind: store.KindUser, ID: "u1", Name: "Ada"},
-		{ProjectID: 1, Kind: store.KindGroup, ID: "g1", Name: "Acme"},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	insertLegacy(t, d, evs...)
+	execAll(t, d, `INSERT INTO identities (project_id, kind, id, name) VALUES (1, 'user', 'u1', 'Ada'), (1, 'group', 'g1', 'Acme')`)
 	day, _ := civil.Parse("2026-10-11")
 	got, err := d.RawEvents(ctx, 1, day)
 	if err != nil {
@@ -73,14 +111,10 @@ func TestRawEventsReadsBackWhatWasWritten(t *testing.T) {
 // (a zero ReceivedAt), and attribute values that are JSON numbers,
 // booleans or null (a value is its JSON text, null is dropped).
 func TestRawEventsReadsOlderRows(t *testing.T) {
-	d := newTestDB(t)
+	d := legacyDB(t)
 	ctx := context.Background()
-	if err := d.WriteEvents(ctx, []store.Event{
-		{ID: "a", ProjectID: 1, Family: store.FamilyProduct, EventName: "x", TS: rawAt("2026-10-11T09:00:00Z"),
-			ReceivedAt: rawAt("2026-10-11T09:00:00Z"), ActorID: "h", Platform: "web", SampleRate: 1},
-	}); err != nil {
-		t.Fatal(err)
-	}
+	insertLegacy(t, d, store.Event{ID: "a", ProjectID: 1, Family: store.FamilyProduct, EventName: "x",
+		TS: rawAt("2026-10-11T09:00:00Z"), ReceivedAt: rawAt("2026-10-11T09:00:00Z"), ActorID: "h", Platform: "web", SampleRate: 1})
 	if _, err := d.db.ExecContext(ctx, `UPDATE events SET ts = '2026-10-11T09:00:00.250Z', received_at = '',
 		attributes = '{"n":42,"b":true,"z":null,"s":"x"}' WHERE id = 'a'`); err != nil {
 		t.Fatal(err)
@@ -101,34 +135,5 @@ func TestRawEventsReadsOlderRows(t *testing.T) {
 	}
 	if want := map[string]string{"n": "42", "b": "true", "s": "x"}; !reflect.DeepEqual(got[0].Attributes, want) {
 		t.Fatalf("Attributes = %v, want %v", got[0].Attributes, want)
-	}
-}
-
-// TestOldestRawDays: nothing on an empty database; each project's oldest
-// day once rows are held, whatever their family.
-func TestOldestRawDays(t *testing.T) {
-	d := newTestDB(t)
-	ctx := context.Background()
-	if got, err := d.OldestRawDays(ctx); err != nil || len(got) != 0 {
-		t.Fatalf("empty: %v, %v; want none", got, err)
-	}
-	row := func(id string, project int64, family store.Family, at string) store.Event {
-		e := store.Event{ID: id, ProjectID: project, Family: family, EventName: "signup", TS: rawAt(at),
-			ActorID: "u1", ActorKind: store.ActorUser, SampleRate: 1}
-		if family == store.FamilyViews {
-			e.EventName = "$page_view"
-		}
-		return e
-	}
-	if err := d.WriteEvents(ctx, []store.Event{
-		row("a", 1, store.FamilyProduct, "2026-10-11T10:00:00Z"),
-		row("b", 1, store.FamilyViews, "2026-10-09T10:00:00Z"),
-		row("c", 2, store.FamilyProduct, "2026-10-12T10:00:00Z"),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	got, err := d.OldestRawDays(ctx)
-	if want := map[int64]string{1: "2026-10-09", 2: "2026-10-12"}; err != nil || !reflect.DeepEqual(got, want) {
-		t.Fatalf("OldestRawDays = %v, %v; want %v", got, err, want)
 	}
 }

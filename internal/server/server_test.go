@@ -961,38 +961,19 @@ func TestFirstIdsAreLoggedOncePerKind(t *testing.T) {
 	}
 }
 
-// identityRecorder is a store that would take display names: the ingest
-// handler is given it as its FormStore, as app gives the SQLite store,
-// and must never call UpsertIdentities on it.
-type identityRecorder struct {
-	*fakeForms
-	mu    sync.Mutex
-	calls int
-}
-
-func (r *identityRecorder) UpsertIdentities(context.Context, []store.Identity) error {
-	r.mu.Lock()
-	r.calls++
-	r.mu.Unlock()
-	return nil
-}
-
-// TestIngestWritesNoIdentities: ingest no longer writes display names to
-// SQLite's identities table (raw-first 5d). The names ride on the events,
-// and the archive log, the event files' source, carries them.
-func TestIngestWritesNoIdentities(t *testing.T) {
+// TestIngestNamesRideOnTheEvents: display names ride on the events
+// (raw-first 5d), and the archive log, the event files' source, carries
+// them.
+func TestIngestNamesRideOnTheEvents(t *testing.T) {
 	cfg := configtest.Load(t, nil)
 	reg := newTestRegistry(t, []manage.ProjectSpec{{Name: "App", AllowedOrigins: []string{testOrigin}}},
 		map[int][2]string{0: {testKey, "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
-	q, rec := &fakeQueue{}, &identityRecorder{fakeForms: newFakeForms()}
-	h := New(cfg, reg, q, g, fixedSalt{}, rec, slog.Default())
+	q := &fakeQueue{}
+	h := New(cfg, reg, q, g, fixedSalt{}, newFakeForms(), slog.Default())
 	if w := post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada","$group_id":"g1","$group_name":"Acme"},
 	  "events":[{"name":"a"},{"name":"$page_view","attributes":{"$path":"/"}}]}`, nil); w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
-	}
-	if rec.calls != 0 {
-		t.Errorf("UpsertIdentities called %d times, want none", rec.calls)
 	}
 	if len(q.events) != 1 || len(q.views) != 1 {
 		t.Fatalf("events %d, views %d; want 1 and 1", len(q.events), len(q.views))

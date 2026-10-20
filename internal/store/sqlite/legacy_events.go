@@ -1,3 +1,10 @@
+// The reads of the events table: `twillingate events import` copies
+// SQLite's raw rows into the event files, and migration 042, which drops
+// the table, refuses to run before it has. Everything here is valid only on
+// a schema through LastEventsVersion; internal/sqlcheck leaves this file
+// out (it prepares against the current schema) and the tests run it
+// against a database at that version.
+
 package sqlite
 
 import (
@@ -5,12 +12,109 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
+
+// LastEventsVersion is the last migration with the events table: 042
+// drops it.
+const LastEventsVersion = 41
+
+// EventsImportedKey is the meta row `twillingate events import` writes
+// once every raw row is in the event files (app.ImportEvents).
+const EventsImportedKey = "events_imported"
+
+// eventsNotImported is migration 042's refusal while events holds rows
+// and EventsImportedKey is unset.
+const eventsNotImported = "migration 042 drops the events table, which still holds raw events the event files may lack: " +
+	"stop the service, run `twillingate events import`, then start again"
+
+// checkEventsImported is migration 042's pre-check (preChecks): it refuses
+// while events holds a row and the import has not run. A database with no
+// events table passes.
+func checkEventsImported(ctx context.Context, conn *sql.Conn) error {
+	var table bool
+	if err := conn.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'events')`).Scan(&table); err != nil {
+		return err
+	}
+	if !table {
+		return nil
+	}
+	var held, imported bool
+	if err := conn.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events)`).Scan(&held); err != nil {
+		return err
+	}
+	if !held {
+		return nil
+	}
+	if err := conn.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM meta WHERE key = ? AND value <> '')`, EventsImportedKey).Scan(&imported); err != nil {
+		return err
+	}
+	if !imported {
+		return errors.New(eventsNotImported)
+	}
+	return nil
+}
+
+// EventsDropped reports whether migration 042 has run, so the events
+// table is gone. A file nothing has migrated yet has not.
+func (d *DB) EventsDropped(ctx context.Context) (bool, error) {
+	var migrated bool
+	if err := d.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_migrations')`).Scan(&migrated); err != nil {
+		return false, err
+	}
+	if !migrated {
+		return false, nil
+	}
+	var dropped bool
+	err := d.db.QueryRowContext(ctx,
+		`SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE version > ?)`, LastEventsVersion).Scan(&dropped)
+	return dropped, err
+}
+
+// ViewDaysBefore, ProductDaysBefore and MeasureDaysBefore list, in order,
+// the days before before on which the project has raw rows of the family.
+func (d *DB) ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
+	return d.daysBefore(ctx, store.FamilyViews, projectID, before)
+}
+
+func (d *DB) ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
+	return d.daysBefore(ctx, store.FamilyProduct, projectID, before)
+}
+
+func (d *DB) MeasureDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
+	return d.daysBefore(ctx, store.FamilyMeasures, projectID, before)
+}
+
+func (d *DB) daysBefore(ctx context.Context, family store.Family, projectID int64, before civil.Date) ([]civil.Date, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT DISTINCT day FROM events WHERE family = ? AND project_id = ? AND day < ? ORDER BY 1`,
+		string(family), projectID, before.String())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []civil.Date
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		day, err := civil.Parse(s)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, day)
+	}
+	return out, rows.Err()
+}
 
 // rawEventsSQL reads one project's day of raw rows, with the names
 // identities holds for each row's user and group. The family list makes
@@ -85,28 +189,6 @@ func (d *DB) RawEvents(ctx context.Context, projectID int64, day civil.Date) ([]
 			e.InstallID = e.ActorID
 		}
 		out = append(out, e)
-	}
-	return out, rows.Err()
-}
-
-// OldestRawDays is each project's oldest day with a raw row SQLite holds,
-// of any family: where what `twillingate events import` would copy into the
-// files begins. A project with none is left out.
-func (d *DB) OldestRawDays(ctx context.Context) (map[int64]string, error) {
-	rows, err := d.db.QueryContext(ctx,
-		`SELECT project_id, MIN(day) FROM events WHERE family IN ('views', 'product', 'measures') GROUP BY project_id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[int64]string{}
-	for rows.Next() {
-		var id int64
-		var day string
-		if err := rows.Scan(&id, &day); err != nil {
-			return nil, err
-		}
-		out[id] = day
 	}
 	return out, rows.Err()
 }

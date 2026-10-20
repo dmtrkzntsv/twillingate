@@ -2,7 +2,6 @@ package sqlite
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -12,50 +11,6 @@ import (
 )
 
 var attrAudit = store.AuditEntry{Actor: "cli", Action: "attribute.rename", Subject: "1/a"}
-
-// writeAttrs stores one event of the family carrying attrs, on 2026-10-10.
-func writeAttrs(t *testing.T, db *DB, project int64, family store.Family, id string, attrs map[string]string) {
-	t.Helper()
-	e := store.Event{Family: family, ID: id, ProjectID: project, EventName: "e",
-		TS: ts("2026-10-10T10:00:00Z"), ReceivedAt: ts("2026-10-10T10:00:00Z"), Kind: "app",
-		ActorID: "a", ActorKind: store.ActorConnection, Attributes: attrs}
-	switch family {
-	case store.FamilyMeasures:
-		v := 1.5
-		e.Value, e.Measure = &v, "m"
-	case store.FamilyViews:
-		e.Kind, e.Path = "web", "/"
-	}
-	if err := db.WriteEvents(context.Background(), []store.Event{e}); err != nil {
-		t.Fatal(err)
-	}
-}
-
-// rawAttrs reads every stored row's attributes by id.
-func rawAttrs(t *testing.T, db *DB) map[string]map[string]any {
-	t.Helper()
-	rows, err := db.db.Query(`SELECT id, attributes FROM events`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	out := map[string]map[string]any{}
-	for rows.Next() {
-		var id, blob string
-		if err := rows.Scan(&id, &blob); err != nil {
-			t.Fatal(err)
-		}
-		var m map[string]any
-		if err := json.Unmarshal([]byte(blob), &m); err != nil {
-			t.Fatalf("row %s: %v", id, err)
-		}
-		out[id] = m
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
-	}
-	return out
-}
 
 func loadAttrRules(t *testing.T, db *DB) []store.AttributeRule {
 	t.Helper()
@@ -88,28 +43,12 @@ func blockAttr(t *testing.T, db *DB, project int64, key string) {
 	}
 }
 
-// usageRows reads usage_attributes as "project/day/key events max" lines.
-func usageRows(t *testing.T, db *DB) []string {
-	t.Helper()
-	return queryStrings(t, db, `SELECT project_id || '/' || day || '/' || attr_key || ' ' || events || ' ' || COALESCE(max_values, 'null')
-		FROM usage_attributes ORDER BY project_id, day, attr_key`)
-}
-
-// A rename writes its rule and its audit row, and touches no event and no
-// catalog row: with the events table, the attribute aggregates and
-// usage_attributes gone, it still succeeds.
+// A rename writes its rule and its audit row, and nothing else.
 func TestRenameAttributeWritesOnlyRules(t *testing.T) {
 	db := ruleDB(t)
-	execAll(t, db,
-		`INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'a', 1), (1, 'b', 0), (2, 'a', 0)`,
-		`DROP VIEW raw_product`, `DROP VIEW raw_measures`, `DROP VIEW raw_views`, `DROP TABLE events`,
-		`DROP TABLE agg_product_attrs`, `DROP TABLE agg_measures_attrs`, `DROP TABLE usage_attributes`)
 
 	renameAttr(t, db, 1, "a", "c")
 
-	if got, want := catalogRows(t, db), []string{"1/a=1", "1/b=0", "2/a=0"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("catalog = %v, want it untouched %v", got, want)
-	}
 	if got, want := loadAttrRules(t, db), []store.AttributeRule{attrRule(1, "a", store.EventRuleRename, "c")}; !reflect.DeepEqual(got, want) {
 		t.Errorf("rules = %v, want %v", got, want)
 	}
@@ -196,9 +135,8 @@ func TestAttributeRuleChains(t *testing.T) {
 	}
 }
 
-// A key is addressed as itself, never as a path: the mapping at insert
-// renames a key with a dot, a slash, a space, an accent, a backslash or a
-// double quote as it is.
+// A key is stored as itself, never as a path: a key with a dot, a slash,
+// a space, an accent, a backslash or a double quote reads back as given.
 func TestAttributeKeyWithDotAndSlash(t *testing.T) {
 	db := ruleDB(t)
 	renameAttr(t, db, 1, "a.b", "c")
@@ -207,11 +145,16 @@ func TestAttributeKeyWithDotAndSlash(t *testing.T) {
 	renameAttr(t, db, 1, "é", "e acute")
 	renameAttr(t, db, 1, `a\b`, `back\slash`)
 	renameAttr(t, db, 1, `q"r`, `quote"d`)
-	writeAttrs(t, db, 1, store.FamilyProduct, "later", map[string]string{"a.b": "1", "x/y": "2", "plan type": "3", "é": "4",
-		`a\b`: "5", `q"r`: "6"})
-	want := map[string]any{"c": "1", "checkout/v2": "2", "é2": "3", "e acute": "4", `back\slash`: "5", `quote"d`: "6"}
-	if got := rawAttrs(t, db)["later"]; !reflect.DeepEqual(got, want) {
-		t.Errorf("later = %v, want %v", got, want)
+	want := []store.AttributeRule{
+		attrRule(1, "a.b", store.EventRuleRename, "c"),
+		attrRule(1, `a\b`, store.EventRuleRename, `back\slash`),
+		attrRule(1, "plan type", store.EventRuleRename, "é2"),
+		attrRule(1, `q"r`, store.EventRuleRename, `quote"d`),
+		attrRule(1, "x/y", store.EventRuleRename, "checkout/v2"),
+		attrRule(1, "é", store.EventRuleRename, "e acute"),
+	}
+	if got := loadAttrRules(t, db); !reflect.DeepEqual(got, want) {
+		t.Errorf("rules = %v, want %v", got, want)
 	}
 }
 
@@ -219,7 +162,6 @@ func TestBlockAttribute(t *testing.T) {
 	db := ruleDB(t)
 	ctx := context.Background()
 	renameAttr(t, db, 1, "z", "a")
-	execAll(t, db, `INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'a', 1)`)
 	blockAttr(t, db, 1, "a")
 	want := []store.AttributeRule{
 		attrRule(1, "a", store.EventRuleBlock, ""),
@@ -227,9 +169,6 @@ func TestBlockAttribute(t *testing.T) {
 	}
 	if got := loadAttrRules(t, db); !reflect.DeepEqual(got, want) {
 		t.Errorf("rules = %v, want %v", got, want)
-	}
-	if got, want := catalogRows(t, db), []string{"1/a=1"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("catalog = %v, want it untouched %v", got, want)
 	}
 	if n := count(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='attribute.block'`); n != 1 {
 		t.Errorf("audit rows = %d, want 1", n)
@@ -271,33 +210,5 @@ func TestBlockAttribute(t *testing.T) {
 	}
 	if n := count(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='attribute.remove_rule'`); n != 1 {
 		t.Errorf("audit rows = %d, want 1", n)
-	}
-}
-
-func TestWriteEventsMapsAttributes(t *testing.T) {
-	db := ruleDB(t)
-	renameAttr(t, db, 1, "a", "b")
-	blockAttr(t, db, 1, "x")
-	writeAttrs(t, db, 1, store.FamilyProduct, "p1", map[string]string{"a": "1", "x": "2", "y": "3"})
-	writeAttrs(t, db, 1, store.FamilyMeasures, "m1", map[string]string{"a": "4"})
-	writeAttrs(t, db, 1, store.FamilyViews, "v1", map[string]string{"a": "5", "x": "6"})
-	writeAttrs(t, db, 2, store.FamilyProduct, "o1", map[string]string{"a": "7", "x": "8"})
-
-	want := map[string]map[string]any{
-		"p1": {"b": "1", "y": "3"},
-		"m1": {"b": "4"},
-		"v1": {"a": "5", "x": "6"}, // views are left alone
-		"o1": {"a": "7", "x": "8"}, // no rules in project 2
-	}
-	if got := rawAttrs(t, db); !reflect.DeepEqual(got, want) {
-		t.Errorf("raw = %v, want %v", got, want)
-	}
-	if got, want := usageRows(t, db), []string{
-		"1/2026-10-10/b 0 null", "1/2026-10-10/y 0 null", "2/2026-10-10/a 0 null", "2/2026-10-10/x 0 null",
-	}; !reflect.DeepEqual(got, want) {
-		t.Errorf("usage_attributes = %v, want %v", got, want)
-	}
-	if got := catalogRows(t, db); len(got) != 0 {
-		t.Errorf("catalog = %v, want no rows written", got)
 	}
 }

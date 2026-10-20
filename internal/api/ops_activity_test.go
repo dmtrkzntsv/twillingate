@@ -39,13 +39,13 @@ func dayPtr(s string) *string { return &s }
 // TestProjectActivityReadsTheFiles: every live project in list order with
 // the newest day of its event files and the submissions its forms have not
 // been read past, and how many live forms it has, drafts among them.
-// Archived projects are left out, and SQLite's events are not read.
+// Archived projects are left out.
 func TestProjectActivityReadsTheFiles(t *testing.T) {
 	h, _ := newTestHost(t)
 	ctx := t.Context()
 	// Project 1: a view newer than the template's files, and a form with
-	// two unseen submissions. Project 2: a measure in a log of its own,
-	// and a later day in SQLite only, which no longer counts. Project 3:
+	// two unseen submissions. Project 2: a measure in a log of its own.
+	// Project 3:
 	// nothing at all. Project 4: archived.
 	value := 120.0
 	writeHostEvents(t, h,
@@ -53,9 +53,6 @@ func TestProjectActivityReadsTheFiles(t *testing.T) {
 			TS: time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)},
 		store.Event{ProjectID: 2, Family: store.FamilyMeasures, EventName: "load", Value: &value, Measure: store.MeasureTime,
 			TS: time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)})
-	if _, err := rawExec(h.ops.St, `INSERT INTO agg_product_totals (project_id, day, total_events, active_users) VALUES (2,'2026-07-02',3,2)`); err != nil {
-		t.Fatal(err)
-	}
 	for _, name := range []string{"quiet", "gone"} {
 		if _, err := h.ops.CreateProject(ctx, "test", manage.ProjectSpec{Name: name}); err != nil {
 			t.Fatal(err)

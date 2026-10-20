@@ -12,7 +12,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/config/configtest"
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -21,18 +20,14 @@ import (
 // message wording elsewhere.
 var errBoom = errors.New("boom")
 
-// faultyStore wraps a real store.Store and makes named methods fail, either
-// every call (failAlways) or after a number of successful calls (skip) —
-// the latter is what lets a test fail the SECOND call to a method that
-// RunDailyPass also calls once earlier via allRawDays.
+// faultyStore wraps a real store.Store and makes named methods fail.
 type faultyStore struct {
 	store.Store
 	failAlways map[string]bool
-	skip       map[string]int
 }
 
 func newFaultyStore(st store.Store) *faultyStore {
-	return &faultyStore{Store: st, failAlways: map[string]bool{}, skip: map[string]int{}}
+	return &faultyStore{Store: st, failAlways: map[string]bool{}}
 }
 
 func (f *faultyStore) failing(name string) *faultyStore {
@@ -40,122 +35,7 @@ func (f *faultyStore) failing(name string) *faultyStore {
 	return f
 }
 
-func (f *faultyStore) failingAfter(name string, okCalls int) *faultyStore {
-	f.skip[name] = okCalls
-	return f
-}
-
-func (f *faultyStore) shouldFail(name string) bool {
-	if f.failAlways[name] {
-		return true
-	}
-	if n, ok := f.skip[name]; ok {
-		if n > 0 {
-			f.skip[name] = n - 1
-			return false
-		}
-		return true
-	}
-	return false
-}
-
-func (f *faultyStore) ProjectIDs(ctx context.Context) ([]int64, error) {
-	if f.shouldFail("ProjectIDs") {
-		return nil, errBoom
-	}
-	return f.Store.ProjectIDs(ctx)
-}
-
-func (f *faultyStore) ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
-	if f.shouldFail("ViewDaysBefore") {
-		return nil, errBoom
-	}
-	return f.Store.ViewDaysBefore(ctx, projectID, before)
-}
-
-func (f *faultyStore) ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
-	if f.shouldFail("ProductDaysBefore") {
-		return nil, errBoom
-	}
-	return f.Store.ProductDaysBefore(ctx, projectID, before)
-}
-
-func (f *faultyStore) UpsertActors(ctx context.Context, projectID int64, day civil.Date) error {
-	if f.shouldFail("UpsertActors") {
-		return errBoom
-	}
-	return f.Store.UpsertActors(ctx, projectID, day)
-}
-
-func (f *faultyStore) AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error {
-	if f.shouldFail("AggregateRetentionDay") {
-		return errBoom
-	}
-	return f.Store.AggregateRetentionDay(ctx, projectID, day)
-}
-
-func (f *faultyStore) AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date, topN int) error {
-	if f.shouldFail("AggregateIdentityDay") {
-		return errBoom
-	}
-	return f.Store.AggregateIdentityDay(ctx, projectID, day, topN)
-}
-
-func (f *faultyStore) AggregateViewDay(ctx context.Context, projectID int64, day civil.Date, topN int) error {
-	if f.shouldFail("AggregateViewDay") {
-		return errBoom
-	}
-	return f.Store.AggregateViewDay(ctx, projectID, day, topN)
-}
-
-func (f *faultyStore) AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error {
-	if f.shouldFail("AggregateProductDay") {
-		return errBoom
-	}
-	return f.Store.AggregateProductDay(ctx, projectID, day, attrs, topN)
-}
-
-func (f *faultyStore) MeasureDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
-	if f.shouldFail("MeasureDaysBefore") {
-		return nil, errBoom
-	}
-	return f.Store.MeasureDaysBefore(ctx, projectID, before)
-}
-
-func (f *faultyStore) AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error {
-	if f.shouldFail("AggregateMeasureDay") {
-		return errBoom
-	}
-	return f.Store.AggregateMeasureDay(ctx, projectID, day, attrs, topN)
-}
-
-func (f *faultyStore) PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error {
-	if f.shouldFail("PruneAggregates") {
-		return errBoom
-	}
-	return f.Store.PruneAggregates(ctx, projectID, before)
-}
-
-func (f *faultyStore) PruneActors(ctx context.Context, projectID int64, before civil.Date) error {
-	if f.shouldFail("PruneActors") {
-		return errBoom
-	}
-	return f.Store.PruneActors(ctx, projectID, before)
-}
-
-func (f *faultyStore) PruneIdentities(ctx context.Context, projectID int64, before civil.Date) error {
-	if f.shouldFail("PruneIdentities") {
-		return errBoom
-	}
-	return f.Store.PruneIdentities(ctx, projectID, before)
-}
-
-func (f *faultyStore) RebuildFlatView(ctx context.Context, keys []string) error {
-	if f.shouldFail("RebuildFlatView") {
-		return errBoom
-	}
-	return f.Store.RebuildFlatView(ctx, keys)
-}
+func (f *faultyStore) shouldFail(name string) bool { return f.failAlways[name] }
 
 func (f *faultyStore) IncrementalVacuum(ctx context.Context) error {
 	if f.shouldFail("IncrementalVacuum") {
@@ -191,224 +71,23 @@ func logged(buf *bytes.Buffer, substr string) bool {
 	return strings.Contains(buf.String(), substr)
 }
 
-// --- fatal: failure to enumerate work at all stops the pass ---
-
-func TestRunDailyPassFailsWhenProjectIDsErrors(t *testing.T) {
-	_, fst, r, _ := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	fst.failing("ProjectIDs")
-	if err := r.RunDailyPass(context.Background()); !errors.Is(err, errBoom) {
-		t.Fatalf("RunDailyPass = %v, want errBoom", err)
-	}
-}
-
-func TestRunDailyPassFailsWhenAllRawDaysViewsQueryErrors(t *testing.T) {
-	_, fst, r, _ := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	fst.failing("ViewDaysBefore")
-	if err := r.RunDailyPass(context.Background()); !errors.Is(err, errBoom) {
-		t.Fatalf("RunDailyPass = %v, want errBoom", err)
-	}
-}
-
-func TestRunDailyPassFailsWhenViewsRawWindowQueryErrors(t *testing.T) {
-	_, fst, r, _ := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	// allRawDays makes the first ViewDaysBefore call; let that one succeed so
-	// the pass reaches the direct raw-window call further down, and fail
-	// that one instead.
-	fst.failingAfter("ViewDaysBefore", 1)
-	if err := r.RunDailyPass(context.Background()); !errors.Is(err, errBoom) {
-		t.Fatalf("RunDailyPass = %v, want errBoom", err)
-	}
-}
-
-func TestRunDailyPassFailsWhenProductRawWindowQueryErrors(t *testing.T) {
-	_, fst, r, _ := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	fst.failingAfter("ProductDaysBefore", 1)
-	if err := r.RunDailyPass(context.Background()); !errors.Is(err, errBoom) {
-		t.Fatalf("RunDailyPass = %v, want errBoom", err)
-	}
-}
-
-// --- per-project soft failures: logged, pass continues, RunDailyPass returns nil ---
-
-var appJobsSpecs = []manage.ProjectSpec{
-	{Name: "App", AllowedOrigins: []string{"https://a.com"}},
-}
-
-func TestRunDailyPassLogsUpsertActorsFailure(t *testing.T) {
-	st, fst, r, buf := setupFaulty(t, jobsVars, appJobsSpecs)
-	ctx := context.Background()
-	ts := mustTime("2026-08-20T10:00:00Z")
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
-		t.Fatal(err)
-	}
-	fst.failing("UpsertActors")
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatalf("RunDailyPass = %v, want nil (per-project failure must not be fatal)", err)
-	}
-	if !logged(buf, "upsert actors failed") || !logged(buf, "boom") {
-		t.Errorf("log output = %q, want mention of upsert actors failed and boom", buf.String())
-	}
-}
-
-func TestRunDailyPassLogsAggregateRetentionDayFailure(t *testing.T) {
-	st, fst, r, buf := setupFaulty(t, jobsVars, appJobsSpecs)
-	ctx := context.Background()
-	ts := mustTime("2026-08-20T10:00:00Z")
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
-		t.Fatal(err)
-	}
-	fst.failing("AggregateRetentionDay")
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatalf("RunDailyPass = %v, want nil", err)
-	}
-	if !logged(buf, "aggregate retention failed") {
-		t.Errorf("log output = %q, want mention of aggregate retention failed", buf.String())
-	}
-}
-
-func TestRunDailyPassLogsAggregateIdentityDayFailure(t *testing.T) {
-	st, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	ctx := context.Background()
-	ts := mustTime("2026-08-20T10:00:00Z")
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
-		t.Fatal(err)
-	}
-	fst.failing("AggregateIdentityDay")
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatalf("RunDailyPass = %v, want nil", err)
-	}
-	if !logged(buf, "aggregate identity failed") {
-		t.Errorf("log output = %q, want mention of aggregate identity failed", buf.String())
-	}
-}
-
-func TestRunDailyPassLogsAggregateViewDayFailure(t *testing.T) {
-	st, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	ctx := context.Background()
-	ts := mustTime("2026-08-10T10:00:00Z")
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
-		t.Fatal(err)
-	}
-	fst.failing("AggregateViewDay")
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatalf("RunDailyPass = %v, want nil", err)
-	}
-	if !logged(buf, "aggregate views failed") {
-		t.Errorf("log output = %q, want mention of aggregate views failed", buf.String())
-	}
-	// The raw row must survive: the failed aggregation must not have
-	// deleted it (AggregateViewDay itself is what would delete it, and it
-	// never got to run for real).
-	left, err := st.ViewDaysBefore(ctx, 1, mustDay("2026-08-22"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(left) != 1 {
-		t.Errorf("raw view days left = %v, want the failed day to survive", left)
-	}
-}
-
-func TestRunDailyPassLogsAggregateProductDayFailure(t *testing.T) {
-	st, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	ctx := context.Background()
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyProduct, ID: "1", ProjectID: 1, EventName: "e", ActorID: "u", TS: mustTime("2026-08-10T10:00:00Z")}}); err != nil {
-		t.Fatal(err)
-	}
-	fst.failing("AggregateProductDay")
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatalf("RunDailyPass = %v, want nil", err)
-	}
-	if !logged(buf, "aggregate product failed") {
-		t.Errorf("log output = %q, want mention of aggregate product failed", buf.String())
-	}
-}
-
-func TestRunDailyPassLogsAggregateMeasuresFailure(t *testing.T) {
-	st, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	ctx := context.Background()
-	v := 120.0
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyMeasures, ID: "1", ProjectID: 1, EventName: "$lcp", TS: mustTime("2026-08-10T10:00:00Z"), ReceivedAt: mustTime("2026-08-10T10:00:00Z"),
-			ActorID: "v", ActorKind: store.ActorConnection, Value: &v, Measure: store.MeasureTime, SampleRate: 1}}); err != nil {
-		t.Fatal(err)
-	}
-	fst.failing("AggregateMeasureDay")
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatalf("RunDailyPass = %v, want nil", err)
-	}
-	if !logged(buf, "aggregate measures failed") {
-		t.Errorf("log output = %q, want mention of aggregate measures failed", buf.String())
-	}
-}
-
-func TestRunDailyPassLogsPruneAggregatesFailure(t *testing.T) {
-	_, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	fst.failing("PruneAggregates")
-	if err := r.RunDailyPass(context.Background()); err != nil {
-		t.Fatalf("RunDailyPass = %v, want nil", err)
-	}
-	if !logged(buf, "prune failed") {
-		t.Errorf("log output = %q, want mention of prune failed", buf.String())
-	}
-}
-
-func TestRunDailyPassLogsPruneActorsFailure(t *testing.T) {
-	_, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	fst.failing("PruneActors")
-	if err := r.RunDailyPass(context.Background()); err != nil {
-		t.Fatalf("RunDailyPass = %v, want nil", err)
-	}
-	if !logged(buf, "prune actors failed") {
-		t.Errorf("log output = %q, want mention of prune actors failed", buf.String())
-	}
-}
-
-func TestRunDailyPassLogsPruneIdentitiesFailure(t *testing.T) {
-	_, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	fst.failing("PruneIdentities")
-	if err := r.RunDailyPass(context.Background()); err != nil {
-		t.Fatalf("RunDailyPass = %v, want nil", err)
-	}
-	if !logged(buf, "prune identities failed") {
-		t.Errorf("log output = %q, want mention of prune identities failed", buf.String())
-	}
-}
-
-func TestRunDailyPassLogsFlatViewRebuildFailure(t *testing.T) {
-	_, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
-	fst.failing("RebuildFlatView")
-	if err := r.RunDailyPass(context.Background()); err != nil {
-		t.Fatalf("RunDailyPass = %v, want nil", err)
-	}
-	if !logged(buf, "flat view rebuild failed") {
-		t.Errorf("log output = %q, want mention of flat view rebuild failed", buf.String())
-	}
-}
+// --- failures are logged and the pass goes on ---
 
 func TestRunDailyPassLogsIncrementalVacuumFailure(t *testing.T) {
 	_, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
 	fst.failing("IncrementalVacuum")
-	if err := r.RunDailyPass(context.Background()); err != nil {
-		t.Fatalf("RunDailyPass = %v, want nil", err)
-	}
+	r.RunDailyPass(context.Background())
 	if !logged(buf, "incremental vacuum failed") {
 		t.Errorf("log output = %q, want mention of incremental vacuum failed", buf.String())
 	}
 }
 
-// The measurement is the last step: a failure is logged and the pass still
-// succeeds, and the earlier steps have already run.
+// The measurement is the last step: a failure is logged, and the earlier
+// steps have already run.
 func TestRunDailyPassLogsRecordUsageHistoryFailure(t *testing.T) {
 	_, fst, r, buf := setupFaulty(t, jobsVars, jobsProjectSpecs)
 	fst.failing("RecordUsageHistory")
-	if err := r.RunDailyPass(context.Background()); err != nil {
-		t.Fatalf("RunDailyPass = %v, want nil", err)
-	}
+	r.RunDailyPass(context.Background())
 	if !logged(buf, "record usage history") || !logged(buf, "boom") {
 		t.Errorf("log output = %q, want mention of record usage history and boom", buf.String())
 	}
@@ -442,24 +121,6 @@ func TestRunScheduledLogsSaltRotationFailure(t *testing.T) {
 	}
 }
 
-func TestRunScheduledLogsDailyPassFailure(t *testing.T) {
-	cfg := configtest.Load(t, jobsVars)
-	st, _ := openStoreAt(t)
-	reg := newRegistry(t, st, cfg, jobsProjectSpecs)
-	fst := newFaultyStore(st)
-	fst.failing("ProjectIDs")
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&buf, nil))
-	now := func() time.Time { return time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC) }
-	r := New(fst, cfg, reg, identity.NewSalter(st, now), logger, now)
-
-	r.runScheduled(context.Background())
-
-	if !logged(&buf, "daily pass") || !logged(&buf, "boom") {
-		t.Errorf("log output = %q, want mention of daily pass and boom", buf.String())
-	}
-}
-
 func TestRunLogsInitialSaltFailure(t *testing.T) {
 	cfg := configtest.Load(t, jobsVars)
 	st := openStore(t)
@@ -481,31 +142,5 @@ func TestRunLogsInitialSaltFailure(t *testing.T) {
 
 	if !logged(&buf, "initial salt") || !logged(&buf, "boom") {
 		t.Errorf("log output = %q, want mention of initial salt and boom", buf.String())
-	}
-}
-
-func TestRunLogsBootCatchUpFailure(t *testing.T) {
-	cfg := configtest.Load(t, jobsVars)
-	st, _ := openStoreAt(t)
-	reg := newRegistry(t, st, cfg, jobsProjectSpecs)
-	fst := newFaultyStore(st)
-	fst.failing("ProjectIDs")
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&buf, nil))
-	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
-	r := New(fst, cfg, reg, identity.NewSalter(fst, now), logger, now)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	done := make(chan struct{})
-	go func() { defer close(done); r.Run(ctx) }()
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(5 * time.Second):
-		t.Fatal("Run did not return after cancel")
-	}
-
-	if !logged(&buf, "boot catch-up pass") || !logged(&buf, "boom") {
-		t.Errorf("log output = %q, want mention of boot catch-up pass and boom", buf.String())
 	}
 }

@@ -133,7 +133,7 @@ func TestLimitsReportsTheIngestSwitch(t *testing.T) {
 
 // events_30d counts the events in the event files of the 30 days ending
 // today, every family and project: an event 30 days old or older is not
-// counted, nor is a row SQLite alone holds. The count is cached for
+// counted. The count is cached for
 // eventCountTTL like the raw count it replaces; the MCP tool answers it
 // too.
 func TestLimitsCountsTheLast30Days(t *testing.T) {
@@ -164,11 +164,6 @@ func TestLimitsCountsTheLast30Days(t *testing.T) {
 		store.Event{Family: store.FamilyMeasures, ProjectID: 2, EventName: "lcp", Value: &one, Measure: store.MeasureTime, TS: noon(today.AddDays(-1))},
 		store.Event{Family: store.FamilyProduct, ProjectID: 1, EventName: "signup", TS: noon(today.AddDays(-30))},
 		store.Event{Family: store.FamilyProduct, ProjectID: 2, EventName: "signup", TS: noon(today.AddDays(-31))})
-	if _, err := rawExec(h.ops.St, `INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, path, family, event_name, sample_rate)
-		VALUES ('sq1', 1, ?1, ?2, ?1, 'web', 'a1', 'user', '/', 'views', '$page_view', 1)`,
-		time.Now().UTC().Format(time.RFC3339), today.String()); err != nil {
-		t.Fatal(err)
-	}
 	// Within the TTL the count is the cached one; past it, the stale count
 	// answers while a refresh runs, and the next read has the new events.
 	if out, _ = h.listLimits(context.Background(), struct{}{}); out.Events30d == nil || out.Events30d.Count != base {
@@ -180,7 +175,7 @@ func TestLimitsCountsTheLast30Days(t *testing.T) {
 	}
 	h.events.settle()
 	if out, _ = h.listLimits(context.Background(), struct{}{}); out.Events30d == nil || out.Events30d.Count != base+3 {
-		t.Errorf("events_30d = %+v, want %d: today's, 29 and 1 days back, not 30 or 31 days back nor SQLite's", out.Events30d, base+3)
+		t.Errorf("events_30d = %+v, want %d: today's, 29 and 1 days back, not 30 or 31 days back", out.Events30d, base+3)
 	}
 
 	var viaMCP struct {

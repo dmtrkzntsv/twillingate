@@ -38,9 +38,8 @@ func measuresRow(t *testing.T, out string, col, want string) map[string]string {
 	return nil
 }
 
-// TestMeasuresReturnsOneRowPerMetric checks the seeded histograms (see
-// seed_test.go: agg_measures_daily/agg_measures_attrs rows on 2026-08-20
-// plus raw measures written through WriteEvents on 2026-08-21) combine
+// TestMeasuresReturnsOneRowPerMetric checks the seeded measures (see
+// seed_files_test.go: hostEvents on 2026-08-20 and 2026-08-21) combine
 // into one row per (event_name, measure) with samples and est_count
 // matching the seeded totals, and that an all-zero metric's p75 is 0.
 func TestMeasuresReturnsOneRowPerMetric(t *testing.T) {

@@ -16,7 +16,7 @@ import (
 // events and measures in the event files, the totals sum it, first_day
 // is the oldest day the files name and last_received_at when the newest
 // row arrived, whatever the range. One project or every project, in one
-// answer; SQLite's event tables are not read.
+// answer.
 //
 // The template's files hold blog's (1) views on 2026-08-20 (45), 08-21
 // (30), 08-22..24 (1 each), 08-25 (2) and 08-26 (1, received 10:00),
@@ -31,10 +31,6 @@ func TestUsageReadsTheFiles(t *testing.T) {
 			TS: time.Date(2026, 8, 21, 9, 0, 0, 0, time.UTC)},
 		store.Event{ProjectID: 2, Family: store.FamilyMeasures, EventName: "load", Value: &value, Measure: store.MeasureTime,
 			TS: time.Date(2026, 8, 22, 9, 30, 0, 0, time.UTC)})
-	if _, err := rawExec(h.ops.St, `INSERT OR REPLACE INTO agg_views_daily (project_id, day, kind, visitors, views, sessions, bounces, duration_sec)
-		VALUES (1, '2026-08-19', 'web', 1, 99, 1, 0, 0)`); err != nil {
-		t.Fatal(err)
-	}
 
 	out, err := h.usage(ctx, usageIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-19", To: "2026-08-27"}})
 	if err != nil {

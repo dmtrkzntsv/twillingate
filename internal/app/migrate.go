@@ -20,12 +20,12 @@ import (
 // migrator (and the rest of that package) reads and writes.
 var _ reporting.Store = store.Store(nil)
 
-// Migrate runs the store's own schema migrations, rebuilds the objects the
-// process owns rather than the migrations (v_events_flat, from the declared
-// attributes), then runs the release's reporting migrator (components and
-// system dashboards, D20/D23) — every entry point that opens the store
-// (serve, migrate, project) calls this rather than st.Migrate directly, so
-// a CLI-only install stays in sync with the release too.
+// Migrate runs the store's own schema migrations, then the release's
+// reporting migrator (components and system dashboards, D20/D23) — every
+// entry point that opens the store (serve, migrate, project) calls this
+// rather than st.Migrate directly, so a CLI-only install stays in sync with
+// the release too. Migration 042 refuses while SQLite holds raw events
+// `twillingate events import` has not copied (sqlite.LastEventsVersion).
 //
 // The reporting migrator validates every system widget on the event
 // files, so Migrate builds an engine on this binary for it, closed before
@@ -62,15 +62,9 @@ func migrate(ctx context.Context, cfg *config.Config, st store.Store, reader *ar
 	if err := st.Migrate(ctx); err != nil {
 		return err
 	}
-	// A migration drops the flat view, and widgets and BI queries read its
-	// attr_ columns: a failed rebuild must stop the boot, not leave the
-	// view missing.
 	reg := manage.New(st, NewLogger(cfg.Log))
 	if err := reg.Reload(ctx); err != nil {
 		return err
-	}
-	if err := st.RebuildFlatView(ctx, nil); err != nil {
-		return fmt.Errorf("rebuild v_events_flat: %w", err)
 	}
 	boot := newWidgetFiles(cfg, reader, reg)
 	boot.timeout = migrateQueryTimeout

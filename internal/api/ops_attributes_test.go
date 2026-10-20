@@ -19,8 +19,8 @@ import (
 // its distinct values, busiest first, rules applied as the reader applies
 // them (a key merged into another counts there and is its alias). A key
 // only a rule names (blocked, or a rename target) is listed received:
-// false, a blocked key's rows hidden; views, another project's events
-// and SQLite's usage rows are not read.
+// false, a blocked key's rows hidden; views and another project's events
+// are not read.
 func TestListAttributesReadsTheFiles(t *testing.T) {
 	h, cs := newTestHost(t)
 	ctx := context.Background()
@@ -38,9 +38,6 @@ func TestListAttributesReadsTheFiles(t *testing.T) {
 			Attributes: map[string]string{"other_project": "z"}},
 		store.Event{ProjectID: 1, Family: store.FamilyProduct, EventName: "late", TS: at.AddDate(0, 0, 2),
 			Attributes: map[string]string{"after_the_range": "z"}})
-	if _, err := rawExec(h.ops.St, `INSERT INTO usage_attributes (project_id, day, attr_key, events, max_values) VALUES (1,'2026-08-20','sqlite_only',9,1)`); err != nil {
-		t.Fatal(err)
-	}
 	for _, step := range []func() error{
 		func() error { _, err := h.ops.MergeAttribute(ctx, "test", 1, "old_ref", "ref"); return err },
 		func() error { _, err := h.ops.RenameAttribute(ctx, "test", 1, "tier_old", "tier2"); return err },

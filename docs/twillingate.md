@@ -40,7 +40,7 @@ discarded.
 | `twillingate serve` | Both, on one listener unless `CONSOLE_ADDR` says otherwise |
 | `twillingate project`, `key`, `form`, `config` | Registry management |
 | `twillingate migrate` | Applies schema migrations and exits |
-| `twillingate events import` | Once, with the ingest service stopped: copies the raw rows the database holds into the event files (`deploy/UPGRADES.md`) |
+| `twillingate events import` | Once, with the ingest service stopped, when upgrading from a release before migration 042: copies the raw rows the database holds into the event files, so the migration may drop them (`deploy/UPGRADES.md`); past 042 it says there is nothing to import |
 
 Which of those run, and how, is the operator's choice — see [Configure the
 collector](deployment.md#configure-the-collector).
@@ -882,9 +882,9 @@ decides instead:
 | `$form_submit` | product | — | written by the collector beside an approved form's submission ([Form submissions](#form-submissions)); a client sending it is rejected |
 | any name, with `family: "measures"` | measures | — | `measures`, the Web Vitals and Measures dashboards |
 
-All three families are stored in one raw table, `events`, whose `family`
-column is `views`, `product` or `measures`; the aggregates, views and tools
-of each family read only its own rows.
+All three families are stored in the event files' `events` table, whose
+`family` column is `views`, `product` or `measures`; the `views`, `product`
+and `measures` tables and the tools of each family read only its own rows.
 
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning; an unrecognized `$`
@@ -1313,8 +1313,8 @@ there. Everything else is on the event, which has the submission's id and
 its arrival as `ts`: the actor, the page (`$host`, `$path`), the country,
 the same referrer and UTMs, and the `$kind`, group, session id,
 environment and consent of the actor's newest view in the window. So the
-submission's attribution outlives the raw window, and the event's details
-are counted like any product event's.
+submission's attribution outlives the event files' `RETENTION_DAYS`, and
+the event's details are counted like any product event's.
 
 Two body styles, chosen by `Content-Type`:
 
@@ -1667,8 +1667,9 @@ product events). First and last seen reach back as far as the files do.
 A person's events across devices, before and after signing in:
 `WHERE user_id = 'u1' OR install_id IN (SELECT install_id FROM aliases WHERE user_id = 'u1')`.
 
-The `v_*` views and `agg_*` tables went with the database's events: name
-one here and the error says so and lists the tables the files hold. A query that runs out of the
+The database's `v_*` views and `agg_*` tables went with its events
+(migration 042): name one here and the error says so and lists the tables
+the files hold. A query that runs out of the
 engine's memory (`ENGINE_MEMORY_LIMIT`) is refused with that cause: a
 `COUNT(DISTINCT …)` over a large group is the usual one, rewritten as a
 `GROUP BY` in a subquery whose rows are then counted.

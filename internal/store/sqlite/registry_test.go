@@ -444,20 +444,18 @@ func TestDeleteProjectDataCascades(t *testing.T) {
 		store.AuditEntry{Actor: "cli", Action: "key.issue", Subject: "1/web"}); err != nil {
 		t.Fatal(err)
 	}
-	// one row in a raw table and one in an aggregate table
-	if _, err := d.db.Exec(`INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, path, family, event_name)
-		VALUES ('h1',?,'2026-08-01T10:00:00Z','2026-08-01','2026-08-01T10:00:00Z','web','a','connection','/x','views','$page_view')`, id); err != nil {
+	// one row of a rule and one of the project's file bytes
+	if _, err := d.db.Exec(`INSERT INTO rules (project_id, kind, family, name, action) VALUES (?, 'event', 'product', 'x', 'block')`, id); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.db.Exec(`INSERT INTO agg_views_daily (project_id, day, kind, visitors, views,
-		sessions, bounces, duration_sec) VALUES (?,'2026-07-01','web',1,1,1,0,0)`, id); err != nil {
+	if _, err := d.db.Exec(`INSERT INTO usage_history (key, project_id, measured_at, value) VALUES ('file_bytes', ?, '2026-07-01', 1)`, id); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.DeleteProjectData(ctx, id, store.AuditEntry{
 		Actor: "cli", Action: "project.delete", Subject: "1"}); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"projects", "ingest_keys", "events", "agg_views_daily"} {
+	for _, table := range []string{"projects", "ingest_keys", "rules", "usage_history"} {
 		var c int
 		if err := d.db.QueryRow(
 			`SELECT COUNT(*) FROM `+table+` WHERE `+projectCol(table)+`=?`, id).Scan(&c); err != nil {

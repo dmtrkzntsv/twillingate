@@ -129,10 +129,6 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	if len(reg.Snapshot(ctx).Projects()) == 0 {
 		logger.Warn("no projects configured; create one with `twillingate project create` or an API management operation")
 	}
-	if runConsole {
-		warnImport(ctx, st, cfg.EventsDir, logger)
-	}
-
 	salter := identity.NewSalter(st, time.Now)
 	dataDir := filepath.Dir(DatabasePath(cfg.Database))
 	geoProvider, err := geo.New(cfg.Geo, dataDir, logger)

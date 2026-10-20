@@ -2,10 +2,7 @@ package sqlite
 
 import (
 	"context"
-	"database/sql"
 	"testing"
-
-	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // A store error in any step of an attribute rule operation is returned,
@@ -17,9 +14,6 @@ func TestAttributeRuleOperationsReportStoreErrors(t *testing.T) {
 	}
 	rename := func(db *DB) error {
 		return db.RenameAttribute(ctx, 1, "a", "b", attrAudit)
-	}
-	inTx := func(fn func(tx *sql.Tx) error) func(db *DB) error {
-		return func(db *DB) error { return db.tx(ctx, fn) }
 	}
 	cases := []struct {
 		name   string
@@ -46,10 +40,6 @@ func TestAttributeRuleOperationsReportStoreErrors(t *testing.T) {
 		{"remove deletes the rule", []string{`DROP TABLE rules`}, func(db *DB) error {
 			return db.RemoveAttributeRule(ctx, 1, "a", attrAudit)
 		}},
-		{"insert reads the rules", []string{`DROP TABLE rules`}, inTx(func(tx *sql.Tx) error {
-			_, err := attributeRules(ctx, tx, []store.Event{{Family: store.FamilyProduct, ProjectID: 1}})
-			return err
-		})},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
