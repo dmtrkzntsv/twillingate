@@ -22,7 +22,7 @@ and backing up the database are the operator's job, in
 
 One Go binary, one SQLite file. It collects views (page views from websites,
 screen views from apps and CLIs) and custom product events through one endpoint,
-rolls them up nightly, and exposes the result as dashboards at `/app/`, a
+keeps them as files, and exposes them as dashboards at `/app/`, a
 read-only SQL surface, and an API (MCP or HTTP). It is cookieless by default:
 the served SDK's `anonymous` default writes nothing to a visitor's device
 unless the tag declares consent, and then a visitor id (pseudonymous, never
@@ -965,7 +965,7 @@ keys, validated the same way; the JS SDK sends them on every batch.
 
 Any other name is a custom product event; don't `$`-prefix your own names.
 Attributes are free-form — see [Attributes](#attributes) for
-which keys get their own column and value breakdown.
+how every key reads as its own column.
 
 ```js
 twillingate.track("signup", { plan: "pro" });

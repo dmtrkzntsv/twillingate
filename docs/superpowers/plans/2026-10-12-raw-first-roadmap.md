@@ -364,6 +364,15 @@ about twice as much for those; Retention scans the whole history, so a
   section; #173 closed; #175 reduced to its allowlist, adjusted to D4.
 - Done when: a fresh install never creates an events table in SQLite, and
   `make check` is green with the smaller store.
+- Plan: `2026-10-19-raw-removal.md`. It changed this section in three
+  places: `limits` counts the last 30 days with one engine query (cached
+  5 minutes) instead of summing footers; `cap_usage` is removed outright;
+  migration 042 refuses while un-imported raw rows remain, and
+  `events import` migrates only through 041.
+- Idle RSS taken 2026-10-20, fresh install, `serve` with only
+  `DATABASE_DSN` and `INGEST_ADDR`: 38.4 MB at 60 s, with the engine child
+  (62 MB) still alive from the start-up pass; 37.6 MB at 230 s, after the
+  child's 3-minute idle exit. Target ~17 MB not met.
 
 ## Order of measurements still to take
 
@@ -372,4 +381,4 @@ about twice as much for those; Retention scans the whole history, so a
 | PR 2 | spawn-to-ready on the release runners | under 100 ms |
 | PR 3 | a cap day's log appended and fsynced per flush, on a 2-CPU server | no visible ingest cost |
 | PR 5d | Views dashboard, 1 year, 2 CPUs, with `sessions` | under 2 s. **Taken 2026-10-14: 10.8 s** (Retention, 90 days: 10.2 s). Follow-up needed. Bench set, 30 days: 1.2 s, met |
-| PR 6 | idle RSS of a fresh install | ~17 MB, as today |
+| PR 6 | idle RSS of a fresh install | ~17 MB, as today. **Taken 2026-10-20: 38.4 MB at 60 s (engine child still up, 62 MB), 37.6 MB once the child exited.** Not met |

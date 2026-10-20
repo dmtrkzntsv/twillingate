@@ -452,7 +452,8 @@ From this release the data directory also holds `raw/`, the event files (or `EVE
 sudo -u twillingate sqlite3 /var/lib/twillingate/twillingate.db \
   ".backup '/var/lib/twillingate/backup.db'"
 sqlite3 /var/lib/twillingate/backup.db 'PRAGMA quick_check;'         # expect: ok
-sqlite3 /var/lib/twillingate/backup.db "SELECT MAX(day) FROM v_views_daily;"
+sqlite3 /var/lib/twillingate/backup.db "SELECT COUNT(*) FROM projects;"   # expect: your project count
+ls /var/lib/twillingate/raw/*/ | sort | tail                              # each project's newest day file
 ```
 
 The image carries no `sqlite3`: under compose, `docker compose stop
