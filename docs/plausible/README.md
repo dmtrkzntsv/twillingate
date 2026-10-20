@@ -100,9 +100,8 @@ the pageview path, and a `$url` attached to a custom event is accepted but
 discarded. A site-wide CTA would otherwise be indistinguishable from page to
 page, so the shim stamps `path: location.pathname` on every event it fires
 (pass an explicit `plausible-event-path--…` class to override it). Drop that
-line if a CTA appears on enough distinct URLs to make the breakdown noisy —
-the server-wide `ATTRIBUTE_VALUES_TOP_N` setting caps what reaches the
-dashboard, but the raw rows keep everything.
+line if a CTA appears on enough distinct URLs to make the breakdown noisy:
+nothing is capped, so every distinct path is kept and reported.
 
 **No navigation delay.** Plausible's script holds a link click for ~150 ms
 so the request escapes before unload. The tracker sends through

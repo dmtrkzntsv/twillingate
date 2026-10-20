@@ -668,8 +668,14 @@ func TestBootWarnsOncePerRemovedVariable(t *testing.T) {
 		if got := strings.Count(logs, want); got != 1 {
 			t.Errorf("%q logged %d times, want 1:\n%s", n, got, logs)
 		}
-	}
-	if !strings.Contains(logs, "level=WARN") {
-		t.Errorf("not a warning: %s", logs)
+		warned := false
+		for _, line := range strings.Split(logs, "\n") {
+			if strings.Contains(line, want) && strings.Contains(line, "level=WARN") {
+				warned = true
+			}
+		}
+		if !warned {
+			t.Errorf("%q is not on a level=WARN line:\n%s", n, logs)
+		}
 	}
 }
