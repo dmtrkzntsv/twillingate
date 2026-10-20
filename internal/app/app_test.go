@@ -647,50 +647,29 @@ func runServeAndCollectLogs(t *testing.T, cfg *config.Config) string {
 	return logs.String()
 }
 
-// The views read their caps from meta, since SQL cannot see the
-// environment: every boot writes both before anything is served, and
-// a restart with new values replaces them. Without it every view would
-// fall back to its built-in default while the daily pass used the setting.
-func TestServeWritesTheCapsToMeta(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "caps.db")
-	bg := context.Background()
-	boot := func(values, identities string) {
-		t.Helper()
-		addr := freePort(t)
-		testConfig(t, addr, dbPath) // seeds the project
-		cfg := configtest.Load(t, map[string]string{
-			"INGEST_ADDR":            addr,
-			"DATABASE_DSN":           "sqlite://" + dbPath,
-			"ATTRIBUTE_VALUES_TOP_N": values,
-			"IDENTITIES_TOP_N":       identities,
-		})
-		ctx, cancel := context.WithCancel(bg)
-		done := make(chan error, 1)
-		go func() { done <- Serve(ctx, cfg, slog.Default(), true, false) }()
-		waitHealthy(t, "http://"+addr)
-		cancel()
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Fatalf("serve: %v", err)
-			}
-		case <-time.After(10 * time.Second):
-			t.Fatal("serve did not shut down")
-		}
-		st, err := store.Open("sqlite://" + dbPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer st.Close()
-		for key, want := range map[string]string{
-			"attributes_top_n": values,
-			"identities_top_n": identities,
-		} {
-			if got, err := st.GetMeta(bg, key); err != nil || got != want {
-				t.Errorf("meta %s = %q (%v), want %q", key, got, err, want)
-			}
+// A retired variable in an old env file does not stop the boot: it is
+// ignored, and each one set is reported once.
+func TestBootWarnsOncePerRemovedVariable(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "removed.db")
+	addr := freePort(t)
+	testConfig(t, addr, dbPath) // seeds the project
+	env := map[string]string{
+		"INGEST_ADDR":  addr,
+		"DATABASE_DSN": "sqlite://" + dbPath,
+	}
+	names := []string{"RETENTION_RAW_DAYS", "RETENTION_AGGREGATE_DAYS", "RETENTION_EVENTS_RAW_DAYS",
+		"RETENTION_EVENTS_AGGREGATE_DAYS", "ATTRIBUTE_VALUES_TOP_N", "ATTRIBUTE_BREAKDOWNS_MAX", "IDENTITIES_TOP_N"}
+	for _, n := range names {
+		env[n] = "5"
+	}
+	logs := runServeAndCollectLogs(t, configtest.Load(t, env))
+	for _, n := range names {
+		want := n + " is no longer used: events are kept in the event files for RETENTION_DAYS, and nothing is capped"
+		if got := strings.Count(logs, want); got != 1 {
+			t.Errorf("%q logged %d times, want 1:\n%s", n, got, logs)
 		}
 	}
-	boot("7", "1200")
-	boot("0", "0")
+	if !strings.Contains(logs, "level=WARN") {
+		t.Errorf("not a warning: %s", logs)
+	}
 }

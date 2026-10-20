@@ -113,16 +113,11 @@ to it.
 | `BUFFER_FLUSH_MAX_EVENTS` | Flush once this many events are buffered. Default 1000. |
 | `BUFFER_FLUSH_INTERVAL` | Flush at least this often. Default `5s`. |
 | `BUFFER_CAPACITY` | Bounded queue size; excess is dropped rather than growing memory. Default 10000. |
-| `INGEST_LATE_DAYS` | Days back a client timestamp may lie; an older one is clamped to this edge, counted, never dropped. At least 1 and at most `RETENTION_RAW_DAYS`, so a late event never lands in a day already rolled up. Default 1. |
-| `RETENTION_RAW_DAYS` | Days raw events of every family are kept before rollup. At least `INGEST_LATE_DAYS`. Default 30. |
-| `RETENTION_AGGREGATE_DAYS` | Days aggregates of every family (and actors, cohorts, identities) are kept. Default 400. |
+| `INGEST_LATE_DAYS` | Days back a client timestamp may lie; an older one is clamped to this edge, counted, never dropped. At least 1 and at most `RETENTION_DAYS`, so a late event never lands in a day whose file is already deleted. Default 1. |
 | `RETENTION_DAYS` | Days the raw event files under `EVENTS_DIR` are kept, in whole months: a month file is deleted once its last day is older. At least 1. Default 400. |
 | `RETENTION_FORMS_DRAFT_DAYS` | Days a form created by its first submission accepts submissions as a draft; unless approved by then, it refuses them and the daily pass archives it. Read when a draft is created or restored, so a change moves no existing draft's window. At least 1. Default 7. |
 | `ATTRIBUTION_DAYS` | How far before a form submission its source is looked for: the submitter's last visit with a referrer or a UTM that started within that many days (`docs/twillingate.md`, "Form submissions"). Read when a submission is attributed, about a minute after it arrives. From 1 to `RETENTION_DAYS`. Default 7, or `RETENTION_DAYS` when that is smaller. |
 | `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data and its widget shares), a dashboard, a widget or a widget share is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
-| `ATTRIBUTE_VALUES_TOP_N` | Values kept per (project, day) in each views breakdown (paths, referrers, browsers, …) and kinds in `v_views_daily`, and distinct attribute values per (project, day, event, key), before the rest collapse into `(other)`. 0 keeps every value. Default 100. |
-| `ATTRIBUTE_BREAKDOWNS_MAX` | No longer read: projects declare no attributes, and every key breaks down in the event files. |
-| `IDENTITIES_TOP_N` | Users, and groups, kept per (project, day) in `v_identity_daily`, busiest first; the rest are dropped. 0 keeps them all. Default 500. |
 | `CONSOLE_AUTH_DSN` | Authentication for the console (MCP, REST and the dashboards' data): `token://<token>?password=…` for the built-in browser login (see [The console](#the-console)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the console with a warning. |
 | `CONSOLE_ADDR` | Give the console its own listener. Defaults to `INGEST_ADDR` (shared). |
 | `CONSOLE_URL` | The console's public origin when it has a hostname of its own (`https://console.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry, and share links are built on it. Defaults to `INGEST_URL`. |
@@ -140,19 +135,25 @@ is a duration with a unit: `90s`, `15m`, `1h`.
 
 The old names refuse the boot, naming their replacement: `LISTEN_ADDR`
 (now `INGEST_ADDR`), the six `API_*` names (now `CONSOLE_*`), and
-`PUBLIC_URL`, `RETENTION_EVENTS_RAW_DAYS`, `RETENTION_EVENTS_AGGREGATE_DAYS`,
-`FORMS_DRAFT_DAYS`, `CONSOLE_DB_PATH`, `CONSOLE_QUERY_MAX_ROWS`,
+`PUBLIC_URL`, `FORMS_DRAFT_DAYS`, `CONSOLE_DB_PATH`, `CONSOLE_QUERY_MAX_ROWS`,
 `REPORTING_CACHE_SECONDS` and `REPORTING_REFRESH_SECONDS` (see
 `deploy/UPGRADES.md`). The older `MCP_*` names are no longer checked; a
 leftover one is ignored, so rename any still in `twillingate.env`.
+
+Removed in this release: `RETENTION_RAW_DAYS`, `RETENTION_AGGREGATE_DAYS`,
+`RETENTION_EVENTS_RAW_DAYS`, `RETENTION_EVENTS_AGGREGATE_DAYS`,
+`ATTRIBUTE_VALUES_TOP_N`, `ATTRIBUTE_BREAKDOWNS_MAX` and `IDENTITIES_TOP_N`.
+Events are kept in the event files for `RETENTION_DAYS`, and nothing is
+capped. A leftover one does not stop the boot: `serve` ignores it and logs
+one warning per name.
 
 ### Raspberry Pi and low-resource hosts
 
 - A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. One `serve` process runs one child at a time (the ingest process for the daily pass's files and the form-attribution lookup, the console's for every dashboard widget load and for `query` on the files, so the console's child is the busy one); on a split install, lower `ENGINE_MEMORY_LIMIT` rather than raise `ENGINE_MAX_CHILDREN`.
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Set `GOMEMLIMIT` (unit and compose files ship `128MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory.
-- Lower `RETENTION_RAW_DAYS` (say `7`): raw events are the largest table in the database file. Dashboards and `query` read the event files, which `RETENTION_DAYS` keeps.
-- Keep `ATTRIBUTE_VALUES_TOP_N` and `IDENTITIES_TOP_N` on (not 0). Aggregates are kept `RETENTION_AGGREGATE_DAYS` (400 days by default), and a breakdown that carries ids (a path like `/orders/81723`) grows them by a row per id per day once its cap is 0.
+- Plan on 1 GB of memory, as in [Install](#install): `GOMEMLIMIT` bounds the server alone, and the engine child may take up to `ENGINE_MEMORY_LIMIT` on top of it. On less, lower `ENGINE_MEMORY_LIMIT` (`256MB`) before anything else; queries then spill to disk and run slower.
+- Lower `RETENTION_DAYS` if the event files outgrow the card: a month file is deleted once its last day is older, and nothing else holds events.
 
 ## The console
 

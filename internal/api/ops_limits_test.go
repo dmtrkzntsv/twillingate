@@ -83,13 +83,11 @@ func TestLimitsReportsTheLimitsInForce(t *testing.T) {
 // raw_events.
 func TestLimitsHasNoCaps(t *testing.T) {
 	h, cs := newTestHost(t)
-	// The settings still in the config until they are removed are not read.
-	cfg := &config.Config{AttributeValuesTopN: 7, IdentitiesTopN: 2000, AttributeBreakdownsMax: 12}
-	cfg.Retention.Events = config.RetentionClass{RawDays: 7, AggregateDays: 90}
-	h.limits = limitsFrom(cfg)
+	h.limits = limitsFrom(&config.Config{})
 	for _, l := range h.limits {
 		switch l.Setting {
-		case "RETENTION_RAW_DAYS", "RETENTION_AGGREGATE_DAYS", "ATTRIBUTE_VALUES_TOP_N", "ATTRIBUTE_BREAKDOWNS_MAX", "IDENTITIES_TOP_N":
+		case "RETENTION_RAW_DAYS", "RETENTION_AGGREGATE_DAYS", "RETENTION_EVENTS_RAW_DAYS", "RETENTION_EVENTS_AGGREGATE_DAYS",
+			"ATTRIBUTE_VALUES_TOP_N", "ATTRIBUTE_BREAKDOWNS_MAX", "IDENTITIES_TOP_N":
 			t.Errorf("limits reports %s: %+v", l.Setting, l)
 		}
 		if l.Group != groupRetention && l.Group != groupIngest {

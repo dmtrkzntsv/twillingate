@@ -811,12 +811,10 @@ func TestEventAgeClampUsesLateWindow(t *testing.T) {
 	}
 }
 
-// TestRaisedRawWindowDoesNotMoveTheClamp is the raw-first spec's step 0 at
-// the ingest boundary: with RETENTION_RAW_DAYS raised to 400 after days
-// were rolled up, a 40-day-old event must still clamp to the late window
-// (1 day by default), never into a rolled-up day.
-func TestRaisedRawWindowDoesNotMoveTheClamp(t *testing.T) {
-	cfg := configtest.Load(t, map[string]string{"RETENTION_RAW_DAYS": "400"})
+// TestRetentionDaysDoNotMoveTheClamp: with RETENTION_DAYS at 400, a
+// 40-day-old event still clamps to the late window (1 day by default).
+func TestRetentionDaysDoNotMoveTheClamp(t *testing.T) {
+	cfg := configtest.Load(t, map[string]string{"RETENTION_DAYS": "400"})
 	reg := newTestRegistry(t,
 		[]manage.ProjectSpec{{Name: "Raised", AllowedOrigins: []string{testOrigin}}},
 		map[int][2]string{0: {"ak_raised", "web"}})

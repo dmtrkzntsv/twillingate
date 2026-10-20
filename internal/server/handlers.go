@@ -84,9 +84,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// the web kind only. Applying it to app traffic would drop every client
 	// whose HTTP library sends a non-browser User-Agent.
 	botUA := enrich.IsBot(ua)
-	// The clamp is the late window (INGEST_LATE_DAYS), at most the raw
-	// window: a clamped event can never target a day the daily pass already
-	// aggregated and deleted.
+	// The clamp is the late window (INGEST_LATE_DAYS), at most
+	// RETENTION_DAYS: a clamped event can never target a day whose file the
+	// daily pass already deleted.
 	maxAge := s.cfg.MaxEventAge()
 
 	var res ingestResult

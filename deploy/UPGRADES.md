@@ -1280,7 +1280,9 @@ What changes on the day:
   `RETENTION_AGGREGATE_DAYS`, `ATTRIBUTE_VALUES_TOP_N`,
   `ATTRIBUTE_BREAKDOWNS_MAX` and `IDENTITIES_TOP_N` (and the older
   `RETENTION_EVENTS_RAW_DAYS` and `RETENTION_EVENTS_AGGREGATE_DAYS`):
-  nothing is capped, and the files keep events for `RETENTION_DAYS`.
+  nothing is capped, and the files keep events for `RETENTION_DAYS`. A
+  leftover one does not stop the boot: it is ignored and logged once at
+  start. `INGEST_LATE_DAYS` may not exceed `RETENTION_DAYS`.
 - SQL or scripts reading the database's `events`, `identities`, `agg_*`,
   `raw_*` or `v_*` must read the event files instead (`query`,
   `docs/twillingate.md`, "Writing SQL against the event files").

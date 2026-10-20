@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -79,6 +78,9 @@ type httpSurface struct {
 // only then is the pipeline cancelled — its cancellation is what triggers
 // the final flush, so it must come last or buffered events would be lost.
 func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runIngest, runConsole bool) error {
+	for _, name := range cfg.Removed {
+		logger.Warn(name + " is no longer used: events are kept in the event files for RETENTION_DAYS, and nothing is capped")
+	}
 	st, err := store.Open(cfg.Database)
 	if err != nil {
 		return err
@@ -99,26 +101,6 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	if err := migrate(ctx, cfg, st, files, ""); err != nil {
 		return err
 	}
-	// The views' live halves read their caps from meta with a scalar
-	// subquery -- SQL cannot see the environment. Written before anything
-	// queries a view so the first read uses the configured caps rather than
-	// the views' built-in fallbacks. 0 is written as is: the views read it
-	// as no cap, as the daily pass does. ATTRIBUTE_VALUES_TOP_N, the one
-	// values cap (views breakdowns and attributes), keeps the row name of
-	// its earlier spelling, attributes_top_n: renaming it would
-	// mean recreating the views that read it, for no reader's benefit.
-	for _, m := range []struct {
-		key string
-		n   int
-	}{
-		{"attributes_top_n", cfg.AttributeValuesTopN},
-		{"identities_top_n", cfg.IdentitiesTopN},
-	} {
-		if err := st.SetMeta(ctx, m.key, strconv.Itoa(m.n)); err != nil {
-			return err
-		}
-	}
-
 	reg := manage.New(st, logger)
 	if err := reg.Reload(ctx); err != nil {
 		return err
