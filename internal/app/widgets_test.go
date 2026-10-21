@@ -182,7 +182,7 @@ func TestCheckUserWidgetsLogsWhatFailsOnTheFiles(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	checkUserWidgets(ctx, f.st, f.files(t), slog.New(slog.NewJSONHandler(&out, nil)))
+	checkUserWidgets(ctx, f.st, f.files(t), f.cfg.EventsDir, slog.New(slog.NewJSONHandler(&out, nil)))
 	var lines []map[string]any
 	for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
 		var m map[string]any
@@ -201,6 +201,26 @@ func TestCheckUserWidgetsLogsWhatFailsOnTheFiles(t *testing.T) {
 	}
 	if e, _ := got["error"].(string); !strings.Contains(e, "v_views_daily") || !strings.Contains(e, "widget SQL is DuckDB SQL") {
 		t.Errorf("error = %q, want DuckDB's message naming v_views_daily, with the hint", e)
+	}
+}
+
+// TestCheckUserWidgetsWithoutEventFilesRunsNoQuery: with no event file
+// under EVENTS_DIR every widget would run on nothing, so the boot's check
+// of the users' widgets runs no query and spawns no child.
+func TestCheckUserWidgetsWithoutEventFilesRunsNoQuery(t *testing.T) {
+	f := newWidgetsFixture(t)
+	ctx := context.Background()
+	if _, err := f.st.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "Mine", SortKey: "z", Sidebar: true},
+		[]store.Widget{{Component: "stat", SortKey: "a", Width: 3, Height: 4, Name: "old", Title: "Old visitors", Props: "{}",
+			SourceType: "sql", Source: "SELECT SUM(visitors) AS value FROM v_views_daily"}},
+		store.AuditEntry{Actor: "test", Action: "dashboard.create"}); err != nil {
+		t.Fatal(err)
+	}
+	files := &failingFiles{Files: f.files(t), err: errors.New("no query expected")}
+	var out bytes.Buffer
+	checkUserWidgets(ctx, f.st, files, f.cfg.EventsDir, slog.New(slog.NewJSONHandler(&out, nil)))
+	if files.queries != 0 || out.Len() != 0 {
+		t.Fatalf("%d queries, logged %q; want none without event files", files.queries, out.String())
 	}
 }
 
@@ -258,7 +278,7 @@ func TestCheckUserWidgetsTellsResourceFailures(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			files := &failingFiles{Files: f.files(t), err: tc.err, only: 1}
 			var out bytes.Buffer
-			checkUserWidgets(ctx, f.st, files, slog.New(slog.NewJSONHandler(&out, nil)))
+			checkUserWidgets(ctx, f.st, files, f.cfg.EventsDir, slog.New(slog.NewJSONHandler(&out, nil)))
 			var lines []map[string]any
 			for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
 				var m map[string]any
@@ -298,6 +318,7 @@ func TestMigrateChecksTheSystemWidgetsPastTheConsoleTimeout(t *testing.T) {
 	f := newWidgetsFixture(t)
 	ctx := context.Background()
 	f.cfg.Console.QueryTimeout = time.Nanosecond
+	writeEvent(t, f.cfg.EventsDir) // without a file there is nothing to check on
 	if err := Migrate(ctx, f.cfg, f.st); err != nil {
 		t.Fatal(err)
 	}

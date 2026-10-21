@@ -24,7 +24,8 @@ process runs one child at a time; `ENGINE_MAX_CHILDREN` bounds the children
 across every process on one data directory, so it matters for a split
 install (ingest and console as separate processes), where the default 2 lets
 each have one. The ingest process's child also answers the form-attribution
-lookup each minute while submissions are pending. `GOMEMLIMIT` does not
+lookup each minute while submissions are pending whose project has events
+in the attribution window. `GOMEMLIMIT` does not
 cover the children.
 
 ### docker compose
@@ -406,7 +407,7 @@ with a server on the same data directory.
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v0.9.2` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
 | Import the database's raw rows into the event files (once, when upgrading from a release before migration 042, which refuses to start until it has run; a newer database has no events to import) | stop the ingest service, `twillingate events import`, start it ([UPGRADES.md](https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md)) |
-| Check the engine | `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate engine -check'` (the service user and its environment: as root it creates a root-owned `raw/` and `engine/` the service cannot write) starts an engine child the way the server does and runs one query: `engine ok: 42 in 63 ms (spawn and first query), DuckDB v1.5.6`. A failure names what stopped it (a missing library, `ENGINE_MEMORY_LIMIT`, all `ENGINE_MAX_CHILDREN` slots busy for 30 s). The start of `serve`, and of every command that opens the database, runs a child too when the release changed the system dashboards (it checks them on the event files), and fails when it cannot start one; a check that runs out of time or memory is logged and the start goes on. |
+| Check the engine | `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate engine -check'` (the service user and its environment: as root it creates a root-owned `raw/` and `engine/` the service cannot write) starts an engine child the way the server does and runs one query: `engine ok: 42 in 63 ms (spawn and first query), DuckDB v1.5.6`. A failure names what stopped it (a missing library, `ENGINE_MEMORY_LIMIT`, all `ENGINE_MAX_CHILDREN` slots busy for 30 s). The start of `serve`, and of every command that opens the database, runs a child too when the release changed the system dashboards and `EVENTS_DIR` holds any event (it checks them on the event files; a fresh install checks them at its first start with events), and fails when it cannot start one; a check that runs out of time or memory is logged and the start goes on. |
 | Upgrade across a schema change | [Back up](#back-up-and-restore) first: migrations 012, 014, 015, 016 and 042 are irreversible. Pre-checks and what changes on the day: <https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md> (not served over MCP; open it in the repository) |
 | Database size | `du -h /var/lib/twillingate/twillingate.db` |
 | Recent config changes | `sqlite3 …/twillingate.db "SELECT * FROM audit_log ORDER BY ts DESC LIMIT 20"` |

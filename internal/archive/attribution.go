@@ -51,11 +51,29 @@ func (r *Reader) Attribute(ctx context.Context, ls []Lookup, days int, rules Rul
 	if len(ls) == 0 {
 		return nil, nil
 	}
-	res, err := r.Query(ctx, attributionSQL(ls, days), 0, rules)
+	// A lookup whose project has no file as new as its window's first day
+	// finds nothing, which the file names tell (LatestDays) without a
+	// query: a form on a site that sends no views spawns no engine child.
+	latest, err := LatestDays(r.dir)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]Found, 0, len(res.Rows))
+	var out []Found
+	ask := make([]Lookup, 0, len(ls))
+	for _, l := range ls {
+		if day, ok := latest[l.ProjectID]; ok && day >= Day(l.At.AddDate(0, 0, -days)) {
+			ask = append(ask, l)
+		} else {
+			out = append(out, Found{ProjectID: l.ProjectID, ID: l.ID})
+		}
+	}
+	if len(ask) == 0 {
+		return out, nil
+	}
+	res, err := r.Query(ctx, attributionSQL(ask, days), 0, rules)
+	if err != nil {
+		return nil, err
+	}
 	for _, row := range res.Rows {
 		str := func(i int) string {
 			s, _ := row[i].(string)

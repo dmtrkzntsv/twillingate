@@ -263,7 +263,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	checkDone := make(chan struct{})
 	checkCtx, stopCheck := context.WithCancel(context.Background())
 	if runConsole {
-		go func() { checkUserWidgets(checkCtx, st, widgets, logger); close(checkDone) }()
+		go func() { checkUserWidgets(checkCtx, st, widgets, cfg.EventsDir, logger); close(checkDone) }()
 	} else {
 		close(checkDone)
 	}

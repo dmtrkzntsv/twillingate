@@ -60,6 +60,13 @@ const uncheckedPrefix = "unchecked:"
 
 // Migrate syncs this release's embedded system definition (systemFS,
 // Manifest()) into st, validating every system widget's SQL on files.
+//
+// A nil files means there are no event files to check on (a fresh
+// install): the widgets are checked without a query (paramsOnly), which
+// would spawn an engine child only to run every widget on nothing, and
+// the sync is recorded under the unchecked hash, so the first start with
+// files checks them all. Unlike ErrUnchecked this is no failure: Migrate
+// returns nil.
 func Migrate(ctx context.Context, st Store, files Files) error {
 	system, err := fs.Sub(systemFS, "system")
 	if err != nil {
@@ -109,6 +116,10 @@ func migrateFrom(ctx context.Context, st Store, files Files, system fs.FS, manif
 	// or the engine refuses a parameter with no argument.
 	svc := &Service{st: st, files: files, sources: newSources(files, false, time.Now), now: time.Now}
 	var unchecked error
+	noFiles := files == nil
+	if noFiles {
+		svc.sources["sql"] = paramsOnly{svc.sources["sql"]}
+	}
 
 	dashboards := make([]store.SystemDashboard, 0, len(fds))
 	if len(fds) > 0 {
@@ -164,7 +175,7 @@ func migrateFrom(ctx context.Context, st Store, files Files, system fs.FS, manif
 		rows = append(rows, c.row())
 	}
 
-	if unchecked != nil {
+	if unchecked != nil || noFiles {
 		hash = uncheckedPrefix + hash
 	}
 	if err := st.SyncReporting(ctx, store.ReportingSync{

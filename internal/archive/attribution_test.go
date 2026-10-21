@@ -2,6 +2,9 @@ package archive
 
 import (
 	"context"
+	"errors"
+	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -146,6 +149,45 @@ func TestAttributeQuotesIDs(t *testing.T) {
 		Lookup{ProjectID: 1, ID: "x'y", ActorKind: store.ActorInstall, ActorID: odd, InstallID: "'; DROP", At: at})
 	if got["x'y"].Source.ReferrerSource != "google" {
 		t.Fatalf("found = %+v", got)
+	}
+}
+
+// TestAttributeWithoutFilesRunsNoQuery: a lookup whose project has no
+// events file, or none as new as its window's first day, is answered from
+// the file names alone, found with nothing, so a form on a site that
+// sends no views spawns no engine child. Only the rest are looked up.
+func TestAttributeWithoutFilesRunsNoQuery(t *testing.T) {
+	dir := t.TempDir()
+	// Project 2's only file is a month whose last day is far outside the
+	// window of a lookup in October.
+	if err := os.MkdirAll(filepath.Join(dir, "2"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "2", "2026-01.parquet"), nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	r, err := NewReader(dir, failingEngine{err: errors.New("no query expected")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := ts("2026-10-14T12:00:00Z")
+	ls := []Lookup{{ProjectID: 1, ID: "a", ActorKind: store.ActorInstall, ActorID: "i1", At: at},
+		{ProjectID: 2, ID: "b", ActorKind: store.ActorInstall, ActorID: "i2", At: at}}
+	got, err := r.Attribute(context.Background(), ls, 7, Rules{})
+	if err != nil {
+		t.Fatalf("Attribute: %v, want no query", err)
+	}
+	want := []Found{{ProjectID: 1, ID: "a"}, {ProjectID: 2, ID: "b"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("found = %+v, want %+v", got, want)
+	}
+
+	// A project with a file in the window is looked up (and here fails).
+	if err := os.WriteFile(filepath.Join(dir, "2", "2026-10-10.parquet"), nil, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Attribute(context.Background(), ls, 7, Rules{}); err == nil {
+		t.Fatal("Attribute with a file in the window ran no query")
 	}
 }
 
