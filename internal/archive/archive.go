@@ -5,13 +5,12 @@
 // SQLite holds no events; the daily pass also derives the
 // sessions, identities and aliases tables from the files; Reader answers
 // SQL over the files and open logs, and the tables derived from them, for
-// the query tool's files source.
+// the query tool.
 //
 // Under raw/<project_id>/:
 //
 //	<YYYY-MM-DD>.log          the day's open log (Log)
 //	<YYYY-MM-DD>.<n>.closed   a log rotated for its dump
-//	<YYYY-MM-DD>.import       a closed log being written (Log.WriteClosed)
 //	<YYYY-MM-DD>.parquet      the day file
 //	<YYYY-MM-DD>.<n>.parquet  a segment of the day, from events that came late
 //	<YYYY-MM>.parquet         the month file

@@ -284,7 +284,7 @@ func (l *Log) Rotate(project int64, day string) (string, error) {
 }
 
 // nextClosed is dir's first free <day>.<n>.closed, n from 1. The caller
-// holds l.mu, so no other rotation or WriteClosed takes the name between
+// holds l.mu, so no other rotation takes the name between
 // the look and the rename.
 func nextClosed(dir, day string) (string, error) {
 	for n := 1; ; n++ {
@@ -298,52 +298,6 @@ func nextClosed(dir, day string) (string, error) {
 		}
 		return dst, nil
 	}
-}
-
-// WriteClosed writes evs, every one the project's and of day, as a closed
-// log of that day, named as Rotate names one, for the next pass to claim
-// and dump: the way rows that never went through ingest get into the files
-// (raw-first D19, the migration). The lines are line's. They go to
-// <day>.import first, which no reader or pass looks at, are fsynced, and
-// the file is renamed under the log's lock: a reader or a pass sees the
-// whole closed log or none. The recent ids are not touched: these are not
-// ingest's. No events write nothing and return "".
-func (l *Log) WriteClosed(project int64, day string, evs []store.Event) (string, error) {
-	if len(evs) == 0 {
-		return "", nil
-	}
-	var buf bytes.Buffer
-	for _, e := range evs {
-		if e.ProjectID != project || Day(e.TS) != day {
-			return "", fmt.Errorf("archive: event %s is project %d's %s, not project %d's %s", e.ID, e.ProjectID, Day(e.TS), project, day)
-		}
-		b, err := line(e)
-		if err != nil {
-			return "", fmt.Errorf("archive: event %s: %w", e.ID, err)
-		}
-		buf.Write(b)
-	}
-	dir := filepath.Join(l.dir, strconv.FormatInt(project, 10))
-	if err := os.MkdirAll(dir, 0o750); err != nil {
-		return "", fmt.Errorf("archive: %w", err)
-	}
-	tmp := filepath.Join(dir, day+".import")
-	if err := os.WriteFile(tmp, buf.Bytes(), 0o640); err != nil {
-		return "", fmt.Errorf("archive: %w", err)
-	}
-	if err := syncFile(tmp); err != nil {
-		return "", err
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	dst, err := nextClosed(dir, day)
-	if err != nil {
-		return "", err
-	}
-	if err := os.Rename(tmp, dst); err != nil {
-		return "", fmt.Errorf("archive: %w", err)
-	}
-	return dst, syncFile(dir)
 }
 
 // Close closes every open log and releases the directory's lock.

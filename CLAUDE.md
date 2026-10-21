@@ -14,14 +14,14 @@ internal/jobs/       daily pass: salt rotation, aggregation, prune, view rebuild
 internal/pipeline/   write buffer between ingest and the store
 internal/manage/     project registry snapshot and its audited operations
 internal/reporting/  dashboards, widgets and components: validation, operations, system dashboards, cache; embeds the web app
-internal/store/      Store interface and row types; store/sqlite owns every migration and view
+internal/store/      Store interface and row types; store/sqlite owns every migration (no events: they live in the event files)
 internal/config/     environment loading
 internal/identity/   actor hashing and salt rotation
 internal/enrich/     User-Agent and URL parsing for web hits
 internal/geo/        MaxMind lookup
 internal/engine/     DuckDB in a child process of the binary (`twillingate engine`): the pipe's two ends, the slot semaphore
-internal/archive/    raw events as files under raw/: the per-day NDJSON log, the dump to Parquet, the month merge, retention by file, the derived sessions, identities and aliases, and the tables query's files source reads
-internal/shared/     small generic leaf packages: civil (calendar dates), readsql, sortkey, version
+internal/archive/    raw events as files under raw/: the per-day NDJSON log, the dump to Parquet, the month merge, retention by file, the derived sessions, identities and aliases, and the tables the dashboards and the query tool read
+internal/shared/     small generic leaf packages: civil (calendar dates), enginesql (DuckDB SQL checks), readsql, sortkey, version
 docs/                the three contract pages, embedded and served over MCP
 sdk/                 browser SDK source (TypeScript); the built file is embedded by internal/server
 web/                 dashboard web app source (React, TypeScript); the build is embedded by internal/reporting
@@ -122,13 +122,11 @@ A Go migration step runs against its own version's schema, so its file goes
 in `migrationSteps` instead.
 
 Migrations own the schema except the objects in `processOwned`
-(`internal/store/sqlite/migrate.go`), which the process builds from the
-data: today only `v_events_flat`, one `attr_*` column per declared
-attribute. The migrator drops them before every pending migration and
-`app.Migrate` rebuilds them right after (a failed rebuild stops the boot),
-so a migration never names one, even when it rebuilds `events`; a test
-refuses one that does. A new `events` column goes into
-`flatViewBaseColumns` (`flatview.go`) or the test's omitted list.
+(`internal/store/sqlite/migrate.go`): today only `v_events_flat`, which the
+process built before the events left SQLite and nothing builds now. An old
+database may still hold it, and the migrations through 041 rebuild `events`
+under it, so the migrator drops it before every pending migration; a
+migration never names it, and a test refuses one that does.
 
 ## Documentation
 
@@ -153,8 +151,8 @@ Update in the **same commit** as the change:
 | MCP tools, REST routes, resources (`internal/api/ops_*.go`, `expose.go`, `rest.go`, `resources.go`) | `docs/twillingate.md` |
 | reporting tools, routes and resources (`internal/api/ops_reporting.go`) | `docs/reporting.md` |
 | components (`web/src/components/widgets/`) | the component table and examples in `docs/reporting.md` |
-| queryable views (`internal/store/sqlite/migrations/`) | `docs/twillingate.md` and `schemaViews` in `internal/api/resources.go` |
-| views the system dashboards read (`internal/store/sqlite/migrations/`) | the system widgets, which `TestSystemDashboards` in `internal/reporting/system_test.go` runs |
+| the event files' tables (`internal/archive/`) | `docs/twillingate.md` and `schemaFiles` in `internal/api/resources.go` |
+| columns the system dashboards read (`internal/archive/`) | the system widgets, which `TestSystemDashboards` in `internal/reporting/system_test.go` runs |
 | a migration with pre-checks or a visible change on upgrade day | `deploy/UPGRADES.md` |
 | environment variables (`internal/config/`) | `docs/deployment.md` |
 | install, upgrade, backup or restore procedure (`deploy/`, `Makefile`) | `docs/deployment.md`, and `docs/litestream.md` when it touches the data directory, the service user or the image |
