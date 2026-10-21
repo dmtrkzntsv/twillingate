@@ -373,6 +373,46 @@ about twice as much for those; Retention scans the whole history, so a
   `DATABASE_DSN` and `INGEST_ADDR`: 38.4 MB at 60 s, with the engine child
   (62 MB) still alive from the start-up pass; 37.6 MB at 230 s, after the
   child's 3-minute idle exit. Target ~17 MB not met.
+- Idle memory (#195), taken 2026-10-20 on one x86-64 host: `serve -ingest`,
+  `GEO_DSN=none://`, an empty data directory, RSS of the server and its
+  children from `/proc`, each build once (the three side by side, then
+  v0.20.0 and main again: within 1 MB of each other).
+
+  | Build | 60 s: server + child | 4 min: server (child gone) |
+  |---|---|---|
+  | v0.20.0 | 38.7 + 63.2 = 101.9 MB | 38.2 MB |
+  | main (#191) | 39.0 + 62.9 = 101.9 MB | 37.9 MB |
+  | #195 | 30.9 MB, no child | 29.9 MB |
+
+  The child was never the pass's: the archive pass already sends the engine
+  nothing when no log needs dumping, no month merging and no derived file is
+  stale (now pinned by a test). It was the reporting migrator checking every
+  system widget on the files at a fresh install's first start, on no files.
+  Where the server's 38 MB went (pagemap of the binary's mappings, a heap
+  profile): about 27 MB is the binary's own pages (6.6 MB of them the
+  dynamic symbol table, DuckDB's ~60,000 C++ symbols the external linker
+  exported; 9.2 MB of `.text`, of which modernc SQLite 1.9 MB and C++ 1 MB;
+  5.1 MB of `.gopclntab`; 3.9 MB of `.rodata`), 9 MB anonymous (Go heap
+  about 4.5 MB resident, of 1.5 MB live), 3.9 MB shared libraries (libc,
+  libstdc++, libm). Linking with `--exclude-libs,ALL` takes the symbol
+  table off: 7.2 MB less in the server and in every engine child. GC
+  tuning gave little (`GOGC=25` 0.3 MB, `GOMEMLIMIT=4MiB` 1.2 MB) and was
+  left alone. The pipeline's channel held 10,000 whole events (5.9 MB): not
+  resident while idle, but every slot is touched after 10,000 events, and
+  stays so: a channel of pointers keeps 5.7 MB instead of 11.0 MB after
+  30,000 events through the buffer (a local measurement of the package).
+
+  **Target, set from this: about 31 MB RSS for a fresh install's server,
+  no child while idle; met (30.9 MB at 60 s, 29.9 MB at 4 min).** ~17 MB
+  is not reachable while the server links DuckDB and SQLite: the binary's pages alone are ~19 MB. Those pages
+  are shared between processes of one binary, so per extra process on a
+  host (D14) the cost is its private memory: two instances side by side
+  measure 18.0 MB PSS and 8.7 MB private each. What would go further, each
+  a larger change: the engine as its own binary, so the server maps no
+  DuckDB or libstdc++ (about 3 MB, and a second file to install and
+  upgrade); retiring the engine child as soon as a boot-only check ends
+  rather than after `DefaultIdleExit` (an upgrade's first start still keeps
+  ~57 MB for 3 minutes).
 
 ## Order of measurements still to take
 
@@ -381,4 +421,4 @@ about twice as much for those; Retention scans the whole history, so a
 | PR 2 | spawn-to-ready on the release runners | under 100 ms |
 | PR 3 | a cap day's log appended and fsynced per flush, on a 2-CPU server | no visible ingest cost |
 | PR 5d | Views dashboard, 1 year, 2 CPUs, with `sessions` | under 2 s. **Taken 2026-10-14: 10.8 s** (Retention, 90 days: 10.2 s). Follow-up needed. Bench set, 30 days: 1.2 s, met |
-| PR 6 | idle RSS of a fresh install | ~17 MB, as today. **Taken 2026-10-20: 38.4 MB at 60 s (engine child still up, 62 MB), 37.6 MB once the child exited.** Not met |
+| PR 6 | idle RSS of a fresh install | ~17 MB, as today. **Taken 2026-10-20: 38.4 MB at 60 s (engine child still up, 62 MB), 37.6 MB once the child exited.** Not met. **Reset by #195 to about 31 MB, no child: 30.9 MB at 60 s, 29.9 MB at 4 min, no child.** Met |

@@ -72,6 +72,15 @@ func (f *widgetFiles) SampleProject(ctx context.Context) (int64, error) {
 func (f *widgetFiles) Timeout() time.Duration { return f.timeout }
 func (f *widgetFiles) MaxRows() int           { return f.maxRows }
 
+// hasEventFiles reports whether any project under dir (EVENTS_DIR) has an
+// events file or log, from the file names alone (archive.LatestDays): a
+// boot check that would only run on nothing asks this first rather than
+// spawn the engine's child to find out.
+func hasEventFiles(dir string) (bool, error) {
+	days, err := archive.LatestDays(dir)
+	return len(days) > 0, err
+}
+
 // openFiles builds the engine on this binary (EngineOptions) and a reader
 // over EVENTS_DIR. Neither starts anything: the engine spawns its child on
 // the first query, so a caller that never queries never spawns one. The
@@ -103,8 +112,15 @@ func openFiles(cfg *config.Config) (*engine.Engine, *archive.Reader, error) {
 // next start checks it again. A plain timeout skips only that widget;
 // running out of memory, a dead child or a timeout loading the logs (the
 // boot pass of an upgrade loads the closed logs meanwhile) leave the rest
-// unchecked too.
-func checkUserWidgets(ctx context.Context, st reporting.Store, files reporting.Files, logger *slog.Logger) {
+// unchecked too. With no event file under eventsDir every widget would
+// run on nothing, so it checks none and spawns no child.
+func checkUserWidgets(ctx context.Context, st reporting.Store, files reporting.Files, eventsDir string, logger *slog.Logger) {
+	if ok, err := hasEventFiles(eventsDir); err != nil || !ok {
+		if err != nil {
+			logger.Error("checking the users' widgets on the event files", "error", err)
+		}
+		return
+	}
 	failed, err := reporting.CheckUserWidgets(ctx, st, files)
 	for _, f := range failed {
 		if f.Stopped {

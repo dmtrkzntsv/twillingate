@@ -30,12 +30,14 @@ var _ reporting.Store = store.Store(nil)
 // The reporting migrator validates every system widget on the event
 // files, so Migrate builds an engine on this binary for it, closed before
 // it returns. The engine spawns its child only when a query runs, which
-// is only when the release's system definition changed: most runs spawn
-// none. The run that does must be the database owner's (checkOwner): a
-// child spawned as root leaves engine/slots, engine/spill and raw/ owned
-// by root, which the service user then cannot open. Migrate checks just
-// before that first query, so a command run as root on a release that
-// changed nothing goes on as before.
+// is only when the release's system definition changed and EVENTS_DIR
+// holds an event file to check it on: most runs spawn none, and neither
+// does a fresh install's first. The run that does must be the database
+// owner's (checkOwner): a child spawned as root leaves engine/slots,
+// engine/spill and raw/ owned by root, which the service user then cannot
+// open. Migrate checks just before that first query, so a command run as
+// root on a release that changed nothing, or on an install with no event
+// file, goes on as before.
 //
 // That check is part of the boot, not a viewer's query: each of its
 // queries runs under migrateQueryTimeout rather than
@@ -66,11 +68,22 @@ func migrate(ctx context.Context, cfg *config.Config, st store.Store, reader *ar
 	if err := reg.Reload(ctx); err != nil {
 		return err
 	}
-	boot := newWidgetFiles(cfg, reader, reg)
-	boot.timeout = migrateQueryTimeout
-	var files reporting.Files = boot
-	if owner != "" {
-		files = &ownerFiles{Files: files, path: owner}
+	// No event file at all (a fresh install): nothing to check the system
+	// widgets on, so the migrator runs no query and spawns no child
+	// (reporting.Migrate with nil Files); the first start with files
+	// checks them.
+	some, err := hasEventFiles(cfg.EventsDir)
+	if err != nil {
+		return err
+	}
+	var files reporting.Files
+	if some {
+		boot := newWidgetFiles(cfg, reader, reg)
+		boot.timeout = migrateQueryTimeout
+		files = boot
+		if owner != "" {
+			files = &ownerFiles{Files: files, path: owner}
+		}
 	}
 	return migrateReporting(ctx, st, files, NewLogger(cfg.Log))
 }

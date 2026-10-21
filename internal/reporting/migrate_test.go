@@ -411,6 +411,54 @@ func TestMigrateFromResourceFailureSyncsAndChecksAgain(t *testing.T) {
 	}
 }
 
+// TestMigrateFromWithoutFilesRunsNoQuery: with no event files (nil Files,
+// a fresh install) there is nothing to check the system widgets on, so
+// Migrate syncs the release without a query, which would spawn an engine
+// child for nothing, and records the sync unchecked, quietly: the first
+// start with files checks every widget. SQL the scanner refuses still
+// fails it.
+func TestMigrateFromWithoutFilesRunsNoQuery(t *testing.T) {
+	ctx := context.Background()
+	manifest := testManifest(t)
+	st, files := newTestStoreAndFiles(t, 1000)
+	system, dir := systemFSCopy(t)
+	addSystemWidget(t, dir, "visits", "SELECT 2 AS value")
+
+	if err := migrateFrom(ctx, st, nil, system, manifest); err != nil {
+		t.Fatalf("no files: %v, want the release synced", err)
+	}
+	ws, err := st.ListWidgets(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws) != 2 {
+		t.Errorf("dashboard 1 widgets = %d, want the release's 2 synced", len(ws))
+	}
+	hash, err := st.ReportingHash(ctx)
+	if err != nil || !strings.HasPrefix(hash, uncheckedPrefix) {
+		t.Fatalf("ReportingHash = %q, %v; want it marked unchecked", hash, err)
+	}
+
+	working := &countingFiles{Files: files}
+	if err := migrateFrom(ctx, st, working, system, manifest); err != nil {
+		t.Fatal(err)
+	}
+	if working.queries != 2 {
+		t.Errorf("first run with files: %d queries, want both widgets checked", working.queries)
+	}
+	if hash, _ := st.ReportingHash(ctx); strings.HasPrefix(hash, uncheckedPrefix) {
+		t.Errorf("ReportingHash after a full check = %q, still unchecked", hash)
+	}
+
+	st2, _ := newTestStoreAndFiles(t, 1000)
+	broken, dir2 := systemFSCopy(t)
+	addSystemWidget(t, dir2, "broken", "SELECT ? AS value")
+	err = migrateFrom(ctx, st2, nil, broken, manifest)
+	if !errors.Is(err, store.ErrInvalid) || !strings.Contains(err.Error(), "widget broken") {
+		t.Errorf("no files, refused SQL: err = %v, want widget broken refused", err)
+	}
+}
+
 // TestMigrateFromResourceFailureStillRefusesSQL: SQL refused for itself
 // fails the start, before a resource failure or after one, where the
 // scanner still reads it.

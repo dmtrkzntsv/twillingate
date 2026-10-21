@@ -30,10 +30,12 @@ ARG VERSION=dev
 # carries it between runs, since a CI builder starts empty. The module cache
 # is a mount too, not a `go mod download` layer: the DuckDB libraries of all
 # five platforms are large and would land in the image layers and the layer
-# cache. CI downloads the modules afresh each run.
+# cache. CI downloads the modules afresh each run. The linker flags are the
+# Makefile's (LDFLAGS): --exclude-libs keeps DuckDB's symbols out of the
+# dynamic symbol table, 7 MB less memory per process.
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
-    CGO_ENABLED=1 go build -trimpath -ldflags "-s -w -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=${VERSION}" \
+    CGO_ENABLED=1 go build -trimpath -ldflags "-s -w -extldflags=-Wl,--exclude-libs,ALL -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=${VERSION}" \
     -o /out/twillingate ./cmd/twillingate
 
 FROM debian:bookworm-slim AS runtime
