@@ -24,12 +24,17 @@ type Buffer struct {
 	cfg     config.BufferConfig
 	sink    Sink
 	logger  *slog.Logger
-	ch      chan store.Event
+	// ch holds pointers: a channel of events would allocate Capacity
+	// whole events (about 600 bytes each, 6 MB at the default 10000) up
+	// front, and the ring touches every slot within Capacity events, so
+	// all of it stays resident for good. Queued pointers keep only the
+	// events in flight on the heap.
+	ch      chan *store.Event
 	dropped atomic.Uint64
 }
 
 func New(cfg config.BufferConfig, sink Sink, logger *slog.Logger) *Buffer {
-	return &Buffer{cfg: cfg, sink: sink, logger: logger, ch: make(chan store.Event, cfg.Capacity)}
+	return &Buffer{cfg: cfg, sink: sink, logger: logger, ch: make(chan *store.Event, cfg.Capacity)}
 }
 
 func (b *Buffer) Enqueue(e store.Event) { b.enqueue(e) }
@@ -38,7 +43,7 @@ func (b *Buffer) Dropped() uint64       { return b.dropped.Load() }
 func (b *Buffer) enqueue(e store.Event) {
 	for {
 		select {
-		case b.ch <- e:
+		case b.ch <- &e:
 			return
 		default:
 			// Full: drop the oldest to make room, count it, retry.
@@ -75,7 +80,7 @@ func (b *Buffer) Run(ctx context.Context) {
 			for {
 				select {
 				case e := <-b.ch:
-					take(e)
+					take(*e)
 					continue
 				default:
 				}
@@ -84,7 +89,7 @@ func (b *Buffer) Run(ctx context.Context) {
 			flush(ctx)
 			return
 		case e := <-b.ch:
-			take(e)
+			take(*e)
 			if len(batch) >= b.cfg.FlushMaxEvents {
 				flush(ctx)
 			}
