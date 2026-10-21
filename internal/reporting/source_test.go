@@ -279,6 +279,48 @@ func TestSQLiteHintOnTheEngine(t *testing.T) {
 	}
 }
 
+// TestWidgetSQLReadsOnlyTheTables: a widget's save (Validate), preview,
+// load and page each refuse SQL that reads a file or gets past the
+// project's scope, with the same message, as ErrInvalid; SQL over the
+// tables, a path compared as text included, loads.
+func TestWidgetSQLReadsOnlyTheTables(t *testing.T) {
+	svc, _ := previewService(t, 1000)
+	seedViews(t, svc, 1, "2026-09-10")
+	seedViews(t, svc, 2, "2026-09-10")
+	s := svc.sources["sql"].(*sqlSource)
+	table := testComponents(t)["table"]
+	ctx := context.Background()
+	p := Params{ProjectID: 1, From: "2026-09-01", To: "2026-09-14"}
+	for content, want := range map[string]string{
+		"SELECT * FROM read_parquet('/etc/passwd')":                     "read_parquet() is not allowed",
+		"SELECT * FROM read_csv_auto('/etc/passwd')":                    "read_csv_auto() is not allowed",
+		"SELECT * FROM glob('/*')":                                      "glob() is not allowed",
+		"SELECT count(*) AS n FROM main.events WHERE :project > 0":      "main.events names a schema",
+		`SELECT count(*) AS n FROM "main"."views" WHERE :project > 0`:   "main.views names a schema",
+		"SELECT * FROM '/etc/passwd'":                                   `"/etc/passwd" is not a table here`,
+		"WITH _tw_all AS (SELECT * FROM _tw_all) SELECT * FROM _tw_all": `"_tw_all" is not a table here`,
+	} {
+		check := func(how string, err error) {
+			t.Helper()
+			if !errors.Is(err, store.ErrInvalid) || !strings.HasPrefix(err.Error(), want) ||
+				!strings.Contains(err.Error(), "; SQL here reads only the tables events, views, product, measures, sessions, identities and aliases") {
+				t.Errorf("%s %s: err = %v; want ErrInvalid %q", how, content, err, want)
+			}
+		}
+		check("save", s.Validate(ctx, content, table))
+		_, err := svc.Preview(ctx, PreviewIn{Component: "table", Source: Source{Type: "sql", Content: content}, ProjectID: 1, From: p.From, To: p.To})
+		check("preview", err)
+		_, err = s.Load(ctx, content, p)
+		check("load", err)
+		_, err = s.LoadPage(ctx, content, p, readsql.Page{})
+		check("page", err)
+	}
+	got, err := s.Load(ctx, "SELECT count(*) AS n FROM views WHERE project_id = :project AND path IS DISTINCT FROM '/etc/passwd'", p)
+	if err != nil || fmt.Sprint(got.(readsql.Result).Rows) != "[[1]]" {
+		t.Errorf("load over views = %v, %v; want project 1's one view", got, err)
+	}
+}
+
 func TestSQLValidateRefusesSyntaxError(t *testing.T) {
 	s := &sqlSource{files: newTestFiles(t)}
 	err := s.Validate(context.Background(), "select from where", testComponents(t)["table"])

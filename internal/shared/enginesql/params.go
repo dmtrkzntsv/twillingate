@@ -2,9 +2,10 @@
 // (internal/engine), as readsql's is for SQLite: it finds the :name
 // parameters a widget uses and rewrites them into bound ones, and it
 // builds the wraps the engine runs around a widget's query (rows as text,
-// the shape check, a remote table's page). It runs nothing; the engine's
-// child is what refuses anything but one SELECT, so the scanner here
-// guards the wraps' meaning, not the files.
+// the shape check, a remote table's page). The scanner guards the wraps'
+// meaning, not the files: the engine's child is what refuses anything but
+// one SELECT, and Confine, which has the engine parse the SQL and runs
+// none of it, what keeps that SELECT on the tables it is given.
 package enginesql
 
 import (

@@ -1308,3 +1308,21 @@ start builds a view over the dropped `events` table. To go back, restore
 the backup taken before the upgrade: the events ingested since are in
 `raw/`, where the release before this one reads them for its dashboards,
 but not in that database.
+
+### Upgrading to widget SQL on the seven tables only (no migration)
+
+Widget SQL and `query` now read only `events`, `views`, `product`,
+`measures`, `sessions`, `identities` and `aliases`, and their own `WITH`
+names. SQL that calls a table function other than `range`,
+`generate_series` and `unnest` (`read_parquet`, `read_csv`, `glob`, …),
+names a file in `FROM`, qualifies a table with a schema (`main.events`)
+or reads any other table (`_tw_all`) is refused before it runs.
+
+- **Before the upgrade**, nothing to check by hand.
+- **On the day**, the start logs `widget SQL fails on the event files`
+  for each user widget refused, with the refusal: rewrite it over the
+  seven tables (`main.events` → `events`, scoped by `:project`). The
+  system widgets read only the seven tables already.
+- Scripts that send `query` such SQL get `invalid` with the same message.
+
+Rollback: install the previous release; nothing on disk changed.

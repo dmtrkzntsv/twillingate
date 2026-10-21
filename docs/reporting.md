@@ -242,8 +242,15 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 - A query returns exactly the columns the component reads, named by alias; a
   column marked optional may be left out, and only `table` takes any columns.
 - Widget SQL is DuckDB SQL, one `SELECT`, over the seven tables in
-  [Tables](#tables). The database's `v_*` views and `agg_*` tables went
-  with its events (migration 042).
+  [Tables](#tables) and nothing else. The database's `v_*` views and
+  `agg_*` tables went with its events (migration 042).
+- Saving, previewing and running a widget refuse SQL that reads past the
+  seven tables: a table function other than `range`, `generate_series`
+  and `unnest` (`read_parquet`, `read_csv`, `glob` and the others read
+  files or the catalog), a file named in `FROM`, a name with a schema
+  (`main.events`, which would read every project's rows past `:project`)
+  and any other table. A `WITH` name of the widget's own reads as usual,
+  where it is in scope; a path inside a string compared as text is fine.
 - The only parameters are `:project`, a BIGINT, and `:from` and `:to`,
   DATEs in UTC like `day`: `day BETWEEN :from AND :to`, and `:to - :from + 1`
   is the range's length in days. `?`, `$1` and `$name` are refused.
@@ -1164,6 +1171,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | visitors is not an input of line | Drop the column, or alias it to an input; only `table` takes any columns. |
 | line.y: "n/a" is not number | Return a number, a `YYYY-MM-DD` day or text as the input asks; `CAST(… AS DOUBLE)` where needed. An empty value (SQL `NULL`) always passes. |
 | Catalog Error: Table with name v_views_daily does not exist! …; widget SQL is DuckDB SQL over events, views, product, measures, sessions, identities and aliases; see docs://reporting | The widget was written for SQLite, before widgets moved to the event files. Rewrite it over [Tables](#tables); see [When widgets break after an update](#when-widgets-break-after-an-update). The same hint follows `julianday`, `strftime('%s', …)`, `date(x, '-1 day')`, the `identities` columns the files do not have, the JSON `attributes` column (each key is its own column now: `json_extract(attributes, '$.plan')` reads `attr_plan`), `MAX(a, b)` with two arguments (`GREATEST` here) and any syntax error. |
+| read_parquet() is not allowed (only range, generate_series and unnest are); SQL here reads only the tables events, views, product, measures, sessions, identities and aliases, by their plain names, and its own WITH names | Read the seven tables in [Tables](#tables); a widget never reads a file itself. The same refusal names a schema-qualified table (`main.events names a schema`: write `events`, scoped by `:project`) and any other table (`"_tw_all" is not a table here`). |
 | ? is not a parameter here; use :name | Use `:project`, `:from` or `:to`, or write the value into the SQL. `$1` and `$name` are refused the same way. |
 | sql must be a single statement; remove what follows the ';' | One `SELECT` (or `WITH … SELECT`). An unterminated string or comment and an unmatched `(` or `)` are refused too. |
 | query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the date range, or aggregate | Filter on `day`, group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |

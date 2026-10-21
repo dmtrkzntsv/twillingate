@@ -1446,7 +1446,7 @@ history starts where the files' does. `query`, the count of events in
 | `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys `product_attributes` breaks down (`$browser`, `$path`, …); a key none carried gives no rows |
 | `retention` | `actor` (`user` or `install`) | Cohort curves for the cohorts that began in the range, every offset, counted over the days before today (UTC), plus `aggregated_through`, the newest such day with views or product events — cohorts and offsets after it are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` (default 50) | Per user or group, busiest first (views plus product events in the range): its `actors` and `users` (itself for a user, its members for a group), each distinct per day and added up over the days, its `views`, `events` and the display `name` sent with its latest event. **Surfaces personal data on projects whose clients send ids** |
-| `query` | `sql`, `source` (optional: `files`, the default and the only one) | A single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them: see [Writing SQL against the event files](#writing-sql-against-the-event-files). Row-capped and time-limited. `source: "sqlite"` was removed with the database's events and is refused (`invalid`); `source` itself stays for one release, so a client sending `files` keeps working |
+| `query` | `sql`, `source` (optional: `files`, the default and the only one) | A single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them: see [Writing SQL against the event files](#writing-sql-against-the-event-files). Row-capped and time-limited; it reads those seven tables only (no table function but `range`, `generate_series` and `unnest`, no schema-qualified name such as `main.events`), every project's rows. `source: "sqlite"` was removed with the database's events and is refused (`invalid`); `source` itself stays for one release, so a client sending `files` keeps working |
 
 `views_breakdown`'s dimensions, the columns each returns and what it reads
 from the `views` table:
@@ -1579,8 +1579,16 @@ them. Once `twillingate events import` has run, they also hold the earlier
 raw days the database still held then; nothing older can be queried.
 Today's events are included, each `BUFFER_FLUSH_INTERVAL`. A query is
 row-capped (`CONSOLE_QUERY_ROWS_MAX`, default 1000) and time-limited
-(`CONSOLE_QUERY_TIMEOUT`, default `30s`); it cannot write and cannot reach
-any other file. `schema://views` lists the tables' columns. The dialect is
+(`CONSOLE_QUERY_TIMEOUT`, default `30s`); it cannot write, and it reads
+the seven tables below and nothing else: a table function that reads files
+or the catalog (`read_parquet`, `read_csv`, `glob`, `query`, `duckdb_*`), a
+file named in `FROM` (`FROM 'x.parquet'`), a name with a schema
+(`main.events`, `information_schema.tables`), any other table (the reader's
+own `_tw_*` among them) and `SHOW TABLES` are refused as `invalid` before
+it runs. `range`, `generate_series` and `unnest` are the table functions
+it may call, and its own `WITH` names read as usual; a path inside a string
+compared as text is just text. `query` reads every project's rows: filter
+`project_id`. `schema://views` lists the tables' columns. The dialect is
 DuckDB's ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction)),
 close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
 `day BETWEEN DATE '2026-01-01' AND DATE '2026-01-31'`, `GROUP BY ALL`,
@@ -1589,7 +1597,8 @@ close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
 Seven tables. `events` holds every event of every family; `views`,
 `product` and `measures` hold its rows of one family each. Three more are
 derived from the events (below the column list). The `_tw_*` tables are
-the reader's own and hold rows before the rules apply: query these seven.
+the reader's own and hold rows before the rules apply: a query naming one
+is refused.
 `events`, `views`, `product` and `measures` have:
 
 | Column | Type | |

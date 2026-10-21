@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -653,6 +654,43 @@ func TestScopedQuerySeesOneProject(t *testing.T) {
 	}
 	if got := askScoped(t, r, 2, "SELECT 1 -- a comment"); got != "[[1]]" {
 		t.Errorf("a trailing line comment: %s, want [[1]]", got)
+	}
+}
+
+// TestConfinedQueryStaysOnTheTables: with Confine, SQL that would read
+// past the scope (main.events, the reader's own _tw_all) or a file
+// (read_parquet) is refused as enginesql.ErrRefused before it runs, scoped
+// or not, and SQL over the tables runs as without it, the scope's
+// own main.* names included; a verdict is remembered, so the same SQL
+// passes again without a parse.
+func TestConfinedQueryStaysOnTheTables(t *testing.T) {
+	f := scopedFixture(t)
+	r := f.reader(t)
+	for _, sql := range []string{
+		"SELECT count(*) FROM main.events",
+		`SELECT count(*) FROM "main"."views"`,
+		"SELECT count(*) FROM _tw_all",
+		"SELECT count(*) FROM read_parquet('" + f.log.Dir() + "/*/*.parquet')",
+	} {
+		for _, scope := range []bool{true, false} {
+			_, err := r.QueryScoped(context.Background(), Scoped{SQL: sql, Scope: scope, Project: 1, Confine: true}, Rules{})
+			if !errors.Is(err, enginesql.ErrRefused) {
+				t.Errorf("%s (scope %v): err = %v; want ErrRefused", sql, scope, err)
+			}
+		}
+		// Without Confine the same SQL reads every project, the leak it closes.
+		if res, err := r.QueryScoped(context.Background(), Scoped{SQL: sql, Scope: true, Project: 1}, Rules{}); err != nil || fmt.Sprint(res.Rows) == "[[0]]" {
+			t.Errorf("%s unconfined: %v, %v; want rows past the scope", sql, res.Rows, err)
+		}
+	}
+	for range 2 {
+		res, err := r.QueryScoped(context.Background(), Scoped{SQL: countAll, Scope: true, Project: 1, Confine: true}, Rules{})
+		if err != nil || fmt.Sprint(res.Rows) != "[[3 2 1 0 2 1 1]]" {
+			t.Fatalf("confined countAll: %v, %v; want project 1's counts", res.Rows, err)
+		}
+	}
+	if n := len(r.confined); n != 1 {
+		t.Errorf("%d verdicts remembered, want 1", n)
 	}
 }
 
