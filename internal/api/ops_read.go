@@ -366,7 +366,7 @@ func (h *host) register(r *registrar) {
 		Description: "Per-user or per-group activity over the range, from the event files: per id, its actors and users (distinct per day, added up over the days), views and product events, busiest first, with the display name sent with its latest event. This surfaces personal data on projects whose clients send ids."},
 		h.identities)
 	expose(r, spec{Name: "query", Annotations: ro, Method: "POST", Path: "/api/query",
-		Description: "Escape hatch: run one read-only SELECT/WITH in DuckDB SQL over the event files: the tables events, views, product, measures, sessions, identities and aliases and nothing else (no table function but range, generate_series and unnest, no schema-qualified name such as main.events), one attr_<key> column per attribute key; read schema://views first (docs://twillingate, \"Writing SQL against the event files\"). source is optional: \"files\", the default, is the only one; \"sqlite\" was removed with the database's events and is refused. Row-capped and time-limited; read-only."},
+		Description: "Escape hatch: run one read-only SELECT/WITH in DuckDB SQL over the event files: the tables events, views, product, measures, sessions, identities and aliases and nothing else (no table function but range, generate_series and unnest, no schema-qualified name such as main.events), one attr_<key> column per attribute key; read schema://views first (docs://twillingate, \"Writing SQL against the event files\"). Row-capped and time-limited; read-only."},
 		h.runQuery)
 
 	expose(r, spec{Name: "create_project", Annotations: write, Method: "POST", Path: "/api/projects", Status: http.StatusCreated,

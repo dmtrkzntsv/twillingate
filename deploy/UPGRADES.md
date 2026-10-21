@@ -1326,3 +1326,40 @@ or reads any other table (`_tw_all`) is refused before it runs.
 - Scripts that send `query` such SQL get `invalid` with the same message.
 
 Rollback: install the previous release; nothing on disk changed.
+
+### Upgrading past the events import (no migration)
+
+This release removes `twillingate events import`, so the section above
+applies only through v0.21.x; its steps stay as the record.
+
+Before upgrading:
+
+- **An install still below migration 042 (any release before v0.21.0)
+  upgrades to v0.21.x first** and follows the section above there: run
+  `twillingate events import` with that release's binary, start it once
+  so 042 runs, then upgrade to this one. Started directly on this release,
+  a database whose `events` holds rows and whose `meta` row
+  `events_imported` is unset is still refused by migration 042 before
+  anything is dropped, and the start (or `twillingate migrate`) fails with:
+
+  ```
+  migration 042 drops the events table, which still holds raw events the event files may lack: upgrade to v0.21.x first and run `twillingate events import` there, then upgrade to this release
+  ```
+
+  Install v0.21.x (`TWILLINGATE_VERSION=v0.21.0` with the installer or in
+  `.env`), do as it says, then upgrade again. An install already past 042
+  needs nothing: the check reads nothing on it.
+- **A restored backup from before 042** goes the same way: restore it with
+  v0.21.x and run `twillingate events import -force` there before
+  upgrading. This release migrates a pre-042 database that has
+  `events_imported` set without looking at the files, so the events it
+  holds that the restored `raw/` lacks would be dropped.
+
+On the day:
+
+- `twillingate events` is an unknown command.
+- `query` takes `sql` only: `source` is an unknown field, refused like any
+  other (`invalid` over MCP, `400` over REST), `"files"` included. Drop it
+  from scripts and saved prompts.
+
+Rollback: install the previous release; nothing in the database changed.

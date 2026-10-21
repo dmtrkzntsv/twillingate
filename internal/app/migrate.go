@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
@@ -25,7 +27,8 @@ var _ reporting.Store = store.Store(nil)
 // entry point that opens the store (serve, migrate, project) calls this
 // rather than st.Migrate directly, so a CLI-only install stays in sync with
 // the release too. Migration 042 refuses while SQLite holds raw events
-// `twillingate events import` has not copied (sqlite.LastEventsVersion).
+// that were never imported into the event files (v0.21's
+// `twillingate events import` did that; this release has no import).
 //
 // The reporting migrator validates every system widget on the event
 // files, so Migrate builds an engine on this binary for it, closed before
@@ -106,6 +109,26 @@ func migrateReporting(ctx context.Context, st store.Store, files reporting.Files
 		return nil
 	}
 	return err
+}
+
+// geteuid is the effective uid Migrate checks against the database file's
+// owner (checkOwner); tests replace it.
+var geteuid = os.Geteuid
+
+// checkOwner refuses a run whose effective uid is not the owner of the
+// database file at path: the directories the run creates would belong to
+// that user, and the service user could not write them afterwards.
+// command is the one to show run as the service user.
+func checkOwner(path string, euid int, command string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	st, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int(st.Uid) == euid {
+		return nil
+	}
+	return fmt.Errorf("%s belongs to uid %d, not %d: run it as the service user, as in sudo -u twillingate twillingate %s", path, st.Uid, euid, command)
 }
 
 // ownerFiles is Files that refuses its first query, the one that spawns

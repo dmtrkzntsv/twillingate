@@ -21,81 +21,6 @@ func day(s string) civil.Date {
 	return d
 }
 
-// DaysBefore lists the days the import reads, one family at a time.
-func TestDaysBefore(t *testing.T) {
-	db := legacyDB(t)
-	ctx := context.Background()
-	views := []store.Event{
-		{Family: store.FamilyViews, ID: "1", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
-		{Family: store.FamilyViews, ID: "2", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T11:00:00Z"), ActorID: "v2", Path: "/"},
-		{Family: store.FamilyViews, ID: "3", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-11T10:00:00Z"), ActorID: "v1", Path: "/"},
-		{Family: store.FamilyViews, ID: "4", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-20T10:00:00Z"), ActorID: "v1", Path: "/"},
-		{Family: store.FamilyViews, ID: "5", ProjectID: 2, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
-	}
-	insertLegacy(t, db, views...)
-	events := []store.Event{
-		{Family: store.FamilyProduct, ID: "e1", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: ts("2026-08-12T10:00:00Z")},
-		{Family: store.FamilyProduct, ID: "e2", ProjectID: 1, EventName: "signup", ActorID: "u2", TS: ts("2026-08-12T11:00:00Z")},
-		{Family: store.FamilyProduct, ID: "e3", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: ts("2026-08-20T10:00:00Z")},
-		{Family: store.FamilyMeasures, ID: "m1", ProjectID: 1, EventName: "load", ActorID: "u1", TS: ts("2026-08-13T10:00:00Z")},
-	}
-	insertLegacy(t, db, events...)
-
-	str := func(days []civil.Date) []string {
-		out := make([]string, len(days))
-		for i, d := range days {
-			out[i] = d.String()
-		}
-		return out
-	}
-	viewDays, err := db.ViewDaysBefore(ctx, 1, day("2026-08-15"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// Distinct, sorted, project-scoped, and excluding the day on/after cutoff.
-	if got := str(viewDays); len(got) != 2 || got[0] != "2026-08-10" || got[1] != "2026-08-11" {
-		t.Errorf("ViewDaysBefore = %v, want [2026-08-10 2026-08-11]", got)
-	}
-	product, err := db.ProductDaysBefore(ctx, 1, day("2026-08-15"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := str(product); len(got) != 1 || got[0] != "2026-08-12" {
-		t.Errorf("ProductDaysBefore = %v, want [2026-08-12]", got)
-	}
-	measures, err := db.MeasureDaysBefore(ctx, 1, day("2026-08-15"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := str(measures); len(got) != 1 || got[0] != "2026-08-13" {
-		t.Errorf("MeasureDaysBefore = %v, want [2026-08-13]", got)
-	}
-	none, err := db.ProductDaysBefore(ctx, 99, day("2026-08-15"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(none) != 0 {
-		t.Errorf("unknown project = %v, want empty", str(none))
-	}
-}
-
-// A malformed day must surface as an error rather than a zero-value date
-// that would silently misfile the import.
-func TestDaysBeforeRejectsCorruptTimestamp(t *testing.T) {
-	db := legacyDB(t)
-	// Must sort before the cutoff so the WHERE clause admits it, yet be an
-	// impossible calendar date so civil.Parse rejects it.
-	if _, err := db.db.Exec(
-		`INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, path, family, event_name)
-		 VALUES ('x',1,'2026-02-30T00:00:00Z','2026-02-30','2026-02-30T00:00:00Z','web','v','connection','/','views','$page_view')`,
-	); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ViewDaysBefore(context.Background(), 1, day("2026-08-15")); err == nil {
-		t.Fatal("want error for unparseable ts, got nil")
-	}
-}
-
 // tx must leave no partial writes behind when fn fails; every write path
 // depends on this for atomicity.
 func TestTxRollsBackOnError(t *testing.T) {
@@ -140,14 +65,12 @@ func TestOperationsOnClosedDB(t *testing.T) {
 		"IncrementalVacuum":  func() error { return db.IncrementalVacuum(ctx) },
 		"RecordUsageHistory": func() error { return db.RecordUsageHistory(ctx, time.Now(), map[int64]int64{1: 1}) },
 		"Migrate":            func() error { return db.Migrate(ctx) },
-		"EventsDropped":      func() error { _, err := db.EventsDropped(ctx); return err },
 		"CreateProject": func() error {
 			_, err := db.CreateProject(ctx, store.RegistryProject{Name: "App", AllowedOrigins: "[]"},
 				store.AuditEntry{Actor: "test", Action: "project.create"})
 			return err
 		},
-		"SetMeta":        func() error { return db.SetMeta(ctx, "k", "v") },
-		"ViewDaysBefore": func() error { _, err := db.ViewDaysBefore(ctx, 1, day("2026-01-01")); return err },
+		"SetMeta": func() error { return db.SetMeta(ctx, "k", "v") },
 		"ProjectIDs": func() error {
 			_, err := db.ProjectIDs(ctx)
 			return err

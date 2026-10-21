@@ -16,8 +16,7 @@ import (
 )
 
 type queryIn struct {
-	SQL    string `json:"sql" jsonschema:"a single read-only SELECT or WITH query in DuckDB SQL over the event files' tables (read schema://views first)"`
-	Source string `json:"source,omitempty" jsonschema:"optional: files, the default and the only source left (the event files through DuckDB: events, views, product, measures, sessions, identities, aliases); sqlite was removed"`
+	SQL string `json:"sql" jsonschema:"a single read-only SELECT or WITH query in DuckDB SQL over the event files' tables (read schema://views first)"`
 }
 
 // Files runs SQL over the raw event files (archive.Reader): query's SQL
@@ -26,17 +25,11 @@ type Files interface {
 	QueryScoped(ctx context.Context, q archive.Scoped, rules archive.Rules) (engine.Result, error)
 }
 
-// runQuery runs in.SQL on the event files. source stays for one release
-// (raw-first Decision 9), so a client that sends "files" keeps working;
-// "sqlite" went with the database's events and is refused.
+// runQuery runs in.SQL on the event files. The source field went one
+// release after the database's events did: a client still sending it is
+// refused like any unknown field.
 func (h *host) runQuery(ctx context.Context, in queryIn) (tableOut, error) {
-	switch in.Source {
-	case "", "files":
-		return h.runFilesQuery(ctx, in.SQL)
-	case "sqlite":
-		return tableOut{}, invalidf(`source "sqlite" was removed: the database no longer holds events; query the event files (docs://twillingate)`)
-	}
-	return tableOut{}, invalidf(`source must be "files", got %q`, in.Source)
+	return h.runFilesQuery(ctx, in.SQL)
 }
 
 // runFilesQuery runs sql over the event files in the engine's child,

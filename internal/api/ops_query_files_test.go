@@ -38,7 +38,7 @@ func TestQueryFilesSourceRunsOnTheFiles(t *testing.T) {
 		Rows:    [][]any{{json.Number("3"), nil, true, "2026-10-12T10:00:00Z", []any{"a", json.Number("1")}}},
 	}}
 	h.files = files
-	res := callTool(t, cs, "query", map[string]any{"sql": "SELECT count(*) FROM events", "source": "files"})
+	res := callTool(t, cs, "query", map[string]any{"sql": "SELECT count(*) FROM events"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
@@ -77,7 +77,7 @@ func TestQueryFilesSourcePassesTheRules(t *testing.T) {
 	if _, err := h.ops.BlockAttribute(ctx, "t", 1, "k"); err != nil {
 		t.Fatal(err)
 	}
-	if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1", "source": "files"}); res.IsError {
+	if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1"}); res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
 	if len(files.rules.Events) != 1 || files.rules.Events[0].Name != "x" ||
@@ -108,7 +108,7 @@ func TestQueryFilesSourceErrors(t *testing.T) {
 		{"confined sqlite table", fmt.Errorf(`%w: "v_views_daily" is not a table here; SQL here reads only …`, enginesql.ErrRefused), []string{"v_views_daily", "docs://twillingate"}},
 	} {
 		h.files = &fakeFiles{err: c.err}
-		res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1", "source": "files"})
+		res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1"})
 		msg := textOf(res)
 		if !res.IsError {
 			t.Errorf("%s: accepted", c.name)
@@ -152,21 +152,15 @@ func TestQueryReadsOnlyTheTables(t *testing.T) {
 	}
 }
 
-func TestQuerySourceChoices(t *testing.T) {
+func TestQueryReadsTheFiles(t *testing.T) {
 	h, cs := newTestHost(t)
-	if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1", "source": "duck"}); !res.IsError || !strings.Contains(textOf(res), `source must be "files"`) {
-		t.Errorf("source duck: %s", textOf(res))
-	}
-	// No source reads the files: the host's own, where blog's 2026-08-20
-	// views are 45.
+	// The host's own files, where blog's 2026-08-20 views are 45.
 	res := callTool(t, cs, "query", map[string]any{"sql": "SELECT count(*) AS n FROM views WHERE project_id = 1 AND day = DATE '2026-08-20'"})
 	if res.IsError || !strings.Contains(textOf(res), `[["45"]]`) {
-		t.Errorf("no source: %s", textOf(res))
+		t.Errorf("query: %s", textOf(res))
 	}
 	h.files = nil
-	for _, source := range []string{"", "files"} {
-		if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1", "source": source}); !res.IsError || !strings.Contains(textOf(res), "cannot be queried") {
-			t.Errorf("source %q without a reader: %s", source, textOf(res))
-		}
+	if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1"}); !res.IsError || !strings.Contains(textOf(res), "cannot be queried") {
+		t.Errorf("without a reader: %s", textOf(res))
 	}
 }

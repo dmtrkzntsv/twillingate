@@ -22,7 +22,8 @@ const schemaFiles = `# Query schema
 The event files: DuckDB SQL over the raw events twillingate keeps as files
 beside its database. query and widget SQL read nothing else. The files hold the raw history: every event
 since the upgrade that began writing them, plus the earlier raw days
-twillingate events import copied, today's included, kept RETENTION_DAYS.
+twillingate events import copied on the upgrade to v0.21, today's
+included, kept RETENTION_DAYS.
 
 Facts you cannot infer from the column names:
 
