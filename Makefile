@@ -1,6 +1,13 @@
 BIN := twillingate
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-LDFLAGS := -s -w -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=$(VERSION)
+# --exclude-libs keeps the ~60,000 C++ symbols of DuckDB's static library
+# out of the binary's dynamic symbol table: 6.6 MB the loader reads at every
+# start, resident in every process, server and engine children alike (#195).
+# Nothing resolves them at run time (the engine loads no extension). GNU ld
+# and lld take it; macOS's linker does not, and has no such table to trim.
+comma := ,
+EXTLDFLAGS := $(if $(filter Linux,$(shell uname -s)),-extldflags=-Wl$(comma)--exclude-libs$(comma)ALL)
+LDFLAGS := -s -w $(EXTLDFLAGS) -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=$(VERSION)
 
 .PHONY: build ui test check vet dist docker run smoke test-install test-compose seed-demo clean
 
