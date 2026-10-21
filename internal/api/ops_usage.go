@@ -47,7 +47,7 @@ type projectUsage struct {
 	ProjectID      int64       `json:"project_id"`
 	Series         []usageDay  `json:"series" jsonschema:"every day of the range, zeros included"`
 	Totals         usageTotals `json:"totals"`
-	LastReceivedAt *string     `json:"last_received_at" jsonschema:"when the newest event in the project's files arrived, whatever the range; null with none"`
+	LastReceivedAt *string     `json:"last_received_at" jsonschema:"when the newest event in the project's files arrived, whatever the range; null with none, and for an archived project unless project_id names it"`
 	FirstDay       *string     `json:"first_day" jsonschema:"the oldest day the project's event files hold (a month's file counts from its first day); null with none"`
 	Size           *usageSize  `json:"size" jsonschema:"the project's event file bytes as the daily pass last measured them, with the day it was measured_at; null until the first measurement"`
 }
@@ -106,7 +106,15 @@ func (h *host) usage(ctx context.Context, in usageIn) (usageOut, error) {
 	if err != nil {
 		return usageOut{}, err
 	}
-	counts, err := h.usageCounts(ctx, in.ProjectID, fromD, toD)
+	// The newest arrival of the project asked for, or of every live one:
+	// an archived project's files only wait for the purge.
+	var newestOf []int64
+	for _, p := range projects {
+		if in.ProjectID != 0 || !p.Archived {
+			newestOf = append(newestOf, p.ID)
+		}
+	}
+	counts, err := h.usageCounts(ctx, in.ProjectID, newestOf, fromD, toD)
 	if err != nil {
 		return usageOut{}, err
 	}
@@ -146,11 +154,9 @@ type fileCounts struct {
 // usageCounts counts the views, product events and measures of every day
 // of the range in the event files, of one project (project, not 0) or of
 // every project, and reads when each one's newest row arrived, in one
-// engine query. The newest row is looked for from the first day of the
-// month of the project's newest file name (archive.LatestDays: a month's
-// file counts as its last day, its rows may end earlier) to that day, so
-// it is found whatever the range and scans at most a month.
-func (h *host) usageCounts(ctx context.Context, project int64, fromD, toD civil.Date) (fileCounts, error) {
+// engine query; the newest arrival is read for the projects in newestOf
+// only (newestArrival).
+func (h *host) usageCounts(ctx context.Context, project int64, newestOf []int64, fromD, toD civil.Date) (fileCounts, error) {
 	latest, err := archive.LatestDays(h.eventsDir)
 	if err != nil {
 		return fileCounts{}, err
@@ -167,26 +173,8 @@ func (h *host) usageCounts(ctx context.Context, project int64, fromD, toD civil.
 		vals[":project"] = enginesql.Value{Type: "BIGINT", Text: strconv.FormatInt(project, 10)}
 	}
 	q := `SELECT project_id, day, family, count(*), NULL FROM events WHERE ` + where + ` GROUP BY ALL`
-	var newest []string
-	for id, day := range latest {
-		if project != 0 && id != project {
-			continue
-		}
-		last, err := civil.Parse(day)
-		if err != nil {
-			continue
-		}
-		i := strconv.Itoa(len(newest))
-		cond := "project_id = :np" + i + " AND day BETWEEN :nf" + i + " AND :nt" + i
-		vals[":np"+i] = enginesql.Value{Type: "BIGINT", Text: strconv.FormatInt(id, 10)}
-		vals[":nf"+i] = enginesql.Value{Type: "DATE", Text: day[:8] + "01"}
-		vals[":nt"+i] = enginesql.Value{Type: "DATE", Text: last.String()}
-		newest = append(newest, "("+cond+")")
-	}
-	if len(newest) > 0 {
-		q += `
-UNION ALL
-SELECT project_id, NULL, NULL, NULL, max(received_at) FROM events WHERE ` + strings.Join(newest, " OR ") + ` GROUP BY project_id`
+	if arm := newestArrival(latest, newestOf, vals); arm != "" {
+		q += "\nUNION ALL\n" + arm
 	}
 	bound, args, err := enginesql.Bind(q, vals)
 	if err != nil {
@@ -232,6 +220,52 @@ SELECT project_id, NULL, NULL, NULL, max(received_at) FROM events WHERE ` + stri
 		}
 	}
 	return out, nil
+}
+
+// newestArrival is usageCounts' second arm: when the newest row of each
+// project in ids arrived, its arguments added to vals; "" when none of
+// them has files. A project's newest row is looked for from the first day
+// of the month of its newest file name (latest, archive.LatestDays: a
+// month's file counts as its last day, its rows may end earlier) to that
+// day, so it is found whatever the range and scans at most a month.
+//
+// The projects' conditions sit behind one on day alone spanning them all
+// (:nlo to :nhi): DuckDB pushes no day range into the Parquet scan from an
+// OR whose arms' day ranges differ, as the projects' do, so without it
+// every retained file is read whole (#196), while a plain day range skips
+// the row groups outside it.
+func newestArrival(latest map[int64]string, ids []int64, vals map[string]enginesql.Value) string {
+	var conds []string
+	var lo, hi string
+	for _, id := range ids {
+		day, ok := latest[id]
+		if !ok {
+			continue
+		}
+		last, err := civil.Parse(day)
+		if err != nil {
+			continue
+		}
+		first, to := day[:8]+"01", last.String()
+		i := strconv.Itoa(len(conds))
+		vals[":np"+i] = enginesql.Value{Type: "BIGINT", Text: strconv.FormatInt(id, 10)}
+		vals[":nf"+i] = enginesql.Value{Type: "DATE", Text: first}
+		vals[":nt"+i] = enginesql.Value{Type: "DATE", Text: to}
+		conds = append(conds, "(project_id = :np"+i+" AND day BETWEEN :nf"+i+" AND :nt"+i+")")
+		if lo == "" || first < lo {
+			lo = first
+		}
+		if to > hi {
+			hi = to
+		}
+	}
+	if len(conds) == 0 {
+		return ""
+	}
+	vals[":nlo"] = enginesql.Value{Type: "DATE", Text: lo}
+	vals[":nhi"] = enginesql.Value{Type: "DATE", Text: hi}
+	return `SELECT project_id, NULL, NULL, NULL, max(received_at) FROM events WHERE day BETWEEN :nlo AND :nhi AND (` +
+		strings.Join(conds, " OR ") + `) GROUP BY project_id`
 }
 
 // readSizes answers every project's latest size, by project id: its

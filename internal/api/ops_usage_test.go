@@ -9,8 +9,79 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
+
+// TestUsageNewestArrivalOfLiveProjects: over every project, the newest
+// arrival is read for the live ones only; an archived project keeps its
+// counts and first_day but has no last_received_at, unless it is the
+// project asked for.
+func TestUsageNewestArrivalOfLiveProjects(t *testing.T) {
+	h, _ := newTestHost(t)
+	ctx := context.Background()
+	writeHostEvents(t, h, store.Event{ProjectID: 2, Family: store.FamilyViews, EventName: "$page_view", Kind: "web", Path: "/",
+		TS: time.Date(2026, 8, 21, 9, 0, 0, 0, time.UTC)})
+	if err := h.ops.ArchiveProject(ctx, "test", 2); err != nil {
+		t.Fatal(err)
+	}
+	all, err := h.usage(ctx, usageIn{usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-22"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(all.Projects) != 2 {
+		t.Fatalf("projects = %+v", all.Projects)
+	}
+	blog, docs := all.Projects[0], all.Projects[1]
+	if blog.LastReceivedAt == nil || *blog.LastReceivedAt != "2026-08-26T10:00:00Z" {
+		t.Errorf("blog last_received_at = %v, want 2026-08-26T10:00:00Z", deref(blog.LastReceivedAt))
+	}
+	if docs.LastReceivedAt != nil {
+		t.Errorf("archived docs last_received_at = %v, want null over every project", *docs.LastReceivedAt)
+	}
+	if docs.Totals.Views != 1 || docs.FirstDay == nil {
+		t.Errorf("archived docs totals %+v, first_day %v; the rest of its answer must stand", docs.Totals, deref(docs.FirstDay))
+	}
+	one, err := h.usage(ctx, usageIn{ProjectID: 2, usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-22"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lr := one.Projects[0].LastReceivedAt; lr == nil || !strings.HasPrefix(*lr, "2026-") {
+		t.Errorf("archived docs asked for by id: last_received_at = %v, want its newest arrival", deref(lr))
+	}
+}
+
+// TestNewestArrivalQuery: the newest-arrival arm reads the projects asked
+// for, each from the first day of its newest file's month to that file's
+// last day, behind one condition on day spanning them all, so DuckDB
+// prunes the Parquet row groups on day even when the projects' ranges
+// differ (it does not push an OR of them into the scan). A project with
+// no files, or not asked for, has no condition.
+func TestNewestArrivalQuery(t *testing.T) {
+	latest := map[int64]string{1: "2026-08-26", 2: "2026-07-03", 3: "2026-09-10", 4: "bad"}
+	vals := map[string]enginesql.Value{}
+	q := newestArrival(latest, []int64{2, 1, 4, 5}, vals)
+	if !strings.HasPrefix(q, "SELECT project_id, NULL, NULL, NULL, max(received_at) FROM events WHERE day BETWEEN :nlo AND :nhi AND (") ||
+		!strings.HasSuffix(q, ") GROUP BY project_id") {
+		t.Errorf("query = %s", q)
+	}
+	if strings.Count(q, "project_id = :np") != 2 {
+		t.Errorf("want one condition for each of 1 and 2: %s", q)
+	}
+	want := map[string]string{":nlo": "2026-07-01", ":nhi": "2026-08-26", ":np0": "2", ":nf0": "2026-07-01", ":nt0": "2026-07-03",
+		":np1": "1", ":nf1": "2026-08-01", ":nt1": "2026-08-26"}
+	if len(vals) != len(want) {
+		t.Errorf("vals = %+v", vals)
+	}
+	for k, v := range want {
+		if vals[k].Text != v {
+			t.Errorf("%s = %q, want %q", k, vals[k].Text, v)
+		}
+	}
+	if q := newestArrival(latest, []int64{5}, map[string]enginesql.Value{}); q != "" {
+		t.Errorf("no project with files: %q, want none", q)
+	}
+}
 
 // TestUsageReadsTheFiles: the series counts each day's views, product
 // events and measures in the event files, the totals sum it, first_day
