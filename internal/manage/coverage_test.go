@@ -1,9 +1,11 @@
 package manage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -252,6 +254,29 @@ func TestSnapshotPollErrorKeepsServingPreviousSnapshot(t *testing.T) {
 	after := reg.Snapshot(ctx)
 	if after.Project(id) == nil {
 		t.Fatal("poll error dropped the previous snapshot instead of keeping it")
+	}
+}
+
+// A poll cut short because its caller went away (a client that closed the
+// connection mid-request) is not a failure: nothing is logged, and the
+// next caller polls again rather than waiting out the interval.
+func TestSnapshotPollCancelledByItsCallerLogsNothing(t *testing.T) {
+	st := testStore(t)
+	seedProject(t, st, "blog")
+	var logs bytes.Buffer
+	reg := New(st, slog.New(slog.NewTextHandler(&logs, nil)))
+	if err := reg.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	reg.lastCheck.Store(0)
+	reg.Snapshot(ctx)
+	if logs.Len() != 0 {
+		t.Errorf("a cancelled poll logged:\n%s", logs.String())
+	}
+	if got := reg.lastCheck.Load(); got != 0 {
+		t.Errorf("lastCheck = %d after a cancelled poll, want 0 so the next caller polls", got)
 	}
 }
 

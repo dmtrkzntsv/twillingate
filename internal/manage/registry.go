@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -198,12 +199,16 @@ func (r *Registry) withhold(ids ...int64) {
 // Snapshot returns the current registry view, polling config_version at
 // most once per pollInterval to notice out-of-process writes. On poll
 // failure the previous snapshot keeps serving: a transient read error
-// must not take down ingestion.
+// must not take down ingestion. A poll cut short because its caller went
+// away (a client that closed the connection) is not a failure: it is not
+// logged, and the next caller polls again.
 func (r *Registry) Snapshot(ctx context.Context) *Snapshot {
 	last := r.lastCheck.Load()
 	now := time.Now().UnixNano()
 	if now-last >= int64(pollInterval) && r.lastCheck.CompareAndSwap(last, now) {
-		if v, err := r.st.ConfigVersion(ctx); err != nil {
+		if v, err := r.st.ConfigVersion(ctx); errors.Is(err, context.Canceled) {
+			r.lastCheck.CompareAndSwap(now, last)
+		} else if err != nil {
 			r.logger.Warn("registry version poll failed", "error", err)
 		} else if v != r.version.Load() {
 			if err := r.Reload(ctx); err != nil {
