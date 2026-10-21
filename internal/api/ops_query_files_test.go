@@ -9,6 +9,7 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 )
 
 // fakeFiles stands in for archive.Reader: what query hands the files and
@@ -17,6 +18,7 @@ type fakeFiles struct {
 	sql      string
 	maxRows  int
 	project  int64
+	confine  bool
 	rules    archive.Rules
 	deadline bool
 	res      engine.Result
@@ -25,7 +27,7 @@ type fakeFiles struct {
 
 func (f *fakeFiles) QueryScoped(ctx context.Context, q archive.Scoped, rules archive.Rules) (engine.Result, error) {
 	_, f.deadline = ctx.Deadline()
-	f.sql, f.maxRows, f.project, f.rules = q.SQL, q.MaxRows, q.Project, rules
+	f.sql, f.maxRows, f.project, f.confine, f.rules = q.SQL, q.MaxRows, q.Project, q.Confine, rules
 	return f.res, f.err
 }
 
@@ -47,9 +49,9 @@ func TestQueryFilesSourceRunsOnTheFiles(t *testing.T) {
 	if want := `[["3","","true","2026-10-12T10:00:00Z","[\"a\",1]"]]`; mustJSON(t, out.Rows) != want {
 		t.Fatalf("rows = %s, want %s", mustJSON(t, out.Rows), want)
 	}
-	if files.sql != "SELECT count(*) FROM events" || files.maxRows != h.queryRows || !files.deadline || files.project != 0 {
-		t.Fatalf("files got sql %q, maxRows %d, deadline %v, project %d; want the SQL, CONSOLE_QUERY_ROWS_MAX, a deadline and every project",
-			files.sql, files.maxRows, files.deadline, files.project)
+	if files.sql != "SELECT count(*) FROM events" || files.maxRows != h.queryRows || !files.deadline || files.project != 0 || !files.confine {
+		t.Fatalf("files got sql %q, maxRows %d, deadline %v, project %d, confine %v; want the SQL, CONSOLE_QUERY_ROWS_MAX, a deadline, every project and the seven tables only",
+			files.sql, files.maxRows, files.deadline, files.project, files.confine)
 	}
 }
 
@@ -102,6 +104,8 @@ func TestQueryFilesSourceErrors(t *testing.T) {
 			[]string{"open logs", "ENGINE_MEMORY_LIMIT", "raise"}},
 		{"child died", engine.ErrChildExited, []string{"stopped", "ENGINE_MEMORY_LIMIT"}},
 		{"sql", &engine.QueryError{Msg: `Binder Error: Referenced column "nope" not found`}, []string{"DuckDB", `"nope"`}},
+		{"confined", fmt.Errorf("%w: main.events names a schema; SQL here reads only …", enginesql.ErrRefused), []string{"main.events names a schema"}},
+		{"confined sqlite table", fmt.Errorf(`%w: "v_views_daily" is not a table here; SQL here reads only …`, enginesql.ErrRefused), []string{"v_views_daily", "docs://twillingate"}},
 	} {
 		h.files = &fakeFiles{err: c.err}
 		res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1", "source": "files"})
@@ -120,6 +124,31 @@ func TestQueryFilesSourceErrors(t *testing.T) {
 		if c.name == "memory loading the logs" && strings.Contains(msg, "COUNT(DISTINCT") {
 			t.Errorf("%s: message %q advises on a query the logs' load was not", c.name, msg)
 		}
+	}
+}
+
+// TestQueryReadsOnlyTheTables: on the host's own files, query refuses SQL
+// that reads a file or the catalog past the seven tables, as invalid with
+// the check's message, and runs SQL over them across every project.
+func TestQueryReadsOnlyTheTables(t *testing.T) {
+	_, cs := newTestHost(t)
+	for sql, want := range map[string]string{
+		"SELECT * FROM read_parquet('/etc/passwd')": "read_parquet() is not allowed",
+		"SELECT * FROM glob('/*')":                  "glob() is not allowed",
+		"SELECT count(*) FROM main.events":          "main.events names a schema",
+		`SELECT count(*) FROM "main"."events"`:      "main.events names a schema",
+		"SELECT count(*) FROM _tw_all":              `"_tw_all" is not a table here`,
+		"SELECT * FROM information_schema.tables":   "information_schema.tables names a schema",
+		"SELECT * FROM 'raw/1/2026-08.parquet'":     `"raw/1/2026-08.parquet" is not a table here`,
+	} {
+		res := callTool(t, cs, "query", map[string]any{"sql": sql})
+		if msg := textOf(res); !res.IsError || !strings.Contains(msg, want) || strings.Contains(msg, "DuckDB") {
+			t.Errorf("%s: %v %q; want the refusal %q", sql, res.IsError, msg, want)
+		}
+	}
+	res := callTool(t, cs, "query", map[string]any{"sql": "SELECT count(*) > 0 AS some FROM events WHERE kind IS DISTINCT FROM '/etc/passwd'"})
+	if msg := textOf(res); res.IsError || !strings.Contains(msg, `"true"`) {
+		t.Errorf("query over events: %s; want its rows", msg)
 	}
 }
 

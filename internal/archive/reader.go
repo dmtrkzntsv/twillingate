@@ -55,7 +55,18 @@ type Reader struct {
 	eng  Engine
 	keys *keyScanner
 	mu   sync.Mutex // one prepare at a time
+
+	confinedMu sync.Mutex
+	confined   map[[sha256.Size]byte]bool // SQL Confine passed, by its hash
 }
+
+// Tables are the tables a Reader answers SQL over: confined SQL
+// (Scoped.Confine) reads these and nothing else.
+var Tables = []string{"events", "views", "product", "measures", "sessions", "identities", "aliases"}
+
+// maxConfined bounds the SQL a Reader remembers passing Confine: a
+// dashboard's widgets run the same few statements on every load.
+const maxConfined = 1024
 
 // NewReader reads the files under dir (raw/), which the engine's child
 // must be allowed to read.
@@ -85,6 +96,10 @@ type Scoped struct {
 	// among them: no project has that id) reads none.
 	Scope   bool
 	Project int64
+	// Confine refuses SQL that reads anything but Tables and its own WITH
+	// names (enginesql.Confine) before it runs: for SQL a person wrote,
+	// which Scope alone keeps neither on one project nor in raw/.
+	Confine bool
 }
 
 // QueryScoped is Query with arguments and, with Scope, the seven tables
@@ -104,8 +119,9 @@ type Scoped struct {
 // Scoping is not isolation: the CTEs shadow the tables' names, and SQL
 // that names main.events, _tw_all or read_parquet reads past them, every
 // project's rows included. It keeps SQL written against the tables on
-// one project; it is no boundary against SQL written to leave it, so the
-// SQL must come from someone allowed to read every project.
+// one project; it is no boundary against SQL written to leave it. Confine
+// is that boundary: it refuses those names and every table function that
+// reads files, so SQL from a person runs with it.
 //
 // rules is the full rule set of every project, not the caller's share of
 // it: the tables live in the child, which every caller of the engine
@@ -146,6 +162,11 @@ var (
 )
 
 func (r *Reader) queryScoped(ctx context.Context, q Scoped, rules Rules) (engine.Result, error) {
+	if q.Confine {
+		if err := r.confine(ctx, q.SQL); err != nil {
+			return engine.Result{}, err
+		}
+	}
 	if err := r.prepare(ctx, rules); err != nil {
 		return engine.Result{}, err
 	}
@@ -154,6 +175,28 @@ func (r *Reader) queryScoped(ctx context.Context, q Scoped, rules Rules) (engine
 		sql = scopedSQL(q.Project, sql)
 	}
 	return r.eng.Query(ctx, sql, q.MaxRows, q.Args...)
+}
+
+// confine is enginesql.Confine of sql over Tables, remembered once passed:
+// the verdict depends on the text alone.
+func (r *Reader) confine(ctx context.Context, sql string) error {
+	key := sha256.Sum256([]byte(sql))
+	r.confinedMu.Lock()
+	ok := r.confined[key]
+	r.confinedMu.Unlock()
+	if ok {
+		return nil
+	}
+	if err := enginesql.Confine(ctx, r.eng, sql, Tables); err != nil {
+		return err
+	}
+	r.confinedMu.Lock()
+	defer r.confinedMu.Unlock()
+	if r.confined == nil || len(r.confined) >= maxConfined {
+		r.confined = map[[sha256.Size]byte]bool{}
+	}
+	r.confined[key] = true
+	return nil
 }
 
 // scopedSQL is sql over the seven tables as project's rows only. The

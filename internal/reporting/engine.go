@@ -49,6 +49,7 @@ const sqliteHint = "widget SQL is DuckDB SQL over events, views, product, measur
 // is most often SQLite's (a JOIN without ON, for one).
 var sqliteNames = regexp.MustCompile(`(?i)` +
 	`Table with name (v|agg|raw)_\w+` +
+	`|"(v|agg|raw)_\w+" is not a table here` +
 	`|Function with name julianday\b` +
 	`|format for strftime` +
 	`|arguments provided to DATE function` +
@@ -69,7 +70,8 @@ func runFiles(ctx context.Context, files Files, q archive.Scoped) (engine.Result
 }
 
 // filesErr classifies an error from running a widget's own SQL as
-// store.ErrInvalid where a person can act on it: the timeout names its
+// store.ErrInvalid where a person can act on it: SQL that reads past the
+// tables (archive.Scoped.Confine) says what it read, the timeout names its
 // environment variable, running out of memory says what to change, and
 // DuckDB's own message passes through, with the hint when it names
 // SQLite's. Anything else (the child could not start) stays an internal
@@ -85,16 +87,22 @@ func filesErr(files Files, err error) error {
 		return &resourceErr{store.Refuse(store.ErrInvalid, "%s", enginesql.LogsOutOfMemory), err}
 	case errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
 		return &resourceErr{store.Refuse(store.ErrInvalid, "%s", enginesql.OutOfMemory), err}
+	case errors.Is(err, enginesql.ErrRefused):
+		return store.Refuse(store.ErrInvalid, "%s", withHint(strings.TrimPrefix(err.Error(), enginesql.ErrRefused.Error()+": ")))
 	case errors.As(err, &qe):
-		msg := oneLine(qe.Msg)
-		if sqliteNames.MatchString(msg) {
-			msg += "; " + sqliteHint
-		}
-		return store.Refuse(store.ErrInvalid, "%s", msg)
+		return store.Refuse(store.ErrInvalid, "%s", withHint(oneLine(qe.Msg)))
 	case errors.Is(err, engine.ErrChildExited):
 		return &resourceErr{store.Refuse(store.ErrInvalid, "%s", enginesql.ChildExited), err}
 	}
 	return err
+}
+
+// withHint is msg, with sqliteHint when it names what only SQLite had.
+func withHint(msg string) string {
+	if sqliteNames.MatchString(msg) {
+		return msg + "; " + sqliteHint
+	}
+	return msg
 }
 
 // resourceErr is the refusal of a query that ran out of time or memory,

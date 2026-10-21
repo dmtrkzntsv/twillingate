@@ -169,7 +169,9 @@ func checkSQLParams(content string) ([]string, error) {
 // checkSQLParams) and returns the bound query: scoped to p's project when
 // content reads :project, even to one with no rows (project 0 among them,
 // which reads none), and otherwise over every project, as a widget that
-// never names one read on SQLite (Decision 2).
+// never names one read on SQLite (Decision 2). Either way it reads only
+// the seven tables (archive.Scoped.Confine): the save, the preview and
+// every run of a widget refuse the same SQL.
 func bindSQL(content string, params []string, p Params) (archive.Scoped, error) {
 	bound, args, err := enginesql.Bind(content, map[string]enginesql.Value{
 		":project": {Type: "BIGINT", Text: strconv.FormatInt(p.ProjectID, 10)},
@@ -179,7 +181,7 @@ func bindSQL(content string, params []string, p Params) (archive.Scoped, error) 
 	if err != nil {
 		return archive.Scoped{}, refuseText(err)
 	}
-	q := archive.Scoped{SQL: bound, Args: args}
+	q := archive.Scoped{SQL: bound, Args: args, Confine: true}
 	for _, name := range params {
 		if name == ":project" {
 			q.Scope, q.Project = true, p.ProjectID
@@ -190,7 +192,7 @@ func bindSQL(content string, params []string, p Params) (archive.Scoped, error) 
 
 // rerun is a query on q's scope: sql with its args, at most maxRows rows.
 func rerun(q archive.Scoped, sql string, args []engine.Arg, maxRows int) archive.Scoped {
-	return archive.Scoped{SQL: sql, Args: args, MaxRows: maxRows, Scope: q.Scope, Project: q.Project}
+	return archive.Scoped{SQL: sql, Args: args, MaxRows: maxRows, Scope: q.Scope, Project: q.Project, Confine: q.Confine}
 }
 
 func (s *sqlSource) Validate(ctx context.Context, content string, c Component) error {
