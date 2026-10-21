@@ -190,12 +190,12 @@ than that copy: the daily pass deletes the files of any project the database
 does not know. A restore to the latest state never is; one to an earlier
 `-timestamp` needs a `raw/` copy taken before that time.
 
-Only a replica written by a release before migration 042 holds events, and
-only then, still before the collector starts, run `twillingate events import
--force` as the service user (the import lines in the commands below). The
+Only a replica written by a release before migration 042 holds events. The
 replica is newer than your copy of `raw/`, so the database holds events the
-files lack; the import copies them in. A replica from this release or later
-holds none, and the command says so: skip it.
+files lack, and this release cannot import them: restore such a replica with
+v0.21.x, run `twillingate events import -force` there as the service user
+before the collector starts, then upgrade (`deploy/UPGRADES.md`). A replica
+from v0.21.0 or later holds none: the commands below are all it needs.
 
 **systemd.** Install twillingate (`install.sh`), put the same credentials in
 `/etc/twillingate/twillingate.env`, and set litestream up as
@@ -207,7 +207,6 @@ sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; litestream resto
   -config /etc/litestream.yml -o /var/lib/twillingate/twillingate.db \
   /var/lib/twillingate/twillingate.db'
 sudo -u twillingate sqlite3 /var/lib/twillingate/twillingate.db 'PRAGMA quick_check;'
-sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate events import -force'   # only for a replica from before migration 042
 sudo systemctl start twillingate litestream
 ```
 
@@ -221,7 +220,6 @@ sudo systemctl start twillingate litestream
 docker compose run --rm --no-deps --entrypoint true twillingate
 docker compose run --rm --no-deps litestream restore -config /etc/litestream.yml \
   -o /var/lib/twillingate/twillingate.db /var/lib/twillingate/twillingate.db
-docker compose run --rm --no-deps twillingate events import -force   # only for a replica from before migration 042
 docker compose up -d
 docker compose exec twillingate twillingate project list   # your projects are back
 ```

@@ -36,19 +36,18 @@ var dynamic = map[string]string{
 
 // minSites guards the scan: finding far fewer SQL sites than the tree
 // holds means the scan broke, not that the code lost its queries.
-const minSites = 160
+const minSites = 150
 
 // migrationSteps lists the files, relative to internal/, whose SQL runs
 // against an older schema than the current one, so it is not checked here.
 // A Go migration step (dataSteps in store/sqlite/migrate.go) runs inside
 // its migration, against that version's schema (migration 015's step reads
 // a table the same migration drops): every test that migrates runs it.
-// legacy_events.go reads the events table migration 042 drops, for
-// `twillingate events import` and 042's pre-check, on a schema through
-// sqlite.LastEventsVersion: store/sqlite's tests run it there.
+// Migration 042's pre-check (preChecks) reads the events table that
+// migration drops, on the schema 041 left: store/sqlite's tests run it.
 var migrationSteps = map[string]bool{
-	"store/sqlite/migration015.go":  true,
-	"store/sqlite/legacy_events.go": true,
+	"store/sqlite/migration015.go": true,
+	"store/sqlite/migration042.go": true,
 }
 
 // migrationFile matches a Go migration step's file name.

@@ -5,8 +5,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // dropped042 is every object migration 042 drops; migration 041 left
@@ -37,26 +35,28 @@ func schemaVersion(t *testing.T, db *DB) string {
 	return queryStrings(t, db, `SELECT MAX(version) FROM schema_migrations`)[0]
 }
 
-// legacyRow is one raw row as ingest wrote it through 041.
-func legacyRow() store.Event {
-	return store.Event{ID: "e1", ProjectID: 1, Family: store.FamilyProduct, EventName: "signup",
-		TS: rawAt("2026-10-11T10:00:00Z"), ReceivedAt: rawAt("2026-10-11T10:00:00Z"),
-		ActorID: "a", ActorKind: store.ActorUser, Platform: "web", SampleRate: 1}
+// insertLegacyRow writes one raw row into events as ingest did through
+// 041.
+func insertLegacyRow(t *testing.T, db *DB) {
+	t.Helper()
+	execAll(t, db, `INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, family, event_name)
+		VALUES ('e1', 1, '2026-10-11T10:00:00Z', '2026-10-11', '2026-10-11T10:00:00Z', '', 'a', 'user', 'product', 'signup')`)
 }
 
 // Migration 042 refuses while events holds a row the import has not
-// copied: the error names the command, and nothing is dropped or recorded.
+// copied: this release has no import, so the error sends the operator to
+// v0.21 and names its command, and nothing is dropped or recorded.
 func TestMigration042RefusesUnimportedEvents(t *testing.T) {
 	db := newTestDBAt(t, 41)
 	execAll(t, db, `INSERT INTO projects (id, name, sort_key) VALUES (1, 'p1', 'a1')`)
-	insertLegacy(t, db, legacyRow())
+	insertLegacyRow(t, db)
 
 	err := db.Migrate(context.Background())
 	if err == nil || !strings.Contains(err.Error(), eventsNotImported) {
 		t.Fatalf("Migrate = %v, want the refusal %q", err, eventsNotImported)
 	}
-	if !strings.Contains(err.Error(), "twillingate events import") {
-		t.Fatalf("the refusal %q does not name the command", err)
+	if !strings.Contains(err.Error(), "v0.21") || !strings.Contains(err.Error(), "twillingate events import") {
+		t.Fatalf("the refusal %q does not name the release and its command", err)
 	}
 	if got := queryStrings(t, db, `SELECT id FROM events`); !slices.Equal(got, []string{"e1"}) {
 		t.Fatalf("events after the refusal = %v, want the row kept", got)
@@ -91,7 +91,7 @@ func TestMigration042DropsAfterTheImport(t *testing.T) {
 		`INSERT INTO usage_history (key, project_id, measured_at, value) VALUES
 			('database_bytes', 0, '2026-10-11', 1), ('file_bytes', 1, '2026-10-11', 2), ('raw_bytes', 1, '2026-10-11', 3)`,
 	)
-	insertLegacy(t, db, legacyRow())
+	insertLegacyRow(t, db)
 
 	if err := db.Migrate(context.Background()); err != nil {
 		t.Fatal(err)
@@ -153,40 +153,5 @@ func TestMigrateFromSnapshot19ThroughHead(t *testing.T) {
 	}
 	if got := queryStrings(t, db, `SELECT name FROM sqlite_master WHERE name IN ('v_events_flat', 'events')`); len(got) != 0 {
 		t.Fatalf("after migrating to the head: %v remain", got)
-	}
-}
-
-// The import migrates through LastEventsVersion and no further: 042 is
-// left pending, and EventsDropped tells the two sides apart.
-func TestMigrateThroughStopsBefore042(t *testing.T) {
-	db := newTestDBAt(t, 30)
-	ctx := context.Background()
-	if dropped, err := db.EventsDropped(ctx); err != nil || dropped {
-		t.Fatalf("EventsDropped at 30 = %v, %v; want false", dropped, err)
-	}
-	if err := db.MigrateThrough(ctx, LastEventsVersion); err != nil {
-		t.Fatal(err)
-	}
-	if got := schemaVersion(t, db); got != "41" {
-		t.Fatalf("schema version = %s, want 41", got)
-	}
-	if dropped, err := db.EventsDropped(ctx); err != nil || dropped {
-		t.Fatalf("EventsDropped at 41 = %v, %v; want false", dropped, err)
-	}
-	if dropped, err := newTestDB(t).EventsDropped(ctx); err != nil || !dropped {
-		t.Fatalf("EventsDropped at the head = %v, %v; want true", dropped, err)
-	}
-}
-
-// A database file nothing has migrated yet has no schema_migrations: its
-// events are not dropped, the import migrates it first.
-func TestEventsDroppedOnAnEmptyFile(t *testing.T) {
-	db, err := openAt(t.TempDir() + "/empty.db")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	if dropped, err := db.EventsDropped(context.Background()); err != nil || dropped {
-		t.Fatalf("EventsDropped on an empty file = %v, %v; want false", dropped, err)
 	}
 }

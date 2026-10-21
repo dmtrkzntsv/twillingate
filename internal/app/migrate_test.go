@@ -2,10 +2,12 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -159,5 +161,30 @@ func TestMigrateRefusesAnotherUserBeforeTheEngine(t *testing.T) {
 	geteuid = func() int { return os.Geteuid() + 1 }
 	if err := Migrate(ctx, cfg, st); err != nil {
 		t.Fatalf("another user, nothing to check: %v", err)
+	}
+}
+
+// TestCheckOwner: the database file's owner may run a command that spawns
+// the engine; anyone else is refused with the owner's uid and the service
+// user named.
+func TestCheckOwner(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "twillingate.db")
+	if err := os.WriteFile(path, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner := int(info.Sys().(*syscall.Stat_t).Uid)
+	if err := checkOwner(path, owner, "migrate"); err != nil {
+		t.Fatalf("the owner: %v, want nil", err)
+	}
+	err = checkOwner(path, owner+1, "migrate")
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("uid %d", owner)) || !strings.Contains(err.Error(), "service user") {
+		t.Fatalf("another uid: %v, want a refusal naming uid %d and the service user", err, owner)
+	}
+	if err := checkOwner(filepath.Join(t.TempDir(), "missing.db"), owner, "migrate"); err == nil {
+		t.Fatal("a missing database file passed")
 	}
 }

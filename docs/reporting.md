@@ -128,7 +128,7 @@ can turn on auto-refresh from a dashboard's top-right "…" menu: the page
 then reloads it every `auto_refresh_seconds` (the longer of the two, so
 each reload runs the queries again), only while its window has focus. Changing a
 widget's source starts it on new entries. Widget queries run on the event files
-under the same guards as `query` with `source: "files"`: one read-only
+under the same guards as `query`: one read-only
 `SELECT`, `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_ROWS_MAX`.
 
 ### Filtering and paging a table
@@ -206,7 +206,7 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 1. **Call `reporting_guide`.** It names the running version, the components
    and the columns each one reads, the tables, the active projects and the
    dashboards there are.
-2. **Explore with `query`** (its default source, `files`) over the event files'
+2. **Explore with `query`** over the event files'
    tables ([Tables](#tables)), for one project and a few days, until the
    numbers are the ones the widget should show.
 3. **Pick a component** and alias the query's columns to its inputs:
@@ -276,7 +276,8 @@ over the raw events twillingate keeps as files beside its database: the
 seven tables `query` reads. Their columns, and how
 rules apply to them, are in [twillingate.md](twillingate.md#writing-sql-against-the-event-files).
 The files hold the events since the upgrade that began writing them, and
-the raw days the database still held when `twillingate events import` ran;
+the raw days the database still held when `twillingate events import` ran
+on the upgrade to v0.21;
 today's events are in them within `BUFFER_FLUSH_INTERVAL`.
 
 | Table | One row per | A widget reads it for |

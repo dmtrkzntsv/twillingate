@@ -40,7 +40,6 @@ discarded.
 | `twillingate serve` | Both, on one listener unless `CONSOLE_ADDR` says otherwise |
 | `twillingate project`, `key`, `form`, `config` | Registry management |
 | `twillingate migrate` | Applies schema migrations and exits |
-| `twillingate events import` | Once, with the ingest service stopped, when upgrading from a release before migration 042: copies the raw rows the database holds into the event files, so the migration may drop them (`deploy/UPGRADES.md`); past 042 it says there is nothing to import |
 
 Which of those run, and how, is the operator's choice — see [Configure the
 collector](deployment.md#configure-the-collector).
@@ -1038,7 +1037,7 @@ event (`query`): the names are personal data there too. They are the only
 copy: the display names the `identities` tool and the Users and Groups
 dashboards show are the latest each id was sent with, read from the files'
 `identities` table, and ingest no longer writes names to the database.
-Events imported from the database (`twillingate events import`), which
+Events imported from the database on the upgrade to v0.21 (`twillingate events import`), which
 kept no names per event, carry the latest name it held, and an
 `$install_id` only where the install was the actor.
 **The collector stores what it is sent.** What reaches it is decided by the tag's
@@ -1446,7 +1445,7 @@ history starts where the files' does. `query`, the count of events in
 | `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys `product_attributes` breaks down (`$browser`, `$path`, …); a key none carried gives no rows |
 | `retention` | `actor` (`user` or `install`) | Cohort curves for the cohorts that began in the range, every offset, counted over the days before today (UTC), plus `aggregated_through`, the newest such day with views or product events — cohorts and offsets after it are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` (default 50) | Per user or group, busiest first (views plus product events in the range): its `actors` and `users` (itself for a user, its members for a group), each distinct per day and added up over the days, its `views`, `events` and the display `name` sent with its latest event. **Surfaces personal data on projects whose clients send ids** |
-| `query` | `sql`, `source` (optional: `files`, the default and the only one) | A single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them: see [Writing SQL against the event files](#writing-sql-against-the-event-files). Row-capped and time-limited; it reads those seven tables only (no table function but `range`, `generate_series` and `unnest`, no schema-qualified name such as `main.events`), every project's rows. `source: "sqlite"` was removed with the database's events and is refused (`invalid`); `source` itself stays for one release, so a client sending `files` keeps working |
+| `query` | `sql` | A single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them: see [Writing SQL against the event files](#writing-sql-against-the-event-files). Row-capped and time-limited; it reads those seven tables only (no table function but `range`, `generate_series` and `unnest`, no schema-qualified name such as `main.events`), every project's rows |
 
 `views_breakdown`'s dimensions, the columns each returns and what it reads
 from the `views` table:
@@ -1559,7 +1558,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/measures` | `measures` | query: `from`, `to`, `name`, `attr_key` |
 | `GET` | `/api/projects/{project_id}/retention` | `retention` | query: `from`, `to`, `actor` |
 | `GET` | `/api/projects/{project_id}/identities` | `identities` | query: `from`, `to`, `kind`, `limit` |
-| `POST` | `/api/query` | `query` | body: `sql`, `source` |
+| `POST` | `/api/query` | `query` | body: `sql` |
 | `GET` | `/api/schema/views` | `schema://views` | — (text/plain) |
 
 Success is the tool's output as JSON, at 200 (201 where noted). Errors are
@@ -1575,8 +1574,9 @@ given twice are all 400: a filter is never dropped silently.
 twillingate keeps as files beside its database; the analytics tools and the
 dashboards read the same tables. The
 files hold every project's events since the upgrade that began writing
-them. Once `twillingate events import` has run, they also hold the earlier
-raw days the database still held then; nothing older can be queried.
+them, and the earlier raw days the database still held when
+`twillingate events import` ran on the upgrade to v0.21; nothing older can
+be queried.
 Today's events are included, each `BUFFER_FLUSH_INTERVAL`. A query is
 row-capped (`CONSOLE_QUERY_ROWS_MAX`, default 1000) and time-limited
 (`CONSOLE_QUERY_TIMEOUT`, default `30s`); it cannot write, and it reads
@@ -1635,7 +1635,7 @@ is refused.
   events. A rule on a key also covers the keys that differ from it only in
   case, since they read as one column. Removing a rule brings the stored
   names and values back, except on events imported from the database
-  (`twillingate events import`): they were stored with the names and keys
+  on the upgrade to v0.21 (`twillingate events import`): they were stored with the names and keys
   the database's rules had already applied.
 - **An event sent twice can show twice** when the copies landed in
   different files (a resend after its day's log was closed), until its

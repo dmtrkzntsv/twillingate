@@ -166,7 +166,7 @@ func TestMigration014AssignsIdsAndRekeys(t *testing.T) {
 func TestMigration014AutoincrementNeverReissues(t *testing.T) {
 	db := seed013(t)
 	ctx := context.Background()
-	if err := db.migrateThrough(ctx, LastEventsVersion); err != nil {
+	if err := db.migrateThrough(ctx, 41); err != nil {
 		t.Fatal(err)
 	}
 	var id int64
@@ -222,7 +222,7 @@ func TestMigration014AbortsOnOrphanRow(t *testing.T) {
 		VALUES ('vx','ghost','2026-09-10T10:00:00Z','2026-09-10T10:00:00Z','web','a9','connection','/x')`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.migrateThrough(ctx, LastEventsVersion)
+	err := db.migrateThrough(ctx, 41)
 	if err == nil || !strings.Contains(err.Error(), "014") || !strings.Contains(err.Error(), "NOT NULL") {
 		t.Fatalf("err = %v, want migration 014 to fail on NOT NULL project_id", err)
 	}
@@ -231,7 +231,7 @@ func TestMigration014AbortsOnOrphanRow(t *testing.T) {
 	if _, err := db.db.ExecContext(ctx, `DELETE FROM views WHERE id='vx'`); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.migrateThrough(ctx, LastEventsVersion); err != nil {
+	if err := db.migrateThrough(ctx, 41); err != nil {
 		t.Fatalf("retry after fixing the orphan: %v", err)
 	}
 }
@@ -243,7 +243,7 @@ func TestMigration014AbortsOnDuplicateLabel(t *testing.T) {
 		`INSERT INTO ingest_keys (key, project, label) VALUES ('ak_blog_web2','blog','web')`); err != nil {
 		t.Fatal(err)
 	}
-	err := db.migrateThrough(ctx, LastEventsVersion)
+	err := db.migrateThrough(ctx, 41)
 	if err == nil || !strings.Contains(err.Error(), "014") || !strings.Contains(err.Error(), "UNIQUE") {
 		t.Fatalf("err = %v, want migration 014 to fail on UNIQUE (project_id, label)", err)
 	}

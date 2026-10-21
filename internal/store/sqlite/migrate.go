@@ -44,17 +44,9 @@ func (d *DB) Migrate(ctx context.Context) error {
 	return d.migrateThrough(ctx, math.MaxInt)
 }
 
-// MigrateThrough applies the pending migrations up to version v and no
-// further: `twillingate events import` migrates through LastEventsVersion,
-// so it can read the events table that migration 042 drops.
-func (d *DB) MigrateThrough(ctx context.Context, v int) error {
-	return d.migrateThrough(ctx, v)
-}
-
 // migrateThrough applies every pending migration whose version is <=
 // maxVersion, then checks the result carries no dangling foreign key.
-// Migrate uses no ceiling; the import uses LastEventsVersion
-// (MigrateThrough), and tests use one to build a database at an older
+// Migrate uses no ceiling; tests use one to build a database at an older
 // schema and exercise the next migration against it. A migration's
 // pre-check (preChecks) runs before its transaction begins.
 //
