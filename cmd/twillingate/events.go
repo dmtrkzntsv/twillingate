@@ -17,8 +17,9 @@ const eventsUsage = "usage: twillingate events import [-force]"
 
 // cmdEvents is `twillingate events import`: once, with the ingest service
 // stopped, it copies the raw rows the database holds into the event files
-// (app.ImportEvents, which migrates the schema once it holds the events
-// directory, so it can run before the new binary's first start).
+// (app.ImportEvents, which migrates the schema through migration 041 once
+// it holds the events directory, so it can run before the new binary's
+// first start, whose migration 042 drops the events table).
 func cmdEvents(args []string, stdout io.Writer) int {
 	if len(args) == 0 || args[0] != "import" {
 		fmt.Fprintln(stdout, eventsUsage)

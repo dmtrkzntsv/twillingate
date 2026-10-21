@@ -278,9 +278,9 @@ func TestSnapshotRuleLists(t *testing.T) {
 	}
 	for _, err := range []error{
 		func() error { _, err := ops.BlockEvent(ctx, "t", b.ID, "product", "b"); return err }(),
-		func() error { _, _, err := ops.RenameEvent(ctx, "t", a.ID, "product", "z", "y"); return err }(),
+		func() error { _, err := ops.RenameEvent(ctx, "t", a.ID, "product", "z", "y"); return err }(),
 		func() error { _, err := ops.BlockAttribute(ctx, "t", b.ID, "k"); return err }(),
-		func() error { _, _, err := ops.RenameAttribute(ctx, "t", a.ID, "m", "n"); return err }(),
+		func() error { _, err := ops.RenameAttribute(ctx, "t", a.ID, "m", "n"); return err }(),
 	} {
 		if err != nil {
 			t.Fatal(err)

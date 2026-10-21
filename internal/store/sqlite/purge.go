@@ -19,7 +19,8 @@ import (
 // form archived more than days ago, each in its own transaction with an
 // audit row (actor "retention"). days <= 0 purges nothing. A share or form
 // purged with its project (deleteProject) gets no row of its own. A form
-// goes with its submissions and their raw events (deleteFormData).
+// goes with its submissions (deleteFormData); their $form_submit events
+// stay in the event files.
 //
 // A project's archived_at is written with datetime('now') ("YYYY-MM-DD
 // HH:MM:SS"); dashboards', widgets' and shares' with strftime(...,'Z')

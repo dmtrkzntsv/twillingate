@@ -23,24 +23,40 @@ var dataSteps = map[int]func(context.Context, *sql.Tx) error{
 	15: foldEnvironment,
 }
 
-// processOwned are the schema objects the running process builds, not
-// the migrations: their shape follows the data (v_events_flat has one
-// column per declared attribute, RebuildFlatView), so a migration's fixed
-// text would be stale the day it ships. The migrator drops each one before
-// every pending migration, so a migration never sees one (SQLite refuses to
-// rebuild a table a view still reads) and never has to recreate it, and
+// preChecks refuse a migration before it starts: each runs on the
+// migration connection before its version's transaction begins, and an
+// error leaves the database as it was.
+var preChecks = map[int]func(context.Context, *sql.Conn) error{
+	42: checkEventsImported,
+}
+
+// processOwned are the schema objects the process once built, not the
+// migrations: v_events_flat had one column per declared attribute until
+// raw-first PR 6, and nothing builds it now. A database from before then
+// may still hold it, and the migrations through 041 rebuild events under
+// it (SQLite refuses to rebuild a table a view still reads), so the
+// migrator drops each one before every pending migration.
 // TestMigrationsNeverNameProcessOwnedObjects refuses a migration that names
-// one. After migrating, the caller rebuilds them (app.Migrate).
+// one.
 var processOwned = []string{"v_events_flat"}
 
 func (d *DB) Migrate(ctx context.Context) error {
 	return d.migrateThrough(ctx, math.MaxInt)
 }
 
+// MigrateThrough applies the pending migrations up to version v and no
+// further: `twillingate events import` migrates through LastEventsVersion,
+// so it can read the events table that migration 042 drops.
+func (d *DB) MigrateThrough(ctx context.Context, v int) error {
+	return d.migrateThrough(ctx, v)
+}
+
 // migrateThrough applies every pending migration whose version is <=
 // maxVersion, then checks the result carries no dangling foreign key.
-// Migrate uses no ceiling; tests use one to build a database at an older
-// schema and exercise the next migration against it.
+// Migrate uses no ceiling; the import uses LastEventsVersion
+// (MigrateThrough), and tests use one to build a database at an older
+// schema and exercise the next migration against it. A migration's
+// pre-check (preChecks) runs before its transaction begins.
 //
 // A migration rebuilds tables (CREATE _new / INSERT SELECT / DROP /
 // RENAME), which foreign key enforcement would refuse mid-flight, and
@@ -111,6 +127,11 @@ func (d *DB) migrateThrough(ctx context.Context, maxVersion int) (err error) {
 		body, err := migrationFS.ReadFile("migrations/" + name)
 		if err != nil {
 			return err
+		}
+		if check, ok := preChecks[version]; ok {
+			if err := check(ctx, conn); err != nil {
+				return fmt.Errorf("sqlite: %w", err)
+			}
 		}
 		tx, err := conn.BeginTx(ctx, nil)
 		if err != nil {

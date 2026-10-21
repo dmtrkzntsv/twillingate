@@ -20,7 +20,8 @@ import (
 const childEnv = "ARCHIVE_TEST_ENGINE_CHILD"
 
 func TestMain(m *testing.M) {
-	if os.Getenv(childEnv) == "1" {
+	// archivetest.ChildEnv is spelled out: archivetest imports this package.
+	if os.Getenv(childEnv) == "1" || os.Getenv("ARCHIVETEST_ENGINE_CHILD") == "1" {
 		if err := engine.ServeChild(os.Args[1:], os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)

@@ -3,12 +3,18 @@ package app
 import (
 	"bytes"
 	"context"
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,7 +22,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/config/configtest"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
 )
@@ -33,8 +38,6 @@ func freePort(t *testing.T) string {
 	l.Close()
 	return addr
 }
-
-func mustDay(s string) civil.Date { d, _ := civil.Parse(s); return d }
 
 // seedProject writes a project and ingest key straight into the registry
 // (bypassing HTTP/CLI) before Serve boots, since the running server only
@@ -181,17 +184,13 @@ func TestServeEndToEnd(t *testing.T) {
 	}
 	defer st.Close()
 	bg := context.Background()
-	days, err := st.ViewDaysBefore(bg, 1, mustDay("2100-01-01"))
-	if err != nil || len(days) != 1 {
-		t.Fatalf("view not persisted: %v %v", days, err)
-	}
-	pdays, err := st.ProductDaysBefore(bg, 1, mustDay("2100-01-01"))
-	if err != nil || len(pdays) != 1 {
-		t.Fatalf("event not persisted: %v %v", pdays, err)
+	names := logEventNames(t, cfg.EventsDir)
+	if want := []string{"$page_view", "$screen_view", "signup", "signup"}; !slices.Equal(names, want) {
+		t.Fatalf("logged events = %v, want %v", names, want)
 	}
 	// The seeded project must still be there after a full boot/shutdown
 	// cycle: Serve reads it, never rewrites the registry.
-	ids, err := st.ProjectIDs(bg)
+	ids, err := st.(importStore).ProjectIDs(bg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,17 +240,8 @@ func TestServeRestartsOnExistingDatabase(t *testing.T) {
 	run(`{"key":"ak_test","events":[{"name":"$pageview","attributes":{"$host":"app.com","$path":"/one"}}]}`)
 	run(`{"key":"ak_test","events":[{"name":"$pageview","attributes":{"$host":"app.com","$path":"/two"}}]}`)
 
-	st, err := store.Open("sqlite://" + dbPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer st.Close()
-	days, err := st.ViewDaysBefore(bg, 1, mustDay("2100-01-01"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(days) != 1 {
-		t.Fatalf("days = %v, want one day holding both hits", days)
+	if names := logEventNames(t, testConfig(t, "127.0.0.1:0", dbPath).EventsDir); len(names) != 2 {
+		t.Fatalf("logged events = %v, want both hits kept across the restart", names)
 	}
 }
 
@@ -543,14 +533,91 @@ func TestServeNeverPersistsIPOrUserAgent(t *testing.T) {
 	}
 	// Sanity: the hit really was recorded, so the assertions above are not
 	// passing merely because nothing was written.
-	st, err := store.Open("sqlite://" + dbPath)
+	if names := logEventNames(t, cfg.EventsDir); len(names) != 1 {
+		t.Fatalf("hit not logged: %v", names)
+	}
+}
+
+// logEventNames lists the name of every event the log files under dir
+// hold (the NDJSON of open and closed segments), sorted.
+func logEventNames(t *testing.T, dir string) []string {
+	t.Helper()
+	var names []string
+	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || strings.HasSuffix(path, ".parquet") || strings.HasSuffix(path, ".tmp") {
+			return err
+		}
+		b, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, ln := range bytes.Split(b, []byte("\n")) {
+			if len(ln) == 0 {
+				continue
+			}
+			var row struct {
+				Name string `json:"event_name"`
+			}
+			if err := json.Unmarshal(ln, &row); err != nil {
+				return fmt.Errorf("%s: %w", path, err)
+			}
+			names = append(names, row.Name)
+		}
+		return nil
+	})
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		t.Fatal(err)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// TestIngestWritesTheLogOnly: a served batch lands in raw/, and SQLite has
+// no events table to write (raw-first PR 6).
+func TestIngestWritesTheLogOnly(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "logonly.db")
+	addr := freePort(t)
+	cfg := testConfig(t, addr, dbPath)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- Serve(ctx, cfg, slog.Default(), true, false) }()
+	base := "http://" + addr
+	waitHealthy(t, base)
+	req, err := http.NewRequest("POST", base+"/ingest/events", strings.NewReader(
+		`{"key":"ak_test","events":[{"name":"$page_view","attributes":{"$host":"app.com","$path":"/a"}},{"name":"signup"}]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer st.Close()
-	days, err := st.ViewDaysBefore(context.Background(), 1, mustDay("2100-01-01"))
-	if err != nil || len(days) != 1 {
-		t.Fatalf("hit not persisted: %v %v", days, err)
+	req.Header.Set("Origin", "https://app.com")
+	req.Header.Set("User-Agent", chromeUA)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != 202 {
+		t.Fatalf("hit: %d", resp.StatusCode)
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("serve: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("serve did not shut down")
+	}
+	if names := logEventNames(t, cfg.EventsDir); !slices.Equal(names, []string{"$page_view", "signup"}) {
+		t.Fatalf("logged events = %v", names)
+	}
+	db, err := sql.Open("sqlite", dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRow(`SELECT count(*) FROM sqlite_master WHERE name = 'events'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("events tables = %d, %v; want none", n, err)
 	}
 }
 
@@ -575,52 +642,4 @@ func runServeAndCollectLogs(t *testing.T, cfg *config.Config) string {
 		t.Fatal("serve did not shut down")
 	}
 	return logs.String()
-}
-
-// The views read their caps from meta, since SQL cannot see the
-// environment: every boot writes both before anything is served, and
-// a restart with new values replaces them. Without it every view would
-// fall back to its built-in default while the daily pass used the setting.
-func TestServeWritesTheCapsToMeta(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "caps.db")
-	bg := context.Background()
-	boot := func(values, identities string) {
-		t.Helper()
-		addr := freePort(t)
-		testConfig(t, addr, dbPath) // seeds the project
-		cfg := configtest.Load(t, map[string]string{
-			"INGEST_ADDR":            addr,
-			"DATABASE_DSN":           "sqlite://" + dbPath,
-			"ATTRIBUTE_VALUES_TOP_N": values,
-			"IDENTITIES_TOP_N":       identities,
-		})
-		ctx, cancel := context.WithCancel(bg)
-		done := make(chan error, 1)
-		go func() { done <- Serve(ctx, cfg, slog.Default(), true, false) }()
-		waitHealthy(t, "http://"+addr)
-		cancel()
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Fatalf("serve: %v", err)
-			}
-		case <-time.After(10 * time.Second):
-			t.Fatal("serve did not shut down")
-		}
-		st, err := store.Open("sqlite://" + dbPath)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer st.Close()
-		for key, want := range map[string]string{
-			"attributes_top_n": values,
-			"identities_top_n": identities,
-		} {
-			if got, err := st.GetMeta(bg, key); err != nil || got != want {
-				t.Errorf("meta %s = %q (%v), want %q", key, got, err, want)
-			}
-		}
-	}
-	boot("7", "1200")
-	boot("0", "0")
 }

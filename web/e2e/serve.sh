@@ -41,22 +41,18 @@ set -a
 set +a
 
 "$bin" migrate
-# team_size and role, two of the custom attributes seed-demo.py puts on
-# product events, fill the Product dashboard's attribute table; plan stays
-# undeclared for projects.spec.ts to add as a breakdown.
-"$bin" project create -name dev -attr team_size -attr role
-python3 "$root/scripts/seed-demo.py" "$db"
-# Widget SQL reads the event files, not SQLite: copy the seeded raw rows
-# into them before serve starts (import wants ingest stopped). Serve then
-# starts at once, as on upgrade day: its boot pass dumps and merges the
-# imported logs while the suite already queries.
-"$bin" events import
+"$bin" project create -name dev
+# Widget SQL reads the event files, not SQLite: the seed writes its events as
+# closed logs under EVENTS_DIR (raw/ beside the database by default). Serve
+# starts at once, as on upgrade day: its boot pass dumps and merges them while
+# the suite already queries.
+python3 "$root/scripts/seed-demo.py" "$db" --events-dir "${EVENTS_DIR:-$(dirname "$db")/raw}"
 
 "$bin" serve &
 pid=$!
 
-# Settle. The first start after the import runs the boot pass in the
-# background: it dumps every imported day into Parquet, merges the months
+# Settle. The first start after the seed runs the boot pass in the
+# background: it dumps every seeded day into Parquet, merges the months
 # and derives the tables, and until it ends every query over the files is
 # slow (the seed's 180 raw days are far more than an upgrade's ~30). So the
 # suite starts only when this script prints the line playwright.config.ts

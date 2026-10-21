@@ -185,7 +185,7 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 	idempotent := map[string]bool{"archive_project": true, "restore_project": true, "move_project": true,
 		"disable_ingest_key": true, "enable_ingest_key": true,
 		"archive_dashboard": true, "restore_dashboard": true, "archive_widget": true, "restore_widget": true,
-		"remove_project_tab": true,
+		"remove_project_tab":  true,
 		"update_widget_share": true, "archive_widget_share": true, "restore_widget_share": true,
 		"archive_form": true, "restore_form": true,
 		"block_event": true, "remove_event_rule": true,
@@ -297,61 +297,35 @@ func TestUpdateProjectEmptyOriginsClears(t *testing.T) {
 	}
 }
 
-// TestCreateProjectSetsAttributes proves create_project's Attributes field
-// reaches manage.ProjectSpec and is stored, not just accepted and dropped.
-func TestCreateProjectSetsAttributes(t *testing.T) {
-	h, cs := newTestHost(t)
-	ctx := context.Background()
-	res := callTool(t, cs, "create_project", map[string]any{
-		"name": "shop", "attributes": []string{"plan", "tier"}})
-	if res.IsError {
-		t.Fatalf("create: %s", textOf(res))
+// TestCreateProjectHasNoAttributes: breakdowns are not declared any more,
+// so a project's JSON carries no attributes field, on create or in the list.
+func TestCreateProjectHasNoAttributes(t *testing.T) {
+	_, cs := newTestHost(t)
+	created := callTool(t, cs, "create_project", map[string]any{"name": "shop"})
+	if created.IsError {
+		t.Fatalf("create: %s", textOf(created))
 	}
-	p := h.reg.Snapshot(ctx).Project(projectIDOf(t, res))
-	if p == nil {
-		t.Fatalf("shop missing from registry")
+	var one map[string]any
+	if err := json.Unmarshal([]byte(textOf(created)), &one); err != nil {
+		t.Fatal(err)
 	}
-	if len(p.Attributes) != 2 || p.Attributes[0] != "plan" || p.Attributes[1] != "tier" {
-		t.Fatalf("Attributes = %v, want [plan tier]", p.Attributes)
+	listed := callTool(t, cs, "list_projects", map[string]any{})
+	var all struct {
+		Projects []map[string]any `json:"projects"`
 	}
-}
-
-// TestUpdateProjectAttributesMergeSemantics is the merge rule for
-// Attributes, matching AllowedOrigins: omitting the field on update_project
-// leaves the current declared attributes untouched, and supplying a
-// non-nil list replaces the whole thing (never merges element-wise).
-func TestUpdateProjectAttributesMergeSemantics(t *testing.T) {
-	h, cs := newTestHost(t)
-	ctx := context.Background()
-	if res := callTool(t, cs, "update_project", map[string]any{
-		"project_id": 1, "attributes": []string{"plan", "tier"}}); res.IsError {
-		t.Fatalf("seed attributes: %s", textOf(res))
+	if err := json.Unmarshal([]byte(textOf(listed)), &all); err != nil {
+		t.Fatal(err)
 	}
-
-	// name-only update must not wipe attributes
-	if res := callTool(t, cs, "update_project", map[string]any{
-		"project_id": 1, "name": "Blog Renamed"}); res.IsError {
-		t.Fatalf("update: %s", textOf(res))
+	if len(all.Projects) == 0 {
+		t.Fatal("no projects listed")
 	}
-	p := h.reg.Snapshot(ctx).Project(1)
-	if p == nil {
-		t.Fatalf("blog vanished from registry")
+	if _, ok := one["attributes"]; ok {
+		t.Errorf("create_project output has attributes: %v", one)
 	}
-	if len(p.Attributes) != 2 || p.Attributes[0] != "plan" || p.Attributes[1] != "tier" {
-		t.Fatalf("attributes not preserved by name-only update, got %v", p.Attributes)
-	}
-
-	// supplying attributes replaces the whole list
-	if res := callTool(t, cs, "update_project", map[string]any{
-		"project_id": 1, "attributes": []string{"solo"}}); res.IsError {
-		t.Fatalf("update attributes: %s", textOf(res))
-	}
-	p = h.reg.Snapshot(ctx).Project(1)
-	if p == nil {
-		t.Fatalf("blog vanished from registry")
-	}
-	if len(p.Attributes) != 1 || p.Attributes[0] != "solo" {
-		t.Fatalf("attributes not replaced wholesale, got %v", p.Attributes)
+	for _, p := range all.Projects {
+		if _, ok := p["attributes"]; ok {
+			t.Errorf("list_projects has attributes: %v", p)
+		}
 	}
 }
 

@@ -25,14 +25,12 @@ func TestProductEvents(t *testing.T) {
 		t.Errorf("missing event: %s", out)
 	}
 	if !strings.Contains(out, "total_events") {
-		t.Errorf("missing daily totals from v_product_totals: %s", out)
+		t.Errorf("missing daily totals: %s", out)
 	}
 }
 
-// docs is seeded with no attributes declared; blog declares "plan" (see
-// seed_test.go) for TestProductAttributesReturnsRows. Rollups are
-// unconditional now (no enabled flag to opt into), so an undeclared-key
-// project returns an empty result rather than an error.
+// docs's events carry no plan; blog's do (see seed_files_test.go), so docs
+// returns an empty result rather than an error.
 func TestProductAttributesReturnsEmptyForUndeclaredProject(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "product_attributes", map[string]any{
@@ -41,7 +39,7 @@ func TestProductAttributesReturnsEmptyForUndeclaredProject(t *testing.T) {
 		t.Fatalf("error: %s", textOf(res))
 	}
 	if out := textOf(res); strings.Contains(out, "\"plan\"") {
-		t.Errorf("docs has no agg_product_attrs rows and must not see blog's: %s", out)
+		t.Errorf("docs has no plan values and must not see blog's: %s", out)
 	}
 }
 
@@ -150,7 +148,7 @@ func TestRetentionReturnsCurveAndAggregatedThrough(t *testing.T) {
 			t.Errorf("missing %q: %s", want, out)
 		}
 	}
-	// agg_retention's cohort: 10 users on 2026-08-01, 4 back a week later;
+	// The files' cohort: 10 users on 2026-08-01, 4 back a week later;
 	// the files reach through 2026-08-26, the newest day with activity.
 	var got retentionOut
 	if err := json.Unmarshal([]byte(out), &got); err != nil {

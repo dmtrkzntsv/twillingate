@@ -119,8 +119,8 @@ func operation(s spec) (map[string]any, error) {
 		"description": s.Description,
 		"responses": map[string]any{
 			strconv.Itoa(status): success,
-			"401":     unauthorized,
-			"default": errorResponse,
+			"401":                unauthorized,
+			"default":            errorResponse,
 		},
 	}
 	in := s.in

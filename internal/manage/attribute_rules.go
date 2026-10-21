@@ -39,44 +39,53 @@ func (o *Ops) attrTarget(ctx context.Context, projectID int64, key string) error
 }
 
 // RenameAttribute gives an attribute key of the project's product and
-// measures events a key not in use yet and keeps a rule so later events
-// land under it. It returns the rule and the rows rewritten per table. A
-// key that has data (merge it instead) or is blocked is ErrConflict.
-func (o *Ops) RenameAttribute(ctx context.Context, actor string, projectID int64, from, to string) (store.AttributeRule, map[string]int64, error) {
+// measures events a key not in use yet and keeps a rule, which the event
+// files apply on read, history included. It returns the rule. A key that
+// has a value in the files, rules applied (merge it instead), or is
+// blocked is ErrConflict.
+func (o *Ops) RenameAttribute(ctx context.Context, actor string, projectID int64, from, to string) (store.AttributeRule, error) {
 	return o.moveAttribute(ctx, actor, "attribute.rename", projectID, from, to, false)
 }
 
-// MergeAttribute folds an attribute key into another: the same rewrite and
-// rule as RenameAttribute, onto a key that may already have data. A merge
-// cannot be split again. A blocked target is ErrConflict: a merge never
-// drops what it moves.
-func (o *Ops) MergeAttribute(ctx context.Context, actor string, projectID int64, from, to string) (store.AttributeRule, map[string]int64, error) {
+// MergeAttribute folds an attribute key into another: the same rule as
+// RenameAttribute, onto a key that may already have data. A merge cannot
+// be split again. A blocked target is ErrConflict: a merge never drops
+// what it moves.
+func (o *Ops) MergeAttribute(ctx context.Context, actor string, projectID int64, from, to string) (store.AttributeRule, error) {
 	return o.moveAttribute(ctx, actor, "attribute.merge", projectID, from, to, true)
 }
 
-func (o *Ops) moveAttribute(ctx context.Context, actor, action string, projectID int64, from, to string, merge bool) (store.AttributeRule, map[string]int64, error) {
+func (o *Ops) moveAttribute(ctx context.Context, actor, action string, projectID int64, from, to string, merge bool) (store.AttributeRule, error) {
 	if err := o.attrTarget(ctx, projectID, from); err != nil {
-		return store.AttributeRule{}, nil, err
+		return store.AttributeRule{}, err
 	}
 	if err := attrKey(to); err != nil {
-		return store.AttributeRule{}, nil, err
+		return store.AttributeRule{}, err
 	}
 	if from == to {
-		return store.AttributeRule{}, nil, fmt.Errorf("attribute %q: moving it onto itself: %w", from, ErrInvalid)
+		return store.AttributeRule{}, fmt.Errorf("attribute %q: moving it onto itself: %w", from, ErrInvalid)
 	}
-	counts, err := o.St.RenameAttribute(ctx, projectID, from, to, merge, store.AuditEntry{
-		Actor: actor, Action: action, Subject: attrSubject(projectID, from), Detail: "to " + to})
-	if err != nil {
-		return store.AttributeRule{}, nil, err
+	if !merge && o.Presence != nil {
+		has, err := o.Presence.HasAttribute(ctx, projectID, to)
+		if err != nil {
+			return store.AttributeRule{}, fmt.Errorf("rename attribute %s: look for %s in the event files: %w", from, to, err)
+		}
+		if has {
+			return store.AttributeRule{}, fmt.Errorf("rename attribute %s to %s: %s already has data; merge %s into it instead: %w",
+				from, to, to, from, ErrConflict)
+		}
 	}
-	o.afterWrite(ctx, true, projectID)
+	if err := o.St.RenameAttribute(ctx, projectID, from, to, store.AuditEntry{
+		Actor: actor, Action: action, Subject: attrSubject(projectID, from), Detail: "to " + to}); err != nil {
+		return store.AttributeRule{}, err
+	}
+	o.afterWrite(ctx, projectID)
 	return o.writtenAttributeRule(ctx, store.AttributeRule{ProjectID: projectID, Key: from,
-		Action: store.EventRuleRename, To: to}), counts, nil
+		Action: store.EventRuleRename, To: to}), nil
 }
 
-// BlockAttribute strips a key from later events: it is not stored, its
-// aggregates are removed by the daily pass, and it is no longer a
-// breakdown.
+// BlockAttribute strips a key: later events do not store it, the event
+// files read none of its values, history included.
 func (o *Ops) BlockAttribute(ctx context.Context, actor string, projectID int64, key string) (store.AttributeRule, error) {
 	if err := o.attrTarget(ctx, projectID, key); err != nil {
 		return store.AttributeRule{}, err
@@ -85,13 +94,15 @@ func (o *Ops) BlockAttribute(ctx context.Context, actor string, projectID int64,
 		Actor: actor, Action: "attribute.block", Subject: attrSubject(projectID, key)}); err != nil {
 		return store.AttributeRule{}, err
 	}
-	o.afterWrite(ctx, true, projectID)
+	o.afterWrite(ctx, projectID)
 	return o.writtenAttributeRule(ctx, store.AttributeRule{ProjectID: projectID, Key: key,
 		Action: store.EventRuleBlock}), nil
 }
 
-// RemoveAttributeRule lifts a rename or block. Data already rewritten or
-// stripped stays as it is.
+// RemoveAttributeRule lifts a rename or block. The event files read what
+// was stored before the rule as it was sent again; what ingest stored
+// under the new key while the rule held stays there, and what a block
+// stripped stays stripped.
 func (o *Ops) RemoveAttributeRule(ctx context.Context, actor string, projectID int64, key string) error {
 	if err := o.attrTarget(ctx, projectID, key); err != nil {
 		return err
@@ -100,7 +111,7 @@ func (o *Ops) RemoveAttributeRule(ctx context.Context, actor string, projectID i
 		Actor: actor, Action: "attribute.rule_remove", Subject: attrSubject(projectID, key)}); err != nil {
 		return err
 	}
-	o.afterWrite(ctx, true, projectID)
+	o.afterWrite(ctx, projectID)
 	return nil
 }
 
@@ -119,24 +130,4 @@ func (o *Ops) writtenAttributeRule(ctx context.Context, r store.AttributeRule) s
 		}
 	}
 	return r
-}
-
-// checkRuledBreakdowns refuses a breakdown list naming a key the project
-// has ruled away: a blocked key is stripped from every event, and a
-// renamed one is stored under its target, so neither could ever fill a
-// column.
-func (o *Ops) checkRuledBreakdowns(ctx context.Context, projectID int64, keys []string) error {
-	set := o.Reg.Snapshot(ctx).AttributeRules(projectID)
-	if set.Empty() {
-		return nil
-	}
-	for _, k := range keys {
-		if set.Blocked[k] {
-			return fmt.Errorf("attribute %q is blocked; remove the block to declare it: %w", k, ErrConflict)
-		}
-		if to, ok := set.Renamed[k]; ok {
-			return fmt.Errorf("attribute %q is renamed to %q; declare that instead: %w", k, to, ErrConflict)
-		}
-	}
-	return nil
 }

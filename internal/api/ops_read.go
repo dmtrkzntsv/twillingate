@@ -22,8 +22,8 @@ import (
 
 type host struct {
 	db *readsql.DB
-	// subs reads the tables db refuses (CustomSQLRefused), for SQL the
-	// server builds; never given user-written SQL.
+	// subs reads submissions, for SQL the server builds; never given
+	// user-written SQL.
 	subs *readsql.DB
 	reg  *manage.Registry
 	ops  *manage.Ops
@@ -33,18 +33,22 @@ type host struct {
 	// placeholder + tell the operator".
 	ingestURL string
 	logger    *slog.Logger
-	// limits are the caps in force (limitsFrom); limits and cap_usage read them.
+	// limits are the limits in force (limitsFrom), which limits reports.
 	limits []limitOut
-	// rawDays is RETENTION_RAW_DAYS, the window limits' raw_events
-	// count falls in.
-	rawDays int
-	// raw caches the raw events held (rawcount.go).
-	raw *rawCount
+	// events caches the last 30 days' events (eventcount.go); nil in a
+	// process without an engine, where limits leaves events_30d out.
+	events *eventCount
 	// ingestDisabled is INGEST_DISABLED, which limits reports.
 	ingestDisabled bool
 	// files runs SQL over the raw event files (archive.Reader); nil in a
-	// process without an engine, where query's files source is refused.
+	// process without an engine, where the tools that read them refuse.
 	files Files
+	// eventsDir is EVENTS_DIR, whose file names say each project's days.
+	eventsDir string
+	// queryTimeout and queryRows are CONSOLE_QUERY_TIMEOUT and
+	// CONSOLE_QUERY_ROWS_MAX, which every query on the files runs under.
+	queryTimeout time.Duration
+	queryRows    int
 }
 
 var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -113,13 +117,13 @@ func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[st
 	if err != nil {
 		return tableOut{}, err
 	}
-	res, err := h.runFiles(ctx, archive.Scoped{SQL: enginesql.Text(bound), Args: args, MaxRows: h.db.MaxRows(), Scope: true, Project: in.ProjectID})
+	res, err := h.runFiles(ctx, archive.Scoped{SQL: enginesql.Text(bound), Args: args, MaxRows: h.queryRows, Scope: true, Project: in.ProjectID})
 	if err != nil {
 		return tableOut{}, err
 	}
 	out := tableOut{Columns: res.Columns, Rows: cellRows(res.Rows), Truncated: res.Truncated}
 	if res.Truncated {
-		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — narrow the range or raise the limit", h.db.MaxRows())
+		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — narrow the range or raise the limit", h.queryRows)
 	}
 	return out, nil
 }
@@ -131,7 +135,7 @@ func (h *host) runFiles(ctx context.Context, q archive.Scoped) (engine.Result, e
 	if h.files == nil {
 		return engine.Result{}, invalidf("the event files cannot be queried by this process")
 	}
-	timeout := h.db.Timeout()
+	timeout := h.queryTimeout
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	events, attrs := h.reg.Snapshot(ctx).RuleLists()
@@ -162,7 +166,6 @@ type projectOut struct {
 	Archived       bool     `json:"archived,omitempty"`
 	ArchivedAt     string   `json:"archived_at,omitempty"`
 	AllowedOrigins []string `json:"allowed_origins"`
-	Attributes     []string `json:"attributes,omitempty"`
 }
 
 type listProjectsOut struct {
@@ -177,7 +180,7 @@ func (h *host) listProjects(ctx context.Context, _ struct{}) (listProjectsOut, e
 	for _, p := range h.reg.Snapshot(ctx).Projects() {
 		out.Projects = append(out.Projects, projectOut{
 			ProjectID: p.ID, Name: p.Name, Archived: p.Archived, ArchivedAt: p.ArchivedAt,
-			AllowedOrigins: p.AllowedOrigins, Attributes: p.Attributes,
+			AllowedOrigins: p.AllowedOrigins,
 		})
 	}
 	return out, nil
@@ -318,8 +321,7 @@ func (h *host) register(r *registrar) {
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
 	// DestructiveHint is *bool in the SDK. Nothing here is destructive but
 	// merge_event and merge_attribute (a merge cannot be split again) and
-	// block_event and block_attribute (the next daily pass deletes the
-	// aggregates), which ask the operator.
+	// block_event and block_attribute, which ask the operator.
 	no, yes := false, true
 	write := &mcp.ToolAnnotations{DestructiveHint: &no}
 	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
@@ -328,22 +330,19 @@ func (h *host) register(r *registrar) {
 	const p = "/api/projects/{project_id}"
 
 	expose(r, spec{Name: "list_projects", Annotations: ro, Method: "GET", Path: "/api/projects",
-		Description: "List projects with id, name, allowed origins and declared attributes, in the order move_project sets. Call this first: every other tool takes a project_id from here."},
+		Description: "List projects with id, name and allowed origins, in the order move_project sets. Call this first: every other tool takes a project_id from here."},
 		h.listProjects)
 	restOnly(r, spec{Name: "project_activity", Method: "GET", Path: "/api/project-activity",
-		Description: "Per live project: last_event_day (the newest day with views, product events or measures, raw or rolled up; null with none) new_submissions (submissions to live forms the console hasn't read), forms (live forms) and draft_forms (live forms still drafts, waiting to be approved). For the console's badges; not an MCP tool."},
+		Description: "Per live project: last_event_day (the newest day file in the event files, a month file counting as its last day; null with none), new_submissions (submissions to live forms the console hasn't read), forms (live forms) and draft_forms (live forms still drafts, waiting to be approved). For the console's badges; not an MCP tool."},
 		h.projectActivity)
 	expose(r, spec{Name: "limits", Annotations: ro, Method: "GET", Path: "/api/limits",
-		Description: "The limits in force, grouped: retention (days raw events, aggregates, event files and archived items are kept), caps (ATTRIBUTE_VALUES_TOP_N, the values kept per views breakdown and day and per attribute key, event and day; users and groups per day; and ATTRIBUTE_BREAKDOWNS_MAX, the attributes all active projects declare together; 0 means no cap) and ingest (INGEST_LATE_DAYS, how far back a client timestamp may lie before it is clamped, then the wire format's fixed limits: body, batch, attributes, timestamps, measures). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here. Also raw_events: held, the raw events stored across every project and family (what the server's disk and dashboard scans follow), counted at most every 5 minutes (never more than 10 minutes old), and window_days, the raw window they fall in (RETENTION_RAW_DAYS); absent when the last count failed. And ingest_disabled: true when INGEST_DISABLED is set and every ingest route refuses events and form submissions."},
+		Description: "The limits in force, grouped: retention (days the event files, archived items and form drafts are kept) and ingest (INGEST_LATE_DAYS, how far back a client timestamp may lie before it is clamped, then the wire format's fixed limits: body, batch, attributes, timestamps, measures). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here. Also events_30d: count, the events in the event files from from through to (the 30 days ending today, UTC), of every family and project, counted at most every 5 minutes (never more than 10 minutes old); absent when the last count failed. And ingest_disabled: true when INGEST_DISABLED is set and every ingest route refuses events and form submissions."},
 		h.listLimits)
-	expose(r, spec{Name: "cap_usage", Annotations: ro, Method: "GET", Path: p + "/cap-usage",
-		Description: "How a project's data meets the caps over a range (default the last 30 days, at most 400): per views breakdown, attribute key, and users/groups, the busiest day's values against the cap, days with data, days folded into (other) (users and groups: days that reached the cap), and the share of views, counts or samples folded. Days already rolled up keep only the kept values and their (other) rows, so values per day stay near the cap there (cap + 1 for single-key breakdowns and attributes, cap plus one per leading key for two-key breakdowns)."},
-		h.capUsage)
 	expose(r, spec{Name: "list_attributes", Annotations: ro, Method: "GET", Path: p + "/attributes",
-		Description: "A project's attributes: the keys its product events and measures carried over a range (default the last 30 days, at most 400; only the raw window is kept, RETENTION_RAW_DAYS), with its breakdowns and attribute rules. Per key the events that carried it and max_values (the most distinct values one event (or measure) had on one day, which ATTRIBUTE_VALUES_TOP_N caps), both as the daily pass counted them, so today's arrive the night after (a key first received today has events 0 and max_values null); whether any event carried it (received), whether the project breaks it down (breakdown), whether block_attribute strips it (blocked), and its aliases, the keys renamed or merged into it. Lists the 500 busiest keys plus every breakdown key, every blocked key and every key others are renamed to (received false when none carried it); a key renamed away is listed only in its target's aliases. keys_total counts the distinct keys received. Also values_cap (ATTRIBUTE_VALUES_TOP_N), breakdowns_used (breakdown keys across active projects) and breakdowns_max (ATTRIBUTE_BREAKDOWNS_MAX, 0 = no limit). Switch a breakdown with update_project's attributes."},
+		Description: "A project's attributes, from the event files with the attribute rules applied: the keys its product events and measures carried over a range (default the last 30 days, at most 92). Per key the events that carried it and its distinct values over the range, whether any event carried it (received), whether block_attribute hides it (blocked), and its aliases, the keys renamed or merged into it. Lists the 500 busiest keys plus every key a rule names (received false when none carried it; a blocked key always); a key renamed away reads as its target and is listed only in its aliases. keys_total counts the distinct keys received."},
 		h.listAttributes)
 	expose(r, spec{Name: "usage", Annotations: ro, Method: "GET", Path: "/api/usage",
-		Description: "Usage per project over a range (default the last 30 days, at most 400): views, product events and measure samples per day (every day, zeros included) and in total, when the newest raw row arrived, the oldest day with data, raw and rolled-up day counts, an estimate of the disk the project's rows take (measured daily by the daily pass, which also runs at start: size is the latest, with the day it was measured_at, null until the first measurement; each series day carries that day's total_bytes, null on days not measured), and, with project_id only (null otherwise), declared attributes no event carried. Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention; later days are counted live. Without project_id, every project. Each series day also carries the project's declared_attributes and, counted the night after while the day's rows are raw and kept once rolled up, the distinct attribute_keys and attribute_values received and the attribute_values_folded into (other); null on days not stored. Also the database's size now and per day (database_series, null on days not measured)."},
+		Description: "Usage per project over a range (default the last 30 days, at most 400), from the event files: views, product events and measure samples per day (every day, zeros included) and in total, when the newest event arrived (whatever the range), the oldest day the files hold, and the bytes the project's event files take (measured by the daily pass of the process that keeps them, which also runs at start: size is the latest, with the day it was measured_at, null until the first measurement; each series day carries that day's total_bytes, null on days not measured). Without project_id, every project. Also the database's size now and per day (database_series, null on days not measured)."},
 		h.usage)
 	expose(r, spec{Name: "views_overview", Annotations: ro, Method: "GET", Path: p + "/views/overview",
 		Description: "Daily views for one project: visitors (distinct per day and kind, added up), views, sessions, bounces, duration, with derived bounce_rate and avg_session_sec. Sums every kind (web, app, cli, …) unless kind is given. Read from the event files, today included."},
@@ -367,14 +366,14 @@ func (h *host) register(r *registrar) {
 		Description: "Per-user or per-group activity over the range, from the event files: per id, its actors and users (distinct per day, added up over the days), views and product events, busiest first, with the display name sent with its latest event. This surfaces personal data on projects whose clients send ids."},
 		h.identities)
 	expose(r, spec{Name: "query", Annotations: ro, Method: "POST", Path: "/api/query",
-		Description: "Escape hatch: run one read-only SELECT/WITH. source \"files\" (the default) reads the raw events through DuckDB: the tables events, views, product, measures, sessions, identities and aliases, one attr_<key> column per attribute key; read schema://views first (docs://twillingate, \"Writing SQL against the event files\"). source \"sqlite\" reads the v_* views and agg_* tables: deprecated, removed in a later release. Row-capped and time-limited; read-only either way."},
+		Description: "Escape hatch: run one read-only SELECT/WITH in DuckDB SQL over the event files: the tables events, views, product, measures, sessions, identities and aliases, one attr_<key> column per attribute key; read schema://views first (docs://twillingate, \"Writing SQL against the event files\"). source is optional: \"files\", the default, is the only one; \"sqlite\" was removed with the database's events and is refused. Row-capped and time-limited; read-only."},
 		h.runQuery)
 
 	expose(r, spec{Name: "create_project", Annotations: write, Method: "POST", Path: "/api/projects", Status: http.StatusCreated,
-		Description: "Create a project and (by default) its first ingest key; returns a paste-ready embed snippet (confirm the collector hostname with the user). Set skip_key to suppress the key. Each declared attribute is a breakdown, counted against ATTRIBUTE_BREAKDOWNS_MAX across active projects; pick keys from list_attributes."},
+		Description: "Create a project and (by default) its first ingest key; returns a paste-ready embed snippet (confirm the collector hostname with the user). Set skip_key to suppress the key. Attributes need no declaring: every key the events carry breaks down in the event files."},
 		h.createProject)
 	expose(r, spec{Name: "update_project", Annotations: write, Method: "PATCH", Path: "/api/projects/{project_id}",
-		Description: "Update a project's name, allowed origins and/or declared product-event attributes (breakdown keys for flat-view columns and attribute rollups). Fields you omit are left unchanged; allowed_origins and attributes replace the whole list when given, and an explicit empty allowed_origins clears it. Each declared attribute is a breakdown, counted against ATTRIBUTE_BREAKDOWNS_MAX across active projects; pick keys from list_attributes."},
+		Description: "Update a project's name and/or allowed origins. Fields you omit are left unchanged; allowed_origins replaces the whole list when given, and an explicit empty allowed_origins clears it."},
 		h.updateProject)
 	expose(r, spec{Name: "move_project", Annotations: idem, Method: "POST", Path: "/api/projects/{project_id}/move",
 		Description: "Put a project right after another (after: a project id, archived ones included; 0 first) in the order list_projects, the console and the CLI show. A new project comes last."},
@@ -401,28 +400,28 @@ func (h *host) register(r *registrar) {
 		Description: "List a project's event rules: renames (name → to) and blocks, product and measures families."},
 		h.listEventRules)
 	expose(r, spec{Name: "rename_event", Annotations: write, Method: "POST", Path: p + "/event-rules/rename",
-		Description: "Rename a product or measures event to a name not in use: rewrites its stored events and aggregates, and stores later events sent under the old name under the new one. Refused onto a name with events (merge_event folds one event into another) or a blocked name. Widget SQL naming the old event is not rewritten."},
+		Description: "Rename a product or measures event to a name not in use: every read of the event files shows its events under the new name, history included, and ingest stores later events sent under the old name under the new one. Refused onto a name the files already have events of, rules applied (merge_event folds one event into another), or a blocked name. Widget SQL naming the old event is not rewritten."},
 		h.renameEvent)
 	expose(r, spec{Name: "merge_event", Annotations: destroy, Method: "POST", Path: p + "/event-rules/merge",
-		Description: "Merge a product or measures event into another of the same family: rewrites its stored events and aggregates under the target, and stores later events sent under the old name under the target. Cannot be undone; merged days' unique counts become an upper bound. The old name need not have events (an alias for an app version still in the field). Refused onto a blocked name. Widget SQL naming the old event is not rewritten."},
+		Description: "Merge a product or measures event into another of the same family: every read of the event files counts its events under the target, history included, and ingest stores later events sent under the old name under the target, which removing the rule does not split again. The old name need not have events (an alias for an app version still in the field). Refused onto a blocked name. Widget SQL naming the old event is not rewritten."},
 		h.mergeEvent)
 	expose(r, spec{Name: "block_event", Annotations: destroyIdem, Method: "POST", Path: p + "/event-rules/block",
-		Description: "Block a product or measures event: ingest accepts and drops it (with a warning), the next daily pass deletes its aggregates, and its stored raw events expire with the raw window. Nothing else is deleted. remove_event_rule unblocks."},
+		Description: "Block a product or measures event: ingest accepts and drops it (with a warning), and every read of the event files leaves its stored events out, history included. Nothing is deleted. remove_event_rule unblocks."},
 		h.blockEvent)
 	expose(r, spec{Name: "remove_event_rule", Annotations: idem, Method: "POST", Path: p + "/event-rules/remove",
-		Description: "Remove a project's rule for an event name: a rename stops mapping (history stays renamed), a block lets the event be stored again."},
+		Description: "Remove a project's rule for an event name: reads of the event files stop applying it, so events stored before the rule show as sent again (ingest stored the later ones as the rule said), and a block lets the event be stored again."},
 		h.removeEventRule)
 	expose(r, spec{Name: "rename_attribute", Annotations: write, Method: "POST", Path: p + "/attribute-rules/rename",
-		Description: "Rename a custom attribute key of a project's product and measures events to a key not in use: rewrites its stored events, aggregates and usage, keeps its breakdown, and stores later events sent with the old key under the new one (the new key's value wins when an event carries both). Refused onto a key with data (merge_attribute folds one key into another) or a blocked key, and for $ keys. Widget SQL naming the old key is not rewritten."},
+		Description: "Rename a custom attribute key of a project's product and measures events to a key not in use: every read of the event files shows its values under the new key, history included, and ingest stores later events sent with the old key under the new one (the new key's value wins when an event carries both). Refused onto a key the files already have values of, rules applied (merge_attribute folds one key into another), or a blocked key, and for $ keys. Widget SQL naming the old key is not rewritten."},
 		h.renameAttribute)
 	expose(r, spec{Name: "merge_attribute", Annotations: destroy, Method: "POST", Path: p + "/attribute-rules/merge",
-		Description: "Merge a custom attribute key into another: rewrites its stored events (the target's value wins where an event carries both), aggregates and usage under the target, and stores later events sent with the old key under the target. Cannot be undone; merged days' unique counts become an upper bound. The old key need not have data (an alias for an app version still in the field). Refused onto a blocked key, and for $ keys. Widget SQL naming the old key is not rewritten."},
+		Description: "Merge a custom attribute key into another: every read of the event files shows its values under the target, history included (the target's value wins where an event carries both), and ingest stores later events sent with the old key under the target, which removing the rule does not split again. The old key need not have data (an alias for an app version still in the field). Refused onto a blocked key, and for $ keys. Widget SQL naming the old key is not rewritten."},
 		h.mergeAttribute)
 	expose(r, spec{Name: "block_attribute", Annotations: destroyIdem, Method: "POST", Path: p + "/attribute-rules/block",
-		Description: "Block a custom attribute key: ingest strips it from events (with a warning) and stores the events without it, it stops being a breakdown, and the next daily pass deletes its aggregates; stored raw events keep it until their day leaves the raw window. Nothing else is deleted. remove_attribute_rule unblocks."},
+		Description: "Block a custom attribute key: ingest strips it from events (with a warning) and stores the events without it, and every read of the event files leaves its stored values out, history included. Nothing is deleted. remove_attribute_rule unblocks."},
 		h.blockAttribute)
 	expose(r, spec{Name: "remove_attribute_rule", Annotations: idem, Method: "POST", Path: p + "/attribute-rules/remove",
-		Description: "Remove a project's rule for an attribute key: a rename stops mapping (history stays renamed), a block lets the key be stored again."},
+		Description: "Remove a project's rule for an attribute key: reads of the event files stop applying it, so events stored before the rule show the key as sent again (ingest stored the later ones as the rule said), and a block lets the key be stored again."},
 		h.removeAttributeRule)
 	restOnly(r, spec{Name: "event_names", Method: "GET", Path: p + "/event-names",
 		Description: "A project's product and measures event names in a range with their event counts, the busiest 200, busiest first. For the console's Settings page; not an MCP tool (product_events and measures answer agents)."},

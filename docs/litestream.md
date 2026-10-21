@@ -1,15 +1,21 @@
 # Backing up with litestream
 
-Everything twillingate needs to run is in one SQLite file,
-`/var/lib/twillingate/twillingate.db`. [Litestream](https://litestream.io)
-streams that file's write-ahead log to S3-compatible storage as it is
-written, so the off-host copy is seconds behind. It runs beside the
-collector, not inside it: twillingate never reads its settings, and neither
-the installer nor the compose file sets it up. This page does, for systemd
-and for docker compose. The examples use Cloudflare R2 and litestream 0.5;
-any S3-compatible store works.
+Twillingate's settings (projects, keys, rules, forms, dashboards, the audit
+log) are in one SQLite file, `/var/lib/twillingate/twillingate.db`. Its events
+are not: from migration 042 they live only in the files under `raw/`.
+[Litestream](https://litestream.io) streams the database's write-ahead log to
+S3-compatible storage as it is written, so that off-host copy is seconds
+behind, but it holds no events; they are only as fresh as your own copy of
+`raw/`. It runs beside the collector, not inside it: twillingate never reads
+its settings, and neither the installer nor the compose file sets it up. This
+page does, for systemd and for docker compose. The examples use Cloudflare R2
+and litestream 0.5; any S3-compatible store works.
 
-Litestream copies the database only. The event files under `raw/` (from the release that added `RETENTION_DAYS`; `EVENTS_DIR` when set) are not part of it; copy them on a schedule of your own (`docs/deployment.md`, "Back up and restore").
+Litestream copies the database only, so a host lost between two copies of
+`raw/` loses the events since the last. The event files under `raw/` (from the
+release that added `RETENTION_DAYS`; `EVENTS_DIR` when set) are not part of it;
+copy them on a schedule of your own (`docs/deployment.md`, "Back up and
+restore").
 
 - [Bucket and credentials](#bucket-and-credentials)
 - [The configuration](#the-configuration)
@@ -133,7 +139,8 @@ docker compose logs -f litestream   # "snapshot complete", then a line per uploa
 ## Check the backup monthly
 
 A backup you have never restored is not a backup. Restore into a scratch
-file and query it: the newest day must be today or yesterday.
+file and query it: it must hold your projects. The database holds no events,
+so the newest day comes from your copy of `raw/` (below).
 
 ```bash
 # systemd: litestream reads the bucket credentials from the env file
@@ -141,7 +148,7 @@ sudo sh -ac '. /etc/twillingate/twillingate.env
   litestream ltx -config /etc/litestream.yml /var/lib/twillingate/twillingate.db
   litestream restore -config /etc/litestream.yml -o /tmp/check.db /var/lib/twillingate/twillingate.db'
 sudo sqlite3 /tmp/check.db 'PRAGMA quick_check;'             # expect: ok
-sudo sqlite3 /tmp/check.db "SELECT MAX(day) FROM v_views_daily;"
+sudo sqlite3 /tmp/check.db "SELECT COUNT(*) FROM projects;"   # expect: your project count
 sudo rm /tmp/check.db*
 ```
 
@@ -154,17 +161,21 @@ docker compose exec litestream litestream restore -config /etc/litestream.yml \
 docker compose cp twillingate:/var/lib/twillingate/check.db ./check.db
 docker compose exec twillingate rm /var/lib/twillingate/check.db
 sqlite3 check.db 'PRAGMA quick_check;'                        # expect: ok
-sqlite3 check.db "SELECT MAX(day) FROM v_views_daily;"
+sqlite3 check.db "SELECT COUNT(*) FROM projects;"             # expect: your project count
 rm check.db
 ```
 
-`ltx` lists what the bucket holds. A newest day several days old means
+`ltx` lists what the bucket holds. A newest upload several days old means
 litestream stopped uploading (`journalctl -u litestream` or `docker compose
 logs litestream`); `no matching backups found` against a bucket you know is
 written means a version mismatch.
 
-Your copy of `raw/` is not in the bucket; check it the same day: its newest
-day files should be a day or two old.
+Your copy of `raw/` is not in the bucket; check it the same day. List each
+project's newest dated file (a day file, or a month file once the month is final), which should be a day or two old:
+
+```bash
+for d in /path/to/your/raw-copy/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done
+```
 
 ## Restore after losing the host
 
@@ -179,10 +190,12 @@ than that copy: the daily pass deletes the files of any project the database
 does not know. A restore to the latest state never is; one to an earlier
 `-timestamp` needs a `raw/` copy taken before that time.
 
-Then, still before the collector starts, run `twillingate events import
--force` as the service user (in the commands below). The replica is newer
-than your copy of `raw/`, so the database holds events the files lack; the
-import copies them in.
+Only a replica written by a release before migration 042 holds events, and
+only then, still before the collector starts, run `twillingate events import
+-force` as the service user (the import lines in the commands below). The
+replica is newer than your copy of `raw/`, so the database holds events the
+files lack; the import copies them in. A replica from this release or later
+holds none, and the command says so: skip it.
 
 **systemd.** Install twillingate (`install.sh`), put the same credentials in
 `/etc/twillingate/twillingate.env`, and set litestream up as
@@ -194,7 +207,7 @@ sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; litestream resto
   -config /etc/litestream.yml -o /var/lib/twillingate/twillingate.db \
   /var/lib/twillingate/twillingate.db'
 sudo -u twillingate sqlite3 /var/lib/twillingate/twillingate.db 'PRAGMA quick_check;'
-sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate events import -force'
+sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate events import -force'   # only for a replica from before migration 042
 sudo systemctl start twillingate litestream
 ```
 
@@ -208,7 +221,7 @@ sudo systemctl start twillingate litestream
 docker compose run --rm --no-deps --entrypoint true twillingate
 docker compose run --rm --no-deps litestream restore -config /etc/litestream.yml \
   -o /var/lib/twillingate/twillingate.db /var/lib/twillingate/twillingate.db
-docker compose run --rm --no-deps twillingate events import -force
+docker compose run --rm --no-deps twillingate events import -force   # only for a replica from before migration 042
 docker compose up -d
 docker compose exec twillingate twillingate project list   # your projects are back
 ```

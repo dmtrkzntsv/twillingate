@@ -238,13 +238,13 @@ func TestRESTWritesAndRefusals(t *testing.T) {
 		!strings.Contains(rec.Body.String(), "2026-08-20") {
 		t.Errorf("query = %d %s", rec.Code, rec.Body.String())
 	}
-	if rec := serveREST(t, r, "POST", "/api/query", `{"sql":"SELECT day, visitors FROM v_views_daily WHERE project_id=1","source":"sqlite"}`); rec.Code != 200 {
-		t.Errorf("query on sqlite = %d %s", rec.Code, rec.Body.String())
+	if rec := serveREST(t, r, "POST", "/api/query", `{"sql":"SELECT day, visitors FROM v_views_daily WHERE project_id=1","source":"sqlite"}`); rec.Code != 400 {
+		t.Errorf("query on sqlite = %d %s, want 400", rec.Code, rec.Body.String())
 	}
 	if rec := serveREST(t, r, "POST", "/api/query", `{"sql":"ATTACH 'x' AS y"}`); rec.Code != 400 {
 		t.Errorf("attach = %d", rec.Code)
 	}
-	if rec := serveREST(t, r, "GET", "/api/schema/views", ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), "v_views_daily") ||
+	if rec := serveREST(t, r, "GET", "/api/schema/views", ""); rec.Code != 200 || !strings.Contains(rec.Body.String(), "  events(") ||
 		!strings.HasPrefix(rec.Header().Get("Content-Type"), "text/plain") {
 		t.Errorf("schema/views = %d %q", rec.Code, rec.Header().Get("Content-Type"))
 	}

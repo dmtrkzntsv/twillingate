@@ -200,7 +200,7 @@ func mergeAttributes(batch, event map[string]any) map[string]any {
 // stored: the `$` namespace is reserved for system fields, so a `$` key this
 // server does not recognize is a client bug, and silently storing it as data
 // would hide that. Every other attribute is kept, however many: the body
-// limit bounds an event, and only declared keys reach the aggregates.
+// limit bounds an event.
 func resolveAttributes(m map[string]any) (r resolved, unknown, overlong []string) {
 	r = resolved{Custom: map[string]string{}}
 	for k, v := range m {
@@ -298,9 +298,8 @@ func truncate(s string, n int) string {
 // clampTS bounds a client timestamp to [received-maxAge, received+skew].
 // Out-of-range values are clamped and counted, never dropped: a device with
 // a broken clock still contributes. The lower bound is the late window
-// (INGEST_LATE_DAYS), kept within the raw window by config, which is what
-// guarantees a clamped event can never target a day that has already been
-// aggregated and had its raw rows deleted.
+// (INGEST_LATE_DAYS), so a clamped event never targets a day older than the
+// files accept.
 func clampTS(client, received time.Time, maxAge time.Duration) (time.Time, bool) {
 	if client.IsZero() {
 		return received, false

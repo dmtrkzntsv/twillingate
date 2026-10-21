@@ -8,12 +8,11 @@ import { sqlNamespace } from './sql-completion'
 // jsdom replaces the URL global, so import.meta.url cannot build a file path here.
 const goSource = readFileSync(resolve(import.meta.dirname, '../../../internal/api/resources.go'), 'utf8')
 const files = goSource.match(/const schemaFiles = `([\s\S]*?)`/)?.[1] ?? ''
-const sqlite = goSource.match(/const schemaSQLite = `([\s\S]*?)`/)?.[1] ?? ''
-// What GET /api/schema/views serves: the files, a blank line, the deprecated part.
-const served = files + '\n\n' + sqlite
+// What GET /api/schema/views serves: the files' tables alone.
+const served = files
 
 describe('parseSchemaViews', () => {
-  it('reads the event files tables, with their columns, and stops before the SQLite views', () => {
+  it('reads the event files tables, with their columns', () => {
     const tables = parseSchemaViews(served)
     const documented = [...files.matchAll(/^\s+(\w+)\(/gm)].map((m) => m[1])
     expect(documented).toEqual(['events', 'views', 'product', 'measures', 'sessions', 'identities', 'aliases'])

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -99,41 +98,16 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	if err := migrate(ctx, cfg, st, files, ""); err != nil {
 		return err
 	}
-	// The views' live halves read their caps from meta with a scalar
-	// subquery -- SQL cannot see the environment. Written before anything
-	// queries a view so the first read uses the configured caps rather than
-	// the views' built-in fallbacks. 0 is written as is: the views read it
-	// as no cap, as the daily pass does. ATTRIBUTE_VALUES_TOP_N, the one
-	// values cap (views breakdowns and attributes), keeps the row name of
-	// its earlier spelling, attributes_top_n: renaming it would
-	// mean recreating the views that read it, for no reader's benefit.
-	for _, m := range []struct {
-		key string
-		n   int
-	}{
-		{"attributes_top_n", cfg.AttributeValuesTopN},
-		{"attribute_breakdowns_max", cfg.AttributeBreakdownsMax},
-		{"identities_top_n", cfg.IdentitiesTopN},
-	} {
-		if err := st.SetMeta(ctx, m.key, strconv.Itoa(m.n)); err != nil {
-			return err
-		}
-	}
-
 	reg := manage.New(st, logger)
 	if err := reg.Reload(ctx); err != nil {
 		return err
 	}
 	ops := manage.NewOps(reg, st)
-	ops.BreakdownsMax = cfg.AttributeBreakdownsMax
 	ops.FormDraftDays = cfg.Forms.DraftDays
+	ops.Presence = &filePresence{reader: files, reg: reg, timeout: cfg.Console.QueryTimeout}
 	if len(reg.Snapshot(ctx).Projects()) == 0 {
 		logger.Warn("no projects configured; create one with `twillingate project create` or an API management operation")
 	}
-	if runConsole {
-		warnImport(ctx, st, cfg.EventsDir, logger)
-	}
-
 	salter := identity.NewSalter(st, time.Now)
 	dataDir := filepath.Dir(DatabasePath(cfg.Database))
 	geoProvider, err := geo.New(cfg.Geo, dataDir, logger)
@@ -144,23 +118,27 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 
 	// The archive log (raw-first PR 3): the ingest process appends every
 	// event to EVENTS_DIR beside SQLite; a console-only process writes none.
-	var sink pipeline.Sink = st
+	// The log is the only sink; only the ingest process enqueues, so a
+	// process without ingest builds no buffer.
 	var archiveLog *archive.Log
+	var buf *pipeline.Buffer
+	pipeCtx, stopPipe := context.WithCancel(context.Background())
+	pipeDone := make(chan struct{})
 	if runIngest {
 		archiveLog, err = archive.OpenLog(cfg.EventsDir)
 		if err != nil {
+			stopPipe()
 			return err
 		}
 		defer archiveLog.Close()
-		sink = pipeline.Sinks{st, archiveLog}
+		// The pipeline and jobs runner get their own contexts rather than
+		// ctx, so cancelling ctx does not tear them down before HTTP has
+		// drained.
+		buf = pipeline.New(cfg.Buffer, archiveLog, logger)
+		go func() { buf.Run(pipeCtx); close(pipeDone) }()
+	} else {
+		close(pipeDone)
 	}
-
-	// The pipeline and jobs runner get their own contexts rather than ctx,
-	// so cancelling ctx does not tear them down before HTTP has drained.
-	buf := pipeline.New(cfg.Buffer, sink, logger)
-	pipeCtx, stopPipe := context.WithCancel(context.Background())
-	pipeDone := make(chan struct{})
-	go func() { buf.Run(pipeCtx); close(pipeDone) }()
 
 	// A project with no active ingest key can receive nothing. That is a
 	// legitimate retired state, so warn rather than refuse to start.
@@ -173,7 +151,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		runner.WithArchive(archive.New(archiveLog, eng, logger))
 		// Form attribution (raw-first PR 5b): the process that ingests
 		// looks each submission's source up in the files a minute after
-		// it arrives and writes its event to SQLite and the log.
+		// it arrives and writes its event to the log.
 		runner.WithAttribution(files, archiveLog)
 	}
 	jobsCtx, stopJobs := context.WithCancel(context.Background())

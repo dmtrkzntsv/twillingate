@@ -1,9 +1,11 @@
 package manage
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -85,27 +87,6 @@ func TestIssueIngestKeyUnknownProject(t *testing.T) {
 	}
 }
 
-func TestUpdateProjectAppliesAttributes(t *testing.T) {
-	st := testStore(t)
-	reg := New(st, discard())
-	ctx := context.Background()
-	reg.Reload(ctx)
-	ops := NewOps(reg, st)
-	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "b"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	u, err := ops.UpdateProject(ctx, "cli", ProjectSpec{
-		ID: p.ID, Attributes: []string{"plan"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if u.Name != "b" || len(u.Attributes) != 1 || u.Attributes[0] != "plan" {
-		t.Fatalf("updated project = %+v", u)
-	}
-}
-
 // Closing the underlying store forces every downstream write to fail,
 // exercising the error-propagation branch of each Ops method the same
 // way internal/store/sqlite's own TestOperationsOnClosedDB does.
@@ -166,21 +147,20 @@ func TestValidateRequiresAName(t *testing.T) {
 	}
 }
 
-func TestRowMarshalsOriginsAndAttributes(t *testing.T) {
-	// nil origins/attributes -> "[]"
+func TestRowMarshalsOrigins(t *testing.T) {
+	// nil origins -> "[]"
 	sp := &ProjectSpec{Name: "a"}
 	row, err := sp.row()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if row.AllowedOrigins != "[]" || row.Attributes != "[]" {
+	if row.AllowedOrigins != "[]" {
 		t.Fatalf("row = %+v", row)
 	}
 
-	// non-nil origins and attributes set, id carried through
+	// non-nil origins set, id carried through
 	sp2 := &ProjectSpec{ID: 7, Name: "b",
-		AllowedOrigins: []string{"https://b.example.com"},
-		Attributes:     []string{"plan", "tier"}}
+		AllowedOrigins: []string{"https://b.example.com"}}
 	row2, err := sp2.row()
 	if err != nil {
 		t.Fatal(err)
@@ -190,9 +170,6 @@ func TestRowMarshalsOriginsAndAttributes(t *testing.T) {
 	}
 	if row2.AllowedOrigins != `["https://b.example.com"]` {
 		t.Errorf("AllowedOrigins = %q", row2.AllowedOrigins)
-	}
-	if row2.Attributes != `["plan","tier"]` {
-		t.Errorf("Attributes = %q", row2.Attributes)
 	}
 }
 
@@ -205,13 +182,12 @@ func TestSnippetDefaultsOriginWhenEmpty(t *testing.T) {
 
 // ---- registry.go: previously-zero accessors and error branches ----
 
-func TestProjectsAnyOriginAllowedAndAttributesFor(t *testing.T) {
+func TestProjectsAndAnyOriginAllowed(t *testing.T) {
 	st := testStore(t)
 	ctx := context.Background()
 	blog, err := st.CreateProject(ctx, store.RegistryProject{
 		Name:           "blog",
 		AllowedOrigins: `["https://blog.example.com/"]`, // trailing slash on this side
-		Attributes:     `["plan"]`,
 	}, store.AuditEntry{Actor: "test", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
@@ -239,17 +215,6 @@ func TestProjectsAnyOriginAllowedAndAttributesFor(t *testing.T) {
 	}
 	if s.AnyOriginAllowed("https://evil.example.com") {
 		t.Error("AnyOriginAllowed matched an origin nobody allows")
-	}
-
-	attrs := s.AttributesFor(blog)
-	if len(attrs) != 1 || attrs[0] != "plan" {
-		t.Fatalf("AttributesFor(blog) = %+v", attrs)
-	}
-	if got := s.AttributesFor(docs); len(got) != 0 {
-		t.Fatalf("AttributesFor(docs) = %+v, want empty (no attributes declared)", got)
-	}
-	if got := s.AttributesFor(404); len(got) != 0 {
-		t.Fatalf("AttributesFor(404) = %+v, want nil (unknown id)", got)
 	}
 }
 
@@ -292,11 +257,33 @@ func TestSnapshotPollErrorKeepsServingPreviousSnapshot(t *testing.T) {
 	}
 }
 
+// A poll cut short because its caller went away (a client that closed the
+// connection mid-request) is not a failure: nothing is logged, and the
+// next caller polls again rather than waiting out the interval.
+func TestSnapshotPollCancelledByItsCallerLogsNothing(t *testing.T) {
+	st := testStore(t)
+	seedProject(t, st, "blog")
+	var logs bytes.Buffer
+	reg := New(st, slog.New(slog.NewTextHandler(&logs, nil)))
+	if err := reg.Reload(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	reg.lastCheck.Store(0)
+	reg.Snapshot(ctx)
+	if logs.Len() != 0 {
+		t.Errorf("a cancelled poll logged:\n%s", logs.String())
+	}
+	if got := reg.lastCheck.Load(); got != 0 {
+		t.Errorf("lastCheck = %d after a cancelled poll, want 0 so the next caller polls", got)
+	}
+}
+
 // A malformed JSON blob in a registry column (which the exported API can
 // never write, but a hand-edited database or a future bug could produce)
 // must surface as an error from Reload rather than a panic or a silently
-// empty field. attributes is not a column: the store builds the list from
-// project_attributes.
+// empty field.
 func TestReloadRejectsCorruptRegistryJSON(t *testing.T) {
 	for _, column := range []string{"allowed_origins"} {
 		t.Run(column, func(t *testing.T) {

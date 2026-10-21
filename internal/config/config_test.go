@@ -37,9 +37,6 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.Buffer.FlushMaxEvents != 1000 || c.Buffer.FlushInterval != 5*time.Second || c.Buffer.Capacity != 10000 {
 		t.Errorf("Buffer = %+v", c.Buffer)
 	}
-	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 400 {
-		t.Errorf("Retention = %+v", c.Retention)
-	}
 	if c.Engine.MemoryLimit != "512MB" || c.Engine.MaxChildren != 2 {
 		t.Errorf("Engine = %+v, want 512MB and 2", c.Engine)
 	}
@@ -54,12 +51,6 @@ func TestDefaultsApplied(t *testing.T) {
 	}
 	if c.Forms.DraftDays != DefaultFormDraftDays || DefaultFormDraftDays != 7 {
 		t.Errorf("Forms.DraftDays = %d (default %d), want 7", c.Forms.DraftDays, DefaultFormDraftDays)
-	}
-	if c.AttributeValuesTopN != 100 || c.IdentitiesTopN != 500 {
-		t.Errorf("caps = %d/%d, want 100/500", c.AttributeValuesTopN, c.IdentitiesTopN)
-	}
-	if c.AttributeBreakdownsMax != 50 {
-		t.Errorf("AttributeBreakdownsMax = %d, want 50", c.AttributeBreakdownsMax)
 	}
 	if c.Reporting.CacheAge != 900*time.Second || c.Reporting.RefreshAge != 60*time.Second {
 		t.Errorf("Reporting = %+v", c.Reporting)
@@ -102,24 +93,13 @@ func TestEnvOverrides(t *testing.T) {
 		"BUFFER_FLUSH_MAX_EVENTS":    "5",
 		"BUFFER_FLUSH_INTERVAL":      "250ms",
 		"BUFFER_CAPACITY":            "42",
-		"RETENTION_RAW_DAYS":         "3",
-		"RETENTION_AGGREGATE_DAYS":   "60",
 		"RETENTION_ARCHIVED_DAYS":    "7",
 		"REPORTING_CACHE_MAX_AGE":    "2m",
 		"REPORTING_REFRESH_MAX_AGE":  "30s",
-		"ATTRIBUTE_VALUES_TOP_N":     "200",
-		"IDENTITIES_TOP_N":           "2000",
-		"ATTRIBUTE_BREAKDOWNS_MAX":   "7",
 		"RETENTION_FORMS_DRAFT_DAYS": "14",
 	})
 	if err != nil {
 		t.Fatal(err)
-	}
-	if c.AttributeValuesTopN != 200 || c.IdentitiesTopN != 2000 {
-		t.Errorf("caps = %d/%d, want 200/2000", c.AttributeValuesTopN, c.IdentitiesTopN)
-	}
-	if c.AttributeBreakdownsMax != 7 {
-		t.Errorf("AttributeBreakdownsMax = %d, want 7", c.AttributeBreakdownsMax)
 	}
 	if c.IngestAddr != "0.0.0.0:9999" || c.Geo != "none://" {
 		t.Errorf("IngestAddr/Geo = %q/%q", c.IngestAddr, c.Geo)
@@ -129,9 +109,6 @@ func TestEnvOverrides(t *testing.T) {
 	}
 	if c.Buffer.FlushMaxEvents != 5 || c.Buffer.FlushInterval != 250*time.Millisecond || c.Buffer.Capacity != 42 {
 		t.Errorf("Buffer = %+v", c.Buffer)
-	}
-	if c.Retention.Events.RawDays != 3 || c.Retention.Events.AggregateDays != 60 {
-		t.Errorf("Retention = %+v", c.Retention)
 	}
 	if c.Retention.ArchivedDays != 7 {
 		t.Errorf("Retention.ArchivedDays = %d, want 7", c.Retention.ArchivedDays)
@@ -153,30 +130,25 @@ func TestValidationErrors(t *testing.T) {
 		return vars
 	}
 	cases := map[string]map[string]string{
-		"no database":                           {"DATABASE_DSN": ""},
-		"bad geo scheme":                        base(map[string]string{"GEO_DSN": "???"}),
-		"negative raw_days":                     base(map[string]string{"RETENTION_RAW_DAYS": "-1"}),
-		"zero retention days":                   base(map[string]string{"RETENTION_DAYS": "0"}),
-		"zero engine children":                  base(map[string]string{"ENGINE_MAX_CHILDREN": "0"}),
-		"engine memory not a size":              base(map[string]string{"ENGINE_MEMORY_LIMIT": "lots"}),
-		"engine memory no unit":                 base(map[string]string{"ENGINE_MEMORY_LIMIT": "512"}),
-		"zero late days":                        base(map[string]string{"INGEST_LATE_DAYS": "0"}),
-		"negative late days":                    base(map[string]string{"INGEST_LATE_DAYS": "-1"}),
-		"late days exceed the raw window":       base(map[string]string{"RETENTION_RAW_DAYS": "3", "INGEST_LATE_DAYS": "4"}),
-		"zero raw window under the late window": base(map[string]string{"RETENTION_RAW_DAYS": "0"}),
-		"negative archived_days":                base(map[string]string{"RETENTION_ARCHIVED_DAYS": "-1"}),
-		"negative attributes cap":               base(map[string]string{"ATTRIBUTE_VALUES_TOP_N": "-1"}),
-		"negative identities cap":               base(map[string]string{"IDENTITIES_TOP_N": "-1"}),
-		"negative breakdowns max":               base(map[string]string{"ATTRIBUTE_BREAKDOWNS_MAX": "-1"}),
-		"zero form draft days":                  base(map[string]string{"RETENTION_FORMS_DRAFT_DAYS": "0"}),
-		"negative form draft days":              base(map[string]string{"RETENTION_FORMS_DRAFT_DAYS": "-3"}),
-		"zero attribution days":                 base(map[string]string{"ATTRIBUTION_DAYS": "0"}),
-		"attribution days past retention":       base(map[string]string{"RETENTION_DAYS": "30", "ATTRIBUTION_DAYS": "31"}),
-		"bad integer":                           base(map[string]string{"BUFFER_CAPACITY": "many"}),
-		"invalid duration":                      base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
-		"negative cache age":                    base(map[string]string{"REPORTING_CACHE_MAX_AGE": "-1s"}),
-		"negative refresh age":                  base(map[string]string{"REPORTING_REFRESH_MAX_AGE": "-1s"}),
-		"cache age without a unit":              base(map[string]string{"REPORTING_CACHE_MAX_AGE": "900"}),
+		"no database":                     {"DATABASE_DSN": ""},
+		"bad geo scheme":                  base(map[string]string{"GEO_DSN": "???"}),
+		"zero retention days":             base(map[string]string{"RETENTION_DAYS": "0"}),
+		"zero engine children":            base(map[string]string{"ENGINE_MAX_CHILDREN": "0"}),
+		"engine memory not a size":        base(map[string]string{"ENGINE_MEMORY_LIMIT": "lots"}),
+		"engine memory no unit":           base(map[string]string{"ENGINE_MEMORY_LIMIT": "512"}),
+		"late days exceed retention":      base(map[string]string{"RETENTION_DAYS": "30", "INGEST_LATE_DAYS": "45"}),
+		"zero late days":                  base(map[string]string{"INGEST_LATE_DAYS": "0"}),
+		"negative late days":              base(map[string]string{"INGEST_LATE_DAYS": "-1"}),
+		"negative archived_days":          base(map[string]string{"RETENTION_ARCHIVED_DAYS": "-1"}),
+		"zero form draft days":            base(map[string]string{"RETENTION_FORMS_DRAFT_DAYS": "0"}),
+		"negative form draft days":        base(map[string]string{"RETENTION_FORMS_DRAFT_DAYS": "-3"}),
+		"zero attribution days":           base(map[string]string{"ATTRIBUTION_DAYS": "0"}),
+		"attribution days past retention": base(map[string]string{"RETENTION_DAYS": "30", "ATTRIBUTION_DAYS": "31"}),
+		"bad integer":                     base(map[string]string{"BUFFER_CAPACITY": "many"}),
+		"invalid duration":                base(map[string]string{"BUFFER_FLUSH_INTERVAL": "fast"}),
+		"negative cache age":              base(map[string]string{"REPORTING_CACHE_MAX_AGE": "-1s"}),
+		"negative refresh age":            base(map[string]string{"REPORTING_REFRESH_MAX_AGE": "-1s"}),
+		"cache age without a unit":        base(map[string]string{"REPORTING_CACHE_MAX_AGE": "900"}),
 		"refresh exceeds cache": base(map[string]string{
 			"REPORTING_CACHE_MAX_AGE": "1m", "REPORTING_REFRESH_MAX_AGE": "2m"}),
 		"console database not sqlite": base(map[string]string{"CONSOLE_DATABASE_DSN": "/tmp/x.db"}),
@@ -310,38 +282,13 @@ func mapLookup(vars map[string]string) func(string) (string, bool) {
 
 // load is package config's own FromEnv wrapper (above); configtest cannot be
 // imported here without an import cycle (it imports this package).
-func TestEventsRetentionDefaultsAndMaxEventAge(t *testing.T) {
+func TestMaxEventAgeDefault(t *testing.T) {
 	c, err := load(t, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 400 {
-		t.Fatalf("events retention = %+v, want 30/400", c.Retention.Events)
-	}
 	if got := c.MaxEventAge(); got != 24*time.Hour {
 		t.Fatalf("MaxEventAge = %v, want the 1-day late window", got)
-	}
-}
-
-func TestEventsRetentionFromEnv(t *testing.T) {
-	c, err := load(t, map[string]string{
-		"RETENTION_RAW_DAYS": "14", "RETENTION_AGGREGATE_DAYS": "90"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.Retention.Events.RawDays != 14 || c.Retention.Events.AggregateDays != 90 {
-		t.Fatalf("events retention = %+v", c.Retention.Events)
-	}
-	if got := c.MaxEventAge(); got != 24*time.Hour {
-		t.Fatalf("MaxEventAge = %v, want the 1-day late window, not the raw window", got)
-	}
-}
-
-func TestRejectsNegativeEventsRetention(t *testing.T) {
-	for _, k := range []string{"RETENTION_RAW_DAYS", "RETENTION_AGGREGATE_DAYS"} {
-		if _, err := load(t, map[string]string{k: "-1"}); err == nil {
-			t.Errorf("%s=-1 accepted", k)
-		}
 	}
 }
 
@@ -354,8 +301,8 @@ func TestOldRetentionNamesHaveNoEffect(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Retention.Events.RawDays != 30 || c.Retention.Events.AggregateDays != 400 {
-		t.Fatalf("old names changed retention: %+v", c.Retention.Events)
+	if c.Retention.Days != 400 {
+		t.Fatalf("old names changed retention: %+v", c.Retention)
 	}
 }
 
@@ -649,21 +596,19 @@ func TestTokenLoginInsecure(t *testing.T) {
 
 func TestRenamedVariablesRefuse(t *testing.T) {
 	for old, repl := range map[string]string{
-		"LISTEN_ADDR":                     "INGEST_ADDR",
-		"PUBLIC_URL":                      "INGEST_URL",
-		"API_ADDR":                        "CONSOLE_ADDR",
-		"API_URL":                         "CONSOLE_URL",
-		"API_AUTH_DSN":                    "CONSOLE_AUTH_DSN",
-		"API_DB_PATH":                     "CONSOLE_DATABASE_DSN (sqlite://<path>)",
-		"CONSOLE_DB_PATH":                 "CONSOLE_DATABASE_DSN (sqlite://<path>)",
-		"API_QUERY_TIMEOUT":               "CONSOLE_QUERY_TIMEOUT",
-		"API_QUERY_MAX_ROWS":              "CONSOLE_QUERY_ROWS_MAX",
-		"CONSOLE_QUERY_MAX_ROWS":          "CONSOLE_QUERY_ROWS_MAX",
-		"RETENTION_EVENTS_RAW_DAYS":       "RETENTION_RAW_DAYS",
-		"RETENTION_EVENTS_AGGREGATE_DAYS": "RETENTION_AGGREGATE_DAYS",
-		"FORMS_DRAFT_DAYS":                "RETENTION_FORMS_DRAFT_DAYS",
-		"REPORTING_CACHE_SECONDS":         "REPORTING_CACHE_MAX_AGE (a duration: 900 is 15m)",
-		"REPORTING_REFRESH_SECONDS":       "REPORTING_REFRESH_MAX_AGE (a duration: 60 is 1m)",
+		"LISTEN_ADDR":               "INGEST_ADDR",
+		"PUBLIC_URL":                "INGEST_URL",
+		"API_ADDR":                  "CONSOLE_ADDR",
+		"API_URL":                   "CONSOLE_URL",
+		"API_AUTH_DSN":              "CONSOLE_AUTH_DSN",
+		"API_DB_PATH":               "CONSOLE_DATABASE_DSN (sqlite://<path>)",
+		"CONSOLE_DB_PATH":           "CONSOLE_DATABASE_DSN (sqlite://<path>)",
+		"API_QUERY_TIMEOUT":         "CONSOLE_QUERY_TIMEOUT",
+		"API_QUERY_MAX_ROWS":        "CONSOLE_QUERY_ROWS_MAX",
+		"CONSOLE_QUERY_MAX_ROWS":    "CONSOLE_QUERY_ROWS_MAX",
+		"FORMS_DRAFT_DAYS":          "RETENTION_FORMS_DRAFT_DAYS",
+		"REPORTING_CACHE_SECONDS":   "REPORTING_CACHE_MAX_AGE (a duration: 900 is 15m)",
+		"REPORTING_REFRESH_SECONDS": "REPORTING_REFRESH_MAX_AGE (a duration: 60 is 1m)",
 	} {
 		env := map[string]string{"DATABASE_DSN": "sqlite:///tmp/x.db", old: "x"}
 		_, err := FromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
@@ -821,38 +766,57 @@ func TestConsoleURLIsTheResourceDefault(t *testing.T) {
 	}
 }
 
-// TestLateDaysWithinDefaultRawWindow: the late window alone is set, the
-// raw window keeps its default 30, so any value from 1 to 30 loads.
-func TestLateDaysWithinDefaultRawWindow(t *testing.T) {
-	for _, v := range []string{"1", "7", "30"} {
-		c, err := load(t, map[string]string{"INGEST_LATE_DAYS": v})
-		if err != nil {
+// TestLateDaysWithinDefaultRetention: the late window alone is set, the
+// retention keeps its default 400, so any value from 1 to 400 loads.
+func TestLateDaysWithinDefaultRetention(t *testing.T) {
+	for _, v := range []string{"1", "7", "400"} {
+		if _, err := load(t, map[string]string{"INGEST_LATE_DAYS": v}); err != nil {
 			t.Fatalf("INGEST_LATE_DAYS=%s: %v", v, err)
-		}
-		if c.Retention.Events.RawDays != 30 {
-			t.Errorf("RawDays = %d, want the default 30", c.Retention.Events.RawDays)
 		}
 	}
 }
 
-// TestLateDaysMessageNamesBothVariables: a window larger than the raw
-// window is refused by name, so the operator knows which to change.
-func TestLateDaysMessageNamesBothVariables(t *testing.T) {
-	_, err := load(t, map[string]string{"RETENTION_RAW_DAYS": "3", "INGEST_LATE_DAYS": "4"})
-	if err == nil || !strings.Contains(err.Error(), "INGEST_LATE_DAYS") || !strings.Contains(err.Error(), "RETENTION_RAW_DAYS") {
-		t.Errorf("err = %v, want a refusal naming INGEST_LATE_DAYS and RETENTION_RAW_DAYS", err)
+// TestLateDaysWithinRetentionDays: a window larger than the files'
+// retention is refused by name, so the operator knows which to change.
+func TestLateDaysWithinRetentionDays(t *testing.T) {
+	_, err := load(t, map[string]string{"RETENTION_DAYS": "30", "INGEST_LATE_DAYS": "45"})
+	if err == nil {
+		t.Fatal("INGEST_LATE_DAYS=45 with RETENTION_DAYS=30 accepted")
+	}
+	for _, want := range []string{"INGEST_LATE_DAYS (45)", "RETENTION_DAYS (30)"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("err = %v, want it to name %q", err, want)
+		}
+	}
+	if _, err := load(t, map[string]string{"RETENTION_DAYS": "30", "INGEST_LATE_DAYS": "30"}); err != nil {
+		t.Errorf("INGEST_LATE_DAYS equal to RETENTION_DAYS refused: %v", err)
 	}
 }
 
 // TestMaxEventAgeIsTheLateWindow: the clamp follows the late window, not
-// the raw window, so raising RETENTION_RAW_DAYS moves no clamp.
+// the retention.
 func TestMaxEventAgeIsTheLateWindow(t *testing.T) {
-	c, err := load(t, map[string]string{"INGEST_LATE_DAYS": "2", "RETENTION_RAW_DAYS": "400"})
+	c, err := load(t, map[string]string{"INGEST_LATE_DAYS": "2", "RETENTION_DAYS": "400"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if c.MaxEventAge() != 48*time.Hour {
 		t.Errorf("MaxEventAge = %v, want 48h", c.MaxEventAge())
+	}
+}
+
+// The variables raw-first PR 6 retired are ignored like any unknown
+// one, whatever their value: an old env file still boots.
+func TestRetiredVariablesAreIgnored(t *testing.T) {
+	c, err := load(t, map[string]string{
+		"IDENTITIES_TOP_N": "-1", "RETENTION_EVENTS_AGGREGATE_DAYS": "90", "RETENTION_RAW_DAYS": "0",
+		"RETENTION_AGGREGATE_DAYS": "60", "RETENTION_EVENTS_RAW_DAYS": "14",
+		"ATTRIBUTE_VALUES_TOP_N": "200", "ATTRIBUTE_BREAKDOWNS_MAX": "7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Retention.Days != DefaultRetentionDays {
+		t.Errorf("Retention.Days = %d, want %d", c.Retention.Days, DefaultRetentionDays)
 	}
 }
 

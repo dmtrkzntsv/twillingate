@@ -24,8 +24,8 @@ interface Props {
 }
 
 /**
- * One project at a glance: freshness, 30 days of events, size, keys and
- * attributes; and, when it has forms, how many, the drafts among them and
+ * One project at a glance: freshness, 30 days of events, size and keys;
+ * and, when it has forms, how many, the drafts among them and
  * the submissions not read yet, a link to its Forms tab.
  */
 export default function ProjectCard({ project, stats, keys, statsFailed, activity }: Props) {
@@ -33,7 +33,6 @@ export default function ProjectCard({ project, stats, keys, statsFailed, activit
   const live = last !== null && last !== undefined && Date.now() - new Date(last).getTime() < DAY
   const total = stats ? stats.totals.views + stats.totals.events + stats.totals.measures : undefined
   const active = keys?.filter((k) => k.state === 'active').length
-  const attrs = project.attributes?.length ?? 0
   return (
     <Card role="article" aria-label={project.name} className="relative gap-3 py-4 transition-colors hover:border-primary/40">
       <CardHeader className="flex flex-row items-start justify-between gap-2 px-4">
@@ -55,7 +54,6 @@ export default function ProjectCard({ project, stats, keys, statsFailed, activit
           {[
             stats ? (stats.size ? formatBytes(stats.size.total_bytes) : 'size not measured yet') : '—',
             active === undefined ? '—' : `${active} active ${active === 1 ? 'key' : 'keys'}`,
-            `${attrs} ${attrs === 1 ? 'attribute' : 'attributes'}`,
           ].join(' · ')}
         </p>
         {activity && activity.forms > 0 && <FormsLine projectId={project.project_id} activity={activity} />}

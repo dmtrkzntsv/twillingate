@@ -126,7 +126,6 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     data: {
       name: `phone-${Date.now()} - longer than a phone is wide on one line`,
       allowed_origins: ['https://www.a-long-subdomain.example.com', 'https://billing-test.another-long-subdomain.example.com'],
-      attributes: ['months_since_signup_with_a_long_key'],
     },
   })
   expect(created.ok(), await created.text()).toBeTruthy()

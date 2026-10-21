@@ -72,7 +72,7 @@ func hostTemplate(t *testing.T) string {
 		ctx := context.Background()
 		for _, name := range []string{"blog", "docs"} {
 			if _, err := st.CreateProject(ctx, store.RegistryProject{
-				Name: name, AllowedOrigins: "[]", Attributes: "[]"},
+				Name: name, AllowedOrigins: "[]"},
 				store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
 				t.Fatal(err)
 			}
@@ -83,81 +83,7 @@ func hostTemplate(t *testing.T) string {
 				t.Fatal(err)
 			}
 		}
-		seed(`INSERT INTO agg_views_daily (project_id, day, kind, visitors, views, sessions, bounces, duration_sec)
-		      VALUES (1,'2026-08-20','web',10,25,12,3,600), (1,'2026-08-21','web',12,30,14,4,720),
-		             (1,'2026-08-20','app',6,20,8,0,480)`)
-		seed(`INSERT INTO agg_views_paths (project_id, day, path, visitors, views)
-		      VALUES (1,'2026-08-20','/post-1',8,15), (1,'2026-08-20','/post-2',4,10), (1,'2026-08-20','/settings',5,12)`)
-		seed(`INSERT INTO agg_views_hosts (project_id, day, host, visitors, views)
-		      VALUES (1,'2026-08-20','blog.example.com',9,20), (1,'2026-08-20','shop.example.com',3,5)`)
-		seed(`INSERT INTO agg_views_utm (project_id, day, utm_source, utm_medium, utm_campaign, visitors, views)
-		      VALUES (1,'2026-08-20','newsletter','email','august',6,9)`)
-		seed(`INSERT INTO agg_views_os (project_id, day, os, os_version, visitors, views)
-		      VALUES (1,'2026-08-20','ios','17.4',5,12), (1,'2026-08-20','windows','',7,13)`)
-		seed(`INSERT INTO agg_views_browsers (project_id, day, browser, browser_version, visitors, views)
-		      VALUES (1,'2026-08-20','chrome','126',7,13)`)
-		seed(`INSERT INTO agg_views_app_versions (project_id, day, platform, app_version, visitors, views)
-		      VALUES (1,'2026-08-20','ios','2.4.1',5,12)`)
-		seed(`INSERT INTO agg_views_platforms (project_id, day, platform, visitors, views)
-		      VALUES (1,'2026-08-20','web',10,25), (1,'2026-08-20','ios',6,20)`)
-		seed(`INSERT INTO agg_views_devices (project_id, day, device, device_model, visitors, views)
-		      VALUES (1,'2026-08-20','desktop','',7,13), (1,'2026-08-20','unknown','iPhone15,3',5,12)`)
-		seed(`INSERT INTO agg_views_countries (project_id, day, country, visitors, views)
-		      VALUES (1,'2026-08-20','US',12,25)`)
-		seed(`INSERT INTO agg_views_displays (project_id, day, display, visitors, views)
-		      VALUES (1,'2026-08-20','1920x1080',6,11)`)
-		seed(`INSERT INTO agg_views_locales (project_id, day, browser_locale, app_locale, visitors, views)
-		      VALUES (1,'2026-08-20','de-DE','en',2,4)`)
-		seed(`INSERT INTO agg_views_consent (project_id, day, consent, visitors, views)
-		      VALUES (1,'2026-08-20','given',3,6)`)
-		seed(`INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, user_id, path, consent, family, event_name)
-		      VALUES ('h1',1,'2026-08-26T10:00:00Z','2026-08-26','2026-08-26T10:00:00Z','web','a1','user','u1','/live',1,'views','$page_view')`)
-		seed(`INSERT INTO agg_product_daily (project_id, day, event_name, count, unique_users)
-		      VALUES (1,'2026-08-20','signup',5,4)`)
-		seed(`INSERT INTO agg_product_totals (project_id, day, total_events, active_users)
-		      VALUES (1,'2026-08-20',5,4)`)
-		seed(`INSERT INTO agg_retention (project_id, actor_kind, cohort_day, day_offset, actors)
-		      VALUES (1,'user','2026-08-01',0,10), (1,'user','2026-08-01',7,4)`)
-		seed(`INSERT INTO agg_identity_daily (project_id, day, kind, id, actors, users, views, events)
-		      VALUES (1,'2026-08-20','user','u1',1,1,5,2)`)
-		seed(`INSERT INTO identities (project_id, kind, id, name) VALUES (1,'user','u1','Jane Doe')`)
-		seed(`INSERT INTO agg_identity_daily (project_id, day, kind, id, actors, users, views, events)
-		      VALUES (1,'2026-08-20','group','g1',1,0,5,2)`)
-		seed(`INSERT INTO identities (project_id, kind, id, name) VALUES (1,'group','g1','Acme Inc')`)
-		// attributes declared for blog only: docs stays at the default (no
-		// attributes declared), which TestProductAttributesReturnsEmptyForUndeclared
-		// depends on. Rollups are unconditional now (no enabled flag).
-		seed(`INSERT INTO project_attributes (project_id, key, breakdown) VALUES (1, 'plan', 1)`)
 		seed(`UPDATE projects SET allowed_origins = '["https://blog.example.com"]' WHERE id=1`)
-		// One row rolled up before migration 016 (unique_groups NULL, "not
-		// measured") and one after, so the tool is seen to carry both.
-		seed(`INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups)
-		      VALUES (1,'2026-08-20','signup','plan','pro',3,3,NULL),
-		             (1,'2026-08-21','signup','plan','team',2,2,2)`)
-		// Measures: an aggregated day (2026-08-20, checkout_api/time and an
-		// all-zero $cls/number) plus a live day (2026-08-21, written through
-		// WriteEvents like real ingest) that TestMeasures* combines with it.
-		// The $browser attrs rows plus the live rows' own browser column
-		// exercise attr_key breakdown across both halves.
-		seed(`INSERT INTO agg_measures_daily (project_id, day, event_name, measure, bucket, samples, weight, sum)
-		      VALUES (1,'2026-08-20','checkout_api','time',135,2,2,400),
-		             (1,'2026-08-20','$cls','number',-1000,3,3,0)`)
-		seed(`INSERT INTO agg_measures_attrs (project_id, day, event_name, measure, attr_key, attr_value, bucket, samples, weight, sum)
-		      VALUES (1,'2026-08-20','checkout_api','time','$browser','chrome',135,1,1,200),
-		             (1,'2026-08-20','checkout_api','time','$browser','firefox',135,1,1,200)`)
-		checkoutValue, clsValue := 300.0, 0.0
-		if err := st.WriteEvents(ctx, []store.Event{
-			{ID: "0190dddd-0000-7000-8000-000000000001", ProjectID: 1, Family: store.FamilyMeasures,
-				EventName: "checkout_api", TS: time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC),
-				ActorID: "a1", ActorKind: "user", Browser: "chrome",
-				Value: &checkoutValue, Measure: store.MeasureTime, SampleRate: 1},
-			{ID: "0190dddd-0000-7000-8000-000000000002", ProjectID: 1, Family: store.FamilyMeasures,
-				EventName: "$cls", TS: time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC),
-				ActorID: "a1", ActorKind: "user", Browser: "chrome",
-				Value: &clsValue, Measure: store.MeasureNumber, SampleRate: 1},
-		}); err != nil {
-			t.Fatal(err)
-		}
 
 		raw := filepath.Join(dir, "raw")
 		if err := writeHostFiles(ctx, filepath.Join(dir, "engine"), raw); err != nil {
@@ -208,7 +134,7 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	}
 	t.Cleanup(func() { st.Close() })
 	ctx := context.Background()
-	db, err := readsql.Open(path, 5*time.Second, 1000, CustomSQLRefused()...)
+	db, err := readsql.Open(path, 5*time.Second, 1000)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,14 +151,15 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	}
 	files := newHostFiles(t, reg)
 	h := &host{db: db, subs: subs, reg: reg, ops: manage.NewOps(reg, st), files: files.reader,
+		eventsDir: files.dir, queryTimeout: 5 * time.Second, queryRows: 1000,
 		rep:       reporting.New(st, files, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example"}),
-		ingestURL: "https://collector.test", logger: logger, rawDays: config.DefaultRawDays,
-		limits: limitsFrom(&config.Config{AttributeValuesTopN: config.DefaultAttributeValuesTopN, IdentitiesTopN: config.DefaultIdentitiesTopN})}
+		ingestURL: "https://collector.test", logger: logger, limits: limitsFrom(&config.Config{})}
 	// host itself carries no path (production has no need for one once
 	// opened); setGuards needs it to reopen with different guards, so the
 	// test side remembers it here, keyed by the host it belongs to.
 	testDBPaths[h] = path
-	h.raw = h.newHostRawCount()
+	h.events = h.newHostEventCount()
+	h.ops.Presence = hostPresence{files}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "analytics", Version: "test"},
 		&mcp.ServerOptions{Instructions: serverInstructions})
@@ -262,7 +189,7 @@ func seedDB(t *testing.T) string {
 		t.Fatal(err)
 	}
 	if _, err := st.CreateProject(context.Background(), store.RegistryProject{
-		Name: "My blog", AllowedOrigins: "[]", Attributes: "[]"},
+		Name: "My blog", AllowedOrigins: "[]"},
 		store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
 		t.Fatal(err)
 	}
@@ -275,23 +202,23 @@ func seedDB(t *testing.T) string {
 // newTestHost. Production's host carries no such field.
 var testDBPaths = map[*host]string{}
 
-// setGuards reopens h's database with a different timeout and/or row cap
-// for one test — host carries neither directly, only the readsql.DB does
-// (readsql.DB.Timeout/MaxRows) — and closes the replaced handle on
+// setGuards sets h's timeout and row cap for one test: the event files'
+// (queryTimeout, queryRows), and SQLite's, by reopening h's database with
+// them (readsql.DB.Timeout/MaxRows) and closing the replaced handle on
 // cleanup. h.register already bound its tool methods to h itself, so
-// swapping h.db here is visible to the next tool call.
+// swapping them here is visible to the next tool call.
 func setGuards(t *testing.T, h *host, timeout time.Duration, maxRows int) {
 	t.Helper()
 	path, ok := testDBPaths[h]
 	if !ok {
 		t.Fatal("setGuards: h was not built by newTestHost")
 	}
-	db, err := readsql.Open(path, timeout, maxRows, CustomSQLRefused()...)
+	db, err := readsql.Open(path, timeout, maxRows)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { db.Close() })
-	h.db = db
+	h.db, h.queryTimeout, h.queryRows = db, timeout, maxRows
 }
 
 // newTestRegistrar registers h's operations on a fresh MCP server and REST

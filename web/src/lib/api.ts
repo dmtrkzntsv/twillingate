@@ -252,7 +252,6 @@ export interface Project {
   /** When it was archived (RFC 3339); absent while live. */
   archived_at?: string
   allowed_origins: string[]
-  attributes?: string[]
 }
 
 export interface IngestKey {
@@ -289,11 +288,10 @@ export interface WidgetShare {
   archived_at: string | null
 }
 
-export type CapSetting = 'ATTRIBUTE_VALUES_TOP_N' | 'IDENTITIES_TOP_N'
 
 /** A limit in force: a setting (with its environment variable and default) or one of the wire format's fixed limits. */
 export interface Limit {
-  group: 'retention' | 'caps' | 'ingest'
+  group: 'retention' | 'ingest'
   name: string
   /** Absent for a fixed limit. */
   setting?: string
@@ -303,43 +301,26 @@ export interface Limit {
   default?: number
   /** Absent for a count or a plain number. */
   unit?: 'days' | 'bytes' | 'characters' | 'seconds'
-  /** What 0 means when it is not the number: no cap, kept forever. */
+  /** What 0 means when it is not the number: kept forever. */
   zero?: string
   description: string
 }
 
-/** The raw events the server stores now, of every family and project, in its raw window (RETENTION_RAW_DAYS). */
-export interface RawEvents {
-  held: number
-  window_days: number
+/** The events in the event files from `from` through `to` (the 30 days ending today, UTC), of every family and project. */
+export interface Events30d {
+  count: number
+  from: string
+  to: string
 }
 
 /**
- * The limits answer: the limits in force, the raw events held (absent when the server could not count them), and
- * whether INGEST_DISABLED refuses every ingest route (absent from a server older than the switch).
+ * The limits answer: the limits in force, the events of the last 30 days (absent when the server could not count
+ * them), and whether INGEST_DISABLED refuses every ingest route (absent from a server older than the switch).
  */
 export interface LimitsResponse {
   limits: Limit[]
-  raw_events?: RawEvents
+  events_30d?: Events30d
   ingest_disabled?: boolean
-}
-
-export interface CapUsageRow {
-  setting: CapSetting
-  dimension: string
-  cap: number
-  max_values_per_day: number
-  max_day: string
-  days: number
-  days_capped: number
-  folded_share: number | null
-}
-
-export interface CapUsage {
-  project_id: number
-  from: string
-  to: string
-  dimensions: CapUsageRow[]
 }
 
 export interface UsageDay {
@@ -347,28 +328,20 @@ export interface UsageDay {
   views: number
   events: number
   measures: number
-  /** The project's size as the daily pass measured it that day; null on a day not measured. */
+  /** The project's event file bytes as the daily pass measured them that day; null on a day not measured. */
   total_bytes: number | null
-  /** Declared attributes on a day the daily pass measured; null otherwise. */
-  declared_attributes: number | null
-  /** Distinct attribute keys and key/value pairs received, and values folded into (other): counted the night after, null until then. */
-  attribute_keys: number | null
-  attribute_values: number | null
-  attribute_values_folded: number | null
 }
 
 export interface ProjectUsage {
   project_id: number
   series: UsageDay[]
   totals: { views: number; events: number; measures: number }
+  /** When the newest event in the project's files arrived, whatever the range; null with none. */
   last_received_at: string | null
+  /** The oldest day the project's event files hold; null with none. */
   first_day: string | null
-  raw_days: number
-  rolled_up_days: number
-  /** The latest the daily pass measured (it also runs at start), measured_at a UTC day; null until the first measurement. */
-  size: { raw_bytes: number; aggregate_bytes: number; total_bytes: number; measured_at: string } | null
-  /** Only computed for one project (asked with project_id); null in the all-projects answer. */
-  unused_attributes: string[] | null
+  /** The event file bytes the daily pass last measured (it also runs at start), measured_at a UTC day; null until the first measurement. */
+  size: { total_bytes: number; measured_at: string } | null
 }
 
 export interface UsageResponse {
@@ -383,7 +356,6 @@ export interface UsageResponse {
 export interface CreateProjectBody {
   name: string
   allowed_origins?: string[]
-  attributes?: string[]
 }
 
 export interface CreatedProject {
@@ -424,28 +396,27 @@ export interface EventName {
 }
 
 /**
- * One attribute key of a project over a range, with the rules on it. `max_values` is null before the nightly count.
- * `$` keys are listed too: they take a breakdown, never a rule.
+ * One attribute key of a project over a range, read from the event files, with the rules on it.
+ * `$` keys are listed too; rules cover custom keys only.
  */
 export interface ProjectAttribute {
   key: string
-  /** As the daily pass counted them: today's arrive the night after, so a key first received today has 0. */
+  /** Product events and measures that carried it over the range. */
   events: number
-  max_values: number | null
-  /** Whether any event in the range carried it; false for a breakdown, blocked key or rename target none carried. */
+  /** Its distinct values over the range. */
+  values: number
+  /** Whether any event in the range carried it; false for a blocked key or rename target none carried. */
   received: boolean
-  /** Whether the project breaks the key down (its `attributes`). */
-  breakdown: boolean
-  /** Whether a block rule strips it from events as they arrive. */
+  /** Whether a block rule hides it from every read. */
   blocked: boolean
   /** The keys renamed or merged into this one; absent when there are none. */
   aliases?: string[]
 }
 
 /**
- * A project's attribute keys over a range, busiest first, with the breakdown budget (`breakdowns_max` 0 is no limit).
- * `attributes` holds the 500 busiest received keys, every breakdown, every blocked key and every rename target;
- * `keys_total` counts every key received, keys renamed away left out.
+ * A project's attribute keys over a range (at most 92 days), busiest first:
+ * `attributes` holds the 500 busiest received keys and every key a rule names;
+ * `keys_total` counts every key received.
  */
 export interface ProjectAttributes {
   project_id: number
@@ -453,9 +424,6 @@ export interface ProjectAttributes {
   to: string
   attributes: ProjectAttribute[]
   keys_total: number
-  values_cap: number
-  breakdowns_used: number
-  breakdowns_max: number
 }
 
 /** An attribute rule: `key` is stored as `to` as it arrives, or (a block, no `to`) stripped from events. */
@@ -686,23 +654,22 @@ export const endpoints = {
   eventRules: (id: number) => api<{ rules: EventRule[] }>(`/api/projects/${id}/event-rules`),
   eventNames: (id: number, q: RangeQuery) => api<{ events: EventName[] }>(`/api/projects/${id}/event-names${toQuery(q)}`),
   renameEvent: (id: number, body: { family: EventFamily; from: string; to: string }) =>
-    api<{ rule: EventRule; rewritten: Record<string, number> }>(`/api/projects/${id}/event-rules/rename`, json('POST', body)),
+    api<{ rule: EventRule }>(`/api/projects/${id}/event-rules/rename`, json('POST', body)),
   mergeEvent: (id: number, body: { family: EventFamily; from: string; to: string }) =>
-    api<{ rule: EventRule; rewritten: Record<string, number> }>(`/api/projects/${id}/event-rules/merge`, json('POST', body)),
+    api<{ rule: EventRule }>(`/api/projects/${id}/event-rules/merge`, json('POST', body)),
   blockEvent: (id: number, body: { family: EventFamily; name: string }) =>
     api<{ rule: EventRule }>(`/api/projects/${id}/event-rules/block`, json('POST', body)),
   removeEventRule: (id: number, body: { family: EventFamily; name: string }) =>
     api<{ status: string }>(`/api/projects/${id}/event-rules/remove`, json('POST', body)),
   listAttributes: (id: number, q: RangeQuery) => api<ProjectAttributes>(`/api/projects/${id}/attributes${toQuery(q)}`),
   renameAttribute: (id: number, body: { from: string; to: string }) =>
-    api<{ rule: AttributeRule; rewritten: Record<string, number> }>(`/api/projects/${id}/attribute-rules/rename`, json('POST', body)),
+    api<{ rule: AttributeRule }>(`/api/projects/${id}/attribute-rules/rename`, json('POST', body)),
   mergeAttribute: (id: number, body: { from: string; to: string }) =>
-    api<{ rule: AttributeRule; rewritten: Record<string, number> }>(`/api/projects/${id}/attribute-rules/merge`, json('POST', body)),
+    api<{ rule: AttributeRule }>(`/api/projects/${id}/attribute-rules/merge`, json('POST', body)),
   blockAttribute: (id: number, body: { key: string }) =>
     api<{ rule: AttributeRule }>(`/api/projects/${id}/attribute-rules/block`, json('POST', body)),
   removeAttributeRule: (id: number, body: { key: string }) =>
     api<{ status: string }>(`/api/projects/${id}/attribute-rules/remove`, json('POST', body)),
-  capUsage: (id: number, q: RangeQuery) => api<CapUsage>(`/api/projects/${id}/cap-usage${toQuery(q)}`),
   widgetShares: (q: { widget_id?: number; state?: ShareState }) => api<{ shares: WidgetShare[] }>(`/api/widget-shares${toQuery(q)}`),
   // No Content-Type here: the browser sets multipart/form-data with its boundary for a FormData body.
   createWidgetShare: (form: FormData) => api<WidgetShare>('/api/widget-shares', { method: 'POST', body: form }),

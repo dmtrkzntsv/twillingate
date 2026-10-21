@@ -8,13 +8,12 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { Switch } from '@/components/ui/switch'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { Project } from '@/lib/api'
 import { attributesQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import AliasDialog from './AliasDialog'
-import { describeKey, usedLabel } from './breakdowns'
+import { describeKey } from './attributes'
 import LoadError from './LoadError'
 import MergeDialog from './MergeDialog'
 import RenameDialog from './RenameDialog'
@@ -24,11 +23,7 @@ interface Props {
   project: Project
   /** The range the page shows: what each key received in it. */
   range: { from: string; to: string }
-  /** RETENTION_RAW_DAYS, for the block dialog. */
-  rawDays?: number
   pending?: boolean
-  /** Saves the project's whole new breakdown list; resolves true when saved. */
-  onSaveBreakdowns: (attributes: string[]) => Promise<boolean>
   /** Each resolves true when done; a refusal is already toasted (except a rename's 'conflict', which points to merging). */
   onRename: (body: { from: string; to: string }) => Promise<boolean | 'conflict'>
   onMerge: (body: { from: string; to: string }) => Promise<boolean>
@@ -39,46 +34,47 @@ interface Props {
 
 const copy = ruleCopy('attribute')
 
+/** list_attributes covers at most this many days (both ends counted) a call. */
+const MAX_DAYS = 92
+
+/** The last MAX_DAYS days of the range: the whole of it when it fits. */
+function clampRange(range: { from: string; to: string }): { from: string; to: string } {
+  const earliest = new Date(Date.parse(`${range.to}T00:00:00Z`) - (MAX_DAYS - 1) * 86_400_000).toISOString().slice(0, 10)
+  return range.from < earliest ? { from: earliest, to: range.to } : range
+}
+
 /**
  * A project's attribute keys over the range, busiest first, each with what it
- * received, its breakdown switch and the rules on it: rename, merge and block
- * (both confirmed) and unblock, aliases added and removed. A `$` key takes
- * the switch only: rules cover custom keys.
+ * received and the rules on it: rename, merge and block (both confirmed) and
+ * unblock, aliases added and removed. Every key breaks down in the event
+ * files, so there is nothing to switch on; rules cover custom keys, so a `$`
+ * key has no menu.
  */
-export default function AttributesSection({ project, range, rawDays, pending, onSaveBreakdowns, onRename, onMerge, onBlock, onRemove, onAddAlias }: Props) {
+export default function AttributesSection({ project, range, pending, onRename, onMerge, onBlock, onRemove, onAddAlias }: Props) {
   // The keys outlive their dialogs' close animations, so a title does not flash "Block undefined?".
   const [renaming, setRenaming] = useState<{ key: string; open: boolean } | null>(null)
   const [merging, setMerging] = useState<{ key: string; open: boolean } | null>(null)
   const [blocking, setBlocking] = useState<{ key: string; open: boolean } | null>(null)
   const [aliasing, setAliasing] = useState<{ key: string; open: boolean } | null>(null)
   const [unaliasing, setUnaliasing] = useState<{ key: string; to: string; open: boolean } | null>(null)
-  const [unbreaking, setUnbreaking] = useState<{ key: string; open: boolean } | null>(null)
-  const { data, error, refetch } = useQuery(attributesQuery(project.project_id, range))
+  const asked = clampRange(range)
+  const clamped = asked.from !== range.from
+  const { data, error, refetch } = useQuery(attributesQuery(project.project_id, asked))
   const rows = data?.attributes ?? []
-  // The saved list is built from what the switches show: every breakdown key
-  // is always listed, so the rows hold them all, and a key switched on twice
-  // before the list refetches is sent once.
-  const breakdowns = rows.filter((r) => r.breakdown).map((r) => r.key)
-  const atLimit = data !== undefined && data.breakdowns_max > 0 && data.breakdowns_used >= data.breakdowns_max
-  const budget = data ? usedLabel(data.breakdowns_used, data.breakdowns_max) : ''
   // The server lists only the busiest received keys; say so when it left some out.
   const receivedListed = rows.filter((r) => r.received).length
   // What a rename or alias must know: the keys with data, and the blocked ones.
   const taken = rows.filter((r) => r.received).map((r) => r.key)
   const blocked = rows.filter((r) => r.blocked).map((r) => r.key)
   const target = (k: string | undefined) => (k === undefined ? null : { name: k })
-  const toggle = (key: string, on: boolean) => {
-    if (on) void onSaveBreakdowns([...new Set([...breakdowns, key])])
-    else setUnbreaking({ key, open: true })
-  }
   return (
     <section aria-label="Attributes" className="flex flex-col gap-3 rounded-lg border p-4">
       <header>
-        <h2 className="text-base font-semibold">
-          Attributes
-          {data && <span className="text-sm font-normal text-muted-foreground"> · {budget}</span>}
-        </h2>
+        <h2 className="text-base font-semibold">Attributes</h2>
       </header>
+      {clamped && (
+        <p className="text-xs text-muted-foreground">Showing the last {MAX_DAYS} days of the range ({asked.from} to {asked.to}).</p>
+      )}
       {data && rows.length === 0 && <p className="text-sm text-muted-foreground">No attributes received in this range.</p>}
       {rows.length > 0 && (
         <Table>
@@ -86,14 +82,13 @@ export default function AttributesSection({ project, range, rawDays, pending, on
             <TableRow>
               <TableHead>Attribute</TableHead>
               <TableHead className="hidden sm:table-cell">Received</TableHead>
-              <TableHead>Breakdown</TableHead>
               <TableHead />
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((r) => {
               const aliases = r.aliases ?? []
-              const received = describeKey(r, data?.values_cap ?? 0)
+              const received = describeKey(r)
               const custom = !r.key.startsWith('$')
               return (
                 <TableRow key={r.key} className={cn(r.blocked ? 'bg-destructive/5 hover:bg-destructive/10' : aliases.length > 0 && 'bg-sky-500/5 hover:bg-sky-500/10')}>
@@ -125,15 +120,6 @@ export default function AttributesSection({ project, range, rawDays, pending, on
                   <TableCell className="hidden text-xs whitespace-normal text-muted-foreground sm:table-cell">
                     {received}
                     {r.blocked && <span className="block">no longer stored</span>}
-                  </TableCell>
-                  <TableCell>
-                    <Switch
-                      aria-label={`Break down ${r.key}`}
-                      checked={r.breakdown}
-                      disabled={pending || r.blocked || (!r.breakdown && atLimit)}
-                      title={!r.breakdown && atLimit ? budget : undefined}
-                      onCheckedChange={(on) => toggle(r.key, on)}
-                    />
                   </TableCell>
                   <TableCell className="text-right">
                     {custom && (
@@ -215,25 +201,11 @@ export default function AttributesSection({ project, range, rawDays, pending, on
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="wrap-anywhere">{blocking && copy.block.title({ name: blocking.key })}</AlertDialogTitle>
-            <AlertDialogDescription className="wrap-anywhere">{blocking && copy.block.description({ name: blocking.key }, rawDays)}</AlertDialogDescription>
+            <AlertDialogDescription className="wrap-anywhere">{blocking && copy.block.description({ name: blocking.key })}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={() => { const k = blocking!.key; setBlocking({ key: k, open: false }); void onBlock({ key: k }) }}>{copy.block.action}</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={unbreaking?.open === true} onOpenChange={(o) => !o && setUnbreaking((d) => d && { ...d, open: false })}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="wrap-anywhere">Stop breaking down {unbreaking?.key}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Days already rolled up keep their rows; days rolled up from now on won't have it, and adding it back later won't fill the gap.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { const k = unbreaking!.key; setUnbreaking({ key: k, open: false }); void onSaveBreakdowns(breakdowns.filter((a) => a !== k)) }}>Remove breakdown</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

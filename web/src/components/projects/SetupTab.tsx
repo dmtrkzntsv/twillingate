@@ -4,7 +4,6 @@ import { useSearchParams } from 'react-router'
 import DashboardHeader from '@/components/DashboardHeader'
 import RangeSwitcher from '@/components/RangeSwitcher'
 import AttributesSection from '@/components/projects/AttributesSection'
-import CapImpactSection from '@/components/projects/CapImpactSection'
 import EventsSection from '@/components/projects/EventsSection'
 import KeysSection from '@/components/projects/KeysSection'
 import OriginsSection from '@/components/projects/OriginsSection'
@@ -16,7 +15,7 @@ import {
 import { Button } from '@/components/ui/button'
 import type { ProjectActions } from '@/hooks/use-project-actions'
 import type { DashboardsResponse, Project } from '@/lib/api'
-import { keysQuery, limitsQuery } from '@/lib/queries'
+import { keysQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import { chooseSelection } from '@/lib/selection'
 import { formatPurgeDate } from '@/lib/time'
@@ -31,14 +30,13 @@ interface Props {
 
 /**
  * A project's Settings page (project landing D4): its usage, allowed origins,
- * events, attributes (with their breakdown switches), keys and cap impact,
- * with Archive or Restore. The range is the URL's, which every tab of the
+ * events, attributes and keys, with
+ * Archive or Restore. The range is the URL's, which every tab of the
  * project shares (D8), else 7 days.
  */
 export default function SetupTab({ project, dash, actions }: Props) {
   const id = project.project_id
   const keysQ = useQuery(keysQuery(id))
-  const limits = useQuery(limitsQuery)
   const [url, setURL] = useSearchParams()
   const [archiving, setArchiving] = useState(false)
   const sel = chooseSelection(url, { range: '7d' }, [], { project: false, range: true })
@@ -63,7 +61,6 @@ export default function SetupTab({ project, dash, actions }: Props) {
       <EventsSection
         project={project}
         range={range}
-        rawDays={limits.data?.raw_events?.window_days}
         pending={actions.pending}
         onRename={(body) => actions.renameEvent(id, body)}
         onMerge={(body) => actions.mergeEvent(id, body)}
@@ -74,9 +71,7 @@ export default function SetupTab({ project, dash, actions }: Props) {
       <AttributesSection
         project={project}
         range={range}
-        rawDays={limits.data?.raw_events?.window_days}
         pending={actions.pending}
-        onSaveBreakdowns={(attributes) => actions.update(id, { attributes })}
         onRename={(body) => actions.renameAttribute(id, body)}
         onMerge={(body) => actions.mergeAttribute(id, body)}
         onBlock={(body) => actions.blockAttribute(id, body)}
@@ -92,7 +87,6 @@ export default function SetupTab({ project, dash, actions }: Props) {
         onDisable={(label) => actions.disableKey(id, label)}
         onEnable={(label) => actions.enableKey(id, label)}
       />
-      <CapImpactSection projectId={id} range={range} />
       <AlertDialog open={archiving} onOpenChange={setArchiving}>
         <AlertDialogContent>
           <AlertDialogHeader>

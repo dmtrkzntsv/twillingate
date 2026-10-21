@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -189,27 +188,15 @@ func TestPurgeArchivedDeletesProjectData(t *testing.T) {
 	ctx := context.Background()
 	id := createPurgeableProject(t, db, "app")
 
-	if err := db.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyViews, ID: "e1", ProjectID: id,
-			TS: time.Now(), ReceivedAt: time.Now(),
-			Kind: "web", ActorID: "a", ActorKind: store.ActorConnection, Path: "/"},
-		{Family: store.FamilyProduct, ID: "p1", ProjectID: id, EventName: "signup",
-			TS: time.Now(), ReceivedAt: time.Now(),
-			Kind: "app", ActorID: "a", ActorKind: store.ActorConnection,
-			Attributes: map[string]string{"plan": "pro"}},
-	}); err != nil {
-		t.Fatal(err)
-	}
 	audit := store.AuditEntry{Actor: "test", Action: "attribute.block"}
 	if err := db.BlockAttribute(ctx, id, "email", audit); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := db.RenameAttribute(ctx, id, "tier", "plan", true, audit); err != nil {
+	if err := db.RenameAttribute(ctx, id, "tier", "plan", audit); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.ExecForTest(
-		`INSERT INTO agg_views_daily (project_id, day, kind, visitors, views, sessions, bounces, duration_sec)
-		 VALUES (?, '2026-01-01', 'web', 1, 1, 1, 0, 0)`, id); err != nil {
+		`INSERT INTO usage_history (key, project_id, measured_at, value) VALUES ('file_bytes', ?, '2026-01-01', 1)`, id); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.InsertIngestKey(ctx, store.RegistryKey{Key: "ak_x", ProjectID: id, Label: "web"},
@@ -223,12 +210,9 @@ func TestPurgeArchivedDeletesProjectData(t *testing.T) {
 	}
 
 	for _, q := range []string{
-		`SELECT COUNT(*) FROM events WHERE project_id=?`,
-		`SELECT COUNT(*) FROM agg_views_daily WHERE project_id=?`,
+		`SELECT COUNT(*) FROM usage_history WHERE project_id=?`,
 		`SELECT COUNT(*) FROM ingest_keys WHERE project_id=?`,
 		`SELECT COUNT(*) FROM rules WHERE project_id=?`,
-		`SELECT COUNT(*) FROM project_attributes WHERE project_id=?`,
-		`SELECT COUNT(*) FROM usage_attributes WHERE project_id=?`,
 		`SELECT COUNT(*) FROM projects WHERE id=?`,
 	} {
 		var n int
@@ -383,7 +367,7 @@ func TestPurgeArchivedNeverSelectsWidgetsOnSystemDashboards(t *testing.T) {
 
 // TestPurgeArchivedContinuesPastAFailedItem checks that one item's delete
 // failing does not abort the rest of the pass: a trigger makes one
-// project's events delete fail (rolling back its own transaction only),
+// project's rules delete fail (rolling back its own transaction only),
 // while a second, otherwise identical project must still be purged, and
 // the error for the first must still be reported.
 func TestPurgeArchivedContinuesPastAFailedItem(t *testing.T) {
@@ -395,16 +379,13 @@ func TestPurgeArchivedContinuesPastAFailedItem(t *testing.T) {
 	good := createPurgeableProject(t, db, "good")
 	archiveProjectDaysAgo(t, db, good, 31)
 
-	if err := db.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyViews, ID: "e1", ProjectID: bad, TS: time.Now(), ReceivedAt: time.Now(),
-			Kind: "web", ActorID: "a", ActorKind: store.ActorConnection, Path: "/"},
-	}); err != nil {
+	if err := db.BlockAttribute(ctx, bad, "email", store.AuditEntry{Actor: "test", Action: "attribute.block"}); err != nil {
 		t.Fatal(err)
 	}
-	// Fails only bad's own events delete, so only its purge transaction
+	// Fails only bad's own rules delete, so only its purge transaction
 	// rolls back; good's must still commit.
 	if _, err := db.ExecForTest(fmt.Sprintf(
-		`CREATE TRIGGER fail_bad_events BEFORE DELETE ON events WHEN OLD.project_id = %d
+		`CREATE TRIGGER fail_bad_rules BEFORE DELETE ON rules WHEN OLD.project_id = %d
 		 BEGIN SELECT RAISE(FAIL, 'boom'); END`, bad)); err != nil {
 		t.Fatal(err)
 	}
@@ -471,7 +452,7 @@ func TestPurgeArchivedDeletesGroupNameWithLastDashboard(t *testing.T) {
 	}
 }
 
-func TestPurgeArchivedDeletesAgedFormsWithSubmissionsAndRawEvents(t *testing.T) {
+func TestPurgeArchivedDeletesAgedFormsWithSubmissions(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	mk := func(projectID int64, form, id string) {
@@ -520,12 +501,9 @@ func TestPurgeArchivedDeletesAgedFormsWithSubmissionsAndRawEvents(t *testing.T) 
 	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions`); c != 4 {
 		t.Fatalf("%d submissions left, want 4", c)
 	}
-	// The purged forms' raw events went too; the other two forms' stay.
-	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE event_name='$form_submit'`); c != 2 {
-		t.Fatalf("%d form events left, want 2", c)
-	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE id LIKE '%-old%'`); c != 0 {
-		t.Fatalf("%d events of purged forms left", c)
+	// The purged forms' queued events went with their submissions.
+	if us, err := db.UnloggedEvents(ctx, 100); err != nil || len(us) != 2 {
+		t.Fatalf("unlogged = %+v, %v; want the other two forms' events", us, err)
 	}
 	rows := auditRows(t, db, "form.purge")
 	if len(rows) != 2 {

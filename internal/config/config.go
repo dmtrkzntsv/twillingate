@@ -28,20 +28,10 @@ type BufferConfig struct {
 	Capacity       int
 }
 
-type RetentionClass struct {
-	RawDays       int `json:"raw_days"`
-	AggregateDays int `json:"aggregate_days"`
-}
-
 type Retention struct {
 	// Days (RETENTION_DAYS) is how long the event files under raw/ are kept:
 	// a month file is deleted once its last day is older (raw-first D5).
-	// RawDays and AggregateDays govern SQLite until the files replace it.
 	Days int `json:"days"`
-	// Events is every family's window: raw rows are rolled up and deleted
-	// after RawDays; aggregates, actors, cohorts and identities are kept
-	// AggregateDays.
-	Events RetentionClass `json:"events"`
 	// ArchivedDays is how long an archived project, dashboard or widget
 	// survives before the daily pass deletes it. 0 keeps archived items
 	// forever.
@@ -135,30 +125,10 @@ type ConsoleConfig struct {
 	authErr error
 }
 
-// The caps' defaults (ATTRIBUTE_VALUES_TOP_N, IDENTITIES_TOP_N), sized for
-// an indie site or app. ATTRIBUTE_VALUES_TOP_N is one cap for every
-// client-supplied value, views breakdowns and attributes alike: past the
-// 100th path of a day, real traffic is single crawler hits, and attributes
-// are mostly a handful of values. Identities are dropped past their cap,
-// so theirs sits well above a small app's daily users. The console's
-// limits tool reports them beside the values in force, so they live here
-// rather than as literals in parse.
-//
-// ATTRIBUTE_BREAKDOWNS_MAX: the attributes all active projects may declare
-// together; each is a breakdown with its own aggregate rows.
+// DefaultRetentionDays is RETENTION_DAYS's default (RETENTION_ARCHIVED_DAYS
+// is the archive's own). A little over a year, so a year-on-year comparison
+// still has last year's day.
 const (
-	DefaultAttributeValuesTopN    = 100
-	DefaultAttributeBreakdownsMax = 50
-	DefaultIdentitiesTopN         = 500
-)
-
-// The retention defaults (RETENTION_RAW_DAYS, RETENTION_AGGREGATE_DAYS,
-// RETENTION_ARCHIVED_DAYS, RETENTION_DAYS), reported by the limits tool
-// beside the values in force like the caps'. Aggregates keep a little
-// over a year, so a year-on-year comparison still has last year's day.
-const (
-	DefaultRawDays       = 30
-	DefaultAggregateDays = 400
 	DefaultArchivedDays  = 30
 	DefaultRetentionDays = 400
 )
@@ -184,28 +154,23 @@ type Config struct {
 	IngestDisabled bool
 	// IngestLateDays (INGEST_LATE_DAYS) is how far back a client timestamp
 	// may lie: older ones are clamped to received − IngestLateDays. At most
-	// Retention.Events.RawDays, so a late event never reaches a day the
-	// daily pass has rolled up (raw-first spec, D3).
+	// Retention.Days, so a late event never reaches a day whose file has
+	// been deleted.
 	IngestLateDays int
 	Database       string
 	// EventsDir (EVENTS_DIR) holds the event files (internal/archive):
 	// absolute, beside the database's file as raw/ unless set. The engine
 	// child may read and write all of it, so it never holds the database.
-	EventsDir           string
-	Geo                 string
-	IngestURL           string
-	Log                 LogConfig
-	Buffer              BufferConfig
-	Retention           Retention
-	AttributeValuesTopN int
-	// AttributeBreakdownsMax bounds the attributes all active projects
-	// declare together; 0 is no limit.
-	AttributeBreakdownsMax int
-	IdentitiesTopN         int
-	Forms                  FormsConfig
-	Reporting              ReportingConfig
-	Engine                 EngineConfig
-	Console                ConsoleConfig
+	EventsDir string
+	Geo       string
+	IngestURL string
+	Log       LogConfig
+	Buffer    BufferConfig
+	Retention Retention
+	Forms     FormsConfig
+	Reporting ReportingConfig
+	Engine    EngineConfig
+	Console   ConsoleConfig
 }
 
 // Load builds the configuration from the process environment.
@@ -305,22 +270,9 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			Capacity:       e.num("BUFFER_CAPACITY", 10000),
 		},
 		Retention: Retention{
-			Days: retentionDays,
-			Events: RetentionClass{
-				RawDays:       e.num("RETENTION_RAW_DAYS", DefaultRawDays),
-				AggregateDays: e.num("RETENTION_AGGREGATE_DAYS", DefaultAggregateDays),
-			},
+			Days:         retentionDays,
 			ArchivedDays: e.num("RETENTION_ARCHIVED_DAYS", DefaultArchivedDays),
 		},
-		// Distinct client-supplied *values* per declared attribute key are
-		// capped globally rather than per project (spec: the operator picks
-		// the key, clients pick the values). The same cap holds the values
-		// of each views breakdown, and IDENTITIES_TOP_N the users and groups
-		// a day. Each cap keeps the aggregates, which outlive raw rows, from
-		// growing with a dimension that carries ids; 0 keeps every value.
-		AttributeValuesTopN:    e.num("ATTRIBUTE_VALUES_TOP_N", DefaultAttributeValuesTopN),
-		AttributeBreakdownsMax: e.num("ATTRIBUTE_BREAKDOWNS_MAX", DefaultAttributeBreakdownsMax),
-		IdentitiesTopN:         e.num("IDENTITIES_TOP_N", DefaultIdentitiesTopN),
 		Forms: FormsConfig{DraftDays: e.num("RETENTION_FORMS_DRAFT_DAYS", DefaultFormDraftDays),
 			AttributionDays: e.num("ATTRIBUTION_DAYS", min(DefaultFormAttributionDays, retentionDays))},
 		Reporting: ReportingConfig{
@@ -376,8 +328,6 @@ var renamed = []struct{ old, repl string }{
 	{"API_QUERY_TIMEOUT", "CONSOLE_QUERY_TIMEOUT"},
 	{"API_QUERY_MAX_ROWS", "CONSOLE_QUERY_ROWS_MAX"},
 	{"CONSOLE_QUERY_MAX_ROWS", "CONSOLE_QUERY_ROWS_MAX"},
-	{"RETENTION_EVENTS_RAW_DAYS", "RETENTION_RAW_DAYS"},
-	{"RETENTION_EVENTS_AGGREGATE_DAYS", "RETENTION_AGGREGATE_DAYS"},
 	{"FORMS_DRAFT_DAYS", "RETENTION_FORMS_DRAFT_DAYS"},
 	{"REPORTING_CACHE_SECONDS", "REPORTING_CACHE_MAX_AGE (a duration: 900 is 15m)"},
 	{"REPORTING_REFRESH_SECONDS", "REPORTING_REFRESH_MAX_AGE (a duration: 60 is 1m)"},
@@ -419,30 +369,12 @@ func (c *Config) validate() error {
 			return fmt.Errorf("config: EVENTS_DIR (%s) must not hold the database (%s): the engine can read and write everything in it", c.EventsDir, path)
 		}
 	}
-	// Validate global retention (negative values only)
-	if rc := c.Retention.Events; rc.RawDays < 0 || rc.AggregateDays < 0 {
-		return fmt.Errorf("config: retention days must not be negative: %+v", rc)
-	}
 	if c.IngestLateDays < 1 {
 		return fmt.Errorf("config: INGEST_LATE_DAYS must be at least 1: %d", c.IngestLateDays)
 	}
-	if c.IngestLateDays > c.Retention.Events.RawDays {
-		return fmt.Errorf("config: INGEST_LATE_DAYS (%d) exceeds RETENTION_RAW_DAYS (%d): a late event could land in a day already rolled up",
-			c.IngestLateDays, c.Retention.Events.RawDays)
-	}
-	for _, v := range []struct {
-		name string
-		n    int
-	}{
-		{"ATTRIBUTE_VALUES_TOP_N", c.AttributeValuesTopN},
-		{"IDENTITIES_TOP_N", c.IdentitiesTopN},
-	} {
-		if v.n < 0 {
-			return fmt.Errorf("config: %s must not be negative (0 keeps every value): %d", v.name, v.n)
-		}
-	}
-	if c.AttributeBreakdownsMax < 0 {
-		return fmt.Errorf("config: ATTRIBUTE_BREAKDOWNS_MAX must not be negative (0 is no limit): %d", c.AttributeBreakdownsMax)
+	if c.IngestLateDays > c.Retention.Days {
+		return fmt.Errorf("config: INGEST_LATE_DAYS (%d) exceeds RETENTION_DAYS (%d): a late event could land in a day whose file is already deleted",
+			c.IngestLateDays, c.Retention.Days)
 	}
 	if c.Retention.ArchivedDays < 0 {
 		return fmt.Errorf("config: RETENTION_ARCHIVED_DAYS must not be negative: %d", c.Retention.ArchivedDays)
@@ -477,8 +409,9 @@ func (c *Config) validate() error {
 }
 
 // MaxEventAge is the late window (INGEST_LATE_DAYS): how far back a client
-// timestamp may lie before it is clamped. Validation keeps it within the raw
-// window, so a clamped timestamp never lands in a day already rolled up.
+// timestamp may lie before it is clamped. Validation keeps it within
+// RETENTION_DAYS, so a clamped timestamp never lands in a day whose file is
+// already deleted.
 func (c *Config) MaxEventAge() time.Duration {
 	return time.Duration(c.IngestLateDays) * 24 * time.Hour
 }

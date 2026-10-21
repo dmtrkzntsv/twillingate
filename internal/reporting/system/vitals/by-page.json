@@ -1,6 +1,6 @@
 {
   "component": "table",
-  "title": "By page (raw window)",
+  "title": "By page",
   "props": {
     "formats": {
       "Samples": "number",

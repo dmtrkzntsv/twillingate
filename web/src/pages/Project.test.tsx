@@ -32,7 +32,7 @@ beforeEach(() => {
   Object.values(actions).forEach((f) => typeof f === 'function' && f.mockReset())
   vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList({ purge_after_days: 30 }))
   vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [
-    { project_id: 4, name: 'econumo.com', allowed_origins: ['https://econumo.com'], attributes: ['plan'] },
+    { project_id: 4, name: 'econumo.com', allowed_origins: ['https://econumo.com'] },
     { project_id: 7, name: 'shop', allowed_origins: ['https://shop.example'] },
     { project_id: 3, name: 'legacy', archived: true, allowed_origins: [] },
   ] })
@@ -42,16 +42,15 @@ beforeEach(() => {
   ] })
   vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [] })
   vi.spyOn(endpoints, 'listAttributes').mockResolvedValue({
-    project_id: 4, from: 'a', to: 'b', values_cap: 50, breakdowns_used: 1, breakdowns_max: 50, keys_total: 2,
+    project_id: 4, from: 'a', to: 'b', keys_total: 2,
     attributes: [
-      { key: 'plan', events: 900, max_values: 3, received: true, breakdown: true, blocked: false },
-      { key: 'tier', events: 20, max_values: 2, received: true, breakdown: false, blocked: false },
+      { key: 'plan', events: 900, values: 3, received: true, blocked: false },
+      { key: 'tier', events: 20, values: 2, received: true, blocked: false },
     ],
   })
-  vi.spyOn(endpoints, 'capUsage').mockResolvedValue({ project_id: 4, from: 'a', to: 'b', dimensions: [] })
   vi.spyOn(endpoints, 'eventNames').mockResolvedValue({ events: [{ family: 'product', name: 'checkout', events: 120 }] })
   vi.spyOn(endpoints, 'eventRules').mockResolvedValue({ rules: [{ family: 'product', name: 'a', action: 'rename', to: 'b' }] })
-  vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [], raw_events: { held: 10, window_days: 9 } })
+  vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [], events_30d: { count: 10, from: '2026-09-11', to: '2026-10-10' } })
   vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs })
   vi.spyOn(endpoints, 'projectActivity').mockResolvedValue({
     projects: [
@@ -135,35 +134,14 @@ describe('Project', () => {
     expect(names.indexOf('Attributes')).toBeLessThan(names.indexOf('Ingest keys'))
   })
 
-  it('switches a breakdown off through PATCH after confirming', async () => {
-    const user = userEvent.setup()
-    actions.update.mockResolvedValue(true)
-    renderAt('/projects/4/settings')
-    const section = await screen.findByRole('region', { name: 'Attributes' })
-    expect(await within(section).findAllByText('900 events · 3 values')).not.toHaveLength(0)
-    await user.click(within(section).getByRole('switch', { name: 'Break down plan' }))
-    expect(actions.update).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Remove breakdown' }))
-    expect(actions.update).toHaveBeenCalledWith(4, { attributes: [] })
-  })
-
-  it('switches a breakdown on through PATCH with the full new list', async () => {
-    const user = userEvent.setup()
-    actions.update.mockResolvedValue(true)
-    renderAt('/projects/4/settings')
-    const section = await screen.findByRole('region', { name: 'Attributes' })
-    await user.click(await within(section).findByRole('switch', { name: 'Break down tier' }))
-    expect(actions.update).toHaveBeenCalledWith(4, { attributes: ['plan', 'tier'] })
-  })
-
-  it('blocks an attribute naming the raw retention days', async () => {
+  it('blocks an attribute, hiding its past events at once', async () => {
     const user = userEvent.setup()
     actions.blockAttribute.mockResolvedValue(true)
     renderAt('/projects/4/settings')
     const section = await screen.findByRole('region', { name: 'Attributes' })
     await user.click(await within(section).findByRole('button', { name: 'Actions for tier' }))
     await user.click(await screen.findByRole('menuitem', { name: 'Block…' }))
-    expect(await screen.findByText(/expire within 9 days/)).toBeInTheDocument()
+    expect(await screen.findByText(/hidden from every report at once/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Block attribute' }))
     expect(actions.blockAttribute).toHaveBeenCalledWith(4, { key: 'tier' })
   })
@@ -191,7 +169,7 @@ describe('Project', () => {
     expect(actions.enableKey).toHaveBeenCalledWith(4, 'old')
   })
 
-  it('lists the events before Attributes and the keys, and blocks one naming the raw retention days', async () => {
+  it('lists the events before Attributes and the keys, and blocks one, hiding its past events at once', async () => {
     const user = userEvent.setup()
     actions.blockEvent.mockResolvedValue(true)
     actions.removeEventRule.mockResolvedValue(true)
@@ -202,7 +180,7 @@ describe('Project', () => {
     expect(regions.indexOf('Events')).toBeLessThan(regions.indexOf('Ingest keys'))
     await user.click(await within(events).findByRole('button', { name: 'Actions for checkout (product)' }))
     await user.click(await screen.findByRole('menuitem', { name: 'Block…' }))
-    expect(await screen.findByText(/stored raw events expire within 9 days/)).toBeInTheDocument()
+    expect(await screen.findByText(/past events included; new ones are not stored/)).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Block event' }))
     expect(actions.blockEvent).toHaveBeenCalledWith(4, { family: 'product', name: 'checkout' })
     await user.click(await within(events).findByRole('button', { name: 'Remove alias a' }))
@@ -245,11 +223,11 @@ describe('Project', () => {
     expect(await screen.findByText(/There is no project 77\./)).toBeInTheDocument()
   })
 
-  it('shows usage and cap impact over the last 7 days and refetches both when the range changes', async () => {
+  it('shows usage over the last 7 days, no cap impact, and refetches when the range changes', async () => {
     const user = userEvent.setup()
     renderAt('/projects/4/settings')
     expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
-    expect(await screen.findByRole('region', { name: 'Cap impact' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Cap impact' })).not.toBeInTheDocument()
     const first = vi.mocked(endpoints.usage).mock.calls.at(-1)![0]
     expect(first).toMatchObject({ project_id: 4 })
     // Opens on the last 7 days, today included.
@@ -258,9 +236,6 @@ describe('Project', () => {
     await user.click(screen.getByRole('button', { name: /^Range:/ }))
     await user.click(await screen.findByRole('menuitemradio', { name: 'Last month' }))
     await vi.waitFor(() => expect(vi.mocked(endpoints.usage).mock.calls.at(-1)![0]).not.toEqual(first))
-    await vi.waitFor(() => expect(vi.mocked(endpoints.capUsage).mock.calls.at(-1)![1]).toEqual({
-      from: vi.mocked(endpoints.usage).mock.calls.at(-1)![0].from, to: vi.mocked(endpoints.usage).mock.calls.at(-1)![0].to,
-    }))
   })
 
   it('keeps "kept until restored" when the server names no purge window', async () => {

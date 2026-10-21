@@ -83,7 +83,6 @@ func openOps(stdout io.Writer, envFile string) (*manage.Ops, *config.Config, fun
 		return nil, nil, nil, 1
 	}
 	ops := manage.NewOps(reg, st)
-	ops.BreakdownsMax = cfg.AttributeBreakdownsMax
 	ops.FormDraftDays = cfg.Forms.DraftDays
 	return ops, cfg, func() { st.Close() }, 0
 }
@@ -120,18 +119,17 @@ func cmdProject(args []string, stdout io.Writer) int {
 		sf := flag.NewFlagSet("project create", flag.ContinueOnError)
 		sf.SetOutput(stdout)
 		name := sf.String("name", "", "display name (required)")
-		var origins, attrs multiFlag
+		var origins multiFlag
 		sf.Var(&origins, "origin", "allowed origin, `*` wildcards accepted (repeatable)")
-		sf.Var(&attrs, "attr", "attribute key to break down (repeatable)")
 		if err := sf.Parse(subArgs); err != nil {
 			return 2
 		}
 		if *name == "" {
-			fmt.Fprintln(stdout, "usage: twillingate project create -name <name> [-origin ...] [-attr ...]")
+			fmt.Fprintln(stdout, "usage: twillingate project create -name <name> [-origin ...]")
 			return 2
 		}
 		p, err := ops.CreateProject(ctx, "cli", manage.ProjectSpec{
-			Name: *name, AllowedOrigins: origins, Attributes: attrs})
+			Name: *name, AllowedOrigins: origins})
 		if err != nil {
 			fmt.Fprintln(stdout, err)
 			return 1
@@ -144,15 +142,14 @@ func cmdProject(args []string, stdout io.Writer) int {
 		sf.SetOutput(stdout)
 		id := sf.Int64("id", 0, "project id (required)")
 		name := sf.String("name", "", "new display name")
-		var origins, attrs multiFlag
+		var origins multiFlag
 		sf.Var(&origins, "origin", "allowed origin, replaces the whole list (repeatable)")
 		clearOrigins := sf.Bool("clear-origins", false, "remove every allowed origin")
-		sf.Var(&attrs, "attr", "attribute key to break down, replaces the whole list (repeatable)")
 		if err := sf.Parse(subArgs); err != nil {
 			return 2
 		}
 		if *id == 0 {
-			fmt.Fprintln(stdout, "usage: twillingate project update -id <id> [-name ...] [-origin ... | -clear-origins] [-attr ...]")
+			fmt.Fprintln(stdout, "usage: twillingate project update -id <id> [-name ...] [-origin ... | -clear-origins]")
 			return 2
 		}
 		if *clearOrigins && len(origins) > 0 {
@@ -162,7 +159,7 @@ func cmdProject(args []string, stdout io.Writer) int {
 		// A flag left out is nil and keeps the current list; -clear-origins
 		// sends an empty non-nil list, which clears it.
 		spec := manage.ProjectSpec{ID: *id, Name: *name,
-			AllowedOrigins: origins, Attributes: attrs}
+			AllowedOrigins: origins}
 		if *clearOrigins {
 			spec.AllowedOrigins = []string{}
 		}

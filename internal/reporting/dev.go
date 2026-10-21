@@ -388,7 +388,6 @@ type devProjectOut struct {
 	Archived       bool     `json:"archived,omitempty"`
 	ArchivedAt     string   `json:"archived_at,omitempty"`
 	AllowedOrigins []string `json:"allowed_origins"`
-	Attributes     []string `json:"attributes,omitempty"`
 }
 
 type devProjectsOut struct {
@@ -396,14 +395,11 @@ type devProjectsOut struct {
 }
 
 // devListProjects lists every project, archived ones flagged, as
-// list_projects does, straight off the projects table and its catalog's
-// breakdown keys (project_attributes, ordered by key) — trusted Go SQL
+// list_projects does, straight off the projects table — trusted Go SQL
 // on SQLite, not a widget's checked custom SQL.
 func devListProjects(ctx context.Context, db DevProjects) (devProjectsOut, error) {
 	rows, err := db.Run(ctx,
 		`SELECT p.id, p.name, p.allowed_origins,
-			COALESCE((SELECT json_group_array(key ORDER BY key) FROM project_attributes a
-				WHERE a.project_id = p.id AND a.breakdown = 1), '[]'),
 			p.archived_at IS NOT NULL,
 			COALESCE(strftime('%Y-%m-%dT%H:%M:%SZ', p.archived_at), '') FROM projects p ORDER BY p.id`)
 	if err != nil {
@@ -415,15 +411,10 @@ func devListProjects(ctx context.Context, db DevProjects) (devProjectsOut, error
 		if err != nil {
 			return devProjectsOut{}, fmt.Errorf("reporting: dev: project id %q: %w", row[0], err)
 		}
-		po := devProjectOut{ProjectID: id, Name: row[1], Archived: row[4] == "1", ArchivedAt: row[5], AllowedOrigins: []string{}}
+		po := devProjectOut{ProjectID: id, Name: row[1], Archived: row[3] == "1", ArchivedAt: row[4], AllowedOrigins: []string{}}
 		if row[2] != "" {
 			if err := json.Unmarshal([]byte(row[2]), &po.AllowedOrigins); err != nil {
 				return devProjectsOut{}, fmt.Errorf("reporting: dev: project %d allowed_origins: %w", id, err)
-			}
-		}
-		if row[3] != "" {
-			if err := json.Unmarshal([]byte(row[3]), &po.Attributes); err != nil {
-				return devProjectsOut{}, fmt.Errorf("reporting: dev: project %d attributes: %w", id, err)
 			}
 		}
 		out.Projects = append(out.Projects, po)

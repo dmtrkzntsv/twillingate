@@ -71,7 +71,7 @@ export const usageQuery = (q: RangeQuery & { project_id?: number }) => ({
   queryFn: () => endpoints.usage({ project_id: q.project_id, from: q.from, to: q.to }),
 })
 
-/** A project's attribute keys over a range, busiest first, with their rules and the breakdown budget. */
+/** A project's attribute keys over a range, busiest first, with their rules. */
 export const attributesQuery = (id: number, q: RangeQuery) => ({
   queryKey: ['attributes', id, q.from ?? '', q.to ?? ''],
   queryFn: () => endpoints.listAttributes(id, { from: q.from, to: q.to }),
@@ -87,12 +87,6 @@ export const eventRulesQuery = (id: number) => ({
 export const eventNamesQuery = (id: number, q: RangeQuery) => ({
   queryKey: ['event-names', id, q.from ?? '', q.to ?? ''],
   queryFn: () => endpoints.eventNames(id, q),
-})
-
-/** How a project's data meets the caps over a range. */
-export const capUsageQuery = (id: number, q: RangeQuery) => ({
-  queryKey: ['cap-usage', id, q.from ?? '', q.to ?? ''],
-  queryFn: () => endpoints.capUsage(id, q),
 })
 
 /** Widget shares, live or archived, of one widget or of all of them. */

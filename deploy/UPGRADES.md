@@ -911,8 +911,9 @@ an older `raw/`.
   `SELECT day, count(*) FROM events WHERE project_id = 1 AND day < current_date GROUP BY ALL ORDER BY day`.
   On the database (systemd):
   `sqlite3 /var/lib/twillingate/twillingate.db "SELECT day, count(*) FROM events WHERE project_id = 1 AND day < date('now') GROUP BY day"`.
-  The compose image has no `sqlite3`: use `query` with `source: "sqlite"`,
-  which reads the raw rows through `raw_views`, `raw_product` and
+  The compose image has no `sqlite3`: use `query` with `source: "sqlite"`
+  (on a release before migration 042, which removes that source), which
+  reads the raw rows through `raw_views`, `raw_product` and
   `raw_measures`, or copy the file out of the volume:
   `SELECT day, count(*) FROM (SELECT project_id, day FROM raw_views UNION ALL SELECT project_id, day FROM raw_product UNION ALL SELECT project_id, day FROM raw_measures) WHERE project_id = 1 AND day < date('now') GROUP BY day`.
 
@@ -1021,8 +1022,9 @@ What changes on the day:
 - **History older than the raw window is gone from the dashboards.** They
   start at the oldest raw day the database held at the import
   (`RETENTION_RAW_DAYS` before it); the daily aggregates older than that
-  stay in the database, readable with `query` and `source: "sqlite"`, but
-  no widget reads them. From the upgrade on, the files keep
+  stay in the database, readable with `query` and `source: "sqlite"`
+  until migration 042 drops them with the source, but no widget reads
+  them. From the upgrade on, the files keep
   `RETENTION_DAYS` (default 400) of history.
 - **What counts from the first day the files hold restarts there,** the
   oldest imported day (the upgrade day without an import):
@@ -1151,17 +1153,158 @@ What changes on the day:
 - **`query` reads the files by default.** Without `source`, its SQL is
   DuckDB SQL over the files' tables; a query naming a `v_*` view or an
   `agg_*` table fails with a hint to pass `source: "sqlite"`. That source
-  still reads the database, deprecated: a later release removes it.
+  still reads the database, deprecated: migration 042's release removes
+  it.
   `schema://views` (and `GET /api/schema/views`) lists the files' tables
   first, then the deprecated views.
 - **Ingest stops writing display names to the database.** The names sent
   beside `$user_id` and `$group_id` stay on each event in the files, where
   `identities`, the Users and Groups dashboards and the files' `identities`
   table read them; the database's `identities` table (`source: "sqlite"`)
-  keeps the names it held at the upgrade.
+  keeps the names it held at the upgrade, until migration 042 drops it.
 
 Rollback: the previous release's binary reads the database as before.
 Widgets rewritten for the files fail on it, as SQLite SQL now fails here.
 Names sent while this release ran are missing from the database's
 `identities` table, so the previous release's `identities` tool and Users
 and Groups dashboards show them only once a client sends them again.
+
+### Upgrading to events in the files only (migration 042)
+
+Migration 042 drops the database's events: the raw `events` table,
+`actors`, `identities`, the 21 `agg_*` tables, the `raw_*` and `v_*`
+views, and the attribute tables `usage_attributes` and
+`project_attributes`. **It cannot be undone.** The database keeps the
+projects, keys, rules, forms, dashboards and the audit log; every event
+lives in the event files under `raw/` (`EVENTS_DIR`) for `RETENTION_DAYS`.
+A fresh install never creates an `events` table.
+
+From 042 on, Litestream (or any copy of the database) holds no events: the
+`raw/` copy schedule is your event backup, and a host lost between two
+copies loses the events since the last one.
+
+Before upgrading:
+
+- **Back up the database** (`docs/deployment.md`, "Back up and restore").
+  The backup is the only copy of the daily aggregates older than the raw
+  window: the files never held them, and no dashboard has read them since
+  the dashboards moved onto the files.
+- **Run the import first, if it has not run.** While `events` holds rows
+  and the `meta` row `events_imported` is unset, migration 042 refuses
+  before it drops anything, and the start (or `twillingate migrate`) fails
+  with:
+
+  ```
+  migration 042 drops the events table, which still holds raw events the event files may lack: stop the service, run `twillingate events import`, then start again
+  ```
+
+  Do as it says, with this release's binary: its `events import` migrates
+  the database through migration 041 and no further, copies what the files
+  lack (see "Upgrading to imported event files" above), and records
+  `events_imported`; the next start runs 042. An install that has run since
+  v0.18.0 wrote every event to both, so its import finds them all held and
+  writes nothing, in seconds. There is no flag to skip the check: to drop
+  rows the files lack, run the import anyway.
+
+  ```sh
+  # systemd
+  sudo systemctl stop twillingate
+  sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate events import'
+  sudo systemctl start twillingate
+
+  # compose
+  docker compose stop twillingate
+  docker compose run --rm --no-deps twillingate events import
+  docker compose start twillingate
+  ```
+
+  An install that already ran `events import` (v0.19 or v0.20) needs
+  nothing. Check before swapping binaries, so the installer's restart does
+  not fail into "did not come back up":
+
+  ```sh
+  sudo -u twillingate sqlite3 /var/lib/twillingate/twillingate.db \
+    "SELECT value FROM meta WHERE key='events_imported'"
+  ```
+
+  A value means it ran; no row means run the import above.
+
+  To see whether it ran, `twillingate events import` says when; a fresh
+  install with no events needs nothing. Once the database is past 042, the
+  command prints `the events table was dropped by migration 042; nothing to
+  import` and exits 0. A later release removes it.
+
+After upgrading:
+
+- **Reclaim the space once.** The dropped tables' pages stay in the file
+  as free pages, and the daily pass returns only about 4 MB of them a day
+  (`auto_vacuum=INCREMENTAL`). Stop the service and run `VACUUM` once; it
+  needs free disk for the new copy only, which is small:
+
+  ```sh
+  # systemd
+  sudo systemctl stop twillingate
+  sudo -u twillingate sqlite3 /var/lib/twillingate/twillingate.db 'VACUUM'
+  sudo systemctl start twillingate
+
+  # compose: the image carries no sqlite3, so a throwaway Alpine container
+  # runs it on the volume as the image's user (uid 10001)
+  docker compose stop twillingate
+  docker run --rm --volumes-from "$(docker compose ps -aq twillingate)" alpine:3.20 sh -c \
+    'apk add -q sqlite && adduser -D -H -u 10001 twillingate &&
+     su twillingate -s /bin/sh -c "sqlite3 /var/lib/twillingate/twillingate.db VACUUM"'
+  docker compose start twillingate
+  ```
+
+  Litestream then uploads one new snapshot, of the small file.
+
+What changes on the day:
+
+- **Removed:** the `cap_usage` tool and its route
+  (`GET /api/projects/{project_id}/cap-usage`, now 404); `query`'s
+  `source: "sqlite"`, refused with `source "sqlite" was removed`
+  (`source` itself stays for one release, so a client sending `"files"`
+  keeps working); and the projects' `attributes` field, from
+  `create_project`, `update_project` and `list_projects` (MCP, REST and the
+  CLI's `-attr`): every attribute key breaks down in the files, with no
+  declaration. A request that still sends `attributes` gets what any
+  unknown field gets.
+- **Fields that changed:**
+  - `limits`: `events_30d {count, from, to}`, the events of the last 30
+    days in the files, replaces `raw_events {held, window_days}`; the
+    `caps` group is gone.
+  - `list_attributes` reads the files: each key's `values` (distinct
+    values over the range) replaces `max_values`, and `breakdown`,
+    `breakdowns_used`, `breakdowns_max` and `values_cap` are gone.
+  - `usage` reads the files: `size` is `{total_bytes, measured_at}`, the
+    project's file bytes as the daily pass last measured them (`null`
+    until then), and `raw_days`, `rolled_up_days`, `unused_attributes`,
+    `size.raw_bytes`, `size.aggregate_bytes`, `declared_attributes`,
+    `attribute_keys`, `attribute_values` and `attribute_values_folded`
+    are gone.
+  - `rename_event`, `merge_event`, `rename_attribute` and
+    `merge_attribute` answer the rule alone: nothing is rewritten, so
+    `rewritten` is gone. A rename checks the event files for the target.
+- **Deleting a submission leaves its `$form_submit` event in the files.**
+  The event holds no field, and the conversion counts stay.
+- **The daily pass** keeps archiving shares and drafts past their date,
+  the purge, the incremental vacuum, `usage_history` (the database's size,
+  and each project's file bytes in the process that keeps the files) and
+  the files' maintenance; it rolls nothing up any more.
+- **Variables no longer used:** `RETENTION_RAW_DAYS`,
+  `RETENTION_AGGREGATE_DAYS`, `ATTRIBUTE_VALUES_TOP_N`,
+  `ATTRIBUTE_BREAKDOWNS_MAX` and `IDENTITIES_TOP_N` (and the older
+  `RETENTION_EVENTS_RAW_DAYS` and `RETENTION_EVENTS_AGGREGATE_DAYS`):
+  nothing is capped, and the files keep events for `RETENTION_DAYS`. A
+  leftover one is ignored like any unknown variable; delete it from
+  `twillingate.env` when convenient. `INGEST_LATE_DAYS` may not exceed
+  `RETENTION_DAYS`.
+- SQL or scripts reading the database's `events`, `identities`, `agg_*`,
+  `raw_*` or `v_*` must read the event files instead (`query`,
+  `docs/twillingate.md`, "Writing SQL against the event files").
+
+Rollback: none past 042. An older binary fails to start, since its
+start builds a view over the dropped `events` table. To go back, restore
+the backup taken before the upgrade: the events ingested since are in
+`raw/`, where the release before this one reads them for its dashboards,
+but not in that database.

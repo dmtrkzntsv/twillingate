@@ -23,8 +23,6 @@ interface Props {
   project: Project
   /** The range the page shows: the names received in it. */
   range: { from: string; to: string }
-  /** RETENTION_RAW_DAYS, for the block dialog. */
-  rawDays?: number
   pending?: boolean
   /** Each resolves true when done; a refusal is already toasted (except a rename's 'conflict', which points to merging). */
   onRename: (body: { family: EventFamily; from: string; to: string }) => Promise<boolean | 'conflict'>
@@ -73,7 +71,7 @@ function eventRows(list: EventName[], rules: EventRule[]): Row[] {
 }
 
 /** A project's event names with what each received and the rules on each: rename, merge and block (both confirmed) and unblock, aliases added and removed. */
-export default function EventsSection({ project, range, rawDays, pending, onRename, onMerge, onBlock, onRemove, onAddAlias }: Props) {
+export default function EventsSection({ project, range, pending, onRename, onMerge, onBlock, onRemove, onAddAlias }: Props) {
   const id = project.project_id
   // The targets outlive their dialogs' close animations, so a title does not flash "Block undefined?".
   const [renaming, setRenaming] = useState<{ target: Target; open: boolean } | null>(null)
@@ -206,7 +204,7 @@ export default function EventsSection({ project, range, rawDays, pending, onRena
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="wrap-anywhere">{blocking && copy.block.title(blocking.target)}</AlertDialogTitle>
-            <AlertDialogDescription className="wrap-anywhere">{blocking && copy.block.description(asRuleTarget(blocking.target)!, rawDays)}</AlertDialogDescription>
+            <AlertDialogDescription className="wrap-anywhere">{blocking && copy.block.description(asRuleTarget(blocking.target)!)}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>

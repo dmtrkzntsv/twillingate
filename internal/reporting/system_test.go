@@ -356,10 +356,8 @@ func TestRetentionMilestonesMatchCurve(t *testing.T) {
 // TestRetentionKindIsSticky: an actor first seen as an install that later
 // signs in under the same actor_id is cohorted on its first day, counts
 // under install until the day it is first a user and under user from then
-// on, even on a later day it is an install again: the rule store's
-// UpsertActors and AggregateRetentionDay applied. The same events go into
-// SQLite and through those two, day by day, and the Cohorts widget must
-// read what v_retention reads.
+// on, even on a later day it is an install again: the rule SQLite's
+// retention rollup applied before raw-first PR 6.
 func TestRetentionKindIsSticky(t *testing.T) {
 	ctx := context.Background()
 	st, files := newTestStoreAndFiles(t, 1000)
@@ -386,27 +384,6 @@ func TestRetentionKindIsSticky(t *testing.T) {
 	view("i", "install", 0)
 	view("i", "install", 5)
 	files.Write(t, evs...)
-	if err := st.WriteEvents(ctx, evs); err != nil {
-		t.Fatal(err)
-	}
-	type retention interface {
-		UpsertActors(context.Context, int64, civil.Date) error
-		AggregateRetentionDay(context.Context, int64, civil.Date) error
-	}
-	for d := cohort.AddDays(-1); d.Before(today); d = d.AddDays(1) {
-		if err := st.(retention).UpsertActors(ctx, pid, d); err != nil {
-			t.Fatal(err)
-		}
-		if err := st.(retention).AggregateRetentionDay(ctx, pid, d); err != nil {
-			t.Fatal(err)
-		}
-	}
-	want, err := storeDB(t, st).Query(ctx, `SELECT cohort_day, actor_kind, day_offset, cohort_size, actors
-		FROM v_retention WHERE project_id = ? AND day_offset BETWEEN 0 AND 45 AND cohort_day BETWEEN ? AND ?
-		ORDER BY cohort_day DESC, actor_kind, day_offset`, pid, cohort.AddDays(-3).String(), cohort.String())
-	if err != nil {
-		t.Fatal(err)
-	}
 	svc := New(st, files, Options{})
 	got, err := svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, svc, 5, "cohorts"), ProjectID: pid,
 		From: cohort.AddDays(-3).String(), To: cohort.String()})
@@ -417,9 +394,6 @@ func TestRetentionKindIsSticky(t *testing.T) {
 	var rows [][]string
 	for _, r := range res.Rows {
 		rows = append(rows, r[:5])
-	}
-	if !reflect.DeepEqual(rows, want.Rows) {
-		t.Errorf("Cohorts:\n got  %v\n want %v (v_retention)", rows, want.Rows)
 	}
 	// x is under install at offset 2 and under user at 5 and 7.
 	for _, w := range [][]string{{"install", "2", "1"}, {"install", "5", "1"}, {"user", "5", "2"}, {"user", "7", "1"}} {

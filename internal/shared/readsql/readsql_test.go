@@ -33,7 +33,7 @@ func newTestDB(t testing.TB, timeout time.Duration, maxRows int) (*DB, string) {
 	}
 	ctx := context.Background()
 	if _, err := st.CreateProject(ctx, store.RegistryProject{
-		Name: "blog", AllowedOrigins: "[]", Attributes: "[]"},
+		Name: "blog", AllowedOrigins: "[]"},
 		store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
 		t.Fatal(err)
 	}

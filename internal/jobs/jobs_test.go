@@ -1,6 +1,7 @@
 package jobs
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"errors"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -25,16 +27,11 @@ import (
 )
 
 var jobsProjectSpecs = []manage.ProjectSpec{
-	{Name: "App", AllowedOrigins: []string{"https://a.com"},
-		Attributes: []string{"plan"}},
+	{Name: "App", AllowedOrigins: []string{"https://a.com"}},
 }
 
-// jobsVars pins the retention windows the assertions below rely on: a
-// 7-day raw window puts the fixed 2026-08-10 fixture day outside it relative
-// to the fake now of 2026-08-22.
-var jobsVars = map[string]string{
-	"RETENTION_RAW_DAYS": "7", "RETENTION_AGGREGATE_DAYS": "365",
-}
+// jobsVars is the environment the tests start from: the defaults.
+var jobsVars = map[string]string{}
 
 // countingStore counts daily passes; IncrementalVacuum runs exactly once per
 // pass, which makes it a reliable proxy. It also counts and records the
@@ -120,265 +117,51 @@ func setup(t *testing.T, vars map[string]string, specs []manage.ProjectSpec) (st
 	return st, reg, New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now)
 }
 
-func mustTime(s string) time.Time {
-	t, _ := time.Parse(time.RFC3339, s)
-	return t
-}
-
-func mustDay(s string) civil.Date { d, _ := civil.Parse(s); return d }
-
-// The pass ends by measuring the server's stats at its own clock: a project
-// with rows has its sizes stored.
-func TestRunDailyPassRecordsUsageHistory(t *testing.T) {
-	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
-	if err := st.WriteEvents(context.Background(), []store.Event{
-		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: mustTime("2026-08-21T10:00:00Z"), ReceivedAt: mustTime("2026-08-21T10:00:00Z"),
-			Kind: "web", ActorKind: store.ActorConnection, ActorID: "v", Path: "/"},
-	}); err != nil {
+// TestPassWithoutArchiveRecordsTheDatabaseOnly: the pass ends by
+// measuring the database at its own clock. With no archive (a process
+// that keeps no event files, such as a console-only one) it records the
+// database's size alone and leaves the file bytes the ingest process
+// wrote.
+func TestPassWithoutArchiveRecordsTheDatabaseOnly(t *testing.T) {
+	_, _, r := setup(t, jobsVars, jobsProjectSpecs)
+	if _, err := rawExec(t, `INSERT INTO usage_history (key, project_id, measured_at, value) VALUES ('file_bytes', 1, '2026-08-22', 777)`); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.RunDailyPass(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	got := queryDays(t, `SELECT key || ' ' || project_id || ' ' || measured_at FROM usage_history ORDER BY key`)
-	// Sizes, the database's, the declared attributes and the caps for the
-	// pass day, and the counts of the days before it.
-	want := []string{"aggregate_bytes 1 2026-08-22", "attribute_breakdowns_max 0 2026-08-22", "attributes_top_n 0 2026-08-22", "database_bytes 0 2026-08-22",
-		"declared_attributes 1 2026-08-22", "identities_top_n 0 2026-08-22", "raw_bytes 1 2026-08-22",
-		"views 1 2026-08-21"}
-	if !slices.Equal(got, want) {
+	r.RunDailyPass(context.Background())
+	got := queryDays(t, `SELECT key || ' ' || project_id || ' ' || measured_at || ' ' || CASE key WHEN 'file_bytes' THEN value ELSE '' END FROM usage_history ORDER BY key`)
+	if want := []string{"database_bytes 0 2026-08-22 ", "file_bytes 1 2026-08-22 777"}; !slices.Equal(got, want) {
 		t.Errorf("usage_history = %v, want %v", got, want)
 	}
 }
 
-func TestRunDailyPassAggregatesOldDays(t *testing.T) {
-	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
-	ctx := context.Background()
-	// Old day (beyond the 7-day raw window relative to fake now 2026-08-22).
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyViews, ID: "1", ProjectID: 1, TS: mustTime("2026-08-10T10:00:00Z"), ReceivedAt: mustTime("2026-08-10T10:00:00Z"),
-			Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
-		t.Fatal(err)
+// TestPassRecordsTheArchiveSizes: with an archive the pass records each
+// project's file bytes as the archive measures them once its maintenance
+// is done; a failed measurement is logged and the database's size is
+// still recorded.
+func TestPassRecordsTheArchiveSizes(t *testing.T) {
+	_, _, r := setup(t, jobsVars, jobsProjectSpecs)
+	a := &fakeArchive{sizes: map[int64]int64{1: 4096, 2: 10}}
+	r.WithArchive(a)
+	r.RunDailyPass(context.Background())
+	if !slices.Equal(a.calls, []string{"2026-08-22 late=1 keep=400", "sizes"}) {
+		t.Errorf("archive calls = %v, want the maintenance, then the sizes", a.calls)
 	}
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyProduct, ID: "2", ProjectID: 1, EventName: "e", UserID: "u", TS: mustTime("2026-08-10T10:00:00Z"),
-			Attributes: map[string]string{"plan": "pro"}}}); err != nil {
-		t.Fatal(err)
-	}
-	// Recent day (inside the window) must survive as raw.
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyViews, ID: "3", ProjectID: 1, TS: mustTime("2026-08-21T10:00:00Z"), ReceivedAt: mustTime("2026-08-21T10:00:00Z"),
-			Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	oldWeb, err := st.ViewDaysBefore(ctx, 1, mustDay("2026-08-20"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(oldWeb) != 0 {
-		t.Fatalf("old web raw must be gone: %v", oldWeb)
-	}
-	recent, err := st.ViewDaysBefore(ctx, 1, mustDay("2026-08-23"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(recent) != 1 {
-		t.Fatalf("recent raw must survive: %v", recent)
-	}
-	oldProd, err := st.ProductDaysBefore(ctx, 1, mustDay("2026-08-20"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(oldProd) != 0 {
-		t.Fatalf("old product raw must be gone: %v", oldProd)
-	}
-	// Both families share one raw table: each must have been rolled up, not
-	// deleted by the other family's pass before its own ran.
-	if got := queryDays(t, `SELECT kind || ':' || views FROM agg_views_daily
-		WHERE project_id=1 AND day='2026-08-10'`); len(got) != 1 || got[0] != "web:1" {
-		t.Errorf("agg_views_daily for 2026-08-10 = %v, want [web:1]", got)
-	}
-	if got := queryDays(t, `SELECT event_name || ':' || count FROM agg_product_daily
-		WHERE project_id=1 AND day='2026-08-10'`); len(got) != 1 || got[0] != "e:1" {
-		t.Errorf("agg_product_daily for 2026-08-10 = %v, want [e:1]", got)
-	}
-	// Second pass is a no-op (idempotency at the job level).
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if len(recent) != 1 {
-		t.Fatal("second pass must not disturb in-window raw data")
-	}
-}
-
-// Every family ages out by the one shared raw window: a day older than it
-// is rolled up and its raw rows deleted for both families, and a day still
-// inside it stays raw for both.
-func TestRunDailyPassAggregatesEveryFamilyByOneWindow(t *testing.T) {
-	st, _, r := setup(t, jobsVars, jobsProjectSpecs) // RETENTION_RAW_DAYS=7
-	ctx := context.Background()
-	// 2026-08-12 is 10 days before the fake now (2026-08-22): outside the
-	// 7-day window. 2026-08-19 is 3 days before: inside it.
-	old := mustTime("2026-08-12T10:00:00Z")
-	recent := mustTime("2026-08-19T10:00:00Z")
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyViews, ID: "v-old", ProjectID: 1, TS: old, ReceivedAt: old,
-			Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"},
-		{Family: store.FamilyProduct, ID: "p-old", ProjectID: 1, EventName: "e", UserID: "u", TS: old, ReceivedAt: old},
-		{Family: store.FamilyViews, ID: "v-recent", ProjectID: 1, TS: recent, ReceivedAt: recent,
-			Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"},
-		{Family: store.FamilyProduct, ID: "p-recent", ProjectID: 1, EventName: "e", UserID: "u", TS: recent, ReceivedAt: recent},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	rawViewsOld := queryDays(t, `SELECT id FROM raw_views WHERE project_id=1 AND day='2026-08-12'`)
-	rawProductOld := queryDays(t, `SELECT id FROM raw_product WHERE project_id=1 AND day='2026-08-12'`)
-	aggViewsOld := queryDays(t, `SELECT day FROM agg_views_daily WHERE project_id=1 AND day='2026-08-12'`)
-	aggProductOld := queryDays(t, `SELECT day FROM agg_product_daily WHERE project_id=1 AND day='2026-08-12'`)
-	if len(rawViewsOld) != 0 || len(aggViewsOld) != 1 {
-		t.Errorf("old views: raw %v agg %v, want rolled up", rawViewsOld, aggViewsOld)
-	}
-	if len(rawProductOld) != 0 || len(aggProductOld) != 1 {
-		t.Errorf("old product: raw %v agg %v, want rolled up", rawProductOld, aggProductOld)
+	got := queryDays(t, `SELECT key || ' ' || project_id || ' ' || measured_at || ' ' || value FROM usage_history WHERE key = 'file_bytes' ORDER BY project_id`)
+	if want := []string{"file_bytes 1 2026-08-22 4096", "file_bytes 2 2026-08-22 10"}; !slices.Equal(got, want) {
+		t.Errorf("file bytes = %v, want %v", got, want)
 	}
 
-	rawViewsRecent := queryDays(t, `SELECT id FROM raw_views WHERE project_id=1 AND day='2026-08-19'`)
-	rawProductRecent := queryDays(t, `SELECT id FROM raw_product WHERE project_id=1 AND day='2026-08-19'`)
-	aggViewsRecent := queryDays(t, `SELECT day FROM agg_views_daily WHERE project_id=1 AND day='2026-08-19'`)
-	aggProductRecent := queryDays(t, `SELECT day FROM agg_product_daily WHERE project_id=1 AND day='2026-08-19'`)
-	if len(rawViewsRecent) != 1 || len(aggViewsRecent) != 0 {
-		t.Errorf("recent views: raw %v agg %v, want raw kept and not rolled up", rawViewsRecent, aggViewsRecent)
+	var buf bytes.Buffer
+	r.logger = slog.New(slog.NewTextHandler(&buf, nil))
+	a.sizesErr = errors.New("boom")
+	r.now = func() time.Time { return time.Date(2026, 8, 23, 4, 0, 0, 0, time.UTC) }
+	r.RunDailyPass(context.Background())
+	if !strings.Contains(buf.String(), "archive sizes") || !strings.Contains(buf.String(), "boom") {
+		t.Errorf("log = %q, want the failed measurement", buf.String())
 	}
-	if len(rawProductRecent) != 1 || len(aggProductRecent) != 0 {
-		t.Errorf("recent product: raw %v agg %v, want raw kept and not rolled up", rawProductRecent, aggProductRecent)
-	}
-}
-
-// Measures roll up on the same shared raw window as views and product: a
-// day older than RETENTION_RAW_DAYS is aggregated into
-// agg_measures_daily and its raw rows deleted; a day still inside it stays
-// raw.
-func TestRunDailyPassRollsUpMeasures(t *testing.T) {
-	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
-	ctx := context.Background()
-	old := mustTime("2026-08-12T10:00:00Z")    // 10 days before the fake now (2026-08-22)
-	recent := mustTime("2026-08-19T10:00:00Z") // 3 days before the fake now
-	v := 120.0
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyMeasures, ID: "m-old", ProjectID: 1, EventName: "$lcp", TS: old, ReceivedAt: old,
-			ActorID: "v", ActorKind: store.ActorConnection, Value: &v, Measure: store.MeasureTime, SampleRate: 1},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyMeasures, ID: "m-recent", ProjectID: 1, EventName: "$lcp", TS: recent, ReceivedAt: recent,
-			ActorID: "v", ActorKind: store.ActorConnection, Value: &v, Measure: store.MeasureTime, SampleRate: 1},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	oldRaw := queryDays(t, `SELECT id FROM raw_measures WHERE project_id=1 AND day='2026-08-12'`)
-	if len(oldRaw) != 0 {
-		t.Errorf("old raw measures left = %v, want 0", oldRaw)
-	}
-	oldAgg := queryDays(t, `SELECT day FROM agg_measures_daily WHERE project_id=1 AND day='2026-08-12'`)
-	if len(oldAgg) != 1 {
-		t.Errorf("agg_measures_daily for 2026-08-12 = %v, want 1 row", oldAgg)
-	}
-	recentRaw := queryDays(t, `SELECT id FROM raw_measures WHERE project_id=1 AND day='2026-08-19'`)
-	if len(recentRaw) != 1 {
-		t.Errorf("recent raw measures = %v, want 1 (still inside the window)", recentRaw)
-	}
-}
-
-// A measure alone must not create actors: measures are deliberately left
-// out of allRawDays (spec decision 17 -- a backend's connection hash is a
-// server, not a visitor), so UpsertActors never runs for a day that only
-// carries measures, however old that day is.
-func TestMeasuresDoNotCreateActors(t *testing.T) {
-	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
-	ctx := context.Background()
-	old := mustTime("2026-08-12T10:00:00Z") // past the 7-day raw window
-	v := 42.0
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyMeasures, ID: "m1", ProjectID: 1, EventName: "$lcp", TS: old, ReceivedAt: old,
-			ActorID: "srv", ActorKind: store.ActorConnection, Value: &v, Measure: store.MeasureTime, SampleRate: 1},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if got := queryDays(t, `SELECT actor_id FROM actors WHERE actor_id='srv'`); len(got) != 0 {
-		t.Errorf("actors for srv = %v, want 0", got)
-	}
-}
-
-// The pass must rebuild v_events_flat from the keys actually present, so a
-// newly seen attribute becomes queryable without a restart.
-func TestRunDailyPassRebuildsFlatView(t *testing.T) {
-	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
-	ctx := context.Background()
-	// Inside the raw window, so it survives to be discovered.
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyProduct, ID: "1", ProjectID: 1, EventName: "e", UserID: "u", TS: mustTime("2026-08-21T10:00:00Z"),
-			Attributes: map[string]string{"plan": "pro"}}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	// Inspect the view through a separate read-only handle: Store deliberately
-	// does not expose its *sql.DB.
-	raw, err := sql.Open("sqlite", "file:"+os.Getenv("JOBS_TEST_DB"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer raw.Close()
-	var plan string
-	if err := raw.QueryRow(`SELECT attr_plan FROM v_events_flat WHERE id='1'`).Scan(&plan); err != nil {
-		t.Fatalf("v_events_flat not rebuilt with the discovered key: %v", err)
-	}
-	if plan != "pro" {
-		t.Errorf("attr_plan = %q, want pro", plan)
-	}
-}
-
-// A project that has been archived in the registry must still be
-// maintained: it is still a registry row, so store.ProjectIDs (all rows,
-// including archived) still returns it.
-func TestRunDailyPassCoversArchivedProjects(t *testing.T) {
-	st, reg, r := setup(t, jobsVars, jobsProjectSpecs)
-	ctx := context.Background()
-	ops := manage.NewOps(reg, st)
-	if _, err := ops.CreateProject(ctx, "test", manage.ProjectSpec{Name: "Gone"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := ops.ArchiveProject(ctx, "test", 2); err != nil {
-		t.Fatal(err)
-	}
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyViews, ID: "1", ProjectID: 2, TS: mustTime("2026-08-10T10:00:00Z"), ReceivedAt: mustTime("2026-08-10T10:00:00Z"),
-			Kind: "web", ActorID: "v", ActorKind: store.ActorConnection, Path: "/"}}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	left, err := st.ViewDaysBefore(ctx, 2, mustDay("2026-08-20"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(left) != 0 {
-		t.Fatalf("archived project not aggregated: %v", left)
+	got = queryDays(t, `SELECT key || ' ' || project_id FROM usage_history WHERE measured_at = '2026-08-23' ORDER BY key`)
+	if want := []string{"database_bytes 0"}; !slices.Equal(got, want) {
+		t.Errorf("after a failed measurement = %v, want the database's size alone", got)
 	}
 }
 
@@ -412,9 +195,7 @@ func TestRunDailyPassPurgesArchivedAndReloadsRegistryOnProjectPurge(t *testing.T
 	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
 	r := New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now)
 
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
+	r.RunDailyPass(ctx)
 	if got := st.purges.Load(); got != 1 {
 		t.Errorf("PurgeArchived calls = %d, want 1", got)
 	}
@@ -454,9 +235,7 @@ func TestRunDailyPassRemovesPurgedProjectsFromTheArchive(t *testing.T) {
 	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
 	a := &fakeArchive{}
 	r := New(raw, cfg, reg, identity.NewSalter(raw, now), slog.Default(), now).WithArchive(a)
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
+	r.RunDailyPass(ctx)
 	if !slices.Equal(a.removed, []int64{2}) {
 		t.Fatalf("RemoveProject calls = %v, want [2]", a.removed)
 	}
@@ -478,9 +257,7 @@ func TestRunDailyPassSkipsPurgeWhenArchivedDaysIsZero(t *testing.T) {
 	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
 	r := New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now)
 
-	if err := r.RunDailyPass(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	r.RunDailyPass(context.Background())
 	if got := st.purges.Load(); got != 0 {
 		t.Errorf("PurgeArchived calls = %d, want 0 when RETENTION_ARCHIVED_DAYS=0", got)
 	}
@@ -516,9 +293,7 @@ func TestRunDailyPassArchivesDueWidgetShares(t *testing.T) {
 	seedShare(t, "future", "2026-09-01T00:00:00Z", nil)
 	seedShare(t, "project", nil, nil)
 
-	if err := r.RunDailyPass(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	r.RunDailyPass(context.Background())
 	got := queryDays(t, `SELECT id || ' ' || COALESCE(archived_at, '-') FROM widget_shares ORDER BY id`)
 	want := []string{"due 2026-08-21T00:00:00Z", "future -", "project -"}
 	if !slices.Equal(got, want) {
@@ -540,9 +315,7 @@ func TestRunDailyPassPurgesOldArchivedWidgetShares(t *testing.T) {
 	yesterday := time.Now().UTC().Add(-24 * time.Hour).Format("2006-01-02T15:04:05Z")
 	seedShare(t, "recent", yesterday, yesterday)
 
-	if err := r.RunDailyPass(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	r.RunDailyPass(context.Background())
 	if got := queryDays(t, `SELECT id FROM widget_shares ORDER BY id`); !slices.Equal(got, []string{"recent"}) {
 		t.Errorf("shares after the pass = %v, want only recent", got)
 	}
@@ -560,9 +333,7 @@ func TestRunDailyPassKeepsArchivedWidgetSharesWhenArchivedDaysIsZero(t *testing.
 	seedShare(t, "old", "2026-07-01T00:00:00Z", "2026-07-01T00:00:00Z")
 	seedShare(t, "due", "2026-08-21T00:00:00Z", nil)
 
-	if err := r.RunDailyPass(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	r.RunDailyPass(context.Background())
 	got := queryDays(t, `SELECT id || ' ' || COALESCE(archived_at, '-') FROM widget_shares ORDER BY id`)
 	want := []string{"due 2026-08-21T00:00:00Z", "old 2026-07-01T00:00:00Z"}
 	if !slices.Equal(got, want) {
@@ -601,36 +372,9 @@ func TestRunDailyPassReloadsRegistryDespiteAPartialPurgeError(t *testing.T) {
 	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
 	r := New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now)
 
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
+	r.RunDailyPass(ctx)
 	if p := reg.Snapshot(ctx).Project(7); p == nil {
 		t.Error("registry not reloaded after a purge error carrying a non-empty partial result")
-	}
-}
-
-// TestPruneUsesGlobalWindowsForEveryProject: retention is global, so two
-// projects with the same aged-out data lose it on the same pass.
-func TestPruneUsesGlobalWindowsForEveryProject(t *testing.T) {
-	_, _, r := setup(t, jobsVars, []manage.ProjectSpec{
-		{Name: "App", AllowedOrigins: []string{"https://a.com"}},
-		{Name: "Shop", AllowedOrigins: []string{"https://s.com"}},
-	})
-	ctx := context.Background()
-	for _, id := range []int64{1, 2} {
-		if _, err := rawExec(t, `INSERT INTO agg_views_daily (project_id, day, kind, visitors, views, sessions, bounces, duration_sec)
-			VALUES (?, '2024-01-01', 'web', 1, 1, 1, 0, 0), (?, '2026-08-20', 'web', 1, 1, 1, 0, 0)`, id, id); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	for _, id := range []int64{1, 2} {
-		days := queryDays(t, `SELECT day FROM agg_views_daily WHERE project_id=? ORDER BY day`, id)
-		if len(days) != 1 || days[0] != "2026-08-20" {
-			t.Errorf("project %d kept %v, want only 2026-08-20 (365-day aggregate window)", id, days)
-		}
 	}
 }
 
@@ -749,288 +493,6 @@ func TestRunBootCatchUpAndCancel(t *testing.T) {
 	}
 }
 
-// --- app class, cohorts and identities ---
-
-var appProjectSpecs = []manage.ProjectSpec{
-	{Name: "App", AllowedOrigins: []string{"https://a.com"}},
-}
-
-func setupApp(t *testing.T, specs []manage.ProjectSpec) (store.Store, *Runner, *sql.DB) {
-	t.Helper()
-	cfg := configtest.Load(t, jobsVars)
-	st, path := openStoreAt(t)
-	reg := newRegistry(t, st, cfg, specs)
-	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
-	raw, err := sql.Open("sqlite", path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { raw.Close() })
-	return st, New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now), raw
-}
-
-func seedAppDay(t *testing.T, st store.Store, actors ...string) {
-	t.Helper()
-	var views []store.Event
-	for i, a := range actors {
-		ts := mustTime("2026-08-10T10:00:00Z")
-		views = append(views, store.Event{Family: store.FamilyViews,
-			ID: "v" + a + string(rune('a'+i)), ProjectID: 1,
-			TS: ts, ReceivedAt: ts,
-			Kind: "app", ActorID: a, ActorKind: store.ActorUser,
-			UserID: "u-" + a, GroupID: "org9",
-			Path: "/home", OS: "iOS", AppVersion: "2.4.1",
-		})
-	}
-	if err := st.WriteEvents(context.Background(), views); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func count(t *testing.T, db *sql.DB, query string) int {
-	t.Helper()
-	var n int
-	if err := db.QueryRow(query).Scan(&n); err != nil {
-		t.Fatalf("%s: %v", query, err)
-	}
-	return n
-}
-
-func TestRunDailyPassAggregatesAppDays(t *testing.T) {
-	st, r, db := setupApp(t, appProjectSpecs)
-	ctx := context.Background()
-	seedAppDay(t, st, "a", "b")
-
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_views_daily WHERE project_id=1 AND kind='app'`); n != 1 {
-		t.Errorf("agg_views_daily rows = %d, want 1", n)
-	}
-	if n := count(t, db, `SELECT visitors FROM agg_views_daily WHERE kind='app'`); n != 2 {
-		t.Errorf("visitors = %d, want 2", n)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM raw_views WHERE project_id=1`); n != 0 {
-		t.Errorf("raw views left = %d, want 0", n)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM actors`); n != 2 {
-		t.Errorf("actors = %d, want 2", n)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_retention WHERE day_offset=0`); n != 1 {
-		t.Errorf("cohort rows = %d, want 1", n)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_identity_daily WHERE kind='group'`); n != 1 {
-		t.Errorf("group aggregate rows = %d, want 1", n)
-	}
-	if n := count(t, db, `SELECT users FROM agg_identity_daily WHERE kind='group'`); n != 2 {
-		t.Errorf("users in group = %d, want 2", n)
-	}
-}
-
-// A project whose clients send no ids has connection-hash actors only.
-// UpsertActors keeps user and install kinds, so it gets no actors and no
-// cohorts, while rollups and identity aggregates still run.
-func TestRunDailyPassBuildsNoActorsWithoutIds(t *testing.T) {
-	st, r, db := setupApp(t, appProjectSpecs)
-	ctx := context.Background()
-	ts := mustTime("2026-08-10T10:00:00Z")
-	if err := st.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews,
-		ID: "vconn", ProjectID: 1, TS: ts, ReceivedAt: ts,
-		Kind: "app", ActorID: "hash1", ActorKind: store.ActorConnection,
-		GroupID: "org9", Path: "/home", OS: "iOS", AppVersion: "2.4.1",
-	}}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	if n := count(t, db, `SELECT COUNT(*) FROM actors`); n != 0 {
-		t.Errorf("actors = %d; a connection-hash actor is never cohorted", n)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_retention`); n != 0 {
-		t.Errorf("agg_retention rows = %d, want 0", n)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_views_daily WHERE kind='app'`); n != 1 {
-		t.Errorf("agg_views_daily rows = %d, want 1", n)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_identity_daily WHERE kind='group'`); n != 1 {
-		t.Errorf("group aggregate rows = %d, want 1", n)
-	}
-}
-
-func TestRunDailyPassIsIdempotentAcrossAppSteps(t *testing.T) {
-	st, r, db := setupApp(t, appProjectSpecs)
-	ctx := context.Background()
-	seedAppDay(t, st, "a", "b")
-
-	for i := 0; i < 2; i++ {
-		if err := r.RunDailyPass(ctx); err != nil {
-			t.Fatalf("pass %d: %v", i, err)
-		}
-	}
-	if n := count(t, db, `SELECT views FROM agg_views_daily WHERE kind='app'`); n != 2 {
-		t.Errorf("views = %d after two passes, want 2", n)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_retention`); n != 1 {
-		t.Errorf("agg_retention rows = %d after two passes, want 1", n)
-	}
-}
-
-func TestRunDailyPassPrunesActorsAndIdentities(t *testing.T) {
-	st, r, db := setupApp(t, appProjectSpecs)
-	ctx := context.Background()
-
-	if err := st.UpsertIdentities(ctx, []store.Identity{
-		{ProjectID: 1, Kind: store.KindUser, ID: "old", Name: "Gone"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(`UPDATE identities SET last_seen_day='2020-01-01'`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(
-		`INSERT INTO actors VALUES (1,'stale','install','2020-01-01','2020-01-01')`); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM actors`); n != 0 {
-		t.Errorf("stale actors left = %d, want 0", n)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM identities`); n != 0 {
-		t.Errorf("stale identities left = %d, want 0", n)
-	}
-}
-
-// A web-only project whose views carry a $user_id must still get cohorts and identity rollups:
-// they used to be driven off app rows alone, which meant a project with no
-// app never got either.
-func TestRunDailyPassCoversWebOnlyProjectsForCohorts(t *testing.T) {
-	st, r, db := setupApp(t, appProjectSpecs)
-	ctx := context.Background()
-	ts := mustTime("2026-08-10T10:00:00Z")
-
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyViews, ID: "w1", ProjectID: 1, TS: ts, ReceivedAt: ts, Kind: "web", ActorID: "a", ActorKind: store.ActorUser,
-			UserID: "u1", GroupID: "org9", Path: "/"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM actors`); n != 1 {
-		t.Errorf("actors = %d for a web-only project, want 1", n)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_retention`); n != 1 {
-		t.Errorf("agg_retention rows = %d, want 1", n)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_identity_daily WHERE kind='user'`); n != 1 {
-		t.Errorf("user aggregate rows = %d, want 1", n)
-	}
-}
-
-// Cohorts must not lag the raw-retention window. They read raw rows without
-// deleting them, so they cover days still inside the window too — otherwise
-// the retention page would be a whole window stale.
-func TestRunDailyPassComputesCohortsForRecentDays(t *testing.T) {
-	st, r, db := setupApp(t, appProjectSpecs)
-	ctx := context.Background()
-	// Two days before the fake now of 2026-08-22, well inside the 7-day
-	// app raw window used by jobsVars.
-	recent := mustTime("2026-08-20T10:00:00Z")
-
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyViews, ID: "r1", ProjectID: 1, TS: recent, ReceivedAt: recent, Kind: "app", ActorID: "a", ActorKind: store.ActorUser,
-			UserID: "u1", Path: "/home", OS: "iOS"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_retention WHERE cohort_day='2026-08-20'`); n != 1 {
-		t.Errorf("cohort rows for an in-window day = %d, want 1", n)
-	}
-	// The raw row itself must survive: it is inside the retention window.
-	if n := count(t, db, `SELECT COUNT(*) FROM raw_views WHERE project_id=1`); n != 1 {
-		t.Errorf("raw views = %d; an in-window day must not be aggregated away", n)
-	}
-}
-
-// The raw window must apply to every kind at once: a single ViewDaysBefore
-// window drives one AggregateViewDay call per day, which rolls up whatever
-// mix of kinds landed on that day.
-func TestDailyPassRollsUpEveryKindPastTheWindow(t *testing.T) {
-	st, _, r := setup(t, jobsVars, jobsProjectSpecs)
-	ctx := context.Background()
-	old := mustTime("2026-08-10T10:00:00Z") // 12 days before the fixed clock; window is 7
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyViews, ID: "w", ProjectID: 1, TS: old, ReceivedAt: old, Kind: "web", ActorID: "h", ActorKind: store.ActorConnection, Path: "/"},
-		{Family: store.FamilyViews, ID: "a", ProjectID: 1, TS: old, ReceivedAt: old, Kind: "app", ActorID: "i", ActorKind: store.ActorInstall, Path: "/home"},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	db, err := sql.Open("sqlite", "file:"+os.Getenv("JOBS_TEST_DB")) // the pattern the file's other tests use
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	var kinds int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM agg_views_daily WHERE project_id=1 AND day='2026-08-10'`).Scan(&kinds); err != nil {
-		t.Fatal(err)
-	}
-	if kinds != 2 {
-		t.Errorf("agg_views_daily rows = %d, want one per kind", kinds)
-	}
-	var raw int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM raw_views WHERE project_id=1`).Scan(&raw); err != nil {
-		t.Fatal(err)
-	}
-	if raw != 0 {
-		t.Errorf("raw views left = %d", raw)
-	}
-}
-
-// Today is still arriving, so rolling it up at 03:00 would freeze a partial
-// day into agg_identity_daily, which v_identity_daily prefers over raw. It
-// is left to the view's live half; yesterday, complete by now, is rolled up.
-func TestRunDailyPassLeavesTodaysIdentityActivityLive(t *testing.T) {
-	st, r, db := setupApp(t, appProjectSpecs)
-	ctx := context.Background()
-	for i, ts := range []string{"2026-08-21T10:00:00Z", "2026-08-22T01:00:00Z"} {
-		at := mustTime(ts)
-		if err := st.WriteEvents(ctx, []store.Event{
-			{Family: store.FamilyViews, ID: "t" + string(rune('a'+i)), ProjectID: 1, TS: at, ReceivedAt: at,
-				Kind: "app", ActorID: "a", ActorKind: store.ActorUser, UserID: "u1",
-				Path: "/home", OS: "iOS"},
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_identity_daily WHERE day='2026-08-22'`); n != 0 {
-		t.Errorf("today's identity rows aggregated = %d, want 0", n)
-	}
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_identity_daily WHERE day='2026-08-21'`); n != 1 {
-		t.Errorf("yesterday's identity rows aggregated = %d, want 1", n)
-	}
-	// Retention still covers today: it has no live half to fall back on.
-	if n := count(t, db, `SELECT COUNT(*) FROM agg_retention WHERE cohort_day='2026-08-21' AND day_offset=1`); n != 1 {
-		t.Errorf("retention rows owned by today = %d, want 1", n)
-	}
-}
-
 // orderStore records the order of the calls the expiry test cares about and
 // the time ExpireDrafts was given.
 type orderStore struct {
@@ -1073,9 +535,7 @@ func TestRunDailyPassExpiresDraftsBeforePurge(t *testing.T) {
 		now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
 		r := New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now)
 
-		if err := r.RunDailyPass(context.Background()); err != nil {
-			t.Fatal(err)
-		}
+		r.RunDailyPass(context.Background())
 		want := []string{"expire", "purge"}
 		if days == "0" {
 			want = []string{"expire"}
@@ -1089,79 +549,12 @@ func TestRunDailyPassExpiresDraftsBeforePurge(t *testing.T) {
 	}
 }
 
-// dropRecorder records the order of the calls the blocked-name rules care
-// about, around a real store.
-type dropRecorder struct {
-	store.Store
-	calls []string
-}
-
-func (d *dropRecorder) DropBlockedAggregates(ctx context.Context, projectID int64) error {
-	d.calls = append(d.calls, fmt.Sprintf("drop %d", projectID))
-	return d.Store.DropBlockedAggregates(ctx, projectID)
-}
-
-func (d *dropRecorder) AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error {
-	d.calls = append(d.calls, fmt.Sprintf("product %d %s", projectID, day))
-	return d.Store.AggregateProductDay(ctx, projectID, day, attrs, topN)
-}
-
-// Aggregates of a blocked name are dropped once per project, before that
-// project's days are rolled up (event rules D11).
-func TestDailyPassDropsBlockedAggregates(t *testing.T) {
-	ctx := context.Background()
-	cfg := configtest.Load(t, jobsVars)
-	st, _ := openStoreAt(t)
-	reg := newRegistry(t, st, cfg, []manage.ProjectSpec{
-		{Name: "A", AllowedOrigins: []string{"https://a.com"}},
-		{Name: "B", AllowedOrigins: []string{"https://b.com"}},
-	})
-	if err := st.WriteEvents(ctx, []store.Event{
-		{Family: store.FamilyProduct, ID: "p1", ProjectID: 1, EventName: "e", UserID: "u", TS: mustTime("2026-08-10T10:00:00Z")},
-		{Family: store.FamilyProduct, ID: "p2", ProjectID: 2, EventName: "e", UserID: "u", TS: mustTime("2026-08-10T10:00:00Z")},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	rec := &dropRecorder{Store: st}
-	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
-	r := New(rec, cfg, reg, identity.NewSalter(st, now), slog.Default(), now)
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"drop 1", "product 1 2026-08-10", "drop 2", "product 2 2026-08-10"}
-	if !slices.Equal(rec.calls, want) {
-		t.Errorf("calls = %v, want %v", rec.calls, want)
-	}
-}
-
-// The daily pass drops the aggregates of a blocked attribute key through
-// the same DropBlockedAggregates call, and keeps the other keys' rows
-// (project attributes D11).
-func TestDailyPassDropsBlockedAttributeAggregates(t *testing.T) {
-	ctx := context.Background()
-	st, reg, r := setup(t, jobsVars, jobsProjectSpecs)
-	pid := reg.Snapshot(ctx).Projects()[0].ID
-	for _, key := range []string{"x", "y"} {
-		if _, err := rawExec(t, `INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users) VALUES (?, '2026-08-01', 'e', ?, 'v', 4, 2)`, pid, key); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := manage.NewOps(reg, st).BlockAttribute(ctx, "test", pid, "x"); err != nil {
-		t.Fatal(err)
-	}
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
-	got := queryDays(t, `SELECT attr_key FROM agg_product_attrs WHERE project_id = ? ORDER BY attr_key`, pid)
-	if !slices.Equal(got, []string{"y"}) {
-		t.Errorf("attribute aggregate keys after the pass = %v, want [y]", got)
-	}
-}
-
 type fakeArchive struct {
-	calls   []string
-	removed []int64
-	dirs    []int64 // the project directories Projects reports
+	calls    []string
+	removed  []int64
+	dirs     []int64 // the project directories Projects reports
+	sizes    map[int64]int64
+	sizesErr error
 }
 
 func (f *fakeArchive) Projects() ([]int64, error) { return f.dirs, nil }
@@ -1171,21 +564,24 @@ func (f *fakeArchive) Maintain(ctx context.Context, today civil.Date, lateDays, 
 	return nil
 }
 
+func (f *fakeArchive) Sizes() (map[int64]int64, error) {
+	f.calls = append(f.calls, "sizes")
+	return f.sizes, f.sizesErr
+}
+
 func (f *fakeArchive) RemoveProject(id int64) error {
 	f.removed = append(f.removed, id)
 	return nil
 }
 
 func TestDailyPassMaintainsTheArchive(t *testing.T) {
-	vars := map[string]string{"RETENTION_RAW_DAYS": "7", "RETENTION_AGGREGATE_DAYS": "365", "INGEST_LATE_DAYS": "2", "RETENTION_DAYS": "500"}
+	vars := map[string]string{"INGEST_LATE_DAYS": "2", "RETENTION_DAYS": "500"}
 	_, _, r := setup(t, vars, jobsProjectSpecs)
 	a := &fakeArchive{}
 	r.WithArchive(a)
-	if err := r.RunDailyPass(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if len(a.calls) != 1 || a.calls[0] != "2026-08-22 late=2 keep=500" {
-		t.Fatalf("Maintain calls = %v", a.calls)
+	r.RunDailyPass(context.Background())
+	if len(a.calls) != 2 || a.calls[0] != "2026-08-22 late=2 keep=500" {
+		t.Fatalf("archive calls = %v", a.calls)
 	}
 }
 
@@ -1198,8 +594,8 @@ func TestScheduledPassWaitsItsJitterBeforeTheArchive(t *testing.T) {
 	r.sleep = func(ctx context.Context, d time.Duration) { waited = d }
 	r.now = func() time.Time { return time.Date(2026, 8, 22, 3, 0, 0, 0, time.UTC) }
 	r.runScheduled(context.Background())
-	if waited != 7*time.Minute || len(a.calls) != 1 {
-		t.Fatalf("waited %v, Maintain calls %d; want 7m then one call", waited, len(a.calls))
+	if waited != 7*time.Minute || len(a.calls) != 2 {
+		t.Fatalf("waited %v, archive calls %d; want 7m, then the maintenance and the sizes", waited, len(a.calls))
 	}
 }
 
@@ -1209,9 +605,7 @@ func TestBootPassDoesNotWaitTheJitter(t *testing.T) {
 	r.WithArchive(&fakeArchive{})
 	waited := false
 	r.sleep = func(ctx context.Context, d time.Duration) { waited = true }
-	if err := r.RunDailyPass(context.Background()); err != nil {
-		t.Fatal(err)
-	}
+	r.RunDailyPass(context.Background())
 	if waited {
 		t.Fatal("RunDailyPass slept; only the scheduled pass is jittered")
 	}
@@ -1234,8 +628,8 @@ func TestScheduledPassCutShortByShutdownDoesNotRun(t *testing.T) {
 	if got := queryDays(t, `SELECT key FROM usage_history`); len(got) != 0 {
 		t.Fatalf("the pass ran after the shutdown: usage_history %v", got)
 	}
-	if r.lastAggDay != "" {
-		t.Fatalf("lastAggDay = %q, want it left open", r.lastAggDay)
+	if r.lastPassDay != "" {
+		t.Fatalf("lastPassDay = %q, want it left open", r.lastPassDay)
 	}
 	_ = st
 }
@@ -1259,9 +653,7 @@ func TestRunDailyPassRemovesDirectoriesOfUnknownProjects(t *testing.T) {
 	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
 	a := &fakeArchive{dirs: []int64{1, 2, 99}}
 	r := New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now).WithArchive(a)
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
+	r.RunDailyPass(ctx)
 	if !slices.Equal(a.removed, []int64{99}) {
 		t.Fatalf("RemoveProject calls = %v, want [99]", a.removed)
 	}
@@ -1285,10 +677,81 @@ func TestRunDailyPassKeepsDirectoriesOfProjectsCreatedElsewhere(t *testing.T) {
 	now := func() time.Time { return time.Date(2026, 8, 22, 4, 0, 0, 0, time.UTC) }
 	a := &fakeArchive{dirs: []int64{2}}
 	r := New(st, cfg, reg, identity.NewSalter(st, now), slog.Default(), now).WithArchive(a)
-	if err := r.RunDailyPass(ctx); err != nil {
-		t.Fatal(err)
-	}
+	r.RunDailyPass(ctx)
 	if len(a.removed) != 0 {
 		t.Fatalf("RemoveProject calls = %v, want none", a.removed)
+	}
+}
+
+// passOnlyStore has jobs.Store's methods and nothing else, so the pass
+// cannot reach any of the event work the store used to do; it records the
+// calls made.
+type passOnlyStore struct{ calls []string }
+
+var _ Store = (*passOnlyStore)(nil)
+
+func (s *passOnlyStore) call(name string) { s.calls = append(s.calls, name) }
+
+func (s *passOnlyStore) IncrementalVacuum(context.Context) error {
+	s.call("IncrementalVacuum")
+	return nil
+}
+
+func (s *passOnlyStore) RecordUsageHistory(_ context.Context, _ time.Time, fileBytes map[int64]int64) error {
+	if fileBytes == nil {
+		s.call("RecordUsageHistory nil")
+	} else {
+		s.call(fmt.Sprintf("RecordUsageHistory %v", fileBytes))
+	}
+	return nil
+}
+
+func (s *passOnlyStore) PurgeArchived(context.Context, int) (store.PurgeResult, error) {
+	s.call("PurgeArchived")
+	return store.PurgeResult{}, nil
+}
+
+func (s *passOnlyStore) ArchiveDueWidgetShares(context.Context, string) (int, error) {
+	s.call("ArchiveDueWidgetShares")
+	return 0, nil
+}
+
+func (s *passOnlyStore) ExpireDrafts(context.Context, time.Time) (int, error) {
+	s.call("ExpireDrafts")
+	return 0, nil
+}
+
+func (s *passOnlyStore) PendingSubmissions(context.Context, time.Time, int) ([]store.PendingSubmission, error) {
+	return nil, nil
+}
+
+func (s *passOnlyStore) AttributeSubmission(context.Context, store.PendingSubmission, store.Event) (bool, error) {
+	return false, nil
+}
+
+func (s *passOnlyStore) UnloggedEvents(context.Context, int) ([]store.UnloggedEvent, error) {
+	return nil, nil
+}
+
+func (s *passOnlyStore) UnloggedCount(context.Context) (int, error) { return 0, nil }
+
+func (s *passOnlyStore) MarkLogged(context.Context, []store.UnloggedEvent) error { return nil }
+
+// TestPassRunsNoEventWork: the pass needs nothing of the store but the
+// shares, drafts, purge, vacuum and usage history, and it maintains the
+// archive before measuring.
+func TestPassRunsNoEventWork(t *testing.T) {
+	_, reg, r := setup(t, jobsVars, jobsProjectSpecs)
+	st := &passOnlyStore{}
+	r = New(st, r.cfg, reg, nil, slog.Default(), r.now)
+	a := &fakeArchive{sizes: map[int64]int64{1: 7}}
+	r.WithArchive(a)
+	r.RunDailyPass(context.Background())
+	want := []string{"ArchiveDueWidgetShares", "ExpireDrafts", "PurgeArchived", "IncrementalVacuum", "RecordUsageHistory map[1:7]"}
+	if !slices.Equal(st.calls, want) {
+		t.Errorf("store calls = %v, want %v", st.calls, want)
+	}
+	if want := []string{"2026-08-22 late=1 keep=400", "sizes"}; !slices.Equal(a.calls, want) {
+		t.Errorf("archive calls = %v, want %v", a.calls, want)
 	}
 }

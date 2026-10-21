@@ -16,7 +16,7 @@ func TestRegistryWritesReturnTypedOutcomes(t *testing.T) {
 	d := openRegistryDB(t)
 	ctx := context.Background()
 	audit := store.AuditEntry{Actor: "test", Action: "test", Subject: "test"}
-	blog := store.RegistryProject{Name: "blog", AllowedOrigins: "[]", Attributes: "[]"}
+	blog := store.RegistryProject{Name: "blog", AllowedOrigins: "[]"}
 	id, err := d.CreateProject(ctx, blog, audit)
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ func TestRegistryWritesReturnTypedOutcomes(t *testing.T) {
 	const ghost int64 = 7 // never assigned
 
 	notFound := map[string]error{
-		"update unknown id":      d.UpdateProject(ctx, store.RegistryProject{ID: ghost, AllowedOrigins: "[]", Attributes: "[]"}, audit),
+		"update unknown id":      d.UpdateProject(ctx, store.RegistryProject{ID: ghost, AllowedOrigins: "[]"}, audit),
 		"archive unknown id":     d.SetProjectArchived(ctx, ghost, true, audit),
 		"disable unknown key":    d.SetIngestKeyDisabled(ctx, id, "ghost", true, audit),
 		"disable key of unknown": d.SetIngestKeyDisabled(ctx, ghost, "web", true, audit),

@@ -528,6 +528,9 @@ func (a *Archive) write(ctx context.Context, copyTo, out string) error {
 	return syncFile(filepath.Dir(out))
 }
 
+// Sizes is Sizes over the log's directory: each project's file bytes.
+func (a *Archive) Sizes() (map[int64]int64, error) { return Sizes(a.log.Dir()) }
+
 // RemoveProject deletes a purged project's directory (raw-first D6). Its
 // open logs are closed first; an event for it still in the pipeline
 // recreates the directory, and the next purge pass removes it.

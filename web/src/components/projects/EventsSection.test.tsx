@@ -24,7 +24,7 @@ function renderSection(props: Partial<Parameters<typeof EventsSection>[0]> = {})
   const onBlock = vi.fn().mockResolvedValue(true)
   const onRemove = vi.fn().mockResolvedValue(true)
   const onAddAlias = vi.fn().mockResolvedValue(true)
-  renderWithProviders(<EventsSection project={project} range={range} rawDays={7} onRename={onRename} onMerge={onMerge} onBlock={onBlock} onRemove={onRemove} onAddAlias={onAddAlias} {...props} />)
+  renderWithProviders(<EventsSection project={project} range={range} onRename={onRename} onMerge={onMerge} onBlock={onBlock} onRemove={onRemove} onAddAlias={onAddAlias} {...props} />)
   return { onRename, onMerge, onBlock, onRemove, onAddAlias }
 }
 
@@ -183,7 +183,7 @@ describe('EventsSection', () => {
     await user.click(await screen.findByRole('button', { name: 'Add alias to signup' }))
     const dialog = await screen.findByRole('dialog', { name: 'Add an alias to signup' })
     await user.type(within(dialog).getByLabelText('Old name'), 'old_signup')
-    expect(within(dialog).getByRole('alert')).toHaveTextContent('old_signup already has events: they merge into signup, and this cannot be undone.')
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('old_signup already has events: every report counts them under signup from now on.')
     await user.click(within(dialog).getByRole('button', { name: 'Add alias' }))
     expect(onAddAlias).toHaveBeenCalledWith({ family: 'product', alias: 'old_signup', to: 'signup' })
   })
@@ -311,7 +311,8 @@ describe('EventsSection', () => {
     await screen.findByText('Blocked')
     await openMenu(user, 'old_signup', 'Merge into…')
     const dialog = await screen.findByRole('dialog', { name: 'Merge old_signup into…' })
-    expect(within(dialog).getByText(/cannot be undone/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/Every report counts old_signup's events \(product\) under the event you pick, past ones included/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/Removing the rule later shows past events as sent again/)).toBeInTheDocument()
     expect(within(dialog).getByText(/Widgets whose SQL names old_signup are not changed\./)).toBeInTheDocument()
     expect(within(dialog).getAllByRole('option').map((o) => o.querySelector('span')?.textContent)).toEqual(['checkout', 'signup'])
     expect(within(dialog).getByRole('button', { name: 'Merge' })).toBeDisabled()
@@ -358,24 +359,23 @@ describe('EventsSection', () => {
     expect(await screen.findByText(/Widgets whose SQL names the old event are not changed\./)).toBeInTheDocument()
   })
 
-  it('confirms before blocking, naming the daily pass and the raw days', async () => {
+  it('confirms before blocking, saying past events are hidden at once', async () => {
     const user = userEvent.setup()
-    const { onBlock } = renderSection({ rawDays: 14 })
+    const { onBlock } = renderSection()
     await openMenu(user, 'signup', 'Block…')
     expect(await screen.findByText('Block signup?')).toBeInTheDocument()
-    expect(screen.getByText(/next daily pass \(03:00 UTC\)/)).toBeInTheDocument()
-    expect(screen.getByText(/within 14 days/)).toBeInTheDocument()
+    expect(screen.getByText(/hidden from every report at once, past events included; new ones are not stored/)).toBeInTheDocument()
+    expect(screen.queryByText(/daily pass|expire|retention/)).not.toBeInTheDocument()
     expect(onBlock).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: 'Block event' }))
     expect(onBlock).toHaveBeenCalledWith({ family: 'product', name: 'signup' })
   })
 
-  it('names the retention window when the raw days are unknown, and blocks nothing on Cancel', async () => {
+  it('blocks nothing on Cancel', async () => {
     const user = userEvent.setup()
-    const { onBlock } = renderSection({ rawDays: undefined })
+    const { onBlock } = renderSection()
     await openMenu(user, 'signup', 'Block…')
-    expect(await screen.findByText(/within the raw retention window/)).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }))
     expect(onBlock).not.toHaveBeenCalled()
   })
 

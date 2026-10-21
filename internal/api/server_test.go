@@ -530,11 +530,11 @@ func TestOAuthAudienceDefaultsToOriginOrMCP(t *testing.T) {
 }
 
 // GET /api/limits answers from the running config: ingest_disabled is
-// INGEST_DISABLED and raw_events carries RETENTION_RAW_DAYS (the
-// seeded database holds no raw rows).
+// INGEST_DISABLED and RETENTION_DAYS is the files' retention. The
+// handler has no engine, so events_30d is left out.
 func TestRESTLimitsFromTheConfig(t *testing.T) {
 	for _, on := range []bool{false, true} {
-		over := map[string]string{"RETENTION_RAW_DAYS": "7"}
+		over := map[string]string{"RETENTION_DAYS": "365"}
 		if on {
 			over["INGEST_DISABLED"] = "true"
 		}
@@ -553,8 +553,11 @@ func TestRESTLimitsFromTheConfig(t *testing.T) {
 		if out.IngestDisabled != on {
 			t.Errorf("ingest_disabled = %v, want %v", out.IngestDisabled, on)
 		}
-		if out.RawEvents == nil || out.RawEvents.WindowDays != 7 || out.RawEvents.Held != 0 {
-			t.Errorf("raw_events = %+v, want 0 held in 7 days", out.RawEvents)
+		if out.Events30d != nil {
+			t.Errorf("events_30d = %+v without an engine, want it left out", out.Events30d)
+		}
+		if len(out.Limits) == 0 || out.Limits[0].Setting != "RETENTION_DAYS" || out.Limits[0].Value != 365 {
+			t.Errorf("limits = %+v, want RETENTION_DAYS 365 first", out.Limits)
 		}
 	}
 }

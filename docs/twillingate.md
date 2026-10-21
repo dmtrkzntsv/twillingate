@@ -22,7 +22,7 @@ and backing up the database are the operator's job, in
 
 One Go binary, one SQLite file. It collects views (page views from websites,
 screen views from apps and CLIs) and custom product events through one endpoint,
-rolls them up nightly, and exposes the result as dashboards at `/app/`, a
+keeps them as files, and exposes them as dashboards at `/app/`, a
 read-only SQL surface, and an API (MCP or HTTP). It is cookieless by default:
 the served SDK's `anonymous` default writes nothing to a visitor's device
 unless the tag declares consent, and then a visitor id (pseudonymous, never
@@ -40,7 +40,7 @@ discarded.
 | `twillingate serve` | Both, on one listener unless `CONSOLE_ADDR` says otherwise |
 | `twillingate project`, `key`, `form`, `config` | Registry management |
 | `twillingate migrate` | Applies schema migrations and exits |
-| `twillingate events import` | Once, with the ingest service stopped: copies the raw rows the database holds into the event files (`deploy/UPGRADES.md`) |
+| `twillingate events import` | Once, with the ingest service stopped, when upgrading from a release before migration 042: copies the raw rows the database holds into the event files, so the migration may drop them (`deploy/UPGRADES.md`); past 042 it says there is nothing to import |
 
 Which of those run, and how, is the operator's choice — see [Configure the
 collector](deployment.md#configure-the-collector).
@@ -54,7 +54,7 @@ Projects live in a registry table, managed through the CLI or, over the API
 
 | Operation | CLI | MCP tool | Tool arguments |
 | --- | --- | --- | --- |
-| Create a project | `twillingate project create` | `create_project` | `{name, allowed_origins, attributes}`; `name` required; `skip_key: true` issues no first key; returns the new `project_id` |
+| Create a project | `twillingate project create` | `create_project` | `{name, allowed_origins}`; `name` required; `skip_key: true` issues no first key; returns the new `project_id` |
 | Change one | `twillingate project update` | `update_project` | `{project_id, …}`; merges, so an omitted field keeps its value and `allowed_origins: []` clears the list |
 | List them | `twillingate project list` | `list_projects` | none; in the order you set, a new project last |
 | Reorder them | `twillingate project move` | `move_project` | `{project_id, after}`; `after` is the project to follow, archived ones included, `0` puts it first. The console does the same by dragging a card on the Projects page or a project in the sidebar |
@@ -62,11 +62,11 @@ Projects live in a registry table, managed through the CLI or, over the API
 | Issue an ingest key | `twillingate key issue` | `issue_ingest_key` | `{project_id, label}`; returns the key **and** a paste-ready snippet |
 | List keys | `twillingate key list` | `list_ingest_keys` | `{project_id}` |
 | Disable / enable a key | `twillingate key disable` / `enable` | `disable_ingest_key` / `enable_ingest_key` | `{project_id, label}` |
-| Rename an event | — | `rename_event` | `{project_id, family, from, to}`; `family` is `product` or `measures`; returns the rule and the rows rewritten per table. See [Event rules](#event-rules) |
+| Rename an event | — | `rename_event` | `{project_id, family, from, to}`; `family` is `product` or `measures`; returns the rule. See [Event rules](#event-rules) |
 | Merge an event into another | — | `merge_event` | `{project_id, family, from, to}`; returns what `rename_event` does |
 | Block an event | — | `block_event` | `{project_id, family, name}` |
 | List / remove event rules | — | `list_event_rules` / `remove_event_rule` | `{project_id}` / `{project_id, family, name}` |
-| Rename an attribute | — | `rename_attribute` | `{project_id, from, to}`; custom keys only; returns the rule and the rows rewritten per table. See [Attribute rules](#attribute-rules) |
+| Rename an attribute | — | `rename_attribute` | `{project_id, from, to}`; custom keys only; returns the rule. See [Attribute rules](#attribute-rules) |
 | Merge an attribute into another | — | `merge_attribute` | `{project_id, from, to}`; returns what `rename_attribute` does |
 | Block an attribute | — | `block_attribute` | `{project_id, key}` |
 | Remove an attribute rule | — | `remove_attribute_rule` | `{project_id, key}`; `list_attributes` shows each rule on the keys it touches |
@@ -83,7 +83,7 @@ for a project, all its data) once it has been archived longer than
 
 ```bash
 twillingate project create -name "My App" \
-  -origin https://myapp.com -attr plan -attr tier
+  -origin https://myapp.com
 twillingate project list                                 # id  name
 twillingate project update -id 1 -origin https://myapp.com -origin https://www.myapp.com
 twillingate project update -id 1 -clear-origins
@@ -94,7 +94,7 @@ twillingate key list -project-id 1
 twillingate key disable -project-id 1 -label ios-2025
 ```
 
-`-origin` and `-attr` replace the whole list rather than merging;
+`-origin` replaces the whole list rather than merging;
 `-clear-origins` (or `allowed_origins: []`) empties the origins.
 
 | Key | Meaning |
@@ -103,57 +103,25 @@ twillingate key disable -project-id 1 -label ios-2025
 | `name` | Display name. Required; free text, need not be unique; change it with `project update -name`. |
 | `ingest_keys` | One or more `{key, label, disabled}` credentials. Required. |
 | `allowed_origins` | Origins allowed to post for this project. `*` is a wildcard — `https://*.example.com` covers every subdomain, a bare `*` allows any origin. Add `tauri://localhost` or `app://.` for Electron/Tauri. |
-| `attributes` | Custom product-event attribute keys the database breaks down (the event files break every key down, declared or not; see [Attribute breakdowns](#attribute-breakdowns)); a repeated key is kept once. Answered ordered by key. |
 
-### Attribute breakdowns
+### Attributes
 
-```bash
-twillingate project update -id 1 -attr plan -attr tier
-```
+A project declares no attributes. `product_attributes`, `measures` (by
+`attr_key`) and the dashboards read the
+[event files](#writing-sql-against-the-event-files), where every key the
+events carried breaks down: each custom attribute key, and the reserved keys
+`$platform`, `$os`, `$app_version`, `$app_locale`, `$kind`, `$browser`,
+`$device`, `$browser_locale`, `$country` (the country ingest derives from the
+connection's IP, never sent by a client), `$host`, `$path`, `$referrer`,
+`$utm_source`, `$utm_medium`, `$utm_campaign`, `$os_version`,
+`$browser_version` and `$device_model`, each read from its column. Nothing is
+capped there and there is no `(other)` row. Sending a key is all it takes;
+`create_project`, `update_project` and `project create`/`update` have no field
+or flag for it, and `list_projects` answers none.
 
-`product_attributes`, `measures` (by `attr_key`) and the dashboards read
-the [event files](#writing-sql-against-the-event-files), where every key the
-events carried breaks down without being declared: each custom attribute
-key, and the reserved keys `$platform`, `$os`, `$app_version`,
-`$app_locale`, `$kind`, `$browser`, `$device`, `$browser_locale`,
-`$country` (the country ingest derives from the connection's IP, never sent
-by a client), `$host`, `$path`, `$referrer`, `$utm_source`, `$utm_medium`,
-`$utm_campaign`, `$os_version`, `$browser_version` and `$device_model`, each
-read from its column. Nothing is capped there and there is no `(other)`
-row.
-
-Declaring a key matters only to the database's rollups, which the
-[deprecated](#writing-sql-against-the-views-deprecated) `source: "sqlite"`
-views read. There a declared key gets a value breakdown (counts and unique
-users/groups per value, per event, per day) in `agg_product_attrs` /
-`v_product_attrs`. A declared custom key also gets an `attr_*` column in `v_events_flat`; a declared
-reserved key is already a typed column there. Undeclared keys are still
-stored and reachable via `json_extract(attributes, '$.junk')`; declaring one
-later does not backfill. `ATTRIBUTE_VALUES_TOP_N` (default 100, 0 for no cap,
-set [server-side](deployment.md#configure-the-collector)) keeps the top N values per
-key and collapses the tail into one `(other)` row whose unique counts are
-recomputed from raw, so **a client sending the literal `(other)` loses its own
-count**. Never declare an unbounded custom key such as a session id. In the
-database, the first nine reserved keys above roll up automatically; the other
-nine (`$host` to `$device_model`) roll up only once declared like a custom
-key, and the top-N cap keeps a declared `$path` bounded there. Declaring any
-other `$` key is refused. Rollups run whether or not a project declares attributes; declaring
-only adds the per-value breakdown and the `attr_*` columns.
-
-Declaring an attribute makes it a breakdown: the key's row in the project's
-attributes catalog is marked, and the database's daily rollup keeps per-value
-rows for it in `v_product_attrs`. `product_attributes` needs no declaration:
-it reads the files, where every key the events carried breaks down. The catalog holds one row
-per key the project received within the raw window, plus every breakdown,
-received or not. `attributes` is the catalog's breakdown keys, ordered by key
-whatever order they were written in; writing it marks the keys listed and
-unmarks the rest. Pick keys from `list_attributes`, which lists the keys
-events actually carry with their breakdown flag. A key that is blocked or
-renamed away cannot be a breakdown (`conflict`, naming the rule; see
-[Attribute rules](#attribute-rules)).
-`ATTRIBUTE_BREAKDOWNS_MAX` (default 50) bounds the attributes all active
-projects declare together; a create or update that adds attributes past it is
-refused (`invalid`), while a save that adds none always passes.
+`list_attributes` lists the keys a project's events carried over a range,
+with each key's events and distinct values; see [Attribute rules](#attribute-rules)
+to rename, merge or block one.
 
 ### Ingest keys
 
@@ -179,25 +147,34 @@ blocked one, is `conflict`. A name has at most one rule: blocking a renamed
 name replaces the rename, and renaming a blocked name replaces the block. Every
 rule operation is audited.
 
-`rename_event {project_id, family, from, to}` gives an event a name not in use:
-it rewrites the stored events and the family's aggregates from `from` to `to`
-in one transaction, keeps a rule, and returns it with `rewritten`, the rows
-changed per table. Events sent later under `from`, by an app version still in
-the field, are stored under `to`; they carry no warning. A name with no stored
-events is accepted: the rule alone is written. If `to` already has events or
-aggregates, the rename is refused: merge instead.
+A rule is applied on read: the event files keep every event as it was sent,
+and every read of them (dashboards, `query`, the analytics tools) applies the
+project's rules at once, history included. Ingest applies them too, so an
+event sent after the rule is stored as the rule says. Nothing stored is
+rewritten, and no rule operation waits on the size of the history.
+
+`rename_event {project_id, family, from, to}` gives an event a name not in use
+and returns the rule. Events sent later under `from`, by an app version still
+in the field, are stored under `to`; they carry no warning. A name with no
+stored events is accepted. Before writing the rule, the rename looks in the
+event files for an event of `to` in the project's whole history, read through
+the rules as they stand: if there is one, the rename is refused, merge
+instead. So a name only a rule fills counts too: once `A` is renamed to `B`,
+renaming `C` to `B` is refused and merging `C` into `B` is not. If the files
+cannot be read (the engine is down or the look-up times out), the rename fails
+with a server error and nothing is written.
 
 `merge_event {project_id, family, from, to}` does the same onto an event that
-may already have events, and answers the same. A merge cannot be undone. Raw
-events merge exactly; aggregates meet on their key and their counts, samples
-and sums add, but `unique_users` and `unique_groups` on merged days become an
-upper bound (someone who sent both names counts twice), and a merged day's
-attribute breakdown may hold more than `ATTRIBUTE_VALUES_TOP_N` values.
+may already have events, and answers the same, without looking in the files.
+Every read counts both names' events under `to`, so unique users and groups
+over merged days are exact.
 
 - **Chains and renaming back.** Renaming or merging B into C retargets every
   rule `A → B` to `A → C`, so a rule's target is never another rule's source.
   Renaming `B` to `A` while `A → B` exists deletes that rule first, so `A` is
-  no longer mapped away.
+  no longer mapped away. Renaming or merging onto a name that is itself
+  renamed to a third one (`B → X`, then `C` into `B`) is `conflict`: rename
+  into `X`, or remove that rule first.
 - **Never onto a blocked name.** Neither a rename nor a merge drops what it
   moves: to stop receiving an event, block it.
 - **Widget SQL is not rewritten.** A widget or `query` that names the old event
@@ -208,22 +185,20 @@ attribute breakdown may hold more than `ATTRIBUTE_VALUES_TOP_N` values.
 - Ingest accepts the event and drops it, so a client sees `2xx` and does not
   retry, and the response carries a [warning](#responses-and-retry). Blocking
   `B` also drops events renamed to `B`.
-- The daily pass never aggregates a blocked name, and at its next run deletes
-  the name's existing aggregates (`agg_product_daily`, `agg_product_attrs`,
-  `agg_measures_daily`, `agg_measures_attrs`). Daily totals
-  (`agg_product_totals`) are not split by event and keep their values.
-- Nothing is deleted on request: the name's stored raw events stay readable
-  until their day leaves the raw window (`RETENTION_RAW_DAYS`).
+- Every read of the event files leaves the name's stored events out, history
+  included, from the moment the block is written.
+- Nothing is deleted: the stored events stay in the files until their month
+  leaves `RETENTION_DAYS`.
 - Events queued in the seconds before the block commits may still be stored.
 
-`remove_event_rule {project_id, family, name}` deletes the rule for `name`. A
-rename or merge stops mapping, and the history it rewrote stays where it went. A block stops
-dropping: events are stored again, and raw days still inside the window
-aggregate as usual. Removing a block before the next daily pass loses nothing;
-after it, the aggregated history of the name is gone. `list_event_rules
-{project_id}` answers `rules`, each `{family, name, action, to, created_at}`
-with `action` `rename` (left by a rename or a merge) or `block`, and no `to`
-for a block.
+`remove_event_rule {project_id, family, name}` deletes the rule for `name`, and
+reads stop applying it. Events stored before a rename or merge read under
+their own name again; those ingest stored under the target while the rule held
+stay there. A removed block shows the name's stored events again, and new ones
+are stored; those sent while it was blocked were dropped and stay gone.
+`list_event_rules {project_id}` answers `rules`, each `{family, name, action,
+to, created_at}` with `action` `rename` (left by a rename or a merge) or
+`block`, and no `to` for a block.
 
 The console lists a project's event names for these tools on its Settings page,
 from `GET /api/projects/{project_id}/event-names`, a route with no MCP tool
@@ -247,78 +222,61 @@ key that already has data, or renaming or merging onto a blocked one, is
 rename, and renaming a blocked key replaces the block. Every rule operation is
 audited.
 
-`rename_attribute {project_id, from, to}` gives a key a name not in use. In
-one transaction it rewrites everything that names `from` and keeps a rule; it
-returns the rule with `rewritten`, the rows changed in `events`,
-`agg_product_attrs`, `agg_measures_attrs` and `usage_attributes`:
+A rule is applied on read, as an event rule is: the event files keep every
+event as it was sent, and every read of them applies the project's attribute
+rules at once, history included. Ingest applies them too. Nothing stored is
+rewritten.
 
-- **Raw events** of the project's product and measures families that carry
-  `from`: its value moves to `to`. Where an event carries both, **the target
-  wins**: `to`'s value is kept and `from` is removed.
-- **`agg_product_attrs` and `agg_measures_attrs`**: rows for `from` become
-  rows for `to`.
-- **Usage**: the per-day key counts `list_attributes` reads
-  (`usage_attributes`).
-- **The catalog** (not counted in `rewritten`): `from`'s row goes, and `to`
-  is a breakdown if either was, so the `attr_*` column follows the key and the
-  breakdown budget never grows.
+`rename_attribute {project_id, from, to}` gives a key a name not in use and
+returns the rule:
 
-A rename or a merge rewrites the project's raw product and measures rows in
-that one transaction, so its time grows with them: about 20 µs a raw row on
-modest hardware, some 1.5 s per 66,000 rows. Ingest is buffered meanwhile: events wait in the write buffer, and a very long rewrite
-on a huge project can fill it (`BUFFER_CAPACITY`), past which events are
-dropped.
+- **Reads** of the project's product and measures events show `from`'s
+  values under `to`, history included, and `from` reads as absent. Where an
+  event carries both, **the target wins**: `to`'s value is kept.
+- **Later events** sent with `from`, by an app version still in the field, are
+  stored with `to`, with no warning. The target wins there too: an event that
+  sends both keeps `to`'s value, and of several keys renamed to one target
+  that arrive without it, the first in key order wins.
 
-Events sent later with `from`, by an app version still in the field, are
-stored with `to`, with no warning. The target wins there too: an event that
-sends both keeps `to`'s value, and of several keys renamed to one target that
-arrive without it, the first in key order wins. A key with no stored data is
-accepted: the rule alone is written. If `to` already has data (a usage row in
-the raw window, or aggregates), the rename is refused: merge instead.
+A key with no stored values is accepted. Before writing the rule, the rename
+looks in the event files for a value of `to` in the project's whole history,
+read through the rules as they stand: if there is one, the rename is refused,
+merge instead. A key only a rule fills counts too, as for events. If the
+files cannot be read, the rename fails with a server error and nothing is
+written.
 
 `merge_attribute {project_id, from, to}` does the same onto a key that may
-already have data, and answers the same. `from` needs no data: that is how an
-alias is added for an app version not yet shipped. A merge cannot be undone.
-Raw events merge exactly; aggregates meet on their key and their counts,
-samples, weights and sums add, but `unique_users` and `unique_groups` on
-merged days become an upper bound (someone whose events carried both keys
-counts twice), and a merged day may hold more than `ATTRIBUTE_VALUES_TOP_N`
-values for the key. The merged days' usage is an upper bound too, until the
-next daily pass recounts it from the raw events. Merging two breakdowns
-leaves one, freeing a place in the budget.
+already have values, and answers the same, without looking in the files.
+`from` needs no values: that is how an alias is added for an app version not
+yet shipped.
 
 - **Chains and renaming back.** Renaming or merging B into C retargets every
   rule `A → B` to `A → C`, so a rule's target is never another rule's source.
   Renaming `B` to `A` while `A → B` exists deletes that rule first, so `A` is
-  no longer mapped away.
+  no longer mapped away. Renaming or merging onto a key that is itself
+  renamed to a third one is `conflict`: rename into that one, or remove its
+  rule first.
 - **Never onto a blocked key.** Neither a rename nor a merge drops what it
   moves: to stop receiving a key, block it.
 - **Widget SQL is not rewritten.** A widget or `query` that names the old key
-  (`json_extract(attributes, '$.old')`, `attr_old`) finds nothing from the
-  rename on; edit it.
+  (`attr_old`) finds nothing from the rename on; edit it.
 
 `block_attribute {project_id, key}` strips a key from events, never the
 events:
 
 - Ingest stores the event without the key, and the response carries a
   [warning](#responses-and-retry), once per key per batch, on the first event
-  that carried it. Blocking `B` also strips keys renamed to `B`. Events queued
-  before the block commits are stripped too: the store applies the rules again
-  as it writes.
-- The key stops being a breakdown, and with it go its `attr_*` column and its
-  place in the budget.
-- The daily pass never aggregates a blocked key, and at its next run deletes
-  the key's existing rows in `agg_product_attrs` and `agg_measures_attrs`.
-- Nothing is deleted on request: stored raw events keep the key until their
-  day leaves the raw window (`RETENTION_RAW_DAYS`), and `list_attributes` keeps
-  counting it there, so its counts fade with the window.
+  that carried it. Blocking `B` also strips keys renamed to `B`.
+- Every read of the event files hides the key's stored values, history
+  included, so `list_attributes` lists it as not received. Nothing is
+  deleted: the files keep the values until their month leaves
+  `RETENTION_DAYS`.
 
-`remove_attribute_rule {project_id, key}` deletes the rule for `key`. A rename
-or merge stops mapping, and the history it rewrote stays where it went. A
-block stops stripping: the key is stored again. Removing a block before the
-next daily pass keeps the key's aggregates; after it, the key's aggregated
-breakdown is gone for good. Either way, events stored while the key was
-blocked stay without it.
+`remove_attribute_rule {project_id, key}` deletes the rule for `key`, and
+reads stop applying it. Events stored before a rename or merge show the key as
+sent again; those ingest stored with the target while the rule held keep it. A
+removed block shows the key's stored values again, and new ones are stored;
+events stored while it was blocked stay without it.
 
 `list_attributes` shows each rule on the keys it touches, so every rule can be
 found there: a blocked key is marked `blocked`; the keys renamed or merged into
@@ -894,8 +852,9 @@ with those filters (at least one; to remove a whole form, archive it); and
 forms too, so an erasure request leaves no copy behind; each submission it
 finds says `archived: true` when its form is archived. Search matches a field's
 value anywhere in it, case-insensitively for ASCII letters only (`É` and `é`
-differ). A deleted submission's `$form_submit` event is removed from the raw
-window only: days already rolled up keep their counts. The audit log records
+differ). A deleted submission's `$form_submit` event stays in the event files: it
+holds the form's name, the actor and the attribution, never a field, so
+the count of conversions is kept. The audit log records
 the selector's kind (`ids`, `search`, or `filters` with the form's name) and
 the number of submissions actually deleted (a delete that removes nothing is
 recorded too, with 0), never the search text, the filter values or the submissions'
@@ -923,9 +882,9 @@ decides instead:
 | `$form_submit` | product | — | written by the collector beside an approved form's submission ([Form submissions](#form-submissions)); a client sending it is rejected |
 | any name, with `family: "measures"` | measures | — | `measures`, the Web Vitals and Measures dashboards |
 
-All three families are stored in one raw table, `events`, whose `family`
-column is `views`, `product` or `measures`; the aggregates, views and tools
-of each family read only its own rows.
+All three families are stored in the event files' `events` table, whose
+`family` column is `views`, `product` or `measures`; the `views`, `product`
+and `measures` tables and the tools of each family read only its own rows.
 
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning; an unrecognized `$`
@@ -1005,8 +964,8 @@ keys, validated the same way; the JS SDK sends them on every batch.
 ### Product (everything else)
 
 Any other name is a custom product event; don't `$`-prefix your own names.
-Attributes are free-form — see [Attribute breakdowns](#attribute-breakdowns) for
-which keys get their own column and value breakdown.
+Attributes are free-form — see [Attributes](#attributes) for
+how every key reads as its own column.
 
 ```js
 twillingate.track("signup", { plan: "pro" });
@@ -1231,8 +1190,8 @@ User-Agent is read only to drop crawlers, and both are discarded.
 happened, not at flush time. The server clamps it to `[received − max_event_age,
 received + 5 minutes]`, records the server clock separately, and **clamps and
 counts, never drops**, out-of-range values; `max_event_age` is
-`INGEST_LATE_DAYS` (1 day by default, at most `RETENTION_RAW_DAYS`), so a
-clamped event can never target a day already rolled up. **`id`** is a client-generated UUID (the SDK
+`INGEST_LATE_DAYS` (1 day by default, at most `RETENTION_DAYS`), so a
+clamped event can never target a day whose file is already deleted. **`id`** is a client-generated UUID (the SDK
 makes v7, so ids sort by time; any version is accepted) and is what makes at-least-once delivery safe:
 the write ignores a duplicate primary key, so a batch retried after a timeout
 that actually succeeded is a no-op. **Omit `id` and a replayed batch
@@ -1304,7 +1263,7 @@ is a poison batch to drop**; the `202` is returned **before** the write, so
 | `$sample_rate` | `0.0001` to `1` (else stored as `1`) |
 
 The `limits` tool lists these, and the [form limits](#form-submissions),
-beside the retention and cap settings in force.
+beside the retention settings in force.
 
 ### Origin and CORS
 
@@ -1330,7 +1289,8 @@ send. An approved form keeps only its expected fields and writes, beside each
 submission, a `$form_submit` product event with the submission's `id`, its
 time as `ts` and the form's name as its one attribute, `form`; a draft's
 submissions write none. The submission is written before the answer, never
-buffered; its attribution and its event follow about a minute later (below).
+buffered; its attribution and its event follow about a minute later (below), the event
+into the event files alone.
 
 **A submission and its event.** The submission keeps what the visitor
 typed, when it arrived and where the visit came from: its `attribution`,
@@ -1353,8 +1313,8 @@ there. Everything else is on the event, which has the submission's id and
 its arrival as `ts`: the actor, the page (`$host`, `$path`), the country,
 the same referrer and UTMs, and the `$kind`, group, session id,
 environment and consent of the actor's newest view in the window. So the
-submission's attribution outlives the raw window, and the event's details
-are counted like any product event's.
+submission's attribution outlives the event files' `RETENTION_DAYS`, and
+the event's details are counted like any product event's.
 
 Two body styles, chosen by `Content-Type`:
 
@@ -1459,7 +1419,7 @@ form submissions](#collect-form-submissions).
 
 ## Answer questions with the data
 
-A connected session gets sixty-five tools: the thirty-two below, the nine
+A connected session gets sixty-four tools: the thirty-one below, the nine
 in [Collect form submissions](#collect-form-submissions), and twenty-four
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
@@ -1470,24 +1430,23 @@ be malformed, and they already apply the caveats below. All the reading tools
 take `project_id`, `from` and `to` as `YYYY-MM-DD` unless noted. The
 analytics tools (`views_overview` through `identities`) read the [event
 files](#writing-sql-against-the-event-files), as the dashboards do, so their
-history starts where the files' does; `limits`, `cap_usage`,
-`list_attributes` and `usage` still read the database.
+history starts where the files' does. `query`, the count of events in
+`limits`, `list_attributes` and `usage` read them too.
 
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
-| `list_projects` | none | Every project with its `project_id`, name, `archived` and `archived_at` (RFC 3339, only when archived), `allowed_origins` and `attributes` (its breakdown keys, ordered by key), in the order `move_project` sets. Call this first — every other tool needs a `project_id` |
-| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in three groups: `retention` (`RETENTION_RAW_DAYS`, `RETENTION_AGGREGATE_DAYS`, `RETENTION_DAYS`, `RETENTION_ARCHIVED_DAYS`, `RETENTION_FORMS_DRAFT_DAYS`), `caps` (`ATTRIBUTE_VALUES_TOP_N`, which caps views breakdowns and attribute values alike, `ATTRIBUTE_BREAKDOWNS_MAX`, `IDENTITIES_TOP_N`) and `ingest`: `INGEST_LATE_DAYS`, then the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`no cap`, `kept forever`). The output also carries `raw_events`, `{held, window_days}`: the raw events stored, of every family and project (what the server's disk and its dashboards' scans of the raw window follow), counted at most every 5 minutes (a full scan of the raw rows, seconds on a server holding millions): a call past the 5 minutes answers the previous count and starts the next, one past 10 waits for it, so the count is never more than 10 minutes old; and `window_days`, `RETENTION_RAW_DAYS`. Absent when the last count failed, `CONSOLE_QUERY_TIMEOUT` included; a failure is logged once and kept for the same 5 minutes. And `ingest_disabled`, `true` when `INGEST_DISABLED` is set and every ingest route refuses with `429` |
-| `cap_usage` | `from`, `to` (optional: the last 30 days) | Per capped dimension — views breakdowns and kinds, attribute keys, `users`/`groups` — the busiest day's values against the `cap`, `days` with data, `days_capped` (an `(other)` row; for users and groups, the cap reached) and `folded_share` |
-| `list_attributes` | `from`, `to` (optional: the last 30 days) | The project's attributes, busiest first: each key's `events` and `max_values` (the busiest event's distinct values on one day, against `ATTRIBUTE_VALUES_TOP_N`), counted by the daily pass so today's arrive the night after (a key first received today has `events` 0 and `max_values` `null`), `received`, `breakdown`, `blocked` and `aliases` (the keys renamed or merged into it; absent when none) — for the 500 busiest keys plus every breakdown key, every blocked key and every key with aliases (`received` false when none carried it); a key renamed away is listed only in its target's `aliases`. Also `keys_total` (the distinct keys received, keys renamed away left out), `values_cap`, `breakdowns_used` and `breakdowns_max` (`ATTRIBUTE_BREAKDOWNS_MAX`). Kept for the raw window only |
-| `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project: `views`, product `events` and measure `samples` per day and in total, `last_received_at`, `first_day` (the oldest day with data, stored counts included), `raw_days`, `rolled_up_days`, an estimated `size` (raw rows and aggregates, measured daily by the daily pass, which also runs at start: the newest, with the day it was `measured_at`; `null` until the first measurement) and each day's measured `total_bytes` in the series (`null` on days not measured), `unused_attributes` (breakdown keys no event carried; computed only with `project_id`, `null` for the all-projects answer); plus the database's size on disk now and per day (`database_series`). Days before the newest daily pass read the counts it stored, which outlive the aggregates' retention. Each series day also carries `declared_attributes` and, counted the night after while the day's rows are raw and kept once rolled up, the distinct `attribute_keys` and `attribute_values` received and the `attribute_values_folded` into `(other)` (`null` on days not stored) |
+| `list_projects` | none | Every project with its `project_id`, name, `archived` and `archived_at` (RFC 3339, only when archived), and `allowed_origins`, in the order `move_project` sets. Call this first — every other tool needs a `project_id` |
+| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in two groups: `retention` (`RETENTION_DAYS`, `RETENTION_ARCHIVED_DAYS`, `RETENTION_FORMS_DRAFT_DAYS`) and `ingest`: `INGEST_LATE_DAYS`, then the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`kept forever`). Nothing is capped. The output also carries `events_30d`, `{count, from, to}`: the events in the event files from `from` through `to` (the 30 days ending today, UTC), of every family and project, rules applied (what the server's disk and its dashboards' scans of a month follow), counted at most every 5 minutes: a call past the 5 minutes answers the previous count and starts the next, one past 10 waits for it, so the count is never more than 10 minutes old. Absent when the last count failed, `CONSOLE_QUERY_TIMEOUT` included (a failure is logged once and kept for the same 5 minutes), and on a server that cannot read the files. And `ingest_disabled`, `true` when `INGEST_DISABLED` is set and every ingest route refuses with `429` |
+| `list_attributes` | `from`, `to` (optional: the last 30 days; at most 92 days) | The project's attributes from the event files, rules applied, busiest first: each key's `events` (the product events and measures of the range that carried it) and `values` (its distinct values over the range), `received`, `blocked` and `aliases` (the keys renamed or merged into it; absent when none) — for the 500 busiest keys plus every key a rule names (`received` false when none carried it: a blocked key always, its values hidden from every read); a key renamed away reads as its target and is listed only in its target's `aliases`. Also `keys_total`, the distinct keys received |
+| `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project, from the event files: `views`, product `events` and measure `samples` per day and in total, `last_received_at` (when the newest event arrived, whatever the range), `first_day` (the oldest day the files hold; a month's file counts from its first day), and `size` (`{total_bytes, measured_at}`: the project's event file bytes as the daily pass of the process that keeps the files last measured them, at 03:00 UTC and at start; `null` until the first measurement), with each day's measured `total_bytes` in the series (`null` on days not measured); plus the database's size on disk now and per day (`database_series`) |
 | `views_overview` | `kind` (optional) | Per day: visitors (distinct per day and kind, added up), views, and the `sessions` table's sessions, bounces, `duration_sec`, `bounce_rate` and `avg_session_sec`, summed across kinds unless `kind` filters one. Today included |
 | `views_breakdown` | `dimension`, `limit` (default 20) | Top rows of one dimension (the table below), busiest by visitors (distinct per day and value, added up over the range). Two-key dimensions return both columns. A value not sent reads as empty |
 | `product_events` | `event` (optional filter) | Count and unique users (distinct per day) per event name and day, plus daily totals |
-| `product_attributes` | `event` (optional filter) | At most 92 days a call (a longer range is refused: use `query` for it). Count, unique users and unique groups (`0` when no group was involved) per event, day and value of every key the events carried, with no declaration needed: each custom attribute key and the eighteen reserved keys listed in [Attribute breakdowns](#attribute-breakdowns), `$path` and `$utm_source` among them |
+| `product_attributes` | `event` (optional filter) | At most 92 days a call (a longer range is refused: use `query` for it). Count, unique users and unique groups (`0` when no group was involved) per event, day and value of every key the events carried, with no declaration needed: each custom attribute key and the eighteen reserved keys listed in [Attributes](#attributes), `$path` and `$utm_source` among them |
 | `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys `product_attributes` breaks down (`$browser`, `$path`, …); a key none carried gives no rows |
 | `retention` | `actor` (`user` or `install`) | Cohort curves for the cohorts that began in the range, every offset, counted over the days before today (UTC), plus `aggregated_through`, the newest such day with views or product events — cohorts and offsets after it are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` (default 50) | Per user or group, busiest first (views plus product events in the range): its `actors` and `users` (itself for a user, its members for a group), each distinct per day and added up over the days, its `views`, `events` and the display `name` sent with its latest event. **Surfaces personal data on projects whose clients send ids** |
-| `query` | `sql`, `source` (optional: `files`, the default, or `sqlite`, deprecated) | A single read-only `SELECT`/`WITH`. Row-capped and time-limited. `files` reads the raw events and the tables derived from them through DuckDB: see [Writing SQL against the event files](#writing-sql-against-the-event-files). `sqlite` reads the database's views ([deprecated](#writing-sql-against-the-views-deprecated), removed in a later release); `meta` and SQLite's internal tables (`sqlite_master`, `dbstat`, …) are refused, whether named directly or as a quoted or single-quoted string, and non-ASCII names must be quoted |
+| `query` | `sql`, `source` (optional: `files`, the default and the only one) | A single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them: see [Writing SQL against the event files](#writing-sql-against-the-event-files). Row-capped and time-limited. `source: "sqlite"` was removed with the database's events and is refused (`invalid`); `source` itself stays for one release, so a client sending `files` keeps working |
 
 `views_breakdown`'s dimensions, the columns each returns and what it reads
 from the `views` table:
@@ -1519,7 +1478,7 @@ described in [Set up a project](#set-up-a-project).
 **Resources:** `docs://twillingate` (this document), `docs://deployment`
 (installing and configuring the collector), `docs://reporting` (building
 dashboards), `schema://views` (the authoritative column list of the event
-files' tables, then the deprecated views — read it before writing SQL),
+files' tables — read it before writing SQL),
 `schema://projects` (the live registry) and the reporting
 snapshots `schema://components`, `schema://dashboards` and
 `schema://widgets`. Enabling the console, choosing an auth mode and pointing
@@ -1559,11 +1518,10 @@ curl -H "Authorization: Bearer $TOKEN" \
 | Method | Path | Mirrors | Input |
 |---|---|---|---|
 | `GET` | `/api/projects` | `list_projects` | — |
-| `GET` | `/api/project-activity` | `project_activity`, REST only: no MCP tool | — → `{"projects":[{"project_id","last_event_day","new_submissions","forms","draft_forms"}]}` for every live project: the newest day with data (null with none), the submissions to live forms the console has not read, its live forms, and how many of them are drafts waiting to be approved |
+| `GET` | `/api/project-activity` | `project_activity`, REST only: no MCP tool | — → `{"projects":[{"project_id","last_event_day","new_submissions","forms","draft_forms"}]}` for every live project: the newest day file in the event files (a month file counts as its last day; null with none), the submissions to live forms the console has not read, its live forms, and how many of them are drafts waiting to be approved |
 | `GET` | `/api/limits` | `limits` | — |
 | `GET` | `/api/usage` | `usage` | query: `project_id`, `from`, `to` |
-| `GET` | `/api/projects/{project_id}/cap-usage` | `cap_usage` | query: `from`, `to` |
-| `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","max_values","received","breakdown","blocked","aliases"}],"keys_total","values_cap","breakdowns_used","breakdowns_max"}`; `aliases` is absent when empty |
+| `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","values","received","blocked","aliases"}],"keys_total"}`; `aliases` is absent when empty |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
 | `POST` | `/api/projects/{project_id}/move` | `move_project` | body: `after` |
@@ -1574,11 +1532,11 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `POST` | `/api/projects/{project_id}/keys/{label}/disable` | `disable_ingest_key` | — |
 | `POST` | `/api/projects/{project_id}/keys/{label}/enable` | `enable_ingest_key` | — |
 | `GET` | `/api/projects/{project_id}/event-rules` | `list_event_rules` | — → `{"rules":[{"family","name","action","to","created_at"}]}`; `to` is absent for a block |
-| `POST` | `/api/projects/{project_id}/event-rules/rename` | `rename_event` | body: `family`, `from`, `to` → `{"rule":{…},"rewritten":{"events":3,…}}` |
+| `POST` | `/api/projects/{project_id}/event-rules/rename` | `rename_event` | body: `family`, `from`, `to` → `{"rule":{…}}` |
 | `POST` | `/api/projects/{project_id}/event-rules/merge` | `merge_event` | body: `family`, `from`, `to` → as `rename_event` |
 | `POST` | `/api/projects/{project_id}/event-rules/block` | `block_event` | body: `family`, `name` → `{"rule":{…}}` |
 | `POST` | `/api/projects/{project_id}/event-rules/remove` | `remove_event_rule` | body: `family`, `name` → `{"status":"removed"}`; a body because names may contain `/` |
-| `POST` | `/api/projects/{project_id}/attribute-rules/rename` | `rename_attribute` | body: `from`, `to` → `{"rule":{"key","action","to","created_at"},"rewritten":{"events":3,…}}` |
+| `POST` | `/api/projects/{project_id}/attribute-rules/rename` | `rename_attribute` | body: `from`, `to` → `{"rule":{"key","action","to","created_at"}}` |
 | `POST` | `/api/projects/{project_id}/attribute-rules/merge` | `merge_attribute` | body: `from`, `to` → as `rename_attribute` |
 | `POST` | `/api/projects/{project_id}/attribute-rules/block` | `block_attribute` | body: `key` → `{"rule":{…}}`; `to` is absent for a block |
 | `POST` | `/api/projects/{project_id}/attribute-rules/remove` | `remove_attribute_rule` | body: `key` → `{"status":"removed"}`; a body because keys may contain `/` |
@@ -1614,12 +1572,11 @@ given twice are all 400: a filter is never dropped silently.
 ### Writing SQL against the event files
 
 `query` runs one read-only `SELECT` through DuckDB over the raw events
-twillingate keeps as files beside its database (its default source,
-`files`); the analytics tools and the dashboards read the same tables. The
+twillingate keeps as files beside its database; the analytics tools and the
+dashboards read the same tables. The
 files hold every project's events since the upgrade that began writing
 them. Once `twillingate events import` has run, they also hold the earlier
-raw days the database still held then. History older than that exists only
-in the database's `agg_*` tables ([deprecated](#writing-sql-against-the-views-deprecated)).
+raw days the database still held then; nothing older can be queried.
 Today's events are included, each `BUFFER_FLUSH_INTERVAL`. A query is
 row-capped (`CONSOLE_QUERY_ROWS_MAX`, default 1000) and time-limited
 (`CONSOLE_QUERY_TIMEOUT`, default `30s`); it cannot write and cannot reach
@@ -1710,83 +1667,11 @@ product events). First and last seen reach back as far as the files do.
 A person's events across devices, before and after signing in:
 `WHERE user_id = 'u1' OR install_id IN (SELECT install_id FROM aliases WHERE user_id = 'u1')`.
 
-The `v_*` views and `agg_*` tables are SQLite's: name one here and the
-error says to pass `source: "sqlite"`. A query that runs out of the
+The database's `v_*` views and `agg_*` tables went with its events
+(migration 042): name one here and the error says so and lists the tables
+the files hold. A query that runs out of the
 engine's memory (`ENGINE_MEMORY_LIMIT`) is refused with that cause: a
 `COUNT(DISTINCT …)` over a large group is the usual one, rewritten as a
 `GROUP BY` in a subquery whose rows are then counted.
 When the open logs themselves do not fit that limit, whatever the query,
 the error says so: raise `ENGINE_MEMORY_LIMIT`.
-
-### Writing SQL against the views (deprecated)
-
-**Deprecated, removed in a later release:** query the [event
-files](#writing-sql-against-the-event-files) instead: the analytics tools
-and the dashboards read the files. `query` with `source: "sqlite"` takes
-read-only SQLite SQL against the views below, under the same row cap and
-timeout. `schema://views` lists them after the files' tables, with the
-caveats the DDL cannot express. Three matter most:
-
-1. `day` columns are TEXT `'YYYY-MM-DD'` (UTC). Compare and `BETWEEN` as
-   strings.
-2. Every `v_*` view includes yesterday and today: each stitches aggregated
-   history (`agg_*` tables) to a live half computed from raw rows.
-3. **`v_retention` has no live half.** It refreshes at the 03:00 UTC daily pass;
-   cohort days after that are ABSENT, not zero. It holds cohorts only for
-   actors identified by `$user_id` or `$install_id`; a project whose clients
-   send neither has none. Each actor is cohorted by how it was
-   identified, `user` (sent a `$user_id`) or `install` (a stable
-   `$install_id`); a connection-hash actor is not cohorted. On a client that
-   mints an install id per page load the `install` curve reads near zero — read
-   the `user` curve. Cohorts counted before migration 011 have no `user` rows
-   and sit wholly under `install`.
-
-Every view carries a `project_id` column — always filter on it; the ids are
-the ones `list_projects` returns. The views family
-is `v_views_daily` (per kind), `v_views_paths`, `v_views_hosts`,
-`v_views_referrers`, `v_views_utm`, `v_views_countries`, `v_views_platforms`,
-`v_views_os`, `v_views_browsers`, `v_views_app_versions` (keyed by `platform`
-and `app_version`), `v_views_devices`, `v_views_displays`, `v_views_consent`
-(`given`, `none` or `unknown`, where `unknown` is every view stored before
-migration 018 or sent without `$consent`) and `v_views_locales` (keyed by
-`browser_locale` and `app_locale`, `''` where one was not sent; a view sending
-neither is left out, and no day rolled up before migration 019 has rows);
-every other dimension is
-capped at `ATTRIBUTE_VALUES_TOP_N` values per day (default 100, 0 for no cap;
-a changed cap applies to days rolled up after it, the past keeps its own),
-the tail is one `(other)` row whose visitors
-are distinct actors, not a sum, and `consent` never reaches it — it only ever
-has three values. `os`, `browser` and `device` are lower-case
-closed vocabularies (see [Declaring the
-environment](#declaring-the-environment)) where `other` is a real value outside
-the list and `(other)` is the cap. Product events have `v_product_daily`,
-`v_product_totals` and `v_product_attrs` (whose `unique_groups` is NULL, not
-zero, for days rolled up before it was measured — `MAX()` skips it, `SUM()`
-would too, a `COALESCE` to 0 would lie). Measures (performance timings, sizes
-and counts, including Web Vitals) have `raw_measures`, `v_measures_daily`
-and `v_measures_attrs` (keyed the same way as `v_product_daily` /
-`v_product_attrs`, plus `measure` — `time`, `size` or `number` — and
-`bucket`/`approx_value` from the log-scale histogram; the `measures` tool
-does the percentile math over them). `raw_views`, `raw_product`,
-`raw_measures` and `v_events_flat` are all views over the one raw table, so
-each now carries every family's columns: `value`, `measure` and
-`sample_rate` are NULL, `''` and `1` on `raw_views`/`raw_product` rows (they
-only mean something on a measure), and `raw_*` additionally carries `bucket`,
-the log-scale bucket `value` falls in (NULL outside measures). `v_events_flat`
-holds every raw row of every family (views, product events and measures)
-with every typed column of the raw row: its `family` column — filter
-`family = 'product'` for product events alone, `family = 'measures'` for
-measures — `kind`, the identity, location and environment columns (`path`,
-`os`, `country`, …), its `consent` column (1, 0 or NULL), the raw
-`attributes` JSON, `value`, `measure`, `sample_rate`, and one `attr_*` column
-per declared custom attribute.
-`v_identity_daily` and `identities` join user and group activity to display
-names (ingest no longer writes `identities`: names sent since the upgrade to
-the event files are in the files only); `v_identity_daily` keeps the busiest `IDENTITIES_TOP_N` users and as
-many groups per day (default 1000, 0 for all) and drops the rest with no
-`(other)` row, so do not sum it for totals.
-`v_retention` is keyed by `actor_kind`.
-
-Cost note: the views' live halves compute from raw rows, but only for the raw
-days the `WHERE` on `project_id` and `day` covers. Narrow ranges and the
-`agg_*` tables are cheaper.

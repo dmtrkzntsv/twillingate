@@ -22,7 +22,7 @@ func TestOpenGivesIndependentMigratedCopies(t *testing.T) {
 	create := func(st store.Store, name string) {
 		t.Helper()
 		if _, err := st.CreateProject(ctx, store.RegistryProject{
-			Name: name, AllowedOrigins: "[]", Attributes: "[]"},
+			Name: name, AllowedOrigins: "[]"},
 			store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
 			t.Fatal(err)
 		}

@@ -15,12 +15,11 @@ vi.mock('@/hooks/use-project-actions', () => ({
 function stats(project_id: number, over: Partial<ProjectUsage> = {}): ProjectUsage {
   return {
     project_id,
-    series: [{ day: '2026-10-02', views: 5, events: 2, measures: 0, total_bytes: null, declared_attributes: null, attribute_keys: null, attribute_values: null, attribute_values_folded: null }],
+    series: [{ day: '2026-10-02', views: 5, events: 2, measures: 0, total_bytes: null }],
     totals: { views: 5, events: 2, measures: 0 },
     last_received_at: new Date(Date.now() - 120_000).toISOString(),
-    first_day: '2026-09-01', raw_days: 30, rolled_up_days: 2,
-    size: { raw_bytes: 1_000_000, aggregate_bytes: 1_300_000, total_bytes: 2_300_000, measured_at: '2026-10-03' },
-    unused_attributes: [],
+    first_day: '2026-09-01',
+    size: { total_bytes: 2_300_000, measured_at: '2026-10-03' },
     ...over,
   }
 }
@@ -31,7 +30,7 @@ beforeEach(() => {
   vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList())
   vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [
     { project_id: 4, name: 'econumo.com', allowed_origins: ['https://econumo.com'] },
-    { project_id: 5, name: 'quiet.dev', allowed_origins: [], attributes: ['plan'] },
+    { project_id: 5, name: 'quiet.dev', allowed_origins: [] },
     { project_id: 3, name: 'legacy', archived: true, allowed_origins: [] },
   ] })
   vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: '2026-09-03', to: '2026-10-02', database_bytes: 2_100_000_000, database_series: [
@@ -47,10 +46,10 @@ beforeEach(() => {
   ] })
   vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [{ project_id: 4, label: 'web', key: 'ak_1', state: 'active' }] })
   vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [
-    { group: 'retention', name: 'Raw events', setting: 'RETENTION_RAW_DAYS', value: 7, default: 30, unit: 'days', description: 'raw events are kept this long' },
-    { group: 'caps', name: 'Attribute values', setting: 'ATTRIBUTE_VALUES_TOP_N', value: 0, default: 100, zero: 'no cap', description: 'values per views breakdown and per attribute key' },
+    { group: 'retention', name: 'Event files', setting: 'RETENTION_DAYS', value: 7, default: 400, unit: 'days', description: 'the event files are kept this long' },
+    { group: 'retention', name: 'Archived items', setting: 'RETENTION_ARCHIVED_DAYS', value: 0, default: 30, unit: 'days', zero: 'kept forever', description: 'deleted this long after archiving' },
     { group: 'ingest', name: 'Request body', value: 262144, unit: 'bytes', description: 'a larger request is refused with 413' },
-  ], raw_events: { held: 48210, window_days: 7 } })
+  ], events_30d: { count: 48210, from: '2026-09-04', to: '2026-10-03' } })
 })
 
 function renderPage() {
@@ -163,20 +162,20 @@ describe('Projects', () => {
     renderPage()
     const panel = await screen.findByRole('region', { name: 'Limits' })
     const groups = within(panel).getAllByRole('region').map((r) => r.getAttribute('aria-label'))
-    expect(groups).toEqual(['Retention', 'Caps', 'Ingest'])
+    expect(groups).toEqual(['Retention', 'Ingest'])
     const retention = within(panel).getByRole('region', { name: 'Retention' })
     expect(within(retention).getByText('7 days')).toBeInTheDocument()
-    expect(within(retention).getByText('RETENTION_RAW_DAYS')).toBeInTheDocument()
-    expect(within(retention).getByText(/default 30 days/)).toBeInTheDocument()
+    expect(within(retention).getByText('RETENTION_DAYS')).toBeInTheDocument()
+    expect(within(retention).getByText(/default 400 days/)).toBeInTheDocument()
     // The variable sits under the value, above the description.
-    const variable = within(retention).getByText('RETENTION_RAW_DAYS').closest('dd')!
-    const description = within(retention).getByText('raw events are kept this long')
+    const variable = within(retention).getByText('RETENTION_DAYS').closest('dd')!
+    const description = within(retention).getByText('the event files are kept this long')
     expect(variable.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(within(panel).getByText('no cap')).toBeInTheDocument()
+    expect(within(panel).getByText('kept forever')).toBeInTheDocument()
     const ingest = within(panel).getByRole('region', { name: 'Ingest' })
     expect(within(ingest).getByText('256 KiB')).toBeInTheDocument()
     expect(within(ingest).queryByText(/default/)).not.toBeInTheDocument()
-    expect(within(panel).getByText('Raw events held: 48,210 (the last 7 days)')).toBeInTheDocument()
+    expect(within(panel).getByText('Events in the last 30 days: 48,210')).toBeInTheDocument()
   })
 
   it('creates a project and shows its key and snippet once', async () => {

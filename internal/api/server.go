@@ -25,12 +25,6 @@ const (
 	mcpPath      = "/mcp"
 )
 
-// CustomSQLRefused names the tables every handle that runs custom SQL on
-// SQLite (the query tool's sqlite source) refuses to read:
-// submissions hold what visitors typed into forms, and only the server's
-// own SQL, on the second handle, reads them. A fresh slice each call.
-func CustomSQLRefused() []string { return []string{"submissions"} }
-
 // Build assembles the tool host, both transports and the auth middleware,
 // returning one handler that serves the console surface: the MCP streamable
 // endpoint at /mcp and the REST routes under /api/ (unmatched /api/ paths
@@ -45,7 +39,7 @@ func CustomSQLRefused() []string { return []string{"submissions"} }
 // widgets where sql widgets run on them, under the same
 // CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_ROWS_MAX as the query tool.
 func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, files Files, widgets reporting.Files) (http.Handler, func() error, error) {
-	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows, CustomSQLRefused()...)
+	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -58,12 +52,15 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	rep := reporting.New(rst, widgets, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge,
 		ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL})
 	h := &host{db: db, subs: subs, reg: reg, ops: ops, rep: rep,
-		ingestURL: cfg.IngestURL, logger: logger, limits: limitsFrom(cfg), rawDays: cfg.Retention.Events.RawDays,
-		ingestDisabled: cfg.IngestDisabled, files: files}
-	h.raw = h.newHostRawCount()
-	// Counted from the start, so the first limits read (the Projects
-	// page) does not wait for a scan of every raw row.
-	h.raw.warm()
+		ingestURL: cfg.IngestURL, logger: logger, limits: limitsFrom(cfg),
+		ingestDisabled: cfg.IngestDisabled, files: files, eventsDir: cfg.EventsDir,
+		queryTimeout: cfg.Console.QueryTimeout, queryRows: cfg.Console.QueryMaxRows}
+	if files != nil {
+		h.events = h.newHostEventCount()
+		// Counted from the start, so the first limits read (the Projects
+		// page) does not wait for a month of files.
+		h.events.warm()
+	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"},
 		&mcp.ServerOptions{Instructions: serverInstructions})
 	rest := http.NewServeMux()

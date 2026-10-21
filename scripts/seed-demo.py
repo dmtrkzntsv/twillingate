@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
 """Seed a local database with demo traffic for every project in the database.
 
-For dashboard development only -- writes straight to SQLite, bypassing the
-HTTP API. Deterministic (fixed seed), with per-project traffic profiles, a
+For dashboard development only -- bypasses the HTTP API. The events go to
+the event files as closed logs (raw/<project id>/<day>.1.closed, one NDJSON
+line per event in the shape of internal/archive's log lines), which the first
+start's pass dumps to Parquet; the database is only read, for the project
+list. Deterministic (fixed seed), with per-project traffic profiles, a
 growth trend and weekend dips so the charts show a believable shape.
 
-Covers 180 days so the widest dashboard range has data to plot. Idempotent:
-seeded rows are cleared before reinsertion, so re-running refreshes the window
-rather than stacking another copy on top.
+Covers 180 days so the widest dashboard range has data to plot. Re-running
+replaces the seeded closed logs of days the pass has not dumped yet; once a
+start has dumped them, seed into an empty events directory.
 
 The "dev" profile also sends Web Vitals from a share of its page views and
 a backend's checkout_api timing, so the Web Vitals and Measures dashboards
@@ -16,11 +19,13 @@ have histograms to read.
 Projects with an "app" profile also get screen views across two platforms and
 three app versions, so the version-adoption chart has a rollout to show.
 Projects whose profile sends ids ("ids": True) get stable actor ids plus
-user and group identities, which is what makes the users, groups and
-retention pages meaningful, the others get a per-day connection hash, as a
-site with an anonymous tag would.
+user and group names on every event of an identified user or group, which is
+what makes the users, groups and retention pages meaningful, the others get a
+per-day connection hash, as a site with an anonymous tag would.
 
-    python3 scripts/seed-demo.py local/twillingate.db
+    python3 scripts/seed-demo.py local/twillingate.db [--events-dir DIR]
+
+DIR defaults to raw/ beside the database.
 
 Projects are read from the projects table; each needs a traffic profile in
 PROFILES, keyed by project name.
@@ -30,6 +35,7 @@ import datetime
 import hashlib
 import json
 import math
+import os
 import random
 import sqlite3
 import sys
@@ -157,10 +163,61 @@ def growing_pool(elapsed, final):
     return random.randint(1, max(1, final * (elapsed + 1) // DAYS))
 
 
-def seed(cur, pid, name, profile, today, sends_ids):
-    for table in ("events", "actors", "identities"):
-        cur.execute(f"DELETE FROM {table} WHERE project_id = ?", (pid,))
+LINE_VERSION = 1
 
+
+def stamp(ts):
+    return ts.strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+class Sink:
+    """The lines of one project, grouped by day, as internal/archive.line
+    writes them: the non-empty fields only, attributes as attr_<key>."""
+
+    def __init__(self, pid):
+        self.pid = pid
+        self.days = {}
+
+    def add(self, family, name, ts, attributes=None, **fields):
+        m = {"v": LINE_VERSION, "id": str(uuid.uuid4()), "project_id": self.pid,
+             "family": family, "event_name": name, "ts": stamp(ts),
+             "day": ts.date().isoformat(), "received_at": stamp(ts)}
+        for k, v in fields.items():
+            if v != "" and v is not None:
+                m[k] = v
+        m.setdefault("sample_rate", 1)
+        for k, v in (attributes or {}).items():
+            if not k.startswith("$"):
+                m["attr_" + k] = v
+        self.days.setdefault(m["day"], []).append(json.dumps(m, sort_keys=True))
+
+    def write(self, events_dir):
+        """<day>.import, then renamed to <day>.1.closed: a reader or a pass
+        sees the whole closed log or none (archive.WriteClosed)."""
+        d = os.path.join(events_dir, str(self.pid))
+        os.makedirs(d, exist_ok=True)
+        for day, lines in self.days.items():
+            tmp = os.path.join(d, day + ".import")
+            with open(tmp, "w") as f:
+                f.write("\n".join(lines) + "\n")
+                f.flush()
+                os.fsync(f.fileno())
+            os.chmod(tmp, 0o640)
+            os.replace(tmp, os.path.join(d, day + ".1.closed"))
+
+
+def user_name(name, n):
+    return f"{FIRST_NAMES[n % len(FIRST_NAMES)]} {LAST_NAMES[(n // 7) % len(LAST_NAMES)]}"
+
+
+def who(name, n):
+    """The identity fields of signed-in user n of the project."""
+    group_id, group_name = GROUPS[n % len(GROUPS)]
+    return {"user_id": f"user-{name}-{n}", "user_name": user_name(name, n),
+            "group_id": group_id, "group_name": group_name}
+
+
+def seed(sink, name, profile, today, sends_ids):
     hits = 0
     for back in range(DAYS - 1, -1, -1):
         day = today - datetime.timedelta(days=back)
@@ -185,22 +242,17 @@ def seed(cur, pid, name, profile, today, sends_ids):
                 ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                     seconds=start + p * random.randint(20, 600))
                 path = pick(profile["pages"])
-                cur.execute(
-                    "INSERT INTO events (id, project_id, ts, received_at, kind, actor_id, actor_kind,"
-                    " user_id, group_id, path, referrer_source, country, device, browser,"
-                    " browser_version, platform, os, utm_source, utm_medium, utm_campaign,"
-                    " display_width, display_height, consent, day, family, event_name)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'views','$page_view')",
-                    (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                     ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "web", vh,
-                     "install" if sends_ids else "connection", "", "",
-                     path, ref, country, device, browser,
-                     random.choice(BROWSER_VERSIONS),
-                     "web", osname, us, um, uc, *random.choice(DISPLAYS),
-                     1 if sends_ids else random.choice([0, 0, 1]), day.isoformat()))
+                sink.add("views", "$page_view", ts, kind="web", actor_id=vh,
+                         actor_kind="install" if sends_ids else "connection",
+                         path=path, referrer_source=ref, country=country, device=device,
+                         browser=browser, browser_version=random.choice(BROWSER_VERSIONS),
+                         platform="web", os=osname, utm_source=us, utm_medium=um,
+                         utm_campaign=uc,
+                         **dict(zip(("display_width", "display_height"), random.choice(DISPLAYS))),
+                         consent=1 if sends_ids else random.choice([0, 0, 1]))
                 hits += 1
                 if profile.get("measures") and random.random() < VITALS_SHARE:
-                    seed_vitals(cur, pid, ts, vh, sends_ids, path, country, device, browser, osname)
+                    seed_vitals(sink, ts, vh, sends_ids, path, country, device, browser, osname)
 
     events = 0
     if profile["product"]:
@@ -212,44 +264,32 @@ def seed(cur, pid, name, profile, today, sends_ids):
                     ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                         seconds=random.randint(0, 86399))
                     n = growing_pool(DAYS - 1 - back, 400)
-                    user = f"user-{name}-{n}" if sends_ids else ""
                     # This is the only event loop and it sits beside the web
                     # views above, so every product event is web-originated:
                     # platform web, and an OS drawn from the same web mix.
-                    cur.execute(
-                        "INSERT INTO events (id, project_id, ts, day, received_at, event_name,"
-                        " actor_id, actor_kind, user_id, group_id, platform, os, app_version,"
-                        " attributes, consent, family) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'product')",
-                        (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"), day.isoformat(),
-                         ts.strftime("%Y-%m-%dT%H:%M:%SZ"), event_name,
-                         actor_for(name, day, n, sends_ids),
-                         "user" if sends_ids else "connection", user,
-                         GROUPS[n % len(GROUPS)][0] if sends_ids else "",
-                         "web", pick(OSES), "", json.dumps({"plan": pick(PLANS), "team_size": pick(TEAM_SIZES), "role": pick(ROLES)}),
-                         1 if sends_ids else random.choice([0, 0, 1])))
+                    sink.add("product", event_name, ts,
+                             {"plan": pick(PLANS), "team_size": pick(TEAM_SIZES), "role": pick(ROLES)},
+                             actor_id=actor_for(name, day, n, sends_ids),
+                             actor_kind="user" if sends_ids else "connection",
+                             platform="web", os=pick(OSES),
+                             consent=1 if sends_ids else random.choice([0, 0, 1]),
+                             **(who(name, n) if sends_ids else {}))
                     events += 1
 
     if profile.get("measures"):
-        seed_backend(cur, pid, profile, today)
-    views = hits + (seed_app(cur, pid, name, profile, today, sends_ids) if profile.get("app") else 0)
-    if sends_ids:
-        seed_identities(cur, pid, name)
+        seed_backend(sink, profile, today)
+    views = hits + (seed_app(sink, name, profile, today, sends_ids) if profile.get("app") else 0)
     return views, events
 
 
-def insert_measure(cur, pid, ts, name, measure, value, actor, actor_kind, **dims):
-    """One measures row, as ingest stores it: sample_rate 1 (the page load
-    was sampled in whole), the day from the timestamp, and bucket left to
-    the generated column."""
-    cols = ["id", "project_id", "ts", "received_at", "day", "family", "event_name",
-            "value", "measure", "sample_rate", "actor_id", "actor_kind", *dims]
-    stamp = ts.strftime("%Y-%m-%dT%H:%M:%SZ")
-    vals = [str(uuid.uuid4()), pid, stamp, stamp, ts.date().isoformat(), "measures", name,
-            value, measure, 1, actor, actor_kind, *dims.values()]
-    cur.execute(f"INSERT INTO events ({', '.join(cols)}) VALUES ({', '.join('?' * len(cols))})", vals)
+def insert_measure(sink, ts, name, measure, value, actor, actor_kind, **dims):
+    """One measures line, as ingest writes it: sample_rate 1 (the page load
+    was sampled in whole)."""
+    sink.add("measures", name, ts, actor_id=actor, actor_kind=actor_kind,
+             measure=measure, value=value, **dims)
 
 
-def seed_vitals(cur, pid, ts, actor, sends_ids, path, country, device, browser, osname):
+def seed_vitals(sink, ts, actor, sends_ids, path, country, device, browser, osname):
     """The five Web Vitals of one page load, log-normal around typical values."""
     for name, measure, median, sigma in VITALS:
         if name == "$cls" and random.random() < CLS_ZERO:
@@ -259,13 +299,13 @@ def seed_vitals(cur, pid, ts, actor, sends_ids, path, country, device, browser, 
             if measure == "time" and device == "mobile":
                 value *= MOBILE_SLOWDOWN
             value = round(value, 4 if measure == "number" else 1)
-        insert_measure(cur, pid, ts + datetime.timedelta(seconds=2), name, measure, value,
+        insert_measure(sink, ts + datetime.timedelta(seconds=2), name, measure, value,
                        actor, "install" if sends_ids else "connection",
                        kind="web", platform="web", path=path, country=country,
                        device=device, browser=browser, os=osname)
 
 
-def seed_backend(cur, pid, profile, today):
+def seed_backend(sink, profile, today):
     """A backend's checkout_api timing: a few dozen requests a day, growing
     with the site, with a slow tail."""
     for back in range(DAYS - 1, -1, -1):
@@ -275,11 +315,11 @@ def seed_backend(cur, pid, profile, today):
             ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                 seconds=random.randint(0, 86399))
             value = round(random.lognormvariate(math.log(320), 0.35), 1)
-            insert_measure(cur, pid, ts, "checkout_api", "time", value,
+            insert_measure(sink, ts, "checkout_api", "time", value,
                            hashlib.sha256(f"backend-{day}".encode()).hexdigest()[:16], "connection")
 
 
-def seed_app(cur, pid, name, profile, today, sends_ids):
+def seed_app(sink, name, profile, today, sends_ids):
     """Screen views across two platforms, with versions rolling out over time.
 
     A native app's platform and OS are the same token (ios, android), which
@@ -315,60 +355,50 @@ def seed_app(cur, pid, name, profile, today, sends_ids):
             for s in range(random.randint(1, 6)):
                 ts = datetime.datetime.combine(day, datetime.time()) + datetime.timedelta(
                     seconds=start + s * random.randint(15, 240))
-                cur.execute(
-                    "INSERT INTO events (id, project_id, ts, received_at, kind, actor_id, actor_kind, user_id,"
-                    " group_id, session_id, path, platform, os, app_version, os_version,"
-                    " browser, device, device_model, browser_locale, app_locale, country, consent,"
-                    " day, family, event_name)"
-                    " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'views','$screen_view')",
-                    (str(uuid.uuid4()), pid, ts.strftime("%Y-%m-%dT%H:%M:%SZ"),
-                     ts.strftime("%Y-%m-%dT%H:%M:%SZ"), "app", actor,
-                     "user" if sends_ids else "connection",
-                     f"user-{name}-{n}" if sends_ids else "",
-                     GROUPS[n % len(GROUPS)][0] if sends_ids else "",
-                     session, pick(SCREENS), platform, platform, version,
-                     pick(OS_VERSIONS[platform]), "unknown", "unknown",
-                     pick(DEVICE_MODELS[platform]),
-                     browser_locale, app_locale, pick(COUNTRIES),
-                     1 if sends_ids else random.choice([0, 1]), day.isoformat()))
+                sink.add("views", "$screen_view", ts, kind="app", actor_id=actor,
+                         actor_kind="user" if sends_ids else "connection",
+                         session_id=session, path=pick(SCREENS), platform=platform,
+                         os=platform, app_version=version,
+                         os_version=pick(OS_VERSIONS[platform]), browser="unknown",
+                         device="unknown", device_model=pick(DEVICE_MODELS[platform]),
+                         browser_locale=browser_locale, app_locale=app_locale,
+                         country=pick(COUNTRIES),
+                         consent=1 if sends_ids else random.choice([0, 1]),
+                         **(who(name, n) if sends_ids else {}))
                 views += 1
     return views
 
 
-def seed_identities(cur, pid, name):
-    """Display names for the users and groups the seeded rows reference."""
-    for gid, gname in GROUPS:
-        cur.execute("INSERT OR REPLACE INTO identities (project_id, kind, id, name,"
-                    " last_seen_day, updated_at) VALUES (?,?,?,?,?,datetime('now'))",
-                    (pid, "group", gid, gname, ""))
-    for n in range(1, 401):
-        display = f"{FIRST_NAMES[n % len(FIRST_NAMES)]} {LAST_NAMES[(n // 7) % len(LAST_NAMES)]}"
-        cur.execute("INSERT OR REPLACE INTO identities (project_id, kind, id, name,"
-                    " last_seen_day, updated_at) VALUES (?,?,?,?,?,datetime('now'))",
-                    (pid, "user", f"user-{name}-{n}", display, ""))
-
-
 def main():
-    db = sys.argv[1]
-    con = sqlite3.connect(db)
-    cur = con.cursor()
-    projects = cur.execute("select id, name from projects order by id").fetchall()
+    args = sys.argv[1:]
+    events_dir = None
+    if "--events-dir" in args:
+        i = args.index("--events-dir")
+        events_dir = args[i + 1]
+        del args[i:i + 2]
+    if len(args) != 1:
+        sys.exit("usage: seed-demo.py <db> [--events-dir DIR]")
+    db = args[0]
+    if events_dir is None:
+        events_dir = os.path.join(os.path.dirname(os.path.abspath(db)), "raw")
+    con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    projects = con.execute("select id, name from projects order by id").fetchall()
+    con.close()
     unknown = [name for _, name in projects if name not in PROFILES]
     if unknown:
         sys.exit(f"no traffic profile for {', '.join(unknown)}; add one to PROFILES (keyed by project name)")
 
-    # views.ts is UTC and the dashboards window on SQLite's date('now'),
-    # which is also UTC -- anchor the seeded range to the same clock so the
+    # Anchor the seeded range to the UTC clock the files' days use, so the
     # narrowest range (last 1 day) lands on a day that has rows.
     today = datetime.datetime.now(datetime.timezone.utc).date()
 
     random.seed(1337)
     for pid, name in projects:
-        views, events = seed(cur, pid, name, PROFILES[name], today, PROFILES[name]["ids"])
+        sink = Sink(pid)
+        views, events = seed(sink, name, PROFILES[name], today, PROFILES[name]["ids"])
+        sink.write(events_dir)
         print(f"  {pid:<3} {name:<10} views={views:<7} events={events:<6} "
               f"({'ids' if PROFILES[name]['ids'] else 'no ids'})")
-    con.commit()
-    con.close()
 
 
 if __name__ == "__main__":

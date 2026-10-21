@@ -20,7 +20,7 @@ interface Props {
 }
 
 /**
- * A project's allowed origins, laid out like its breakdowns: one row each
+ * A project's allowed origins, laid out like its attributes: one row each
  * with Remove (confirmed), Add origin, and "Allow everything" (`*`) while
  * the list does not already hold it. Every change saves the whole list.
  */

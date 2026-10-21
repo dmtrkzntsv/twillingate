@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 type activityRow struct {
@@ -35,23 +36,23 @@ func getActivity(t *testing.T, h *host) []activityRow {
 
 func dayPtr(s string) *string { return &s }
 
-// TestProjectActivity: every live project in list order with the newest day
-// across the raw and rolled-up tables and the submissions its forms have not
+// TestProjectActivityReadsTheFiles: every live project in list order with
+// the newest day of its event files and the submissions its forms have not
 // been read past, and how many live forms it has, drafts among them.
 // Archived projects are left out.
-func TestProjectActivity(t *testing.T) {
+func TestProjectActivityReadsTheFiles(t *testing.T) {
 	h, _ := newTestHost(t)
 	ctx := t.Context()
-	// Project 1: a raw view newer than the template's data, and a form with
-	// two unseen submissions. Project 2: only a rolled-up day. Project 3:
+	// Project 1: a view newer than the template's files, and a form with
+	// two unseen submissions. Project 2: a measure in a log of its own.
+	// Project 3:
 	// nothing at all. Project 4: archived.
-	if _, err := rawExec(h.ops.St, `INSERT INTO events (id, project_id, ts, day, received_at, kind, actor_id, actor_kind, path, family, event_name)
-		VALUES ('act1',1,'2026-09-30T10:00:00Z','2026-09-30','2026-09-30T10:00:00Z','web','a1','user','/x','views','$page_view')`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := rawExec(h.ops.St, `INSERT INTO agg_product_totals (project_id, day, total_events, active_users) VALUES (2,'2026-07-01',3,2)`); err != nil {
-		t.Fatal(err)
-	}
+	value := 120.0
+	writeHostEvents(t, h,
+		store.Event{ProjectID: 1, Family: store.FamilyViews, EventName: "$page_view", Kind: "web", Path: "/x",
+			TS: time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)},
+		store.Event{ProjectID: 2, Family: store.FamilyMeasures, EventName: "load", Value: &value, Measure: store.MeasureTime,
+			TS: time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)})
 	for _, name := range []string{"quiet", "gone"} {
 		if _, err := h.ops.CreateProject(ctx, "test", manage.ProjectSpec{Name: name}); err != nil {
 			t.Fatal(err)

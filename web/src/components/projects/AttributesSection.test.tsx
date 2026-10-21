@@ -5,32 +5,30 @@ import { ApiError, endpoints, type ProjectAttributes, type Project } from '@/lib
 import { renderWithProviders } from '@/test/render'
 import AttributesSection from './AttributesSection'
 
-const project = { project_id: 1, name: 'dev', allowed_origins: [], attributes: ['plan', 'never_sent'] } as Project
+const project = { project_id: 1, name: 'dev', allowed_origins: [] } as Project
 const range = { from: '2026-09-05', to: '2026-10-04' }
 const answer: ProjectAttributes = {
-  project_id: 1, from: '2026-09-05', to: '2026-10-04', values_cap: 50, breakdowns_used: 2, breakdowns_max: 10, keys_total: 4,
+  project_id: 1, from: '2026-09-05', to: '2026-10-04', keys_total: 4,
   attributes: [
-    { key: 'order_id', events: 980, max_values: 412, received: true, breakdown: false, blocked: false },
-    { key: 'plan', events: 900, max_values: 3, received: true, breakdown: true, blocked: false, aliases: ['planType'] },
-    { key: 'tier', events: 20, max_values: 2, received: true, breakdown: false, blocked: false },
-    { key: '$host', events: 15, max_values: 1, received: true, breakdown: false, blocked: false },
-    { key: 'never_sent', events: 0, max_values: null, received: false, breakdown: true, blocked: false },
-    { key: 'debug', events: 0, max_values: null, received: false, breakdown: false, blocked: true },
+    { key: 'order_id', events: 980, values: 412, received: true, blocked: false },
+    { key: 'plan', events: 900, values: 3, received: true, blocked: false, aliases: ['planType'] },
+    { key: 'tier', events: 20, values: 2, received: true, blocked: false },
+    { key: '$host', events: 15, values: 1, received: true, blocked: false },
+    { key: 'debug', events: 0, values: 0, received: false, blocked: true },
   ],
 }
 
 function renderSection(props: Partial<Parameters<typeof AttributesSection>[0]> = {}) {
-  const onSaveBreakdowns = vi.fn().mockResolvedValue(true)
   const onRename = vi.fn().mockResolvedValue(true)
   const onMerge = vi.fn().mockResolvedValue(true)
   const onBlock = vi.fn().mockResolvedValue(true)
   const onRemove = vi.fn().mockResolvedValue(true)
   const onAddAlias = vi.fn().mockResolvedValue(true)
   renderWithProviders(
-    <AttributesSection project={project} range={range} rawDays={7} onSaveBreakdowns={onSaveBreakdowns}
+    <AttributesSection project={project} range={range}
       onRename={onRename} onMerge={onMerge} onBlock={onBlock} onRemove={onRemove} onAddAlias={onAddAlias} {...props} />,
   )
-  return { onSaveBreakdowns, onRename, onMerge, onBlock, onRemove, onAddAlias }
+  return { onRename, onMerge, onBlock, onRemove, onAddAlias }
 }
 
 const row = (key: string) => screen.getAllByRole('row').find((r) => r.querySelector('code')?.textContent === key)!
@@ -46,102 +44,35 @@ describe('AttributesSection', () => {
     vi.spyOn(endpoints, 'listAttributes').mockResolvedValue(answer)
   })
 
-  it('lists every key busiest first with what it received, its switch, and the budget in the header', async () => {
+  it('lists every key busiest first with what it received, and no breakdown switch', async () => {
     renderSection()
     const section = screen.getByRole('region', { name: 'Attributes' })
-    await within(section).findByRole('switch', { name: 'Break down plan' })
+    await within(section).findByText('order_id')
     expect(endpoints.listAttributes).toHaveBeenCalledWith(1, { from: '2026-09-05', to: '2026-10-04' })
     const rows = within(section).getAllByRole('row').slice(1)
-    expect(rows.map((r) => r.querySelector('code')?.textContent)).toEqual(['order_id', 'plan', 'tier', '$host', 'never_sent', 'debug'])
+    expect(rows.map((r) => r.querySelector('code')?.textContent)).toEqual(['order_id', 'plan', 'tier', '$host', 'debug'])
     // The Received text sits in its column and, folded, under the key for phones.
     expect(within(row('plan')).getAllByText('900 events · 3 values')).toHaveLength(2)
-    expect(within(row('order_id')).getAllByText('980 events · 412 values · folds past 50')).toHaveLength(2)
-    expect(within(row('never_sent')).getAllByText('not received')).toHaveLength(2)
-    expect(within(section).getByRole('switch', { name: 'Break down plan' })).toBeChecked()
-    expect(within(section).getByRole('switch', { name: 'Break down never_sent' })).toBeChecked()
-    expect(within(section).getByRole('switch', { name: 'Break down order_id' })).not.toBeChecked()
-    expect(within(section).getByRole('switch', { name: 'Break down $host' })).not.toBeChecked()
-    expect(within(section).getByRole('heading')).toHaveTextContent('Attributes · 2 of 10 in use')
+    expect(within(row('order_id')).getAllByText('980 events · 412 values')).toHaveLength(2)
+    expect(within(row('debug')).getAllByText('not received')).toHaveLength(2)
+    expect(within(section).queryByRole('switch')).not.toBeInTheDocument()
+    expect(within(section).queryByRole('columnheader', { name: 'Breakdown' })).not.toBeInTheDocument()
+    expect(within(section).getByRole('heading')).toHaveTextContent(/^Attributes$/)
   })
 
-  it('says "N in use" when there is no limit', async () => {
-    vi.spyOn(endpoints, 'listAttributes').mockResolvedValue({ ...answer, breakdowns_max: 0 })
-    renderSection()
-    expect(await screen.findByText(/· 2 in use/)).toBeInTheDocument()
+  it('asks for the last 92 days of a longer range and says so', async () => {
+    renderSection({ range: { from: '2026-01-01', to: '2026-08-01' } })
+    const section = screen.getByRole('region', { name: 'Attributes' })
+    await within(section).findByText('order_id')
+    expect(endpoints.listAttributes).toHaveBeenCalledWith(1, { from: '2026-05-02', to: '2026-08-01' })
+    expect(within(section).getByText(/last 92 days of the range \(2026-05-02 to 2026-08-01\)/)).toBeInTheDocument()
   })
 
-  it('switching a key on saves the breakdowns with it added', async () => {
-    const user = userEvent.setup()
-    const { onSaveBreakdowns } = renderSection()
-    await user.click(await screen.findByRole('switch', { name: 'Break down tier' }))
-    expect(onSaveBreakdowns).toHaveBeenCalledWith(['plan', 'never_sent', 'tier'])
-  })
-
-  it('switches a $ key on too', async () => {
-    const user = userEvent.setup()
-    const { onSaveBreakdowns } = renderSection()
-    await user.click(await screen.findByRole('switch', { name: 'Break down $host' }))
-    expect(onSaveBreakdowns).toHaveBeenCalledWith(['plan', 'never_sent', '$host'])
-  })
-
-  it('saves from the listed breakdowns, not the project row, which may lag', async () => {
-    const user = userEvent.setup()
-    const { onSaveBreakdowns } = renderSection({ project: { project_id: 1, name: 'dev', allowed_origins: [], attributes: ['stale'] } as Project })
-    await user.click(await screen.findByRole('switch', { name: 'Break down tier' }))
-    expect(onSaveBreakdowns).toHaveBeenCalledWith(['plan', 'never_sent', 'tier'])
-  })
-
-  it('sends a key once when switched on again while the list still shows it off', async () => {
-    // The first save already reached the project row; the attributes list has not refetched.
-    const user = userEvent.setup()
-    const { onSaveBreakdowns } = renderSection({ project: { ...project, attributes: ['plan', 'never_sent', 'tier'] } })
-    const tier = await screen.findByRole('switch', { name: 'Break down tier' })
-    await user.click(tier)
-    await user.click(tier)
-    expect(onSaveBreakdowns).toHaveBeenCalledTimes(2)
-    for (const call of onSaveBreakdowns.mock.calls) expect(call[0]).toEqual(['plan', 'never_sent', 'tier'])
-  })
-
-  it('asks before switching a key off, then saves the list without it', async () => {
-    const user = userEvent.setup()
-    const { onSaveBreakdowns } = renderSection()
-    await user.click(await screen.findByRole('switch', { name: 'Break down plan' }))
-    const confirm = await screen.findByRole('alertdialog', { name: 'Stop breaking down plan?' })
-    expect(within(confirm).getByText(/adding it back later won't fill the gap/)).toBeInTheDocument()
-    expect(onSaveBreakdowns).not.toHaveBeenCalled()
-    await user.click(within(confirm).getByRole('button', { name: 'Remove breakdown' }))
-    expect(onSaveBreakdowns).toHaveBeenCalledWith(['never_sent'])
-  })
-
-  it('keeps the breakdown on Cancel, and never titles the confirm with a missing key', async () => {
-    const user = userEvent.setup()
-    const { onSaveBreakdowns } = renderSection()
-    await user.click(await screen.findByRole('switch', { name: 'Break down plan' }))
-    await user.click(await screen.findByRole('button', { name: 'Cancel' }))
-    expect(onSaveBreakdowns).not.toHaveBeenCalled()
-    expect(screen.queryByText('Stop breaking down undefined?')).not.toBeInTheDocument()
-  })
-
-  it('disables switching on at the limit, never switching off, and blocked rows always', async () => {
-    vi.spyOn(endpoints, 'listAttributes').mockResolvedValue({ ...answer, breakdowns_used: 10 })
-    renderSection()
-    await screen.findByText(/10 of 10 in use/)
-    expect(screen.getByRole('switch', { name: 'Break down tier' })).toBeDisabled()
-    expect(screen.getByRole('switch', { name: 'Break down tier' })).toHaveAttribute('title', '10 of 10 in use')
-    expect(screen.getByRole('switch', { name: 'Break down plan' })).toBeEnabled()
-    expect(screen.getByRole('switch', { name: 'Break down debug' })).toBeDisabled()
-  })
-
-  it('disables a blocked key under the limit too', async () => {
-    renderSection()
-    expect(await screen.findByRole('switch', { name: 'Break down debug' })).toBeDisabled()
-    expect(screen.getByRole('switch', { name: 'Break down tier' })).toBeEnabled()
-  })
-
-  it('disables every switch while a write is pending', async () => {
-    renderSection({ pending: true })
-    expect(await screen.findByRole('switch', { name: 'Break down tier' })).toBeDisabled()
-    expect(screen.getByRole('switch', { name: 'Break down plan' })).toBeDisabled()
+  it('asks for a range of 92 days as it is, without a caption', async () => {
+    renderSection({ range: { from: '2026-05-02', to: '2026-08-01' } })
+    await screen.findByText('order_id')
+    expect(endpoints.listAttributes).toHaveBeenCalledWith(1, { from: '2026-05-02', to: '2026-08-01' })
+    expect(screen.queryByText(/last 92 days/)).not.toBeInTheDocument()
   })
 
   it('marks a blocked key as Events marks a blocked event', async () => {
@@ -154,9 +85,9 @@ describe('AttributesSection', () => {
     expect(within(row('plan')).queryByText('Blocked')).not.toBeInTheDocument()
   })
 
-  it('gives a $ key its switch and no menu', async () => {
+  it('gives a $ key no menu', async () => {
     renderSection()
-    await screen.findByRole('switch', { name: 'Break down $host' })
+    await screen.findByText('$host')
     expect(screen.queryByRole('button', { name: 'Actions for $host' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Actions for plan' })).toBeInTheDocument()
   })
@@ -197,10 +128,10 @@ describe('AttributesSection', () => {
     const { onMerge } = renderSection()
     await openMenu(user, 'tier', 'Merge into…')
     const dialog = await screen.findByRole('dialog', { name: 'Merge tier into…' })
-    expect(within(dialog).getByText(/stored values move to the attribute you pick/)).toBeInTheDocument()
-    expect(within(dialog).getByText(/cannot be undone/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/Every report shows tier's values under the attribute you pick, past ones included/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/Removing the rule later shows past events as sent again, but not the ones received while it held\./)).toBeInTheDocument()
     expect(within(dialog).getByRole('combobox', { name: 'Search attributes' })).toBeInTheDocument()
-    expect(within(dialog).getAllByRole('option').map((o) => o.querySelector('span')?.textContent)).toEqual(['order_id', 'plan', 'never_sent'])
+    expect(within(dialog).getAllByRole('option').map((o) => o.querySelector('span')?.textContent)).toEqual(['order_id', 'plan'])
     await user.click(within(dialog).getByRole('option', { name: /plan/ }))
     await user.click(within(dialog).getByRole('button', { name: 'Merge into plan' }))
     expect(onMerge).toHaveBeenCalledWith({ from: 'tier', to: 'plan' })
@@ -214,7 +145,7 @@ describe('AttributesSection', () => {
     expect(within(dialog).getByText('Events carrying the alias store it as plan.')).toBeInTheDocument()
     await user.type(within(dialog).getByLabelText('Old name'), 'tier')
     expect(within(dialog).getByText('Events carrying tier store it as plan.')).toBeInTheDocument()
-    expect(within(dialog).getByRole('alert')).toHaveTextContent('tier already has events: they merge into plan, and this cannot be undone.')
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('tier already has events: every report counts them under plan from now on.')
     await user.clear(within(dialog).getByLabelText('Old name'))
     await user.type(within(dialog).getByLabelText('Old name'), 'planType')
     expect(within(dialog).getByRole('button', { name: 'Add alias' })).toBeDisabled()
@@ -234,7 +165,7 @@ describe('AttributesSection', () => {
     await user.click(screen.getByRole('button', { name: 'Remove alias planType' }))
     expect(onRemove).not.toHaveBeenCalled()
     const confirm = await screen.findByRole('alertdialog', { name: 'Remove alias planType?' })
-    expect(within(confirm).getByText(/Events carrying planType keep it under its own name again; the ones already renamed stay under plan\./)).toBeInTheDocument()
+    expect(within(confirm).getByText(/Events carrying planType keep it under its own name again, and so do the ones stored before the alias; those received while it held stay under plan\./)).toBeInTheDocument()
     await user.click(within(confirm).getByRole('button', { name: 'Remove alias' }))
     expect(onRemove).toHaveBeenCalledWith({ key: 'planType' })
     await user.click(screen.getByRole('button', { name: 'Add alias to plan' }))
@@ -244,14 +175,13 @@ describe('AttributesSection', () => {
     expect(onAddAlias).toHaveBeenCalledWith({ alias: 'p', to: 'plan' })
   })
 
-  it('confirms before blocking, naming the daily pass and the raw days', async () => {
+  it('confirms before blocking, saying past events are hidden at once', async () => {
     const user = userEvent.setup()
-    const { onBlock } = renderSection({ rawDays: 14 })
+    const { onBlock } = renderSection()
     await openMenu(user, 'tier', 'Block…')
     const confirm = await screen.findByRole('alertdialog', { name: 'Block tier?' })
-    expect(within(confirm).getByText(/tier is stripped from events when they arrive/)).toBeInTheDocument()
-    expect(within(confirm).getByText(/next daily pass \(03:00 UTC\)/)).toBeInTheDocument()
-    expect(within(confirm).getByText(/within 14 days/)).toBeInTheDocument()
+    expect(within(confirm).getByText(/tier is hidden from every report at once, past events included; new ones are not stored/)).toBeInTheDocument()
+    expect(within(confirm).queryByText(/daily pass|expire|retention/)).not.toBeInTheDocument()
     expect(onBlock).not.toHaveBeenCalled()
     await user.click(within(confirm).getByRole('button', { name: 'Block attribute' }))
     expect(onBlock).toHaveBeenCalledWith({ key: 'tier' })
@@ -259,16 +189,15 @@ describe('AttributesSection', () => {
 
   it('blocks nothing on Cancel', async () => {
     const user = userEvent.setup()
-    const { onBlock } = renderSection({ rawDays: undefined })
+    const { onBlock } = renderSection()
     await openMenu(user, 'tier', 'Block…')
-    expect(await screen.findByText(/within the raw retention window/)).toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Cancel' }))
+    await user.click(await screen.findByRole('button', { name: 'Cancel' }))
     expect(onBlock).not.toHaveBeenCalled()
   })
 
   it('says an empty range has none', async () => {
-    vi.spyOn(endpoints, 'listAttributes').mockResolvedValue({ ...answer, attributes: [], keys_total: 0, breakdowns_used: 0 })
-    renderSection({ project: { ...project, attributes: [] } })
+    vi.spyOn(endpoints, 'listAttributes').mockResolvedValue({ ...answer, attributes: [], keys_total: 0 })
+    renderSection()
     expect(await screen.findByText('No attributes received in this range.')).toBeInTheDocument()
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
   })

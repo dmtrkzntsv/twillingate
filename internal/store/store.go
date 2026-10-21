@@ -5,18 +5,13 @@ import (
 	"database/sql/driver"
 	"fmt"
 	"net/url"
-	"sort"
 	"time"
-
-	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
-// Family names the aggregate family a raw row feeds: views (v_views_*,
-// agg_views_*, views_overview, views_breakdown), product (v_product_*,
-// agg_product_*, product_events, product_attributes) or measures
-// (v_measures_*, agg_measures_*). Ingest decides it from the event's
-// family, or from its name when family is absent; the database holds no
-// list of families.
+// Family names the kind of event a row is: a view (views_overview,
+// views_breakdown), a product event (product_events, product_attributes)
+// or a measure (measures). Ingest decides it from the event's family, or
+// from its name when family is absent; nothing holds a list of families.
 type Family string
 
 const (
@@ -47,7 +42,7 @@ var ReservedMetrics = map[string]string{
 	"$ttfb": MeasureTime,
 }
 
-// Event is one row of the raw events table: a view ($page_view,
+// Event is one row of the event files: a view ($page_view,
 // $screen_view), a product event or a measure, told apart by Family.
 // Kind is the client-declared surface ("web", "app", "cli", …); empty on a
 // product event that declared none. ActorKind records how the actor was
@@ -73,9 +68,7 @@ type Event struct {
 	ActorID, ActorKind, UserID, GroupID, SessionID string
 	// InstallID is the client's $install_id, also when a $user_id outranks
 	// it as the actor; UserName and GroupName name UserID and GroupID, each
-	// kept only beside its id. SQLite's events table does not store them
-	// (its identities table holds the latest names); the event files do
-	// (raw-first D17, D18).
+	// kept only beside its id (raw-first D17, D18).
 	InstallID, UserName, GroupName       string
 	Host, Path, ReferrerSource           string
 	UTMSource, UTMMedium, UTMCampaign    string
@@ -90,54 +83,6 @@ type Event struct {
 	Value                                *float64
 	Measure                              string
 	SampleRate                           float64
-}
-
-// SystemAttribute is a reserved key that product_attributes always breaks
-// down, and the events column it reads.
-type SystemAttribute struct{ Key, Column string }
-
-// SystemAttributes are rolled up for every project, declared or not:
-// low-cardinality environment keys, and the country ingest resolves from
-// the client's address. The live halves of v_product_attrs and
-// v_measures_attrs (038_product_country.sql) list every entry in their
-// keys and their CASE.
-var SystemAttributes = []SystemAttribute{
-	{"$platform", "platform"},
-	{"$os", "os"},
-	{"$app_version", "app_version"},
-	{"$app_locale", "app_locale"},
-	{"$kind", "kind"},
-	{"$browser", "browser"},
-	{"$device", "device"},
-	{"$browser_locale", "browser_locale"},
-	{"$country", "country"},
-}
-
-// DeclarableAttributes are the reserved keys a project may declare in its
-// attributes to get a per-value breakdown, mapped to the events column
-// each reads. Any other $ key is refused (manage.ErrInvalid): always-on
-// ones need no declaration, and identity, session, consent, os_name and
-// display sizes are unbounded or not breakdowns.
-var DeclarableAttributes = map[string]string{
-	"$host":            "host",
-	"$path":            "path",
-	"$referrer":        "referrer_source",
-	"$utm_source":      "utm_source",
-	"$utm_medium":      "utm_medium",
-	"$utm_campaign":    "utm_campaign",
-	"$os_version":      "os_version",
-	"$browser_version": "browser_version",
-	"$device_model":    "device_model",
-}
-
-// DeclarableAttributeKeys lists DeclarableAttributes' keys, sorted.
-func DeclarableAttributeKeys() []string {
-	keys := make([]string, 0, len(DeclarableAttributes))
-	for k := range DeclarableAttributes {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }
 
 // Consent is the client's answer, when it sent the row, to "may anything
@@ -166,35 +111,12 @@ func (c Consent) Value() (driver.Value, error) {
 // constant here, measured in internal/store/sqlite/usage_history.go, never
 // a migration.
 const (
-	// Per project, on the day measured: its estimated disk use in raw rows
-	// (events) and in everything rolled up (agg_*, actors, identities).
-	StatRawBytes       = "raw_bytes"
-	StatAggregateBytes = "aggregate_bytes"
-	// Per project, for the day counted (every day before the pass's): its
-	// views, product events and measure samples.
-	StatViews    = "views"
-	StatEvents   = "events"
-	StatMeasures = "measures"
 	// Server-wide (project 0), on the day measured: the database file's
 	// size, page_count × page_size.
 	StatDatabaseBytes = "database_bytes"
-	// Per project, on the day measured: how many attributes it declares.
-	StatDeclaredAttributes = "declared_attributes"
-	// Per project, for the day counted while its rows are raw (kept once
-	// they are rolled up, which keeps only what the caps let through): the
-	// distinct attribute keys and key/value pairs received, declared or
-	// not, and the values the attribute views fold into (other), summed
-	// over every event (and measure) and aggregated key.
-	StatAttributeKeys         = "attribute_keys"
-	StatAttributeValues       = "attribute_values"
-	StatAttributeValuesFolded = "attribute_values_folded"
-	// Server-wide (project 0), on the day measured: each cap in force, as
-	// its meta row names it (0 = no cap), so a day's folds can be read
-	// against the cap that made them. ATTRIBUTE_VALUES_TOP_N's row keeps
-	// its earlier name, attributes_top_n.
-	StatCapAttributes = "attributes_top_n"
-	StatCapIdentities = "identities_top_n"
-	StatCapBreakdowns = "attribute_breakdowns_max"
+	// Per project, on the day measured: the bytes of its event files
+	// (archive.Sizes), written by the pass of the process that keeps them.
+	StatFileBytes = "file_bytes"
 )
 
 // Actor kinds: how an actor id was derived. Only user and install actors
@@ -205,34 +127,14 @@ const (
 	ActorConnection = "connection"
 )
 
-// Identity is a display name for a user or group. Names live in their own
-// table rather than on event rows: a name repeated on every row could never
-// be updated, and names change.
-type Identity struct {
-	ProjectID      int64
-	Kind, ID, Name string
-}
-
-// Identity kinds.
-const (
-	KindUser  = "user"
-	KindGroup = "group"
-)
-
 // RegistryProject represents a project configuration from the registry.
 type RegistryProject struct {
 	ID             int64 // 0 on create; assigned by the store
 	Name           string
 	AllowedOrigins string // JSON array, "[]" if none
-	Attributes     string // JSON array of the breakdown keys (project_attributes), by key; "[]" if none
 	Archived       bool
 	ArchivedAt     string // RFC 3339 UTC, "" = live
 	SortKey        string // its place in the order (migration 034)
-	// KeepBreakdowns tells UpdateProject to leave the catalog's breakdown
-	// flags as they are and ignore Attributes: the caller did not send a
-	// list, so a stale copy of the current one must not be written back
-	// over a rule that changed it since. Never set on a loaded row.
-	KeepBreakdowns bool
 }
 
 // EventRule is one event rule (rules with kind 'event', migration 040): a rename (To set)
@@ -294,48 +196,24 @@ type AuditEntry struct {
 // Store defines the interface for analytics data storage.
 type Store interface {
 	Migrate(ctx context.Context) error
-	WriteEvents(ctx context.Context, evs []Event) error
-	UpsertIdentities(ctx context.Context, ids []Identity) error
-	ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
-	ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
-	MeasureDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
-	// RawEvents returns a project's raw rows of one day, as the event
-	// files hold an event (sqlite.DB.RawEvents).
-	RawEvents(ctx context.Context, projectID int64, day civil.Date) ([]Event, error)
-	// OldestRawDays is each project's oldest day with a raw row held
-	// (YYYY-MM-DD); a project with none is left out.
-	OldestRawDays(ctx context.Context) (map[int64]string, error)
-	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date, topN int) error
-	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
-	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
-	// DropBlockedAggregates deletes the project's per-event aggregates of
-	// every blocked event name (event rules D11), and the attribute
-	// aggregates of every blocked attribute key (project attributes D12).
-	DropBlockedAggregates(ctx context.Context, projectID int64) error
 	// Event rules (migration 039): LoadEventRules reads them all; the
 	// three mutations are audited from a in the same transaction.
 	LoadEventRules(ctx context.Context) ([]EventRule, error)
-	RenameEvent(ctx context.Context, projectID int64, family Family, from, to string, merge bool, a AuditEntry) (map[string]int64, error)
+	RenameEvent(ctx context.Context, projectID int64, family Family, from, to string, a AuditEntry) error
 	BlockEvent(ctx context.Context, projectID int64, family Family, name string, a AuditEntry) error
 	RemoveEventRule(ctx context.Context, projectID int64, family Family, name string, a AuditEntry) error
 	// Attribute rules: the same two actions on custom attribute keys,
 	// audited the same way.
 	LoadAttributeRules(ctx context.Context) ([]AttributeRule, error)
-	RenameAttribute(ctx context.Context, projectID int64, from, to string, merge bool, a AuditEntry) (map[string]int64, error)
+	RenameAttribute(ctx context.Context, projectID int64, from, to string, a AuditEntry) error
 	BlockAttribute(ctx context.Context, projectID int64, key string, a AuditEntry) error
 	RemoveAttributeRule(ctx context.Context, projectID int64, key string, a AuditEntry) error
-	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
-	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
-	PruneActors(ctx context.Context, projectID int64, before civil.Date) error
-	AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date, topN int) error
-	PruneIdentities(ctx context.Context, projectID int64, before civil.Date) error
-	PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error
 	IncrementalVacuum(ctx context.Context) error
 	// RecordUsageHistory writes now's UTC day of usage_history, replacing
-	// that day's rows and keeping earlier days as history.
-	RecordUsageHistory(ctx context.Context, now time.Time) error
-	ProjectIDs(ctx context.Context) ([]int64, error) // all rows incl. archived, ascending
-	RebuildFlatView(ctx context.Context, keys []string) error
+	// that day's rows and keeping earlier days as history: the database's
+	// size, and each project's file bytes when fileBytes is non-nil (a
+	// process with no event files passes nil and leaves them alone).
+	RecordUsageHistory(ctx context.Context, now time.Time, fileBytes map[int64]int64) error
 	GetMeta(ctx context.Context, key string) (string, error) // "" if absent
 	SetMeta(ctx context.Context, key, value string) error
 	LoadRegistry(ctx context.Context) ([]RegistryProject, []RegistryKey, error)
@@ -462,9 +340,9 @@ type Store interface {
 	// many.
 	ExpireDrafts(ctx context.Context, now time.Time) (int, error)
 	// DeleteSubmissions deletes the project's submissions with these ids
-	// and, in the same transaction, their raw $form_submit events, and
-	// returns how many submissions it deleted. Ids that match nothing are
-	// skipped. Aggregates are not touched. The audit row's detail is
+	// and returns how many it deleted; their $form_submit events stay in
+	// the event files. Ids that match nothing are skipped. The audit row's
+	// detail is
 	// a.Detail (how the ids were chosen) followed by " (<n> deleted)", the
 	// count actually deleted, written even when it is 0.
 	DeleteSubmissions(ctx context.Context, projectID int64, ids []string, a AuditEntry) (int, error)
@@ -489,10 +367,9 @@ type Store interface {
 	// and counts toward limit; only a failed read is an error.
 	PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]PendingSubmission, error)
 	// AttributeSubmission stores ev's referrer and UTMs as p's attribution
-	// and, when p.WriteEvent, writes ev and leaves it in the outbox
-	// (UnloggedEvents), all in one transaction; wrote reports the event
-	// written. A submission no longer pending (deleted, or attributed
-	// already) changes nothing.
+	// and, when p.WriteEvent, leaves ev in the outbox (UnloggedEvents),
+	// all in one transaction; wrote reports the outbox filled. A submission no
+	// longer pending (deleted, or attributed already) changes nothing.
 	AttributeSubmission(ctx context.Context, p PendingSubmission, ev Event) (wrote bool, err error)
 	// UnloggedEvents lists up to limit events AttributeSubmission wrote
 	// and MarkLogged has not cleared yet, oldest first. A row that does
@@ -512,7 +389,7 @@ type Store interface {
 	// PurgeArchived deletes every project, dashboard, widget and widget
 	// share archived more than days ago, each in its own transaction with
 	// an audit row (actor "retention"). days <= 0 purges nothing. An
-	// archived form goes with its submissions and their raw events.
+	// archived form goes with its submissions.
 	PurgeArchived(ctx context.Context, days int) (PurgeResult, error)
 
 	Close() error

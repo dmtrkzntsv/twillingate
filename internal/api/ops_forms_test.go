@@ -239,7 +239,7 @@ func TestListSubmissionsColumnsDraftAndApproved(t *testing.T) {
 	// the attribution.
 	sub := callAs[map[string]any](t, cs, "get_submission", map[string]any{"project_id": 1, "name": "contact", "id": "s1"})
 	want := map[string]any{"id": "s1", "form": "contact", "received_at": sub["received_at"],
-		"fields":   map[string]any{"email": "a@x.io", "note": "hi"},
+		"fields":      map[string]any{"email": "a@x.io", "note": "hi"},
 		"attribution": map[string]any{"referrer": "news.example", "utm_source": "nl", "utm_medium": "email", "utm_campaign": "oct"}}
 	if !reflect.DeepEqual(sub, want) || sub["received_at"] == "" {
 		t.Fatalf("submission = %v", sub)
@@ -473,8 +473,8 @@ func TestDeleteSubmissionsSelectors(t *testing.T) {
 			t.Errorf("audit detail %q holds a search or filter value", d)
 		}
 	}
-	// The custom-SQL handle still cannot read the table.
-	if msg := refused(t, cs, "query", map[string]any{"sql": "select * from submissions", "source": "sqlite"}); !strings.Contains(msg, "submissions") {
+	// Custom SQL runs on the event files, which hold no submissions.
+	if msg := refused(t, cs, "query", map[string]any{"sql": "select * from submissions"}); !strings.Contains(msg, "submissions") {
 		t.Errorf("query refusal: %s", msg)
 	}
 }

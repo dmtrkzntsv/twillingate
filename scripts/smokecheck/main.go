@@ -1,35 +1,54 @@
-// Command smokecheck prints row counts for the two raw families of an
-// analytics database, read through raw_views and raw_product (the one raw
-// events table holds both). Used by scripts/smoke.sh to verify ingestion
+// Command smokecheck prints the number of events of the two raw families in
+// an events directory (raw/<project>/<day>.log and <day>.N.closed), counted
+// from the lines themselves. Used by scripts/smoke.sh to verify ingestion
 // end-to-end without requiring a sqlite3 CLI on the host.
 package main
 
 import (
-	"database/sql"
+	"bufio"
+	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
-
-	_ "modernc.org/sqlite"
+	"path/filepath"
+	"strings"
 )
 
 func main() {
 	if len(os.Args) != 2 {
-		fmt.Fprintln(os.Stderr, "usage: smokecheck <db-path>")
+		fmt.Fprintln(os.Stderr, "usage: smokecheck <events-dir>")
 		os.Exit(2)
 	}
-	db, err := sql.Open("sqlite", "file:"+os.Args[1]+"?mode=ro")
+	counts := map[string]int{}
+	err := filepath.WalkDir(os.Args[1], func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !(strings.HasSuffix(path, ".log") || strings.HasSuffix(path, ".closed")) {
+			return err
+		}
+		return count(path, counts)
+	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
-	defer db.Close()
-	count := func(view string) int {
-		var n int
-		if err := db.QueryRow("SELECT COUNT(*) FROM " + view).Scan(&n); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		return n
+	fmt.Printf("views=%d events=%d\n", counts["views"], counts["product"])
+}
+
+func count(path string, counts map[string]int) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
 	}
-	fmt.Printf("views=%d events=%d\n", count("raw_views"), count("raw_product"))
+	defer f.Close()
+	sc := bufio.NewScanner(f)
+	sc.Buffer(make([]byte, 1<<20), 16<<20)
+	for sc.Scan() {
+		var l struct {
+			Family string `json:"family"`
+		}
+		if err := json.Unmarshal(sc.Bytes(), &l); err != nil {
+			return fmt.Errorf("%s: %w", path, err)
+		}
+		counts[l.Family]++
+	}
+	return sc.Err()
 }

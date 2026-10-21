@@ -6,7 +6,6 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -14,10 +13,17 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// DaysBefore drives the aggregation scheduler: it decides which days still
-// have raw rows to roll up. Both raw tables must be reported independently.
+func day(s string) civil.Date {
+	d, err := civil.Parse(s)
+	if err != nil {
+		panic(err)
+	}
+	return d
+}
+
+// DaysBefore lists the days the import reads, one family at a time.
 func TestDaysBefore(t *testing.T) {
-	db := newTestDB(t)
+	db := legacyDB(t)
 	ctx := context.Background()
 	views := []store.Event{
 		{Family: store.FamilyViews, ID: "1", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
@@ -26,17 +32,14 @@ func TestDaysBefore(t *testing.T) {
 		{Family: store.FamilyViews, ID: "4", ProjectID: 1, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-20T10:00:00Z"), ActorID: "v1", Path: "/"},
 		{Family: store.FamilyViews, ID: "5", ProjectID: 2, Kind: "web", ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v1", Path: "/"},
 	}
-	if err := db.WriteEvents(ctx, views); err != nil {
-		t.Fatal(err)
-	}
+	insertLegacy(t, db, views...)
 	events := []store.Event{
 		{Family: store.FamilyProduct, ID: "e1", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: ts("2026-08-12T10:00:00Z")},
 		{Family: store.FamilyProduct, ID: "e2", ProjectID: 1, EventName: "signup", ActorID: "u2", TS: ts("2026-08-12T11:00:00Z")},
 		{Family: store.FamilyProduct, ID: "e3", ProjectID: 1, EventName: "signup", ActorID: "u1", TS: ts("2026-08-20T10:00:00Z")},
+		{Family: store.FamilyMeasures, ID: "m1", ProjectID: 1, EventName: "load", ActorID: "u1", TS: ts("2026-08-13T10:00:00Z")},
 	}
-	if err := db.WriteEvents(ctx, events); err != nil {
-		t.Fatal(err)
-	}
+	insertLegacy(t, db, events...)
 
 	str := func(days []civil.Date) []string {
 		out := make([]string, len(days))
@@ -60,6 +63,13 @@ func TestDaysBefore(t *testing.T) {
 	if got := str(product); len(got) != 1 || got[0] != "2026-08-12" {
 		t.Errorf("ProductDaysBefore = %v, want [2026-08-12]", got)
 	}
+	measures, err := db.MeasureDaysBefore(ctx, 1, day("2026-08-15"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := str(measures); len(got) != 1 || got[0] != "2026-08-13" {
+		t.Errorf("MeasureDaysBefore = %v, want [2026-08-13]", got)
+	}
 	none, err := db.ProductDaysBefore(ctx, 99, day("2026-08-15"))
 	if err != nil {
 		t.Fatal(err)
@@ -69,10 +79,10 @@ func TestDaysBefore(t *testing.T) {
 	}
 }
 
-// A malformed ts must surface as an error rather than a zero-value date that
-// would silently misfile aggregates.
+// A malformed day must surface as an error rather than a zero-value date
+// that would silently misfile the import.
 func TestDaysBeforeRejectsCorruptTimestamp(t *testing.T) {
-	db := newTestDB(t)
+	db := legacyDB(t)
 	// Must sort before the cutoff so the WHERE clause admits it, yet be an
 	// impossible calendar date so civil.Parse rejects it.
 	if _, err := db.db.Exec(
@@ -94,7 +104,7 @@ func TestTxRollsBackOnError(t *testing.T) {
 	boom := errors.New("boom")
 	err := db.tx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO agg_views_daily VALUES (1,'2026-08-10','web',1,1,1,0,0)`); err != nil {
+			`INSERT INTO meta (key, value) VALUES ('tx', 'x')`); err != nil {
 			return err
 		}
 		return boom
@@ -103,7 +113,7 @@ func TestTxRollsBackOnError(t *testing.T) {
 		t.Fatalf("err = %v, want boom", err)
 	}
 	var n int
-	if err := db.db.QueryRow(`SELECT COUNT(*) FROM agg_views_daily`).Scan(&n); err != nil {
+	if err := db.db.QueryRow(`SELECT COUNT(*) FROM meta WHERE key = 'tx'`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
 	if n != 0 {
@@ -127,20 +137,10 @@ func TestOperationsOnClosedDB(t *testing.T) {
 	}
 
 	for name, op := range map[string]func() error{
-		"PruneAggregates": func() error {
-			return db.PruneAggregates(ctx, 1, day("2026-01-01"))
-		},
 		"IncrementalVacuum":  func() error { return db.IncrementalVacuum(ctx) },
-		"RecordUsageHistory": func() error { return db.RecordUsageHistory(ctx, time.Now()) },
-		"AggregateViewDay":   func() error { return db.AggregateViewDay(ctx, 1, day("2026-01-01"), defaultAttrsTopN) },
+		"RecordUsageHistory": func() error { return db.RecordUsageHistory(ctx, time.Now(), map[int64]int64{1: 1}) },
 		"Migrate":            func() error { return db.Migrate(ctx) },
-		"WriteEvents(views)": func() error {
-			return db.WriteEvents(ctx, []store.Event{{Family: store.FamilyViews, ID: "1", ProjectID: 1, Kind: "web",
-				ActorKind: store.ActorConnection, TS: ts("2026-08-10T10:00:00Z"), ActorID: "v", Path: "/"}})
-		},
-		"WriteEvents(product)": func() error {
-			return db.WriteEvents(ctx, []store.Event{{Family: store.FamilyProduct, ID: "e", ProjectID: 1, EventName: "n", ActorID: "u", TS: ts("2026-08-10T10:00:00Z")}})
-		},
+		"EventsDropped":      func() error { _, err := db.EventsDropped(ctx); return err },
 		"CreateProject": func() error {
 			_, err := db.CreateProject(ctx, store.RegistryProject{Name: "App", AllowedOrigins: "[]"},
 				store.AuditEntry{Actor: "test", Action: "project.create"})
@@ -204,23 +204,6 @@ func TestMigrateFailureIsNotRecorded(t *testing.T) {
 	}
 }
 
-// PruneAggregates must name the table it failed on, so an operator can tell
-// which retention step broke.
-func TestPruneAggregatesReportsFailingTable(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_product_attrs`); err != nil {
-		t.Fatal(err)
-	}
-	err := db.PruneAggregates(ctx, 1, day("2026-01-01"))
-	if err == nil {
-		t.Fatal("want error when a target table is missing, got nil")
-	}
-	if !strings.Contains(err.Error(), "agg_product_attrs") {
-		t.Errorf("error %q does not name the failing table", err)
-	}
-}
-
 // A DSN with no leading slash puts the first path segment in url.Host; that
 // relative form must resolve to a relative file, not be dropped.
 func TestOpenRelativeDSN(t *testing.T) {
@@ -246,22 +229,6 @@ func TestOpenRelativeDSN(t *testing.T) {
 	}
 }
 
-// Empty batches are routine (a flush tick with nothing buffered) and must not
-// open a transaction or error.
-func TestWriteEmptyBatchIsNoOp(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	if err := db.WriteEvents(ctx, nil); err != nil {
-		t.Errorf("WriteEvents(nil) = %v", err)
-	}
-	if err := db.WriteEvents(ctx, nil); err != nil {
-		t.Errorf("WriteEvents(nil) = %v", err)
-	}
-	if err := db.WriteEvents(ctx, []store.Event{}); err != nil {
-		t.Errorf("WriteEvents(empty) = %v", err)
-	}
-}
-
 // ExecForTest is a thin pass-through exported for other packages' test
 // seeding (internal/api's seed helper is the real caller — see
 // seed_test.go there); a cross-package call does not register in this
@@ -282,17 +249,5 @@ func TestExecForTest(t *testing.T) {
 	}
 	if _, err := db.ExecForTest(`INSERT INTO no_such_table (x) VALUES (1)`); err == nil {
 		t.Error("ExecForTest(bad SQL) = nil, want error")
-	}
-}
-
-func TestPruneAggregatesReportsFailingViewsTable(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	if _, err := db.db.ExecContext(ctx, `DROP TABLE agg_views_utm`); err != nil {
-		t.Fatal(err)
-	}
-	err := db.PruneAggregates(ctx, 1, day("2026-01-01"))
-	if err == nil || !strings.Contains(err.Error(), "agg_views_utm") {
-		t.Errorf("error %v does not name the failing views table", err)
 	}
 }

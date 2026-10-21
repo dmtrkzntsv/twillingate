@@ -96,9 +96,6 @@ func TestWriteSubmissionFirstCreatesDraft(t *testing.T) {
 	if got := storedFields(t, db, "s1"); !reflect.DeepEqual(got, map[string]string{"name": "Ann", "email": "a@x.io"}) {
 		t.Fatalf("stored = %v", got)
 	}
-	if n := countRows(t, db, `SELECT COUNT(*) FROM events`); n != 0 {
-		t.Fatalf("a draft wrote %d events", n)
-	}
 	var recv string
 	var attribution *string
 	if err := db.db.QueryRow(`SELECT received_at, attribution FROM submissions
@@ -175,7 +172,7 @@ func TestWriteSubmissionDuplicateIDIsNoOp(t *testing.T) {
 	}
 }
 
-func TestWriteSubmissionApprovedKeepsExpectedAndWritesEvent(t *testing.T) {
+func TestWriteSubmissionApprovedKeepsExpectedAndQueuesItsEvent(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	if _, _, err := db.WriteSubmission(ctx, newSub("s0", map[string]string{"name": "Ann"})); err != nil {
@@ -199,36 +196,31 @@ func TestWriteSubmissionApprovedKeepsExpectedAndWritesEvent(t *testing.T) {
 		t.Fatalf("fields = %v, want %v (dropped names stay recorded)", formFieldNames(t, db), want)
 	}
 	attributeAll(t, db, nil)
-	var id, family, name, ts, day, kind, actorKind, actorID, host, path, attrs string
-	if err := db.db.QueryRow(`SELECT id, family, event_name, ts, day, kind, actor_kind, actor_id, host, path, attributes
-		FROM events`).Scan(&id, &family, &name, &ts, &day, &kind, &actorKind, &actorID, &host, &path, &attrs); err != nil {
-		t.Fatal(err)
+	us, err := db.UnloggedEvents(ctx, 10)
+	if err != nil || len(us) != 1 || us[0].Err != nil {
+		t.Fatalf("unlogged = %+v, %v; want the one event", us, err)
 	}
-	if id != "s1" || family != "product" || name != "$form_submit" || ts != "2026-10-06T12:00:00Z" ||
-		day != "2026-10-06" || kind != "web" || actorKind != "user" || actorID != "a1" ||
-		host != "example.com" || path != "/contact" || attrs != `{"form":"contact"}` {
-		t.Fatalf("event = %q %q %q %q %q %q %q %q %q %q %q", id, family, name, ts, day, kind, actorKind, actorID, host, path, attrs)
+	e := us[0].Event
+	if e.ID != "s1" || e.Family != store.FamilyProduct || e.EventName != "$form_submit" ||
+		e.TS.Format(time.RFC3339) != "2026-10-06T12:00:00Z" || e.Kind != "web" || e.ActorKind != store.ActorUser ||
+		e.ActorID != "a1" || e.Host != "example.com" || e.Path != "/contact" || e.Attributes["form"] != "contact" {
+		t.Fatalf("event = %+v", e)
 	}
-	// The event is found by the key a later delete uses, and its ts is the
-	// submission's received_at.
+	// The event's ts is the submission's received_at.
 	var recv string
 	if err := db.db.QueryRow(`SELECT received_at FROM submissions WHERE project_id=1 AND id='s1'`).Scan(&recv); err != nil {
 		t.Fatal(err)
 	}
-	if recv != ts {
-		t.Fatalf("received_at %q != event ts %q", recv, ts)
-	}
-	// ingest recorded that the form key arrived.
-	if c := countRows(t, db, `SELECT COUNT(*) FROM usage_attributes WHERE project_id=1 AND attr_key='form'`); c != 1 {
-		t.Fatalf("usage_attributes rows for form = %d", c)
+	if recv != e.TS.Format(time.RFC3339) {
+		t.Fatalf("received_at %q != event ts %v", recv, e.TS)
 	}
 
 	// A retry after the first succeeded writes no second event.
 	if _, inserted, err := db.WriteSubmission(ctx, n); err != nil || inserted {
 		t.Fatalf("retry: inserted=%v err=%v", inserted, err)
 	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM events`); c != 1 {
-		t.Fatalf("%d events after retry", c)
+	if c, err := db.UnloggedCount(ctx); err != nil || c != 1 {
+		t.Fatalf("%d events in the outbox after retry, %v", c, err)
 	}
 }
 
@@ -244,9 +236,6 @@ func TestWriteSubmissionRetryAfterApprovalWritesNoEvent(t *testing.T) {
 	approve(t, db, `["name"]`)
 	if _, inserted, err := db.WriteSubmission(ctx, n); err != nil || inserted {
 		t.Fatalf("retry: inserted=%v err=%v", inserted, err)
-	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM events`); c != 0 {
-		t.Fatalf("%d events", c)
 	}
 }
 
@@ -269,7 +258,6 @@ func TestWriteSubmissionRefusedWhenClosed(t *testing.T) {
 			}
 			execAll(t, db, c.setup, `UPDATE forms SET return_url='https://site.com/back'`)
 			subs := countRows(t, db, `SELECT COUNT(*) FROM submissions`)
-			evs := countRows(t, db, `SELECT COUNT(*) FROM events`)
 			var fieldsBefore, lastBefore string
 			if err := db.db.QueryRow(`SELECT fields, COALESCE(last_submitted_at,'') FROM forms`).Scan(&fieldsBefore, &lastBefore); err != nil {
 				t.Fatal(err)
@@ -285,8 +273,7 @@ func TestWriteSubmissionRefusedWhenClosed(t *testing.T) {
 			if form.Name != "contact" || form.ReturnURL != "https://site.com/back" {
 				t.Fatalf("refused with form %+v, want the form as it stands", form)
 			}
-			if countRows(t, db, `SELECT COUNT(*) FROM submissions`) != subs ||
-				countRows(t, db, `SELECT COUNT(*) FROM events`) != evs {
+			if countRows(t, db, `SELECT COUNT(*) FROM submissions`) != subs {
 				t.Fatal("a refused submission wrote rows")
 			}
 			var fieldsAfter, lastAfter string
@@ -352,6 +339,37 @@ func attributeAll(t *testing.T, db *DB, found func(store.Event) store.Event) {
 	}
 }
 
+// AttributeSubmission fills the outbox: the event reaches the files from
+// there (raw-first PR 6).
+func TestAttributeSubmissionFillsTheOutbox(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, newSub("s0", map[string]string{"name": "Ann"}))
+	approve(t, db, `["name"]`)
+	mustWrite(t, db, newSub("s1", map[string]string{"name": "Bob"}))
+	ps, err := db.PendingSubmissions(ctx, formsNow.Add(time.Hour), 10)
+	if err != nil || len(ps) == 0 {
+		t.Fatalf("pending = %+v, %v", ps, err)
+	}
+	var wrote int
+	for _, p := range ps {
+		w, err := db.AttributeSubmission(ctx, p, p.Event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w {
+			wrote++
+		}
+	}
+	if wrote != 1 {
+		t.Fatalf("wrote = %d, want the approved form's one", wrote)
+	}
+	us, err := db.UnloggedEvents(ctx, 10)
+	if err != nil || len(us) != 1 || us[0].Event.ID != "s1" {
+		t.Fatalf("unlogged = %+v, %v; want s1", us, err)
+	}
+}
+
 // A submission waits with the event the request built; an approved
 // form's gets written by AttributeSubmission, with the attribution, and
 // only once.
@@ -364,9 +382,6 @@ func TestSubmissionWaitsForItsAttribution(t *testing.T) {
 	approve(t, db, `["name"]`)
 	if _, _, err := db.WriteSubmission(ctx, newSub("s1", map[string]string{"name": "Bob"})); err != nil {
 		t.Fatal(err)
-	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product`); c != 0 {
-		t.Fatalf("%d events written before attribution", c)
 	}
 	ps, err := db.PendingSubmissions(ctx, formsNow, 10)
 	if err != nil || len(ps) != 2 {
@@ -385,11 +400,9 @@ func TestSubmissionWaitsForItsAttribution(t *testing.T) {
 		attr != `{"referrer":"google","utm_source":"cpc"}` {
 		t.Fatalf("attribution = %q, %v", attr, err)
 	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id='s1' AND referrer_source='google'`); c != 1 {
-		t.Fatalf("%d attributed events for s1", c)
-	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id='s0'`); c != 0 {
-		t.Fatal("a draft's submission wrote an event")
+	us, err := db.UnloggedEvents(ctx, 10)
+	if err != nil || len(us) != 1 || us[0].Event.ID != "s1" || us[0].Event.ReferrerSource != "google" {
+		t.Fatalf("unlogged = %+v, %v; want s1 attributed to google (a draft's submission queues none)", us, err)
 	}
 	if left, _ := db.PendingSubmissions(ctx, formsNow.Add(time.Hour), 10); len(left) != 0 {
 		t.Fatalf("still pending: %+v", left)
@@ -397,8 +410,8 @@ func TestSubmissionWaitsForItsAttribution(t *testing.T) {
 	if wrote, err := db.AttributeSubmission(ctx, ps[1], ps[1].Event); err != nil || wrote {
 		t.Fatalf("second AttributeSubmission wrote=%v err=%v", wrote, err)
 	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id='s1'`); c != 1 {
-		t.Fatalf("%d events for s1 after a second attribution", c)
+	if c, err := db.UnloggedCount(ctx); err != nil || c != 1 {
+		t.Fatalf("%d events queued after a second attribution, %v", c, err)
 	}
 }
 
@@ -469,8 +482,8 @@ func TestPendingSubmissionsReturnsAnUnreadableEventWithItsError(t *testing.T) {
 		AND attribution IS NULL AND fields='{}'`); c != 1 {
 		t.Fatal("the cleared submission is not kept unattributed")
 	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id='s1'`); c != 0 {
-		t.Fatal("clearing an unreadable submission wrote an event")
+	if us, err := db.UnloggedEvents(ctx, 10); err != nil || len(us) != 0 {
+		t.Fatalf("outbox after clearing = %+v, %v; want empty", us, err)
 	}
 	if ps, _ := db.PendingSubmissions(ctx, formsNow, 10); len(ps) != 2 {
 		t.Fatalf("pending after clearing = %+v, want s0 and s2", ps)
@@ -495,8 +508,8 @@ func TestAttributeSubmissionAfterDeleteWritesNothing(t *testing.T) {
 	if err != nil || wrote {
 		t.Fatalf("wrote=%v err=%v", wrote, err)
 	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product`); c != 0 {
-		t.Fatalf("%d events for a deleted submission", c)
+	if us, err := db.UnloggedEvents(ctx, 10); err != nil || len(us) != 0 {
+		t.Fatalf("outbox for a deleted submission = %+v, %v; want empty", us, err)
 	}
 }
 
@@ -548,13 +561,9 @@ func TestAttributedEventWaitsUnloggedUntilMarked(t *testing.T) {
 	if err := db.MarkLogged(ctx, nil); err != nil {
 		t.Fatalf("marking nothing: %v", err)
 	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_product WHERE id IN ('s1','s2')`); c != 2 {
-		t.Fatalf("%d events in SQLite, want 2: marking touches only the outbox", c)
-	}
 }
 
-// Deleting a submission takes its unlogged event with it, as it takes
-// the event SQLite holds.
+// Deleting a submission takes its unlogged event with it.
 func TestDeletedSubmissionLeavesTheOutbox(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -659,17 +668,14 @@ func TestWriteSubmissionEventShapeIsTheStores(t *testing.T) {
 		t.Fatal(err)
 	}
 	attributeAll(t, db, nil)
-	var id, name, ts, attrs string
-	var project int64
-	if err := db.db.QueryRow(`SELECT id, project_id, event_name, ts, attributes FROM raw_product`).
-		Scan(&id, &project, &name, &ts, &attrs); err != nil {
-		t.Fatal(err)
+	us, err := db.UnloggedEvents(ctx, 10)
+	if err != nil || len(us) != 1 {
+		t.Fatalf("unlogged = %+v, %v", us, err)
 	}
-	if id != "s1" || project != 1 || name != "$form_submit" || ts != "2026-10-06T12:00:00Z" || attrs != `{"form":"contact"}` {
-		t.Fatalf("event = %q %d %q %q %q", id, project, name, ts, attrs)
-	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM raw_views`); c != 0 {
-		t.Fatalf("%d view rows", c)
+	e := us[0].Event
+	if e.ID != "s1" || e.ProjectID != 1 || e.Family != store.FamilyProduct || e.EventName != "$form_submit" ||
+		e.TS.Format(time.RFC3339) != "2026-10-06T12:00:00Z" || len(e.Attributes) != 1 || e.Attributes["form"] != "contact" {
+		t.Fatalf("event = %+v", e)
 	}
 }
 
@@ -979,25 +985,7 @@ func TestExpireDrafts(t *testing.T) {
 	}
 }
 
-func rawProductIDs(t *testing.T, db *DB) map[string]bool {
-	t.Helper()
-	rows, err := db.db.Query(`SELECT id FROM raw_product`)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	ids := map[string]bool{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			t.Fatal(err)
-		}
-		ids[id] = true
-	}
-	return ids
-}
-
-func TestDeleteSubmissionsRemovesRowAndRawEvent(t *testing.T) {
+func TestDeleteSubmissionsRemovesTheRows(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s0", map[string]string{"email": "draft@x.io"})) // draft: no event
@@ -1023,11 +1011,8 @@ func TestDeleteSubmissionsRemovesRowAndRawEvent(t *testing.T) {
 	other.Submission.ProjectID, other.Event.ProjectID = 2, 2
 	mustWrite(t, db, other)
 	attributeAll(t, db, nil)
-	if c := countRows(t, db, `SELECT COUNT(*) FROM events`); c != 4 {
-		t.Fatalf("setup: %d events, want 4", c)
-	}
-	if ids := rawProductIDs(t, db); len(ids) != 3 {
-		t.Fatalf("setup: raw product ids = %v", ids)
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions`); c != 6 {
+		t.Fatalf("setup: %d submissions, want 6", c)
 	}
 
 	n, err := db.DeleteSubmissions(ctx, 1, []string{"s1", "s3", "s0", "missing"},
@@ -1040,16 +1025,6 @@ func TestDeleteSubmissionsRemovesRowAndRawEvent(t *testing.T) {
 	}
 	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE project_id=1 AND id='s2'`); c != 1 {
 		t.Fatal("s2 was deleted")
-	}
-	// s2 (project 1) and s1 (project 2) keep their events.
-	if c := countRows(t, db, `SELECT COUNT(*) FROM events`); c != 2 {
-		t.Fatalf("%d events left, want 2", c)
-	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE project_id=1 AND id='s2'`); c != 1 {
-		t.Fatal("s2's event was deleted")
-	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM events WHERE project_id=2 AND id='s1'`); c != 1 {
-		t.Fatal("another project's event was deleted")
 	}
 	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE project_id=2`); c != 2 {
 		t.Fatal("another project's submission was deleted")

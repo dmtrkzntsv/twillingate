@@ -42,8 +42,7 @@ type attributeKeyIn struct {
 }
 
 type renameAttributeOut struct {
-	Rule      attributeRuleOut `json:"rule"`
-	Rewritten map[string]int64 `json:"rewritten" jsonschema:"rows rewritten per table"`
+	Rule attributeRuleOut `json:"rule"`
 }
 
 type blockAttributeOut struct {
@@ -51,25 +50,21 @@ type blockAttributeOut struct {
 }
 
 func (h *host) renameAttribute(ctx context.Context, in renameAttributeIn) (renameAttributeOut, error) {
-	rule, rewritten, err := h.ops.RenameAttribute(ctx, actorFrom(ctx), in.ProjectID, in.From, in.To)
-	return h.movedAttributeOut(ctx, in.ProjectID, rule, rewritten, err)
+	rule, err := h.ops.RenameAttribute(ctx, actorFrom(ctx), in.ProjectID, in.From, in.To)
+	return h.movedAttributeOut(ctx, in.ProjectID, rule, err)
 }
 
 func (h *host) mergeAttribute(ctx context.Context, in mergeAttributeIn) (renameAttributeOut, error) {
-	rule, rewritten, err := h.ops.MergeAttribute(ctx, actorFrom(ctx), in.ProjectID, in.From, in.To)
-	return h.movedAttributeOut(ctx, in.ProjectID, rule, rewritten, err)
+	rule, err := h.ops.MergeAttribute(ctx, actorFrom(ctx), in.ProjectID, in.From, in.To)
+	return h.movedAttributeOut(ctx, in.ProjectID, rule, err)
 }
 
-// movedAttributeOut answers a rename or a merge: the rule and the rows
-// rewritten.
-func (h *host) movedAttributeOut(ctx context.Context, id int64, rule store.AttributeRule, rewritten map[string]int64, err error) (renameAttributeOut, error) {
+// movedAttributeOut answers a rename or a merge: the rule.
+func (h *host) movedAttributeOut(ctx context.Context, id int64, rule store.AttributeRule, err error) (renameAttributeOut, error) {
 	if err != nil {
 		return renameAttributeOut{}, h.ruleErr(ctx, id, err)
 	}
-	if rewritten == nil {
-		rewritten = map[string]int64{}
-	}
-	return renameAttributeOut{Rule: attrRuleOut(rule), Rewritten: rewritten}, nil
+	return renameAttributeOut{Rule: attrRuleOut(rule)}, nil
 }
 
 func (h *host) blockAttribute(ctx context.Context, in attributeKeyIn) (blockAttributeOut, error) {

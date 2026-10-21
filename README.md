@@ -87,7 +87,7 @@ install too.
 
 | Section | Covers |
 | --- | --- |
-| [Set up a project](docs/twillingate.md#set-up-a-project) | Projects, allowed origins, retention, attribute breakdowns, ingest keys |
+| [Set up a project](docs/twillingate.md#set-up-a-project) | Projects, allowed origins, retention, ingest keys |
 | [Instrument a website](docs/twillingate.md#instrument-a-website) | twillingate.js: snippet and code modes, masking, routing, consent and storage |
 | [The event model](docs/twillingate.md#the-event-model) | The three event families, for native apps and backends too |
 | [The wire format](docs/twillingate.md#the-wire-format) | The normative contract for `/ingest/events` |

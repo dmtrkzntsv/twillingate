@@ -8,8 +8,7 @@ import (
 )
 
 // Store is the slice of store.Store this package uses: the registry rows,
-// their audited mutations, and the two maintenance calls an edit triggers
-// (the flat-view rebuild and the post-delete vacuum). Declared here so a
+// their audited mutations, and the post-delete vacuum. Declared here so a
 // new aggregation method on the store never touches manage, and so a test
 // can hand Ops a fake that implements only this.
 type Store interface {
@@ -23,19 +22,18 @@ type Store interface {
 	InsertIngestKey(ctx context.Context, k store.RegistryKey, a store.AuditEntry) error
 	SetIngestKeyDisabled(ctx context.Context, projectID int64, label string, disabled bool, a store.AuditEntry) error
 	DeleteProjectData(ctx context.Context, id int64, a store.AuditEntry) error
-	RebuildFlatView(ctx context.Context, keys []string) error
 	IncrementalVacuum(ctx context.Context) error
 
 	// Event rules: audited by the store from the AuditEntry passed, with a
 	// config bump so other processes reload the snapshot.
 	LoadEventRules(ctx context.Context) ([]store.EventRule, error)
-	RenameEvent(ctx context.Context, projectID int64, family store.Family, from, to string, merge bool, a store.AuditEntry) (map[string]int64, error)
+	RenameEvent(ctx context.Context, projectID int64, family store.Family, from, to string, a store.AuditEntry) error
 	BlockEvent(ctx context.Context, projectID int64, family store.Family, name string, a store.AuditEntry) error
 	RemoveEventRule(ctx context.Context, projectID int64, family store.Family, name string, a store.AuditEntry) error
 
 	// Attribute rules: the same, for custom attribute keys.
 	LoadAttributeRules(ctx context.Context) ([]store.AttributeRule, error)
-	RenameAttribute(ctx context.Context, projectID int64, from, to string, merge bool, a store.AuditEntry) (map[string]int64, error)
+	RenameAttribute(ctx context.Context, projectID int64, from, to string, a store.AuditEntry) error
 	BlockAttribute(ctx context.Context, projectID int64, key string, a store.AuditEntry) error
 	RemoveAttributeRule(ctx context.Context, projectID int64, key string, a store.AuditEntry) error
 

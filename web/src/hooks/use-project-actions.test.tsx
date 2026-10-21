@@ -33,7 +33,7 @@ describe('useProjectActions', () => {
     expect(invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0])).toEqual(['keys'])
   })
 
-  it('refetches projects, keys, stats and attributes after a project write, never cap usage', async () => {
+  it('refetches projects, keys and stats after a project write, never cap usage', async () => {
     vi.spyOn(endpoints, 'archiveProject').mockResolvedValue({ status: 'archived' } as never)
     const { client, wrapper: w } = wrapper()
     const invalidate = vi.spyOn(client, 'invalidateQueries')
@@ -42,7 +42,7 @@ describe('useProjectActions', () => {
       await result.current.archive(7)
     })
     const keys = invalidate.mock.calls.map((c) => (c[0] as { queryKey: string[] }).queryKey[0])
-    expect(keys.sort()).toEqual(['attributes', 'keys', 'projects', 'usage'])
+    expect(keys.sort()).toEqual(['keys', 'projects', 'usage'])
   })
 
   it('stays pending until the project list has refetched, so a next write builds on the saved list', async () => {
@@ -54,7 +54,7 @@ describe('useProjectActions', () => {
     const { result } = renderHook(() => useProjectActions(), { wrapper: w })
     let saved: Promise<boolean> | undefined
     act(() => {
-      saved = result.current.update(7, { attributes: ['plan'] })
+      saved = result.current.update(7, { name: 'renamed' })
     })
     await vi.waitFor(() => expect(finish).toBeDefined())
     expect(result.current.pending).toBe(true)
@@ -115,8 +115,8 @@ describe('useProjectActions', () => {
   })
 
   it('renames, merges, blocks and removes event rules with their toasts, refetching rules, names and usage', async () => {
-    vi.spyOn(endpoints, 'renameEvent').mockResolvedValue({ rule: { family: 'product', name: 'a', action: 'rename', to: 'b' }, rewritten: {} })
-    vi.spyOn(endpoints, 'mergeEvent').mockResolvedValue({ rule: { family: 'product', name: 'a', action: 'rename', to: 'b' }, rewritten: {} })
+    vi.spyOn(endpoints, 'renameEvent').mockResolvedValue({ rule: { family: 'product', name: 'a', action: 'rename', to: 'b' } })
+    vi.spyOn(endpoints, 'mergeEvent').mockResolvedValue({ rule: { family: 'product', name: 'a', action: 'rename', to: 'b' } })
     vi.spyOn(endpoints, 'blockEvent').mockResolvedValue({ rule: { family: 'product', name: 'x', action: 'block' } })
     vi.spyOn(endpoints, 'removeEventRule').mockResolvedValue({ status: 'removed' })
     const { client, wrapper: w } = wrapper()
@@ -170,9 +170,9 @@ describe('useProjectActions', () => {
     expect(toast.error).toHaveBeenCalledWith('$b is reserved')
   })
 
-  it('renames, merges, blocks and removes attribute rules with their toasts, refetching attributes, projects and usage', async () => {
-    vi.spyOn(endpoints, 'renameAttribute').mockResolvedValue({ rule: { key: 'a', action: 'rename', to: 'b' }, rewritten: {} })
-    vi.spyOn(endpoints, 'mergeAttribute').mockResolvedValue({ rule: { key: 'a', action: 'rename', to: 'b' }, rewritten: {} })
+  it('renames, merges, blocks and removes attribute rules with their toasts, refetching attributes and usage', async () => {
+    vi.spyOn(endpoints, 'renameAttribute').mockResolvedValue({ rule: { key: 'a', action: 'rename', to: 'b' } })
+    vi.spyOn(endpoints, 'mergeAttribute').mockResolvedValue({ rule: { key: 'a', action: 'rename', to: 'b' } })
     vi.spyOn(endpoints, 'blockAttribute').mockResolvedValue({ rule: { key: 'x', action: 'block' } })
     vi.spyOn(endpoints, 'removeAttributeRule').mockResolvedValue({ status: 'removed' })
     const { client, wrapper: w } = wrapper()
@@ -194,7 +194,7 @@ describe('useProjectActions', () => {
     expect(endpoints.blockAttribute).toHaveBeenCalledWith(7, { key: 'x' })
     expect(endpoints.removeAttributeRule).toHaveBeenCalledWith(7, { key: 'a' })
     expect(endpoints.mergeAttribute).toHaveBeenLastCalledWith(7, { from: 'c', to: 'b' })
-    expect(invalidate.mock.calls.slice(0, 3).map((c) => (c[0] as { queryKey: string[] }).queryKey[0])).toEqual(['attributes', 'projects', 'usage'])
+    expect(invalidate.mock.calls.slice(0, 2).map((c) => (c[0] as { queryKey: string[] }).queryKey[0])).toEqual(['attributes', 'usage'])
   })
 
   it('resolves conflict without a toast or a refetch on a 409 attribute rename, and toasts a 409 merge', async () => {

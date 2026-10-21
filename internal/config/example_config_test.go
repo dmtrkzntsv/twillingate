@@ -44,7 +44,7 @@ func TestExamplesLoad(t *testing.T) {
 	if cfg.Reporting.CacheAge.Minutes() != 15 {
 		t.Errorf("reporting cache age = %v", cfg.Reporting.CacheAge)
 	}
-	if cfg.Retention.Events.RawDays != 30 {
+	if cfg.Retention.Days != 400 {
 		t.Errorf("retention = %+v", cfg.Retention)
 	}
 }

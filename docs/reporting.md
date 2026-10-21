@@ -242,8 +242,8 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 - A query returns exactly the columns the component reads, named by alias; a
   column marked optional may be left out, and only `table` takes any columns.
 - Widget SQL is DuckDB SQL, one `SELECT`, over the seven tables in
-  [Tables](#tables). The `v_*` views and `agg_*` tables are SQLite's, and a
-  widget cannot read them.
+  [Tables](#tables). The database's `v_*` views and `agg_*` tables went
+  with its events (migration 042).
 - The only parameters are `:project`, a BIGINT, and `:from` and `:to`,
   DATEs in UTC like `day`: `day BETWEEN :from AND :to`, and `:to - :from + 1`
   is the range's length in days. `?`, `$1` and `$name` are refused.
@@ -266,7 +266,7 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 
 Widget SQL is DuckDB SQL ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction))
 over the raw events twillingate keeps as files beside its database: the
-seven tables `query` reads by default (`source: "files"`). Their columns, and how
+seven tables `query` reads. Their columns, and how
 rules apply to them, are in [twillingate.md](twillingate.md#writing-sql-against-the-event-files).
 The files hold the events since the upgrade that began writing them, and
 the raw days the database still held when `twillingate events import` ran;
@@ -1041,9 +1041,9 @@ a tab of a project's page (`/app/projects/{project_id}`).
 - **A project page is tabs.** The dashboards are the tabs, in one order per
   project, then **+**, which adds one. `list_project_tabs` lists them. The
   page opens on the tab last used for that project in the browser, else the
-  first. Settings (the project's usage, origins, breakdowns and keys) and
-  Forms are not dashboards and are never listed: they are buttons beside the
-  tabs, Settings behind the gear.
+  first. Settings (the project's usage and file size, origins, event and
+  attribute rules and keys) and Forms are not dashboards and are
+  never listed: they are buttons beside the tabs, Settings behind the gear.
   - Each project keeps its own list: `add_project_tab`,
     `remove_project_tab` and `move_project_tab` change one project's page
     and no other.
@@ -1145,7 +1145,7 @@ Archived projects, dashboards, widgets and widget shares are **deleted
 forever), by the daily pass: on the first start after upgrading, then daily
 at 03:00 UTC. A purged dashboard takes its widgets
 with it, and leaves their shares up. A purged project takes all of its
-data: its events, aggregates, ingest keys and widget shares are gone, and
+data: its event files, ingest keys and widget shares are gone, and
 so is anything a widget's SQL could have shown of it. Nothing returns the purge date; it follows from `archived_at`.
 
 ## Refusals and fixes
@@ -1168,7 +1168,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | sql must be a single statement; remove what follows the ';' | One `SELECT` (or `WITH … SELECT`). An unterminated string or comment and an unmatched `(` or `)` are refused too. |
 | query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the date range, or aggregate | Filter on `day`, group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |
 | the query ran out of the engine's memory (ENGINE_MEMORY_LIMIT) … | Count the rows of a `GROUP BY` subquery rather than `count(DISTINCT …)` over a large group, or narrow the range. |
-| DuckDB's own error, such as a column that does not exist (`Binder Error: Referenced column "visitors" not found …`) | Fix the query; try it with `query` and `source: "files"` first. |
+| DuckDB's own error, such as a column that does not exist (`Binder Error: Referenced column "visitors" not found …`) | Fix the query; try it with `query` first. |
 | markdown text is empty | Give the Markdown text. |
 | stat: … (a props schema error) | Match the props schema `list_components` returns; unknown props are refused. |
 | validating "arguments": … (an MCP input schema error) | The path and message name the field; match `list_components`. The path is the schema's, not the widget's: for `create_dashboard` it points into `widgets/items`, not at a particular widget, so find the value it names in your own input. Over REST the same mistake gets the server's own refusal. |
@@ -1222,8 +1222,8 @@ To fix them:
    https://github.com/dmtrkzntsv/twillingate/releases (one page per tag,
    `…/releases/tag/v<version>`). They name renamed view columns and removed
    components.
-3. Rewrite the SQL with `update_widget` (check the columns with `query`,
-   `source: "files"`, and `DESCRIBE views`), or switch a removed
+3. Rewrite the SQL with `update_widget` (check the columns with `query`
+   and `DESCRIBE views`), or switch a removed
    component's widgets to another component. `list_widgets` with
    `component` finds every widget on one.
 4. Check each with `widget_data`.

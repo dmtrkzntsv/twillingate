@@ -7,41 +7,6 @@ import (
 	"testing"
 )
 
-// withWriteTables creates, on a database pinned below migration 040, the
-// tables today's WriteEvents names that the schema lacks: rules (the
-// rename lookup), usage_attributes (the keys received) and
-// project_attributes (the catalog ingest adds to), as 040 leaves them. For a test that writes events through WriteEvents before migrating
-// further, never through 40, which would create them again.
-func withWriteTables(t *testing.T, db *DB) {
-	t.Helper()
-	execAll(t, db, `CREATE TABLE rules (
-		project_id INTEGER NOT NULL REFERENCES projects(id),
-		kind       TEXT    NOT NULL CHECK (kind IN ('event', 'attribute')),
-		family     TEXT    NOT NULL,
-		name       TEXT    NOT NULL,
-		action     TEXT    NOT NULL CHECK (action IN ('rename', 'block')),
-		to_name    TEXT,
-		created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-		PRIMARY KEY (project_id, kind, family, name),
-		CHECK ((action = 'rename') = (to_name IS NOT NULL)),
-		CHECK ((kind = 'event' AND family IN ('product', 'measures'))
-		    OR (kind = 'attribute' AND family = 'event'))
-	) WITHOUT ROWID`, `CREATE TABLE usage_attributes (
-		project_id INTEGER NOT NULL,
-		day        TEXT    NOT NULL,
-		attr_key   TEXT    NOT NULL,
-		events     INTEGER NOT NULL,
-		max_values INTEGER,
-		PRIMARY KEY (project_id, day, attr_key)
-	) WITHOUT ROWID`, `CREATE TABLE project_attributes (
-		project_id INTEGER NOT NULL REFERENCES projects(id),
-		key        TEXT    NOT NULL,
-		breakdown  INTEGER NOT NULL DEFAULT 0 CHECK (breakdown IN (0, 1)),
-		created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-		PRIMARY KEY (project_id, key)
-	) WITHOUT ROWID`)
-}
-
 // Migration 040 moves event_rules to rules (kind 'event'), renames
 // received_attributes to usage_attributes, builds the project_attributes
 // catalog from both the received keys and each project's list, and drops

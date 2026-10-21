@@ -113,16 +113,11 @@ to it.
 | `BUFFER_FLUSH_MAX_EVENTS` | Flush once this many events are buffered. Default 1000. |
 | `BUFFER_FLUSH_INTERVAL` | Flush at least this often. Default `5s`. |
 | `BUFFER_CAPACITY` | Bounded queue size; excess is dropped rather than growing memory. Default 10000. |
-| `INGEST_LATE_DAYS` | Days back a client timestamp may lie; an older one is clamped to this edge, counted, never dropped. At least 1 and at most `RETENTION_RAW_DAYS`, so a late event never lands in a day already rolled up. Default 1. |
-| `RETENTION_RAW_DAYS` | Days raw events of every family are kept before rollup. At least `INGEST_LATE_DAYS`. Default 30. |
-| `RETENTION_AGGREGATE_DAYS` | Days aggregates of every family (and actors, cohorts, identities) are kept. Default 400. |
+| `INGEST_LATE_DAYS` | Days back a client timestamp may lie; an older one is clamped to this edge, counted, never dropped. At least 1 and at most `RETENTION_DAYS`, so a late event never lands in a day whose file is already deleted. Default 1. |
 | `RETENTION_DAYS` | Days the raw event files under `EVENTS_DIR` are kept, in whole months: a month file is deleted once its last day is older. At least 1. Default 400. |
 | `RETENTION_FORMS_DRAFT_DAYS` | Days a form created by its first submission accepts submissions as a draft; unless approved by then, it refuses them and the daily pass archives it. Read when a draft is created or restored, so a change moves no existing draft's window. At least 1. Default 7. |
 | `ATTRIBUTION_DAYS` | How far before a form submission its source is looked for: the submitter's last visit with a referrer or a UTM that started within that many days (`docs/twillingate.md`, "Form submissions"). Read when a submission is attributed, about a minute after it arrives. From 1 to `RETENTION_DAYS`. Default 7, or `RETENTION_DAYS` when that is smaller. |
 | `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data and its widget shares), a dashboard, a widget or a widget share is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
-| `ATTRIBUTE_VALUES_TOP_N` | Values kept per (project, day) in each views breakdown (paths, referrers, browsers, …) and kinds in `v_views_daily`, and distinct attribute values per (project, day, event, key), before the rest collapse into `(other)`. 0 keeps every value. Default 100. |
-| `ATTRIBUTE_BREAKDOWNS_MAX` | Attributes all active projects may declare together; each is a breakdown with its own aggregate rows, kept `RETENTION_AGGREGATE_DAYS`. A create or update that adds attributes past it is refused; saves that add none always pass. 0 is no limit. Default 50. |
-| `IDENTITIES_TOP_N` | Users, and groups, kept per (project, day) in `v_identity_daily`, busiest first; the rest are dropped. 0 keeps them all. Default 500. |
 | `CONSOLE_AUTH_DSN` | Authentication for the console (MCP, REST and the dashboards' data): `token://<token>?password=…` for the built-in browser login (see [The console](#the-console)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the console with a warning. |
 | `CONSOLE_ADDR` | Give the console its own listener. Defaults to `INGEST_ADDR` (shared). |
 | `CONSOLE_URL` | The console's public origin when it has a hostname of its own (`https://console.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry, and share links are built on it. Defaults to `INGEST_URL`. |
@@ -140,8 +135,7 @@ is a duration with a unit: `90s`, `15m`, `1h`.
 
 The old names refuse the boot, naming their replacement: `LISTEN_ADDR`
 (now `INGEST_ADDR`), the six `API_*` names (now `CONSOLE_*`), and
-`PUBLIC_URL`, `RETENTION_EVENTS_RAW_DAYS`, `RETENTION_EVENTS_AGGREGATE_DAYS`,
-`FORMS_DRAFT_DAYS`, `CONSOLE_DB_PATH`, `CONSOLE_QUERY_MAX_ROWS`,
+`PUBLIC_URL`, `FORMS_DRAFT_DAYS`, `CONSOLE_DB_PATH`, `CONSOLE_QUERY_MAX_ROWS`,
 `REPORTING_CACHE_SECONDS` and `REPORTING_REFRESH_SECONDS` (see
 `deploy/UPGRADES.md`). The older `MCP_*` names are no longer checked; a
 leftover one is ignored, so rename any still in `twillingate.env`.
@@ -151,8 +145,8 @@ leftover one is ignored, so rename any still in `twillingate.env`.
 - A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. One `serve` process runs one child at a time (the ingest process for the daily pass's files and the form-attribution lookup, the console's for every dashboard widget load and for `query` on the files, so the console's child is the busy one); on a split install, lower `ENGINE_MEMORY_LIMIT` rather than raise `ENGINE_MAX_CHILDREN`.
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Set `GOMEMLIMIT` (unit and compose files ship `128MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory.
-- Lower `RETENTION_RAW_DAYS` (say `7`): raw events are the largest table in the database file, and the deprecated `sqlite` source of `query` scans the raw days each query's range covers. Dashboards read the event files, which `RETENTION_DAYS` keeps.
-- Keep `ATTRIBUTE_VALUES_TOP_N` and `IDENTITIES_TOP_N` on (not 0). Aggregates are kept `RETENTION_AGGREGATE_DAYS` (400 days by default), and a breakdown that carries ids (a path like `/orders/81723`) grows them by a row per id per day once its cap is 0.
+- Plan on 1 GB of memory, as in [Install](#install): `GOMEMLIMIT` bounds the server alone, and the engine child may take up to `ENGINE_MEMORY_LIMIT` on top of it. On less, lower `ENGINE_MEMORY_LIMIT` (`256MB`) before anything else; queries then spill to disk and run slower.
+- Lower `RETENTION_DAYS` if the event files outgrow the card: a month file is deleted once its last day is older, and nothing else holds events.
 
 ## The console
 
@@ -273,13 +267,12 @@ Disable the bare unit first: enabling both `twillingate.service` and an
 instance binds the same listeners at the next boot. An upgrade restarts
 running instances and leaves the bare unit disabled; reverse to go back.
 
-> **A console-only process still runs the daily aggregation pass against
+> **A console-only process still runs the daily pass against
 > `DATABASE_DSN`** — `-console` only makes the HTTP listener conditional,
 > not the background jobs. Set `CONSOLE_DATABASE_DSN` (what the console reads)
 > and `DATABASE_DSN` (what the pass writes) deliberately: aimed at a copy of
 > the database, a console-only unit writes to that copy on every pass — or
-> accept that a two-process topology runs the idempotent daily aggregation
-> twice.
+> accept that a two-process topology runs the idempotent daily pass twice.
 
 ### Other auth modes
 
@@ -412,25 +405,26 @@ with a server on the same data directory.
 | Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash` — restarts the running service and reports the old and new version |
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v0.9.2` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
-| Import the database's raw rows into the event files (once, after the upgrade that brings it) | stop the ingest service, `twillingate events import`, start it ([UPGRADES.md](https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md)) |
+| Import the database's raw rows into the event files (once, when upgrading from a release before migration 042, which refuses to start until it has run; a newer database has no events to import) | stop the ingest service, `twillingate events import`, start it ([UPGRADES.md](https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md)) |
 | Check the engine | `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate engine -check'` (the service user and its environment: as root it creates a root-owned `raw/` and `engine/` the service cannot write) starts an engine child the way the server does and runs one query: `engine ok: 42 in 63 ms (spawn and first query), DuckDB v1.5.6`. A failure names what stopped it (a missing library, `ENGINE_MEMORY_LIMIT`, all `ENGINE_MAX_CHILDREN` slots busy for 30 s). The start of `serve`, and of every command that opens the database, runs a child too when the release changed the system dashboards (it checks them on the event files), and fails when it cannot start one; a check that runs out of time or memory is logged and the start goes on. |
-| Upgrade across a schema change | [Back up](#back-up-and-restore) first: migrations 012, 014, 015 and 016 are irreversible. Pre-checks and what changes on the day: <https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md> (not served over MCP; open it in the repository) |
+| Upgrade across a schema change | [Back up](#back-up-and-restore) first: migrations 012, 014, 015, 016 and 042 are irreversible. Pre-checks and what changes on the day: <https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md> (not served over MCP; open it in the repository) |
 | Database size | `du -h /var/lib/twillingate/twillingate.db` |
 | Recent config changes | `sqlite3 …/twillingate.db "SELECT * FROM audit_log ORDER BY ts DESC LIMIT 20"` |
 | Preview dashboard files against real data | `twillingate reporting dev <dir>... [-db <path>] [-addr 127.0.0.1:3100]` — a local, no-login server over the built UI; `-db` defaults to `DATABASE_DSN`'s path, `-addr` is refused unless it is loopback |
 
 Every CLI command on a systemd host needs the unit's environment:
 `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate project list'`.
-Aggregation, pruning, incremental vacuum and the daily history in
-`usage_history` (each project's disk use, declared attributes, views,
-events and measure samples, and attribute keys, values and values folded
-into `(other)` per day, and the database's size and the caps in force,
-which `usage` reads and which outlive the aggregates' retention) run daily at
-03:00 UTC and the visitor salt rotates at 00:00 UTC; a catch-up pass at startup means downtime
+The daily pass runs at 03:00 UTC: it archives the widget shares and draft
+forms past their date, purges what was archived `RETENTION_ARCHIVED_DAYS`
+ago, runs an incremental vacuum and records the daily history in
+`usage_history` (the database's size and, in the process that keeps the
+event files, each project's file bytes, per day, which `usage` reads). The
+database holds no events, so nothing is rolled up. The visitor salt
+rotates at 00:00 UTC; a catch-up pass at startup means downtime
 across those times skips no day. With `LOG_FILE` set, install
 `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.
 
-The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began are copied in once, by hand, with `twillingate events import` (stop the ingest service first). The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (every widget's SQL), `query` (its default source) and the analytics tools (`views_overview` through `identities`) read them and the tables derived from them; `limits`, `cap_usage`, `list_attributes`, `usage` and `query` with `source: "sqlite"` (deprecated) still read SQLite.
+The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began were copied in once, by hand, with `twillingate events import` (stop the ingest service first), which an upgrade from a release before migration 042 still needs. The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (every widget's SQL), `query`, the analytics tools (`views_overview` through `identities`), the count of events in `limits`, `list_attributes`, `usage` and the console's event names and newest days read them and the tables derived from them.
 
 ### Back up and restore
 
@@ -451,7 +445,15 @@ From this release the data directory also holds `raw/`, the event files (or `EVE
 sudo -u twillingate sqlite3 /var/lib/twillingate/twillingate.db \
   ".backup '/var/lib/twillingate/backup.db'"
 sqlite3 /var/lib/twillingate/backup.db 'PRAGMA quick_check;'         # expect: ok
-sqlite3 /var/lib/twillingate/backup.db "SELECT MAX(day) FROM v_views_daily;"
+sqlite3 /var/lib/twillingate/backup.db "SELECT COUNT(*) FROM projects;"   # expect: your project count
+```
+
+List each project's newest dated file (a day file, or a month file once the month is final); it should be today's or yesterday's. The files are `0640`, so run it as the service user:
+
+```bash
+sudo -u twillingate sh -c 'for d in /var/lib/twillingate/raw/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done'
+# compose (the image has sh, grep and sort)
+docker compose exec twillingate sh -c 'for d in /var/lib/twillingate/raw/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done'
 ```
 
 The image carries no `sqlite3`: under compose, `docker compose stop
@@ -463,10 +465,11 @@ owned by the service user, delete any `twillingate.db-wal` and
 `twillingate.db-shm` beside it, and start the service. A copy from an older
 release migrates on start.
 
-If the restored database is newer than the restored `raw/` (a Litestream
-restore, say), run `twillingate events import -force` as the service user
-before starting the service: it copies the rows the database holds and the
-files lack.
+If the restored database is from before migration 042 and newer than the
+restored `raw/` (a Litestream restore of an old backup, say), run
+`twillingate events import -force` as the service user before starting the
+service: it copies the rows the database holds and the files lack. A
+database past 042 holds no events, and the command says so.
 
 ```bash
 sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate events import -force'

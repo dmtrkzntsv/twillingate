@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -48,7 +47,7 @@ func TestQueryFilesSourceRunsOnTheFiles(t *testing.T) {
 	if want := `[["3","","true","2026-10-12T10:00:00Z","[\"a\",1]"]]`; mustJSON(t, out.Rows) != want {
 		t.Fatalf("rows = %s, want %s", mustJSON(t, out.Rows), want)
 	}
-	if files.sql != "SELECT count(*) FROM events" || files.maxRows != h.db.MaxRows() || !files.deadline || files.project != 0 {
+	if files.sql != "SELECT count(*) FROM events" || files.maxRows != h.queryRows || !files.deadline || files.project != 0 {
 		t.Fatalf("files got sql %q, maxRows %d, deadline %v, project %d; want the SQL, CONSOLE_QUERY_ROWS_MAX, a deadline and every project",
 			files.sql, files.maxRows, files.deadline, files.project)
 	}
@@ -96,9 +95,9 @@ func TestQueryFilesSourceErrors(t *testing.T) {
 		{"memory", &engine.QueryError{Msg: "Out of Memory Error: failed to allocate data of size 16.0 MiB (242.3 MiB/244.1 MiB used)"},
 			[]string{"ENGINE_MEMORY_LIMIT", "GROUP BY"}},
 		{"sqlite table", &engine.QueryError{Msg: "Catalog Error: Table with name v_views_daily does not exist!\nDid you mean \"pg_views\"?"},
-			[]string{"v_views_daily", `source "sqlite"`}},
+			[]string{"v_views_daily", "docs://twillingate"}},
 		{"sqlite table upper case", &engine.QueryError{Msg: "Catalog Error: Table with name V_VIEWS_DAILY does not exist!"},
-			[]string{"V_VIEWS_DAILY", `source "sqlite"`}},
+			[]string{"V_VIEWS_DAILY", "docs://twillingate"}},
 		{"memory loading the logs", fmt.Errorf("%w: %w", archive.ErrLoadingLogs, &engine.QueryError{Msg: "Out of Memory Error: failed to allocate data of size 16.0 MiB"}),
 			[]string{"open logs", "ENGINE_MEMORY_LIMIT", "raise"}},
 		{"child died", engine.ErrChildExited, []string{"stopped", "ENGINE_MEMORY_LIMIT"}},
@@ -115,6 +114,9 @@ func TestQueryFilesSourceErrors(t *testing.T) {
 				t.Errorf("%s: message %q lacks %q", c.name, msg, w)
 			}
 		}
+		if strings.Contains(msg, `source "sqlite"`) {
+			t.Errorf("%s: message %q points at the removed sqlite source", c.name, msg)
+		}
 		if c.name == "memory loading the logs" && strings.Contains(msg, "COUNT(DISTINCT") {
 			t.Errorf("%s: message %q advises on a query the logs' load was not", c.name, msg)
 		}
@@ -123,7 +125,7 @@ func TestQueryFilesSourceErrors(t *testing.T) {
 
 func TestQuerySourceChoices(t *testing.T) {
 	h, cs := newTestHost(t)
-	if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1", "source": "duck"}); !res.IsError || !strings.Contains(textOf(res), `source must be "files" or "sqlite"`) {
+	if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1", "source": "duck"}); !res.IsError || !strings.Contains(textOf(res), `source must be "files"`) {
 		t.Errorf("source duck: %s", textOf(res))
 	}
 	// No source reads the files: the host's own, where blog's 2026-08-20
@@ -131,12 +133,6 @@ func TestQuerySourceChoices(t *testing.T) {
 	res := callTool(t, cs, "query", map[string]any{"sql": "SELECT count(*) AS n FROM views WHERE project_id = 1 AND day = DATE '2026-08-20'"})
 	if res.IsError || !strings.Contains(textOf(res), `[["45"]]`) {
 		t.Errorf("no source: %s", textOf(res))
-	}
-	// sqlite, deprecated, still reads the views and never the files.
-	h.files = &fakeFiles{err: errors.New("must not be called")}
-	res = callTool(t, cs, "query", map[string]any{"sql": "SELECT project_id FROM v_views_daily LIMIT 1", "source": "sqlite"})
-	if res.IsError {
-		t.Errorf("source sqlite: %s", textOf(res))
 	}
 	h.files = nil
 	for _, source := range []string{"", "files"} {

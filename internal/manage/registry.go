@@ -9,11 +9,11 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/url"
 	"slices"
-	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,7 +26,6 @@ type Project struct {
 	ID             int64
 	Name           string
 	AllowedOrigins []string
-	Attributes     []string
 	Archived       bool
 	ArchivedAt     string // RFC 3339 UTC, "" = live
 	SortKey        string // its place in the order
@@ -143,11 +142,6 @@ func (r *Registry) Reload(ctx context.Context) error {
 				return fmt.Errorf("manage: project %d allowed_origins: %w", rp.ID, err)
 			}
 		}
-		if rp.Attributes != "" {
-			if err := json.Unmarshal([]byte(rp.Attributes), &p.Attributes); err != nil {
-				return fmt.Errorf("manage: project %d attributes: %w", rp.ID, err)
-			}
-		}
 		s.byID[p.ID] = p
 		s.ordered = append(s.ordered, p)
 		set := originSet{exact: map[string]bool{}}
@@ -205,12 +199,16 @@ func (r *Registry) withhold(ids ...int64) {
 // Snapshot returns the current registry view, polling config_version at
 // most once per pollInterval to notice out-of-process writes. On poll
 // failure the previous snapshot keeps serving: a transient read error
-// must not take down ingestion.
+// must not take down ingestion. A poll cut short because its caller went
+// away (a client that closed the connection) is not a failure: it is not
+// logged, and the next caller polls again.
 func (r *Registry) Snapshot(ctx context.Context) *Snapshot {
 	last := r.lastCheck.Load()
 	now := time.Now().UnixNano()
 	if now-last >= int64(pollInterval) && r.lastCheck.CompareAndSwap(last, now) {
-		if v, err := r.st.ConfigVersion(ctx); err != nil {
+		if v, err := r.st.ConfigVersion(ctx); errors.Is(err, context.Canceled) {
+			r.lastCheck.CompareAndSwap(now, last)
+		} else if err != nil {
 			r.logger.Warn("registry version poll failed", "error", err)
 		} else if v != r.version.Load() {
 			if err := r.Reload(ctx); err != nil {
@@ -435,47 +433,5 @@ func (s *Snapshot) KeylessProjects() []*Project {
 			out = append(out, p)
 		}
 	}
-	return out
-}
-
-// AttributesFor returns the project's declared attribute keys. Unknown ids
-// return nil, matching the archived-project fallback.
-func (s *Snapshot) AttributesFor(id int64) []string {
-	p := s.byID[id]
-	if p == nil {
-		return nil
-	}
-	return p.Attributes
-}
-
-// BreakdownsInUse is how many attributes the active projects declare
-// together: each is an attribute breakdown, held against
-// ATTRIBUTE_BREAKDOWNS_MAX. Archived projects receive nothing, so theirs
-// don't count.
-func (s *Snapshot) BreakdownsInUse() int {
-	n := 0
-	for _, p := range s.ordered {
-		if !p.Archived {
-			n += len(p.Attributes)
-		}
-	}
-	return n
-}
-
-// DeclaredAttributeKeys is the sorted, deduplicated union of every
-// project's declared keys — the column set of v_events_flat. Archived
-// projects are included: archiving keeps their data queryable.
-func (s *Snapshot) DeclaredAttributeKeys() []string {
-	seen := map[string]bool{}
-	var out []string
-	for _, p := range s.ordered {
-		for _, k := range p.Attributes {
-			if !seen[k] {
-				seen[k] = true
-				out = append(out, k)
-			}
-		}
-	}
-	sort.Strings(out)
 	return out
 }

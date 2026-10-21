@@ -811,12 +811,10 @@ func TestEventAgeClampUsesLateWindow(t *testing.T) {
 	}
 }
 
-// TestRaisedRawWindowDoesNotMoveTheClamp is the raw-first spec's step 0 at
-// the ingest boundary: with RETENTION_RAW_DAYS raised to 400 after days
-// were rolled up, a 40-day-old event must still clamp to the late window
-// (1 day by default), never into a rolled-up day.
-func TestRaisedRawWindowDoesNotMoveTheClamp(t *testing.T) {
-	cfg := configtest.Load(t, map[string]string{"RETENTION_RAW_DAYS": "400"})
+// TestRetentionDaysDoNotMoveTheClamp: with RETENTION_DAYS at 400, a
+// 40-day-old event still clamps to the late window (1 day by default).
+func TestRetentionDaysDoNotMoveTheClamp(t *testing.T) {
+	cfg := configtest.Load(t, map[string]string{"RETENTION_DAYS": "400"})
 	reg := newTestRegistry(t,
 		[]manage.ProjectSpec{{Name: "Raised", AllowedOrigins: []string{testOrigin}}},
 		map[int][2]string{0: {"ak_raised", "web"}})
@@ -961,38 +959,19 @@ func TestFirstIdsAreLoggedOncePerKind(t *testing.T) {
 	}
 }
 
-// identityRecorder is a store that would take display names: the ingest
-// handler is given it as its FormStore, as app gives the SQLite store,
-// and must never call UpsertIdentities on it.
-type identityRecorder struct {
-	*fakeForms
-	mu    sync.Mutex
-	calls int
-}
-
-func (r *identityRecorder) UpsertIdentities(context.Context, []store.Identity) error {
-	r.mu.Lock()
-	r.calls++
-	r.mu.Unlock()
-	return nil
-}
-
-// TestIngestWritesNoIdentities: ingest no longer writes display names to
-// SQLite's identities table (raw-first 5d). The names ride on the events,
-// and the archive log, the event files' source, carries them.
-func TestIngestWritesNoIdentities(t *testing.T) {
+// TestIngestNamesRideOnTheEvents: display names ride on the events
+// (raw-first 5d), and the archive log, the event files' source, carries
+// them.
+func TestIngestNamesRideOnTheEvents(t *testing.T) {
 	cfg := configtest.Load(t, nil)
 	reg := newTestRegistry(t, []manage.ProjectSpec{{Name: "App", AllowedOrigins: []string{testOrigin}}},
 		map[int][2]string{0: {testKey, "web"}})
 	g, _ := geo.New("cloudflare://", t.TempDir(), slog.Default())
-	q, rec := &fakeQueue{}, &identityRecorder{fakeForms: newFakeForms()}
-	h := New(cfg, reg, q, g, fixedSalt{}, rec, slog.Default())
+	q := &fakeQueue{}
+	h := New(cfg, reg, q, g, fixedSalt{}, newFakeForms(), slog.Default())
 	if w := post(h, `{"key":"`+testKey+`","attributes":{"$user_id":"u1","$user_name":"Ada","$group_id":"g1","$group_name":"Acme"},
 	  "events":[{"name":"a"},{"name":"$page_view","attributes":{"$path":"/"}}]}`, nil); w.Code != http.StatusAccepted {
 		t.Fatalf("status = %d: %s", w.Code, w.Body.String())
-	}
-	if rec.calls != 0 {
-		t.Errorf("UpsertIdentities called %d times, want none", rec.calls)
 	}
 	if len(q.events) != 1 || len(q.views) != 1 {
 		t.Fatalf("events %d, views %d; want 1 and 1", len(q.events), len(q.views))
@@ -1544,12 +1523,12 @@ func TestIngestAppliesEventRules(t *testing.T) {
 	ctx := context.Background()
 	ops := manage.NewOps(reg, st)
 	pid := reg.Snapshot(ctx).Projects()[0].ID
-	if _, _, err := ops.RenameEvent(ctx, "t", pid, "product", "old", "new"); err != nil {
+	if _, err := ops.RenameEvent(ctx, "t", pid, "product", "old", "new"); err != nil {
 		t.Fatal(err)
 	}
 	// x is renamed to spam before spam is blocked: a block on the target
 	// refuses the rename itself.
-	if _, _, err := ops.RenameEvent(ctx, "t", pid, "product", "x", "spam"); err != nil {
+	if _, err := ops.RenameEvent(ctx, "t", pid, "product", "x", "spam"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ops.BlockEvent(ctx, "t", pid, "product", "spam"); err != nil {
@@ -1600,7 +1579,7 @@ func TestIngestAppliesAttributeRules(t *testing.T) {
 	ctx := context.Background()
 	ops := manage.NewOps(reg, st)
 	pid := reg.Snapshot(ctx).Projects()[0].ID
-	if _, _, err := ops.RenameAttribute(ctx, "t", pid, "a", "b"); err != nil {
+	if _, err := ops.RenameAttribute(ctx, "t", pid, "a", "b"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ops.BlockAttribute(ctx, "t", pid, "x"); err != nil {

@@ -48,14 +48,13 @@ func TestAttributeRulesRenameAndRemoveOverREST(t *testing.T) {
 		t.Fatalf("rename = %d %s", rec.Code, rec.Body)
 	}
 	var renamed struct {
-		Rule      attrRuleRow      `json:"rule"`
-		Rewritten map[string]int64 `json:"rewritten"`
+		Rule attrRuleRow `json:"rule"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &renamed); err != nil {
 		t.Fatalf("decode: %v\n%s", err, rec.Body)
 	}
 	if renamed.Rule.Key != key || renamed.Rule.To != "checkout" || renamed.Rule.Action != "rename" ||
-		renamed.Rule.CreatedAt == "" || renamed.Rewritten == nil {
+		renamed.Rule.CreatedAt == "" {
 		t.Errorf("rename = %s", rec.Body)
 	}
 	if aliases, _ := aliasesREST(t, r, "checkout"); len(aliases) != 1 || aliases[0] != key {
@@ -115,7 +114,7 @@ func TestAttributeRulesBlockOverMCP(t *testing.T) {
 	for _, a := range list.Attributes {
 		if a.Key == "session_id" {
 			found = true
-			if !a.Blocked || a.Received || a.Breakdown {
+			if !a.Blocked || a.Received {
 				t.Errorf("session_id = %+v, want blocked, not received", a)
 			}
 		}
@@ -186,28 +185,15 @@ func TestAttributeRulesRefusalsOverREST(t *testing.T) {
 		t.Errorf("remove in an unknown project = %d %s, want 404 naming the valid projects", rec.Code, rec.Body)
 	}
 
-	// Renaming onto a key that has data is refused, merging is not:
-	// "plan" has aggregated rows in project 1.
+	// Renaming onto a key that has values in the files is refused,
+	// merging is not: "plan" has values in project 1.
 	body := `{"from":"planType","to":"plan"}`
-	if rec := serveREST(t, r, "POST", "/api/projects/1/attribute-rules/rename", body); rec.Code != http.StatusConflict {
+	if rec := serveREST(t, r, "POST", "/api/projects/1/attribute-rules/rename", body); rec.Code != http.StatusConflict ||
+		!strings.Contains(rec.Body.String(), "plan already has data; merge planType into it instead") {
 		t.Fatalf("rename onto a key with data = %d %s, want 409", rec.Code, rec.Body)
 	}
-	if _, err := rawExec(h.ops.St, `INSERT INTO agg_product_attrs (project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups)
-		VALUES (1,'2026-08-19','signup','planType','pro',2,1,0)`); err != nil {
-		t.Fatal(err)
-	}
-	rec := serveREST(t, r, "POST", "/api/projects/1/attribute-rules/merge", body)
-	if rec.Code != http.StatusOK {
+	if rec := serveREST(t, r, "POST", "/api/projects/1/attribute-rules/merge", body); rec.Code != http.StatusOK {
 		t.Fatalf("merge = %d %s", rec.Code, rec.Body)
-	}
-	var out struct {
-		Rewritten map[string]int64 `json:"rewritten"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
-		t.Fatal(err)
-	}
-	if out.Rewritten["agg_product_attrs"] != 1 {
-		t.Errorf("rewritten = %v, want agg_product_attrs 1", out.Rewritten)
 	}
 
 	// Nothing merges into a blocked key.
@@ -232,6 +218,48 @@ func TestAttributeRuleToolsListed(t *testing.T) {
 	for _, name := range []string{"list_attributes", "rename_attribute", "merge_attribute", "block_attribute", "remove_attribute_rule"} {
 		if !have[name] {
 			t.Errorf("tool %s missing", name)
+		}
+	}
+}
+
+// TestRuleOutputsHaveNoRewritten: a rename or merge answers with its rule
+// alone, over REST and MCP: nothing is rewritten, so nothing is counted.
+func TestRuleOutputsHaveNoRewritten(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	for _, c := range []struct{ path, body string }{
+		{"/api/projects/1/event-rules/rename", `{"family":"product","from":"a","to":"b"}`},
+		{"/api/projects/1/event-rules/merge", `{"family":"product","from":"c","to":"signup"}`},
+		{"/api/projects/1/attribute-rules/rename", `{"from":"a","to":"b"}`},
+		{"/api/projects/1/attribute-rules/merge", `{"from":"c","to":"plan"}`},
+	} {
+		rec := serveREST(t, r, "POST", c.path, c.body)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s = %d %s", c.path, rec.Code, rec.Body)
+		}
+		var out map[string]json.RawMessage
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := out["rule"]; !ok || len(out) != 1 {
+			t.Errorf("%s = %s, want the rule alone", c.path, rec.Body)
+		}
+	}
+	for _, c := range []struct {
+		tool string
+		args map[string]any
+	}{
+		{"rename_event", map[string]any{"project_id": 1, "family": "product", "from": "d", "to": "e"}},
+		{"merge_event", map[string]any{"project_id": 1, "family": "product", "from": "f", "to": "signup"}},
+		{"rename_attribute", map[string]any{"project_id": 1, "from": "d", "to": "e"}},
+		{"merge_attribute", map[string]any{"project_id": 1, "from": "f", "to": "plan"}},
+	} {
+		res := callTool(t, cs, c.tool, c.args)
+		if res.IsError {
+			t.Fatalf("%s: %s", c.tool, textOf(res))
+		}
+		if strings.Contains(textOf(res), "rewritten") {
+			t.Errorf("%s = %s, want no rewritten", c.tool, textOf(res))
 		}
 	}
 }

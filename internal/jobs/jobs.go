@@ -1,13 +1,12 @@
 // Package jobs schedules the daily maintenance work (spec §9): salt
-// rotation at 00:00 UTC, aggregation+prune at 03:00 UTC, with a catch-up
-// pass on boot so downtime never skips days.
+// rotation at 00:00 UTC, the daily pass at 03:00 UTC, with a catch-up pass
+// on boot so downtime never skips days.
 package jobs
 
 import (
 	"context"
 	"log/slog"
 	"math/rand/v2"
-	"sort"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
@@ -22,31 +21,17 @@ type Rotator interface {
 	Current(ctx context.Context) (string, error)
 }
 
-// Store is the slice of store.Store the daily pass drives: enumerate the
-// raw days behind the window, roll each up, prune what has aged out, and
-// reclaim pages. Declared here so the ingest and registry halves of the
-// store can change without touching this package.
+// Store is the slice of store.Store the daily pass and form attribution
+// drive: archive the shares and drafts past their date, purge what was
+// archived long enough ago, reclaim pages and measure the database.
+// Declared here so the ingest and registry halves of the store can change
+// without touching this package.
 type Store interface {
-	ProjectIDs(ctx context.Context) ([]int64, error)
-	ViewDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
-	ProductDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
-	AggregateViewDay(ctx context.Context, projectID int64, day civil.Date, topN int) error
-	AggregateProductDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
-	MeasureDaysBefore(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error)
-	AggregateMeasureDay(ctx context.Context, projectID int64, day civil.Date, attrs []string, topN int) error
-	// DropBlockedAggregates deletes the aggregates of the project's blocked names.
-	DropBlockedAggregates(ctx context.Context, projectID int64) error
-	UpsertActors(ctx context.Context, projectID int64, day civil.Date) error
-	AggregateRetentionDay(ctx context.Context, projectID int64, day civil.Date) error
-	PruneActors(ctx context.Context, projectID int64, before civil.Date) error
-	AggregateIdentityDay(ctx context.Context, projectID int64, day civil.Date, topN int) error
-	PruneIdentities(ctx context.Context, projectID int64, before civil.Date) error
-	PruneAggregates(ctx context.Context, projectID int64, before civil.Date) error
-	RebuildFlatView(ctx context.Context, keys []string) error
 	IncrementalVacuum(ctx context.Context) error
-	// RecordUsageHistory stores the usage_history measurements (each
-	// project's disk use) as of now.
-	RecordUsageHistory(ctx context.Context, now time.Time) error
+	// RecordUsageHistory stores the usage_history measurements as of now:
+	// the database's size, and each project's file bytes when fileBytes
+	// is non-nil.
+	RecordUsageHistory(ctx context.Context, now time.Time, fileBytes map[int64]int64) error
 	// PurgeArchived deletes every project, dashboard, widget and widget
 	// share archived more than days ago. days <= 0 purges nothing.
 	PurgeArchived(ctx context.Context, days int) (store.PurgeResult, error)
@@ -63,10 +48,9 @@ type Store interface {
 	// and counts toward limit; only a failed read is an error.
 	PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]store.PendingSubmission, error)
 	// AttributeSubmission stores ev's referrer and UTMs as p's attribution
-	// and, when p.WriteEvent, writes ev and leaves it in the outbox
-	// (UnloggedEvents), all in one transaction; wrote reports the event
-	// written. A submission no longer pending (deleted, or attributed
-	// already) changes nothing.
+	// and, when p.WriteEvent, leaves ev in the outbox (UnloggedEvents),
+	// all in one transaction; wrote reports the outbox filled. A submission no
+	// longer pending (deleted, or attributed already) changes nothing.
 	AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) (wrote bool, err error)
 	// UnloggedEvents lists up to limit events AttributeSubmission wrote
 	// and MarkLogged has not cleared yet, oldest first. A row that does
@@ -86,6 +70,8 @@ type Archive interface {
 	// Projects lists the projects with a directory under raw/.
 	Projects() ([]int64, error)
 	Maintain(ctx context.Context, today civil.Date, lateDays, retentionDays int) error
+	// Sizes is each project's file bytes, by project id.
+	Sizes() (map[int64]int64, error)
 	RemoveProject(id int64) error
 }
 
@@ -118,18 +104,11 @@ type Runner struct {
 	// Last UTC day on which each job fired, so a job runs at most once per
 	// day however often the ticker lands inside its hour.
 	lastSaltDay string
-	lastAggDay  string
-
-	// topN caps distinct client-supplied values kept per day
-	// (ATTRIBUTE_VALUES_TOP_N): per views breakdown, kinds included, and
-	// per attribute key; the operator picks the key, clients pick the
-	// values.
-	topN int
+	lastPassDay string
 }
 
 func New(st Store, cfg *config.Config, reg *manage.Registry, salt Rotator, logger *slog.Logger, now func() time.Time) *Runner {
 	return &Runner{store: st, cfg: cfg, reg: reg, salt: salt, logger: logger, now: now,
-		topN:                  cfg.AttributeValuesTopN,
 		attributionTimeout:    attributionTimeout,
 		attributionTickBudget: attributionTickBudget,
 		jitter:                func() time.Duration { return rand.N(archiveJitter) },
@@ -144,16 +123,16 @@ func New(st Store, cfg *config.Config, reg *manage.Registry, salt Rotator, logge
 // WithArchive makes the pass maintain the archive's files.
 func (r *Runner) WithArchive(a Archive) *Runner { r.archive = a; return r }
 
-// RunDailyPass rolls up every day that has aged out of the raw window,
-// prunes aggregates past their retention, refreshes the flat view,
-// reclaims free pages and measures the server's stats (project sizes).
+// RunDailyPass archives the shares and draft forms past their date,
+// purges what was archived RETENTION_ARCHIVED_DAYS ago, removes the files
+// of projects gone, reclaims free pages, maintains the archive and
+// measures the database's size and each project's file bytes. Events live
+// in the event files only (raw-first PR 6): the pass rolls nothing up.
 //
-// Per-project failures are logged and skipped rather than returned: one
-// broken project must not stop maintenance for the rest. Only failures to
-// enumerate work at all are treated as fatal to the pass.
-func (r *Runner) RunDailyPass(ctx context.Context) error {
+// Every failure is logged and the rest of the pass goes on: one broken
+// step must not stop maintenance for the rest.
+func (r *Runner) RunDailyPass(ctx context.Context) {
 	today := civil.Today(r.now())
-	// Retention is global: the same windows apply to every project.
 	ret := r.cfg.Retention
 
 	// Shares past their date are archived on every pass, whatever
@@ -173,9 +152,8 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 		r.logger.Info("expire draft forms", "forms", n)
 	}
 
-	// Purge first: a project purged this pass must not then be rolled up
-	// or pruned below, and the registry (which still lists it until this
-	// reloads) must not hand it out to a request arriving mid-pass.
+	// Purge first: the registry (which still lists a purged project until
+	// this reloads) must not hand it out to a request arriving mid-pass.
 	//
 	// PurgeArchived returns its partial result alongside an error when one
 	// item among several failed (it keeps going rather than abort the rest
@@ -206,115 +184,30 @@ func (r *Runner) RunDailyPass(ctx context.Context) error {
 	}
 	r.removeOrphanedArchives(ctx)
 
-	// store.ProjectIDs (all rows, including archived) is the complete list.
-	ids, err := r.store.ProjectIDs(ctx)
-	if err != nil {
-		return err
-	}
-	snap := r.reg.Snapshot(ctx)
-	for _, id := range ids {
-		// Cohorts, actors and identity rollups read raw rows across both
-		// raw tables and never delete them, so they run over every day
-		// still present -- not just the aged-out ones. Restricting them to
-		// aged-out days would leave the users, groups and retention pages a
-		// whole raw window stale. Every write is keyed and recomputed, so
-		// re-running a day is safe.
-		identityDays, err := r.allRawDays(ctx, id, today.AddDays(1))
-		if err != nil {
-			return err
-		}
-		// Actors and cohorts run for every project. UpsertActors keeps
-		// user- and install-identified actors only, so a project whose
-		// clients send no ids gets empty cohorts at no cost.
-		for _, day := range identityDays {
-			if err := r.store.UpsertActors(ctx, id, day); err != nil {
-				r.logger.Error("upsert actors failed", "project", id, "day", day.String(), "error", err)
-			}
-			if err := r.store.AggregateRetentionDay(ctx, id, day); err != nil {
-				r.logger.Error("aggregate retention failed", "project", id, "day", day.String(), "error", err)
-			}
-			// Today is still arriving. v_identity_daily prefers an
-			// aggregated day over its raw rows, so rolling today up would
-			// freeze whatever had landed by 03:00; the view's live half
-			// serves it instead.
-			if day == today {
-				continue
-			}
-			if err := r.store.AggregateIdentityDay(ctx, id, day, r.cfg.IdentitiesTopN); err != nil {
-				r.logger.Error("aggregate identity failed", "project", id, "day", day.String(), "error", err)
-			}
-		}
-
-		// Names blocked after their days were rolled up leave the aggregates
-		// here, before the days still to roll up are read.
-		if err := r.store.DropBlockedAggregates(ctx, id); err != nil {
-			r.logger.Error("drop blocked aggregates failed", "project", id, "error", err)
-		}
-
-		days, err := r.store.ViewDaysBefore(ctx, id, today.AddDays(-ret.Events.RawDays))
-		if err != nil {
-			return err
-		}
-		for _, day := range days {
-			if err := r.store.AggregateViewDay(ctx, id, day, r.topN); err != nil {
-				r.logger.Error("aggregate views failed", "project", id, "day", day.String(), "error", err)
-			}
-		}
-
-		prodDays, err := r.store.ProductDaysBefore(ctx, id, today.AddDays(-ret.Events.RawDays))
-		if err != nil {
-			return err
-		}
-		attrs := snap.AttributesFor(id)
-		for _, day := range prodDays {
-			if err := r.store.AggregateProductDay(ctx, id, day, attrs, r.topN); err != nil {
-				r.logger.Error("aggregate product failed", "project", id, "day", day.String(), "error", err)
-			}
-		}
-
-		// Measures share the product family's raw window but never feed
-		// allRawDays above (spec decision 17): a backend's connection hash
-		// is a server, not a visitor, so a measure alone must not create an
-		// actor, a cohort or an identity rollup.
-		measureDays, err := r.store.MeasureDaysBefore(ctx, id, today.AddDays(-ret.Events.RawDays))
-		if err != nil {
-			return err
-		}
-		for _, day := range measureDays {
-			if err := r.store.AggregateMeasureDay(ctx, id, day, attrs, r.topN); err != nil {
-				r.logger.Error("aggregate measures failed", "project", id, "day", day.String(), "error", err)
-			}
-		}
-
-		if err := r.store.PruneAggregates(ctx, id, today.AddDays(-ret.Events.AggregateDays)); err != nil {
-			r.logger.Error("prune failed", "project", id, "error", err)
-		}
-		if err := r.store.PruneActors(ctx, id, today.AddDays(-ret.Events.AggregateDays)); err != nil {
-			r.logger.Error("prune actors failed", "project", id, "error", err)
-		}
-		if err := r.store.PruneIdentities(ctx, id, today.AddDays(-ret.Events.AggregateDays)); err != nil {
-			r.logger.Error("prune identities failed", "project", id, "error", err)
-		}
-	}
-
-	if err := r.store.RebuildFlatView(ctx, snap.DeclaredAttributeKeys()); err != nil {
-		r.logger.Error("flat view rebuild failed", "error", err)
-	}
 	if err := r.store.IncrementalVacuum(ctx); err != nil {
 		r.logger.Error("incremental vacuum failed", "error", err)
 	}
-	// Last, so the sizes are those left after the pruning and the vacuum.
-	// Run calls this pass at boot, in the background, so sizes exist shortly
-	// after every start, not only after the first 03:00.
-	if err := r.store.RecordUsageHistory(ctx, r.now()); err != nil {
-		r.logger.Error("record usage history", "error", err)
-	}
+	// The sizes last, so they are those left after the vacuum and the
+	// archive's dumps, merges and expiry. Run calls this pass at boot, in
+	// the background, so sizes exist shortly after every start, not only
+	// after the first 03:00. Without an archive (a process that keeps no
+	// event files) only the database is measured; a failed measurement of
+	// the files leaves them out the same way.
+	var fileBytes map[int64]int64
 	if r.archive != nil {
 		if err := r.archive.Maintain(ctx, today, r.cfg.IngestLateDays, r.cfg.Retention.Days); err != nil {
 			r.logger.Error("archive maintenance", "error", err)
 		}
+		sizes, err := r.archive.Sizes()
+		if err != nil {
+			r.logger.Error("archive sizes", "error", err)
+		} else {
+			fileBytes = sizes
+		}
 	}
-	return nil
+	if err := r.store.RecordUsageHistory(ctx, r.now(), fileBytes); err != nil {
+		r.logger.Error("record usage history", "error", err)
+	}
 }
 
 // removeOrphanedArchives removes the raw/ directory of every project the
@@ -354,32 +247,6 @@ func (r *Runner) removeOrphanedArchives(ctx context.Context) {
 	}
 }
 
-// allRawDays merges the days present in both raw tables, deduplicated
-// and sorted, so a project is covered whatever mix of surfaces it uses.
-func (r *Runner) allRawDays(ctx context.Context, projectID int64, before civil.Date) ([]civil.Date, error) {
-	seen := map[string]bool{}
-	var out []civil.Date
-	for _, fn := range []func(context.Context, int64, civil.Date) ([]civil.Date, error){
-		r.store.ViewDaysBefore, r.store.ProductDaysBefore,
-	} {
-		days, err := fn(ctx, projectID, before)
-		if err != nil {
-			return nil, err
-		}
-		for _, d := range days {
-			if !seen[d.String()] {
-				seen[d.String()] = true
-				out = append(out, d)
-			}
-		}
-	}
-	// Chronological order matters: AggregateRetentionDay reads first_seen_day
-	// from actors, so an earlier day must be recorded before a later one
-	// references it.
-	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
-	return out, nil
-}
-
 // runScheduled fires whichever jobs are due at the current time. Split out
 // from Run so the day-boundary guards are testable without a real clock.
 func (r *Runner) runScheduled(ctx context.Context) {
@@ -393,7 +260,7 @@ func (r *Runner) runScheduled(ctx context.Context) {
 			r.logger.Error("salt rotation", "error", err)
 		}
 	}
-	if now.Hour() == 3 && r.lastAggDay != day {
+	if now.Hour() == 3 && r.lastPassDay != day {
 		// Every process on a host runs its pass at 03:00; the file work
 		// moves to a random point in the following half hour. The pass is
 		// one unit, so the SQLite work waits too, and so does the loop
@@ -406,10 +273,8 @@ func (r *Runner) runScheduled(ctx context.Context) {
 				return
 			}
 		}
-		r.lastAggDay = day
-		if err := r.RunDailyPass(ctx); err != nil {
-			r.logger.Error("daily pass", "error", err)
-		}
+		r.lastPassDay = day
+		r.RunDailyPass(ctx)
 	}
 }
 
@@ -418,9 +283,7 @@ func (r *Runner) Run(ctx context.Context) {
 	if _, err := r.salt.Current(ctx); err != nil {
 		r.logger.Error("initial salt", "error", err)
 	}
-	if err := r.RunDailyPass(ctx); err != nil {
-		r.logger.Error("boot catch-up pass", "error", err)
-	}
+	r.RunDailyPass(ctx)
 	tick := time.NewTicker(time.Minute)
 	defer tick.Stop()
 	for {

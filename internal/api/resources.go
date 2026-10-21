@@ -20,8 +20,7 @@ import (
 const schemaFiles = `# Query schema
 
 The event files: DuckDB SQL over the raw events twillingate keeps as files
-beside its database. query reads them by default (source files), and
-widget SQL reads nothing else. The files hold the raw history: every event
+beside its database. query and widget SQL read nothing else. The files hold the raw history: every event
 since the upgrade that began writing them, plus the earlier raw days
 twillingate events import copied, today's included, kept RETENTION_DAYS.
 
@@ -59,61 +58,9 @@ Cost note: a query without a day filter reads the project's whole history;
 COUNT(DISTINCT …) over a long range keeps every value in memory
 (ENGINE_MEMORY_LIMIT). Queries are row-capped and time-limited.`
 
-// schemaSQLite is the reference to SQLite's views, which query reads with
-// source sqlite: deprecated, removed in a later release. The three caveats
-// at the top are the ones a model cannot infer (endpoint spec §9).
-const schemaSQLite = `Deprecated: query with source sqlite
-
-SQLite's views, removed in a later release: query the event files above
-instead. Facts you cannot infer from the DDL:
-
-1. day columns are TEXT 'YYYY-MM-DD' (UTC). Compare and BETWEEN as strings.
-2. Every v_* view includes yesterday and today: each stitches aggregated
-   history (agg_* tables) with a live half computed from raw rows.
-3. EXCEPTION: v_retention has no live half. It refreshes at the 03:00 UTC
-   daily pass; cohort days after that are ABSENT, not zero. It holds cohorts
-   only for actors identified by $user_id or $install_id; a project whose
-   clients send neither has none.
-4. Every dimension is capped per day (ATTRIBUTE_VALUES_TOP_N values per
-   views breakdown and per attribute key, default 100; 0 is no cap); the
-   rest sit in one '(other)' row per day whose visitors are distinct
-   actors, not a sum. v_identity_daily keeps the busiest
-   IDENTITIES_TOP_N ids per kind per day (default 500) and drops the rest:
-   there is no '(other)' row, so do not sum it for totals.
-
-Views (all carry a 'project_id' column — always filter on it; ids come from list_projects):
-
-  v_views_daily(project_id, day, kind, visitors, views, sessions, bounces, duration_sec)  -- kind: 'web'|'app'|'cli'|…
-  v_views_paths(project_id, day, path, visitors, views)
-  v_views_hosts(project_id, day, host, visitors, views)
-  v_views_referrers(project_id, day, source, visitors, views)
-  v_views_utm(project_id, day, utm_source, utm_medium, utm_campaign, visitors, views)
-  v_views_countries(project_id, day, country, visitors, views)
-  v_views_platforms(project_id, day, platform, visitors, views)  -- platform: 'web'|'ios'|'android'|'electron'|…|'unknown', never empty
-  v_views_os(project_id, day, os, os_version, visitors, views)  -- os: lower-case closed vocabulary ('windows','macos','ios',…) plus 'other' (outside the list) and 'unknown' (not declared)
-  v_views_browsers(project_id, day, browser, browser_version, visitors, views)  -- browser: 'chrome'|'safari'|'firefox'|'edge'|'opera'|'samsung_internet'|'brave'|'vivaldi'|'duckduckgo'|'yandex'|'other'|'unknown'
-  v_views_app_versions(project_id, day, platform, app_version, visitors, views)  -- keyed by platform: 2.4.1 means different things per build
-  v_views_devices(project_id, day, device, device_model, visitors, views)  -- device: 'desktop'|'mobile'|'tablet'|'wearable'|'xr'|'other'|'unknown'
-  v_views_displays(project_id, day, display, visitors, views)  -- display: 'WxH', e.g. '1920x1080'
-  v_views_consent(project_id, day, consent, visitors, views)  -- consent: 'given'|'none'|'unknown'; unknown is every row stored before migration 018 or sent without $consent
-  v_views_locales(project_id, day, browser_locale, app_locale, visitors, views)  -- '' = not sent; views sending neither are left out; nothing before migration 019 was rolled up
-  v_product_daily(project_id, day, event_name, count, unique_users)
-  v_product_totals(project_id, day, total_events, active_users)
-  v_identity_daily(project_id, day, kind, id, actors, users, views, events)  -- kind: 'user'|'group'
-  v_retention(project_id, actor_kind, cohort_day, day_offset, actors, cohort_size)  -- actor_kind: 'user'|'install'
-  v_product_attrs(project_id, day, event_name, attr_key, attr_value, count, unique_users, unique_groups)  -- attr_key '$platform', '$os', '$app_version', '$app_locale', '$kind', '$browser', '$device', '$browser_locale', '$country' always present; unique_groups is NULL for days rolled up before it was measured (0 = measured, none)
-  v_measures_daily(project_id, day, event_name, measure, bucket, approx_value, samples, weight, sum)  -- measure: 'time' (ms)|'size' (bytes)|'number'; weight = estimated count; percentile: order by bucket, first bucket whose running weight reaches q × total
-  v_measures_attrs(project_id, day, event_name, measure, attr_key, attr_value, bucket, approx_value, samples, weight, sum)  -- same keys and top-N as v_product_attrs
-  identities(project_id, kind, id, name)  -- display names, joinable to v_identity_daily; ingest no longer writes it: names after the upgrade to the event files are in the files only
-
-Cost note: the views' live halves sessionize raw rows with window
-functions; a WHERE on day may not prune that work. Narrow ranges and the
-agg_* tables are cheaper. Queries are row-capped and time-limited.`
-
 // schemaViews is schema://views and GET /api/schema/views: the event
-// files first, then SQLite's views under their deprecation heading. The
-// editor's parser reads the table lines before that heading.
-const schemaViews = schemaFiles + "\n\n" + schemaSQLite
+// files' tables, the only ones query reads.
+const schemaViews = schemaFiles
 
 // textResource registers a static text resource.
 func textResource(s *mcp.Server, uri, name, desc, text string) {
@@ -147,7 +94,7 @@ func (h *host) registerResources(s *mcp.Server) {
 
 	s.AddResource(&mcp.Resource{
 		URI: "schema://views", Name: "views",
-		Description: "The event files' seven tables, their columns, and the caveats needed to write correct SQL, then SQLite's deprecated views (source sqlite). Read before using the query tool.",
+		Description: "The event files' seven tables, their columns, and the caveats needed to write correct SQL. Read before using the query tool.",
 		MIMEType:    "text/plain",
 	}, func(_ context.Context, _ *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{
