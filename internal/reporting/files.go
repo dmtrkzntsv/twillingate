@@ -1,6 +1,6 @@
 // The system directory format a release ships (D20): one directory per
 // dashboard, holding dashboard.json (its title, starting range,
-// placement flags and widget layout) plus one $name.json/$name.(sql|md)
+// placement flags and widget layout) plus one $name.json/$name.(sql|md|query)
 // pair per widget the layout places. LoadDashboard reads one such
 // directory; LoadDashboards reads every one under a filesystem root and
 // orders them by id, for migrate.go to hash and sync.
@@ -18,7 +18,7 @@ import (
 
 // FileWidget is one widget as the system directory format describes it:
 // a $name.json config (component, title, props) paired with a $name.sql
-// or $name.md data file, whose extension names the source type, placed
+// $name.md or $name.query data file, whose extension names the source type, placed
 // by dashboard.json's layout.
 type FileWidget struct {
 	Name, Component, Title string
@@ -93,7 +93,7 @@ func decodeStrict(name string, b []byte, v any) error {
 }
 
 // LoadDashboard reads one system directory: dashboard.json plus the
-// $name.json/$name.(sql|md) pair for every widget its layout names. Any
+// $name.json/$name.(sql|md|query) pair for every widget its layout names. Any
 // other file in the directory — an extension other than json/sql/md,
 // most often a typo like visitors.sq — is refused rather than silently
 // ignored. LoadDashboard does not check dashboard.json's id
@@ -137,7 +137,7 @@ func LoadDashboard(fsys fs.FS, dir string) (FileDashboard, error) {
 		}
 		ext := strings.TrimPrefix(path.Ext(name), ".")
 		base := strings.TrimSuffix(name, path.Ext(name))
-		if ext != "json" && ext != "sql" && ext != "md" {
+		if ext != "json" && ext != "sql" && ext != "md" && ext != "query" {
 			return FileDashboard{}, fmt.Errorf("reporting: %s: unexpected file %s", dir, name)
 		}
 		b := builds[base]
