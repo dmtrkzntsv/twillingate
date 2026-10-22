@@ -139,6 +139,8 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
   const value = Number(records[0].value ?? 0)
   const previous = records[0].previous
   const delta = typeof previous === 'number' && previous !== 0 ? (value - previous) / previous : null
+  // The change is an estimate when either side is.
+  const deltaApprox = approximate(sql, 'value') || approximate(sql, 'previous')
 
   return (
     <div className={`flex h-full flex-col justify-center pt-1 ${card ? 'items-center gap-6' : 'items-start gap-2'}`}>
@@ -153,8 +155,7 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
             }
           >
             {delta >= 0 ? <ArrowUpRightIcon className="size-3" /> : <ArrowDownRightIcon className="size-3" />}
-            {delta >= 0 ? '+' : ''}
-            {formatValue(delta, 'percent')}
+            {approx(`${delta >= 0 ? '+' : ''}${formatValue(delta, 'percent')}`, deltaApprox)}
           </span>
           <span className="text-muted-foreground">vs previous</span>
         </div>

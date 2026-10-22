@@ -54,10 +54,21 @@ describe('stat', () => {
     expect(screen.getByText('50%')).toBeInTheDocument()
   })
 
-  it('marks an approximate value with ≈, and only that one', () => {
+  it('marks an approximate value with ≈, and the change it makes', () => {
     renderStat({ columns: ['value', 'previous'], rows: [['3500', '3000']], truncated: false, approximate: ['value'] })
     expect(screen.getByText('≈3,500')).toBeInTheDocument()
-    expect(screen.getByText('+16.7%')).toBeInTheDocument()
+    expect(screen.getByText('≈+16.7%')).toBeInTheDocument()
+  })
+
+  it('marks the change when only previous is approximate', () => {
+    renderStat({ columns: ['value', 'previous'], rows: [['80', '100']], truncated: false, approximate: ['previous'] })
+    expect(screen.getByText('80')).toBeInTheDocument()
+    expect(screen.getByText('≈-20%')).toBeInTheDocument()
+  })
+
+  it('leaves an exact change unmarked', () => {
+    renderStat({ columns: ['value', 'previous'], rows: [['120', '100']], truncated: false, approximate: [] })
+    expect(screen.getByText('+20%')).toBeInTheDocument()
   })
 
   it('marks the aggregate of an approximate series', () => {
