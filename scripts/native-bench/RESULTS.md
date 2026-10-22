@@ -623,13 +623,15 @@ Step 1b: load average (1 min) at the start of every run and rewrite: 0.81 to 1.0
 
 Notes on step 1b (written by hand after the run):
 
-- The gate held: every run and rewrite started at a 1-minute load of 0.81 to
-  1.00, none gave up, so no run is flagged. The load hovered just under the
+- The gate held: every run started at a 1-minute load of 0.81 to 1.00, none
+  gave up, so no run is flagged (the rewrites' loads are in the layouts
+  tables). The load hovered just under the
   threshold (other sessions share the host), so the gate waited before most
   runs; the whole matrix, both volumes, took 24 minutes.
-- The comparison with step 1 is fair at 100k (step 1 ran at load 1.3 to 2.3)
-  but flatters step 1b at 1M: step 1's 1M cells ran at load 2.4 to 8.7, and
-  its pqgo-1d cells at 4.0 to 6.1. Read the 1M speedups as upper bounds. The
+- The comparison with step 1 is roughly comparable at 100k (step 1 ran at
+  load 1.3 to 2.3) but flatters step 1b at 1M:
+  step 1's 1M cells ran at load 2.4 to 8.7, and its pqgo-1d cells with the
+  pqgo source at 5.0 to 6.1. Read the 1M speedups as upper bounds. The
   re-timed 1M writes say the same: pqgo-1d's slowest file took 4.1 s behind
   the gate against 8.2 s in step 1, while arrow-1d's barely moved (5.1 s
   against 5.2 s).
