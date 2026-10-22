@@ -54,6 +54,8 @@ type Engine struct {
 	logKeys  *archive.KeyScanner // each open log's keys, read as far as it grew
 	colMu    sync.Mutex          // guards colFiles, never held over a read
 	colFiles map[string]fileCols // each Parquet file's columns, by path
+
+	idCache identityCache // each project's identities, up to MaxBytes of them
 }
 
 // New returns an engine over o.Dir.
@@ -71,7 +73,7 @@ func New(o Options) *Engine {
 		o.MaxBytes = 128 << 20
 	}
 	return &Engine{dir: o.Dir, workers: o.Workers, maxGroups: o.MaxGroups, maxBytes: o.MaxBytes, sem: make(chan struct{}, o.MaxScans),
-		logKeys: archive.NewKeyScanner()}
+		logKeys: archive.NewKeyScanner(), idCache: identityCache{max: o.MaxBytes}}
 }
 
 // Params are what a query runs on: one project, the days From to To.
@@ -101,7 +103,17 @@ var (
 
 // Answer answers q over project p.Project's rows of p.From to p.To, with
 // rules (every project's; the project's own apply) applied as the
-// reader's events view applies them. A malformed query, or a filter value
+// reader's events view applies them; the sessions and identities tables,
+// derived from the events as stored, take none (scanSessions, identities).
+// identities holds the project's users and groups first seen in the
+// range, its day their first_seen's day; user_status and group_status
+// look each row's id up in their first-seen days alone (firstSeen), over
+// the whole history. Identities are cached between queries (at most
+// MaxBytes of them), their stored and live parts apart, so a log's flush
+// derives only the logs' part again; while the derived identities file is
+// missing or stale (older than an events file), the next query that
+// needs them derives them again from every event the project's files
+// hold. A malformed query, or a filter value
 // that does not parse for its column, is refused with an error wrapping
 // ErrInvalid; one whose aggregation needs more than MaxBytes allows, with
 // one wrapping ErrTooLarge. Answer waits for one of MaxScans turns first,
@@ -132,7 +144,9 @@ var (
 // count is COUNT(*), actors, users and groups COUNT(DISTINCT actor_id),
 // user_id and group_id (NULL left out), sum, avg, min and max NULL over no
 // value, daily_* the per-day distinct counts' SUM, MAX or AVG over the
-// days with rows (NULL over none).
+// days with rows (NULL over none); on sessions bounces is COUNT(*) FILTER
+// (WHERE views = 1) and bounce_rate that over COUNT(*) as a DOUBLE (NULL
+// over no session; an Other row's over its folded groups' sessions).
 func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Rules) (Result, error) {
 	if err := q.Validate(); err != nil {
 		return Result{}, err
@@ -169,9 +183,12 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 }
 
 func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, p Params, rules archive.Rules) (Result, error) {
-	rs, err := e.ruleSet(p.Project, rules)
-	if err != nil {
-		return Result{}, err
+	var rs ruleSet
+	if q.Table != "sessions" && q.Table != "identities" { // derived from the events as stored
+		var err error
+		if rs, err = e.ruleSet(p.Project, rules); err != nil {
+			return Result{}, err
+		}
 	}
 	s := scan{e: e, q: q, filters: filters, project: p.Project, rules: rs}
 	switch q.Kind {
@@ -282,12 +299,53 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 	}
 	a, ms := newAgg(aggOptions{metrics: ms, filters: s.filters, dims: dims, perDay: perDay, sets: sets,
 		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
-	fam := s.family()
-	read := s.rules.columns(a.columns())
-	pq, logs, err := projectFiles(s.e.dir, s.project, r)
+	charge := func(n int64) error {
+		a.mem.add(n)
+		if n > 0 {
+			return a.checkMemory()
+		}
+		return nil
+	}
+	if s.q.Table == "sessions" {
+		if err := s.e.scanSessions(ctx, s.project, r, a.columns(), charge, a.add); err != nil {
+			return nil, nil, err
+		}
+		return a.merge(), ms, nil
+	}
+	// One listing serves the scan and the identities.
+	all, err := archive.ListFiles(s.e.dir)
 	if err != nil {
 		return nil, nil, err
 	}
+	files := all[s.project]
+	if s.q.Table == "identities" {
+		ids, err := s.e.identities(ctx, s.project, files, charge)
+		if err != nil {
+			return nil, nil, err
+		}
+		rows := ids.rowsIn(&r) // only those first seen in r put together
+		if err := charge(rows.bytes()); err != nil {
+			return nil, nil, err
+		}
+		b := identityBatch(rows, s.project)
+		if err := charge(batchBytes(b)); err != nil {
+			return nil, nil, err
+		}
+		if err := a.add(0, b); err != nil {
+			return nil, nil, err
+		}
+		return a.merge(), ms, nil
+	}
+	fam := s.family()
+	read := s.rules.columns(a.columns())
+	status := s.statusColumns(dims)
+	var ids *firstSet
+	if len(status) > 0 {
+		if ids, err = s.e.firstSeen(ctx, s.project, files, charge); err != nil {
+			return nil, nil, err
+		}
+	}
+	pq, logs := filesIn(files, r)
 	groups, err := parquetGroups(pq, fam, r)
 	if err != nil {
 		return nil, nil, err
@@ -310,7 +368,11 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 		if err != nil {
 			return err
 		}
-		return a.add(w, s.rules.apply(b, fam))
+		b = s.rules.apply(b, fam)
+		if ids != nil {
+			addStatus(b, status, ids)
+		}
+		return a.add(w, b)
 	})
 	for i := range readers {
 		if cerr := readers[i].close(); err == nil {
@@ -321,6 +383,23 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 		return nil, nil, err
 	}
 	return a.merge(), ms, nil
+}
+
+// statusColumns are the status columns (user_status, group_status) the
+// query's filters and dims name.
+func (s scan) statusColumns(dims []string) []string {
+	var out []string
+	for _, f := range s.filters {
+		if _, ok := statusColumns[f.column]; ok && !slices.Contains(out, f.column) {
+			out = append(out, f.column)
+		}
+	}
+	for _, d := range dims {
+		if _, ok := statusColumns[d]; ok && !slices.Contains(out, d) {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // columnsOut is a result's columns, and marks the approximate ones.

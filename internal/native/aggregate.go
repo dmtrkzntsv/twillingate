@@ -264,10 +264,7 @@ type dimView struct {
 
 // viewOf is the dimension column of b for the rows sel.
 func viewOf(b *Batch, name string, typ colType, sel []int32) (dimView, error) {
-	_, c := b.col(readColumn(name))
-	if c == nil && typ == typeBucket {
-		c = nullColumn("value", b.N) // NULL values: bucket -1000
-	}
+	c := batchColumn(b, name)
 	if c == nil {
 		return dimView{}, nil
 	}
@@ -402,16 +399,18 @@ type agg struct {
 	nd       int // cells per group: ndays in a trend, else 1
 	nums     []numCol
 	distinct []*distinctCol
+	bounces  bool // count sessions of one view per cell (bounces, bounce_rate)
 	parts    []part
 	mem      memory
 }
 
 // part is one worker's partials.
 type part struct {
-	count []int64
-	nums  []numPart
-	sets  [][]dset // per distinct column, per group; nil without set
-	days  []keySink
+	count   []int64
+	bounces []int64 // per cell, rows with views 1 (when agg.bounces)
+	nums    []numPart
+	sets    [][]dset // per distinct column, per group; nil without set
+	days    []keySink
 	// scratch, reused across batches
 	sel, gids  []int32
 	hashes     []uint64
@@ -497,6 +496,8 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 		case "daily_sum", "daily_max", "daily_avg":
 			m.distinct = dist(distinctOf[m.Of])
 			a.distinct[m.distinct].day = true
+		case "bounces", "bounce_rate":
+			a.bounces = true
 		}
 		out[k] = m
 	}
@@ -512,16 +513,23 @@ func (a *agg) columns() []string {
 		}
 	}
 	for _, f := range a.filters {
-		add(readColumn(f.column))
+		for _, c := range readColumns(f.column) {
+			add(c)
+		}
 	}
 	for _, d := range a.dims {
-		add(readColumn(d))
+		for _, c := range readColumns(d) {
+			add(c)
+		}
 	}
 	for _, n := range a.nums {
 		add(n.name)
 	}
 	for _, d := range a.distinct {
 		add(d.name)
+	}
+	if a.bounces {
+		add("views")
 	}
 	return cols
 }
@@ -536,7 +544,7 @@ func (p *part) grow(a *agg, groups int) {
 	cells = max(cells, 2*len(p.count))
 	// Per cell: the count, and per numeric column 4 numbers; per group a
 	// set header per distinct column.
-	perCell := int64(8 + 32*len(a.nums))
+	perCell := int64(8 + 32*len(a.nums) + 8*boolInt(a.bounces))
 	perGroup := int64(0)
 	for _, d := range a.distinct {
 		if d.set {
@@ -545,6 +553,9 @@ func (p *part) grow(a *agg, groups int) {
 	}
 	p.grew += int64(cells-len(p.count))*perCell + int64(cells-len(p.count))/int64(a.nd)*perGroup
 	p.count = growTo(p.count, cells)
+	if a.bounces {
+		p.bounces = growTo(p.bounces, cells)
+	}
 	if p.nums == nil {
 		p.nums = make([]numPart, len(a.nums))
 	}
@@ -635,6 +646,17 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 	for k, i := range sel {
 		if gids[k] >= 0 {
 			p.count[cell(k, i)]++
+		}
+	}
+	if a.bounces {
+		_, c := b.col("views")
+		if c == nil || c.Ints == nil {
+			return fmt.Errorf("native: a batch without views")
+		}
+		for k, i := range sel {
+			if gids[k] >= 0 && (c.Null == nil || !c.Null[i]) && c.Ints[i] == 1 {
+				p.bounces[cell(k, i)]++
+			}
 		}
 	}
 	for j, n := range a.nums {
@@ -869,13 +891,14 @@ type run struct {
 
 // merged is the workers' partials put together.
 type merged struct {
-	a      *agg
-	groups int
-	count  []int64
-	nums   []numPart
-	sets   [][]dset
-	keys   [][]dayKey // per distinct column with day keys: all of them
-	runs   [][]run    // and their counts per (group, day)
+	a       *agg
+	groups  int
+	count   []int64
+	bounces []int64
+	nums    []numPart
+	sets    [][]dset
+	keys    [][]dayKey // per distinct column with day keys: all of them
+	runs    [][]run    // and their counts per (group, day)
 }
 
 // merge puts the workers' partials together, releasing them.
@@ -886,6 +909,9 @@ func (a *agg) merge() *merged {
 	}
 	cells := m.groups * a.nd
 	m.count = make([]int64, cells)
+	if a.bounces {
+		m.bounces = make([]int64, cells)
+	}
 	m.nums = make([]numPart, len(a.nums))
 	for j, n := range a.nums {
 		np := &m.nums[j]
@@ -909,6 +935,9 @@ func (a *agg) merge() *merged {
 		for x, c := range p.count[:min(len(p.count), cells)] {
 			m.count[x] += c
 		}
+		for x, c := range p.bounces[:min(len(p.bounces), cells)] {
+			m.bounces[x] += c
+		}
 		for j := range p.nums {
 			mergeNum(&m.nums[j], &p.nums[j], a.nums[j].float, cells)
 		}
@@ -918,7 +947,7 @@ func (a *agg) merge() *merged {
 			}
 			p.sets[j] = nil
 		}
-		p.count, p.nums = nil, nil
+		p.count, p.bounces, p.nums = nil, nil, nil
 	}
 	m.keys = make([][]dayKey, len(a.distinct))
 	m.runs = make([][]run, len(a.distinct))
@@ -1014,6 +1043,22 @@ func (m *merged) compute(mt metricSpec, gs []int32, day int) value {
 		return intValue(n)
 	case "sum", "avg", "min", "max":
 		return m.evalNum(mt, gs, day)
+	case "bounces", "bounce_rate":
+		// Sessions of one view, and their share of the sessions: DuckDB's
+		// count(*) FILTER (WHERE views = 1)::DOUBLE / count(*), empty over
+		// none.
+		var b, n int64
+		for _, g := range gs {
+			n += m.rows(g, day)
+			m.cellsOf(g, day, func(x int) { b += m.bounces[x] })
+		}
+		switch {
+		case mt.Op == "bounces":
+			return intValue(b)
+		case n == 0:
+			return value{null: true}
+		}
+		return value{f: float64(b) / float64(n)}
 	case "actors", "users", "groups":
 		if day >= 0 {
 			return intValue(m.dayCount(mt.distinct, gs[0], day))

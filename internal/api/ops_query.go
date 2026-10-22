@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -54,7 +55,13 @@ func queryEnums(in *jsonschema.Schema) {
 	q.Properties["compare"].Enum = enum([]string{"", "previous"})
 	m := q.Properties["metrics"].Items
 	m.Properties["op"].Enum = enum(native.MetricOps)
-	m.Properties["column"].Enum = enum(native.ValueColumns)
+	var columns []string // each table's, in order, each once
+	for _, c := range slices.Concat(native.ValueColumns, native.SessionValueColumns, native.IdentityValueColumns) {
+		if !slices.Contains(columns, c) {
+			columns = append(columns, c)
+		}
+	}
+	m.Properties["column"].Enum = enum(columns)
 	m.Properties["of"].Enum = enum(native.OfColumns)
 	q.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
 }

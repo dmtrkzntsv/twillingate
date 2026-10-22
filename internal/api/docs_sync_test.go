@@ -645,8 +645,9 @@ func TestStructuredQueryDocument(t *testing.T) {
 			t.Errorf("no example of a %s", k)
 		}
 	}
-	for _, list := range [][]string{native.Kinds, native.Tables, native.Columns, native.MetricOps,
-		native.ValueColumns, native.OfColumns, native.FilterOps} {
+	for _, list := range [][]string{native.Kinds, native.Tables, native.Columns, native.SessionColumns, native.MetricOps,
+		native.ValueColumns, native.SessionValueColumns, native.IdentityColumns, native.IdentityValueColumns,
+		native.OfColumns, native.FilterOps} {
 		for _, name := range list {
 			if !strings.Contains(body, "`"+name+"`") {
 				t.Errorf("the Structured queries section does not name `%s`", name)
