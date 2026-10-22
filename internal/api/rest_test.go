@@ -145,6 +145,27 @@ func TestWriteErrorMapping(t *testing.T) {
 	}
 }
 
+// A request its client abandoned (a page reload, a closed tab) fails with
+// the request's own cancellation: that is not a server error, so nothing is
+// logged. A cancellation the client did not cause still logs.
+func TestWriteErrorSkipsARequestItsClientCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest("GET", "/api/projects/6/event-names", nil).WithContext(ctx)
+	var logs strings.Builder
+	writeError(httptest.NewRecorder(), slog.New(slog.NewTextHandler(&logs, nil)), req,
+		fmt.Errorf("engine: %w", context.Canceled))
+	if logs.Len() != 0 {
+		t.Errorf("an abandoned request logged: %q", logs.String())
+	}
+
+	live := httptest.NewRequest("GET", "/api/projects/6/event-names", nil)
+	writeError(httptest.NewRecorder(), slog.New(slog.NewTextHandler(&logs, nil)), live, context.Canceled)
+	if !strings.Contains(logs.String(), "api request failed") {
+		t.Errorf("a cancellation the client did not cause must log; got %q", logs.String())
+	}
+}
+
 // TestRESTMatchesMCP calls each routed read through both transports with
 // the same input and requires identical JSON.
 func TestRESTMatchesMCP(t *testing.T) {
