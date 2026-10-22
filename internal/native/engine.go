@@ -3,6 +3,7 @@ package native
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"slices"
@@ -147,6 +148,13 @@ var (
 // days with rows (NULL over none); on sessions bounces is COUNT(*) FILTER
 // (WHERE views = 1) and bounce_rate that over COUNT(*) as a DOUBLE (NULL
 // over no session; an Other row's over its folded groups' sessions).
+// A metric with a where counts only the rows that pass it too (SQL's
+// FILTER): its groups are still those of the query's where, so a group
+// none of whose rows pass reads 0 for count, a distinct count and
+// bounces, NULL for the others. A metric with round is rounded as
+// DuckDB's ROUND rounds a DOUBLE, after Other is put together and
+// before groups and series are ranked by it, as SQL's ORDER BY of the
+// rounded column ranks them.
 func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Rules) (Result, error) {
 	if err := q.Validate(); err != nil {
 		return Result{}, err
@@ -154,9 +162,15 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 	if p.To.Before(p.From) {
 		return Result{}, invalid("to", "%s is before from %s", p.To, p.From)
 	}
-	filters, err := compileFilters(q.Where)
+	filters, err := compileFilters(q.Where, "where")
 	if err != nil {
 		return Result{}, err
+	}
+	metricFilters := make([][]filter, len(q.Metrics))
+	for i, m := range q.Metrics {
+		if metricFilters[i], err = compileFilters(m.Where, fmt.Sprintf("metrics[%d].where", i)); err != nil {
+			return Result{}, err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
@@ -169,7 +183,7 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 	defer func() { <-e.sem }()
 	backoff := retryBackoff
 	for attempt := 1; ; attempt++ {
-		res, err := e.answerOnce(ctx, q, filters, p, rules)
+		res, err := e.answerOnce(ctx, q, filters, metricFilters, p, rules)
 		if err == nil || !errors.Is(err, fs.ErrNotExist) || attempt == maxAttempts {
 			return res, err
 		}
@@ -182,7 +196,7 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 	}
 }
 
-func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, p Params, rules archive.Rules) (Result, error) {
+func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metricFilters [][]filter, p Params, rules archive.Rules) (Result, error) {
 	var rs ruleSet
 	if q.Table != "sessions" && q.Table != "identities" { // derived from the events as stored
 		var err error
@@ -190,7 +204,7 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, p Pa
 			return Result{}, err
 		}
 	}
-	s := scan{e: e, q: q, filters: filters, project: p.Project, rules: rs}
+	s := scan{e: e, q: q, filters: filters, metricFilters: metricFilters, project: p.Project, rules: rs}
 	switch q.Kind {
 	case "stat":
 		return s.stat(ctx, p.From, p.To)
@@ -272,11 +286,12 @@ type fileCols struct {
 
 // scan runs one query's scans.
 type scan struct {
-	e       *Engine
-	q       Query
-	filters []filter
-	project int64
-	rules   ruleSet
+	e             *Engine
+	q             Query
+	filters       []filter
+	metricFilters [][]filter // per metric, its own where
+	project       int64
+	rules         ruleSet
 }
 
 // family is the family the query's table holds ("" for events: all).
@@ -295,7 +310,7 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 	lo, hi := r.days()
 	ms := make([]metricSpec, len(s.q.Metrics))
 	for i, m := range s.q.Metrics {
-		ms[i] = metricSpec{Metric: m}
+		ms[i] = metricSpec{Metric: m, where: s.metricFilters[i]}
 	}
 	a, ms := newAgg(aggOptions{metrics: ms, filters: s.filters, dims: dims, perDay: perDay, sets: sets,
 		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
@@ -386,12 +401,14 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 }
 
 // statusColumns are the status columns (user_status, group_status) the
-// query's filters and dims name.
+// query's filters, its metrics' filters and dims name.
 func (s scan) statusColumns(dims []string) []string {
 	var out []string
-	for _, f := range s.filters {
-		if _, ok := statusColumns[f.column]; ok && !slices.Contains(out, f.column) {
-			out = append(out, f.column)
+	for _, fs := range append([][]filter{s.filters}, s.metricFilters...) {
+		for _, f := range fs {
+			if _, ok := statusColumns[f.column]; ok && !slices.Contains(out, f.column) {
+				out = append(out, f.column)
+			}
 		}
 	}
 	for _, d := range dims {

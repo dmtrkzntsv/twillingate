@@ -288,6 +288,10 @@ func TestIdentitiesQueriesMatchDuckDB(t *testing.T) {
 			cols: []string{"user_status", "path", "count"},
 			sql: statusSQL + `SELECT us, "path", count(*) AS c FROM s WHERE "family" = 'views' AND us <> 'returning'
 				GROUP BY ALL ORDER BY c DESC, us ASC NULLS LAST, "path" ASC NULLS LAST LIMIT 100`},
+		{name: "new users beside all", q: Query{Kind: "stat", Table: "events", Where: []Filter{widgetFamilies},
+			Metrics: []Metric{{Op: "users"}, {Op: "users", As: "new", Where: []Filter{{Column: "user_status", Op: "eq", Values: []string{"new"}}}}}},
+			cols: []string{"users", "new"},
+			sql:  statusSQL + `SELECT count(DISTINCT "user_id"), count(DISTINCT "user_id") FILTER (WHERE us = 'new') FROM s WHERE "family" IN ('views', 'product')`},
 		{name: "identities by kind", q: Query{Kind: "breakdown", Table: "identities",
 			Metrics:    []Metric{{Op: "count"}, {Op: "sum", Column: "views"}, {Op: "avg", Column: "events"}, {Op: "max", Column: "views"}},
 			Dimensions: []string{"kind"}}, cols: []string{"kind", "count", "sum_views", "avg_events", "max_views"},

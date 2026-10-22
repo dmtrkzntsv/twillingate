@@ -1695,7 +1695,7 @@ caught up with), over `project_id`'s days `from` through `to` (both `YYYY-MM-DD`
 `to` defaults to today, UTC, and `from` to 29 days before `to`; at most
 1,100 days a call). A malformed query is refused as `invalid`, with a
 message naming the field (`dimensions`, `metrics[0].column`,
-`where[1].values`); an unknown project is `not_found`.
+`where[1].values`, `metrics[2].where[0].op`); an unknown project is `not_found`.
 
 | Field | Kinds | Meaning |
 | --- | --- | --- |
@@ -1774,6 +1774,23 @@ A metric's column is named by `as`, else `op`, `op_column` (`sum_value`)
 or `op_of` (`daily_sum_actors`); two metrics may not share a name, nor,
 with `compare`, may one be named `previous_<another's name>`.
 
+A metric takes two more optional fields:
+
+- `where`: filters of its own, the same columns and operators as the
+  query's `where` (a refusal names them as `metrics[2].where[0].column`).
+  A row counts toward that metric only when it passes them too; the other
+  metrics still count it. A group exists when any row passes the query's
+  `where`, so a metric with none of its rows in a group reads `0` for
+  `count`, `actors`, `users`, `groups` and `bounces`, and empty for the
+  others (`sum`, `avg`, `min`, `max`, `daily_*`, `bounce_rate`). They
+  apply alike to the `previous_` columns, an `Other` row and a trend's
+  days; a trend still has a row for every day with rows.
+- `round`: 0 to 6 decimal places, half away from zero (`2.5` rounds to
+  `3`), applied last, after `Other` is summed and before groups are ranked
+  by the metric; with `0` the value reads as an integer (`3`). A metric
+  whose value is an integer already (`count`, `sum` of an integer column)
+  stays as it is.
+
 | Filter `op` | Values |
 | --- | --- |
 | `eq`, `ne`, `contains`, `prefix` | exactly one |
@@ -1840,6 +1857,20 @@ A breakdown: the ten busiest paths by unique users, the rest as `Other`.
   "kind": "breakdown", "table": "views", "dimensions": ["path"],
   "metrics": [{"op": "users"}, {"op": "count", "as": "views"}],
   "order": "users", "limit": 10, "other": true}}
+```
+
+A breakdown with filtered metrics side by side: per path, its views and
+its product events, and the mean of the measures sent from it, to two
+places.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "breakdown", "table": "events", "dimensions": ["path"],
+  "metrics": [
+    {"op": "count", "as": "views", "where": [{"column": "family", "op": "eq", "values": ["views"]}]},
+    {"op": "count", "as": "events", "where": [{"column": "family", "op": "eq", "values": ["product"]}]},
+    {"op": "avg", "column": "value", "as": "mean", "round": 2,
+     "where": [{"column": "family", "op": "eq", "values": ["measures"]}]}]}}
 ```
 
 A breakdown of sessions: the bounce rate and average session length per

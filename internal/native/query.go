@@ -36,11 +36,16 @@ type Query struct {
 
 // Metric is one aggregate.
 type Metric struct {
-	Op     string `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. sessions takes count (sessions), actors, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, sum, avg, min and max"`
-	Column string `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views; on identities views or events"`
-	Of     string `json:"of,omitempty" jsonschema:"daily_* only: what is counted distinct per day"`
-	As     string `json:"as,omitempty" jsonschema:"the output column's name (default: op, or op_column, or op_of)"`
+	Op     string   `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. sessions takes count (sessions), actors, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, sum, avg, min and max"`
+	Column string   `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views; on identities views or events"`
+	Of     string   `json:"of,omitempty" jsonschema:"daily_* only: what is counted distinct per day"`
+	As     string   `json:"as,omitempty" jsonschema:"the output column's name (default: op, or op_column, or op_of)"`
+	Round  *int     `json:"round,omitempty" jsonschema:"optional, 0 to 6: decimal places to round the value to, half away from zero (an integer stays as it is)"`
+	Where  []Filter `json:"where,omitempty" jsonschema:"optional: filters, as the query's where, that a row must also satisfy to count toward this metric only; a group still exists from the query's where, so its metric may be 0 (count, distinct counts, bounces) or empty (the others)"`
 }
+
+// maxRound bounds a metric's round.
+const maxRound = 6
 
 // Filter keeps the rows whose Column satisfies Op against Values.
 type Filter struct {
@@ -333,7 +338,7 @@ func (q Query) Validate() error {
 	}
 
 	for i, f := range q.Where {
-		if err := f.validate(q.Table, i); err != nil {
+		if err := f.validate(q.Table, fmt.Sprintf("where[%d]", i)); err != nil {
 			return err
 		}
 	}
@@ -399,6 +404,14 @@ func (m Metric) validate(table string, i int) error {
 	if table != "sessions" && bounceOps[m.Op] {
 		return invalid(p+".op", "%s is a metric of sessions only", m.Op)
 	}
+	if m.Round != nil && (*m.Round < 0 || *m.Round > maxRound) {
+		return invalid(p+".round", "%d is not between 0 and %d", *m.Round, maxRound)
+	}
+	for j, f := range m.Where {
+		if err := f.validate(table, fmt.Sprintf("%s.where[%d]", p, j)); err != nil {
+			return err
+		}
+	}
 	switch m.Op {
 	case "sum", "avg", "min", "max":
 		if m.Column == "" {
@@ -436,8 +449,9 @@ func (m Metric) validate(table string, i int) error {
 	return nil
 }
 
-func (f Filter) validate(table string, i int) error {
-	p := fmt.Sprintf("where[%d]", i)
+// validate refuses a malformed filter; p is its path (where[0],
+// metrics[1].where[0]).
+func (f Filter) validate(table, p string) error {
 	orderable, ok := columnInfo(table, f.Column)
 	if !ok {
 		return invalid(p+".column", "%q is not a column of %s", f.Column, table)

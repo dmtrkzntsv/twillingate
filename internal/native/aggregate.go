@@ -8,6 +8,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -329,6 +330,20 @@ func (v value) String() string {
 	return strconv.FormatFloat(v.f, 'f', -1, 64)
 }
 
+// round is v rounded to *places decimals, as DuckDB's ROUND rounds a
+// DOUBLE: half away from zero, of v times 10^places; an integer, NULL, or
+// places nil leave v as it is.
+func (v value) round(places *int) value {
+	if places == nil || v.null || v.isInt {
+		return v
+	}
+	mod := math.Pow(10, float64(*places))
+	if r := math.Round(v.f*mod) / mod; !math.IsInf(r, 0) && !math.IsNaN(r) {
+		v.f = r
+	}
+	return v
+}
+
 func (v value) num() float64 {
 	if v.isInt {
 		return float64(v.i)
@@ -368,29 +383,44 @@ func cmpDim(typ colType, a, b dimVal) int {
 // metricSpec is one metric, resolved against the aggregation's columns.
 type metricSpec struct {
 	Metric
-	num      int // index into agg.nums, for sum/avg/min/max
-	distinct int // index into agg.distinct, for actors/users/groups and daily_*
+	where    []filter // the metric's own filters, compiled
+	mask     int      // index into agg.masks: the rows the metric counts
+	num      int      // index into agg.nums, for sum/avg/min/max
+	distinct int      // index into agg.distinct, for actors/users/groups and daily_*
 }
 
 // distinctOf is the id column a distinct op counts.
 var distinctOf = map[string]string{"actors": "actor_id", "users": "user_id", "groups": "group_id"}
 
-// distinctCol is one id column counted distinct: set says whole-range
-// sets per group are kept, day that per-day keys are.
+// distinctCol is one id column counted distinct over the rows of a mask:
+// set says whole-range sets per group are kept, day that per-day keys are.
 type distinctCol struct {
 	name     string
+	mask     int
 	set, day bool
 }
 
-// numCol is one numeric column summed, averaged or bounded.
+// numCol is one numeric column summed, averaged or bounded over the rows
+// of a mask.
 type numCol struct {
 	name  string
+	mask  int
 	float bool
+}
+
+// colMask keys a column's partials by the mask of rows they read.
+type colMask struct {
+	col  string
+	mask int
 }
 
 // agg is one scan's aggregation.
 type agg struct {
-	filters  []filter
+	filters []filter
+	// masks are the rows each metric counts, beside the filters: masks[0]
+	// every row (the groups' rows), the others each a distinct set of a
+	// metric's own filters.
+	masks    [][]filter
 	dims     []string // the group's columns: a breakdown's dimensions, a trend's series
 	dimTypes []colType
 	groups   *groupTable // nil for the one group of a stat or a trend without series
@@ -399,20 +429,21 @@ type agg struct {
 	nd       int // cells per group: ndays in a trend, else 1
 	nums     []numCol
 	distinct []*distinctCol
-	bounces  bool // count sessions of one view per cell (bounces, bounce_rate)
+	bounces  bool // count sessions of one view per cell and mask (bounces, bounce_rate)
 	parts    []part
 	mem      memory
 }
 
 // part is one worker's partials.
 type part struct {
-	count   []int64
-	bounces []int64 // per cell, rows with views 1 (when agg.bounces)
+	count   [][]int64 // per mask, per cell
+	bounces [][]int64 // per mask, per cell, rows with views 1 (when agg.bounces)
 	nums    []numPart
 	sets    [][]dset // per distinct column, per group; nil without set
 	days    []keySink
 	// scratch, reused across batches
 	sel, gids  []int32
+	pass       [][]bool // per mask but 0, per row of the batch: whether it passes
 	hashes     []uint64
 	keys       []uint64
 	buf        []dayKey
@@ -445,7 +476,7 @@ type aggOptions struct {
 // newAgg sets up an aggregation and returns its metrics resolved.
 func newAgg(o aggOptions) (*agg, []metricSpec) {
 	metrics, filters, dims, perDay, from, ndays, maxGroups, distinctSets := o.metrics, o.filters, o.dims, o.perDay, o.from, o.ndays, o.maxGroups, o.sets
-	a := &agg{filters: filters, dims: dims, from: from, ndays: ndays, nd: 1, parts: make([]part, o.workers)}
+	a := &agg{filters: filters, masks: [][]filter{nil}, dims: dims, from: from, ndays: ndays, nd: 1, parts: make([]part, o.workers)}
 	a.mem.max = o.maxBytes
 	if perDay {
 		a.nd = ndays
@@ -462,31 +493,40 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 		}
 		a.groups = &groupTable{ids: map[string]int32{}, max: max(1, limit)}
 	}
-	numIdx := map[string]int{}
-	distIdx := map[string]int{}
-	dist := func(col string) int {
-		i, ok := distIdx[col]
+	maskIdx := map[string]int{"": 0}
+	numIdx := map[colMask]int{}
+	distIdx := map[colMask]int{}
+	dist := func(col string, mask int) int {
+		i, ok := distIdx[colMask{col, mask}]
 		if !ok {
 			i = len(a.distinct)
-			distIdx[col] = i
-			a.distinct = append(a.distinct, &distinctCol{name: col})
+			distIdx[colMask{col, mask}] = i
+			a.distinct = append(a.distinct, &distinctCol{name: col, mask: mask})
 		}
 		return i
 	}
 	out := make([]metricSpec, len(metrics))
 	for k, m := range metrics {
 		m.num, m.distinct = -1, -1
+		key := filtersKey(m.Where)
+		mask, ok := maskIdx[key]
+		if !ok {
+			mask = len(a.masks)
+			maskIdx[key] = mask
+			a.masks = append(a.masks, m.where)
+		}
+		m.mask = mask
 		switch m.Op {
 		case "sum", "avg", "min", "max":
-			i, ok := numIdx[m.Column]
+			i, ok := numIdx[colMask{m.Column, mask}]
 			if !ok {
 				i = len(a.nums)
-				numIdx[m.Column] = i
-				a.nums = append(a.nums, numCol{name: m.Column, float: m.Column == "value" || m.Column == "sample_rate"})
+				numIdx[colMask{m.Column, mask}] = i
+				a.nums = append(a.nums, numCol{name: m.Column, mask: mask, float: m.Column == "value" || m.Column == "sample_rate"})
 			}
 			m.num = i
 		case "actors", "users", "groups":
-			m.distinct = dist(distinctOf[m.Op])
+			m.distinct = dist(distinctOf[m.Op], mask)
 			if perDay {
 				a.distinct[m.distinct].day = true
 			}
@@ -494,7 +534,7 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 				a.distinct[m.distinct].set = true
 			}
 		case "daily_sum", "daily_max", "daily_avg":
-			m.distinct = dist(distinctOf[m.Of])
+			m.distinct = dist(distinctOf[m.Of], mask)
 			a.distinct[m.distinct].day = true
 		case "bounces", "bounce_rate":
 			a.bounces = true
@@ -502,6 +542,21 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 		out[k] = m
 	}
 	return a, out
+}
+
+// filtersKey is a metric's filters as a key: metrics with the same
+// filters share a mask ("" for none).
+func filtersKey(where []Filter) string {
+	var b strings.Builder
+	for _, f := range where {
+		b.WriteString(strconv.Quote(f.Column))
+		b.WriteString(strconv.Quote(f.Op))
+		for _, v := range f.Values {
+			b.WriteString(strconv.Quote(v))
+		}
+		b.WriteByte(';')
+	}
+	return b.String()
 }
 
 // columns is what a scan must read for the aggregation.
@@ -512,9 +567,11 @@ func (a *agg) columns() []string {
 			cols = append(cols, c)
 		}
 	}
-	for _, f := range a.filters {
-		for _, c := range readColumns(f.column) {
-			add(c)
+	for _, fs := range append([][]filter{a.filters}, a.masks...) {
+		for _, f := range fs {
+			for _, c := range readColumns(f.column) {
+				add(c)
+			}
 		}
 	}
 	for _, d := range a.dims {
@@ -538,23 +595,35 @@ func (a *agg) columns() []string {
 // p.grew.
 func (p *part) grow(a *agg, groups int) {
 	cells := groups * a.nd
-	if len(p.count) >= cells {
+	have := 0
+	if p.count != nil {
+		have = len(p.count[0])
+	}
+	if have >= cells {
 		return
 	}
-	cells = max(cells, 2*len(p.count))
-	// Per cell: the count, and per numeric column 4 numbers; per group a
-	// set header per distinct column.
-	perCell := int64(8 + 32*len(a.nums) + 8*boolInt(a.bounces))
+	cells = max(cells, 2*have)
+	// Per cell: the count per mask (and bounces), and per numeric column 4
+	// numbers; per group a set header per distinct column.
+	perCell := int64(8*len(a.masks)*(1+boolInt(a.bounces)) + 32*len(a.nums))
 	perGroup := int64(0)
 	for _, d := range a.distinct {
 		if d.set {
 			perGroup += 48
 		}
 	}
-	p.grew += int64(cells-len(p.count))*perCell + int64(cells-len(p.count))/int64(a.nd)*perGroup
-	p.count = growTo(p.count, cells)
-	if a.bounces {
-		p.bounces = growTo(p.bounces, cells)
+	p.grew += int64(cells-have)*perCell + int64(cells-have)/int64(a.nd)*perGroup
+	if p.count == nil {
+		p.count = make([][]int64, len(a.masks))
+		if a.bounces {
+			p.bounces = make([][]int64, len(a.masks))
+		}
+	}
+	for k := range a.masks {
+		p.count[k] = growTo(p.count[k], cells)
+		if a.bounces {
+			p.bounces[k] = growTo(p.bounces[k], cells)
+		}
 	}
 	if p.nums == nil {
 		p.nums = make([]numPart, len(a.nums))
@@ -643,19 +712,37 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 		}
 		return int(gids[k])*a.nd + off(i)
 	}
-	for k, i := range sel {
-		if gids[k] >= 0 {
-			p.count[cell(k, i)]++
+	// pass is each mask's rows (nil for mask 0: every row).
+	if len(p.pass) < len(a.masks) {
+		p.pass = make([][]bool, len(a.masks))
+	}
+	for k := 1; k < len(a.masks); k++ {
+		if p.pass[k], err = passRows(b, a.masks[k], p.pass[k]); err != nil {
+			return err
 		}
 	}
+	pass := p.pass[:len(a.masks)]
+	pass[0] = nil
+	var views *Column
 	if a.bounces {
-		_, c := b.col("views")
-		if c == nil || c.Ints == nil {
+		if _, views = b.col("views"); views == nil || views.Ints == nil {
 			return fmt.Errorf("native: a batch without views")
 		}
+	}
+	for mask, keep := range pass {
+		count := p.count[mask]
 		for k, i := range sel {
-			if gids[k] >= 0 && (c.Null == nil || !c.Null[i]) && c.Ints[i] == 1 {
-				p.bounces[cell(k, i)]++
+			if gids[k] >= 0 && (keep == nil || keep[i]) {
+				count[cell(k, i)]++
+			}
+		}
+		if views == nil {
+			continue
+		}
+		bounces := p.bounces[mask]
+		for k, i := range sel {
+			if gids[k] >= 0 && (keep == nil || keep[i]) && (views.Null == nil || !views.Null[i]) && views.Ints[i] == 1 {
+				bounces[cell(k, i)]++
 			}
 		}
 	}
@@ -665,8 +752,9 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 			continue
 		}
 		np := &p.nums[j]
+		keep := pass[n.mask]
 		for k, i := range sel {
-			if gids[k] < 0 || (c.Null != nil && c.Null[i]) {
+			if gids[k] < 0 || (keep != nil && !keep[i]) || (c.Null != nil && c.Null[i]) {
 				continue
 			}
 			x := cell(k, i)
@@ -702,14 +790,16 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 		}
 	}
 	for j, d := range a.distinct {
-		if err := a.addDistinct(p, j, d, b, sel, gids, off); err != nil {
+		if err := a.addDistinct(p, j, d, b, sel, gids, pass[d.mask], off); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *Batch, sel, gids []int32, off func(int32) int) error {
+// addDistinct adds the ids of column d of the rows sel (those keep, when
+// not nil, passes) to their groups' sets and per-day keys.
+func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *Batch, sel, gids []int32, keep []bool, off func(int32) int) error {
 	_, c := b.col(d.name)
 	// hashes is each dictionary entry's hash, of the entries the tracked
 	// rows use only (the others are not hashed); keys the whole-range keys:
@@ -721,7 +811,7 @@ func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *Batch, sel, gids []
 		}
 		used := make([]bool, len(c.Dict))
 		for k, i := range sel {
-			if x := c.Idx[i]; gids[k] >= 0 && x >= 0 {
+			if x := c.Idx[i]; gids[k] >= 0 && x >= 0 && (keep == nil || keep[i]) {
 				used[x] = true
 			}
 		}
@@ -738,7 +828,7 @@ func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *Batch, sel, gids []
 	buf := p.buf[:0]
 	for k, i := range sel {
 		g := gids[k]
-		if g < 0 {
+		if g < 0 || (keep != nil && !keep[i]) {
 			continue
 		}
 		x := int32(-1)
@@ -893,8 +983,8 @@ type run struct {
 type merged struct {
 	a       *agg
 	groups  int
-	count   []int64
-	bounces []int64
+	count   [][]int64 // per mask
+	bounces [][]int64 // per mask
 	nums    []numPart
 	sets    [][]dset
 	keys    [][]dayKey // per distinct column with day keys: all of them
@@ -908,9 +998,15 @@ func (a *agg) merge() *merged {
 		m.groups = a.groups.len()
 	}
 	cells := m.groups * a.nd
-	m.count = make([]int64, cells)
+	m.count = make([][]int64, len(a.masks))
 	if a.bounces {
-		m.bounces = make([]int64, cells)
+		m.bounces = make([][]int64, len(a.masks))
+	}
+	for k := range a.masks {
+		m.count[k] = make([]int64, cells)
+		if a.bounces {
+			m.bounces[k] = make([]int64, cells)
+		}
 	}
 	m.nums = make([]numPart, len(a.nums))
 	for j, n := range a.nums {
@@ -932,11 +1028,15 @@ func (a *agg) merge() *merged {
 		p := &a.parts[w]
 		// A worker's arrays may be longer than the groups (they grow
 		// ahead); the cells past them hold nothing.
-		for x, c := range p.count[:min(len(p.count), cells)] {
-			m.count[x] += c
+		for k, count := range p.count {
+			for x, c := range count[:min(len(count), cells)] {
+				m.count[k][x] += c
+			}
 		}
-		for x, c := range p.bounces[:min(len(p.bounces), cells)] {
-			m.bounces[x] += c
+		for k, bounces := range p.bounces {
+			for x, c := range bounces[:min(len(bounces), cells)] {
+				m.bounces[k][x] += c
+			}
 		}
 		for j := range p.nums {
 			mergeNum(&m.nums[j], &p.nums[j], a.nums[j].float, cells)
@@ -1025,20 +1125,29 @@ func (m *merged) cellsOf(g int32, day int, f func(x int)) {
 }
 
 // rows is how many rows group g holds (on day, unless it is < 0).
-func (m *merged) rows(g int32, day int) int64 {
+func (m *merged) rows(g int32, day int) int64 { return m.maskRows(0, g, day) }
+
+// maskRows is how many rows of mask group g holds (on day, unless it is
+// < 0).
+func (m *merged) maskRows(mask int, g int32, day int) int64 {
 	var n int64
-	m.cellsOf(g, day, func(x int) { n += m.count[x] })
+	m.cellsOf(g, day, func(x int) { n += m.count[mask][x] })
 	return n
 }
 
 // compute is metric mt over the rows of the groups gs: on one day of the
-// range (a trend's cell; gs one group then) or, when day < 0, over all.
+// range (a trend's cell; gs one group then) or, when day < 0, over all;
+// rounded as mt says.
 func (m *merged) compute(mt metricSpec, gs []int32, day int) value {
+	return m.computeRaw(mt, gs, day).round(mt.Round)
+}
+
+func (m *merged) computeRaw(mt metricSpec, gs []int32, day int) value {
 	switch mt.Op {
 	case "count":
 		var n int64
 		for _, g := range gs {
-			n += m.rows(g, day)
+			n += m.maskRows(mt.mask, g, day)
 		}
 		return intValue(n)
 	case "sum", "avg", "min", "max":
@@ -1049,8 +1158,8 @@ func (m *merged) compute(mt metricSpec, gs []int32, day int) value {
 		// none.
 		var b, n int64
 		for _, g := range gs {
-			n += m.rows(g, day)
-			m.cellsOf(g, day, func(x int) { b += m.bounces[x] })
+			n += m.maskRows(mt.mask, g, day)
+			m.cellsOf(g, day, func(x int) { b += m.bounces[mt.mask][x] })
 		}
 		switch {
 		case mt.Op == "bounces":

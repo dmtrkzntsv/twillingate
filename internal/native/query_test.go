@@ -9,6 +9,8 @@ import (
 
 func count() []Metric { return []Metric{{Op: "count"}} }
 
+func ptr[T any](v T) *T { return &v }
+
 func TestValidate(t *testing.T) {
 	valid := map[string]Query{
 		"stat":            {Kind: "stat", Table: "events", Metrics: count()},
@@ -40,6 +42,13 @@ func TestValidate(t *testing.T) {
 			Dimensions: []string{"kind", "id", "name"}, Where: []Filter{{Column: "views", Op: "gt", Values: []string{"1"}},
 				{Column: "events", Op: "lte", Values: []string{"5"}}, {Column: "day", Op: "gte", Values: []string{"2026-01-02"}}}},
 		"identities trend": {Kind: "trend", Table: "identities", Metrics: count(), Series: "kind"},
+		"metric where and round": {Kind: "breakdown", Table: "events", Dimensions: []string{"path"}, Metrics: []Metric{
+			{Op: "count", As: "views", Where: []Filter{{Column: "family", Op: "eq", Values: []string{"views"}}}},
+			{Op: "avg", Column: "value", Round: ptr(0), Where: []Filter{{Column: "consent_state", Op: "eq", Values: []string{"given"}},
+				{Column: "day", Op: "gte", Values: []string{"2026-01-02"}}}},
+			{Op: "daily_avg", Of: "users", Round: ptr(6), Where: []Filter{{Column: "user_status", Op: "eq", Values: []string{"new"}}}}}},
+		"session metric where": {Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "bounce_rate", Round: ptr(3),
+			Where: []Filter{{Column: "views", Op: "gt", Values: []string{"1"}}}}}},
 		"filters": {Kind: "stat", Table: "events", Metrics: count(), Where: []Filter{
 			{Column: "attr_a", Op: "is_set"}, {Column: "country", Op: "in", Values: []string{"DE", "FR"}},
 			{Column: "day", Op: "gte", Values: []string{"2026-01-02"}}, {Column: "path", Op: "prefix", Values: []string{"/x"}}}},
@@ -130,6 +139,20 @@ func TestValidate(t *testing.T) {
 		{"series_limit neg", Query{Kind: "trend", Table: "events", Metrics: count(), Series: "path", SeriesLimit: -1}, "series_limit"},
 		{"series_limit 51", Query{Kind: "trend", Table: "events", Metrics: count(), Series: "path", SeriesLimit: 51}, "series_limit"},
 		{"series_limit on stat", Query{Kind: "stat", Table: "events", Metrics: count(), SeriesLimit: 3}, "series_limit"},
+		{"round 7", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "avg", Column: "value", Round: ptr(7)}}}, "metrics[0].round"},
+		{"round negative", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "avg", Column: "value", Round: ptr(-1)}}}, "metrics[1].round"},
+		{"metric where column", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count"},
+			{Op: "count", As: "n", Where: []Filter{{Column: "is_set", Op: "eq", Values: []string{"x"}}}}}}, "metrics[1].where[0].column"},
+		{"metric where op", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count",
+			Where: []Filter{{Column: "path", Op: "is_set"}, {Column: "path", Op: "like", Values: []string{"x"}}}}}}, "metrics[0].where[1].op"},
+		{"metric where values", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count",
+			Where: []Filter{{Column: "path", Op: "eq"}}}}}, "metrics[0].where[0].values"},
+		{"metric where gt on text", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count",
+			Where: []Filter{{Column: "path", Op: "gt", Values: []string{"1"}}}}}}, "metrics[0].where[0].op"},
+		{"metric where path on sessions", Query{Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "count",
+			Where: []Filter{{Column: "path", Op: "is_set"}}}}}, "metrics[0].where[0].column"},
+		{"metric where bucket on events", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count",
+			Where: []Filter{{Column: "bucket", Op: "gt", Values: []string{"1"}}}}}}, "metrics[0].where[0].column"},
 		{"compare collides", Query{Kind: "stat", Table: "events", Compare: "previous",
 			Metrics: []Metric{{Op: "count", As: "previous_users"}, {Op: "users"}}}, "metrics[0].as"},
 	}
@@ -146,18 +169,22 @@ func TestValidate(t *testing.T) {
 }
 
 func TestMetricName(t *testing.T) {
-	for m, want := range map[Metric]string{
-		{Op: "count"}:                        "count",
-		{Op: "users"}:                        "users",
-		{Op: "sum", Column: "value"}:         "sum_value",
-		{Op: "max", Column: "display_width"}: "max_display_width",
-		{Op: "daily_avg", Of: "groups"}:      "daily_avg_groups",
-		{Op: "count", As: "n"}:               "n",
-		{Op: "bounce_rate"}:                  "bounce_rate",
-		{Op: "avg", Column: "duration_sec"}:  "avg_duration_sec",
+	for _, c := range []struct {
+		m    Metric
+		want string
+	}{
+		{Metric{Op: "count"}, "count"},
+		{Metric{Op: "users"}, "users"},
+		{Metric{Op: "sum", Column: "value"}, "sum_value"},
+		{Metric{Op: "max", Column: "display_width"}, "max_display_width"},
+		{Metric{Op: "daily_avg", Of: "groups"}, "daily_avg_groups"},
+		{Metric{Op: "count", As: "n"}, "n"},
+		{Metric{Op: "bounce_rate"}, "bounce_rate"},
+		{Metric{Op: "avg", Column: "duration_sec"}, "avg_duration_sec"},
+		{Metric{Op: "avg", Column: "value", Round: ptr(2), Where: []Filter{{Column: "path", Op: "is_set"}}}, "avg_value"},
 	} {
-		if got := m.Name(); got != want {
-			t.Errorf("%+v: %q, want %q", m, got, want)
+		if got := c.m.Name(); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.m, got, c.want)
 		}
 	}
 }

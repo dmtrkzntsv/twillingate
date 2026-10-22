@@ -221,6 +221,28 @@ func TestQuerySchemaDescribesStructured(t *testing.T) {
 	if strings.Contains(text, "$defs") || strings.Contains(text, "$ref") {
 		t.Errorf("query's input schema is not inline: %s", text)
 	}
+	// A metric's own filters and its round.
+	m := r.specs[i].in.Properties["query"].Properties["metrics"].Items
+	if e := m.Properties["where"].Items.Properties["op"].Enum; len(e) != len(native.FilterOps) {
+		t.Errorf("a metric's where op enum = %v, want the filter operators", e)
+	}
+	if rd := m.Properties["round"]; rd.Minimum == nil || *rd.Minimum != 0 || rd.Maximum == nil || *rd.Maximum != 6 {
+		t.Errorf("round's bounds = %v..%v, want 0..6", rd.Minimum, rd.Maximum)
+	}
+}
+
+// A metric's where and round pass MCP's schema.
+func TestQueryStructuredMetricWhere(t *testing.T) {
+	_, cs := newTestHost(t)
+	q := map[string]any{"kind": "stat", "table": "views", "metrics": []any{
+		map[string]any{"op": "count", "as": "web", "round": 2, "where": []any{map[string]any{"column": "kind", "op": "eq", "values": []any{"web"}}}}}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "query": q}); res.IsError {
+		t.Errorf("a metric's where over MCP: %s", textOf(res))
+	}
+	q["metrics"] = []any{map[string]any{"op": "count", "round": 7}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "query": q}); !res.IsError {
+		t.Error("round 7 over MCP: accepted")
+	}
 }
 
 // compare "" (no comparison) passes MCP's schema as it passes REST.

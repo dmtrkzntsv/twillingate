@@ -225,8 +225,9 @@ type filter struct {
 }
 
 // compileFilters parses the filters' values for their columns' types; a
-// value that is not one refuses the query, naming it.
-func compileFilters(where []Filter) ([]filter, error) {
+// value that is not one refuses the query, naming it under path (where,
+// metrics[1].where).
+func compileFilters(where []Filter, path string) ([]filter, error) {
 	out := make([]filter, len(where))
 	for i, f := range where {
 		c := filter{column: f.Column, typ: typeOf(f.Column), op: f.Op}
@@ -242,13 +243,13 @@ func compileFilters(where []Filter) ([]filter, error) {
 			continue
 		}
 		if f.Op == "contains" || f.Op == "prefix" {
-			return nil, invalid(fmt.Sprintf("where[%d].op", i), "%s is not allowed on %s", f.Op, f.Column)
+			return nil, invalid(fmt.Sprintf("%s[%d].op", path, i), "%s is not allowed on %s", f.Op, f.Column)
 		}
 		c.ints = make(map[int64]bool, len(f.Values))
 		for _, v := range f.Values {
 			n, err := parseValue(c.typ, v)
 			if err != nil {
-				return nil, invalid(fmt.Sprintf("where[%d].values", i), "%v", err)
+				return nil, invalid(fmt.Sprintf("%s[%d].values", path, i), "%v", err)
 			}
 			c.ints[n] = true
 			c.num = n
@@ -362,6 +363,24 @@ func (f *filter) apply(b *Batch, keep []bool) error {
 	return nil
 }
 
+// passRows is, per row of b, whether it passes every filter, in keep
+// (reused when it holds b.N rows).
+func passRows(b *Batch, filters []filter, keep []bool) ([]bool, error) {
+	if cap(keep) < b.N {
+		keep = make([]bool, b.N)
+	}
+	keep = keep[:b.N]
+	for i := range keep {
+		keep[i] = true
+	}
+	for i := range filters {
+		if err := filters[i].apply(b, keep); err != nil {
+			return nil, err
+		}
+	}
+	return keep, nil
+}
+
 // selectRows is the rows of b that pass every filter, appended to sel[:0].
 func selectRows(b *Batch, filters []filter, sel []int32) ([]int32, error) {
 	sel = sel[:0]
@@ -371,14 +390,9 @@ func selectRows(b *Batch, filters []filter, sel []int32) ([]int32, error) {
 		}
 		return sel, nil
 	}
-	keep := make([]bool, b.N)
-	for i := range keep {
-		keep[i] = true
-	}
-	for i := range filters {
-		if err := filters[i].apply(b, keep); err != nil {
-			return nil, err
-		}
+	keep, err := passRows(b, filters, nil)
+	if err != nil {
+		return nil, err
 	}
 	for i, k := range keep {
 		if k {
