@@ -7,8 +7,7 @@
 //	go build -o native-bench .
 //	native-bench <subcommand> ...
 //
-// No subcommand works yet: the Parquet sources, the SQL rewriter and the
-// subcommands arrive in later steps.
+//	native-bench rewrite -lib arrow|pqgo -rows N <in> <out>
 package main
 
 import (
@@ -18,10 +17,15 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: native-bench <subcommand> ... (none yet)")
+		fmt.Fprintln(os.Stderr, "usage: native-bench rewrite -lib arrow|pqgo -rows N <in> <out>")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
+	case "rewrite":
+		if err := rewriteCmd(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "native-bench:", err)
+			os.Exit(1)
+		}
 	default:
 		fmt.Fprintf(os.Stderr, "native-bench: unknown subcommand %q\n", os.Args[1])
 		os.Exit(2)
