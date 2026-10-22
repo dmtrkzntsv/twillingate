@@ -470,7 +470,7 @@ larger than DuckDB's own 47 MB.
   "1d" group holds about 2–3 days of one family and a "4d" group about
   8–10. The 1M layout comparison is unreliable (load, below), so the
   size is chosen in step 1b, with mid-month ranges.
-- **30-day targets, uncached: missed at both ends.** The target is "tens
+- **30-day targets, uncached: missed at both ends (step 1b: met at 1M, see below).** The target is "tens
   of ms" at 100k and under 0.5 s at 1M, for a whole dashboard. At 100k
   the trio alone (3 of ~20 widgets) takes 143–218 ms, so "tens of ms" is
   missed and "under 0.5 s" for a full dashboard is not established;
@@ -478,7 +478,7 @@ larger than DuckDB's own 47 MB.
   against 0.5 s (attribute values 0.76 s of it): missed. That best came
   from the quietest cells (load 2.4–2.6), so the miss is robust to the
   load.
-- **1-year target: missed by far, and slower than today.** At 1M the
+- **1-year target: missed by far, and slower than today (step 1b: still missed at 3.27 s warm, see below).** At 1M the
   trio takes 12–26 s (first runs; best 13–26 s) with a peak up to 541
   MB, against 10.9 s for the whole Views dashboard and 5.3 s for Product
   in DuckDB. The queries measured are a deliberately naive first cut
@@ -541,8 +541,8 @@ trio 531 ms / 4,591 ms at 1M.
 | 365 d | 3,906 (944) | 3,274 (570) | 3,258 (459) |
 
 **Parquet library at 1M.** Files of 1-day groups, written by each library
-and read by each (best wall; exact attribute values 5,243 ms against
-5,966 ms at 365 d is the smallest gap):
+and read by each (best wall; the smallest ratio is exact attribute values
+at 30 d, 595 against 539 ms, 1.10x):
 
 | | parquet-go reads | arrow-go reads |
 |---|---|---|
@@ -584,11 +584,13 @@ source).
   against 191 ms; 30 d mid-month: 539 against 431 ms). At 100k 4 d wins
   the long ranges (365 d: 459 against 570 ms; 30 d: 81 against 94 ms) and
   loses the short ones (1 d: 34 against 32 ms; 7 d: 62 against 54 ms),
-  by less in absolute terms than at 1M. Writer peak at 1M is 203 MB for
+  by less in absolute terms than at 1M. The engine is sized for 1M,
+  where 1 d wins or ties on every range, so it overrides the 100k result.
+  Writer peak at 1M is 203 MB for
   1 d against 322 MB for 4 d. Files sort by family first, so a group
   holds about 2-3 days of one family.
 - **Library at 1M: parquet-go confirmed.** It reads 1.3 to 1.6x faster
-  than arrow-go on the trio queries at 1M (30 d trio 402 against 545 ms;
+  than arrow-go on the trio queries at 1M (1.2 to 1.6x; 30 d trio 402 against 545 ms;
   365 d 3,274 against 4,772 ms), down to 1.1x on exact attribute values;
   it writes the year in 48.1 s against 60.3 s with a 203 MB writer peak
   against 268 MB, and adds 5.7 MB to the binary against 20.6 MB (step 1).
@@ -601,7 +603,7 @@ source).
   borderline. The trio is 3 of the ~20 widgets of a Views dashboard, so
   neither verdict establishes a full dashboard.
 - **1-year target at 1M: missed.** The trio takes 3,274 ms warm (peak
-  186 MB) against under 1 s warm; the cold target (under ~3 s) is
+  186 MB, over the ~150 MB budget) against under 1 s warm; the cold target (under ~3 s) is
   missed too, since even the warm figure is above it. Nothing was
   measured cold. At 100k the trio takes 570 ms.
 - **Cache: yes, step 5 proceeds** (owner's rule: none unless the results
