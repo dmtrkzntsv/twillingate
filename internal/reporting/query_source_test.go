@@ -159,11 +159,35 @@ func TestQuerySourceValidate(t *testing.T) {
 			"bar_list needs label (text); columns are country, actors"},
 		{"remote table", widget("table", `{"mode":"remote"}`, `{"query":`+stat+`}`),
 			`a remote table takes sql only; a query source needs props.mode "local"`},
+		{"text into number", widget("stat", "{}", `{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"count"}],"dimensions":["path"]},"rename":{"path":"value","count":"previous"}}`),
+			"stat.value: the query's column is text, not number"},
+		{"attribute into number", widget("stat", "{}", `{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"count","as":"value"}],"dimensions":["attr_n"]},"rename":{"attr_n":"previous"}}`),
+			"stat.previous: the query's column is text, not number"},
+		{"other day into day", widget("stat", "{}", `{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"count","as":"value"}],"dimensions":["day"],"other":true},"rename":{"day":"x"}}`),
+			"stat.x: the query's column is text, not day"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			wantRefusal(t, svc.validateWidget(context.Background(), comps, c.w), store.ErrInvalid, c.msg)
 		})
+	}
+
+	// Columns whose types fit: day into a day, a number dimension and a
+	// metric into numbers, a stat's previous_ column into a number.
+	for _, content := range []string{
+		`{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"count","as":"value"}],"dimensions":["day"]},"rename":{"day":"x"}}`,
+		`{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"count","as":"previous"}],"dimensions":["display_width"]},"rename":{"display_width":"value"}}`,
+		`{"query":{"kind":"stat","table":"views","metrics":[{"op":"actors","as":"value"}],"compare":"previous"},"rename":{"previous_value":"previous"}}`,
+		`{"query":{"kind":"trend","table":"views","metrics":[{"op":"count","as":"value"}]},"rename":{"day":"x"}}`,
+	} {
+		if err := svc.validateWidget(context.Background(), comps, widget("stat", "{}", content)); err != nil {
+			t.Errorf("%s: %v", content, err)
+		}
+	}
+	// bar_list's label is text, which takes any column.
+	if err := svc.validateWidget(context.Background(), comps, widget("bar_list", "{}",
+		`{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"count","as":"value"}],"dimensions":["day"]},"rename":{"day":"label"}}`)); err != nil {
+		t.Errorf("day into text: %v", err)
 	}
 
 	// A local table takes whatever the query returns.

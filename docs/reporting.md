@@ -77,8 +77,14 @@ breakdown), and `rename`, optional, maps its output columns to the names the
 component reads (`{"day": "x", "previous_value": "previous"}`). A stat returns
 its metrics, then `previous_<name>` each with `compare: previous`; a trend
 `day`, `series` when split, and its metric; a breakdown its dimensions, then
-its metrics. Every component that takes `sql` takes `query`, except a remote
-`table` (`mode: remote`), which takes `sql` only.
+its metrics. Each column has a type the component's input must take: metrics
+and `previous_<name>` are numbers, `day` is a day, the numeric columns
+(`project_id`, `display_width`, `display_height`, `consent`, `bucket`) are
+numbers, and the rest (a trend's `series`, `attr_<key>`, every other column)
+text, as is every dimension of a breakdown with `other`, whose `Other` row
+reads `Other`. An input that takes text takes any column. Every component that
+takes `sql` takes `query`, except a remote `table` (`mode: remote`), which
+takes `sql` only.
 
 A widget also has a `name`, unique on its dashboard (derived from the title
 when you omit it: lower case, `-` for each run of other characters, `-2`, `-3`,
@@ -98,7 +104,8 @@ when at least one of its live widgets follows it. `get_dashboard` reports
 what to change: the component exists and accepts the source type; the SQL uses
 only the three parameters, runs, and returns the columns the component reads
 (checked on a sample project and range); a structured query is valid and, after
-`rename`, returns those columns (checked without reading data); Markdown is not
+`rename`, returns those columns, of the types they take (checked without
+reading data); Markdown is not
 empty; props match the schema; the size is in range. Refusals come back as tool
 errors over MCP and as `400 invalid`, `404 not_found` or `409 conflict` over
 HTTP. Every write except the viewer's selection is recorded in the audit log
@@ -1248,6 +1255,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | rename: sessions is not a column of the query; its columns are day, actors | `rename` maps the query's own output columns. |
 | rename: a and b are both renamed value | Give each renamed column its own name, and none the query already returns. |
 | a remote table takes sql only; a query source needs props.mode "local" | Drop `mode`, or write the table's source as `sql`. |
+| stat.value: the query's column is text, not number | Rename a column of that type onto the input: a metric for a number, `day` for a day. |
 | sql uses :path; widgets get only :project, :from and :to | Write the value into the SQL, or use one of the three. |
 | line needs y (number); columns are x, visitors | Alias the column to the input: `visitors AS y`. |
 | visitors is not an input of line | Drop the column, or alias it to an input; only `table` takes any columns. |

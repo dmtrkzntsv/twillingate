@@ -134,3 +134,29 @@ func TestColumns(t *testing.T) {
 		}
 	}
 }
+
+func TestColumnTypes(t *testing.T) {
+	cases := []struct {
+		name string
+		q    Query
+		want []string
+	}{
+		{"stat compare", Query{Kind: "stat", Metrics: []Metric{{Op: "count"}, {Op: "actors"}}, Compare: "previous"},
+			[]string{"number", "number", "number", "number"}},
+		{"trend", Query{Kind: "trend", Metrics: count()}, []string{"day", "number"}},
+		{"trend series", Query{Kind: "trend", Metrics: count(), Series: "display_width"}, []string{"day", "text", "number"}},
+		{"breakdown", Query{Kind: "breakdown", Metrics: count(),
+			Dimensions: []string{"day", "path", "attr_plan", "project_id", "display_width", "display_height", "consent", "bucket"}},
+			[]string{"day", "text", "text", "number", "number", "number", "number", "number", "number"}},
+		{"breakdown other", Query{Kind: "breakdown", Metrics: count(), Dimensions: []string{"day", "consent"}, Other: true},
+			[]string{"text", "text", "number"}},
+	}
+	for _, c := range cases {
+		if got := c.q.ColumnTypes(); !slices.Equal(got, c.want) {
+			t.Errorf("%s: ColumnTypes() = %v, want %v", c.name, got, c.want)
+		}
+		if n := len(c.q.Columns()); n != len(c.want) {
+			t.Errorf("%s: %d columns, %d types", c.name, n, len(c.want))
+		}
+	}
+}

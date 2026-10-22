@@ -134,14 +134,18 @@ func queryErr(err error) error {
 	return err
 }
 
-// Validate checks content and that its columns, renamed, fit c. It reads
-// no data: the columns come from the query alone.
+// Validate checks content and that its columns, renamed, fit c: their
+// names, and their types against the ones c declares. It reads no data:
+// the columns and their types come from the query alone.
 func (*querySource) Validate(_ context.Context, content string, c Component) error {
-	_, cols, err := parseQuery(content)
+	q, cols, err := parseQuery(content)
 	if err != nil {
 		return err
 	}
-	return c.checkColumns(cols)
+	if err := c.checkColumns(cols); err != nil {
+		return err
+	}
+	return c.checkColumnTypes(cols, q.ColumnTypes())
 }
 
 func (s *querySource) Load(ctx context.Context, content string, p Params) (any, error) {

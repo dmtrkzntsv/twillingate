@@ -89,6 +89,53 @@ func (q Query) Columns() []string {
 	return cols
 }
 
+// ColumnTypes are the types of Columns' columns, in the same order, read
+// from q alone: number, day or text, the type every value of the column
+// has (an empty value, NULL, aside). Metrics, a stat's previous_<name>
+// and the numeric columns (project_id, display_width, display_height,
+// consent, bucket) are number; day is day; a trend's series and every
+// other column, attr_<key> included, text. A breakdown with other has
+// its dimensions text, its Other row reading "Other" in each. It does
+// not validate q.
+func (q Query) ColumnTypes() []string {
+	var types []string
+	switch q.Kind {
+	case "trend":
+		types = append(types, "day")
+		if q.Series != "" {
+			types = append(types, "text")
+		}
+	case "breakdown":
+		for _, d := range q.Dimensions {
+			if q.Other {
+				types = append(types, "text")
+			} else {
+				types = append(types, columnType(d))
+			}
+		}
+	}
+	for range q.Metrics {
+		types = append(types, "number")
+	}
+	if q.Kind == "stat" && q.Compare == "previous" {
+		for range q.Metrics {
+			types = append(types, "number")
+		}
+	}
+	return types
+}
+
+// columnType is a dimension column's type, as ColumnTypes names it.
+func columnType(column string) string {
+	switch {
+	case column == "day":
+		return "day"
+	case column == "bucket", plainColumns[column]:
+		return "number"
+	}
+	return "text"
+}
+
 // maxLimit bounds a breakdown's limit, maxSeries a trend's series_limit.
 const (
 	maxLimit  = 1000
