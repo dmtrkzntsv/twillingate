@@ -342,6 +342,10 @@ file layout and table names are part of the versioned contract.
    country, DAU, attribute values) with no cache. This settles the
    library, the row-group size, and whether both ends of the envelope meet
    the 30-day targets uncached.
+1b. Optimise the native queries (count by dictionary index into arrays,
+   sort-based distinct instead of hash sets, parallel row groups, early
+   family/day pruning by page index) and re-measure 1M on a quiet host;
+   decide the cache and the row-group size from those numbers.
 2. The engine and the language for `stat`, `trend`, `breakdown`;
    `query` over MCP.
 3. `percentiles`, `retention`, `attributes`; rewrite the system widgets;
@@ -359,12 +363,84 @@ file layout and table names are part of the versioned contract.
 Each step is a PR stacked on the previous one and released on its own;
 until step 6, SQL widgets and the daily pass may still use DuckDB.
 
+## Measurements (step 1)
+
+Data and runs: `scripts/native-bench` (full tables in its `RESULTS.md`).
+Host 4 CPUs, 30 GB; a year of months per volume, project 1; DuckDB at 2
+threads, every native run at GOMAXPROCS=2. "Best" is warm (best of runs 2
+and 3, OS cache warm). Caveats: the data is the synthetic generator's, with
+fixed vocabularies (attribute values return 20,367 rows at both ranges), so
+cardinality and skew differ from real data; some Product widgets return 0
+rows in the baseline (app versions); the 1M native runs were disturbed by
+another process (load average up to 8.69 on 4 CPUs).
+
+**Today's DuckDB, whole dashboards** (best of 3, one widget at a time;
+child peak RSS):
+
+| Dashboard | Range | 100k | 1M | Peak RSS at 1M |
+|---|---|---|---|---|
+| Views (20 widgets) | 30 d | 550 ms | 1.11 s | 171 MB |
+| Views | 365 d | 1.48 s | 10.9 s | 853 MB |
+| Product (10) | 30 d | 306 ms | 1.60 s | 729 MB |
+| Product | 365 d | 608 ms | 5.28 s | 812 MB |
+
+**Native, three queries one after another** (visitors by country, DAU,
+attribute values; no cache). The spread is over the layouts and the two
+libraries as source; peak is the largest of the three.
+
+| Volume | Range | Sum of best walls | Peak RSS |
+|---|---|---|---|
+| 100k | 30 d | 143–218 ms (attribute values ~100 ms of it) | 66–137 MB |
+| 100k | 365 d | 1.05–1.65 s | 66–137 MB |
+| 1M | 30 d | 1.09–2.79 s (best: attribute values 0.76 s) | 401–541 MB |
+| 1M | 365 d | 12–26 s | up to 541 MB |
+
+**Parquet libraries.**
+
+| | arrow-go | parquet-go |
+|---|---|---|
+| Read, 100k, 30 d, same layout (sum of best walls) | 174–200 ms | 143–152 ms |
+| Read, 100k, 365 d | 1.41–1.61 s | 1.05–1.20 s |
+| Read peak RSS, 100k | 73–75 MB | 66 MB |
+| Write a 100k month, max wall / writer peak RSS | 629–780 ms / 147–167 MB | 451–491 ms / 63–77 MB |
+| Write a 1M month at 122,880-row groups, writer peak RSS | 470 MB | 344 MB |
+| Stripped binary over an empty main | +20.6 MB | +5.7 MB |
+
+Output size is within 6% (100k year: 55–57 MB arrow-go, 53–56 MB
+parquet-go, DuckDB's own 47 MB).
+
+**Decisions** (the numbers that decided them):
+
+- **Parquet library: `parquet-go/parquet-go`.** Faster and leaner reads
+  than arrow-go (the 100k comparison is clean: 143–152 ms against
+  174–200 ms for the 30-day trio, 66 against 73–75 MB), a lower writer
+  peak on a real 1M month (344 MB against 470 MB), and +5.7 MB of binary
+  against +20.6 MB.
+- **Row-group size: provisional.** At 100k, groups of 4 days (13,333
+  rows) beat groups of 1 day (3,333 rows) by about 10% on the 365-day
+  trio (1,045 against 1,197 ms with parquet-go), make files 6% smaller
+  and cost a little more writer memory (77 against 63 MB); at 30 days
+  the two are level (143 against 150 ms). The 1M layout comparison is
+  unreliable (load, above), so the size is re-measured in step 1b.
+- **30-day targets, uncached: partly missed.** At 100k the trio takes
+  143–218 ms: under 0.5 s, but not "tens of ms"; attribute values
+  dominates at ~100 ms. At 1M the best is 1.09 s against 0.5 s (attribute
+  values 0.76 s of it): missed.
+- **1-year target: missed by far, and slower than today.** At 1M the trio
+  takes 12–26 s with a peak up to 541 MB, against 10.9 s for the whole
+  Views dashboard and 5.3 s for Product in DuckDB. The queries measured
+  are a deliberately naive first cut (exact sets in Go maps, one row group
+  per batch, one thread per query), so these numbers bound nothing about
+  an optimised engine.
+- **Cache: not decided.** The rule is no cache unless it shows great
+  results; that waits for step 1b.
+
 ## Left to the builder
 
 - Field names and JSON schema of the language; the exact metric and
   dimension lists beyond what the built-ins need.
-- The Parquet library (by measurement), row-group size, HLL precision and
-  the exact/approximate threshold.
+- Row-group size (step 1b), HLL precision and the exact/approximate
+  threshold.
 - Cache directory default, size cap, eviction details, key format.
 - Whether the fixed analytics tools survive as presets.
 - Names of new environment variables.
