@@ -7,32 +7,38 @@ import (
 	"testing"
 )
 
-// memSource serves hand-built batches. It honours the Source contract's
-// "attr_*" pattern by keeping every attr_ column of a batch, and keeps only
-// the requested columns.
+// memSource serves hand-built batches, one group each. It honours the
+// Source contract's "attr_*" pattern by keeping every attr_ column of a
+// batch, and keeps only the requested columns.
 type memSource struct{ batches []*Batch }
 
 func (m memSource) Name() string { return "mem" }
 
-func (m memSource) Scan(_ []string, cols []string, _ string, _, _ int64, fn func(*Batch) error) error {
-	for _, b := range m.batches {
-		out := &Batch{N: b.N, Cols: map[string]*Column{}}
-		for _, want := range cols {
-			if prefix, ok := strings.CutSuffix(want, "*"); ok {
-				for name, c := range b.Cols {
-					if strings.HasPrefix(name, prefix) {
-						out.Cols[name] = c
-					}
+func (m memSource) Groups(_ []string, _ string, _, _ int64) ([]Group, error) {
+	gs := make([]Group, len(m.batches))
+	for i, b := range m.batches {
+		gs[i] = Group{File: "mem", Index: i, Rows: int64(b.N), All: true}
+	}
+	return gs, nil
+}
+
+func (m memSource) NewGroupReader() *GroupReader { return &GroupReader{} }
+
+func (m memSource) ReadGroup(_ *GroupReader, g Group, cols []string, _ string, _, _ int64) (*Batch, error) {
+	b := m.batches[g.Index]
+	out := &Batch{N: b.N, Cols: map[string]*Column{}}
+	for _, want := range cols {
+		if prefix, ok := strings.CutSuffix(want, "*"); ok {
+			for name, c := range b.Cols {
+				if strings.HasPrefix(name, prefix) {
+					out.Cols[name] = c
 				}
-			} else if c, ok := b.Cols[want]; ok {
-				out.Cols[want] = c
 			}
-		}
-		if err := fn(out); err != nil {
-			return err
+		} else if c, ok := b.Cols[want]; ok {
+			out.Cols[want] = c
 		}
 	}
-	return nil
+	return out, nil
 }
 
 // strCol dictionary-encodes values; "\x00" is null.

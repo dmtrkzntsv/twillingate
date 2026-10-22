@@ -61,7 +61,7 @@ func Countries(src Source, files []string, from, to int64) ([]Row, error) {
 		actor   int32
 	}
 	seen := map[key]struct{}{}
-	err := src.Scan(files, []string{"day", "country", "actor_id"}, "views", from, to, func(b *Batch) error {
+	err := Scan(src, files, []string{"day", "country", "actor_id"}, "views", from, to, func(b *Batch) error {
 		day, country, actor := b.Cols["day"], b.Cols["country"], b.Cols["actor_id"]
 		cm, am := in.remap(country.Dict), in.remap(actor.Dict)
 		for i := 0; i < b.N; i++ {
@@ -122,7 +122,7 @@ func DAU(src Source, files []string, from, to int64) ([]Row, error) {
 		actor int32
 	}
 	seen := map[key]struct{}{}
-	err := src.Scan(files, []string{"day", "actor_id"}, "product", from, to, func(b *Batch) error {
+	err := Scan(src, files, []string{"day", "actor_id"}, "product", from, to, func(b *Batch) error {
 		day, actor := b.Cols["day"], b.Cols["actor_id"]
 		am := in.remap(actor.Dict)
 		for i := 0; i < b.N; i++ {
@@ -177,7 +177,7 @@ func AttributeValues(src Source, files []string, from, to int64) ([]Row, error) 
 		groups map[int32]struct{}
 	}
 	aggs := map[key]*agg{}
-	err := src.Scan(files, []string{AttrCols, "actor_id", "group_id"}, "product", from, to, func(b *Batch) error {
+	err := Scan(src, files, []string{AttrCols, "actor_id", "group_id"}, "product", from, to, func(b *Batch) error {
 		actor, group := b.Cols["actor_id"], b.Cols["group_id"]
 		am := in.remap(actor.Dict)
 		var gm []int32
