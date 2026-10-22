@@ -35,6 +35,7 @@ var rank = map[string]int{
 	"internal/geo":                 0,
 	"internal/shared/civil":        0,
 	"internal/shared/enginesql":    0,
+	"internal/shared/hll":          0,
 	"internal/shared/readsql":      0,
 	"internal/shared/sortkey":      0,
 	"internal/shared/version":      0,
