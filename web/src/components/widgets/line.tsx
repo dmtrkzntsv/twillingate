@@ -18,7 +18,7 @@ interface LineProps {
 export const contract: Contract = {
   description:
     'A trend over time or category, one line per `series` value; best for a continuous metric like visitors per day. Keep it to 5 lines, one per chart color: rank the series in SQL and keep the top ones.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

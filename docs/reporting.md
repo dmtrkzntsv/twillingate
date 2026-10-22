@@ -65,10 +65,20 @@ Retention · Web Vitals · Measures.
 
 - the **component** is how it is drawn (`line`, `stat`, `table`, …; see
   [Components](#components));
-- the **source** is `{"type": "sql" | "md", "content": "…"}`: a read-only query
-  in DuckDB SQL over the event files' tables (see [Tables](#tables)), or
-  Markdown text. The component says which source types it accepts and which
-  columns its query must return.
+- the **source** is `{"type": "md" | "query" | "sql", "content": "…"}`: a
+  read-only query in DuckDB SQL over the event files' tables (`sql`, see
+  [Tables](#tables)), a structured query as JSON (`query`, see below), or
+  Markdown text (`md`). The component says which source types it accepts and
+  which columns its query must return.
+
+A `query` source's content is `{"query": {…}, "rename": {…}}`: `query` is a
+[structured query](twillingate.md#structured-queries) (a stat, a trend or a
+breakdown), and `rename`, optional, maps its output columns to the names the
+component reads (`{"day": "x", "previous_value": "previous"}`). A stat returns
+its metrics, then `previous_<name>` each with `compare: previous`; a trend
+`day`, `series` when split, and its metric; a breakdown its dimensions, then
+its metrics. Every component that takes `sql` takes `query`, except a remote
+`table` (`mode: remote`), which takes `sql` only.
 
 A widget also has a `name`, unique on its dashboard (derived from the title
 when you omit it: lower case, `-` for each run of other characters, `-2`, `-3`,
@@ -80,14 +90,16 @@ checked against its props schema), and a `width` and `height` (see
 **A widget's SQL decides what it follows.** A query that uses `:project`
 follows the page's project switcher; one that uses `:from` or `:to` follows the
 range switcher; one that uses neither is fixed, and shows whatever its SQL
-names. A dashboard shows a switcher only when at least one of its live widgets
+names. A `query` source always follows both. A dashboard shows a switcher only when at least one of its live widgets
 follows it. `get_dashboard` reports `follows_project` and `follows_range` for
 the dashboard and for each widget.
 
 **Every write validates the whole result** and refuses with a message that
 says what to change: the component exists and accepts the source type; the SQL
 uses only the three parameters, runs, and returns the columns the component
-reads (checked on a sample project and range); Markdown is not empty; props
+reads (checked on a sample project and range); a structured query is valid and,
+after `rename`, returns those columns (checked without reading data); Markdown
+is not empty; props
 match the schema; the size is in range. Refusals come back as tool errors over
 MCP and as `400 invalid`, `404 not_found` or `409 conflict` over HTTP. Every
 write except the viewer's selection is recorded in the audit log with the edge
@@ -106,8 +118,8 @@ component:
 
 - `project_id` appears only for a widget that follows the project, `from` and
   `to` only for one that follows the range; both echo the values applied.
-- `data` is `{columns, rows, truncated}` for `sql` (every value a string, as
-  `query` returns them) and `{markdown}` for `md`.
+- `data` is `{columns, rows, truncated}` for `sql` and `query` (every value a
+  string, as the `query` tool returns them) and `{markdown}` for `md`.
 - `truncated: true` means the result hit `CONSOLE_QUERY_ROWS_MAX`: group the query
   or narrow it.
 - `page` appears only for a remote table: `{offset, limit, matched, total,
@@ -119,7 +131,7 @@ component:
   refusal (never data) ending "if this started after an update, see the
   release notes at https://github.com/dmtrkzntsv/twillingate/releases".
 
-`sql` results are cached per widget and per value it follows (for a remote
+`sql` and `query` results are cached per widget and per value it follows (for a remote
 table, per page: its filters, sort, distinct, offset and limit). An ordinary load
 reuses a result up to `REPORTING_CACHE_MAX_AGE` old (default `15m`); `fresh=true`
 reuses one only up to `REPORTING_REFRESH_MAX_AGE` old (default `1m`), and
@@ -435,23 +447,23 @@ appears. `width` and `height` default to the component's size below.
 
 | Component | Accepts | Inputs: the columns the query returns | Props | Default width × height |
 | --- | --- | --- | --- | --- |
-| `stat` | `sql` | `value` number; `previous` number, optional (shows the change); `x` day, optional (a sparkline under the number, which becomes the series' `aggregate`) | `format`, `aggregate` (`sum`, `last`, `avg`) | 3 × 3 |
-| `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value; keep it to 5 lines, one per chart color, ranking the rest out in SQL) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
-| `area` | `sql` | as `line` | `format`, `curve`, `stacked` | 6 × 8 |
-| `bar` | `sql` | `x` text or day; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
-| `bar_list` | `sql` | `label` text; `value` number (a ranked list with an inline bar) | `format` | 6 × 8 |
-| `pie` | `sql` | `label` text; `value` number; keep it to 5 slices, one per chart color, and group the rest as 'Other' in SQL | `format`, `donut` | 4 × 8 |
-| `radar` | `sql` | `axis` text; `value` number; `series` text, optional | `format` | 4 × 8 |
-| `radial` | `sql` | `label` text; `value` number; `max` number, optional (a ring toward a target) | `format` | 4 × 8 |
-| `scatter` | `sql` | `x` number; `y` number; `series` text, optional; `size` number, optional | `format` | 6 × 8 |
-| `funnel` | `sql` | `step` text; `value` number, in query order | `format` | 6 × 8 |
-| `combo` | `sql` | `x` day or text; `bar` number; `line` number (two units on two axes) | `bar_format`, `line_format` | 6 × 8 |
-| `heatmap` | `sql` | `x` text or day; `y` text or day; `value` number (a retention grid: cohort day × days since) | `format`, `labels` (print values in cells) | 6 × 10 |
-| `calendar` | `sql` | `day` day; `value` number (a year of days) | `format` | 12 × 4 |
-| `map` | `sql` | `country` text, ISO alpha-2; `value` number (unknown codes are listed under the map) | `format` | 6 × 8 |
-| `treemap` | `sql` | `label` text; `value` number; `parent` text, optional (two levels, e.g. browser → version) | `format` | 6 × 8 |
-| `sankey` | `sql` | `source` text; `target` text; `value` number (one row per flow; a name is one node in whichever column it appears, so a page that is a target and a source joins two stages; a row that would loop back is left out and listed under the chart) | `format` | 12 × 8 |
-| `table` | `sql` | any columns, shown in query order until a viewer sorts by a header or filters by a column | `formats` (column → format), `colorscale` (columns shaded by value), `mode` (`local`, the default, filters the loaded rows; `remote` filters, sorts and pages the whole result on the server) | 6 × 10 |
+| `stat` | `sql`, `query` | `value` number; `previous` number, optional (shows the change); `x` day, optional (a sparkline under the number, which becomes the series' `aggregate`) | `format`, `aggregate` (`sum`, `last`, `avg`) | 3 × 3 |
+| `line` | `sql`, `query` | `x` day or text; `y` number; `series` text, optional (one line per value; keep it to 5 lines, one per chart color, ranking the rest out in SQL) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
+| `area` | `sql`, `query` | as `line` | `format`, `curve`, `stacked` | 6 × 8 |
+| `bar` | `sql`, `query` | `x` text or day; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
+| `bar_list` | `sql`, `query` | `label` text; `value` number (a ranked list with an inline bar) | `format` | 6 × 8 |
+| `pie` | `sql`, `query` | `label` text; `value` number; keep it to 5 slices, one per chart color, and group the rest as 'Other' in SQL | `format`, `donut` | 4 × 8 |
+| `radar` | `sql`, `query` | `axis` text; `value` number; `series` text, optional | `format` | 4 × 8 |
+| `radial` | `sql`, `query` | `label` text; `value` number; `max` number, optional (a ring toward a target) | `format` | 4 × 8 |
+| `scatter` | `sql`, `query` | `x` number; `y` number; `series` text, optional; `size` number, optional | `format` | 6 × 8 |
+| `funnel` | `sql`, `query` | `step` text; `value` number, in query order | `format` | 6 × 8 |
+| `combo` | `sql`, `query` | `x` day or text; `bar` number; `line` number (two units on two axes) | `bar_format`, `line_format` | 6 × 8 |
+| `heatmap` | `sql`, `query` | `x` text or day; `y` text or day; `value` number (a retention grid: cohort day × days since) | `format`, `labels` (print values in cells) | 6 × 10 |
+| `calendar` | `sql`, `query` | `day` day; `value` number (a year of days) | `format` | 12 × 4 |
+| `map` | `sql`, `query` | `country` text, ISO alpha-2; `value` number (unknown codes are listed under the map) | `format` | 6 × 8 |
+| `treemap` | `sql`, `query` | `label` text; `value` number; `parent` text, optional (two levels, e.g. browser → version) | `format` | 6 × 8 |
+| `sankey` | `sql`, `query` | `source` text; `target` text; `value` number (one row per flow; a name is one node in whichever column it appears, so a page that is a target and a source joins two stages; a row that would loop back is left out and listed under the chart) | `format` | 12 × 8 |
+| `table` | `sql`, `query` (local mode only) | any columns, shown in query order until a viewer sorts by a header or filters by a column | `formats` (column → format), `colorscale` (columns shaded by value), `mode` (`local`, the default, filters the loaded rows; `remote` filters, sorts and pages the whole result on the server) | 6 × 10 |
 | `markdown` | `md` | none | none | 12 × 2 |
 
 `list_components` is the authority: it returns each component's props as a
@@ -480,9 +492,10 @@ that comes back in a later release does not reattach itself.
 
 ## Examples
 
-One widget per component, each ready for `add_widget`: the component, the
-source (the block below, as `{"type": "sql", "content": "…"}`, or `md` for
-the Markdown one) and the props shown. Unless the title says otherwise, each
+At least one widget per component, each ready for `add_widget`: the
+component, the source (the block below, as `{"type": "sql", "content": "…"}`;
+`md` for the Markdown one; `query` for a JSON block, its text the content) and
+the props shown. Unless the title says otherwise, each
 follows both switchers. [Percentiles from measures](#percentiles-from-measures)
 closes the section with the one query pattern measures need.
 
@@ -500,6 +513,26 @@ ORDER BY day
 
 Props: `{"format": "number", "aggregate": "sum"}`
 
+### `stat` as a structured query
+
+Views in the range against the period before, as a `query` source: the
+stat returns `value` and `previous_value`, and `rename` gives the second
+the name the component reads:
+
+```json
+{
+  "query": {
+    "kind": "stat",
+    "table": "views",
+    "metrics": [{"op": "count", "as": "value"}],
+    "compare": "previous"
+  },
+  "rename": {"previous_value": "previous"}
+}
+```
+
+Props: `{"format": "number"}`
+
 ### `line`
 
 Visitors per day, one line per kind (`web`, `app`, …):
@@ -510,6 +543,25 @@ FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to
 GROUP BY day, kind
 ORDER BY day
+```
+
+Props: `{"curve": "monotone"}`
+
+### `line` as a structured query
+
+The same chart as a `query` source: a trend returns `day`, `series` and
+its metric, renamed to the inputs `line` reads:
+
+```json
+{
+  "query": {
+    "kind": "trend",
+    "table": "views",
+    "metrics": [{"op": "actors"}],
+    "series": "kind"
+  },
+  "rename": {"day": "x", "actors": "y"}
+}
 ```
 
 Props: `{"curve": "monotone"}`
@@ -554,6 +606,27 @@ WHERE project_id = :project AND day BETWEEN :from AND :to AND path IS NOT NULL
 GROUP BY path
 ORDER BY value DESC
 LIMIT 10
+```
+
+Props: `{"format": "number"}`
+
+### `bar_list` as a structured query
+
+The same list as a `query` source: a breakdown returns its dimension and
+its metric, renamed to `label` and `value`:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [{"op": "count"}],
+    "dimensions": ["path"],
+    "where": [{"column": "path", "op": "is_set"}],
+    "limit": 10
+  },
+  "rename": {"path": "label", "count": "value"}
+}
 ```
 
 Props: `{"format": "number"}`
@@ -1165,8 +1238,13 @@ widget's name (`widget visitors: …`), and nothing is created.
 | Refusal | Fix |
 | --- | --- |
 | component gauge does not exist; list_components names the ones there are | Use a name from `list_components` or `reporting_guide`. |
-| line does not accept md; it accepts sql | `markdown` takes `md`; every other component takes `sql`. |
-| source type csv does not exist; there are md and sql | Set `source.type` to `sql` or `md`. |
+| line does not accept md; it accepts sql and query | `markdown` takes `md`; every other component takes `sql` and `query`. |
+| source type csv does not exist; there are md, query and sql | Set `source.type` to `sql`, `query` or `md`. |
+| query source: json: unknown field "metric" | A `query` source's content is `{"query": {…}, "rename": {…}}`, each field as [structured queries](twillingate.md#structured-queries) spells it. |
+| query.dimensions: … | The structured query is malformed; the message names the field. |
+| rename: sessions is not a column of the query; its columns are day, actors | `rename` maps the query's own output columns. |
+| rename: a and b are both renamed value | Give each renamed column its own name, and none the query already returns. |
+| a remote table takes sql only; a query source needs props.mode "local" | Drop `mode`, or write the table's source as `sql`. |
 | sql uses :path; widgets get only :project, :from and :to | Write the value into the SQL, or use one of the three. |
 | line needs y (number); columns are x, visitors | Alias the column to the input: `visitors AS y`. |
 | visitors is not an input of line | Drop the column, or alias it to an input; only `table` takes any columns. |

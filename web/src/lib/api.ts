@@ -96,9 +96,9 @@ export interface DashboardsResponse {
   auto_refresh_seconds?: number
 }
 
-/** A widget's source: SQL for the chart components, Markdown for the markdown one. */
+/** A widget's source: SQL or a structured query (JSON) for the chart components, Markdown for the markdown one. */
 export interface WidgetSource {
-  type: 'sql' | 'md'
+  type: 'sql' | 'query' | 'md'
   content: string
 }
 
@@ -145,7 +145,7 @@ export interface MarkdownData {
 
 export interface WidgetData {
   widget_id: number
-  source_type: 'sql' | 'md'
+  source_type: 'sql' | 'query' | 'md'
   project_id?: number
   from?: string
   to?: string
@@ -542,7 +542,7 @@ export interface FoundSubmission extends Submission {
 export type DeleteSubmissionsBody = { ids: string[] } | { form: string; filters: string } | { search: string }
 
 export interface ComponentsResponse {
-  source_types: ('md' | 'sql')[]
+  source_types: ('md' | 'query' | 'sql')[]
   components: unknown[]
 }
 

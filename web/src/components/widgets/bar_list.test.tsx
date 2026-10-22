@@ -87,7 +87,7 @@ describe('bar_list', () => {
   })
 
   it('exposes its contract', () => {
-    expect(contract.accepts).toEqual(['sql'])
+    expect(contract.accepts).toEqual(['sql', 'query'])
     expect(contract.defaultWidth).toBe(6)
     expect(contract.defaultHeight).toBe(8)
   })

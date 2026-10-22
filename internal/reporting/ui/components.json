@@ -4,7 +4,8 @@
       "name": "area",
       "description": "A trend over time or category, filled under the line; use `stacked` to show parts of a whole changing over time.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -61,7 +62,8 @@
       "name": "bar",
       "description": "Compare values across categories; use `series` for grouped or `stacked` bars, `horizontal` for long labels.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -114,7 +116,8 @@
       "name": "bar_list",
       "description": "A ranked list with an inline bar per row: top pages, referrers, top N by value.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -153,7 +156,8 @@
       "name": "calendar",
       "description": "A year of days shaded by value, GitHub-style: daily active users, events per day.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -192,7 +196,8 @@
       "name": "combo",
       "description": "Two related metrics on two axes over the same `x`, e.g. visitors (bar) and bounce rate (line).",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -245,7 +250,8 @@
       "name": "funnel",
       "description": "A drop-off funnel, steps in query order; a signup or checkout flow.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -284,7 +290,8 @@
       "name": "heatmap",
       "description": "A shaded grid of x by y, e.g. a retention cohort: cohort day x days since.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -334,7 +341,8 @@
       "name": "line",
       "description": "A trend over time or category, one line per `series` value; best for a continuous metric like visitors per day. Keep it to 5 lines, one per chart color: rank the series in SQL and keep the top ones.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -388,7 +396,8 @@
       "name": "map",
       "description": "Countries shaded by value, ISO alpha-2; unmatched codes are listed below the map, not dropped.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -445,7 +454,8 @@
       "name": "pie",
       "description": "Parts of a whole, up to 5 slices, one per chart color; group the rest as 'Other' in SQL.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -487,7 +497,8 @@
       "name": "radar",
       "description": "Compare several axes at once, one shape per `series` value; keep the number of axes small (4–8) for readability.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -533,7 +544,8 @@
       "name": "radial",
       "description": "A single value as a ring toward a `max` target; use for a goal or capacity metric.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -579,7 +591,8 @@
       "name": "sankey",
       "description": "Flows from one stage to the next, ribbons sized by value; referrer -> landing page -> event. A node is its name, so a name in two columns is one node; a row that would loop back is left out.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -624,7 +637,8 @@
       "name": "scatter",
       "description": "Correlation between two numeric measures; `size` adds a third dimension, `series` colors groups.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -677,7 +691,8 @@
       "name": "stat",
       "description": "A single number, optionally compared to a previous period; give `x` for a small trend line under it, and it becomes the series' aggregate.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,
@@ -731,7 +746,8 @@
       "name": "table",
       "description": "Every column the query returns, in order; a raw drill-down table for a card that lists rows. Viewers sort it by clicking a header. Viewers filter it by column; with mode \"remote\" filters, sort and paging run on the server over the whole result.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": true,
@@ -772,7 +788,8 @@
       "name": "treemap",
       "description": "Nested rectangles sized by value; give `parent` for two levels, e.g. browser -> version.",
       "accepts": [
-        "sql"
+        "sql",
+        "query"
       ],
       "inputs": {
         "open": false,

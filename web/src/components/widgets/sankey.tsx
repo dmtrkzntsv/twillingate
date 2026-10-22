@@ -14,7 +14,7 @@ interface SankeyProps {
 export const contract: Contract = {
   description:
     'Flows from one stage to the next, ribbons sized by value; referrer -> landing page -> event. A node is its name, so a name in two columns is one node; a row that would loop back is left out.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

@@ -12,7 +12,7 @@ interface HeatmapProps {
 
 export const contract: Contract = {
   description: 'A shaded grid of x by y, e.g. a retention cohort: cohort day x days since.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

@@ -17,7 +17,7 @@ interface RadialProps {
 
 export const contract: Contract = {
   description: 'A single value as a ring toward a `max` target; use for a goal or capacity metric.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

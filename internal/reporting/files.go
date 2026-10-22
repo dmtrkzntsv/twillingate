@@ -17,9 +17,9 @@ import (
 )
 
 // FileWidget is one widget as the system directory format describes it:
-// a $name.json config (component, title, props) paired with a $name.sql
-// $name.md or $name.query data file, whose extension names the source type, placed
-// by dashboard.json's layout.
+// a $name.json config (component, title, props) paired with a $name.sql,
+// $name.md or $name.query data file, whose extension names the source
+// type, placed by dashboard.json's layout.
 type FileWidget struct {
 	Name, Component, Title string
 	Props                  json.RawMessage
@@ -94,7 +94,7 @@ func decodeStrict(name string, b []byte, v any) error {
 
 // LoadDashboard reads one system directory: dashboard.json plus the
 // $name.json/$name.(sql|md|query) pair for every widget its layout names. Any
-// other file in the directory — an extension other than json/sql/md,
+// other file in the directory — an extension other than json/sql/md/query,
 // most often a typo like visitors.sq — is refused rather than silently
 // ignored. LoadDashboard does not check dashboard.json's id
 // (LoadDashboards does, for a release's system directory; reporting dev

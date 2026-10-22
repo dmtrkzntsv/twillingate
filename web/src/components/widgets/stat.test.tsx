@@ -60,7 +60,7 @@ describe('stat', () => {
   })
 
   it('exposes its contract', () => {
-    expect(contract.accepts).toEqual(['sql'])
+    expect(contract.accepts).toEqual(['sql', 'query'])
     expect(contract.defaultWidth).toBe(3)
     expect(contract.defaultHeight).toBe(3)
   })

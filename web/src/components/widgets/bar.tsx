@@ -19,7 +19,7 @@ interface BarProps {
 export const contract: Contract = {
   description:
     'Compare values across categories; use `series` for grouped or `stacked` bars, `horizontal` for long labels.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

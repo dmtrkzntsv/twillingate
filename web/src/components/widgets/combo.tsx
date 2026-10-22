@@ -15,7 +15,7 @@ interface ComboProps {
 export const contract: Contract = {
   description:
     'Two related metrics on two axes over the same `x`, e.g. visitors (bar) and bounce rate (line).',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

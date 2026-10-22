@@ -10,7 +10,7 @@ interface FunnelProps {
 
 export const contract: Contract = {
   description: 'A drop-off funnel, steps in query order; a signup or checkout flow.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

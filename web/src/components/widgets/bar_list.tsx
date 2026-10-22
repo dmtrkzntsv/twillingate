@@ -11,7 +11,7 @@ interface BarListProps {
 
 export const contract: Contract = {
   description: 'A ranked list with an inline bar per row: top pages, referrers, top N by value.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

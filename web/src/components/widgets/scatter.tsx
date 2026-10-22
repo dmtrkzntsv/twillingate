@@ -16,7 +16,7 @@ interface ScatterProps {
 export const contract: Contract = {
   description:
     'Correlation between two numeric measures; `size` adds a third dimension, `series` colors groups.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

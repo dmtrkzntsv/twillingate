@@ -151,10 +151,12 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 		t.Fatal(err)
 	}
 	files := newHostFiles(t, reg)
+	nat := native.New(native.Options{Dir: files.dir})
 	h := &host{db: db, subs: subs, reg: reg, ops: manage.NewOps(reg, st), files: files.reader,
-		native:    native.New(native.Options{Dir: files.dir}),
+		native:    nat,
 		eventsDir: files.dir, queryTimeout: 5 * time.Second, queryRows: 1000,
-		rep:       reporting.New(st, files, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example"}),
+		rep: reporting.New(st, files, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example",
+			Native: nat, Rules: registryRules(reg)}),
 		ingestURL: "https://collector.test", logger: logger, limits: limitsFrom(&config.Config{})}
 	// host itself carries no path (production has no need for one once
 	// opened); setGuards needs it to reopen with different guards, so the

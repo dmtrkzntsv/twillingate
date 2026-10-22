@@ -11,7 +11,7 @@ export interface InputColumn {
 
 export interface Contract {
   description: string
-  accepts: ('sql' | 'md')[]
+  accepts: ('sql' | 'query' | 'md')[]
   inputs: { open: boolean; columns: InputColumn[] }
   props: Record<string, unknown> // JSON schema, additionalProperties false
   defaultWidth: number

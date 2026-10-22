@@ -17,7 +17,7 @@ interface RadarProps {
 export const contract: Contract = {
   description:
     'Compare several axes at once, one shape per `series` value; keep the number of axes small (4–8) for readability.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

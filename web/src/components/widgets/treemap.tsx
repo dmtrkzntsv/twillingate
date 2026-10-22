@@ -14,7 +14,7 @@ interface TreemapProps {
 
 export const contract: Contract = {
   description: 'Nested rectangles sized by value; give `parent` for two levels, e.g. browser -> version.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

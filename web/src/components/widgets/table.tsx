@@ -24,7 +24,7 @@ interface TableProps {
 export const contract: Contract = {
   description:
     'Every column the query returns, in order; a raw drill-down table for a card that lists rows. Viewers sort it by clicking a header. Viewers filter it by column; with mode "remote" filters, sort and paging run on the server over the whole result.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: { open: true, columns: [] },
   props: {
     type: 'object',

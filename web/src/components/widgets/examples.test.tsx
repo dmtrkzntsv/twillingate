@@ -66,9 +66,9 @@ describe('examples', () => {
       const { contract } = module
       const errors = propErrors(example.props, contract)
       if ('markdown' in example.data) {
-        if (!contract.accepts.includes('md')) errors.push('markdown data for an sql component')
+        if (!contract.accepts.includes('md')) errors.push('markdown data for a component that does not take md')
       } else {
-        if (!contract.accepts.includes('sql')) errors.push('sql data for an md component')
+        if (!contract.accepts.includes('sql')) errors.push('sql data for a component that does not take sql')
         errors.push(...dataErrors(example.data, contract))
       }
       expect(errors, `${example.title}`).toEqual([])

@@ -20,7 +20,7 @@ interface AreaProps {
 export const contract: Contract = {
   description:
     'A trend over time or category, filled under the line; use `stacked` to show parts of a whole changing over time.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

@@ -23,8 +23,8 @@ export function draftOf(widget?: Widget): Draft {
   }
 }
 
-/** The source type a component takes: every component accepts exactly one today. */
-export function sourceTypeOf(component: string | null): 'sql' | 'md' | null {
+/** The source type the editor writes for a component: the first it accepts. */
+export function sourceTypeOf(component: string | null): WidgetSource['type'] | null {
   if (!component) return null
   return widgets[component]?.contract.accepts[0] ?? null
 }

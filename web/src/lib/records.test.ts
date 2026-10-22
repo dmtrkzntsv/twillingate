@@ -4,7 +4,7 @@ import { pivot, toRecords } from './records'
 
 const contract: Contract = {
   description: 'test',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

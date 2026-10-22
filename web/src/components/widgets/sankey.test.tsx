@@ -147,7 +147,7 @@ describe('sankey', () => {
   })
 
   it('exposes its contract', () => {
-    expect(contract.accepts).toEqual(['sql'])
+    expect(contract.accepts).toEqual(['sql', 'query'])
     expect(contract.inputs.columns.map((c) => c.name)).toEqual(['source', 'target', 'value'])
     expect(contract.defaultWidth).toBe(12)
     expect(contract.defaultHeight).toBe(8)

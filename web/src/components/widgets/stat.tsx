@@ -14,7 +14,7 @@ interface StatProps {
 export const contract: Contract = {
   description:
     "A single number, optionally compared to a previous period; give `x` for a small trend line under it, and it becomes the series' aggregate.",
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

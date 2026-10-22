@@ -12,7 +12,7 @@ interface CalendarProps {
 
 export const contract: Contract = {
   description: "A year of days shaded by value, GitHub-style: daily active users, events per day.",
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [
