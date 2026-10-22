@@ -113,8 +113,10 @@ func sortedUnique(s []uint64) []uint64 {
 	return slices.Compact(s)
 }
 
-// mergeKeys concatenates the workers' keys and returns them sorted, each once.
-func mergeKeys(sinks []keySink) []uint64 {
+// mergeKeys concatenates the workers' keys and returns them sorted, each
+// once. It drops each sink's keys once copied, so the workers' arrays can be
+// collected before the final sort.
+func mergeKeys(sinks []*keySink) []uint64 {
 	n := 0
 	for _, s := range sinks {
 		n += len(s.keys)
@@ -122,7 +124,7 @@ func mergeKeys(sinks []keySink) []uint64 {
 	all := make([]uint64, 0, n)
 	for i := range sinks {
 		all = append(all, sinks[i].keys...)
-		sinks[i].keys = nil
+		sinks[i].keys, sinks[i].compacted = nil, 0
 	}
 	return sortedUnique(all)
 }
@@ -172,7 +174,9 @@ func Countries(src Source, files []string, from, to int64) ([]Row, error) {
 				if off < 0 || off > 0xFFFF {
 					return fmt.Errorf("countries: day %d outside [%d, %d]", d, from, to)
 				}
-				buf = append(buf, uint64(off)<<48|uint64(c)<<32|uint64(idAt(actor, s.am, i)))
+				if k := uint64(off)<<48 | uint64(c)<<32 | uint64(idAt(actor, s.am, i)); len(buf) == 0 || buf[len(buf)-1] != k {
+					buf = append(buf, k)
+				}
 			}
 			s.sink.addGroup(buf)
 			s.buf = buf
@@ -181,9 +185,10 @@ func Countries(src Source, files []string, from, to int64) ([]Row, error) {
 	if err != nil {
 		return nil, err
 	}
-	sinks := make([]keySink, len(ws))
+	sinks := make([]*keySink, len(ws))
 	for i := range ws {
-		sinks[i] = ws[i].sink
+		ws[i].buf = nil
+		sinks[i] = &ws[i].sink
 	}
 	keys := mergeKeys(sinks)
 	sums := make([]int64, len(countries.strs))
@@ -251,7 +256,9 @@ func DAU(src Source, files []string, from, to int64) ([]Row, error) {
 				if off < 0 || off > 0xFFFFFFFF {
 					return fmt.Errorf("dau: day %d outside [%d, %d]", d, from, to)
 				}
-				buf = append(buf, uint64(off)<<32|uint64(idAt(actor, s.am, i)))
+				if k := uint64(off)<<32 | uint64(idAt(actor, s.am, i)); len(buf) == 0 || buf[len(buf)-1] != k {
+					buf = append(buf, k)
+				}
 			}
 			s.sink.addGroup(buf)
 			s.buf = buf
@@ -260,9 +267,10 @@ func DAU(src Source, files []string, from, to int64) ([]Row, error) {
 	if err != nil {
 		return nil, err
 	}
-	sinks := make([]keySink, len(ws))
+	sinks := make([]*keySink, len(ws))
 	for i := range ws {
-		sinks[i] = ws[i].sink
+		ws[i].buf = nil
+		sinks[i] = &ws[i].sink
 	}
 	var rows []Row
 	var cur, n int64 = -1, 0
@@ -318,94 +326,126 @@ func (p *pairs) remap(attr uint32, vids []uint32, dst []uint32) ([]uint32, int, 
 	return dst, len(p.list), nil
 }
 
-// AttributeValues is product/attribute-values.sql: per (attribute, value)
-// the events, distinct actors and distinct non-empty groups.
-//
-// Events are summed per pair id; users are distinct pairID<<32 | actor keys
-// (a null actor is one key, so it counts as one user, as the SQL's bool_or
-// does); groups are distinct pairID<<32 | group over non-empty groups.
-func AttributeValues(src Source, files []string, from, to int64) ([]Row, error) {
-	attrs := newInterner("attributes", int(nullID))
-	values := newInterner("values", int(nullID))
-	actors := newInterner("actors", int(nullID))
-	groups := newInterner("groups", int(nullID))
-	pm := &pairs{ids: map[uint64]uint32{}}
+// attrScan is the scan AttributeValues and AttributeValuesApprox share:
+// the interners, the pair ids, and per worker the events per pair. Each
+// query passes per-column code that counts the distinct actors and groups.
+type attrScan struct {
+	attrs, values, actors, groups *interner
+	pm                            *pairs
+	counts                        [][]int64 // per worker, per pair id
+}
+
+// attrCol is one attribute column of a batch, remapped: pids[col.Idx[i]] is
+// row i's pair id; actor and group ids come from idAt with am and gm.
+type attrCol struct {
+	col          *Column
+	pids         []uint32
+	actor, group *Column
+	am, gm       []uint32
+	counts       []int64 // this worker's, long enough for every pair id
+	pairs        int     // pair ids that exist now
+}
+
+// scanAttrs scans the product rows and calls column(w, c) per attribute
+// column of every batch, and batchDone(w) after each batch. With fp, actor
+// and group ids are fingerprints of their strings rather than interned ids,
+// so they do not depend on which worker saw a string first.
+func scanAttrs(src Source, files []string, from, to int64, nw int, fp bool,
+	column func(w int, c *attrCol), batchDone func(w int)) (*attrScan, error) {
+	a := &attrScan{
+		attrs:  newInterner("attributes", int(nullID)),
+		values: newInterner("values", int(nullID)),
+		actors: newInterner("actors", int(nullID)),
+		groups: newInterner("groups", int(nullID)),
+		pm:     &pairs{ids: map[uint64]uint32{}},
+		counts: make([][]int64, nw),
+	}
 	type state struct {
-		counts             []int64
-		users, grps        keySink
-		ubuf, gbuf         []uint64
 		am, gm, vm, pidmap []uint32
 		attr               []uint32
 	}
-	ws := make([]state, workers())
-	err := ScanParallel(src, files, []string{AttrCols, "actor_id", "group_id"}, "product", from, to, len(ws),
+	ws := make([]state, nw)
+	err := ScanParallel(src, files, []string{AttrCols, "actor_id", "group_id"}, "product", from, to, nw,
 		func(w int, b *Batch) error {
 			s := &ws[w]
 			actor, group := b.Cols["actor_id"], b.Cols["group_id"]
 			var err error
-			if s.am, err = actors.remapCol(actor, nil, s.am); err != nil {
-				return err
+			if fp {
+				s.am = fingerprints(actor, nil, s.am)
+				s.gm = fingerprints(group, &noString, s.gm)
+			} else {
+				if s.am, err = a.actors.remapCol(actor, nil, s.am); err != nil {
+					return err
+				}
+				if s.gm, err = a.groups.remapCol(group, &noString, s.gm); err != nil {
+					return err
+				}
 			}
-			if s.gm, err = groups.remapCol(group, &noString, s.gm); err != nil {
-				return err
-			}
-			ubuf, gbuf := s.ubuf[:0], s.gbuf[:0]
 			for name, col := range b.Cols {
 				an, ok := strings.CutPrefix(name, "attr_")
 				if !ok {
 					continue
 				}
-				if s.attr, err = attrs.remap([]string{an}, nil, s.attr); err != nil {
+				if s.attr, err = a.attrs.remap([]string{an}, nil, s.attr); err != nil {
 					return err
 				}
-				if s.vm, err = values.remap(col.Dict, nil, s.vm); err != nil {
+				if s.vm, err = a.values.remap(col.Dict, nil, s.vm); err != nil {
 					return err
 				}
 				var n int
-				if s.pidmap, n, err = pm.remap(s.attr[0], s.vm, s.pidmap); err != nil {
+				if s.pidmap, n, err = a.pm.remap(s.attr[0], s.vm, s.pidmap); err != nil {
 					return err
 				}
-				if len(s.counts) < n {
-					s.counts = append(s.counts, make([]int64, n-len(s.counts))...)
+				if len(a.counts[w]) < n {
+					a.counts[w] = append(a.counts[w], make([]int64, n-len(a.counts[w]))...)
 				}
-				for i := 0; i < b.N; i++ {
-					x := col.Idx[i]
-					if x < 0 {
-						continue
-					}
-					p := uint64(s.pidmap[x])
-					s.counts[p]++
-					ubuf = append(ubuf, p<<32|uint64(idAt(actor, s.am, i)))
-					if g := idAt(group, s.gm, i); g != nullID {
-						gbuf = append(gbuf, p<<32|uint64(g))
-					}
-				}
+				column(w, &attrCol{col: col, pids: s.pidmap, actor: actor, group: group,
+					am: s.am, gm: s.gm, counts: a.counts[w], pairs: n})
 			}
-			s.users.addGroup(ubuf)
-			s.grps.addGroup(gbuf)
-			s.ubuf, s.gbuf = ubuf, gbuf
+			batchDone(w)
 			return nil
 		})
 	if err != nil {
 		return nil, err
 	}
-	n := len(pm.list)
-	counts := make([]int64, n)
-	users := make([]int64, n)
-	grps := make([]int64, n)
-	us := make([]keySink, len(ws))
-	gs := make([]keySink, len(ws))
-	for i := range ws {
-		for p, c := range ws[i].counts {
+	return a, nil
+}
+
+// fingerprints returns per dictionary entry a 32-bit FNV-1a fingerprint of
+// its string, never nullID; an entry equal to skip maps to nullID. Two
+// strings share a fingerprint with odds 2^-32, which a Sketch's error
+// swamps.
+func fingerprints(c *Column, skip *string, dst []uint32) []uint32 {
+	dst = dst[:0]
+	if c == nil {
+		return dst
+	}
+	for _, str := range c.Dict {
+		if skip != nil && str == *skip {
+			dst = append(dst, nullID)
+			continue
+		}
+		h := uint64(14695981039346656037)
+		for i := 0; i < len(str); i++ {
+			h = (h ^ uint64(str[i])) * 1099511628211
+		}
+		f := uint32(h ^ h>>32)
+		if f == nullID {
+			f--
+		}
+		dst = append(dst, f)
+	}
+	return dst
+}
+
+// rows sums the workers' events per pair and returns the query's rows, in
+// its order, with users and groups per pair id.
+func (a *attrScan) rows(users, grps func(p uint32) uint64) []Row {
+	counts := make([]int64, len(a.pm.list))
+	for _, wc := range a.counts {
+		for p, c := range wc {
 			counts[p] += c
 		}
-		us[i], gs[i] = ws[i].users, ws[i].grps
-	}
-	for _, k := range mergeKeys(us) {
-		users[k>>32]++
-	}
-	for _, k := range mergeKeys(gs) {
-		grps[k>>32]++
 	}
 	var ids []uint32
 	for p, c := range counts {
@@ -413,22 +453,127 @@ func AttributeValues(src Source, files []string, from, to int64) ([]Row, error) 
 			ids = append(ids, uint32(p))
 		}
 	}
-	attrOf := func(p uint32) string { return attrs.strs[pm.list[p]>>32] }
-	valueOf := func(p uint32) string { return values.strs[uint32(pm.list[p])] }
+	attrOf := func(p uint32) string { return a.attrs.strs[a.pm.list[p]>>32] }
+	valueOf := func(p uint32) string { return a.values.strs[uint32(a.pm.list[p])] }
 	sort.Slice(ids, func(i, j int) bool {
-		a, b := ids[i], ids[j]
-		if aa, ab := attrOf(a), attrOf(b); aa != ab {
-			return aa < ab
+		x, y := ids[i], ids[j]
+		if ax, ay := attrOf(x), attrOf(y); ax != ay {
+			return ax < ay
 		}
-		if counts[a] != counts[b] {
-			return counts[a] > counts[b]
+		if counts[x] != counts[y] {
+			return counts[x] > counts[y]
 		}
-		return valueOf(a) < valueOf(b)
+		return valueOf(x) < valueOf(y)
 	})
 	rows := make([]Row, len(ids))
 	for i, p := range ids {
 		rows[i] = Row{attrOf(p), valueOf(p), strconv.FormatInt(counts[p], 10),
-			strconv.FormatInt(users[p], 10), strconv.FormatInt(grps[p], 10)}
+			strconv.FormatUint(users(p), 10), strconv.FormatUint(grps(p), 10)}
 	}
-	return rows, nil
+	return rows
+}
+
+// AttributeValues is product/attribute-values.sql: per (attribute, value)
+// the events, distinct actors and distinct non-empty groups.
+//
+// Events are summed per pair id; users are distinct pairID<<32 | actor keys
+// (a null actor is one key, so it counts as one user, as the SQL's bool_or
+// does); groups are distinct pairID<<32 | group over non-empty groups.
+func AttributeValues(src Source, files []string, from, to int64) ([]Row, error) {
+	type state struct {
+		users, grps keySink
+		ubuf, gbuf  []uint64
+	}
+	ws := make([]state, workers())
+	a, err := scanAttrs(src, files, from, to, len(ws), false,
+		func(w int, c *attrCol) {
+			s := &ws[w]
+			ubuf, gbuf := s.ubuf, s.gbuf
+			for i, x := range c.col.Idx {
+				if x < 0 {
+					continue
+				}
+				p := uint64(c.pids[x])
+				c.counts[p]++
+				if k := p<<32 | uint64(idAt(c.actor, c.am, i)); len(ubuf) == 0 || ubuf[len(ubuf)-1] != k {
+					ubuf = append(ubuf, k)
+				}
+				if g := idAt(c.group, c.gm, i); g != nullID {
+					if k := p<<32 | uint64(g); len(gbuf) == 0 || gbuf[len(gbuf)-1] != k {
+						gbuf = append(gbuf, k)
+					}
+				}
+			}
+			s.ubuf, s.gbuf = ubuf, gbuf
+		},
+		func(w int) {
+			s := &ws[w]
+			s.users.addGroup(s.ubuf)
+			s.grps.addGroup(s.gbuf)
+			s.ubuf, s.gbuf = s.ubuf[:0], s.gbuf[:0]
+		})
+	if err != nil {
+		return nil, err
+	}
+	n := len(a.pm.list)
+	users := make([]uint64, n)
+	grps := make([]uint64, n)
+	us := make([]*keySink, len(ws))
+	gs := make([]*keySink, len(ws))
+	for i := range ws {
+		ws[i].ubuf, ws[i].gbuf = nil, nil
+		us[i], gs[i] = &ws[i].users, &ws[i].grps
+	}
+	for _, k := range mergeKeys(us) {
+		users[k>>32]++
+	}
+	for _, k := range mergeKeys(gs) {
+		grps[k>>32]++
+	}
+	return a.rows(func(p uint32) uint64 { return users[p] }, func(p uint32) uint64 { return grps[p] }), nil
+}
+
+// AttributeValuesApprox is AttributeValues with users and groups counted by
+// a Sketch per pair per worker, merged at the end; events stay exact. The
+// sketches take string fingerprints (a null actor is nullID, one user), so
+// the rows are the same on every run and with any number of workers.
+func AttributeValuesApprox(src Source, files []string, from, to int64) ([]Row, error) {
+	type state struct{ users, grps []Sketch }
+	ws := make([]state, workers())
+	a, err := scanAttrs(src, files, from, to, len(ws), true,
+		func(w int, c *attrCol) {
+			s := &ws[w]
+			if len(s.users) < c.pairs {
+				s.users = append(s.users, make([]Sketch, c.pairs-len(s.users))...)
+				s.grps = append(s.grps, make([]Sketch, c.pairs-len(s.grps))...)
+			}
+			for i, x := range c.col.Idx {
+				if x < 0 {
+					continue
+				}
+				p := c.pids[x]
+				c.counts[p]++
+				s.users[p].Add(idAt(c.actor, c.am, i))
+				if g := idAt(c.group, c.gm, i); g != nullID {
+					s.grps[p].Add(g)
+				}
+			}
+		},
+		func(int) {})
+	if err != nil {
+		return nil, err
+	}
+	n := len(a.pm.list)
+	// The first worker's sketches become the totals; the others merge in.
+	users := append(ws[0].users, make([]Sketch, n-len(ws[0].users))...)
+	grps := append(ws[0].grps, make([]Sketch, n-len(ws[0].grps))...)
+	ws[0] = state{}
+	for i := 1; i < len(ws); i++ {
+		for p := range ws[i].users {
+			users[p].Merge(&ws[i].users[p])
+			grps[p].Merge(&ws[i].grps[p])
+		}
+		ws[i] = state{}
+	}
+	return a.rows(func(p uint32) uint64 { return users[p].Count() }, func(p uint32) uint64 { return grps[p].Count() }), nil
 }

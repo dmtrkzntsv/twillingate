@@ -8,7 +8,7 @@
 //	native-bench <subcommand> ...
 //
 //	native-bench rewrite -lib arrow|pqgo -rows N <in> <out>
-//	native-bench query -src arrow|pqgo -q countries|dau|attrvalues -from YYYY-MM-DD -to YYYY-MM-DD <files...>
+//	native-bench query -src arrow|pqgo -q countries|dau|attrvalues|attrvalues-approx -from YYYY-MM-DD -to YYYY-MM-DD <files...>
 //	native-bench matrix [-out RESULTS.md] <root>
 package main
 

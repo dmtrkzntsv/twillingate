@@ -230,7 +230,7 @@ func TestKeySinkCompacts(t *testing.T) {
 	if len(k.keys) > 9 { // 30 without compaction; at most 2x the last compaction plus a group
 		t.Fatalf("%d keys held for 3 distinct: never compacted", len(k.keys))
 	}
-	if got := mergeKeys([]keySink{k, {keys: []uint64{5, 2}}}); !reflect.DeepEqual(got, []uint64{1, 2, 3, 5}) {
+	if got := mergeKeys([]*keySink{&k, {keys: []uint64{5, 2}}}); !reflect.DeepEqual(got, []uint64{1, 2, 3, 5}) {
 		t.Fatalf("merged %v", got)
 	}
 }

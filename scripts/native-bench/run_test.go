@@ -10,7 +10,7 @@ import (
 func TestQueryCommandPrintsOneJSONLine(t *testing.T) {
 	files := monthFiles(t, duck(t))
 	for _, src := range []string{"arrow", "pqgo"} {
-		for _, q := range []string{"countries", "dau", "attrvalues"} {
+		for _, q := range []string{"countries", "dau", "attrvalues", "attrvalues-approx"} {
 			var out bytes.Buffer
 			args := append([]string{"-src", src, "-q", q, "-from", "2026-08-01", "-to", "2026-09-30"}, files...)
 			if err := queryCmd(args, &out); err != nil {

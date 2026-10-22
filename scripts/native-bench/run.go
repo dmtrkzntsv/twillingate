@@ -23,9 +23,10 @@ import (
 // ---- query: one query, once, in this process ----
 
 var queryFuncs = map[string]func(Source, []string, int64, int64) ([]Row, error){
-	"countries":  Countries,
-	"dau":        DAU,
-	"attrvalues": AttributeValues,
+	"countries":         Countries,
+	"dau":               DAU,
+	"attrvalues":        AttributeValues,
+	"attrvalues-approx": AttributeValuesApprox,
 }
 
 func newSource(name string) (Source, error) {
@@ -69,12 +70,12 @@ func hashRows(rows []Row) string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-const queryUsage = "usage: native-bench query -src arrow|pqgo -q countries|dau|attrvalues -from YYYY-MM-DD -to YYYY-MM-DD [-workers N] <files...>"
+const queryUsage = "usage: native-bench query -src arrow|pqgo -q countries|dau|attrvalues|attrvalues-approx -from YYYY-MM-DD -to YYYY-MM-DD [-workers N] <files...>"
 
 func queryCmd(args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("query", flag.ContinueOnError)
 	srcName := fs.String("src", "", "arrow or pqgo")
-	qName := fs.String("q", "", "countries, dau or attrvalues")
+	qName := fs.String("q", "", "countries, dau, attrvalues or attrvalues-approx")
 	fromS := fs.String("from", "", "first day, YYYY-MM-DD")
 	toS := fs.String("to", "", "last day, YYYY-MM-DD")
 	workers := fs.Int("workers", 2, "goroutines scanning row groups")
