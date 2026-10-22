@@ -50,9 +50,20 @@ func nativeRows(t *testing.T, f *archivetest.Files, rs ruleSet, cols []string, f
 func matchRules(t *testing.T, f *archivetest.Files, rules archive.Rules, q, family string) []string {
 	t.Helper()
 	cols, want := duckRulesRows(t, f, q, rules)
-	got := nativeRows(t, f, compileRules(1, rules), cols, family)
+	got := nativeRows(t, f, compile(t, f, 1, rules), cols, family)
 	sameRows(t, got, want, cols)
 	return cols
+}
+
+// compile compiles project p's rules against the columns of every file
+// under f.Dir, as the reader's events view sees them.
+func compile(t *testing.T, f *archivetest.Files, p int64, rules archive.Rules) ruleSet {
+	t.Helper()
+	have, err := unionColumns(f.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return compileRules(p, rules, have)
 }
 
 func duckRulesRows(t *testing.T, f *archivetest.Files, q string, rules archive.Rules) ([]string, [][]string) {
@@ -146,7 +157,7 @@ func TestEventRenameAndBlockMatchDuckDB(t *testing.T) {
 	matchRules(t, f, rules, "SELECT * FROM events WHERE project_id = 1 AND family = 'views'", "views")
 
 	// Asked for id alone, the scan also reads what the rules need.
-	rs := compileRules(1, rules)
+	rs := compile(t, f, 1, rules)
 	read := rs.columns([]string{"id"})
 	for _, c := range []string{"id", "event_name", "family"} {
 		if !slices.Contains(read, c) {
@@ -169,10 +180,10 @@ func TestEventRenameAndBlockMatchDuckDB(t *testing.T) {
 
 	// No rules: the batch as it is.
 	b := &Batch{N: 1, Cols: map[string]*Column{"event_name": {Dict: []string{"a"}, Idx: []int32{0}}}}
-	if got := compileRules(1, archive.Rules{}).apply(b, ""); got != b {
+	if got := compile(t, f, 1, archive.Rules{}).apply(b, ""); got != b {
 		t.Error("no rules: a new batch")
 	}
-	if got := compileRules(3, rules); !got.empty() {
+	if got := compile(t, f, 3, rules); !got.empty() {
 		t.Error("project 3: rules")
 	}
 }
@@ -198,7 +209,7 @@ func TestAttributeRenameAndBlockMatchDuckDB(t *testing.T) {
 	matchRules(t, f, rules, "SELECT * FROM events WHERE project_id = 1 AND family = 'product'", "product")
 
 	// Asked for the targets alone, the scan reads their sources too.
-	rs := compileRules(1, rules)
+	rs := compile(t, f, 1, rules)
 	want := []string{"id", "attr_tone", "attr_plan"}
 	read := rs.columns(want)
 	for _, c := range []string{"family", "attr_color", "attr_shade", "attr_size"} {
@@ -225,6 +236,39 @@ func TestAttributeRenameChainMatchesDuckDB(t *testing.T) {
 	matchRules(t, f, rules, "SELECT * FROM events WHERE project_id = 1", "")
 }
 
+// A chain through a key no file holds: DuckDB skips the rule whose source
+// is in no file, so the middle key is a target only and reads its source.
+// A key only another project's files hold still counts: the view's
+// columns are every file's.
+func TestAttributeRenameThroughAbsentKey(t *testing.T) {
+	f := rulesFixture(t)
+	ts := date(t, today).Time().Add(11 * time.Hour)
+	f.Write(t, store.Event{ID: "p2-only", ProjectID: 2, Family: store.FamilyProduct, EventName: "ev0", TS: ts,
+		Attributes: map[string]string{"elsewhere": "p2"}})
+	for _, rules := range []archive.Rules{
+		{Attributes: []store.AttributeRule{
+			attrRule(1, "size", store.EventRuleRename, "ghost"),
+			attrRule(1, "ghost", store.EventRuleRename, "tone"),
+		}},
+		{Attributes: []store.AttributeRule{
+			attrRule(1, "size", store.EventRuleRename, "Elsewhere"),
+			attrRule(1, "elsewhere", store.EventRuleRename, "tone"),
+		}},
+	} {
+		cols := matchRules(t, f, rules, "SELECT * FROM events WHERE project_id = 1", "")
+		matchRules(t, f, rules, "SELECT * FROM events WHERE project_id = 1 AND family = 'product'", "product")
+		if !slices.Contains(cols, "attr_tone") {
+			t.Fatalf("cols %v", cols)
+		}
+	}
+	// The added column is named as the view names it: have's spelling.
+	rs := compile(t, f, 1, archive.Rules{Attributes: []store.AttributeRule{attrRule(1, "size", store.EventRuleRename, "ELSEWHERE")}})
+	b := &Batch{N: 1, Cols: map[string]*Column{"attr_size": {Dict: []string{"L"}, Idx: []int32{0}}}}
+	if got := rs.apply(b, "product"); got.Cols["attr_elsewhere"] == nil {
+		t.Errorf("added column named %v", keys(got.Cols))
+	}
+}
+
 func TestAttributeRenameAcrossFiles(t *testing.T) {
 	f := rulesFixture(t)
 	// attr_color is in September's files only: the month file's batches
@@ -234,7 +278,7 @@ func TestAttributeRenameAcrossFiles(t *testing.T) {
 	}}
 	matchRules(t, f, rules, "SELECT * FROM events WHERE project_id = 1", "")
 	matchRules(t, f, rules, "SELECT id, attr_color FROM events WHERE project_id = 1", "")
-	rs := compileRules(1, rules)
+	rs := compile(t, f, 1, rules)
 	pq, _, err := projectFiles(f.Dir, 1, rng(t, "2026-08-01", "2026-08-31"))
 	if err != nil {
 		t.Fatal(err)

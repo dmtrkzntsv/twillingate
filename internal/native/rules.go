@@ -5,8 +5,10 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -37,8 +39,12 @@ type eventAction struct {
 	to   string
 }
 
-// attrCol is one attribute column a rule touches, by its name as the rules
-// spell it ("attr_" and the key, a NUL as \u0000).
+// attrCol is one attribute column a rule touches, by its name as the
+// events view spells it: the first spelling of the files' columns (have),
+// else, for a target no file holds, the first rule's ("attr_" and the key,
+// a NUL as \u0000). apply adds a target a batch lacks under that name,
+// and the engine's output must expose it so; a batch that has the column
+// keeps its own spelling, which Batch.col resolves.
 type attrCol struct {
 	name string
 	// null: the column is a renamed or blocked key's and reads NULL in
@@ -50,8 +56,18 @@ type attrCol struct {
 }
 
 // compileRules compiles the rules of project p, ordered as archive's
-// sortRules orders them (the view's result depends on the order).
-func compileRules(p int64, rules archive.Rules) ruleSet {
+// sortRules orders them (the view's result depends on the order), against
+// have, the columns of every events file (unionColumns): as in eventsView,
+// an attribute rule whose source column no file holds is skipped, so a
+// key that is only a rename target reads its sources even when a rule
+// renames it too.
+func compileRules(p int64, rules archive.Rules, have []string) ruleSet {
+	spelled := map[string]string{} // have's first spelling, by lower-case name
+	for _, c := range have {
+		if _, ok := spelled[strings.ToLower(c)]; !ok {
+			spelled[strings.ToLower(c)] = c
+		}
+	}
 	ev := slices.Clone(rules.Events)
 	slices.SortFunc(ev, func(a, b store.EventRule) int {
 		return cmp.Or(cmp.Compare(a.ProjectID, b.ProjectID), cmp.Compare(a.Family, b.Family), cmp.Compare(a.Name, b.Name))
@@ -115,6 +131,10 @@ func compileRules(p int64, rules archive.Rules) ruleSet {
 		if r.Action == store.EventRuleRename && strings.EqualFold(src, dst) {
 			continue // one column already: the values read there as they are
 		}
+		src, ok := spelled[strings.ToLower(src)]
+		if !ok {
+			continue // no file holds it: no column to read NULL or to fold
+		}
 		col(src).null = true
 		if r.Action != store.EventRuleRename || keyBlocked[r.To] {
 			continue
@@ -125,7 +145,11 @@ func compileRules(p int64, rules archive.Rules) ruleSet {
 		sources[r.To] = append(sources[r.To], src)
 	}
 	for _, t := range targets {
-		c := col(visible("attr_" + t))
+		name := visible("attr_" + t)
+		if n, ok := spelled[strings.ToLower(name)]; ok {
+			name = n
+		}
+		c := col(name)
 		if c.from == nil { // two targets equal but for case: the first's arm wins
 			c.from = sources[t]
 		}
@@ -177,7 +201,7 @@ func (rs ruleSet) columns(cols []string) []string {
 // and a batch without one has no row in an attribute rule's scope. Event
 // rules need b's event_name column; without one, no event is renamed or
 // left out. b's columns are not changed: a column the rules change is a
-// new one, under b's own name for it (the rule's when b has none).
+// new one, under b's own name for it (attrCol's name when b has none).
 func (rs ruleSet) apply(b *Batch, family string) *Batch {
 	if rs.empty() {
 		return b
@@ -406,3 +430,57 @@ func (rs ruleSet) applyEvents(b *Batch, family string) *Batch {
 // visible is an attribute column's name for key as archive spells it: a
 // NUL as \u0000.
 func visible(name string) string { return strings.ReplaceAll(name, "\x00", `\u0000`) }
+
+// unionColumns is the column names of every events file under dir, of
+// every project and day: the columns the reader's events view is built
+// over, whose rules eventsView checks against (a rule whose source key no
+// file holds is skipped). They come as DuckDB's union by name first sees
+// them: the open logs, by project, then the Parquet files, so the first
+// spelling of a name equal to another but for case is the view's.
+//
+// It reads every Parquet file's footer and decodes every open log's lines
+// (their keys only, no row kept): a cost a caller should cache by the
+// files' list and the logs' sizes, as the reader does.
+func unionColumns(dir string) ([]string, error) {
+	all, err := archive.ListFiles(dir)
+	if err != nil {
+		return nil, err
+	}
+	ids := slices.Sorted(maps.Keys(all))
+	var out []string
+	seen := map[string]bool{}
+	add := func(names []string) {
+		slices.Sort(names) // one file holds no two names equal but for case
+		for _, n := range names {
+			if !seen[n] {
+				seen[n] = true
+				out = append(out, n)
+			}
+		}
+	}
+	// A range no day is in: readLog reads the log's columns, no rows.
+	none := Range{From: civil.DateOf(time.Unix(86400, 0)), To: civil.DateOf(time.Unix(0, 0))}
+	for _, id := range ids {
+		for _, path := range all[id].Logs {
+			b, err := readLog(path, []string{"*"}, "", none)
+			if err != nil {
+				return nil, err
+			}
+			add(slices.Collect(maps.Keys(b.Cols)))
+		}
+	}
+	for _, id := range ids {
+		for _, path := range all[id].Parquet {
+			f, err := openFile(path)
+			if err != nil {
+				return nil, err
+			}
+			names := slices.Clone(f.cols)
+			if err := f.close(); err != nil {
+				return nil, err
+			}
+			add(names)
+		}
+	}
+	return out, nil
+}
