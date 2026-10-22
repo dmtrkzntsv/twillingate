@@ -299,3 +299,32 @@ func TestLoadDashboardGroupTitle(t *testing.T) {
 		t.Errorf("GroupTitle = %q, want \"Ops\"", fd.GroupTitle)
 	}
 }
+
+func TestSystemLoaderReadsQuery(t *testing.T) {
+	const q = `{"query":{"from":"events"}}`
+	fsys := fstest.MapFS{
+		"d/dashboard.json": mapFile(`{"id":1,"title":"DD","range":"7d","sidebar":true,"project_tab":true,"layout":[{"widget":"a"}]}`),
+		"d/a.json":         mapFile(`{"component":"stat","title":"A"}`),
+		"d/a.query":        mapFile(q),
+	}
+	d, err := LoadDashboard(fsys, "d")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.Widgets) != 1 || d.Widgets[0].SourceType != "query" || d.Widgets[0].Source != q {
+		t.Errorf("widgets = %+v, want one query widget with the file's content", d.Widgets)
+	}
+}
+
+func TestSystemLoaderRefusesTwoSources(t *testing.T) {
+	fsys := fstest.MapFS{
+		"d/dashboard.json": mapFile(`{"id":1,"title":"DD","range":"7d","sidebar":true,"project_tab":true,"layout":[{"widget":"a"}]}`),
+		"d/a.json":         mapFile(`{"component":"stat","title":"A"}`),
+		"d/a.sql":          mapFile("select 1"),
+		"d/a.query":        mapFile(`{"query":{}}`),
+	}
+	_, err := LoadDashboard(fsys, "d")
+	if err == nil || !strings.Contains(err.Error(), `"a"`) {
+		t.Fatalf("err = %v, want a refusal naming widget a", err)
+	}
+}

@@ -197,8 +197,12 @@ export function Rows({ state, stale }: { state: RunState; stale: boolean }) {
         <TableHeader className="sticky top-0 z-10 bg-card shadow-[inset_0_-1px_0_var(--border)]">
           <TableRow>
             {result.columns.map((c, i) => (
-              <TableHead key={i} className="px-4 text-muted-foreground sm:px-6">
-                {c}
+              <TableHead
+                key={i}
+                className="px-4 text-muted-foreground sm:px-6"
+                title={result.approximate?.includes(c) ? 'Estimated values' : undefined}
+              >
+                {result.approximate?.includes(c) ? `≈ ${c}` : c}
               </TableHead>
             ))}
           </TableRow>

@@ -129,8 +129,24 @@ describe('map', () => {
     expect(screen.getByRole('tooltip')).toHaveTextContent('No data')
   })
 
+  it('marks approximate values with ≈, on hover and below the map', async () => {
+    const user = userEvent.setup()
+    const { container, getByText } = renderMap({
+      columns: ['country', 'value'],
+      rows: [
+        ['US', '30000'],
+        ['ZZ', '12'],
+      ],
+      truncated: false,
+      approximate: ['value'],
+    })
+    expect(getByText(/Not on the map:/)).toHaveTextContent('Not on the map: ZZ ≈12')
+    await user.hover(container.querySelector(`[data-id="${ISO_ALPHA2_TO_NUMERIC.US}"]`) as Element)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Value≈30,000')
+  })
+
   it('exposes its contract', () => {
-    expect(contract.accepts).toEqual(['sql'])
+    expect(contract.accepts).toEqual(['sql', 'query'])
     expect(contract.defaultWidth).toBe(6)
     expect(contract.defaultHeight).toBe(8)
   })

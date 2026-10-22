@@ -2,7 +2,7 @@ import { Sankey as RechartsSankey, type SankeyLinkProps, type SankeyNodeProps } 
 import { ChartContainer } from '@/components/ui/chart'
 import { HoverCard, useHover, type HoverRow } from '@/components/chart-parts'
 import { seriesColor } from '@/lib/chart'
-import { formatExact, formatValue, type Format } from '@/lib/format'
+import { approx, approximate, formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { CARD_TYPE, useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
@@ -14,7 +14,7 @@ interface SankeyProps {
 export const contract: Contract = {
   description:
     'Flows from one stage to the next, ribbons sized by value; referrer -> landing page -> event. A node is its name, so a name in two columns is one node; a row that would loop back is left out.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [
@@ -178,6 +178,7 @@ export default function Sankey({ data, props }: WidgetProps<SankeyProps>) {
   // A share card's labels are larger, for a card seen small in a feed.
   const cardMode = useCardMode()
   const records = toRecords(data as SqlData, contract)
+  const estimated = approximate(data as SqlData, 'value')
   const { nodes, links, loops } = graph(records)
   if (links.length === 0) return null
 
@@ -213,7 +214,7 @@ export default function Sankey({ data, props }: WidgetProps<SankeyProps>) {
         >
           <tspan fontWeight={500}>{name}</tspan>
           <tspan dx={6} className="fill-muted-foreground">
-            {formatValue(Math.max(into[index], out[index]), format)}
+            {approx(formatValue(Math.max(into[index], out[index]), format), estimated)}
           </tspan>
         </text>
       </g>
@@ -242,7 +243,7 @@ export default function Sankey({ data, props }: WidgetProps<SankeyProps>) {
   const rowsOf = (h: Hovered): { heading: string; rows: HoverRow[] } => {
     if (h.kind === 'link') {
       const l = links[h.index]
-      const rows: HoverRow[] = [{ label: 'Value', value: formatExact(l.value, format), color: colorOf(l.source) }]
+      const rows: HoverRow[] = [{ label: 'Value', value: approx(formatExact(l.value, format), estimated), color: colorOf(l.source) }]
       if (shares) {
         rows.push({ label: 'Of the source', value: formatValue(l.value / out[l.source], 'percent') })
         rows.push({ label: 'Of the target', value: formatValue(l.value / into[l.target], 'percent') })
@@ -251,8 +252,8 @@ export default function Sankey({ data, props }: WidgetProps<SankeyProps>) {
     }
     const i = h.index
     const rows: HoverRow[] = []
-    if (into[i] > 0) rows.push({ label: 'In', value: formatExact(into[i], format) })
-    if (out[i] > 0) rows.push({ label: 'Out', value: formatExact(out[i], format) })
+    if (into[i] > 0) rows.push({ label: 'In', value: approx(formatExact(into[i], format), estimated) })
+    if (out[i] > 0) rows.push({ label: 'Out', value: approx(formatExact(out[i], format), estimated) })
     rows[0].color = colorOf(i)
     return { heading: nodes[i], rows }
   }

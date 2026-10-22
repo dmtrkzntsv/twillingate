@@ -18,6 +18,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/docs"
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
@@ -209,7 +210,7 @@ func newSystemFixture(t *testing.T) systemFixture {
 	pid := mustCreateProject(t, st, "demo")
 	other := mustCreateProject(t, st, "neighbour")
 	archivetest.CopyDir(t, systemTemplate(t, pid, other, today), files.Dir)
-	return systemFixture{svc: New(st, files, Options{}), st: st, files: files, project: pid, neighbour: other, today: today}
+	return systemFixture{svc: New(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})}), st: st, files: files, project: pid, neighbour: other, today: today}
 }
 
 // systemFiles is the raw/ directory every system fixture starts from,
@@ -384,7 +385,7 @@ func TestRetentionKindIsSticky(t *testing.T) {
 	view("i", "install", 0)
 	view("i", "install", 5)
 	files.Write(t, evs...)
-	svc := New(st, files, Options{})
+	svc := New(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})})
 	got, err := svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, svc, 5, "cohorts"), ProjectID: pid,
 		From: cohort.AddDays(-3).String(), To: cohort.String()})
 	if err != nil {
@@ -601,7 +602,7 @@ func TestAttributeValuesWithoutAttributes(t *testing.T) {
 	pid := mustCreateProject(t, st, "plain")
 	today := civil.Today(time.Now().UTC())
 	files.Write(t, event(t, "p1", pid, store.FamilyProduct, "signup", today.AddDays(-1).String()))
-	svc := New(st, files, Options{})
+	svc := New(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})})
 	from, to := presetDates("7d", today)
 
 	d, err := svc.Dashboard(ctx, 2)

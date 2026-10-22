@@ -42,7 +42,7 @@ func constrained[T any](t *testing.T) *jsonschema.Resolved {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ConstrainWidget(s, comps, []string{"md", "sql"}); err != nil {
+	if err := ConstrainWidget(s, comps, []string{"md", "query", "sql"}); err != nil {
 		t.Fatal(err)
 	}
 	r, err := s.Resolve(nil)

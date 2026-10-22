@@ -1,5 +1,5 @@
 import { HoverCard, useHover } from '@/components/chart-parts'
-import { formatExact, formatValue, type Format } from '@/lib/format'
+import { approx, approximate, formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { formatTick, onRamp, ramp } from '@/lib/chart'
 import { useCardMode } from '@/components/share/card-mode'
@@ -12,7 +12,7 @@ interface HeatmapProps {
 
 export const contract: Contract = {
   description: 'A shaded grid of x by y, e.g. a retention cohort: cohort day x days since.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [
@@ -85,6 +85,7 @@ export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
   const { hovered, bind } = useHover<{ x: string; y: string; value: number; t: number }>()
   const card = useCardMode()
   const records = toRecords(data as SqlData, contract)
+  const estimated = approximate(data as SqlData, 'value')
   if (records.length === 0) return null
 
   const format = props.format ?? 'number'
@@ -109,7 +110,7 @@ export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
         <HoverCard
           at={hovered}
           heading={`${formatTick(hovered.item.y)}, ${formatTick(hovered.item.x)}`}
-          rows={[{ label: 'Value', value: formatExact(hovered.item.value, format), color: ramp(hovered.item.t) }]}
+          rows={[{ label: 'Value', value: approx(formatExact(hovered.item.value, format), estimated), color: ramp(hovered.item.t) }]}
         />
       )}
       <div
@@ -148,7 +149,7 @@ export default function Heatmap({ data, props }: WidgetProps<HeatmapProps>) {
                   } ${hasValue ? 'hover:ring-2 hover:ring-foreground/50 hover:ring-inset' : ''}`}
                   style={hasValue ? { backgroundColor: ramp(t) } : undefined}
                 >
-                  {hasValue && showLabels ? formatValue(value, format) : ''}
+                  {hasValue && showLabels ? approx(formatValue(value, format), estimated) : ''}
                 </div>
               )
             })}

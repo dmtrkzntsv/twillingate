@@ -65,10 +65,26 @@ Retention · Web Vitals · Measures.
 
 - the **component** is how it is drawn (`line`, `stat`, `table`, …; see
   [Components](#components));
-- the **source** is `{"type": "sql" | "md", "content": "…"}`: a read-only query
-  in DuckDB SQL over the event files' tables (see [Tables](#tables)), or
-  Markdown text. The component says which source types it accepts and which
-  columns its query must return.
+- the **source** is `{"type": "md" | "query" | "sql", "content": "…"}`: a
+  read-only query in DuckDB SQL over the event files' tables (`sql`, see
+  [Tables](#tables)), a structured query as JSON (`query`, see below), or
+  Markdown text (`md`). The component says which source types it accepts and
+  which columns its query must return.
+
+A `query` source's content is `{"query": {…}, "rename": {…}}`: `query` is a
+[structured query](twillingate.md#structured-queries) (a stat, a trend or a
+breakdown), and `rename`, optional, maps its output columns to the names the
+component reads (`{"day": "x", "previous_value": "previous"}`). A stat returns
+its metrics, then `previous_<name>` each with `compare: previous`; a trend
+`day`, `series` when split, and its metric; a breakdown its dimensions, then
+its metrics. Each column has a type the component's input must take: metrics
+and `previous_<name>` are numbers, `day` is a day, the numeric columns
+(`project_id`, `display_width`, `display_height`, `consent`, `bucket`) are
+numbers, and the rest (a trend's `series`, `attr_<key>`, every other column)
+text, as is every dimension of a breakdown with `other`, whose `Other` row
+reads `Other`. An input that takes text takes any column. Every component that
+takes `sql` takes `query`, except a remote `table` (`mode: remote`), which
+takes `sql` only.
 
 A widget also has a `name`, unique on its dashboard (derived from the title
 when you omit it: lower case, `-` for each run of other characters, `-2`, `-3`,
@@ -80,18 +96,20 @@ checked against its props schema), and a `width` and `height` (see
 **A widget's SQL decides what it follows.** A query that uses `:project`
 follows the page's project switcher; one that uses `:from` or `:to` follows the
 range switcher; one that uses neither is fixed, and shows whatever its SQL
-names. A dashboard shows a switcher only when at least one of its live widgets
-follows it. `get_dashboard` reports `follows_project` and `follows_range` for
-the dashboard and for each widget.
+names. A `query` source always follows both. A dashboard shows a switcher only
+when at least one of its live widgets follows it. `get_dashboard` reports
+`follows_project` and `follows_range` for the dashboard and for each widget.
 
-**Every write validates the whole result** and refuses with a message that
-says what to change: the component exists and accepts the source type; the SQL
-uses only the three parameters, runs, and returns the columns the component
-reads (checked on a sample project and range); Markdown is not empty; props
-match the schema; the size is in range. Refusals come back as tool errors over
-MCP and as `400 invalid`, `404 not_found` or `409 conflict` over HTTP. Every
-write except the viewer's selection is recorded in the audit log with the edge
-it came through (`mcp` or `api`).
+**Every write validates the whole result** and refuses with a message that says
+what to change: the component exists and accepts the source type; the SQL uses
+only the three parameters, runs, and returns the columns the component reads
+(checked on a sample project and range); a structured query is valid and, after
+`rename`, returns those columns, of the types they take (checked without
+reading data); Markdown is not
+empty; props match the schema; the size is in range. Refusals come back as tool
+errors over MCP and as `400 invalid`, `404 not_found` or `409 conflict` over
+HTTP. Every write except the viewer's selection is recorded in the audit log
+with the edge it came through (`mcp` or `api`).
 
 **Loading a widget** (`widget_data`) answers in one envelope, whatever the
 component:
@@ -106,10 +124,14 @@ component:
 
 - `project_id` appears only for a widget that follows the project, `from` and
   `to` only for one that follows the range; both echo the values applied.
-- `data` is `{columns, rows, truncated}` for `sql` (every value a string, as
-  `query` returns them) and `{markdown}` for `md`.
+- `data` is `{columns, rows, truncated}` for `sql` and `query` (every value a
+  string, as the `query` tool returns them) and `{markdown}` for `md`.
 - `truncated: true` means the result hit `CONSOLE_QUERY_ROWS_MAX`: group the query
   or narrow it.
+- `data.approximate`, when present, names the columns whose values are
+  estimates (a `query` source's distinct count past 1,024 ids, within
+  about ±2%, under the name `rename` gave it). The components show those
+  values with a "≈" in front.
 - `page` appears only for a remote table: `{offset, limit, matched, total,
   sort, distinct, filters}`, what was applied. `data.truncated` is then
   `matched > offset + limit`: there are more rows.
@@ -119,7 +141,7 @@ component:
   refusal (never data) ending "if this started after an update, see the
   release notes at https://github.com/dmtrkzntsv/twillingate/releases".
 
-`sql` results are cached per widget and per value it follows (for a remote
+`sql` and `query` results are cached per widget and per value it follows (for a remote
 table, per page: its filters, sort, distinct, offset and limit). An ordinary load
 reuses a result up to `REPORTING_CACHE_MAX_AGE` old (default `15m`); `fresh=true`
 reuses one only up to `REPORTING_REFRESH_MAX_AGE` old (default `1m`), and
@@ -372,11 +394,11 @@ Every tool above except `reporting_guide`, which is MCP-only, is also a REST
 route under `/api/`, with the same bearer token, JSON and error shape as the
 routes in [twillingate.md](twillingate.md#http-api). Four routes have no
 tool, `view`, `preview_widget`, `create_widget_share` and
-`widget_share_image`. The console's widget editor runs unsaved SQL with
-`POST /api/widgets/preview`, which binds the project and range given and
-returns the rows with the first way they do not fit the component; agents
-call `add_widget`, which validates. The page stores
-the viewer's selection with `PUT …/view`, which is viewer state rather than a
+`widget_share_image`. The console's widget editor runs an unsaved SQL or
+`query` source with `POST /api/widgets/preview`, which binds the project and
+range given and returns the rows with the first way they do not fit the
+component; agents call `add_widget`, which validates. The page stores the
+viewer's selection with `PUT …/view`, which is viewer state rather than a
 definition, so it is allowed on system dashboards and not audited. It uploads
 a share with `POST /api/widget-shares`, since only a browser can capture the
 picture, and reads a share's picture back with
@@ -406,7 +428,7 @@ public `/share/<id>.png` stops at archiving
 | `POST` | `/api/widgets/{widget_id}/archive` | `archive_widget` | — |
 | `POST` | `/api/widgets/{widget_id}/restore` | `restore_widget` | — |
 | `PUT` | `/api/dashboards/{dashboard_id}/view` | `view`, REST only: no MCP tool | body: `project_id`, `range`, and `from`/`to` for `custom` → `{"status":"saved"}` |
-| `POST` | `/api/widgets/preview` | `preview_widget`, REST only: no MCP tool | body: `component`, `props`, `source`, `project_id`, `from`, `to` → `{columns, rows, truncated, problem, elapsed_ms}` |
+| `POST` | `/api/widgets/preview` | `preview_widget`, REST only: no MCP tool | body: `component`, `props`, `source`, `project_id`, `from`, `to` → `{columns, rows, truncated, approximate, problem, elapsed_ms}` |
 | `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id`, `from`, `to`, `archive_after`, `caption_project`, `caption_range`, `image`, `image_2x` → 201 |
 | `GET` | `/api/widget-shares` | `list_widget_shares` | query: `widget_id`, `state` |
 | `PATCH` | `/api/widget-shares/{id}` | `update_widget_share` | body: `archive_after` |
@@ -435,23 +457,23 @@ appears. `width` and `height` default to the component's size below.
 
 | Component | Accepts | Inputs: the columns the query returns | Props | Default width × height |
 | --- | --- | --- | --- | --- |
-| `stat` | `sql` | `value` number; `previous` number, optional (shows the change); `x` day, optional (a sparkline under the number, which becomes the series' `aggregate`) | `format`, `aggregate` (`sum`, `last`, `avg`) | 3 × 3 |
-| `line` | `sql` | `x` day or text; `y` number; `series` text, optional (one line per value; keep it to 5 lines, one per chart color, ranking the rest out in SQL) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
-| `area` | `sql` | as `line` | `format`, `curve`, `stacked` | 6 × 8 |
-| `bar` | `sql` | `x` text or day; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
-| `bar_list` | `sql` | `label` text; `value` number (a ranked list with an inline bar) | `format` | 6 × 8 |
-| `pie` | `sql` | `label` text; `value` number; keep it to 5 slices, one per chart color, and group the rest as 'Other' in SQL | `format`, `donut` | 4 × 8 |
-| `radar` | `sql` | `axis` text; `value` number; `series` text, optional | `format` | 4 × 8 |
-| `radial` | `sql` | `label` text; `value` number; `max` number, optional (a ring toward a target) | `format` | 4 × 8 |
-| `scatter` | `sql` | `x` number; `y` number; `series` text, optional; `size` number, optional | `format` | 6 × 8 |
-| `funnel` | `sql` | `step` text; `value` number, in query order | `format` | 6 × 8 |
-| `combo` | `sql` | `x` day or text; `bar` number; `line` number (two units on two axes) | `bar_format`, `line_format` | 6 × 8 |
-| `heatmap` | `sql` | `x` text or day; `y` text or day; `value` number (a retention grid: cohort day × days since) | `format`, `labels` (print values in cells) | 6 × 10 |
-| `calendar` | `sql` | `day` day; `value` number (a year of days) | `format` | 12 × 4 |
-| `map` | `sql` | `country` text, ISO alpha-2; `value` number (unknown codes are listed under the map) | `format` | 6 × 8 |
-| `treemap` | `sql` | `label` text; `value` number; `parent` text, optional (two levels, e.g. browser → version) | `format` | 6 × 8 |
-| `sankey` | `sql` | `source` text; `target` text; `value` number (one row per flow; a name is one node in whichever column it appears, so a page that is a target and a source joins two stages; a row that would loop back is left out and listed under the chart) | `format` | 12 × 8 |
-| `table` | `sql` | any columns, shown in query order until a viewer sorts by a header or filters by a column | `formats` (column → format), `colorscale` (columns shaded by value), `mode` (`local`, the default, filters the loaded rows; `remote` filters, sorts and pages the whole result on the server) | 6 × 10 |
+| `stat` | `sql`, `query` | `value` number; `previous` number, optional (shows the change); `x` day, optional (a sparkline under the number, which becomes the series' `aggregate`) | `format`, `aggregate` (`sum`, `last`, `avg`) | 3 × 3 |
+| `line` | `sql`, `query` | `x` day or text; `y` number; `series` text, optional (one line per value; keep it to 5 lines, one per chart color, ranking the rest out in SQL) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
+| `area` | `sql`, `query` | as `line` | `format`, `curve`, `stacked` | 6 × 8 |
+| `bar` | `sql`, `query` | `x` text or day; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
+| `bar_list` | `sql`, `query` | `label` text; `value` number (a ranked list with an inline bar) | `format` | 6 × 8 |
+| `pie` | `sql`, `query` | `label` text; `value` number; keep it to 5 slices, one per chart color, and group the rest as 'Other' in SQL | `format`, `donut` | 4 × 8 |
+| `radar` | `sql`, `query` | `axis` text; `value` number; `series` text, optional | `format` | 4 × 8 |
+| `radial` | `sql`, `query` | `label` text; `value` number; `max` number, optional (a ring toward a target) | `format` | 4 × 8 |
+| `scatter` | `sql`, `query` | `x` number; `y` number; `series` text, optional; `size` number, optional | `format` | 6 × 8 |
+| `funnel` | `sql`, `query` | `step` text; `value` number, in query order | `format` | 6 × 8 |
+| `combo` | `sql`, `query` | `x` day or text; `bar` number; `line` number (two units on two axes) | `bar_format`, `line_format` | 6 × 8 |
+| `heatmap` | `sql`, `query` | `x` text or day; `y` text or day; `value` number (a retention grid: cohort day × days since) | `format`, `labels` (print values in cells) | 6 × 10 |
+| `calendar` | `sql`, `query` | `day` day; `value` number (a year of days) | `format` | 12 × 4 |
+| `map` | `sql`, `query` | `country` text, ISO alpha-2; `value` number (unknown codes are listed under the map) | `format` | 6 × 8 |
+| `treemap` | `sql`, `query` | `label` text; `value` number; `parent` text, optional (two levels, e.g. browser → version) | `format` | 6 × 8 |
+| `sankey` | `sql`, `query` | `source` text; `target` text; `value` number (one row per flow; a name is one node in whichever column it appears, so a page that is a target and a source joins two stages; a row that would loop back is left out and listed under the chart) | `format` | 12 × 8 |
+| `table` | `sql`, `query` (local mode only) | any columns, shown in query order until a viewer sorts by a header or filters by a column | `formats` (column → format), `colorscale` (columns shaded by value), `mode` (`local`, the default, filters the loaded rows; `remote` filters, sorts and pages the whole result on the server) | 6 × 10 |
 | `markdown` | `md` | none | none | 12 × 2 |
 
 `list_components` is the authority: it returns each component's props as a
@@ -480,9 +502,10 @@ that comes back in a later release does not reattach itself.
 
 ## Examples
 
-One widget per component, each ready for `add_widget`: the component, the
-source (the block below, as `{"type": "sql", "content": "…"}`, or `md` for
-the Markdown one) and the props shown. Unless the title says otherwise, each
+At least one widget per component, each ready for `add_widget`: the
+component, the source (the block below, as `{"type": "sql", "content": "…"}`;
+`md` for the Markdown one; `query` for a JSON block, its text the content) and
+the props shown. Unless the title says otherwise, each
 follows both switchers. [Percentiles from measures](#percentiles-from-measures)
 closes the section with the one query pattern measures need.
 
@@ -500,6 +523,26 @@ ORDER BY day
 
 Props: `{"format": "number", "aggregate": "sum"}`
 
+### `stat` as a structured query
+
+Views in the range against the period before, as a `query` source: the
+stat returns `value` and `previous_value`, and `rename` gives the second
+the name the component reads:
+
+```json
+{
+  "query": {
+    "kind": "stat",
+    "table": "views",
+    "metrics": [{"op": "count", "as": "value"}],
+    "compare": "previous"
+  },
+  "rename": {"previous_value": "previous"}
+}
+```
+
+Props: `{"format": "number"}`
+
 ### `line`
 
 Visitors per day, one line per kind (`web`, `app`, …):
@@ -510,6 +553,25 @@ FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to
 GROUP BY day, kind
 ORDER BY day
+```
+
+Props: `{"curve": "monotone"}`
+
+### `line` as a structured query
+
+The same chart as a `query` source: a trend returns `day`, `series` and
+its metric, renamed to the inputs `line` reads:
+
+```json
+{
+  "query": {
+    "kind": "trend",
+    "table": "views",
+    "metrics": [{"op": "actors"}],
+    "series": "kind"
+  },
+  "rename": {"day": "x", "actors": "y"}
+}
 ```
 
 Props: `{"curve": "monotone"}`
@@ -554,6 +616,27 @@ WHERE project_id = :project AND day BETWEEN :from AND :to AND path IS NOT NULL
 GROUP BY path
 ORDER BY value DESC
 LIMIT 10
+```
+
+Props: `{"format": "number"}`
+
+### `bar_list` as a structured query
+
+The same list as a `query` source: a breakdown returns its dimension and
+its metric, renamed to `label` and `value`:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [{"op": "count"}],
+    "dimensions": ["path"],
+    "where": [{"column": "path", "op": "is_set"}],
+    "limit": 10
+  },
+  "rename": {"path": "label", "count": "value"}
+}
 ```
 
 Props: `{"format": "number"}`
@@ -1165,8 +1248,14 @@ widget's name (`widget visitors: …`), and nothing is created.
 | Refusal | Fix |
 | --- | --- |
 | component gauge does not exist; list_components names the ones there are | Use a name from `list_components` or `reporting_guide`. |
-| line does not accept md; it accepts sql | `markdown` takes `md`; every other component takes `sql`. |
-| source type csv does not exist; there are md and sql | Set `source.type` to `sql` or `md`. |
+| line does not accept md; it accepts sql and query | `markdown` takes `md`; every other component takes `sql` and `query`. |
+| source type csv does not exist; there are md, query and sql | Set `source.type` to `sql`, `query` or `md`. |
+| query source: json: unknown field "metric" | A `query` source's content is `{"query": {…}, "rename": {…}}`, each field as [structured queries](twillingate.md#structured-queries) spells it. |
+| query.dimensions: … | The structured query is malformed; the message names the field. |
+| rename: sessions is not a column of the query; its columns are day, actors | `rename` maps the query's own output columns. |
+| rename: a and b are both renamed value | Give each renamed column its own name, and none the query already returns. |
+| a remote table takes sql only; a query source needs props.mode "local" | Drop `mode`, or write the table's source as `sql`. |
+| stat.value: the query's column is text, not number | Rename a column of that type onto the input: a metric for a number, `day` for a day. |
 | sql uses :path; widgets get only :project, :from and :to | Write the value into the SQL, or use one of the three. |
 | line needs y (number); columns are x, visitors | Alias the column to the input: `visitors AS y`. |
 | visitors is not an input of line | Drop the column, or alias it to an input; only `table` takes any columns. |
@@ -1199,7 +1288,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | widget 42's component was removed; set component first | `update_widget` with a `component` (and resize or archive as needed); see [When widgets break after an update](#when-widgets-break-after-an-update). |
 | the sql uses :project; pass project_id | `preview_widget` only: pass `project_id`. |
 | the sql uses :from or :to; pass from and to | `preview_widget` only: pass `from` and `to`. |
-| preview runs sql only; markdown is drawn as it is typed | `preview_widget` takes a `sql` source; a `md` widget needs no query to preview. |
+| preview runs sql and query only; markdown is drawn as it is typed | `preview_widget` takes a `sql` or `query` source; a `md` widget needs no query to preview. |
 | widget 42 follows the project switcher; pass project_id | Pass `project_id` to `widget_data`. For the range: widget 42 follows the date range; pass from and to. |
 | from 2026-09-10 is after to 2026-09-01; from 2026-01-01 to 2027-02-01 spans more than 365 days; from 2026-10-01 is after today | Pass `from` ≤ `to`, at most 365 days apart, `from` no later than today. |
 | range must be one of today, yesterday, 7d, 30d, 90d, custom | Use a preset id. `create_dashboard` refuses `custom`: create with a preset; the viewer picks custom dates. |

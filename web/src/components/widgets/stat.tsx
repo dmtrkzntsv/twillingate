@@ -2,7 +2,7 @@ import { useId } from 'react'
 import { ArrowDownRightIcon, ArrowUpRightIcon } from 'lucide-react'
 import { Area, AreaChart, ResponsiveContainer, YAxis } from 'recharts'
 import { useCardMode } from '@/components/share/card-mode'
-import { formatValue, type Format } from '@/lib/format'
+import { approx, approximate, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
 
@@ -14,7 +14,7 @@ interface StatProps {
 export const contract: Contract = {
   description:
     "A single number, optionally compared to a previous period; give `x` for a small trend line under it, and it becomes the series' aggregate.",
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [
@@ -83,6 +83,8 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
   // An SVG id, so only characters url(#...) takes as they are.
   const fade = 'spark' + useId().replace(/[^a-zA-Z0-9_-]/g, '')
   if (records.length === 0) return null
+  // The headline is value's, marked when the result estimated it.
+  const show = (v: number) => approx(formatValue(v, format), approximate(sql, 'value'))
 
   if (sql.columns.includes('x')) {
     const values = records.map((r) => Number(r.value ?? 0))
@@ -90,7 +92,7 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
     const series = records.map((r, i) => ({ x: String(r.x ?? i), value: Number(r.value ?? 0) }))
     return (
       <div className={`flex h-full flex-col justify-between gap-1 pt-1 ${card ? 'items-center gap-6' : ''}`}>
-        <Figure card={card}>{formatValue(value, format)}</Figure>
+        <Figure card={card}>{show(value)}</Figure>
         <div className={`-mx-1 min-h-8 flex-1 ${card ? 'w-full' : ''}`}>
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={series} margin={{ top: 4, right: 4, bottom: 2, left: 4 }}>
@@ -137,10 +139,12 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
   const value = Number(records[0].value ?? 0)
   const previous = records[0].previous
   const delta = typeof previous === 'number' && previous !== 0 ? (value - previous) / previous : null
+  // The change is an estimate when either side is.
+  const deltaApprox = approximate(sql, 'value') || approximate(sql, 'previous')
 
   return (
     <div className={`flex h-full flex-col justify-center pt-1 ${card ? 'items-center gap-6' : 'items-start gap-2'}`}>
-      <Figure card={card}>{formatValue(value, format)}</Figure>
+      <Figure card={card}>{show(value)}</Figure>
       {delta !== null && (
         <div className={`flex items-center ${card ? 'gap-3 text-[22px] [&_svg]:size-5' : 'gap-1.5 text-xs'}`}>
           <span
@@ -151,8 +155,7 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
             }
           >
             {delta >= 0 ? <ArrowUpRightIcon className="size-3" /> : <ArrowDownRightIcon className="size-3" />}
-            {delta >= 0 ? '+' : ''}
-            {formatValue(delta, 'percent')}
+            {approx(`${delta >= 0 ? '+' : ''}${formatValue(delta, 'percent')}`, deltaApprox)}
           </span>
           <span className="text-muted-foreground">vs previous</span>
         </div>

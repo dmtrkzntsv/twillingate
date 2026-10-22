@@ -4,7 +4,7 @@ import {
   ChartTooltip,
 } from '@/components/ui/chart'
 import { axis, formatTick, grid, MAX_BAR, niceTicks, seriesColor, seriesConfig, stackTotals, valueAxis, valuesOf } from '@/lib/chart'
-import { formatValue, type Format } from '@/lib/format'
+import { approx, approximate, formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
 import { CARD_TICK_GAP, CARD_TYPE, useCardMode } from '@/components/share/card-mode'
@@ -19,7 +19,7 @@ interface BarProps {
 export const contract: Contract = {
   description:
     'Compare values across categories; use `series` for grouped or `stacked` bars, `horizontal` for long labels.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [
@@ -109,6 +109,9 @@ export default function Bar({ data, props }: WidgetProps<BarProps>) {
   const ticks = niceTicks(stacked ? stackTotals(rows, keys) : valuesOf(rows, keys))
   const labelled = keys.length === 1 && rows.length <= LABELLED
   const show = (v: unknown) => formatValue(Number(v), format)
+  // A bar's own label is marked when estimated; the axis ticks are not values the result gave.
+  const estimated = approximate(sql, 'y')
+  const label = (v: unknown) => approx(show(v), estimated)
   // Rounded at the data end only; in a stack, only the outermost segment.
   const end: [number, number, number, number] = horizontal ? [0, 4, 4, 0] : [4, 4, 0, 0]
   const radius = (i: number) => (!stacked || i === keys.length - 1 ? end : 0)
@@ -151,7 +154,7 @@ export default function Bar({ data, props }: WidgetProps<BarProps>) {
         )}
         <ChartTooltip
           cursor={{ fill: 'var(--muted)', opacity: 0.6 }}
-          content={tooltip(format, { heading: 'x', total: stacked })}
+          content={tooltip(format, { heading: 'x', total: stacked, approximate: estimated })}
         />
         {hasSeries && legend()}
         {keys.map((key, i) => (
@@ -174,7 +177,7 @@ export default function Bar({ data, props }: WidgetProps<BarProps>) {
                 offset={8}
                 fontSize={card ? CARD_TYPE : 11}
                 className="fill-muted-foreground"
-                formatter={show}
+                formatter={label}
               />
             )}
           </RechartsBar>

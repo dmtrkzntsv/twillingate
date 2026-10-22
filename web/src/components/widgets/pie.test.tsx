@@ -40,7 +40,7 @@ describe('pie', () => {
   })
 
   it('exposes its contract', () => {
-    expect(contract.accepts).toEqual(['sql'])
+    expect(contract.accepts).toEqual(['sql', 'query'])
     expect(contract.defaultWidth).toBe(4)
     expect(contract.defaultHeight).toBe(8)
   })

@@ -1,5 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { formatExact, formatValue } from './format'
+import { approx, approximate, formatExact, formatValue } from './format'
+
+describe('approximate', () => {
+  it('prefixes ≈ to a value of a column the result names approximate', () => {
+    const data = { columns: ['label', 'value'], rows: [], truncated: false, approximate: ['value'] }
+    expect(approximate(data, 'value')).toBe(true)
+    expect(approximate(data, 'label')).toBe(false)
+    const exact = { columns: ['value'], rows: [], truncated: false }
+    expect(approximate(exact, 'value')).toBe(false)
+    expect(approx('3,500', true)).toBe('≈3,500')
+    expect(approx('3,500', false)).toBe('3,500')
+    expect(approx('–', true)).toBe('–')
+    expect(approx('', true)).toBe('')
+  })
+})
 
 describe('formatValue', () => {
   it('renders null as an em dash', () => {

@@ -3,6 +3,7 @@ package reporting
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
@@ -31,7 +32,7 @@ type Preview struct {
 	ElapsedMS int64  `json:"elapsed_ms"`
 }
 
-// Preview runs an unsaved widget's sql with the values given rather than
+// Preview runs an unsaved widget's sql or query with the values given rather than
 // sample ones, uncached and unaudited. What keeps it from running at all
 // is refused as add_widget refuses it (D2); markdown has nothing to run.
 func (s *Service) Preview(ctx context.Context, in PreviewIn) (Preview, error) {
@@ -44,23 +45,18 @@ func (s *Service) Preview(ctx context.Context, in PreviewIn) (Preview, error) {
 		return Preview{}, store.Refuse(store.ErrInvalid,
 			"component %s does not exist; list_components names the ones there are", in.Component)
 	}
-	if in.Source.Type != "sql" {
-		return Preview{}, store.Refuse(store.ErrInvalid, "preview runs sql only; markdown is drawn as it is typed")
+	if in.Source.Type != "sql" && in.Source.Type != "query" {
+		return Preview{}, store.Refuse(store.ErrInvalid, "preview runs sql and query only; markdown is drawn as it is typed")
 	}
-	if !accepts(comp, "sql") {
+	if !accepts(comp, in.Source.Type) {
 		return Preview{}, store.Refuse(store.ErrInvalid,
-			"%s does not accept sql; it accepts %s", comp.Name, joinAnd(comp.Accepts))
+			"%s does not accept %s; it accepts %s", comp.Name, in.Source.Type, joinAnd(comp.Accepts))
 	}
-	params, err := checkSQLParams(in.Source.Content)
-	if err != nil {
-		return Preview{}, err
-	}
-	p, err := s.previewParams(params, in)
-	if err != nil {
+	if err := checkRemoteTable(store.Widget{Component: in.Component, Props: string(in.Props), SourceType: in.Source.Type}); err != nil {
 		return Preview{}, err
 	}
 	start := time.Now()
-	res, err := loadRows(ctx, s.files, in.Source.Content, params, p)
+	res, err := s.previewRows(ctx, in)
 	if err != nil {
 		return Preview{}, err
 	}
@@ -77,6 +73,50 @@ func (s *Service) Preview(ctx context.Context, in PreviewIn) (Preview, error) {
 		out.Problem = err.Error()
 	}
 	return out, nil
+}
+
+// previewRows runs in's source with the values in gives: sql binding the
+// parameters it uses, a query always over the project and the range.
+func (s *Service) previewRows(ctx context.Context, in PreviewIn) (readsql.Result, error) {
+	if in.Source.Type == "query" {
+		qs, ok := s.sources["query"].(*querySource)
+		if !ok {
+			return readsql.Result{}, errors.New("reporting: the query source type is not registered")
+		}
+		if _, _, err := parseQuery(in.Source.Content); err != nil {
+			return readsql.Result{}, err
+		}
+		p, err := s.previewQueryParams(in)
+		if err != nil {
+			return readsql.Result{}, err
+		}
+		return qs.load(ctx, in.Source.Content, p)
+	}
+	params, err := checkSQLParams(in.Source.Content)
+	if err != nil {
+		return readsql.Result{}, err
+	}
+	p, err := s.previewParams(params, in)
+	if err != nil {
+		return readsql.Result{}, err
+	}
+	return loadRows(ctx, s.files, in.Source.Content, params, p)
+}
+
+// previewQueryParams is previewParams for a query, which follows both
+// the project and the range.
+func (s *Service) previewQueryParams(in PreviewIn) (Params, error) {
+	if in.ProjectID == 0 {
+		return Params{}, store.Refuse(store.ErrInvalid, "a query follows the project; pass project_id")
+	}
+	if in.From == "" && in.To == "" {
+		return Params{}, store.Refuse(store.ErrInvalid, "a query follows the date range; pass from and to")
+	}
+	from, to, err := checkRange(in.From, in.To, civil.Today(s.now()))
+	if err != nil {
+		return Params{}, err
+	}
+	return Params{ProjectID: in.ProjectID, From: from, To: to}, nil
 }
 
 // previewParams resolves the values to bind for exactly the parameters

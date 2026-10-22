@@ -11,7 +11,7 @@ export interface InputColumn {
 
 export interface Contract {
   description: string
-  accepts: ('sql' | 'md')[]
+  accepts: ('sql' | 'query' | 'md')[]
   inputs: { open: boolean; columns: InputColumn[] }
   props: Record<string, unknown> // JSON schema, additionalProperties false
   defaultWidth: number
@@ -22,6 +22,8 @@ export interface SqlData {
   columns: string[]
   rows: string[][]
   truncated: boolean
+  /** The columns any value of which is an estimate, shown with "≈"; absent when every value is exact. */
+  approximate?: string[]
 }
 
 export interface MarkdownData {

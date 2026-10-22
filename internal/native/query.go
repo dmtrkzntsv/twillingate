@@ -31,7 +31,7 @@ type Query struct {
 	Compare     string   `json:"compare,omitempty" jsonschema:"stat only: previous adds each metric over as many days ending the day before from"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown only: how many groups, 1 to 1000 (default 20)"`
 	Other       bool     `json:"other,omitempty" jsonschema:"breakdown only: fold the groups past limit into one row whose dimensions read Other"`
-	Order       string   `json:"order,omitempty" jsonschema:"breakdown only: the metric name to rank groups by, descending (default: the first metric)"`
+	Order       string   `json:"order,omitempty" jsonschema:"breakdown only: a metric name to rank groups by, descending, or one of its dimensions to sort them by, ascending, ties by the other dimensions ascending (default: the first metric); limit keeps the first groups in that order"`
 }
 
 // Metric is one aggregate.
@@ -60,6 +60,80 @@ func (m Metric) Name() string {
 		return m.Op + "_" + m.Of
 	}
 	return m.Op
+}
+
+// Columns are the result's column names, in order, as Answer returns
+// them for q, read from q alone: a stat's metrics, then with compare
+// previous a previous_<name> each; a trend's day, series when split, and
+// its metric; a breakdown's dimensions, then its metrics. It does not
+// validate q.
+func (q Query) Columns() []string {
+	var cols []string
+	switch q.Kind {
+	case "trend":
+		cols = append(cols, "day")
+		if q.Series != "" {
+			cols = append(cols, "series")
+		}
+	case "breakdown":
+		cols = append(cols, q.Dimensions...)
+	}
+	for _, m := range q.Metrics {
+		cols = append(cols, m.Name())
+	}
+	if q.Kind == "stat" && q.Compare == "previous" {
+		for _, m := range q.Metrics {
+			cols = append(cols, "previous_"+m.Name())
+		}
+	}
+	return cols
+}
+
+// ColumnTypes are the types of Columns' columns, in the same order, read
+// from q alone: number, day or text, the type every value of the column
+// has (an empty value, NULL, aside). Metrics, a stat's previous_<name>
+// and the numeric columns (project_id, display_width, display_height,
+// consent, bucket) are number; day is day; a trend's series and every
+// other column, attr_<key> included, text. A breakdown with other has
+// its dimensions text, its Other row reading "Other" in each. It does
+// not validate q.
+func (q Query) ColumnTypes() []string {
+	var types []string
+	switch q.Kind {
+	case "trend":
+		types = append(types, "day")
+		if q.Series != "" {
+			types = append(types, "text")
+		}
+	case "breakdown":
+		for _, d := range q.Dimensions {
+			if q.Other {
+				types = append(types, "text")
+			} else {
+				types = append(types, columnType(d))
+			}
+		}
+	}
+	for range q.Metrics {
+		types = append(types, "number")
+	}
+	if q.Kind == "stat" && q.Compare == "previous" {
+		for range q.Metrics {
+			types = append(types, "number")
+		}
+	}
+	return types
+}
+
+// columnType is a dimension column's type, as ColumnTypes names it.
+func columnType(column string) string {
+	switch {
+	case column == "day":
+		return "day"
+	case column == "bucket", plainColumns[column]:
+		return "number"
+	}
+	return "text"
 }
 
 // maxLimit bounds a breakdown's limit, maxSeries a trend's series_limit.
@@ -230,8 +304,8 @@ func (q Query) Validate() error {
 		if q.Kind != "breakdown" {
 			return invalid("order", "only a breakdown orders")
 		}
-		if !metricNames[q.Order] {
-			return invalid("order", "%q is not a metric name", q.Order)
+		if !metricNames[q.Order] && !names[q.Order] {
+			return invalid("order", "%q is not a metric name or a dimension", q.Order)
 		}
 	}
 	return nil

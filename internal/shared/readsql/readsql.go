@@ -41,11 +41,13 @@ var (
 )
 
 // Result is a query's answer, shaped for JSON: Rows is a matrix of
-// strings, a NULL reading as "".
+// strings, a NULL reading as "". Approximate names the columns any value
+// of which is an estimate rather than exact; nil when every value is.
 type Result struct {
-	Columns   []string   `json:"columns"`
-	Rows      [][]string `json:"rows"`
-	Truncated bool       `json:"truncated"`
+	Columns     []string   `json:"columns"`
+	Rows        [][]string `json:"rows"`
+	Truncated   bool       `json:"truncated"`
+	Approximate []string   `json:"approximate,omitempty"`
 }
 
 // DB is a read-only handle on one SQLite file, with its own deadline and

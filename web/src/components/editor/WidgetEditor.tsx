@@ -27,7 +27,7 @@ import { projectsQuery, schemaViewsQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import { carryProps, fieldsOf, needsHint } from '@/lib/props-form'
 import { parseSchemaViews } from '@/lib/schema-views'
-import { draftOf, isDirty, sourceOf, sourceTypeOf, usesParams, type Draft } from '@/lib/widget-draft'
+import { codeTypesOf, draftOf, isDirty, paramsOf, sourceOf, sourceTypeOf, withCode, withComponent, type CodeType, type Draft } from '@/lib/widget-draft'
 import { iconOf } from './component-icons'
 import PropsForm, { SettingRow } from './PropsForm'
 import Splitter from './Splitter'
@@ -108,6 +108,8 @@ const bar = 'flex min-h-11 min-w-0 shrink-0 flex-wrap items-center gap-x-3 gap-y
 /** How long a change of visualization, props, project or range waits before it runs the query. */
 const AUTO_RUN_MS = 400
 
+const codeLabel: Record<CodeType, string> = { sql: 'SQL', query: 'Query' }
+
 const known = (c: string | null): c is string => c !== null && Object.hasOwn(widgets, c)
 
 /** The draft an editor opens on; a removed component opens with the visualization empty (spec D16). */
@@ -167,24 +169,29 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
 
   const component = known(draft.component) ? draft.component : null
   const module = component ? widgets[component] : undefined
-  const markdown = sourceTypeOf(component) === 'md'
-  const uses = usesParams(draft.sql)
+  const type = sourceTypeOf({ ...draft, component })
+  const markdown = type === 'md'
+  const codes = codeTypesOf(component, draft.props)
+  // The code the run reads: the query's JSON or the SQL.
+  const code = type === 'query' ? draft.query : draft.sql
+  const codeType: CodeType = type === 'query' ? 'query' : 'sql'
+  const uses = paramsOf({ ...draft, component })
   // The dashboard hands over its range resolved; a preset picked here is resolved now.
   const span = range.from && range.to ? { from: range.from, to: range.to } : resolve(range.range, defaults.timezone, new Date())
   // What a run reads: a change to any of it after the run dims its rows.
-  const runKey = JSON.stringify([draft.sql, uses.project ? projectId : null, uses.range ? span : null])
+  const runKey = JSON.stringify([codeType, code, uses.project ? projectId : null, uses.range ? span : null])
   const stale = ranWith !== null && ranWith.key !== runKey
   const last = ranOf(run)?.result
   // What an automatic run reads; null while there is nothing it could run.
   const autoKey =
-    component && !markdown && draft.sql.trim() !== '' && (!uses.project || projectId !== undefined)
-      ? JSON.stringify([component, draft.props, uses.project ? projectId : null, uses.range ? span : null])
+    component && !markdown && code.trim() !== '' && (!uses.project || projectId !== undefined)
+      ? JSON.stringify([component, codeType, draft.props, uses.project ? projectId : null, uses.range ? span : null])
       : null
   const ranAuto = useRef<string | null>(null)
   const everRan = ranWith !== null
   const editing = widget !== undefined
   // An automatic run never runs SQL typed since the last run: that waits for ⌘↵.
-  const autoDue = autoKey !== null && autoKey !== ranAuto.current && (everRan ? ranWith.sql === draft.sql : editing)
+  const autoDue = autoKey !== null && autoKey !== ranAuto.current && (everRan ? ranWith.sql === code : editing)
 
   const runQuery = async (auto = false) => {
     if (!component || markdown) return
@@ -192,14 +199,14 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
     if (auto && !autoDue) return
     const n = ++latest.current
     ranAuto.current = autoKey
-    setRanWith({ key: runKey, sql: draft.sql })
+    setRanWith({ key: runKey, sql: code })
     setRun((r) => ({ kind: 'running', last: ranOf(r) }))
     const props = draft.props
     try {
       const result = await endpoints.previewWidget({
         component,
         props,
-        source: { type: 'sql', content: draft.sql },
+        source: { type: codeType, content: code },
         ...(uses.project && projectId !== undefined ? { project_id: projectId } : {}),
         ...(uses.range ? span : {}),
       })
@@ -348,7 +355,7 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
                 <Select
                   value={component ?? ''}
                   onValueChange={(next) =>
-                    setDraft((d) => ({ ...d, component: next, props: carryProps(d.props, widgets[next].contract.props) }))
+                    setDraft((d) => withComponent(d, next, carryProps(d.props, widgets[next].contract.props)))
                   }
                 >
                   <SelectTrigger size="sm" aria-label="Visualization" className="w-48 min-w-0">
@@ -422,7 +429,28 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
             </div>
             <div className="flex min-w-0 flex-col border-t lg:min-h-0 lg:border-t-0">
               <div className={toolbar}>
-                <span className="mr-auto text-sm font-medium">{markdown ? 'Markdown' : 'SQL'}</span>
+                {codes.length > 1 ? (
+                  <div role="group" aria-label="Source type" className="mr-auto flex items-center gap-1">
+                    {codes.map((c) => (
+                      <Button
+                        key={c}
+                        type="button"
+                        size="sm"
+                        variant={c === codeType ? 'secondary' : 'ghost'}
+                        aria-pressed={c === codeType}
+                        className="h-7"
+                        onClick={() => setDraft((d) => withCode(d, c))}
+                      >
+                        {codeLabel[c]}
+                      </Button>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="mr-auto text-sm font-medium">{markdown ? 'Markdown' : codeLabel[codeType]}</span>
+                )}
+                {draft.code === 'query' && type === 'sql' && (
+                  <span className="text-xs text-muted-foreground">A remote table takes SQL only</span>
+                )}
                 {!markdown && (
                   <>
                     {projectPicker}
@@ -440,13 +468,14 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
                     <CodeEditor flush language="markdown" label="Markdown" value={draft.markdown} onChange={(md) => edit({ markdown: md })} />
                   ) : (
                     <CodeEditor
+                      key={codeType}
                       flush
-                      language="sql"
-                      label="SQL"
-                      value={draft.sql}
-                      onChange={(sql) => edit({ sql })}
+                      language={codeType === 'query' ? 'json' : 'sql'}
+                      label={codeLabel[codeType]}
+                      value={code}
+                      onChange={(text) => edit(codeType === 'query' ? { query: text } : { sql: text })}
                       onRun={() => void runQuery()}
-                      tables={tables}
+                      tables={codeType === 'sql' ? tables : undefined}
                     />
                   )}
                 </Suspense>

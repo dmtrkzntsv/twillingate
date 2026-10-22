@@ -3,7 +3,7 @@ import { ArrowDownIcon, ArrowUpIcon } from 'lucide-react'
 import { useCardMode } from '@/components/share/card-mode'
 import { FilterBar, PageFooter, type OptionLoader } from '@/components/table-filters'
 import { Table as ShadcnTable, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { formatValue, type Format } from '@/lib/format'
+import { approx, approximate, formatValue, type Format } from '@/lib/format'
 import {
   applyView,
   distinctValues,
@@ -24,7 +24,7 @@ interface TableProps {
 export const contract: Contract = {
   description:
     'Every column the query returns, in order; a raw drill-down table for a card that lists rows. Viewers sort it by clicking a header. Viewers filter it by column; with mode "remote" filters, sort and paging run on the server over the whole result.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: { open: true, columns: [] },
   props: {
     type: 'object',
@@ -247,7 +247,10 @@ export default function Table({
                   {sql.columns.map((col, ci) => {
                     const raw = row[ci] ?? ''
                     const format = formats[col]
-                    const text = format ? formatValue(raw === '' ? null : Number(raw), format) : raw
+                    const text = approx(
+                      format ? formatValue(raw === '' ? null : Number(raw), format) : raw,
+                      approximate(sql, col)
+                    )
                     const range = ranges.get(col)
                     const style =
                       range && raw !== ''

@@ -54,13 +54,45 @@ describe('stat', () => {
     expect(screen.getByText('50%')).toBeInTheDocument()
   })
 
+  it('marks an approximate value with ≈, and the change it makes', () => {
+    renderStat({ columns: ['value', 'previous'], rows: [['3500', '3000']], truncated: false, approximate: ['value'] })
+    expect(screen.getByText('≈3,500')).toBeInTheDocument()
+    expect(screen.getByText('≈+16.7%')).toBeInTheDocument()
+  })
+
+  it('marks the change when only previous is approximate', () => {
+    renderStat({ columns: ['value', 'previous'], rows: [['80', '100']], truncated: false, approximate: ['previous'] })
+    expect(screen.getByText('80')).toBeInTheDocument()
+    expect(screen.getByText('≈-20%')).toBeInTheDocument()
+  })
+
+  it('leaves an exact change unmarked', () => {
+    renderStat({ columns: ['value', 'previous'], rows: [['120', '100']], truncated: false, approximate: [] })
+    expect(screen.getByText('+20%')).toBeInTheDocument()
+  })
+
+  it('marks the aggregate of an approximate series', () => {
+    renderStat({
+      columns: ['x', 'value'],
+      rows: [['2026-01-01', '10'], ['2026-01-02', '20']],
+      truncated: false,
+      approximate: ['value'],
+    })
+    expect(screen.getByText('≈30')).toBeInTheDocument()
+  })
+
+  it('leaves an exact value unmarked', () => {
+    renderStat({ columns: ['value', 'previous'], rows: [['5', '4']], truncated: false, approximate: ['previous'] })
+    expect(screen.getByText('5')).toBeInTheDocument()
+  })
+
   it('renders nothing broken for an empty result', () => {
     const { container } = renderStat({ columns: ['value'], rows: [], truncated: false })
     expect(container.firstChild).toBeEmptyDOMElement()
   })
 
   it('exposes its contract', () => {
-    expect(contract.accepts).toEqual(['sql'])
+    expect(contract.accepts).toEqual(['sql', 'query'])
     expect(contract.defaultWidth).toBe(3)
     expect(contract.defaultHeight).toBe(3)
   })

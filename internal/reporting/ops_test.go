@@ -1102,7 +1102,7 @@ func itoa(n int64) string { return strconv.FormatInt(n, 10) }
 // --- Reads and unknown ids ---
 
 func TestSourceTypesSorted(t *testing.T) {
-	if got := newTestService(t).SourceTypes(); !reflect.DeepEqual(got, []string{"md", "sql"}) {
+	if got := newTestService(t).SourceTypes(); !reflect.DeepEqual(got, []string{"md", "query", "sql"}) {
 		t.Errorf("SourceTypes = %v", got)
 	}
 }
