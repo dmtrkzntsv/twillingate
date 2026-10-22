@@ -1,0 +1,371 @@
+# Native engine: structured queries in Go, SQL as an external engine
+
+Status: approved, 2026-10-21. Supersedes D8 and D10 of
+`2026-10-12-raw-first-design.md` for the open-source server; the rest of
+raw-first (event files are the only truth, per-project month Parquet plus
+day files plus the open NDJSON log, retention by file) stands.
+
+## Intent
+
+Twillingate's long-term shape is an analytics server that is cheap to run:
+fast answers, as little memory as possible, low CPU. Almost every request
+is someone opening a built-in dashboard; very few people ever write SQL.
+Today every one of those requests goes through DuckDB in a child process,
+which costs a cgo build, an 81 MB binary, memory peaks of 600–800 MB per
+child, a slot semaphore, and a SQL dialect that users and agents have to
+learn.
+
+The owner's decisions (2026-10-20/21):
+
+- **The server has no SQL and no DuckDB.** It is pure Go. Every
+  dashboard, built-in or custom, and every agent question runs on a native
+  engine that answers a small structured query language.
+- **SQL is an external engine**, a separate program reached through a
+  narrow, generic hook. Its code is not in this repository. Without one
+  configured, SQL sources are refused.
+- **Agents compose their own questions** from the same structured language
+  widgets use.
+- **Approximate distinct counts (about 1%) are acceptable** where exactness
+  would cost memory (tentative yes: "I think so"). This reverses raw-first
+  D9's "no estimates" for those cases.
+- **No precomputed partials as data.** No extra files the daily pass
+  writes and someone must maintain, back up and clean. Per-day partial
+  results may exist only as a **disposable cache**, generated on demand,
+  in a cache directory with a size cap, safe to delete at any time.
+- **No backward compatibility for widgets.** No converter, no upgrade
+  path for SQL widgets. (Builder's call: saved SQL widgets and shares of them are kept,
+  not deleted; they fail with the typed "needs an external SQL engine"
+  error, and run as before where the hook is configured. Nothing
+  irreversible happens on upgrade.)
+- **Shipped as stacked PRs, released one by one.** DuckDB stays in this
+  repository while the native engine takes over (the parity check needs
+  it, and prod keeps working); the final `feat!` release removes it and
+  adds the SQL hook together.
+- **Go.** A Rust rewrite of the server or a Rust engine sidecar were
+  considered and rejected: Rust's DuckDB crate wraps the same C++ library;
+  its pure-Rust option (DataFusion) only matters for SQL, which leaves the
+  server; the native engine's speed comes from what it reads, not the
+  language, and Go can hold a ~20 MB idle budget (`GOMEMLIMIT`); the
+  server is ~28.5k lines plus ~49.5k of tests.
+
+## Targets
+
+Many instances should fit on one modest host, so idle and peak memory per
+process are the budget that matters. The workload envelope is **100,000 to
+1,000,000 events per month per instance**; every target holds across it,
+so the upper end is what the engine is sized for. Targets per process:
+
+| | Target | Today |
+|---|---|---|
+| Idle RSS | ~20 MB | 30 MB (after #200), no engine child |
+| Peak during a dashboard load | under ~150 MB, released after | 600–800 MB in the DuckDB child |
+| A built-in dashboard, 30-day range, no cache | under 0.5 s total at 1M events/month; tens of ms at 100k | 0.35 s+ plus a 23–100 ms spawn |
+| A built-in dashboard, 1-year range | under 1 s total with a warm cache, under ~3 s cold, at 1M events/month | ~3 s at 2 threads |
+| Binary | no cgo; target ≤ 30 MB | 81 MB, cgo |
+
+These are targets to measure against, not promises; step 1 of the build
+measures them.
+
+## Goals
+
+- One native Go engine answers every built-in dashboard, every custom
+  widget, and the agent's `query` tool, within the budget above.
+- Widgets are standardized: a widget's source is a structured query,
+  validated structurally when it is saved, so a saved widget cannot fail
+  with a syntax error or change meaning on an engine upgrade.
+- The daily pass (dump, month merge, derived sessions, identities,
+  aliases) runs without DuckDB.
+- Pure-Go release build: no cgo, plain cross-compiling. 32-bit ARM may
+  come back (a free side effect, not a goal to test for in v1).
+- A narrow, published hook lets an external SQL engine answer SQL
+  sources. With the hook unset, SQL sources are refused with a
+  typed error.
+
+## Non-goals
+
+- A SQL engine of our own, or any subset of SQL.
+- Funnels, paths/sankey, one-actor timelines in v1 (no built-in uses them;
+  the survey found them only as documentation examples). They are the
+  first candidates for later kinds, for agents.
+- Chaining queries (passing one query's actor set into another's filter)
+  in v1.
+- An external SQL engine itself; this design only fixes the hook one
+  plugs into.
+- Migrating existing SQL widgets.
+
+## Anti-goals (a failure even if it works)
+
+- Per-day or per-month partial files that the daily pass writes and that
+  have to be kept correct, backed up or cleaned up by hand.
+- Redis or any other server to install beside the binary.
+- A query an agent can send that makes memory grow with traffic: every
+  kind has a bounded memory model, and past the bound the engine refuses
+  or trims with a clear message.
+- Approximate numbers presented as exact.
+- A per-dashboard special case in Go: built-in dashboards are ordinary
+  widgets over the same structured language.
+
+## What the built-ins need (survey, 2026-10-20)
+
+All 63 system widgets and the analytics tools were read
+(`internal/reporting/system/`, `internal/api/ops_*.go`):
+
+- Every query is one project and `day BETWEEN from AND to`. The only time
+  bucket is `day`.
+- Most figures are per-day then combined: "visitors" is the per-day
+  distinct actors **summed** over days; the "users" columns in product
+  and table widgets are the **max** of per-day distincts. So the engine
+  needs a two-stage aggregate: inner per day (and dimension), outer sum,
+  max or avg.
+- Whole-range distinct counts appear in: active users/groups,
+  actions-per-user/group, new users/groups, top users/groups "active
+  days", attribute values users/groups (up to a year), list_attributes,
+  product_attributes (capped at 92 days today because it runs out of
+  memory), and retention (per cohort × offset).
+- Previous-period comparison is used by three stat widgets.
+- Shapes outside a plain trend/breakdown: retention cohorts with a
+  clock-based denominator and D7/D30/D45 milestones; the attribute
+  explorer (every attribute key × value with counts); new vs returning
+  (`day = first_seen`); top-4-plus-Other and top-5-then-trend; vitals
+  ratings against fixed thresholds; per-page vitals pivoted to columns;
+  weighted percentiles from log-scale measure buckets.
+- Form attribution (`internal/archive/attribution.go`) is internal code,
+  not a user query: an actor/install/alias lookup in a time window.
+
+## The structured query language
+
+A widget source becomes `{"type": "query", "query": {…}}` (or `md`). The
+agent's `query` tool takes the same object. The kinds for v1:
+
+| Kind | Answers | Notes |
+|---|---|---|
+| `stat` | one number | optional `compare: "previous"` (the preceding range of equal length); optional per-day sparkline |
+| `trend` | a metric per day, optionally split into series by one dimension | `series_limit` with top-N over the whole range (top-5-then-trend) |
+| `breakdown` | a ranked table by 1–3 dimensions, one or more metrics | `limit`, `other: true` (fold the rest into "Other"); remote table paging/sort/filter on top |
+| `retention` | cohort grid and pooled curves | cohort = first active day; activity filter; offsets 0..N; user vs install split as today; milestones |
+| `percentiles` | p50/p75/p95 and weighted mean of measures and vitals | by day, by event, by one or two dimensions; ratings against named thresholds |
+| `attributes` | every attribute key and value with counts | the attribute explorer, `list_attributes`, `product_attributes` |
+
+Common fields: `table` (`views`, `product`, `measures`, `sessions`,
+`events`, `identities`), `where` (a closed operator set — `eq`, `ne`,
+`in`, `not_in`, `contains`, `prefix`, `gt`, `gte`, `lt`, `lte`, `is_set`
+— on columns and `attr_*`), `metrics`, `dimensions`, `limit`, `order`.
+
+Metrics (closed set): `count`, `actors` (distinct actors), `users`,
+`groups`, `sum`, `avg`, `min`, `max` of a numeric column, `share` (of the
+total), `ratio` of two metrics, and the per-day combinators the built-ins
+use (`daily_sum`, `daily_max`, `daily_avg` of a per-day distinct).
+Sessions add `sessions`, `bounces`, `bounce_rate`, `duration`.
+
+Dimensions: any column of the table, any `attr_*`, `first_seen_day`
+(new vs returning), and a few computed ones the built-ins need
+(`resolution` = width×height, `device_label` = model or device,
+`platform_version` = platform + app version, `consent_state`).
+
+The exact field names, the JSON schema, and which combinations each kind
+accepts are the builder's to settle, with three constraints: every
+built-in widget is expressible; the MCP tool schema carries the whole
+language inline (as widget props are today, no `$defs`), so an agent
+learns it from the tool definition; and an invalid query is refused at
+save time (widgets) or call time (`query`) with a typed `manage.ErrInvalid`
+naming the field.
+
+Every result carries an `approximate` flag per column when any value in
+it came from a sketch; components show it (a "≈" marker is enough).
+Builder's call (from the review): approximation applies to **distinct
+counts only**. Plain counts, sums and rankings are exact, from the cache
+too: a cache entry holds the day's full group table (under the kind's
+caps), never only a top-K, so a merged range ranks exactly.
+
+**Visitors stay "once per day, summed".** A cookieless visitor, the default, is a hash of the
+connection under a key that rotates at midnight (`docs/twillingate.md`),
+so the same person has a new id every day and a range-distinct count is
+impossible for most visitors; it would dedupe only consenting visitors
+and mix two meanings in one figure. This is the Plausible convention too.
+The docs say it plainly. Product `users`/`groups` come from ids that do
+not rotate (user, install, group), so their whole-range figures are
+distinct over the range, approximate where the engine needs it.
+
+## The engine
+
+**Reading.** Parquet is read column by column: a query reads only the
+columns it needs, reads each file's footer first, and skips every row
+group whose min/max statistics (project, day) fall outside the query.
+Dictionary-encoded string columns are grouped and counted by dictionary
+index, and decoded only for the rows that are returned. The open NDJSON
+log is parsed with the same decoders the ingest path uses. This
+"scan smart every time" path is the engine; everything else is an
+optimization.
+
+**Aggregation.** Per kind, one pass over the scanned rows into a hash
+aggregate keyed by (day, dimensions). Distinct actors per day are exact
+(a per-day set); a whole-range distinct is exact while the set is under a
+threshold and switches to HyperLogLog above it (the threshold and the
+sketch precision are the builder's, chosen against the memory target).
+Retention needs per-actor first day and active days: exact per actor id
+within the range, with the actor id mapped to a dense integer per query.
+
+**Memory bounds.** Each kind has a written memory model (rows × width,
+groups × state size). Breakdowns cap group count (top-N with Other, and
+a hard cap on distinct keys tracked); retention caps cohort days and
+offsets; `attributes` caps keys and values per key (today's
+`ATTRIBUTE_VALUES_TOP_N` and friends). Past a cap the engine trims and
+says so in the result (`truncated`), or refuses with a typed error; it
+never grows unbounded.
+
+**Concurrency.** Queries run in the server process. A per-process
+semaphore (default: a small number, e.g. 2) bounds concurrent scans so a
+dashboard of many widgets cannot multiply peak memory. Widgets of one
+dashboard load run one or two at a time, as the measurements in
+raw-first found best on small boxes.
+
+**The cache.** A disposable per-day partial cache:
+
+- Lives under a cache directory (default under the data directory, e.g.
+  `cache/`, configurable), with a size cap and least-recently-used
+  eviction; a small in-memory layer above it within the memory budget.
+- Keyed by (project, day, a hash of the query's scan shape: table, where,
+  dimensions, metrics) and by the file's identity (path + size + mtime or
+  a generation number), so a rewritten day file or month file simply
+  misses.
+- Entries hold per-day partial state: counts, sums, the full
+  per-dimension group table (under the kind's caps; not a top-K), HLL
+  sketches, measure bucket weights.
+- Built on demand the first time a query needs that day; never by the
+  daily pass. Today and the open log are never cached.
+- Rule changes (rename, merge, block), late events landing on a closed
+  day, and retention deletions drop the affected project's entries (or
+  bump a per-project generation). No repair logic.
+- Not backed up, not migrated; a missing or corrupt directory is rebuilt.
+  Deleting it is always safe.
+- Ships behind a setting that can turn it off; the engine must meet the
+  30-day targets across the whole envelope without it.
+
+## The daily pass without DuckDB
+
+`internal/archive` today runs DuckDB `COPY … TO` for the day dump
+(NDJSON → Parquet), the month merge, and the derived `sessions`,
+`identities` and `aliases` files. In Go:
+
+- A Parquet writer and reader. Per CLAUDE.md, a dependency needs a very
+  reputable vendor: Apache Arrow's Go Parquet package qualifies;
+  `parquet-go/parquet-go` is the other candidate. Builder chooses by
+  measurement (write speed, memory while merging a month, read speed for
+  the engine's column/row-group access) and records why. Writing our own
+  Parquet codec is out of scope.
+- File layout stays as raw-first D2/D4 defined it, with two requirements
+  the engine relies on: rows ordered by family then time within a file,
+  and row groups small enough to make day pruning useful (builder
+  measures; ~one day per row group in a month file is a starting point).
+- Sessionization, identities and aliases become Go over the day's rows;
+  the semantics stay exactly as `internal/archive/derive.go` defines them.
+- Merging a month streams row groups; it never loads a month into memory.
+
+## SQL: the external engine hook
+
+- The widget source type `sql` stays in the contract but is only
+  accepted when an external SQL engine is configured: one environment
+  variable with the engine's address (a Unix socket path; name is the
+  builder's, e.g. `SQL_ENGINE_SOCKET`, documented in
+  `docs/deployment.md`). Unset: saving a SQL widget or calling `query`
+  with SQL is refused with a typed error that says SQL needs an external
+  engine.
+- **What the engine is sent: the SQL plus a table spec.** Today SQL never
+  reads raw files directly: `internal/archive/reader.go` builds the seven
+  tables as DuckDB views that apply the event and attribute rules
+  (rename, merge, block) on read, load the open NDJSON logs, and derive
+  sessions, identities and aliases for days without a derived file. The
+  hook sends the SQL, its args, `max_rows`, the project, and a **table
+  spec**: the file lists per table, the open log paths, and the project's
+  rules. Turning a table spec into tables is the engine's job. Storage
+  does not change: the server and an engine read the same event files;
+  the table spec is a per-request message, never stored.
+- An engine must reproduce the rule semantics, open-log parsing and
+  sessionization the native engine applies; the table spec carries
+  everything it needs. Baking rules into the files was rejected: rules
+  apply to the past by design.
+- An engine reads the event files directly and only needs read access to
+  `raw/`; paths in a table spec always resolve inside it.
+- `internal/engine`, the `twillingate engine` subcommand,
+  `internal/shared/enginesql`, the reader's SQL, the DuckDB dependency and
+  cgo leave this repository in the final release.
+
+**The protocol (v1): HTTP with JSON over a Unix socket.** Standard library,
+`curl --unix-socket` to debug, cancellation through the request context.
+Message shapes follow today's pipe protocol
+(`internal/engine/protocol.go`).
+
+| Call | Purpose |
+|---|---|
+| `GET /v1/health` | protocol and engine version; twillingate checks it at startup and refuses a mismatch with a clear error |
+| `POST /v1/query` | `{sql, args, max_rows, project, tables}` → `{columns, rows, truncated}` |
+
+Errors by status: 400 = the engine refused the SQL (message shown to the
+user, as `QueryError` today); 503 with `Retry-After` = the engine is
+busy; 500 = the engine failed. The protocol and table-spec types live in
+a small package in this repository so an engine can import them; the
+file layout and table names are part of the versioned contract.
+
+## What changes in the repo
+
+- `internal/reporting`: widget sources become structured queries;
+  validation is structural; the 63 system widgets are rewritten as
+  structured queries; `components.json` gains whatever the components
+  need for the `approximate` flag.
+- `internal/api`: `query` takes the structured language; the fixed
+  analytics tools (`views_overview`, `views_breakdown`, `product_events`,
+  `product_attributes`, `measures`, `retention`, `identities`) become thin
+  presets over the engine or are dropped in favour of `query` (builder's
+  call; lean towards dropping — one way in).
+- `internal/archive`: Go Parquet writing, Go derivations, the reader
+  serving the engine instead of building SQL.
+- A new package for the engine (rank in `internal/archtest`).
+- `internal/sqlcheck`: whatever still reaches DuckDB is gone; it keeps
+  checking SQLite.
+- Docs: `docs/reporting.md` teaches the structured language (the
+  component table and worked examples); `docs/twillingate.md` drops
+  "writing SQL against the event files"; `docs/deployment.md` drops the
+  engine variables (`ENGINE_MEMORY_LIMIT`, `ENGINE_MAX_CHILDREN`, …) and
+  adds the cache and SQL hook settings; `deploy/UPGRADES.md` says SQL
+  widgets are refused after the upgrade. `docs_sync_test.go` follows.
+- Web: the widget editor builds structured queries (the SQL box shows
+  only when the server reports an external engine).
+- Release: `make dist` and `release.yml` drop cgo and the arm64 C
+  toolchain.
+- Commits: `feat!` (breaking for widgets and `query`).
+
+## Order of work (suggested)
+
+1. **Measure first.** With `scripts/archive-bench`'s generator at 100k and
+   1M events/month over a year: the candidate Parquet libraries' read and
+   write; a native scan of three representative built-ins (visitors by
+   country, DAU, attribute values) with no cache. This settles the
+   library, the row-group size, and whether both ends of the envelope meet
+   the 30-day targets uncached.
+2. The engine and the language for `stat`, `trend`, `breakdown`;
+   `query` over MCP.
+3. `percentiles`, `retention`, `attributes`; rewrite the system widgets;
+   parity check against today's DuckDB results on the same files (as the
+   raw-first switch did).
+4. The daily pass in Go (DuckDB still in the tree for SQL widgets and the
+   parity check).
+5. The cache, only if it shows great results (owner, 2026-10-21): the
+   default is no cache. It is built only when the measurements show the
+   1-year target missed without it and the cache bringing that dashboard
+   several times faster, enough to justify its moving parts.
+6. The SQL hook, the final `feat!` release: DuckDB, cgo and
+   `internal/engine` leave this repository in the same release.
+
+Each step is a PR stacked on the previous one and released on its own;
+until step 6, SQL widgets and the daily pass may still use DuckDB.
+
+## Left to the builder
+
+- Field names and JSON schema of the language; the exact metric and
+  dimension lists beyond what the built-ins need.
+- The Parquet library (by measurement), row-group size, HLL precision and
+  the exact/approximate threshold.
+- Cache directory default, size cap, eviction details, key format.
+- Whether the fixed analytics tools survive as presets.
+- Names of new environment variables.
+- How the `approximate` flag is drawn.
