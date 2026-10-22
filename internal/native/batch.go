@@ -3,7 +3,13 @@
 // statistics, into column batches.
 package native
 
-import "github.com/dmtrkzntsv/twillingate/internal/shared/civil"
+import (
+	"iter"
+	"maps"
+	"strings"
+
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
+)
 
 // Column is one column of a batch, by the column's type:
 //   - VARCHAR: Dict holds this batch's distinct values, Idx one entry per
@@ -22,10 +28,41 @@ type Column struct {
 	Null   []bool
 }
 
-// Batch is a run of rows, column by column.
+// Batch is a run of rows, column by column. Cols is keyed by the column's
+// name as the batch's file spells it: DuckDB's names ignore case (its
+// union by name makes a month file's attr_plan and a log's attr_Plan one
+// column of events), so batches from different files may spell one column
+// differently. Look a column up with col, never by indexing Cols.
 type Batch struct {
 	N    int
 	Cols map[string]*Column
+}
+
+// col finds the column name names: the one spelled so, else the one equal
+// to it but for case (the first in name order, should there be several).
+// key is the batch's own name for it; "" and nil when b has none.
+func (b *Batch) col(name string) (key string, c *Column) {
+	key, ok := resolveName(name, maps.Keys(b.Cols))
+	if !ok {
+		return "", nil
+	}
+	return key, b.Cols[key]
+}
+
+// resolveName is the one of names that name names, as col finds it: name
+// itself, else the least of those equal to it but for case.
+func resolveName(name string, names iter.Seq[string]) (string, bool) {
+	var fold string
+	found := false
+	for n := range names {
+		if n == name {
+			return n, true
+		}
+		if strings.EqualFold(n, name) && (!found || n < fold) {
+			fold, found = n, true
+		}
+	}
+	return fold, found
 }
 
 // AttrCols is the column pattern that asks for every column whose name

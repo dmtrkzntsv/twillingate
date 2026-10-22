@@ -187,20 +187,14 @@ func TestLogSkipsBadLines(t *testing.T) {
 }
 
 // fold names b's columns as a union by name across files does (DuckDB's
-// names ignore case): a name of cols that b lacks is b's column equal to it
-// but for case, if any. The month file's attr_plan is the log's attr_Plan
-// (the log's own attr_plan is attr_plan_1).
+// names ignore case): each name of cols is b's column Batch.col resolves
+// it to. The month file's attr_plan is the log's attr_Plan (the log's own
+// attr_plan is attr_plan_1).
 func fold(b *Batch, cols []string) *Batch {
 	out := &Batch{N: b.N, Cols: map[string]*Column{}}
 	for _, name := range cols {
-		if c := b.Cols[name]; c != nil {
+		if _, c := b.col(name); c != nil {
 			out.Cols[name] = c
-			continue
-		}
-		for have, c := range b.Cols {
-			if strings.EqualFold(have, name) {
-				out.Cols[name] = c
-			}
 		}
 	}
 	return out

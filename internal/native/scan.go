@@ -2,6 +2,7 @@ package native
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 )
@@ -73,9 +74,11 @@ feed:
 }
 
 // expandCols resolves the requested names against one file's columns: a
-// "prefix*" pattern becomes every file column with that prefix, a plain
-// name stays even when the file lacks it (it then reads all null). Each
-// name comes once, in the order first asked for.
+// "prefix*" pattern becomes every file column with that prefix; a plain
+// name becomes the file's column as Batch.col would find it (the file's
+// spelling, which may differ in case), and stays as it is when the file
+// has none (it then reads all null). Each name comes once, in the order
+// first asked for.
 func expandCols(fileCols []string, want []string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -93,6 +96,9 @@ func expandCols(fileCols []string, want []string) []string {
 				}
 			}
 			continue
+		}
+		if n, ok := resolveName(w, slices.Values(fileCols)); ok {
+			w = n
 		}
 		add(w)
 	}

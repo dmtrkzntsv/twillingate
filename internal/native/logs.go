@@ -31,7 +31,9 @@ import (
 //     of the log's complete lines: a key equal to an earlier one but for
 //     case reads as <key>_<n>, so a name in cols matches that column. A
 //     pattern in cols (AttrCols) expands to the log's columns with its
-//     prefix; a plain name the log lacks reads all null.
+//     prefix; a plain name resolves as expandCols resolves it, to the log's
+//     own spelling when that differs in case (look columns up with
+//     Batch.col), and one the log lacks reads all null.
 //   - A key a line leaves out reads null, at the column's type; a value
 //     that does not cast to the column's type fails the read, as DuckDB's
 //     CAST fails the query.
@@ -168,15 +170,16 @@ func readLine(br *bufio.Reader, buf *[]byte) ([]byte, error) {
 }
 
 // wanted says whether key's column may be one cols asks for: its name is
-// the key (NUL spelled \u0000, as archive names it) or that and _<n>.
+// the key (NUL spelled \u0000, as archive names it) or that and _<n>, but
+// for case (expandCols resolves a plain name so).
 func wanted(key string, cols []string) bool {
-	name := strings.ReplaceAll(key, "\x00", `\u0000`)
+	name := strings.ToLower(visible(key))
 	for _, c := range cols {
 		if prefix, ok := strings.CutSuffix(c, "*"); ok {
-			if strings.HasPrefix(name, prefix) {
+			if strings.HasPrefix(visible(key), prefix) {
 				return true
 			}
-		} else if c == name || strings.HasPrefix(c, name+"_") {
+		} else if c = strings.ToLower(c); c == name || strings.HasPrefix(c, name+"_") {
 			return true
 		}
 	}
