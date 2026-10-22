@@ -230,33 +230,71 @@ func TestSessionsQueriesMatchDuckDB(t *testing.T) {
 	e := New(Options{Dir: f.Dir, Workers: 2})
 	const from, to = "2026-08-29", today
 	const in = `"project_id" = 3 AND "day" BETWEEN DATE '%[1]s' AND DATE '%[2]s'`
+	// The metrics of sessions, as the built-in widgets read them.
+	metrics := []Metric{{Op: "count"}, {Op: "bounces"}, {Op: "bounce_rate"}, {Op: "avg", Column: "duration_sec"},
+		{Op: "sum", Column: "views"}, {Op: "min", Column: "duration_sec"}, {Op: "max", Column: "views"}}
+	metricCols := []string{"count", "bounces", "bounce_rate", "avg_duration_sec", "sum_views", "min_duration_sec", "max_views"}
+	const metricSQL = `count(*), count(*) FILTER (WHERE "views" = 1),
+		CASE WHEN count(*) > 0 THEN count(*) FILTER (WHERE "views" = 1)::DOUBLE / count(*) END,
+		avg("duration_sec"), sum("views"), min("duration_sec"), max("views")`
+	// byRate ranks referrers by bounce rate, ties by the referrer.
+	const byRate = `WITH g AS (SELECT "referrer_source" AS r, count(*) FILTER (WHERE "views" = 1)::DOUBLE / count(*) AS b,
+				count(*) FILTER (WHERE "views" = 1) AS n, count(*) AS c
+			FROM sessions WHERE ` + in + ` GROUP BY ALL),
+		top AS (SELECT * FROM g ORDER BY b DESC, r ASC NULLS LAST LIMIT 2) `
 	cases := []struct {
-		name string
-		q    Query
-		cols []string
-		sql  string
+		name     string
+		q        Query
+		cols     []string
+		sql      string
+		from, to string
 	}{
-		{"stat", Query{Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "count"}, {Op: "actors"}}},
-			[]string{"count", "actors"}, `SELECT count(*), count(DISTINCT "actor_id") FROM sessions WHERE ` + in},
-		{"trend", Query{Kind: "trend", Table: "sessions", Metrics: count()}, []string{"day", "count"},
-			`SELECT "day", count(*) FROM sessions WHERE ` + in + ` GROUP BY "day" ORDER BY "day"`},
-		{"trend by kind", Query{Kind: "trend", Table: "sessions", Metrics: []Metric{{Op: "actors"}}, Series: "kind"},
-			[]string{"day", "series", "actors"},
-			`SELECT "day", "kind", count(DISTINCT "actor_id") FROM sessions WHERE ` + in + ` GROUP BY ALL ORDER BY "day", "kind"`},
-		{"breakdown", Query{Kind: "breakdown", Table: "sessions", Metrics: []Metric{{Op: "count"}, {Op: "actors"}},
-			Dimensions: []string{"entry_path", "exit_path"}, Limit: 100}, []string{"entry_path", "exit_path", "count", "actors"},
-			`SELECT "entry_path", "exit_path", count(*) AS c, count(DISTINCT "actor_id") FROM sessions WHERE ` + in + `
+		{name: "stat session metrics", q: Query{Kind: "stat", Table: "sessions", Metrics: metrics}, cols: metricCols,
+			sql: `SELECT ` + metricSQL + ` FROM sessions WHERE ` + in},
+		{name: "stat empty", q: Query{Kind: "stat", Table: "sessions", Metrics: metrics}, cols: metricCols,
+			sql: `SELECT ` + metricSQL + ` FROM sessions WHERE ` + in, from: "2026-07-01", to: "2026-07-05"},
+		{name: "trend bounce rate", q: Query{Kind: "trend", Table: "sessions", Metrics: []Metric{{Op: "bounce_rate"}}},
+			cols: []string{"day", "bounce_rate"},
+			sql:  `SELECT "day", count(*) FILTER (WHERE "views" = 1)::DOUBLE / count(*) FROM sessions WHERE ` + in + ` GROUP BY "day" ORDER BY "day"`},
+		{name: "breakdown entry path", q: Query{Kind: "breakdown", Table: "sessions", Metrics: count(), Dimensions: []string{"entry_path"}},
+			cols: []string{"entry_path", "count"},
+			sql: `SELECT "entry_path", count(*) AS c FROM sessions WHERE ` + in + `
+				GROUP BY ALL ORDER BY c DESC, "entry_path" ASC NULLS LAST LIMIT 20`},
+		{name: "breakdown bounce rate other", q: Query{Kind: "breakdown", Table: "sessions",
+			Metrics: []Metric{{Op: "bounce_rate"}, {Op: "bounces"}, {Op: "count"}}, Dimensions: []string{"referrer_source"}, Limit: 2, Other: true},
+			cols: []string{"referrer_source", "bounce_rate", "bounces", "count"},
+			sql: byRate + `SELECT r, b, n, c FROM (
+					SELECT 0 AS o, r, b, n, c FROM top
+					UNION ALL
+					SELECT 1, 'Other', count(*) FILTER (WHERE "views" = 1)::DOUBLE / count(*), count(*) FILTER (WHERE "views" = 1), count(*)
+					FROM sessions s WHERE ` + in + ` AND NOT EXISTS (SELECT 1 FROM top WHERE top.r IS NOT DISTINCT FROM s."referrer_source")
+					HAVING count(*) > 0)
+				ORDER BY o, b DESC, r ASC NULLS LAST`},
+		{name: "stat", q: Query{Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "count"}, {Op: "actors"}}},
+			cols: []string{"count", "actors"}, sql: `SELECT count(*), count(DISTINCT "actor_id") FROM sessions WHERE ` + in},
+		{name: "trend", q: Query{Kind: "trend", Table: "sessions", Metrics: count()}, cols: []string{"day", "count"},
+			sql: `SELECT "day", count(*) FROM sessions WHERE ` + in + ` GROUP BY "day" ORDER BY "day"`},
+		{name: "trend by kind", q: Query{Kind: "trend", Table: "sessions", Metrics: []Metric{{Op: "actors"}}, Series: "kind"},
+			cols: []string{"day", "series", "actors"},
+			sql:  `SELECT "day", "kind", count(DISTINCT "actor_id") FROM sessions WHERE ` + in + ` GROUP BY ALL ORDER BY "day", "kind"`},
+		{name: "breakdown", q: Query{Kind: "breakdown", Table: "sessions", Metrics: []Metric{{Op: "count"}, {Op: "actors"}},
+			Dimensions: []string{"entry_path", "exit_path"}, Limit: 100}, cols: []string{"entry_path", "exit_path", "count", "actors"},
+			sql: `SELECT "entry_path", "exit_path", count(*) AS c, count(DISTINCT "actor_id") FROM sessions WHERE ` + in + `
 				GROUP BY ALL ORDER BY c DESC, "entry_path" ASC NULLS LAST, "exit_path" ASC NULLS LAST LIMIT 100`},
-		{"filtered", Query{Kind: "breakdown", Table: "sessions", Metrics: count(), Dimensions: []string{"referrer_source", "day"},
+		{name: "filtered", q: Query{Kind: "breakdown", Table: "sessions", Metrics: count(), Dimensions: []string{"referrer_source", "day"},
 			Where: []Filter{{Column: "views", Op: "gt", Values: []string{"1"}}, {Column: "duration_sec", Op: "lte", Values: []string{"1800"}},
 				{Column: "session_id", Op: "ne", Values: []string{"2"}}, {Column: "entry_host", Op: "is_set"}}, Limit: 100},
-			[]string{"referrer_source", "day", "count"},
-			`SELECT "referrer_source", "day", count(*) AS c FROM sessions WHERE ` + in + ` AND "views" > 1 AND "duration_sec" <= 1800
+			cols: []string{"referrer_source", "day", "count"},
+			sql: `SELECT "referrer_source", "day", count(*) AS c FROM sessions WHERE ` + in + ` AND "views" > 1 AND "duration_sec" <= 1800
 				AND "session_id" <> '2' AND "entry_host" <> ''
 				GROUP BY ALL ORDER BY c DESC, "referrer_source" ASC NULLS LAST, "day" ASC LIMIT 100`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			from, to := from, to
+			if c.from != "" {
+				from, to = c.from, c.to
+			}
 			res, err := e.Answer(context.Background(), c.q, Params{Project: sessionsProject, From: date(t, from), To: date(t, to)}, engineRules)
 			if err != nil {
 				t.Fatal(err)

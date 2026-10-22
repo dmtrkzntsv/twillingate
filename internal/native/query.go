@@ -36,8 +36,8 @@ type Query struct {
 
 // Metric is one aggregate.
 type Metric struct {
-	Op     string `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. sessions takes count (sessions) and actors only"`
-	Column string `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column"`
+	Op     string `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. sessions takes count (sessions), actors, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none)"`
+	Column string `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views"`
 	Of     string `json:"of,omitempty" jsonschema:"daily_* only: what is counted distinct per day"`
 	As     string `json:"as,omitempty" jsonschema:"the output column's name (default: op, or op_column, or op_of)"`
 }
@@ -226,18 +226,23 @@ func dimensionOf(table, column string) bool {
 var (
 	Kinds        = []string{"stat", "trend", "breakdown"}
 	Tables       = []string{"events", "views", "product", "measures", "sessions"}
-	MetricOps    = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg"}
+	MetricOps    = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "bounces", "bounce_rate"}
 	ValueColumns = []string{"value", "sample_rate", "display_width", "display_height"}
-	OfColumns    = []string{"actors", "users", "groups"}
-	FilterOps    = []string{"eq", "ne", "in", "not_in", "contains", "prefix", "gt", "gte", "lt", "lte", "is_set"}
+	// SessionValueColumns are the columns sum, avg, min and max take on
+	// sessions (ValueColumns on the other tables).
+	SessionValueColumns = []string{"duration_sec", "views"}
+	OfColumns           = []string{"actors", "users", "groups"}
+	FilterOps           = []string{"eq", "ne", "in", "not_in", "contains", "prefix", "gt", "gte", "lt", "lte", "is_set"}
 )
 
 var (
 	metricOps  = setOf(MetricOps)
 	valueCols  = setOf(ValueColumns)
+	sessValue  = setOf(SessionValueColumns)
 	ofCols     = setOf(OfColumns)
 	filterOps  = setOf(FilterOps)
-	sessionOps = setOf([]string{"count", "actors"})
+	sessionOps = setOf([]string{"count", "actors", "sum", "avg", "min", "max", "bounces", "bounce_rate"})
+	bounceOps  = setOf([]string{"bounces", "bounce_rate"})
 	orderedOps = map[string]bool{"gt": true, "gte": true, "lt": true, "lte": true}
 )
 
@@ -363,14 +368,20 @@ func (m Metric) validate(table string, i int) error {
 		return invalid(p+".op", "%q is not a metric", m.Op)
 	}
 	if table == "sessions" && !sessionOps[m.Op] {
-		return invalid(p+".op", "%s is not a metric of sessions, which takes count and actors", m.Op)
+		return invalid(p+".op", "%s is not a metric of sessions, which takes count, actors, bounces, bounce_rate, sum, avg, min and max", m.Op)
+	}
+	if table != "sessions" && bounceOps[m.Op] {
+		return invalid(p+".op", "%s is a metric of sessions only", m.Op)
 	}
 	switch m.Op {
 	case "sum", "avg", "min", "max":
 		if m.Column == "" {
 			return invalid(p+".column", "%s needs a column", m.Op)
 		}
-		if !valueCols[m.Column] {
+		if table == "sessions" && !sessValue[m.Column] {
+			return invalid(p+".column", "%q is not duration_sec or views, the numbers of sessions", m.Column)
+		}
+		if table != "sessions" && !valueCols[m.Column] {
 			return invalid(p+".column", "%q is not value, sample_rate, display_width or display_height", m.Column)
 		}
 		if m.Of != "" {

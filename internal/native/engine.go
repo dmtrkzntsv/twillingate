@@ -133,7 +133,9 @@ var (
 // count is COUNT(*), actors, users and groups COUNT(DISTINCT actor_id),
 // user_id and group_id (NULL left out), sum, avg, min and max NULL over no
 // value, daily_* the per-day distinct counts' SUM, MAX or AVG over the
-// days with rows (NULL over none).
+// days with rows (NULL over none); on sessions bounces is COUNT(*) FILTER
+// (WHERE views = 1) and bounce_rate that over COUNT(*) as a DOUBLE (NULL
+// over no session; an Other row's over its folded groups' sessions).
 func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Rules) (Result, error) {
 	if err := q.Validate(); err != nil {
 		return Result{}, err

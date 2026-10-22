@@ -29,6 +29,10 @@ func TestValidate(t *testing.T) {
 			Dimensions: []string{"entry_path", "day", "project_id"}, Where: []Filter{{Column: "views", Op: "gt", Values: []string{"1"}},
 				{Column: "duration_sec", Op: "lte", Values: []string{"60"}}, {Column: "utm_source", Op: "is_set"}}},
 		"sessions trend": {Kind: "trend", Table: "sessions", Metrics: count(), Series: "referrer_source"},
+		"session metrics": {Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "bounces"}, {Op: "bounce_rate"},
+			{Op: "sum", Column: "duration_sec"}, {Op: "avg", Column: "views"}, {Op: "min", Column: "duration_sec"}, {Op: "max", Column: "views"}}},
+		"bounce rate breakdown": {Kind: "breakdown", Table: "sessions", Metrics: []Metric{{Op: "bounce_rate"}},
+			Dimensions: []string{"referrer_source"}, Order: "bounce_rate", Other: true},
 		"filters": {Kind: "stat", Table: "events", Metrics: count(), Where: []Filter{
 			{Column: "attr_a", Op: "is_set"}, {Column: "country", Op: "in", Values: []string{"DE", "FR"}},
 			{Column: "day", Op: "gte", Values: []string{"2026-01-02"}}, {Column: "path", Op: "prefix", Values: []string{"/x"}}}},
@@ -57,7 +61,12 @@ func TestValidate(t *testing.T) {
 		{"computed on sessions", Query{Kind: "stat", Table: "sessions", Metrics: count(), Where: []Filter{{Column: "consent_state", Op: "is_set"}}}, "where[0].column"},
 		{"attr on sessions", Query{Kind: "breakdown", Table: "sessions", Metrics: count(), Dimensions: []string{"attr_plan"}}, "dimensions[0]"},
 		{"users on sessions", Query{Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "users"}}}, "metrics[0].op"},
-		{"sum on sessions", Query{Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "sum", Column: "value"}}}, "metrics[0].op"},
+		{"sum value on sessions", Query{Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "sum", Column: "value"}}}, "metrics[0].column"},
+		{"avg duration on views", Query{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "avg", Column: "duration_sec"}}}, "metrics[0].column"},
+		{"bounces on views", Query{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "bounces"}}}, "metrics[0].op"},
+		{"bounce_rate on events", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "bounce_rate"}}}, "metrics[0].op"},
+		{"column on bounces", Query{Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "bounces", Column: "views"}}}, "metrics[0].column"},
+		{"of on bounce_rate", Query{Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "bounce_rate", Of: "actors"}}}, "metrics[0].of"},
 		{"daily on sessions", Query{Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "daily_sum", Of: "actors"}}}, "metrics[0].op"},
 		{"entry_path on views", Query{Kind: "breakdown", Table: "views", Metrics: count(), Dimensions: []string{"entry_path"}}, "dimensions[0]"},
 		{"views filter on events", st(Filter{Column: "views", Op: "gt", Values: []string{"1"}}), "where[0].column"},
@@ -126,6 +135,8 @@ func TestMetricName(t *testing.T) {
 		{Op: "max", Column: "display_width"}: "max_display_width",
 		{Op: "daily_avg", Of: "groups"}:      "daily_avg_groups",
 		{Op: "count", As: "n"}:               "n",
+		{Op: "bounce_rate"}:                  "bounce_rate",
+		{Op: "avg", Column: "duration_sec"}:  "avg_duration_sec",
 	} {
 		if got := m.Name(); got != want {
 			t.Errorf("%+v: %q, want %q", m, got, want)

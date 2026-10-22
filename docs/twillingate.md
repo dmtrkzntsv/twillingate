@@ -1740,14 +1740,18 @@ dimension, series and filter columns are `project_id`, `day`, `kind`,
 `exit_path`, `referrer_source`, `utm_source`, `utm_medium` and
 `utm_campaign`; `duration_sec` and `views` are numbers a filter may name
 (`{"column": "views", "op": "gt", "values": ["1"]}`) but not a dimension
-or series. It takes the metrics `count` (sessions) and `actors` only.
+or series. It takes the metrics `count` (sessions), `actors`, `sum`,
+`avg`, `min` and `max` of `duration_sec` or `views`, and its own
+`bounces` and `bounce_rate`; not `users`, `groups` or the `daily_*` ones.
 
 | Metric `op` | Takes | Counts |
 | --- | --- | --- |
 | `count` | | rows |
 | `actors`, `users`, `groups` | | distinct `actor_id`, `user_id`, `group_id` over the range (NULL left out) |
-| `sum`, `avg`, `min`, `max` | `column`: `value`, `sample_rate`, `display_width` or `display_height` | the column's aggregate; empty over no value |
+| `sum`, `avg`, `min`, `max` | `column`: `value`, `sample_rate`, `display_width` or `display_height`; on `sessions` `duration_sec` or `views` | the column's aggregate; empty over no value |
 | `daily_sum`, `daily_max`, `daily_avg` | `of`: `actors`, `users` or `groups` | the distinct count per day, summed, maxed or averaged over the days with rows |
+| `bounces` | | `sessions` only: the sessions of one view |
+| `bounce_rate` | | `sessions` only: `bounces` divided by the sessions (`0.25`), exact; empty over no session, and in an `Other` row over the sessions of the groups it folds |
 
 A metric's column is named by `as`, else `op`, `op_column` (`sum_value`)
 or `op_of` (`daily_sum_actors`); two metrics may not share a name, nor,
@@ -1819,4 +1823,13 @@ A breakdown: the ten busiest paths by unique users, the rest as `Other`.
   "kind": "breakdown", "table": "views", "dimensions": ["path"],
   "metrics": [{"op": "users"}, {"op": "count", "as": "views"}],
   "order": "users", "limit": 10, "other": true}}
+```
+
+A breakdown of sessions: the bounce rate and average session length per
+referrer.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "breakdown", "table": "sessions", "dimensions": ["referrer_source"],
+  "metrics": [{"op": "count", "as": "sessions"}, {"op": "bounce_rate"}, {"op": "avg", "column": "duration_sec"}]}}
 ```
