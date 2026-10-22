@@ -10,6 +10,8 @@ interface Q {
   dimensions?: string[]
   series?: string
   compare?: string
+  order?: string
+  other?: boolean
 }
 
 // native.Query.Columns(), mirrored: the result's columns before rename.
@@ -21,6 +23,18 @@ function columnsOf(q: Q): string[] {
   cols.push(...q.metrics.map(name))
   if (q.kind === 'stat' && q.compare === 'previous') cols.push(...q.metrics.map((m) => `previous_${name(m)}`))
   return cols
+}
+
+// native.Query.ColumnTypes(), mirrored: each column's type, in order.
+function typesOf(q: Q): string[] {
+  const numeric = ['project_id', 'display_width', 'display_height', 'consent', 'bucket']
+  const dim = (d: string) => (q.other ? 'text' : d === 'day' ? 'day' : numeric.includes(d) ? 'number' : 'text')
+  const types: string[] = []
+  if (q.kind === 'trend') types.push('day', ...(q.series ? ['text'] : []))
+  if (q.kind === 'breakdown') types.push(...(q.dimensions ?? []).map(dim))
+  types.push(...q.metrics.map(() => 'number'))
+  if (q.kind === 'stat' && q.compare === 'previous') types.push(...q.metrics.map(() => 'number'))
+  return types
 }
 
 const line: Widget = {
@@ -133,6 +147,18 @@ describe('query templates', () => {
     for (const input of c.inputs.columns.filter((x) => !x.optional)) expect(out).toContain(input.name)
     const declared = c.inputs.columns.map((x) => x.name)
     for (const col of out) expect(declared).toContain(col)
+    // The types the server checks at save: text takes any column.
+    const types = typesOf(query)
+    out.forEach((col, i) => {
+      const want = c.inputs.columns.find((x) => x.name === col)!.types
+      if (!want.includes('text')) expect(want).toContain(types[i])
+    })
+    // A breakdown's order names a metric or a dimension.
+    if (query.order) expect(cols).toContain(query.order)
+  })
+  it('orders the combo by day and the heatmap by count', () => {
+    expect(JSON.parse(queryTemplate('combo')).query).toMatchObject({ dimensions: ['day'], order: 'day', limit: 1000 })
+    expect(JSON.parse(queryTemplate('heatmap')).query).toMatchObject({ dimensions: ['device', 'platform'], order: 'count' })
   })
   it('moves an untouched template to the new component, and keeps an edited query', () => {
     const d = withCode({ ...draftOf(), component: 'stat' }, 'query')

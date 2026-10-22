@@ -79,7 +79,8 @@ const labelInput: Record<string, string> = { bar_list: 'label', pie: 'label', ra
  * A small structured query a new query source starts from, renamed to the
  * component's inputs where it has fixed ones: a view count for a stat, views
  * per day for the charts over time, views by path for the lists, and views
- * by path otherwise. Every one fits its component's inputs (a test checks).
+ * by path otherwise. Every one fits its component's inputs, names and types
+ * (a test checks).
  */
 export function queryTemplate(component: string | null): string {
   const metrics = [{ op: 'count' }]
@@ -91,13 +92,16 @@ export function queryTemplate(component: string | null): string {
   } else if (component === 'calendar') {
     content = { query: { kind: 'trend', table: 'views', metrics }, rename: { count: 'value' } }
   } else if (component === 'combo') {
-    // A trend takes one metric: the combo's two are a breakdown by day.
-    const query = { kind: 'breakdown', table: 'views', metrics: [{ op: 'count' }, { op: 'actors' }], dimensions: ['day'], limit: 100 }
+    // A trend takes one metric: the combo's two are a breakdown by day, in
+    // date order (order names the dimension) rather than by count.
+    const query = {
+      kind: 'breakdown', table: 'views', metrics: [{ op: 'count' }, { op: 'actors' }], dimensions: ['day'], order: 'day', limit: 1000,
+    }
     content = { query, rename: { day: 'x', count: 'bar', actors: 'line' } }
   } else if (component === 'heatmap') {
     content = {
-      query: { kind: 'breakdown', table: 'views', metrics, dimensions: ['day', 'device'], limit: 100 },
-      rename: { day: 'x', device: 'y', count: 'value' },
+      query: { kind: 'breakdown', table: 'views', metrics, dimensions: ['device', 'platform'], order: 'count', limit: 100 },
+      rename: { device: 'x', platform: 'y', count: 'value' },
     }
   } else if (component === 'sankey') {
     content = {
