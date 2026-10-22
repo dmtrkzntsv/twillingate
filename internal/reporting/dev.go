@@ -52,10 +52,10 @@ type DevProjects interface {
 // DevHandler serves twillingate reporting dev: the routes a preview
 // needs, without auth, over dirs (each either a dashboard directory —
 // one holding dashboard.json — or a parent of several), files, where sql
-// widgets run, nat, which answers query widgets (without rules), and projects, which lists the project switcher's choices.
-// The component manifest is this build's own (ui/components.json,
-// embedded, same as the real server); only dirs is re-read on every
-// request.
+// widgets run, nat, which answers query widgets (without rules), and
+// projects, which lists the project switcher's choices. The component
+// manifest is this build's own (ui/components.json, embedded, same as
+// the real server); only dirs is re-read on every request.
 func DevHandler(dirs []string, files Files, nat Native, projects DevProjects) http.Handler {
 	svc := &Service{files: files, sources: newSources(files, true, time.Now, nat, nil), now: time.Now}
 	comps, err := ParseManifest(Manifest())
