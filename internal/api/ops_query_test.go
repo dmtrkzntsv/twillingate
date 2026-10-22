@@ -115,6 +115,7 @@ func TestQueryStructuredInvalid(t *testing.T) {
 		`{"project_id":1,"from":"2026-08-21","to":"2026-08-20","query":{"kind":"stat","table":"views","metrics":[{"op":"count"}]}}`: "from",
 		`{"project_id":1,"from":"2026-8-1","query":{"kind":"stat","table":"views","metrics":[{"op":"count"}]}}`:                     "YYYY-MM-DD",
 		`{"project_id":1,"from":"2020-01-01","to":"2026-01-01","query":{"kind":"stat","table":"views","metrics":[{"op":"count"}]}}`: "1100",
+		`{"project_id":1,"query":{"kind":"trend","table":"views","series":"path","series_limit":51,"metrics":[{"op":"count"}]}}`:    "series_limit",
 	} {
 		rec := serveREST(t, r, "POST", "/api/query", body)
 		if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), field) {
@@ -183,6 +184,12 @@ func TestQueryStructuredDefaultsAndCaps(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "where[0].values") {
 		t.Errorf("ErrInvalid = %d %s, want 400 naming the field", rec.Code, rec.Body)
 	}
+	fake.err = fmt.Errorf("%w (about 300 MiB counted, 128 MiB allowed)", native.ErrTooLarge)
+	rec = serveREST(t, newTestRegistrar(t, h), "POST", "/api/query",
+		`{"project_id":1,"query":{"kind":"stat","table":"views","metrics":[{"op":"daily_sum","of":"actors"}]}}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), tooLarge) {
+		t.Errorf("ErrTooLarge = %d %s, want 400 with %q", rec.Code, rec.Body, tooLarge)
+	}
 }
 
 // The tool's input schema describes the structured query inline for an
@@ -201,6 +208,10 @@ func TestQuerySchemaDescribesStructured(t *testing.T) {
 			t.Errorf("query's input schema lacks %s: %s", want, text)
 		}
 	}
+	// compare "" is no comparison, over MCP as over REST.
+	if e := r.specs[i].in.Properties["query"].Properties["compare"].Enum; !slices.Equal(e, []any{"", "previous"}) {
+		t.Errorf("compare's enum = %v, want \"\" and previous", e)
+	}
 	col := r.specs[i].in.Properties["query"].Properties["where"].Items.Properties["column"]
 	for _, c := range native.Columns {
 		if !strings.Contains(col.Description, c) {
@@ -209,5 +220,14 @@ func TestQuerySchemaDescribesStructured(t *testing.T) {
 	}
 	if strings.Contains(text, "$defs") || strings.Contains(text, "$ref") {
 		t.Errorf("query's input schema is not inline: %s", text)
+	}
+}
+
+// compare "" (no comparison) passes MCP's schema as it passes REST.
+func TestQueryStructuredCompareEmpty(t *testing.T) {
+	_, cs := newTestHost(t)
+	q := map[string]any{"kind": "stat", "table": "views", "compare": "", "metrics": []any{map[string]any{"op": "count"}}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "query": q}); res.IsError {
+		t.Errorf("compare \"\" over MCP: %s", textOf(res))
 	}
 }

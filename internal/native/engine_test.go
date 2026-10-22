@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -131,9 +132,13 @@ func engineDay(t testing.TB, day string, d int) []store.Event {
 	return out
 }
 
-// engineFixture writes 40 days of project 1 (and a little of project 2),
-// runs the daily pass as of today, then writes late events to two closed
-// days and today's events, which stay in logs.
+// engineFixture writes 40 days of project 1 (and a little of project 2)
+// and runs the daily pass as of today; then writes late events to
+// September 5 and runs it again, which dumps them to a segment
+// (2026-09-05.1.parquet); then writes late events to September 6 and
+// claims their log for its dump (2026-09-06.1.parquet.dumping, a pass
+// stopped before the dump), late events to a merged August day, and
+// today's events, which stay in logs.
 func engineFixture(t testing.TB) *archivetest.Files {
 	t.Helper()
 	f := archivetest.New(t)
@@ -149,12 +154,29 @@ func engineFixture(t testing.TB) *archivetest.Files {
 		}
 	}
 	f.Maintain(t, today)
-	f.Write(t, engineDay(t, today, 39)...)
-	late := engineDay(t, "2026-08-20", 18)[:6]
-	for i := range late {
-		late[i].ID += "-late"
+	late := func(day string, d, n int) []store.Event {
+		evs := engineDay(t, day, d)[:n]
+		for i := range evs {
+			evs[i].ID += "-late"
+		}
+		return evs
 	}
-	f.Write(t, late...)
+	f.Write(t, late("2026-09-05", 34, 9)...)
+	f.Maintain(t, today)
+	f.Write(t, late("2026-09-06", 35, 7)...)
+	closed, err := f.Log.Rotate(1, "2026-09-06")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pdir := filepath.Join(f.Dir, "1")
+	if err := os.Rename(closed, filepath.Join(pdir, "2026-09-06.1.parquet.dumping")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(pdir, "2026-09-05.1.parquet")); err != nil {
+		t.Fatalf("no late segment: %v", err)
+	}
+	f.Write(t, engineDay(t, today, 39)...)
+	f.Write(t, late("2026-08-20", 18, 6)...)
 	f.Write(t, events(t, 2, today, 3)...)
 	return f
 }
@@ -321,6 +343,22 @@ func TestKindsMatchDuckDB(t *testing.T) {
 			Where: []Filter{{Column: "bucket", Op: "lt", Values: []string{"30"}}}}, []string{"bucket", "count"},
 			`SELECT "bucket", count(*) AS c FROM measures WHERE `+inRange+` AND "bucket" < 30
 				GROUP BY "bucket" ORDER BY c DESC, "bucket" ASC LIMIT 5`),
+		all("trend daily", Query{Kind: "trend", Table: "views", Metrics: []Metric{{Op: "daily_max", Of: "users"}}},
+			[]string{"day", "daily_max_users"},
+			`SELECT "day", count(DISTINCT "user_id") FROM views WHERE `+inRange+` GROUP BY "day" ORDER BY "day"`),
+		all("trend events by family", Query{Kind: "trend", Table: "events", Metrics: []Metric{{Op: "actors"}}, Series: "family"},
+			[]string{"day", "series", "actors"},
+			`SELECT "day", "family", count(DISTINCT "actor_id") FROM events WHERE `+inRange+`
+				GROUP BY ALL ORDER BY "day", "family" ASC NULLS LAST`),
+		all("breakdown events by day", Query{Kind: "breakdown", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "users"},
+			{Op: "daily_sum", Of: "actors"}}, Dimensions: []string{"day"}, Limit: 100}, []string{"day", "count", "users", "daily_sum_actors"},
+			`SELECT "day", count(*) AS c, count(DISTINCT "user_id"), count(DISTINCT "actor_id") FROM events WHERE `+inRange+`
+				GROUP BY "day" ORDER BY c DESC, "day" ASC LIMIT 100`),
+		{name: "late files", q: Query{Kind: "breakdown", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "actors"}},
+			Dimensions: []string{"day", "family"}, Limit: 20}, from: "2026-09-04", to: "2026-09-07",
+			cols: []string{"day", "family", "count", "actors"},
+			sql: []string{`SELECT "day", "family", count(*) AS c, count(DISTINCT "actor_id") FROM events WHERE ` + inRange + `
+				GROUP BY ALL ORDER BY c DESC, "day" ASC, "family" ASC NULLS LAST LIMIT 20`}},
 		all("renamed event", Query{Kind: "breakdown", Table: "views", Metrics: count(), Dimensions: []string{"event_name"}},
 			[]string{"event_name", "count"},
 			`SELECT "event_name", count(*) AS c FROM views WHERE `+inRange+` GROUP BY "event_name" ORDER BY c DESC, "event_name" ASC NULLS LAST LIMIT 20`),
@@ -521,13 +559,19 @@ func TestMaxScansWaits(t *testing.T) {
 	}
 }
 
+// The engine's columns are unionColumns', a Parquet footer read once and
+// a log's keys as far as it grew (archive.KeyScanner); concurrent calls
+// under a writer agree with them.
 func TestRulesColumnsCached(t *testing.T) {
 	f := engineFixture(t)
 	e := New(Options{Dir: f.Dir})
 	defer func(r func(string, bool) ([]string, error)) { readFileColumns = r }(readFileColumns)
+	var mu sync.Mutex
 	var reads []string
 	readFileColumns = func(path string, log bool) ([]string, error) {
+		mu.Lock()
 		reads = append(reads, filepath.Base(path))
+		mu.Unlock()
 		return fileColumns(path, log)
 	}
 	a, err := e.columns()
@@ -538,6 +582,9 @@ func TestRulesColumnsCached(t *testing.T) {
 	if err != nil || !slices.Equal(a, want) {
 		t.Fatalf("columns %q, want unionColumns' %q (%v)", a, want, err)
 	}
+	if len(reads) == 0 || slices.ContainsFunc(reads, func(n string) bool { return !strings.HasSuffix(n, ".parquet") }) {
+		t.Fatalf("first call read %q, want the Parquet footers only", reads)
+	}
 	reads = nil
 	b, err := e.columns()
 	if err != nil || !slices.Equal(a, b) || len(reads) != 0 {
@@ -546,39 +593,100 @@ func TestRulesColumnsCached(t *testing.T) {
 	if slices.Contains(a, "attr_fresh") {
 		t.Fatal("attr_fresh before it is written")
 	}
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			if _, err := e.columns(); err != nil {
+				t.Error(err)
+			}
+		})
+	}
 	f.Write(t, store.Event{ID: "fresh", ProjectID: 1, Family: store.FamilyProduct, EventName: "x",
 		TS: date(t, today).Time().Add(time.Hour), Attributes: map[string]string{"fresh": "1"}})
+	wg.Wait()
 	c, err := e.columns()
 	if err != nil || !slices.Contains(c, "attr_fresh") {
 		t.Fatalf("after a log grew: %v %q", err, c)
 	}
-	if !slices.Equal(reads, []string{today + ".log"}) {
-		t.Errorf("read %q, want only the log written to", reads)
+	if len(reads) != 0 {
+		t.Errorf("read %q, want no footer again", reads)
 	}
 	if want, _ := unionColumns(f.Dir); !slices.Equal(c, want) {
 		t.Errorf("columns %q, want %q", c, want)
 	}
 }
 
+// A breakdown past MaxBytes admits no new group and is truncated; past
+// twice MaxBytes it is refused. Budgets grow by 4 KiB from 1 KiB up to
+// the full answer: each is refused with ErrTooLarge, truncated, or the
+// full answer, and some are truncated (a group per path and day, so new
+// groups keep coming).
 func TestMaxBytesTruncates(t *testing.T) {
 	f := engineFixture(t)
 	q := Query{Kind: "breakdown", Table: "views", Metrics: []Metric{{Op: "actors"}, {Op: "daily_max", Of: "users"}},
-		Dimensions: []string{"path", "country"}, Limit: 1000}
+		Dimensions: []string{"path", "day"}, Limit: 1000}
 	p := Params{Project: 1, From: date(t, engineFrom), To: date(t, today)}
 	full, err := New(Options{Dir: f.Dir}).Answer(context.Background(), q, p, engineRules)
 	if err != nil || full.Truncated {
 		t.Fatalf("default budget: %v truncated %v", err, full.Truncated)
 	}
-	small, err := New(Options{Dir: f.Dir, MaxBytes: 1}).Answer(context.Background(), q, p, engineRules)
-	if err != nil {
-		t.Fatal(err)
+	refused, truncated := 0, 0
+	for budget := int64(1 << 10); budget < 1<<20; budget += 4 << 10 {
+		res, err := New(Options{Dir: f.Dir, Workers: 1, MaxBytes: budget}).Answer(context.Background(), q, p, engineRules)
+		switch {
+		case errors.Is(err, ErrTooLarge):
+			refused++
+		case err != nil:
+			t.Fatal(err)
+		case !res.Truncated:
+			sameTable(t, res.Rows, full.Rows)
+			if truncated == 0 {
+				t.Errorf("full at %d bytes after %d refused, none truncated", budget, refused)
+			}
+			return
+		case len(res.Rows) == 0 || len(res.Rows) >= len(full.Rows):
+			t.Fatalf("%d bytes: truncated to %d rows of %d", budget, len(res.Rows), len(full.Rows))
+		default:
+			truncated++
+		}
 	}
-	if !small.Truncated || len(small.Rows) == 0 || len(small.Rows) >= len(full.Rows) {
-		t.Errorf("1-byte budget: truncated %v, %d rows of %d", small.Truncated, len(small.Rows), len(full.Rows))
+	t.Fatal("no budget under 1 MiB answers in full")
+}
+
+// A breakdown whose groups all come early, past MaxBytes, has nothing
+// left to leave out: its groups' per-day keys take it past twice MaxBytes
+// and it is refused.
+func TestMaxBytesRefusesAdmittedGrowth(t *testing.T) {
+	f := engineFixture(t)
+	q := Query{Kind: "breakdown", Table: "views", Metrics: []Metric{{Op: "daily_max", Of: "actors"}},
+		Dimensions: []string{"country"}}
+	p := Params{Project: 1, From: date(t, engineFrom), To: date(t, today)}
+	_, err := New(Options{Dir: f.Dir, Workers: 1, MaxBytes: 1 << 10}).Answer(context.Background(), q, p, engineRules)
+	if !errors.Is(err, ErrTooLarge) {
+		t.Errorf("1 KiB budget: %v, want ErrTooLarge", err)
 	}
 }
 
-func TestDistinctInternsTrackedRowsOnly(t *testing.T) {
+// A stat or a trend without series has no group to leave out: past
+// MaxBytes it is refused with ErrTooLarge.
+func TestMaxBytesRefusesOneGroup(t *testing.T) {
+	f := engineFixture(t)
+	p := Params{Project: 1, From: date(t, engineFrom), To: date(t, today)}
+	for _, q := range []Query{
+		{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "daily_sum", Of: "actors"}}},
+		{Kind: "trend", Table: "views", Metrics: []Metric{{Op: "actors"}}},
+	} {
+		if _, err := New(Options{Dir: f.Dir}).Answer(context.Background(), q, p, engineRules); err != nil {
+			t.Fatalf("%s: default budget: %v", q.Kind, err)
+		}
+		_, err := New(Options{Dir: f.Dir, MaxBytes: 1 << 10}).Answer(context.Background(), q, p, engineRules)
+		if !errors.Is(err, ErrTooLarge) {
+			t.Errorf("%s: 1 KiB budget: %v, want ErrTooLarge", q.Kind, err)
+		}
+	}
+}
+
+func TestDistinctKeysTrackedRowsOnly(t *testing.T) {
 	filters, err := compileFilters([]Filter{{Column: "path", Op: "eq", Values: []string{"/a"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -593,8 +701,11 @@ func TestDistinctInternsTrackedRowsOnly(t *testing.T) {
 	if err := a.add(0, b); err != nil {
 		t.Fatal(err)
 	}
-	if n := len(a.distinct[ms[0].distinct].in.ids); n != 1 {
-		t.Errorf("%d ids interned, want 1 (only the filtered rows' actor)", n)
+	if keys := a.parts[0].days[ms[0].distinct].keys; len(keys) != 1 || keys[0].null() {
+		t.Errorf("per-day keys %v, want 1 (only the filtered rows' actor)", keys)
+	}
+	if h := a.parts[0].hashes; h[1] != 0 || h[2] != 0 || h[3] != 0 {
+		t.Errorf("hashes %v, want only x's", h)
 	}
 	if a.mem.n.Load() <= 0 {
 		t.Error("no memory counted")

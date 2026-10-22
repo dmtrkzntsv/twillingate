@@ -13,6 +13,10 @@ import (
 // names the offending field.
 var ErrInvalid = errors.New("native: invalid query")
 
+// ErrTooLarge is wrapped by the refusal of a query whose aggregation needs
+// more memory than Options.MaxBytes allows.
+var ErrTooLarge = errors.New("native: the query needs more memory than allowed; narrow the range or add filters")
+
 // Query is a structured query over one events table. Kind picks the shape:
 // a stat is one row of metrics, a trend one metric per day (optionally split
 // by Series), a breakdown the metrics grouped by 1-3 Dimensions.
@@ -23,7 +27,7 @@ type Query struct {
 	Where       []Filter `json:"where,omitempty" jsonschema:"filters, all of which a row must satisfy"`
 	Dimensions  []string `json:"dimensions,omitempty" jsonschema:"breakdown only, 1 to 3: columns to group by, each one a filter's column may name (path, country, event_name, attr_<key>, …)"`
 	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by, one a filter's column may name except day"`
-	SeriesLimit int      `json:"series_limit,omitempty" jsonschema:"trend only: how many series, the top ones by the metric over the range (default 5)"`
+	SeriesLimit int      `json:"series_limit,omitempty" jsonschema:"trend only: how many series, 1 to 50, the top ones by the metric over the range (default 5)"`
 	Compare     string   `json:"compare,omitempty" jsonschema:"stat only: previous adds each metric over as many days ending the day before from"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown only: how many groups, 1 to 1000 (default 20)"`
 	Other       bool     `json:"other,omitempty" jsonschema:"breakdown only: fold the groups past limit into one row whose dimensions read Other"`
@@ -41,7 +45,7 @@ type Metric struct {
 // Filter keeps the rows whose Column satisfies Op against Values.
 type Filter struct {
 	Column string   `json:"column" jsonschema:"one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute"`
-	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none. gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, and only on numeric columns"`
+	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none (not NULL, and text not empty). gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, and only on numeric columns. NULL fails every op, ne and not_in included"`
 	Values []string `json:"values,omitempty" jsonschema:"the values compared against, as text"`
 }
 
@@ -58,7 +62,11 @@ func (m Metric) Name() string {
 	return m.Op
 }
 
-const maxLimit = 1000
+// maxLimit bounds a breakdown's limit, maxSeries a trend's series_limit.
+const (
+	maxLimit  = 1000
+	maxSeries = 50
+)
 
 // Columns are the non-attribute columns a dimension, series or filter may
 // name (bucket aside, which only measures has).
@@ -193,14 +201,21 @@ func (q Query) Validate() error {
 			return invalid("series", "a trend is by day already")
 		}
 	}
-	if q.SeriesLimit < 0 || (q.SeriesLimit > 0 && q.Kind != "trend") {
-		return invalid("series_limit", "%d is not valid here", q.SeriesLimit)
+	if q.SeriesLimit < 0 || q.SeriesLimit > maxSeries || (q.SeriesLimit > 0 && q.Kind != "trend") {
+		return invalid("series_limit", "%d is not between 1 and %d for a trend", q.SeriesLimit, maxSeries)
 	}
 	switch q.Compare {
 	case "":
 	case "previous":
 		if q.Kind != "stat" {
 			return invalid("compare", "only a stat compares")
+		}
+		// The previous range's columns are previous_<name>: none may be
+		// another metric's name.
+		for i, m := range q.Metrics {
+			if of, ok := strings.CutPrefix(m.Name(), "previous_"); ok && metricNames[of] {
+				return invalid(fmt.Sprintf("metrics[%d].as", i), "name %q is metric %q's column over the previous range", m.Name(), of)
+			}
 		}
 	default:
 		return invalid("compare", "%q is not previous", q.Compare)

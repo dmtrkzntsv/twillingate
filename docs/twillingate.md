@@ -1706,8 +1706,8 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `order` | breakdown | the metric name to rank the groups by, descending (default the first metric); ties by the dimensions |
 | `other` | breakdown | `true` adds an `Other` row (every dimension `Other`) summing the groups past `limit`, when there are any |
 | `series` | trend | a column to split each day by |
-| `series_limit` | trend | how many series, those ranking first by the metric over the range (default 5) |
-| `compare` | stat | `previous` adds a `previous_<name>` column per metric, over as many days ending the day before `from` |
+| `series_limit` | trend | how many series, 1 to 50, those ranking first by the metric over the range (default 5) |
+| `compare` | stat | `previous` adds a `previous_<name>` column per metric, over as many days ending the day before `from`; `""` or absent, none |
 
 A dimension, series or filter column is one of `project_id`, `family`,
 `event_name`, `day`, `kind`, `actor_id`, `actor_kind`, `user_id`,
@@ -1730,14 +1730,19 @@ sorts last; numbers sort by value.
 | `daily_sum`, `daily_max`, `daily_avg` | `of`: `actors`, `users` or `groups` | the distinct count per day, summed, maxed or averaged over the days with rows |
 
 A metric's column is named by `as`, else `op`, `op_column` (`sum_value`)
-or `op_of` (`daily_sum_actors`); two metrics may not share a name.
+or `op_of` (`daily_sum_actors`); two metrics may not share a name, nor,
+with `compare`, may one be named `previous_<another's name>`.
 
 | Filter `op` | Values |
 | --- | --- |
 | `eq`, `ne`, `contains`, `prefix` | exactly one |
 | `in`, `not_in` | one or more |
 | `gt`, `gte`, `lt`, `lte` | exactly one: an integer, or `YYYY-MM-DD` on `day`; numeric columns only (`day`, `project_id`, `display_width`, `display_height`, `consent`, `bucket`) |
-| `is_set` | none: the column is not NULL |
+| `is_set` | none: the column is not NULL, and on a text column not empty either |
+
+A NULL value fails every operator, `ne` and `not_in` included (as in
+SQL): `{"column": "country", "op": "ne", "values": ["DE"]}` leaves out the
+rows without a country too.
 
 The answer is `{columns, rows, truncated, note, approximate}`, every value
 as text:
@@ -1745,18 +1750,28 @@ as text:
 - **stat**: one row, a column per metric (then `previous_<name>` ones);
 - **trend**: `day`, `series` when split, then the metric; a row per day
   (and series) that has rows, by day then series. Days without rows are
-  absent, not zero;
+  absent, not zero. A trend over more days than `CONSOLE_QUERY_ROWS_MAX`
+  (1,000 by default) is always cut there, and `truncated`;
 - **breakdown**: a column per dimension, then per metric; the `limit`
   groups ranking first, then the `Other` row.
 
 A distinct count over the range (`actors`, `users`, `groups`) is exact up
 to 1,024 ids per group; past that it is estimated, within about ±2%, and
-its column is named in `approximate`. The `daily_*` metrics are always
-exact. A query tracks at most 100,000 groups (a trend as many series ×
-days as ten times that) within a bounded memory: past that, or past
-`CONSOLE_QUERY_ROWS_MAX` rows, the answer is `truncated`, its untracked
-groups left out (of `Other` too), and `note` says so; narrow the range,
-add a filter or lower the limit. It runs under `CONSOLE_QUERY_TIMEOUT`.
+its column is named in `approximate`. The `daily_*` metrics, and a
+trend's per-day counts, are always exact; but the series a split trend
+keeps are chosen by their count over the range, so with a distinct
+metric past 1,024 ids that choice rests on estimates. A query tracks at
+most 100,000 groups (a trend as many series × days as ten times that) in
+at most 128 MiB of memory: past either, or past `CONSOLE_QUERY_ROWS_MAX`
+rows, a breakdown's or a split trend's answer is `truncated`, its
+untracked groups left out (of `Other` too), and `note` says so; narrow
+the range, add a filter or lower the limit. A stat or an unsplit trend
+has no group to leave out: one that needs more memory (a `daily_*` metric
+or a trend's distinct count over many days with many ids, whose per-day
+ids are all kept) is refused as `invalid`, "the query needs more memory
+than allowed; narrow the range or add filters", and so is a breakdown or
+split trend whose tracked groups alone grow past twice that. It runs
+under `CONSOLE_QUERY_TIMEOUT`.
 
 A stat: visitors and views on the web last week, against the week
 before.

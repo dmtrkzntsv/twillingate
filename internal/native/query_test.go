@@ -13,6 +13,9 @@ func TestValidate(t *testing.T) {
 		"stat":            {Kind: "stat", Table: "events", Metrics: count()},
 		"stat compare":    {Kind: "stat", Table: "views", Metrics: count(), Compare: "previous"},
 		"trend series":    {Kind: "trend", Table: "product", Metrics: count(), Series: "attr_plan", SeriesLimit: 3},
+		"series_limit 50": {Kind: "trend", Table: "product", Metrics: count(), Series: "path", SeriesLimit: 50},
+		"previous_ alone": {Kind: "stat", Table: "views", Metrics: []Metric{{Op: "count", As: "previous_users"}, {Op: "actors"}}, Compare: "previous"},
+		"no compare":      {Kind: "stat", Table: "views", Metrics: []Metric{{Op: "count", As: "previous_users"}, {Op: "users"}}},
 		"breakdown":       {Kind: "breakdown", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "sum", Column: "value"}}, Dimensions: []string{"path", "day"}, Order: "sum_value", Limit: 1000, Other: true},
 		"daily":           {Kind: "stat", Table: "measures", Metrics: []Metric{{Op: "daily_max", Of: "users"}, {Op: "daily_sum", Of: "actors", As: "x"}}},
 		"measures bucket": {Kind: "breakdown", Table: "measures", Metrics: count(), Dimensions: []string{"bucket"}, Where: []Filter{{Column: "bucket", Op: "gte", Values: []string{"3"}}}},
@@ -73,6 +76,10 @@ func TestValidate(t *testing.T) {
 		{"series bad", Query{Kind: "trend", Table: "events", Metrics: count(), Series: "id"}, "series"},
 		{"series day", Query{Kind: "trend", Table: "events", Metrics: count(), Series: "day"}, "series"},
 		{"series_limit neg", Query{Kind: "trend", Table: "events", Metrics: count(), Series: "path", SeriesLimit: -1}, "series_limit"},
+		{"series_limit 51", Query{Kind: "trend", Table: "events", Metrics: count(), Series: "path", SeriesLimit: 51}, "series_limit"},
+		{"series_limit on stat", Query{Kind: "stat", Table: "events", Metrics: count(), SeriesLimit: 3}, "series_limit"},
+		{"compare collides", Query{Kind: "stat", Table: "events", Compare: "previous",
+			Metrics: []Metric{{Op: "count", As: "previous_users"}, {Op: "users"}}}, "metrics[0].as"},
 	}
 	for _, c := range invalid {
 		err := c.q.Validate()

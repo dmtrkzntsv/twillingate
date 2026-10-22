@@ -51,7 +51,7 @@ func queryEnums(in *jsonschema.Schema) {
 	q := in.Properties["query"]
 	q.Properties["kind"].Enum = enum(native.Kinds)
 	q.Properties["table"].Enum = enum(native.Tables)
-	q.Properties["compare"].Enum = enum([]string{"previous"})
+	q.Properties["compare"].Enum = enum([]string{"", "previous"})
 	m := q.Properties["metrics"].Items
 	m.Properties["op"].Enum = enum(native.MetricOps)
 	m.Properties["column"].Enum = enum(native.ValueColumns)
@@ -155,11 +155,19 @@ func parseDay(name, s string) (civil.Date, error) {
 	return civil.Parse(s)
 }
 
+// tooLarge is the refusal of a structured query that needs more memory
+// than the engine allows (native.ErrTooLarge).
+const tooLarge = "the query needs more memory than allowed; narrow the range or add filters"
+
 // nativeError words a refused structured query (native.ErrInvalid, whose
-// message names the field) as invalid; anything else passes through.
+// message names the field, or native.ErrTooLarge) as invalid; anything
+// else passes through.
 func nativeError(err error) error {
-	if errors.Is(err, native.ErrInvalid) {
+	switch {
+	case errors.Is(err, native.ErrInvalid):
 		return invalidf("query: %s", strings.TrimPrefix(err.Error(), native.ErrInvalid.Error()+": "))
+	case errors.Is(err, native.ErrTooLarge):
+		return invalidf("%s", tooLarge)
 	}
 	return err
 }

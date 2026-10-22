@@ -5,10 +5,8 @@ import (
 	"maps"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -440,8 +438,8 @@ func visible(name string) string { return strings.ReplaceAll(name, "\x00", `\u00
 // them: the open logs, by project, then the Parquet files, so the first
 // spelling of a name equal to another but for case is the view's.
 //
-// It reads every Parquet file's footer and decodes every open log's lines
-// (their keys only, no row kept): Engine.columns caches each file's.
+// It reads every Parquet file's footer and every open log's keys:
+// Engine.columns keeps both, reading only what changed.
 func unionColumns(dir string) ([]string, error) {
 	return unionColumnsOf(dir, fileColumns)
 }
@@ -489,16 +487,15 @@ func unionColumnsOf(dir string, of func(path string, log bool) ([]string, error)
 }
 
 // fileColumns is the column names of one events file: an open log's (its
-// complete lines' keys) or a Parquet file's (its footer's).
+// complete lines' keys, as archive.LogColumns names them) or a Parquet
+// file's (its footer's).
 func fileColumns(path string, log bool) ([]string, error) {
 	if log {
-		// A range no day is in: readLog reads the log's columns, no rows.
-		none := Range{From: civil.DateOf(time.Unix(86400, 0)), To: civil.DateOf(time.Unix(0, 0))}
-		b, err := readLog(path, []string{"*"}, "", none)
+		keys, err := archive.NewKeyScanner().Keys(path)
 		if err != nil {
 			return nil, err
 		}
-		return slices.Collect(maps.Keys(b.Cols)), nil
+		return logColumnNames(keys), nil
 	}
 	f, err := openFile(path)
 	if err != nil {
@@ -509,4 +506,14 @@ func fileColumns(path string, log bool) ([]string, error) {
 		return nil, err
 	}
 	return names, nil
+}
+
+// logColumnNames is the names of the columns a log of keys reads into.
+func logColumnNames(keys map[string]bool) []string {
+	lc := archive.LogColumns(keys)
+	names := make([]string, len(lc))
+	for i, c := range lc {
+		names[i] = c.Name
+	}
+	return names
 }

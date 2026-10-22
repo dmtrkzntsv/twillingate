@@ -29,15 +29,18 @@ type Options struct {
 	// says it is truncated.
 	MaxGroups int
 	// MaxBytes bounds one scan's aggregation (default 128 MiB), counted
-	// approximately: interned ids and groups with their strings, the
-	// per-cell arrays, the exact distinct sets' arrays and 16 KiB per
-	// sketch, and the per-day distinct keys. Once past it a breakdown or a
-	// trend admits no new group and the result says it is truncated, so
-	// the bound holds up to what the groups already tracked add (each
-	// group's exact set stays under 2 × hll.ExactLimit keys or one
-	// sketch, each worker's per-day keys under twice their distinct
-	// count). A stat has one group: it is not bounded so, its distinct
-	// sets and per-day keys being at most one per distinct id (per day).
+	// approximately: the groups with their strings, the per-cell arrays,
+	// the whole-range distinct sets (exact keys, at most about one 16 KiB
+	// sketch's worth each, or that sketch) and the per-day distinct keys
+	// (16 bytes per distinct id and day, up to twice that per worker
+	// between compactions). It is checked after each batch, so a batch's
+	// growth may pass it. A stat or a trend without series, which has no
+	// group to leave out, is refused with ErrTooLarge once past MaxBytes.
+	// A breakdown or a split trend past it admits no new group (its rows
+	// are left out and the result says it is truncated); what the groups
+	// admitted add then (their sets and per-day keys) may take it to twice
+	// MaxBytes, past which it is refused with ErrTooLarge too. Merging the
+	// workers' partials holds the per-day keys twice for a moment.
 	MaxBytes int64
 }
 
@@ -48,8 +51,9 @@ type Engine struct {
 	maxBytes           int64
 	sem                chan struct{}
 
-	colMu    sync.Mutex
-	colFiles map[string]fileCols // each events file's columns, by path
+	logKeys  *archive.KeyScanner // each open log's keys, read as far as it grew
+	colMu    sync.Mutex          // guards colFiles, never held over a read
+	colFiles map[string]fileCols // each Parquet file's columns, by path
 }
 
 // New returns an engine over o.Dir.
@@ -66,7 +70,8 @@ func New(o Options) *Engine {
 	if o.MaxBytes <= 0 {
 		o.MaxBytes = 128 << 20
 	}
-	return &Engine{dir: o.Dir, workers: o.Workers, maxGroups: o.MaxGroups, maxBytes: o.MaxBytes, sem: make(chan struct{}, o.MaxScans)}
+	return &Engine{dir: o.Dir, workers: o.Workers, maxGroups: o.MaxGroups, maxBytes: o.MaxBytes, sem: make(chan struct{}, o.MaxScans),
+		logKeys: archive.NewKeyScanner()}
 }
 
 // Params are what a query runs on: one project, the days From to To.
@@ -98,8 +103,9 @@ var (
 // rules (every project's; the project's own apply) applied as the
 // reader's events view applies them. A malformed query, or a filter value
 // that does not parse for its column, is refused with an error wrapping
-// ErrInvalid. Answer waits for one of MaxScans turns first, and stops when
-// ctx is done.
+// ErrInvalid; one whose aggregation needs more than MaxBytes allows, with
+// one wrapping ErrTooLarge. Answer waits for one of MaxScans turns first,
+// and stops when ctx is done.
 //
 // A file the daily pass removes while the query reads (a dump deletes its
 // log, a merge its days) fails the attempt; the whole query is run again,
@@ -112,7 +118,8 @@ var (
 //   - trend: day, series when split, the metric; a row per day (and
 //     series) with rows, by day then series; only the series_limit (5)
 //     series ranking first by the metric over the whole range, ties by
-//     their value;
+//     their value (a distinct count past hll.ExactLimit ids ranks by its
+//     estimate; the per-day values stay exact);
 //   - breakdown: a column per dimension, then per metric; the limit (20)
 //     groups ranking first by the order metric (the first), ties by the
 //     dimensions, then with other an "Other" row (every dimension
@@ -188,21 +195,34 @@ func (e *Engine) ruleSet(project int64, rules archive.Rules) (ruleSet, error) {
 	return compileRules(project, rules, have), nil
 }
 
-// columns is unionColumns(e.dir), each file's columns read again only
-// when the file is new or changed in size or time since it was last read
-// (under live ingest, only the logs being written to).
+// columns is unionColumns(e.dir): an open log's keys are read only as far
+// as it grew since (archive.KeyScanner, under live ingest the lines
+// appended), a Parquet file's footer only when the file is new or changed
+// in size or time since it was last read. colMu guards the footer cache
+// only: it is copied out, the files read without it, and the new cache
+// put back (the gone files drop out).
 func (e *Engine) columns() ([]string, error) {
 	e.colMu.Lock()
-	defer e.colMu.Unlock()
-	next := make(map[string]fileCols, len(e.colFiles))
+	known := e.colFiles
+	e.colMu.Unlock()
+	next := make(map[string]fileCols, len(known))
+	var logs []string
 	cols, err := unionColumnsOf(e.dir, func(path string, log bool) ([]string, error) {
+		if log {
+			logs = append(logs, path)
+			keys, err := e.logKeys.Keys(path)
+			if err != nil {
+				return nil, err
+			}
+			return logColumnNames(keys), nil
+		}
 		st, err := os.Stat(path)
 		if err != nil {
 			return nil, err
 		}
-		fc, ok := e.colFiles[path]
+		fc, ok := known[path]
 		if !ok || fc.size != st.Size() || !fc.mtime.Equal(st.ModTime()) {
-			names, err := readFileColumns(path, log)
+			names, err := readFileColumns(path, false)
 			if err != nil {
 				return nil, err
 			}
@@ -214,11 +234,15 @@ func (e *Engine) columns() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	e.colFiles = next // the files listed now: the gone ones drop out
+	e.colMu.Lock()
+	e.colFiles = next
+	e.colMu.Unlock()
+	e.logKeys.Keep(logs)
 	return cols, nil
 }
 
-// readFileColumns is fileColumns; a variable so a test can count reads.
+// readFileColumns is fileColumns; a variable so a test can count the
+// Parquet footers read.
 var readFileColumns = fileColumns
 
 // fileCols is one file's columns as read when it had size and mtime.
