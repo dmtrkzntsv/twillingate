@@ -1689,7 +1689,9 @@ the error says so: raise `ENGINE_MEMORY_LIMIT`.
 
 `query`'s `query` field asks one project's event files a question without
 SQL: twillingate answers it itself, with the rules applied as everywhere
-else, over `project_id`'s days `from` through `to` (both `YYYY-MM-DD`;
+else (except on `sessions` and `identities`: the daily pass derives those
+from the events as stored, and the query derives the days it has not
+caught up with), over `project_id`'s days `from` through `to` (both `YYYY-MM-DD`;
 `to` defaults to today, UTC, and `from` to 29 days before `to`; at most
 1,100 days a call). A malformed query is refused as `invalid`, with a
 message naming the field (`dimensions`, `metrics[0].column`,
