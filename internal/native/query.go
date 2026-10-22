@@ -31,7 +31,7 @@ type Query struct {
 	Compare     string   `json:"compare,omitempty" jsonschema:"stat only: previous adds each metric over as many days ending the day before from"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown only: how many groups, 1 to 1000 (default 20)"`
 	Other       bool     `json:"other,omitempty" jsonschema:"breakdown only: fold the groups past limit into one row whose dimensions read Other"`
-	Order       string   `json:"order,omitempty" jsonschema:"breakdown only: the metric name to rank groups by, descending (default: the first metric)"`
+	Order       string   `json:"order,omitempty" jsonschema:"breakdown only: a metric name to rank groups by, descending, or one of its dimensions to sort them by, ascending, ties by the other dimensions ascending (default: the first metric); limit keeps the first groups in that order"`
 }
 
 // Metric is one aggregate.
@@ -257,8 +257,8 @@ func (q Query) Validate() error {
 		if q.Kind != "breakdown" {
 			return invalid("order", "only a breakdown orders")
 		}
-		if !metricNames[q.Order] {
-			return invalid("order", "%q is not a metric name", q.Order)
+		if !metricNames[q.Order] && !names[q.Order] {
+			return invalid("order", "%q is not a metric name or a dimension", q.Order)
 		}
 	}
 	return nil

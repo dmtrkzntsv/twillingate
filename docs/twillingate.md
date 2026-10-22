@@ -1703,7 +1703,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `where` | all | filters, `{column, op, values}`, every one of which a row must satisfy |
 | `dimensions` | breakdown | 1 to 3 columns to group by |
 | `limit` | breakdown | groups returned, 1 to 1000 (default 20) |
-| `order` | breakdown | the metric name to rank the groups by, descending (default the first metric); ties by the dimensions |
+| `order` | breakdown | a metric name to rank the groups by, descending, ties by the dimensions; or one of the dimensions to sort the groups by, ascending, ties by the other dimensions (`"order": "day"` puts a breakdown by day in date order). Default the first metric; `limit` keeps the first groups in that order |
 | `other` | breakdown | `true` adds an `Other` row (every dimension `Other`) summing the groups past `limit`, when there are any |
 | `series` | trend | a column to split each day by |
 | `series_limit` | trend | how many series, 1 to 50, those ranking first by the metric over the range (default 5) |
@@ -1753,7 +1753,7 @@ as text:
   absent, not zero. A trend over more days than `CONSOLE_QUERY_ROWS_MAX`
   (1,000 by default) is always cut there, and `truncated`;
 - **breakdown**: a column per dimension, then per metric; the `limit`
-  groups ranking first, then the `Other` row.
+  groups first in `order`, then the `Other` row.
 
 A distinct count over the range (`actors`, `users`, `groups`) is exact up
 to 1,024 ids per group; past that it is estimated, within about ±2%, and

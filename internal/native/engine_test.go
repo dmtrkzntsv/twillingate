@@ -359,6 +359,15 @@ func TestKindsMatchDuckDB(t *testing.T) {
 			cols: []string{"day", "family", "count", "actors"},
 			sql: []string{`SELECT "day", "family", count(*) AS c, count(DISTINCT "actor_id") FROM events WHERE ` + inRange + `
 				GROUP BY ALL ORDER BY c DESC, "day" ASC, "family" ASC NULLS LAST LIMIT 20`}},
+		all("breakdown ordered by day", Query{Kind: "breakdown", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "actors"}},
+			Dimensions: []string{"day"}, Order: "day", Limit: 10, Other: true}, []string{"day", "count", "actors"},
+			`SELECT "day", count(*), count(DISTINCT "actor_id") FROM events WHERE `+inRange+` GROUP BY "day" ORDER BY "day" LIMIT 10`,
+			`SELECT 'Other', count(*), count(DISTINCT "actor_id") FROM events WHERE `+inRange+` AND "day" NOT IN
+				(SELECT DISTINCT "day" FROM events WHERE `+inRange+` ORDER BY "day" LIMIT 10) HAVING count(*) > 0`),
+		all("breakdown ordered by second dimension", Query{Kind: "breakdown", Table: "product", Metrics: count(),
+			Dimensions: []string{"attr_plan", "country"}, Order: "country", Limit: 7}, []string{"attr_plan", "country", "count"},
+			`SELECT "attr_plan", "country", count(*) FROM product WHERE `+inRange+`
+				GROUP BY ALL ORDER BY "country" ASC NULLS LAST, "attr_plan" ASC NULLS LAST LIMIT 7`),
 		all("renamed event", Query{Kind: "breakdown", Table: "views", Metrics: count(), Dimensions: []string{"event_name"}},
 			[]string{"event_name", "count"},
 			`SELECT "event_name", count(*) AS c FROM views WHERE `+inRange+` GROUP BY "event_name" ORDER BY c DESC, "event_name" ASC NULLS LAST LIMIT 20`),
