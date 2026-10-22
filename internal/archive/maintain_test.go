@@ -627,7 +627,7 @@ func TestLogSelectSkipsATornLineWhenTolerant(t *testing.T) {
 	f.write(t, evOf(1, "a", "2026-10-12T10:00:00Z"), evOf(1, "b", "2026-10-12T11:00:00Z"))
 	path := filepath.Join(f.log.Dir(), "1", "2026-10-12.log")
 	appendTo(t, path, `{"v":1,"id":"torn","fam`)
-	keys, err := newKeyScanner().keys(path)
+	keys, err := NewKeyScanner().Keys(path)
 	if err != nil {
 		t.Fatal(err)
 	}

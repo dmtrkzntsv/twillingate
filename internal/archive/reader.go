@@ -53,7 +53,7 @@ type Rules struct {
 type Reader struct {
 	dir  string
 	eng  Engine
-	keys *keyScanner
+	keys *KeyScanner
 	mu   sync.Mutex // one prepare at a time
 
 	confinedMu sync.Mutex
@@ -75,7 +75,7 @@ func NewReader(dir string, eng Engine) (*Reader, error) {
 	if err != nil {
 		return nil, fmt.Errorf("archive: %w", err)
 	}
-	return &Reader{dir: abs, eng: eng, keys: newKeyScanner()}, nil
+	return &Reader{dir: abs, eng: eng, keys: NewKeyScanner()}, nil
 }
 
 // Query runs one SELECT over the tables (engine.Query refuses anything
@@ -331,13 +331,13 @@ func (r *Reader) build(ctx context.Context, files map[int64]Files, rules Rules, 
 	}
 	hot := []string{emptyRow()}
 	for _, p := range logs {
-		keys, err := r.keys.keys(p)
+		keys, err := r.keys.Keys(p)
 		if err != nil {
 			return err
 		}
 		hot = append(hot, "SELECT * FROM ("+logSelect(p, columnsOf(keys), true)+")")
 	}
-	r.keys.keep(logs)
+	r.keys.Keep(logs)
 	all := func(hot string) string {
 		union := []string{emptyRow(), "SELECT * FROM " + hot}
 		if len(parquet) > 0 {
