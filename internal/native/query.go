@@ -168,6 +168,9 @@ func (q Query) Validate() error {
 		if _, ok := columnInfo(q.Table, q.Series); !ok {
 			return invalid("series", "%q is not a column of %s", q.Series, q.Table)
 		}
+		if q.Series == "day" {
+			return invalid("series", "a trend is by day already")
+		}
 	}
 	if q.SeriesLimit < 0 || (q.SeriesLimit > 0 && q.Kind != "trend") {
 		return invalid("series_limit", "%d is not valid here", q.SeriesLimit)

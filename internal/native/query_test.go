@@ -71,6 +71,7 @@ func TestValidate(t *testing.T) {
 		{"compare bad", Query{Kind: "stat", Table: "events", Metrics: count(), Compare: "next"}, "compare"},
 		{"series on stat", Query{Kind: "stat", Table: "events", Metrics: count(), Series: "path"}, "series"},
 		{"series bad", Query{Kind: "trend", Table: "events", Metrics: count(), Series: "id"}, "series"},
+		{"series day", Query{Kind: "trend", Table: "events", Metrics: count(), Series: "day"}, "series"},
 		{"series_limit neg", Query{Kind: "trend", Table: "events", Metrics: count(), Series: "path", SeriesLimit: -1}, "series_limit"},
 	}
 	for _, c := range invalid {
