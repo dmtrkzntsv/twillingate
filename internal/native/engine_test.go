@@ -327,7 +327,7 @@ func TestKindsMatchDuckDB(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			res, err := e.Run(context.Background(), c.q, Params{Project: 1, From: date(t, c.from), To: date(t, c.to)}, engineRules)
+			res, err := e.Answer(context.Background(), c.q, Params{Project: 1, From: date(t, c.from), To: date(t, c.to)}, engineRules)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -363,7 +363,7 @@ func TestResultIndependentOfWorkers(t *testing.T) {
 	p := Params{Project: 1, From: date(t, engineFrom), To: date(t, today)}
 	var first Result
 	for _, w := range []int{1, 2, 5} {
-		res, err := New(Options{Dir: f.Dir, Workers: w}).Run(context.Background(), q, p, engineRules)
+		res, err := New(Options{Dir: f.Dir, Workers: w}).Answer(context.Background(), q, p, engineRules)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -388,17 +388,17 @@ func TestRunRefusesBadValues(t *testing.T) {
 		{Filter{Column: "bucket", Op: "ne", Values: []string{"1.5"}}, "where[0].values"},
 	} {
 		q := Query{Kind: "stat", Table: "measures", Metrics: count(), Where: []Filter{c.f}}
-		_, err := e.Run(context.Background(), q, p, archive.Rules{})
+		_, err := e.Answer(context.Background(), q, p, archive.Rules{})
 		if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), c.path) {
 			t.Errorf("%+v: %v, want ErrInvalid naming %s", c.f, err, c.path)
 		}
 	}
 	q := Query{Kind: "stat", Table: "views", Metrics: count()}
-	if _, err := e.Run(context.Background(), q, Params{Project: 1, From: date(t, today), To: date(t, "2026-09-01")}, archive.Rules{}); !errors.Is(err, ErrInvalid) {
+	if _, err := e.Answer(context.Background(), q, Params{Project: 1, From: date(t, today), To: date(t, "2026-09-01")}, archive.Rules{}); !errors.Is(err, ErrInvalid) {
 		t.Errorf("to before from: %v", err)
 	}
 	// No files: one row of zeros.
-	res, err := e.Run(context.Background(), q, p, archive.Rules{})
+	res, err := e.Answer(context.Background(), q, p, archive.Rules{})
 	if err != nil || !slices.Equal(res.Rows[0], []string{"0"}) {
 		t.Errorf("no files: %v %q", err, res.Rows)
 	}
@@ -424,14 +424,14 @@ func TestDistinctTurnsApproximate(t *testing.T) {
 	f.Maintain(t, today)
 	e := New(Options{Dir: f.Dir, Workers: 2})
 	q := Query{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "count"}, {Op: "actors"}}}
-	res, err := e.Run(context.Background(), q, Params{Project: 1, From: date(t, "2026-09-08"), To: date(t, "2026-09-08")}, archive.Rules{})
+	res, err := e.Answer(context.Background(), q, Params{Project: 1, From: date(t, "2026-09-08"), To: date(t, "2026-09-08")}, archive.Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !slices.Equal(res.Rows[0], []string{"1024", "1024"}) || len(res.Approximate) > 0 {
 		t.Errorf("1,024 actors: %q approximate %q", res.Rows, res.Approximate)
 	}
-	res, err = e.Run(context.Background(), q, Params{Project: 1, From: date(t, "2026-09-08"), To: date(t, "2026-09-09")}, archive.Rules{})
+	res, err = e.Answer(context.Background(), q, Params{Project: 1, From: date(t, "2026-09-08"), To: date(t, "2026-09-09")}, archive.Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -446,7 +446,7 @@ func TestDistinctTurnsApproximate(t *testing.T) {
 		t.Errorf("approximate %q, want actors", res.Approximate)
 	}
 	// Per day, distinct counts stay exact.
-	res, err = e.Run(context.Background(), Query{Kind: "trend", Table: "views", Metrics: []Metric{{Op: "actors"}}},
+	res, err = e.Answer(context.Background(), Query{Kind: "trend", Table: "views", Metrics: []Metric{{Op: "actors"}}},
 		Params{Project: 1, From: date(t, "2026-09-08"), To: date(t, "2026-09-09")}, archive.Rules{})
 	if err != nil {
 		t.Fatal(err)
@@ -469,7 +469,7 @@ func TestBreakdownCapTruncates(t *testing.T) {
 	f.Write(t, evs...)
 	e := New(Options{Dir: f.Dir, Workers: 1, MaxGroups: 10})
 	q := Query{Kind: "breakdown", Table: "views", Metrics: count(), Dimensions: []string{"path"}, Limit: 3}
-	res, err := e.Run(context.Background(), q, Params{Project: 1, From: date(t, today), To: date(t, today)}, archive.Rules{})
+	res, err := e.Answer(context.Background(), q, Params{Project: 1, From: date(t, today), To: date(t, today)}, archive.Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -480,7 +480,7 @@ func TestBreakdownCapTruncates(t *testing.T) {
 	}
 	// A trend's series too.
 	q = Query{Kind: "trend", Table: "views", Metrics: count(), Series: "path", SeriesLimit: 2}
-	res, err = e.Run(context.Background(), q, Params{Project: 1, From: date(t, today), To: date(t, today)}, archive.Rules{})
+	res, err = e.Answer(context.Background(), q, Params{Project: 1, From: date(t, today), To: date(t, today)}, archive.Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -497,12 +497,12 @@ func TestMaxScansWaits(t *testing.T) {
 	e.sem <- struct{}{} // a scan running
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
-	if _, err := e.Run(ctx, q, p, archive.Rules{}); !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := e.Answer(ctx, q, p, archive.Rules{}); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("cancelled while waiting: %v", err)
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := e.Run(context.Background(), q, p, archive.Rules{})
+		_, err := e.Answer(context.Background(), q, p, archive.Rules{})
 		done <- err
 	}()
 	select {
@@ -565,11 +565,11 @@ func TestMaxBytesTruncates(t *testing.T) {
 	q := Query{Kind: "breakdown", Table: "views", Metrics: []Metric{{Op: "actors"}, {Op: "daily_max", Of: "users"}},
 		Dimensions: []string{"path", "country"}, Limit: 1000}
 	p := Params{Project: 1, From: date(t, engineFrom), To: date(t, today)}
-	full, err := New(Options{Dir: f.Dir}).Run(context.Background(), q, p, engineRules)
+	full, err := New(Options{Dir: f.Dir}).Answer(context.Background(), q, p, engineRules)
 	if err != nil || full.Truncated {
 		t.Fatalf("default budget: %v truncated %v", err, full.Truncated)
 	}
-	small, err := New(Options{Dir: f.Dir, MaxBytes: 1}).Run(context.Background(), q, p, engineRules)
+	small, err := New(Options{Dir: f.Dir, MaxBytes: 1}).Answer(context.Background(), q, p, engineRules)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -614,7 +614,7 @@ func TestRunRetriesVanishedFiles(t *testing.T) {
 	}
 	e := New(Options{Dir: dir})
 	q := Query{Kind: "stat", Table: "views", Metrics: count()}
-	_, err := e.Run(context.Background(), q, Params{Project: 1, From: date(t, today), To: date(t, today)}, archive.Rules{})
+	_, err := e.Answer(context.Background(), q, Params{Project: 1, From: date(t, today), To: date(t, today)}, archive.Rules{})
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("err = %v, want ErrNotExist after the retries", err)
 	}

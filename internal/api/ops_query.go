@@ -35,7 +35,7 @@ type queryOut struct {
 
 // Native answers structured queries over the event files (native.Engine).
 type Native interface {
-	Run(ctx context.Context, q native.Query, p native.Params, rules archive.Rules) (native.Result, error)
+	Answer(ctx context.Context, q native.Query, p native.Params, rules archive.Rules) (native.Result, error)
 }
 
 // queryEnums lists the structured query's closed vocabularies in query's
@@ -125,7 +125,7 @@ func (h *host) runStructured(ctx context.Context, in queryIn) (queryOut, error) 
 	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
 	events, attrs := h.reg.Snapshot(ctx).RuleLists()
-	res, err := askNative(ctx, h.native, *in.Query, native.Params{Project: in.ProjectID, From: from, To: to},
+	res, err := h.native.Answer(ctx, *in.Query, native.Params{Project: in.ProjectID, From: from, To: to},
 		archive.Rules{Events: events, Attributes: attrs})
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
@@ -145,13 +145,6 @@ func (h *host) runStructured(ctx context.Context, in queryIn) (queryOut, error) 
 		out.Note = fmt.Sprintf("truncated (at most %d rows, and the groups one query tracks); results are PARTIAL — narrow the range, add a where or lower the limit", h.queryRows)
 	}
 	return out, nil
-}
-
-// askNative hands q to n. Its own function so internal/sqlcheck, which
-// reads any call of a method named Run as readsql.DB.Run's SQL, lists
-// just this one call as not SQL.
-func askNative(ctx context.Context, n Native, q native.Query, p native.Params, rules archive.Rules) (native.Result, error) {
-	return n.Run(ctx, q, p, rules)
 }
 
 // parseDay reads a YYYY-MM-DD day for the field name.

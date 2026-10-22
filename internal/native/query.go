@@ -3,6 +3,7 @@ package native
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -20,8 +21,8 @@ type Query struct {
 	Table       string   `json:"table" jsonschema:"the rows read: events (every family), views, product or measures"`
 	Metrics     []Metric `json:"metrics" jsonschema:"the aggregates, each an output column; a trend takes exactly 1"`
 	Where       []Filter `json:"where,omitempty" jsonschema:"filters, all of which a row must satisfy"`
-	Dimensions  []string `json:"dimensions,omitempty" jsonschema:"breakdown only, 1 to 3: columns to group by, such as path, country, event_name, or attr_<key> for an attribute (bucket on measures)"`
-	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by"`
+	Dimensions  []string `json:"dimensions,omitempty" jsonschema:"breakdown only, 1 to 3: columns to group by, each one a filter's column may name (path, country, event_name, attr_<key>, …)"`
+	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by, one a filter's column may name except day"`
 	SeriesLimit int      `json:"series_limit,omitempty" jsonschema:"trend only: how many series, the top ones by the metric over the range (default 5)"`
 	Compare     string   `json:"compare,omitempty" jsonschema:"stat only: previous adds each metric over as many days ending the day before from"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown only: how many groups, 1 to 1000 (default 20)"`
@@ -39,7 +40,7 @@ type Metric struct {
 
 // Filter keeps the rows whose Column satisfies Op against Values.
 type Filter struct {
-	Column string   `json:"column" jsonschema:"a column of the table, or attr_<key> for an attribute"`
+	Column string   `json:"column" jsonschema:"one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute"`
 	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none. gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, and only on numeric columns"`
 	Values []string `json:"values,omitempty" jsonschema:"the values compared against, as text"`
 }
@@ -59,21 +60,27 @@ func (m Metric) Name() string {
 
 const maxLimit = 1000
 
-// plainColumns are the non-attribute columns a dimension, series or filter
-// may name, each with whether it is numeric (BIGINT, or the DATE day, which
-// takes gt/lt against YYYY-MM-DD).
-var plainColumns = map[string]bool{
-	"project_id": true, "family": false, "event_name": false, "day": true,
-	"kind": false, "actor_id": false, "actor_kind": false, "user_id": false,
-	"group_id": false, "session_id": false, "install_id": false, "user_name": false,
-	"group_name": false, "host": false, "path": false, "referrer_source": false,
-	"utm_source": false, "utm_medium": false, "utm_campaign": false, "platform": false,
-	"os": false, "os_version": false, "os_name": false, "browser": false,
-	"browser_version": false, "browser_locale": false, "app_version": false,
-	"app_locale": false, "device": false, "device_model": false,
-	"display_width": true, "display_height": true, "country": false,
-	"consent": true, "measure": false,
+// Columns are the non-attribute columns a dimension, series or filter may
+// name (bucket aside, which only measures has).
+var Columns = []string{
+	"project_id", "family", "event_name", "day", "kind", "actor_id", "actor_kind",
+	"user_id", "group_id", "session_id", "install_id", "user_name", "group_name",
+	"host", "path", "referrer_source", "utm_source", "utm_medium", "utm_campaign",
+	"platform", "os", "os_version", "os_name", "browser", "browser_version",
+	"browser_locale", "app_version", "app_locale", "device", "device_model",
+	"display_width", "display_height", "country", "consent", "measure",
 }
+
+// plainColumns are Columns, each with whether it is numeric (BIGINT, or
+// the DATE day, which takes gt/lt against YYYY-MM-DD).
+var plainColumns = func() map[string]bool {
+	numeric := setOf([]string{"project_id", "day", "display_width", "display_height", "consent"})
+	m := make(map[string]bool, len(Columns))
+	for _, c := range Columns {
+		m[c] = numeric[c]
+	}
+	return m
+}()
 
 // columnInfo reports whether column takes gt/gte/lt/lte, and ok whether the
 // table has the column at all as a dimension or filter.
@@ -121,15 +128,11 @@ func invalid(path, format string, args ...any) error {
 // Validate refuses a malformed query; the error wraps ErrInvalid and names
 // the field.
 func (q Query) Validate() error {
-	switch q.Kind {
-	case "stat", "trend", "breakdown":
-	default:
-		return invalid("kind", "%q is not stat, trend or breakdown", q.Kind)
+	if !slices.Contains(Kinds, q.Kind) {
+		return invalid("kind", "%q is not one of %s", q.Kind, strings.Join(Kinds, ", "))
 	}
-	switch q.Table {
-	case "events", "views", "product", "measures":
-	default:
-		return invalid("table", "%q is not events, views, product or measures", q.Table)
+	if !slices.Contains(Tables, q.Table) {
+		return invalid("table", "%q is not one of %s", q.Table, strings.Join(Tables, ", "))
 	}
 
 	names := map[string]bool{}

@@ -86,7 +86,7 @@ type Result struct {
 	Approximate []string `json:"approximate,omitempty"`
 }
 
-// The retry bounds of Run when a file vanishes under it; variables so a
+// The retry bounds of Answer when a file vanishes under it; variables so a
 // test can shorten them.
 var (
 	maxAttempts     = 10
@@ -94,11 +94,11 @@ var (
 	retryBackoffMax = time.Second
 )
 
-// Run answers q over project p.Project's rows of p.From to p.To, with
+// Answer answers q over project p.Project's rows of p.From to p.To, with
 // rules (every project's; the project's own apply) applied as the
 // reader's events view applies them. A malformed query, or a filter value
 // that does not parse for its column, is refused with an error wrapping
-// ErrInvalid. Run waits for one of MaxScans turns first, and stops when
+// ErrInvalid. Answer waits for one of MaxScans turns first, and stops when
 // ctx is done.
 //
 // A file the daily pass removes while the query reads (a dump deletes its
@@ -125,7 +125,7 @@ var (
 // user_id and group_id (NULL left out), sum, avg, min and max NULL over no
 // value, daily_* the per-day distinct counts' SUM, MAX or AVG over the
 // days with rows (NULL over none).
-func (e *Engine) Run(ctx context.Context, q Query, p Params, rules archive.Rules) (Result, error) {
+func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Rules) (Result, error) {
 	if err := q.Validate(); err != nil {
 		return Result{}, err
 	}
@@ -147,7 +147,7 @@ func (e *Engine) Run(ctx context.Context, q Query, p Params, rules archive.Rules
 	defer func() { <-e.sem }()
 	backoff := retryBackoff
 	for attempt := 1; ; attempt++ {
-		res, err := e.answer(ctx, q, filters, p, rules)
+		res, err := e.answerOnce(ctx, q, filters, p, rules)
 		if err == nil || !errors.Is(err, fs.ErrNotExist) || attempt == maxAttempts {
 			return res, err
 		}
@@ -160,7 +160,7 @@ func (e *Engine) Run(ctx context.Context, q Query, p Params, rules archive.Rules
 	}
 }
 
-func (e *Engine) answer(ctx context.Context, q Query, filters []filter, p Params, rules archive.Rules) (Result, error) {
+func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, p Params, rules archive.Rules) (Result, error) {
 	rs, err := e.ruleSet(p.Project, rules)
 	if err != nil {
 		return Result{}, err

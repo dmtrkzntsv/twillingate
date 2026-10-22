@@ -1445,7 +1445,7 @@ history starts where the files' does. `query`, the count of events in
 | `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys `product_attributes` breaks down (`$browser`, `$path`, …); a key none carried gives no rows |
 | `retention` | `actor` (`user` or `install`) | Cohort curves for the cohorts that began in the range, every offset, counted over the days before today (UTC), plus `aggregated_through`, the newest such day with views or product events — cohorts and offsets after it are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` (default 50) | Per user or group, busiest first (views plus product events in the range): its `actors` and `users` (itself for a user, its members for a group), each distinct per day and added up over the days, its `views`, `events` and the display `name` sent with its latest event. **Surfaces personal data on projects whose clients send ids** |
-| `query` | `sql`, or `project_id`, `from`, `to` (optional: the 30 days ending today, UTC) and `query` | One of two, never both. `query` is a structured query over one project, answered natively: a stat, a trend or a breakdown, see [Structured queries](#structured-queries). `sql` is a single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them: see [Writing SQL against the event files](#writing-sql-against-the-event-files); it reads those seven tables only (no table function but `range`, `generate_series` and `unnest`, no schema-qualified name such as `main.events`), every project's rows, and takes none of `project_id`, `from` and `to`. Row-capped and time-limited either way
+| `query` | `sql`, or `project_id`, `from`, `to` (optional: the 30 days ending today, UTC) and `query` | One of two, never both. `query` is a structured query over one project, answered natively: a stat, a trend or a breakdown, see [Structured queries](#structured-queries). `sql` is a single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them: see [Writing SQL against the event files](#writing-sql-against-the-event-files); it reads those seven tables only (no table function but `range`, `generate_series` and `unnest`, no schema-qualified name such as `main.events`), every project's rows, and takes none of `project_id`, `from` and `to`. Row-capped and time-limited either way |
 
 `views_breakdown`'s dimensions, the columns each returns and what it reads
 from the `views` table:
@@ -1709,10 +1709,17 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `series_limit` | trend | how many series, those ranking first by the metric over the range (default 5) |
 | `compare` | stat | `previous` adds a `previous_<name>` column per metric, over as many days ending the day before `from` |
 
-A dimension, series or filter column is any column of the table that
-`schema://views` lists for `events` (`event_name`, `path`, `country`,
-`utm_source`, `day`, …), `attr_<key>` for an attribute (the key as sent,
-`attr_plan`), or `bucket` on `measures`. NULL reads as an empty string and
+A dimension, series or filter column is one of `project_id`, `family`,
+`event_name`, `day`, `kind`, `actor_id`, `actor_kind`, `user_id`,
+`group_id`, `session_id`, `install_id`, `user_name`, `group_name`, `host`,
+`path`, `referrer_source`, `utm_source`, `utm_medium`, `utm_campaign`,
+`platform`, `os`, `os_version`, `os_name`, `browser`, `browser_version`,
+`browser_locale`, `app_version`, `app_locale`, `device`, `device_model`,
+`display_width`, `display_height`, `country`, `consent` and `measure`
+(as `schema://views` describes them), `bucket` on `measures`, or
+`attr_<key>` for an attribute (the key as sent, `attr_plan`). The others
+(`id`, `ts`, `received_at`, `value`, `sample_rate`) are not: `value` and
+`sample_rate` are read by the metrics. NULL reads as an empty string and
 sorts last; numbers sort by value.
 
 | Metric `op` | Takes | Counts |

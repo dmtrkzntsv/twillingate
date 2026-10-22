@@ -14,6 +14,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 )
 
 // source was removed one release after the database's events: it is an
@@ -56,7 +57,7 @@ type fakeNative struct {
 	err      error
 }
 
-func (f *fakeNative) Run(ctx context.Context, q native.Query, p native.Params, rules archive.Rules) (native.Result, error) {
+func (f *fakeNative) Answer(ctx context.Context, q native.Query, p native.Params, rules archive.Rules) (native.Result, error) {
 	_, f.deadline = ctx.Deadline()
 	f.q, f.p, f.rules = q, p, rules
 	return f.res, f.err
@@ -170,6 +171,12 @@ func TestQueryStructuredDefaultsAndCaps(t *testing.T) {
 	if len(out.Rows) != 2 || !out.Truncated || !slices.Equal(out.Approximate, []string{"actors"}) {
 		t.Errorf("out = %+v, want 2 rows, truncated, approximate [actors]", out)
 	}
+	fake.err = context.DeadlineExceeded
+	rec = serveREST(t, newTestRegistrar(t, h), "POST", "/api/query",
+		`{"project_id":1,"query":{"kind":"stat","table":"views","metrics":[{"op":"count"}]}}`)
+	if want := enginesql.Timeout(h.queryTimeout); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), want) {
+		t.Errorf("deadline = %d %s, want 400 with %q", rec.Code, rec.Body, want)
+	}
 	fake.err = fmt.Errorf("%w: where[0].values: bad", native.ErrInvalid)
 	rec = serveREST(t, newTestRegistrar(t, h), "POST", "/api/query",
 		`{"project_id":1,"query":{"kind":"stat","table":"views","metrics":[{"op":"count"}]}}`)
@@ -183,16 +190,21 @@ func TestQueryStructuredDefaultsAndCaps(t *testing.T) {
 func TestQuerySchemaDescribesStructured(t *testing.T) {
 	h, _ := newTestHost(t)
 	r := newTestRegistrar(t, h)
-	var in []byte
-	for _, s := range r.specs {
-		if s.Name == "query" {
-			in, _ = json.Marshal(s.in)
-		}
+	i := slices.IndexFunc(r.specs, func(s spec) bool { return s.Name == "query" })
+	if i < 0 {
+		t.Fatal("no query tool")
 	}
+	in, _ := json.Marshal(r.specs[i].in)
 	text := string(in)
 	for _, want := range []string{`"breakdown"`, `"measures"`, `"daily_avg"`, `"not_in"`, `"is_set"`, `"project_id"`} {
 		if !strings.Contains(text, want) {
 			t.Errorf("query's input schema lacks %s: %s", want, text)
+		}
+	}
+	col := r.specs[i].in.Properties["query"].Properties["where"].Items.Properties["column"]
+	for _, c := range native.Columns {
+		if !strings.Contains(col.Description, c) {
+			t.Errorf("where's column description lacks %s: %s", c, col.Description)
 		}
 	}
 	if strings.Contains(text, "$defs") || strings.Contains(text, "$ref") {
