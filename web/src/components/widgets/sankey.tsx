@@ -214,7 +214,7 @@ export default function Sankey({ data, props }: WidgetProps<SankeyProps>) {
         >
           <tspan fontWeight={500}>{name}</tspan>
           <tspan dx={6} className="fill-muted-foreground">
-            {formatValue(Math.max(into[index], out[index]), format)}
+            {approx(formatValue(Math.max(into[index], out[index]), format), estimated)}
           </tspan>
         </text>
       </g>

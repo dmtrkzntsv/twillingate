@@ -98,6 +98,11 @@ describe('sankey', () => {
     expect(label?.textContent).toContain('1,200')
   })
 
+  it('marks an approximate node value with ≈', () => {
+    const { container } = renderSankey({ ...rows([['google.com', '/', '1200']]), approximate: ['value'] })
+    expect(container.querySelector('[data-node-name="google.com"] text')?.textContent).toContain('≈1,200')
+  })
+
   it('lists the rows it left out as loops', () => {
     const { container } = renderSankey(
       rows([

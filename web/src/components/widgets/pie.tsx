@@ -57,6 +57,7 @@ export const examples: Example[] = [
 
 export default function Pie({ data, props }: WidgetProps<PieProps>) {
   const records = toRecords(data as SqlData, contract)
+  const estimated = approximate(data as SqlData, 'value')
   const card = useCardMode()
   if (records.length === 0) return null
 
@@ -71,7 +72,7 @@ export default function Pie({ data, props }: WidgetProps<PieProps>) {
   return (
     <ChartContainer config={config} className="h-full w-full">
       <PieChart>
-        <ChartTooltip content={tooltip(format, { nameKey: 'label', approximate: approximate(data as SqlData, 'value') })} />
+        <ChartTooltip content={tooltip(format, { nameKey: 'label', approximate: estimated })} />
         {legend('label')}
         <RechartsPie
           data={records}
@@ -95,7 +96,7 @@ export default function Pie({ data, props }: WidgetProps<PieProps>) {
                 return (
                   <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle">
                     <tspan x={cx} y={card ? cy - 8 : cy - 4} className={`fill-foreground font-semibold ${card ? 'text-[36px]' : 'text-xl'}`}>
-                      {approx(formatValue(total, format), approximate(data as SqlData, 'value'))}
+                      {approx(formatValue(total, format), estimated)}
                     </tspan>
                     <tspan x={cx} y={card ? cy + 26 : cy + 16} className={`fill-muted-foreground ${card ? 'text-[length:var(--card-type)]' : 'text-xs'}`}>
                       Total

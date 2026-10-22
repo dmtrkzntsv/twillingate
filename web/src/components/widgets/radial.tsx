@@ -56,6 +56,7 @@ export const examples: Example[] = [
 export default function Radial({ data, props }: WidgetProps<RadialProps>) {
   const sql = data as SqlData
   const records = toRecords(sql, contract)
+  const estimated = approximate(sql, 'value')
   const card = useCardMode()
   if (records.length === 0) return null
 
@@ -92,16 +93,16 @@ export default function Radial({ data, props }: WidgetProps<RadialProps>) {
         barCategoryGap={single ? 0 : '18%'}
       >
         <PolarAngleAxis type="number" domain={[0, domainMax]} tick={false} />
-        <ChartTooltip cursor={false} content={tooltip(format, { nameKey: 'label', valueKey: 'value', approximate: approximate(sql, 'value') })} />
+        <ChartTooltip cursor={false} content={tooltip(format, { nameKey: 'label', valueKey: 'value', approximate: estimated })} />
         {!single && legend('label')}
         <RadialBar dataKey="display" background cornerRadius={999} isAnimationActive={false} />
         {single && (
           <text x="50%" y="50%" textAnchor="middle" dominantBaseline="middle">
             <tspan x="50%" dy="-0.3em" className={`fill-foreground font-semibold ${card ? 'text-[40px]' : 'text-2xl'}`}>
-              {approx(formatValue(rows[0].value, format), approximate(sql, 'value'))}
+              {approx(formatValue(rows[0].value, format), estimated)}
             </tspan>
             <tspan x="50%" dy="1.6em" className={`fill-muted-foreground ${card ? 'text-[length:var(--card-type)]' : 'text-xs'}`}>
-              {hasMax ? `${Math.round(rows[0].display)}% of ${formatValue(Number(records[0].max), format)}` : rows[0].label}
+              {hasMax ? `${Math.round(rows[0].display)}% of ${approx(formatValue(Number(records[0].max), format), approximate(sql, 'max'))}` : rows[0].label}
             </tspan>
           </text>
         )}

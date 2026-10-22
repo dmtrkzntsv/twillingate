@@ -67,6 +67,24 @@ describe('funnel', () => {
     expect(container.firstChild).toBeEmptyDOMElement()
   })
 
+  it('marks approximate values and the drop between them with ≈ on hover', async () => {
+    const user = userEvent.setup()
+    renderFunnel({
+      columns: ['step', 'value'],
+      rows: [
+        ['visit', '20000'],
+        ['signup', '5000'],
+      ],
+      truncated: false,
+      approximate: ['value'],
+    })
+    await user.hover(screen.getByText('signup'))
+    const card = screen.getByRole('tooltip')
+    expect(card).toHaveTextContent('Value≈5,000')
+    expect(card).toHaveTextContent('Dropped≈15,000')
+    expect(card).toHaveTextContent('Of the first step25%')
+  })
+
   it('shows the step value, conversion and drop-off on hover', async () => {
     const user = userEvent.setup()
     renderFunnel({

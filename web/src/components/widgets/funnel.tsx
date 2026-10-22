@@ -66,7 +66,7 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
     if (i > 0 && values[i - 1]) {
       rows.push({ label: 'Of the step before', value: formatValue(values[i] / values[i - 1], 'percent') })
       // Only counts drop off: a difference of percents or durations is not a loss.
-      if (format === 'number') rows.push({ label: 'Dropped', value: formatExact(values[i - 1] - values[i]) })
+      if (format === 'number') rows.push({ label: 'Dropped', value: approx(formatExact(values[i - 1] - values[i]), estimated) })
     }
     return rows
   }
