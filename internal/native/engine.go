@@ -32,16 +32,18 @@ type Options struct {
 	// MaxBytes bounds one scan's aggregation (default 128 MiB), counted
 	// approximately: the groups with their strings, the per-cell arrays,
 	// the whole-range distinct sets (exact keys, at most about one 16 KiB
-	// sketch's worth each, or that sketch) and the per-day distinct keys
+	// sketch's worth each, or that sketch), the per-day distinct keys
 	// (16 bytes per distinct id and day, up to twice that per worker
-	// between compactions). It is checked after each batch, so a batch's
+	// between compactions) and the measures' bucket histograms (an entry
+	// per cell and bucket with rows). It is checked after each batch, so a batch's
 	// growth may pass it. A stat or a trend without series, which has no
 	// group to leave out, is refused with ErrTooLarge once past MaxBytes.
 	// A breakdown or a split trend past it admits no new group (its rows
 	// are left out and the result says it is truncated); what the groups
 	// admitted add then (their sets and per-day keys) may take it to twice
 	// MaxBytes, past which it is refused with ErrTooLarge too. Merging the
-	// workers' partials holds the per-day keys twice for a moment.
+	// workers' partials holds the per-day keys and the histograms twice
+	// for a moment, uncounted.
 	MaxBytes int64
 }
 
@@ -162,6 +164,14 @@ var (
 // DuckDB's ROUND rounds a DOUBLE, after Other is put together and
 // before groups and series are ranked by it, as SQL's ORDER BY of the
 // rounded column ranks them.
+// share is a group's of (count: its rows, of the metric's where when it
+// has one; weight: their SUM(1 / sample_rate)) over its partition's, as
+// SQL's x / SUM(x) OVER (PARTITION BY …) reads it before the limit: in a
+// breakdown the groups of its first dimension's value (every group with
+// one dimension), in a trend the day's groups, every series (over the
+// range when the series are ranked); an Other row's partition is every
+// group. It is NULL when the partition's total is 0, and never
+// approximate.
 func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Rules) (Result, error) {
 	if err := q.Validate(); err != nil {
 		return Result{}, err
@@ -560,6 +570,9 @@ func (s scan) breakdown(ctx context.Context, from, to civil.Date) (Result, error
 		}
 	}
 	vals, types := m.a.groups.vals, m.a.dimTypes
+	if len(types) > 1 && slices.ContainsFunc(ms, func(mt metricSpec) bool { return mt.Op == "share" }) {
+		m.partitionBy()
+	}
 	gs := make([]int32, m.groups)
 	for g := range gs {
 		gs[g] = int32(g)
@@ -598,9 +611,14 @@ func (s scan) breakdown(ctx context.Context, from, to civil.Date) (Result, error
 	}
 	top, rest := gs[:min(limit, len(gs))], gs[min(limit, len(gs)):]
 	var rows [][]string
-	metrics := func(row []string, groups []int32) []string {
+	metrics := func(row []string, groups []int32, other bool) []string {
 		for i, mt := range ms {
-			v := m.compute(mt, groups, -1)
+			var v value
+			if other {
+				v = m.computeOther(mt, groups)
+			} else {
+				v = m.compute(mt, groups, -1)
+			}
 			if v.approx {
 				cols.approx[len(types)+i] = true
 			}
@@ -613,14 +631,14 @@ func (s scan) breakdown(ctx context.Context, from, to civil.Date) (Result, error
 		for _, v := range vals[g] {
 			row = append(row, label(v))
 		}
-		rows = append(rows, metrics(row, []int32{g}))
+		rows = append(rows, metrics(row, []int32{g}, false))
 	}
 	if s.q.Other && len(rest) > 0 {
 		row := make([]string, 0, len(cols.names))
 		for range types {
 			row = append(row, "Other")
 		}
-		rows = append(rows, metrics(row, rest))
+		rows = append(rows, metrics(row, rest, true))
 	}
 	return cols.result(rows, m.a.groups.dropped), nil
 }

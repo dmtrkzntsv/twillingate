@@ -1724,7 +1724,7 @@ A dimension, series or filter column is one of `project_id`, `family`,
 `sample_rate` are read by the metrics. NULL reads as an empty string and
 sorts last; numbers sort by value.
 
-Six more are computed from those, as the built-in dashboards group by
+Eight more are computed from those, as the built-in dashboards group by
 them; they are text, so `gt`, `gte`, `lt` and `lte` do not take them:
 
 | Column | Tables | Value |
@@ -1735,6 +1735,8 @@ them; they are text, so `gt`, `gte`, `lt` and `lte` do not take them:
 | `consent_state` | `events`, `views`, `product` | `given` (`consent` 1), `none` (0) or `unknown` (NULL) |
 | `user_status` | `events`, `views`, `product` | `new` on the day the row's `user_id` was first seen (its `first_seen` in `identities`, over the whole history the files hold, whatever the range), `returning` on a later day; NULL when `user_id` is empty, or not in `identities` (an id only measures carried), and on a measure sent before it was first seen |
 | `group_status` | `events`, `views`, `product` | the same of `group_id` |
+| `vital` | `measures` | `LCP`, `INP`, `CLS`, `FCP` or `TTFB` for the web vitals' `event_name` (`$lcp`, `$inp`, `$cls`, `$fcp`, `$ttfb`); else NULL |
+| `vital_rating` | `measures` | a vital's sample rated by its bucket's value (as a percentile reads it, below) against the vital's two thresholds: `good` up to the first, `needs improvement` up to the second, else `poor`. LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800, as the built-in Web Vitals dashboard rates them; NULL for the other measures |
 
 `{"column": "user_status", "op": "eq", "values": ["new"]}` with the metric
 `users` counts the new users, as the built-in Users dashboard does (with
@@ -1748,7 +1750,7 @@ dimension, series and filter columns are `project_id`, `day`, `kind`,
 `exit_path`, `referrer_source`, `utm_source`, `utm_medium` and
 `utm_campaign`; `duration_sec` and `views` are numbers a filter may name
 (`{"column": "views", "op": "gt", "values": ["1"]}`) but not a dimension
-or series. It takes the metrics `count` (sessions), `actors`, `sum`,
+or series. It takes the metrics `count` (sessions), `actors`, `share`, `sum`,
 `avg`, `min` and `max` of `duration_sec` or `views`, and its own
 `bounces` and `bounce_rate`; not `users`, `groups` or the `daily_*` ones.
 
@@ -1759,7 +1761,7 @@ range, and `day` is that day (a trend counts the new users and groups per
 day). Its dimension, series and filter columns are `kind` (`user` or
 `group`), `id`, `name` and `day`; `views` and `events` are numbers a filter
 may name but not a dimension or series. It takes the metrics `count`
-(identities) and `sum`, `avg`, `min` and `max` of `views` or `events`.
+(identities), `share` and `sum`, `avg`, `min` and `max` of `views` or `events`.
 
 | Metric `op` | Takes | Counts |
 | --- | --- | --- |
@@ -1772,6 +1774,7 @@ may name but not a dimension or series. It takes the metrics `count`
 | `percentile` | `q`: above 0 and below 1 (`0.75`) | `measures` only: the `q` quantile of `value`, each sample weighing `1 / sample_rate`; empty over no sample |
 | `mean` | | `measures` only: `value` weighted so, `SUM(value / sample_rate) / SUM(1 / sample_rate)`; empty over no sample |
 | `weight` | | `measures` only: the samples' `1 / sample_rate` summed, the samples a sampled metric stands for |
+| `share` | `of`: `count`, or on `measures` `weight` | trend and breakdown only: the group's `count` (or `weight`) divided by its partition's (`0.25`); empty when that is 0 |
 
 A percentile comes from `bucket`, as the built-in Web Vitals and
 Measures dashboards compute theirs: the weights are summed per bucket and
@@ -1782,8 +1785,18 @@ the bucket's representative, `2 × 1.04^bucket / 2.04` (`0` for bucket
 exact to that resolution, not an estimate, and never `approximate`. An
 `Other` row's percentile puts its groups' buckets together.
 
+A share's partition is, in a breakdown, the groups with the same value of
+the first dimension (every group with one dimension), as SQL's
+`x / SUM(x) OVER (PARTITION BY first dimension)` has it before the limit:
+groups past `limit` still count toward their partition, and the `Other`
+row's partition is every group. In a trend it is the day's groups, every
+series, not only those kept (a series ranks by its share over the range).
+A stat is one group, so it refuses `share`. A share is exact, never
+`approximate`, and with a metric `where` (below) both the group's and the
+partition's are of the rows that pass it.
+
 A metric's column is named by `as`, else `op`, `op_column` (`sum_value`),
-`op_of` (`daily_sum_actors`) or, for a percentile, `p` and `100 × q`
+`op_of` (`daily_sum_actors`, `share_weight`) or, for a percentile, `p` and `100 × q`
 (`p75`, `p99.9`); two metrics may not share a name, nor,
 with `compare`, may one be named `previous_<another's name>`.
 
@@ -1796,7 +1809,8 @@ A metric takes two more optional fields:
   `where`, so a metric with none of its rows in a group reads `0` for
   `count`, `actors`, `users`, `groups` and `bounces`, and empty for the
   others (`sum`, `avg`, `min`, `max`, `daily_*`, `bounce_rate`,
-  `percentile`, `mean`, `weight`). A `daily_*` metric with a `where` is
+  `percentile`, `mean`, `weight`); `share` reads `0`, or empty when its
+  whole partition has none. A `daily_*` metric with a `where` is
   over the days with rows that pass it (its `daily_avg` averages those
   days only). They apply alike to the `previous_` columns, an `Other` row and a trend's
   days; a trend still has a row for every day with rows.
@@ -1901,6 +1915,17 @@ LCP, INP and CLS, as the built-in Web Vitals dashboard's table has them.
     {"op": "percentile", "q": 0.75, "as": "lcp_p75", "round": 0, "where": [{"column": "event_name", "op": "eq", "values": ["$lcp"]}]},
     {"op": "percentile", "q": 0.75, "as": "inp_p75", "round": 0, "where": [{"column": "event_name", "op": "eq", "values": ["$inp"]}]},
     {"op": "percentile", "q": 0.75, "as": "cls_p75", "round": 3, "where": [{"column": "event_name", "op": "eq", "values": ["$cls"]}]}]}}
+```
+
+A breakdown of ratings: each vital's share of samples, by weight, rated
+good, needs improvement or poor, as the built-in Web Vitals dashboard's
+ratings chart has them.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "breakdown", "table": "measures", "dimensions": ["vital", "vital_rating"], "order": "vital",
+  "where": [{"column": "vital", "op": "is_set"}],
+  "metrics": [{"op": "share", "of": "weight", "as": "share", "round": 3}]}}
 ```
 
 A breakdown of sessions: the bounce rate and average session length per

@@ -25,8 +25,8 @@ type Query struct {
 	Table       string   `json:"table" jsonschema:"the rows read: events (every family), views, product or measures; or sessions, one row per session of views; or identities, one row per user or group first seen in the range (rules apply to neither)"`
 	Metrics     []Metric `json:"metrics" jsonschema:"the aggregates, each an output column; a trend takes exactly 1"`
 	Where       []Filter `json:"where,omitempty" jsonschema:"filters, all of which a row must satisfy"`
-	Dimensions  []string `json:"dimensions,omitempty" jsonschema:"breakdown only, 1 to 3: columns to group by, each one a filter's column may name on the table (path, country, event_name, attr_<key>, …; resolution on events and views only, the other computed ones on events, views and product), but duration_sec and views on sessions and views and events on identities"`
-	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by, one a filter's column may name on the table except day (resolution on events and views only, the other computed ones on events, views and product), and except duration_sec and views on sessions and views and events on identities"`
+	Dimensions  []string `json:"dimensions,omitempty" jsonschema:"breakdown only, 1 to 3: columns to group by, each one a filter's column may name on the table (path, country, event_name, attr_<key>, …; resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), but duration_sec and views on sessions and views and events on identities"`
+	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by, one a filter's column may name on the table except day (resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), and except duration_sec and views on sessions and views and events on identities"`
 	SeriesLimit int      `json:"series_limit,omitempty" jsonschema:"trend only: how many series, 1 to 50, the top ones by the metric over the range (default 5)"`
 	Compare     string   `json:"compare,omitempty" jsonschema:"stat only: previous adds each metric over as many days ending the day before from"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown only: how many groups, 1 to 1000 (default 20)"`
@@ -36,11 +36,11 @@ type Query struct {
 
 // Metric is one aggregate.
 type Metric struct {
-	Op     string   `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. measures alone takes percentile (the q quantile of value, a sample weighing 1 / sample_rate, read from its log-scale bucket: within about 2%), mean (value weighted so) and weight (the samples' 1 / sample_rate summed). sessions takes count (sessions), actors, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, sum, avg, min and max"`
+	Op     string   `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. measures alone takes percentile (the q quantile of value, a sample weighing 1 / sample_rate, read from its log-scale bucket: within about 2%), mean (value weighted so) and weight (the samples' 1 / sample_rate summed). share (trend and breakdown only): the group's of (count, or on measures weight) over its partition's: in a breakdown the groups of the same first dimension (all with one dimension; an Other row's is all of them), in a trend the day's; empty over none. sessions takes count (sessions), actors, share, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, share, sum, avg, min and max"`
 	Q      float64  `json:"q,omitempty" jsonschema:"percentile only, above 0 and below 1: the quantile (0.75 for p75)"`
 	Column string   `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views; on identities views or events"`
-	Of     string   `json:"of,omitempty" jsonschema:"daily_* only: what is counted distinct per day"`
-	As     string   `json:"as,omitempty" jsonschema:"the output column's name (default: op, or op_column, or op_of; a percentile's p and 100 q, as p75 or p99.9)"`
+	Of     string   `json:"of,omitempty" jsonschema:"daily_* only: what is counted distinct per day (actors, users or groups); share only: count or, on measures, weight"`
+	As     string   `json:"as,omitempty" jsonschema:"the output column's name (default: op, or op_column, or op_of, as share_weight; a percentile's p and 100 q, as p75 or p99.9)"`
 	Round  *int     `json:"round,omitempty" jsonschema:"optional, 0 to 6: decimal places to round the value to, half away from zero (an integer stays as it is)"`
 	Where  []Filter `json:"where,omitempty" jsonschema:"optional: filters, as the query's where, that a row must also satisfy to count toward this metric only; a group still exists from the query's where, so its metric may be 0 (count, distinct counts, bounces) or empty (the others)"`
 }
@@ -50,7 +50,7 @@ const maxRound = 6
 
 // Filter keeps the rows whose Column satisfies Op against Values.
 type Filter struct {
-	Column string   `json:"column" jsonschema:"one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent), user_status and group_status (new on the day the user_id or group_id was first seen, as identities has it, returning on a later day, NULL without one), these five on events, views and product only. On sessions instead: project_id, day, kind, actor_id, actor_kind, session_id, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign, and the numbers duration_sec and views. On identities instead: kind (user or group), id, name, day (first_seen's day), and the numbers views and events"`
+	Column string   `json:"column" jsonschema:"one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent), user_status and group_status (new on the day the user_id or group_id was first seen, as identities has it, returning on a later day, NULL without one), these five on events, views and product only; on measures only, vital (LCP, INP, CLS, FCP or TTFB for the event_name $lcp, $inp, $cls, $fcp or $ttfb, else NULL) and vital_rating (good, needs improvement or poor: the sample's bucket value against the vital's thresholds, LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800; NULL for the other measures). On sessions instead: project_id, day, kind, actor_id, actor_kind, session_id, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign, and the numbers duration_sec and views. On identities instead: kind (user or group), id, name, day (first_seen's day), and the numbers views and events"`
 	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none (not NULL, and text not empty). gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, and only on numeric columns. NULL fails every op, ne and not_in included"`
 	Values []string `json:"values,omitempty" jsonschema:"the values compared against, as text"`
 }
@@ -182,7 +182,7 @@ var Columns = []string{
 	"browser_locale", "app_version", "app_locale", "device", "device_model",
 	"display_width", "display_height", "country", "consent", "measure",
 	"resolution", "device_label", "platform_version", "consent_state",
-	"user_status", "group_status",
+	"user_status", "group_status", "vital", "vital_rating",
 }
 
 // computedTables are the tables each computed column (computedColumns)
@@ -194,6 +194,8 @@ var computedTables = map[string][]string{
 	"consent_state":    {"events", "views", "product"},
 	"user_status":      {"events", "views", "product"},
 	"group_status":     {"events", "views", "product"},
+	"vital":            {"measures"},
+	"vital_rating":     {"measures"},
 }
 
 // SessionColumns are the columns a dimension, series or filter on
@@ -273,7 +275,7 @@ func dimensionOf(table, column string) bool {
 var (
 	Kinds        = []string{"stat", "trend", "breakdown"}
 	Tables       = []string{"events", "views", "product", "measures", "sessions", "identities"}
-	MetricOps    = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "bounces", "bounce_rate", "percentile", "mean", "weight"}
+	MetricOps    = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "bounces", "bounce_rate", "percentile", "mean", "weight", "share"}
 	ValueColumns = []string{"value", "sample_rate", "display_width", "display_height"}
 	// SessionValueColumns are the columns sum, avg, min and max take on
 	// sessions (ValueColumns on the other tables).
@@ -282,7 +284,9 @@ var (
 	// identities.
 	IdentityValueColumns = []string{"views", "events"}
 	OfColumns            = []string{"actors", "users", "groups"}
-	FilterOps            = []string{"eq", "ne", "in", "not_in", "contains", "prefix", "gt", "gte", "lt", "lte", "is_set"}
+	// ShareOfColumns are what share takes as of (weight on measures only).
+	ShareOfColumns = []string{"count", "weight"}
+	FilterOps      = []string{"eq", "ne", "in", "not_in", "contains", "prefix", "gt", "gte", "lt", "lte", "is_set"}
 )
 
 var (
@@ -290,10 +294,10 @@ var (
 	valueCols  = setOf(ValueColumns)
 	sessValue  = setOf(SessionValueColumns)
 	idValue    = setOf(IdentityValueColumns)
-	idOps      = setOf([]string{"count", "sum", "avg", "min", "max"})
+	idOps      = setOf([]string{"count", "share", "sum", "avg", "min", "max"})
 	ofCols     = setOf(OfColumns)
 	filterOps  = setOf(FilterOps)
-	sessionOps = setOf([]string{"count", "actors", "sum", "avg", "min", "max", "bounces", "bounce_rate"})
+	sessionOps = setOf([]string{"count", "actors", "share", "sum", "avg", "min", "max", "bounces", "bounce_rate"})
 	bounceOps  = setOf([]string{"bounces", "bounce_rate"})
 	measureOps = setOf([]string{"percentile", "mean", "weight"})
 	orderedOps = map[string]bool{"gt": true, "gte": true, "lt": true, "lte": true}
@@ -352,7 +356,7 @@ func (q Query) Validate() error {
 	reserved := map[string]bool{"series": true, "day": true}
 	metricNames := map[string]bool{}
 	for i, m := range q.Metrics {
-		if err := m.validate(q.Table, i); err != nil {
+		if err := m.validate(q.Kind, q.Table, i); err != nil {
 			return err
 		}
 		n := m.Name()
@@ -415,16 +419,16 @@ func (q Query) Validate() error {
 	return nil
 }
 
-func (m Metric) validate(table string, i int) error {
+func (m Metric) validate(kind, table string, i int) error {
 	p := fmt.Sprintf("metrics[%d]", i)
 	if !metricOps[m.Op] {
 		return invalid(p+".op", "%q is not a metric", m.Op)
 	}
 	if table == "sessions" && !sessionOps[m.Op] {
-		return invalid(p+".op", "%s is not a metric of sessions, which takes count, actors, bounces, bounce_rate, sum, avg, min and max", m.Op)
+		return invalid(p+".op", "%s is not a metric of sessions, which takes count, actors, share, bounces, bounce_rate, sum, avg, min and max", m.Op)
 	}
 	if table == "identities" && !idOps[m.Op] {
-		return invalid(p+".op", "%s is not a metric of identities, which takes count, sum, avg, min and max", m.Op)
+		return invalid(p+".op", "%s is not a metric of identities, which takes count, share, sum, avg, min and max", m.Op)
 	}
 	if table != "sessions" && bounceOps[m.Op] {
 		return invalid(p+".op", "%s is a metric of sessions only", m.Op)
@@ -461,6 +465,20 @@ func (m Metric) validate(table string, i int) error {
 		}
 		if m.Of != "" {
 			return invalid(p+".of", "%s takes no of", m.Op)
+		}
+	case "share":
+		// A stat is one group: its share would always be 1.
+		if kind == "stat" {
+			return invalid(p+".op", "share is a metric of a trend or a breakdown, not a stat")
+		}
+		if !slices.Contains(ShareOfColumns, m.Of) {
+			return invalid(p+".of", "share needs count or weight, got %q", m.Of)
+		}
+		if m.Of == "weight" && table != "measures" {
+			return invalid(p+".of", "share of weight is a metric of measures only")
+		}
+		if m.Column != "" {
+			return invalid(p+".column", "share takes no column")
 		}
 	case "daily_sum", "daily_max", "daily_avg":
 		if m.Of == "" {

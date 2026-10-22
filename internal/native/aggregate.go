@@ -575,7 +575,10 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 			a.distinct[m.distinct].day = true
 		case "bounces", "bounce_rate":
 			a.bounces = true
-		case "percentile", "mean", "weight":
+		case "percentile", "mean", "weight", "share":
+			if m.Op == "share" && m.Of != "weight" {
+				break // a share of count reads the mask's counts
+			}
 			i := slices.IndexFunc(a.msrs, func(c msrCol) bool { return c.mask == mask })
 			if i < 0 {
 				i = len(a.msrs)
@@ -873,9 +876,12 @@ func (a *agg) addMeasures(p *part, b *Batch, sel, gids []int32, pass [][]bool, c
 	}
 	_, val := b.col("value")
 	_, rate := b.col("sample_rate")
-	for name, c := range map[string]*Column{"value": val, "sample_rate": rate} {
-		if c != nil && c.Floats == nil && c.Ints == nil {
-			return fmt.Errorf("native: column %s is not a number", name)
+	for _, c := range []struct {
+		name string
+		col  *Column
+	}{{"value", val}, {"sample_rate", rate}} {
+		if c.col != nil && c.col.Floats == nil && c.col.Ints == nil {
+			return fmt.Errorf("native: column %s is not a number", c.name)
 		}
 	}
 	if rate == nil {
@@ -1116,6 +1122,38 @@ type merged struct {
 	sets    [][]dset
 	keys    [][]dayKey // per distinct column with day keys: all of them
 	runs    [][]run    // and their counts per (group, day)
+	// parts are the groups of each partition a share is taken over, by
+	// partition (nil: one, every group); partOf is each group's.
+	parts       [][]int32
+	partOf      []int32
+	shareTotals map[shareKey]float64
+}
+
+// shareKey is a cached share total: of a mask's rows (count) or a
+// measure column's weights, over a partition (-1: every group), on a day
+// (-1: all).
+type shareKey struct {
+	weight    bool
+	idx, part int
+	day       int
+}
+
+// partitionBy splits the groups into partitions by their first
+// dimension's value, which a breakdown's share is taken over.
+func (m *merged) partitionBy() {
+	ids := map[dimVal]int32{}
+	m.partOf = make([]int32, m.groups)
+	for g := range m.groups {
+		v := m.a.groups.vals[g][0]
+		id, ok := ids[v]
+		if !ok {
+			id = int32(len(m.parts))
+			ids[v] = id
+			m.parts = append(m.parts, nil)
+		}
+		m.parts[id] = append(m.parts[id], int32(g))
+		m.partOf[g] = id
+	}
 }
 
 // merge puts the workers' partials together, releasing them.
@@ -1199,6 +1237,7 @@ func (a *agg) merge() *merged {
 		}
 		slices.SortFunc(es, func(a, b histEntry) int { return cmpHistKey(a.histKey, b.histKey) })
 		m.hists[j] = es
+		hists[j] = nil
 	}
 	m.keys = make([][]dayKey, len(a.distinct))
 	m.runs = make([][]run, len(a.distinct))
@@ -1315,11 +1354,27 @@ func (m *merged) maskRows(mask int, g int32, day int) int64 {
 // range (a trend's cell; gs one group then) or, when day < 0, over all;
 // rounded as mt says.
 func (m *merged) compute(mt metricSpec, gs []int32, day int) value {
-	return m.computeRaw(mt, gs, day).round(mt.Round)
+	return m.computeRaw(mt, gs, day, false).round(mt.Round)
 }
 
-func (m *merged) computeRaw(mt metricSpec, gs []int32, day int) value {
+// computeOther is compute for a breakdown's Other row: its share is over
+// every group.
+func (m *merged) computeOther(mt metricSpec, gs []int32) value {
+	return m.computeRaw(mt, gs, -1, true).round(mt.Round)
+}
+
+func (m *merged) computeRaw(mt metricSpec, gs []int32, day int, whole bool) value {
 	switch mt.Op {
+	case "share":
+		part := -1
+		if m.partOf != nil && !whole && len(gs) > 0 && int(gs[0]) < m.groups {
+			part = int(m.partOf[gs[0]])
+		}
+		total := m.shareTotal(mt, part, day)
+		if total == 0 {
+			return value{null: true}
+		}
+		return value{f: m.shareOf(mt, gs, day) / total}
 	case "count":
 		var n int64
 		for _, g := range gs {
@@ -1465,6 +1520,51 @@ func (m *merged) evalNum(mt metricSpec, gs []int32, day int) value {
 		return intValue(imin)
 	}
 	return intValue(imax)
+}
+
+// shareOf is what share mt is taken of over the groups gs (on day, unless
+// it is < 0): the rows of its mask, or their weights.
+func (m *merged) shareOf(mt metricSpec, gs []int32, day int) float64 {
+	if mt.Of != "weight" {
+		var n int64
+		for _, g := range gs {
+			n += m.maskRows(mt.mask, g, day)
+		}
+		return float64(n)
+	}
+	var w float64
+	mp := &m.msrs[mt.msr]
+	for _, g := range gs {
+		m.cellsOf(g, day, func(x int) { w += mp.w[x] })
+	}
+	return w
+}
+
+// shareTotal is shareOf over partition part's groups (every group when
+// part < 0), cached.
+func (m *merged) shareTotal(mt metricSpec, part, day int) float64 {
+	k := shareKey{weight: mt.Of == "weight", idx: mt.mask, part: part, day: day}
+	if k.weight {
+		k.idx = mt.msr
+	}
+	if t, ok := m.shareTotals[k]; ok {
+		return t
+	}
+	var gs []int32
+	if part >= 0 {
+		gs = m.parts[part]
+	} else {
+		gs = make([]int32, m.groups)
+		for g := range gs {
+			gs[g] = int32(g)
+		}
+	}
+	t := m.shareOf(mt, gs, day)
+	if m.shareTotals == nil {
+		m.shareTotals = map[shareKey]float64{}
+	}
+	m.shareTotals[k] = t
+	return t
 }
 
 // percentile is mt's quantile over the rows of the groups gs (on day,

@@ -53,6 +53,13 @@ func TestValidate(t *testing.T) {
 			{Op: "percentile", Q: 0.75, Round: ptr(0), Where: []Filter{{Column: "event_name", Op: "eq", Values: []string{"$lcp"}}}},
 			{Op: "percentile", Q: 0.999}, {Op: "mean", Round: ptr(3)}, {Op: "weight"}}, Order: "p75", Other: true},
 		"percentile trend": {Kind: "trend", Table: "measures", Metrics: []Metric{{Op: "percentile", Q: 0.5}}, Series: "event_name"},
+		"ratings": {Kind: "breakdown", Table: "measures", Dimensions: []string{"vital", "vital_rating"}, Order: "vital",
+			Metrics: []Metric{{Op: "share", Of: "weight", As: "y"}, {Op: "share", Of: "count", Round: ptr(3)}},
+			Where:   []Filter{{Column: "vital", Op: "is_set"}, {Column: "vital_rating", Op: "ne", Values: []string{"poor"}}}},
+		"share trend": {Kind: "trend", Table: "events", Metrics: []Metric{{Op: "share", Of: "count",
+			Where: []Filter{{Column: "family", Op: "eq", Values: []string{"views"}}}}}, Series: "country"},
+		"share sessions":   {Kind: "breakdown", Table: "sessions", Dimensions: []string{"referrer_source"}, Metrics: []Metric{{Op: "share", Of: "count"}}},
+		"share identities": {Kind: "breakdown", Table: "identities", Dimensions: []string{"kind"}, Metrics: []Metric{{Op: "share", Of: "count"}}},
 		"filters": {Kind: "stat", Table: "events", Metrics: count(), Where: []Filter{
 			{Column: "attr_a", Op: "is_set"}, {Column: "country", Op: "in", Values: []string{"DE", "FR"}},
 			{Column: "day", Op: "gte", Values: []string{"2026-01-02"}}, {Column: "path", Op: "prefix", Values: []string{"/x"}}}},
@@ -168,6 +175,14 @@ func TestValidate(t *testing.T) {
 		{"column on percentile", Query{Kind: "stat", Table: "measures", Metrics: []Metric{{Op: "percentile", Q: 0.5, Column: "value"}}}, "metrics[0].column"},
 		{"of on weight", Query{Kind: "stat", Table: "measures", Metrics: []Metric{{Op: "weight", Of: "actors"}}}, "metrics[0].of"},
 		{"two p50", Query{Kind: "stat", Table: "measures", Metrics: []Metric{{Op: "percentile", Q: 0.5}, {Op: "percentile", Q: 0.5}}}, "metrics[1].as"},
+		{"share on a stat", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "share", Of: "count"}}}, "metrics[0].op"},
+		{"share without of", Query{Kind: "breakdown", Table: "events", Dimensions: []string{"path"}, Metrics: []Metric{{Op: "share"}}}, "metrics[0].of"},
+		{"share of actors", Query{Kind: "breakdown", Table: "events", Dimensions: []string{"path"}, Metrics: []Metric{{Op: "share", Of: "actors"}}}, "metrics[0].of"},
+		{"share of weight on events", Query{Kind: "breakdown", Table: "events", Dimensions: []string{"path"}, Metrics: []Metric{{Op: "share", Of: "weight"}}}, "metrics[0].of"},
+		{"share with a column", Query{Kind: "breakdown", Table: "measures", Dimensions: []string{"path"}, Metrics: []Metric{{Op: "share", Of: "count", Column: "value"}}}, "metrics[0].column"},
+		{"daily_sum of count", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "daily_sum", Of: "count"}}}, "metrics[0].of"},
+		{"vital on events", Query{Kind: "breakdown", Table: "events", Metrics: count(), Dimensions: []string{"vital"}}, "dimensions[0]"},
+		{"vital_rating on views", Query{Kind: "stat", Table: "views", Metrics: count(), Where: []Filter{{Column: "vital_rating", Op: "is_set"}}}, "where[0].column"},
 		{"compare collides", Query{Kind: "stat", Table: "events", Compare: "previous",
 			Metrics: []Metric{{Op: "count", As: "previous_users"}, {Op: "users"}}}, "metrics[0].as"},
 	}
@@ -205,6 +220,8 @@ func TestMetricName(t *testing.T) {
 		{Metric{Op: "percentile", Q: 0.9, As: "slow"}, "slow"},
 		{Metric{Op: "mean"}, "mean"},
 		{Metric{Op: "weight"}, "weight"},
+		{Metric{Op: "share", Of: "weight"}, "share_weight"},
+		{Metric{Op: "share", Of: "count"}, "share_count"},
 		{Metric{Op: "avg", Column: "value", Round: ptr(2), Where: []Filter{{Column: "path", Op: "is_set"}}}, "avg_value"},
 	} {
 		if got := c.m.Name(); got != c.want {
@@ -258,6 +275,8 @@ func TestColumnTypes(t *testing.T) {
 		{"identities breakdown", Query{Kind: "breakdown", Table: "identities", Metrics: count(),
 			Dimensions: []string{"kind", "id", "name", "day"}}, []string{"text", "text", "text", "day", "number"}},
 		{"status series", Query{Kind: "trend", Metrics: count(), Series: "user_status"}, []string{"day", "text", "number"}},
+		{"ratings", Query{Kind: "breakdown", Table: "measures", Metrics: []Metric{{Op: "share", Of: "weight"}},
+			Dimensions: []string{"vital", "vital_rating"}}, []string{"text", "text", "number"}},
 		{"breakdown other", Query{Kind: "breakdown", Metrics: count(), Dimensions: []string{"day", "consent"}, Other: true},
 			[]string{"text", "text", "number"}},
 	}

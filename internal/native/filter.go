@@ -77,8 +77,15 @@ type computedColumn struct {
 //     empty, else NULL;
 //   - platform_version: platform (NULL read as empty), a space, then
 //     app_version, when app_version is not empty, else NULL;
-//   - consent_state: given (consent 1), none (0), else unknown.
+//   - consent_state: given (consent 1), none (0), else unknown;
+//   - vital: upper(substr(event_name, 2)) for the vitals (vitals), else
+//     NULL;
+//   - vital_rating: a vital's sample rated against its thresholds by its
+//     bucket's value (bucketValue): good up to the first, needs
+//     improvement up to the second, else poor; NULL for the others.
 var computedColumns = map[string]computedColumn{
+	"vital":            {[]string{"event_name"}, vitalColumn},
+	"vital_rating":     {[]string{"event_name", "value"}, vitalRatingColumn},
 	"resolution":       {[]string{"display_width", "display_height"}, resolutionColumn},
 	"device_label":     {[]string{"device_model", "device"}, deviceLabelColumn},
 	"platform_version": {[]string{"platform", "app_version"}, platformVersionColumn},
@@ -198,6 +205,75 @@ func consentStateColumn(b *Batch) *Column {
 			return "none", true
 		}
 		return "unknown", true
+	})
+}
+
+// vitalThreshold is a vital's name (vital's value) and the two values a
+// sample's bucket value is rated good and needs improvement up to, as
+// vitals/ratings.sql has them.
+type vitalThreshold struct {
+	name       string
+	good, poor float64
+}
+
+// vitals are the web vitals by event_name.
+var vitals = map[string]vitalThreshold{
+	"$lcp":  {"LCP", 2500, 4000},
+	"$inp":  {"INP", 200, 500},
+	"$cls":  {"CLS", 0.1, 0.25},
+	"$fcp":  {"FCP", 1800, 3000},
+	"$ttfb": {"TTFB", 800, 1800},
+}
+
+// vitalOf is the vital of b's event_name dictionary entries (nil when b
+// has no event_name): per entry, its threshold, or nil.
+func vitalOf(b *Batch) (*Column, []*vitalThreshold) {
+	_, c := b.col("event_name")
+	if c == nil || c.Idx == nil {
+		return nil, nil
+	}
+	ts := make([]*vitalThreshold, len(c.Dict))
+	for j, s := range c.Dict {
+		if v, ok := vitals[s]; ok {
+			ts[j] = &v
+		}
+	}
+	return c, ts
+}
+
+func vitalColumn(b *Batch) *Column {
+	names, ts := vitalOf(b)
+	return textColumn(b.N, func(i int) (string, bool) {
+		if names == nil || names.Idx[i] < 0 || ts[names.Idx[i]] == nil {
+			return "", false
+		}
+		return ts[names.Idx[i]].name, true
+	})
+}
+
+func vitalRatingColumn(b *Batch) *Column {
+	names, ts := vitalOf(b)
+	_, val := b.col("value")
+	return textColumn(b.N, func(i int) (string, bool) {
+		if names == nil || names.Idx[i] < 0 || ts[names.Idx[i]] == nil {
+			return "", false
+		}
+		t := ts[names.Idx[i]]
+		v, null := 0.0, true
+		switch {
+		case val == nil || (val.Null != nil && val.Null[i]):
+		case val.Floats != nil:
+			v, null = val.Floats[i], false
+		case val.Ints != nil:
+			v, null = float64(val.Ints[i]), false
+		}
+		switch x := bucketValue(bucketOf(v, null)); {
+		case x <= t.good:
+			return "good", true
+		case x <= t.poor:
+			return "needs improvement", true
+		}
+		return "poor", true
 	})
 }
 
