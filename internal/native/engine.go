@@ -43,8 +43,12 @@ type Options struct {
 	// admitted add then (their sets and per-day keys) may take it to twice
 	// MaxBytes, past which it is refused with ErrTooLarge too. Merging the
 	// workers' partials holds the per-day keys and the histograms twice
-	// for a moment, uncounted.
+	// for a moment, uncounted. A retention query charges its per-actor
+	// state and is refused with ErrTooLarge past MaxBytes.
 	MaxBytes int64
+	// Now is the clock (default time.Now): its UTC day is today, which a
+	// retention query counts up to, leaving it out.
+	Now func() time.Time
 }
 
 // Engine answers structured queries over the event files of Dir.
@@ -59,6 +63,8 @@ type Engine struct {
 	colFiles map[string]fileCols // each Parquet file's columns, by path
 
 	idCache identityCache // each project's identities, up to MaxBytes of them
+
+	now func() time.Time
 }
 
 // New returns an engine over o.Dir.
@@ -75,8 +81,28 @@ func New(o Options) *Engine {
 	if o.MaxBytes <= 0 {
 		o.MaxBytes = 128 << 20
 	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
 	return &Engine{dir: o.Dir, workers: o.Workers, maxGroups: o.MaxGroups, maxBytes: o.MaxBytes, sem: make(chan struct{}, o.MaxScans),
-		logKeys: archive.NewKeyScanner(), idCache: identityCache{max: o.MaxBytes}}
+		logKeys: archive.NewKeyScanner(), idCache: identityCache{max: o.MaxBytes}, now: o.Now}
+}
+
+// today is the clock's UTC day.
+func (e *Engine) today() civil.Date { return civil.DateOf(e.now()) }
+
+// charge is a fresh budget of MaxBytes: each call adds n bytes (n < 0
+// gives them back) and, once past MaxBytes, refuses with ErrTooLarge. It
+// is safe from several goroutines at once.
+func (e *Engine) charge() func(n int64) error {
+	m := &memory{max: e.maxBytes}
+	return func(n int64) error {
+		m.add(n)
+		if n > 0 && m.over() {
+			return fmt.Errorf("%w (about %d MiB counted, %d MiB allowed)", ErrTooLarge, m.n.Load()>>20, m.max>>20)
+		}
+		return nil
+	}
 }
 
 // Params are what a query runs on: one project, the days From to To.
