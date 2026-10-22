@@ -55,9 +55,7 @@ type Engine struct {
 	colMu    sync.Mutex          // guards colFiles, never held over a read
 	colFiles map[string]fileCols // each Parquet file's columns, by path
 
-	idMu    sync.Mutex // guards idCache and idTick, never held over a read
-	idCache map[int64]*identityCache
-	idTick  uint64
+	idCache identityCache // each project's identities, up to MaxBytes of them
 }
 
 // New returns an engine over o.Dir.
@@ -75,7 +73,7 @@ func New(o Options) *Engine {
 		o.MaxBytes = 128 << 20
 	}
 	return &Engine{dir: o.Dir, workers: o.Workers, maxGroups: o.MaxGroups, maxBytes: o.MaxBytes, sem: make(chan struct{}, o.MaxScans),
-		logKeys: archive.NewKeyScanner()}
+		logKeys: archive.NewKeyScanner(), idCache: identityCache{max: o.MaxBytes}}
 }
 
 // Params are what a query runs on: one project, the days From to To.
@@ -109,7 +107,11 @@ var (
 // derived from the events as stored, take none (scanSessions, identities).
 // identities holds the project's users and groups first seen in the
 // range, its day their first_seen's day; user_status and group_status
-// look each row's id up in them, over the whole history. A malformed query, or a filter value
+// look each row's id up in them, over the whole history. Identities are
+// cached between queries (at most MaxBytes of them); while the derived
+// identities file is missing or stale (older than an events file), the
+// next query that needs them derives them again from every event the
+// project's files hold. A malformed query, or a filter value
 // that does not parse for its column, is refused with an error wrapping
 // ErrInvalid; one whose aggregation needs more than MaxBytes allows, with
 // one wrapping ErrTooLarge. Answer waits for one of MaxScans turns first,
@@ -302,22 +304,32 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 		}
 		return nil
 	}
-	if s.q.Table == "identities" {
-		ids, err := s.e.identities(ctx, s.project, charge)
-		if err != nil {
-			return nil, nil, err
-		}
-		b := ids.batch(s.project, &r)
-		if err := charge(batchBytes(b)); err != nil {
-			return nil, nil, err
-		}
-		if err := a.add(0, b); err != nil {
+	if s.q.Table == "sessions" {
+		if err := s.e.scanSessions(ctx, s.project, r, a.columns(), charge, a.add); err != nil {
 			return nil, nil, err
 		}
 		return a.merge(), ms, nil
 	}
-	if s.q.Table == "sessions" {
-		if err := s.e.scanSessions(ctx, s.project, r, a.columns(), charge, a.add); err != nil {
+	// One listing serves the scan and the identities.
+	all, err := archive.ListFiles(s.e.dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	files := all[s.project]
+	if s.q.Table == "identities" {
+		ids, err := s.e.identities(ctx, s.project, files, charge)
+		if err != nil {
+			return nil, nil, err
+		}
+		rows := ids.rows()
+		if err := charge(rows.bytes()); err != nil {
+			return nil, nil, err
+		}
+		b := identityBatch(rows, s.project, &r)
+		if err := charge(batchBytes(b)); err != nil {
+			return nil, nil, err
+		}
+		if err := a.add(0, b); err != nil {
 			return nil, nil, err
 		}
 		return a.merge(), ms, nil
@@ -327,15 +339,11 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 	status := s.statusColumns(dims)
 	var ids *identitySet
 	if len(status) > 0 {
-		var err error
-		if ids, err = s.e.identities(ctx, s.project, charge); err != nil {
+		if ids, err = s.e.identities(ctx, s.project, files, charge); err != nil {
 			return nil, nil, err
 		}
 	}
-	pq, logs, err := projectFiles(s.e.dir, s.project, r)
-	if err != nil {
-		return nil, nil, err
-	}
+	pq, logs := filesIn(files, r)
 	groups, err := parquetGroups(pq, fam, r)
 	if err != nil {
 		return nil, nil, err

@@ -2,12 +2,15 @@ package native
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -118,11 +121,11 @@ var identityColumnList = `"` + strings.Join(identityColumns, `", "`) + `"`
 // as duckTable formats DuckDB's rows, sorted.
 func identityRows(t *testing.T, e *Engine, project int64) [][]string {
 	t.Helper()
-	ids, err := e.identities(context.Background(), project, func(int64) error { return nil })
+	ids, err := e.identities(context.Background(), project, listFiles(t, e)[project], func(int64) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := ids.batch(project, nil)
+	b := identityBatch(ids.rows(), project, nil)
 	rows := make([][]string, b.N)
 	for i := range b.N {
 		row := make([]string, len(identityColumns))
@@ -139,12 +142,23 @@ func identityRows(t *testing.T, e *Engine, project int64) [][]string {
 	return rows
 }
 
+func listFiles(t *testing.T, e *Engine) map[int64]archive.Files {
+	t.Helper()
+	all, err := archive.ListFiles(e.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return all
+}
+
 func TestIdentitiesRowsMatchDuckDB(t *testing.T) {
 	f := identitiesFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	pdir := filepath.Join(f.Dir, strconv.Itoa(identitiesProject))
 	check := func(t *testing.T) {
 		t.Helper()
+		identityRows(t, e, identitiesProject) // through the cache too
+
 		got := identityRows(t, e, identitiesProject)
 		want := duckTable(t, f, `SELECT `+identityColumnList+` FROM identities WHERE "project_id" = 4 AND '%[1]s' = '%[2]s'`, "", "")
 		sortRows(want)
@@ -188,6 +202,7 @@ func TestIdentitiesRowsMatchDuckDB(t *testing.T) {
 		if err := os.Remove(filepath.Join(pdir, "identities.parquet")); err != nil {
 			t.Fatal(err)
 		}
+		e = New(Options{Dir: f.Dir, Workers: 3}) // nothing cached
 		check(t)
 	})
 }
@@ -245,7 +260,7 @@ func TestIdentitiesQueriesMatchDuckDB(t *testing.T) {
 			sql: statusSQL + `SELECT us, "path", count(*) AS c FROM s WHERE "family" = 'views' AND us <> 'returning'
 				GROUP BY ALL ORDER BY c DESC, us ASC NULLS LAST, "path" ASC NULLS LAST LIMIT 100`},
 		{name: "identities by kind", q: Query{Kind: "breakdown", Table: "identities",
-			Metrics: []Metric{{Op: "count"}, {Op: "sum", Column: "views"}, {Op: "avg", Column: "events"}, {Op: "max", Column: "views"}},
+			Metrics:    []Metric{{Op: "count"}, {Op: "sum", Column: "views"}, {Op: "avg", Column: "events"}, {Op: "max", Column: "views"}},
 			Dimensions: []string{"kind"}}, cols: []string{"kind", "count", "sum_views", "avg_events", "max_views"},
 			from: identitiesFrom,
 			sql: `SELECT "kind", count(*) AS c, sum("views"), avg("events"), max("views") FROM identities WHERE ` + firstIn + `
@@ -304,8 +319,109 @@ func TestIdentitiesCharged(t *testing.T) {
 		{Kind: "stat", Table: "views", Metrics: count(), Where: []Filter{{Column: "user_status", Op: "is_set"}}},
 	} {
 		_, err := e.Answer(context.Background(), q, Params{Project: identitiesProject, From: date(t, identitiesFrom), To: date(t, today)}, archive.Rules{})
-		if err == nil || !strings.Contains(err.Error(), ErrTooLarge.Error()) {
+		if !errors.Is(err, ErrTooLarge) {
 			t.Errorf("%s: err %v, want ErrTooLarge", q.Table, err)
+		}
+	}
+}
+
+// copyTo is evs as project's events, their ids marked with it.
+func copyTo(project int64, evs []store.Event) []store.Event {
+	out := slices.Clone(evs)
+	for i := range out {
+		out[i].ProjectID = project
+		out[i].ID = fmt.Sprintf("%s-p%d", out[i].ID, project)
+	}
+	return out
+}
+
+// TestIdentitiesCacheBounded: the cached identities of several projects
+// take at most MaxBytes together, the least recently used dropped.
+func TestIdentitiesCacheBounded(t *testing.T) {
+	f := archivetest.New(t)
+	start := date(t, identitiesFrom).Time()
+	projects := []int64{4, 5, 6, 7, 8, 9, 10, 11}
+	for d := 0; d < 6; d++ {
+		day := start.AddDate(0, 0, d).Format(time.DateOnly)
+		for _, p := range projects {
+			f.Write(t, copyTo(p, identityDay(t, day, d, ""))...)
+		}
+	}
+	f.Maintain(t, today)
+	q := Query{Kind: "stat", Table: "identities", Metrics: count()}
+	params := func(p int64) Params { return Params{Project: p, From: date(t, identitiesFrom), To: date(t, today)} }
+
+	big := New(Options{Dir: f.Dir})
+	for _, p := range projects {
+		if _, err := big.Answer(context.Background(), q, params(p), archive.Rules{}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	one := big.idCache.size() / int64(len(projects))
+	if one == 0 || len(big.idCache.entries) != len(projects) {
+		t.Fatalf("%d bytes a project, %d cached: want every project cached", one, len(big.idCache.entries))
+	}
+
+	// Room for five projects' sets (a query needs about three times one:
+	// the set, put together, and its batch).
+	limit := 5*one + one/2
+	e := New(Options{Dir: f.Dir, MaxBytes: limit})
+	for _, p := range projects {
+		if _, err := e.Answer(context.Background(), q, params(p), archive.Rules{}); err != nil {
+			t.Fatal(err)
+		}
+		if n := e.idCache.size(); n > limit {
+			t.Fatalf("after project %d: %d bytes cached, over %d", p, n, limit)
+		}
+	}
+	var cached []int64
+	for p := range e.idCache.entries {
+		cached = append(cached, p)
+	}
+	slices.Sort(cached)
+	if want := []int64{7, 8, 9, 10, 11}; !slices.Equal(cached, want) {
+		t.Errorf("projects %v cached, want the last used %v", cached, want)
+	}
+}
+
+// TestIdentitiesLoadedOnce: concurrent queries that miss the cache for
+// one project load its identities once.
+func TestIdentitiesLoadedOnce(t *testing.T) {
+	f := identitiesFixture(t)
+	e := New(Options{Dir: f.Dir})
+	var loads atomic.Int64
+	release := make(chan struct{})
+	onIdentityLoad = func() {
+		loads.Add(1)
+		<-release // hold the load while the others queue behind it
+	}
+	t.Cleanup(func() { onIdentityLoad = func() {} })
+	files := listFiles(t, e)[identitiesProject]
+	var wg sync.WaitGroup
+	sets := make([]*identitySet, 8)
+	for i := range sets {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			set, err := e.identities(context.Background(), identitiesProject, files, func(int64) error { return nil })
+			if err != nil {
+				t.Error(err)
+			}
+			sets[i] = set
+		}()
+	}
+	for loads.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond) // let the others reach the wait
+	close(release)
+	wg.Wait()
+	if n := loads.Load(); n != 1 {
+		t.Errorf("%d loads, want 1", n)
+	}
+	for _, s := range sets {
+		if s != sets[0] {
+			t.Fatal("the queries got different sets")
 		}
 	}
 }

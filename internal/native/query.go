@@ -252,8 +252,8 @@ var (
 	// IdentityValueColumns are the columns sum, avg, min and max take on
 	// identities.
 	IdentityValueColumns = []string{"views", "events"}
-	OfColumns           = []string{"actors", "users", "groups"}
-	FilterOps           = []string{"eq", "ne", "in", "not_in", "contains", "prefix", "gt", "gte", "lt", "lte", "is_set"}
+	OfColumns            = []string{"actors", "users", "groups"}
+	FilterOps            = []string{"eq", "ne", "in", "not_in", "contains", "prefix", "gt", "gte", "lt", "lte", "is_set"}
 )
 
 var (
