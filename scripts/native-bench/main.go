@@ -8,6 +8,8 @@
 //	native-bench <subcommand> ...
 //
 //	native-bench rewrite -lib arrow|pqgo -rows N <in> <out>
+//	native-bench query -src arrow|pqgo -q countries|dau|attrvalues -from YYYY-MM-DD -to YYYY-MM-DD <files...>
+//	native-bench matrix [-out RESULTS.md] <root>
 package main
 
 import (
@@ -17,17 +19,23 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: native-bench rewrite -lib arrow|pqgo -rows N <in> <out>")
+		fmt.Fprintln(os.Stderr, "usage: native-bench rewrite|query|matrix ...")
 		os.Exit(2)
 	}
+	var err error
 	switch os.Args[1] {
 	case "rewrite":
-		if err := rewriteCmd(os.Args[2:]); err != nil {
-			fmt.Fprintln(os.Stderr, "native-bench:", err)
-			os.Exit(1)
-		}
+		err = rewriteCmd(os.Args[2:])
+	case "query":
+		err = queryCmd(os.Args[2:], os.Stdout)
+	case "matrix":
+		err = matrixCmd(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "native-bench: unknown subcommand %q\n", os.Args[1])
 		os.Exit(2)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "native-bench:", err)
+		os.Exit(1)
 	}
 }
