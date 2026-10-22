@@ -178,3 +178,37 @@ func TestAttributeValuesSkipsNull(t *testing.T) {
 		t.Fatalf("got %v want %v", got, want)
 	}
 }
+
+func TestCountriesNullActorOnlyGroupIsZero(t *testing.T) {
+	src := memSource{[]*Batch{countryBatch(r{1, "DE", "\x00"}, r{1, "US", "a"}, r{1, "US", "\x00"})}}
+	got, _ := Countries(src, nil, 0, 10)
+	want := []Row{{"US", "1"}, {"DE", "0"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+func TestAttributeValuesNullActorCountsAsUser(t *testing.T) {
+	b := &Batch{N: 3, Cols: map[string]*Column{
+		"actor_id":  strCol("a", "\x00", "\x00"),
+		"group_id":  strCol("", "", ""),
+		"attr_plan": strCol("pro", "pro", "free"),
+	}}
+	got, _ := AttributeValues(memSource{[]*Batch{b}}, nil, 0, 10)
+	want := []Row{{"plan", "pro", "2", "2", "0"}, {"plan", "free", "1", "1", "0"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+func TestAttributeValuesTieBreaksByValue(t *testing.T) {
+	b := &Batch{N: 3, Cols: map[string]*Column{
+		"actor_id":  strCol("a", "b", "c"),
+		"group_id":  strCol("", "", ""),
+		"attr_plan": strCol("zeta", "alpha", "mid"),
+	}}
+	got, _ := AttributeValues(memSource{[]*Batch{b}}, nil, 0, 10)
+	if got[0][1] != "alpha" || got[1][1] != "mid" || got[2][1] != "zeta" {
+		t.Fatalf("got %v", got)
+	}
+}

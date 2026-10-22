@@ -67,7 +67,7 @@ func Countries(src Source, files []string, from, to int64) ([]Row, error) {
 		for i := 0; i < b.N; i++ {
 			d, ok := intAt(day, i)
 			c, a := gid(cm, country.Idx[i]), gid(am, actor.Idx[i])
-			if !ok || c < 0 || c == empty || a < 0 {
+			if !ok || c < 0 || c == empty {
 				continue
 			}
 			seen[key{d, c, a}] = struct{}{}
@@ -79,7 +79,12 @@ func Countries(src Source, files []string, from, to int64) ([]Row, error) {
 	}
 	perDay := map[[2]int64]int64{} // (day, country) -> visitors
 	for k := range seen {
-		perDay[[2]int64{k.day, int64(k.country)}]++
+		g := [2]int64{k.day, int64(k.country)}
+		if k.actor >= 0 {
+			perDay[g]++
+		} else if _, ok := perDay[g]; !ok {
+			perDay[g] = 0 // count(DISTINCT) skips nulls but the group exists
+		}
 	}
 	sums := map[int32]int64{}
 	for k, n := range perDay {
@@ -162,11 +167,12 @@ func formatDay(d int64) string {
 func AttributeValues(src Source, files []string, from, to int64) ([]Row, error) {
 	in := newInterner() // values, actors and groups share one id space
 	type key struct {
-		attr  string
+		attr  int32
 		value int32
 	}
 	type agg struct {
 		count  int64
+		null   bool // saw a null actor: the SQL counts that group as a user
 		actors map[int32]struct{}
 		groups map[int32]struct{}
 	}
@@ -184,7 +190,7 @@ func AttributeValues(src Source, files []string, from, to int64) ([]Row, error) 
 				continue
 			}
 			vm := in.remap(col.Dict)
-			attr := strings.TrimPrefix(name, "attr_")
+			attr := in.intern(strings.TrimPrefix(name, "attr_"))
 			for i := 0; i < b.N; i++ {
 				v := gid(vm, col.Idx[i])
 				if v < 0 {
@@ -199,6 +205,8 @@ func AttributeValues(src Source, files []string, from, to int64) ([]Row, error) 
 				a.count++
 				if id := gid(am, actor.Idx[i]); id >= 0 {
 					a.actors[id] = struct{}{}
+				} else {
+					a.null = true
 				}
 				if group != nil {
 					if id := gid(gm, group.Idx[i]); id >= 0 && id != noGroup {
@@ -219,7 +227,7 @@ func AttributeValues(src Source, files []string, from, to int64) ([]Row, error) 
 	sort.Slice(keys, func(i, j int) bool {
 		a, b := keys[i], keys[j]
 		if a.attr != b.attr {
-			return a.attr < b.attr
+			return in.strs[a.attr] < in.strs[b.attr]
 		}
 		if ca, cb := aggs[a].count, aggs[b].count; ca != cb {
 			return ca > cb
@@ -229,8 +237,12 @@ func AttributeValues(src Source, files []string, from, to int64) ([]Row, error) 
 	rows := make([]Row, len(keys))
 	for i, k := range keys {
 		a := aggs[k]
-		rows[i] = Row{k.attr, in.strs[k.value], strconv.FormatInt(a.count, 10),
-			strconv.Itoa(len(a.actors)), strconv.Itoa(len(a.groups))}
+		users := len(a.actors)
+		if a.null {
+			users++
+		}
+		rows[i] = Row{in.strs[k.attr], in.strs[k.value], strconv.FormatInt(a.count, 10),
+			strconv.Itoa(users), strconv.Itoa(len(a.groups))}
 	}
 	return rows, nil
 }
