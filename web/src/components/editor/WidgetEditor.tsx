@@ -27,7 +27,7 @@ import { projectsQuery, schemaViewsQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import { carryProps, fieldsOf, needsHint } from '@/lib/props-form'
 import { parseSchemaViews } from '@/lib/schema-views'
-import { codeTypesOf, draftOf, isDirty, paramsOf, sourceOf, sourceTypeOf, withCode, type CodeType, type Draft } from '@/lib/widget-draft'
+import { codeTypesOf, draftOf, isDirty, paramsOf, sourceOf, sourceTypeOf, withCode, withComponent, type CodeType, type Draft } from '@/lib/widget-draft'
 import { iconOf } from './component-icons'
 import PropsForm, { SettingRow } from './PropsForm'
 import Splitter from './Splitter'
@@ -355,7 +355,7 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
                 <Select
                   value={component ?? ''}
                   onValueChange={(next) =>
-                    setDraft((d) => ({ ...d, component: next, props: carryProps(d.props, widgets[next].contract.props) }))
+                    setDraft((d) => withComponent(d, next, carryProps(d.props, widgets[next].contract.props)))
                   }
                 >
                   <SelectTrigger size="sm" aria-label="Visualization" className="w-48 min-w-0">
@@ -447,6 +447,9 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
                   </div>
                 ) : (
                   <span className="mr-auto text-sm font-medium">{markdown ? 'Markdown' : codeLabel[codeType]}</span>
+                )}
+                {draft.code === 'query' && type === 'sql' && (
+                  <span className="text-xs text-muted-foreground">A remote table takes SQL only</span>
                 )}
                 {!markdown && (
                   <>

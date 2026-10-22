@@ -1,6 +1,27 @@
 import { describe, expect, it } from 'vitest'
 import type { Widget } from './api'
-import { addBody, changedFields, codeTypesOf, draftOf, isDirty, paramsOf, queryTemplate, sourceOf, sourceTypeOf, usesParams, withCode } from './widget-draft'
+import { widgets } from '@/components/widgets'
+import { addBody, changedFields, codeTypesOf, draftOf, isDirty, paramsOf, queryTemplate, sourceOf, sourceTypeOf, usesParams, withCode, withComponent } from './widget-draft'
+
+interface Q {
+  kind: 'stat' | 'trend' | 'breakdown'
+  table: string
+  metrics: { op: string; as?: string; column?: string; of?: string }[]
+  dimensions?: string[]
+  series?: string
+  compare?: string
+}
+
+// native.Query.Columns(), mirrored: the result's columns before rename.
+function columnsOf(q: Q): string[] {
+  const name = (m: Q['metrics'][number]) => m.as || (m.column ? `${m.op}_${m.column}` : m.of ? `${m.op}_${m.of}` : m.op)
+  const cols: string[] = []
+  if (q.kind === 'trend') cols.push('day', ...(q.series ? ['series'] : []))
+  if (q.kind === 'breakdown') cols.push(...(q.dimensions ?? []))
+  cols.push(...q.metrics.map(name))
+  if (q.kind === 'stat' && q.compare === 'previous') cols.push(...q.metrics.map((m) => `previous_${name(m)}`))
+  return cols
+}
 
 const line: Widget = {
   widget_id: 7, dashboard_id: 3, name: 'visits', component: 'line', title: 'Visits', width: 6, height: 8,
@@ -94,6 +115,37 @@ describe('query sources', () => {
     expect(t('pie')).toMatchObject({ query: { kind: 'breakdown', dimensions: ['path'] }, rename: { path: 'label', count: 'value' } })
     expect(t('bar_list').rename).toEqual({ path: 'label', count: 'value' })
     expect(t('table')).toEqual({ query: { kind: 'breakdown', table: 'views', metrics: [{ op: 'count' }], dimensions: ['path'], limit: 10 } })
+  })
+})
+
+describe('query templates', () => {
+  const withQuery = Object.entries(widgets).filter(([, m]) => m.contract.accepts.includes('query'))
+  it.each(withQuery.map(([name]) => name))('%s starts on a query whose renamed columns fit its inputs', (name) => {
+    const c = widgets[name].contract
+    const { query, rename = {} } = JSON.parse(queryTemplate(name)) as { query: Q; rename?: Record<string, string> }
+    const cols = columnsOf(query)
+    for (const k of Object.keys(rename)) expect(cols).toContain(k)
+    expect(new Set(Object.values(rename)).size).toBe(Object.values(rename).length)
+    const out = cols.map((col) => rename[col] ?? col)
+    if (query.kind === 'trend') expect(query.metrics).toHaveLength(1)
+    if (query.kind === 'breakdown') expect(query.dimensions?.length).toBeGreaterThan(0)
+    if (c.inputs.open) return
+    for (const input of c.inputs.columns.filter((x) => !x.optional)) expect(out).toContain(input.name)
+    const declared = c.inputs.columns.map((x) => x.name)
+    for (const col of out) expect(declared).toContain(col)
+  })
+  it('moves an untouched template to the new component, and keeps an edited query', () => {
+    const d = withCode({ ...draftOf(), component: 'stat' }, 'query')
+    const moved = withComponent(d, 'line', {})
+    expect(moved).toMatchObject({ component: 'line', query: queryTemplate('line') })
+    const edited = { ...d, query: '{"query":{}}' }
+    expect(withComponent(edited, 'line', { curve: 'step' })).toMatchObject({ component: 'line', props: { curve: 'step' }, query: '{"query":{}}' })
+  })
+  it('an untouched template on a new widget is no change once back on sql', () => {
+    const d = withCode({ ...draftOf(), component: 'stat' }, 'query')
+    expect(isDirty(undefined, withCode(d, 'sql'))).toBe(isDirty(undefined, { ...draftOf(), component: 'stat' }))
+    expect(isDirty(undefined, { ...draftOf(), sql: '' , query: queryTemplate(null) })).toBe(false)
+    expect(isDirty(undefined, { ...withCode(d, 'sql'), query: '{}' })).toBe(true)
   })
 })
 

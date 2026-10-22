@@ -63,6 +63,15 @@ export function withCode(d: Draft, code: CodeType): Draft {
   return { ...d, code }
 }
 
+/**
+ * The draft on another component, with these props: a query still on the
+ * old component's template moves to the new one's; an edited one stays.
+ */
+export function withComponent(d: Draft, component: string, props: Record<string, unknown>): Draft {
+  const untouched = d.query === queryTemplate(d.component)
+  return { ...d, component, props, query: untouched && d.query !== '' ? queryTemplate(component) : d.query }
+}
+
 // The breakdown dimension's input name, for the components that read one text column and a value.
 const labelInput: Record<string, string> = { bar_list: 'label', pie: 'label', radial: 'label', treemap: 'label', funnel: 'step', radar: 'axis' }
 
@@ -70,7 +79,7 @@ const labelInput: Record<string, string> = { bar_list: 'label', pie: 'label', ra
  * A small structured query a new query source starts from, renamed to the
  * component's inputs where it has fixed ones: a view count for a stat, views
  * per day for the charts over time, views by path for the lists, and views
- * by path otherwise.
+ * by path otherwise. Every one fits its component's inputs (a test checks).
  */
 export function queryTemplate(component: string | null): string {
   const metrics = [{ op: 'count' }]
@@ -81,6 +90,25 @@ export function queryTemplate(component: string | null): string {
     content = { query: { kind: 'trend', table: 'views', metrics }, rename: { day: 'x', count: 'y' } }
   } else if (component === 'calendar') {
     content = { query: { kind: 'trend', table: 'views', metrics }, rename: { count: 'value' } }
+  } else if (component === 'combo') {
+    // A trend takes one metric: the combo's two are a breakdown by day.
+    const query = { kind: 'breakdown', table: 'views', metrics: [{ op: 'count' }, { op: 'actors' }], dimensions: ['day'], limit: 100 }
+    content = { query, rename: { day: 'x', count: 'bar', actors: 'line' } }
+  } else if (component === 'heatmap') {
+    content = {
+      query: { kind: 'breakdown', table: 'views', metrics, dimensions: ['day', 'device'], limit: 100 },
+      rename: { day: 'x', device: 'y', count: 'value' },
+    }
+  } else if (component === 'sankey') {
+    content = {
+      query: { kind: 'breakdown', table: 'views', metrics, dimensions: ['referrer_source', 'path'], limit: 20 },
+      rename: { referrer_source: 'source', path: 'target', count: 'value' },
+    }
+  } else if (component === 'scatter') {
+    content = {
+      query: { kind: 'breakdown', table: 'views', metrics: [{ op: 'count' }, { op: 'actors' }], dimensions: ['path'], limit: 20 },
+      rename: { path: 'series', count: 'x', actors: 'y' },
+    }
   } else if (component === 'map') {
     content = { query: { kind: 'breakdown', table: 'views', metrics, dimensions: ['country'], limit: 10 }, rename: { count: 'value' } }
   } else {
@@ -122,7 +150,8 @@ export function changedFields(w: Widget, d: Draft): WidgetContentBody {
 
 /** Whether closing the editor would lose something: an edit differs from the widget, an add from the empty draft. */
 export function isDirty(w: Widget | undefined, d: Draft): boolean {
-  if (!w) return !same(d, draftOf())
+  // A template no one edited is not a change, once the draft is back on sql.
+  if (!w) return !same({ ...d, query: d.query === queryTemplate(d.component) ? '' : d.query }, draftOf())
   return Object.keys(changedFields(w, d)).length > 0
 }
 
