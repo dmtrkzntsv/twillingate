@@ -30,6 +30,10 @@ Other timings: daily pass (derive sessions, identities, aliases) 1.864 s at
 month at 1M (the whole 1M run was 209 s, 100k 34 s). Files: 100k month about
 4.1 MB, 1M month about 39.8 MB; `du` of each dir 53 MB and 501 MB.
 
+Product widgets users-by-app-version and app-versions return 0 rows in this
+generated data at both volumes (see `100k.log` and `1m.log`), so their timings
+are of empty results.
+
 Noise: the host's load average was 3.0 to 3.9 throughout (another process was
 running), so these are pessimistic for a 4-CPU box and the 100k numbers are
 more affected in relative terms. The 100k run's all-at-once passes are not
@@ -136,7 +140,7 @@ Queries:
 
 Failed cells: 0 of 60. Load average (1 min) at cell start: 1.32 to 2.32.
 
-The three queries one after another (sum of walls; peak = the largest of the three):
+The three queries one after another (sum of walls; "Peak RSS" = peak over both ranges, the largest of the three queries at 30 d and 365 d):
 
 | Layout | Source | 30 d first | 30 d best | 365 d first | 365 d best | Peak RSS |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -234,16 +238,31 @@ Failed cells: 0 of 60. Load average (1 min) at cell start: 2.37 to 8.69.
 host busy during this volume: the 1-minute load average rose to 8.69 on 4 CPUs
 (it was still 6.3 after the run). The cells ran with the layout as the outermost
 loop (duckdb, arrow-1d, arrow-4d, pqgo-1d, pqgo-4d), so the layout is confounded
-with elapsed time and with the rising load. The layouts measured later (pqgo-1d,
-pqgo-4d, and partly arrow-4d) look worse partly or wholly because of that. Some
-cells show wall above CPU, or a best run slower than the first (arrow-1d / pqgo /
+with elapsed time and with the load, which did not simply rise (per-cell loads,
+`matrix-1m.json`): duckdb layout, run first, 5.8 to 8.7 (the highest); arrow-1d
+2.4 to 4.2 (2.4 to 2.6 when read with parquet-go, the quietest cells); arrow-4d
+4.6 to 7.2; pqgo-1d 4.0 to 6.1; pqgo-4d 6.2 to 6.6. Load also differs within a
+layout, between the two sources. The layouts measured later (pqgo-1d, pqgo-4d,
+and partly arrow-4d) look worse partly or wholly because of that. Some cells
+show wall above CPU, or a best run slower than the first (arrow-1d / pqgo /
 attrvalues / 365 d: first 8197 ms, best 12730 ms). Read the 1M numbers as orders
 of magnitude. Within one layout, source against source is a fairer comparison:
 those cells ran next to each other. Even so, at pqgo-1d and pqgo-4d the two
 sources come out mixed. A rerun on a quiet host (`native-bench matrix -volumes 1m`)
-is needed before choosing a layout.
+is needed before choosing a layout. The best 1M 30 d trio (1.09 s, arrow-1d /
+pqgo) came from the quietest cells, so the miss of the 30-day target is robust.
 
-The three queries one after another (sum of walls; peak = the largest of the three):
+Other limits of the matrix:
+
+- Ranges are month-aligned, so day pruning inside a file is never exercised.
+- No cold-cache numbers: the "first" runs follow earlier cells over the same
+  files, so the OS cache was warm.
+- The generator has no `group_id`, so attrvalues' group sets were never built
+  natively (the DuckDB baseline neither).
+- "Write" in the rewrite tables is a Parquet-to-Parquet rewrite with fsync in
+  the wall, not the daily pass's NDJSON dump and month merge.
+
+The three queries one after another (sum of walls; "Peak RSS" = peak over both ranges, the largest of the three queries at 30 d and 365 d):
 
 | Layout | Source | 30 d first | 30 d best | 365 d first | 365 d best | Peak RSS |
 | --- | --- | --- | --- | --- | --- | --- |
