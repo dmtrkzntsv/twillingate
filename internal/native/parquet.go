@@ -95,24 +95,26 @@ func parquetGroups(files []string, family string, r Range) ([]group, error) {
 // statsOf is what row group rg's statistics say about family and day.
 func statsOf(rg *format.RowGroup, famIdx, dayIdx int) groupStats {
 	var g groupStats
-	minMax := func(i int) (lo, hi []byte, ok bool) {
+	// The null count comes with the bounds (a writer SHOULD always write
+	// it, DuckDB does); without bounds it is not read.
+	minMax := func(i int) (lo, hi []byte, nulls int64, ok bool) {
 		if i < 0 || i >= len(rg.Columns) {
-			return nil, nil, false
+			return nil, nil, 0, false
 		}
 		st := &rg.Columns[i].MetaData.Statistics
 		if st.MinValue != nil && st.MaxValue != nil {
-			return st.MinValue, st.MaxValue, true
+			return st.MinValue, st.MaxValue, st.NullCount, true
 		}
 		if st.Min != nil && st.Max != nil {
-			return st.Min, st.Max, true
+			return st.Min, st.Max, st.NullCount, true
 		}
-		return nil, nil, false
+		return nil, nil, 0, false
 	}
-	if lo, hi, ok := minMax(famIdx); ok {
-		g.famOK, g.famMin, g.famMax = true, string(lo), string(hi)
+	if lo, hi, nulls, ok := minMax(famIdx); ok {
+		g.famOK, g.famMin, g.famMax, g.famNulls = true, string(lo), string(hi), nulls
 	}
-	if lo, hi, ok := minMax(dayIdx); ok && len(lo) == 4 && len(hi) == 4 {
-		g.dayOK = true
+	if lo, hi, nulls, ok := minMax(dayIdx); ok && len(lo) == 4 && len(hi) == 4 {
+		g.dayOK, g.dayNulls = true, nulls
 		g.dayMin = int64(int32(binary.LittleEndian.Uint32(lo)))
 		g.dayMax = int64(int32(binary.LittleEndian.Uint32(hi)))
 	}
@@ -204,8 +206,10 @@ func timeScale(cc parquet.ColumnChunk, name string) (mul, div int64, ok bool) {
 // readChunk reads one column chunk of n rows. Pages are released as they
 // are consumed, so everything kept is copied out of them: indexes and
 // numbers into the column's own slices, strings into Go strings. A
-// dictionary-encoded string page hands over its dictionary and indexes as
-// they are; a plain page's strings go into a per-batch dictionary.
+// dictionary-encoded string page's dictionary joins the batch's, its
+// indexes kept as they are when that is the dictionary's first (no values
+// before it, none repeated); a plain page's strings join it one by one, so
+// the batch's dictionary holds each value once.
 func readChunk(cc parquet.ColumnChunk, name string, n int) (*Column, error) {
 	kind := cc.Type().Kind()
 	c := &Column{}
@@ -229,7 +233,8 @@ func readChunk(cc parquet.ColumnChunk, name string, n int) (*Column, error) {
 	var (
 		db       dictBuilder
 		lastDict parquet.Dictionary
-		base     int32 // where lastDict's entries start in db.dict
+		remap    []int32 // lastDict's entries' indexes in db.dict
+		same     bool    // remap is the identity
 	)
 	pages := cc.Pages()
 	defer pages.Close()
@@ -247,19 +252,15 @@ func readChunk(cc parquet.ColumnChunk, name string, n int) (*Column, error) {
 		if kind == parquet.ByteArray {
 			if d := p.Dictionary(); d != nil {
 				if d != lastDict {
-					// A new dictionary: append its values (a chunk has one, so
-					// this happens once per batch in practice).
+					// A new dictionary (a chunk has one, so this happens once
+					// per batch in practice): its values join the batch's,
+					// each once.
 					dv := d.Page().Data()
-					vals, offs := dv.ByteArray()
-					base = int32(len(db.dict))
-					for j := 0; j+1 < len(offs); j++ {
-						db.dict = append(db.dict, string(vals[offs[j]:offs[j+1]]))
-					}
-					db.ids = nil
+					remap, same = db.addDict(dv.ByteArray())
 					lastDict = d
 				}
 				idx := data.Int32()
-				if def == nil && base == 0 {
+				if def == nil && same {
 					c.Idx = append(c.Idx, idx...)
 				} else {
 					k := 0
@@ -267,7 +268,7 @@ func readChunk(cc parquet.ColumnChunk, name string, n int) (*Column, error) {
 						if def != nil && def[r] == 0 {
 							c.Idx = append(c.Idx, -1)
 						} else {
-							c.Idx = append(c.Idx, base+idx[k])
+							c.Idx = append(c.Idx, remap[idx[k]])
 							k++
 						}
 					}

@@ -9,9 +9,11 @@ import (
 // scanParallel hands groups, in order, to `workers` goroutines and calls
 // read(worker, g) for each from that worker's goroutine only, so read may
 // keep per-worker state (a groupReader) indexed by worker without locks.
-// Groups go out in file order, so neighbouring groups of one file tend to
-// land on one worker and reuse its open file. The first error stops every
-// worker and is returned; so is ctx's error once it is done.
+// Groups go out in file order, each to whichever worker is free first, so
+// a file's groups spread over the workers: each worker opens a file once
+// per run of its groups from it, and a worker that takes several groups of
+// one file in a row reuses it. The first error stops every worker and is
+// returned; so is ctx's error once it is done.
 func scanParallel(ctx context.Context, groups []group, workers int, read func(w int, g group) error) error {
 	if len(groups) == 0 {
 		return nil
@@ -98,17 +100,22 @@ func expandCols(fileCols []string, want []string) []string {
 }
 
 // groupStats is what a row group's statistics say about family and day
-// (days since 1970-01-01); ok false when a column has none.
+// (days since 1970-01-01): their bounds, ok false when a column has none,
+// and how many of the group's values are null.
 type groupStats struct {
 	famOK          bool
 	famMin, famMax string
+	famNulls       int64
 	dayOK          bool
 	dayMin, dayMax int64
+	dayNulls       int64
 }
 
 // decide says whether a row group may hold rows of family (any, when "")
 // with day in [from, to] (keep), and whether every row in it does (all),
-// so the row filter can be skipped.
+// so the row filter can be skipped. The bounds leave nulls out, and a null
+// family or day matches no filter, so all needs none (of family only when
+// filtering by it).
 func (s groupStats) decide(family string, from, to int64) (keep, all bool) {
 	if family != "" && s.famOK && (family < s.famMin || family > s.famMax) {
 		return false, false
@@ -116,8 +123,8 @@ func (s groupStats) decide(family string, from, to int64) (keep, all bool) {
 	if s.dayOK && (s.dayMax < from || s.dayMin > to) {
 		return false, false
 	}
-	famAll := family == "" || (s.famOK && s.famMin == family && s.famMax == family)
-	return true, famAll && s.dayOK && s.dayMin >= from && s.dayMax <= to
+	famAll := family == "" || (s.famOK && s.famNulls == 0 && s.famMin == family && s.famMax == family)
+	return true, famAll && s.dayOK && s.dayNulls == 0 && s.dayMin >= from && s.dayMax <= to
 }
 
 // filterBatch keeps the rows whose family is family (any, when "") and

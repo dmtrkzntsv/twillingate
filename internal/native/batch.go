@@ -120,3 +120,17 @@ func (d *dictBuilder) id(b []byte) int32 {
 	d.dict = append(d.dict, s)
 	return id
 }
+
+// addDict adds a dictionary page's values (BYTE_ARRAY data and offsets)
+// and returns each one's index in the batch's dictionary; same when that
+// is the value's own index (the first dictionary of a batch, no value
+// repeated), so the page's indexes stand as they are.
+func (d *dictBuilder) addDict(vals []byte, offs []uint32) (remap []int32, same bool) {
+	same = len(d.dict) == 0
+	remap = make([]int32, max(0, len(offs)-1))
+	for j := range remap {
+		remap[j] = d.id(vals[offs[j]:offs[j+1]])
+		same = same && remap[j] == int32(j)
+	}
+	return remap, same
+}

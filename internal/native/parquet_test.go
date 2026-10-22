@@ -243,8 +243,11 @@ func sortByFirst(rows [][]string) {
 	slices.SortFunc(rows, func(a, b []string) int { return strings.Compare(a[0], b[0]) })
 }
 
-func TestParquetRowsMatchDuckDB(t *testing.T) {
-	f := seed(t, 40)
+// matchDuckDB reads every row of project 1 in its Parquet files (two,
+// and no log) in every column of events, and compares them with DuckDB's.
+// It returns the files.
+func matchDuckDB(t *testing.T, f *archivetest.Files) []string {
+	t.Helper()
 	res, err := f.Reader.Query(context.Background(),
 		"SELECT * FROM events WHERE project_id = 1 ORDER BY id", 0, archive.Rules{})
 	if err != nil {
@@ -293,11 +296,17 @@ func TestParquetRowsMatchDuckDB(t *testing.T) {
 			t.Fatalf("row %d:\n got %q\nwant %q\ncols %v", i, got[i], want[i], cols)
 		}
 	}
+	return pq
+}
+
+func TestParquetRowsMatchDuckDB(t *testing.T) {
+	f := seed(t, 40)
+	pq := matchDuckDB(t, f)
 
 	// One family and one day, the attributes by pattern: the rows DuckDB
 	// filters the same way, and every attr_ column a file holds.
 	day := rng(t, "2026-09-05", "2026-09-05")
-	groups, err = parquetGroups(pq, "product", day)
+	groups, err := parquetGroups(pq, "product", day)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +319,7 @@ func TestParquetRowsMatchDuckDB(t *testing.T) {
 		gotSub = formatBatch(t, b, []string{"id", "attr_color", "attr_plan"}, gotSub)
 	}
 	sortByFirst(gotSub)
-	res, err = f.Reader.Query(context.Background(), "SELECT id, attr_color, attr_plan FROM events WHERE project_id = 1 "+
+	res, err := f.Reader.Query(context.Background(), "SELECT id, attr_color, attr_plan FROM events WHERE project_id = 1 "+
 		"AND family = 'product' AND day = DATE '2026-09-05' ORDER BY id", 0, archive.Rules{})
 	if err != nil {
 		t.Fatal(err)
@@ -355,6 +364,7 @@ func TestParquetPrunesByDay(t *testing.T) {
 	f := seed(t, 1500) // 9000 rows in August
 	month := filepath.Join(f.Dir, "1", "2026-08.parquet")
 	rewrite(t, f, month, 2048) // DuckDB's smallest row group
+	matchDuckDB(t, f)          // every column over many groups and pages
 	all, err := parquetGroups([]string{month}, "", rng(t, "2026-08-01", "2026-08-31"))
 	if err != nil {
 		t.Fatal(err)
@@ -499,4 +509,49 @@ func TestScanParallel(t *testing.T) {
 	if err := scanParallel(context.Background(), nil, 4, func(int, group) error { return boom }); err != nil {
 		t.Errorf("no groups: %v", err)
 	}
+}
+
+func TestDecideCountsNulls(t *testing.T) {
+	s := groupStats{famOK: true, famMin: "views", famMax: "views", dayOK: true, dayMin: 10, dayMax: 12}
+	for _, c := range []struct {
+		famNulls, dayNulls int64
+		family             string
+		all                bool
+	}{
+		{0, 0, "views", true}, {0, 0, "", true},
+		{3, 0, "views", false}, // a null family is no views row
+		{3, 0, "", true},       // nor filtered when any family will do
+		{0, 2, "", false},      // a null day is in no range
+	} {
+		s.famNulls, s.dayNulls = c.famNulls, c.dayNulls
+		if keep, all := s.decide(c.family, 10, 12); !keep || all != c.all {
+			t.Errorf("%+v: keep %v all %v", c, keep, all)
+		}
+	}
+}
+
+func TestDictDedupes(t *testing.T) {
+	var db dictBuilder
+	remap, same := db.addDict(byteArray("a", "b"))
+	if !same || !slices.Equal(remap, []int32{0, 1}) {
+		t.Errorf("first: %v %v", remap, same)
+	}
+	if id := db.id([]byte("c")); id != 2 { // a plain page's value
+		t.Errorf("c: %d", id)
+	}
+	remap, same = db.addDict(byteArray("c", "a", "d", "d")) // a second dictionary page
+	if same || !slices.Equal(remap, []int32{2, 0, 3, 3}) || !slices.Equal(db.dict, []string{"a", "b", "c", "d"}) {
+		t.Errorf("second: %v %v %v", remap, same, db.dict)
+	}
+}
+
+// byteArray is vals as a page's BYTE_ARRAY values and offsets.
+func byteArray(vals ...string) ([]byte, []uint32) {
+	var data []byte
+	offs := []uint32{0}
+	for _, v := range vals {
+		data = append(data, v...)
+		offs = append(offs, uint32(len(data)))
+	}
+	return data, offs
 }
