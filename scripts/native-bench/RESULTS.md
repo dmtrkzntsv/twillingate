@@ -230,6 +230,19 @@ Queries:
 
 Failed cells: 0 of 60. Load average (1 min) at cell start: 2.37 to 8.69.
 
+**Caveat: host noise. Do not compare layouts at 1M.** Another process kept the
+host busy during this volume: the 1-minute load average rose to 8.69 on 4 CPUs
+(it was still 6.3 after the run). The cells ran with the layout as the outermost
+loop (duckdb, arrow-1d, arrow-4d, pqgo-1d, pqgo-4d), so the layout is confounded
+with elapsed time and with the rising load. The layouts measured later (pqgo-1d,
+pqgo-4d, and partly arrow-4d) look worse partly or wholly because of that. Some
+cells show wall above CPU, or a best run slower than the first (arrow-1d / pqgo /
+attrvalues / 365 d: first 8197 ms, best 12730 ms). Read the 1M numbers as orders
+of magnitude. Within one layout, source against source is a fairer comparison:
+those cells ran next to each other. Even so, at pqgo-1d and pqgo-4d the two
+sources come out mixed. A rerun on a quiet host (`native-bench matrix -volumes 1m`)
+is needed before choosing a layout.
+
 The three queries one after another (sum of walls; peak = the largest of the three):
 
 | Layout | Source | 30 d first | 30 d best | 365 d first | 365 d best | Peak RSS |
