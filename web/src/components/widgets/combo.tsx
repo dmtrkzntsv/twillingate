@@ -1,7 +1,7 @@
 import { Bar, CartesianGrid, ComposedChart, Line, XAxis, YAxis } from 'recharts'
 import { ChartContainer, ChartTooltip, ChartTooltipContent } from '@/components/ui/chart'
 import { activeDot, axis, formatHeading, formatTick, grid, MAX_BAR, niceTicks, seriesColor, valueAxis } from '@/lib/chart'
-import { formatValue, type Format } from '@/lib/format'
+import { approx, approximate, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { legend } from '@/components/chart-parts'
 import { CARD_TICK_GAP, useCardMode } from '@/components/share/card-mode'
@@ -104,7 +104,9 @@ export default function Combo({ data, props }: WidgetProps<ComboProps>) {
           content={
             <ChartTooltipContent
               labelFormatter={(_, payload) => formatHeading(payload?.[0]?.payload?.x)}
-              valueFormatter={(v, _, key) => formatValue(v, key === 'line' ? lineFormat : barFormat)}
+              valueFormatter={(v, _, key) =>
+                approx(formatValue(v, key === 'line' ? lineFormat : barFormat), key !== undefined && approximate(data as SqlData, key))
+              }
             />
           }
         />

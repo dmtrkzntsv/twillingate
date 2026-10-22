@@ -81,6 +81,23 @@ describe('bar_list', () => {
     expect(screen.getByRole('tooltip')).not.toHaveTextContent('Share')
   })
 
+  it('marks approximate values with ≈, in the row and on hover', async () => {
+    const user = userEvent.setup()
+    renderBarList({
+      columns: ['label', 'value'],
+      rows: [
+        ['DE', '12345'],
+        ['FR', '50'],
+      ],
+      truncated: false,
+      approximate: ['value'],
+    })
+    expect(screen.getByText('≈12.3K')).toBeInTheDocument()
+    expect(screen.getByText('≈50')).toBeInTheDocument()
+    await user.hover(screen.getByText('DE'))
+    expect(screen.getByRole('tooltip')).toHaveTextContent('Value≈12,345')
+  })
+
   it('renders nothing broken for an empty result', () => {
     const { container } = renderBarList({ columns: ['label', 'value'], rows: [], truncated: false })
     expect(container.firstChild).toBeEmptyDOMElement()

@@ -54,6 +54,27 @@ describe('stat', () => {
     expect(screen.getByText('50%')).toBeInTheDocument()
   })
 
+  it('marks an approximate value with ≈, and only that one', () => {
+    renderStat({ columns: ['value', 'previous'], rows: [['3500', '3000']], truncated: false, approximate: ['value'] })
+    expect(screen.getByText('≈3,500')).toBeInTheDocument()
+    expect(screen.getByText('+16.7%')).toBeInTheDocument()
+  })
+
+  it('marks the aggregate of an approximate series', () => {
+    renderStat({
+      columns: ['x', 'value'],
+      rows: [['2026-01-01', '10'], ['2026-01-02', '20']],
+      truncated: false,
+      approximate: ['value'],
+    })
+    expect(screen.getByText('≈30')).toBeInTheDocument()
+  })
+
+  it('leaves an exact value unmarked', () => {
+    renderStat({ columns: ['value', 'previous'], rows: [['5', '4']], truncated: false, approximate: ['previous'] })
+    expect(screen.getByText('5')).toBeInTheDocument()
+  })
+
   it('renders nothing broken for an empty result', () => {
     const { container } = renderStat({ columns: ['value'], rows: [], truncated: false })
     expect(container.firstChild).toBeEmptyDOMElement()

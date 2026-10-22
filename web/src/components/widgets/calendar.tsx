@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef, useState } from 'react'
-import { formatExact, formatValue, type Format } from '@/lib/format'
+import { approx, approximate, formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { formatHeading, ramp } from '@/lib/chart'
 import { HoverCard, ScaleLegend, useHover, type HoverRow } from '@/components/chart-parts'
@@ -113,6 +113,7 @@ export default function Calendar({ data, props }: WidgetProps<CalendarProps>) {
     if (r.width > 0 && r.height > 0) setBox({ w: r.width, h: r.height })
   })
   const records = toRecords(data as SqlData, contract)
+  const estimated = approximate(data as SqlData, 'value')
   if (records.length === 0) return null
 
   const format = props.format ?? 'number'
@@ -139,7 +140,7 @@ export default function Calendar({ data, props }: WidgetProps<CalendarProps>) {
     const value = values.get(day)
     return value === undefined
       ? [{ label: 'No data', value: '' }]
-      : [{ label: 'Value', value: formatExact(value, format), color: fillOf(value) }]
+      : [{ label: 'Value', value: approx(formatExact(value, format), estimated), color: fillOf(value) }]
   }
 
   return (

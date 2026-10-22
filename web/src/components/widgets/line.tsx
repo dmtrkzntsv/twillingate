@@ -4,7 +4,7 @@ import {
   ChartTooltip,
 } from '@/components/ui/chart'
 import { activeDot, axis, formatTick, grid, niceTicks, seriesColor, seriesConfig, valueAxis, valuesOf } from '@/lib/chart'
-import { formatValue, type Format } from '@/lib/format'
+import { approximate, formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
 import { CARD_TICK_GAP, useCardMode } from '@/components/share/card-mode'
@@ -114,7 +114,7 @@ export default function Line({ data, props }: WidgetProps<LineProps>) {
         <CartesianGrid {...grid} />
         <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={card ? CARD_TICK_GAP : 24} tickFormatter={formatTick} />
         <YAxis {...valueAxis} ticks={ticks} domain={[ticks[0], ticks[ticks.length - 1]]} tickFormatter={(v: number) => formatValue(v, format)} />
-        <ChartTooltip cursor={{ strokeWidth: 1 }} content={tooltip(format, { indicator: 'line', heading: 'x' })} />
+        <ChartTooltip cursor={{ strokeWidth: 1 }} content={tooltip(format, { indicator: 'line', heading: 'x', approximate: approximate(sql, 'y') })} />
         {hasSeries && legend()}
         {keys.map((key, i) => (
           <RechartsLine

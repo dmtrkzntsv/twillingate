@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import { HoverCard, useHover, type HoverRow } from '@/components/chart-parts'
-import { formatExact, formatValue, type Format } from '@/lib/format'
+import { approx, approximate, formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
@@ -71,9 +71,10 @@ export default function BarList({ data, props }: WidgetProps<BarListProps>) {
   // A share only of counts, and only of a whole list: a cut list has no total.
   const sum = values.reduce((a, b) => a + b, 0)
   const shares = format === 'number' && !(data as SqlData).truncated && sum > 0
+  const estimated = approximate(data as SqlData, 'value')
 
   const rowsOf = (i: number): HoverRow[] => [
-    { label: 'Value', value: formatExact(values[i], format), color: 'var(--chart-1)' },
+    { label: 'Value', value: approx(formatExact(values[i], format), estimated), color: 'var(--chart-1)' },
     ...(shares ? [{ label: 'Share of list', value: formatValue(values[i] / sum, 'percent') }] : []),
     { label: 'Rank', value: `${i + 1} of ${records.length}` },
   ]
@@ -95,7 +96,7 @@ export default function BarList({ data, props }: WidgetProps<BarListProps>) {
               style={{ width: `${(values[i] / max) * 100}%` }}
             />
             <span className="relative truncate">{String(r.label)}</span>
-            <span className="relative shrink-0 font-medium tabular-nums">{formatValue(values[i], format)}</span>
+            <span className="relative shrink-0 font-medium tabular-nums">{approx(formatValue(values[i], format), estimated)}</span>
           </li>
         ))}
       </ul>

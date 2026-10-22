@@ -197,6 +197,12 @@ func (s *querySource) load(ctx context.Context, content string, p Params) (reads
 		}
 		out.Columns[i] = c
 	}
+	for _, c := range res.Approximate {
+		if n, ok := names[c]; ok {
+			c = n
+		}
+		out.Approximate = append(out.Approximate, c)
+	}
 	if out.Rows == nil {
 		out.Rows = [][]string{}
 	}

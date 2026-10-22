@@ -88,6 +88,18 @@ describe('table', () => {
     expect(cells[2].textContent).toBe('12345')
   })
 
+  it('marks the cells of an approximate column with ≈', () => {
+    const { container } = renderTable({
+      columns: ['country', 'actors', 'events'],
+      rows: [['DE', '3500', '9000']],
+      truncated: false,
+      approximate: ['actors'],
+    })
+    const cells = container.querySelectorAll('tbody td')
+    expect(cells[1].textContent).toBe('≈3500')
+    expect(cells[2].textContent).toBe('9000')
+  })
+
   it('shades colorscale columns by value, via color-mix on --chart-1', () => {
     const { container } = renderTable(
       {

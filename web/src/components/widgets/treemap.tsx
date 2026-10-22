@@ -2,7 +2,7 @@ import type { TreemapNode } from 'recharts'
 import { Treemap as RechartsTreemap } from 'recharts'
 import { ChartContainer, ChartTooltip } from '@/components/ui/chart'
 import { seriesColor } from '@/lib/chart'
-import { formatValue, type Format } from '@/lib/format'
+import { approx, approximate, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { tooltip } from '@/components/chart-parts'
 import { CARD_TYPE, useCardMode } from '@/components/share/card-mode'
@@ -80,7 +80,7 @@ type Cell = TreemapNode & { index: number; parentName?: string; colorIndex?: num
 /** A label's type: a share card's is larger, for a card seen small in a feed. */
 const TYPE = { tile: { name: 12, value: 11, line: 16 }, card: { name: 21, value: CARD_TYPE, line: 26 } }
 
-function cell(format: Format, card: boolean) {
+function cell(format: Format, card: boolean, estimated: boolean) {
   return function Cell({ x, y, width, height, name, depth, index, value, parentName, colorIndex }: Cell) {
     const grouped = parentName !== undefined
     if (depth !== (grouped ? 2 : 1)) return <g data-treemap-node data-node-name={name} data-node-depth={depth} />
@@ -112,7 +112,7 @@ function cell(format: Format, card: boolean) {
         )}
         {width > 48 && height > type.line * 2 + 14 && fits && (
           <text x={x + 8} y={y + 6 + type.line * 1.75} fontSize={type.value} fill={labelInk(color)} fillOpacity={0.8}>
-            {formatValue(Number(value), format)}
+            {approx(formatValue(Number(value), format), estimated)}
           </text>
         )}
       </g>
@@ -160,9 +160,9 @@ export default function Treemap({ data, props }: WidgetProps<TreemapProps>) {
         dataKey="value"
         nameKey="name"
         isAnimationActive={false}
-        content={cell(format, card) as never}
+        content={cell(format, card, approximate(sql, 'value')) as never}
       >
-        <ChartTooltip content={tooltip(format)} />
+        <ChartTooltip content={tooltip(format, { approximate: approximate(sql, 'value') })} />
       </RechartsTreemap>
     </ChartContainer>
   )

@@ -121,6 +121,10 @@ component:
   string, as the `query` tool returns them) and `{markdown}` for `md`.
 - `truncated: true` means the result hit `CONSOLE_QUERY_ROWS_MAX`: group the query
   or narrow it.
+- `data.approximate`, when present, names the columns whose values are
+  estimates (a `query` source's distinct count past 1,024 ids, within
+  about ±2%, under the name `rename` gave it). The components show those
+  values with a "≈" in front.
 - `page` appears only for a remote table: `{offset, limit, matched, total,
   sort, distinct, filters}`, what was applied. `data.truncated` is then
   `matched > offset + limit`: there are more rows.
@@ -417,7 +421,7 @@ public `/share/<id>.png` stops at archiving
 | `POST` | `/api/widgets/{widget_id}/archive` | `archive_widget` | — |
 | `POST` | `/api/widgets/{widget_id}/restore` | `restore_widget` | — |
 | `PUT` | `/api/dashboards/{dashboard_id}/view` | `view`, REST only: no MCP tool | body: `project_id`, `range`, and `from`/`to` for `custom` → `{"status":"saved"}` |
-| `POST` | `/api/widgets/preview` | `preview_widget`, REST only: no MCP tool | body: `component`, `props`, `source`, `project_id`, `from`, `to` → `{columns, rows, truncated, problem, elapsed_ms}` |
+| `POST` | `/api/widgets/preview` | `preview_widget`, REST only: no MCP tool | body: `component`, `props`, `source`, `project_id`, `from`, `to` → `{columns, rows, truncated, approximate, problem, elapsed_ms}` |
 | `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id`, `from`, `to`, `archive_after`, `caption_project`, `caption_range`, `image`, `image_2x` → 201 |
 | `GET` | `/api/widget-shares` | `list_widget_shares` | query: `widget_id`, `state` |
 | `PATCH` | `/api/widget-shares/{id}` | `update_widget_share` | body: `archive_after` |

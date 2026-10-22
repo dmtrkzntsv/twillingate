@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -235,4 +236,60 @@ func TestQuerySourcePreview(t *testing.T) {
 	in.From, in.To = "", ""
 	_, err = svc.Preview(context.Background(), in)
 	wantRefusal(t, err, store.ErrInvalid, "a query follows the date range; pass from and to")
+}
+
+// TestQuerySourceApproximate: a stat over more distinct actors than a
+// sketch counts exactly reaches widget_data with its renamed column named
+// approximate, from the load and again from the cache.
+func TestQuerySourceApproximate(t *testing.T) {
+	svc, _ := newTestServiceOpts(t, Options{}, 1000)
+	files := filesOf(t, svc)
+	var evs []store.Event
+	for d, day := range []string{"2026-10-20", "2026-10-21"} {
+		for i := range 1500 {
+			e := event(t, fmt.Sprintf("a-%s-%d", day, i), 1, store.FamilyViews, "$page_view", day)
+			e.ActorID = fmt.Sprintf("actor-%d", d*1000+i)
+			evs = append(evs, e)
+		}
+	}
+	files.Write(t, evs...)
+	svc.sources = querySources(t, files, nil)
+	if err := svc.st.SyncReporting(context.Background(), store.ReportingSync{
+		Hash: "query", Version: "test", Components: []store.Component{oneComponent(t, queryStat).row()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	content := `{"query":{"kind":"stat","table":"views","metrics":[{"op":"actors"}]},"rename":{"actors":"value"}}`
+	d := mustCreate(t, svc, "Approx", WidgetSpec{Name: "s", Component: "stat", Title: "s", Source: Source{Type: "query", Content: content}})
+	in := DataRequest{WidgetID: d.Widgets[0].ID, ProjectID: 1, From: "2026-10-20", To: "2026-10-21"}
+	for _, pass := range []string{"load", "cache"} {
+		got, err := svc.WidgetData(context.Background(), in)
+		if err != nil {
+			t.Fatalf("%s: WidgetData: %v", pass, err)
+		}
+		res, ok := got.Data.(readsql.Result)
+		if !ok {
+			t.Fatalf("%s: Data is %T", pass, got.Data)
+		}
+		if !reflect.DeepEqual(res.Approximate, []string{"value"}) {
+			t.Errorf("%s: approximate = %q, want [value]", pass, res.Approximate)
+		}
+		b, err := json.Marshal(got)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), `"approximate":["value"]`) {
+			t.Errorf("%s: envelope %s has no approximate", pass, b)
+		}
+	}
+
+	// A day with no events counts exactly: no approximate key at all.
+	in.From, in.To = "2026-10-19", "2026-10-19"
+	got, err := svc.WidgetData(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := json.Marshal(got); strings.Contains(string(b), "approximate") {
+		t.Errorf("empty day: envelope %s names approximate", b)
+	}
 }

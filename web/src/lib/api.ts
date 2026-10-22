@@ -137,6 +137,8 @@ export interface SqlData {
   columns: string[]
   rows: string[][]
   truncated: boolean
+  /** The columns any value of which is an estimate, shown with "≈"; absent when every value is exact. */
+  approximate?: string[]
 }
 
 export interface MarkdownData {

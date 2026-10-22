@@ -1,5 +1,5 @@
 import { HoverCard, useHover, type HoverRow } from '@/components/chart-parts'
-import { formatExact, formatValue, type Format } from '@/lib/format'
+import { approx, approximate, formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
@@ -50,6 +50,7 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
   const { hovered, bind } = useHover<number>()
   const card = useCardMode()
   const records = toRecords(data as SqlData, contract)
+  const estimated = approximate(data as SqlData, 'value')
   if (records.length === 0) return null
 
   const format = props.format ?? 'number'
@@ -59,7 +60,7 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
 
   const rowsOf = (i: number): HoverRow[] => {
     const rows: HoverRow[] = [
-      { label: 'Value', value: formatExact(values[i], format), color: 'var(--chart-1)' },
+      { label: 'Value', value: approx(formatExact(values[i], format), estimated), color: 'var(--chart-1)' },
       { label: 'Of the first step', value: formatValue(values[i] / first, 'percent') },
     ]
     if (i > 0 && values[i - 1]) {
@@ -87,7 +88,7 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
               <div className={`flex items-baseline justify-between gap-3 ${card ? 'text-[22px]' : 'text-sm'}`}>
                 <span className="truncate font-medium">{String(r.step)}</span>
                 <span className="flex shrink-0 items-baseline gap-2 tabular-nums">
-                  <span className="text-muted-foreground">{formatValue(value, format)}</span>
+                  <span className="text-muted-foreground">{approx(formatValue(value, format), estimated)}</span>
                   <span className={`text-right font-medium ${card ? 'w-20' : 'w-12'}`}>{formatValue(share, 'percent')}</span>
                 </span>
               </div>

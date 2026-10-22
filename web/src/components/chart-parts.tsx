@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { useCardMode } from '@/components/share/card-mode'
 import { ChartLegend, ChartLegendContent, ChartTooltipContent } from '@/components/ui/chart'
 import { formatHeading, ramp } from '@/lib/chart'
-import { formatValue, type Format } from '@/lib/format'
+import { approx, formatValue, type Format } from '@/lib/format'
 
 interface Options {
   /** A line beside each value (trends), or a dot (everything else). */
@@ -15,16 +15,22 @@ interface Options {
   nameKey?: string
   /** Show this row field rather than the plotted value (e.g. the value behind a share). */
   valueKey?: string
+  /** Values the result estimated, shown with "≈": all of them (true), or those of the keys listed. */
+  approximate?: boolean | string[]
 }
 
 /** The one tooltip every chart shows: a heading, then each value in the widget's `format`. */
-export function tooltip(format: Format, { indicator = 'dot', heading, total = false, nameKey, valueKey }: Options = {}) {
+export function tooltip(
+  format: Format,
+  { indicator = 'dot', heading, total = false, nameKey, valueKey, approximate = false }: Options = {}
+) {
+  const marked = (key?: string) => (Array.isArray(approximate) ? key !== undefined && approximate.includes(key) : approximate)
   return (
     <ChartTooltipContent
       indicator={indicator}
       hideLabel={heading === undefined}
       labelFormatter={(_, payload) => formatHeading(payload?.[0]?.payload?.[heading ?? ''])}
-      valueFormatter={(v, row) => formatValue(valueKey && row ? Number(row[valueKey]) : v, format)}
+      valueFormatter={(v, row, key) => approx(formatValue(valueKey && row ? Number(row[valueKey]) : v, format), marked(key))}
       total={total}
       nameKey={nameKey}
     />

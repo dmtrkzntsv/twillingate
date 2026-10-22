@@ -107,7 +107,7 @@ export default function Scatter({ data, props }: WidgetProps<ScatterProps>) {
           tickFormatter={show}
         />
         {hasSize && <ZAxis dataKey="size" type="number" range={[48, 360]} />}
-        <ChartTooltip cursor={{ strokeWidth: 1 }} content={tooltip(format)} />
+        <ChartTooltip cursor={{ strokeWidth: 1 }} content={tooltip(format, { approximate: sql.approximate })} />
         {hasSeries && legend()}
         {groups.map(({ key, data: groupData }, i) => (
           <RechartsScatter

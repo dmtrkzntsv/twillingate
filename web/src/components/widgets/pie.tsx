@@ -5,7 +5,7 @@ import {
   type ChartConfig,
 } from '@/components/ui/chart'
 import { seriesColor } from '@/lib/chart'
-import { formatValue, type Format } from '@/lib/format'
+import { approx, approximate, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
 import { useCardMode } from '@/components/share/card-mode'
@@ -71,7 +71,7 @@ export default function Pie({ data, props }: WidgetProps<PieProps>) {
   return (
     <ChartContainer config={config} className="h-full w-full">
       <PieChart>
-        <ChartTooltip content={tooltip(format, { nameKey: 'label' })} />
+        <ChartTooltip content={tooltip(format, { nameKey: 'label', approximate: approximate(data as SqlData, 'value') })} />
         {legend('label')}
         <RechartsPie
           data={records}
@@ -95,7 +95,7 @@ export default function Pie({ data, props }: WidgetProps<PieProps>) {
                 return (
                   <text x={cx} y={cy} textAnchor="middle" dominantBaseline="middle">
                     <tspan x={cx} y={card ? cy - 8 : cy - 4} className={`fill-foreground font-semibold ${card ? 'text-[36px]' : 'text-xl'}`}>
-                      {formatValue(total, format)}
+                      {approx(formatValue(total, format), approximate(data as SqlData, 'value'))}
                     </tspan>
                     <tspan x={cx} y={card ? cy + 26 : cy + 16} className={`fill-muted-foreground ${card ? 'text-[length:var(--card-type)]' : 'text-xs'}`}>
                       Total
