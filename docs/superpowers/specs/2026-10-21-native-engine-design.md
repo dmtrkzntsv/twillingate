@@ -1,6 +1,6 @@
 # Native engine: structured queries in Go, SQL as an external engine
 
-Status: design, 2026-10-21. Supersedes D8 and D10 of
+Status: approved, 2026-10-21. Supersedes D8 and D10 of
 `2026-10-12-raw-first-design.md` for the open-source server; the rest of
 raw-first (event files are the only truth, per-project month Parquet plus
 day files plus the open NDJSON log, retention by file) stands.
@@ -51,14 +51,16 @@ The owner's decisions (2026-10-20/21):
 ## Targets
 
 Many instances should fit on one modest host, so idle and peak memory per
-process are the budget that matters. Targets per process:
+process are the budget that matters. The workload envelope is **100,000 to
+1,000,000 events per month per instance**; every target holds across it,
+so the upper end is what the engine is sized for. Targets per process:
 
 | | Target | Today |
 |---|---|---|
 | Idle RSS | ~20 MB | 30 MB (after #200), no engine child |
 | Peak during a dashboard load | under ~150 MB, released after | 600–800 MB in the DuckDB child |
-| CPU for a built-in dashboard, 30-day range, 100k events/month | tens of ms total | 0.35 s+ plus a 23–100 ms spawn |
-| CPU for a built-in dashboard, 1-year range, 1M events/month, warm cache | under 1 s total | ~3 s at 2 threads |
+| A built-in dashboard, 30-day range, no cache | under 0.5 s total at 1M events/month; tens of ms at 100k | 0.35 s+ plus a 23–100 ms spawn |
+| A built-in dashboard, 1-year range | under 1 s total with a warm cache, under ~3 s cold, at 1M events/month | ~3 s at 2 threads |
 | Binary | no cgo; target ≤ 30 MB | 81 MB, cgo |
 
 These are targets to measure against, not promises; step 1 of the build
@@ -237,7 +239,7 @@ raw-first found best on small boxes.
 - Not backed up, not migrated; a missing or corrupt directory is rebuilt.
   Deleting it is always safe.
 - Ships behind a setting that can turn it off; the engine must meet the
-  100k-events/month targets without it.
+  30-day targets across the whole envelope without it.
 
 ## The daily pass without DuckDB
 
@@ -338,8 +340,8 @@ file layout and table names are part of the versioned contract.
    1M events/month over a year: the candidate Parquet libraries' read and
    write; a native scan of three representative built-ins (visitors by
    country, DAU, attribute values) with no cache. This settles the
-   library, the row-group size, and whether 100k events/month meets its
-   targets uncached.
+   library, the row-group size, and whether both ends of the envelope meet
+   the 30-day targets uncached.
 2. The engine and the language for `stat`, `trend`, `breakdown`;
    `query` over MCP.
 3. `percentiles`, `retention`, `attributes`; rewrite the system widgets;
@@ -347,7 +349,7 @@ file layout and table names are part of the versioned contract.
    raw-first switch did).
 4. The daily pass in Go (DuckDB still in the tree for SQL widgets and the
    parity check).
-5. The cache, if step 1 or 3 shows a volume missing its targets.
+5. The cache, if step 1 or 3 shows the 1-year target missed without it.
 6. The SQL hook, the final `feat!` release: DuckDB, cgo and
    `internal/engine` leave this repository in the same release.
 
