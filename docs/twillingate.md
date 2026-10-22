@@ -1774,7 +1774,7 @@ may name but not a dimension or series. It takes the metrics `count`
 | `percentile` | `q`: above 0 and below 1 (`0.75`) | `measures` only: the `q` quantile of `value`, each sample weighing `1 / sample_rate`; empty over no sample |
 | `mean` | | `measures` only: `value` weighted so, `SUM(value / sample_rate) / SUM(1 / sample_rate)`; empty over no sample |
 | `weight` | | `measures` only: the samples' `1 / sample_rate` summed, the samples a sampled metric stands for |
-| `share` | `of`: `count`, or on `measures` `weight` | trend and breakdown only: the group's `count` (or `weight`) divided by its partition's (`0.25`); empty when that is 0 |
+| `share` | `of`: `count`, or on `measures` `weight` | breakdown, or trend with `series`: the group's `count` (or `weight`) divided by its partition's (`0.25`); empty when that is 0 |
 
 A percentile comes from `bucket`, as the built-in Web Vitals and
 Measures dashboards compute theirs: the weights are summed per bucket and
@@ -1790,8 +1790,9 @@ the first dimension (every group with one dimension), as SQL's
 `x / SUM(x) OVER (PARTITION BY first dimension)` has it before the limit:
 groups past `limit` still count toward their partition, and the `Other`
 row's partition is every group. In a trend it is the day's groups, every
-series, not only those kept (a series ranks by its share over the range).
-A stat is one group, so it refuses `share`. A share is exact, never
+series, not only those kept (a series ranks by its share over the range)
+unless the answer is `truncated` (below).
+A stat is one group, and an unsplit trend has one per day, so both refuse `share` (its value would always be 1). A share is exact, never
 `approximate`, and with a metric `where` (below) both the group's and the
 partition's are of the rows that pass it.
 
@@ -1822,7 +1823,7 @@ A metric takes two more optional fields:
 
 | Filter `op` | Values |
 | --- | --- |
-| `eq`, `ne`, `contains`, `prefix` | exactly one |
+| `eq`, `ne`, `contains`, `prefix`, `not_prefix` | exactly one (`contains`, `prefix` and `not_prefix` on text columns only; `not_prefix` keeps text that does not start with the value, so `event_name` `not_prefix` `$` leaves out the system names) |
 | `in`, `not_in` | one or more |
 | `gt`, `gte`, `lt`, `lte` | exactly one: an integer, or `YYYY-MM-DD` on `day`; numeric columns only (`day`, `project_id`, `display_width`, `display_height`, `consent`, `bucket`; `duration_sec` and `views` on `sessions`; `views` and `events` on `identities`) |
 | `is_set` | none: the column is not NULL, and on a text column not empty either |
@@ -1851,7 +1852,7 @@ metric past 1,024 ids that choice rests on estimates. A query tracks at
 most 100,000 groups (a trend as many series × days as ten times that) in
 at most 128 MiB of memory: past either, or past `CONSOLE_QUERY_ROWS_MAX`
 rows, a breakdown's or a split trend's answer is `truncated`, its
-untracked groups left out (of `Other` too), and `note` says so; narrow
+untracked groups left out (of `Other` too, and of a `share`'s partition, which then counts only the tracked groups or series), and `note` says so; narrow
 the range, add a filter or lower the limit. A stat or an unsplit trend
 has no group to leave out: one that needs more memory (a `daily_*` metric
 or a trend's distinct count over many days with many ids, whose per-day

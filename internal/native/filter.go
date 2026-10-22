@@ -318,7 +318,7 @@ func compileFilters(where []Filter, path string) ([]filter, error) {
 			out[i] = c
 			continue
 		}
-		if f.Op == "contains" || f.Op == "prefix" {
+		if f.Op == "contains" || f.Op == "prefix" || f.Op == "not_prefix" {
 			return nil, invalid(fmt.Sprintf("%s[%d].op", path, i), "%s is not allowed on %s", f.Op, f.Column)
 		}
 		c.ints = make(map[int64]bool, len(f.Values))
@@ -365,6 +365,8 @@ func (f *filter) matchString(s string) bool {
 		return strings.Contains(s, f.str)
 	case "prefix":
 		return strings.HasPrefix(s, f.str)
+	case "not_prefix":
+		return !strings.HasPrefix(s, f.str)
 	case "is_set":
 		return s != ""
 	}

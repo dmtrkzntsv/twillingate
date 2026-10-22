@@ -1367,7 +1367,7 @@ func (m *merged) computeRaw(mt metricSpec, gs []int32, day int, whole bool) valu
 	switch mt.Op {
 	case "share":
 		part := -1
-		if m.partOf != nil && !whole && len(gs) > 0 && int(gs[0]) < m.groups {
+		if m.partOf != nil && !whole && len(gs) > 0 {
 			part = int(m.partOf[gs[0]])
 		}
 		total := m.shareTotal(mt, part, day)

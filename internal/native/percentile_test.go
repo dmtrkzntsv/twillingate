@@ -23,7 +23,7 @@ const vitalsFrom = "2026-09-01"
 // the vitals $lcp, $inp and $cls on 60 paths and the empty one, with a
 // sample rate of 0.5 on a third of the samples, zeros (bucket -1000) among
 // the $cls values and no $cls on September 4 and 7, nothing at all on
-// September 6; and the custom metrics load (time and number, one sample
+// September 6; and an unknown system name $foo, the custom metrics load (time and number, one sample
 // without a value), payload and score. The days before today are dumped
 // to Parquet; today's stay in a log.
 func vitalsFixture(t testing.TB) *archivetest.Files {
@@ -59,6 +59,9 @@ func vitalsFixture(t testing.TB) *archivetest.Files {
 			for k := range 100 {
 				add("$cls", store.MeasureNumber, k, val(0.001*float64((k*7+d)%400)))
 			}
+		}
+		for k := range 7 {
+			add("$foo", store.MeasureNumber, k, val(float64(k+1)))
 		}
 		for k := range 40 {
 			add("load", store.MeasureTime, k, val(float64(k*k%900)+0.25))
@@ -130,11 +133,17 @@ func TestPercentilesMatchWidgets(t *testing.T) {
 			Metrics: []Metric{{Op: "percentile", Q: 0.75, Round: ptr(3)}}},
 			[]string{"day", "p75"}, widgetSQL(t, "vitals/cls-by-day.sql")},
 		{"metrics", Query{Kind: "breakdown", Table: "measures", Dimensions: []string{"event_name", "measure"}, Limit: 100,
-			Where: []Filter{{Column: "event_name", Op: "not_in", Values: []string{"$lcp", "$inp", "$cls"}}},
+			Where: []Filter{{Column: "event_name", Op: "not_prefix", Values: []string{"$"}}},
 			Metrics: []Metric{{Op: "count", As: "samples"}, {Op: "mean", Round: ptr(3)},
 				{Op: "percentile", Q: 0.5, Round: ptr(3)}, {Op: "percentile", Q: 0.75, Round: ptr(3)},
 				{Op: "percentile", Q: 0.95, Round: ptr(3)}}},
 			[]string{"event_name", "measure", "samples", "mean", "p50", "p75", "p95"}, widgetSQL(t, "measures/metrics.sql")},
+		{"not_prefix leaves out every system name", Query{Kind: "breakdown", Table: "measures", Dimensions: []string{"event_name"}, Order: "event_name",
+			Where:   []Filter{{Column: "event_name", Op: "not_prefix", Values: []string{"$"}}},
+			Metrics: []Metric{{Op: "count", As: "samples"}, {Op: "mean", Round: ptr(3)}}},
+			[]string{"event_name", "samples", "mean"},
+			`SELECT "event_name", count(*), ROUND(SUM(value / sample_rate) / SUM(1 / sample_rate), 3) FROM measures
+			WHERE ` + inRange + ` AND "event_name" NOT LIKE '$%%' GROUP BY "event_name" ORDER BY "event_name"`},
 		{"by page", Query{Kind: "breakdown", Table: "measures", Dimensions: []string{"path"}, Limit: 50,
 			Where: []Filter{{Column: "event_name", Op: "in", Values: []string{"$lcp", "$inp", "$cls"}},
 				{Column: "path", Op: "ne", Values: []string{""}}},
@@ -144,10 +153,11 @@ func TestPercentilesMatchWidgets(t *testing.T) {
 			[]string{"path", "samples", "lcp", "inp", "cls"}, widgetSQL(t, "vitals/by-page.sql")},
 		{"weight and mean with other", Query{Kind: "breakdown", Table: "measures", Dimensions: []string{"event_name"}, Limit: 2, Other: true,
 			Order:   "event_name",
+			Where:   []Filter{{Column: "event_name", Op: "ne", Values: []string{"$foo"}}},
 			Metrics: []Metric{{Op: "count"}, {Op: "weight"}, {Op: "mean"}, {Op: "percentile", Q: 0.999}, {Op: "percentile", Q: 0.05}}},
 			[]string{"event_name", "count", "weight", "mean", "p99.9", "p5"},
 			`SELECT * EXCLUDE o FROM (SELECT 0 AS o, * FROM (` + pctSQL(`"event_name"`, `"event_name" IN ('$cls', '$inp')`, "0.999", "0.05") + `)
-			UNION ALL SELECT 1, 'Other', * FROM (` + pctSQL("", `"event_name" NOT IN ('$cls', '$inp')`, "0.999", "0.05") + `)) ORDER BY o, 2`},
+			UNION ALL SELECT 1, 'Other', * FROM (` + pctSQL("", `"event_name" NOT IN ('$cls', '$inp', '$foo')`, "0.999", "0.05") + `)) ORDER BY o, 2`},
 		{"stat compare", Query{Kind: "stat", Table: "measures", Where: eq("event_name", "$cls"), Compare: "previous",
 			Metrics: []Metric{{Op: "count"}, {Op: "weight"}, {Op: "mean"}, {Op: "percentile", Q: 0.9}, {Op: "percentile", Q: 0.1}}},
 			[]string{"count", "weight", "mean", "p90", "p10", "previous_count", "previous_weight", "previous_mean", "previous_p90", "previous_p10"},

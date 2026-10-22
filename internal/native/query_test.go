@@ -62,7 +62,7 @@ func TestValidate(t *testing.T) {
 		"share identities": {Kind: "breakdown", Table: "identities", Dimensions: []string{"kind"}, Metrics: []Metric{{Op: "share", Of: "count"}}},
 		"filters": {Kind: "stat", Table: "events", Metrics: count(), Where: []Filter{
 			{Column: "attr_a", Op: "is_set"}, {Column: "country", Op: "in", Values: []string{"DE", "FR"}},
-			{Column: "day", Op: "gte", Values: []string{"2026-01-02"}}, {Column: "path", Op: "prefix", Values: []string{"/x"}}}},
+			{Column: "day", Op: "gte", Values: []string{"2026-01-02"}}, {Column: "path", Op: "prefix", Values: []string{"/x"}}, {Column: "path", Op: "not_prefix", Values: []string{"/xy"}}}},
 	}
 	for name, q := range valid {
 		if err := q.Validate(); err != nil {
@@ -179,6 +179,7 @@ func TestValidate(t *testing.T) {
 		{"share without of", Query{Kind: "breakdown", Table: "events", Dimensions: []string{"path"}, Metrics: []Metric{{Op: "share"}}}, "metrics[0].of"},
 		{"share of actors", Query{Kind: "breakdown", Table: "events", Dimensions: []string{"path"}, Metrics: []Metric{{Op: "share", Of: "actors"}}}, "metrics[0].of"},
 		{"share of weight on events", Query{Kind: "breakdown", Table: "events", Dimensions: []string{"path"}, Metrics: []Metric{{Op: "share", Of: "weight"}}}, "metrics[0].of"},
+		{"share on an unsplit trend", Query{Kind: "trend", Table: "events", Metrics: []Metric{{Op: "share", Of: "count"}}}, "metrics[0].op"},
 		{"share with a column", Query{Kind: "breakdown", Table: "measures", Dimensions: []string{"path"}, Metrics: []Metric{{Op: "share", Of: "count", Column: "value"}}}, "metrics[0].column"},
 		{"daily_sum of count", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "daily_sum", Of: "count"}}}, "metrics[0].of"},
 		{"vital on events", Query{Kind: "breakdown", Table: "events", Metrics: count(), Dimensions: []string{"vital"}}, "dimensions[0]"},
@@ -287,5 +288,13 @@ func TestColumnTypes(t *testing.T) {
 		if n := len(c.q.Columns()); n != len(c.want) {
 			t.Errorf("%s: %d columns, %d types", c.name, n, len(c.want))
 		}
+	}
+}
+
+// not_prefix, like contains and prefix, is for text columns.
+func TestNotPrefixIsText(t *testing.T) {
+	_, err := compileFilters([]Filter{{Column: "day", Op: "not_prefix", Values: []string{"2026"}}}, "where")
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "where[0].op") {
+		t.Errorf("err = %v, want ErrInvalid naming where[0].op", err)
 	}
 }

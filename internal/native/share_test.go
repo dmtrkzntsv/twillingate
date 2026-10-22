@@ -104,10 +104,6 @@ func TestShareMatchesDuckDB(t *testing.T) {
 				FROM events WHERE ` + inRange + ` GROUP BY "day", "country")
 			SELECT "day", d."country", s FROM d JOIN top ON d."country" IS NOT DISTINCT FROM top."country"
 			ORDER BY "day", d."country" ASC NULLS LAST`},
-		{"trend whole", Query{Kind: "trend", Table: "views", Metrics: []Metric{{Op: "share", Of: "count"}}},
-			[]string{"day", "share_count"},
-			`SELECT "day", count(*)::DOUBLE / SUM(count(*)) OVER (PARTITION BY "day") FROM views WHERE ` + inRange + `
-				GROUP BY "day" ORDER BY "day"`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
