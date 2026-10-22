@@ -264,10 +264,7 @@ type dimView struct {
 
 // viewOf is the dimension column of b for the rows sel.
 func viewOf(b *Batch, name string, typ colType, sel []int32) (dimView, error) {
-	_, c := b.col(readColumn(name))
-	if c == nil && typ == typeBucket {
-		c = nullColumn("value", b.N) // NULL values: bucket -1000
-	}
+	c := batchColumn(b, name)
 	if c == nil {
 		return dimView{}, nil
 	}
@@ -512,10 +509,14 @@ func (a *agg) columns() []string {
 		}
 	}
 	for _, f := range a.filters {
-		add(readColumn(f.column))
+		for _, c := range readColumns(f.column) {
+			add(c)
+		}
 	}
 	for _, d := range a.dims {
-		add(readColumn(d))
+		for _, c := range readColumns(d) {
+			add(c)
+		}
 	}
 	for _, n := range a.nums {
 		add(n.name)

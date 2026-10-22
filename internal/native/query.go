@@ -44,7 +44,7 @@ type Metric struct {
 
 // Filter keeps the rows whose Column satisfies Op against Values.
 type Filter struct {
-	Column string   `json:"column" jsonschema:"one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute"`
+	Column string   `json:"column" jsonschema:"one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent)"`
 	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none (not NULL, and text not empty). gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, and only on numeric columns. NULL fails every op, ne and not_in included"`
 	Values []string `json:"values,omitempty" jsonschema:"the values compared against, as text"`
 }
@@ -151,10 +151,21 @@ var Columns = []string{
 	"platform", "os", "os_version", "os_name", "browser", "browser_version",
 	"browser_locale", "app_version", "app_locale", "device", "device_model",
 	"display_width", "display_height", "country", "consent", "measure",
+	"resolution", "device_label", "platform_version", "consent_state",
+}
+
+// computedTables are the tables each computed column (computedColumns)
+// is a column of.
+var computedTables = map[string][]string{
+	"resolution":       {"events", "views"},
+	"device_label":     {"events", "views", "product"},
+	"platform_version": {"events", "views", "product"},
+	"consent_state":    {"events", "views", "product"},
 }
 
 // plainColumns are Columns, each with whether it is numeric (BIGINT, or
-// the DATE day, which takes gt/lt against YYYY-MM-DD).
+// the DATE day, which takes gt/lt against YYYY-MM-DD); the computed ones
+// are text.
 var plainColumns = func() map[string]bool {
 	numeric := setOf([]string{"project_id", "day", "display_width", "display_height", "consent"})
 	m := make(map[string]bool, len(Columns))
@@ -169,6 +180,9 @@ var plainColumns = func() map[string]bool {
 func columnInfo(table, column string) (orderable, ok bool) {
 	if column == "bucket" {
 		return true, table == "measures"
+	}
+	if tables, found := computedTables[column]; found {
+		return false, slices.Contains(tables, table)
 	}
 	if rest, found := strings.CutPrefix(column, "attr_"); found {
 		return false, rest != ""

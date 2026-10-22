@@ -1722,6 +1722,16 @@ A dimension, series or filter column is one of `project_id`, `family`,
 `sample_rate` are read by the metrics. NULL reads as an empty string and
 sorts last; numbers sort by value.
 
+Four more are computed from those, as the built-in dashboards group by
+them; they are text, so `gt`, `gte`, `lt` and `lte` do not take them:
+
+| Column | Tables | Value |
+| --- | --- | --- |
+| `resolution` | `events`, `views` | `display_width` and `display_height` as `1920x1080`, where both are above 0; else NULL |
+| `device_label` | `events`, `views`, `product` | `device_model` when not empty, else `device` when not empty; else NULL |
+| `platform_version` | `events`, `views`, `product` | `platform`, a space, then `app_version` (`ios 2.4.1`), where `app_version` is not empty; else NULL |
+| `consent_state` | `events`, `views`, `product` | `given` (`consent` 1), `none` (0) or `unknown` (NULL) |
+
 | Metric `op` | Takes | Counts |
 | --- | --- | --- |
 | `count` | | rows |
