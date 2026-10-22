@@ -2,6 +2,7 @@ package native
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -104,6 +105,30 @@ func TestMetricName(t *testing.T) {
 	} {
 		if got := m.Name(); got != want {
 			t.Errorf("%+v: %q, want %q", m, got, want)
+		}
+	}
+}
+
+func TestColumns(t *testing.T) {
+	cases := []struct {
+		name string
+		q    Query
+		want []string
+	}{
+		{"stat", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "actors", As: "value"}}},
+			[]string{"count", "value"}},
+		{"stat compare", Query{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "count"}, {Op: "sum", Column: "value"}}, Compare: "previous"},
+			[]string{"count", "sum_value", "previous_count", "previous_sum_value"}},
+		{"trend", Query{Kind: "trend", Table: "events", Metrics: []Metric{{Op: "daily_max", Of: "users"}}},
+			[]string{"day", "daily_max_users"}},
+		{"trend series", Query{Kind: "trend", Table: "product", Metrics: count(), Series: "path"},
+			[]string{"day", "series", "count"}},
+		{"breakdown", Query{Kind: "breakdown", Table: "events", Metrics: []Metric{{Op: "actors"}, {Op: "count", As: "n"}}, Dimensions: []string{"country", "path"}},
+			[]string{"country", "path", "actors", "n"}},
+	}
+	for _, c := range cases {
+		if got := c.q.Columns(); !slices.Equal(got, c.want) {
+			t.Errorf("%s: Columns() = %v, want %v", c.name, got, c.want)
 		}
 	}
 }

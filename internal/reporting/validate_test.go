@@ -110,7 +110,7 @@ func TestValidateWidget(t *testing.T) {
 	if !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("unregistered source type: err = %v, want ErrInvalid", err)
 	}
-	want = "source type image does not exist; there are md and sql"
+	want = "source type image does not exist; there are md, query and sql"
 	if err.Error() != want {
 		t.Errorf("err = %q, want %q", err.Error(), want)
 	}

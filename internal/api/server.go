@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
@@ -38,7 +39,7 @@ const (
 // writes; files is where the query tool reads the event files, and
 // widgets where sql widgets run on them, under the same
 // CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_ROWS_MAX as the query tool;
-// nat answers the query tool's structured queries.
+// nat answers the query tool's structured queries and query widgets.
 func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, files Files, nat Native, widgets reporting.Files) (http.Handler, func() error, error) {
 	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
 	if err != nil {
@@ -51,7 +52,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	}
 	closeAll := func() error { return errors.Join(db.Close(), subs.Close()) }
 	rep := reporting.New(rst, widgets, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge,
-		ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL})
+		ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL, Native: nat, Rules: registryRules(reg)})
 	h := &host{db: db, subs: subs, reg: reg, ops: ops, rep: rep,
 		ingestURL: cfg.IngestURL, logger: logger, limits: limitsFrom(cfg),
 		ingestDisabled: cfg.IngestDisabled, files: files, native: nat, eventsDir: cfg.EventsDir,
@@ -102,6 +103,19 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	protected.Handle("GET /share/{file}", shares)
 	protected.Handle("GET /share/", shares)
 	return protected, closeAll, nil
+}
+
+// registryRules is the rules query widgets read with: every project's
+// event and attribute rules, as the query tool's (runStructured); none
+// without a registry.
+func registryRules(reg *manage.Registry) reporting.RulesFunc {
+	if reg == nil {
+		return nil
+	}
+	return func(ctx context.Context, _ int64) archive.Rules {
+		events, attrs := reg.Snapshot(ctx).RuleLists()
+		return archive.Rules{Events: events, Attributes: attrs}
+	}
 }
 
 // NewHandler assembles the console surface: tool host, both transports, auth

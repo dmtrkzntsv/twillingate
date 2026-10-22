@@ -112,5 +112,8 @@ func (s *Service) validateWidget(ctx context.Context, comps map[string]Component
 	if err := comp.checkProps(json.RawMessage(w.Props)); err != nil {
 		return err
 	}
+	if w.SourceType != "sql" && remoteTable(w) {
+		return store.Refuse(store.ErrInvalid, "a remote table takes sql only; a %s source needs props.mode \"local\"", w.SourceType)
+	}
 	return st.Validate(ctx, w.Source, comp)
 }

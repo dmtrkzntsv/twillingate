@@ -49,7 +49,7 @@ func TestReportingGuideIsLive(t *testing.T) {
 	}
 	for _, want := range []string{
 		"v0.12.3", reporting.ReleasesURL, reporting.ReleasesURL + "/tag/v0.12.3",
-		"Source types: md, sql",
+		"Source types: md, query, sql",
 		"## Tables", "  views(id, project_id", ", bucket)",
 		"| 1 | blog |", "| 2 | docs |",
 		"| 1001 | Signups this quarter | user | 1001 | yes | no |", "| 1 | Views | system | 1 | yes | no |",

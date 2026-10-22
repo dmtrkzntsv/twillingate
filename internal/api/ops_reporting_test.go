@@ -132,7 +132,7 @@ func TestReportingRoundTrip(t *testing.T) {
 		} `json:"components"`
 	}
 	toolJSON(t, cs, "list_components", map[string]any{}, &comps)
-	if strings.Join(comps.SourceTypes, ",") != "md,sql" || len(comps.Components) == 0 {
+	if strings.Join(comps.SourceTypes, ",") != "md,query,sql" || len(comps.Components) == 0 {
 		t.Errorf("list_components = %+v", comps)
 	}
 	var ds struct {

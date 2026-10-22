@@ -62,6 +62,33 @@ func (m Metric) Name() string {
 	return m.Op
 }
 
+// Columns are the result's column names, in order, as Answer returns
+// them for q, read from q alone: a stat's metrics, then with compare
+// previous a previous_<name> each; a trend's day, series when split, and
+// its metric; a breakdown's dimensions, then its metrics. It does not
+// validate q.
+func (q Query) Columns() []string {
+	var cols []string
+	switch q.Kind {
+	case "trend":
+		cols = append(cols, "day")
+		if q.Series != "" {
+			cols = append(cols, "series")
+		}
+	case "breakdown":
+		cols = append(cols, q.Dimensions...)
+	}
+	for _, m := range q.Metrics {
+		cols = append(cols, m.Name())
+	}
+	if q.Kind == "stat" && q.Compare == "previous" {
+		for _, m := range q.Metrics {
+			cols = append(cols, "previous_"+m.Name())
+		}
+	}
+	return cols
+}
+
 // maxLimit bounds a breakdown's limit, maxSeries a trend's series_limit.
 const (
 	maxLimit  = 1000

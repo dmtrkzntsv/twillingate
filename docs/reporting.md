@@ -1199,7 +1199,7 @@ widget's name (`widget visitors: …`), and nothing is created.
 | widget 42's component was removed; set component first | `update_widget` with a `component` (and resize or archive as needed); see [When widgets break after an update](#when-widgets-break-after-an-update). |
 | the sql uses :project; pass project_id | `preview_widget` only: pass `project_id`. |
 | the sql uses :from or :to; pass from and to | `preview_widget` only: pass `from` and `to`. |
-| preview runs sql only; markdown is drawn as it is typed | `preview_widget` takes a `sql` source; a `md` widget needs no query to preview. |
+| preview runs sql and query only; markdown is drawn as it is typed | `preview_widget` takes a `sql` or `query` source; a `md` widget needs no query to preview. |
 | widget 42 follows the project switcher; pass project_id | Pass `project_id` to `widget_data`. For the range: widget 42 follows the date range; pass from and to. |
 | from 2026-09-10 is after to 2026-09-01; from 2026-01-01 to 2027-02-01 spans more than 365 days; from 2026-10-01 is after today | Pass `from` ≤ `to`, at most 365 days apart, `from` no later than today. |
 | range must be one of today, yesterday, 7d, 30d, 90d, custom | Use a preset id. `create_dashboard` refuses `custom`: create with a preset; the viewer picks custom dates. |
