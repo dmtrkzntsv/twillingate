@@ -16,6 +16,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -151,6 +152,7 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	}
 	files := newHostFiles(t, reg)
 	h := &host{db: db, subs: subs, reg: reg, ops: manage.NewOps(reg, st), files: files.reader,
+		native:    native.New(native.Options{Dir: files.dir}),
 		eventsDir: files.dir, queryTimeout: 5 * time.Second, queryRows: 1000,
 		rep:       reporting.New(st, files, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example"}),
 		ingestURL: "https://collector.test", logger: logger, limits: limitsFrom(&config.Config{})}

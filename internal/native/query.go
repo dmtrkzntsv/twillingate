@@ -16,32 +16,32 @@ var ErrInvalid = errors.New("native: invalid query")
 // a stat is one row of metrics, a trend one metric per day (optionally split
 // by Series), a breakdown the metrics grouped by 1-3 Dimensions.
 type Query struct {
-	Kind        string   `json:"kind"`  // "stat" | "trend" | "breakdown"
-	Table       string   `json:"table"` // "events" | "views" | "product" | "measures"
-	Metrics     []Metric `json:"metrics"`
-	Where       []Filter `json:"where,omitempty"`
-	Dimensions  []string `json:"dimensions,omitempty"`   // breakdown: 1-3
-	Series      string   `json:"series,omitempty"`       // trend: optional split
-	SeriesLimit int      `json:"series_limit,omitempty"` // trend: top N series over the range (default 5)
-	Compare     string   `json:"compare,omitempty"`      // stat: "" | "previous"
-	Limit       int      `json:"limit,omitempty"`        // breakdown: default 20, max 1000
-	Other       bool     `json:"other,omitempty"`        // breakdown: fold the rest into "Other"
-	Order       string   `json:"order,omitempty"`        // breakdown: metric name to sort by, desc (default: first metric)
+	Kind        string   `json:"kind" jsonschema:"stat: one row of metrics (with compare previous, a previous_<name> column each); trend: one metric per day, optionally split by series; breakdown: the metrics grouped by 1 to 3 dimensions"`
+	Table       string   `json:"table" jsonschema:"the rows read: events (every family), views, product or measures"`
+	Metrics     []Metric `json:"metrics" jsonschema:"the aggregates, each an output column; a trend takes exactly 1"`
+	Where       []Filter `json:"where,omitempty" jsonschema:"filters, all of which a row must satisfy"`
+	Dimensions  []string `json:"dimensions,omitempty" jsonschema:"breakdown only, 1 to 3: columns to group by, such as path, country, event_name, or attr_<key> for an attribute (bucket on measures)"`
+	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by"`
+	SeriesLimit int      `json:"series_limit,omitempty" jsonschema:"trend only: how many series, the top ones by the metric over the range (default 5)"`
+	Compare     string   `json:"compare,omitempty" jsonschema:"stat only: previous adds each metric over as many days ending the day before from"`
+	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown only: how many groups, 1 to 1000 (default 20)"`
+	Other       bool     `json:"other,omitempty" jsonschema:"breakdown only: fold the groups past limit into one row whose dimensions read Other"`
+	Order       string   `json:"order,omitempty" jsonschema:"breakdown only: the metric name to rank groups by, descending (default: the first metric)"`
 }
 
 // Metric is one aggregate.
 type Metric struct {
-	Op     string `json:"op"`               // count | actors | users | groups | sum | avg | min | max | daily_sum | daily_max | daily_avg
-	Column string `json:"column,omitempty"` // sum/avg/min/max: value | sample_rate | display_width | display_height
-	Of     string `json:"of,omitempty"`     // daily_*: actors | users | groups
-	As     string `json:"as,omitempty"`     // output column name; default derived from op
+	Op     string `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows"`
+	Column string `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column"`
+	Of     string `json:"of,omitempty" jsonschema:"daily_* only: what is counted distinct per day"`
+	As     string `json:"as,omitempty" jsonschema:"the output column's name (default: op, or op_column, or op_of)"`
 }
 
 // Filter keeps the rows whose Column satisfies Op against Values.
 type Filter struct {
-	Column string   `json:"column"` // a table column or attr_<key>
-	Op     string   `json:"op"`     // eq | ne | in | not_in | contains | prefix | gt | gte | lt | lte | is_set
-	Values []string `json:"values,omitempty"`
+	Column string   `json:"column" jsonschema:"a column of the table, or attr_<key> for an attribute"`
+	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none. gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, and only on numeric columns"`
+	Values []string `json:"values,omitempty" jsonschema:"the values compared against, as text"`
 }
 
 // Name is the metric's output column: As, else derived from the op.
@@ -88,13 +88,31 @@ func columnInfo(table, column string) (orderable, ok bool) {
 	return orderable, ok
 }
 
+// The closed vocabularies of a Query, which a schema describing it lists.
 var (
-	metricOps  = map[string]bool{"count": true, "actors": true, "users": true, "groups": true, "sum": true, "avg": true, "min": true, "max": true, "daily_sum": true, "daily_max": true, "daily_avg": true}
-	valueCols  = map[string]bool{"value": true, "sample_rate": true, "display_width": true, "display_height": true}
-	ofCols     = map[string]bool{"actors": true, "users": true, "groups": true}
-	filterOps  = map[string]bool{"eq": true, "ne": true, "in": true, "not_in": true, "contains": true, "prefix": true, "gt": true, "gte": true, "lt": true, "lte": true, "is_set": true}
+	Kinds        = []string{"stat", "trend", "breakdown"}
+	Tables       = []string{"events", "views", "product", "measures"}
+	MetricOps    = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg"}
+	ValueColumns = []string{"value", "sample_rate", "display_width", "display_height"}
+	OfColumns    = []string{"actors", "users", "groups"}
+	FilterOps    = []string{"eq", "ne", "in", "not_in", "contains", "prefix", "gt", "gte", "lt", "lte", "is_set"}
+)
+
+var (
+	metricOps  = setOf(MetricOps)
+	valueCols  = setOf(ValueColumns)
+	ofCols     = setOf(OfColumns)
+	filterOps  = setOf(FilterOps)
 	orderedOps = map[string]bool{"gt": true, "gte": true, "lt": true, "lte": true}
 )
+
+func setOf(xs []string) map[string]bool {
+	m := make(map[string]bool, len(xs))
+	for _, x := range xs {
+		m[x] = true
+	}
+	return m
+}
 
 func invalid(path, format string, args ...any) error {
 	return fmt.Errorf("%w: %s: %s", ErrInvalid, path, fmt.Sprintf(format, args...))

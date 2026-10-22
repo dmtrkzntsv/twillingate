@@ -24,6 +24,7 @@ import (
 // constant. TestDynamicSitesAreListed checks it both ways: a function
 // that builds SQL needs an entry, and an entry needs such a function.
 var dynamic = map[string]string{
+	"api/ops_query.go:askNative":                  "not SQL: native.Engine.Run takes a structured query, and shares readsql.DB.Run's name",
 	"shared/readsql/page.go:QueryPage":            "wraps the caller's query in the page's filters, sort and window",
 	"shared/readsql/page.go:countWhenEmpty":       "wraps the caller's query to count its rows",
 	"shared/readsql/readsql.go:QueryLimit":        "wraps the caller's query to cap its rows",

@@ -19,6 +19,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/jobs"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/pipeline"
 	"github.com/dmtrkzntsv/twillingate/internal/server"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -183,9 +184,10 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	var surfaces []httpSurface
 	var apiClose func() error
 	widgets := newWidgetFiles(cfg, files, reg)
+	nat := native.New(native.Options{Dir: cfg.EventsDir})
 	switch {
 	case runConsole && runIngest && cfg.Console.Addr == cfg.IngestAddr:
-		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger, files, widgets)
+		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger, files, nat, widgets)
 		if err != nil {
 			stopBackground()
 			return err
@@ -196,7 +198,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		api.RegisterOn(mux, protected, cfg, false, logger)
 		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, api.NotFoundPages(mux), "ingest,console"})
 	case runConsole:
-		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger, files, widgets)
+		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger, files, nat, widgets)
 		if err != nil {
 			stopBackground()
 			return err
