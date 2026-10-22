@@ -103,7 +103,7 @@ func matrix1bCmd(args []string) error {
 	}
 	lo, hi := minMax(m.loads)
 	m.logf("matrix1b: done in %s", time.Since(start).Round(time.Second))
-	return m.appendMD(fmt.Sprintf("\nStep 1b: load average (1 min) at the start of every run and rewrite: %.2f to %.2f. Matrix wall: %s.\n",
+	return m.appendMD(fmt.Sprintf("\nStep 1b: load average (1 min) at the start of every run: %.2f to %.2f. Matrix wall: %s.\n",
 		lo, hi, time.Since(start).Round(time.Second)))
 }
 

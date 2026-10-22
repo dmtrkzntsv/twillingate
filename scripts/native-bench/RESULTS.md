@@ -619,7 +619,7 @@ Against step 1 (serial scans, maps; `pqgo-1d`, `pqgo` source, best wall; step 1'
 
 Failed cells: 0 of 140 (420 runs). Load average (1 min) at run start: 0.86 to 1.00. Runs that started above 1.0 (the gate gave up): 0 cells.
 
-Step 1b: load average (1 min) at the start of every run and rewrite: 0.81 to 1.00. Matrix wall: 24m4s.
+Step 1b: load average (1 min) at the start of every run: 0.81 to 1.00. Matrix wall: 24m4s.
 
 Notes on step 1b (written by hand after the run):
 
