@@ -107,11 +107,13 @@ var (
 // derived from the events as stored, take none (scanSessions, identities).
 // identities holds the project's users and groups first seen in the
 // range, its day their first_seen's day; user_status and group_status
-// look each row's id up in them, over the whole history. Identities are
-// cached between queries (at most MaxBytes of them); while the derived
-// identities file is missing or stale (older than an events file), the
-// next query that needs them derives them again from every event the
-// project's files hold. A malformed query, or a filter value
+// look each row's id up in their first-seen days alone (firstSeen), over
+// the whole history. Identities are cached between queries (at most
+// MaxBytes of them), their stored and live parts apart, so a log's flush
+// derives only the logs' part again; while the derived identities file is
+// missing or stale (older than an events file), the next query that
+// needs them derives them again from every event the project's files
+// hold. A malformed query, or a filter value
 // that does not parse for its column, is refused with an error wrapping
 // ErrInvalid; one whose aggregation needs more than MaxBytes allows, with
 // one wrapping ErrTooLarge. Answer waits for one of MaxScans turns first,
@@ -321,11 +323,11 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 		if err != nil {
 			return nil, nil, err
 		}
-		rows := ids.rows()
+		rows := ids.rowsIn(&r) // only those first seen in r put together
 		if err := charge(rows.bytes()); err != nil {
 			return nil, nil, err
 		}
-		b := identityBatch(rows, s.project, &r)
+		b := identityBatch(rows, s.project)
 		if err := charge(batchBytes(b)); err != nil {
 			return nil, nil, err
 		}
@@ -337,9 +339,9 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 	fam := s.family()
 	read := s.rules.columns(a.columns())
 	status := s.statusColumns(dims)
-	var ids *identitySet
+	var ids *firstSet
 	if len(status) > 0 {
-		if ids, err = s.e.identities(ctx, s.project, files, charge); err != nil {
+		if ids, err = s.e.firstSeen(ctx, s.project, files, charge); err != nil {
 			return nil, nil, err
 		}
 	}

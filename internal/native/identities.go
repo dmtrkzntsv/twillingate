@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"slices"
 	"strings"
 	"sync"
 
@@ -109,32 +108,6 @@ func (m identityMap) fold(o identityMap) {
 	}
 }
 
-// combineIdentities folds parts (a stored file's rows, those derived on
-// read) into one row per identity, as identitiesCombine does: the name of
-// the part with the latest last_seen that has one, the earliest
-// first_seen, the latest last_seen, the counts added.
-func combineIdentities(parts ...identityMap) identityMap {
-	out := identityMap{}
-	for _, p := range parts {
-		for k, x := range p {
-			x.nameAt = x.last
-			cur, ok := out[k]
-			if !ok {
-				out[k] = x
-				continue
-			}
-			if x.named && (!cur.named || x.nameAt > cur.nameAt) {
-				cur.name, cur.named, cur.nameAt = x.name, true, x.nameAt
-			}
-			cur.first, cur.last = min(cur.first, x.first), max(cur.last, x.last)
-			cur.views += x.views
-			cur.events += x.events
-			out[k] = cur
-		}
-	}
-	return out
-}
-
 // bytes is about what m takes.
 func (m identityMap) bytes() int64 {
 	var n int64
@@ -144,45 +117,142 @@ func (m identityMap) bytes() int64 {
 	return n
 }
 
+// firstMap is the day (days since 1970-01-01) each identity was first
+// seen, users and groups apart: all a status lookup needs, without the
+// names and counts an identityMap keeps.
+type firstMap struct{ users, groups map[string]int32 }
+
+// firstBytes is about what an entry costs in a firstMap, its id aside.
+const firstBytes = 32
+
+func newFirstMap() firstMap {
+	return firstMap{users: map[string]int32{}, groups: map[string]int32{}}
+}
+
+func (m firstMap) of(group bool) map[string]int32 {
+	if group {
+		return m.groups
+	}
+	return m.users
+}
+
+// see notes identity (group, id) seen on day; it returns the bytes m grew
+// by. A new id is copied, so m holds no batch's memory.
+func (m firstMap) see(group bool, id string, day int32) int64 {
+	ids := m.of(group)
+	cur, ok := ids[id]
+	switch {
+	case !ok:
+		ids[strings.Clone(id)] = day
+		return firstBytes + int64(len(id))
+	case day < cur:
+		ids[id] = day
+	}
+	return 0
+}
+
+// fold adds o's identities to m: the earlier day of each.
+func (m firstMap) fold(o firstMap) {
+	for _, group := range []bool{false, true} {
+		ids := m.of(group)
+		for id, d := range o.of(group) {
+			if cur, ok := ids[id]; !ok || d < cur {
+				ids[id] = d
+			}
+		}
+	}
+}
+
+// bytes is about what m takes.
+func (m firstMap) bytes() int64 {
+	var n int64
+	for _, ids := range []map[string]int32{m.users, m.groups} {
+		for id := range ids {
+			n += firstBytes + int64(len(id))
+		}
+	}
+	return n
+}
+
 // identitySet is one project's identities, as the reader's identities
 // view holds them, kept as its two parts: base (the derived file's rows
 // when current, else what the events Parquet files derive) and live
-// (what the open logs derive). They are put together only when read
-// whole (rows); a lookup reads both.
+// (what the open logs derive). They are put together only as read
+// (rowsIn), and only the identities a query asks for.
 type identitySet struct {
 	base, live identityMap
 	current    bool // base is a current derived file's rows
-	bytes      int64
 }
 
-// firstDay is the day (days since 1970-01-01) identity k was first seen;
-// ok false for an identity the set lacks.
-func (s *identitySet) firstDay(group bool, id string) (day int64, ok bool) {
-	k := identityKey{group, id}
-	b, okb := s.base[k]
-	l, okl := s.live[k]
+// rowsIn is the identities first seen in r (every one, r nil), put
+// together one row per identity: with a current file, as
+// identitiesCombine folds its rows and the logs' (each part's name
+// dated by its last_seen); else as one part, the files' events and the
+// logs' together (each name dated by its event).
+func (s *identitySet) rowsIn(r *Range) identityMap {
+	lo, hi := everything.days()
+	if r != nil {
+		lo, hi = r.days()
+	}
+	in := func(first int64) bool { d := microsDay(first); return d >= lo && d <= hi }
+	out := identityMap{}
+	for k, b := range s.base {
+		l, okl := s.live[k]
+		first := b.first
+		if okl {
+			first = min(first, l.first)
+		}
+		if in(first) {
+			out[k] = s.merge(b, true, l, okl)
+		}
+	}
+	for k, l := range s.live {
+		if _, ok := s.base[k]; !ok && in(l.first) {
+			out[k] = s.merge(identity{}, false, l, true)
+		}
+	}
+	return out
+}
+
+// merge is one identity's row from its base part b and live part l, those
+// of them ok.
+func (s *identitySet) merge(b identity, okb bool, l identity, okl bool) identity {
+	if s.current {
+		b.nameAt, l.nameAt = b.last, l.last
+	}
+	switch {
+	case !okb:
+		return l
+	case !okl:
+		return b
+	}
+	if l.named && (!b.named || l.nameAt > b.nameAt) {
+		b.name, b.named, b.nameAt = l.name, true, l.nameAt
+	}
+	b.first, b.last = min(b.first, l.first), max(b.last, l.last)
+	b.views += l.views
+	b.events += l.events
+	return b
+}
+
+// firstSet is one project's first-seen days, in the two parts an
+// identitySet has.
+type firstSet struct{ base, live firstMap }
+
+// firstDay is the day (days since 1970-01-01) identity (group, id) was
+// first seen; ok false for an identity the set lacks.
+func (s *firstSet) firstDay(group bool, id string) (day int64, ok bool) {
+	b, okb := s.base.of(group)[id]
+	l, okl := s.live.of(group)[id]
 	switch {
 	case okb && okl:
-		return microsDay(min(b.first, l.first)), true
+		return int64(min(b, l)), true
 	case okb:
-		return microsDay(b.first), true
+		return int64(b), true
 	case okl:
-		return microsDay(l.first), true
+		return int64(l), true
 	}
 	return 0, false
-}
-
-// rows is the set put together, one row per identity: with a current
-// file, as identitiesCombine folds its rows and the logs'; else as one
-// part, the files' events and the logs' together.
-func (s *identitySet) rows() identityMap {
-	if s.current {
-		return combineIdentities(s.base, s.live)
-	}
-	one := make(identityMap, len(s.base)+len(s.live))
-	one.fold(s.base)
-	one.fold(s.live)
-	return combineIdentities(one)
 }
 
 // microsDay is the UTC day of ts (unix microseconds), as ts::DATE.
@@ -195,19 +265,12 @@ func microsDay(ts int64) int64 {
 	return d
 }
 
-// identityBatch is the identities rows of project first seen in r (every
-// one, when r is nil) as a batch of identityColumns, and day: first_seen's
-// day.
-func identityBatch(rows identityMap, project int64, r *Range) *Batch {
-	var lo, hi int64
-	if r != nil {
-		lo, hi = r.days()
-	}
-	var keys []identityKey
-	for k, x := range rows {
-		if d := microsDay(x.first); r == nil || (d >= lo && d <= hi) {
-			keys = append(keys, k)
-		}
+// identityBatch is rows, project's identities, as a batch of
+// identityColumns, and day: first_seen's day.
+func identityBatch(rows identityMap, project int64) *Batch {
+	keys := make([]identityKey, 0, len(rows))
+	for k := range rows {
+		keys = append(keys, k)
 	}
 	n := len(keys)
 	ints := func(v func(x identity) int64) *Column {
@@ -245,96 +308,109 @@ func identityBatch(rows identityMap, project int64, r *Range) *Batch {
 	return b
 }
 
-// identityCache is the engine's cache of identity sets: one per project,
-// each under the signature of the files it was read from (the stored
-// part's, then the logs'), at most MaxBytes of them all together, the
-// least recently used dropped first. A set is never held twice: the cache
-// holds its two parts, which a query reads and puts together itself.
+// idPart names one cached part of a project's identities: the stored
+// part or the live one (the open logs'), as whole rows (an identityMap)
+// or first-seen days only (a firstMap).
+type idPart struct {
+	project int64
+	live    bool
+	first   bool
+}
+
+// identityCache is the engine's cache of identity parts, each under the
+// signature of the files it was read from, at most MaxBytes of them all
+// together, the least recently used dropped first. A project's stored and
+// live parts are cached apart, so a log's flush derives the logs again
+// and nothing else; a query puts the parts together itself.
 type identityCache struct {
 	mu      sync.Mutex // never held over a read
 	max     int64
 	bytes   int64
 	tick    uint64
-	entries map[int64]*identityEntry
-	flights map[int64]chan struct{} // a load under way, closed when done
+	entries map[idPart]*identityEntry
+	flights map[idPart]chan struct{} // a load under way, closed when done
 }
 
+// identityEntry is one cached part: full or first, as its idPart says.
 type identityEntry struct {
-	sig  string
-	set  *identitySet
-	used uint64
+	sig   string
+	full  identityMap
+	first firstMap
+	bytes int64
+	used  uint64
 }
 
-// get is project's set if cached under sig, marked used.
-func (c *identityCache) get(project int64, sig string) *identitySet {
+// get is part's entry if cached under sig, marked used.
+func (c *identityCache) get(part idPart, sig string) *identityEntry {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	x := c.entries[project]
+	x := c.entries[part]
 	if x == nil || x.sig != sig {
 		return nil
 	}
 	c.tick++
 	x.used = c.tick
-	return x.set
+	return x
 }
 
-// put caches set as project's under sig, replacing what it had, and drops
-// the least recently used projects while the cache holds more than max.
-// A set larger than max alone is not cached.
-func (c *identityCache) put(project int64, sig string, set *identitySet) {
+// put caches x as part, replacing what it had, and drops the least
+// recently used parts while the cache holds more than max. A part larger
+// than max alone is not cached.
+func (c *identityCache) put(part idPart, x *identityEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if old := c.entries[project]; old != nil {
-		c.bytes -= old.set.bytes
-		delete(c.entries, project)
+	if old := c.entries[part]; old != nil {
+		c.bytes -= old.bytes
+		delete(c.entries, part)
 	}
-	if set.bytes > c.max {
+	if x.bytes > c.max {
 		return
 	}
 	if c.entries == nil {
-		c.entries = map[int64]*identityEntry{}
+		c.entries = map[idPart]*identityEntry{}
 	}
 	c.tick++
-	c.entries[project] = &identityEntry{sig: sig, set: set, used: c.tick}
-	c.bytes += set.bytes
+	x.used = c.tick
+	c.entries[part] = x
+	c.bytes += x.bytes
 	for c.bytes > c.max {
-		var oldest int64
+		var oldest idPart
 		var at uint64
 		first := true
-		for p, x := range c.entries {
-			if first || x.used < at {
-				oldest, at, first = p, x.used, false
+		for p, y := range c.entries {
+			if first || y.used < at {
+				oldest, at, first = p, y.used, false
 			}
 		}
-		c.bytes -= c.entries[oldest].set.bytes
+		c.bytes -= c.entries[oldest].bytes
 		delete(c.entries, oldest)
 	}
 }
 
-// size is the bytes the cached sets take.
+// size is the bytes the cached parts take.
 func (c *identityCache) size() int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.bytes
 }
 
-// flight waits while another query loads project's set, then returns nil;
-// with none under way, it registers this one's and returns done, which
-// the caller calls once it has loaded (or failed to).
-func (c *identityCache) flight(ctx context.Context, project int64) (done func(), err error) {
+// flight waits while another query loads part, then returns nil; with
+// none under way, it registers this one's and returns done, which the
+// caller calls once it has loaded (or failed to).
+func (c *identityCache) flight(ctx context.Context, part idPart) (done func(), err error) {
 	for {
 		c.mu.Lock()
-		ch, busy := c.flights[project]
+		ch, busy := c.flights[part]
 		if !busy {
 			if c.flights == nil {
-				c.flights = map[int64]chan struct{}{}
+				c.flights = map[idPart]chan struct{}{}
 			}
 			ch = make(chan struct{})
-			c.flights[project] = ch
+			c.flights[part] = ch
 			c.mu.Unlock()
 			return func() {
 				c.mu.Lock()
-				delete(c.flights, project)
+				delete(c.flights, part)
 				c.mu.Unlock()
 				close(ch)
 			}, nil
@@ -349,38 +425,111 @@ func (c *identityCache) flight(ctx context.Context, project int64) (done func(),
 	}
 }
 
-// identities is the identities of the project whose files f lists
-// (archive.ListFiles), as the reader's identities view (archive's
-// derivedView) holds them, rules never applied:
-//   - with a current derived file (archive.Files.Identities), its rows
-//     combined with those derived from the project's open logs;
-//   - without, those derived from all the project's events, the Parquet
-//     files and the logs.
+// identityParts is where the two parts of the identities of the project
+// whose files f lists (archive.ListFiles) come from, as the reader's
+// identities view (archive's derivedView) has them, rules never applied:
+//   - with a current derived file (archive.Files.Identities), its rows;
+//     without, those derived from the project's events Parquet files;
+//   - and those derived from the project's open logs.
 //
-// A set is cached while the files it was read from (paths, sizes,
-// modification times) stay as they were; when any changes, it is read
-// again, the logs derived anew. Concurrent queries missing the cache for
-// one project load it once: the others wait, then look again. charge is
-// told the bytes the set takes (as a derivation builds it, or at once
-// from the cache), and may refuse them with an error.
-func (e *Engine) identities(ctx context.Context, project int64, f archive.Files, charge func(int64) error) (*identitySet, error) {
-	stored, current := f.Parquet, false
-	if f.Identities != "" {
-		stored, current = []string{f.Identities}, true
+// Each part's signature names its files (paths, sizes, modification
+// times), and the stored one whether it is the derived file.
+type identityParts struct {
+	current          bool
+	baseSig, liveSig string
+}
+
+func newIdentityParts(f archive.Files) (identityParts, error) {
+	p := identityParts{current: f.Identities != ""}
+	stored := f.Parquet
+	if p.current {
+		stored = []string{f.Identities}
 	}
-	sig, err := filesSignature(slices.Concat(stored, f.Logs))
+	sig, err := filesSignature(stored)
+	if err != nil {
+		return p, err
+	}
+	p.baseSig = fmt.Sprintf("%t\n%s", p.current, sig)
+	p.liveSig, err = filesSignature(f.Logs)
+	return p, err
+}
+
+// identities is the identities of project, as identityParts says, whole
+// rows. Each part is cached while its files stay as they were; when any
+// changes, that part alone is read again. charge is told the bytes the
+// parts take (as a load builds them, or at once from the cache), and may
+// refuse them with an error.
+func (e *Engine) identities(ctx context.Context, project int64, f archive.Files, charge func(int64) error) (*identitySet, error) {
+	p, err := newIdentityParts(f)
 	if err != nil {
 		return nil, err
 	}
-	sig = fmt.Sprintf("%t\n%d\n%s", current, len(stored), sig)
-	for {
-		if set := e.idCache.get(project, sig); set != nil {
-			if err := charge(set.bytes); err != nil {
-				return nil, err
-			}
-			return set, nil
+	base, err := e.identityPart(ctx, idPart{project: project}, p.baseSig, charge, func() (*identityEntry, error) {
+		var m identityMap
+		var err error
+		if p.current {
+			m, err = e.readIdentities(f.Identities, charge)
+		} else {
+			m, err = e.deriveIdentities(ctx, f.Parquet, nil, charge)
 		}
-		done, err := e.idCache.flight(ctx, project)
+		return &identityEntry{full: m, bytes: m.bytes()}, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	live, err := e.identityPart(ctx, idPart{project: project, live: true}, p.liveSig, charge, func() (*identityEntry, error) {
+		m, err := e.deriveIdentities(ctx, nil, f.Logs, charge)
+		return &identityEntry{full: m, bytes: m.bytes()}, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &identitySet{base: base.full, live: live.full, current: p.current}, nil
+}
+
+// firstSeen is the first-seen days of project's identities, as
+// identities has them, cached and charged as identities says: what the
+// user_status and group_status columns look up, at a fraction of the
+// whole rows' memory.
+func (e *Engine) firstSeen(ctx context.Context, project int64, f archive.Files, charge func(int64) error) (*firstSet, error) {
+	p, err := newIdentityParts(f)
+	if err != nil {
+		return nil, err
+	}
+	base, err := e.identityPart(ctx, idPart{project: project, first: true}, p.baseSig, charge, func() (*identityEntry, error) {
+		var m firstMap
+		var err error
+		if p.current {
+			m, err = e.readFirstSeen(f.Identities, charge)
+		} else {
+			m, err = e.deriveFirstSeen(ctx, f.Parquet, nil, charge)
+		}
+		return &identityEntry{first: m, bytes: m.bytes()}, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	live, err := e.identityPart(ctx, idPart{project: project, live: true, first: true}, p.liveSig, charge, func() (*identityEntry, error) {
+		m, err := e.deriveFirstSeen(ctx, nil, f.Logs, charge)
+		return &identityEntry{first: m, bytes: m.bytes()}, err
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &firstSet{base: base.first, live: live.first}, nil
+}
+
+// identityPart is part, from the cache when held there under sig, else
+// as load builds it (charging as it goes), then cached. Concurrent
+// queries missing the cache for one part load it once: the others wait,
+// then look again. A cached part is charged at once.
+func (e *Engine) identityPart(ctx context.Context, part idPart, sig string, charge func(int64) error,
+	load func() (*identityEntry, error)) (*identityEntry, error) {
+	for {
+		if x := e.idCache.get(part, sig); x != nil {
+			return x, charge(x.bytes)
+		}
+		done, err := e.idCache.flight(ctx, part)
 		if err != nil {
 			return nil, err
 		}
@@ -388,36 +537,24 @@ func (e *Engine) identities(ctx context.Context, project int64, f archive.Files,
 			continue // another query loaded it: look again
 		}
 		defer done()
-		if set := e.idCache.get(project, sig); set != nil { // loaded meanwhile
-			if err := charge(set.bytes); err != nil {
-				return nil, err
-			}
-			return set, nil
+		if x := e.idCache.get(part, sig); x != nil { // loaded meanwhile
+			return x, charge(x.bytes)
 		}
 		break
 	}
-	onIdentityLoad()
-	var base identityMap
-	if current {
-		base, err = e.readIdentities(f.Identities, charge)
-	} else {
-		base, err = e.deriveIdentities(ctx, f.Parquet, nil, charge)
-	}
+	onIdentityLoad(part)
+	x, err := load()
 	if err != nil {
 		return nil, err
 	}
-	live, err := e.deriveIdentities(ctx, nil, f.Logs, charge)
-	if err != nil {
-		return nil, err
-	}
-	set := &identitySet{base: base, live: live, current: current, bytes: base.bytes() + live.bytes()}
-	e.idCache.put(project, sig, set)
-	return set, nil
+	x.sig = sig
+	e.idCache.put(part, x)
+	return x, nil
 }
 
-// onIdentityLoad is called as identities loads a set rather than taking
-// it from the cache; a variable so a test can count the loads.
-var onIdentityLoad = func() {}
+// onIdentityLoad is called as identityPart loads a part rather than
+// taking it from the cache; a variable so a test can count the loads.
+var onIdentityLoad = func(idPart) {}
 
 // filesSignature identifies paths by their names, sizes and modification
 // times.
@@ -435,19 +572,8 @@ func filesSignature(paths []string) (string, error) {
 
 // readIdentities reads a derived identities file (one project's).
 func (e *Engine) readIdentities(path string, charge func(int64) error) (identityMap, error) {
-	groups, err := parquetGroups([]string{path}, "", everything)
-	if err != nil {
-		return nil, err
-	}
-	var gr groupReader
-	defer gr.close() //nolint:errcheck // read only
 	out := identityMap{}
-	for _, g := range groups {
-		g.all = true // no family or day to filter by
-		b, err := gr.read(g, identityColumns, "", everything)
-		if err != nil {
-			return nil, err
-		}
+	err := readIdentityFile(path, identityColumns, func(b *Batch) error {
 		_, kind := b.col("kind")
 		_, id := b.col("id")
 		_, name := b.col("name")
@@ -470,11 +596,51 @@ func (e *Engine) readIdentities(path string, charge func(int64) error) (identity
 			out[identityKey{group: k == "group", id: s}] = x
 			grew += int64(len(s) + len(x.name))
 		}
-		if err := charge(grew + int64(len(out)-before)*identityBytes); err != nil {
-			return nil, err
+		return charge(grew + int64(len(out)-before)*identityBytes)
+	})
+	return out, err
+}
+
+// readFirstSeen reads the first-seen days of a derived identities file
+// (one project's), its kind, id and first_seen columns alone.
+func (e *Engine) readFirstSeen(path string, charge func(int64) error) (firstMap, error) {
+	out := newFirstMap()
+	err := readIdentityFile(path, []string{"kind", "id", "first_seen"}, func(b *Batch) error {
+		_, kind := b.col("kind")
+		_, id := b.col("id")
+		_, first := b.col("first_seen")
+		var grew int64
+		for i := range b.N {
+			k, _ := textAt(kind, i)
+			s, _ := textAt(id, i)
+			ts, _ := timeAt(first, i)
+			grew += out.see(k == "group", s, int32(microsDay(ts)))
+		}
+		return charge(grew)
+	})
+	return out, err
+}
+
+// readIdentityFile reads cols of a derived identities file, each row
+// group's batch handed to each.
+func readIdentityFile(path string, cols []string, each func(*Batch) error) error {
+	groups, err := parquetGroups([]string{path}, "", everything)
+	if err != nil {
+		return err
+	}
+	var gr groupReader
+	defer gr.close() //nolint:errcheck // read only
+	for _, g := range groups {
+		g.all = true // no family or day to filter by
+		b, err := gr.read(g, cols, "", everything)
+		if err != nil {
+			return err
+		}
+		if err := each(b); err != nil {
+			return err
 		}
 	}
-	return out, nil
+	return nil
 }
 
 // timeAt is c's TIMESTAMP at row i; ok false for NULL.
@@ -491,42 +657,17 @@ func timeAt(c *Column, i int) (int64, bool) {
 // is a user, a group_id a group, each named by its user_name or
 // group_name.
 func (e *Engine) deriveIdentities(ctx context.Context, parquet, logs []string, charge func(int64) error) (identityMap, error) {
-	groups, err := parquetGroups(parquet, "", everything)
-	if err != nil {
-		return nil, err
-	}
-	work := make([]group, 0, len(logs)+len(groups))
-	for _, path := range logs {
-		work = append(work, group{file: path, index: -1})
-	}
-	work = append(work, groups...)
 	parts := make([]identityMap, e.workers)
 	for i := range parts {
 		parts[i] = identityMap{}
 	}
-	readers := make([]groupReader, e.workers)
-	var mu sync.Mutex // charge from one worker at a time
-	err = scanParallel(ctx, work, e.workers, func(w int, g group) error {
-		var b *Batch
-		var err error
-		if g.index < 0 {
-			b, err = readLog(g.file, identityEventColumns, "", everything)
-		} else {
-			b, err = readers[w].read(g, identityEventColumns, "", everything)
-		}
-		if err != nil {
-			return err
-		}
-		grew := seeIdentities(parts[w], b)
-		mu.Lock()
-		defer mu.Unlock()
+	err := e.scanIdentityEvents(ctx, parquet, logs, identityEventColumns, func(w int, b *Batch) error {
+		var grew int64
+		eachIdentity(b, func(k identityKey, name string, named bool, ts int64, view bool) {
+			grew += parts[w].see(k, name, named, ts, view)
+		})
 		return charge(grew)
 	})
-	for i := range readers {
-		if cerr := readers[i].close(); err == nil {
-			err = cerr
-		}
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -537,12 +678,71 @@ func (e *Engine) deriveIdentities(ctx context.Context, parquet, logs []string, c
 	return out, nil
 }
 
-// seeIdentities adds b's views and product events to m; it returns the
-// bytes m grew by.
-func seeIdentities(m identityMap, b *Batch) int64 {
+// deriveFirstSeen derives one part of the first-seen days as
+// deriveIdentities derives one of identities, reading no names.
+func (e *Engine) deriveFirstSeen(ctx context.Context, parquet, logs []string, charge func(int64) error) (firstMap, error) {
+	parts := make([]firstMap, e.workers)
+	for i := range parts {
+		parts[i] = newFirstMap()
+	}
+	err := e.scanIdentityEvents(ctx, parquet, logs, []string{"family", "user_id", "group_id", "ts"}, func(w int, b *Batch) error {
+		var grew int64
+		eachIdentity(b, func(k identityKey, _ string, _ bool, ts int64, _ bool) {
+			grew += parts[w].see(k.group, k.id, int32(microsDay(ts)))
+		})
+		return charge(grew)
+	})
+	if err != nil {
+		return firstMap{}, err
+	}
+	out := parts[0]
+	for _, p := range parts[1:] {
+		out.fold(p)
+	}
+	return out, nil
+}
+
+// scanIdentityEvents reads cols of every event of the Parquet files
+// parquet and the logs logs, each batch handed to each with its worker.
+// charge, which each may call, is safe from several workers at once.
+func (e *Engine) scanIdentityEvents(ctx context.Context, parquet, logs, cols []string, each func(w int, b *Batch) error) error {
+	groups, err := parquetGroups(parquet, "", everything)
+	if err != nil {
+		return err
+	}
+	work := make([]group, 0, len(logs)+len(groups))
+	for _, path := range logs {
+		work = append(work, group{file: path, index: -1})
+	}
+	work = append(work, groups...)
+	readers := make([]groupReader, e.workers)
+	err = scanParallel(ctx, work, e.workers, func(w int, g group) error {
+		var b *Batch
+		var err error
+		if g.index < 0 {
+			b, err = readLog(g.file, cols, "", everything)
+		} else {
+			b, err = readers[w].read(g, cols, "", everything)
+		}
+		if err != nil {
+			return err
+		}
+		return each(w, b)
+	})
+	for i := range readers {
+		if cerr := readers[i].close(); err == nil {
+			err = cerr
+		}
+	}
+	return err
+}
+
+// eachIdentity calls fn for each identity on b's views and product
+// events: a user_id that is not empty is a user, a group_id a group, each
+// named by its user_name or group_name (when b has them).
+func eachIdentity(b *Batch, fn func(k identityKey, name string, named bool, ts int64, view bool)) {
 	_, fam := b.col("family")
 	_, ts := b.col("ts")
-	var grew int64
 	for _, who := range []struct {
 		id, name string
 		group    bool
@@ -563,10 +763,9 @@ func seeIdentities(m identityMap, b *Batch) int64 {
 				continue
 			}
 			n, named := textAt(name, i)
-			grew += m.see(identityKey{who.group, s}, n, named, t, f == "views")
+			fn(identityKey{who.group, s}, n, named, t, f == "views")
 		}
 	}
-	return grew
 }
 
 // addStatus sets b's user_status and group_status, those of them cols
@@ -574,7 +773,7 @@ func seeIdentities(m identityMap, b *Batch) int64 {
 // returning on a later day, NULL when the id is NULL or empty, when ids
 // lack it (an id only measures carried) or on a day before it was first
 // seen.
-func addStatus(b *Batch, cols []string, ids *identitySet) {
+func addStatus(b *Batch, cols []string, ids *firstSet) {
 	for _, name := range cols {
 		s, ok := statusColumns[name]
 		if !ok {
@@ -584,7 +783,7 @@ func addStatus(b *Batch, cols []string, ids *identitySet) {
 	}
 }
 
-func statusColumn(b *Batch, idCol string, group bool, ids *identitySet) *Column {
+func statusColumn(b *Batch, idCol string, group bool, ids *firstSet) *Column {
 	_, ic := b.col(idCol)
 	_, dc := b.col("day")
 	out := &Column{Dict: []string{"new", "returning"}, Idx: make([]int32, b.N)}

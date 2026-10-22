@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -117,15 +119,16 @@ func identitiesFixture(t testing.TB) *archivetest.Files {
 // identityColumnList is the identities table's columns, for DuckDB.
 var identityColumnList = `"` + strings.Join(identityColumns, `", "`) + `"`
 
-// identityRows is project's identities as the engine loads them, formatted
-// as duckTable formats DuckDB's rows, sorted.
-func identityRows(t *testing.T, e *Engine, project int64) [][]string {
+// identityRows is project's identities first seen in r (every one, r nil)
+// as the engine loads them, formatted as duckTable formats DuckDB's rows,
+// sorted.
+func identityRows(t *testing.T, e *Engine, project int64, r *Range) [][]string {
 	t.Helper()
 	ids, err := e.identities(context.Background(), project, listFiles(t, e)[project], func(int64) error { return nil })
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := identityBatch(ids.rows(), project, nil)
+	b := identityBatch(ids.rowsIn(r), project)
 	rows := make([][]string, b.N)
 	for i := range b.N {
 		row := make([]string, len(identityColumns))
@@ -157,19 +160,45 @@ func TestIdentitiesRowsMatchDuckDB(t *testing.T) {
 	pdir := filepath.Join(f.Dir, strconv.Itoa(identitiesProject))
 	check := func(t *testing.T) {
 		t.Helper()
-		identityRows(t, e, identitiesProject) // through the cache too
+		identityRows(t, e, identitiesProject, nil) // through the cache too
 
-		got := identityRows(t, e, identitiesProject)
+		got := identityRows(t, e, identitiesProject, nil)
 		want := duckTable(t, f, `SELECT `+identityColumnList+` FROM identities WHERE "project_id" = 4 AND '%[1]s' = '%[2]s'`, "", "")
 		sortRows(want)
 		if len(want) < 10 {
 			t.Fatalf("DuckDB has %d identities: a weak case", len(want))
 		}
 		sameTable(t, got, want)
+
+		// Those first seen in a range, put together alone.
+		r := rng(t, "2026-09-01", today)
+		inRange := identityRows(t, e, identitiesProject, &r)
+		want = duckTable(t, f, `SELECT `+identityColumnList+` FROM identities WHERE "project_id" = 4
+			AND first_seen::DATE BETWEEN DATE '%[1]s' AND DATE '%[2]s'`, "2026-09-01", today)
+		sortRows(want)
+		if len(want) == 0 || len(want) == len(got) {
+			t.Fatalf("DuckDB has %d of %d identities first seen in range: a weak case", len(want), len(got))
+		}
+		sameTable(t, inRange, want)
+
+		// The first-seen days a status looks up are every identity's.
+		first, err := e.firstSeen(context.Background(), identitiesProject, listFiles(t, e)[identitiesProject], func(int64) error { return nil })
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, row := range got {
+			day, ok := first.firstDay(row[1] == "group", row[2])
+			if !ok || formatDay(day) != row[4][:10] {
+				t.Errorf("%s %s first seen on %s (%t), want %s", row[1], row[2], formatDay(day), ok, row[4][:10])
+			}
+		}
+		if n := len(first.base.users) + len(first.base.groups) + len(first.live.users) + len(first.live.groups); n < len(got) {
+			t.Errorf("%d first-seen days for %d identities", n, len(got))
+		}
 	}
 	t.Run("current file and logs", func(t *testing.T) {
 		check(t)
-		got := identityRows(t, e, identitiesProject)
+		got := identityRows(t, e, identitiesProject, nil)
 		if !slices.ContainsFunc(got, func(r []string) bool { return r[2] == "u1" && r[3] == "Renamed" }) {
 			t.Error("u1 is not named by the logs, whose last_seen is the latest")
 		}
@@ -179,7 +208,7 @@ func TestIdentitiesRowsMatchDuckDB(t *testing.T) {
 		f.Write(t, store.Event{ID: "i-grown", ProjectID: identitiesProject, Family: store.FamilyViews, EventName: "pageview",
 			TS: at, Kind: "web", ActorID: "a2", UserID: "u2", UserName: "Grown", GroupID: "g9"})
 		check(t)
-		got := identityRows(t, e, identitiesProject)
+		got := identityRows(t, e, identitiesProject, nil)
 		if !slices.ContainsFunc(got, func(r []string) bool { return r[2] == "g9" }) {
 			t.Error("the grown log's group is not read")
 		}
@@ -358,8 +387,8 @@ func TestIdentitiesCacheBounded(t *testing.T) {
 		}
 	}
 	one := big.idCache.size() / int64(len(projects))
-	if one == 0 || len(big.idCache.entries) != len(projects) {
-		t.Fatalf("%d bytes a project, %d cached: want every project cached", one, len(big.idCache.entries))
+	if n := len(cachedProjects(big)); one == 0 || n != len(projects) {
+		t.Fatalf("%d bytes a project, %d cached: want every project cached", one, n)
 	}
 
 	// Room for five projects' sets (a query needs about three times one:
@@ -374,28 +403,98 @@ func TestIdentitiesCacheBounded(t *testing.T) {
 			t.Fatalf("after project %d: %d bytes cached, over %d", p, n, limit)
 		}
 	}
-	var cached []int64
-	for p := range e.idCache.entries {
-		cached = append(cached, p)
-	}
-	slices.Sort(cached)
-	if want := []int64{7, 8, 9, 10, 11}; !slices.Equal(cached, want) {
+	if cached, want := cachedProjects(e), []int64{7, 8, 9, 10, 11}; !slices.Equal(cached, want) {
 		t.Errorf("projects %v cached, want the last used %v", cached, want)
 	}
 }
 
+// cachedProjects is the projects whose stored identities part e caches
+// (the live one is empty once the logs are dumped), sorted.
+func cachedProjects(e *Engine) []int64 {
+	e.idCache.mu.Lock()
+	defer e.idCache.mu.Unlock()
+	var out []int64
+	for part, x := range e.idCache.entries {
+		if !part.live && x.bytes > 0 {
+			out = append(out, part.project)
+		}
+	}
+	slices.Sort(out)
+	return out
+}
+
+// countLoads counts the identity parts loaded, by part, until the test
+// ends.
+func countLoads(t *testing.T) func() map[idPart]int {
+	t.Helper()
+	var mu sync.Mutex
+	loads := map[idPart]int{}
+	onIdentityLoad = func(p idPart) {
+		mu.Lock()
+		defer mu.Unlock()
+		loads[p]++
+	}
+	t.Cleanup(func() { onIdentityLoad = func(idPart) {} })
+	return func() map[idPart]int {
+		mu.Lock()
+		defer mu.Unlock()
+		return maps.Clone(loads)
+	}
+}
+
+// TestIdentitiesPartsCachedApart: a log's flush loads the live part again
+// and not the stored one; the first-seen days are cached as the rows are,
+// at a fraction of their bytes.
+func TestIdentitiesPartsCachedApart(t *testing.T) {
+	f := identitiesFixture(t)
+	e := New(Options{Dir: f.Dir})
+	loads := countLoads(t)
+	ctx, free := context.Background(), func(int64) error { return nil }
+	load := func() {
+		t.Helper()
+		files := listFiles(t, e)[identitiesProject]
+		if _, err := e.identities(ctx, identitiesProject, files, free); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := e.firstSeen(ctx, identitiesProject, files, free); err != nil {
+			t.Fatal(err)
+		}
+	}
+	load()
+	load()
+	base, live := idPart{project: identitiesProject}, idPart{project: identitiesProject, live: true}
+	firstBase, firstLive := idPart{project: identitiesProject, first: true}, idPart{project: identitiesProject, live: true, first: true}
+	if got, want := loads(), map[idPart]int{base: 1, live: 1, firstBase: 1, firstLive: 1}; !maps.Equal(got, want) {
+		t.Fatalf("loads %v, want %v: each part once", got, want)
+	}
+	f.Write(t, store.Event{ID: "i-flushed", ProjectID: identitiesProject, Family: store.FamilyViews, EventName: "pageview",
+		TS: date(t, today).Time().Add(23 * time.Hour), Kind: "web", ActorID: "a3", UserID: "u-flushed"})
+	load()
+	if got, want := loads(), map[idPart]int{base: 1, live: 2, firstBase: 1, firstLive: 2}; !maps.Equal(got, want) {
+		t.Errorf("loads %v after a log's flush, want %v: the live parts alone again", got, want)
+	}
+
+	e.idCache.mu.Lock()
+	full := e.idCache.entries[base].bytes + e.idCache.entries[live].bytes
+	first := e.idCache.entries[firstBase].bytes + e.idCache.entries[firstLive].bytes
+	e.idCache.mu.Unlock()
+	if first == 0 || 2*first > full {
+		t.Errorf("first-seen days take %d bytes, the rows %d: want under half", first, full)
+	}
+}
+
 // TestIdentitiesLoadedOnce: concurrent queries that miss the cache for
-// one project load its identities once.
+// one project load each part of its identities once.
 func TestIdentitiesLoadedOnce(t *testing.T) {
 	f := identitiesFixture(t)
 	e := New(Options{Dir: f.Dir})
 	var loads atomic.Int64
 	release := make(chan struct{})
-	onIdentityLoad = func() {
+	onIdentityLoad = func(idPart) {
 		loads.Add(1)
 		<-release // hold the load while the others queue behind it
 	}
-	t.Cleanup(func() { onIdentityLoad = func() {} })
+	t.Cleanup(func() { onIdentityLoad = func(idPart) {} })
 	files := listFiles(t, e)[identitiesProject]
 	var wg sync.WaitGroup
 	sets := make([]*identitySet, 8)
@@ -416,11 +515,14 @@ func TestIdentitiesLoadedOnce(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // let the others reach the wait
 	close(release)
 	wg.Wait()
-	if n := loads.Load(); n != 1 {
-		t.Errorf("%d loads, want 1", n)
+	if n := loads.Load(); n != 2 {
+		t.Errorf("%d loads, want 2: the stored part and the live one", n)
+	}
+	same := func(a, b identityMap) bool {
+		return reflect.ValueOf(a).UnsafePointer() == reflect.ValueOf(b).UnsafePointer()
 	}
 	for _, s := range sets {
-		if s != sets[0] {
+		if !same(s.base, sets[0].base) || !same(s.live, sets[0].live) {
 			t.Fatal("the queries got different sets")
 		}
 	}
