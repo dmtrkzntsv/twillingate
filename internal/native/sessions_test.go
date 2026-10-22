@@ -225,6 +225,43 @@ func TestSessionsRowsMatchDuckDB(t *testing.T) {
 	}
 }
 
+// TestSessionsStaleMonthMatchesDuckDB: a month's session file older than
+// its events file (the month merged again after it was derived) is stale,
+// so the month is derived from its events, alone or beside the next one.
+func TestSessionsStaleMonthMatchesDuckDB(t *testing.T) {
+	f := sessionsFixture(t)
+	pdir := filepath.Join(f.Dir, strconv.Itoa(sessionsProject))
+	later := time.Now().Add(time.Hour)
+	if err := os.Chtimes(filepath.Join(pdir, "2026-08.parquet"), later, later); err != nil {
+		t.Fatal(err)
+	}
+	all, err := archive.ListFiles(f.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range all[sessionsProject].Sessions {
+		if filepath.Base(s) == "2026-08.parquet" {
+			t.Fatalf("session file %s is current", s)
+		}
+	}
+	e := New(Options{Dir: f.Dir, Workers: 3})
+	for _, c := range []struct{ name, from, to string }{
+		{"the month alone", "2026-08-01", "2026-08-31"},
+		{"across the month's end", "2026-08-30", "2026-09-03"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			got := sessionRows(t, e, sessionsProject, c.from, c.to)
+			want := duckTable(t, f, `SELECT `+sessionColumnList+` FROM sessions
+				WHERE "project_id" = 3 AND "day" BETWEEN DATE '%[1]s' AND DATE '%[2]s'`, c.from, c.to)
+			sortRows(want)
+			if len(want) == 0 {
+				t.Fatal("DuckDB has no sessions: a weak case")
+			}
+			sameTable(t, got, want)
+		})
+	}
+}
+
 func TestSessionsQueriesMatchDuckDB(t *testing.T) {
 	f := sessionsFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 2})
