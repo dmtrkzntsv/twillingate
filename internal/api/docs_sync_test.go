@@ -17,6 +17,7 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/docs"
 	"github.com/dmtrkzntsv/twillingate/internal/enrich"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -584,4 +585,44 @@ func docSection(t *testing.T, doc, heading string) string {
 		t.Fatalf("no %q section", heading)
 	}
 	return body
+}
+
+// TestStructuredQueryDocument binds docs/twillingate.md's "Structured
+// queries" to internal/native: every JSON example is a query tool input
+// whose query validates, one per kind at least, and the section names
+// every kind, table, column, metric and filter operator.
+func TestStructuredQueryDocument(t *testing.T) {
+	body := docSection(t, docs.Twillingate, "### Structured queries")
+	blocks := regexp.MustCompile("(?s)```json\n(.*?)```").FindAllStringSubmatch(body, -1)
+	kinds := map[string]bool{}
+	for _, b := range blocks {
+		dec := json.NewDecoder(strings.NewReader(b[1]))
+		dec.DisallowUnknownFields()
+		var in queryIn
+		if err := dec.Decode(&in); err != nil {
+			t.Errorf("example does not parse as query's input: %v\n%s", err, b[1])
+			continue
+		}
+		if in.Query == nil {
+			t.Errorf("example has no query:\n%s", b[1])
+			continue
+		}
+		if err := in.Query.Validate(); err != nil {
+			t.Errorf("example is refused: %v\n%s", err, b[1])
+		}
+		kinds[in.Query.Kind] = true
+	}
+	for _, k := range native.Kinds {
+		if !kinds[k] {
+			t.Errorf("no example of a %s", k)
+		}
+	}
+	for _, list := range [][]string{native.Kinds, native.Tables, native.Columns, native.MetricOps,
+		native.ValueColumns, native.OfColumns, native.FilterOps} {
+		for _, name := range list {
+			if !strings.Contains(body, "`"+name+"`") {
+				t.Errorf("the Structured queries section does not name `%s`", name)
+			}
+		}
+	}
 }

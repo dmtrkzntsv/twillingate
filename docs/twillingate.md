@@ -1445,7 +1445,7 @@ history starts where the files' does. `query`, the count of events in
 | `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys `product_attributes` breaks down (`$browser`, `$path`, …); a key none carried gives no rows |
 | `retention` | `actor` (`user` or `install`) | Cohort curves for the cohorts that began in the range, every offset, counted over the days before today (UTC), plus `aggregated_through`, the newest such day with views or product events — cohorts and offsets after it are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` (default 50) | Per user or group, busiest first (views plus product events in the range): its `actors` and `users` (itself for a user, its members for a group), each distinct per day and added up over the days, its `views`, `events` and the display `name` sent with its latest event. **Surfaces personal data on projects whose clients send ids** |
-| `query` | `sql` | A single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them: see [Writing SQL against the event files](#writing-sql-against-the-event-files). Row-capped and time-limited; it reads those seven tables only (no table function but `range`, `generate_series` and `unnest`, no schema-qualified name such as `main.events`), every project's rows |
+| `query` | `sql`, or `project_id`, `from`, `to` (optional: the 30 days ending today, UTC) and `query` | One of two, never both. `query` is a structured query over one project, answered natively: a stat, a trend or a breakdown, see [Structured queries](#structured-queries). `sql` is a single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them: see [Writing SQL against the event files](#writing-sql-against-the-event-files); it reads those seven tables only (no table function but `range`, `generate_series` and `unnest`, no schema-qualified name such as `main.events`), every project's rows, and takes none of `project_id`, `from` and `to`. Row-capped and time-limited either way |
 
 `views_breakdown`'s dimensions, the columns each returns and what it reads
 from the `views` table:
@@ -1558,7 +1558,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/measures` | `measures` | query: `from`, `to`, `name`, `attr_key` |
 | `GET` | `/api/projects/{project_id}/retention` | `retention` | query: `from`, `to`, `actor` |
 | `GET` | `/api/projects/{project_id}/identities` | `identities` | query: `from`, `to`, `kind`, `limit` |
-| `POST` | `/api/query` | `query` | body: `sql` |
+| `POST` | `/api/query` | `query` | body: `sql`, or `project_id`, `from`, `to` and `query` → `{"columns","rows","truncated","note","approximate"}`; `truncated`, `note` and `approximate` are absent when empty |
 | `GET` | `/api/schema/views` | `schema://views` | — (text/plain) |
 
 Success is the tool's output as JSON, at 200 (201 where noted). Errors are
@@ -1684,3 +1684,119 @@ engine's memory (`ENGINE_MEMORY_LIMIT`) is refused with that cause: a
 `GROUP BY` in a subquery whose rows are then counted.
 When the open logs themselves do not fit that limit, whatever the query,
 the error says so: raise `ENGINE_MEMORY_LIMIT`.
+
+### Structured queries
+
+`query`'s `query` field asks one project's event files a question without
+SQL: twillingate answers it itself, with the rules applied as everywhere
+else, over `project_id`'s days `from` through `to` (both `YYYY-MM-DD`;
+`to` defaults to today, UTC, and `from` to 29 days before `to`; at most
+1,100 days a call). A malformed query is refused as `invalid`, with a
+message naming the field (`dimensions`, `metrics[0].column`,
+`where[1].values`); an unknown project is `not_found`.
+
+| Field | Kinds | Meaning |
+| --- | --- | --- |
+| `kind` | all | `stat`, `trend` or `breakdown` |
+| `table` | all | `events` (every family), `views`, `product` or `measures` |
+| `metrics` | all | the aggregates, each an output column; a trend takes exactly one |
+| `where` | all | filters, `{column, op, values}`, every one of which a row must satisfy |
+| `dimensions` | breakdown | 1 to 3 columns to group by |
+| `limit` | breakdown | groups returned, 1 to 1000 (default 20) |
+| `order` | breakdown | the metric name to rank the groups by, descending (default the first metric); ties by the dimensions |
+| `other` | breakdown | `true` adds an `Other` row (every dimension `Other`) summing the groups past `limit`, when there are any |
+| `series` | trend | a column to split each day by |
+| `series_limit` | trend | how many series, 1 to 50, those ranking first by the metric over the range (default 5) |
+| `compare` | stat | `previous` adds a `previous_<name>` column per metric, over as many days ending the day before `from`; `""` or absent, none |
+
+A dimension, series or filter column is one of `project_id`, `family`,
+`event_name`, `day`, `kind`, `actor_id`, `actor_kind`, `user_id`,
+`group_id`, `session_id`, `install_id`, `user_name`, `group_name`, `host`,
+`path`, `referrer_source`, `utm_source`, `utm_medium`, `utm_campaign`,
+`platform`, `os`, `os_version`, `os_name`, `browser`, `browser_version`,
+`browser_locale`, `app_version`, `app_locale`, `device`, `device_model`,
+`display_width`, `display_height`, `country`, `consent` and `measure`
+(as `schema://views` describes them), `bucket` on `measures`, or
+`attr_<key>` for an attribute (the key as sent, `attr_plan`). The others
+(`id`, `ts`, `received_at`, `value`, `sample_rate`) are not: `value` and
+`sample_rate` are read by the metrics. NULL reads as an empty string and
+sorts last; numbers sort by value.
+
+| Metric `op` | Takes | Counts |
+| --- | --- | --- |
+| `count` | | rows |
+| `actors`, `users`, `groups` | | distinct `actor_id`, `user_id`, `group_id` over the range (NULL left out) |
+| `sum`, `avg`, `min`, `max` | `column`: `value`, `sample_rate`, `display_width` or `display_height` | the column's aggregate; empty over no value |
+| `daily_sum`, `daily_max`, `daily_avg` | `of`: `actors`, `users` or `groups` | the distinct count per day, summed, maxed or averaged over the days with rows |
+
+A metric's column is named by `as`, else `op`, `op_column` (`sum_value`)
+or `op_of` (`daily_sum_actors`); two metrics may not share a name, nor,
+with `compare`, may one be named `previous_<another's name>`.
+
+| Filter `op` | Values |
+| --- | --- |
+| `eq`, `ne`, `contains`, `prefix` | exactly one |
+| `in`, `not_in` | one or more |
+| `gt`, `gte`, `lt`, `lte` | exactly one: an integer, or `YYYY-MM-DD` on `day`; numeric columns only (`day`, `project_id`, `display_width`, `display_height`, `consent`, `bucket`) |
+| `is_set` | none: the column is not NULL, and on a text column not empty either |
+
+A NULL value fails every operator, `ne` and `not_in` included (as in
+SQL): `{"column": "country", "op": "ne", "values": ["DE"]}` leaves out the
+rows without a country too.
+
+The answer is `{columns, rows, truncated, note, approximate}`, every value
+as text:
+
+- **stat**: one row, a column per metric (then `previous_<name>` ones);
+- **trend**: `day`, `series` when split, then the metric; a row per day
+  (and series) that has rows, by day then series. Days without rows are
+  absent, not zero. A trend over more days than `CONSOLE_QUERY_ROWS_MAX`
+  (1,000 by default) is always cut there, and `truncated`;
+- **breakdown**: a column per dimension, then per metric; the `limit`
+  groups ranking first, then the `Other` row.
+
+A distinct count over the range (`actors`, `users`, `groups`) is exact up
+to 1,024 ids per group; past that it is estimated, within about ±2%, and
+its column is named in `approximate`. The `daily_*` metrics, and a
+trend's per-day counts, are always exact; but the series a split trend
+keeps are chosen by their count over the range, so with a distinct
+metric past 1,024 ids that choice rests on estimates. A query tracks at
+most 100,000 groups (a trend as many series × days as ten times that) in
+at most 128 MiB of memory: past either, or past `CONSOLE_QUERY_ROWS_MAX`
+rows, a breakdown's or a split trend's answer is `truncated`, its
+untracked groups left out (of `Other` too), and `note` says so; narrow
+the range, add a filter or lower the limit. A stat or an unsplit trend
+has no group to leave out: one that needs more memory (a `daily_*` metric
+or a trend's distinct count over many days with many ids, whose per-day
+ids are all kept) is refused as `invalid`, "the query needs more memory
+than allowed; narrow the range or add filters", and so is a breakdown or
+split trend whose tracked groups alone grow past twice that. It runs
+under `CONSOLE_QUERY_TIMEOUT`.
+
+A stat: visitors and views on the web last week, against the week
+before.
+
+```json
+{"project_id": 1, "from": "2026-09-07", "to": "2026-09-13", "query": {
+  "kind": "stat", "table": "views", "compare": "previous",
+  "where": [{"column": "kind", "op": "eq", "values": ["web"]}],
+  "metrics": [{"op": "daily_sum", "of": "actors", "as": "visitors"}, {"op": "count", "as": "views"}]}}
+```
+
+A trend: signups per day, split by plan.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "trend", "table": "product", "series": "attr_plan",
+  "where": [{"column": "event_name", "op": "eq", "values": ["signup"]}],
+  "metrics": [{"op": "count"}]}}
+```
+
+A breakdown: the ten busiest paths by unique users, the rest as `Other`.
+
+```json
+{"project_id": 1, "from": "2026-09-01", "to": "2026-09-30", "query": {
+  "kind": "breakdown", "table": "views", "dimensions": ["path"],
+  "metrics": [{"op": "users"}, {"op": "count", "as": "views"}],
+  "order": "users", "limit": 10, "other": true}}
+```

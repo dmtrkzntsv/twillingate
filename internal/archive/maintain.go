@@ -383,6 +383,24 @@ func columnsOf(keys map[string]bool) []column {
 	return cols
 }
 
+// LogColumn is a key of a log's lines and the column a reader reads it
+// into.
+type LogColumn struct{ Key, Name string }
+
+// LogColumns is columnsOf for a reader of the logs outside DuckDB, so its
+// columns are named as this log's select names them (logSelect): fields,
+// then every other key, a key equal to an earlier one but for case
+// suffixed _<n>. The events view unions them with other files' by name,
+// ignoring case, so a suffixed name holds only within the log.
+func LogColumns(keys map[string]bool) []LogColumn {
+	cols := columnsOf(keys)
+	out := make([]LogColumn, len(cols))
+	for i, c := range cols {
+		out[i] = LogColumn{c.key, c.name}
+	}
+	return out
+}
+
 // visible is key as a column name: NUL, which SQL text cannot hold (DuckDB
 // reads it as a C string, cut at the first NUL), becomes the text \u0000.
 // Every other character, control ones included, is kept as stored.

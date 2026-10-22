@@ -39,8 +39,8 @@ func TestKeyScannerReadsOnlyWhatWasAppended(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "2026-10-12.log")
 	first := `{"id":"1","attr_a":"x"}` + "\n" + `[1,2]` + "\n" + `not json` + "\n" + `{"id":"2","attr_b":"y"}` + "\n"
 	appendTo(t, path, first)
-	s := newKeyScanner()
-	keys, err := s.keys(path)
+	s := NewKeyScanner()
+	keys, err := s.Keys(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,7 +48,7 @@ func TestKeyScannerReadsOnlyWhatWasAppended(t *testing.T) {
 		t.Fatalf("keys = %v", got)
 	}
 	appendTo(t, path, `{"id":"3","attr_c":"z"}`+"\n"+`{"id":"4","attr_d":`)
-	keys, err = s.keys(path)
+	keys, err = s.Keys(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestKeyScannerReadsOnlyWhatWasAppended(t *testing.T) {
 		t.Fatalf("next = %d, want %d: the torn line must be read again, nothing before it", s.logs[path].next, want)
 	}
 	appendTo(t, path, `"w"}`+"\n")
-	keys, err = s.keys(path)
+	keys, err = s.Keys(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,22 +75,22 @@ func TestKeyScannerStartsOverOnANewFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "2026-10-12.log")
 	appendTo(t, path, `{"id":"1","attr_a":"x","attr_long_enough_to_outgrow_the_next_file":"x"}`+"\n")
-	s := newKeyScanner()
-	if _, err := s.keys(path); err != nil {
+	s := NewKeyScanner()
+	if _, err := s.Keys(path); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Rename(path, filepath.Join(dir, "2026-10-12.1.closed")); err != nil {
 		t.Fatal(err)
 	}
 	appendTo(t, path, `{"id":"9","attr_z":"q"}`+"\n")
-	keys, err := s.keys(path)
+	keys, err := s.Keys(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := sortedKeys(keys); !eq(got, []string{"attr_z", "id"}) {
 		t.Fatalf("keys of the new file = %v; want attr_z and id only", got)
 	}
-	s.keep([]string{path})
+	s.Keep([]string{path})
 	if _, ok := s.logs[filepath.Join(dir, "2026-10-12.1.closed")]; ok {
 		t.Fatal("keep left a log it was not given")
 	}
@@ -107,21 +107,21 @@ func TestColumnsOfLeavesItsKeysAlone(t *testing.T) {
 	}
 }
 
-// TestKeyScannerReturnsACopy: a caller may change the set keys returns (the
+// TestKeyScannerReturnsACopy: a caller may change the set Keys returns (the
 // archive's columns read it while a second call may be reading the log);
 // the scanner's own set, and so the next call, does not change.
 func TestKeyScannerReturnsACopy(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "2026-10-12.log")
 	appendTo(t, path, `{"id":"1","attr_a":"x"}`+"\n")
-	s := newKeyScanner()
-	keys, err := s.keys(path)
+	s := NewKeyScanner()
+	keys, err := s.Keys(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	keys["attr_gone"] = true
 	delete(keys, "id")
 	appendTo(t, path, `{"id":"2","attr_b":"y"}`+"\n")
-	again, err := s.keys(path)
+	again, err := s.Keys(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,8 +151,8 @@ func TestKeyScannerReadsAcrossChunks(t *testing.T) {
 	if err := os.WriteFile(path, []byte(b.String()), 0o640); err != nil {
 		t.Fatal(err)
 	}
-	s := newKeyScanner()
-	keys, err := s.keys(path)
+	s := NewKeyScanner()
+	keys, err := s.Keys(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,15 +175,15 @@ func TestKeyScannerRescansAfterACutBack(t *testing.T) {
 	first := `{"id":"1","attr_a":"x"}` + "\n"
 	second := `{"id":"2","attr_b":"y"}` + "\n"
 	appendTo(t, path, first+second)
-	s := newKeyScanner()
-	if _, err := s.keys(path); err != nil {
+	s := NewKeyScanner()
+	if _, err := s.Keys(path); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Truncate(path, int64(len(first))); err != nil { // the second line, cut back
 		t.Fatal(err)
 	}
 	appendTo(t, path, `{"id":"3","attr_c":"z","attr_d":"w"}`+"\n"+`{"id":"4","attr_e":"v"}`+"\n")
-	keys, err := s.keys(path)
+	keys, err := s.Keys(path)
 	if err != nil {
 		t.Fatal(err)
 	}

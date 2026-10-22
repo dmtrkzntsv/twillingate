@@ -43,6 +43,9 @@ type host struct {
 	// files runs SQL over the raw event files (archive.Reader); nil in a
 	// process without an engine, where the tools that read them refuse.
 	files Files
+	// native answers the query tool's structured queries over the event
+	// files; nil in a process that cannot read them, where those refuse.
+	native Native
 	// eventsDir is EVENTS_DIR, whose file names say each project's days.
 	eventsDir string
 	// queryTimeout and queryRows are CONSOLE_QUERY_TIMEOUT and
@@ -365,8 +368,8 @@ func (h *host) register(r *registrar) {
 	expose(r, spec{Name: "identities", Annotations: ro, Method: "GET", Path: p + "/identities",
 		Description: "Per-user or per-group activity over the range, from the event files: per id, its actors and users (distinct per day, added up over the days), views and product events, busiest first, with the display name sent with its latest event. This surfaces personal data on projects whose clients send ids."},
 		h.identities)
-	expose(r, spec{Name: "query", Annotations: ro, Method: "POST", Path: "/api/query",
-		Description: "Escape hatch: run one read-only SELECT/WITH in DuckDB SQL over the event files: the tables events, views, product, measures, sessions, identities and aliases and nothing else (no table function but range, generate_series and unnest, no schema-qualified name such as main.events), one attr_<key> column per attribute key; read schema://views first (docs://twillingate, \"Writing SQL against the event files\"). Row-capped and time-limited; read-only."},
+	expose(r, spec{Name: "query", Annotations: ro, Method: "POST", Path: "/api/query", constrain: queryEnums,
+		Description: "Ask the event files a question, one of two ways. query is the native structured language over one project (project_id, from, to: default the 30 days ending today): a stat (one row of metrics, optionally against the previous period), a trend (one metric per day, optionally split by a series) or a breakdown (metrics grouped by 1-3 dimensions), over events, views, product or measures, with filters; distinct counts past 1,024 ids per group are estimated (about ±2%) and named in approximate (docs://twillingate, \"Structured queries\"). sql is the escape hatch, DuckDB SQL until it moves out: one read-only SELECT/WITH over the tables events, views, product, measures, sessions, identities and aliases and nothing else (no table function but range, generate_series and unnest, no schema-qualified name such as main.events), one attr_<key> column per attribute key, every project's rows; read schema://views first (\"Writing SQL against the event files\"). Give sql or query, not both. Row-capped and time-limited; read-only."},
 		h.runQuery)
 
 	expose(r, spec{Name: "create_project", Annotations: write, Method: "POST", Path: "/api/projects", Status: http.StatusCreated,
