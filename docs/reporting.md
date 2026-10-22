@@ -90,20 +90,19 @@ checked against its props schema), and a `width` and `height` (see
 **A widget's SQL decides what it follows.** A query that uses `:project`
 follows the page's project switcher; one that uses `:from` or `:to` follows the
 range switcher; one that uses neither is fixed, and shows whatever its SQL
-names. A `query` source always follows both. A dashboard shows a switcher only when at least one of its live widgets
-follows it. `get_dashboard` reports `follows_project` and `follows_range` for
-the dashboard and for each widget.
+names. A `query` source always follows both. A dashboard shows a switcher only
+when at least one of its live widgets follows it. `get_dashboard` reports
+`follows_project` and `follows_range` for the dashboard and for each widget.
 
-**Every write validates the whole result** and refuses with a message that
-says what to change: the component exists and accepts the source type; the SQL
-uses only the three parameters, runs, and returns the columns the component
-reads (checked on a sample project and range); a structured query is valid and,
-after `rename`, returns those columns (checked without reading data); Markdown
-is not empty; props
-match the schema; the size is in range. Refusals come back as tool errors over
-MCP and as `400 invalid`, `404 not_found` or `409 conflict` over HTTP. Every
-write except the viewer's selection is recorded in the audit log with the edge
-it came through (`mcp` or `api`).
+**Every write validates the whole result** and refuses with a message that says
+what to change: the component exists and accepts the source type; the SQL uses
+only the three parameters, runs, and returns the columns the component reads
+(checked on a sample project and range); a structured query is valid and, after
+`rename`, returns those columns (checked without reading data); Markdown is not
+empty; props match the schema; the size is in range. Refusals come back as tool
+errors over MCP and as `400 invalid`, `404 not_found` or `409 conflict` over
+HTTP. Every write except the viewer's selection is recorded in the audit log
+with the edge it came through (`mcp` or `api`).
 
 **Loading a widget** (`widget_data`) answers in one envelope, whatever the
 component:
@@ -384,11 +383,11 @@ Every tool above except `reporting_guide`, which is MCP-only, is also a REST
 route under `/api/`, with the same bearer token, JSON and error shape as the
 routes in [twillingate.md](twillingate.md#http-api). Four routes have no
 tool, `view`, `preview_widget`, `create_widget_share` and
-`widget_share_image`. The console's widget editor runs unsaved SQL with
-`POST /api/widgets/preview`, which binds the project and range given and
-returns the rows with the first way they do not fit the component; agents
-call `add_widget`, which validates. The page stores
-the viewer's selection with `PUT …/view`, which is viewer state rather than a
+`widget_share_image`. The console's widget editor runs an unsaved SQL or
+`query` source with `POST /api/widgets/preview`, which binds the project and
+range given and returns the rows with the first way they do not fit the
+component; agents call `add_widget`, which validates. The page stores the
+viewer's selection with `PUT …/view`, which is viewer state rather than a
 definition, so it is allowed on system dashboards and not audited. It uploads
 a share with `POST /api/widget-shares`, since only a browser can capture the
 picture, and reads a share's picture back with

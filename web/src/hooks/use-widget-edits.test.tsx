@@ -31,7 +31,7 @@ const visits: Widget = {
   follows_range: false,
 }
 
-const draft: Draft = { title: 'Signups', component: 'stat', props: {}, sql: 'SELECT 1 AS value', markdown: '' }
+const draft: Draft = { title: 'Signups', component: 'stat', props: {}, code: 'sql', sql: 'SELECT 1 AS value', query: '', markdown: '' }
 
 beforeEach(() => {
   client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -66,7 +66,7 @@ describe('useWidgetEdits', () => {
     const { result } = renderHook(() => useWidgetEdits(), { wrapper })
 
     await act(() =>
-      result.current.update(visits, { title: 'Visits', component: 'line', props: {}, sql: 'SELECT 2', markdown: '' })
+      result.current.update(visits, { title: 'Visits', component: 'line', props: {}, code: 'sql', sql: 'SELECT 2', query: '', markdown: '' })
     )
 
     expect(update).toHaveBeenCalledWith(7, { source: { type: 'sql', content: 'SELECT 2' } })
@@ -80,7 +80,7 @@ describe('useWidgetEdits', () => {
     const { result } = renderHook(() => useWidgetEdits(), { wrapper })
 
     await act(() =>
-      result.current.update(visits, { title: 'Daily visits', component: 'line', props: {}, sql: visits.source.content, markdown: '' })
+      result.current.update(visits, { title: 'Daily visits', component: 'line', props: {}, code: 'sql', sql: visits.source.content, query: '', markdown: '' })
     )
 
     expect(update).toHaveBeenCalledWith(7, { title: 'Daily visits' })
@@ -97,7 +97,7 @@ describe('useWidgetEdits', () => {
     const { result } = renderHook(() => useWidgetEdits(), { wrapper })
 
     await act(() =>
-      result.current.update(visits, { title: 'Visits', component: 'line', props: {}, sql: visits.source.content, markdown: '', ...patch })
+      result.current.update(visits, { title: 'Visits', component: 'line', props: {}, code: 'sql', sql: visits.source.content, query: '', markdown: '', ...patch })
     )
 
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['widget', 7] })
@@ -108,7 +108,7 @@ describe('useWidgetEdits', () => {
     const { result } = renderHook(() => useWidgetEdits(), { wrapper })
 
     await act(() =>
-      result.current.update(visits, { title: 'Visits', component: 'line', props: {}, sql: visits.source.content, markdown: '' })
+      result.current.update(visits, { title: 'Visits', component: 'line', props: {}, code: 'sql', sql: visits.source.content, query: '', markdown: '' })
     )
 
     expect(update).not.toHaveBeenCalled()

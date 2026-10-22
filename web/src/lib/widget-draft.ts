@@ -1,39 +1,94 @@
 import { widgets } from '@/components/widgets'
 import type { Widget, WidgetBody, WidgetContentBody, WidgetSource } from './api'
 
-/** What the editor holds while a widget is added or edited: sql and markdown are kept apart, so switching component and back loses neither. */
+/** The two code source types a component may take; markdown is the third, and the only one its component takes. */
+export type CodeType = 'sql' | 'query'
+
+/**
+ * What the editor holds while a widget is added or edited: sql, query and
+ * markdown are kept apart, so switching component or code type and back
+ * loses none of them. `code` is the code type chosen, for a component that
+ * takes both.
+ */
 export interface Draft {
   title: string
   component: string | null
   props: Record<string, unknown>
+  code: CodeType
   sql: string
+  query: string
   markdown: string
 }
 
-/** The draft an edit starts from: the widget as stored, or empty for a new one. */
+/** The draft an edit starts from: the widget as stored, or empty for a new one (on sql, its components' first type). */
 export function draftOf(widget?: Widget): Draft {
-  if (!widget) return { title: '', component: null, props: {}, sql: '', markdown: '' }
-  const md = widget.source.type === 'md'
+  if (!widget) return { title: '', component: null, props: {}, code: 'sql', sql: '', query: '', markdown: '' }
+  const { type, content } = widget.source
   return {
     title: widget.title ?? '',
     component: widget.component,
     props: widget.props ?? {},
-    sql: md ? '' : widget.source.content,
-    markdown: md ? widget.source.content : '',
+    code: type === 'query' ? 'query' : 'sql',
+    sql: type === 'sql' ? content : '',
+    query: type === 'query' ? content : '',
+    markdown: type === 'md' ? content : '',
   }
 }
 
-/** The source type the editor writes for a component: the first it accepts. */
-export function sourceTypeOf(component: string | null): WidgetSource['type'] | null {
-  if (!component) return null
-  return widgets[component]?.contract.accepts[0] ?? null
+/** The code types a component takes with these props, in its own order; a remote table runs its SQL per request, so it takes sql only. */
+export function codeTypesOf(component: string | null, props: Record<string, unknown>): CodeType[] {
+  if (!component) return []
+  const accepts = widgets[component]?.contract.accepts ?? []
+  return accepts.filter((t): t is CodeType => (t === 'sql' || t === 'query') && !(t === 'query' && component === 'table' && props.mode === 'remote'))
 }
 
-/** The draft's source for its component's type; null while no component is chosen. */
+/** The source type the draft writes: its chosen code type when the component takes it, otherwise the component's first. */
+export function sourceTypeOf(d: Pick<Draft, 'component' | 'props' | 'code'>): WidgetSource['type'] | null {
+  if (!d.component) return null
+  const codes = codeTypesOf(d.component, d.props)
+  if (codes.includes(d.code)) return d.code
+  return widgets[d.component]?.contract.accepts[0] ?? null
+}
+
+/** The draft's source for its type; null while no component is chosen. */
 export function sourceOf(d: Draft): WidgetSource | null {
-  const type = sourceTypeOf(d.component)
+  const type = sourceTypeOf(d)
   if (!type) return null
-  return { type, content: type === 'md' ? d.markdown : d.sql }
+  return { type, content: type === 'md' ? d.markdown : type === 'query' ? d.query : d.sql }
+}
+
+/** The draft on another code type; an empty query starts from the component's template. */
+export function withCode(d: Draft, code: CodeType): Draft {
+  if (code === 'query' && d.query.trim() === '') return { ...d, code, query: queryTemplate(d.component) }
+  return { ...d, code }
+}
+
+// The breakdown dimension's input name, for the components that read one text column and a value.
+const labelInput: Record<string, string> = { bar_list: 'label', pie: 'label', radial: 'label', treemap: 'label', funnel: 'step', radar: 'axis' }
+
+/**
+ * A small structured query a new query source starts from, renamed to the
+ * component's inputs where it has fixed ones: a view count for a stat, views
+ * per day for the charts over time, views by path for the lists, and views
+ * by path otherwise.
+ */
+export function queryTemplate(component: string | null): string {
+  const metrics = [{ op: 'count' }]
+  let content: Record<string, unknown>
+  if (component === 'stat') {
+    content = { query: { kind: 'stat', table: 'views', metrics }, rename: { count: 'value' } }
+  } else if (component === 'line' || component === 'area' || component === 'bar') {
+    content = { query: { kind: 'trend', table: 'views', metrics }, rename: { day: 'x', count: 'y' } }
+  } else if (component === 'calendar') {
+    content = { query: { kind: 'trend', table: 'views', metrics }, rename: { count: 'value' } }
+  } else if (component === 'map') {
+    content = { query: { kind: 'breakdown', table: 'views', metrics, dimensions: ['country'], limit: 10 }, rename: { count: 'value' } }
+  } else {
+    const query = { kind: 'breakdown', table: 'views', metrics, dimensions: ['path'], limit: 10 }
+    const label = component ? labelInput[component] : undefined
+    content = label ? { query, rename: { path: label, count: 'value' } } : { query }
+  }
+  return JSON.stringify(content, null, 2)
 }
 
 /** The add_widget body for a draft; throws when no component is chosen. */
@@ -79,4 +134,12 @@ export function isDirty(w: Widget | undefined, d: Draft): boolean {
 export function usesParams(sql: string): { project: boolean; range: boolean } {
   const code = sql.replace(/'(?:[^']|'')*'|"(?:[^"]|"")*"|`[^`]*`|\[[^\]]*\]|--[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/g, ' ')
   return { project: /:project\b/.test(code), range: /:(?:from|to)\b/.test(code) }
+}
+
+/** Which switcher parameters the draft's source reads: a query always follows both, markdown neither. */
+export function paramsOf(d: Draft): { project: boolean; range: boolean } {
+  const type = sourceTypeOf(d)
+  if (type === 'query') return { project: true, range: true }
+  if (type === 'sql') return usesParams(d.sql)
+  return { project: false, range: false }
 }

@@ -223,11 +223,11 @@ export interface WidgetContentBody {
   source?: WidgetSource
 }
 
-/** The preview body: an unsaved widget's SQL run with the project and range the editor holds. */
+/** The preview body: an unsaved widget's SQL or structured query run with the project and range the editor holds. */
 export interface PreviewBody {
   component: string
   props?: Record<string, unknown>
-  source: { type: 'sql'; content: string }
+  source: { type: 'sql' | 'query'; content: string }
   project_id?: number
   from?: string
   to?: string

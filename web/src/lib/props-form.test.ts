@@ -35,5 +35,7 @@ describe('needsHint', () => {
     expect(needsHint(widgets.line.contract)).toBe('needs x (day or text), y (number); optional series (text)')
     expect(needsHint(widgets.table.contract)).toBe('any columns')
     expect(needsHint(widgets.markdown.contract)).toBe('markdown text')
+    // A component that takes a query alone still reads columns.
+    expect(needsHint({ ...widgets.stat.contract, accepts: ['query'] })).toMatch(/^needs value \(number\)/)
   })
 })

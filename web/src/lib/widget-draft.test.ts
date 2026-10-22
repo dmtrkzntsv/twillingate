@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { Widget } from './api'
-import { addBody, changedFields, draftOf, isDirty, sourceOf, usesParams } from './widget-draft'
+import { addBody, changedFields, codeTypesOf, draftOf, isDirty, paramsOf, queryTemplate, sourceOf, sourceTypeOf, usesParams, withCode } from './widget-draft'
 
 const line: Widget = {
   widget_id: 7, dashboard_id: 3, name: 'visits', component: 'line', title: 'Visits', width: 6, height: 8,
@@ -10,7 +10,7 @@ const line: Widget = {
 
 describe('draft', () => {
   it('starts empty for a new widget and from the widget for an edit', () => {
-    expect(draftOf()).toEqual({ title: '', component: null, props: {}, sql: '', markdown: '' })
+    expect(draftOf()).toEqual({ title: '', component: null, props: {}, code: 'sql', sql: '', query: '', markdown: '' })
     expect(draftOf(line)).toMatchObject({ title: 'Visits', component: 'line', sql: line.source.content, markdown: '' })
   })
   it('sends only what changed', () => {
@@ -39,9 +39,61 @@ describe('draft', () => {
     expect(changedFields(removed, { ...draftOf(removed), component: 'line' })).toMatchObject({ component: 'line' })
   })
   it('builds an add body', () => {
-    expect(addBody({ title: ' A ', component: 'stat', props: {}, sql: 'SELECT 1 AS value', markdown: '' })).toEqual({
+    expect(addBody({ ...draftOf(), title: ' A ', component: 'stat', sql: 'SELECT 1 AS value' })).toEqual({
       component: 'stat', title: 'A', props: {}, source: { type: 'sql', content: 'SELECT 1 AS value' },
     })
+  })
+})
+
+const statQuery: Widget = {
+  ...line, component: 'stat', title: 'Views', props: {},
+  source: { type: 'query', content: '{"query":{"kind":"stat","table":"views","metrics":[{"op":"count","as":"value"}]}}' },
+  follows_project: true, follows_range: true,
+}
+
+describe('query sources', () => {
+  it('opens a query widget on its query, not as sql', () => {
+    const d = draftOf(statQuery)
+    expect(d).toMatchObject({ code: 'query', query: statQuery.source.content, sql: '' })
+    expect(sourceTypeOf(d)).toBe('query')
+    expect(sourceOf(d)).toEqual(statQuery.source)
+    expect(changedFields(statQuery, d)).toEqual({})
+  })
+  it('a new widget starts on sql', () => {
+    expect(sourceTypeOf({ ...draftOf(), component: 'stat' })).toBe('sql')
+  })
+  it('switching keeps each type\'s content and sends the chosen one', () => {
+    const d = { ...draftOf(line), sql: 'SELECT 1' }
+    const q = withCode(d, 'query')
+    expect(q.sql).toBe('SELECT 1')
+    expect(q.query).toBe(queryTemplate('line'))
+    expect(sourceOf(q)).toEqual({ type: 'query', content: queryTemplate('line') })
+    const edited = { ...q, query: '{"query":{}}' }
+    const back = withCode(edited, 'sql')
+    expect(sourceOf(back)).toEqual({ type: 'sql', content: 'SELECT 1' })
+    expect(withCode(back, 'query').query).toBe('{"query":{}}')
+    expect(changedFields(line, edited)).toEqual({ source: { type: 'query', content: '{"query":{}}' } })
+  })
+  it('a remote table takes sql only', () => {
+    expect(codeTypesOf('table', {})).toEqual(['sql', 'query'])
+    expect(codeTypesOf('table', { mode: 'remote' })).toEqual(['sql'])
+    expect(codeTypesOf('markdown', {})).toEqual([])
+    const d = { ...draftOf(), component: 'table', props: { mode: 'remote' }, code: 'query' as const, sql: 'SELECT 1', query: '{}' }
+    expect(sourceOf(d)).toEqual({ type: 'sql', content: 'SELECT 1' })
+  })
+  it('a query follows the project and the range', () => {
+    expect(paramsOf({ ...draftOf(statQuery) })).toEqual({ project: true, range: true })
+    expect(paramsOf({ ...draftOf(line) })).toEqual({ project: false, range: false })
+    expect(paramsOf({ ...draftOf(), component: 'markdown', markdown: ':project' })).toEqual({ project: false, range: false })
+  })
+  it('starts each component on a query renamed to its inputs', () => {
+    const t = (c: string) => JSON.parse(queryTemplate(c))
+    expect(t('stat')).toEqual({ query: { kind: 'stat', table: 'views', metrics: [{ op: 'count' }] }, rename: { count: 'value' } })
+    expect(t('line')).toMatchObject({ query: { kind: 'trend' }, rename: { day: 'x', count: 'y' } })
+    expect(t('bar')).toMatchObject({ query: { kind: 'trend' }, rename: { day: 'x', count: 'y' } })
+    expect(t('pie')).toMatchObject({ query: { kind: 'breakdown', dimensions: ['path'] }, rename: { path: 'label', count: 'value' } })
+    expect(t('bar_list').rename).toEqual({ path: 'label', count: 'value' })
+    expect(t('table')).toEqual({ query: { kind: 'breakdown', table: 'views', metrics: [{ op: 'count' }], dimensions: ['path'], limit: 10 } })
   })
 })
 

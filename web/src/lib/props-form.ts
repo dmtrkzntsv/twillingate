@@ -60,7 +60,7 @@ export function carryProps(props: Record<string, unknown>, schema: Schema): Reco
 
 /** One line on what the query must return, from the contract's inputs. */
 export function needsHint(c: Contract): string {
-  if (!c.accepts.includes('sql')) return 'markdown text'
+  if (c.accepts.includes('md')) return 'markdown text'
   if (c.inputs.open) return 'any columns'
   const col = (x: { name: string; types: string[] }) => `${x.name} (${x.types.join(' or ')})`
   const req = c.inputs.columns.filter((x) => !x.optional).map(col)
