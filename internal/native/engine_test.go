@@ -216,7 +216,7 @@ func sameTable(t *testing.T, got, want [][]string) {
 }
 
 // The where clause of project 1 over a range, for duckTable's SQL.
-const inRange = "project_id = 1 AND day BETWEEN DATE '%[1]s' AND DATE '%[2]s'"
+const inRange = `"project_id" = 1 AND "day" BETWEEN DATE '%[1]s' AND DATE '%[2]s'`
 
 func TestKindsMatchDuckDB(t *testing.T) {
 	f := engineFixture(t)
@@ -237,18 +237,18 @@ func TestKindsMatchDuckDB(t *testing.T) {
 	}
 	viewsStat := Query{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "count"}, {Op: "actors"}, {Op: "users"},
 		{Op: "groups"}, {Op: "sum", Column: "value"}, {Op: "avg", Column: "value"}, {Op: "daily_avg", Of: "actors"}}}
-	viewsStatSQL := `SELECT count(*), count(DISTINCT actor_id), count(DISTINCT user_id), count(DISTINCT group_id),
-		sum(value), avg(value),
-		(SELECT avg(n) FROM (SELECT count(DISTINCT actor_id) AS n FROM views WHERE ` + inRange + ` GROUP BY day))
+	viewsStatSQL := `SELECT count(*), count(DISTINCT "actor_id"), count(DISTINCT "user_id"), count(DISTINCT "group_id"),
+		sum("value"), avg("value"),
+		(SELECT avg(n) FROM (SELECT count(DISTINCT "actor_id") AS n FROM views WHERE ` + inRange + ` GROUP BY "day"))
 		FROM views WHERE ` + inRange
 	viewsStatCols := []string{"count", "actors", "users", "groups", "sum_value", "avg_value", "daily_avg_actors"}
 	compare := viewsStat
 	compare.Compare = "previous"
-	pathTop := `WITH g AS (SELECT path, count(DISTINCT actor_id) AS a, count(*) AS c FROM views WHERE ` + inRange + ` GROUP BY path),
-		top AS (SELECT * FROM g ORDER BY a DESC, path ASC NULLS LAST LIMIT 3) `
-	dailyTop := `WITH d AS (SELECT path, day, count(DISTINCT actor_id) AS n FROM views WHERE ` + inRange + ` GROUP BY path, day),
-		g AS (SELECT path, sum(n) AS s FROM d GROUP BY path),
-		top AS (SELECT * FROM g ORDER BY s DESC, path ASC NULLS LAST LIMIT 2) `
+	pathTop := `WITH g AS (SELECT "path", count(DISTINCT "actor_id") AS a, count(*) AS c FROM views WHERE ` + inRange + ` GROUP BY "path"),
+		top AS (SELECT * FROM g ORDER BY a DESC, "path" ASC NULLS LAST LIMIT 3) `
+	dailyTop := `WITH d AS (SELECT "path", "day", count(DISTINCT "actor_id") AS n FROM views WHERE ` + inRange + ` GROUP BY "path", "day"),
+		g AS (SELECT "path", sum(n) AS s FROM d GROUP BY "path"),
+		top AS (SELECT * FROM g ORDER BY s DESC, "path" ASC NULLS LAST LIMIT 2) `
 	cases := []tc{
 		all("stat views", viewsStat, viewsStatCols, viewsStatSQL),
 		{name: "stat compare", q: compare, from: "2026-08-26", to: today, prev: true, sql: []string{viewsStatSQL},
@@ -259,45 +259,45 @@ func TestKindsMatchDuckDB(t *testing.T) {
 			{Op: "max", Column: "value"}, {Op: "sum", Column: "display_width"}, {Op: "avg", Column: "display_width"},
 			{Op: "max", Column: "sample_rate"}, {Op: "daily_max", Of: "actors"}, {Op: "daily_sum", Of: "actors"}}},
 			[]string{"min_value", "max_value", "sum_display_width", "avg_display_width", "max_sample_rate", "daily_max_actors", "daily_sum_actors"},
-			`SELECT min(value), max(value), sum(display_width), avg(display_width), max(sample_rate),
-				(SELECT max(n) FROM (SELECT count(DISTINCT actor_id) AS n FROM measures WHERE `+inRange+` GROUP BY day)),
-				(SELECT sum(n) FROM (SELECT count(DISTINCT actor_id) AS n FROM measures WHERE `+inRange+` GROUP BY day))
+			`SELECT min("value"), max("value"), sum("display_width"), avg("display_width"), max("sample_rate"),
+				(SELECT max(n) FROM (SELECT count(DISTINCT "actor_id") AS n FROM measures WHERE `+inRange+` GROUP BY "day")),
+				(SELECT sum(n) FROM (SELECT count(DISTINCT "actor_id") AS n FROM measures WHERE `+inRange+` GROUP BY "day"))
 				FROM measures WHERE `+inRange),
 		all("trend count", Query{Kind: "trend", Table: "views", Metrics: count()}, []string{"day", "count"},
-			`SELECT day, count(*) FROM views WHERE `+inRange+` GROUP BY day ORDER BY day`),
+			`SELECT "day", count(*) FROM views WHERE `+inRange+` GROUP BY "day" ORDER BY "day"`),
 		all("trend actors by country", Query{Kind: "trend", Table: "views", Metrics: []Metric{{Op: "actors"}},
 			Series: "country", SeriesLimit: 2}, []string{"day", "series", "actors"},
-			`WITH top AS (SELECT country FROM views WHERE `+inRange+` GROUP BY country
-				ORDER BY count(DISTINCT actor_id) DESC, country ASC NULLS LAST LIMIT 2)
-			SELECT day, v.country, count(DISTINCT actor_id) FROM views v JOIN top ON v.country IS NOT DISTINCT FROM top.country
-			WHERE `+inRange+` GROUP BY day, v.country ORDER BY day, v.country ASC NULLS LAST`),
+			`WITH top AS (SELECT "country" FROM views WHERE `+inRange+` GROUP BY "country"
+				ORDER BY count(DISTINCT "actor_id") DESC, "country" ASC NULLS LAST LIMIT 2)
+			SELECT "day", v."country", count(DISTINCT "actor_id") FROM views v JOIN top ON v."country" IS NOT DISTINCT FROM top."country"
+			WHERE `+inRange+` GROUP BY "day", v."country" ORDER BY "day", v."country" ASC NULLS LAST`),
 		all("trend width series", Query{Kind: "trend", Table: "product", Metrics: []Metric{{Op: "users"}}, Series: "display_width"},
 			[]string{"day", "series", "users"},
-			`SELECT day, display_width, count(DISTINCT user_id) FROM product WHERE `+inRange+`
-				GROUP BY day, display_width ORDER BY day, display_width ASC NULLS LAST`),
+			`SELECT "day", "display_width", count(DISTINCT "user_id") FROM product WHERE `+inRange+`
+				GROUP BY "day", "display_width" ORDER BY "day", "display_width" ASC NULLS LAST`),
 		all("breakdown path other", Query{Kind: "breakdown", Table: "views", Metrics: []Metric{{Op: "actors"}, {Op: "count"}},
 			Dimensions: []string{"path"}, Limit: 3, Other: true}, []string{"path", "actors", "count"},
-			pathTop+`SELECT path, a, c FROM top ORDER BY a DESC, path ASC NULLS LAST`,
-			pathTop+`SELECT 'Other', count(DISTINCT actor_id), count(*) FROM views v WHERE `+inRange+`
-				AND NOT EXISTS (SELECT 1 FROM top WHERE top.path IS NOT DISTINCT FROM v.path) HAVING count(*) > 0`),
+			pathTop+`SELECT "path", a, c FROM top ORDER BY a DESC, "path" ASC NULLS LAST`,
+			pathTop+`SELECT 'Other', count(DISTINCT "actor_id"), count(*) FROM views v WHERE `+inRange+`
+				AND NOT EXISTS (SELECT 1 FROM top WHERE top."path" IS NOT DISTINCT FROM v."path") HAVING count(*) > 0`),
 		all("breakdown daily other", Query{Kind: "breakdown", Table: "views", Metrics: []Metric{{Op: "daily_sum", Of: "actors"}},
 			Dimensions: []string{"path"}, Limit: 2, Other: true}, []string{"path", "daily_sum_actors"},
-			dailyTop+`SELECT path, s FROM top ORDER BY s DESC, path ASC NULLS LAST`,
-			dailyTop+`SELECT 'Other', sum(n) FROM (SELECT day, count(DISTINCT actor_id) AS n FROM views v WHERE `+inRange+`
-				AND NOT EXISTS (SELECT 1 FROM top WHERE top.path IS NOT DISTINCT FROM v.path) GROUP BY day) HAVING count(*) > 0`),
+			dailyTop+`SELECT "path", s FROM top ORDER BY s DESC, "path" ASC NULLS LAST`,
+			dailyTop+`SELECT 'Other', sum(n) FROM (SELECT "day", count(DISTINCT "actor_id") AS n FROM views v WHERE `+inRange+`
+				AND NOT EXISTS (SELECT 1 FROM top WHERE top."path" IS NOT DISTINCT FROM v."path") GROUP BY "day") HAVING count(*) > 0`),
 		all("breakdown event by plan", Query{Kind: "breakdown", Table: "product", Metrics: []Metric{{Op: "count"}, {Op: "users"}},
 			Dimensions: []string{"event_name", "attr_plan"}}, []string{"event_name", "attr_plan", "count", "users"},
-			`SELECT event_name, attr_plan, count(*) AS c, count(DISTINCT user_id) FROM product WHERE `+inRange+`
-				GROUP BY ALL ORDER BY c DESC, event_name ASC NULLS LAST, attr_plan ASC NULLS LAST LIMIT 20`),
+			`SELECT "event_name", "attr_plan", count(*) AS c, count(DISTINCT "user_id") FROM product WHERE `+inRange+`
+				GROUP BY ALL ORDER BY c DESC, "event_name" ASC NULLS LAST, "attr_plan" ASC NULLS LAST LIMIT 20`),
 		all("breakdown renamed color", Query{Kind: "breakdown", Table: "product", Metrics: []Metric{{Op: "count"}, {Op: "groups"}},
 			Dimensions: []string{"attr_color", "country", "display_width"}, Limit: 50}, []string{"attr_color", "country", "display_width", "count", "groups"},
-			`SELECT attr_color, country, display_width, count(*) AS c, count(DISTINCT group_id) FROM product WHERE `+inRange+`
-				GROUP BY ALL ORDER BY c DESC, attr_color ASC NULLS LAST, country ASC NULLS LAST, display_width ASC NULLS LAST LIMIT 50`),
+			`SELECT "attr_color", "country", "display_width", count(*) AS c, count(DISTINCT "group_id") FROM product WHERE `+inRange+`
+				GROUP BY ALL ORDER BY c DESC, "attr_color" ASC NULLS LAST, "country" ASC NULLS LAST, "display_width" ASC NULLS LAST LIMIT 50`),
 		all("breakdown in and prefix", Query{Kind: "breakdown", Table: "views", Metrics: count(), Dimensions: []string{"path"},
 			Where: []Filter{{Column: "country", Op: "in", Values: []string{"DE", "FR"}}, {Column: "path", Op: "prefix", Values: []string{"/p"}}}},
 			[]string{"path", "count"},
-			`SELECT path, count(*) AS c FROM views WHERE `+inRange+` AND country IN ('DE', 'FR') AND starts_with(path, '/p')
-				GROUP BY path ORDER BY c DESC, path ASC NULLS LAST LIMIT 20`),
+			`SELECT "path", count(*) AS c FROM views WHERE `+inRange+` AND "country" IN ('DE', 'FR') AND starts_with("path", '/p')
+				GROUP BY "path" ORDER BY c DESC, "path" ASC NULLS LAST LIMIT 20`),
 		all("breakdown other filters", Query{Kind: "breakdown", Table: "product", Metrics: []Metric{{Op: "count"}, {Op: "actors"}},
 			Dimensions: []string{"day"}, Limit: 100, Where: []Filter{
 				{Column: "attr_plan", Op: "ne", Values: []string{"free"}}, {Column: "attr_color", Op: "is_set"},
@@ -305,25 +305,25 @@ func TestKindsMatchDuckDB(t *testing.T) {
 				{Column: "display_width", Op: "gte", Values: []string{"391"}}, {Column: "day", Op: "lte", Values: []string{"2026-09-08"}},
 				{Column: "country", Op: "eq", Values: []string{"DE"}}}},
 			[]string{"day", "count", "actors"},
-			`SELECT day, count(*) AS c, count(DISTINCT actor_id) FROM product WHERE `+inRange+` AND attr_plan <> 'free'
-				AND attr_color IS NOT NULL AND attr_color <> '' AND event_name NOT IN ('ev0') AND contains(path, '1')
-				AND display_width >= 391 AND day <= DATE '2026-09-08' AND country = 'DE'
-				GROUP BY day ORDER BY c DESC, day ASC LIMIT 100`),
+			`SELECT "day", count(*) AS c, count(DISTINCT "actor_id") FROM product WHERE `+inRange+` AND "attr_plan" <> 'free'
+				AND "attr_color" IS NOT NULL AND "attr_color" <> '' AND "event_name" NOT IN ('ev0') AND contains("path", '1')
+				AND "display_width" >= 391 AND "day" <= DATE '2026-09-08' AND "country" = 'DE'
+				GROUP BY "day" ORDER BY c DESC, "day" ASC LIMIT 100`),
 		{name: "breakdown mid-month", q: Query{Kind: "breakdown", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "actors"}},
 			Dimensions: []string{"family", "consent"}}, from: "2026-08-15", to: "2026-09-04", cols: []string{"family", "consent", "count", "actors"},
-			sql: []string{`SELECT family, consent, count(*) AS c, count(DISTINCT actor_id) FROM events WHERE ` + inRange + `
-				GROUP BY ALL ORDER BY c DESC, family ASC NULLS LAST, consent ASC NULLS LAST LIMIT 20`}},
+			sql: []string{`SELECT "family", "consent", count(*) AS c, count(DISTINCT "actor_id") FROM events WHERE ` + inRange + `
+				GROUP BY ALL ORDER BY c DESC, "family" ASC NULLS LAST, "consent" ASC NULLS LAST LIMIT 20`}},
 		all("measures by event", Query{Kind: "breakdown", Table: "measures", Metrics: []Metric{{Op: "avg", Column: "value"}, {Op: "count"}},
 			Dimensions: []string{"event_name"}}, []string{"event_name", "avg_value", "count"},
-			`SELECT event_name, avg(value) AS a, count(*) FROM measures WHERE `+inRange+`
-				GROUP BY event_name ORDER BY a DESC NULLS LAST, event_name ASC NULLS LAST LIMIT 20`),
+			`SELECT "event_name", avg("value") AS a, count(*) FROM measures WHERE `+inRange+`
+				GROUP BY "event_name" ORDER BY a DESC NULLS LAST, "event_name" ASC NULLS LAST LIMIT 20`),
 		all("measures by bucket", Query{Kind: "breakdown", Table: "measures", Metrics: count(), Dimensions: []string{"bucket"}, Limit: 5,
 			Where: []Filter{{Column: "bucket", Op: "lt", Values: []string{"30"}}}}, []string{"bucket", "count"},
-			`SELECT bucket, count(*) AS c FROM measures WHERE `+inRange+` AND bucket < 30
-				GROUP BY bucket ORDER BY c DESC, bucket ASC LIMIT 5`),
+			`SELECT "bucket", count(*) AS c FROM measures WHERE `+inRange+` AND "bucket" < 30
+				GROUP BY "bucket" ORDER BY c DESC, "bucket" ASC LIMIT 5`),
 		all("renamed event", Query{Kind: "breakdown", Table: "views", Metrics: count(), Dimensions: []string{"event_name"}},
 			[]string{"event_name", "count"},
-			`SELECT event_name, count(*) AS c FROM views WHERE `+inRange+` GROUP BY event_name ORDER BY c DESC, event_name ASC NULLS LAST LIMIT 20`),
+			`SELECT "event_name", count(*) AS c FROM views WHERE `+inRange+` GROUP BY "event_name" ORDER BY c DESC, "event_name" ASC NULLS LAST LIMIT 20`),
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -524,13 +524,24 @@ func TestMaxScansWaits(t *testing.T) {
 func TestRulesColumnsCached(t *testing.T) {
 	f := engineFixture(t)
 	e := New(Options{Dir: f.Dir})
+	defer func(r func(string, bool) ([]string, error)) { readFileColumns = r }(readFileColumns)
+	var reads []string
+	readFileColumns = func(path string, log bool) ([]string, error) {
+		reads = append(reads, filepath.Base(path))
+		return fileColumns(path, log)
+	}
 	a, err := e.columns()
 	if err != nil {
 		t.Fatal(err)
 	}
+	want, err := unionColumns(f.Dir)
+	if err != nil || !slices.Equal(a, want) {
+		t.Fatalf("columns %q, want unionColumns' %q (%v)", a, want, err)
+	}
+	reads = nil
 	b, err := e.columns()
-	if err != nil || !slices.Equal(a, b) {
-		t.Fatalf("second call: %v %q", err, b)
+	if err != nil || !slices.Equal(a, b) || len(reads) != 0 {
+		t.Fatalf("second call: %v %q, read %q", err, b, reads)
 	}
 	if slices.Contains(a, "attr_fresh") {
 		t.Fatal("attr_fresh before it is written")
@@ -540,6 +551,53 @@ func TestRulesColumnsCached(t *testing.T) {
 	c, err := e.columns()
 	if err != nil || !slices.Contains(c, "attr_fresh") {
 		t.Fatalf("after a log grew: %v %q", err, c)
+	}
+	if !slices.Equal(reads, []string{today + ".log"}) {
+		t.Errorf("read %q, want only the log written to", reads)
+	}
+	if want, _ := unionColumns(f.Dir); !slices.Equal(c, want) {
+		t.Errorf("columns %q, want %q", c, want)
+	}
+}
+
+func TestMaxBytesTruncates(t *testing.T) {
+	f := engineFixture(t)
+	q := Query{Kind: "breakdown", Table: "views", Metrics: []Metric{{Op: "actors"}, {Op: "daily_max", Of: "users"}},
+		Dimensions: []string{"path", "country"}, Limit: 1000}
+	p := Params{Project: 1, From: date(t, engineFrom), To: date(t, today)}
+	full, err := New(Options{Dir: f.Dir}).Run(context.Background(), q, p, engineRules)
+	if err != nil || full.Truncated {
+		t.Fatalf("default budget: %v truncated %v", err, full.Truncated)
+	}
+	small, err := New(Options{Dir: f.Dir, MaxBytes: 1}).Run(context.Background(), q, p, engineRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !small.Truncated || len(small.Rows) == 0 || len(small.Rows) >= len(full.Rows) {
+		t.Errorf("1-byte budget: truncated %v, %d rows of %d", small.Truncated, len(small.Rows), len(full.Rows))
+	}
+}
+
+func TestDistinctInternsTrackedRowsOnly(t *testing.T) {
+	filters, err := compileFilters([]Filter{{Column: "path", Op: "eq", Values: []string{"/a"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, ms := newAgg(aggOptions{metrics: []metricSpec{{Metric: Metric{Op: "daily_max", Of: "actors"}}}, filters: filters,
+		dims: []string{"path"}, ndays: 1, workers: 1, maxGroups: 10, maxBytes: 1 << 20})
+	b := &Batch{N: 4, Cols: map[string]*Column{
+		"day":      {Ints: []int64{0, 0, 0, 0}},
+		"path":     {Dict: []string{"/a", "/b"}, Idx: []int32{0, 1, 1, 0}},
+		"actor_id": {Dict: []string{"x", "y", "z", "w"}, Idx: []int32{0, 1, 2, 0}},
+	}}
+	if err := a.add(0, b); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(a.distinct[ms[0].distinct].in.ids); n != 1 {
+		t.Errorf("%d ids interned, want 1 (only the filtered rows' actor)", n)
+	}
+	if a.mem.n.Load() <= 0 {
+		t.Error("no memory counted")
 	}
 }
 

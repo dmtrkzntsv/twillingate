@@ -3,12 +3,9 @@ package native
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io/fs"
-	"maps"
 	"os"
 	"slices"
-	"strings"
 	"sync"
 	"time"
 
@@ -27,20 +24,32 @@ type Options struct {
 	// wait for a turn, or give up when their context is done.
 	MaxScans int
 	// MaxGroups is how many distinct groups a breakdown tracks (default
-	// 100,000), and a trend 10 × MaxGroups series × days; rows of further
-	// groups are left out and the result says it is truncated.
+	// 100,000); a trend tracks as many series as fit 10 × MaxGroups cells
+	// (series × days). Rows of further groups are left out and the result
+	// says it is truncated.
 	MaxGroups int
+	// MaxBytes bounds one scan's aggregation (default 128 MiB), counted
+	// approximately: interned ids and groups with their strings, the
+	// per-cell arrays, the exact distinct sets' arrays and 16 KiB per
+	// sketch, and the per-day distinct keys. Once past it a breakdown or a
+	// trend admits no new group and the result says it is truncated, so
+	// the bound holds up to what the groups already tracked add (each
+	// group's exact set stays under 2 × hll.ExactLimit keys or one
+	// sketch, each worker's per-day keys under twice their distinct
+	// count). A stat has one group: it is not bounded so, its distinct
+	// sets and per-day keys being at most one per distinct id (per day).
+	MaxBytes int64
 }
 
 // Engine answers structured queries over the event files of Dir.
 type Engine struct {
 	dir                string
 	workers, maxGroups int
+	maxBytes           int64
 	sem                chan struct{}
 
 	colMu    sync.Mutex
-	colKey   string   // the files unionColumns last read, with sizes and times
-	colNames []string // what it found
+	colFiles map[string]fileCols // each events file's columns, by path
 }
 
 // New returns an engine over o.Dir.
@@ -54,7 +63,10 @@ func New(o Options) *Engine {
 	if o.MaxGroups <= 0 {
 		o.MaxGroups = 100_000
 	}
-	return &Engine{dir: o.Dir, workers: o.Workers, maxGroups: o.MaxGroups, sem: make(chan struct{}, o.MaxScans)}
+	if o.MaxBytes <= 0 {
+		o.MaxBytes = 128 << 20
+	}
+	return &Engine{dir: o.Dir, workers: o.Workers, maxGroups: o.MaxGroups, maxBytes: o.MaxBytes, sem: make(chan struct{}, o.MaxScans)}
 }
 
 // Params are what a query runs on: one project, the days From to To.
@@ -106,7 +118,9 @@ var (
 //     dimensions, then with other an "Other" row (every dimension
 //     "Other") of the rest, when there is any.
 //
-// Groups and series sort NULLs last, numbers by value. Metrics are SQL's:
+// A truncated result (MaxGroups, MaxBytes) leaves the untracked groups
+// out of a breakdown's Other row too, and ranks a trend's tracked series
+// only. Groups and series sort NULLs last, numbers by value. Metrics are SQL's:
 // count is COUNT(*), actors, users and groups COUNT(DISTINCT actor_id),
 // user_id and group_id (NULL left out), sum, avg, min and max NULL over no
 // value, daily_* the per-day distinct counts' SUM, MAX or AVG over the
@@ -174,34 +188,44 @@ func (e *Engine) ruleSet(project int64, rules archive.Rules) (ruleSet, error) {
 	return compileRules(project, rules, have), nil
 }
 
-// columns is unionColumns(e.dir), read again only when a file was added,
-// removed, or changed in size or time since the last read.
+// columns is unionColumns(e.dir), each file's columns read again only
+// when the file is new or changed in size or time since it was last read
+// (under live ingest, only the logs being written to).
 func (e *Engine) columns() ([]string, error) {
-	all, err := archive.ListFiles(e.dir)
-	if err != nil {
-		return nil, err
-	}
-	var key strings.Builder
-	for _, id := range slices.Sorted(maps.Keys(all)) {
-		for _, path := range append(slices.Clone(all[id].Logs), all[id].Parquet...) {
-			st, err := os.Stat(path)
+	e.colMu.Lock()
+	defer e.colMu.Unlock()
+	next := make(map[string]fileCols, len(e.colFiles))
+	cols, err := unionColumnsOf(e.dir, func(path string, log bool) ([]string, error) {
+		st, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		fc, ok := e.colFiles[path]
+		if !ok || fc.size != st.Size() || !fc.mtime.Equal(st.ModTime()) {
+			names, err := readFileColumns(path, log)
 			if err != nil {
 				return nil, err
 			}
-			fmt.Fprintf(&key, "%s\x00%d\x00%d\n", path, st.Size(), st.ModTime().UnixNano())
+			fc = fileCols{size: st.Size(), mtime: st.ModTime(), names: names}
 		}
-	}
-	e.colMu.Lock()
-	defer e.colMu.Unlock()
-	if key.String() == e.colKey && e.colNames != nil {
-		return e.colNames, nil
-	}
-	cols, err := unionColumns(e.dir)
+		next[path] = fc
+		return fc.names, nil
+	})
 	if err != nil {
 		return nil, err
 	}
-	e.colKey, e.colNames = key.String(), cols
+	e.colFiles = next // the files listed now: the gone ones drop out
 	return cols, nil
+}
+
+// readFileColumns is fileColumns; a variable so a test can count reads.
+var readFileColumns = fileColumns
+
+// fileCols is one file's columns as read when it had size and mtime.
+type fileCols struct {
+	size  int64
+	mtime time.Time
+	names []string
 }
 
 // scan runs one query's scans.
@@ -231,7 +255,8 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 	for i, m := range s.q.Metrics {
 		ms[i] = metricSpec{Metric: m}
 	}
-	a, ms := newAgg(ms, s.filters, dims, perDay, lo, int(hi-lo+1), s.e.maxGroups, s.e.workers, sets)
+	a, ms := newAgg(aggOptions{metrics: ms, filters: s.filters, dims: dims, perDay: perDay, sets: sets,
+		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
 	fam := s.family()
 	read := s.rules.columns(a.columns())
 	pq, logs, err := projectFiles(s.e.dir, s.project, r)

@@ -159,6 +159,9 @@ func (f *filter) matchInt(n int64) bool {
 // apply clears keep[i] for the rows of b that do not pass.
 func (f *filter) apply(b *Batch, keep []bool) error {
 	_, c := b.col(readColumn(f.column))
+	if c == nil && f.typ == typeBucket {
+		c = nullColumn("value", b.N) // NULL values: bucket -1000
+	}
 	if c == nil {
 		clear(keep) // all NULL: nothing passes
 		return nil

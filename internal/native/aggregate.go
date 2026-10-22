@@ -4,10 +4,12 @@ import (
 	"cmp"
 	"encoding/binary"
 	"fmt"
+	"hash/maphash"
 	"math"
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/hll"
@@ -44,24 +46,38 @@ type interner struct {
 
 func newInterner() *interner { return &interner{ids: map[string]uint32{}} }
 
-// remap returns in dst each dictionary entry's id.
-func (in *interner) remap(dict []string, dst []uint32) ([]uint32, error) {
+// remap returns in dst the id of each dictionary entry used (nullID for
+// the others, which are not interned), and the bytes the new strings take.
+func (in *interner) remap(dict []string, used []bool, dst []uint32) ([]uint32, int64, error) {
 	in.mu.Lock()
 	defer in.mu.Unlock()
 	dst = dst[:0]
-	for _, s := range dict {
+	var grew int64
+	for j, s := range dict {
+		if !used[j] {
+			dst = append(dst, nullID)
+			continue
+		}
 		id, ok := in.ids[s]
 		if !ok {
 			if len(in.ids) >= int(nullID) {
-				return nil, fmt.Errorf("native: more than %d distinct ids", nullID)
+				return nil, 0, fmt.Errorf("native: more than %d distinct ids", nullID)
 			}
 			id = uint32(len(in.ids))
 			in.ids[s] = id
+			grew += int64(len(s)) + mapEntryBytes
 		}
 		dst = append(dst, id)
 	}
-	return dst, nil
+	return dst, grew, nil
 }
+
+// mapEntryBytes is about what a map entry of a string key costs beside
+// the string's bytes; sketchBytes is a sketch's registers.
+const (
+	mapEntryBytes = 48
+	sketchBytes   = 1 << 14
+)
 
 // keySink is one worker's packed keys: each batch's sorted and
 // deduplicated, appended, and the whole compacted once it is twice its
@@ -75,12 +91,16 @@ type keySink struct {
 // compactAt is a variable so a test can lower it.
 var compactAt = 1 << 20
 
-func (k *keySink) addGroup(group []uint64) {
+// addGroup appends a batch's keys and returns how many bytes the sink's
+// array grew by.
+func (k *keySink) addGroup(group []uint64) int64 {
+	before := cap(k.keys)
 	k.keys = append(k.keys, sortedUnique(group)...)
 	if len(k.keys) > compactAt && len(k.keys) > 2*k.compacted {
 		k.keys = sortedUnique(k.keys)
 		k.compacted = len(k.keys)
 	}
+	return int64(cap(k.keys)-before) * 8
 }
 
 func sortedUnique(s []uint64) []uint64 {
@@ -112,18 +132,26 @@ type dset struct {
 	sk     *hll.Sketch
 }
 
-func (s *dset) add(k uint64) {
+// add adds key k and returns how many bytes s grew by (less than 0 when
+// it turned into a sketch smaller than its keys).
+func (s *dset) add(k uint64) int64 {
 	if s.sk != nil {
 		s.sk.Add(uint32(k))
-		return
+		return 0
 	}
 	if n := len(s.keys); n > 0 && s.keys[n-1] == k {
-		return
+		return 0
 	}
+	before := cap(s.keys)
 	s.keys = append(s.keys, k)
+	grew := int64(cap(s.keys)-before) * 8
 	if len(s.keys) >= 2*hll.ExactLimit {
 		s.compact()
+		if s.sk != nil {
+			grew += sketchBytes - int64(before)*8
+		}
 	}
+	return grew
 }
 
 // compact sorts and dedupes the exact keys, and turns them into a sketch
@@ -180,8 +208,9 @@ type dimVal struct {
 }
 
 // groupTable gives each tuple of dimension values met a dense group id,
-// shared by the workers, up to max groups; a tuple met past that is not
-// tracked (its rows are left out) and dropped says so.
+// shared by the workers, up to max groups and while the aggregation's
+// memory is within its budget; a tuple met past either is not tracked
+// (its rows are left out) and dropped says so.
 type groupTable struct {
 	mu      sync.Mutex
 	ids     map[string]int32
@@ -190,16 +219,17 @@ type groupTable struct {
 	dropped bool
 }
 
-// resolve returns each tuple's group id (-1 past the cap); keys are the
-// tuples' encodings.
-func (t *groupTable) resolve(keys []string, tuples [][]dimVal, out []int32) []int32 {
+// resolve returns each tuple's group id (-1 past the caps); keys are the
+// tuples' encodings. Each new group's cost is added to mem, and none is
+// admitted once mem is past budget.
+func (t *groupTable) resolve(keys []string, tuples [][]dimVal, out []int32, mem *memory) []int32 {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	out = out[:0]
 	for i, k := range keys {
 		id, ok := t.ids[k]
 		if !ok {
-			if len(t.vals) >= t.max {
+			if len(t.vals) >= t.max || mem.over() {
 				t.dropped = true
 				out = append(out, -1)
 				continue
@@ -207,11 +237,24 @@ func (t *groupTable) resolve(keys []string, tuples [][]dimVal, out []int32) []in
 			id = int32(len(t.vals))
 			t.ids[k] = id
 			t.vals = append(t.vals, tuples[i])
+			mem.add(2*int64(len(k)) + mapEntryBytes + int64(len(tuples[i]))*32)
 		}
 		out = append(out, id)
 	}
 	return out
 }
+
+// memory is an aggregation's approximate size in bytes: the interned
+// strings, the groups, the per-cell arrays, the exact distinct keys'
+// arrays and the sketches, and the per-day keys. Workers add what they
+// grow by once per batch.
+type memory struct {
+	n   atomic.Int64
+	max int64
+}
+
+func (m *memory) add(n int64) { m.n.Add(n) }
+func (m *memory) over() bool  { return m.n.Load() > m.max }
 
 func (t *groupTable) len() int {
 	t.mu.Lock()
@@ -231,6 +274,9 @@ type dimView struct {
 // viewOf is the dimension column of b for the rows sel.
 func viewOf(b *Batch, name string, typ colType, sel []int32) (dimView, error) {
 	_, c := b.col(readColumn(name))
+	if c == nil && typ == typeBucket {
+		c = nullColumn("value", b.N) // NULL values: bucket -1000
+	}
 	if c == nil {
 		return dimView{}, nil
 	}
@@ -367,6 +413,7 @@ type agg struct {
 	nums     []numCol
 	distinct []*distinctCol
 	parts    []part
+	mem      memory
 }
 
 // part is one worker's partials.
@@ -377,9 +424,10 @@ type part struct {
 	days  []keySink
 	// scratch, reused across batches
 	sel, gids  []int32
-	ids, fps   []uint32
-	buf        []uint64
+	ids        []uint32
+	keys, buf  []uint64
 	resolveIDs []int32
+	grew       int64 // bytes the partials grew by in this batch
 }
 
 // numPart is one numeric column's partials per cell: rows with a value,
@@ -390,10 +438,25 @@ type numPart struct {
 	isum, imin, imax []int64
 }
 
-// newAgg sets up the aggregation of metrics grouped by dims (none: one
-// group) over the days [from, from+ndays), by day when perDay.
-func newAgg(metrics []metricSpec, filters []filter, dims []string, perDay bool, from int64, ndays, maxGroups, workers int, distinctSets bool) (*agg, []metricSpec) {
-	a := &agg{filters: filters, dims: dims, from: from, ndays: ndays, nd: 1, parts: make([]part, workers)}
+// aggOptions shape an aggregation: metrics grouped by dims (none: one
+// group) over the days [from, from+ndays), by day when perDay; sets keeps
+// whole-range distinct sets beside a trend's per-day keys.
+type aggOptions struct {
+	metrics        []metricSpec
+	filters        []filter
+	dims           []string
+	perDay, sets   bool
+	from           int64
+	ndays, workers int
+	maxGroups      int
+	maxBytes       int64
+}
+
+// newAgg sets up an aggregation and returns its metrics resolved.
+func newAgg(o aggOptions) (*agg, []metricSpec) {
+	metrics, filters, dims, perDay, from, ndays, maxGroups, distinctSets := o.metrics, o.filters, o.dims, o.perDay, o.from, o.ndays, o.maxGroups, o.sets
+	a := &agg{filters: filters, dims: dims, from: from, ndays: ndays, nd: 1, parts: make([]part, o.workers)}
+	a.mem.max = o.maxBytes
 	if perDay {
 		a.nd = ndays
 	}
@@ -473,13 +536,24 @@ func (a *agg) columns() []string {
 	return cols
 }
 
-// grow makes p's arrays hold groups groups.
+// grow makes p's arrays hold groups groups, adding what they grow by to
+// p.grew.
 func (p *part) grow(a *agg, groups int) {
 	cells := groups * a.nd
 	if len(p.count) >= cells {
 		return
 	}
 	cells = max(cells, 2*len(p.count))
+	// Per cell: the count, and per numeric column 4 numbers; per group a
+	// set header per distinct column.
+	perCell := int64(8 + 32*len(a.nums))
+	perGroup := int64(0)
+	for _, d := range a.distinct {
+		if d.set {
+			perGroup += 48
+		}
+	}
+	p.grew += int64(cells-len(p.count))*perCell + int64(cells-len(p.count))/int64(a.nd)*perGroup
 	p.count = growTo(p.count, cells)
 	if p.nums == nil {
 		p.nums = make([]numPart, len(a.nums))
@@ -528,8 +602,10 @@ func (a *agg) add(w int, b *Batch) error {
 	}
 	p.gids = gids
 	if gmax < 0 {
-		return nil // every row's group is past the cap
+		return nil // every row's group is past the caps
 	}
+	p.grew = 0
+	defer func() { a.mem.add(p.grew) }()
 	p.grow(a, int(gmax)+1)
 	_, dayCol := b.col("day")
 	if dayCol == nil || dayCol.Ints == nil {
@@ -599,41 +675,66 @@ func (a *agg) add(w int, b *Batch) error {
 
 func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *Batch, sel, gids []int32, off func(int32) int) error {
 	_, c := b.col(d.name)
-	ids, fps := p.ids[:0], p.fps[:0]
+	// The dictionary entries the tracked rows use: only those are
+	// interned or hashed.
+	var used []bool
 	if c != nil {
 		if c.Idx == nil {
 			return fmt.Errorf("native: column %s is not text", d.name)
 		}
-		var err error
-		if ids, err = d.in.remap(c.Dict, ids); err != nil {
-			return err
-		}
-		if d.set {
-			for _, s := range c.Dict {
-				fps = append(fps, hll.Fingerprint(s))
+		used = make([]bool, len(c.Dict))
+		for k, i := range sel {
+			if x := c.Idx[i]; gids[k] >= 0 && x >= 0 {
+				used[x] = true
 			}
 		}
 	}
-	p.ids, p.fps = ids, fps
+	// ids are the per-day keys' ids, from the interner (exact); sets are
+	// the whole-range keys: the interned id, or without per-day keys a
+	// second 32-bit hash, above the fingerprint a sketch takes.
+	ids, keys := p.ids[:0], p.keys[:0]
+	if c != nil {
+		if d.day {
+			var err error
+			var grew int64
+			if ids, grew, err = d.in.remap(c.Dict, used, ids); err != nil {
+				return err
+			}
+			p.grew += grew
+		}
+		if d.set {
+			for x, s := range c.Dict {
+				var k uint64
+				switch {
+				case !used[x]:
+				case d.day:
+					k = uint64(ids[x])<<32 | uint64(hll.Fingerprint(s))
+				default:
+					k = uint64(uint32(maphash.String(hashSeed, s)))<<32 | uint64(hll.Fingerprint(s))
+				}
+				keys = append(keys, k)
+			}
+		}
+	}
+	p.ids, p.keys = ids, keys
 	buf := p.buf[:0]
 	for k, i := range sel {
 		g := gids[k]
 		if g < 0 {
 			continue
 		}
-		id, fp := nullID, uint32(0)
+		x := int32(-1)
 		if c != nil {
-			if x := c.Idx[i]; x >= 0 {
-				id = ids[x]
-				if d.set {
-					fp = fps[x]
-				}
-			}
+			x = c.Idx[i]
 		}
-		if d.set && id != nullID {
-			p.sets[j][g].add(uint64(id)<<32 | uint64(fp))
+		if d.set && x >= 0 {
+			p.grew += p.sets[j][g].add(keys[x])
 		}
 		if d.day {
+			id := nullID
+			if x >= 0 {
+				id = ids[x]
+			}
 			k := (uint64(g)*uint64(a.ndays)+uint64(off(i)))<<32 | uint64(id)
 			if n := len(buf); n == 0 || buf[n-1] != k {
 				buf = append(buf, k)
@@ -641,11 +742,16 @@ func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *Batch, sel, gids []
 		}
 	}
 	if d.day {
-		p.days[j].addGroup(buf)
+		p.grew += p.days[j].addGroup(buf)
 	}
 	p.buf = buf
 	return nil
 }
+
+// hashSeed seeds the hash that, with a fingerprint, keys a whole-range
+// distinct id without interning it: two ids share a key with odds about
+// n²/2^65 among n, far below the sketch's error.
+var hashSeed = maphash.MakeSeed()
 
 // groupsOf returns each selected row's group id (-1: past the cap) and the
 // largest one (-1 when none is tracked). The batch's distinct tuples are
@@ -747,7 +853,7 @@ func (a *agg) groupsOf(b *Batch, sel []int32, p *part) ([]int32, int32, error) {
 		}
 		keys[s], tuples[s] = string(enc), t
 	}
-	resolved := a.groups.resolve(keys, tuples, p.resolveIDs)
+	resolved := a.groups.resolve(keys, tuples, p.resolveIDs, &a.mem)
 	p.resolveIDs = resolved
 	gmax := int32(-1)
 	for k := range sel {

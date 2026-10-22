@@ -43,8 +43,9 @@ type eventAction struct {
 // events view spells it: the first spelling of the files' columns (have),
 // else, for a target no file holds, the first rule's ("attr_" and the key,
 // a NUL as \u0000). apply adds a target a batch lacks under that name,
-// and the engine's output must expose it so; a batch that has the column
-// keeps its own spelling, which Batch.col resolves.
+// an internal column found case-insensitively (Batch.col) like any other;
+// a batch that has the column keeps its own spelling. The engine's output
+// columns are named as the query wrote them, whatever the spelling.
 type attrCol struct {
 	name string
 	// null: the column is a renamed or blocked key's and reads NULL in
@@ -201,7 +202,8 @@ func (rs ruleSet) columns(cols []string) []string {
 // and a batch without one has no row in an attribute rule's scope. Event
 // rules need b's event_name column; without one, no event is renamed or
 // left out. b's columns are not changed: a column the rules change is a
-// new one, under b's own name for it (attrCol's name when b has none).
+// new one, under b's own name for it (attrCol's name when b has none);
+// either way only the batch's, not the name a result shows.
 func (rs ruleSet) apply(b *Batch, family string) *Batch {
 	if rs.empty() {
 		return b
@@ -439,9 +441,14 @@ func visible(name string) string { return strings.ReplaceAll(name, "\x00", `\u00
 // spelling of a name equal to another but for case is the view's.
 //
 // It reads every Parquet file's footer and decodes every open log's lines
-// (their keys only, no row kept): a cost a caller should cache by the
-// files' list and the logs' sizes, as the reader does.
+// (their keys only, no row kept): Engine.columns caches each file's.
 func unionColumns(dir string) ([]string, error) {
+	return unionColumnsOf(dir, fileColumns)
+}
+
+// unionColumnsOf is unionColumns with each file's columns from of (log
+// says the file is an open log).
+func unionColumnsOf(dir string, of func(path string, log bool) ([]string, error)) ([]string, error) {
 	all, err := archive.ListFiles(dir)
 	if err != nil {
 		return nil, err
@@ -449,7 +456,12 @@ func unionColumns(dir string) ([]string, error) {
 	ids := slices.Sorted(maps.Keys(all))
 	var out []string
 	seen := map[string]bool{}
-	add := func(names []string) {
+	add := func(path string, log bool) error {
+		names, err := of(path, log)
+		if err != nil {
+			return err
+		}
+		names = slices.Clone(names)
 		slices.Sort(names) // one file holds no two names equal but for case
 		for _, n := range names {
 			if !seen[n] {
@@ -457,30 +469,44 @@ func unionColumns(dir string) ([]string, error) {
 				out = append(out, n)
 			}
 		}
+		return nil
 	}
-	// A range no day is in: readLog reads the log's columns, no rows.
-	none := Range{From: civil.DateOf(time.Unix(86400, 0)), To: civil.DateOf(time.Unix(0, 0))}
 	for _, id := range ids {
 		for _, path := range all[id].Logs {
-			b, err := readLog(path, []string{"*"}, "", none)
-			if err != nil {
+			if err := add(path, true); err != nil {
 				return nil, err
 			}
-			add(slices.Collect(maps.Keys(b.Cols)))
 		}
 	}
 	for _, id := range ids {
 		for _, path := range all[id].Parquet {
-			f, err := openFile(path)
-			if err != nil {
+			if err := add(path, false); err != nil {
 				return nil, err
 			}
-			names := slices.Clone(f.cols)
-			if err := f.close(); err != nil {
-				return nil, err
-			}
-			add(names)
 		}
 	}
 	return out, nil
+}
+
+// fileColumns is the column names of one events file: an open log's (its
+// complete lines' keys) or a Parquet file's (its footer's).
+func fileColumns(path string, log bool) ([]string, error) {
+	if log {
+		// A range no day is in: readLog reads the log's columns, no rows.
+		none := Range{From: civil.DateOf(time.Unix(86400, 0)), To: civil.DateOf(time.Unix(0, 0))}
+		b, err := readLog(path, []string{"*"}, "", none)
+		if err != nil {
+			return nil, err
+		}
+		return slices.Collect(maps.Keys(b.Cols)), nil
+	}
+	f, err := openFile(path)
+	if err != nil {
+		return nil, err
+	}
+	names := slices.Clone(f.cols)
+	if err := f.close(); err != nil {
+		return nil, err
+	}
+	return names, nil
 }
