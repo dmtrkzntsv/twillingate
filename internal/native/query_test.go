@@ -9,6 +9,8 @@ import (
 
 func count() []Metric { return []Metric{{Op: "count"}} }
 
+func ptr[T any](v T) *T { return &v }
+
 func TestValidate(t *testing.T) {
 	valid := map[string]Query{
 		"stat":            {Kind: "stat", Table: "events", Metrics: count()},
@@ -40,9 +42,27 @@ func TestValidate(t *testing.T) {
 			Dimensions: []string{"kind", "id", "name"}, Where: []Filter{{Column: "views", Op: "gt", Values: []string{"1"}},
 				{Column: "events", Op: "lte", Values: []string{"5"}}, {Column: "day", Op: "gte", Values: []string{"2026-01-02"}}}},
 		"identities trend": {Kind: "trend", Table: "identities", Metrics: count(), Series: "kind"},
+		"metric where and round": {Kind: "breakdown", Table: "events", Dimensions: []string{"path"}, Metrics: []Metric{
+			{Op: "count", As: "views", Where: []Filter{{Column: "family", Op: "eq", Values: []string{"views"}}}},
+			{Op: "avg", Column: "value", Round: ptr(0), Where: []Filter{{Column: "consent_state", Op: "eq", Values: []string{"given"}},
+				{Column: "day", Op: "gte", Values: []string{"2026-01-02"}}}},
+			{Op: "daily_avg", Of: "users", Round: ptr(6), Where: []Filter{{Column: "user_status", Op: "eq", Values: []string{"new"}}}}}},
+		"session metric where": {Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "bounce_rate", Round: ptr(3),
+			Where: []Filter{{Column: "views", Op: "gt", Values: []string{"1"}}}}}},
+		"percentiles": {Kind: "breakdown", Table: "measures", Dimensions: []string{"path"}, Metrics: []Metric{
+			{Op: "percentile", Q: 0.75, Round: ptr(0), Where: []Filter{{Column: "event_name", Op: "eq", Values: []string{"$lcp"}}}},
+			{Op: "percentile", Q: 0.999}, {Op: "mean", Round: ptr(3)}, {Op: "weight"}}, Order: "p75", Other: true},
+		"percentile trend": {Kind: "trend", Table: "measures", Metrics: []Metric{{Op: "percentile", Q: 0.5}}, Series: "event_name"},
+		"ratings": {Kind: "breakdown", Table: "measures", Dimensions: []string{"vital", "vital_rating"}, Order: "vital",
+			Metrics: []Metric{{Op: "share", Of: "weight", As: "y"}, {Op: "share", Of: "count", Round: ptr(3)}},
+			Where:   []Filter{{Column: "vital", Op: "is_set"}, {Column: "vital_rating", Op: "ne", Values: []string{"poor"}}}},
+		"share trend": {Kind: "trend", Table: "events", Metrics: []Metric{{Op: "share", Of: "count",
+			Where: []Filter{{Column: "family", Op: "eq", Values: []string{"views"}}}}}, Series: "country"},
+		"share sessions":   {Kind: "breakdown", Table: "sessions", Dimensions: []string{"referrer_source"}, Metrics: []Metric{{Op: "share", Of: "count"}}},
+		"share identities": {Kind: "breakdown", Table: "identities", Dimensions: []string{"kind"}, Metrics: []Metric{{Op: "share", Of: "count"}}},
 		"filters": {Kind: "stat", Table: "events", Metrics: count(), Where: []Filter{
 			{Column: "attr_a", Op: "is_set"}, {Column: "country", Op: "in", Values: []string{"DE", "FR"}},
-			{Column: "day", Op: "gte", Values: []string{"2026-01-02"}}, {Column: "path", Op: "prefix", Values: []string{"/x"}}}},
+			{Column: "day", Op: "gte", Values: []string{"2026-01-02"}}, {Column: "path", Op: "prefix", Values: []string{"/x"}}, {Column: "path", Op: "not_prefix", Values: []string{"/xy"}}}},
 	}
 	for name, q := range valid {
 		if err := q.Validate(); err != nil {
@@ -130,6 +150,40 @@ func TestValidate(t *testing.T) {
 		{"series_limit neg", Query{Kind: "trend", Table: "events", Metrics: count(), Series: "path", SeriesLimit: -1}, "series_limit"},
 		{"series_limit 51", Query{Kind: "trend", Table: "events", Metrics: count(), Series: "path", SeriesLimit: 51}, "series_limit"},
 		{"series_limit on stat", Query{Kind: "stat", Table: "events", Metrics: count(), SeriesLimit: 3}, "series_limit"},
+		{"round 7", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "avg", Column: "value", Round: ptr(7)}}}, "metrics[0].round"},
+		{"round negative", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "avg", Column: "value", Round: ptr(-1)}}}, "metrics[1].round"},
+		{"metric where column", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count"},
+			{Op: "count", As: "n", Where: []Filter{{Column: "is_set", Op: "eq", Values: []string{"x"}}}}}}, "metrics[1].where[0].column"},
+		{"metric where op", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count",
+			Where: []Filter{{Column: "path", Op: "is_set"}, {Column: "path", Op: "like", Values: []string{"x"}}}}}}, "metrics[0].where[1].op"},
+		{"metric where values", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count",
+			Where: []Filter{{Column: "path", Op: "eq"}}}}}, "metrics[0].where[0].values"},
+		{"metric where gt on text", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count",
+			Where: []Filter{{Column: "path", Op: "gt", Values: []string{"1"}}}}}}, "metrics[0].where[0].op"},
+		{"metric where path on sessions", Query{Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "count",
+			Where: []Filter{{Column: "path", Op: "is_set"}}}}}, "metrics[0].where[0].column"},
+		{"metric where bucket on events", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count",
+			Where: []Filter{{Column: "bucket", Op: "gt", Values: []string{"1"}}}}}}, "metrics[0].where[0].column"},
+		{"percentile on events", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "percentile", Q: 0.5}}}, "metrics[0].op"},
+		{"mean on views", Query{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "count"}, {Op: "mean"}}}, "metrics[1].op"},
+		{"weight on sessions", Query{Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "weight"}}}, "metrics[0].op"},
+		{"percentile without q", Query{Kind: "stat", Table: "measures", Metrics: []Metric{{Op: "percentile"}}}, "metrics[0].q"},
+		{"percentile q 1", Query{Kind: "stat", Table: "measures", Metrics: []Metric{{Op: "percentile", Q: 1}}}, "metrics[0].q"},
+		{"percentile q negative", Query{Kind: "stat", Table: "measures", Metrics: []Metric{{Op: "percentile", Q: -0.5}}}, "metrics[0].q"},
+		{"q on mean", Query{Kind: "stat", Table: "measures", Metrics: []Metric{{Op: "mean", Q: 0.5}}}, "metrics[0].q"},
+		{"q on count", Query{Kind: "stat", Table: "measures", Metrics: []Metric{{Op: "count", Q: 0.5}}}, "metrics[0].q"},
+		{"column on percentile", Query{Kind: "stat", Table: "measures", Metrics: []Metric{{Op: "percentile", Q: 0.5, Column: "value"}}}, "metrics[0].column"},
+		{"of on weight", Query{Kind: "stat", Table: "measures", Metrics: []Metric{{Op: "weight", Of: "actors"}}}, "metrics[0].of"},
+		{"two p50", Query{Kind: "stat", Table: "measures", Metrics: []Metric{{Op: "percentile", Q: 0.5}, {Op: "percentile", Q: 0.5}}}, "metrics[1].as"},
+		{"share on a stat", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "share", Of: "count"}}}, "metrics[0].op"},
+		{"share without of", Query{Kind: "breakdown", Table: "events", Dimensions: []string{"path"}, Metrics: []Metric{{Op: "share"}}}, "metrics[0].of"},
+		{"share of actors", Query{Kind: "breakdown", Table: "events", Dimensions: []string{"path"}, Metrics: []Metric{{Op: "share", Of: "actors"}}}, "metrics[0].of"},
+		{"share of weight on events", Query{Kind: "breakdown", Table: "events", Dimensions: []string{"path"}, Metrics: []Metric{{Op: "share", Of: "weight"}}}, "metrics[0].of"},
+		{"share on an unsplit trend", Query{Kind: "trend", Table: "events", Metrics: []Metric{{Op: "share", Of: "count"}}}, "metrics[0].op"},
+		{"share with a column", Query{Kind: "breakdown", Table: "measures", Dimensions: []string{"path"}, Metrics: []Metric{{Op: "share", Of: "count", Column: "value"}}}, "metrics[0].column"},
+		{"daily_sum of count", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "daily_sum", Of: "count"}}}, "metrics[0].of"},
+		{"vital on events", Query{Kind: "breakdown", Table: "events", Metrics: count(), Dimensions: []string{"vital"}}, "dimensions[0]"},
+		{"vital_rating on views", Query{Kind: "stat", Table: "views", Metrics: count(), Where: []Filter{{Column: "vital_rating", Op: "is_set"}}}, "where[0].column"},
 		{"compare collides", Query{Kind: "stat", Table: "events", Compare: "previous",
 			Metrics: []Metric{{Op: "count", As: "previous_users"}, {Op: "users"}}}, "metrics[0].as"},
 	}
@@ -146,18 +200,33 @@ func TestValidate(t *testing.T) {
 }
 
 func TestMetricName(t *testing.T) {
-	for m, want := range map[Metric]string{
-		{Op: "count"}:                        "count",
-		{Op: "users"}:                        "users",
-		{Op: "sum", Column: "value"}:         "sum_value",
-		{Op: "max", Column: "display_width"}: "max_display_width",
-		{Op: "daily_avg", Of: "groups"}:      "daily_avg_groups",
-		{Op: "count", As: "n"}:               "n",
-		{Op: "bounce_rate"}:                  "bounce_rate",
-		{Op: "avg", Column: "duration_sec"}:  "avg_duration_sec",
+	for _, c := range []struct {
+		m    Metric
+		want string
+	}{
+		{Metric{Op: "count"}, "count"},
+		{Metric{Op: "users"}, "users"},
+		{Metric{Op: "sum", Column: "value"}, "sum_value"},
+		{Metric{Op: "max", Column: "display_width"}, "max_display_width"},
+		{Metric{Op: "daily_avg", Of: "groups"}, "daily_avg_groups"},
+		{Metric{Op: "count", As: "n"}, "n"},
+		{Metric{Op: "bounce_rate"}, "bounce_rate"},
+		{Metric{Op: "avg", Column: "duration_sec"}, "avg_duration_sec"},
+		{Metric{Op: "percentile", Q: 0.75}, "p75"},
+		{Metric{Op: "percentile", Q: 0.5}, "p50"},
+		{Metric{Op: "percentile", Q: 0.05}, "p5"},
+		{Metric{Op: "percentile", Q: 0.999}, "p99.9"},
+		{Metric{Op: "percentile", Q: 0.001}, "p0.1"},
+		{Metric{Op: "percentile", Q: 0.1}, "p10"},
+		{Metric{Op: "percentile", Q: 0.9, As: "slow"}, "slow"},
+		{Metric{Op: "mean"}, "mean"},
+		{Metric{Op: "weight"}, "weight"},
+		{Metric{Op: "share", Of: "weight"}, "share_weight"},
+		{Metric{Op: "share", Of: "count"}, "share_count"},
+		{Metric{Op: "avg", Column: "value", Round: ptr(2), Where: []Filter{{Column: "path", Op: "is_set"}}}, "avg_value"},
 	} {
-		if got := m.Name(); got != want {
-			t.Errorf("%+v: %q, want %q", m, got, want)
+		if got := c.m.Name(); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.m, got, c.want)
 		}
 	}
 }
@@ -207,6 +276,8 @@ func TestColumnTypes(t *testing.T) {
 		{"identities breakdown", Query{Kind: "breakdown", Table: "identities", Metrics: count(),
 			Dimensions: []string{"kind", "id", "name", "day"}}, []string{"text", "text", "text", "day", "number"}},
 		{"status series", Query{Kind: "trend", Metrics: count(), Series: "user_status"}, []string{"day", "text", "number"}},
+		{"ratings", Query{Kind: "breakdown", Table: "measures", Metrics: []Metric{{Op: "share", Of: "weight"}},
+			Dimensions: []string{"vital", "vital_rating"}}, []string{"text", "text", "number"}},
 		{"breakdown other", Query{Kind: "breakdown", Metrics: count(), Dimensions: []string{"day", "consent"}, Other: true},
 			[]string{"text", "text", "number"}},
 	}
@@ -217,5 +288,13 @@ func TestColumnTypes(t *testing.T) {
 		if n := len(c.q.Columns()); n != len(c.want) {
 			t.Errorf("%s: %d columns, %d types", c.name, n, len(c.want))
 		}
+	}
+}
+
+// not_prefix, like contains and prefix, is for text columns.
+func TestNotPrefixIsText(t *testing.T) {
+	_, err := compileFilters([]Filter{{Column: "day", Op: "not_prefix", Values: []string{"2026"}}}, "where")
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "where[0].op") {
+		t.Errorf("err = %v, want ErrInvalid naming where[0].op", err)
 	}
 }

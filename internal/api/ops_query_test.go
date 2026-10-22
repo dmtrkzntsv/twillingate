@@ -221,6 +221,61 @@ func TestQuerySchemaDescribesStructured(t *testing.T) {
 	if strings.Contains(text, "$defs") || strings.Contains(text, "$ref") {
 		t.Errorf("query's input schema is not inline: %s", text)
 	}
+	// A metric's own filters and its round.
+	m := r.specs[i].in.Properties["query"].Properties["metrics"].Items
+	if e := m.Properties["where"].Items.Properties["op"].Enum; len(e) != len(native.FilterOps) {
+		t.Errorf("a metric's where op enum = %v, want the filter operators", e)
+	}
+	if rd := m.Properties["round"]; rd.Minimum == nil || *rd.Minimum != 0 || rd.Maximum == nil || *rd.Maximum != 6 {
+		t.Errorf("round's bounds = %v..%v, want 0..6", rd.Minimum, rd.Maximum)
+	}
+	if q := m.Properties["q"]; q.ExclusiveMinimum == nil || *q.ExclusiveMinimum != 0 || q.ExclusiveMaximum == nil || *q.ExclusiveMaximum != 1 {
+		t.Errorf("q's bounds = %v..%v, want above 0, below 1", q.ExclusiveMinimum, q.ExclusiveMaximum)
+	}
+}
+
+// A share's of, count or weight, passes MCP's schema, and vital and
+// vital_rating are dimensions of measures.
+func TestQueryStructuredShare(t *testing.T) {
+	_, cs := newTestHost(t)
+	q := map[string]any{"kind": "breakdown", "table": "measures", "dimensions": []any{"vital", "vital_rating"}, "order": "vital",
+		"metrics": []any{map[string]any{"op": "share", "of": "weight"}, map[string]any{"op": "share", "of": "count", "round": 3}}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "query": q}); res.IsError {
+		t.Errorf("a share over MCP: %s", textOf(res))
+	}
+	q["metrics"] = []any{map[string]any{"op": "share", "of": "rows"}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "query": q}); !res.IsError {
+		t.Error("share of rows over MCP: accepted")
+	}
+}
+
+// A percentile's q passes MCP's schema when within (0, 1), and is refused
+// past it.
+func TestQueryStructuredPercentile(t *testing.T) {
+	_, cs := newTestHost(t)
+	q := map[string]any{"kind": "stat", "table": "measures", "metrics": []any{
+		map[string]any{"op": "percentile", "q": 0.75}, map[string]any{"op": "mean", "round": 3}, map[string]any{"op": "weight"}}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "query": q}); res.IsError {
+		t.Errorf("a percentile over MCP: %s", textOf(res))
+	}
+	q["metrics"] = []any{map[string]any{"op": "percentile", "q": 1}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "query": q}); !res.IsError {
+		t.Error("q 1 over MCP: accepted")
+	}
+}
+
+// A metric's where and round pass MCP's schema.
+func TestQueryStructuredMetricWhere(t *testing.T) {
+	_, cs := newTestHost(t)
+	q := map[string]any{"kind": "stat", "table": "views", "metrics": []any{
+		map[string]any{"op": "count", "as": "web", "round": 2, "where": []any{map[string]any{"column": "kind", "op": "eq", "values": []any{"web"}}}}}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "query": q}); res.IsError {
+		t.Errorf("a metric's where over MCP: %s", textOf(res))
+	}
+	q["metrics"] = []any{map[string]any{"op": "count", "round": 7}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "query": q}); !res.IsError {
+		t.Error("round 7 over MCP: accepted")
+	}
 }
 
 // compare "" (no comparison) passes MCP's schema as it passes REST.

@@ -292,6 +292,17 @@ func TestKindsMatchDuckDB(t *testing.T) {
 	dailyTop := `WITH d AS (SELECT "path", "day", count(DISTINCT "actor_id") AS n FROM views WHERE ` + inRange + ` GROUP BY "path", "day"),
 		g AS (SELECT "path", sum(n) AS s FROM d GROUP BY "path"),
 		top AS (SELECT * FROM g ORDER BY s DESC, "path" ASC NULLS LAST LIMIT 2) `
+	// sideBySide ranks paths by views, with the product events, buyers and
+	// consented views with a display beside them.
+	const sideBySideMetrics = `count(*) FILTER (WHERE "family" = 'views'), count(*) FILTER (WHERE "family" = 'product'),
+		count(DISTINCT "actor_id") FILTER (WHERE "family" = 'product'),
+		count(*) FILTER (WHERE "consent" = 1 AND "display_width" > 0)`
+	sideBySide := `WITH g AS (SELECT "path", count(*) FILTER (WHERE "family" = 'views') AS v,
+			count(*) FILTER (WHERE "family" = 'product') AS p, count(DISTINCT "actor_id") FILTER (WHERE "family" = 'product') AS b,
+			count(*) FILTER (WHERE "consent" = 1 AND "display_width" > 0) AS gv
+			FROM events WHERE ` + inRange + ` GROUP BY "path"),
+		top AS (SELECT * FROM g ORDER BY v DESC, "path" ASC NULLS LAST LIMIT 3) `
+	measuresOnly := []Filter{{Column: "family", Op: "eq", Values: []string{"measures"}}}
 	cases := []tc{
 		all("stat views", viewsStat, viewsStatCols, viewsStatSQL),
 		{name: "stat compare", q: compare, from: "2026-08-26", to: today, prev: true, sql: []string{viewsStatSQL},
@@ -433,6 +444,51 @@ func TestKindsMatchDuckDB(t *testing.T) {
 		all("renamed event", Query{Kind: "breakdown", Table: "views", Metrics: count(), Dimensions: []string{"event_name"}},
 			[]string{"event_name", "count"},
 			`SELECT "event_name", count(*) AS c FROM views WHERE `+inRange+` GROUP BY "event_name" ORDER BY c DESC, "event_name" ASC NULLS LAST LIMIT 20`),
+		all("metric filters side by side", Query{Kind: "breakdown", Table: "events", Dimensions: []string{"path"}, Limit: 3, Other: true,
+			Metrics: []Metric{
+				{Op: "count", As: "views", Where: []Filter{{Column: "family", Op: "eq", Values: []string{"views"}}}},
+				{Op: "count", As: "events", Where: []Filter{{Column: "family", Op: "eq", Values: []string{"product"}}}},
+				{Op: "actors", As: "buyers", Where: []Filter{{Column: "family", Op: "eq", Values: []string{"product"}}}},
+				{Op: "count", As: "given", Where: []Filter{{Column: "consent_state", Op: "eq", Values: []string{"given"}},
+					{Column: "display_width", Op: "gt", Values: []string{"0"}}}}}},
+			[]string{"path", "views", "events", "buyers", "given"},
+			sideBySide+`SELECT "path", v, p, b, gv FROM top ORDER BY v DESC, "path" ASC NULLS LAST`,
+			sideBySide+`SELECT 'Other', `+sideBySideMetrics+` FROM events e WHERE `+inRange+`
+				AND NOT EXISTS (SELECT 1 FROM top WHERE top."path" IS NOT DISTINCT FROM e."path") HAVING count(*) > 0`),
+		{name: "stat round", q: Query{Kind: "stat", Table: "measures", Compare: "previous", Metrics: []Metric{
+			{Op: "avg", Column: "value", Round: ptr(2)}, {Op: "avg", Column: "value", Round: ptr(0), As: "r0"},
+			{Op: "count", Round: ptr(2)}, {Op: "avg", Column: "display_width", Round: ptr(1), As: "w"},
+			{Op: "sum", Column: "value", Round: ptr(1), As: "s", Where: []Filter{{Column: "event_name", Op: "eq", Values: []string{"cls"}}}}}},
+			from: "2026-08-26", to: today, prev: true,
+			cols: []string{"avg_value", "r0", "count", "w", "s", "previous_avg_value", "previous_r0", "previous_count", "previous_w", "previous_s"},
+			sql: []string{`SELECT ROUND(avg("value"), 2), ROUND(avg("value")), count(*), ROUND(avg("display_width"), 1),
+				ROUND(sum("value") FILTER (WHERE "event_name" = 'cls'), 1) FROM measures WHERE ` + inRange}},
+		all("metric filter empty in some groups", Query{Kind: "breakdown", Table: "events", Dimensions: []string{"event_name"}, Limit: 50,
+			Metrics: []Metric{{Op: "count"},
+				{Op: "avg", Column: "value", Round: ptr(3), As: "mean", Where: measuresOnly},
+				{Op: "count", As: "samples", Where: measuresOnly},
+				{Op: "actors", As: "measured", Where: measuresOnly},
+				{Op: "daily_max", Of: "actors", As: "dm", Where: measuresOnly},
+				{Op: "min", Column: "display_width", As: "mw", Where: measuresOnly}}},
+			[]string{"event_name", "count", "mean", "samples", "measured", "dm", "mw"},
+			`SELECT "event_name", count(*) AS c, ROUND(avg("value") FILTER (WHERE "family" = 'measures'), 3),
+				count(*) FILTER (WHERE "family" = 'measures'), count(DISTINCT "actor_id") FILTER (WHERE "family" = 'measures'),
+				(SELECT max(n) FROM (SELECT count(DISTINCT x."actor_id") AS n FROM events x WHERE x."project_id" = 1
+					AND x."day" BETWEEN DATE '%[1]s' AND DATE '%[2]s' AND x."family" = 'measures'
+					AND x."event_name" IS NOT DISTINCT FROM e."event_name" GROUP BY x."day")),
+				min("display_width") FILTER (WHERE "family" = 'measures')
+				FROM events e WHERE `+inRange+` GROUP BY "event_name" ORDER BY c DESC, "event_name" ASC NULLS LAST LIMIT 50`),
+		all("trend metric filter", Query{Kind: "trend", Table: "views", Metrics: []Metric{{Op: "count", As: "landings",
+			Where: []Filter{{Column: "event_name", Op: "eq", Values: []string{"landing"}}}}}}, []string{"day", "landings"},
+			`SELECT "day", count(*) FILTER (WHERE "event_name" = 'landing') FROM views WHERE `+inRange+` GROUP BY "day" ORDER BY "day"`),
+		all("trend series ranked by a filtered metric", Query{Kind: "trend", Table: "views", Series: "country", SeriesLimit: 2,
+			Metrics: []Metric{{Op: "actors", Where: []Filter{{Column: "path", Op: "prefix", Values: []string{"/q"}}}}}},
+			[]string{"day", "series", "actors"},
+			`WITH top AS (SELECT "country" FROM views WHERE `+inRange+` GROUP BY "country"
+				ORDER BY count(DISTINCT "actor_id") FILTER (WHERE starts_with("path", '/q')) DESC, "country" ASC NULLS LAST LIMIT 2)
+			SELECT "day", v."country", count(DISTINCT "actor_id") FILTER (WHERE starts_with("path", '/q'))
+			FROM views v JOIN top ON v."country" IS NOT DISTINCT FROM top."country"
+			WHERE `+inRange+` GROUP BY "day", v."country" ORDER BY "day", v."country" ASC NULLS LAST`),
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -501,6 +557,12 @@ func TestRunRefusesBadValues(t *testing.T) {
 		if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), c.path) {
 			t.Errorf("%+v: %v, want ErrInvalid naming %s", c.f, err, c.path)
 		}
+	}
+	// A metric's filter too, named by its path.
+	mq := Query{Kind: "stat", Table: "measures", Metrics: []Metric{{Op: "count"}, {Op: "count", As: "n",
+		Where: []Filter{{Column: "path", Op: "is_set"}, {Column: "display_width", Op: "in", Values: []string{"wide"}}}}}}
+	if _, err := e.Answer(context.Background(), mq, p, archive.Rules{}); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "metrics[1].where[1].values") {
+		t.Errorf("metric filter: %v, want ErrInvalid naming metrics[1].where[1].values", err)
 	}
 	q := Query{Kind: "stat", Table: "views", Metrics: count()}
 	if _, err := e.Answer(context.Background(), q, Params{Project: 1, From: date(t, today), To: date(t, "2026-09-01")}, archive.Rules{}); !errors.Is(err, ErrInvalid) {
@@ -758,7 +820,7 @@ func TestMaxBytesRefusesOneGroup(t *testing.T) {
 }
 
 func TestDistinctKeysTrackedRowsOnly(t *testing.T) {
-	filters, err := compileFilters([]Filter{{Column: "path", Op: "eq", Values: []string{"/a"}}})
+	filters, err := compileFilters([]Filter{{Column: "path", Op: "eq", Values: []string{"/a"}}}, "where")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -799,5 +861,32 @@ func TestRunRetriesVanishedFiles(t *testing.T) {
 	_, err := e.Answer(context.Background(), q, Params{Project: 1, From: date(t, today), To: date(t, today)}, archive.Rules{})
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("err = %v, want ErrNotExist after the retries", err)
+	}
+}
+
+// A metric's round prints as DuckDB prints ROUND of a DOUBLE: half away
+// from zero, round 0 as an integer.
+func TestRoundMatchesDuckDB(t *testing.T) {
+	f := archivetest.New(t)
+	xs := []float64{2.5, -2.5, 0.125, 1.005, 2, 1234.5678, -0.004, 0.0001234}
+	for _, places := range []int{0, 1, 2, 3, 6} {
+		var sel []string
+		var got []string
+		for _, x := range xs {
+			lit := strconv.FormatFloat(x, 'g', -1, 64)
+			if places == 0 { // as the widgets write it
+				sel = append(sel, fmt.Sprintf("ROUND(%s::DOUBLE)", lit))
+			} else {
+				sel = append(sel, fmt.Sprintf("ROUND(%s::DOUBLE, %d)", lit, places))
+			}
+			got = append(got, value{f: x}.round(&places).String())
+		}
+		want := duckTable(t, f, "SELECT "+strings.Join(sel, ", ")+" WHERE '%[1]s' = '%[2]s'", "", "")
+		if !slices.Equal(got, want[0]) {
+			t.Errorf("round %d: %q, want DuckDB's %q", places, got, want[0])
+		}
+	}
+	if got := intValue(7).round(ptr(2)).String(); got != "7" {
+		t.Errorf("an integer rounded: %q", got)
 	}
 }

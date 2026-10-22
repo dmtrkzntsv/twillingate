@@ -77,8 +77,15 @@ type computedColumn struct {
 //     empty, else NULL;
 //   - platform_version: platform (NULL read as empty), a space, then
 //     app_version, when app_version is not empty, else NULL;
-//   - consent_state: given (consent 1), none (0), else unknown.
+//   - consent_state: given (consent 1), none (0), else unknown;
+//   - vital: upper(substr(event_name, 2)) for the vitals (vitals), else
+//     NULL;
+//   - vital_rating: a vital's sample rated against its thresholds by its
+//     bucket's value (bucketValue): good up to the first, needs
+//     improvement up to the second, else poor; NULL for the others.
 var computedColumns = map[string]computedColumn{
+	"vital":            {[]string{"event_name"}, vitalColumn},
+	"vital_rating":     {[]string{"event_name", "value"}, vitalRatingColumn},
 	"resolution":       {[]string{"display_width", "display_height"}, resolutionColumn},
 	"device_label":     {[]string{"device_model", "device"}, deviceLabelColumn},
 	"platform_version": {[]string{"platform", "app_version"}, platformVersionColumn},
@@ -201,6 +208,75 @@ func consentStateColumn(b *Batch) *Column {
 	})
 }
 
+// vitalThreshold is a vital's name (vital's value) and the two values a
+// sample's bucket value is rated good and needs improvement up to, as
+// vitals/ratings.sql has them.
+type vitalThreshold struct {
+	name       string
+	good, poor float64
+}
+
+// vitals are the web vitals by event_name.
+var vitals = map[string]vitalThreshold{
+	"$lcp":  {"LCP", 2500, 4000},
+	"$inp":  {"INP", 200, 500},
+	"$cls":  {"CLS", 0.1, 0.25},
+	"$fcp":  {"FCP", 1800, 3000},
+	"$ttfb": {"TTFB", 800, 1800},
+}
+
+// vitalOf is the vital of b's event_name dictionary entries (nil when b
+// has no event_name): per entry, its threshold, or nil.
+func vitalOf(b *Batch) (*Column, []*vitalThreshold) {
+	_, c := b.col("event_name")
+	if c == nil || c.Idx == nil {
+		return nil, nil
+	}
+	ts := make([]*vitalThreshold, len(c.Dict))
+	for j, s := range c.Dict {
+		if v, ok := vitals[s]; ok {
+			ts[j] = &v
+		}
+	}
+	return c, ts
+}
+
+func vitalColumn(b *Batch) *Column {
+	names, ts := vitalOf(b)
+	return textColumn(b.N, func(i int) (string, bool) {
+		if names == nil || names.Idx[i] < 0 || ts[names.Idx[i]] == nil {
+			return "", false
+		}
+		return ts[names.Idx[i]].name, true
+	})
+}
+
+func vitalRatingColumn(b *Batch) *Column {
+	names, ts := vitalOf(b)
+	_, val := b.col("value")
+	return textColumn(b.N, func(i int) (string, bool) {
+		if names == nil || names.Idx[i] < 0 || ts[names.Idx[i]] == nil {
+			return "", false
+		}
+		t := ts[names.Idx[i]]
+		v, null := 0.0, true
+		switch {
+		case val == nil || (val.Null != nil && val.Null[i]):
+		case val.Floats != nil:
+			v, null = val.Floats[i], false
+		case val.Ints != nil:
+			v, null = float64(val.Ints[i]), false
+		}
+		switch x := bucketValue(bucketOf(v, null)); {
+		case x <= t.good:
+			return "good", true
+		case x <= t.poor:
+			return "needs improvement", true
+		}
+		return "poor", true
+	})
+}
+
 // bucketOf is measures' bucket of a value, as the reader's measures view
 // computes it: ceil(ln(value)/ln(1.04)) above 1e-17, else (NULL among
 // them) -1000.
@@ -225,8 +301,9 @@ type filter struct {
 }
 
 // compileFilters parses the filters' values for their columns' types; a
-// value that is not one refuses the query, naming it.
-func compileFilters(where []Filter) ([]filter, error) {
+// value that is not one refuses the query, naming it under path (where,
+// metrics[1].where).
+func compileFilters(where []Filter, path string) ([]filter, error) {
 	out := make([]filter, len(where))
 	for i, f := range where {
 		c := filter{column: f.Column, typ: typeOf(f.Column), op: f.Op}
@@ -241,14 +318,14 @@ func compileFilters(where []Filter) ([]filter, error) {
 			out[i] = c
 			continue
 		}
-		if f.Op == "contains" || f.Op == "prefix" {
-			return nil, invalid(fmt.Sprintf("where[%d].op", i), "%s is not allowed on %s", f.Op, f.Column)
+		if f.Op == "contains" || f.Op == "prefix" || f.Op == "not_prefix" {
+			return nil, invalid(fmt.Sprintf("%s[%d].op", path, i), "%s is not allowed on %s", f.Op, f.Column)
 		}
 		c.ints = make(map[int64]bool, len(f.Values))
 		for _, v := range f.Values {
 			n, err := parseValue(c.typ, v)
 			if err != nil {
-				return nil, invalid(fmt.Sprintf("where[%d].values", i), "%v", err)
+				return nil, invalid(fmt.Sprintf("%s[%d].values", path, i), "%v", err)
 			}
 			c.ints[n] = true
 			c.num = n
@@ -288,6 +365,8 @@ func (f *filter) matchString(s string) bool {
 		return strings.Contains(s, f.str)
 	case "prefix":
 		return strings.HasPrefix(s, f.str)
+	case "not_prefix":
+		return !strings.HasPrefix(s, f.str)
 	case "is_set":
 		return s != ""
 	}
@@ -362,6 +441,24 @@ func (f *filter) apply(b *Batch, keep []bool) error {
 	return nil
 }
 
+// passRows is, per row of b, whether it passes every filter, in keep
+// (reused when it holds b.N rows).
+func passRows(b *Batch, filters []filter, keep []bool) ([]bool, error) {
+	if cap(keep) < b.N {
+		keep = make([]bool, b.N)
+	}
+	keep = keep[:b.N]
+	for i := range keep {
+		keep[i] = true
+	}
+	for i := range filters {
+		if err := filters[i].apply(b, keep); err != nil {
+			return nil, err
+		}
+	}
+	return keep, nil
+}
+
 // selectRows is the rows of b that pass every filter, appended to sel[:0].
 func selectRows(b *Batch, filters []filter, sel []int32) ([]int32, error) {
 	sel = sel[:0]
@@ -371,14 +468,9 @@ func selectRows(b *Batch, filters []filter, sel []int32) ([]int32, error) {
 		}
 		return sel, nil
 	}
-	keep := make([]bool, b.N)
-	for i := range keep {
-		keep[i] = true
-	}
-	for i := range filters {
-		if err := filters[i].apply(b, keep); err != nil {
-			return nil, err
-		}
+	keep, err := passRows(b, filters, nil)
+	if err != nil {
+		return nil, err
 	}
 	for i, k := range keep {
 		if k {
