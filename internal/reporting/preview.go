@@ -52,6 +52,9 @@ func (s *Service) Preview(ctx context.Context, in PreviewIn) (Preview, error) {
 		return Preview{}, store.Refuse(store.ErrInvalid,
 			"%s does not accept %s; it accepts %s", comp.Name, in.Source.Type, joinAnd(comp.Accepts))
 	}
+	if err := checkRemoteTable(store.Widget{Component: in.Component, Props: string(in.Props), SourceType: in.Source.Type}); err != nil {
+		return Preview{}, err
+	}
 	start := time.Now()
 	res, err := s.previewRows(ctx, in)
 	if err != nil {

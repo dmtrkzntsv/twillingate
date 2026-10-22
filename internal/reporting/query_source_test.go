@@ -240,12 +240,17 @@ func TestQuerySourcePreview(t *testing.T) {
 	writeCountries(t, files)
 	svc.sources = querySources(t, files, nil)
 	if err := svc.st.SyncReporting(context.Background(), store.ReportingSync{
-		Hash: "query", Version: "test", Components: []store.Component{oneComponent(t, queryBarList).row()},
+		Hash: "query", Version: "test", Components: []store.Component{oneComponent(t, queryBarList).row(), oneComponent(t, queryTable).row()},
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// A remote table is refused as add_widget refuses it.
+	_, err := svc.Preview(context.Background(), PreviewIn{Component: "table", Props: json.RawMessage(`{"mode":"remote"}`),
+		Source: Source{Type: "query", Content: countryBars}, ProjectID: 1, From: "2026-10-20", To: "2026-10-21"})
+	wantRefusal(t, err, store.ErrInvalid, `a remote table takes sql only; a query source needs props.mode "local"`)
+
 	in := PreviewIn{Component: "bar_list", Source: Source{Type: "query", Content: countryBars}, From: "2026-10-20", To: "2026-10-21"}
-	_, err := svc.Preview(context.Background(), in)
+	_, err = svc.Preview(context.Background(), in)
 	wantRefusal(t, err, store.ErrInvalid, "a query follows the project; pass project_id")
 
 	in.ProjectID = 1
