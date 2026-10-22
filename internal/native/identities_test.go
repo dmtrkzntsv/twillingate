@@ -1,0 +1,311 @@
+package native
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
+)
+
+// identitiesProject is the identities fixture's project.
+const identitiesProject = 4
+
+// identitiesFrom is the fixture's first day: users and groups are first
+// seen from then on, some of them before any range the tests ask.
+const identitiesFrom = "2026-08-25"
+
+// identityDay is one day (index d) of project 4's events: users u0 to
+// u7 seen on views and product events from day k on (on two days of
+// three), named on some of them; groups g0 to g2 beside some; views
+// without a user; measures with a user only measures carry (m0, m1), and
+// with u7 before its first view, which identities never count.
+func identityDay(t testing.TB, day string, d int, tag string) []store.Event {
+	t.Helper()
+	base := date(t, day).Time().Add(6 * time.Hour)
+	var out []store.Event
+	n := 0
+	add := func(e store.Event) {
+		e.ProjectID = identitiesProject
+		e.TS = base.Add(time.Duration(n) * time.Minute)
+		e.ID = fmt.Sprintf("i-%s-%d%s", day, n, tag)
+		e.Kind, e.ActorKind, e.Host = "web", "install", "example.com"
+		n++
+		out = append(out, e)
+	}
+	for k := range min(d+1, 8) {
+		if (k+d)%3 == 2 {
+			continue
+		}
+		e := store.Event{Family: store.FamilyViews, EventName: "pageview", ActorID: fmt.Sprintf("a%d", k),
+			UserID: fmt.Sprintf("u%d", k), Path: fmt.Sprintf("/p%d", k%3)}
+		if (k+d)%2 == 0 {
+			e.UserName = fmt.Sprintf("User %d.%d", k, d)
+		}
+		if k%2 == 0 {
+			e.GroupID = fmt.Sprintf("g%d", k%3)
+			if d%3 == 0 {
+				e.GroupName = fmt.Sprintf("Group %d.%d", k%3, d)
+			}
+		}
+		add(e)
+		if (k*d)%4 == 1 {
+			add(store.Event{Family: store.FamilyProduct, EventName: "click", ActorID: fmt.Sprintf("a%d", k),
+				UserID: fmt.Sprintf("u%d", k), GroupID: e.GroupID})
+		}
+	}
+	add(store.Event{Family: store.FamilyViews, EventName: "pageview", ActorID: "anon", Path: "/anon"})
+	v := 1.5
+	add(store.Event{Family: store.FamilyMeasures, EventName: "lcp", Measure: "web", ActorID: "a1",
+		UserID: fmt.Sprintf("m%d", d%2), Value: &v})
+	if d < 7 {
+		add(store.Event{Family: store.FamilyMeasures, EventName: "lcp", Measure: "web", ActorID: "a7", UserID: "u7", Value: &v})
+	}
+	return out
+}
+
+// identitiesFixture writes project 4's days August 25 to September 9 and
+// runs the daily pass as of today, which derives identities.parquet; then
+// writes today's events and late events on September 3 (a new user, and
+// u1 renamed, then seen unnamed today), which stay in logs over the
+// current file.
+func identitiesFixture(t testing.TB) *archivetest.Files {
+	t.Helper()
+	f := archivetest.New(t)
+	start := date(t, identitiesFrom).Time()
+	days := 0
+	for ; ; days++ {
+		day := start.AddDate(0, 0, days).Format(time.DateOnly)
+		if day == today {
+			break
+		}
+		f.Write(t, identityDay(t, day, days, "")...)
+	}
+	f.Maintain(t, today)
+	f.Write(t, identityDay(t, today, days, "")...)
+	late := date(t, "2026-09-03").Time().Add(20 * time.Hour)
+	f.Write(t,
+		store.Event{ID: "i-late-1", ProjectID: identitiesProject, Family: store.FamilyViews, EventName: "pageview", TS: late,
+			Kind: "web", ActorID: "a9", UserID: "late", UserName: "Late"},
+		store.Event{ID: "i-late-2", ProjectID: identitiesProject, Family: store.FamilyProduct, EventName: "click", TS: late.Add(time.Minute),
+			Kind: "web", ActorID: "a1", UserID: "u1", UserName: "Renamed"},
+		// Unnamed, but the logs' latest of u1: their name, Renamed, is the
+		// one combined, the file's last_seen being earlier.
+		store.Event{ID: "i-late-3", ProjectID: identitiesProject, Family: store.FamilyViews, EventName: "pageview",
+			TS: date(t, today).Time().Add(22 * time.Hour), Kind: "web", ActorID: "a1", UserID: "u1"})
+	all, err := archive.ListFiles(f.Dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p := all[identitiesProject]; p.Identities == "" || len(p.Logs) < 2 {
+		t.Fatalf("identities file %q, logs %q: want a current file and two logs", p.Identities, p.Logs)
+	}
+	return f
+}
+
+// identityColumnList is the identities table's columns, for DuckDB.
+var identityColumnList = `"` + strings.Join(identityColumns, `", "`) + `"`
+
+// identityRows is project's identities as the engine loads them, formatted
+// as duckTable formats DuckDB's rows, sorted.
+func identityRows(t *testing.T, e *Engine, project int64) [][]string {
+	t.Helper()
+	ids, err := e.identities(context.Background(), project, func(int64) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := ids.batch(project, nil)
+	rows := make([][]string, b.N)
+	for i := range b.N {
+		row := make([]string, len(identityColumns))
+		for j, name := range identityColumns {
+			_, c := b.col(name)
+			if c == nil {
+				t.Fatalf("batch without %s", name)
+			}
+			row[j] = cellText(c, i, false)
+		}
+		rows[i] = row
+	}
+	sortRows(rows)
+	return rows
+}
+
+func TestIdentitiesRowsMatchDuckDB(t *testing.T) {
+	f := identitiesFixture(t)
+	e := New(Options{Dir: f.Dir, Workers: 3})
+	pdir := filepath.Join(f.Dir, strconv.Itoa(identitiesProject))
+	check := func(t *testing.T) {
+		t.Helper()
+		got := identityRows(t, e, identitiesProject)
+		want := duckTable(t, f, `SELECT `+identityColumnList+` FROM identities WHERE "project_id" = 4 AND '%[1]s' = '%[2]s'`, "", "")
+		sortRows(want)
+		if len(want) < 10 {
+			t.Fatalf("DuckDB has %d identities: a weak case", len(want))
+		}
+		sameTable(t, got, want)
+	}
+	t.Run("current file and logs", func(t *testing.T) {
+		check(t)
+		got := identityRows(t, e, identitiesProject)
+		if !slices.ContainsFunc(got, func(r []string) bool { return r[2] == "u1" && r[3] == "Renamed" }) {
+			t.Error("u1 is not named by the logs, whose last_seen is the latest")
+		}
+	})
+	t.Run("a log grown", func(t *testing.T) {
+		at := date(t, today).Time().Add(23 * time.Hour)
+		f.Write(t, store.Event{ID: "i-grown", ProjectID: identitiesProject, Family: store.FamilyViews, EventName: "pageview",
+			TS: at, Kind: "web", ActorID: "a2", UserID: "u2", UserName: "Grown", GroupID: "g9"})
+		check(t)
+		got := identityRows(t, e, identitiesProject)
+		if !slices.ContainsFunc(got, func(r []string) bool { return r[2] == "g9" }) {
+			t.Error("the grown log's group is not read")
+		}
+	})
+	t.Run("stale file", func(t *testing.T) {
+		later := time.Now().Add(time.Hour)
+		if err := os.Chtimes(filepath.Join(pdir, "2026-09-05.parquet"), later, later); err != nil {
+			t.Fatal(err)
+		}
+		all, err := archive.ListFiles(f.Dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if p := all[identitiesProject].Identities; p != "" {
+			t.Fatalf("identities file %q is current", p)
+		}
+		check(t)
+	})
+	t.Run("missing file", func(t *testing.T) {
+		if err := os.Remove(filepath.Join(pdir, "identities.parquet")); err != nil {
+			t.Fatal(err)
+		}
+		check(t)
+	})
+}
+
+// statusSQL is the events of project 4 in range with their user_status
+// and group_status, as the system widgets join identities.
+const statusSQL = `WITH s AS (SELECT e.*,
+		CASE WHEN e."day" = u.first_seen::DATE THEN 'new' WHEN e."day" > u.first_seen::DATE THEN 'returning' END AS us,
+		CASE WHEN e."day" = g.first_seen::DATE THEN 'new' WHEN e."day" > g.first_seen::DATE THEN 'returning' END AS gs
+	FROM events e
+	LEFT JOIN identities u ON u.project_id = 4 AND u.kind = 'user' AND u.id = e.user_id
+	LEFT JOIN identities g ON g.project_id = 4 AND g.kind = 'group' AND g.id = e.group_id
+	WHERE e."project_id" = 4 AND e."day" BETWEEN DATE '%[1]s' AND DATE '%[2]s') `
+
+func TestIdentitiesQueriesMatchDuckDB(t *testing.T) {
+	f := identitiesFixture(t)
+	e := New(Options{Dir: f.Dir, Workers: 2})
+	const from, to = "2026-09-01", today
+	widgetFamilies := Filter{Column: "family", Op: "in", Values: []string{"views", "product"}}
+	firstIn := `"project_id" = 4 AND first_seen::DATE BETWEEN DATE '%[1]s' AND DATE '%[2]s'`
+	cases := []struct {
+		name     string
+		q        Query
+		cols     []string
+		sql      string
+		from, to string
+	}{
+		{name: "daily active users", q: Query{Kind: "trend", Table: "events", Metrics: []Metric{{Op: "users"}}, Series: "user_status",
+			Where: []Filter{widgetFamilies, {Column: "user_id", Op: "is_set"}}}, cols: []string{"day", "series", "users"},
+			sql: statusSQL + `SELECT "day", us, count(DISTINCT "user_id") FROM s WHERE "family" IN ('views', 'product') AND "user_id" <> ''
+				GROUP BY ALL ORDER BY "day", us ASC NULLS LAST`},
+		// The new-users widget's own SQL.
+		{name: "new users", q: Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "users"}},
+			Where: []Filter{widgetFamilies, {Column: "user_status", Op: "eq", Values: []string{"new"}}}}, cols: []string{"users"},
+			sql: `SELECT count(DISTINCT e.user_id) FILTER (WHERE e.day = i.first_seen::DATE) FROM events e
+				JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = e.user_id
+				WHERE e.project_id = 4 AND e.family IN ('views', 'product') AND e.user_id <> ''
+				AND e.day BETWEEN DATE '%[1]s' AND DATE '%[2]s'`},
+		{name: "new groups", q: Query{Kind: "stat", Table: "product", Metrics: []Metric{{Op: "groups"}, {Op: "count"}},
+			Where: []Filter{{Column: "group_status", Op: "eq", Values: []string{"new"}}}, Compare: "previous"},
+			cols: []string{"groups", "count", "previous_groups", "previous_count"},
+			sql: statusSQL + `, p AS (SELECT count(DISTINCT "group_id") AS g, count(*) AS c FROM s WHERE "family" = 'product' AND gs = 'new'),
+				q AS (SELECT count(DISTINCT e."group_id") AS g, count(*) AS c FROM events e
+					JOIN identities i ON i.project_id = 4 AND i.kind = 'group' AND i.id = e.group_id
+					WHERE e."project_id" = 4 AND e."family" = 'product' AND e."day" BETWEEN DATE '2026-08-22' AND DATE '2026-08-31'
+					AND e."day" = i.first_seen::DATE)
+				SELECT p.g, p.c, q.g, q.c FROM p, q`},
+		{name: "status on every family", q: Query{Kind: "breakdown", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "users"}, {Op: "groups"}},
+			Dimensions: []string{"user_status", "group_status", "family"}, Limit: 100}, from: identitiesFrom, cols: []string{"user_status", "group_status", "family", "count", "users", "groups"},
+			sql: statusSQL + `SELECT us, gs, "family", count(*) AS c, count(DISTINCT "user_id"), count(DISTINCT "group_id") FROM s
+				GROUP BY ALL ORDER BY c DESC, us ASC NULLS LAST, gs ASC NULLS LAST, "family" ASC LIMIT 100`},
+		{name: "views by status", q: Query{Kind: "breakdown", Table: "views", Metrics: count(), Dimensions: []string{"user_status", "path"},
+			Where: []Filter{{Column: "user_status", Op: "ne", Values: []string{"returning"}}}, Limit: 100},
+			cols: []string{"user_status", "path", "count"},
+			sql: statusSQL + `SELECT us, "path", count(*) AS c FROM s WHERE "family" = 'views' AND us <> 'returning'
+				GROUP BY ALL ORDER BY c DESC, us ASC NULLS LAST, "path" ASC NULLS LAST LIMIT 100`},
+		{name: "identities by kind", q: Query{Kind: "breakdown", Table: "identities",
+			Metrics: []Metric{{Op: "count"}, {Op: "sum", Column: "views"}, {Op: "avg", Column: "events"}, {Op: "max", Column: "views"}},
+			Dimensions: []string{"kind"}}, cols: []string{"kind", "count", "sum_views", "avg_events", "max_views"},
+			from: identitiesFrom,
+			sql: `SELECT "kind", count(*) AS c, sum("views"), avg("events"), max("views") FROM identities WHERE ` + firstIn + `
+				GROUP BY ALL ORDER BY c DESC, "kind" ASC`},
+		{name: "identities first seen per day", q: Query{Kind: "trend", Table: "identities", Metrics: count(), Series: "kind"},
+			cols: []string{"day", "series", "count"}, from: identitiesFrom,
+			sql: `SELECT first_seen::DATE, "kind", count(*) FROM identities WHERE ` + firstIn + ` GROUP BY ALL ORDER BY 1, 2`},
+		{name: "identities by name", q: Query{Kind: "breakdown", Table: "identities", Metrics: []Metric{{Op: "sum", Column: "events"}},
+			Dimensions: []string{"id", "name", "day"}, Where: []Filter{{Column: "kind", Op: "eq", Values: []string{"user"}},
+				{Column: "views", Op: "gt", Values: []string{"2"}}}, Limit: 100},
+			cols: []string{"id", "name", "day", "sum_events"}, from: identitiesFrom,
+			sql: `SELECT "id", "name", first_seen::DATE, sum("events") AS s FROM identities WHERE ` + firstIn + `
+				AND "kind" = 'user' AND "views" > 2 GROUP BY ALL ORDER BY s DESC, "id" ASC, "name" ASC NULLS LAST, 3 LIMIT 100`},
+		{name: "identities in range", q: Query{Kind: "stat", Table: "identities", Metrics: []Metric{{Op: "count"}, {Op: "min", Column: "events"}}},
+			cols: []string{"count", "min_events"},
+			sql:  `SELECT count(*), min("events") FROM identities WHERE ` + firstIn},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			from, to := from, to
+			if c.from != "" {
+				from = c.from
+			}
+			if c.to != "" {
+				to = c.to
+			}
+			res, err := e.Answer(context.Background(), c.q, Params{Project: identitiesProject, From: date(t, from), To: date(t, to)}, engineRules)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(res.Columns, c.cols) {
+				t.Fatalf("columns %q, want %q", res.Columns, c.cols)
+			}
+			want := duckTable(t, f, c.sql, from, to)
+			if len(want) == 0 {
+				t.Fatal("the SQL returns no rows: a weak case")
+			}
+			sameTable(t, res.Rows, want)
+		})
+	}
+	// The fixture is built for this: users first seen before the range,
+	// and some within it.
+	rows := duckTable(t, f, statusSQL+`SELECT us, count(DISTINCT "user_id") FROM s WHERE us IS NOT NULL GROUP BY ALL ORDER BY 1`, from, to)
+	if len(rows) != 2 || rows[0][0] != "new" || rows[1][0] != "returning" || rows[0][1] == "0" {
+		t.Errorf("DuckDB's users by status in range: %q, want both new and returning", rows)
+	}
+}
+
+// TestIdentitiesCharged: the identities a query loads count against
+// MaxBytes.
+func TestIdentitiesCharged(t *testing.T) {
+	f := identitiesFixture(t)
+	e := New(Options{Dir: f.Dir, MaxBytes: 64})
+	for _, q := range []Query{
+		{Kind: "stat", Table: "identities", Metrics: count()},
+		{Kind: "stat", Table: "views", Metrics: count(), Where: []Filter{{Column: "user_status", Op: "is_set"}}},
+	} {
+		_, err := e.Answer(context.Background(), q, Params{Project: identitiesProject, From: date(t, identitiesFrom), To: date(t, today)}, archive.Rules{})
+		if err == nil || !strings.Contains(err.Error(), ErrTooLarge.Error()) {
+			t.Errorf("%s: err %v, want ErrTooLarge", q.Table, err)
+		}
+	}
+}

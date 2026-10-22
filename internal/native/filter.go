@@ -31,13 +31,17 @@ func typeOf(column string) colType {
 }
 
 // readColumns are the columns a scan reads for column: value for bucket,
-// a computed column's sources.
+// a computed column's sources, a status column's id (with day, which a
+// scan always reads; the scan adds the status itself, from identities).
 func readColumns(column string) []string {
 	if c, ok := computedColumns[column]; ok {
 		return c.sources
 	}
 	if column == "bucket" {
 		return []string{"value"}
+	}
+	if s, ok := statusColumns[column]; ok {
+		return []string{s.id}
 	}
 	return []string{column}
 }

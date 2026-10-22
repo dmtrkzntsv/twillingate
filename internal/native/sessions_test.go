@@ -253,6 +253,12 @@ func TestSessionsQueriesMatchDuckDB(t *testing.T) {
 			sql: `SELECT ` + metricSQL + ` FROM sessions WHERE ` + in},
 		{name: "stat empty", q: Query{Kind: "stat", Table: "sessions", Metrics: metrics}, cols: metricCols,
 			sql: `SELECT ` + metricSQL + ` FROM sessions WHERE ` + in, from: "2026-07-01", to: "2026-07-05"},
+		{name: "stat compare", q: Query{Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "count"}, {Op: "bounce_rate"}}, Compare: "previous"},
+			cols: []string{"count", "bounce_rate", "previous_count", "previous_bounce_rate"}, from: "2026-09-03", to: "2026-09-06",
+			sql: `WITH c AS (SELECT count(*) AS n, count(*) FILTER (WHERE "views" = 1)::DOUBLE / count(*) AS r FROM sessions WHERE ` + in + `),
+				p AS (SELECT count(*) AS n, count(*) FILTER (WHERE "views" = 1)::DOUBLE / count(*) AS r FROM sessions
+					WHERE "project_id" = 3 AND "day" BETWEEN DATE '2026-08-30' AND DATE '2026-09-02')
+				SELECT c.n, c.r, p.n, p.r FROM c, p`},
 		{name: "trend bounce rate", q: Query{Kind: "trend", Table: "sessions", Metrics: []Metric{{Op: "bounce_rate"}}},
 			cols: []string{"day", "bounce_rate"},
 			sql:  `SELECT "day", count(*) FILTER (WHERE "views" = 1)::DOUBLE / count(*) FROM sessions WHERE ` + in + ` GROUP BY "day" ORDER BY "day"`},

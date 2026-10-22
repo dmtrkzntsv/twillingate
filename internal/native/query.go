@@ -22,11 +22,11 @@ var ErrTooLarge = errors.New("native: the query needs more memory than allowed; 
 // by Series), a breakdown the metrics grouped by 1-3 Dimensions.
 type Query struct {
 	Kind        string   `json:"kind" jsonschema:"stat: one row of metrics (with compare previous, a previous_<name> column each); trend: one metric per day, optionally split by series; breakdown: the metrics grouped by 1 to 3 dimensions"`
-	Table       string   `json:"table" jsonschema:"the rows read: events (every family), views, product or measures; or sessions, one row per session of views (rules do not apply to it)"`
+	Table       string   `json:"table" jsonschema:"the rows read: events (every family), views, product or measures; or sessions, one row per session of views; or identities, one row per user or group first seen in the range (rules apply to neither)"`
 	Metrics     []Metric `json:"metrics" jsonschema:"the aggregates, each an output column; a trend takes exactly 1"`
 	Where       []Filter `json:"where,omitempty" jsonschema:"filters, all of which a row must satisfy"`
-	Dimensions  []string `json:"dimensions,omitempty" jsonschema:"breakdown only, 1 to 3: columns to group by, each one a filter's column may name on the table (path, country, event_name, attr_<key>, …; resolution on events and views only, the other computed ones on events, views and product), but duration_sec and views on sessions"`
-	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by, one a filter's column may name on the table except day (resolution on events and views only, the other computed ones on events, views and product), and except duration_sec and views on sessions"`
+	Dimensions  []string `json:"dimensions,omitempty" jsonschema:"breakdown only, 1 to 3: columns to group by, each one a filter's column may name on the table (path, country, event_name, attr_<key>, …; resolution on events and views only, the other computed ones on events, views and product), but duration_sec and views on sessions and views and events on identities"`
+	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by, one a filter's column may name on the table except day (resolution on events and views only, the other computed ones on events, views and product), and except duration_sec and views on sessions and views and events on identities"`
 	SeriesLimit int      `json:"series_limit,omitempty" jsonschema:"trend only: how many series, 1 to 50, the top ones by the metric over the range (default 5)"`
 	Compare     string   `json:"compare,omitempty" jsonschema:"stat only: previous adds each metric over as many days ending the day before from"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown only: how many groups, 1 to 1000 (default 20)"`
@@ -36,15 +36,15 @@ type Query struct {
 
 // Metric is one aggregate.
 type Metric struct {
-	Op     string `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. sessions takes count (sessions), actors, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none)"`
-	Column string `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views"`
+	Op     string `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. sessions takes count (sessions), actors, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, sum, avg, min and max"`
+	Column string `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views; on identities views or events"`
 	Of     string `json:"of,omitempty" jsonschema:"daily_* only: what is counted distinct per day"`
 	As     string `json:"as,omitempty" jsonschema:"the output column's name (default: op, or op_column, or op_of)"`
 }
 
 // Filter keeps the rows whose Column satisfies Op against Values.
 type Filter struct {
-	Column string   `json:"column" jsonschema:"one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent), these three on events, views and product only. On sessions instead: project_id, day, kind, actor_id, actor_kind, session_id, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign, and the numbers duration_sec and views"`
+	Column string   `json:"column" jsonschema:"one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent), user_status and group_status (new on the day the user_id or group_id was first seen, as identities has it, returning on a later day, NULL without one), these five on events, views and product only. On sessions instead: project_id, day, kind, actor_id, actor_kind, session_id, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign, and the numbers duration_sec and views. On identities instead: kind (user or group), id, name, day (first_seen's day), and the numbers views and events"`
 	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none (not NULL, and text not empty). gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, and only on numeric columns. NULL fails every op, ne and not_in included"`
 	Values []string `json:"values,omitempty" jsonschema:"the values compared against, as text"`
 }
@@ -153,6 +153,7 @@ var Columns = []string{
 	"browser_locale", "app_version", "app_locale", "device", "device_model",
 	"display_width", "display_height", "country", "consent", "measure",
 	"resolution", "device_label", "platform_version", "consent_state",
+	"user_status", "group_status",
 }
 
 // computedTables are the tables each computed column (computedColumns)
@@ -162,6 +163,8 @@ var computedTables = map[string][]string{
 	"device_label":     {"events", "views", "product"},
 	"platform_version": {"events", "views", "product"},
 	"consent_state":    {"events", "views", "product"},
+	"user_status":      {"events", "views", "product"},
+	"group_status":     {"events", "views", "product"},
 }
 
 // SessionColumns are the columns a dimension, series or filter on
@@ -181,13 +184,25 @@ var (
 	sessionFilterOnly = setOf([]string{"duration_sec", "views"})
 )
 
-// plainColumns are Columns and SessionColumns, each with whether it is
+// IdentityColumns are the columns a dimension, series or filter on
+// identities may name: kind, id and name, and day, its first_seen's day;
+// and, filters only, the numbers views and events.
+var IdentityColumns = []string{"kind", "id", "name", "day", "views", "events"}
+
+// identityColumnSet is IdentityColumns as a set; identityFilterOnly those
+// of them a dimension or series may not name.
+var (
+	identityColumnSet  = setOf(IdentityColumns)
+	identityFilterOnly = setOf([]string{"views", "events"})
+)
+
+// plainColumns are Columns, SessionColumns and IdentityColumns, each with whether it is
 // numeric (BIGINT, or the DATE day, which takes gt/lt against
 // YYYY-MM-DD); the computed ones are text.
 var plainColumns = func() map[string]bool {
-	numeric := setOf([]string{"project_id", "day", "display_width", "display_height", "consent", "duration_sec", "views"})
-	m := make(map[string]bool, len(Columns)+len(SessionColumns))
-	for _, c := range append(slices.Clone(Columns), SessionColumns...) {
+	numeric := setOf([]string{"project_id", "day", "display_width", "display_height", "consent", "duration_sec", "views", "events"})
+	m := make(map[string]bool, len(Columns)+len(SessionColumns)+len(IdentityColumns))
+	for _, c := range slices.Concat(Columns, SessionColumns, IdentityColumns) {
 		m[c] = numeric[c]
 	}
 	return m
@@ -197,8 +212,11 @@ var plainColumns = func() map[string]bool {
 // table has the column at all as a filter (as a dimension or series too,
 // but for sessionFilterOnly).
 func columnInfo(table, column string) (orderable, ok bool) {
-	if table == "sessions" {
+	switch table {
+	case "sessions":
 		return plainColumns[column], sessionColumnSet[column]
+	case "identities":
+		return plainColumns[column], identityColumnSet[column]
 	}
 	if column == "bucket" {
 		return true, table == "measures"
@@ -219,18 +237,21 @@ func columnInfo(table, column string) (orderable, ok bool) {
 // column.
 func dimensionOf(table, column string) bool {
 	_, ok := columnInfo(table, column)
-	return ok && !(table == "sessions" && sessionFilterOnly[column])
+	return ok && !(table == "sessions" && sessionFilterOnly[column]) && !(table == "identities" && identityFilterOnly[column])
 }
 
 // The closed vocabularies of a Query, which a schema describing it lists.
 var (
 	Kinds        = []string{"stat", "trend", "breakdown"}
-	Tables       = []string{"events", "views", "product", "measures", "sessions"}
+	Tables       = []string{"events", "views", "product", "measures", "sessions", "identities"}
 	MetricOps    = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "bounces", "bounce_rate"}
 	ValueColumns = []string{"value", "sample_rate", "display_width", "display_height"}
 	// SessionValueColumns are the columns sum, avg, min and max take on
 	// sessions (ValueColumns on the other tables).
 	SessionValueColumns = []string{"duration_sec", "views"}
+	// IdentityValueColumns are the columns sum, avg, min and max take on
+	// identities.
+	IdentityValueColumns = []string{"views", "events"}
 	OfColumns           = []string{"actors", "users", "groups"}
 	FilterOps           = []string{"eq", "ne", "in", "not_in", "contains", "prefix", "gt", "gte", "lt", "lte", "is_set"}
 )
@@ -239,6 +260,8 @@ var (
 	metricOps  = setOf(MetricOps)
 	valueCols  = setOf(ValueColumns)
 	sessValue  = setOf(SessionValueColumns)
+	idValue    = setOf(IdentityValueColumns)
+	idOps      = setOf([]string{"count", "sum", "avg", "min", "max"})
 	ofCols     = setOf(OfColumns)
 	filterOps  = setOf(FilterOps)
 	sessionOps = setOf([]string{"count", "actors", "sum", "avg", "min", "max", "bounces", "bounce_rate"})
@@ -370,6 +393,9 @@ func (m Metric) validate(table string, i int) error {
 	if table == "sessions" && !sessionOps[m.Op] {
 		return invalid(p+".op", "%s is not a metric of sessions, which takes count, actors, bounces, bounce_rate, sum, avg, min and max", m.Op)
 	}
+	if table == "identities" && !idOps[m.Op] {
+		return invalid(p+".op", "%s is not a metric of identities, which takes count, sum, avg, min and max", m.Op)
+	}
 	if table != "sessions" && bounceOps[m.Op] {
 		return invalid(p+".op", "%s is a metric of sessions only", m.Op)
 	}
@@ -378,10 +404,12 @@ func (m Metric) validate(table string, i int) error {
 		if m.Column == "" {
 			return invalid(p+".column", "%s needs a column", m.Op)
 		}
-		if table == "sessions" && !sessValue[m.Column] {
+		switch {
+		case table == "sessions" && !sessValue[m.Column]:
 			return invalid(p+".column", "%q is not duration_sec or views, the numbers of sessions", m.Column)
-		}
-		if table != "sessions" && !valueCols[m.Column] {
+		case table == "identities" && !idValue[m.Column]:
+			return invalid(p+".column", "%q is not views or events, the numbers of identities", m.Column)
+		case table != "sessions" && table != "identities" && !valueCols[m.Column]:
 			return invalid(p+".column", "%q is not value, sample_rate, display_width or display_height", m.Column)
 		}
 		if m.Of != "" {

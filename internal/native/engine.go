@@ -54,6 +54,10 @@ type Engine struct {
 	logKeys  *archive.KeyScanner // each open log's keys, read as far as it grew
 	colMu    sync.Mutex          // guards colFiles, never held over a read
 	colFiles map[string]fileCols // each Parquet file's columns, by path
+
+	idMu    sync.Mutex // guards idCache and idTick, never held over a read
+	idCache map[int64]*identityCache
+	idTick  uint64
 }
 
 // New returns an engine over o.Dir.
@@ -101,8 +105,11 @@ var (
 
 // Answer answers q over project p.Project's rows of p.From to p.To, with
 // rules (every project's; the project's own apply) applied as the
-// reader's events view applies them; the sessions table, derived from the
-// events as stored, takes none (scanSessions). A malformed query, or a filter value
+// reader's events view applies them; the sessions and identities tables,
+// derived from the events as stored, take none (scanSessions, identities).
+// identities holds the project's users and groups first seen in the
+// range, its day their first_seen's day; user_status and group_status
+// look each row's id up in them, over the whole history. A malformed query, or a filter value
 // that does not parse for its column, is refused with an error wrapping
 // ErrInvalid; one whose aggregation needs more than MaxBytes allows, with
 // one wrapping ErrTooLarge. Answer waits for one of MaxScans turns first,
@@ -173,7 +180,7 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 
 func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, p Params, rules archive.Rules) (Result, error) {
 	var rs ruleSet
-	if q.Table != "sessions" { // derived from the events as stored
+	if q.Table != "sessions" && q.Table != "identities" { // derived from the events as stored
 		var err error
 		if rs, err = e.ruleSet(p.Project, rules); err != nil {
 			return Result{}, err
@@ -288,14 +295,28 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 	}
 	a, ms := newAgg(aggOptions{metrics: ms, filters: s.filters, dims: dims, perDay: perDay, sets: sets,
 		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
-	if s.q.Table == "sessions" {
-		charge := func(n int64) error {
-			a.mem.add(n)
-			if n > 0 {
-				return a.checkMemory()
-			}
-			return nil
+	charge := func(n int64) error {
+		a.mem.add(n)
+		if n > 0 {
+			return a.checkMemory()
 		}
+		return nil
+	}
+	if s.q.Table == "identities" {
+		ids, err := s.e.identities(ctx, s.project, charge)
+		if err != nil {
+			return nil, nil, err
+		}
+		b := ids.batch(s.project, &r)
+		if err := charge(batchBytes(b)); err != nil {
+			return nil, nil, err
+		}
+		if err := a.add(0, b); err != nil {
+			return nil, nil, err
+		}
+		return a.merge(), ms, nil
+	}
+	if s.q.Table == "sessions" {
 		if err := s.e.scanSessions(ctx, s.project, r, a.columns(), charge, a.add); err != nil {
 			return nil, nil, err
 		}
@@ -303,6 +324,14 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 	}
 	fam := s.family()
 	read := s.rules.columns(a.columns())
+	status := s.statusColumns(dims)
+	var ids *identitySet
+	if len(status) > 0 {
+		var err error
+		if ids, err = s.e.identities(ctx, s.project, charge); err != nil {
+			return nil, nil, err
+		}
+	}
 	pq, logs, err := projectFiles(s.e.dir, s.project, r)
 	if err != nil {
 		return nil, nil, err
@@ -329,7 +358,11 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 		if err != nil {
 			return err
 		}
-		return a.add(w, s.rules.apply(b, fam))
+		b = s.rules.apply(b, fam)
+		if ids != nil {
+			addStatus(b, status, ids)
+		}
+		return a.add(w, b)
 	})
 	for i := range readers {
 		if cerr := readers[i].close(); err == nil {
@@ -340,6 +373,23 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 		return nil, nil, err
 	}
 	return a.merge(), ms, nil
+}
+
+// statusColumns are the status columns (user_status, group_status) the
+// query's filters and dims name.
+func (s scan) statusColumns(dims []string) []string {
+	var out []string
+	for _, f := range s.filters {
+		if _, ok := statusColumns[f.column]; ok && !slices.Contains(out, f.column) {
+			out = append(out, f.column)
+		}
+	}
+	for _, d := range dims {
+		if _, ok := statusColumns[d]; ok && !slices.Contains(out, d) {
+			out = append(out, d)
+		}
+	}
+	return out
 }
 
 // columnsOut is a result's columns, and marks the approximate ones.
