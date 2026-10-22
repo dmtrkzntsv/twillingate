@@ -22,81 +22,109 @@ func NewPQGoSource() Source { return &pqgoSource{} }
 
 func (s *pqgoSource) Name() string { return "parquet-go" }
 
-func (s *pqgoSource) Scan(files []string, cols []string, family string, from, to int64, fn func(*Batch) error) error {
-	for _, path := range files {
-		if err := s.scanFile(path, cols, family, from, to, fn); err != nil {
-			return fmt.Errorf("%s: %w", path, err)
-		}
-	}
-	return nil
+// pqgoFile is one open file with its footer: a GroupReader's state.
+type pqgoFile struct {
+	path           string
+	f              *os.File
+	pf             *parquet.File
+	leaves         map[string]int // top-level column name to leaf index
+	fileCols       []string
+	famIdx, dayIdx int
 }
 
-func (s *pqgoSource) scanFile(path string, cols []string, family string, from, to int64, fn func(*Batch) error) error {
+func openPQGo(path string) (*pqgoFile, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	defer f.Close()
 	st, err := f.Stat()
 	if err != nil {
-		return err
+		f.Close()
+		return nil, err
 	}
 	pf, err := parquet.OpenFile(f, st.Size(), parquet.SkipPageIndex(true), parquet.SkipBloomFilters(true),
 		parquet.ReadBufferSize(1<<20))
 	if err != nil {
-		return err
+		f.Close()
+		return nil, err
 	}
-	leaves := map[string]int{}
-	var fileCols []string
-	for _, path := range pf.Schema().Columns() {
-		if len(path) == 1 {
-			lc, _ := pf.Schema().Lookup(path...)
-			leaves[path[0]] = lc.ColumnIndex
-			fileCols = append(fileCols, path[0])
+	p := &pqgoFile{path: path, f: f, pf: pf, leaves: map[string]int{}, famIdx: -1, dayIdx: -1}
+	for _, col := range pf.Schema().Columns() {
+		if len(col) == 1 {
+			lc, _ := pf.Schema().Lookup(col...)
+			p.leaves[col[0]] = lc.ColumnIndex
+			p.fileCols = append(p.fileCols, col[0])
 		}
 	}
-	requested := expandCols(fileCols, cols)
-	famIdx, dayIdx := -1, -1
-	if i, ok := leaves["family"]; ok {
-		famIdx = i
+	if i, ok := p.leaves["family"]; ok {
+		p.famIdx = i
 	}
-	if i, ok := leaves["day"]; ok {
-		dayIdx = i
+	if i, ok := p.leaves["day"]; ok {
+		p.dayIdx = i
 	}
+	return p, nil
+}
 
-	md := pf.Metadata()
-	groups := pf.RowGroups()
-	for rg := range md.RowGroups {
-		rgm := &md.RowGroups[rg]
-		keep, all := pqgoStats(rgm, famIdx, dayIdx).decide(family, from, to)
-		if !keep || rgm.NumRows == 0 {
+func (p *pqgoFile) Close() error { return p.f.Close() }
+
+func (s *pqgoSource) Groups(files []string, family string, from, to int64) ([]Group, error) {
+	var out []Group
+	for _, path := range files {
+		p, err := openPQGo(path)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		md := p.pf.Metadata()
+		for rg := range md.RowGroups {
+			rgm := &md.RowGroups[rg]
+			keep, all := pqgoStats(rgm, p.famIdx, p.dayIdx).decide(family, from, to)
+			if keep && rgm.NumRows > 0 {
+				out = append(out, Group{File: path, Index: rg, Rows: rgm.NumRows, All: all})
+			}
+		}
+		if err := p.Close(); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+	}
+	return out, nil
+}
+
+func (s *pqgoSource) NewGroupReader() *GroupReader { return &GroupReader{} }
+
+func (s *pqgoSource) ReadGroup(r *GroupReader, g Group, cols []string, family string, from, to int64) (*Batch, error) {
+	p, ok := r.state.(*pqgoFile)
+	if !ok || p.path != g.File {
+		if err := r.Close(); err != nil {
+			return nil, err
+		}
+		var err error
+		if p, err = openPQGo(g.File); err != nil {
+			return nil, err
+		}
+		r.state = p
+	}
+	s.n.Add(1)
+	requested := expandCols(p.fileCols, cols)
+	read := requested
+	if !g.All {
+		read = expandCols(nil, append(append([]string{}, requested...), "family", "day"))
+	}
+	n := int(g.Rows)
+	b := &Batch{N: n, Cols: make(map[string]*Column, len(read))}
+	chunks := p.pf.RowGroups()[g.Index].ColumnChunks()
+	for _, name := range read {
+		i, ok := p.leaves[name]
+		if !ok {
+			b.Cols[name] = nullColumn(name, n)
 			continue
 		}
-		s.n.Add(1)
-		read := requested
-		if !all {
-			read = expandCols(nil, append(append([]string{}, requested...), "family", "day"))
+		c, err := readChunk(chunks[i], n)
+		if err != nil {
+			return nil, fmt.Errorf("column %s: %w", name, err)
 		}
-		n := int(rgm.NumRows)
-		b := &Batch{N: n, Cols: make(map[string]*Column, len(read))}
-		chunks := groups[rg].ColumnChunks()
-		for _, name := range read {
-			i, ok := leaves[name]
-			if !ok {
-				b.Cols[name] = nullColumn(name, n)
-				continue
-			}
-			c, err := readChunk(chunks[i], n)
-			if err != nil {
-				return fmt.Errorf("row group %d column %s: %w", rg, name, err)
-			}
-			b.Cols[name] = c
-		}
-		if err := fn(finish(b, requested, all, family, from, to)); err != nil {
-			return err
-		}
+		b.Cols[name] = c
 	}
-	return nil
+	return finish(b, requested, g.All, family, from, to), nil
 }
 
 func pqgoStats(rgm *format.RowGroup, famIdx, dayIdx int) groupStats {

@@ -23,9 +23,10 @@ import (
 // ---- query: one query, once, in this process ----
 
 var queryFuncs = map[string]func(Source, []string, int64, int64) ([]Row, error){
-	"countries":  Countries,
-	"dau":        DAU,
-	"attrvalues": AttributeValues,
+	"countries":         Countries,
+	"dau":               DAU,
+	"attrvalues":        AttributeValues,
+	"attrvalues-approx": AttributeValuesApprox,
 }
 
 func newSource(name string) (Source, error) {
@@ -69,17 +70,20 @@ func hashRows(rows []Row) string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-const queryUsage = "usage: native-bench query -src arrow|pqgo -q countries|dau|attrvalues -from YYYY-MM-DD -to YYYY-MM-DD <files...>"
+const queryUsage = "usage: native-bench query -src arrow|pqgo -q countries|dau|attrvalues|attrvalues-approx -from YYYY-MM-DD -to YYYY-MM-DD [-workers N] [-rows FILE] <files...>"
 
 func queryCmd(args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("query", flag.ContinueOnError)
 	srcName := fs.String("src", "", "arrow or pqgo")
-	qName := fs.String("q", "", "countries, dau or attrvalues")
+	qName := fs.String("q", "", "countries, dau, attrvalues or attrvalues-approx")
 	fromS := fs.String("from", "", "first day, YYYY-MM-DD")
 	toS := fs.String("to", "", "last day, YYYY-MM-DD")
+	workers := fs.Int("workers", 2, "goroutines scanning row groups")
+	rowsOut := fs.String("rows", "", "also write the result rows, as JSON, to this file (after the measurement)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	Workers = *workers
 	q, ok := queryFuncs[*qName]
 	if !ok || fs.NArg() == 0 {
 		return errors.New(queryUsage)
@@ -108,10 +112,20 @@ func queryCmd(args []string, w io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return json.NewEncoder(w).Encode(QueryResult{
+	if err := json.NewEncoder(w).Encode(QueryResult{
 		WallMS: ms(wall), UserMS: ms(u1 - u0), SysMS: ms(s1 - s0),
 		PeakRSSKB: peak, Rows: len(rows), Hash: hashRows(rows),
-	})
+	}); err != nil {
+		return err
+	}
+	if *rowsOut == "" {
+		return nil
+	}
+	b, err := json.Marshal(rows)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(*rowsOut, b, 0o644)
 }
 
 // ---- matrix: every cell in a fresh process ----
@@ -142,6 +156,8 @@ type FileWrite struct {
 	Bytes     int64   `json:"bytes"`
 	RowGroups int     `json:"row_groups"`
 	PeakRSSKB int64   `json:"peak_rss_kb"`
+	Load      float64 `json:"load,omitempty"`    // 1-minute load the write started at (step 1b)
+	Unquiet   bool    `json:"unquiet,omitempty"` // the quiet gate gave up before it
 }
 
 // Cell is one volume x layout x source x query x range, run cellRuns times.
@@ -150,12 +166,17 @@ type Cell struct {
 	Load                         float64
 	Runs                         []QueryResult
 	Err                          string
+	Loads                        []float64 `json:",omitempty"` // per run (step 1b)
+	Unquiet                      int       `json:",omitempty"` // runs the quiet gate gave up before
 }
 
 type matrix struct {
 	root, exe, goBin, srcDir, out string
 	log                           io.Writer
 	loads                         []float64
+	// gate, when set (step 1b), runs before every query run and every
+	// rewrite and returns the load it ended at and whether that was quiet.
+	gate func(what string) (float64, bool)
 }
 
 func matrixCmd(args []string) error {
@@ -259,15 +280,23 @@ func (m *matrix) layoutPath(vol, layout, month string) string {
 	return filepath.Join(m.root, vol, layout, month+".parquet")
 }
 
+// groupRows is a layout's rows per row group: PerMonth/30 for "-1d",
+// PerMonth*4/30 for "-4d", PerMonth/90 for "-8h".
+func groupRows(layout string, perMonth int) int {
+	switch {
+	case strings.HasSuffix(layout, "-4d"):
+		return perMonth * 4 / 30
+	case strings.HasSuffix(layout, "-8h"):
+		return perMonth / 90
+	}
+	return perMonth / 30
+}
+
 // writeLayout rewrites the twelve months for one layout, each in its own
 // process, or reads the stats of a file made by an earlier run.
 func (m *matrix) writeLayout(vol string, perMonth int, layout string) ([]FileWrite, error) {
 	var out []FileWrite
-	lib, size, _ := strings.Cut(layout, "-")
-	rowsPerGroup := perMonth / 30
-	if size == "4d" {
-		rowsPerGroup = perMonth * 4 / 30
-	}
+	lib, _, _ := strings.Cut(layout, "-")
 	for _, mo := range months {
 		in := m.layoutPath(vol, "duckdb", mo)
 		if layout == "duckdb" {
@@ -279,9 +308,8 @@ func (m *matrix) writeLayout(vol string, perMonth int, layout string) ([]FileWri
 			continue
 		}
 		dst := m.layoutPath(vol, layout, mo)
-		statsPath := dst + ".stats.json"
 		if _, err := os.Stat(dst); err == nil {
-			if b, err := os.ReadFile(statsPath); err == nil {
+			if b, err := os.ReadFile(dst + ".stats.json"); err == nil {
 				var fw FileWrite
 				if json.Unmarshal(b, &fw) == nil {
 					out = append(out, fw)
@@ -289,38 +317,53 @@ func (m *matrix) writeLayout(vol string, perMonth int, layout string) ([]FileWri
 				}
 			}
 		}
-		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-			return nil, err
-		}
-		stdout, ru, err := m.run("rewrite", "-lib", lib, "-rows", strconv.Itoa(rowsPerGroup), in, dst)
+		fw, err := m.rewriteMonth(vol, layout, lib, groupRows(layout, perMonth), mo, in, dst)
 		if err != nil {
-			return nil, fmt.Errorf("rewrite %s %s %s: %w", vol, layout, mo, err)
-		}
-		fw := FileWrite{Month: mo}
-		for _, f := range strings.Fields(string(stdout)) {
-			k, v, _ := strings.Cut(f, "=")
-			switch k {
-			case "wall":
-				d, _ := time.ParseDuration(v)
-				fw.WallMS = ms(d)
-			case "bytes":
-				fw.Bytes, _ = strconv.ParseInt(v, 10, 64)
-			case "row_groups":
-				fw.RowGroups, _ = strconv.Atoi(v)
-			}
-		}
-		if ru != nil {
-			fw.PeakRSSKB = ru.Maxrss // KB on Linux
-		}
-		b, _ := json.Marshal(fw)
-		if err := os.WriteFile(statsPath, b, 0o644); err != nil {
 			return nil, err
 		}
-		m.logf("rewrite %s %s %s: wall %.0f ms, %d bytes, %d groups, peak %d KB",
-			vol, layout, mo, fw.WallMS, fw.Bytes, fw.RowGroups, fw.PeakRSSKB)
 		out = append(out, fw)
 	}
 	return out, nil
+}
+
+// rewriteMonth rewrites one month file in its own process, behind the gate
+// when there is one, and stores its stats beside it.
+func (m *matrix) rewriteMonth(vol, layout, lib string, rows int, mo, in, dst string) (FileWrite, error) {
+	fw := FileWrite{Month: mo}
+	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+		return fw, err
+	}
+	if m.gate != nil {
+		var quiet bool
+		fw.Load, quiet = m.gate(fmt.Sprintf("rewrite %s %s %s", vol, layout, mo))
+		fw.Unquiet = !quiet
+	}
+	stdout, ru, err := m.run("rewrite", "-lib", lib, "-rows", strconv.Itoa(rows), in, dst)
+	if err != nil {
+		return fw, fmt.Errorf("rewrite %s %s %s: %w", vol, layout, mo, err)
+	}
+	for _, f := range strings.Fields(string(stdout)) {
+		k, v, _ := strings.Cut(f, "=")
+		switch k {
+		case "wall":
+			d, _ := time.ParseDuration(v)
+			fw.WallMS = ms(d)
+		case "bytes":
+			fw.Bytes, _ = strconv.ParseInt(v, 10, 64)
+		case "row_groups":
+			fw.RowGroups, _ = strconv.Atoi(v)
+		}
+	}
+	if ru != nil {
+		fw.PeakRSSKB = ru.Maxrss // KB on Linux
+	}
+	b, _ := json.Marshal(fw)
+	if err := os.WriteFile(dst+".stats.json", b, 0o644); err != nil {
+		return fw, err
+	}
+	m.logf("rewrite %s %s %s: load %.2f, wall %.0f ms, %d bytes, %d groups, peak %d KB",
+		vol, layout, mo, fw.Load, fw.WallMS, fw.Bytes, fw.RowGroups, fw.PeakRSSKB)
+	return fw, nil
 }
 
 // rangeFiles are the layout's months overlapping [from, to].
@@ -580,4 +623,25 @@ func (m *matrix) sizes() error {
 		fmt.Fprintf(&b, "| %s | %d | %.1f MB | %.1f MB |\n", s.name, fi.Size(), float64(fi.Size())/(1<<20), float64(fi.Size()-floor)/(1<<20))
 	}
 	return m.appendMD(b.String())
+}
+
+// waitQuiet polls load every poll until it reads at most maxLoad, or limit
+// has elapsed. It returns the last load read (-1 if it never read one) and
+// whether it was quiet; a load that fails to read counts as not quiet.
+func waitQuiet(maxLoad float64, poll, limit time.Duration, load func() (float64, error)) (float64, bool) {
+	deadline := time.Now().Add(limit)
+	last := -1.0
+	for {
+		if l, err := load(); err == nil {
+			last = l
+			if l <= maxLoad {
+				return l, true
+			}
+		}
+		left := time.Until(deadline)
+		if left <= 0 {
+			return last, false
+		}
+		time.Sleep(min(poll, left))
+	}
 }

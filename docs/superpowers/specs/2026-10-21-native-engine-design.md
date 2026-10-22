@@ -345,12 +345,13 @@ file layout and table names are part of the versioned contract.
 
    **Step 1b.** Optimise the native queries (count by dictionary index
    into arrays, sort-based distinct instead of hash sets, parallel row
-   groups, early family/day pruning by page index) and re-measure 1M on a
+   groups, early family/day pruning by row-group statistics) and re-measure 1M on a
    quiet host. Add a mid-month 30-day range and a 7-day range, so day
    pruning inside a file is exercised, before choosing a row-group size.
    Re-measure the library at 1M too (write wall; reads of files each
    library wrote). Decide the cache and the row-group size from those
-   numbers.
+   numbers. **Done 2026-10-22**: see "Measurements (step 1b)". Page-index
+   pruning was not tried; it is left for step 2.
 
 2. The engine and the language for `stat`, `trend`, `breakdown`;
    `query` over MCP.
@@ -362,7 +363,10 @@ file layout and table names are part of the versioned contract.
 5. The cache, only if it shows great results (owner, 2026-10-21): the
    default is no cache. It is built only when the measurements show the
    1-year target missed without it and the cache bringing that dashboard
-   several times faster, enough to justify its moving parts.
+   several times faster, enough to justify its moving parts. Step 1b
+   found the 1-year target missed and an upper bound of 37x, so this step
+   proceeds; it measures the real gain first and drops the cache if the
+   gain is not large.
 6. The SQL hook, the final `feat!` release: DuckDB, cgo and
    `internal/engine` leave this repository in the same release.
 
@@ -441,7 +445,7 @@ larger than DuckDB's own 47 MB.
 
 **Decisions** (the numbers that decided them):
 
-- **Parquet library: `parquet-go/parquet-go`, on 100k evidence only.**
+- **Parquet library: `parquet-go/parquet-go`, on 100k evidence only (confirmed at 1M in step 1b).**
   Faster and leaner reads than arrow-go (the 100k comparison is clean:
   143–152 ms against 174–200 ms for the 30-day trio, 66–68 against 73–75
   MB), a lower writer peak on a real 1M month at 133,333-row groups (322
@@ -457,7 +461,7 @@ larger than DuckDB's own 47 MB.
 
   Step 1b re-measures the library at 1M (write wall; reads of
   parquet-go-written files) on a quiet host before this is final.
-- **Row-group size: provisional.** At 100k, groups of 4 days (13,333
+- **Row-group size: provisional (settled in step 1b: 1 day).** At 100k, groups of 4 days (13,333
   rows) beat groups of 1 day (3,333 rows) by about 13% on the 365-day
   trio (1,045 against 1,197 ms with parquet-go), make files 6% smaller
   and cost a little more writer memory (77 against 63 MB); at 30 days
@@ -467,7 +471,7 @@ larger than DuckDB's own 47 MB.
   "1d" group holds about 2–3 days of one family and a "4d" group about
   8–10. The 1M layout comparison is unreliable (load, below), so the
   size is chosen in step 1b, with mid-month ranges.
-- **30-day targets, uncached: missed at both ends.** The target is "tens
+- **30-day targets, uncached: missed at both ends (step 1b: trio met at 1M, full dashboard not established, see below).** The target is "tens
   of ms" at 100k and under 0.5 s at 1M, for a whole dashboard. At 100k
   the trio alone (3 of ~20 widgets) takes 143–218 ms, so "tens of ms" is
   missed and "under 0.5 s" for a full dashboard is not established;
@@ -475,7 +479,7 @@ larger than DuckDB's own 47 MB.
   against 0.5 s (attribute values 0.76 s of it): missed. That best came
   from the quietest cells (load 2.4–2.6), so the miss is robust to the
   load.
-- **1-year target: missed by far, and slower than today.** At 1M the
+- **1-year target: missed by far, and slower than today (step 1b: still missed at 3.27 s uncached with a warm OS cache, see below).** At 1M the
   trio takes 12–26 s (first runs; best 13–26 s) with a peak up to 541
   MB, against 10.9 s for the whole Views dashboard and 5.3 s for Product
   in DuckDB. The queries measured are a deliberately naive first cut
@@ -484,8 +488,7 @@ larger than DuckDB's own 47 MB.
 - **Writer memory (step 4).** At 1M the parquet-go writer peaks at 208 MB
   (1-day groups) and 322 MB (4-day groups), above the ~150 MB budget; the
   daily pass in Go must bound it (smaller batches, or a smaller group).
-- **Cache: not decided.** The rule is no cache unless it shows great
-  results; that waits for step 1b.
+- **Cache: not decided in step 1** (decided in step 1b).
 
 **Host load at 1M** (1-minute load average at cell start, from
 `matrix-1m.json`): the DuckDB layout, measured first, saw the highest
@@ -493,12 +496,154 @@ larger than DuckDB's own 47 MB.
 (2.4–2.6); the later layouts 4–7. Load also differs within a layout,
 between the two sources.
 
+## Measurements (step 1b)
+
+Data and runs: `scripts/native-bench` (full tables in its `RESULTS.md`,
+"Step 1b"). Same host and data as step 1, with the queries optimised
+(counts by dictionary index into arrays, sort-based distinct, parallel row
+groups; pruning by row-group statistics only, the page index is not used) and the matrix gated: every run waited for a
+1-minute load average of at most 1.0 (actual 0.81 to 1.00, no run flagged).
+Native runs use GOMAXPROCS=2 and 2 workers; 3 runs per cell, "best" is the
+minimum of runs 2 and 3. Ranges: 1 d, 7 d, 30 d mid-month (spans two
+month files, so day pruning inside a file is exercised), 30 d (a whole
+month) and 365 d. Layouts: `pqgo-8h` (volume/90 rows per group), `pqgo-1d`
+(volume/30), `pqgo-4d` (volume*4/30), `arrow-1d`, DuckDB's own files.
+Caveats: the data is still the generator's (no `group_id`, same users
+every month, fixed vocabularies); nothing was measured cold (the OS cache
+was warm), so the "cold" 1-year target is judged from the warm figure,
+which already misses; a trio is 3 of the ~20 widgets of a Views dashboard,
+so no full dashboard is established.
+
+**The chosen layout, 1-day groups, written and read by parquet-go.** Trio =
+visitors by country + DAU + attribute values (approximate); sum of best
+walls, first run in brackets, peak RSS of the largest query.
+
+| Range | 100k | 1M |
+|---|---|---|
+| 1 d | 32 ms (33), 32 MB | 88 ms (94), 52 MB |
+| 7 d | 54 ms (55), 41 MB | 191 ms (207), 65 MB |
+| 30 d mid-month | 112 ms (118), 49 MB | 431 ms (451), 83 MB |
+| 30 d | 94 ms (98), 50 MB | 402 ms (415), 76 MB |
+| 365 d | 570 ms (576), 65 MB | 3,274 ms (3,280), 186 MB |
+
+Per query at 1M, 30 d / 365 d, best wall: countries 93 ms / 776 ms, DAU
+122 ms / 1,112 ms, attribute values exact 539 ms / 5,243 ms, attribute
+values approximate 187 ms / 1,385 ms. DuckDB's own files read natively:
+trio 531 ms / 4,591 ms at 1M.
+
+**Row-group size** (trio, best wall, 1M; 100k in brackets):
+
+| Range | 8 h | 1 d | 4 d |
+|---|---|---|---|
+| 1 d | 97 (63) | 88 (32) | 164 (34) |
+| 7 d | 182 (81) | 191 (54) | 294 (62) |
+| 30 d mid-month | 492 (166) | 431 (112) | 539 (109) |
+| 30 d | 470 (131) | 402 (94) | 416 (81) |
+| 365 d | 3,906 (944) | 3,274 (570) | 3,258 (459) |
+
+**Parquet library at 1M.** Files of 1-day groups, written by each library
+and read by each (best wall; the smallest ratio is exact attribute values
+at 30 d, 595 against 539 ms, 1.10x):
+
+| | parquet-go reads | arrow-go reads |
+|---|---|---|
+| 30 d trio, pqgo-1d files | 402 ms | 545 ms |
+| 365 d trio, pqgo-1d files | 3,274 ms | 4,772 ms |
+| 365 d approx attribute values, pqgo-1d files | 1,385 ms, 139 MB | 2,212 ms, 201 MB |
+
+| Write a 1M year (12 files, 1-day groups), gated | parquet-go | arrow-go |
+|---|---|---|
+| Total wall | 48.1 s | 60.3 s |
+| Slowest file | 4.1 s | 5.1 s |
+| Writer peak RSS | 203 MB | 268 MB |
+| Size | 508.7 MB | 533.6 MB |
+
+**What the optimisation bought** (pqgo-1d, parquet-go, best wall against
+step 1's naive scans; step 1's exact attribute values stand in for the
+approximate column). Upper bounds: step 1 ran on a noisier host (100k at
+load 1.3 to 2.3; 1M at 2.4 to 8.7, and 5.0 to 6.1 for this layout and
+source).
+
+| Query | Range | 100k step 1 -> 1b | 1M step 1 -> 1b |
+|---|---|---|---|
+| countries | 30 d | 18 -> 16 ms (1.1x) | 234 -> 93 ms (2.5x) |
+| DAU | 30 d | 25 -> 21 ms (1.2x) | 340 -> 122 ms (2.8x) |
+| attribute values, exact | 30 d | 107 -> 70 ms (1.5x) | 1,510 -> 539 ms (2.8x) |
+| attribute values, approximate | 30 d | 107 -> 57 ms (1.9x) | 1,510 -> 187 ms (8.1x) |
+| countries | 365 d | 157 -> 122 ms (1.3x) | 2,303 -> 776 ms (3.0x) |
+| DAU | 365 d | 228 -> 145 ms (1.6x) | 3,321 -> 1,112 ms (3.0x) |
+| attribute values, exact | 365 d | 811 -> 523 ms (1.6x) | 14,475 -> 5,243 ms (2.8x) |
+| attribute values, approximate | 365 d | 811 -> 303 ms (2.7x) | 14,475 -> 1,385 ms (10.5x) |
+
+**Decisions** (the numbers that decided them):
+
+- **Row-group size: about one day of rows per group (volume/30).** At 1M
+  it is best or within 5% on every range, and ties 4 d at 365 d
+  (3,274 against 3,258 ms); 8 h is worse on 30 d (470 against 402 ms) and
+  365 d (3,906 against 3,274 ms) and not better on 1 d (97 against 88
+  ms); 4 d is slower on short ranges (1 d: 164 against 88 ms; 7 d: 294
+  against 191 ms; 30 d mid-month: 539 against 431 ms). At 100k 4 d wins
+  the long ranges (365 d: 459 against 570 ms; 30 d: 81 against 94 ms; 30 d
+  mid-month: 109 against 112 ms) and
+  loses the short ones (1 d: 34 against 32 ms; 7 d: 62 against 54 ms),
+  by less in absolute terms than at 1M. The engine is sized for 1M,
+  where 1 d is best or within 5% on every range, so it overrides the 100k result.
+  This is the best size without page-index pruning, which was not tried
+  (the reader skips the page index) and is left for step 2; page pruning
+  could favour larger groups on short ranges, so the size is open to
+  revisit then.
+  Writer peak at 1M is 203 MB for
+  1 d against 322 MB for 4 d. Files sort by family first, so a group
+  holds about 2-3 days of one family.
+- **Library at 1M: parquet-go confirmed.** It reads 1.2 to 1.6x faster
+  than arrow-go on the trio queries at 1M (1.17 to 1.60x across ranges; 1.3 to
+  1.6x at 30 d and 365 d: trio 402 against 545 ms and 3,274 against 4,772 ms), down to 1.1x on exact attribute values;
+  it writes the year in 48.1 s against 60.3 s with a 203 MB writer peak
+  against 268 MB, and adds 5.7 MB to the binary against 20.6 MB (step 1).
+  The step 1 doubt about 1M writes was load: behind the gate the slowest
+  parquet-go file takes 4.1 s against 8.2 s in step 1, arrow-go's 5.1 s
+  against 5.2 s.
+- **30-day targets, uncached.** At 1M the trio takes 402 ms uncached,
+  OS cache warm (415 ms first run) against under 0.5 s: met for the trio. At 100k it takes 94 ms (98 ms
+  first, 81 ms with 4-day groups) against "tens of ms": not met, though
+  borderline. The trio is 3 of the ~20 widgets of a Views dashboard, so
+  neither verdict establishes a full dashboard.
+- **1-year target at 1M: missed.** The trio takes 3,274 ms uncached,
+  OS cache warm (peak 186 MB, over the ~150 MB budget), against under 1 s
+  with a warm engine cache. The cold target (under ~3 s) is missed too,
+  since even this figure is above it. A cache cannot rescue it: a cold
+  load runs the uncached path and builds the cache, and the trio alone is
+  3 of ~20 widgets, so the cold target needs a faster scan or a revised
+  target. Nothing was measured cold. At 100k the trio takes 570 ms.
+- **Cache: yes, step 5 proceeds** (owner's rule: none unless the results
+  are great; plan rule: yes only if the 1-year target is missed and the
+  upper-bound speedup T(365 d) / T(1 d) is at least 5x). T(365 d trio) =
+  3,274 ms and T(1 d trio) = 88 ms, so the bound is about 37x. It is a
+  theoretical upper bound: it ignores merge cost and reading today's open
+  log (never cached). Step 5 builds the disposable per-day cache exactly
+  as "The cache" above describes, measures the real 1-year gain first
+  and drops the cache if the gain is not large.
+- **Approximate distinct users ship** for whole-range distinct counts.
+  Attribute values at 1M and 365 d: 1,385 ms and 139 MB approximate
+  against 5,243 ms and 395 MB exact (3.8x faster, 2.8x less memory);
+  exact is over the ~150 MB budget by itself, which is a second reason.
+  Against exact, the largest error on counts of 50 or more is 1.73% (1M,
+  30 d mid-month; 1.31% at 100k) and no value fell outside the 2%
+  tolerance in the 35 comparisons at each volume. That is less evidence
+  than the cell count suggests: the fingerprints are deterministic, so the
+  7 layout and source combinations are one sample per range, and 30 d and
+  365 d hold the same users. The HLL path (values above 1,024 users) was
+  exercised by at most 367 values per range at 1M and 27 at 100k. The 2% bound is statistical
+  (about 2.5 sigma at 2^14 registers), not guaranteed. The check is
+  weaker than it looks: the generator has no group ids (the groups half
+  compares 0 with 0) and repeats the same users every month (30 d and
+  365 d have the same distinct users per value).
+
 ## Left to the builder
 
 - Field names and JSON schema of the language; the exact metric and
   dimension lists beyond what the built-ins need.
-- Row-group size (step 1b), HLL precision and the exact/approximate
-  threshold.
+- HLL precision and the exact/approximate threshold.
 - Cache directory default, size cap, eviction details, key format.
 - Whether the fixed analytics tools survive as presets.
 - Names of new environment variables.

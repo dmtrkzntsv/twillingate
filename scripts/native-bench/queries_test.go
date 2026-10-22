@@ -7,32 +7,38 @@ import (
 	"testing"
 )
 
-// memSource serves hand-built batches. It honours the Source contract's
-// "attr_*" pattern by keeping every attr_ column of a batch, and keeps only
-// the requested columns.
+// memSource serves hand-built batches, one group each. It honours the
+// Source contract's "attr_*" pattern by keeping every attr_ column of a
+// batch, and keeps only the requested columns.
 type memSource struct{ batches []*Batch }
 
 func (m memSource) Name() string { return "mem" }
 
-func (m memSource) Scan(_ []string, cols []string, _ string, _, _ int64, fn func(*Batch) error) error {
-	for _, b := range m.batches {
-		out := &Batch{N: b.N, Cols: map[string]*Column{}}
-		for _, want := range cols {
-			if prefix, ok := strings.CutSuffix(want, "*"); ok {
-				for name, c := range b.Cols {
-					if strings.HasPrefix(name, prefix) {
-						out.Cols[name] = c
-					}
+func (m memSource) Groups(_ []string, _ string, _, _ int64) ([]Group, error) {
+	gs := make([]Group, len(m.batches))
+	for i, b := range m.batches {
+		gs[i] = Group{File: "mem", Index: i, Rows: int64(b.N), All: true}
+	}
+	return gs, nil
+}
+
+func (m memSource) NewGroupReader() *GroupReader { return &GroupReader{} }
+
+func (m memSource) ReadGroup(_ *GroupReader, g Group, cols []string, _ string, _, _ int64) (*Batch, error) {
+	b := m.batches[g.Index]
+	out := &Batch{N: b.N, Cols: map[string]*Column{}}
+	for _, want := range cols {
+		if prefix, ok := strings.CutSuffix(want, "*"); ok {
+			for name, c := range b.Cols {
+				if strings.HasPrefix(name, prefix) {
+					out.Cols[name] = c
 				}
-			} else if c, ok := b.Cols[want]; ok {
-				out.Cols[want] = c
 			}
-		}
-		if err := fn(out); err != nil {
-			return err
+		} else if c, ok := b.Cols[want]; ok {
+			out.Cols[want] = c
 		}
 	}
-	return nil
+	return out, nil
 }
 
 // strCol dictionary-encodes values; "\x00" is null.
@@ -210,5 +216,28 @@ func TestAttributeValuesTieBreaksByValue(t *testing.T) {
 	got, _ := AttributeValues(memSource{[]*Batch{b}}, nil, 0, 10)
 	if got[0][1] != "alpha" || got[1][1] != "mid" || got[2][1] != "zeta" {
 		t.Fatalf("got %v", got)
+	}
+}
+
+func TestKeySinkCompacts(t *testing.T) {
+	saved := compactAt
+	t.Cleanup(func() { compactAt = saved })
+	compactAt = 4
+	var k keySink
+	for g := 0; g < 10; g++ {
+		k.addGroup([]uint64{3, 1, 2, 1, 3}) // the same three keys every group
+	}
+	if len(k.keys) > 9 { // 30 without compaction; at most 2x the last compaction plus a group
+		t.Fatalf("%d keys held for 3 distinct: never compacted", len(k.keys))
+	}
+	if got := mergeKeys([]*keySink{&k, {keys: []uint64{5, 2}}}); !reflect.DeepEqual(got, []uint64{1, 2, 3, 5}) {
+		t.Fatalf("merged %v", got)
+	}
+}
+
+func TestCountriesRefusesTooLongRange(t *testing.T) {
+	src := memSource{[]*Batch{countryBatch(r{1, "DE", "a"})}}
+	if _, err := Countries(src, nil, 0, 1<<16); err == nil {
+		t.Fatal("a range of 65,537 days fit 16 bits")
 	}
 }
