@@ -218,3 +218,26 @@ func TestAttributeValuesTieBreaksByValue(t *testing.T) {
 		t.Fatalf("got %v", got)
 	}
 }
+
+func TestKeySinkCompacts(t *testing.T) {
+	saved := compactAt
+	t.Cleanup(func() { compactAt = saved })
+	compactAt = 4
+	var k keySink
+	for g := 0; g < 10; g++ {
+		k.addGroup([]uint64{3, 1, 2, 1, 3}) // the same three keys every group
+	}
+	if len(k.keys) > 9 { // 30 without compaction; at most 2x the last compaction plus a group
+		t.Fatalf("%d keys held for 3 distinct: never compacted", len(k.keys))
+	}
+	if got := mergeKeys([]keySink{k, {keys: []uint64{5, 2}}}); !reflect.DeepEqual(got, []uint64{1, 2, 3, 5}) {
+		t.Fatalf("merged %v", got)
+	}
+}
+
+func TestCountriesRefusesTooLongRange(t *testing.T) {
+	src := memSource{[]*Batch{countryBatch(r{1, "DE", "a"})}}
+	if _, err := Countries(src, nil, 0, 1<<16); err == nil {
+		t.Fatal("a range of 65,537 days fit 16 bits")
+	}
+}

@@ -112,3 +112,64 @@ func TestGroupsPrunes(t *testing.T) {
 		}
 	}
 }
+
+// TestQueriesDeterministicAcrossWorkers runs every query with 1, 2 and 4
+// workers on the step 1 fixtures (and on many small in-memory groups, where
+// the same actors and pairs recur across groups and workers) and wants the
+// same rows each time.
+func TestQueriesDeterministicAcrossWorkers(t *testing.T) {
+	saved := Workers
+	t.Cleanup(func() { Workers = saved })
+	db := duck(t)
+	files := monthFiles(t, db)
+	run := func(src Source, q query, files []string, from, to int64) {
+		t.Helper()
+		var first []Row
+		for _, w := range []int{1, 2, 4} {
+			Workers = w
+			got, err := q.native(src, files, from, to)
+			if err != nil {
+				t.Fatalf("%s %s workers %d: %v", src.Name(), q.name, w, err)
+			}
+			if len(got) == 0 {
+				t.Fatalf("%s %s: no rows; the fixture tests nothing", src.Name(), q.name)
+			}
+			if w == 1 {
+				first = got
+			} else if !reflect.DeepEqual(got, first) {
+				t.Fatalf("%s %s: workers %d\ngot  %v\nwant %v", src.Name(), q.name, w, got, first)
+			}
+		}
+	}
+	for _, src := range sources() {
+		for _, q := range queries {
+			for _, r := range [][2]string{{"2026-08-01", "2026-09-30"}, {"2026-08-10", "2026-09-05"}} {
+				run(src, q, files, day(r[0]), day(r[1]))
+			}
+		}
+	}
+	var batches []*Batch
+	for g := 0; g < 12; g++ {
+		n := 40
+		days := make([]int64, n)
+		var cs, as, gs, plan []string
+		for i := 0; i < n; i++ {
+			days[i] = int64(1 + (g+i)%3)
+			cs = append(cs, []string{"DE", "US", "", "\x00", "FR"}[(g*7+i)%5])
+			if (g+i)%11 == 0 {
+				as = append(as, "\x00")
+			} else {
+				as = append(as, fmt.Sprintf("a%d", (g*3+i)%17))
+			}
+			gs = append(gs, []string{"", "g1", "g2", "\x00"}[(g+i)%4])
+			plan = append(plan, []string{"pro", "free", "\x00"}[(g*5+i)%3])
+		}
+		batches = append(batches, &Batch{N: n, Cols: map[string]*Column{
+			"day": intCol(days...), "country": strCol(cs...), "actor_id": strCol(as...),
+			"group_id": strCol(gs...), "attr_plan": strCol(plan...),
+		}})
+	}
+	for _, q := range queries {
+		run(memSource{batches}, q, nil, 0, 10)
+	}
+}

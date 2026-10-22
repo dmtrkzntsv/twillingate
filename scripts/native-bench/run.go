@@ -69,7 +69,7 @@ func hashRows(rows []Row) string {
 	return hex.EncodeToString(h.Sum(nil))[:16]
 }
 
-const queryUsage = "usage: native-bench query -src arrow|pqgo -q countries|dau|attrvalues -from YYYY-MM-DD -to YYYY-MM-DD <files...>"
+const queryUsage = "usage: native-bench query -src arrow|pqgo -q countries|dau|attrvalues -from YYYY-MM-DD -to YYYY-MM-DD [-workers N] <files...>"
 
 func queryCmd(args []string, w io.Writer) error {
 	fs := flag.NewFlagSet("query", flag.ContinueOnError)
@@ -77,9 +77,11 @@ func queryCmd(args []string, w io.Writer) error {
 	qName := fs.String("q", "", "countries, dau or attrvalues")
 	fromS := fs.String("from", "", "first day, YYYY-MM-DD")
 	toS := fs.String("to", "", "last day, YYYY-MM-DD")
+	workers := fs.Int("workers", 2, "goroutines scanning row groups")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	Workers = *workers
 	q, ok := queryFuncs[*qName]
 	if !ok || fs.NArg() == 0 {
 		return errors.New(queryUsage)
