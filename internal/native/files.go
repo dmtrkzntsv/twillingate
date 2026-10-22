@@ -26,7 +26,12 @@ func projectFiles(dir string, p int64, r Range) (parquet, logs []string, err err
 	if err != nil {
 		return nil, nil, err
 	}
-	f := all[p]
+	parquet, logs = filesIn(all[p], r)
+	return parquet, logs, nil
+}
+
+// filesIn is f's Parquet files and logs that may hold rows in r.
+func filesIn(f archive.Files, r Range) (parquet, logs []string) {
 	for _, path := range f.Parquet {
 		if overlaps(filepath.Base(path), r) {
 			parquet = append(parquet, path)
@@ -37,7 +42,45 @@ func projectFiles(dir string, p int64, r Range) (parquet, logs []string, err err
 			logs = append(logs, path)
 		}
 	}
-	return parquet, logs, nil
+	return parquet, logs
+}
+
+// sessionSources is what project p's sessions in r are read from, from
+// archive.ListFiles(dir)[p]: the current session files whose day or month
+// overlaps r, the days of r no current session file covers (its
+// SessionGaps), in order, and the project's events files, which those
+// days' sessions are derived from.
+func sessionSources(dir string, p int64, r Range) (files []string, gaps []civil.Date, events archive.Files, err error) {
+	all, err := archive.ListFiles(dir)
+	if err != nil {
+		return nil, nil, archive.Files{}, err
+	}
+	events = all[p]
+	for _, path := range events.Sessions {
+		if overlaps(filepath.Base(path), r) {
+			files = append(files, path)
+		}
+	}
+	for _, g := range events.SessionGaps {
+		from, err := civil.Parse(g.From)
+		if err != nil {
+			return nil, nil, archive.Files{}, err
+		}
+		to, err := civil.Parse(g.To)
+		if err != nil {
+			return nil, nil, archive.Files{}, err
+		}
+		if from.Before(r.From) {
+			from = r.From
+		}
+		if r.To.Before(to) {
+			to = r.To
+		}
+		for d := from; !to.Before(d); d = d.AddDays(1) {
+			gaps = append(gaps, d)
+		}
+	}
+	return files, gaps, events, nil
 }
 
 // overlaps says whether the file named name may hold rows in r: a month

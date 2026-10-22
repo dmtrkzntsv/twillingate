@@ -101,7 +101,8 @@ var (
 
 // Answer answers q over project p.Project's rows of p.From to p.To, with
 // rules (every project's; the project's own apply) applied as the
-// reader's events view applies them. A malformed query, or a filter value
+// reader's events view applies them; the sessions table, derived from the
+// events as stored, takes none (scanSessions). A malformed query, or a filter value
 // that does not parse for its column, is refused with an error wrapping
 // ErrInvalid; one whose aggregation needs more than MaxBytes allows, with
 // one wrapping ErrTooLarge. Answer waits for one of MaxScans turns first,
@@ -169,9 +170,12 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 }
 
 func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, p Params, rules archive.Rules) (Result, error) {
-	rs, err := e.ruleSet(p.Project, rules)
-	if err != nil {
-		return Result{}, err
+	var rs ruleSet
+	if q.Table != "sessions" { // derived from the events as stored
+		var err error
+		if rs, err = e.ruleSet(p.Project, rules); err != nil {
+			return Result{}, err
+		}
 	}
 	s := scan{e: e, q: q, filters: filters, project: p.Project, rules: rs}
 	switch q.Kind {
@@ -282,6 +286,19 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 	}
 	a, ms := newAgg(aggOptions{metrics: ms, filters: s.filters, dims: dims, perDay: perDay, sets: sets,
 		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
+	if s.q.Table == "sessions" {
+		charge := func(n int64) error {
+			a.mem.add(n)
+			if n > 0 {
+				return a.checkMemory()
+			}
+			return nil
+		}
+		if err := s.e.scanSessions(ctx, s.project, r, a.columns(), charge, a.add); err != nil {
+			return nil, nil, err
+		}
+		return a.merge(), ms, nil
+	}
 	fam := s.family()
 	read := s.rules.columns(a.columns())
 	pq, logs, err := projectFiles(s.e.dir, s.project, r)

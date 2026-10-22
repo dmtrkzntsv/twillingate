@@ -96,14 +96,24 @@ var eventKinds = map[string]colKind{
 	"ts": kindTime, "received_at": kindTime,
 }
 
-// nullColumn is a column of n nulls of name's type, for a column a file
-// lacks.
+// sessionKinds are the types of the sessions table's columns that are not
+// VARCHAR (archive's sessionsSelect): those of events it shares, and these.
+var sessionKinds = map[string]colKind{
+	"duration_sec": kindInt, "views": kindInt, "started_at": kindTime, "ended_at": kindTime,
+}
+
+// nullColumn is a column of n nulls of name's type (in events, or in
+// sessions for a column only it has), for a column a file lacks.
 func nullColumn(name string, n int) *Column {
 	null := make([]bool, n)
 	for i := range null {
 		null[i] = true
 	}
-	switch eventKinds[name] {
+	kind, ok := eventKinds[name]
+	if !ok {
+		kind = sessionKinds[name]
+	}
+	switch kind {
 	case kindInt:
 		return &Column{Ints: make([]int64, n), Null: null}
 	case kindFloat:

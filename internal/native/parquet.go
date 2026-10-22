@@ -18,7 +18,8 @@ type group struct {
 	file  string
 	index int
 	rows  int64
-	all   bool // statistics prove every row matches the family and the range
+	all   bool  // statistics prove every row matches the family and the range
+	day   int64 // a gap day to derive sessions of (index gapIndex)
 }
 
 // pqFile is one open file with its footer.

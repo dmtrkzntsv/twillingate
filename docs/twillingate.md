@@ -1698,7 +1698,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | Field | Kinds | Meaning |
 | --- | --- | --- |
 | `kind` | all | `stat`, `trend` or `breakdown` |
-| `table` | all | `events` (every family), `views`, `product` or `measures` |
+| `table` | all | `events` (every family), `views`, `product` or `measures`; or `sessions`, one row per session (below) |
 | `metrics` | all | the aggregates, each an output column; a trend takes exactly one |
 | `where` | all | filters, `{column, op, values}`, every one of which a row must satisfy |
 | `dimensions` | breakdown | 1 to 3 columns to group by |
@@ -1732,6 +1732,16 @@ them; they are text, so `gt`, `gte`, `lt` and `lte` do not take them:
 | `platform_version` | `events`, `views`, `product` | `platform`, a space, then `app_version` (`ios 2.4.1`), where `app_version` is not empty; else NULL |
 | `consent_state` | `events`, `views`, `product` | `given` (`consent` 1), `none` (0) or `unknown` (NULL) |
 
+`sessions` is the table of that name in `schema://views`: the sessions of
+the views, derived as the event files are written and, for the days not
+derived yet, as the query reads them; rules do not apply to it. Its
+dimension, series and filter columns are `project_id`, `day`, `kind`,
+`actor_id`, `actor_kind`, `session_id`, `entry_host`, `entry_path`,
+`exit_path`, `referrer_source`, `utm_source`, `utm_medium` and
+`utm_campaign`; `duration_sec` and `views` are numbers a filter may name
+(`{"column": "views", "op": "gt", "values": ["1"]}`) but not a dimension
+or series. It takes the metrics `count` (sessions) and `actors` only.
+
 | Metric `op` | Takes | Counts |
 | --- | --- | --- |
 | `count` | | rows |
@@ -1747,7 +1757,7 @@ with `compare`, may one be named `previous_<another's name>`.
 | --- | --- |
 | `eq`, `ne`, `contains`, `prefix` | exactly one |
 | `in`, `not_in` | one or more |
-| `gt`, `gte`, `lt`, `lte` | exactly one: an integer, or `YYYY-MM-DD` on `day`; numeric columns only (`day`, `project_id`, `display_width`, `display_height`, `consent`, `bucket`) |
+| `gt`, `gte`, `lt`, `lte` | exactly one: an integer, or `YYYY-MM-DD` on `day`; numeric columns only (`day`, `project_id`, `display_width`, `display_height`, `consent`, `bucket`; `duration_sec` and `views` on `sessions`) |
 | `is_set` | none: the column is not NULL, and on a text column not empty either |
 
 A NULL value fails every operator, `ne` and `not_in` included (as in
