@@ -253,7 +253,7 @@ In the same section, one line each, with the number that decided it:
 - The Parquet library.
 - The row-group size.
 - Whether the 30-day targets hold uncached at both ends of the envelope.
-- Whether the 1-year target needs the cache, which decides whether step 5 of the order of work happens.
+- Whether the 1-year target is met without a cache. The default is no cache: step 5 of the order of work happens only if the 1-year target is missed and the numbers suggest a cache would make that dashboard several times faster.
 
 Remove the settled items from "Left to the builder".
 

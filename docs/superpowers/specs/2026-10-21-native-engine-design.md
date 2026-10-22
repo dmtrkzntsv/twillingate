@@ -349,7 +349,10 @@ file layout and table names are part of the versioned contract.
    raw-first switch did).
 4. The daily pass in Go (DuckDB still in the tree for SQL widgets and the
    parity check).
-5. The cache, if step 1 or 3 shows the 1-year target missed without it.
+5. The cache, only if it shows great results (owner, 2026-10-21): the
+   default is no cache. It is built only when the measurements show the
+   1-year target missed without it and the cache bringing that dashboard
+   several times faster, enough to justify its moving parts.
 6. The SQL hook, the final `feat!` release: DuckDB, cgo and
    `internal/engine` leave this repository in the same release.
 
