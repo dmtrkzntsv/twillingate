@@ -393,7 +393,7 @@ libraries as source; peak is the largest of the three.
 | 100k | 30 d | 143–218 ms (attribute values ~100 ms of it) | 66–137 MB |
 | 100k | 365 d | 1.05–1.65 s | 66–137 MB |
 | 1M | 30 d | 1.09–2.79 s (best: attribute values 0.76 s) | 401–541 MB |
-| 1M | 365 d | 12–26 s | up to 541 MB |
+| 1M | 365 d | 12–26 s first run (best 13–26 s) | up to 541 MB |
 
 **Parquet libraries.**
 
@@ -403,7 +403,7 @@ libraries as source; peak is the largest of the three.
 | Read, 100k, 365 d | 1.41–1.61 s | 1.05–1.20 s |
 | Read peak RSS, 100k | 73–75 MB | 66 MB |
 | Write a 100k month, max wall / writer peak RSS | 629–780 ms / 147–167 MB | 451–491 ms / 63–77 MB |
-| Write a 1M month at 122,880-row groups, writer peak RSS | 470 MB | 344 MB |
+| Write a 1M month at 133,333-row groups, writer peak RSS | 597 MB | 322 MB |
 | Stripped binary over an empty main | +20.6 MB | +5.7 MB |
 
 Output size is within 6% (100k year: 55–57 MB arrow-go, 53–56 MB
@@ -414,7 +414,7 @@ parquet-go, DuckDB's own 47 MB).
 - **Parquet library: `parquet-go/parquet-go`.** Faster and leaner reads
   than arrow-go (the 100k comparison is clean: 143–152 ms against
   174–200 ms for the 30-day trio, 66 against 73–75 MB), a lower writer
-  peak on a real 1M month (344 MB against 470 MB), and +5.7 MB of binary
+  peak on a real 1M month at 133,333-row groups (322 MB against 597 MB), and +5.7 MB of binary
   against +20.6 MB.
 - **Row-group size: provisional.** At 100k, groups of 4 days (13,333
   rows) beat groups of 1 day (3,333 rows) by about 10% on the 365-day
@@ -427,7 +427,7 @@ parquet-go, DuckDB's own 47 MB).
   dominates at ~100 ms. At 1M the best is 1.09 s against 0.5 s (attribute
   values 0.76 s of it): missed.
 - **1-year target: missed by far, and slower than today.** At 1M the trio
-  takes 12–26 s with a peak up to 541 MB, against 10.9 s for the whole
+  takes 12–26 s (first runs; best 13–26 s) with a peak up to 541 MB, against 10.9 s for the whole
   Views dashboard and 5.3 s for Product in DuckDB. The queries measured
   are a deliberately naive first cut (exact sets in Go maps, one row group
   per batch, one thread per query), so these numbers bound nothing about
