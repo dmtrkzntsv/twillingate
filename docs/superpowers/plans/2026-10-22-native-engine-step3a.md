@@ -134,3 +134,11 @@ Expected: PASS. `components.json` has not changed yet, so the `query` source is 
   - a Playwright case in `web/e2e/` that creates a `stat` widget with a query source through the editor and sees a number. The e2e harness seeds events; check `web/e2e/` fixtures.
 
 - [ ] Tests first, then implement. Run `cd web && npm test && npm run e2e`, then `make check`. Commit: `git commit -m "feat(web): edit and preview structured query widgets"`
+
+### Task 5: Approximate values reach the reader
+
+**Files:**
+- Modify: `internal/shared/readsql/readsql.go` (`Result` gains `Approximate []string \`json:"approximate,omitempty"\``; generic: "names of columns any value of which is an estimate"), `internal/reporting/query_source.go` (carry native's `Approximate` through `rename`), the cache (it stores the whole `Result`, so check it is kept), `docs/reporting.md` (the widget_data envelope gains `approximate`), and the web: `web/src/lib/api.ts` (the envelope type) and the components that print numbers (`stat`, `bar_list`, `table`, chart tooltips), which mark an approximate column's values with "≈".
+- Test: `TestQuerySourceApproximate` (a stat over more than 1,024 distinct actors, loaded through `WidgetData`: `approximate` lists the renamed column), plus vitest for the marker on `stat` and `bar_list`.
+
+- [ ] Tests first, then implement. Run `make check` and `cd web && npm test`. Commit: `git commit -m "feat(reporting): mark approximate widget values"`
