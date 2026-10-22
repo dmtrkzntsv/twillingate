@@ -36,10 +36,11 @@ type Query struct {
 
 // Metric is one aggregate.
 type Metric struct {
-	Op     string   `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. sessions takes count (sessions), actors, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, sum, avg, min and max"`
+	Op     string   `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. measures alone takes percentile (the q quantile of value, a sample weighing 1 / sample_rate, read from its log-scale bucket: within about 2%), mean (value weighted so) and weight (the samples' 1 / sample_rate summed). sessions takes count (sessions), actors, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, sum, avg, min and max"`
+	Q      float64  `json:"q,omitempty" jsonschema:"percentile only, above 0 and below 1: the quantile (0.75 for p75)"`
 	Column string   `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views; on identities views or events"`
 	Of     string   `json:"of,omitempty" jsonschema:"daily_* only: what is counted distinct per day"`
-	As     string   `json:"as,omitempty" jsonschema:"the output column's name (default: op, or op_column, or op_of)"`
+	As     string   `json:"as,omitempty" jsonschema:"the output column's name (default: op, or op_column, or op_of; a percentile's p and 100 q, as p75 or p99.9)"`
 	Round  *int     `json:"round,omitempty" jsonschema:"optional, 0 to 6: decimal places to round the value to, half away from zero (an integer stays as it is)"`
 	Where  []Filter `json:"where,omitempty" jsonschema:"optional: filters, as the query's where, that a row must also satisfy to count toward this metric only; a group still exists from the query's where, so its metric may be 0 (count, distinct counts, bounces) or empty (the others)"`
 }
@@ -63,8 +64,31 @@ func (m Metric) Name() string {
 		return m.Op + "_" + m.Column
 	case m.Of != "":
 		return m.Op + "_" + m.Of
+	case m.Op == "percentile":
+		return "p" + percent(m.Q)
 	}
 	return m.Op
+}
+
+// percent is q (0 < q < 1) times 100 in decimal, shifted as text so no
+// float error shows: 0.75 is 75, 0.999 is 99.9, 0.05 is 5.
+func percent(q float64) string {
+	s := strconv.FormatFloat(q, 'f', -1, 64)
+	frac, ok := strings.CutPrefix(s, "0.")
+	if !ok {
+		return strconv.FormatFloat(q*100, 'f', -1, 64)
+	}
+	for len(frac) < 2 {
+		frac += "0"
+	}
+	whole := strings.TrimLeft(frac[:2], "0")
+	if whole == "" {
+		whole = "0"
+	}
+	if rest := frac[2:]; rest != "" {
+		return whole + "." + rest
+	}
+	return whole
 }
 
 // Columns are the result's column names, in order, as Answer returns
@@ -249,7 +273,7 @@ func dimensionOf(table, column string) bool {
 var (
 	Kinds        = []string{"stat", "trend", "breakdown"}
 	Tables       = []string{"events", "views", "product", "measures", "sessions", "identities"}
-	MetricOps    = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "bounces", "bounce_rate"}
+	MetricOps    = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "bounces", "bounce_rate", "percentile", "mean", "weight"}
 	ValueColumns = []string{"value", "sample_rate", "display_width", "display_height"}
 	// SessionValueColumns are the columns sum, avg, min and max take on
 	// sessions (ValueColumns on the other tables).
@@ -271,6 +295,7 @@ var (
 	filterOps  = setOf(FilterOps)
 	sessionOps = setOf([]string{"count", "actors", "sum", "avg", "min", "max", "bounces", "bounce_rate"})
 	bounceOps  = setOf([]string{"bounces", "bounce_rate"})
+	measureOps = setOf([]string{"percentile", "mean", "weight"})
 	orderedOps = map[string]bool{"gt": true, "gte": true, "lt": true, "lte": true}
 )
 
@@ -403,6 +428,15 @@ func (m Metric) validate(table string, i int) error {
 	}
 	if table != "sessions" && bounceOps[m.Op] {
 		return invalid(p+".op", "%s is a metric of sessions only", m.Op)
+	}
+	if table != "measures" && measureOps[m.Op] {
+		return invalid(p+".op", "%s is a metric of measures only", m.Op)
+	}
+	switch {
+	case m.Op == "percentile" && !(m.Q > 0 && m.Q < 1):
+		return invalid(p+".q", "%v is not above 0 and below 1", m.Q)
+	case m.Op != "percentile" && m.Q != 0:
+		return invalid(p+".q", "%s takes no q", m.Op)
 	}
 	if m.Round != nil && (*m.Round < 0 || *m.Round > maxRound) {
 		return invalid(p+".round", "%d is not between 0 and %d", *m.Round, maxRound)

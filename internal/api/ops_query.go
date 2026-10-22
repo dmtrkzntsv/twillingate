@@ -65,6 +65,8 @@ func queryEnums(in *jsonschema.Schema) {
 	m.Properties["of"].Enum = enum(native.OfColumns)
 	minRound, maxRound := 0.0, 6.0
 	m.Properties["round"].Minimum, m.Properties["round"].Maximum = &minRound, &maxRound
+	minQ, maxQ := 0.0, 1.0
+	m.Properties["q"].ExclusiveMinimum, m.Properties["q"].ExclusiveMaximum = &minQ, &maxQ
 	m.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
 	q.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
 }

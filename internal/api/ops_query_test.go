@@ -229,6 +229,24 @@ func TestQuerySchemaDescribesStructured(t *testing.T) {
 	if rd := m.Properties["round"]; rd.Minimum == nil || *rd.Minimum != 0 || rd.Maximum == nil || *rd.Maximum != 6 {
 		t.Errorf("round's bounds = %v..%v, want 0..6", rd.Minimum, rd.Maximum)
 	}
+	if q := m.Properties["q"]; q.ExclusiveMinimum == nil || *q.ExclusiveMinimum != 0 || q.ExclusiveMaximum == nil || *q.ExclusiveMaximum != 1 {
+		t.Errorf("q's bounds = %v..%v, want above 0, below 1", q.ExclusiveMinimum, q.ExclusiveMaximum)
+	}
+}
+
+// A percentile's q passes MCP's schema when within (0, 1), and is refused
+// past it.
+func TestQueryStructuredPercentile(t *testing.T) {
+	_, cs := newTestHost(t)
+	q := map[string]any{"kind": "stat", "table": "measures", "metrics": []any{
+		map[string]any{"op": "percentile", "q": 0.75}, map[string]any{"op": "mean", "round": 3}, map[string]any{"op": "weight"}}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "query": q}); res.IsError {
+		t.Errorf("a percentile over MCP: %s", textOf(res))
+	}
+	q["metrics"] = []any{map[string]any{"op": "percentile", "q": 1}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "query": q}); !res.IsError {
+		t.Error("q 1 over MCP: accepted")
+	}
 }
 
 // A metric's where and round pass MCP's schema.

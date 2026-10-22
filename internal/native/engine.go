@@ -147,7 +147,14 @@ var (
 // value, daily_* the per-day distinct counts' SUM, MAX or AVG over the
 // days with rows (NULL over none); on sessions bounces is COUNT(*) FILTER
 // (WHERE views = 1) and bounce_rate that over COUNT(*) as a DOUBLE (NULL
-// over no session; an Other row's over its folded groups' sessions).
+// over no session; an Other row's over its folded groups' sessions). On
+// measures, a sample weighs 1 / sample_rate: weight is SUM(1 /
+// sample_rate), mean SUM(value / sample_rate) over that, and percentile
+// the widgets' recipe over the log-scale buckets (bucket 2 * 1.04^bucket /
+// 2.04, 0 for -1000): the value of the first bucket, ascending, whose
+// running weight reaches q of the total (NULL over no row; an Other row's
+// over its folded groups' buckets put together); not approximate, the
+// buckets being the answer's resolution.
 // A metric with a where counts only the rows that pass it too (SQL's
 // FILTER): its groups are still those of the query's where, so a group
 // none of whose rows pass reads 0 for count, a distinct count and

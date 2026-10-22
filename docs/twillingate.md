@@ -1769,9 +1769,22 @@ may name but not a dimension or series. It takes the metrics `count`
 | `daily_sum`, `daily_max`, `daily_avg` | `of`: `actors`, `users` or `groups` | the distinct count per day, summed, maxed or averaged over the days with rows |
 | `bounces` | | `sessions` only: the sessions of one view |
 | `bounce_rate` | | `sessions` only: `bounces` divided by the sessions (`0.25`), exact; empty over no session, and in an `Other` row over the sessions of the groups it folds |
+| `percentile` | `q`: above 0 and below 1 (`0.75`) | `measures` only: the `q` quantile of `value`, each sample weighing `1 / sample_rate`; empty over no sample |
+| `mean` | | `measures` only: `value` weighted so, `SUM(value / sample_rate) / SUM(1 / sample_rate)`; empty over no sample |
+| `weight` | | `measures` only: the samples' `1 / sample_rate` summed, the samples a sampled metric stands for |
 
-A metric's column is named by `as`, else `op`, `op_column` (`sum_value`)
-or `op_of` (`daily_sum_actors`); two metrics may not share a name, nor,
+A percentile comes from `bucket`, as the built-in Web Vitals and
+Measures dashboards compute theirs: the weights are summed per bucket and
+run up in ascending bucket order, and the answer is the value of the
+first bucket whose running weight reaches `q` of the total. That value is
+the bucket's representative, `2 × 1.04^bucket / 2.04` (`0` for bucket
+`-1000`), so a percentile is within about 2% of the samples' own; it is
+exact to that resolution, not an estimate, and never `approximate`. An
+`Other` row's percentile puts its groups' buckets together.
+
+A metric's column is named by `as`, else `op`, `op_column` (`sum_value`),
+`op_of` (`daily_sum_actors`) or, for a percentile, `p` and `100 × q`
+(`p75`, `p99.9`); two metrics may not share a name, nor,
 with `compare`, may one be named `previous_<another's name>`.
 
 A metric takes two more optional fields:
@@ -1782,8 +1795,10 @@ A metric takes two more optional fields:
   metrics still count it. A group exists when any row passes the query's
   `where`, so a metric with none of its rows in a group reads `0` for
   `count`, `actors`, `users`, `groups` and `bounces`, and empty for the
-  others (`sum`, `avg`, `min`, `max`, `daily_*`, `bounce_rate`). They
-  apply alike to the `previous_` columns, an `Other` row and a trend's
+  others (`sum`, `avg`, `min`, `max`, `daily_*`, `bounce_rate`,
+  `percentile`, `mean`, `weight`). A `daily_*` metric with a `where` is
+  over the days with rows that pass it (its `daily_avg` averages those
+  days only). They apply alike to the `previous_` columns, an `Other` row and a trend's
   days; a trend still has a row for every day with rows.
 - `round`: 0 to 6 decimal places, half away from zero (`2.5` rounds to
   `3`), applied last, after `Other` is summed and before groups are ranked
@@ -1871,6 +1886,21 @@ places.
     {"op": "count", "as": "events", "where": [{"column": "family", "op": "eq", "values": ["product"]}]},
     {"op": "avg", "column": "value", "as": "mean", "round": 2,
      "where": [{"column": "family", "op": "eq", "values": ["measures"]}]}]}}
+```
+
+A breakdown of measures: per page, the samples of LCP and the p75 of
+LCP, INP and CLS, as the built-in Web Vitals dashboard's table has them.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "breakdown", "table": "measures", "dimensions": ["path"], "limit": 50,
+  "where": [{"column": "event_name", "op": "in", "values": ["$lcp", "$inp", "$cls"]},
+            {"column": "path", "op": "ne", "values": [""]}],
+  "metrics": [
+    {"op": "count", "as": "samples", "where": [{"column": "event_name", "op": "eq", "values": ["$lcp"]}]},
+    {"op": "percentile", "q": 0.75, "as": "lcp_p75", "round": 0, "where": [{"column": "event_name", "op": "eq", "values": ["$lcp"]}]},
+    {"op": "percentile", "q": 0.75, "as": "inp_p75", "round": 0, "where": [{"column": "event_name", "op": "eq", "values": ["$inp"]}]},
+    {"op": "percentile", "q": 0.75, "as": "cls_p75", "round": 3, "where": [{"column": "event_name", "op": "eq", "values": ["$cls"]}]}]}}
 ```
 
 A breakdown of sessions: the bounce rate and average session length per
