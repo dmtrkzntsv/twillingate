@@ -173,10 +173,13 @@ type apiError struct {
 // writeError maps a refusal to its status by errors.Is. Untyped errors are
 // logged (with the request that triggered them, so a 500 in journalctl
 // names a method and path rather than just an error string) and answered
-// generically: their text may carry internals.
+// generically: their text may carry internals. A request its client
+// abandoned (a reload, a closed tab) is not logged: the failure is the
+// request's own cancellation, and nobody reads the answer.
 func writeError(w http.ResponseWriter, logger *slog.Logger, req *http.Request, err error) {
 	status, code, msg := http.StatusInternalServerError, "internal", "internal error"
 	switch {
+	case errors.Is(err, context.Canceled) && req.Context().Err() != nil:
 	case errors.Is(err, manage.ErrInvalid):
 		status, code, msg = http.StatusBadRequest, "invalid", err.Error()
 	case errors.Is(err, manage.ErrNotFound):
