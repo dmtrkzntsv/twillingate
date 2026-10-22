@@ -4,6 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -287,5 +290,164 @@ func TestRetentionFiles(t *testing.T) {
 	}
 	if got := strings.Join(names(logs), " "); got != "2026-07-01.log" {
 		t.Errorf("logs %s, want July 1's", got)
+	}
+}
+
+// retentionSQL is the built-in retention widget file name's SQL as
+// written, run on the fixture: today put in for current_date, the
+// parameters bound (from and to as duckTable's %[1]s and %[2]s), the
+// offsets put in for its 45, and extra conditions added to acts.
+func retentionSQL(t *testing.T, name, now string, offsets int, where string) string {
+	t.Helper()
+	b, err := os.ReadFile(filepath.Join("..", "reporting", "system", "retention", name+".sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sql := string(b)
+	acts := "AND day <= :to + 45\n"
+	if !strings.Contains(sql, acts) {
+		t.Fatalf("%s: no %q in acts", name, acts)
+	}
+	sql = strings.Replace(sql, acts, "AND day <= :to + 45 "+where+"\n", 1)
+	n := strconv.Itoa(offsets)
+	return strings.NewReplacer("current_date", "DATE '"+now+"'", ":project", "1", ":from", "DATE '%[1]s'", ":to", "DATE '%[2]s'",
+		"+ 45", "+ "+n, "BETWEEN 0 AND 45", "BETWEEN 0 AND "+n, "range(0, 46)", "range(0, "+strconv.Itoa(offsets+1)+")").Replace(sql)
+}
+
+// The retention kind's grid, curves and milestones equal the built-in
+// retention widgets' SQL, run as written.
+func TestRetentionMatchesSQL(t *testing.T) {
+	f := retentionFixture(t)
+	for _, c := range []struct {
+		name     string
+		from, to string
+		offsets  int
+		today    string
+		where    []Filter
+		sql      string
+	}{
+		{name: "every day", from: retentionFrom, to: "2026-09-09"},
+		{name: "first seen before the range", from: "2026-07-15", to: "2026-08-15"},
+		{name: "past today", from: "2026-08-15", to: today},
+		{name: "90 days", from: "2026-06-20", to: "2026-07-20", offsets: 90},
+		{name: "30 days", from: "2026-06-20", to: "2026-07-20", offsets: 30},
+		{name: "earlier today", from: "2026-07-01", to: "2026-08-10", today: "2026-08-20"},
+		{name: "filtered", from: "2026-06-15", to: "2026-08-15",
+			where: []Filter{{Column: "country", Op: "eq", Values: []string{"DE"}}, {Column: "event_name", Op: "ne", Values: []string{"signup"}}},
+			sql:   `AND "country" = 'DE' AND "event_name" <> 'signup'`},
+		{name: "empty range", from: "2026-05-01", to: "2026-05-10"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			now := c.today
+			if now == "" {
+				now = today
+			}
+			offsets := c.offsets
+			if offsets == 0 {
+				offsets = 45
+			}
+			clock := date(t, now).Time().Add(13 * time.Hour)
+			e := New(Options{Dir: f.Dir, Workers: 3, Now: func() time.Time { return clock }})
+			p := Params{Project: 1, From: date(t, c.from), To: date(t, c.to)}
+			run := func(q Query, file string) {
+				t.Helper()
+				q.Kind, q.Offsets, q.Where = "retention", c.offsets, c.where
+				res, err := e.Answer(context.Background(), q, p, engineRules)
+				if err != nil {
+					t.Fatalf("%s: %v", file, err)
+				}
+				if !slices.Equal(res.Columns, q.Columns()) {
+					t.Errorf("%s: columns %v, want %v", file, res.Columns, q.Columns())
+				}
+				want := duckTable(t, f, retentionSQL(t, file, now, offsets, c.sql), c.from, c.to)
+				t.Logf("%s: %d rows", file, len(want))
+				if len(want) == 0 && c.name != "empty range" {
+					t.Fatalf("%s: no rows: a weak case", file)
+				}
+				sameTable(t, res.Rows, want)
+			}
+			run(Query{Output: "grid"}, "cohorts")
+			run(Query{Output: "curve", IdentifiedBy: "install"}, "install-retention")
+			run(Query{Output: "curve", IdentifiedBy: "user"}, "signed-in-retention")
+			if offsets >= 45 {
+				run(Query{Output: "milestones", IdentifiedBy: "install"}, "install-milestones")
+				run(Query{Output: "milestones", IdentifiedBy: "user"}, "signed-in-milestones")
+			}
+		})
+	}
+}
+
+// An install that signs in on its fourth day counts as an install on days
+// 0 to 2 and as a user from day 3, in its install cohort, whose size it
+// stays in; a user cohort's size holds only those users on their first
+// day. Retention is 0 over no cohort, and milestones read empty past the
+// curve.
+func TestRetentionSignsIn(t *testing.T) {
+	f := archivetest.New(t)
+	at := func(day string) time.Time { return date(t, day).Time().Add(9 * time.Hour) }
+	view := func(id, actor string, kind string, day string) store.Event {
+		return store.Event{ID: id, ProjectID: 1, Family: store.FamilyViews, EventName: "pageview", ActorID: actor,
+			ActorKind: kind, Host: "example.com", TS: at(day)}
+	}
+	f.Write(t,
+		view("a0", "a", store.ActorInstall, "2026-09-01"),
+		view("a1", "a", store.ActorInstall, "2026-09-02"),
+		view("a3", "a", store.ActorUser, "2026-09-04"),
+		view("a5", "a", store.ActorInstall, "2026-09-06"), // after signing in: still a user
+		view("b0", "b", store.ActorInstall, "2026-09-01"),
+		view("u0", "u", store.ActorUser, "2026-09-02"),
+		view("u1", "u", store.ActorUser, "2026-09-03"),
+		view("t0", "t", store.ActorUser, today)) // today: left out
+	e := New(Options{Dir: f.Dir, Now: func() time.Time { return at(today) }})
+	p := Params{Project: 1, From: date(t, "2026-09-01"), To: date(t, "2026-09-09")}
+	answer := func(q Query) [][]string {
+		t.Helper()
+		q.Kind = "retention"
+		q.Offsets = 7
+		res, err := e.Answer(context.Background(), q, p, archive.Rules{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res.Rows
+	}
+	grid := answer(Query{Output: "grid"})
+	wantGrid := [][]string{
+		{"2026-09-02", "user", "0", "1", "1", "1"},
+		{"2026-09-02", "user", "1", "1", "1", "1"},
+		{"2026-09-01", "install", "0", "2", "2", "1"},
+		{"2026-09-01", "install", "1", "2", "1", "0.5"},
+	}
+	if fmt.Sprint(grid) != fmt.Sprint(wantGrid) {
+		t.Errorf("grid %q, want %q (a's user days have no user cohort of 2026-09-01)", grid, wantGrid)
+	}
+	if got := answer(Query{Output: "curve", IdentifiedBy: "install"}); fmt.Sprint(got) != fmt.Sprint([][]string{
+		{"0", "1"}, {"1", "0.5"}, {"2", "0"}, {"3", "0"}, {"4", "0"}, {"5", "0"}, {"6", "0"}, {"7", "0"}}) {
+		t.Errorf("install curve %q", got)
+	}
+	// The user cohort of 2026-09-02 has reached offsets 0 to 7 (9 is today).
+	if got := answer(Query{Output: "curve", IdentifiedBy: "user"}); len(got) != 8 || fmt.Sprint(got[:3]) != fmt.Sprint([][]string{{"0", "1"}, {"1", "1"}, {"2", "0"}}) {
+		t.Errorf("user curve %q", got)
+	}
+	if got := answer(Query{Output: "milestones", IdentifiedBy: "user", Milestones: []int{1, 7}}); fmt.Sprint(got) != fmt.Sprint([][]string{{"1", "0"}}) {
+		t.Errorf("user milestones %q", got)
+	}
+	// No cohort: no grid row, and one row of empty milestones.
+	p.From = date(t, "2026-09-08")
+	if got := answer(Query{Output: "milestones", IdentifiedBy: "install", Milestones: []int{0, 2}}); fmt.Sprint(got) != fmt.Sprint([][]string{{"", ""}}) {
+		t.Errorf("milestones over no cohort %q, want one row of empties", got)
+	}
+	if got := answer(Query{Output: "grid"}); len(got) != 0 {
+		t.Errorf("grid over no cohort %q", got)
+	}
+}
+
+// A retention query's per-actor state is held to MaxBytes.
+func TestRetentionTooLarge(t *testing.T) {
+	f := retentionFixture(t)
+	e := New(Options{Dir: f.Dir, MaxBytes: 1 << 10, Now: func() time.Time { return date(t, today).Time() }})
+	_, err := e.Answer(context.Background(), Query{Kind: "retention", Output: "grid"},
+		Params{Project: 1, From: date(t, retentionFrom), To: date(t, today)}, engineRules)
+	if !errors.Is(err, ErrTooLarge) {
+		t.Errorf("err = %v, want ErrTooLarge", err)
 	}
 }

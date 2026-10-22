@@ -166,6 +166,8 @@ var (
 //     dimensions, or with order naming a dimension sorted by it ascending,
 //     ties by the other dimensions; then with other an "Other" row (every
 //     dimension "Other") of the rest, when there is any.
+//   - retention: its output's rows (scan.retention), over the cohorts of
+//     From to To, the days back up to the day before the clock's today.
 //
 // A truncated result (MaxGroups, MaxBytes) leaves the untracked groups
 // out of a breakdown's Other row too, and ranks a trend's tracked series
@@ -253,6 +255,8 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 		return s.stat(ctx, p.From, p.To)
 	case "trend":
 		return s.trend(ctx, p.From, p.To)
+	case "retention":
+		return s.retention(ctx, p.From, p.To)
 	}
 	return s.breakdown(ctx, p.From, p.To)
 }

@@ -1,9 +1,11 @@
 package native
 
 import (
+	"cmp"
 	"context"
 	"math"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
@@ -306,4 +308,125 @@ func (w retentionWindow) fold(dst, src map[string]*retentionState) int64 {
 		}
 	}
 	return -freed
+}
+
+// retentionKey is one count of the retention widgets' returned CTE: the
+// actors of kind (install or user) of cohort day cohort back offset
+// days later.
+type retentionKey struct {
+	user   bool
+	cohort int64
+	offset int
+}
+
+// retention answers a retention query over the cohorts of [from, to], as
+// the built-in retention widgets' SQL (cohorts.sql and the curves and
+// milestones beside it) has it. An actor back on day d of its cohort
+// counts as a user when it was first a user on d or before, else as an
+// install; a cohort's size, per kind, is its count at offset 0, and a
+// kind's row at an offset exists only when that kind has a size in the
+// cohort (the SQL's inner join on offset 0).
+//   - grid: a row per cohort, kind and offset with any actor back, by
+//     cohort descending, kind, offset;
+//   - curve: the kind's cohorts pooled per offset o, over those whose
+//     cohort + o is before today: the actors back over the cohort sizes,
+//     0 over none; a row per offset some cohort reached;
+//   - milestones: one row, the curve at each milestone, empty when the
+//     curve has no row there.
+func (s scan) retention(ctx context.Context, from, to civil.Date) (Result, error) {
+	offsets := s.q.offsets()
+	actors, err := s.retentionActors(ctx, retentionSpec{from: from, to: to, offsets: offsets}, s.e.charge())
+	if err != nil {
+		return Result{}, err
+	}
+	counts := map[retentionKey]int64{}
+	for _, a := range actors {
+		for o := 0; o <= offsets; o++ {
+			if a.activeOn(o) {
+				counts[retentionKey{user: a.user <= a.cohort+int64(o), cohort: a.cohort, offset: o}]++
+			}
+		}
+	}
+	// A kind's rows of a cohort exist only beside its size.
+	for k := range counts {
+		if counts[retentionKey{user: k.user, cohort: k.cohort}] == 0 {
+			delete(counts, k)
+		}
+	}
+	cols := columnsOut{}
+	for _, c := range s.q.Columns() {
+		cols.add(c)
+	}
+	ratio := func(n, d int64) string {
+		if d == 0 {
+			return "0"
+		}
+		return value{f: float64(n) / float64(d)}.String()
+	}
+	if s.q.Output == "grid" {
+		keys := make([]retentionKey, 0, len(counts))
+		for k := range counts {
+			keys = append(keys, k)
+		}
+		slices.SortFunc(keys, func(a, b retentionKey) int {
+			switch {
+			case a.cohort != b.cohort:
+				return cmp.Compare(b.cohort, a.cohort)
+			case a.user != b.user:
+				if b.user {
+					return -1 // install before user
+				}
+				return 1
+			}
+			return cmp.Compare(a.offset, b.offset)
+		})
+		rows := make([][]string, 0, len(keys))
+		for _, k := range keys {
+			size, n := counts[retentionKey{user: k.user, cohort: k.cohort}], counts[k]
+			kind := "install"
+			if k.user {
+				kind = "user"
+			}
+			rows = append(rows, []string{formatDay(k.cohort), kind, strconv.Itoa(k.offset),
+				strconv.FormatInt(size, 10), strconv.FormatInt(n, 10), ratio(n, size)})
+		}
+		return cols.result(rows, false), nil
+	}
+	// The curve of one kind: per offset, the sizes and the actors back of
+	// the cohorts that reached it before today.
+	user, today := s.q.IdentifiedBy == "user", epochDay(s.e.today())
+	sizes, back := make([]int64, offsets+1), make([]int64, offsets+1)
+	reached := make([]bool, offsets+1)
+	for k, n := range counts {
+		if k.user != user {
+			continue
+		}
+		if k.offset == 0 {
+			for o := 0; o <= offsets && k.cohort+int64(o) < today; o++ {
+				sizes[o] += n
+				reached[o] = true
+			}
+		}
+		if k.cohort+int64(k.offset) < today {
+			back[k.offset] += n
+		}
+	}
+	if s.q.Output == "curve" {
+		var rows [][]string
+		for o := range reached {
+			if reached[o] {
+				rows = append(rows, []string{strconv.Itoa(o), ratio(back[o], sizes[o])})
+			}
+		}
+		return cols.result(rows, false), nil
+	}
+	row := make([]string, 0, len(cols.names))
+	for _, m := range s.q.milestones() {
+		v := ""
+		if reached[m] {
+			v = ratio(back[m], sizes[m])
+		}
+		row = append(row, v)
+	}
+	return cols.result([][]string{row}, false), nil
 }

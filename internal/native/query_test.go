@@ -63,6 +63,12 @@ func TestValidate(t *testing.T) {
 		"filters": {Kind: "stat", Table: "events", Metrics: count(), Where: []Filter{
 			{Column: "attr_a", Op: "is_set"}, {Column: "country", Op: "in", Values: []string{"DE", "FR"}},
 			{Column: "day", Op: "gte", Values: []string{"2026-01-02"}}, {Column: "path", Op: "prefix", Values: []string{"/x"}}, {Column: "path", Op: "not_prefix", Values: []string{"/xy"}}}},
+		"retention grid":        {Kind: "retention", Output: "grid"},
+		"retention grid events": {Kind: "retention", Table: "events", Output: "grid", Offsets: 90, Where: []Filter{{Column: "country", Op: "eq", Values: []string{"DE"}}}},
+		"retention curve":       {Kind: "retention", Output: "curve", IdentifiedBy: "install", Offsets: 1},
+		"retention milestones":  {Kind: "retention", Output: "milestones", IdentifiedBy: "user"},
+		"retention own milestones": {Kind: "retention", Output: "milestones", IdentifiedBy: "install", Offsets: 14,
+			Milestones: []int{0, 1, 3, 7, 10, 14}},
 	}
 	for name, q := range valid {
 		if err := q.Validate(); err != nil {
@@ -186,6 +192,34 @@ func TestValidate(t *testing.T) {
 		{"vital_rating on views", Query{Kind: "stat", Table: "views", Metrics: count(), Where: []Filter{{Column: "vital_rating", Op: "is_set"}}}, "where[0].column"},
 		{"compare collides", Query{Kind: "stat", Table: "events", Compare: "previous",
 			Metrics: []Metric{{Op: "count", As: "previous_users"}, {Op: "users"}}}, "metrics[0].as"},
+		{"retention no output", Query{Kind: "retention"}, "output"},
+		{"retention bad output", Query{Kind: "retention", Output: "table"}, "output"},
+		{"retention table", Query{Kind: "retention", Table: "views", Output: "grid"}, "table"},
+		{"retention grid identified_by", Query{Kind: "retention", Output: "grid", IdentifiedBy: "user"}, "identified_by"},
+		{"retention curve no identified_by", Query{Kind: "retention", Output: "curve"}, "identified_by"},
+		{"retention bad identified_by", Query{Kind: "retention", Output: "curve", IdentifiedBy: "group"}, "identified_by"},
+		{"retention offsets 91", Query{Kind: "retention", Output: "grid", Offsets: 91}, "offsets"},
+		{"retention offsets negative", Query{Kind: "retention", Output: "grid", Offsets: -1}, "offsets"},
+		{"retention milestones on a grid", Query{Kind: "retention", Output: "grid", Milestones: []int{7}}, "milestones"},
+		{"retention milestones on a curve", Query{Kind: "retention", Output: "curve", IdentifiedBy: "user", Milestones: []int{7}}, "milestones"},
+		{"retention milestone past offsets", Query{Kind: "retention", Output: "milestones", IdentifiedBy: "user", Offsets: 10, Milestones: []int{7, 11}}, "milestones[1]"},
+		{"retention milestone negative", Query{Kind: "retention", Output: "milestones", IdentifiedBy: "user", Milestones: []int{-1}}, "milestones[0]"},
+		{"retention milestone repeated", Query{Kind: "retention", Output: "milestones", IdentifiedBy: "user", Milestones: []int{7, 7}}, "milestones[1]"},
+		{"retention seven milestones", Query{Kind: "retention", Output: "milestones", IdentifiedBy: "user", Milestones: []int{1, 2, 3, 4, 5, 6, 7}}, "milestones"},
+		{"retention default milestones past offsets", Query{Kind: "retention", Output: "milestones", IdentifiedBy: "user", Offsets: 30}, "milestones"},
+		{"retention metrics", Query{Kind: "retention", Output: "grid", Metrics: count()}, "metrics"},
+		{"retention dimensions", Query{Kind: "retention", Output: "grid", Dimensions: []string{"path"}}, "dimensions"},
+		{"retention series", Query{Kind: "retention", Output: "grid", Series: "path"}, "series"},
+		{"retention series_limit", Query{Kind: "retention", Output: "grid", SeriesLimit: 3}, "series_limit"},
+		{"retention compare", Query{Kind: "retention", Output: "grid", Compare: "previous"}, "compare"},
+		{"retention limit", Query{Kind: "retention", Output: "grid", Limit: 3}, "limit"},
+		{"retention other", Query{Kind: "retention", Output: "grid", Other: true}, "other"},
+		{"retention order", Query{Kind: "retention", Output: "grid", Order: "day"}, "order"},
+		{"retention where", Query{Kind: "retention", Output: "grid", Where: []Filter{{Column: "bucket", Op: "is_set"}}}, "where[0].column"},
+		{"output on a stat", Query{Kind: "stat", Table: "events", Metrics: count(), Output: "grid"}, "output"},
+		{"identified_by on a trend", Query{Kind: "trend", Table: "events", Metrics: count(), IdentifiedBy: "user"}, "identified_by"},
+		{"offsets on a breakdown", Query{Kind: "breakdown", Table: "events", Metrics: count(), Dimensions: []string{"path"}, Offsets: 3}, "offsets"},
+		{"milestones on a stat", Query{Kind: "stat", Table: "events", Metrics: count(), Milestones: []int{1}}, "milestones"},
 	}
 	for _, c := range invalid {
 		err := c.q.Validate()
@@ -247,6 +281,12 @@ func TestColumns(t *testing.T) {
 			[]string{"day", "series", "count"}},
 		{"breakdown", Query{Kind: "breakdown", Table: "events", Metrics: []Metric{{Op: "actors"}, {Op: "count", As: "n"}}, Dimensions: []string{"country", "path"}},
 			[]string{"country", "path", "actors", "n"}},
+		{"retention grid", Query{Kind: "retention", Output: "grid"},
+			[]string{"cohort", "identified_by", "day", "size", "returned", "retention"}},
+		{"retention curve", Query{Kind: "retention", Output: "curve", IdentifiedBy: "user"}, []string{"day", "retention"}},
+		{"retention milestones", Query{Kind: "retention", Output: "milestones", IdentifiedBy: "user"}, []string{"d7", "d30", "d45"}},
+		{"retention own milestones", Query{Kind: "retention", Output: "milestones", IdentifiedBy: "user", Milestones: []int{14, 0}},
+			[]string{"d14", "d0"}},
 	}
 	for _, c := range cases {
 		if got := c.q.Columns(); !slices.Equal(got, c.want) {
@@ -280,6 +320,11 @@ func TestColumnTypes(t *testing.T) {
 			Dimensions: []string{"vital", "vital_rating"}}, []string{"text", "text", "number"}},
 		{"breakdown other", Query{Kind: "breakdown", Metrics: count(), Dimensions: []string{"day", "consent"}, Other: true},
 			[]string{"text", "text", "number"}},
+		{"retention grid", Query{Kind: "retention", Output: "grid"},
+			[]string{"day", "text", "number", "number", "number", "number"}},
+		{"retention curve", Query{Kind: "retention", Output: "curve", IdentifiedBy: "install"}, []string{"number", "number"}},
+		{"retention milestones", Query{Kind: "retention", Output: "milestones", IdentifiedBy: "install", Milestones: []int{1, 2}},
+			[]string{"number", "number"}},
 	}
 	for _, c := range cases {
 		if got := c.q.ColumnTypes(); !slices.Equal(got, c.want) {

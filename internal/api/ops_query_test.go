@@ -212,6 +212,23 @@ func TestQuerySchemaDescribesStructured(t *testing.T) {
 	if e := r.specs[i].in.Properties["query"].Properties["compare"].Enum; !slices.Equal(e, []any{"", "previous"}) {
 		t.Errorf("compare's enum = %v, want \"\" and previous", e)
 	}
+	// A retention's own fields.
+	rq := r.specs[i].in.Properties["query"]
+	if e := rq.Properties["output"].Enum; !slices.Equal(e, []any{"grid", "curve", "milestones"}) {
+		t.Errorf("output's enum = %v", e)
+	}
+	if e := rq.Properties["identified_by"].Enum; !slices.Equal(e, []any{"install", "user"}) {
+		t.Errorf("identified_by's enum = %v", e)
+	}
+	if o := rq.Properties["offsets"]; o.Minimum == nil || *o.Minimum != 1 || o.Maximum == nil || *o.Maximum != 90 {
+		t.Errorf("offsets' bounds = %v..%v, want 1..90", o.Minimum, o.Maximum)
+	}
+	if m := rq.Properties["milestones"]; m.MaxItems == nil || *m.MaxItems != 6 || m.Items.Minimum == nil || *m.Items.Minimum != 0 {
+		t.Errorf("milestones = %+v, want at most 6, each from 0", m)
+	}
+	if slices.Contains(rq.Required, "metrics") || slices.Contains(rq.Required, "table") {
+		t.Errorf("query requires %v: a retention has no metrics, nor needs a table", rq.Required)
+	}
 	col := r.specs[i].in.Properties["query"].Properties["where"].Items.Properties["column"]
 	for _, c := range native.Columns {
 		if !strings.Contains(col.Description, c) {

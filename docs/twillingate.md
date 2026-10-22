@@ -1699,9 +1699,9 @@ message naming the field (`dimensions`, `metrics[0].column`,
 
 | Field | Kinds | Meaning |
 | --- | --- | --- |
-| `kind` | all | `stat`, `trend` or `breakdown` |
-| `table` | all | `events` (every family), `views`, `product` or `measures`; or `sessions`, one row per session, or `identities`, one row per user or group (below) |
-| `metrics` | all | the aggregates, each an output column; a trend takes exactly one |
+| `kind` | all | `stat`, `trend`, `breakdown` or `retention` (below) |
+| `table` | all | `events` (every family), `views`, `product` or `measures`; or `sessions`, one row per session, or `identities`, one row per user or group (below); a retention reads `events`, and may leave it out |
+| `metrics` | stat, trend, breakdown | the aggregates, each an output column; a trend takes exactly one |
 | `where` | all | filters, `{column, op, values}`, every one of which a row must satisfy |
 | `dimensions` | breakdown | 1 to 3 columns to group by |
 | `limit` | breakdown | groups returned, 1 to 1000 (default 20) |
@@ -1710,6 +1710,10 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `series` | trend | a column to split each day by |
 | `series_limit` | trend | how many series, 1 to 50, those ranking first by the metric over the range (default 5) |
 | `compare` | stat | `previous` adds a `previous_<name>` column per metric, over as many days ending the day before `from`; `""` or absent, none |
+| `output` | retention | `grid`, `curve` or `milestones` (required) |
+| `identified_by` | retention | `install` or `user`: the cohorts a `curve` or `milestones` pools (required there; a `grid` has both and refuses it) |
+| `offsets` | retention | the days back counted, 1 to 90 (default 45) |
+| `milestones` | retention | `milestones` only: 1 to 6 distinct days back, each 0 to `offsets` (default 7, 30 and 45, which need `offsets` of 45 or more) |
 
 A dimension, series or filter column is one of `project_id`, `family`,
 `event_name`, `day`, `kind`, `actor_id`, `actor_kind`, `user_id`,
@@ -1832,6 +1836,36 @@ A NULL value fails every operator, `ne` and `not_in` included (as in
 SQL): `{"column": "country", "op": "ne", "values": ["DE"]}` leaves out the
 rows without a country too.
 
+A `retention` answers what the built-in Retention dashboard shows, from
+the views and product events of actors identified by a `$user_id` or a
+stable `$install_id` (`actor_kind` `user` or `install`, `actor_id` not
+empty); measures do not count, and neither do the days from today (UTC)
+on, which are partial. An actor's cohort is its first day with such an
+event over the whole history the files hold, so an actor first seen
+before `from` is in no cohort of the range, even when active in it; the
+cohorts are those from `from` to `to`. An actor is back on day `o` (its
+offset, 0 to `offsets`) when it sent one `o` days after its cohort day; it
+counts as a `user` from the first day it was one, an `install` before, so
+an install that signs in on its fourth day counts in its `install` cohort
+on days 0 to 2 and as a `user` from day 3. A cohort's size, per kind, is
+its count on day 0, and a kind has rows in a cohort only when it has a
+size there. `where` filters the events read, as on `events`; the other
+fields of the other kinds are refused.
+
+- **grid**: `cohort` (a day), `identified_by`, `day` (the offset), `size`,
+  `returned` and `retention` (`returned / size`); a row per cohort, kind
+  and offset with anyone back, by cohort descending, then kind, then day;
+- **curve**: `day` and `retention`, one kind's cohorts pooled: at each
+  offset, those whose cohort day plus the offset is before today, their
+  actors back over their sizes (`0` over none, a cohort with nobody back
+  that day still in the sizes); a row per offset some cohort has reached;
+- **milestones**: one row, a `d<n>` column per milestone (`d7`, `d30`,
+  `d45`): the curve's retention that day, empty when it has no row there
+  (every column is, over no cohort).
+
+The retention state of every actor over the whole history is held in the
+same 128 MiB as the other kinds; past it the query is refused, as above.
+
 The answer is `{columns, rows, truncated, note, approximate}`, every value
 as text:
 
@@ -1841,7 +1875,8 @@ as text:
   absent, not zero. A trend over more days than `CONSOLE_QUERY_ROWS_MAX`
   (1,000 by default) is always cut there, and `truncated`;
 - **breakdown**: a column per dimension, then per metric; the `limit`
-  groups first in `order`, then the `Other` row.
+  groups first in `order`, then the `Other` row;
+- **retention**: its output's columns and rows, as above.
 
 A distinct count over the range (`actors`, `users`, `groups`) is exact up
 to 1,024 ids per group; past that it is estimated, within about ±2%, and
@@ -1936,4 +1971,28 @@ referrer.
 {"project_id": 1, "query": {
   "kind": "breakdown", "table": "sessions", "dimensions": ["referrer_source"],
   "metrics": [{"op": "count", "as": "sessions"}, {"op": "bounce_rate"}, {"op": "avg", "column": "duration_sec"}]}}
+```
+
+A retention grid: the cohorts of September, each kind's size and who came
+back on each of the 30 days after.
+
+```json
+{"project_id": 1, "from": "2026-09-01", "to": "2026-09-30", "query": {
+  "kind": "retention", "output": "grid", "offsets": 30}}
+```
+
+A retention curve: the signed-in users' cohorts of the last 30 days,
+pooled, on the web only.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "retention", "output": "curve", "identified_by": "user",
+  "where": [{"column": "kind", "op": "eq", "values": ["web"]}]}}
+```
+
+Retention milestones: the installs back on days 1, 7 and 30.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "retention", "output": "milestones", "identified_by": "install", "milestones": [1, 7, 30]}}
 ```
