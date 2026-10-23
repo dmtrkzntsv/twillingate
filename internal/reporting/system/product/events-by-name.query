@@ -1,0 +1,1 @@
+{"query":{"kind":"trend","table":"product","series":"event_name","series_limit":5,"metrics":[{"op":"count","as":"y"}]},"rename":{"day":"x"}}

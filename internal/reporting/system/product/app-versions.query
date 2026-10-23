@@ -1,0 +1,1 @@
+{"query":{"kind":"breakdown","table":"product","dimensions":["app_version"],"limit":1000,"where":[{"column":"app_version","op":"is_set"}],"metrics":[{"op":"count","as":"Events"},{"op":"actors","as":"Users"},{"op":"groups","as":"Groups"}]},"rename":{"app_version":"Version"}}

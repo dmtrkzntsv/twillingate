@@ -361,9 +361,8 @@ is older than `REPORTING_CACHE_MAX_AGE`:
   are cut.
 - `count(DISTINCT …)` over a long range keeps every value in memory, and
   a query past `ENGINE_MEMORY_LIMIT` is refused. Count the rows of a
-  `GROUP BY` subquery instead, which spills to disk (the Product
-  dashboard's "Attribute values" counts its users and groups so, per
-  attribute value over a year), or narrow the range.
+  `GROUP BY` subquery instead, which spills to disk, or narrow the
+  range.
 - Today comes from the open logs, loaded again whenever they have grown;
   past days come from Parquet files.
 

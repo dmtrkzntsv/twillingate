@@ -94,7 +94,12 @@ var parityGaps = []string{"G2", "G6", "G7", "G8", "G9", "G10", "G11", "G13", "G1
 // preset needs fails the harness, so none outlives its reason.
 //
 //	"views/visitors": {{Gap: "G2", Kind: blankStat, Columns: []string{"value"}}},
-var parityAllowances = map[string][]allowance{}
+var parityAllowances = map[string][]allowance{
+	"product/app-versions": {{Gap: "G6", Kind: reshape,
+		Reason: "true distinct users and groups per version over the range, where the SQL showed the largest per (day, event) count, headed \"(at least)\"; TestAppVersionsAtLeastTheOldFloors holds them to it"}},
+	"product/users-by-app-version": {{Gap: "G6", Kind: reshape,
+		Reason: "true distinct users per day and version, ordered by series, where the SQL showed the largest per-event count, ordered by it; TestAppVersionsAtLeastTheOldFloors holds them to it"}},
+}
 
 // newSystemWidgets names the system query widgets that have no old SQL
 // to compare with (one split from another, say), each with the reason.
@@ -575,11 +580,74 @@ func mapFS(files map[string]string) fstest.MapFS {
 	return out
 }
 
-// TestViewsStatsOverNoEvents pins what the Views dashboard's stats show
-// for a project with no events, natively and in their old SQL. The
-// differences are G2's: an empty metric is blank, where the old SQL read
-// 0 (the stat component draws a blank figure, not "0").
-func TestViewsStatsOverNoEvents(t *testing.T) {
+// TestAppVersionsAtLeastTheOldFloors: G6's reshape replaced the app
+// version widgets' floors (the largest distinct count of any one event on
+// a day) with the true distinct counts, so on every preset each row the old
+// SQL drew is still there, by its key, with numbers at least the floor's.
+func TestAppVersionsAtLeastTheOldFloors(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+	cases := []struct {
+		name string
+		keys int               // the leading key columns, the same in both
+		cols map[string]string // native column: the old SQL's
+	}{
+		{"app-versions", 1, map[string]string{"Events": "Events", "Users": "Users (at least)", "Groups": "Groups (at least)"}},
+		{"users-by-app-version", 2, map[string]string{"y": "y"}},
+	}
+	for _, c := range cases {
+		b, err := os.ReadFile("testdata/system-sql/product/" + c.name + ".sql")
+		if err != nil {
+			t.Fatal(err)
+		}
+		id := systemWidgetOf(t, f.svc, 2, c.name)
+		above := 0
+		for _, preset := range parityPresets {
+			from, to := presetDates(preset, f.today)
+			got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: id, ProjectID: f.project, From: from, To: to})
+			if err != nil {
+				t.Fatal(err)
+			}
+			nat := got.Data.(readsql.Result)
+			res, err := f.svc.sources["sql"].Load(ctx, string(b), Params{ProjectID: f.project, From: from, To: to})
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := res.(readsql.Result)
+			if len(old.Rows) == 0 || len(nat.Rows) != len(old.Rows) {
+				t.Fatalf("%s %s: native %d rows, old SQL %d; want the same, and some", c.name, preset, len(nat.Rows), len(old.Rows))
+			}
+			byKey := map[string][]string{}
+			for _, r := range nat.Rows {
+				byKey[strings.Join(r[:c.keys], "\x00")] = r
+			}
+			for _, r := range old.Rows {
+				n, ok := byKey[strings.Join(r[:c.keys], "\x00")]
+				if !ok {
+					t.Errorf("%s %s: the old SQL's %v has no native row", c.name, preset, r[:c.keys])
+					continue
+				}
+				for natCol, oldCol := range c.cols {
+					want, _ := strconv.ParseFloat(r[slices.Index(old.Columns, oldCol)], 64)
+					have, err := strconv.ParseFloat(n[slices.Index(nat.Columns, natCol)], 64)
+					if err != nil || have < want {
+						t.Errorf("%s %s %v: %s %q, below the old floor %v", c.name, preset, r[:c.keys], natCol, n[slices.Index(nat.Columns, natCol)], want)
+					}
+					if have > want {
+						above++
+					}
+				}
+			}
+		}
+		t.Logf("%s: %d cells above the old floor", c.name, above)
+	}
+}
+
+// TestSystemStatsOverNoEvents pins what the Views and Product dashboards'
+// stats show for a project with no events, natively and in their old SQL.
+// The differences are G2's: an empty metric is blank, where the old SQL
+// read 0 (the stat component draws a blank figure, not "0").
+func TestSystemStatsOverNoEvents(t *testing.T) {
 	ctx := context.Background()
 	st, files := newTestStoreAndFiles(t, 1000)
 	if err := Migrate(ctx, st, files); err != nil {
@@ -589,19 +657,23 @@ func TestViewsStatsOverNoEvents(t *testing.T) {
 	svc := New(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})})
 	from, to := "2026-10-01", "2026-10-07"
 	cases := []struct {
-		name   string
+		name   string   // <dashboard dir>/<widget>
 		native []string // the native row
 		old    []string // the old SQL's row
 		why    string
 	}{
-		{"visitors", []string{"", ""}, []string{"0", "0"}, "G2: daily_sum over no rows is empty; the SQL COALESCEd it to 0"},
-		{"bounce-rate", []string{""}, []string{"0"}, "G2: bounce_rate over no sessions is empty; the SQL wrote 0"},
-		{"avg-session", []string{""}, []string{"0"}, "G2: avg over no sessions is empty; the SQL wrote 0"},
-		{"consent-share", []string{""}, []string{""}, "none: a ratio over a 0 denominator is empty, as the SQL's NULL"},
+		{"views/visitors", []string{"", ""}, []string{"0", "0"}, "G2: daily_sum over no rows is empty; the SQL COALESCEd it to 0"},
+		{"views/bounce-rate", []string{""}, []string{"0"}, "G2: bounce_rate over no sessions is empty; the SQL wrote 0"},
+		{"views/avg-session", []string{""}, []string{"0"}, "G2: avg over no sessions is empty; the SQL wrote 0"},
+		{"views/consent-share", []string{""}, []string{""}, "none: a ratio over a 0 denominator is empty, as the SQL's NULL"},
+		{"product/total-events", []string{"0", "0"}, []string{"0", "0"}, "none: a count over no rows is 0 in both"},
+		{"product/peak-dau", []string{""}, []string{""}, "none: daily_max over no days is empty, as the SQL's MAX over no rows"},
+		{"product/avg-dau", []string{""}, []string{""}, "none: daily_avg over no days is empty, as the SQL's AVG over no rows"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			got, err := svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, svc, 1, c.name), ProjectID: pid, From: from, To: to})
+			dir, name, _ := strings.Cut(c.name, "/")
+			got, err := svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, svc, map[string]int64{"views": 1, "product": 2}[dir], name), ProjectID: pid, From: from, To: to})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -609,7 +681,7 @@ func TestViewsStatsOverNoEvents(t *testing.T) {
 			if !ok || len(nat.Rows) != 1 || !slices.Equal(nat.Rows[0], c.native) {
 				t.Errorf("native %v, want one row %q (%s)", got.Data, c.native, c.why)
 			}
-			b, err := os.ReadFile("testdata/system-sql/views/" + c.name + ".sql")
+			b, err := os.ReadFile("testdata/system-sql/" + c.name + ".sql")
 			if err != nil {
 				t.Fatal(err)
 			}

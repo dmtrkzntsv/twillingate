@@ -2,7 +2,6 @@
   "component": "table",
   "title": "Attribute values",
   "props": {
-    "mode": "remote",
     "formats": {
       "Count": "number",
       "Users": "number",

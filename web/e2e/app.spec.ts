@@ -248,7 +248,7 @@ test('a table sorts by its header and remembers the sort across a reload', async
   await expect(names).toHaveText(['a', 'c', 'b'])
 })
 
-test('the attribute table filters on the server and lists each value once', async ({ page, request }) => {
+test('the attribute table filters and lists each value once', async ({ page, request }) => {
   const id = (await dashboardIds(request)).get('Product')
   expect(id, 'no Product dashboard').toBeDefined()
   await login(page)
@@ -264,7 +264,7 @@ test('the attribute table filters on the server and lists each value once', asyn
     .filter({ has: page.getByRole('heading', { name: 'Attribute values', exact: true }) })
   await expect(card.getByRole('columnheader')).toHaveText([/^Attribute/, /^Value/, /^Count/, /^Users/, /^Groups/])
   await card.getByRole('button', { name: 'Filter', exact: true }).click()
-  // The picker offers the column's values from the server, most frequent first.
+  // The picker offers the column's values, most frequent first.
   const options = page.getByRole('option')
   await expect(options.nth(1)).toBeVisible()
   const picked: string[] = []
@@ -276,8 +276,8 @@ test('the attribute table filters on the server and lists each value once', asyn
 
   const chip = card.getByRole('button', { name: `Attribute in ${picked.join(', ')}`, exact: true })
   await expect(chip).toBeVisible()
-  // Every row is one of the two picked, the server having filtered the
-  // whole result, and each (attribute, value) is one row.
+  // Every row is one of the two picked, and each (attribute, value) is
+  // one row.
   const onlyPickedOnce = async () => {
     const shown = await card
       .locator('tbody tr')
