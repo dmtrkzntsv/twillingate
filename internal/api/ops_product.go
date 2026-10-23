@@ -4,10 +4,6 @@ import (
 	"cmp"
 	"context"
 	"slices"
-	"sort"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
@@ -25,14 +21,6 @@ type productEventsIn struct {
 type productEventsOut struct {
 	Events tableOut `json:"events"`
 	Totals tableOut `json:"totals"`
-}
-
-// eventFilter is the condition and value for an optional event name.
-func eventFilter(event string) (string, map[string]enginesql.Value) {
-	if event == "" {
-		return "", nil
-	}
-	return ` AND event_name = :event`, map[string]enginesql.Value{":event": {Type: "VARCHAR", Text: event}}
 }
 
 // productEvents answers two native breakdowns of the product events: per
@@ -87,9 +75,25 @@ func (h *host) productEvents(ctx context.Context, in productEventsIn) (productEv
 // first, over p, by day: at most CONSOLE_QUERY_ROWS_MAX rows (and the
 // engine's 1,000), the earliest days', the rest noted as left out.
 func (h *host) byDay(ctx context.Context, p native.Params, dims []string, where []native.Filter, metrics []native.Metric) (tableOut, error) {
+	return h.capped(ctx, native.Query{Kind: "breakdown", Table: "product", Dimensions: dims, Order: "day",
+		Where: where, Metrics: metrics}, p, 0)
+}
+
+// capped answers q with its first rows in q's order: at most limit (all
+// of them when 0) and at most CONSOLE_QUERY_ROWS_MAX (rowCap). The table
+// is marked truncated when the row cap, not limit, left rows out, or the
+// engine left groups untracked; at the engine's 1,000 there is no asking
+// for one more, so 1,000 rows past a limit of the tool's own are marked
+// too.
+func (h *host) capped(ctx context.Context, q native.Query, p native.Params, limit int) (tableOut, error) {
 	n := h.rowCap()
-	res, err := h.answer(ctx, native.Query{Kind: "breakdown", Table: "product", Dimensions: dims, Order: "day",
-		Limit: min(n+1, maxBreakdownLimit), Where: where, Metrics: metrics}, p)
+	own := limit > 0 && limit <= n
+	if own {
+		q.Limit = limit
+	} else {
+		q.Limit = min(n+1, maxBreakdownLimit)
+	}
+	res, err := h.answer(ctx, q, p)
 	if err != nil {
 		return tableOut{}, err
 	}
@@ -101,70 +105,38 @@ func (h *host) byDay(ctx context.Context, p native.Params, dims []string, where 
 	if cut {
 		out.Rows = out.Rows[:n]
 	}
-	// At the engine's 1,000 there is no asking for one more.
-	h.markPartial(&out, res.Truncated || cut || len(out.Rows) == maxBreakdownLimit, res.Approximate)
+	h.markPartial(&out, res.Truncated || cut || !own && len(out.Rows) == maxBreakdownLimit, res.Approximate)
 	return out, nil
 }
 
-// productAttributesMaxDays bounds product_attributes' range: its rows are
-// per day, event and value, so a year at the cap is millions of groups,
-// each with two distinct counts DuckDB cannot spill, and it runs out of
-// ENGINE_MEMORY_LIMIT (measured 2026-10-19). A quarter fits.
-const productAttributesMaxDays = 92
-
-// productAttributes breaks the product events down by every attribute key
-// they carried (one attr_<key> column each, unpivoted as the Product
-// dashboard's attribute values are) and by every reserved key in
-// native.ReservedKeyColumns, read from its typed column under an "attr_$…" name no key
-// can produce (ingest never stores a $ key as an attribute), so the
-// unpivot always has a column. The COLUMNS pattern takes the fixed columns too: one that
-// matched nothing (no event ever carried an attribute) would be an error.
-// The unpivot drops NULLs, a key an event did not carry.
+// productAttributes answers a native attributes query of the product
+// events: per day, event, attribute and value (every custom key, and
+// every reserved key of native.ReservedKeyColumns read from its column,
+// empty left out), the events, their distinct actors (unique users) and
+// groups, by day, the most events first, then event, key and value: at
+// most CONSOLE_QUERY_ROWS_MAX rows (and the engine's 1,000), the earliest
+// days'. A range the engine cannot hold is refused (native.ErrTooLarge).
 func (h *host) productAttributes(ctx context.Context, in productEventsIn) (tableOut, error) {
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return tableOut{}, err
 	}
-	from, _ := time.Parse(time.DateOnly, in.From)
-	to, _ := time.Parse(time.DateOnly, in.To)
-	if days := int(to.Sub(from).Hours()/24) + 1; days > productAttributesMaxDays {
-		return tableOut{}, invalidf("product_attributes covers at most %d days a call, got %d: its rows are per day, event and value, and a longer range "+
-			"runs out of the engine's memory before the row cap would cut it anyway. Narrow from and to, or ask query (source files) "+
-			"for a coarser grouping, such as each value over the whole range", productAttributesMaxDays, days)
+	cols := []string{"day", "event_name", "attr_key", "attr_value", "count", "unique_users", "unique_groups"}
+	p, ok := rangeParams(in.rangeIn)
+	if !ok {
+		return tableOut{Columns: cols, Rows: [][]string{}}, nil
 	}
-	p := h.reg.Snapshot(ctx).Project(in.ProjectID)
-	if p == nil {
-		return tableOut{}, h.unknownProjectErr(ctx, in.ProjectID)
+	var where []native.Filter
+	if in.Event != "" {
+		where = []native.Filter{{Column: "event_name", Op: "eq", Values: []string{in.Event}}}
 	}
-	cond, vals := eventFilter(in.Event)
-	q := `WITH a AS (
-  UNPIVOT (
-    SELECT COLUMNS('^(day|event_name|actor_id|group_id|attr_.*)$'),
-           ` + reservedKeys() + `
-    FROM product
-    WHERE project_id = :project AND day BETWEEN :from AND :to` + cond + `
-  )
-  ON COLUMNS('^attr_') INTO NAME col VALUE attr_value
-)
-SELECT day, event_name, substr(col, 6) AS attr_key, attr_value, count(*) AS "count",
-       count(DISTINCT actor_id) AS unique_users, count(DISTINCT group_id) AS unique_groups
-FROM a
-GROUP BY day, event_name, col, attr_value
-ORDER BY day, "count" DESC, event_name, attr_key, attr_value`
-	return h.filesTable(ctx, in.rangeIn, q, vals)
-}
-
-// reservedKeys selects each reserved key's column, empty read as NULL, as
-// "attr_<key>", in key order.
-func reservedKeys() string {
-	keys := make([]string, 0, len(native.ReservedKeyColumns))
-	for k := range native.ReservedKeyColumns {
-		keys = append(keys, k)
+	out, err := h.capped(ctx, native.Query{Kind: "attributes", Table: "product", Output: "values", Reserved: true,
+		Dimensions: []string{"day", "event_name"}, Where: where, Metrics: []native.Metric{
+			{Op: "count", As: "count"}, {Op: "actors", As: "unique_users"}, {Op: "groups", As: "unique_groups"}}}, p, 0)
+	if err != nil {
+		return tableOut{}, err
 	}
-	sort.Strings(keys)
-	for i, k := range keys {
-		keys[i] = "nullif(" + native.ReservedKeyColumns[k] + `, '') AS "attr_` + k + `"`
-	}
-	return strings.Join(keys, ",\n           ")
+	out.Columns = cols
+	return out, nil
 }
 
 type retentionIn struct {
@@ -253,6 +225,13 @@ type identitiesIn struct {
 	Limit int    `json:"limit,omitempty" jsonschema:"top-N by activity, default 50"`
 }
 
+// identities answers a native breakdown of the views and product events
+// by user_id (or group_id) and its label: per id, its actors and its
+// users (itself for a user, its members for a group), each distinct per
+// day and added up over the days, its views and its product events, the
+// busiest first (views and events together), then by id. The name is the
+// label's, the identities' name of the id; the label reads the id itself
+// for an id without a name, which reads as no name here.
 func (h *host) identities(ctx context.Context, in identitiesIn) (tableOut, error) {
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return tableOut{}, err
@@ -264,32 +243,33 @@ func (h *host) identities(ctx context.Context, in identitiesIn) (tableOut, error
 	if limit <= 0 {
 		limit = 50
 	}
-	// v_identity_daily summed over the range, as before the files: per day
-	// and id, its actors and its users (itself for a user, its members for
-	// a group), its views and product events; then each added up over the
-	// days. The name is the one the identities table derives from the
-	// events.
-	id, users := "user_id", "1"
-	if in.Kind == "group" {
-		id, users = "group_id", "count(DISTINCT user_id)"
+	cols := []string{"id", "name", "actors", "users", "views", "events"}
+	p, ok := rangeParams(in.rangeIn)
+	if !ok {
+		return tableOut{Columns: cols, Rows: [][]string{}}, nil
 	}
-	return h.filesTable(ctx, in.rangeIn, `WITH d AS (
-  SELECT `+id+` AS id, day, count(DISTINCT actor_id) AS actors, `+users+` AS users,
-         count(*) FILTER (WHERE family = 'views') AS views,
-         count(*) FILTER (WHERE family = 'product') AS events
-  FROM events
-  WHERE project_id = :project AND family IN ('views', 'product') AND `+id+` <> ''
-    AND day BETWEEN :from AND :to
-  GROUP BY 1, day
-)
-SELECT d.id, COALESCE(i.name, '') AS name, SUM(d.actors) AS actors, SUM(d.users) AS users,
-       SUM(d.views) AS views, SUM(d.events) AS events
-FROM d
-LEFT JOIN identities i ON i.project_id = :project AND i.kind = :kind AND i.id = d.id
-GROUP BY d.id, i.name
-ORDER BY SUM(d.views) + SUM(d.events) DESC, d.id
-LIMIT :limit`, map[string]enginesql.Value{
-		":kind":  {Type: "VARCHAR", Text: in.Kind},
-		":limit": {Type: "BIGINT", Text: strconv.Itoa(limit)},
-	})
+	id, label := "user_id", "user_label"
+	if in.Kind == "group" {
+		id, label = "group_id", "group_label"
+	}
+	family := func(f string) []native.Filter {
+		return []native.Filter{{Column: "family", Op: "eq", Values: []string{f}}}
+	}
+	out, err := h.capped(ctx, native.Query{Kind: "breakdown", Table: "events", Dimensions: []string{id, label}, Order: "actions",
+		Where: []native.Filter{{Column: "family", Op: "in", Values: []string{"views", "product"}}, {Column: id, Op: "is_set"}},
+		Metrics: []native.Metric{{Op: "count", As: "actions"}, {Op: "daily_sum", Of: "actors", As: "actors"},
+			{Op: "daily_sum", Of: "users", As: "users"}, {Op: "count", As: "views", Where: family("views")},
+			{Op: "count", As: "events", Where: family("product")}}}, p, limit)
+	if err != nil {
+		return tableOut{}, err
+	}
+	for i, r := range out.Rows {
+		name := r[1]
+		if name == r[0] {
+			name = ""
+		}
+		out.Rows[i] = []string{r[0], name, r[3], r[4], r[5], r[6]}
+	}
+	out.Columns = cols
+	return out, nil
 }

@@ -3,9 +3,7 @@ package api
 import (
 	"context"
 
-	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 )
 
 type measuresIn struct {
@@ -14,77 +12,54 @@ type measuresIn struct {
 	AttrKey string `json:"attr_key,omitempty" jsonschema:"break each metric down by this attribute key: a reserved key such as $browser or $path, or any key the measures carried; no declaration needed"`
 }
 
-// measures answers percentiles from the log-scale buckets of the measures
-// table, as the Measures dashboard does (its percentile metric; the old
-// SQL is reporting's testdata/system-sql/measures/metrics.sql): each
-// sample weighs 1 / sample_rate, so sampled rows count at full size
-// (design decisions 18-20), and a percentile is the first bucket whose
-// running weight reaches its share of the total.
+// measures answers a native breakdown of the measures by name and kind
+// (and by attr_key's value when given), as the Measures dashboard reads
+// them: the samples, their estimated count (each sample weighing
+// 1 / sample_rate, so sampled rows count at full size, design decisions
+// 18-20), the weighted mean, and p50, p75 and p95 read from the
+// log-scale buckets, by name, kind and value: at most
+// CONSOLE_QUERY_ROWS_MAX rows (and the engine's 1,000).
 func (h *host) measures(ctx context.Context, in measuresIn) (tableOut, error) {
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return tableOut{}, err
 	}
-	p := h.reg.Snapshot(ctx).Project(in.ProjectID)
-	if p == nil {
-		return tableOut{}, h.unknownProjectErr(ctx, in.ProjectID)
+	dims, cols := []string{"event_name", "measure"}, []string{"event_name", "measure"}
+	var where []native.Filter
+	if in.Name != "" {
+		where = append(where, native.Filter{Column: "event_name", Op: "eq", Values: []string{in.Name}})
 	}
-	// by and partition add attr_value to the grouping when attr_key narrows
-	// to one breakdown.
-	// One deadline for the column lookup and the query together.
-	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
-	defer cancel()
-	dim, by, partition := "", "", ""
 	if in.AttrKey != "" {
-		value, err := h.measureAttr(ctx, in.AttrKey)
-		if err != nil {
-			return tableOut{}, err
-		}
-		dim, by, partition = " AND "+value+" IS NOT NULL", value+" AS attr_value, ", ", attr_value"
+		col, set := measureAttr(in.AttrKey)
+		dims, cols, where = append(dims, col), append(cols, "attr_value"), append(where, set)
 	}
-	cond, vals := eventFilter(in.Name)
-	q := `WITH h AS (
-  SELECT event_name, measure, ` + by + `bucket,
-         CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,
-         count(*) AS s, SUM(1 / sample_rate) AS w, SUM(value / sample_rate) AS total
-  FROM measures
-  WHERE project_id = :project AND day BETWEEN :from AND :to` + cond + dim + `
-  GROUP BY ALL
-),
-c AS (
-  SELECT *, SUM(w) OVER (PARTITION BY event_name, measure` + partition + ` ORDER BY bucket) AS run,
-            SUM(w) OVER (PARTITION BY event_name, measure` + partition + `) AS all_w
-  FROM h
-)
-SELECT event_name, measure` + partition + `, SUM(s) AS samples, ROUND(SUM(w), 1) AS est_count,
-       ROUND(SUM(total) / SUM(w), 3) AS mean,
-       ROUND(MIN(approx_value) FILTER (WHERE run >= 0.50 * all_w), 3) AS p50,
-       ROUND(MIN(approx_value) FILTER (WHERE run >= 0.75 * all_w), 3) AS p75,
-       ROUND(MIN(approx_value) FILTER (WHERE run >= 0.95 * all_w), 3) AS p95
-FROM c GROUP BY event_name, measure` + partition + `
-ORDER BY event_name, measure` + partition
-	return h.filesTable(ctx, in.rangeIn, q, vals)
+	cols = append(cols, "samples", "est_count", "mean", "p50", "p75", "p95")
+	p, ok := rangeParams(in.rangeIn)
+	if !ok {
+		return tableOut{Columns: cols, Rows: [][]string{}}, nil
+	}
+	one, three := 1, 3
+	percentile := func(q float64, as string) native.Metric {
+		return native.Metric{Op: "percentile", Q: q, Round: &three, As: as}
+	}
+	out, err := h.capped(ctx, native.Query{Kind: "breakdown", Table: "measures", Dimensions: dims, Order: "event_name",
+		Where: where, Metrics: []native.Metric{{Op: "count", As: "samples"}, {Op: "weight", Round: &one, As: "est_count"},
+			{Op: "mean", Round: &three, As: "mean"}, percentile(0.5, "p50"), percentile(0.75, "p75"), percentile(0.95, "p95")}}, p, 0)
+	if err != nil {
+		return tableOut{}, err
+	}
+	out.Columns = cols
+	return out, nil
 }
 
-// measureAttr is the SQL value attr_key reads on the measures table: a
-// system key's typed column (empty read as NULL), else the key's attr_<key>
-// column, quoted. A key no file carries reads NULL, so its breakdown is
-// empty rather than an error.
-func (h *host) measureAttr(ctx context.Context, key string) (string, error) {
+// measureAttr is the column attr_key reads on the measures and the filter
+// that keeps the measures carrying it: a reserved key's typed column, set
+// (empty read as no value), else the key's attr_<key> column, any value,
+// an empty one included (prefix "" passes every value but NULL). A key no
+// file carries reads NULL, so its breakdown is empty rather than an error.
+func measureAttr(key string) (string, native.Filter) {
 	if col, ok := native.ReservedKeyColumns[key]; ok {
-		return "nullif(" + col + ", '')", nil
+		return col, native.Filter{Column: col, Op: "is_set"}
 	}
-	res, err := h.runFiles(ctx, archive.Scoped{SQL: "SELECT column_name FROM (DESCRIBE SELECT * FROM measures)"})
-	if err != nil {
-		return "", err
-	}
-	cols := make([]string, 0, len(res.Rows))
-	for _, row := range res.Rows {
-		if c, ok := row[0].(string); ok {
-			cols = append(cols, c)
-		}
-	}
-	if col, ok := enginesql.AttrColumn(cols, key); ok {
-		return col, nil
-	}
-	return "CAST(NULL AS VARCHAR)", nil
+	col := "attr_" + key
+	return col, native.Filter{Column: col, Op: "prefix", Values: []string{""}}
 }

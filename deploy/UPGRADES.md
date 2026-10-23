@@ -1389,14 +1389,18 @@ Rollback: install the previous release; it restores the built-in widgets' SQL on
 
 ### Upgrading to analytics tools on the native engine (no migration)
 
-`views_overview`, `views_breakdown`, `product_events` and the console's
-event-names route read the event files natively, with the same inputs and
-output fields.
+`views_overview`, `views_breakdown`, `product_events`,
+`product_attributes`, `measures`, `identities`, `list_attributes` and the
+console's event-names route read the event files natively, with the same
+inputs and output fields.
 
 - **Before the upgrade**, nothing to check by hand.
 - **On the day**, these differ from the release before:
   - `views_overview` without `kind` counts an actor seen under two kinds on one day as one visitor, not two.
   - A distinct count past 1,024 ids in one row is estimated within about ±2%, and the table's `note` names its column.
-  - Where `CONSOLE_QUERY_ROWS_MAX` was raised above 1,000 (or set to 0), `views_breakdown` returns at most 1,000 rows, and `views_overview` and `product_events` at most 1,000 rows each, marked `truncated` when cut.
+  - Where `CONSOLE_QUERY_ROWS_MAX` was raised above 1,000 (or set to 0), `views_breakdown`, `product_attributes`, `measures` and `identities` return at most 1,000 rows, and `views_overview` and `product_events` at most 1,000 rows each, marked `truncated` when cut.
+  - `product_attributes` and `list_attributes` take ranges past 92 days (`list_attributes` up to 400); a range the engine cannot hold is refused, or for `product_attributes` marked `truncated`.
+  - `list_attributes` estimates a key's `values` past 1,024 distinct values (about ±2%).
+  - `identities` leaves `name` empty for an id whose display name is the id itself.
 
 Rollback: install the previous release; nothing in the database changed.

@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -10,6 +11,8 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -263,6 +266,7 @@ func TestProductAttributesWithoutAnyAttribute(t *testing.T) {
 	if h.files, err = archive.NewReader(raw, eng); err != nil {
 		t.Fatal(err)
 	}
+	h.native = native.New(native.Options{Dir: raw})
 	args := map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-20"}
 	res := callTool(t, cs, "product_attributes", args)
 	if res.IsError {
@@ -277,22 +281,31 @@ func TestProductAttributesWithoutAnyAttribute(t *testing.T) {
 	}
 }
 
-// TestProductAttributesRefusesMoreThanAQuarter: its per-day rows over a
-// year run out of the engine's memory, so a longer range is refused with
-// a way out, and a quarter still answers.
-func TestProductAttributesRefusesMoreThanAQuarter(t *testing.T) {
-	_, cs := newTestHost(t)
-	res := callTool(t, cs, "product_attributes", map[string]any{
-		"project_id": 1, "from": "2026-05-27", "to": "2026-08-27"})
-	if !res.IsError {
-		t.Fatalf("93 days answered: %s", textOf(res))
+// TestProductAttributesOverAYear: the native engine holds a year of
+// per-day rows (the old 92-day cap went with DuckDB), cut at the row cap
+// and said so; past the engine's groups the table is marked truncated,
+// and past its memory the call is refused with a way out.
+func TestProductAttributesOverAYear(t *testing.T) {
+	h, cs := newTestHost(t)
+	year := map[string]any{"project_id": 1, "from": "2025-08-28", "to": "2026-08-27"}
+	res := callTool(t, cs, "product_attributes", year)
+	if res.IsError || !strings.Contains(textOf(res), `"plan","pro"`) {
+		t.Fatalf("a year = %s", textOf(res))
 	}
-	if out := textOf(res); !strings.Contains(out, "at most 92 days") || !strings.Contains(out, "query") {
-		t.Errorf("refusal = %s, want the limit and the way out", out)
+	ctx := context.Background()
+	in := productEventsIn{rangeIn: rangeIn{ProjectID: 1, From: "2025-08-28", To: "2026-08-27"}}
+	setGuards(t, h, h.queryTimeout, 2)
+	out, err := h.productAttributes(ctx, in)
+	if err != nil || len(out.Rows) != 2 || !out.Truncated || !strings.Contains(out.Note, "PARTIAL") {
+		t.Errorf("under a cap of 2 = %+v, %v; want 2 rows, truncated", out, err)
 	}
-	res = callTool(t, cs, "product_attributes", map[string]any{
-		"project_id": 1, "from": "2026-05-28", "to": "2026-08-27"})
-	if res.IsError {
-		t.Fatalf("92 days refused: %s", textOf(res))
+	setGuards(t, h, h.queryTimeout, 1000)
+	h.native = native.New(native.Options{Dir: h.eventsDir, MaxGroups: 1})
+	if out, err = h.productAttributes(ctx, in); err != nil || !out.Truncated {
+		t.Errorf("past the engine's groups = %+v, %v; want truncated", out, err)
+	}
+	h.native = native.New(native.Options{Dir: h.eventsDir, MaxBytes: 1})
+	if _, err := h.productAttributes(ctx, in); !errors.Is(err, manage.ErrInvalid) || !strings.Contains(err.Error(), "narrow the range") {
+		t.Errorf("past the engine's memory = %v, want refused", err)
 	}
 }

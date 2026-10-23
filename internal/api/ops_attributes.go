@@ -3,11 +3,9 @@ package api
 import (
 	"context"
 	"sort"
-	"strconv"
-	"strings"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -53,10 +51,6 @@ func (h *host) listAttributes(ctx context.Context, in attributesIn) (listAttribu
 	if err != nil {
 		return listAttributesOut{}, err
 	}
-	if days := int(toD.Time().Sub(fromD.Time()).Hours()/24) + 1; days > productAttributesMaxDays {
-		return listAttributesOut{}, invalidf("list_attributes covers at most %d days a call, got %d: it reads every value of the range. "+
-			"Narrow from and to", productAttributesMaxDays, days)
-	}
 	p := snap.Project(in.ProjectID)
 	if p == nil {
 		return listAttributesOut{}, h.unknownProjectErr(ctx, in.ProjectID)
@@ -79,53 +73,31 @@ func (h *host) listAttributes(ctx context.Context, in attributesIn) (listAttribu
 		}
 	}
 
-	// Every attr_ column of the range's product and measures rows,
-	// unpivoted as product_attributes does; the NULL "attr_$" (no key
-	// ingest stores) keeps the unpivot from an empty column list, and the
-	// unpivot drops NULLs, a key an event did not carry. keys_total is
-	// counted over every key before the busiest are kept.
-	limit := min(attributeKeysLimit, h.queryRows)
-	vals := map[string]enginesql.Value{":limit": {Type: "BIGINT", Text: strconv.Itoa(limit)}}
-	keep := `row_number() OVER (ORDER BY events DESC, attr_key) <= :limit`
-	if len(named) > 0 {
-		params := make([]string, len(named))
-		for i, k := range named {
-			params[i] = ":k" + strconv.Itoa(i)
-			vals[params[i]] = enginesql.Value{Type: "VARCHAR", Text: k}
-		}
-		keep += ` OR attr_key IN (` + strings.Join(params, ", ") + `)`
-	}
-	tbl, err := h.filesTable(ctx, rangeIn{ProjectID: p.ID, From: out.From, To: out.To}, `WITH a AS (
-  UNPIVOT (
-    SELECT COLUMNS('^(day|attr_.*)$'), CAST(NULL AS VARCHAR) AS "attr_$"
-    FROM events
-    WHERE family IN ('product', 'measures') AND day BETWEEN :from AND :to
-  )
-  ON COLUMNS('^attr_') INTO NAME col VALUE attr_value
-),
-k AS (
-  SELECT substr(col, 6) AS attr_key, count(*) AS events, count(DISTINCT attr_value) AS "values"
-  FROM a
-  GROUP BY col
-)
-SELECT attr_key, events, "values", count(*) OVER () AS keys_total
-FROM k
-QUALIFY `+keep+`
-ORDER BY events DESC, attr_key`, vals)
-	if err != nil {
-		return listAttributesOut{}, err
-	}
-	if tbl.Truncated {
-		return listAttributesOut{}, invalidf("too many attribute keys for CONSOLE_QUERY_ROWS_MAX (%d); narrow the date range", h.queryRows)
-	}
+	// The keys of the range's product and measures rows, natively: the
+	// busiest and those a rule names (native.MaxKeep a query, so a longer
+	// list asks again with the next names), keys_total over every key. A
+	// key's values past 1,024 are estimated.
+	limit := min(attributeKeysLimit, h.rowCap())
+	params := native.Params{Project: p.ID, From: fromD, To: toD}
 	seen := map[string]bool{}
-	for _, r := range tbl.Rows {
-		k := attributeOut{Key: r[0], Received: true, Blocked: blocked[r[0]], Aliases: aliases[r[0]]}
-		k.Events, _ = strconv.ParseInt(r[1], 10, 64)
-		k.Values, _ = strconv.ParseInt(r[2], 10, 64)
-		out.KeysTotal, _ = strconv.ParseInt(r[3], 10, 64)
-		out.Attributes = append(out.Attributes, k)
-		seen[r[0]] = true
+	for i := 0; i == 0 || i < len(named); i += native.MaxKeep {
+		res, err := h.answer(ctx, native.Query{Kind: "attributes", Table: "events", Output: "keys", Limit: limit,
+			Keep: named[i:min(i+native.MaxKeep, len(named))]}, params)
+		if err != nil {
+			return listAttributesOut{}, err
+		}
+		if res.Truncated {
+			return listAttributesOut{}, invalidf("too many attribute keys and values to count in one pass; narrow the date range")
+		}
+		for _, r := range res.Rows {
+			out.KeysTotal = cellInt(r[3])
+			if seen[r[0]] {
+				continue
+			}
+			k := attributeOut{Key: r[0], Received: true, Blocked: blocked[r[0]], Aliases: aliases[r[0]], Events: cellInt(r[1]), Values: cellInt(r[2])}
+			out.Attributes = append(out.Attributes, k)
+			seen[r[0]] = true
+		}
 	}
 	// The keys only a rule names, with nothing in the range.
 	for _, k := range named {
