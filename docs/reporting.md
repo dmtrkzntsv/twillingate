@@ -474,7 +474,7 @@ appears. `width` and `height` default to the component's size below.
 
 | Component | Accepts | Inputs: the columns the query returns | Props | Default width × height |
 | --- | --- | --- | --- | --- |
-| `stat` | `sql`, `query` | `value` number (an empty one shows "–", never 0); `previous` number, optional (shows the change; an empty one shows none); `x` day, optional (a sparkline under the number, which becomes the series' `aggregate`) | `format`, `aggregate` (`sum`, `last`, `avg`) | 3 × 3 |
+| `stat` | `sql`, `query` | `value` number (an empty one shows "–", never 0); `previous` number, optional (shows the change; an empty one shows none); `x` day, optional (a sparkline under the number, which becomes the series' `aggregate`; an empty value is left out of both, and a series of only empty ones shows "–") | `format`, `aggregate` (`sum`, `last`, `avg`) | 3 × 3 |
 | `line` | `sql`, `query` | `x` day, text or number (numbers plot to scale, ascending); `y` number; `series` text, optional (one line per value; keep it to 5 lines, one per chart color, ranking the rest out in SQL) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
 | `area` | `sql`, `query` | as `line` | `format`, `curve`, `stacked` | 6 × 8 |
 | `bar` | `sql`, `query` | `x` text or day; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
