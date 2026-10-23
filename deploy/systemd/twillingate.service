@@ -11,7 +11,7 @@ EnvironmentFile=/etc/twillingate/twillingate.env
 Restart=on-failure
 RestartSec=2
 TimeoutStopSec=30
-Environment=GOMEMLIMIT=128MiB
+Environment=GOMEMLIMIT=256MiB
 
 # Hardening (spec §11)
 NoNewPrivileges=yes
