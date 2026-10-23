@@ -204,7 +204,9 @@ func (s scan) unpivoted(ctx context.Context, r Range, tables []string, inner []m
 		}
 	}
 	for _, f := range s.filters {
-		more(readColumns(f.column)...)
+		for _, col := range f.columns() {
+			more(readColumns(col)...)
+		}
 	}
 	if s.q.Reserved {
 		for _, k := range reservedKeys {

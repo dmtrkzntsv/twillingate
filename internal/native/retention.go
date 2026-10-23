@@ -103,9 +103,11 @@ func (s scan) retentionActors(ctx context.Context, spec retentionSpec, files arc
 	words := int((hi - lo + 64) / 64)
 	cols := slices.Clone(retentionColumns)
 	for _, f := range s.filters {
-		for _, c := range readColumns(f.column) {
-			if !slices.Contains(cols, c) {
-				cols = append(cols, c)
+		for _, col := range f.columns() {
+			for _, c := range readColumns(col) {
+				if !slices.Contains(cols, c) {
+					cols = append(cols, c)
+				}
 			}
 		}
 	}

@@ -1702,7 +1702,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `kind` | all | `stat`, `trend`, `breakdown`, `retention` or `attributes` (below) |
 | `table` | all | `events` (every family), `views`, `product` or `measures`; or `sessions`, one row per session, or `identities`, one row per user or group (below); a retention reads `events`, and may leave it out; an attributes `product` or `measures`, its `keys` also `events` (product and measures both, the default) |
 | `metrics` | stat, trend, breakdown, attributes | the aggregates, each an output column; a trend takes one to five, exactly one with `series` (several are its series, below); an attributes' `keys` none |
-| `where` | all | filters, `{column, op, values}`, every one of which a row must satisfy |
+| `where` | all | filters, `{column, op, values}` (`{op, columns}` for `any_set`), every one of which a row must satisfy |
 | `dimensions` | breakdown, attributes | a breakdown's 1 to 3 columns to group by; an attributes' `day`, `event_name` or both, in that order, before its attribute and value |
 | `limit` | breakdown, attributes | groups returned, 1 to 1000 (default 20; an attributes' `values` all of them, its `keys` 50) |
 | `order` | breakdown, attributes | a metric name to rank the groups by, descending, ties by the dimensions; or one of the dimensions to sort the groups by, ascending, ties by the other dimensions (`"order": "day"` puts a breakdown by day in date order). Default the first metric; `limit` keeps the first groups in that order; an attributes' default differs (below) |
@@ -1882,6 +1882,7 @@ A metric takes two more optional fields:
 | `in`, `not_in` | one or more |
 | `gt`, `gte`, `lt`, `lte` | exactly one: an integer, or `YYYY-MM-DD` on `day`, `user_first_seen` and `group_first_seen`; numeric columns and those days only (`day`, `user_first_seen`, `group_first_seen`, `project_id`, `display_width`, `display_height`, `consent`, `bucket`; `duration_sec` and `views` on `sessions`; `views` and `events` on `identities`) |
 | `is_set` | none: the column is not NULL, and on a text column not empty either |
+| `any_set` | none, and `columns` (2 to 5) in place of `column`: at least one of them is set, as `is_set` says; `{"op": "any_set", "columns": ["utm_source", "utm_medium", "utm_campaign"]}` keeps the rows carrying any UTM tag |
 
 A NULL value fails every operator, `ne` and `not_in` included (as in
 SQL): `{"column": "country", "op": "ne", "values": ["DE"]}` leaves out the

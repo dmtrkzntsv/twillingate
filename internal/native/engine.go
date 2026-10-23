@@ -518,8 +518,10 @@ func (s scan) identityColumnsOf(dims []string) []string {
 	}
 	for _, fs := range fss {
 		for _, f := range fs {
-			if _, ok := idColumns[f.column]; ok && !slices.Contains(out, f.column) {
-				out = append(out, f.column)
+			for _, col := range f.columns() {
+				if _, ok := idColumns[col]; ok && !slices.Contains(out, col) {
+					out = append(out, col)
+				}
 			}
 		}
 	}
