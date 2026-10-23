@@ -51,13 +51,13 @@ const maxConsumers = 32
 // its truncation and refusals are its own. A retention, an attributes and
 // a query of identities are answered alone, by Answer.
 //
-// The call holds no more aggregations at once than MaxScans queries
-// answered one by one would: an aggregation that keeps distinct ids or
-// histograms (heavy: its memory follows the ids, not the groups) counts
-// as one query, a scan of light ones alone as one, and so does a query
-// answered alone; a scan takes at most MaxScans heavy aggregations (and
-// maxConsumers in all), and the call's scans and alone queries run while
-// their count stays within MaxScans. Independent scans so run beside each
+// The engine holds no more aggregations at once than MaxScans queries
+// answered one by one would, across every call: an aggregation that
+// keeps distinct ids or histograms (heavy: its memory follows the ids,
+// not the groups) takes one of the MaxScans turns, a scan of light ones
+// alone takes one, and so does every query Answer answers; a scan feeds
+// at most MaxScans heavy aggregations (and maxConsumers in all) and
+// takes a turn for each (turnFor). Independent scans so run beside each
 // other as separate queries would.
 //
 // A shared scan also holds at most twice MaxBytes over its aggregations:
@@ -84,7 +84,6 @@ func (e *Engine) AnswerMany(ctx context.Context, reqs []Request, done func(i int
 		wg    sync.WaitGroup
 		keys  []scanKey
 		plans = map[scanKey][]*manyReq{}
-		slots = newWeighted(cap(e.sem))
 	)
 	for i, r := range reqs {
 		rctx := r.Ctx
@@ -95,7 +94,8 @@ func (e *Engine) AnswerMany(ctx context.Context, reqs []Request, done func(i int
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				answer(i, e.answerAlone(rctx, slots, r))
+				res, err := e.Answer(rctx, r.Query, r.Params, r.Rules)
+				answer(i, Answered{Result: res, Err: err})
 			}()
 			continue
 		}
@@ -121,17 +121,17 @@ func (e *Engine) AnswerMany(ctx context.Context, reqs []Request, done func(i int
 				return
 			}
 			// A request heavier than the slots (a compared stat with
-			// MaxScans 1) takes them all.
-			c, w := chunk, min(max(1, heavy), slots.size)
+			// MaxScans 1) takes them all (turnFor).
+			c, w := chunk, heavy
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				e.shared(ctx, k.project, k.sessions, c, w, slots, answer)
+				e.shared(ctx, k.project, k.sessions, c, w, answer)
 			}()
 			chunk, n, heavy = nil, 0, 0
 		}
 		for _, mr := range plans[k] {
-			if n+len(mr.cons) > maxConsumers || heavy+mr.heavy > slots.size {
+			if n+len(mr.cons) > maxConsumers || heavy+mr.heavy > e.slots.size {
 				flush()
 			}
 			chunk = append(chunk, mr)
@@ -141,16 +141,6 @@ func (e *Engine) AnswerMany(ctx context.Context, reqs []Request, done func(i int
 		flush()
 	}
 	wg.Wait()
-}
-
-// answerAlone is Answer's answer to r, in one of the call's slots.
-func (e *Engine) answerAlone(ctx context.Context, slots *weighted, r Request) Answered {
-	if err := slots.acquire(ctx, 1); err != nil {
-		return Answered{Err: err}
-	}
-	defer slots.release(1)
-	res, err := e.Answer(ctx, r.Query, r.Params, r.Rules)
-	return Answered{Result: res, Err: err}
 }
 
 // AnswerAll is AnswerMany's answers, by request.
@@ -269,9 +259,10 @@ type sharedScan struct {
 // errNoConsumer stops a work item no request of the scan reads any more.
 var errNoConsumer = errors.New("native: no query reads this item")
 
-// shared runs reqs, of project's table class, in one scan, in weight of
-// the call's slots, then the ones the budget evicted alone.
-func (e *Engine) shared(ctx context.Context, project int64, sessions bool, reqs []*manyReq, weight int, slots *weighted,
+// shared runs reqs, of project's table class, in one scan taking weight
+// of the engine's slots (one per heavy aggregation), then the ones the
+// budget evicted alone.
+func (e *Engine) shared(ctx context.Context, project int64, sessions bool, reqs []*manyReq, weight int,
 	answer func(int, Answered)) {
 	sctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
@@ -291,11 +282,7 @@ func (e *Engine) shared(ctx context.Context, project int64, sessions bool, reqs 
 			}
 		}
 	}
-	err := slots.acquire(sctx, weight)
-	if err == nil {
-		err = e.turn(sctx, func() error { return sh.attempt(sctx) })
-		slots.release(weight)
-	}
+	err := e.turnFor(sctx, weight, func() error { return sh.attempt(sctx) })
 	for _, stop := range stops {
 		stop()
 	}
@@ -324,7 +311,8 @@ func (e *Engine) shared(ctx context.Context, project int64, sessions bool, reqs 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			answer(r.i, e.answerAlone(r.ctx, slots, r.req))
+			res, err := e.Answer(r.ctx, r.req.Query, r.req.Params, r.req.Rules)
+			answer(r.i, Answered{Result: res, Err: err})
 		}()
 	}
 	wg.Wait()
@@ -360,12 +348,12 @@ func (sh *sharedScan) leave(r *manyReq, state int, a Answered) {
 // fail answers r with err, out of the scan.
 func (sh *sharedScan) fail(r *manyReq, err error) { sh.leave(r, reqDone, Answered{Err: err}) }
 
-// onEvict is called as the budget evicts a query; a variable so a test
-// can count them.
+// onEvict is called as the budget evicts a query; a no-op in production,
+// a variable only so a test can count them.
 var onEvict = func() {}
 
 // onScanItem is called as a shared scan's worker takes a work item; a
-// variable so a test can act mid-scan.
+// no-op in production, a variable only so a test can act mid-scan.
 var onScanItem = func() {}
 
 // attempt runs the scan once, every live request's aggregations fresh,

@@ -1286,3 +1286,14 @@ Since 2d a batch's dictionary entries share one chunk-sized string, so a value k
 
 - **The memory rule sets the gain.** A widget that counts distinct ids per day (a `daily_*` metric, a trend of actors) keeps about 7.5 MB at 30 days and 1M (Views; 15 MB on Product), in per-day keys. A scan that feeds all of them at once holds them all: one scan per class made Views 0.54 s and Product 0.74 s, but peaked at 354–366 MB and 262 MB. So a call holds no more such aggregations at once than MaxScans queries would (two): a scan takes at most two, and the call's scans and alone queries share two slots. Its peak then stays at or under today's, and the gain is what one footer and row group read for several light widgets and two heavy ones saves.
 - The first load with the log in range is within its spread on Product (1.67 to 2.03 s per widget over three runs, 1.90 to 1.96 s as one call).
+
+### 3, fix round 1: heavy turns engine-wide, and four heavy a scan
+
+The turns are now weighted and the engine's own: `Answer`, `Attribute`, presence and every shared scan take them, a scan one per heavy aggregation it feeds (at most MaxScans), so two dashboards loading at once hold no more heavy aggregations than MaxScans queries would. The documented trade-off, measured once and not the default: a scan feeding up to 2×MaxScans (4) heavy aggregations, taking every turn. Same session, load at start 0.95–0.96, no log.
+
+| Dashboard | Per widget (above) best / peak | Default (2 a scan) best / peak | 4 a scan best / peak |
+| --- | --- | --- | --- |
+| Views (20) | 0.80 s / 121 MB | 0.72 s / 111 MB | 0.64 s / 137 MB |
+| Product (10) | 0.93 s / 187 MB | 0.86 s / 134 MB | 0.81 s / 170 MB |
+
+- Four a scan takes Views to 0.64 s at 137 MB, above today's 121 MB, which is why the default stays at MaxScans.

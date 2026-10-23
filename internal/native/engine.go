@@ -57,7 +57,9 @@ type Engine struct {
 	dir                string
 	workers, maxGroups int
 	maxBytes           int64
-	sem                chan struct{}
+	// slots are the MaxScans turns, taken several at once by a shared
+	// scan with more than one heavy aggregation (turnFor).
+	slots *weighted
 
 	logKeys  *archive.KeyScanner // each open log's keys, read as far as it grew
 	colMu    sync.Mutex          // guards colFiles, never held over a read
@@ -87,7 +89,7 @@ func New(o Options) *Engine {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	return &Engine{dir: o.Dir, workers: o.Workers, maxGroups: o.MaxGroups, maxBytes: o.MaxBytes, sem: make(chan struct{}, o.MaxScans),
+	return &Engine{dir: o.Dir, workers: o.Workers, maxGroups: o.MaxGroups, maxBytes: o.MaxBytes, slots: newWeighted(o.MaxScans),
 		logKeys: archive.NewKeyScanner(), idCache: identityCache{max: o.MaxBytes}, logs: newLogCache(o.MaxBytes), now: o.Now}
 }
 
@@ -254,7 +256,8 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 }
 
 // answered, when set, is told each Answer's query and answer (after the
-// checks compileQuery makes); a test's recorder.
+// checks compileQuery makes); nil in production, set only by a test's
+// recorder.
 var answered func(e *Engine, q Query, p Params, rules archive.Rules, res Result, err error)
 
 // compileQuery checks q over p and compiles its filters and metrics'.
@@ -282,17 +285,22 @@ func compileQuery(q Query, p Params) ([]filter, []metricSpec, error) {
 // giving up when ctx is done. A file the daily pass removes while once
 // reads (an error wrapping fs.ErrNotExist) fails the attempt; once runs
 // again, on the files as they are then, up to maxAttempts times.
-func (e *Engine) turn(ctx context.Context, once func() error) error {
+func (e *Engine) turn(ctx context.Context, once func() error) error { return e.turnFor(ctx, 1, once) }
+
+// turnFor is turn taking weight of the MaxScans slots at once (at most
+// all of them): a shared scan takes one per heavy aggregation it feeds,
+// so the engine never holds more of them than MaxScans queries would.
+func (e *Engine) turnFor(ctx context.Context, weight int, once func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	select {
-	case e.sem <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
+	weight = min(max(1, weight), e.slots.size)
+	if err := e.slots.acquire(ctx, weight); err != nil {
+		return err
 	}
-	defer func() { <-e.sem }()
-	onTurn()
+	defer e.slots.release(weight)
+	onTurn(weight)
+	defer onTurn(-weight)
 	backoff := retryBackoff
 	for attempt := 1; ; attempt++ {
 		err := once()
@@ -308,9 +316,10 @@ func (e *Engine) turn(ctx context.Context, once func() error) error {
 	}
 }
 
-// onTurn is called as a scan takes one of the MaxScans turns; a variable
-// so a test can count them.
-var onTurn = func() {}
+// onTurn is called with a turn's weight as a scan takes it, and with
+// minus that as it ends; a no-op in production, a variable only so a test
+// can count them.
+var onTurn = func(weight int) {}
 
 // compileMetric is m with its filters compiled, and a ratio's sides
 // with theirs; p is its path (metrics[0]).

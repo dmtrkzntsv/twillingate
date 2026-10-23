@@ -687,7 +687,9 @@ func TestMaxScansWaits(t *testing.T) {
 	e := New(Options{Dir: t.TempDir(), MaxScans: 1})
 	q := Query{Kind: "stat", Table: "views", Metrics: count()}
 	p := Params{Project: 1, From: date(t, today), To: date(t, today)}
-	e.sem <- struct{}{} // a scan running
+	if err := e.slots.acquire(context.Background(), 1); err != nil { // a scan running
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	if _, err := e.Answer(ctx, q, p, archive.Rules{}); !errors.Is(err, context.DeadlineExceeded) {
@@ -703,7 +705,7 @@ func TestMaxScansWaits(t *testing.T) {
 		t.Fatalf("ran beside a running scan: %v", err)
 	case <-time.After(50 * time.Millisecond):
 	}
-	<-e.sem // the running scan ends
+	e.slots.release(1) // the running scan ends
 	select {
 	case err := <-done:
 		if err != nil {

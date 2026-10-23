@@ -995,6 +995,8 @@ Each measured as step 4c's cells (`scripts/native-bench/RESULTS.md`,
   - `Engine.AnswerMany` answers several queries, each answer Answer's: the stats, trends and breakdowns of one project, table class (the events files' tables, or sessions) and rule set read one scan in one turn, each footer and row group once with the union of their columns, each gap day's sessions derived once. Each query keeps its own aggregation (a stat with compare previous two), fed only the rows of its family and range. Retention, attributes and identities go alone through Answer.
   - Memory: a scan holds at most twice MaxBytes over its aggregations (past it, the largest query is answered alone afterwards), and a call holds no more aggregations that keep distinct ids or histograms at once than MaxScans queries would. Unbounded, one scan per class made Views 0.54 s but peaked at 360 MB (today 121 MB).
   - Warm loads as one call: Views 0.72 s (from 0.80) and 0.75 s with the log (0.86); Product 0.86 s (0.93) and 0.85 s (0.95). Every peak at or under today's (Views 107 against 121 MB, Product 136 against 187 MB).
+  - The turns are weighted and the engine's own (Answer, Attribute, presence and the shared scans), a scan taking one per heavy aggregation, so the bound holds across concurrent calls.
+  - Trade-off, not the default: four heavy aggregations a scan (2×MaxScans) takes Views to 0.64 s at 137 MB and Product to 0.81 s at 170 MB, against 0.72 s at 111 MB and 0.86 s at 134 MB with two.
 
 ## Left to the builder
 

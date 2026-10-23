@@ -358,8 +358,16 @@ func TestAnswerManyCancelsOne(t *testing.T) {
 	}
 	total := items.Load()
 
-	// Every one cancelled at the first item: the scan stops there.
+	// Every one cancelled at the first item: each scan stops at its first
+	// items (a worker may have taken one more), and no later one starts.
 	items.Store(0)
+	var scans atomic.Int64
+	defer func(f func(int)) { onTurn = f }(onTurn)
+	onTurn = func(w int) {
+		if w > 0 {
+			scans.Add(1)
+		}
+	}
 	ctxs := make([]context.CancelFunc, len(reqs))
 	for i := range reqs {
 		reqs[i].Ctx, ctxs[i] = context.WithCancel(context.Background())
@@ -377,8 +385,8 @@ func TestAnswerManyCancelsOne(t *testing.T) {
 			t.Errorf("query %d: %v, want context.Canceled", i, a.Err)
 		}
 	}
-	if n := items.Load(); n > 2 || n >= total {
-		t.Errorf("%d items read after every query left, of %d", n, total)
+	if n := items.Load(); n > 2*scans.Load() || n >= total/2 {
+		t.Errorf("%d items read in %d scans after every query left, of %d", n, scans.Load(), total)
 	}
 }
 
@@ -455,8 +463,12 @@ func TestAnswerManyOneTurn(t *testing.T) {
 	f := engineFixture(t)
 	e := New(Options{Dir: f.Dir})
 	var turns atomic.Int64
-	defer func(f func()) { onTurn = f }(onTurn)
-	onTurn = func() { turns.Add(1) }
+	defer func(f func(int)) { onTurn = f }(onTurn)
+	onTurn = func(w int) {
+		if w > 0 {
+			turns.Add(1)
+		}
+	}
 	p := func(project int64) Params {
 		return Params{Project: project, From: date(t, "2026-09-01"), To: date(t, today)}
 	}
@@ -566,5 +578,50 @@ func TestWeighted(t *testing.T) {
 	w.release(2)
 	if w.free != 2 || len(w.waiters) != 0 {
 		t.Errorf("free %d, %d waiters", w.free, len(w.waiters))
+	}
+}
+
+// Two calls at once never hold more heavy aggregations than MaxScans
+// queries would: the turns' weights, summed over both, stay within
+// MaxScans, and a scan of two heavy ones takes both.
+func TestAnswerManyHeavyBoundAcrossCalls(t *testing.T) {
+	f := engineFixture(t)
+	e := New(Options{Dir: f.Dir, MaxScans: 2})
+	p := Params{Project: 1, From: date(t, "2026-08-26"), To: date(t, today)}
+	heavy := func(table string) Request {
+		return Request{Query: Query{Kind: "breakdown", Table: table, Dimensions: []string{"path"},
+			Metrics: []Metric{{Op: "daily_sum", Of: "actors"}}}, Params: p, Rules: engineRules}
+	}
+	reqs := []Request{heavy("views"), heavy("events"), heavy("product"), heavy("views"),
+		{Query: Query{Kind: "stat", Table: "views", Metrics: count()}, Params: p, Rules: engineRules},
+		{Query: Query{Kind: "retention", Output: "grid"}, Params: p}}
+	want := answersOf(e, reqs)
+	var held, most, widest atomic.Int64
+	defer func(f func(int)) { onTurn = f }(onTurn)
+	onTurn = func(w int) {
+		n := held.Add(int64(w))
+		for m := most.Load(); n > m && !most.CompareAndSwap(m, n); m = most.Load() {
+		}
+		for m := widest.Load(); int64(w) > m && !widest.CompareAndSwap(m, int64(w)); m = widest.Load() {
+		}
+	}
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for i, a := range e.AnswerAll(context.Background(), reqs) {
+				if d := diffAnswer(a, want[i].res, want[i].err); d != "" {
+					t.Errorf("%+v: %s", reqs[i].Query, d)
+				}
+			}
+		}()
+	}
+	wg.Wait()
+	if n := most.Load(); n > 2 {
+		t.Errorf("%d turns' weight held at once, want at most MaxScans (2)", n)
+	}
+	if widest.Load() != 2 {
+		t.Errorf("the widest turn weighed %d, want 2 (a scan of two heavy aggregations)", widest.Load())
 	}
 }
