@@ -1,0 +1,1 @@
+{"query":{"kind":"trend","table":"views","series":"kind","series_limit":50,"metrics":[{"op":"actors","as":"y"}]},"rename":{"day":"x"}}

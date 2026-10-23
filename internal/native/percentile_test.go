@@ -2,7 +2,9 @@ package native
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -88,6 +90,10 @@ func widgetSQL(t *testing.T, name string) string {
 func widgetSQLOf(t *testing.T, name string, project int64) string {
 	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "reporting", "system", name))
+	if errors.Is(err, fs.ErrNotExist) {
+		// A widget the native engine answers keeps its old SQL here.
+		b, err = os.ReadFile(filepath.Join("..", "reporting", "testdata", "system-sql", name))
+	}
 	if err != nil {
 		t.Fatal(err)
 	}

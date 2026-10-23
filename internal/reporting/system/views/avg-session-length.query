@@ -1,0 +1,1 @@
+{"query":{"kind":"trend","table":"sessions","metrics":[{"op":"avg","column":"duration_sec","as":"y"}]},"rename":{"day":"x"}}

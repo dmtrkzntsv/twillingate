@@ -1,0 +1,1 @@
+{"query":{"kind":"breakdown","table":"views","dimensions":["os"],"limit":4,"other":true,"where":[{"column":"os","op":"is_set"}],"metrics":[{"op":"daily_sum","of":"actors","as":"value"}]},"rename":{"os":"label"}}
