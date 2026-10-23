@@ -1406,3 +1406,14 @@ files natively, with the same inputs and output fields.
   - `retention` lists offsets up to 90 days after the cohort day; it listed every offset the range allowed. A project whose actors the engine cannot hold in memory is refused.
 
 Rollback: install the previous release; nothing in the database changed.
+
+### Upgrading to the daily pass in Go (no migration)
+
+The daily pass writes each day's Parquet file itself, without an engine
+child.
+
+- **Before the upgrade**, nothing to check by hand.
+- **On the day**, day files written from now on have smaller row groups: one per family and day, at most 65,536 rows each. Older files are left as they are until retention. Nothing to do.
+- A log line edited by hand whose text attribute holds a JSON number keeps it as written (`1.50` stays `"1.50"`, where it became `"1.5"`). Ingest writes every attribute as a string, so no logged event changes.
+
+Rollback: install the previous release; it reads the files this one wrote.

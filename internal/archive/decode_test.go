@@ -71,6 +71,21 @@ func TestCastsMatchDuckDB(t *testing.T) {
 	}
 }
 
+// TestJSONTextReadsStringsAsUnmarshalDoes: the shortcut for a string
+// without an escape gives what json.Unmarshal gives, invalid UTF-8
+// included.
+func TestJSONTextReadsStringsAsUnmarshalDoes(t *testing.T) {
+	for _, raw := range []string{`""`, `"abc"`, `"é"`, "\"a\xffb\"", `"a\"b"`, `"\u00e9\n"`, ` "x" `} {
+		var want string
+		if err := json.Unmarshal([]byte(raw), &want); err != nil {
+			t.Fatal(err)
+		}
+		if got, ok, err := JSONText(json.RawMessage(raw)); got != want || !ok || err != nil {
+			t.Errorf("%q: %q %v %v, want %q", raw, got, ok, err, want)
+		}
+	}
+}
+
 // TestDecodeLine: an object decodes to its keys; null and what is not
 // JSON are skipped (nil); other JSON reads as a line without keys.
 func TestDecodeLine(t *testing.T) {

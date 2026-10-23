@@ -9,6 +9,7 @@ import (
 	"math"
 	"strconv"
 	"time"
+	"unicode/utf8"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
@@ -89,6 +90,13 @@ func JSONText(raw json.RawMessage) (string, bool, error) {
 	}
 	if raw[0] != '"' {
 		return string(raw), true, nil
+	}
+	// A string without an escape, in valid UTF-8, is its bytes between the
+	// quotes: raw is one valid JSON value, so it holds no other quote and no
+	// control character. Unmarshal reads the rest (it also replaces invalid
+	// UTF-8 with U+FFFD).
+	if n := len(raw); n >= 2 && raw[n-1] == '"' && bytes.IndexByte(raw[1:n-1], '\\') < 0 && utf8.Valid(raw[1:n-1]) {
+		return string(raw[1 : n-1]), true, nil
 	}
 	var s string
 	if err := json.Unmarshal(raw, &s); err != nil {

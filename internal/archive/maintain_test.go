@@ -152,19 +152,26 @@ func TestMaintainLogsWhatThePassDid(t *testing.T) {
 }
 
 // countingEngine counts the requests that reach the engine: each one
-// spawns a child when none runs.
+// spawns a child when none runs. logReads counts those that read a log.
 type countingEngine struct {
 	Engine
-	requests int
+	requests, logReads int
+}
+
+func (e *countingEngine) count(sql string) {
+	e.requests++
+	if strings.Contains(sql, "read_json") || strings.Contains(sql, ".dumping") {
+		e.logReads++
+	}
 }
 
 func (e *countingEngine) Exec(ctx context.Context, sql string) error {
-	e.requests++
+	e.count(sql)
 	return e.Engine.Exec(ctx, sql)
 }
 
 func (e *countingEngine) Query(ctx context.Context, sql string, maxRows int, args ...engine.Arg) (engine.Result, error) {
-	e.requests++
+	e.count(sql)
 	return e.Engine.Query(ctx, sql, maxRows, args...)
 }
 
@@ -193,7 +200,10 @@ func TestMaintainWithNothingToDoSpawnsNoChild(t *testing.T) {
 	f.write(t, evOf(1, "b", "2026-09-29T10:00:00Z"))
 	pass("2026-10-13") // dumps both days, merges September, derives
 	if eng.requests == 0 {
-		t.Fatal("no engine request for a pass with dumps to do")
+		t.Fatal("no engine request for a pass with a merge and derived files to write")
+	}
+	if eng.logReads != 0 {
+		t.Fatalf("%d engine requests read a log: the dump goes through the engine", eng.logReads)
 	}
 	eng.requests = 0
 	pass("2026-10-13")

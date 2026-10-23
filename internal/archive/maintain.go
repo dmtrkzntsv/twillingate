@@ -1,12 +1,9 @@
 package archive
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"maps"
 	"os"
@@ -128,7 +125,7 @@ func (a *Archive) maintainProject(ctx context.Context, project int64, today civi
 	}
 	for _, n := range names {
 		if dumpingName.MatchString(n) {
-			if err := a.dump(ctx, dir, n); err != nil {
+			if err := a.dump(dir, n); err != nil {
 				errs = append(errs, err)
 			} else {
 				st.dumped++
@@ -262,18 +259,14 @@ func (a *Archive) claim(dir, closed, day string) error {
 }
 
 // dump writes a claimed log (<target>.dumping) as its target unless the
-// target exists already, then deletes the log. Of an id the recent-ids
-// window let through twice, the line appended first is kept (dumpQuery).
-func (a *Archive) dump(ctx context.Context, dir, pending string) error {
+// target exists already, then deletes the log. It runs in Go, without the
+// engine (dumpLog); of an id the recent-ids window let through twice, the
+// line appended first is kept.
+func (a *Archive) dump(dir, pending string) error {
 	src := filepath.Join(dir, pending)
 	out := strings.TrimSuffix(src, ".dumping")
 	if !exists(out) {
-		q, err := dumpQuery(src)
-		if err != nil {
-			return err
-		}
-		q = "COPY (" + q + ") TO "
-		if err := a.write(ctx, q, out); err != nil {
+		if err := dumpLog(src, out); err != nil {
 			return err
 		}
 	}
@@ -283,46 +276,27 @@ func (a *Archive) dump(ctx context.Context, dir, pending string) error {
 	return syncFile(dir)
 }
 
-// dumpQuery is the dump's SELECT of a log (logSelect, strict): every line
-// once per id, ordered by family and ts, with every column's type spelled
-// out. DuckDB inferring the types from one day's values would rewrite a
-// value for good ("ABCDEF01-…" read as a UUID comes back lower case,
-// "12:30" as a TIME comes back "12:30:00") and leave a month whose days
-// inferred different types unable to merge. The fixed keys take their type
-// from fields, every other key (attr_<key>, the key as stored) is VARCHAR,
-// and every fixed column is there even when no line has it.
+// logSelect is a log's lines as typed rows, as a reader of the open logs
+// reads them through DuckDB (the reader's events view): cols, every id
+// once, the line appended first kept, ordered by family and ts. The fixed
+// keys take their type from fields, every other key (attr_<key>, the key
+// as stored) is VARCHAR: DuckDB inferring the types from one day's values
+// would rewrite a value ("ABCDEF01-…" read as a UUID comes back lower
+// case, "12:30" as a TIME comes back "12:30:00"). A strict select fails on
+// a line that is not JSON; a tolerant one skips it, for a reader that may
+// meet the torn last line of a log ingest is still writing
+// (read_json_objects with ignore_errors reads such a line as a NULL
+// object). The dump reads the logs in Go (dumpLog); the strict select is
+// its oracle in the tests (dumpQuery).
 //
-// A repeated id keeps the line appended first, as SQLite keeps the first
-// row it receives: a repeat need not be the same event (the server does
-// not check), so a later one can differ in received_at, actor_id,
-// country or attributes. The lines are numbered in file order (WITH
-// ORDINALITY), the first number per id is found over the ids and numbers
-// alone, and only then are the lines it names sorted (a sort spills to
-// disk; a hash table of whole lines does not) and their columns extracted
-// as they stream into the file. A DISTINCT ON over the lines held them all
-// in a hash table and ran out of memory on smaller logs, worst with more
-// threads; measure_test.go compares this with the first release's dump.
-//
-// Each key is extracted by JSON pointer, so its case is kept; DuckDB's
-// column names are not case-sensitive, though (read_ndjson's columns={…}
-// refuses attr_Plan beside attr_plan as a duplicate). Of keys equal but for
-// case, the first in byte order keeps its name and each next one is named
-// <key>_<n>, the first n free: attr_Plan, attr_plan_1. Which column such a
-// key lands in can differ between days; no value is dropped.
-func dumpQuery(path string) (string, error) {
-	keys, err := logKeys(path)
-	if err != nil {
-		return "", err
-	}
-	return logSelect(path, columnsOf(keys), false), nil
-}
-
-// logSelect is a log's lines as typed rows (see dumpQuery): cols, every
-// id once, the line appended first kept, ordered by family and ts. A
-// strict select fails on a line that is not JSON; a tolerant one skips it,
-// for a reader that may meet the torn last line of a log ingest is still
-// writing (read_json_objects with ignore_errors reads such a line as a
-// NULL object).
+// The lines are numbered in file order (WITH ORDINALITY), the first number
+// per id is found over the ids and numbers alone, and only then are the
+// lines it names sorted (a sort spills to disk; a hash table of whole
+// lines does not) and their columns extracted. Each key is extracted by
+// JSON pointer, so its case is kept; DuckDB's column names are not
+// case-sensitive, though, so of keys equal but for case the first in byte
+// order keeps its name and each next one is named <key>_<n>, the first n
+// free: attr_Plan, attr_plan_1 (columnsOf).
 func logSelect(path string, cols []column, tolerant bool) string {
 	paths := make([]string, len(cols))
 	sel := make([]string, len(cols))
@@ -422,32 +396,6 @@ var jsonPointer = strings.NewReplacer("~", "~0", "/", "~1")
 func ident(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`) + `"` }
 
 func (c column) ident() string { return ident(c.name) }
-
-// logKeys returns every key of a log's lines. A line that is not a JSON
-// object fails it, as DuckDB would.
-func logKeys(path string) (map[string]bool, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("archive: %w", err)
-	}
-	defer f.Close()
-	keys := map[string]bool{}
-	dec := json.NewDecoder(bufio.NewReader(f))
-	for {
-		var m map[string]json.RawMessage
-		if err := dec.Decode(&m); errors.Is(err, io.EOF) {
-			return keys, nil
-		} else if err != nil {
-			return nil, fmt.Errorf("archive: %s: %w", filepath.Base(path), err)
-		}
-		if m == nil {
-			return nil, fmt.Errorf("archive: %s: a line is not an object", filepath.Base(path))
-		}
-		for k := range m {
-			keys[k] = true
-		}
-	}
-}
 
 // merge writes every day file and segment of month, with the month file
 // if a crashed merge left one, as the month file, then deletes the days.
