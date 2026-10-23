@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -39,6 +40,39 @@ type Native interface {
 	Answer(ctx context.Context, q native.Query, p native.Params, rules archive.Rules) (native.Result, error)
 }
 
+// metricSchema is native.Metric's schema, which the inference cannot
+// reach itself: its num and den are Metrics. They are described as
+// native.Metric's fields but as, round, num and den, the fields a
+// ratio's side does not take. As and Round are left out by their Go
+// names (renaming them breaks the side's schema, which
+// TestQuerySchemaRatioSides pins), and the copy is built with
+// reflect.StructOf, which panics, at init through expose.go, should
+// native.Metric ever gain an unexported field: keep its fields exported.
+func metricSchema() *jsonschema.Schema {
+	mt := reflect.TypeFor[native.Metric]()
+	fields := func(side reflect.Type) []reflect.StructField {
+		var out []reflect.StructField
+		for i := range mt.NumField() {
+			f := mt.Field(i)
+			switch {
+			case f.Type == reflect.PointerTo(mt) && side == nil:
+				continue
+			case f.Type == reflect.PointerTo(mt):
+				f.Type = reflect.PointerTo(side)
+			case side == nil && (f.Name == "As" || f.Name == "Round"):
+				continue
+			}
+			out = append(out, f)
+		}
+		return out
+	}
+	s, err := jsonschema.ForType(reflect.StructOf(fields(reflect.StructOf(fields(nil)))), nil)
+	if err != nil {
+		panic(fmt.Sprintf("api: schema for native.Metric: %v", err))
+	}
+	return s
+}
+
 // queryEnums lists the structured query's closed vocabularies in query's
 // input schema, which a Go type cannot say.
 func queryEnums(in *jsonschema.Schema) {
@@ -53,6 +87,7 @@ func queryEnums(in *jsonschema.Schema) {
 	q.Properties["kind"].Enum = enum(native.Kinds)
 	q.Properties["table"].Enum = enum(native.Tables)
 	q.Properties["compare"].Enum = enum([]string{"", "previous"})
+	q.Properties["fill"].Enum = enum([]string{"", "zero"})
 	q.Properties["output"].Enum = enum(slices.Concat(native.RetentionOutputs, native.AttributeOutputs))
 	q.Properties["identified_by"].Enum = enum(native.IdentifiedBy)
 	minOffsets, maxOffsets := 1.0, 90.0
@@ -65,13 +100,17 @@ func queryEnums(in *jsonschema.Schema) {
 	q.Properties["keep"].MaxItems = &maxKeep
 	m := q.Properties["metrics"].Items
 	m.Properties["op"].Enum = enum(native.MetricOps)
-	var columns []string // each table's, in order, each once
-	for _, c := range slices.Concat(native.ValueColumns, native.SessionValueColumns, native.IdentityValueColumns) {
-		if !slices.Contains(columns, c) {
-			columns = append(columns, c)
+	once := func(lists ...[]string) []string { // each list's, in order, each once
+		var out []string
+		for _, c := range slices.Concat(lists...) {
+			if !slices.Contains(out, c) {
+				out = append(out, c)
+			}
 		}
+		return out
 	}
-	m.Properties["column"].Enum = enum(columns)
+	numbers := once(native.ValueColumns, native.SessionValueColumns, native.IdentityValueColumns)
+	m.Properties["column"].Enum = enum(once(numbers, native.BoundColumns, native.SessionBoundColumns))
 	m.Properties["of"].Enum = enum(slices.Concat(native.OfColumns, native.ShareOfColumns))
 	minRound, maxRound := 0.0, 6.0
 	m.Properties["round"].Minimum, m.Properties["round"].Maximum = &minRound, &maxRound
@@ -79,6 +118,15 @@ func queryEnums(in *jsonschema.Schema) {
 	m.Properties["q"].ExclusiveMinimum, m.Properties["q"].ExclusiveMaximum = &minQ, &maxQ
 	m.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
 	q.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
+	sideOps := slices.DeleteFunc(slices.Clone(native.MetricOps), func(op string) bool { return op == "ratio" || op == "share" })
+	for _, side := range []string{"num", "den"} {
+		s := m.Properties[side]
+		s.Properties["op"].Enum = enum(sideOps)
+		s.Properties["column"].Enum = enum(numbers) // a side is a number: no day or time
+		s.Properties["of"].Enum = enum(native.OfColumns)
+		s.Properties["q"].ExclusiveMinimum, s.Properties["q"].ExclusiveMaximum = &minQ, &maxQ
+		s.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
+	}
 }
 
 // maxQueryDays bounds a structured query's range, from and to included.

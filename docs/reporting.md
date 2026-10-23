@@ -71,14 +71,29 @@ Retention · Web Vitals · Measures.
   Markdown text (`md`). The component says which source types it accepts and
   which columns its query must return.
 
-A `query` source's content is `{"query": {…}, "rename": {…}}`: `query` is a
-[structured query](twillingate.md#structured-queries) (a stat, a trend or a
-breakdown), and `rename`, optional, maps its output columns to the names the
-component reads (`{"day": "x", "previous_value": "previous"}`). A stat returns
+A `query` source's content is `{"query": {…}, "rename": {…}, "labels": {…}, "columns": […]}`:
+`query` is a [structured query](twillingate.md#structured-queries) (a stat, a
+trend or a breakdown), `rename`, optional, maps its output columns to the names
+the component reads (`{"day": "x", "previous_value": "previous"}`), and
+`labels`, optional, shows a column's values as others: keyed by the column's
+name after `rename`, each a map of value to label (`{"label": {"new": "New
+users", "returning": "Returning users"}}`). A value it does not list shows as it
+is, and the key `""` labels the empty value (`{"label": {"": "Unknown"}}`);
+labels replace values only and never merge rows, so two values under one label
+are two rows. Only a text column takes labels (a day or number column is
+refused), and a labelled column keeps its type and its `approximate` mark.
+`columns`, optional, keeps only the columns it names, by their names after
+`rename`, in its order (`["user_label", "days", "user_first_seen"]` drops
+`user_id` and shows first seen last); the component checks the columns kept, and
+an empty list, a name that is no column and a name given twice are refused.
+Without it every column is kept, in the order below. A stat returns
 its metrics, then `previous_<name>` each with `compare: previous`; a trend
-`day`, `series` when split, and its metric; a breakdown its dimensions, then
-its metrics. Each column has a type the component's input must take: metrics
-and `previous_<name>` are numbers, `day` is a day, the numeric columns
+`day`, `series` when split, and its metric, or with several metrics `day`,
+`series` (each metric's name, its `as`) and `value`; a breakdown its
+dimensions, then its metrics. Each column has a type the component's input
+must take: metrics, a trend's `value` and `previous_<name>` are numbers (a
+`min` or `max` of a day a day, of a time text), `day`, `user_first_seen` and
+`group_first_seen` are days, the numeric columns
 (`project_id`, `display_width`, `display_height`, `consent`, `bucket`) are
 numbers, and the rest (a trend's `series`, `attr_<key>`, every other column)
 text, as is every dimension of a breakdown with `other`, whose `Other` row
@@ -104,7 +119,7 @@ when at least one of its live widgets follows it. `get_dashboard` reports
 what to change: the component exists and accepts the source type; the SQL uses
 only the three parameters, runs, and returns the columns the component reads
 (checked on a sample project and range); a structured query is valid and, after
-`rename`, returns those columns, of the types they take (checked without
+`rename` and `columns`, returns those columns, of the types they take (checked without
 reading data); Markdown is not
 empty; props match the schema; the size is in range. Refusals come back as tool
 errors over MCP and as `400 invalid`, `404 not_found` or `409 conflict` over
@@ -282,7 +297,9 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 - Group in SQL: a widget gets at most `CONSOLE_QUERY_ROWS_MAX` rows (default
   1000) and `CONSOLE_QUERY_TIMEOUT` (default 30s). A result cut at the cap draws
   as "partial". A pie keeps to five slices, the rest summed as `Other`,
-  and a line chart to five lines: the palette has five colors.
+  and a line chart to five lines: the palette has five colors. A query's
+  `"limit": 4, "other": true` gives those five slices, a fifth group
+  listed under its own name when it is the only one left.
 - A widget that follows neither switcher says in its title what it is fixed
   to.
 - To move a widget, `update_widget` it with the `after` you want. Names are
@@ -457,7 +474,7 @@ appears. `width` and `height` default to the component's size below.
 
 | Component | Accepts | Inputs: the columns the query returns | Props | Default width × height |
 | --- | --- | --- | --- | --- |
-| `stat` | `sql`, `query` | `value` number; `previous` number, optional (shows the change); `x` day, optional (a sparkline under the number, which becomes the series' `aggregate`) | `format`, `aggregate` (`sum`, `last`, `avg`) | 3 × 3 |
+| `stat` | `sql`, `query` | `value` number (an empty one shows "–", never 0); `previous` number, optional (shows the change; an empty one shows none); `x` day, optional (a sparkline under the number, which becomes the series' `aggregate`; an empty value is left out of both, and a series of only empty ones shows "–") | `format`, `aggregate` (`sum`, `last`, `avg`) | 3 × 3 |
 | `line` | `sql`, `query` | `x` day, text or number (numbers plot to scale, ascending); `y` number; `series` text, optional (one line per value; keep it to 5 lines, one per chart color, ranking the rest out in SQL) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
 | `area` | `sql`, `query` | as `line` | `format`, `curve`, `stacked` | 6 × 8 |
 | `bar` | `sql`, `query` | `x` text or day; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
@@ -542,6 +559,10 @@ the name the component reads:
 ```
 
 Props: `{"format": "number"}`
+
+An empty `value` (a metric with nothing to read, as `avg` or `ratio` over no
+rows) shows as "–" rather than 0, and an empty `previous` shows no change; a
+`0` still shows 0.
 
 ### `line`
 
@@ -1270,10 +1291,14 @@ widget's name (`widget visitors: …`), and nothing is created.
 | component gauge does not exist; list_components names the ones there are | Use a name from `list_components` or `reporting_guide`. |
 | line does not accept md; it accepts sql and query | `markdown` takes `md`; every other component takes `sql` and `query`. |
 | source type csv does not exist; there are md, query and sql | Set `source.type` to `sql`, `query` or `md`. |
-| query source: json: unknown field "metric" | A `query` source's content is `{"query": {…}, "rename": {…}}`, each field as [structured queries](twillingate.md#structured-queries) spells it. |
+| query source: json: unknown field "metric" | A `query` source's content is `{"query": {…}, "rename": {…}, "labels": {…}, "columns": […]}`, each query field as [structured queries](twillingate.md#structured-queries) spells it. |
 | query.dimensions: … | The structured query is malformed; the message names the field. |
 | rename: sessions is not a column of the query; its columns are day, actors | `rename` maps the query's own output columns. |
 | rename: a and b are both renamed value | Give each renamed column its own name, and none the query already returns. |
+| labels.status: not a column of the query; its columns are label, value | `labels` keys on a column's name after `rename`. |
+| labels.day: a day column takes no labels | Label a text column only; a day or number column keeps its values. |
+| columns: user_id is not a column of the query; its columns are user_label, days | `columns` names columns after `rename`. |
+| columns: days is named twice | Name each kept column once; omit `columns` to keep them all. |
 | a remote table takes sql only; a query source needs props.mode "local" | Drop `mode`, or write the table's source as `sql`. |
 | stat.value: the query's column is text, not number | Rename a column of that type onto the input: a metric for a number, `day` for a day. |
 | sql uses :path; widgets get only :project, :from and :to | Write the value into the SQL, or use one of the three. |

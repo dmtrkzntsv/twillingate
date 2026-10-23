@@ -1701,14 +1701,15 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | --- | --- | --- |
 | `kind` | all | `stat`, `trend`, `breakdown`, `retention` or `attributes` (below) |
 | `table` | all | `events` (every family), `views`, `product` or `measures`; or `sessions`, one row per session, or `identities`, one row per user or group (below); a retention reads `events`, and may leave it out; an attributes `product` or `measures`, its `keys` also `events` (product and measures both, the default) |
-| `metrics` | stat, trend, breakdown, attributes | the aggregates, each an output column; a trend takes exactly one; an attributes' `keys` none |
+| `metrics` | stat, trend, breakdown, attributes | the aggregates, each an output column; a trend takes one to five, exactly one with `series` (several are its series, below); an attributes' `keys` none |
 | `where` | all | filters, `{column, op, values}`, every one of which a row must satisfy |
 | `dimensions` | breakdown, attributes | a breakdown's 1 to 3 columns to group by; an attributes' `day`, `event_name` or both, in that order, before its attribute and value |
 | `limit` | breakdown, attributes | groups returned, 1 to 1000 (default 20; an attributes' `values` all of them, its `keys` 50) |
 | `order` | breakdown, attributes | a metric name to rank the groups by, descending, ties by the dimensions; or one of the dimensions to sort the groups by, ascending, ties by the other dimensions (`"order": "day"` puts a breakdown by day in date order). Default the first metric; `limit` keeps the first groups in that order; an attributes' default differs (below) |
-| `other` | breakdown | `true` adds an `Other` row (every dimension `Other`) summing the groups past `limit`, when there are any |
+| `other` | breakdown | `true` adds an `Other` row (every dimension `Other`) summing the groups past `limit`, when there are two or more; a single one past it is listed under its own name, so `"limit": 4` gives at most five rows |
 | `series` | trend | a column to split each day by |
-| `series_limit` | trend | how many series, 1 to 50, those ranking first by the metric over the range (default 5) |
+| `series_limit` | trend | how many series, 1 to 50, those ranking first by the metric over the range (default 5); only with `series` (a trend without one is refused) |
+| `fill` | trend | `zero` gives every day of the range its row, for every kept series or metric: a counted metric (`count`, `actors`, `users`, `groups`, `bounces`, `weight`, `daily_*`, `days`) reads `0` where it is empty, the others stay empty; `""` or absent, only the days with rows |
 | `compare` | stat | `previous` adds a `previous_<name>` column per metric, over as many days ending the day before `from`; `""` or absent, none |
 | `output` | retention, attributes | a retention's `grid`, `curve` or `milestones`; an attributes' `values` or `keys` (required) |
 | `identified_by` | retention | `install` or `user`: the cohorts a `curve` or `milestones` pools (required there; a `grid` has both and refuses it) |
@@ -1730,8 +1731,10 @@ A dimension, series or filter column is one of `project_id`, `family`,
 `sample_rate` are read by the metrics. NULL reads as an empty string and
 sorts last; numbers sort by value.
 
-Eight more are computed from those, as the built-in dashboards group by
-them; they are text, so `gt`, `gte`, `lt` and `lte` do not take them:
+Twelve more are computed from those, as the built-in dashboards group by
+them; they are text, so `gt`, `gte`, `lt` and `lte` do not take them, but
+for `user_first_seen` and `group_first_seen`, which are days and take them
+as `day` does:
 
 | Column | Tables | Value |
 | --- | --- | --- |
@@ -1741,12 +1744,25 @@ them; they are text, so `gt`, `gte`, `lt` and `lte` do not take them:
 | `consent_state` | `events`, `views`, `product` | `given` (`consent` 1), `none` (0) or `unknown` (NULL) |
 | `user_status` | `events`, `views`, `product` | `new` on the day the row's `user_id` was first seen (its `first_seen` in `identities`, over the whole history the files hold, whatever the range), `returning` on a later day; NULL when `user_id` is empty, or not in `identities` (an id only measures carried), and on a measure sent before it was first seen |
 | `group_status` | `events`, `views`, `product` | the same of `group_id` |
+| `user_label` | `events`, `views`, `product` | the `name` of the row's `user_id` in `identities` (over the whole history, the latest name as `identities` combines it, so every row of a renamed user reads its current name), else the `user_id` itself; NULL when `user_id` is empty |
+| `group_label` | `events`, `views`, `product` | the same of `group_id` |
+| `user_first_seen` | `events`, `views`, `product` | the day the row's `user_id` was first seen (its `first_seen` in `identities`, a day); NULL when `user_id` is empty or not in `identities` |
+| `group_first_seen` | `events`, `views`, `product` | the same of `group_id` |
 | `vital` | `measures` | `LCP`, `INP`, `CLS`, `FCP` or `TTFB` for the web vitals' `event_name` (`$lcp`, `$inp`, `$cls`, `$fcp`, `$ttfb`); else NULL |
 | `vital_rating` | `measures` | a vital's sample rated by its bucket's value (as a percentile reads it, below) against the vital's two thresholds: `good` up to the first, `needs improvement` up to the second, else `poor`. LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800, as the built-in Web Vitals dashboard rates them; NULL for the other measures |
 
 `{"column": "user_status", "op": "eq", "values": ["new"]}` with the metric
 `users` counts the new users, as the built-in Users dashboard does (with
-`family` `in` `views`, `product`).
+`family` `in` `views`, `product`). Each label and first-seen day is a
+function of its id, so a breakdown by `user_id`, `user_label` and
+`user_first_seen` has one row per user, as the built-in top users table:
+`{"kind": "breakdown", "table": "events", "dimensions": ["user_id",
+"user_label", "user_first_seen"], "metrics": [{"op": "count"}, {"op":
+"days"}, {"op": "max", "column": "day"}], "where": [{"column": "family",
+"op": "in", "values": ["views", "product"]}, {"column": "user_id", "op":
+"is_set"}], "limit": 100}`. A label is not unique, though: two users
+who share a name have the same `user_label`, so a breakdown by
+`user_label` alone puts them in one row; group by the id beside it.
 
 `sessions` is the table of that name in `schema://views`: the sessions of
 the views, derived as the event files are written and, for the days not
@@ -1756,7 +1772,7 @@ dimension, series and filter columns are `project_id`, `day`, `kind`,
 `exit_path`, `referrer_source`, `utm_source`, `utm_medium` and
 `utm_campaign`; `duration_sec` and `views` are numbers a filter may name
 (`{"column": "views", "op": "gt", "values": ["1"]}`) but not a dimension
-or series. It takes the metrics `count` (sessions), `actors`, `share`, `sum`,
+or series. It takes the metrics `count` (sessions), `actors`, `share`, `ratio`, `sum`,
 `avg`, `min` and `max` of `duration_sec` or `views`, and its own
 `bounces` and `bounce_rate`; not `users`, `groups` or the `daily_*` ones.
 
@@ -1767,14 +1783,15 @@ range, and `day` is that day (a trend counts the new users and groups per
 day). Its dimension, series and filter columns are `kind` (`user` or
 `group`), `id`, `name` and `day`; `views` and `events` are numbers a filter
 may name but not a dimension or series. It takes the metrics `count`
-(identities), `share` and `sum`, `avg`, `min` and `max` of `views` or `events`.
+(identities), `share`, `ratio` and `sum`, `avg`, `min` and `max` of `views` or `events`.
 
 | Metric `op` | Takes | Counts |
 | --- | --- | --- |
 | `count` | | rows |
 | `actors`, `users`, `groups` | | distinct `actor_id`, `user_id`, `group_id` over the range (NULL left out) |
-| `sum`, `avg`, `min`, `max` | `column`: `value`, `sample_rate`, `display_width` or `display_height`; on `sessions` `duration_sec` or `views`; on `identities` `views` or `events` | the column's aggregate; empty over no value |
+| `sum`, `avg`, `min`, `max` | `column`: `value`, `sample_rate`, `display_width` or `display_height`; on `sessions` `duration_sec` or `views`; on `identities` `views` or `events`. `min` and `max` also take `day`, `ts` and `received_at`, on `sessions` `day`, `started_at` and `ended_at` (below) | the column's aggregate; empty over no value |
 | `daily_sum`, `daily_max`, `daily_avg` | `of`: `actors`, `users` or `groups` | the distinct count per day, summed, maxed or averaged over the days with rows |
+| `days` | | the distinct days with rows (`count(DISTINCT day)`), exact; `0` over none; not on `sessions` or `identities` |
 | `bounces` | | `sessions` only: the sessions of one view |
 | `bounce_rate` | | `sessions` only: `bounces` divided by the sessions (`0.25`), exact; empty over no session, and in an `Other` row over the sessions of the groups it folds |
 | `percentile` | `q`: above 0 and below 1 (`0.75`) | `measures` only: the `q` quantile of `value`, each sample weighing `1 / sample_rate`; empty over no sample |
@@ -1782,6 +1799,7 @@ may name but not a dimension or series. It takes the metrics `count`
 | `weight` | | `measures` only: the samples' `1 / sample_rate` summed, the samples a sampled metric stands for |
 | `actors_or_null` | | `attributes` only: distinct `actor_id`, a NULL one counting as one more |
 | `share` | `of`: `count`, or on `measures` `weight` | breakdown, or trend with `series`: the group's `count` (or `weight`) divided by its partition's (`0.25`); empty when that is 0 |
+| `ratio` | `num` and `den`: each a metric of the table | `num` divided by `den` (`2.5`); empty when `den` is 0 or empty, or `num` is empty; a counted `num` over no rows is 0 (below) |
 
 A percentile comes from `bucket`, as the built-in Web Vitals and
 Measures dashboards compute theirs: the weights are summed per bucket and
@@ -1803,6 +1821,33 @@ A stat is one group, and an unsplit trend has one per day, so both refuse `share
 `approximate`, and with a metric `where` (below) both the group's and the
 partition's are of the rows that pass it.
 
+A ratio's `num` and `den` are metrics the table takes, each with its own
+optional `where` (below), but no `as`, `round`, `share` or `ratio`; the
+ratio itself takes no `where`, and a refusal names a side's field as
+`metrics[0].num.op`. Both sides are over the same rows: in an `Other`
+row each is put together over the groups it folds and then divided, and a
+`previous_` column divides the previous range's. A ratio is `approximate`
+when either side is, and its `round` rounds the quotient. A counted
+`num` (`count`, `actors`, `users`, `groups`, `bounces`, `weight`, a
+`daily_*` or `days`) with no rows reads `0` when `den` is above 0, so the ratio is
+`0` rather than empty: a `daily_*` or `weight` over no rows would be
+empty on its own, as SQL's `COALESCE(num, 0)` turns it into 0. Actions per
+user: `{"op": "ratio", "as": "per_user", "round": 1, "num": {"op":
+"count"}, "den": {"op": "users"}}`.
+
+`min` and `max` of `day` are the first and last day with rows
+(`2026-09-01`, a day column, as `MAX(day)` reads in SQL: the built-in
+Users dashboard's last seen is `{"op": "max", "column": "day"}` in a
+breakdown by `user_id`). Of `ts` or `received_at` (on `sessions`
+`started_at` or `ended_at`) they are the first and last time, in UTC, as
+`2026-09-01T08:00:05Z`: RFC 3339, to the second the files store, the way
+`sql` prints a `TIMESTAMP` (a fraction would show only if one were
+stored); a text column. `max` of `received_at` is when the newest event in
+the range arrived, empty when none says. Both are empty over no row, take
+a metric `where`, an `Other` row's groups, `compare` and a trend's days
+like any metric, but neither `sum` nor `avg` takes those columns, nor
+does a ratio's side, and `identities` takes none of them.
+
 A metric's column is named by `as`, else `op`, `op_column` (`sum_value`),
 `op_of` (`daily_sum_actors`, `share_weight`) or, for a percentile, `p` and `100 × q`
 (`p75`, `p99.9`); two metrics may not share a name, nor,
@@ -1815,13 +1860,16 @@ A metric takes two more optional fields:
   A row counts toward that metric only when it passes them too; the other
   metrics still count it. A group exists when any row passes the query's
   `where`, so a metric with none of its rows in a group reads `0` for
-  `count`, `actors`, `users`, `groups` and `bounces`, and empty for the
+  `count`, `actors`, `users`, `groups`, `bounces` and `days`, and empty for the
   others (`sum`, `avg`, `min`, `max`, `daily_*`, `bounce_rate`,
-  `percentile`, `mean`, `weight`); `share` reads `0`, or empty when its
+  `percentile`, `mean`, `weight`, `ratio`); `share` reads `0`, or empty when its
   whole partition has none. A `daily_*` metric with a `where` is
   over the days with rows that pass it (its `daily_avg` averages those
-  days only). They apply alike to the `previous_` columns, an `Other` row and a trend's
-  days; a trend still has a row for every day with rows.
+  days only), and `days` counts those days (in a trend, `1` or `0` per
+  day). They apply alike to the `previous_` columns, an `Other` row and a trend's
+  days; a trend of one metric still has a row for every day with rows,
+  one of several metrics a row per day with rows that pass its `where`
+  (below).
 - `round`: 0 to 6 decimal places, half away from zero (`2.5` rounds to
   `3`), applied last, after `Other` is summed and before groups are ranked
   by the metric; with `0` the value reads as an integer (`3`). A metric
@@ -1832,7 +1880,7 @@ A metric takes two more optional fields:
 | --- | --- |
 | `eq`, `ne`, `contains`, `prefix`, `not_prefix` | exactly one (`contains`, `prefix` and `not_prefix` on text columns only; `not_prefix` keeps text that does not start with the value, so `event_name` `not_prefix` `$` leaves out the system names) |
 | `in`, `not_in` | one or more |
-| `gt`, `gte`, `lt`, `lte` | exactly one: an integer, or `YYYY-MM-DD` on `day`; numeric columns only (`day`, `project_id`, `display_width`, `display_height`, `consent`, `bucket`; `duration_sec` and `views` on `sessions`; `views` and `events` on `identities`) |
+| `gt`, `gte`, `lt`, `lte` | exactly one: an integer, or `YYYY-MM-DD` on `day`, `user_first_seen` and `group_first_seen`; numeric columns and those days only (`day`, `user_first_seen`, `group_first_seen`, `project_id`, `display_width`, `display_height`, `consent`, `bucket`; `duration_sec` and `views` on `sessions`; `views` and `events` on `identities`) |
 | `is_set` | none: the column is not NULL, and on a text column not empty either |
 
 A NULL value fails every operator, `ne` and `not_in` included (as in
@@ -1919,10 +1967,20 @@ as text:
 - **stat**: one row, a column per metric (then `previous_<name>` ones);
 - **trend**: `day`, `series` when split, then the metric; a row per day
   (and series) that has rows, by day then series. Days without rows are
-  absent, not zero. A trend over more days than `CONSOLE_QUERY_ROWS_MAX`
-  (1,000 by default) is always cut there, and `truncated`;
+  absent, not zero, unless `fill` is `zero`: then every day of the range
+  has a row per kept series (the series still chosen by their total over
+  the range), `0` for a counted metric. A trend of several metrics is
+  long: `day`, `series` (each metric's name, so its `as` is the label)
+  and `value`, a number, so no metric of it is a `min` or `max` of a
+  day or time; a row per day and metric, by day then the metrics'
+  order, each metric's on the days with rows that pass its `where` (a
+  `ratio`'s, either side's), or every day with `fill`. A trend with more
+  rows (its days, times its series or metrics) than
+  `CONSOLE_QUERY_ROWS_MAX` (1,000 by default) is always cut there, and
+  `truncated`;
 - **breakdown**: a column per dimension, then per metric; the `limit`
-  groups first in `order`, then the `Other` row;
+  groups first in `order`, then the `Other` row (or the one group past
+  `limit`, under its own name);
 - **retention**: its output's columns and rows, as above;
 - **attributes**: its dimensions, `attribute`, `value`, then its metrics;
   `keys` its `attribute`, `events`, `values` and `keys_total`.
@@ -1963,6 +2021,18 @@ A trend: signups per day, split by plan.
   "kind": "trend", "table": "product", "series": "attr_plan",
   "where": [{"column": "event_name", "op": "eq", "values": ["signup"]}],
   "metrics": [{"op": "count"}]}}
+```
+
+Two metrics as one trend's series, every day of the range drawn: new
+and returning users per day, as the built-in Users dashboard has them.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "trend", "table": "events", "fill": "zero",
+  "where": [{"column": "family", "op": "in", "values": ["views", "product"]}, {"column": "user_id", "op": "is_set"}],
+  "metrics": [
+    {"op": "users", "as": "New users", "where": [{"column": "user_status", "op": "eq", "values": ["new"]}]},
+    {"op": "users", "as": "Returning users", "where": [{"column": "user_status", "op": "eq", "values": ["returning"]}]}]}}
 ```
 
 A breakdown: the ten busiest paths by unique users, the rest as `Other`.
@@ -2006,6 +2076,20 @@ places.
     {"op": "count", "as": "events", "where": [{"column": "family", "op": "eq", "values": ["product"]}]},
     {"op": "avg", "column": "value", "as": "mean", "round": 2,
      "where": [{"column": "family", "op": "eq", "values": ["measures"]}]}]}}
+```
+
+A stat of the share of consenting visitors: visitors counted per day
+with `$consent` 1, over those with any `$consent`; `0` when every one of
+them declined. It reads as the built-in Views dashboard's share with
+consent in force, which counts a visitor once per day and answer: the
+two differ only when a visitor changes their answer within a day.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "stat", "table": "views", "compare": "previous",
+  "metrics": [{"op": "ratio", "as": "consent_share", "round": 3,
+    "num": {"op": "daily_sum", "of": "actors", "where": [{"column": "consent", "op": "eq", "values": ["1"]}]},
+    "den": {"op": "daily_sum", "of": "actors", "where": [{"column": "consent", "op": "is_set"}]}}]}}
 ```
 
 A breakdown of measures: per page, the samples of LCP and the p75 of

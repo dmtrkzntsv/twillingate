@@ -667,7 +667,7 @@ func TestStructuredQueryDocument(t *testing.T) {
 		t.Errorf("the attributes' reserved keys are %v, want %v", named, want)
 	}
 	for _, list := range [][]string{native.Kinds, native.Tables, native.Columns, native.SessionColumns, native.MetricOps,
-		native.ValueColumns, native.SessionValueColumns, native.IdentityColumns, native.IdentityValueColumns,
+		native.ValueColumns, native.SessionValueColumns, native.BoundColumns, native.SessionBoundColumns, native.IdentityColumns, native.IdentityValueColumns,
 		native.OfColumns, native.ShareOfColumns, native.FilterOps, native.RetentionOutputs, native.IdentifiedBy,
 		native.AttributeOutputs, native.AttributeTables, native.AttributeDimensions, native.AttributeOps} {
 		for _, name := range list {

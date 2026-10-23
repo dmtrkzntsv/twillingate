@@ -15,9 +15,12 @@ interface Q {
 }
 
 // native.Query.Columns(), mirrored: the result's columns before rename.
+// A trend of several metrics is long: day, series, value.
+const long = (q: Q) => q.kind === 'trend' && q.metrics.length > 1
 function columnsOf(q: Q): string[] {
   const name = (m: Q['metrics'][number]) => m.as || (m.column ? `${m.op}_${m.column}` : m.of ? `${m.op}_${m.of}` : m.op)
   const cols: string[] = []
+  if (long(q)) return ['day', 'series', 'value']
   if (q.kind === 'trend') cols.push('day', ...(q.series ? ['series'] : []))
   if (q.kind === 'breakdown') cols.push(...(q.dimensions ?? []))
   cols.push(...q.metrics.map(name))
@@ -28,12 +31,19 @@ function columnsOf(q: Q): string[] {
 // native.Query.ColumnTypes(), mirrored: each column's type, in order.
 function typesOf(q: Q): string[] {
   const numeric = ['project_id', 'display_width', 'display_height', 'consent', 'bucket']
-  const dim = (d: string) => (q.other ? 'text' : d === 'day' ? 'day' : numeric.includes(d) ? 'number' : 'text')
+  const days = ['day', 'user_first_seen', 'group_first_seen']
+  const dim = (d: string) => (q.other ? 'text' : days.includes(d) ? 'day' : numeric.includes(d) ? 'number' : 'text')
+  // A min or max of day is a day, of a time text.
+  const times = ['ts', 'received_at', 'started_at', 'ended_at']
+  const bound = (m: Q['metrics'][number]) => m.op === 'min' || m.op === 'max'
+  const metric = (m: Q['metrics'][number]) =>
+    bound(m) && m.column === 'day' ? 'day' : bound(m) && times.includes(m.column ?? '') ? 'text' : 'number'
   const types: string[] = []
+  if (long(q)) return ['day', 'text', 'number']
   if (q.kind === 'trend') types.push('day', ...(q.series ? ['text'] : []))
   if (q.kind === 'breakdown') types.push(...(q.dimensions ?? []).map(dim))
-  types.push(...q.metrics.map(() => 'number'))
-  if (q.kind === 'stat' && q.compare === 'previous') types.push(...q.metrics.map(() => 'number'))
+  types.push(...q.metrics.map(metric))
+  if (q.kind === 'stat' && q.compare === 'previous') types.push(...q.metrics.map(metric))
   return types
 }
 
@@ -141,7 +151,7 @@ describe('query templates', () => {
     for (const k of Object.keys(rename)) expect(cols).toContain(k)
     expect(new Set(Object.values(rename)).size).toBe(Object.values(rename).length)
     const out = cols.map((col) => rename[col] ?? col)
-    if (query.kind === 'trend') expect(query.metrics).toHaveLength(1)
+    if (query.kind === 'trend' && query.series) expect(query.metrics).toHaveLength(1)
     if (query.kind === 'breakdown') expect(query.dimensions?.length).toBeGreaterThan(0)
     if (c.inputs.open) return
     for (const input of c.inputs.columns.filter((x) => !x.optional)) expect(out).toContain(input.name)
@@ -155,6 +165,12 @@ describe('query templates', () => {
     })
     // A breakdown's order names a metric or a dimension.
     if (query.order) expect(cols).toContain(query.order)
+  })
+  it('mirrors a trend of several metrics as day, series and value', () => {
+    const q: Q = { kind: 'trend', table: 'views', metrics: [{ op: 'count', as: 'Views' }, { op: 'actors', as: 'Visitors' }] }
+    expect(columnsOf(q)).toEqual(['day', 'series', 'value'])
+    expect(typesOf(q)).toEqual(['day', 'text', 'number'])
+    expect(typesOf({ kind: 'trend', table: 'views', metrics: [{ op: 'max', column: 'day' }] })).toEqual(['day', 'day'])
   })
   it('orders the combo by day and the heatmap by count', () => {
     expect(JSON.parse(queryTemplate('combo')).query).toMatchObject({ dimensions: ['day'], order: 'day', limit: 1000 })
