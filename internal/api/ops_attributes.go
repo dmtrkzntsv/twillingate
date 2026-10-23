@@ -87,7 +87,7 @@ func (h *host) listAttributes(ctx context.Context, in attributesIn) (listAttribu
 			return listAttributesOut{}, err
 		}
 		if res.Truncated {
-			return listAttributesOut{}, invalidf("too many attribute keys and values to count in one pass; narrow the date range")
+			return listAttributesOut{}, invalidf("too many attribute keys to count in one pass; narrow the date range")
 		}
 		for _, r := range res.Rows {
 			out.KeysTotal = cellInt(r[3])

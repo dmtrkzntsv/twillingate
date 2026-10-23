@@ -226,8 +226,18 @@ func TestListAttributesKeepsEveryRuleNamedKey(t *testing.T) {
 	if n := len(out.Attributes); n != native.MaxKeep+2 {
 		t.Errorf("%d keys, want the busiest, zz_last and the %d blocked", n, native.MaxKeep)
 	}
-	i := slices.IndexFunc(out.Attributes, func(a attributeOut) bool { return a.Key == "zz_last" })
-	if i < 0 || !out.Attributes[i].Received || out.Attributes[i].Events != 1 {
-		t.Errorf("zz_last = %+v, want received with its event", out.Attributes)
+	// The merged answers keep the old order: events descending, then key.
+	// plan (team x2) is the busiest, zz_last (asked in the second turn,
+	// rule keys going by key) next, then the blocked keys, by key.
+	if got := out.Attributes[:2]; len(out.Attributes) < 2 ||
+		got[0].Key != "plan" || got[0].Events != 2 || !got[0].Received ||
+		got[1].Key != "zz_last" || got[1].Events != 1 || !got[1].Received || !slices.Equal(got[1].Aliases, []string{"zz_old"}) {
+		t.Errorf("first keys = %+v, want plan (2), then zz_last (1)", out.Attributes[:min(2, len(out.Attributes))])
+	}
+	if !slices.IsSortedFunc(out.Attributes[2:], func(a, b attributeOut) int { return strings.Compare(a.Key, b.Key) }) {
+		t.Error("the blocked keys are not by key")
+	}
+	if out.KeysTotal != 2 {
+		t.Errorf("keys_total = %d, want 2 (plan, zz_last)", out.KeysTotal)
 	}
 }

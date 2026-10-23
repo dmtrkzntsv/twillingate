@@ -318,9 +318,10 @@ func (h *host) markPartial(out *tableOut, truncated bool, approximate []string) 
 // viewsDimension is one breakdown of the views table: the native
 // dimensions it groups by, the columns it returns them as, and the filter
 // that leaves views out, if any. A value not sent (NULL) reads as the
-// empty string, as the old SQL's COALESCE(col, '') read it: the two agree
+// empty string, as the old SQL's COALESCE read it: the two agree
 // because the files never hold an empty string (archive's log leaves
-// empty fields out), so NULL and '' never split one value in two.
+// empty fields out), so NULL and the empty string never split one value
+// in two.
 type viewsDimension struct {
 	dims  []string
 	cols  []string
@@ -464,7 +465,7 @@ func (h *host) register(r *registrar) {
 		Description: "The limits in force, grouped: retention (days the event files, archived items and form drafts are kept) and ingest (INGEST_LATE_DAYS, how far back a client timestamp may lie before it is clamped, then the wire format's fixed limits: body, batch, attributes, timestamps, measures). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here. Also events_30d: count, the events in the event files from from through to (the 30 days ending today, UTC), of every family and project, counted at most every 5 minutes (never more than 10 minutes old); absent when the last count failed. And ingest_disabled: true when INGEST_DISABLED is set and every ingest route refuses events and form submissions."},
 		h.listLimits)
 	expose(r, spec{Name: "list_attributes", Annotations: ro, Method: "GET", Path: p + "/attributes",
-		Description: "A project's attributes, from the event files with the attribute rules applied: the keys its product events and measures carried over a range (default the last 30 days, at most 400). Per key the events that carried it and its distinct values over the range, whether any event carried it (received), whether block_attribute hides it (blocked), and its aliases, the keys renamed or merged into it. Lists the 500 busiest keys plus every key a rule names (received false when none carried it; a blocked key always); a key renamed away reads as its target and is listed only in its aliases. keys_total counts the distinct keys received. A key's values past 1,024 are estimated (about ±2%); a range with more keys and values than one pass counts is refused."},
+		Description: "A project's attributes, from the event files with the attribute rules applied: the keys its product events and measures carried over a range (default the last 30 days, at most 400). Per key the events that carried it and its distinct values over the range, whether any event carried it (received), whether block_attribute hides it (blocked), and its aliases, the keys renamed or merged into it. Lists the 500 busiest keys plus every key a rule names (received false when none carried it; a blocked key always); a key renamed away reads as its target and is listed only in its aliases. keys_total counts the distinct keys received. A key's values past 1,024 are estimated (about ±2%); a range with more keys than one pass counts is refused."},
 		h.listAttributes)
 	expose(r, spec{Name: "usage", Annotations: ro, Method: "GET", Path: "/api/usage",
 		Description: "Usage per project over a range (default the last 30 days, at most 400), from the event files: views, product events and measure samples per day (every day, zeros included) and in total, when the newest event arrived (whatever the range), the oldest day the files hold, and the bytes the project's event files take (measured by the daily pass of the process that keeps them, which also runs at start: size is the latest, with the day it was measured_at, null until the first measurement; each series day carries that day's total_bytes, null on days not measured). Without project_id, every project. Also the database's size now and per day (database_series, null on days not measured)."},

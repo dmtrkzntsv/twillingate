@@ -1402,5 +1402,6 @@ inputs and output fields.
   - `product_attributes` and `list_attributes` take ranges past 92 days (`list_attributes` up to 400); a range the engine cannot hold is refused, or for `product_attributes` marked `truncated`.
   - `list_attributes` estimates a key's `values` past 1,024 distinct values (about ±2%).
   - `identities` leaves `name` empty for an id whose display name is the id itself.
+  - `measures` prints a whole number without a decimal: `200`, where it printed `200.0`.
 
 Rollback: install the previous release; nothing in the database changed.
