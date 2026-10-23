@@ -2,9 +2,12 @@ package archive
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -501,5 +504,254 @@ func TestWriterRefusesTheWrongKind(t *testing.T) {
 			t.Errorf("%d: a value of the wrong kind is accepted", i)
 		}
 		w.Abort()
+	}
+}
+
+// wideCols is a dumped day's columns with attrs attribute keys: 40 fixed
+// ones (an id, family, day, ts, project_id and 35 low-cardinality
+// strings), then attr_k0 … attr_k<attrs-1>.
+func wideCols(attrs int) []pqColumn {
+	cols := []pqColumn{{"id", colVarchar}, {"family", colVarchar}, {"day", colDate}, {"ts", colTimestamp}, {"project_id", colBigint}}
+	for i := 5; i < 40; i++ {
+		cols = append(cols, pqColumn{fmt.Sprint("f", i), colVarchar})
+	}
+	for i := range attrs {
+		cols = append(cols, pqColumn{fmt.Sprint("attr_k", i), colVarchar})
+	}
+	return cols
+}
+
+// writeWide writes rows rows of wideCols(attrs) to path, each row with 5
+// attributes set, spread over the keys, and reports the peak heap in use
+// above what it was before, sampled every 256 rows. set counts the values
+// each attribute column got, lo and hi attr_k5's least and greatest.
+func writeWide(t testing.TB, path string, attrs, rows int) (peak uint64, set []int, lo, hi string) {
+	cols := wideCols(attrs)
+	small := make([]string, 100)
+	for i := range small {
+		small[i] = fmt.Sprint("x", i)
+	}
+	set = make([]int, attrs)
+	runtime.GC()
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	base := ms.HeapInuse
+	sample := func() {
+		runtime.ReadMemStats(&ms)
+		if ms.HeapInuse > base {
+			peak = max(peak, ms.HeapInuse-base)
+		}
+	}
+	w, err := newRowWriter(path, cols, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := make(row, len(cols))
+	for i := range rows {
+		clear(r)
+		r[0] = strValue(fmt.Sprintf("%032x", i*7919))
+		r[1] = strValue("views")
+		r[2] = dateValue(20000)
+		r[3] = timestampValue(int64(i) * 1000)
+		r[4] = intValue(1)
+		for j := 5; j < 40; j++ {
+			r[j] = strValue(small[(i+j)%30])
+		}
+		for k := range min(5, attrs) {
+			a := (i*5 + k*7919) % attrs
+			if !r[40+a].ok {
+				set[a]++
+			}
+			v := small[i%100]
+			if a == 5 && attrs > 5 {
+				if lo == "" || v < lo {
+					lo = v
+				}
+				hi = max(hi, v)
+			}
+			r[40+a] = strValue(v)
+		}
+		if err := w.Write(r); err != nil {
+			t.Fatal(err)
+		}
+		if i%256 == 0 {
+			sample()
+		}
+	}
+	sample()
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return peak, set, lo, hi
+}
+
+// TestWideFileMatchesNarrow: the same rows written by row and by column
+// (byColumnCols lowered) read back the same through DuckDB, with the same
+// types, row groups and statistics: every type, NULLs, a long string, an
+// all-NULL group, a dictionary that falls back to PLAIN, groups cut by
+// the cut rule and by byColumnCells; and an empty file.
+func TestWideFileMatchesNarrow(t *testing.T) {
+	f := newFixture(t)
+	defer SetDictMaxBytes(1 << 10)()
+	dir := filepath.Join(f.log.Dir(), "w")
+	os.MkdirAll(dir, 0o750)
+	cols := append([]pqColumn{{"family", colVarchar}}, allTypes...)
+	long := strings.Repeat("y", 4000)
+	var rows []row
+	for i := range 3000 {
+		fam := strValue("product")
+		if i >= 2000 {
+			fam = strValue("views")
+		}
+		v := strValue(fmt.Sprintf("path-%05d", i))
+		switch {
+		case i == 1999:
+			v = strValue(long)
+		case i >= 1500 && i < 2000:
+			v = value{}
+		}
+		r := row{fam, v, intValue(int64(i - 1000)), floatValue(float64(i) / 8), dateValue(int32(20000 + i/1000)), timestampValue(int64(i) * 1_000_003)}
+		if i%5 == 0 {
+			r[2], r[3], r[4], r[5] = value{}, value{}, value{}, value{}
+		}
+		rows = append(rows, r)
+	}
+	byFamily := func(prev, next row) bool { return prev[0] != next[0] }
+	narrow, wide := filepath.Join(dir, "narrow.parquet"), filepath.Join(dir, "wide.parquet")
+	writeRows(t, narrow, cols, byFamily, rows...)
+	func() {
+		defer setByColumn(0, 1200*6)()
+		writeRows(t, wide, cols, byFamily, rows...)
+	}()
+	ask := func(sql, p string) []string {
+		return f.values(t, strings.ReplaceAll(sql, "$f", "read_parquet("+quote(p)+")"))
+	}
+	for _, q := range []string{
+		"SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM $f)",
+		"SELECT family, v, b, d, dt::VARCHAR, epoch_us(ts) FROM $f",
+		"SELECT count(*), count(v), min(v), length(max(v)), sum(b), sum(d), min(dt)::VARCHAR, max(ts)::VARCHAR FROM $f",
+	} {
+		if got, want := ask(q, wide), ask(q, narrow); !eq(got, want) {
+			t.Errorf("%s: by column %.300v, by row %.300v", q, got, want)
+		}
+	}
+	// The groups: by row, cut by family (2000, 1000); by column, also once
+	// 7,200 values are held, 1,385 rows (every fifth row has 2 of its 6).
+	if got := fmt.Sprint(groupRows(t, narrow)); got != "[2000 1000]" {
+		t.Errorf("by-row groups %s", got)
+	}
+	if got := fmt.Sprint(groupRows(t, wide)); got != "[1385 615 1000]" {
+		t.Errorf("by-column groups %s", got)
+	}
+	// Each column's statistics over the file: nulls summed, bounds folded.
+	stats := func(p string) []string {
+		pf := openMeta(t, p)
+		var out []string
+		for c := range cols {
+			var nulls int64
+			var lo, hi []byte
+			for _, rg := range pf.Metadata().RowGroups {
+				st := rg.Columns[c].MetaData.Statistics
+				nulls += st.NullCount
+				if st.MinValue == nil {
+					continue
+				}
+				if lo == nil || cmpStat(cols[c].Type, st.MinValue, lo) < 0 {
+					lo = st.MinValue
+				}
+				if hi == nil || cmpStat(cols[c].Type, st.MaxValue, hi) > 0 {
+					hi = st.MaxValue
+				}
+			}
+			out = append(out, fmt.Sprintf("%s nulls=%d min=%.20x max=%.20x/%d", cols[c].Name, nulls, lo, hi, len(hi)))
+		}
+		return out
+	}
+	if got, want := stats(wide), stats(narrow); !eq(got, want) {
+		t.Errorf("statistics by column %v, by row %v", got, want)
+	}
+	if md := openMeta(t, wide).Metadata(); len(md.ColumnOrders) != len(cols) {
+		t.Errorf("%d column orders", len(md.ColumnOrders))
+	}
+
+	empty := filepath.Join(dir, "empty.parquet")
+	func() {
+		defer setByColumn(0, byColumnCells)()
+		writeRows(t, empty, cols, nil)
+	}()
+	if got, want := ask("SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM $f)", empty), ask("SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM $f)", narrow); !eq(got, want) {
+		t.Errorf("empty by column: %v", got)
+	}
+	if got := ask("SELECT count(*) FROM $f", empty); !eq(got, []string{"[0]"}) || len(groupRows(t, empty)) != 0 {
+		t.Errorf("empty by column holds %v", got)
+	}
+}
+
+// cmpStat compares two statistics bounds of a column of type t.
+func cmpStat(t colType, a, b []byte) int {
+	switch t {
+	case colVarchar:
+		return strings.Compare(string(a), string(b))
+	case colDouble:
+		return cmpNum(math.Float64frombits(binary.LittleEndian.Uint64(a)), math.Float64frombits(binary.LittleEndian.Uint64(b)))
+	case colDate:
+		return cmpNum(int32(binary.LittleEndian.Uint32(a)), int32(binary.LittleEndian.Uint32(b)))
+	}
+	return cmpNum(int64(binary.LittleEndian.Uint64(a)), int64(binary.LittleEndian.Uint64(b)))
+}
+
+func cmpNum[T int32 | int64 | float64](a, b T) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	}
+	return 0
+}
+
+// setByColumn sets byColumnCols and byColumnCells; the returned func
+// restores them.
+func setByColumn(cols, cells int) func() {
+	oldCols, oldCells := byColumnCols, byColumnCells
+	byColumnCols, byColumnCells = cols, cells
+	return func() { byColumnCols, byColumnCells = oldCols, oldCells }
+}
+
+// TestWriterBoundsWideFiles: a day of 2,000 columns, nearly all sparse
+// attributes, is written by column in under 150 MB of heap (about 310 MB
+// by row), and DuckDB reads it back whole, with exact statistics.
+func TestWriterBoundsWideFiles(t *testing.T) {
+	f := newFixture(t)
+	dir := filepath.Join(f.log.Dir(), "w")
+	os.MkdirAll(dir, 0o750)
+	p := filepath.Join(dir, "wide.parquet")
+	const attrs, rows = 1960, 20000
+	peak, set, lo5, hi5 := writeWide(t, p, attrs, rows)
+	t.Logf("peak heap %.1f MB", float64(peak)/1e6)
+	if peak > 150e6 {
+		t.Errorf("peak heap %.1f MB, want under 150 MB", float64(peak)/1e6)
+	}
+	got := f.values(t, "SELECT count(*), count(DISTINCT id), count(attr_k0), count(attr_k977), count(attr_k1959), min(attr_k5), max(attr_k5) FROM read_parquet("+quote(p)+")")
+	if want := fmt.Sprintf("[%d %d %d %d %d %s %s]", rows, rows, set[0], set[977], set[1959], lo5, hi5); !eq(got, []string{want}) {
+		t.Errorf("read back %v, want %s", got, want)
+	}
+	if got := f.values(t, "SELECT count(*) FROM (DESCRIBE SELECT * FROM read_parquet("+quote(p)+"))"); !eq(got, []string{"[2000]"}) {
+		t.Errorf("columns %v", got)
+	}
+	// attr_k5's values: its null count and bounds in the statistics.
+	pf := openMeta(t, p)
+	var nulls int64
+	lo, hi := "", ""
+	for _, rg := range pf.Metadata().RowGroups {
+		st := rg.Columns[45].MetaData.Statistics
+		nulls += st.NullCount
+		if st.MinValue != nil && (lo == "" || string(st.MinValue) < lo) {
+			lo = string(st.MinValue)
+		}
+		hi = max(hi, string(st.MaxValue))
+	}
+	if nulls != int64(rows-set[5]) || lo != lo5 || hi != hi5 {
+		t.Errorf("attr_k5 statistics: %d nulls, %s to %s; want %d, %s to %s", nulls, lo, hi, rows-set[5], lo5, hi5)
 	}
 }

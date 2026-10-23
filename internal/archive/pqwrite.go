@@ -83,12 +83,24 @@ const pageBytes = 32 << 10
 // parquet-go at once (a call per row costs more than the rows).
 const pendingRows = 256
 
+// byColumnCols is the width past which a file is written by column
+// (pqwide.go): parquet-go keeps buffers for every column of the open group,
+// at least about 20 KB a column however few values it holds and about 150
+// KB once its pages fill, so a day log with 15,000 attribute keys took
+// about 2 GB. A file of up to byColumnCols columns, a typical one, is
+// written by row as it always was. A variable so a test can change it.
+var byColumnCols = 256
+
 // rowWriter writes one Parquet file row by row, cutting a row group when
 // cut(prev, next) says so or after maxGroupRows rows, and finishing the
 // file atomically on Close: rows go to path.tmp, which Close makes 0640,
 // fsyncs, renames over path and whose directory it fsyncs, so a reader
 // sees the old file or the whole new one and a crash leaves at most a
 // .tmp. A writer that fails, or is not to be kept, is Aborted.
+//
+// A file of more than byColumnCols columns is written by column instead
+// (wideFile): the same encoding, its memory bounded by its values rather
+// than its width.
 //
 // Memory: parquet-go holds the open row group until it is cut: each
 // column's compressed pages, one page being filled per column (pageBytes)
@@ -117,6 +129,7 @@ type rowWriter struct {
 
 	pending []parquet.Row // converted rows not yet given to pw
 	vals    []parquet.Value
+	wide    *wideFile // a file of more than byColumnCols columns, else nil
 	err     error
 	done    bool
 }
@@ -125,7 +138,12 @@ type rowWriter struct {
 // one OPTIONAL, in that order. cut may be nil: groups are then cut by size
 // alone.
 func newRowWriter(path string, cols []pqColumn, cut func(prev, next row) bool) (*rowWriter, error) {
-	schema, err := pqSchema(cols)
+	wide := len(cols) > byColumnCols
+	var schema *parquet.Schema
+	err := checkColumns(cols)
+	if err == nil && !wide {
+		schema, err = pqSchema(cols)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("archive: %s: %w", filepath.Base(path), err)
 	}
@@ -137,13 +155,24 @@ func newRowWriter(path string, cols []pqColumn, cut func(prev, next row) bool) (
 	}
 	w := &rowWriter{path: path, cols: cols, cut: cut, f: f, buf: bufio.NewWriterSize(f, 256<<10),
 		prev: make(row, len(cols))}
-	w.pw = parquet.NewWriter(w.buf, schema,
+	if wide {
+		w.wide = newWideFile(w.buf, cols)
+		return w, nil
+	}
+	w.pw = parquet.NewWriter(w.buf, pqOptions(schema)...)
+	return w, nil
+}
+
+// pqOptions are the writer's options for schema, a by-column file's
+// chunks' too.
+func pqOptions(schema *parquet.Schema) []parquet.WriterOption {
+	return []parquet.WriterOption{
+		schema,
 		parquet.Compression(&parquet.Zstd),
 		parquet.DictionaryMaxBytes(dictMaxBytes),
 		parquet.PageBufferSize(pageBytes),
 		parquet.CreatedBy("twillingate", "", ""),
-	)
-	return w, nil
+	}
 }
 
 // Write appends r, which must have one value per column, each of its
@@ -165,14 +194,20 @@ func (w *rowWriter) Write(r row) error {
 			return w.err
 		}
 	}
-	if w.inGroup > 0 && (w.inGroup >= maxGroupRows || (w.cut != nil && w.havePrev && w.cut(w.prev, r))) {
+	if w.inGroup > 0 && (w.inGroup >= maxGroupRows || (w.wide != nil && w.wide.full()) ||
+		(w.cut != nil && w.havePrev && w.cut(w.prev, r))) {
 		if err := w.flushGroup(); err != nil {
 			return err
 		}
 	}
-	w.pending = append(w.pending, w.convert(r))
 	copy(w.prev, r)
 	w.havePrev = true
+	if w.wide != nil {
+		w.wide.add(w.inGroup, r)
+		w.inGroup++
+		return nil
+	}
+	w.pending = append(w.pending, w.convert(r))
 	w.inGroup++
 	if len(w.pending) == pendingRows {
 		return w.flushPending()
@@ -185,22 +220,26 @@ func (w *rowWriter) Write(r row) error {
 func (w *rowWriter) convert(r row) parquet.Row {
 	start := len(w.vals)
 	for j, v := range r {
-		var pv parquet.Value
-		switch {
-		case !v.ok:
-			pv = parquet.NullValue().Level(0, 0, j)
-		case w.cols[j].Type == colVarchar:
-			pv = parquet.ByteArrayValue(unsafe.Slice(unsafe.StringData(v.s), len(v.s))).Level(0, 1, j)
-		case w.cols[j].Type == colDate:
-			pv = parquet.Int32Value(int32(v.n)).Level(0, 1, j)
-		case w.cols[j].Type == colDouble:
-			pv = parquet.DoubleValue(math.Float64frombits(uint64(v.n))).Level(0, 1, j)
-		default:
-			pv = parquet.Int64Value(v.n).Level(0, 1, j)
-		}
-		w.vals = append(w.vals, pv)
+		w.vals = append(w.vals, pqValue(j, v))
 	}
 	return parquet.Row(w.vals[start:len(w.vals):len(w.vals)])
+}
+
+// pqValue is v as column j's parquet value: definition level 1, or a NULL
+// at level 0. A string's bytes are the string's own, which parquet-go
+// copies out without writing to them.
+func pqValue(j int, v value) parquet.Value {
+	switch {
+	case !v.ok:
+		return parquet.NullValue().Level(0, 0, j)
+	case v.k == colVarchar:
+		return parquet.ByteArrayValue(unsafe.Slice(unsafe.StringData(v.s), len(v.s))).Level(0, 1, j)
+	case v.k == colDate:
+		return parquet.Int32Value(int32(v.n)).Level(0, 1, j)
+	case v.k == colDouble:
+		return parquet.DoubleValue(math.Float64frombits(uint64(v.n))).Level(0, 1, j)
+	}
+	return parquet.Int64Value(v.n).Level(0, 1, j)
 }
 
 func (w *rowWriter) flushPending() error {
@@ -222,7 +261,13 @@ func (w *rowWriter) flushGroup() error {
 	if err := w.flushPending(); err != nil {
 		return err
 	}
-	if err := w.pw.Flush(); err != nil {
+	var err error
+	if w.wide != nil {
+		err = w.wide.writeGroup(w.inGroup)
+	} else {
+		err = w.pw.Flush()
+	}
+	if err != nil {
 		w.err = fmt.Errorf("archive: %s: %w", filepath.Base(w.path), err)
 		return w.err
 	}
@@ -254,10 +299,16 @@ func (w *rowWriter) finish() error {
 		return w.err
 	}
 	tmp := w.path + ".tmp"
-	if err := w.flushPending(); err != nil {
+	if err := w.flushGroup(); err != nil {
 		return err
 	}
-	if err := w.pw.Close(); err != nil {
+	var err error
+	if w.wide != nil {
+		err = w.wide.close()
+	} else {
+		err = w.pw.Close()
+	}
+	if err != nil {
 		return fmt.Errorf("archive: %s: %w", filepath.Base(w.path), err)
 	}
 	if err := w.buf.Flush(); err != nil {
@@ -291,17 +342,27 @@ func (w *rowWriter) Abort() {
 	os.Remove(w.path + ".tmp")
 }
 
+// checkColumns refuses a name given twice and an unknown type.
+func checkColumns(cols []pqColumn) error {
+	seen := make(map[string]bool, len(cols))
+	for _, c := range cols {
+		if seen[c.Name] {
+			return fmt.Errorf("column %s twice", c.Name)
+		}
+		seen[c.Name] = true
+		if c.Type > colTimestamp {
+			return fmt.Errorf("column %s: unknown type %d", c.Name, c.Type)
+		}
+	}
+	return nil
+}
+
 // pqSchema is cols as a flat Parquet schema of OPTIONAL leaves, in cols'
 // order (parquet.Group would sort them by name), each zstd compressed and
 // VARCHARs dictionary encoded, as DuckDB writes them.
 func pqSchema(cols []pqColumn) (*parquet.Schema, error) {
 	fields := make([]parquet.Field, len(cols))
-	seen := make(map[string]bool, len(cols))
 	for i, c := range cols {
-		if seen[c.Name] {
-			return nil, fmt.Errorf("column %s twice", c.Name)
-		}
-		seen[c.Name] = true
 		var leaf parquet.Node
 		switch c.Type {
 		case colVarchar:

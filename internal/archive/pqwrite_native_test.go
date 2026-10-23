@@ -113,3 +113,50 @@ func TestNativeReadsPlainFallback(t *testing.T) {
 		t.Errorf("stat = %s, want %s", got, want)
 	}
 }
+
+// TestNativeReadsWideFiles: native reads a file wide enough to be written
+// with small pages and no dictionaries.
+func TestNativeReadsWideFiles(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "1"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	const attrs, rows = 1100, 2500
+	cols := []archive.PQColumn{{Name: "family", Type: archive.ColVarchar}, {Name: "day", Type: archive.ColDate},
+		{Name: "ts", Type: archive.ColTimestamp}, {Name: "event_name", Type: archive.ColVarchar}}
+	for i := range attrs {
+		cols = append(cols, archive.PQColumn{Name: fmt.Sprint("attr_k", i), Type: archive.ColVarchar})
+	}
+	day := civil.Date{Year: 2026, Month: 10, Day: 1}
+	w, err := archive.NewRowWriter(filepath.Join(dir, "1", "2026-10-01.parquet"), cols, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := make(archive.Row, len(cols))
+	for i := range rows {
+		clear(r)
+		r[0], r[1] = archive.StrValue("product"), archive.DateValue(int32(day.Time().Unix()/86400))
+		r[2], r[3] = archive.TimestampValue(day.Time().UnixMicro()+int64(i)), archive.StrValue("signup")
+		r[4+i%attrs] = archive.StrValue(fmt.Sprint("v", i))
+		if err := w.Write(r); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	e := native.New(native.Options{Dir: dir, Now: func() time.Time { return day.Time().AddDate(0, 0, 1) }})
+	q := native.Query{Kind: "stat", Table: "product", Metrics: []native.Metric{
+		{Op: "count"},
+		{Op: "count", As: "last", Where: []native.Filter{{Column: "attr_k1099", Op: "is_set"}}},
+		{Op: "count", As: "v2199", Where: []native.Filter{{Column: "attr_k1099", Op: "eq", Values: []string{"v2199"}}}},
+		{Op: "count", As: "first", Where: []native.Filter{{Column: "attr_k0", Op: "in", Values: []string{"v0", "v1100", "v2200"}}}},
+	}}
+	res, err := e.Answer(context.Background(), q, native.Params{Project: 1, From: day, To: day}, archive.Rules{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := fmt.Sprint(res.Rows), "[[2500 2 1 3]]"; got != want {
+		t.Errorf("stat = %s, want %s", got, want)
+	}
+}
