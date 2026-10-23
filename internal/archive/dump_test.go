@@ -318,7 +318,8 @@ func TestDumpFailsWhereDuckDBDid(t *testing.T) {
 
 // TestDumpKeepsTiesInFileOrder: rows equal in family and ts keep the order
 // of their lines (a stable sort), and a row group is cut where the family
-// or the day changes.
+// changes, and where the day does (a late event's) only once the group
+// holds dayCutRows rows.
 func TestDumpKeepsTiesInFileOrder(t *testing.T) {
 	f := newFixture(t)
 	late := evOf(1, "p-late-day", "2026-10-11T10:00:00Z")
@@ -334,8 +335,19 @@ func TestDumpKeepsTiesInFileOrder(t *testing.T) {
 	if want := []string{"[p-z]", "[p-a]", "[p-m]", "[p-late-day]", "[v-b]", "[v-a]"}; !eq(got, want) {
 		t.Fatalf("rows = %v, want %v: ties in file order", got, want)
 	}
+	if got := groupRows(t, out); fmt.Sprint(got) != "[4 2]" {
+		t.Fatalf("row groups = %v, want [4 2]: cut at the family only", got)
+	}
+	setDayCutRows(t, 2)
+	os.Remove(out)
+	f.writeFile(t, "2026-10-11.parquet.dumping", logOf(t,
+		dumpView("v-b", "2026-10-11T10:00:00Z"), evOf(1, "p-z", "2026-10-11T10:00:00Z"), dumpView("v-a", "2026-10-11T10:00:00Z"),
+		evOf(1, "p-a", "2026-10-11T10:00:00Z"), late, evOf(1, "p-m", "2026-10-11T10:00:00Z")))
+	if err := dumpLog(out+".dumping", out); err != nil {
+		t.Fatal(err)
+	}
 	if got := groupRows(t, out); fmt.Sprint(got) != "[3 1 2]" {
-		t.Fatalf("row groups = %v, want [3 1 2]: cut at the day, then at the family", got)
+		t.Fatalf("row groups = %v, want [3 1 2]: past 2 rows, cut at the day, then at the family", got)
 	}
 }
 

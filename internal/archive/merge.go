@@ -31,8 +31,9 @@ import (
 //     Every row without an id counts as one id.
 //  2. The inputs are merged by (family, ts), NULLs last, each read a row
 //     group at a time; a tie goes to the earlier input, then the earlier
-//     row. Marked rows are skipped. A row group is cut where the family or
-//     the day changes, or after maxGroupRows rows (the writer's own bound
+//     row. Marked rows are skipped. Row groups are cut by eventsCut: where
+//     the family changes, where the day changes once the group holds
+//     dayCutRows rows, or after maxGroupRows rows (the writer's own bound
 //     on a wide file's group comes on top).
 //
 // The columns are the union of the inputs': matched ignoring case, the
@@ -401,7 +402,7 @@ func (in *mergeInput) dropped(row int64) bool { return in.drop[row/64]&(1<<(row%
 // write is pass 2: it merges the inputs into out.
 func (m *monthMerge) write(ctx context.Context, out string) error {
 	fam, day := m.column("family"), m.column("day")
-	w, err := newRowWriter(out, m.cols, func(prev, next row) bool { return prev[fam] != next[fam] || prev[day] != next[day] })
+	w, err := newRowWriter(out, m.cols, eventsCut(fam, day))
 	if err != nil {
 		return err
 	}

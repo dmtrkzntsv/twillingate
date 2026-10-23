@@ -1418,7 +1418,7 @@ it from 128MiB to 256MiB, since the pass on a month of a million events
 peaks near 150 MB of resident memory on the day the month is merged.
 
 - **Before the upgrade**, nothing to check by hand on a systemd install: the installer rewrites the unit with `GOMEMLIMIT=256MiB`. A drop-in that sets `GOMEMLIMIT`, or a compose file of your own, keeps its value: raise a `128MiB` there to `256MiB`.
-- **On the day**, day and month files written from now on have smaller row groups: one per family and day, at most 65,536 rows each. Older files are left as they are until retention. Nothing to do.
+- **On the day**, day and month files written from now on have different row groups: one per family, cut at a day once it holds 32,768 rows, at most 65,536 rows each. Older files are left as they are until retention. Nothing to do.
 - The derived files (`sessions/`, `identities.parquet`, `aliases.parquet`) hold the same rows for events ingest writes. They are rewritten only when the events under them change, as before; the ones already there are kept.
 - A month file also gains every fixed column none of its days had, all empty: a month whose days were written by a release that lacked `install_id`, `user_name` and `group_name` now has them. Readers already read a missing column as empty, so no answer changes.
 - A month whose day file is not in order (one edited by hand) is not merged: the pass logs `not sorted by family and ts` with the file's name, and the month stays as day files, which read as before. A day file with a column of another type (also only by hand) is refused the same way, the column named.

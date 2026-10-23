@@ -66,6 +66,28 @@ func (v value) timestamp() int64    { return v.n }
 // whatever cut says.
 const maxGroupRows = 65536
 
+// dayCutRows is how many rows an events file's open group must hold before
+// a change of day cuts it (eventsCut). Small groups cost a scan their
+// setup (a chunk's pages and dictionary, per column) once each: a group
+// per family and day was 90 a month, about 1,100 rows each at 100,000
+// events a month, and made the small dashboards 2 to 6 times slower. Past
+// this many rows a group still ends at a day, so a short range at a
+// million events a month skips the days it does not hold. A variable so a
+// measurement can set it.
+var dayCutRows = 32768
+
+// eventsCut cuts an events file's (a day's or a month's) row groups, its
+// rows ordered by family, then ts: where the family changes, and where the
+// day changes once the open group holds dayCutRows rows; maxGroupRows
+// bounds a group either way. fam and day are the columns' indexes. A
+// group may hold several days: its day bounds say which, and a reader
+// filters its rows when the range takes only some of them.
+func eventsCut(fam, day int) func(prev, next row, rows int) bool {
+	return func(prev, next row, rows int) bool {
+		return prev[fam] != next[fam] || rows >= dayCutRows && prev[day] != next[day]
+	}
+}
+
 // dictMaxBytes bounds each VARCHAR column's dictionary in a row group:
 // past it, the column's later pages in that group are PLAIN, as DuckDB's
 // are past its own limit. Without it, a group of distinct strings (ids,
@@ -92,7 +114,7 @@ const pendingRows = 256
 var byColumnCols = 256
 
 // rowWriter writes one Parquet file row by row, cutting a row group when
-// cut(prev, next) says so or after maxGroupRows rows, and finishing the
+// cut(prev, next, rows) says so (rows: the open group's) or after maxGroupRows rows, and finishing the
 // file atomically on Close: rows go to path.tmp, which Close makes 0640,
 // fsyncs, renames over path and whose directory it fsyncs, so a reader
 // sees the old file or the whole new one and a crash leaves at most a
@@ -117,7 +139,7 @@ var byColumnCols = 256
 type rowWriter struct {
 	path string
 	cols []pqColumn
-	cut  func(prev, next row) bool
+	cut  func(prev, next row, rows int) bool
 
 	f   *os.File
 	buf *bufio.Writer
@@ -137,7 +159,7 @@ type rowWriter struct {
 // newRowWriter starts writing path (into path.tmp) with columns cols, every
 // one OPTIONAL, in that order. cut may be nil: groups are then cut by size
 // alone.
-func newRowWriter(path string, cols []pqColumn, cut func(prev, next row) bool) (*rowWriter, error) {
+func newRowWriter(path string, cols []pqColumn, cut func(prev, next row, rows int) bool) (*rowWriter, error) {
 	wide := len(cols) > byColumnCols
 	var schema *parquet.Schema
 	err := checkColumns(cols)
@@ -199,7 +221,7 @@ func (w *rowWriter) Write(r row) error {
 		}
 	}
 	if w.inGroup > 0 && (w.inGroup >= maxGroupRows || (w.wide != nil && w.wide.full()) ||
-		(w.cut != nil && w.havePrev && w.cut(w.prev, r))) {
+		(w.cut != nil && w.havePrev && w.cut(w.prev, r, w.inGroup))) {
 		if err := w.flushGroup(); err != nil {
 			return err
 		}

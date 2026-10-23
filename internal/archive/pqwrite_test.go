@@ -42,7 +42,7 @@ const allTypesSQL = `SELECT * FROM (VALUES
 	('it''s', 0::BIGINT, 1e300::DOUBLE, DATE '1970-01-01', TIMESTAMP '1970-01-01 00:00:00')
 ) t(v, b, d, dt, ts)`
 
-func writeRows(t *testing.T, path string, cols []pqColumn, cut func(prev, next row) bool, rows ...row) {
+func writeRows(t *testing.T, path string, cols []pqColumn, cut func(prev, next row, rows int) bool, rows ...row) {
 	t.Helper()
 	w, err := newRowWriter(path, cols, cut)
 	if err != nil {
@@ -191,7 +191,7 @@ func TestWriterStatsAreExact(t *testing.T) {
 	dir := t.TempDir()
 	p := filepath.Join(dir, "stats.parquet")
 	long := strings.Repeat("x", 5000)
-	cut := func(prev, next row) bool { return prev[2].int()/10 != next[2].int()/10 }
+	cut := func(prev, next row, _ int) bool { return prev[2].int()/10 != next[2].int()/10 }
 	writeRows(t, p, statsCols, cut,
 		// group 0: long strings, a NULL day
 		row{strValue(long + "b"), dateValue(20000), intValue(0)},
@@ -250,6 +250,13 @@ func TestWriterStatsAreExact(t *testing.T) {
 	}
 }
 
+// setDayCutRows sets dayCutRows for the test, restored after it.
+func setDayCutRows(t *testing.T, n int) {
+	old := dayCutRows
+	dayCutRows = n
+	t.Cleanup(func() { dayCutRows = old })
+}
+
 // groupRows is each row group's row count.
 func groupRows(t *testing.T, path string) []int64 {
 	t.Helper()
@@ -263,7 +270,7 @@ func groupRows(t *testing.T, path string) []int64 {
 // TestWriterCutsGroups: a group ends where cut says, and after 65,536 rows.
 func TestWriterCutsGroups(t *testing.T) {
 	dir := t.TempDir()
-	byFamily := func(prev, next row) bool { return prev[0] != next[0] }
+	byFamily := func(prev, next row, _ int) bool { return prev[0] != next[0] }
 	p := filepath.Join(dir, "cut.parquet")
 	rows := []row{}
 	for _, fam := range []string{"product", "product", "views", "views", "views", "measures"} {
@@ -548,9 +555,9 @@ func writeWide(t testing.TB, path string, attrs, rows, every int) (peak uint64, 
 			peak = max(peak, ms.HeapInuse-base)
 		}
 	}
-	var cut func(prev, next row) bool
+	var cut func(prev, next row, rows int) bool
 	if every > 0 {
-		cut = func(prev, next row) bool { return prev[4].int()/int64(every) != next[4].int()/int64(every) }
+		cut = func(prev, next row, _ int) bool { return prev[4].int()/int64(every) != next[4].int()/int64(every) }
 	}
 	w, err := newRowWriter(path, cols, cut)
 	if err != nil {
@@ -627,7 +634,7 @@ func TestWideFileMatchesNarrow(t *testing.T) {
 		}
 		rows = append(rows, r)
 	}
-	byFamily := func(prev, next row) bool { return prev[0] != next[0] }
+	byFamily := func(prev, next row, _ int) bool { return prev[0] != next[0] }
 	narrow, wide := filepath.Join(dir, "narrow.parquet"), filepath.Join(dir, "wide.parquet")
 	writeRows(t, narrow, cols, byFamily, rows...)
 	func() {
@@ -786,7 +793,7 @@ func TestWideFooterMatchesNarrow(t *testing.T) {
 	}
 	// By family and every 90 rows: 34 groups, so the list's header takes
 	// its long form (past 14 elements).
-	cut := func(prev, next row) bool {
+	cut := func(prev, next row, _ int) bool {
 		return prev[0] != next[0] || prev[7].timestamp()/90 != next[7].timestamp()/90
 	}
 	narrow, wide := filepath.Join(dir, "narrow.parquet"), filepath.Join(dir, "wide.parquet")

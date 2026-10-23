@@ -273,8 +273,9 @@ func TestGoMergeMatchesDuckDB(t *testing.T) {
 }
 
 // TestMergeKeepsTiesInInputOrder: rows equal in family and ts come out by
-// input, then by row, and a row group is cut where the family or the day
-// changes, or at maxGroupRows.
+// input, then by row, and a row group is cut where the family changes,
+// where the day does once the group holds dayCutRows rows, or at
+// maxGroupRows.
 func TestMergeKeepsTiesInInputOrder(t *testing.T) {
 	f := newFixture(t)
 	dir := f.project1("")
@@ -290,9 +291,17 @@ func TestMergeKeepsTiesInInputOrder(t *testing.T) {
 	if want := []string{"[p-1a]", "[p-1b]", "[p-sa]", "[p-2]", "[v-1]", "[v-s]"}; !eq(got, want) {
 		t.Fatalf("rows = %v, want %v: ties by input, then row", got, want)
 	}
-	if got := groupRows(t, out); fmt.Sprint(got) != "[3 1 2]" {
-		t.Fatalf("row groups = %v, want [3 1 2]: cut at the day, then at the family", got)
+	if got := groupRows(t, out); fmt.Sprint(got) != "[4 2]" {
+		t.Fatalf("row groups = %v, want [4 2]: cut at the family, not at a day under dayCutRows", got)
 	}
+	setDayCutRows(t, 3)
+	if err := mergeFiles(context.Background(), []string{d1, seg}, out); err != nil {
+		t.Fatal(err)
+	}
+	if got := groupRows(t, out); fmt.Sprint(got) != "[3 1 2]" {
+		t.Fatalf("row groups = %v, want [3 1 2]: past 3 rows, cut at the day, then at the family", got)
+	}
+	setDayCutRows(t, 32768)
 	big := f.goDay(t, dir, "2026-09-03.parquet", sortedLog(t, "2026-09-03", "a", 1, 80000, "1")) // ids a-…0 are views
 	if err := mergeFiles(context.Background(), []string{big}, out); err != nil {
 		t.Fatal(err)

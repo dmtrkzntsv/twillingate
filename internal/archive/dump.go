@@ -28,8 +28,9 @@ import (
 // not check), so a later one can differ in received_at, actor_id, country
 // or attributes. Every line without an id counts as one id. The rows are
 // then stably sorted by family, then ts, NULLs last (ties keep file
-// order), and a row group is cut where the family or the day changes, or
-// after maxGroupRows rows.
+// order), and row groups are cut by eventsCut: where the family changes
+// (a day's file holds one day, so its day never cuts), or after
+// maxGroupRows rows.
 //
 // The log is read once: a key's type does not depend on where its column
 // lands (a fixed key has its own, every other is VARCHAR), so each kept
@@ -64,7 +65,7 @@ func dumpLog(src, out string) error {
 	})
 	// columnsOf lists the fields first, in order.
 	fam, day := fieldIndex("family"), fieldIndex("day")
-	w, err := newRowWriter(out, pq, func(prev, next row) bool { return prev[fam] != next[fam] || prev[day] != next[day] })
+	w, err := newRowWriter(out, pq, eventsCut(fam, day))
 	if err != nil {
 		return err
 	}
