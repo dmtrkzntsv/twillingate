@@ -310,24 +310,6 @@ func TestCheckUserWidgetsTellsResourceFailures(t *testing.T) {
 	}
 }
 
-// TestMigrateChecksTheSystemWidgetsPastTheConsoleTimeout: the boot's
-// check of the system widgets is no viewer's query. A CONSOLE_QUERY_TIMEOUT
-// far shorter than starting the engine's child leaves it whole: the
-// recorded hash is the release's, not one marked unchecked.
-func TestMigrateChecksTheSystemWidgetsPastTheConsoleTimeout(t *testing.T) {
-	f := newWidgetsFixture(t)
-	ctx := context.Background()
-	f.cfg.Console.QueryTimeout = time.Nanosecond
-	writeEvent(t, f.cfg.EventsDir) // without a file there is nothing to check on
-	if err := Migrate(ctx, f.cfg, f.st); err != nil {
-		t.Fatal(err)
-	}
-	hash, err := f.st.ReportingHash(ctx)
-	if err != nil || hash == "test" || strings.HasPrefix(hash, "unchecked") {
-		t.Errorf("ReportingHash = %q, %v; want the release's, every widget checked", hash, err)
-	}
-}
-
 // TestMigrateStartsWhenTheSystemCheckCannotRun: a check of the system
 // widgets that runs out of time or memory, or whose child dies, comes
 // back from the reporting migrator as ErrUnchecked (reporting's own tests

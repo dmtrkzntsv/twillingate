@@ -84,8 +84,9 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		return err
 	}
 	defer st.Close()
-	// The engine (raw-first D8): the reporting migrator validates the
-	// system widgets on the event files through it, the ingest process's
+	// The engine (raw-first D8): the reporting migrator validates SQL
+	// system widgets on the event files through it (this release's carry
+	// none, so it runs no query there), the ingest process's
 	// daily pass dumps and merges through it, the console's widgets and
 	// query read the files through it. A child starts on the first
 	// request, so a process that needs none runs none. Closed after the

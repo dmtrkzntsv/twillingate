@@ -32,10 +32,14 @@ var _ reporting.Store = store.Store(nil)
 //
 // The reporting migrator validates every system widget on the event
 // files, so Migrate builds an engine on this binary for it, closed before
-// it returns. The engine spawns its child only when a query runs, which
-// is only when the release's system definition changed and EVENTS_DIR
-// holds an event file to check it on: most runs spawn none, and neither
-// does a fresh install's first. The run that does must be the database
+// it returns. This release's system widgets carry no SQL (they are
+// structured queries, answered without the engine), so that check runs
+// no query and spawns no child; what follows stays for a release whose
+// system widgets read SQL, until DuckDB leaves. The engine spawns its
+// child only when a query runs, which is only when the release's system
+// definition changed, a system widget reads SQL, and EVENTS_DIR holds an
+// event file to check it on: most runs spawn none, and neither does a
+// fresh install's first. The run that does must be the database
 // owner's (checkOwner): a child spawned as root leaves engine/slots,
 // engine/spill and raw/ owned by root, which the service user then cannot
 // open. Migrate checks just before that first query, so a command run as
@@ -74,7 +78,8 @@ func migrate(ctx context.Context, cfg *config.Config, st store.Store, reader *ar
 	// No event file at all (a fresh install): nothing to check the system
 	// widgets on, so the migrator runs no query and spawns no child
 	// (reporting.Migrate with nil Files); the first start with files
-	// checks them.
+	// checks them. This release's system widgets carry no SQL, so even
+	// that check runs no query.
 	some, err := hasEventFiles(cfg.EventsDir)
 	if err != nil {
 		return err
@@ -92,7 +97,8 @@ func migrate(ctx context.Context, cfg *config.Config, st store.Store, reader *ar
 }
 
 // migrateQueryTimeout bounds each query of the reporting migrator's check
-// of the system widgets: long enough for the first to load a month of
+// of the system widgets' SQL (none in this release's, which carry no
+// SQL; kept for SQL system widgets until DuckDB leaves): long enough for the first to load a month of
 // logs at the cap that the daily pass has not dumped yet, short enough
 // that a start which cannot load them goes on (ErrUnchecked) while ingest
 // waits.
