@@ -24,6 +24,7 @@ func TestEveryToolChoosesATransport(t *testing.T) {
 	restOnly := map[string]bool{"view": true, "create_widget_share": true, "widget_share_image": true, // the web app's own selection, upload and picture
 		"export_submissions": true,                           // a CSV download
 		"preview_widget":     true,                           // the console editor's Run query
+		"widget_stream":      true,                           // the console's dashboard load, as Server-Sent Events
 		"mark_form_seen":     true, "project_activity": true, // the console's own read mark and badges
 		"event_names": true, // the Settings page's event list
 	}

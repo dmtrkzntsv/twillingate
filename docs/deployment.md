@@ -110,6 +110,15 @@ SDK dormant with a console warning. Snippets use `INGEST_URL`; change the
 `src` per hostname, and keep the console on one — OAuth and `cloudflare://` bind
 to it.
 
+A dashboard page loads its widgets over one streamed response
+(`POST /api/widgets/stream`, `text/event-stream`), so a proxy in front of the
+console must not buffer it, or the cards appear only once the last one is
+ready. Caddy's `reverse_proxy` and cloudflared flush `text/event-stream` as it
+comes. nginx honours the `X-Accel-Buffering: no` header the console sends; if
+your configuration ignores it (`proxy_ignore_headers X-Accel-Buffering`), add
+`proxy_buffering off;` to the console's `location`. A proxy read timeout under
+15 seconds cuts the stream between its keepalives.
+
 ## Configure the collector
 
 | Variable | Meaning |

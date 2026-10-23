@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
@@ -240,49 +241,84 @@ func (s *querySource) Load(ctx context.Context, content string, p Params) (any, 
 // Files.MaxRows rows, under Files.Timeout, its columns renamed, its
 // values relabelled and its columns picked.
 func (s *querySource) load(ctx context.Context, content string, p Params) (readsql.Result, error) {
-	qc, _, _, err := parseQuery(content)
+	pl, err := s.plan(ctx, content, p)
 	if err != nil {
 		return readsql.Result{}, err
+	}
+	ctx, cancel := s.timeout(ctx)
+	defer cancel()
+	res, err := s.native.Answer(ctx, pl.q, pl.p, pl.rules)
+	return s.answered(pl, res, err)
+}
+
+// queryPlan is one query source's load before the engine answers it:
+// its content, its columns renamed, and the engine's query, params and
+// rules.
+type queryPlan struct {
+	qc    queryContent
+	cols  []string
+	q     native.Query
+	p     native.Params
+	rules archive.Rules
+}
+
+// plan checks content and p for a load, and reads the rules it runs
+// with.
+func (s *querySource) plan(ctx context.Context, content string, p Params) (queryPlan, error) {
+	qc, _, _, err := parseQuery(content)
+	if err != nil {
+		return queryPlan{}, err
 	}
 	cols, err := renamed(qc.Query.Columns(), qc.Rename)
 	if err != nil {
-		return readsql.Result{}, err
+		return queryPlan{}, err
 	}
-	q := qc.Query
 	if s.native == nil {
-		return readsql.Result{}, store.Refuse(store.ErrInvalid, "structured queries are not available in this process")
+		return queryPlan{}, store.Refuse(store.ErrInvalid, "structured queries are not available in this process")
 	}
 	from, err := civil.Parse(p.From)
 	if err != nil {
-		return readsql.Result{}, store.Refuse(store.ErrInvalid, "from %q is not a YYYY-MM-DD date", p.From)
+		return queryPlan{}, store.Refuse(store.ErrInvalid, "from %q is not a YYYY-MM-DD date", p.From)
 	}
 	to, err := civil.Parse(p.To)
 	if err != nil {
-		return readsql.Result{}, store.Refuse(store.ErrInvalid, "to %q is not a YYYY-MM-DD date", p.To)
+		return queryPlan{}, store.Refuse(store.ErrInvalid, "to %q is not a YYYY-MM-DD date", p.To)
 	}
 	var rules archive.Rules
 	if s.rules != nil {
 		rules = s.rules(ctx, p.ProjectID)
 	}
-	maxRows := 0
-	if s.files != nil {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, s.files.Timeout())
-		defer cancel()
-		maxRows = s.files.MaxRows()
+	return queryPlan{qc: qc, cols: cols, q: qc.Query, p: native.Params{Project: p.ProjectID, From: from, To: to}, rules: rules}, nil
+}
+
+// timeout is ctx under Files.Timeout (CONSOLE_QUERY_TIMEOUT); without
+// files, ctx itself.
+func (s *querySource) timeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if s.files == nil {
+		return ctx, func() {}
 	}
-	res, err := s.native.Answer(ctx, q, native.Params{Project: p.ProjectID, From: from, To: to}, rules)
+	return context.WithTimeout(ctx, s.files.Timeout())
+}
+
+// answered is pl's result from the engine's answer: an error as
+// reporting's, or at most Files.MaxRows rows, its columns renamed, its
+// values relabelled and its columns picked.
+func (s *querySource) answered(pl queryPlan, res native.Result, err error) (readsql.Result, error) {
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) && s.files != nil {
 			return readsql.Result{}, &resourceErr{store.Refuse(store.ErrInvalid, "%s", enginesql.Timeout(s.files.Timeout())), err}
 		}
 		return readsql.Result{}, queryErr(err)
 	}
+	maxRows := 0
+	if s.files != nil {
+		maxRows = s.files.MaxRows()
+	}
 	// The engine names the columns as Columns does; renamed by name, so a
 	// column it returned and Columns did not name keeps its own.
-	names := make(map[string]string, len(cols))
-	for i, c := range q.Columns() {
-		names[c] = cols[i]
+	names := make(map[string]string, len(pl.cols))
+	for i, c := range pl.q.Columns() {
+		names[c] = pl.cols[i]
 	}
 	out := readsql.Result{Columns: make([]string, len(res.Columns)), Rows: res.Rows, Truncated: res.Truncated}
 	for i, c := range res.Columns {
@@ -300,9 +336,9 @@ func (s *querySource) load(ctx context.Context, content string, p Params) (reads
 	if out.Rows == nil {
 		out.Rows = [][]string{}
 	}
-	relabel(out.Rows, out.Columns, qc.Labels)
-	if qc.Columns != nil {
-		if out, err = pickColumns(out, qc.Columns); err != nil {
+	relabel(out.Rows, out.Columns, pl.qc.Labels)
+	if pl.qc.Columns != nil {
+		if out, err = pickColumns(out, pl.qc.Columns); err != nil {
 			return readsql.Result{}, err
 		}
 	}
@@ -310,6 +346,70 @@ func (s *querySource) load(ctx context.Context, content string, p Params) (reads
 		out.Rows, out.Truncated = out.Rows[:maxRows], true
 	}
 	return out, nil
+}
+
+// manyNative is a Native that answers several queries from one scan
+// (native.Engine.AnswerMany).
+type manyNative interface {
+	AnswerMany(ctx context.Context, reqs []native.Request, done func(i int, a native.Answered))
+}
+
+// queryLoad is one load of a loadMany: a query source's content over
+// its params.
+type queryLoad struct {
+	content string
+	p       Params
+}
+
+// loadMany answers loads as load answers each, each answer the same, and
+// calls done once per load (i its index), never two at once, as it is
+// answered: a load refused before the engine runs at once, then the
+// engine's answers as AnswerMany hands them over, a shared scan's when
+// that scan finishes. Each load runs under its own Files.Timeout, in ctx:
+// once ctx is done every load still running stops. A Native that cannot
+// answer several at once answers each alone, concurrently. It returns
+// after the last call to done.
+func (s *querySource) loadMany(ctx context.Context, loads []queryLoad, done func(i int, res readsql.Result, err error)) {
+	mn, ok := s.native.(manyNative)
+	if !ok {
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		for i, l := range loads {
+			wg.Go(func() {
+				res, err := s.load(ctx, l.content, l.p)
+				mu.Lock()
+				defer mu.Unlock()
+				done(i, res, err)
+			})
+		}
+		wg.Wait()
+		return
+	}
+	var (
+		reqs    []native.Request
+		plans   []queryPlan
+		idx     []int
+		cancels []context.CancelFunc
+	)
+	for i, l := range loads {
+		pl, err := s.plan(ctx, l.content, l.p)
+		if err != nil {
+			done(i, readsql.Result{}, err)
+			continue
+		}
+		// The timeout starts here, before the engine's turn, as load's does.
+		rctx, cancel := s.timeout(ctx)
+		reqs = append(reqs, native.Request{Query: pl.q, Params: pl.p, Rules: pl.rules, Ctx: rctx})
+		plans, idx, cancels = append(plans, pl), append(idx, i), append(cancels, cancel)
+	}
+	if len(reqs) == 0 {
+		return
+	}
+	mn.AnswerMany(ctx, reqs, func(k int, a native.Answered) {
+		cancels[k]()
+		res, err := s.answered(plans[k], a.Result, a.Err)
+		done(idx[k], res, err)
+	})
 }
 
 // pickColumns is res with only columns, in their order: its rows'

@@ -56,6 +56,9 @@ type host struct {
 	// CONSOLE_QUERY_ROWS_MAX, which every query on the files runs under.
 	queryTimeout time.Duration
 	queryRows    int
+	// keepalive is how often POST /api/widgets/stream sends a keepalive
+	// comment; 0 is streamKeepalive. Tests shorten it.
+	keepalive time.Duration
 }
 
 var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)

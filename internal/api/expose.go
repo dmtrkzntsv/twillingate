@@ -28,6 +28,7 @@ type spec struct {
 	Multipart   bool   // set by restRaw: the body is multipart/form-data
 	Image       bool   // set by restImage: the response is image/png, not JSON
 	CSV         bool   // set by restCSV: the response is text/csv, not JSON
+	Stream      bool   // the response is text/event-stream, its events shaped as out
 
 	// constrain, when set, tightens the inferred input schema before the
 	// tool is registered and the OpenAPI document reads it: what a Go
