@@ -63,6 +63,7 @@ type Engine struct {
 	colFiles map[string]fileCols // each Parquet file's columns, by path
 
 	idCache identityCache // each project's identities, up to MaxBytes of them
+	retMemo retentionMemo // recent retention tallies, so a dashboard's widgets scan once
 
 	now func() time.Time
 }

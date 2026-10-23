@@ -155,8 +155,12 @@ func retentionRows(t *testing.T, e *Engine, where []Filter, from, to string, off
 		t.Fatal(err)
 	}
 	s := scan{e: e, filters: filters, project: 1, rules: rs}
+	all, err := archive.ListFiles(e.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	actors, err := s.retentionActors(context.Background(), retentionSpec{from: date(t, from), to: date(t, to), offsets: offsets},
-		e.charge())
+		all[1], e.charge())
 	if err != nil {
 		return nil, err
 	}
@@ -271,7 +275,7 @@ func TestRetentionStateBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := scan{e: e, project: 1, rules: rs}
-	if _, err := s.retentionActors(ctx, retentionSpec{from: date(t, retentionFrom), to: date(t, today), offsets: 45}, e.charge()); !errors.Is(err, context.Canceled) {
+	if _, err := s.retentionActors(ctx, retentionSpec{from: date(t, retentionFrom), to: date(t, today), offsets: 45}, archive.Files{}, e.charge()); !errors.Is(err, context.Canceled) {
 		t.Errorf("done context: %v, want context.Canceled", err)
 	}
 }

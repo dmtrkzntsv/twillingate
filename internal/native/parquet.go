@@ -72,6 +72,25 @@ func (p *pqFile) close() error { return p.f.Close() }
 // the footers only, no pages.
 func parquetGroups(files []string, family string, r Range) ([]group, error) {
 	from, to := r.days()
+	return listGroups(files, func(st groupStats) (bool, bool) { return st.decide(family, from, to) })
+}
+
+// parquetGroupsOf is parquetGroups for rows of any of families, which the
+// reader does not filter by: a group's all says only that every row's day
+// is in r.
+func parquetGroupsOf(files []string, families []string, r Range) ([]group, error) {
+	from, to := r.days()
+	return listGroups(files, func(st groupStats) (bool, bool) {
+		if !st.mayHold(families) {
+			return false, false
+		}
+		return st.decide("", from, to)
+	})
+}
+
+// listGroups lists, in file order, the row groups of files with rows that
+// decide keeps, with its all.
+func listGroups(files []string, decide func(groupStats) (keep, all bool)) ([]group, error) {
 	var out []group
 	for _, path := range files {
 		p, err := openFile(path)
@@ -81,7 +100,7 @@ func parquetGroups(files []string, family string, r Range) ([]group, error) {
 		md := p.pf.Metadata()
 		for i := range md.RowGroups {
 			rg := &md.RowGroups[i]
-			keep, all := statsOf(rg, p.famIdx, p.dayIdx).decide(family, from, to)
+			keep, all := decide(statsOf(rg, p.famIdx, p.dayIdx))
 			if keep && rg.NumRows > 0 {
 				out = append(out, group{file: path, index: i, rows: rg.NumRows, all: all})
 			}

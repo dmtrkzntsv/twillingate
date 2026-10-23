@@ -13,10 +13,11 @@ import (
 )
 
 // retentionSpec is what a retention scan gathers: the actors whose cohort
-// day is in [from, to], and their days back up to offsets days on.
+// day is in [from, to], and their days back up to offsets days on, before
+// today (the engine's clock when zero).
 type retentionSpec struct {
-	from, to civil.Date
-	offsets  int
+	from, to, today civil.Date
+	offsets         int
 }
 
 // noUserDay is a retentionActor's user day when it was never a user.
@@ -55,6 +56,10 @@ const retentionEntryBytes = 96
 // retentionColumns are the columns the scan reads, beside its filters'.
 var retentionColumns = []string{"day", "family", "actor_id", "actor_kind"}
 
+// retentionFamilies are the families a retention counts: a row group of
+// measures alone is not read.
+var retentionFamilies = []string{"product", "views"}
+
 // retentionFiles is f's Parquet files and logs that may hold rows on any
 // day up to hi: the cohort day is the first over all history.
 func retentionFiles(f archive.Files, hi civil.Date) (parquet, logs []string) {
@@ -66,7 +71,7 @@ func retentionFiles(f archive.Files, hi civil.Date) (parquet, logs []string) {
 // firsts read the events: rows of families views and product (the rules
 // applied as events applies them, then the scan's filters) whose
 // actor_kind is user or install and actor_id not empty, on a day before
-// today (the engine's clock) and no later than to + offsets, over all
+// spec.today and no later than to + offsets, over all
 // history before that, so an actor first seen before from is in no
 // cohort of the range.
 //
@@ -79,12 +84,16 @@ func retentionFiles(f archive.Files, hi civil.Date) (parquet, logs []string) {
 // folded together at the end. Every actor and bitset is charged as it
 // comes (and given back as dropped); the result is charged in place of
 // the map it is built from. A done ctx stops the scan with its error.
-func (s scan) retentionActors(ctx context.Context, spec retentionSpec, charge func(int64) error) ([]retentionActor, error) {
+// files are the project's, as archive.ListFiles lists them.
+func (s scan) retentionActors(ctx context.Context, spec retentionSpec, files archive.Files, charge func(int64) error) ([]retentionActor, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if spec.today == (civil.Date{}) {
+		spec.today = s.e.today()
+	}
 	hiDate := spec.to.AddDays(spec.offsets)
-	if last := s.e.today().AddDays(-1); last.Before(hiDate) {
+	if last := spec.today.AddDays(-1); last.Before(hiDate) {
 		hiDate = last
 	}
 	if hiDate.Before(spec.from) || spec.to.Before(spec.from) {
@@ -92,11 +101,6 @@ func (s scan) retentionActors(ctx context.Context, spec retentionSpec, charge fu
 	}
 	lo, hi, toDay := epochDay(spec.from), epochDay(hiDate), epochDay(spec.to)
 	words := int((hi - lo + 64) / 64)
-	all, err := archive.ListFiles(s.e.dir)
-	if err != nil {
-		return nil, err
-	}
-	files := all[s.project]
 	cols := slices.Clone(retentionColumns)
 	for _, f := range s.filters {
 		for _, c := range readColumns(f.column) {
@@ -108,6 +112,7 @@ func (s scan) retentionActors(ctx context.Context, spec retentionSpec, charge fu
 	read := s.rules.columns(cols)
 	status := s.statusColumns(nil)
 	var ids *firstSet
+	var err error
 	if len(status) > 0 {
 		if ids, err = s.e.firstSeen(ctx, s.project, files, charge); err != nil {
 			return nil, err
@@ -115,7 +120,7 @@ func (s scan) retentionActors(ctx context.Context, spec retentionSpec, charge fu
 	}
 	r := Range{From: everything.From, To: hiDate}
 	pq, logs := retentionFiles(files, hiDate)
-	groups, err := parquetGroups(pq, "", r)
+	groups, err := parquetGroupsOf(pq, retentionFamilies, r)
 	if err != nil {
 		return nil, err
 	}
@@ -289,8 +294,7 @@ func (w retentionWindow) fold(dst, src map[string]*retentionState) int64 {
 		}
 		freed += retentionEntryBytes + int64(len(id))
 		y.first, y.user = min(y.first, x.first), min(y.user, x.user)
-		switch {
-		case y.first < w.lo:
+		if y.first < w.lo {
 			if y.window != nil {
 				freed += w.windowBytes()
 			}
@@ -298,16 +302,35 @@ func (w retentionWindow) fold(dst, src map[string]*retentionState) int64 {
 				freed += w.windowBytes()
 			}
 			y.window = nil
-		case y.window == nil:
-			y.window = x.window
-		case x.window != nil:
-			for j, v := range x.window {
-				y.window[j] |= v
-			}
-			freed += w.windowBytes()
+			continue
 		}
+		// Neither first day is before lo, so both kept their windows (add
+		// drops one only once its first day is).
+		for j, v := range x.window {
+			y.window[j] |= v
+		}
+		freed += w.windowBytes()
 	}
 	return -freed
+}
+
+// countRetention is the counts of actors, as retentionCounts has them.
+func countRetention(actors []retentionActor, offsets int) map[retentionKey]int64 {
+	counts := map[retentionKey]int64{}
+	for _, a := range actors {
+		for o := 0; o <= offsets; o++ {
+			if a.activeOn(o) {
+				counts[retentionKey{user: a.user <= a.cohort+int64(o), cohort: a.cohort, offset: o}]++
+			}
+		}
+	}
+	// A kind's rows of a cohort exist only beside its size.
+	for k := range counts {
+		if counts[retentionKey{user: k.user, cohort: k.cohort}] == 0 {
+			delete(counts, k)
+		}
+	}
+	return counts
 }
 
 // retentionKey is one count of the retention widgets' returned CTE: the
@@ -335,24 +358,11 @@ type retentionKey struct {
 //     curve has no row there.
 func (s scan) retention(ctx context.Context, from, to civil.Date) (Result, error) {
 	offsets := s.q.offsets()
-	actors, err := s.retentionActors(ctx, retentionSpec{from: from, to: to, offsets: offsets}, s.e.charge())
+	got, err := s.retentionCounts(ctx, retentionSpec{from: from, to: to, today: s.e.today(), offsets: offsets})
 	if err != nil {
 		return Result{}, err
 	}
-	counts := map[retentionKey]int64{}
-	for _, a := range actors {
-		for o := 0; o <= offsets; o++ {
-			if a.activeOn(o) {
-				counts[retentionKey{user: a.user <= a.cohort+int64(o), cohort: a.cohort, offset: o}]++
-			}
-		}
-	}
-	// A kind's rows of a cohort exist only beside its size.
-	for k := range counts {
-		if counts[retentionKey{user: k.user, cohort: k.cohort}] == 0 {
-			delete(counts, k)
-		}
-	}
+	counts := got.counts // shared with other queries: read only
 	cols := columnsOut{}
 	for _, c := range s.q.Columns() {
 		cols.add(c)
@@ -394,7 +404,7 @@ func (s scan) retention(ctx context.Context, from, to civil.Date) (Result, error
 	}
 	// The curve of one kind: per offset, the sizes and the actors back of
 	// the cohorts that reached it before today.
-	user, today := s.q.IdentifiedBy == "user", epochDay(s.e.today())
+	user, today := s.q.IdentifiedBy == "user", got.today
 	sizes, back := make([]int64, offsets+1), make([]int64, offsets+1)
 	reached := make([]bool, offsets+1)
 	for k, n := range counts {
