@@ -211,3 +211,42 @@ func hasDayFile(t *testing.T, dir string, project int64, name string) bool {
 	_, err := os.Stat(filepath.Join(dir, strconv.FormatInt(project, 10), name))
 	return err == nil
 }
+
+// TestFilePresenceViewsAndBlockedKeys: a view's name is present in views
+// alone; a blocked key holds no value.
+func TestFilePresenceViewsAndBlockedKeys(t *testing.T) {
+	f, p, send := presenceFixture(t)
+	ctx := context.Background()
+	send("e1", 1, "a", map[string]string{"plan": "pro", "tier": "x"})
+	log, err := archive.OpenLog(f.cfg.EventsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	at := time.Date(2026, 8, 20, 13, 0, 0, 0, time.UTC)
+	if err := log.WriteEvents(ctx, []store.Event{{ID: "v1", ProjectID: 1, Family: store.FamilyViews, EventName: "$page_view",
+		TS: at, ReceivedAt: at, Kind: "web", ActorID: "a", ActorKind: store.ActorInstall, Path: "/"}}); err != nil {
+		t.Fatal(err)
+	}
+	log.Close()
+	for _, c := range []struct {
+		family store.Family
+		name   string
+		want   bool
+	}{
+		{store.FamilyViews, "$page_view", true}, {store.FamilyProduct, "$page_view", false},
+		{store.FamilyViews, "a", false}, {store.FamilyProduct, "a", true},
+	} {
+		if got, err := p.HasEvents(ctx, 1, c.family, c.name); err != nil || got != c.want {
+			t.Errorf("HasEvents(1, %s, %q) = %v, %v; want %v", c.family, c.name, got, err, c.want)
+		}
+	}
+	if _, err := f.ops.BlockAttribute(ctx, "test", 1, "plan"); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := p.HasAttribute(ctx, 1, "plan"); err != nil || got {
+		t.Errorf("a blocked key: %v, %v; want false", got, err)
+	}
+	if got, err := p.HasAttribute(ctx, 1, "tier"); err != nil || !got {
+		t.Errorf("another key: %v, %v; want true", got, err)
+	}
+}

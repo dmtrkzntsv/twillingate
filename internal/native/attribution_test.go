@@ -325,3 +325,117 @@ func TestAttributeNothingAsked(t *testing.T) {
 		t.Fatalf("Attribute(nil) = %v, %v", got, err)
 	}
 }
+
+// aliasOnlyInParquet writes a sign-in of u1 with install i1 on a day the
+// pass then dumps, and i1's views with a source, so the alias is in a day
+// file (and aliases.parquet) and in no log.
+func aliasOnlyInParquet(t *testing.T) (*archivetest.Files, time.Time) {
+	t.Helper()
+	f := archivetest.New(t)
+	at := attrTS(t, "2026-10-14T12:00:00Z")
+	day := at.Add(-2 * 24 * time.Hour)
+	f.Write(t,
+		formView("v1", store.ActorInstall, "i1", day, func(e *store.Event) { e.ReferrerSource = "google" }),
+		store.Event{ID: "p1", ProjectID: 1, Family: store.FamilyProduct, EventName: "login", TS: day.Add(time.Minute),
+			ReceivedAt: day.Add(time.Minute), ActorKind: store.ActorUser, ActorID: "u1", UserID: "u1", InstallID: "i1"},
+		formView("v2", store.ActorInstall, "i9", at.Add(-time.Hour), nil), // today's log, of no alias
+	)
+	f.Maintain(t, "2026-10-14")
+	return f, at
+}
+
+// While aliases.parquet is missing, or older than an events file, the
+// aliases come from every events file: a sign-in only in a day file still
+// makes the install's visits the user's.
+func TestAttributeStaleAliasesReadTheEventsFiles(t *testing.T) {
+	check := func(t *testing.T, f *archivetest.Files, at time.Time) {
+		t.Helper()
+		all, err := archive.ListFiles(f.Dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if all[1].Aliases != "" || len(all[1].Parquet) == 0 {
+			t.Fatalf("files = %+v, want no current aliases file and a day file", all[1])
+		}
+		got := attributeBoth(t, f, 7, archive.Rules{},
+			archive.Lookup{ProjectID: 1, ID: "user", ActorKind: store.ActorUser, ActorID: "u1", At: at})
+		if s := got["user"].Source; s.ReferrerSource != "google" {
+			t.Errorf("user: source = %+v, want i1's google through the day file's alias", s)
+		}
+	}
+	t.Run("missing", func(t *testing.T) {
+		f, at := aliasOnlyInParquet(t)
+		if err := os.Remove(filepath.Join(f.Dir, "1", "aliases.parquet")); err != nil {
+			t.Fatal(err)
+		}
+		check(t, f, at)
+	})
+	t.Run("stale", func(t *testing.T) {
+		f, at := aliasOnlyInParquet(t)
+		day := filepath.Join(f.Dir, "1", "2026-10-12.parquet")
+		later := time.Now().Add(time.Hour)
+		if err := os.Chtimes(day, later, later); err != nil {
+			t.Fatal(err)
+		}
+		check(t, f, at)
+	})
+}
+
+// appendRaw appends lines to project 1's log of day as they are, past the
+// log's own checks: a line without an id, as no client sends but a file
+// may hold.
+func appendRaw(t *testing.T, f *archivetest.Files, day string, lines ...string) {
+	t.Helper()
+	lf, err := os.OpenFile(filepath.Join(f.Dir, "1", day+".log"), os.O_APPEND|os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lf.Close()
+	for _, l := range lines {
+		if _, err := lf.WriteString(l + "\n"); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+// The window's first instant is in it; a NULL view id ranks after any id
+// at the same time, and alone wins by its time (a log keeps one line
+// without an id, the first: the two cases are in two days' logs); lookups of two projects
+// in one batch each read their own project.
+func TestAttributeEdgesNullIDsAndProjects(t *testing.T) {
+	f := archivetest.New(t)
+	at := attrTS(t, "2026-10-14T12:00:00Z")
+	t1, t2 := at.Add(-24*time.Hour), at.Add(-time.Hour)
+	f.Write(t,
+		formView("edge", store.ActorInstall, "i4", at.Add(-7*24*time.Hour), func(e *store.Event) { e.ReferrerSource = "edge" }),
+		formView("past", store.ActorInstall, "i4", at.Add(-7*24*time.Hour-time.Hour), func(e *store.Event) { e.ReferrerSource = "past" }),
+		formView("named", store.ActorInstall, "i5", t1, func(e *store.Event) { e.OS = "named" }),
+		formView("older", store.ActorInstall, "i6", t2.Add(-time.Minute), func(e *store.Event) { e.OS = "older" }),
+		formView("p2", store.ActorInstall, "i5", t2, func(e *store.Event) { e.ProjectID, e.OS, e.UTMSource = 2, "two", "p2" }),
+	)
+	line := func(actor, os string, ts time.Time) string {
+		return `{"v":1,"project_id":1,"family":"views","event_name":"$page_view","ts":"` + ts.UTC().Format(time.RFC3339) +
+			`","day":"` + archive.Day(ts) + `","received_at":"` + ts.UTC().Format(time.RFC3339) + `","kind":"web","actor_kind":"install","actor_id":"` +
+			actor + `","path":"/","os":"` + os + `"}`
+	}
+	appendRaw(t, f, "2026-10-13", line("i5", "nullid", t1))
+	appendRaw(t, f, "2026-10-14", line("i6", "nullid", t2))
+	got := attributeBoth(t, f, 7, archive.Rules{},
+		archive.Lookup{ProjectID: 1, ID: "edge", ActorKind: store.ActorInstall, ActorID: "i4", At: at},
+		archive.Lookup{ProjectID: 1, ID: "named", ActorKind: store.ActorInstall, ActorID: "i5", At: at},
+		archive.Lookup{ProjectID: 1, ID: "nullid", ActorKind: store.ActorInstall, ActorID: "i6", At: at},
+		archive.Lookup{ProjectID: 2, ID: "two", ActorKind: store.ActorInstall, ActorID: "i5", At: at},
+	)
+	if s := got["edge"].Source.ReferrerSource; s != "edge" {
+		t.Errorf("edge: source %q, want the view at the window's first instant", s)
+	}
+	if n := got["named"].Newest.OS; n != "named" {
+		t.Errorf("named: newest %q, want the view with an id (a NULL id sorts last)", n)
+	}
+	if n := got["nullid"].Newest.OS; n != "nullid" {
+		t.Errorf("nullid: newest %q, want the NULL-id view (newer)", n)
+	}
+	if x := got["two"]; x.ProjectID != 2 || x.Newest.OS != "two" || x.Source.UTMSource != "p2" {
+		t.Errorf("two: %+v, want project 2's own view", x)
+	}
+}

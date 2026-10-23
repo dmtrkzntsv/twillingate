@@ -81,40 +81,46 @@ func (e *Engine) Attribute(ctx context.Context, ls []archive.Lookup, days int, r
 // attributionViewColumns are the columns attributionViews reads.
 var attributionViewColumns = append([]string{"actor_kind", "actor_id", "ts", "id"}, newestColumns...)
 
-// viewLogs reads each open log once for one project's attribution: its
-// views of r, with cols (the family and day among them), kept while the
-// attribution runs and charged once. A read of fewer columns, of the
-// views, of days within r, takes the rows it asks for from them; any
-// other read is readLog's.
-type viewLogs struct {
+// callLogs reads each open log once for one project's attribution:
+// every row, with cols (the family and day among them), kept while the
+// attribution runs. A read of fewer columns, of the views or of every
+// family, takes the rows it asks for from them; any other read is
+// readLog's. The aliases, the sessions of a log's day and the views all
+// read a log through it.
+//
+// A log's batch is charged once, as it is read. A read of part of it is
+// a copy of those rows (filterBatch), which a gap day's derivation
+// charges again while it holds them: the count then overstates the
+// memory by at most that day's views, for the derivation's length, a
+// margin taken over keeping the two charges apart.
+type callLogs struct {
 	cols   []string
-	r      Range
 	charge func(int64) error
 
 	mu   sync.Mutex
-	logs map[string]*viewLog
+	logs map[string]*callLog
 }
 
-type viewLog struct {
+type callLog struct {
 	once sync.Once
 	b    *Batch
 	err  error
 }
 
-func (v *viewLogs) read(path string, cols []string, family string, r Range) (*Batch, error) {
-	if family != "views" || r.From.Before(v.r.From) || v.r.To.Before(r.To) ||
+func (v *callLogs) read(path string, cols []string, family string, r Range) (*Batch, error) {
+	if (family != "views" && family != "") ||
 		slices.ContainsFunc(cols, func(c string) bool { return !slices.Contains(v.cols, c) }) {
 		return readLog(path, cols, family, r)
 	}
 	v.mu.Lock()
 	l := v.logs[path]
 	if l == nil {
-		l = &viewLog{}
+		l = &callLog{}
 		v.logs[path] = l
 	}
 	v.mu.Unlock()
 	l.once.Do(func() {
-		l.b, l.err = readLog(path, v.cols, "views", v.r)
+		l.b, l.err = readLog(path, v.cols, "", everything)
 		if l.err == nil {
 			l.err = v.charge(batchBytes(l.b))
 		}
@@ -126,7 +132,7 @@ func (v *viewLogs) read(path string, cols []string, family string, r Range) (*Ba
 		return l.b, nil
 	}
 	from, to := r.days()
-	return filterBatch(l.b, "views", from, to), nil
+	return filterBatch(l.b, family, from, to), nil
 }
 
 // whoKey is one actor a lookup follows.
@@ -183,8 +189,22 @@ func (e *Engine) attributeProject(ctx context.Context, project int64, ls []archi
 			users[l.ActorID] = append(users[l.ActorID], int32(i))
 		}
 	}
+	charge := e.charge()
+	rs, err := e.ruleSet(project, rules)
+	if err != nil {
+		return nil, err
+	}
+	// The open logs are read once, for the aliases, the sessions of their
+	// days and the views alike.
+	logCols := slices.Clone(viewColumns)
+	for _, c := range append(rs.columns(attributionViewColumns), "family", "day", "user_id", "install_id") {
+		if !slices.Contains(logCols, c) {
+			logCols = append(logCols, c)
+		}
+	}
+	logs := &callLogs{cols: logCols, charge: charge, logs: map[string]*callLog{}}
 	if users != nil {
-		installs, err := e.aliasedInstalls(ctx, files, users)
+		installs, err := e.aliasedInstalls(ctx, files, users, logs.read)
 		if err != nil {
 			return nil, err
 		}
@@ -193,20 +213,6 @@ func (e *Engine) attributeProject(ctx context.Context, project int64, ls []archi
 		}
 	}
 
-	charge := e.charge()
-	rs, err := e.ruleSet(project, rules)
-	if err != nil {
-		return nil, err
-	}
-	// The open logs are read once, for the sessions of their days and the
-	// views alike.
-	logCols := slices.Clone(viewColumns)
-	for _, c := range append(rs.columns(attributionViewColumns), "family", "day") {
-		if !slices.Contains(logCols, c) {
-			logCols = append(logCols, c)
-		}
-	}
-	logs := &viewLogs{cols: logCols, r: a.r, charge: charge, logs: map[string]*viewLog{}}
 	sources, err := e.attributionSources(ctx, project, &a, logs.read, charge)
 	if err != nil {
 		return nil, err
@@ -254,7 +260,8 @@ type aliasedInstall struct {
 // every events file and log, as the reader's aliases table holds them (a
 // pair is an event of any family with both ids not empty, no rule
 // applied).
-func (e *Engine) aliasedInstalls(ctx context.Context, f archive.Files, users map[string][]int32) ([]aliasedInstall, error) {
+// The logs are read through logs.
+func (e *Engine) aliasedInstalls(ctx context.Context, f archive.Files, users map[string][]int32, logs logReader) ([]aliasedInstall, error) {
 	seen := map[archive.AliasKey]bool{}
 	var mu sync.Mutex // the workers' batches arrive at once
 	see := func(b *Batch) {
@@ -279,8 +286,15 @@ func (e *Engine) aliasedInstalls(ctx context.Context, f archive.Files, users map
 			return nil, err
 		}
 	}
-	if err := e.scanIdentityEvents(ctx, parquet, f.Logs, cols, func(_ int, b *Batch) error { see(b); return nil }); err != nil {
+	if err := e.scanIdentityEvents(ctx, parquet, nil, cols, func(_ int, b *Batch) error { see(b); return nil }); err != nil {
 		return nil, err
+	}
+	for _, path := range f.Logs {
+		b, err := logs(path, cols, "", everything)
+		if err != nil {
+			return nil, err
+		}
+		see(b)
 	}
 	var out []aliasedInstall
 	for k := range seen {
