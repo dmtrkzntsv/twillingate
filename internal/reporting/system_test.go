@@ -911,6 +911,9 @@ func systemEvents(projectID int64, today civil.Date) []store.Event {
 					ActorKind: "user", Platform: "web", Value: &m.value, Measure: m.measure, SampleRate: rate}
 				if m.name != "checkout_api" {
 					e.Path, e.Browser = []string{"/", "/pricing", "/docs", "/"}[i%4], []string{"chrome", "safari"}[i%2]
+					if i == 11 {
+						e.Browser = "edge" // fewest samples, yet before safari by name: By browser's order is by samples
+					}
 					e.Device = []string{"desktop", "mobile"}[i%4/2]
 				}
 				add(e)
