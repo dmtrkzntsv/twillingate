@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 
 	"github.com/parquet-go/parquet-go"
@@ -46,9 +47,10 @@ import (
 //
 // Memory: in pass 1, the month's id hashes (128 bits each, from two
 // maphash seeds, in a set; collected before pass 2) and one drop bit per
-// input row. In pass 2, per input, its footer and the family and ts of
-// its current row group; and the other columns of the runs of one family
-// rows are being taken from (cursor), only those: the days of a month do
+// input row. Throughout, at most maxFooters inputs' footers decoded. In
+// pass 2, per input, the family and ts of its current row group; and the
+// other columns of the runs of one family rows are being taken from
+// (cursor), only those: the days of a month do
 // not overlap in ts, so it is about one run at a time, a few where a
 // segment or a crashed merge's month file overlaps a day. A run's values
 // are held as the strings it uses and an index per row (VARCHAR) or a
@@ -74,17 +76,37 @@ func mergeFiles(ctx context.Context, inputs []string, out string) error {
 
 // monthMerge is a merge's inputs, opened, and the columns of its output.
 type monthMerge struct {
-	inputs []*mergeInput
-	cols   []pqColumn
-	kept   int64 // rows pass 1 kept: pass 2 must write as many
+	inputs  []*mergeInput
+	cols    []pqColumn
+	kept    int64 // rows pass 1 kept: pass 2 must write as many
+	footers footers
+}
+
+// maxFooters is how many inputs' footers a merge holds decoded at once.
+// A footer costs about a kilobyte per column per row group once decoded:
+// a day of 2,000 attribute keys, in a group per family, about 6 MB, so 30
+// such days held at once were 180 MB. The days of a month do not overlap
+// in ts, so pass 2 reads about one input at a time per family and a
+// footer let go is decoded again about once per family.
+const maxFooters = 4
+
+// footers tracks the inputs whose footer is decoded, for maxFooters.
+type footers struct {
+	open    []*mergeInput // least recently used first
+	decoded int           // footers decoded again after being let go
+	most    int           // the most held at once
 }
 
 // mergeInput is one input: its open file, how each of its columns lands
-// in the output, and its drop bits.
+// in the output, and its drop bits. The file stays open for the whole
+// merge, so both passes read the same inode; its footer (pf) is decoded
+// when used and let go past maxFooters (file).
 type mergeInput struct {
 	path     string
 	f        *os.File
-	pf       *parquet.File
+	size     int64
+	pf       *parquet.File // nil while let go
+	fs       *footers
 	cols     []inColumn
 	fam, ts  int // index in cols of family and ts, -1 when missing
 	id       int // leaf index of id, -1 when missing
@@ -97,6 +119,7 @@ type mergeInput struct {
 // inColumn is one column of an input: its leaf, its output column and
 // type, and for a TIMESTAMP the factor its values take to microseconds.
 type inColumn struct {
+	name      string
 	leaf, out int
 	typ       colType
 	scale     int64
@@ -111,11 +134,13 @@ func openMerge(inputs []string) (*monthMerge, error) {
 			m.close()
 			return nil, err
 		}
+		in.fs = &m.footers
 		m.inputs = append(m.inputs, in)
 		if err := m.addColumns(in, byName); err != nil {
 			m.close()
 			return nil, err
 		}
+		in.pf = nil // decoded again when pass 1 reaches it
 	}
 	for _, f := range fields {
 		if _, ok := byName[f.name]; !ok {
@@ -137,13 +162,13 @@ func openInput(path string) (*mergeInput, error) {
 		f.Close()
 		return nil, fmt.Errorf("archive: %w", err)
 	}
-	pf, err := parquet.OpenFile(f, st.Size(), parquet.SkipPageIndex(true), parquet.SkipBloomFilters(true),
-		parquet.ReadBufferSize(256<<10))
+	in := &mergeInput{path: path, f: f, size: st.Size(), fam: -1, ts: -1, id: -1}
+	pf, err := in.decode()
 	if err != nil {
 		f.Close()
-		return nil, fmt.Errorf("archive: %s: %w", filepath.Base(path), err)
+		return nil, err
 	}
-	in := &mergeInput{path: path, f: f, pf: pf, fam: -1, ts: -1, id: -1, rows: pf.NumRows()}
+	in.pf, in.rows = pf, pf.NumRows()
 	var start int64
 	for _, rg := range pf.Metadata().RowGroups {
 		in.groupRow = append(in.groupRow, start)
@@ -158,6 +183,45 @@ func openInput(path string) (*mergeInput, error) {
 	}
 	in.drop = make([]uint64, (in.rows+63)/64)
 	return in, nil
+}
+
+func (in *mergeInput) decode() (*parquet.File, error) {
+	pf, err := parquet.OpenFile(in.f, in.size, parquet.SkipPageIndex(true), parquet.SkipBloomFilters(true),
+		parquet.ReadBufferSize(256<<10))
+	if err != nil {
+		return nil, fmt.Errorf("archive: %s: %w", filepath.Base(in.path), err)
+	}
+	return pf, nil
+}
+
+// file is in's footer, decoded again if it was let go, then the most
+// recently used; past maxFooters, the least recently used other footer is
+// let go. What was read through a footer let go stays valid: a vector
+// holds its own copies.
+func (in *mergeInput) file() (*parquet.File, error) {
+	fs := in.fs
+	if in.pf != nil {
+		i := slices.Index(fs.open, in)
+		fs.open = append(slices.Delete(fs.open, i, i+1), in)
+		return in.pf, nil
+	}
+	pf, err := in.decode()
+	if err != nil {
+		return nil, err
+	}
+	// The same file as when it was opened: its groups as groupRow says.
+	if len(pf.RowGroups()) != len(in.groupRow) || pf.NumRows() != in.rows {
+		return nil, fmt.Errorf("archive: %s: its footer changed during the merge", filepath.Base(in.path))
+	}
+	for len(fs.open) >= maxFooters {
+		fs.open[0].pf = nil
+		fs.open = fs.open[1:]
+	}
+	in.pf = pf
+	fs.open = append(fs.open, in)
+	fs.decoded++
+	fs.most = max(fs.most, len(fs.open))
+	return pf, nil
 }
 
 // addColumns maps in's columns onto the output's, adding the ones it is
@@ -196,7 +260,7 @@ func (m *monthMerge) addColumns(in *mergeInput, byName map[string]int) error {
 		case "id":
 			in.id = leaf
 		}
-		in.cols = append(in.cols, inColumn{leaf: leaf, out: out, typ: want, scale: scale})
+		in.cols = append(in.cols, inColumn{name: fl.Name(), leaf: leaf, out: out, typ: want, scale: scale})
 	}
 	return nil
 }
@@ -299,7 +363,11 @@ func (m *monthMerge) markRepeats() error {
 			}
 			row++
 		}
-		for g, rg := range in.pf.RowGroups() {
+		pf, err := in.file()
+		if err != nil {
+			return err
+		}
+		for g, rg := range pf.RowGroups() {
 			if in.id < 0 {
 				for range rg.NumRows() {
 					mark(nil, false)
@@ -317,6 +385,14 @@ func (m *monthMerge) markRepeats() error {
 		m.kept += in.rows - in.repeats
 	}
 	return nil
+}
+
+// groupRows is the number of rows of row group g.
+func (in *mergeInput) groupRows(g int) int64 {
+	if g+1 < len(in.groupRow) {
+		return in.groupRow[g+1] - in.groupRow[g]
+	}
+	return in.rows - in.groupRow[g]
 }
 
 // dropped reports whether row (of the file) was marked by pass 1.
@@ -463,7 +539,7 @@ func (c *cursor) advance() error {
 
 // readKeys reads group g's family and ts.
 func (c *cursor) readKeys() error {
-	c.n = int(c.in.pf.RowGroups()[c.g].NumRows())
+	c.n = int(c.in.groupRows(c.g))
 	var err error
 	if c.fam, err = c.readColumn(c.in.fam, 0, c.n, false); err != nil {
 		return err
@@ -480,11 +556,15 @@ func (c *cursor) readColumn(i, from, to int, compact bool) (*vector, error) {
 		return nil, nil
 	}
 	ic := c.in.cols[i]
-	cc := c.in.pf.RowGroups()[c.g].ColumnChunks()[ic.leaf]
-	compact = compact && mostlyNull(&c.in.pf.Metadata().RowGroups[c.g].Columns[ic.leaf], c.n)
+	pf, err := c.in.file()
+	if err != nil {
+		return nil, err
+	}
+	cc := pf.RowGroups()[c.g].ColumnChunks()[ic.leaf]
+	compact = compact && mostlyNull(&pf.Metadata().RowGroups[c.g].Columns[ic.leaf], c.n)
 	v, err := readVector(cc, ic, c.n, from, to, compact)
 	if err != nil {
-		return nil, fmt.Errorf("archive: %s row group %d column %s: %w", filepath.Base(c.in.path), c.g, visible(c.in.pf.Schema().Fields()[ic.leaf].Name()), err)
+		return nil, fmt.Errorf("archive: %s row group %d column %s: %w", filepath.Base(c.in.path), c.g, visible(ic.name), err)
 	}
 	return v, nil
 }

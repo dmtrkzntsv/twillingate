@@ -302,6 +302,45 @@ func TestMergeKeepsTiesInInputOrder(t *testing.T) {
 	}
 }
 
+// TestMergeHoldsFewFooters: a merge of more inputs than maxFooters holds
+// at most maxFooters of their footers decoded at once, decodes a footer
+// let go again when its input is read, and still writes every row once.
+func TestMergeHoldsFewFooters(t *testing.T) {
+	f := newFixture(t)
+	dir := f.project1("")
+	var inputs []string
+	for d := 1; d <= 3*maxFooters; d++ {
+		day := fmt.Sprintf("2026-09-%02d", d)
+		inputs = append(inputs, f.goDay(t, dir, day+".parquet", sortedLog(t, day, fmt.Sprintf("d%02d", d), 0, 40, day)))
+	}
+	// A repeat of the first day's ids, as a late segment: dropped.
+	inputs = append(inputs, f.goDay(t, dir, "2026-09-01.1.parquet", sortedLog(t, "2026-09-01", "d01", 0, 40, "again")))
+	m, err := openMerge(inputs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.close()
+	if err := m.markRepeats(); err != nil {
+		t.Fatal(err)
+	}
+	out := f.project1("2026-09.parquet")
+	if err := m.write(context.Background(), out); err != nil {
+		t.Fatal(err)
+	}
+	if m.footers.most > maxFooters {
+		t.Fatalf("held %d footers at once, want at most %d", m.footers.most, maxFooters)
+	}
+	// Pass 1 decodes each once; pass 2 again for each family (views, then
+	// product) of each input.
+	if m.footers.decoded <= len(inputs)*2 {
+		t.Fatalf("decoded %d footers for %d inputs: pass 2 kept them", m.footers.decoded, len(inputs))
+	}
+	got := f.values(t, "SELECT count(*), count(DISTINCT id), count(*) FILTER (WHERE attr_copy = 'again') FROM read_parquet("+quote(out)+")")
+	if want := []string{fmt.Sprintf("[%d %d 0]", 40*3*maxFooters, 40*3*maxFooters)}; !eq(got, want) {
+		t.Fatalf("rows, ids, repeats = %v, want %v", got, want)
+	}
+}
+
 // TestMergeKeepsTheFirstSpelling is Review Focus 1: attr_Plan one day and
 // attr_plan the next are one column of the month, the first spelling, with
 // both days' values.
