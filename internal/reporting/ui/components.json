@@ -2,7 +2,7 @@
   "components": [
     {
       "name": "area",
-      "description": "A trend over time or category, filled under the line; use `stacked` to show parts of a whole changing over time.",
+      "description": "A trend over time, a number (plotted to scale) or category, filled under the line; use `stacked` to show parts of a whole changing over time.",
       "accepts": [
         "sql",
         "query"
@@ -14,7 +14,8 @@
             "name": "x",
             "types": [
               "day",
-              "text"
+              "text",
+              "number"
             ]
           },
           {
@@ -339,7 +340,7 @@
     },
     {
       "name": "line",
-      "description": "A trend over time or category, one line per `series` value; best for a continuous metric like visitors per day. Keep it to 5 lines, one per chart color: rank the series in SQL and keep the top ones.",
+      "description": "A trend over time, a number (such as retention offsets, plotted to scale) or category, one line per `series` value; best for a continuous metric like visitors per day. Keep it to 5 lines, one per chart color: rank the series in SQL and keep the top ones.",
       "accepts": [
         "sql",
         "query"
@@ -351,7 +352,8 @@
             "name": "x",
             "types": [
               "day",
-              "text"
+              "text",
+              "number"
             ]
           },
           {

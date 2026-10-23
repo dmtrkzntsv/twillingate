@@ -4,13 +4,13 @@ export type Record_ = Record<string, string | number | null>
 
 /**
  * Turns a query's raw string rows into typed records, keyed by the columns
- * the contract declares. A column typed `number` is parsed, with an empty
- * string (SQL `NULL`) becoming `null`; every other column stays a string,
- * empty or not.
+ * the contract declares. A column typed `number` alone is parsed, with an
+ * empty string (SQL `NULL`) becoming `null`; every other column, one that
+ * may also be a day or text included, stays a string, empty or not.
  */
 export function toRecords(d: SqlData, c: Contract): Record_[] {
   const numberColumns = new Set(
-    c.inputs.columns.filter((col) => col.types.includes('number')).map((col) => col.name)
+    c.inputs.columns.filter((col) => col.types.every((t) => t === 'number')).map((col) => col.name)
   )
   return d.rows.map((row) => {
     const record: Record_ = {}

@@ -19,11 +19,13 @@ var ErrTooLarge = errors.New("native: the query needs more memory than allowed; 
 
 // Query is a structured query over one events table. Kind picks the shape:
 // a stat is one row of metrics, a trend one metric per day (optionally split
-// by Series), a breakdown the metrics grouped by 1-3 Dimensions.
+// by Series), a breakdown the metrics grouped by 1-3 Dimensions, a
+// retention its cohorts' days back (Output, IdentifiedBy, Offsets,
+// Milestones).
 type Query struct {
-	Kind        string   `json:"kind" jsonschema:"stat: one row of metrics (with compare previous, a previous_<name> column each); trend: one metric per day, optionally split by series; breakdown: the metrics grouped by 1 to 3 dimensions"`
-	Table       string   `json:"table" jsonschema:"the rows read: events (every family), views, product or measures; or sessions, one row per session of views; or identities, one row per user or group first seen in the range (rules apply to neither)"`
-	Metrics     []Metric `json:"metrics" jsonschema:"the aggregates, each an output column; a trend takes exactly 1"`
+	Kind        string   `json:"kind" jsonschema:"stat: one row of metrics (with compare previous, a previous_<name> column each); trend: one metric per day, optionally split by series; breakdown: the metrics grouped by 1 to 3 dimensions; retention: the cohorts of users and installs first active in the range, and their days back (output, identified_by, offsets, milestones; no metrics)"`
+	Table       string   `json:"table,omitempty" jsonschema:"the rows read: events (every family), views, product or measures; or sessions, one row per session of views; or identities, one row per user or group first seen in the range (rules apply to neither); a retention reads events (absent or events)"`
+	Metrics     []Metric `json:"metrics,omitempty" jsonschema:"the aggregates, each an output column; a trend takes exactly 1; a retention none"`
 	Where       []Filter `json:"where,omitempty" jsonschema:"filters, all of which a row must satisfy"`
 	Dimensions  []string `json:"dimensions,omitempty" jsonschema:"breakdown only, 1 to 3: columns to group by, each one a filter's column may name on the table (path, country, event_name, attr_<key>, …; resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), but duration_sec and views on sessions and views and events on identities"`
 	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by, one a filter's column may name on the table except day (resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), and except duration_sec and views on sessions and views and events on identities"`
@@ -32,6 +34,39 @@ type Query struct {
 	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown only: how many groups, 1 to 1000 (default 20)"`
 	Other       bool     `json:"other,omitempty" jsonschema:"breakdown only: fold the groups past limit into one row whose dimensions read Other"`
 	Order       string   `json:"order,omitempty" jsonschema:"breakdown only: a metric name to rank groups by, descending, or one of its dimensions to sort them by, ascending, ties by the other dimensions ascending (default: the first metric); limit keeps the first groups in that order"`
+	// The retention kind's fields.
+	Output       string `json:"output,omitempty" jsonschema:"retention only, required: grid (cohort, identified_by, offset, size, returned, retention: a row per cohort, identity kind and day back, offset the days since the cohort day), curve (offset, retention: one identity kind's cohorts pooled per day back) or milestones (one row, a d<n> column per milestone: the curve's retention that day back)"`
+	IdentifiedBy string `json:"identified_by,omitempty" jsonschema:"retention curve and milestones only, required: install or user, the cohorts pooled (a grid has both)"`
+	Offsets      int    `json:"offsets,omitempty" jsonschema:"retention only: the days back counted, 1 to 90 (default 45)"`
+	Milestones   []int  `json:"milestones,omitempty" jsonschema:"retention milestones only: 1 to 6 distinct days back, each 0 to offsets (default 7, 30 and 45)"`
+}
+
+// The retention defaults: the days back counted, the milestones read.
+var (
+	defaultOffsets    = 45
+	defaultMilestones = []int{7, 30, 45}
+)
+
+// The retention bounds: the days back, the milestones.
+const (
+	maxOffsets    = 90
+	maxMilestones = 6
+)
+
+// offsets is a retention's days back, its default when unset.
+func (q Query) offsets() int {
+	if q.Offsets == 0 {
+		return defaultOffsets
+	}
+	return q.Offsets
+}
+
+// milestones is a retention's milestones, its default when unset.
+func (q Query) milestones() []int {
+	if len(q.Milestones) == 0 {
+		return defaultMilestones
+	}
+	return q.Milestones
 }
 
 // Metric is one aggregate.
@@ -94,11 +129,24 @@ func percent(q float64) string {
 // Columns are the result's column names, in order, as Answer returns
 // them for q, read from q alone: a stat's metrics, then with compare
 // previous a previous_<name> each; a trend's day, series when split, and
-// its metric; a breakdown's dimensions, then its metrics. It does not
+// its metric; a breakdown's dimensions, then its metrics; a retention
+// grid's cohort, identified_by, offset, size, returned and retention, a
+// curve's offset and retention, milestones' d<n> each. It does not
 // validate q.
 func (q Query) Columns() []string {
 	var cols []string
 	switch q.Kind {
+	case "retention":
+		switch q.Output {
+		case "grid":
+			return []string{"cohort", "identified_by", "offset", "size", "returned", "retention"}
+		case "curve":
+			return []string{"offset", "retention"}
+		}
+		for _, m := range q.milestones() {
+			cols = append(cols, "d"+strconv.Itoa(m))
+		}
+		return cols
 	case "trend":
 		cols = append(cols, "day")
 		if q.Series != "" {
@@ -124,11 +172,24 @@ func (q Query) Columns() []string {
 // and the numeric columns (project_id, display_width, display_height,
 // consent, bucket) are number; day is day; a trend's series and every
 // other column, attr_<key> included, text. A breakdown with other has
-// its dimensions text, its Other row reading "Other" in each. It does
-// not validate q.
+// its dimensions text, its Other row reading "Other" in each. A
+// retention's cohort is day, identified_by text, the others number. It
+// does not validate q.
 func (q Query) ColumnTypes() []string {
 	var types []string
 	switch q.Kind {
+	case "retention":
+		for _, c := range q.Columns() {
+			switch c {
+			case "cohort":
+				types = append(types, "day")
+			case "identified_by":
+				types = append(types, "text")
+			default:
+				types = append(types, "number")
+			}
+		}
+		return types
 	case "trend":
 		types = append(types, "day")
 		if q.Series != "" {
@@ -273,10 +334,14 @@ func dimensionOf(table, column string) bool {
 
 // The closed vocabularies of a Query, which a schema describing it lists.
 var (
-	Kinds        = []string{"stat", "trend", "breakdown"}
-	Tables       = []string{"events", "views", "product", "measures", "sessions", "identities"}
-	MetricOps    = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "bounces", "bounce_rate", "percentile", "mean", "weight", "share"}
-	ValueColumns = []string{"value", "sample_rate", "display_width", "display_height"}
+	Kinds = []string{"stat", "trend", "breakdown", "retention"}
+	// RetentionOutputs are a retention's outputs, IdentifiedBy what its
+	// curve and milestones pool.
+	RetentionOutputs = []string{"grid", "curve", "milestones"}
+	IdentifiedBy     = []string{"install", "user"}
+	Tables           = []string{"events", "views", "product", "measures", "sessions", "identities"}
+	MetricOps        = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "bounces", "bounce_rate", "percentile", "mean", "weight", "share"}
+	ValueColumns     = []string{"value", "sample_rate", "display_width", "display_height"}
 	// SessionValueColumns are the columns sum, avg, min and max take on
 	// sessions (ValueColumns on the other tables).
 	SessionValueColumns = []string{"duration_sec", "views"}
@@ -320,6 +385,19 @@ func invalid(path, format string, args ...any) error {
 func (q Query) Validate() error {
 	if !slices.Contains(Kinds, q.Kind) {
 		return invalid("kind", "%q is not one of %s", q.Kind, strings.Join(Kinds, ", "))
+	}
+	if q.Kind == "retention" {
+		return q.validateRetention()
+	}
+	switch {
+	case q.Output != "":
+		return invalid("output", "only a retention takes an output")
+	case q.IdentifiedBy != "":
+		return invalid("identified_by", "only a retention takes identified_by")
+	case q.Offsets != 0:
+		return invalid("offsets", "only a retention takes offsets")
+	case len(q.Milestones) > 0:
+		return invalid("milestones", "only a retention takes milestones")
 	}
 	if !slices.Contains(Tables, q.Table) {
 		return invalid("table", "%q is not one of %s", q.Table, strings.Join(Tables, ", "))
@@ -419,6 +497,68 @@ func (q Query) Validate() error {
 		}
 		if !metricNames[q.Order] && !names[q.Order] {
 			return invalid("order", "%q is not a metric name or a dimension", q.Order)
+		}
+	}
+	return nil
+}
+
+// validateRetention refuses a malformed retention: it reads events, and
+// takes its own fields and where alone.
+func (q Query) validateRetention() error {
+	if q.Table != "" && q.Table != "events" {
+		return invalid("table", "a retention reads events, not %q", q.Table)
+	}
+	switch {
+	case len(q.Metrics) > 0:
+		return invalid("metrics", "a retention takes none; its output names its columns")
+	case len(q.Dimensions) > 0:
+		return invalid("dimensions", "a retention takes none")
+	case q.Series != "":
+		return invalid("series", "a retention takes none")
+	case q.SeriesLimit != 0:
+		return invalid("series_limit", "a retention takes none")
+	case q.Compare != "":
+		return invalid("compare", "a retention takes none")
+	case q.Limit != 0:
+		return invalid("limit", "a retention takes none")
+	case q.Other:
+		return invalid("other", "a retention takes none")
+	case q.Order != "":
+		return invalid("order", "a retention takes none")
+	}
+	if !slices.Contains(RetentionOutputs, q.Output) {
+		return invalid("output", "%q is not one of %s", q.Output, strings.Join(RetentionOutputs, ", "))
+	}
+	switch {
+	case q.Output == "grid" && q.IdentifiedBy != "":
+		return invalid("identified_by", "a grid has both install and user; only a curve or milestones takes identified_by")
+	case q.Output != "grid" && !slices.Contains(IdentifiedBy, q.IdentifiedBy):
+		return invalid("identified_by", "%q is not install or user, which a %s needs", q.IdentifiedBy, q.Output)
+	}
+	if q.Offsets < 0 || q.Offsets > maxOffsets {
+		return invalid("offsets", "%d is not between 1 and %d", q.Offsets, maxOffsets)
+	}
+	offsets := q.offsets()
+	switch {
+	case q.Output != "milestones" && len(q.Milestones) > 0:
+		return invalid("milestones", "only the milestones output takes milestones")
+	case len(q.Milestones) > maxMilestones:
+		return invalid("milestones", "at most %d, got %d", maxMilestones, len(q.Milestones))
+	case q.Output == "milestones" && len(q.Milestones) == 0 && offsets < slices.Max(defaultMilestones):
+		return invalid("milestones", "the default 7, 30 and 45 need offsets of 45 or more, got %d; give milestones", offsets)
+	}
+	for i, m := range q.Milestones {
+		p := fmt.Sprintf("milestones[%d]", i)
+		if m < 0 || m > offsets {
+			return invalid(p, "%d is not between 0 and offsets, %d", m, offsets)
+		}
+		if slices.Contains(q.Milestones[:i], m) {
+			return invalid(p, "%d is repeated", m)
+		}
+	}
+	for i, f := range q.Where {
+		if err := f.validate("events", fmt.Sprintf("where[%d]", i)); err != nil {
+			return err
 		}
 	}
 	return nil

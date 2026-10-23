@@ -3,7 +3,7 @@ import {
   ChartContainer,
   ChartTooltip,
 } from '@/components/ui/chart'
-import { activeDot, axis, formatTick, grid, niceTicks, seriesColor, seriesConfig, valueAxis, valuesOf } from '@/lib/chart'
+import { activeDot, axis, formatTick, grid, niceTicks, numericX, seriesColor, seriesConfig, valueAxis, valuesOf } from '@/lib/chart'
 import { approximate, formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
@@ -17,12 +17,12 @@ interface LineProps {
 
 export const contract: Contract = {
   description:
-    'A trend over time or category, one line per `series` value; best for a continuous metric like visitors per day. Keep it to 5 lines, one per chart color: rank the series in SQL and keep the top ones.',
+    'A trend over time, a number (such as retention offsets, plotted to scale) or category, one line per `series` value; best for a continuous metric like visitors per day. Keep it to 5 lines, one per chart color: rank the series in SQL and keep the top ones.',
   accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [
-      { name: 'x', types: ['day', 'text'] },
+      { name: 'x', types: ['day', 'text', 'number'] },
       { name: 'y', types: ['number'] },
       { name: 'series', types: ['text'], optional: true },
     ],
@@ -103,7 +103,11 @@ export default function Line({ data, props }: WidgetProps<LineProps>) {
   const format = props.format ?? 'number'
   const curve = props.curve ?? 'monotone'
   const hasSeries = sql.columns.includes('series')
-  const { rows, keys } = hasSeries ? pivot(records, 'x', 'series', 'y') : { rows: records, keys: ['y'] }
+  const pivoted = hasSeries ? pivot(records, 'x', 'series', 'y') : { rows: records, keys: ['y'] }
+  const keys = pivoted.keys
+  // Numbers on x (a retention curve's offsets) plot to scale, in order.
+  const numeric = numericX(pivoted.rows)
+  const rows = numeric?.rows ?? pivoted.rows
   const config = hasSeries ? seriesConfig(keys) : { y: { label: 'y' } }
   const ticks = niceTicks(valuesOf(rows, keys))
   const dotted = rows.length <= DOTTED
@@ -112,7 +116,7 @@ export default function Line({ data, props }: WidgetProps<LineProps>) {
     <ChartContainer config={config} className="h-full w-full">
       <LineChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }}>
         <CartesianGrid {...grid} />
-        <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={card ? CARD_TICK_GAP : 24} tickFormatter={formatTick} />
+        <XAxis dataKey="x" {...axis} {...numeric?.axis} interval="preserveStartEnd" minTickGap={card ? CARD_TICK_GAP : 24} tickFormatter={formatTick} />
         <YAxis {...valueAxis} ticks={ticks} domain={[ticks[0], ticks[ticks.length - 1]]} tickFormatter={(v: number) => formatValue(v, format)} />
         <ChartTooltip cursor={{ strokeWidth: 1 }} content={tooltip(format, { indicator: 'line', heading: 'x', approximate: approximate(sql, 'y') })} />
         {hasSeries && legend()}

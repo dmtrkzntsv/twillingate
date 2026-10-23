@@ -458,7 +458,7 @@ appears. `width` and `height` default to the component's size below.
 | Component | Accepts | Inputs: the columns the query returns | Props | Default width × height |
 | --- | --- | --- | --- | --- |
 | `stat` | `sql`, `query` | `value` number; `previous` number, optional (shows the change); `x` day, optional (a sparkline under the number, which becomes the series' `aggregate`) | `format`, `aggregate` (`sum`, `last`, `avg`) | 3 × 3 |
-| `line` | `sql`, `query` | `x` day or text; `y` number; `series` text, optional (one line per value; keep it to 5 lines, one per chart color, ranking the rest out in SQL) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
+| `line` | `sql`, `query` | `x` day, text or number (numbers plot to scale, ascending); `y` number; `series` text, optional (one line per value; keep it to 5 lines, one per chart color, ranking the rest out in SQL) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
 | `area` | `sql`, `query` | as `line` | `format`, `curve`, `stacked` | 6 × 8 |
 | `bar` | `sql`, `query` | `x` text or day; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
 | `bar_list` | `sql`, `query` | `label` text; `value` number (a ranked list with an inline bar) | `format` | 6 × 8 |
@@ -575,6 +575,26 @@ its metric, renamed to the inputs `line` reads:
 ```
 
 Props: `{"curve": "monotone"}`
+
+### `line` as a retention curve
+
+The share of the range's signed-in users back on each day after their
+first: a retention curve returns `offset` (a number, the days since the
+cohort day) and `retention`, and a numeric `x` plots to scale:
+
+```json
+{
+  "query": {
+    "kind": "retention",
+    "output": "curve",
+    "identified_by": "user",
+    "offsets": 30
+  },
+  "rename": {"offset": "x", "retention": "y"}
+}
+```
+
+Props: `{"format": "percent", "curve": "linear"}`
 
 ### `area`
 
