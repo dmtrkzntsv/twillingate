@@ -1086,3 +1086,69 @@ Started 2026-10-23T16:08:52Z. The same cells as step 3f (`native-bench dashboard
 | Measures (2) | 30 d | 29 ms / 29 ms | 33 ms / 22 ms | 0.76x | 71 ms | 83 MB | 59 MB | metrics 22 ms | 0.95 |
 
 Load average (1 min) at cell start: 0.85 to 1.00; cells that started above 1.0 (the gate gave up): 0 of 26.
+
+## Step 4c: a profile of a dashboard load
+
+Run 2026-10-23 from 17:28Z, native only, on step 4b's 1M files with T = 32,768 (`~/.cache/twbench-native/4/dash-T32768/1m`): Views (20 query widgets) and Product (10) over 30 days, one fresh process a cell (`TestMeasureSystemDashboard`, GOMAXPROCS=2, `native.New`'s defaults: MaxScans 2, 2 workers), every widget at once, a first load then 3 warm loads. Each cell runs with and without **an open log**: 2026-09-30's 32,304 events written as `archivetest.WriteLogs` writes a day's log, re-dated to 2026-10-01 and added as `2026-10-01.log` to a copy of `raw/` whose other files are links; that cell's range is 2026-09-02 to 2026-10-01 (29 days of Parquet and the log) and the engine's clock says it is 2026-10-01, so the log is today's. The cell without it is 2026-09-01 to 2026-09-30 as before. Before every cell the gate waited until the 1-minute load was at most 1.0 (polling every 10 s, up to 5 min); one profile cell started at 1.31 and was re-run, the rest started at 0.69 to 0.98.
+
+Hooks (`internal/app/measure_system_test.go`, build tag `measure`): `MEASURE_PROFILE` writes a CPU profile and a block profile (rate 1) of the 3 warm loads and a heap profile after them; `MEASURE_OPEN_LOG` with `MEASURE_TODAY` adds the log; `MEASURE_MARK` stats a missing `/measure-mark-<n>` before each load so an `strace -f -y` of the process tells the loads apart; `MEASURE_CHUNKS` lists every Parquet column chunk's first byte, to name the trace's reads; `MEASURE_NO_POLL` skips the harness's look for engine children. Each cell's CPU (user + system, `getrusage`) is now recorded per warm load. Profiles, traces and cells: `~/.cache/twbench-native/profiles/`.
+
+### Wall and CPU
+
+Best of 3 warm loads; CPU is the process's over that load. "Poll" is the harness as every earlier step ran it; "no poll" skips its /proc scan.
+
+| Dashboard | Open log | Wall, poll | CPU, poll | Wall, no poll | CPU, no poll | Peak | Load at start (poll / no poll) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | no | 1.91 s | 3.79 s | 1.61 s | 3.18 s | 117 to 124 MB | 0.72 / 0.88 |
+| Views (20) | yes | 9.12 s | 18.07 s | 7.76 s | 15.25 s | 119 to 123 MB | 0.82 / 0.89 |
+| Product (10) | no | 1.43 s | 2.80 s | 1.22 s | 2.29 s | 187 to 200 MB | 0.98 / 0.93 |
+| Product (10) | yes | 4.96 s | 9.82 s | 4.17 s | 8.19 s | 166 to 179 MB | 0.98 / 0.93 |
+
+- **CPU is saturated:** CPU is 1.97 to 2.0 times wall in every cell, so the two Ps are idle under 2% of a load.
+- **The harness's child poll costs 14 to 16% of a native cell's wall.** `childPeaks` lists /proc and reads every process's stat every 20 ms; on a busy host that is 13 to 15% of the CPU samples, taken from the cell's own two Ps. Every native cell since step 3f carries it (Views 30 d at 1M: 1.93 s in step 4b, 1.61 s without it). A DuckDB cell polls too, but its queries run in the engine child, outside the Go process's GOMAXPROCS, so the native/DuckDB ratios of steps 3f to 4b overstate the gap (Views 30 d at 1M: about 1.5x DuckDB, not 1.8x).
+- **The open log makes the load 4.8x (Views) and 3.4x (Product) slower.** No earlier benchmark had one; a range ending today always does.
+
+### Where the CPU goes
+
+CPU per warm load (the profile's samples over 3 loads, divided by 3), without the harness's poll; each sample goes to the first category any frame of its stack matches, in the table's order (`tools/split.py` beside the profiles).
+
+| Category | Views, no log | Views, open log | Product, no log | Product, open log |
+| --- | --- | --- | --- | --- |
+| Footer decode (`openFile`) | 93 ms (2.9%) | 87 ms (0.6%) | 60 ms (2.5%) | 60 ms (0.7%) |
+| JSON log decode (`readLog`) | — | 11,523 ms (75.0%) | — | 5,717 ms (68.5%) |
+| `readChunk` and dictionaries | 1,137 ms (35.6%) | 1,167 ms (7.6%) | 933 ms (39.1%) | 877 ms (10.5%) |
+| of which the dictionary map (`dictBuilder`) | 697 ms (21.8%) | 667 ms (4.3%) | 637 ms (26.7%) | 607 ms (7.3%) |
+| of which zstd | 160 ms (5.0%) | 197 ms (1.3%) | 120 ms (5.0%) | 93 ms (1.1%) |
+| `selectRows`, `groupsOf`, `addDistinct` | 1,360 ms (42.5%) | 1,457 ms (9.5%) | 837 ms (35.1%) | 867 ms (10.4%) |
+| of which the per-day key sort (`sortedUniqueKeys`) | 1,047 ms (32.7%) | 1,150 ms (7.5%) | 233 ms (9.8%) | 303 ms (3.6%) |
+| of which the id hashing (`addDistinct`, `dset`) | 203 ms (6.4%) | 200 ms (1.3%) | 433 ms (18.2%) | 403 ms (4.8%) |
+| of which `groupsOf` and `selectRows` | 110 ms (3.4%) | 107 ms (0.7%) | 170 ms (7.1%) | 160 ms (1.9%) |
+| Computed columns (`batchColumn`) | 100 ms (3.1%) | 97 ms (0.6%) | 0 | 0 |
+| Merge (`agg.merge`, its key sort) | 310 ms (9.7%) | 260 ms (1.7%) | 137 ms (5.7%) | 90 ms (1.1%) |
+| Attribute unpivot | — | — | 210 ms (8.8%) | 197 ms (2.4%) |
+| Gap-day sessionize (beyond its reads) | — | 50 ms (0.3%) | — | — |
+| GC (background) | 110 ms (3.4%) | 507 ms (3.3%) | 113 ms (4.7%) | 407 ms (4.9%) |
+| Other | 87 ms (2.7%) | 213 ms (1.4%) | 97 ms (4.1%) | 130 ms (1.6%) |
+| **Engine CPU per load** | **3,197 ms** | **15,360 ms** | **2,387 ms** | **8,343 ms** |
+
+- **Waiting on `turn`** (the block profile's time in `turn`'s semaphore select, summed over the widgets, per load): Views 17.6 s of the 21.8 s its widgets' latencies add up to, 82 s of 101 s with the log; Product 6.4 s of 10.5 s, 21.7 s of 30.7 s. It is queueing, not lost work: the Ps are busy throughout (above), so the wall is the CPU over two.
+- **The JSON decode** is `encoding/json` into `map[string]json.RawMessage` per line (83% of it), then the per-key builders: about 575 ms of CPU per decode of the 18 MB log (32 MB/s), the same in both dashboards. With Views' sessions widgets, 16% of it is the gap day's `deriveSessions` decoding the log again.
+- **The dictionary map** is `dictBuilder.addDict` putting every entry of a chunk's first dictionary into a `map[string]int32` (and a Go string each) to remap it, though a first dictionary's indexes stand as they are; `dictBuilder.id` is also the largest allocator (2.1 GB of the 6.2 GB allocated by a Views cell).
+- **The per-day key sort** is `slices.SortFunc(cmpDayKey)` over each batch's (cell, hash) keys for a per-day distinct (visitors per day, `daily_*`): Views' largest single cost without the log, done per query.
+
+### Reads per warm load
+
+From `strace -f -y` of a cell with one warm load (between the marks): footer decodes are `openat`s of a Parquet file (each `openFile` decodes its footer), chunk reads are `pread64`s at a column chunk's first byte, log decodes are `openat`s of the log.
+
+| Dashboard | Open log | Footer decodes | Column chunk reads (distinct chunks) | Most read | Log decodes |
+| --- | --- | --- | --- | --- | --- |
+| Views | no | 65: 2026-09 51, 2026-08 6, sessions/2026-09 8 | 664 (266), 2.5 each | `day` 230 (28), `actor_id` 191 (21) | 0 |
+| Views | yes | 50: 2026-09 38, 2026-08 6, sessions/2026-09 6 | 704 (267), 2.6 each | `day` 242 (28), `actor_id` 198 (21) | 20 |
+| Product | no | 32: 2026-09 30, 2026-08 2 | 314 (142), 2.2 each | `day` 106 (19), `actor_id` 63 (10) | 0 |
+| Product | yes | 25: 2026-09 23, 2026-08 2 | 336 (150), 2.2 each | `day` 108 (21), `actor_id` 64 (10) | 11 |
+
+A load reads 18 to 35 MB of Parquet. Each widget's scan lists the file's groups (one footer decode) and each worker opens it again (one more each); the dimension columns are read about once a chunk (one widget each), `day` (every group not taken whole) and `actor_id` (every visitor count) 8 to 9 times, and the log once per events scan and once more per gap-day derivation.
+
+### What a shared scan must share
+
+One scan per (project, table class) answers the load's widgets only if it shares the open log's decode first: 69 to 75% of a load's CPU with a log in range, read 20 (Views) or 11 (Product) times, where one decode per load (shared by the events consumers and the gap-day derivation) would take the Views load from about 15.4 s to about 4.4 s of CPU. Without a log, sharing the chunk reads (2.5x fewer, with their dictionary maps) and the footers saves about 0.77 s of Views' 3.2 s and 0.57 s of Product's 2.4 s. What stays per query is the aggregation: the per-day key sort (1.05 s of Views' 3.2 s), the id hashing, `groupsOf` and the merge, 1.7 s of Views' load, which neither the shared scan nor the per-batch memo touches. The per-batch memo targets the computed columns (3% of Views' load, none of Product's) and the per-entry hashes inside the id hashing (6% of Views', 18% of Product's, set inserts included), and pays only once a scan has several consumers. A cheaper per-day distinct (no comparison sort per batch), a first dictionary taken without the map, and a log decoded once per growth rather than per load are the costs beside it.

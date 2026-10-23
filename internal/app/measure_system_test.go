@@ -29,6 +29,21 @@
 // it) through Service.Preview, the console editor's uncached run, so
 // through archive.Reader and the engine child at EngineOptions' defaults
 // (threads = GOMAXPROCS, one query at a time at 2 threads, 512 MB).
+//
+// The profile (step 4c): MEASURE_PROFILE=<prefix> writes a CPU profile of
+// the warm runs to <prefix>-cpu.pb.gz, a block profile of them (every
+// blocking event, so the time widgets wait on the engine's turn) to
+// <prefix>-block.pb.gz, and a heap profile after them to
+// <prefix>-heap.pb.gz. MEASURE_OPEN_LOG=<file> with MEASURE_TODAY=<day>
+// adds an open log: the cell reads a copy of raw/ (links to its files)
+// holding <file> as <day>.log, its range ends on that day, and the
+// engine's clock says it is that day. MEASURE_MARK=1 stats a missing
+// /measure-mark-<n> before each load, so a trace of the process (strace)
+// can tell the loads apart; MEASURE_NO_POLL=1 does not look for engine
+// children (native spawns none), whose poll of /proc takes CPU from the
+// cell's GOMAXPROCS; MEASURE_CHUNKS=<file> writes each Parquet
+// file's column chunks (path, offset, row group, column) to it, to name
+// the trace's reads.
 package app
 
 import (
@@ -39,12 +54,17 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/pprof"
 	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
+
+	"github.com/parquet-go/parquet-go"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
@@ -68,6 +88,7 @@ type systemCell struct {
 	Widgets   int            `json:"widgets"`
 	FirstMS   float64        `json:"first_ms"`
 	WarmMS    []float64      `json:"warm_ms"`
+	WarmCPU   []float64      `json:"warm_cpu_ms"` // user + system CPU of this process over each warm run
 	BestMS    float64        `json:"best_ms"`
 	SelfPeak  int            `json:"self_peak_kb"`  // VmHWM of this process
 	ChildPeak int            `json:"child_peak_kb"` // the sum over the engine children of each one's VmHWM
@@ -195,6 +216,89 @@ func rebuildThroughPass(t *testing.T, src, raw string) {
 	}
 }
 
+// withOpenLog is a copy of raw under work, its files linked, with log
+// added to project 1 as day's open log.
+func withOpenLog(t *testing.T, raw, work, log string, day civil.Date) string {
+	out := filepath.Join(work, "raw")
+	if err := os.MkdirAll(filepath.Join(out, "1"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	link := func(dir, name string) {
+		if err := os.Symlink(filepath.Join(raw, dir, name), filepath.Join(out, dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	top, err := os.ReadDir(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range top {
+		if e.Name() != "1" {
+			link("", e.Name())
+		}
+	}
+	files, err := os.ReadDir(filepath.Join(raw, "1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range files {
+		link("1", e.Name())
+	}
+	b, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(out, "1", day.String()+".log"), b, 0o640); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// writeChunks writes every Parquet file's column chunks under raw/1 to
+// path, a line each: path, the chunk's first byte, row group, column.
+func writeChunks(t *testing.T, raw, path string) {
+	paths, err := filepath.Glob(filepath.Join(raw, "1", "*.parquet"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	more, _ := filepath.Glob(filepath.Join(raw, "1", "sessions", "*.parquet"))
+	var sb strings.Builder
+	for _, p := range append(paths, more...) {
+		f, err := os.Open(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		st, _ := f.Stat()
+		pf, err := parquet.OpenFile(f, st.Size(), parquet.SkipPageIndex(true), parquet.SkipBloomFilters(true))
+		if err != nil {
+			t.Fatal(err)
+		}
+		real, _ := filepath.EvalSymlinks(p)
+		for i, rg := range pf.Metadata().RowGroups {
+			for _, cc := range rg.Columns {
+				off := cc.MetaData.DataPageOffset
+				if d := cc.MetaData.DictionaryPageOffset; d > 0 && d < off {
+					off = d
+				}
+				fmt.Fprintf(&sb, "%s\t%d\t%d\t%s\n", real, off, i, strings.Join(cc.MetaData.PathInSchema, "."))
+			}
+		}
+		f.Close()
+	}
+	if err := os.WriteFile(path, []byte(sb.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// cpuMS is this process's user and system CPU so far.
+func cpuMS() float64 {
+	var ru syscall.Rusage
+	if err := syscall.Getrusage(syscall.RUSAGE_SELF, &ru); err != nil {
+		return 0
+	}
+	return float64(ru.Utime.Nano()+ru.Stime.Nano()) / 1e6
+}
+
 func TestMeasureSystemDashboard(t *testing.T) {
 	months, perMonth, passes := measureEnv("MEASURE_MONTHS", 12), measureEnv("MEASURE_MONTH_EVENTS", 1_000_000), measureEnv("MEASURE_PASSES", 3)
 	dir := os.Getenv("MEASURE_DIR")
@@ -254,6 +358,18 @@ func TestMeasureSystemDashboard(t *testing.T) {
 	if err != nil || days < 1 {
 		t.Fatalf("MEASURE_CELL %q: days", cellSpec)
 	}
+	now := time.Now
+	if log := os.Getenv("MEASURE_OPEN_LOG"); log != "" {
+		today, err := civil.Parse(os.Getenv("MEASURE_TODAY"))
+		if err != nil {
+			t.Fatalf("MEASURE_TODAY: %v", err)
+		}
+		raw, last = withOpenLog(t, raw, work, log, today), today
+		now = func() time.Time { return today.Time().Add(12 * time.Hour) }
+	}
+	if path := os.Getenv("MEASURE_CHUNKS"); path != "" {
+		writeChunks(t, raw, path)
+	}
 	from := last.AddDays(1 - days)
 
 	// 2. A store with the system dashboards and the project.
@@ -285,7 +401,7 @@ func TestMeasureSystemDashboard(t *testing.T) {
 	if err := reporting.Migrate(ctx, st, files); err != nil {
 		t.Fatal(err)
 	}
-	svc := reporting.New(st, files, reporting.Options{Native: native.New(native.Options{Dir: raw})})
+	svc := reporting.New(st, files, reporting.Options{Native: native.New(native.Options{Dir: raw, Now: now})})
 
 	// 3. The requests: one function per widget.
 	type request struct {
@@ -357,10 +473,19 @@ func TestMeasureSystemDashboard(t *testing.T) {
 
 	// 4. The loads: all at once, as the console sends them.
 	stop := make(chan struct{})
-	peaks := childPeaks(stop)
+	peaks := func() map[int]int { return nil }
+	if os.Getenv("MEASURE_NO_POLL") == "" { // the poll reads /proc every 20 ms, on the cell's own CPUs
+		peaks = childPeaks(stop)
+	}
 	cell := systemCell{Engine: eng, Dashboard: dash, Days: days, From: from.String(), To: last.String(), Widgets: len(reqs),
 		IdleRSS: procStatusKB("self", "VmRSS"), Rows: map[string]int{}, Load: loadAvg()}
+	mark := os.Getenv("MEASURE_MARK") != ""
+	loads := 0
 	load := func() (time.Duration, map[string]int) {
+		if mark {
+			os.Stat(fmt.Sprintf("/measure-mark-%d", loads)) //nolint:errcheck // the trace sees the call
+		}
+		loads++
 		took := make([]time.Duration, len(reqs))
 		rows := make([]int, len(reqs))
 		var wg sync.WaitGroup
@@ -389,12 +514,40 @@ func TestMeasureSystemDashboard(t *testing.T) {
 	}
 	wall, per := load()
 	cell.FirstMS, cell.First = float64(wall.Microseconds())/1000, per
+	prof := os.Getenv("MEASURE_PROFILE")
+	if prof != "" {
+		f, err := os.Create(prof + "-cpu.pb.gz")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if err := pprof.StartCPUProfile(f); err != nil {
+			t.Fatal(err)
+		}
+		runtime.SetBlockProfileRate(1)
+	}
 	for pass := 0; pass < passes; pass++ {
+		cpu := cpuMS()
 		wall, per := load()
+		cell.WarmCPU = append(cell.WarmCPU, cpuMS()-cpu)
 		ms := float64(wall.Microseconds()) / 1000
 		cell.WarmMS = append(cell.WarmMS, ms)
 		if cell.Best == nil || ms < cell.BestMS {
 			cell.BestMS, cell.Best = ms, per
+		}
+	}
+	if prof != "" {
+		pprof.StopCPUProfile()
+		runtime.SetBlockProfileRate(0)
+		for _, name := range []string{"block", "heap"} {
+			f, err := os.Create(prof + "-" + name + ".pb.gz")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := pprof.Lookup(name).WriteTo(f, 0); err != nil {
+				t.Fatal(err)
+			}
+			f.Close()
 		}
 	}
 	got := peaks()
@@ -412,8 +565,8 @@ func TestMeasureSystemDashboard(t *testing.T) {
 		names = append(names, n)
 	}
 	slices.SortFunc(names, func(a, b string) int { return cell.Best[b] - cell.Best[a] })
-	t.Logf("%s: first %.0f ms, warm %v ms, self peak %d MB, children %d peak %d MB; slowest %v",
-		cellSpec, cell.FirstMS, cell.WarmMS, cell.SelfPeak/1024, cell.Children, cell.ChildPeak/1024, names[:min(3, len(names))])
+	t.Logf("%s: first %.0f ms, warm %v ms (CPU %v ms), self peak %d MB, children %d peak %d MB; slowest %v",
+		cellSpec, cell.FirstMS, cell.WarmMS, cell.WarmCPU, cell.SelfPeak/1024, cell.Children, cell.ChildPeak/1024, names[:min(3, len(names))])
 	if out := os.Getenv("MEASURE_OUT"); out != "" {
 		b, err := json.Marshal(cell)
 		if err != nil {

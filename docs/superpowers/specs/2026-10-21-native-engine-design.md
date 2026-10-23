@@ -910,6 +910,37 @@ DuckDB best (Retention: first) for reference; peak is the native process's:
   26 groups against 90, so the 2,000-key month's about 150 MB becomes
   about 45 MB (arithmetic, not measured).
 
+### Profile (step 4c)
+
+A CPU, block and heap profile of Views and Product over 30 days at 1M
+(T = 32,768), behind the gate (load 0.69 to 0.98), with and without an
+open log of today's 32,304 events in range, which no earlier benchmark
+had. Method, tables and read counts: `scripts/native-bench/RESULTS.md`,
+"Step 4c".
+
+- **The open log dominates.** It makes the load 4.8x slower for Views
+  (1.91 to 9.12 s) and 3.4x for Product (1.43 to 4.96 s): 69 to 75% of
+  the CPU is `encoding/json` decoding the log, about 575 ms a decode,
+  once per events scan and once more per gap-day derivation (20 decodes
+  a Views load, 11 a Product load).
+- **Without a log**, per Views load (3.2 s of CPU): chunk reads and their
+  dictionary maps 36% (664 reads of 266 chunks: `day` and `actor_id`
+  8 to 9 times each), the per-day key sort of a per-day distinct 33%,
+  merge 10%, id hashing 6%, footers 3% (65 decodes of 3 files), computed
+  columns 3%. Product (2.4 s): chunk reads 39%, id hashing 18%, per-day
+  sort 10%, unpivot 9%, `groupsOf` 7%, merge 6%.
+- **Waiting on `turn`** is queueing, not lost work: the two Ps are busy
+  98% of a load, so the wall is the CPU over two.
+- **The harness's child poll** (/proc every 20 ms) took 14 to 16% of
+  every native cell's wall since step 3f; without it Views 30 d at 1M is
+  1.61 s, about 1.5x DuckDB rather than 1.8x.
+
+So the shared scan must share the log's decode (one per load, for the
+events and the gap-day derivation) before anything else, then the chunk
+reads and footers (about 24% of a no-log load). The per-query
+aggregation (per-day sort, hashing, `groupsOf`, merge: about half of a
+no-log Views load) stays, and needs its own work.
+
 ## Left to the builder
 
 - Field names and JSON schema of the language; the exact metric and
