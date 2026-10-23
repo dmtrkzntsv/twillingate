@@ -1726,7 +1726,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `fill` | trend | `zero` gives every day of the range its row, for every kept series or metric: a counted metric (`count`, `actors`, `users`, `groups`, `bounces`, `weight`, `daily_*`, `days`) reads `0` where it is empty, the others stay empty; `""` or absent, only the days with rows |
 | `compare` | stat | `previous` adds a `previous_<name>` column per metric, over as many days ending the day before `from`; `""` or absent, none |
 | `output` | retention, attributes | a retention's `grid`, `curve` or `milestones`; an attributes' `values` or `keys` (required) |
-| `identified_by` | retention | `install` or `user`: the cohorts a `curve` or `milestones` pools (required there; a `grid` has both and refuses it) |
+| `identified_by` | retention | `install` or `user`: the cohorts a `curve` or `milestones` pools (required there); on a `grid`, optional: that kind's rows alone (without it, both) |
 | `offsets` | retention | the days back counted, 1 to 90 (default 45) |
 | `milestones` | retention | `milestones` only: 1 to 6 distinct days back, each 0 to `offsets` (default 7, 30 and 45, which need `offsets` of 45 or more) |
 | `reserved` | attributes | `values` only: `true` adds the reserved keys (below) |
@@ -1960,7 +1960,8 @@ passes it. The other fields of the other kinds are refused.
 - **grid**: `cohort` (a day), `identified_by`, `offset` (a number: the
   days since the cohort day), `size`, `returned` and `retention`
   (`returned / size`); a row per cohort, kind and offset with anyone back,
-  by cohort descending, then kind, then offset. A grid has up to two rows
+  by cohort descending, then kind, then offset, or with `identified_by`
+  that kind's rows alone. A grid has up to two rows
   per cohort and offset, so a month of cohorts over 45 offsets can pass
   `CONSOLE_QUERY_ROWS_MAX` (1,000 by default): the answer is then cut
   there, keeping the newest cohorts, and `truncated`; narrow the range or

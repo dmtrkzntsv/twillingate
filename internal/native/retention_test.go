@@ -358,7 +358,16 @@ func TestRetentionMatchesSQL(t *testing.T) {
 				if !slices.Equal(res.Columns, q.Columns()) {
 					t.Errorf("%s: columns %v, want %v", file, res.Columns, q.Columns())
 				}
-				want := duckTable(t, f, retentionSQL(t, file, now, offsets, c.sql), c.from, c.to)
+				sql := retentionSQL(t, file, now, offsets, c.sql)
+				if q.Output == "grid" && q.IdentifiedBy != "" {
+					// The grid of one kind: cohorts.sql's rows of that kind.
+					all := "FROM retention\nWHERE day_offset"
+					if !strings.Contains(sql, all) {
+						t.Fatalf("%s: no %q", file, all)
+					}
+					sql = strings.Replace(sql, all, "FROM retention\nWHERE actor_kind = '"+q.IdentifiedBy+"' AND day_offset", 1)
+				}
+				want := duckTable(t, f, sql, c.from, c.to)
 				t.Logf("%s: %d rows", file, len(want))
 				if len(want) == 0 && c.name != "empty range" {
 					t.Fatalf("%s: no rows: a weak case", file)
@@ -366,6 +375,8 @@ func TestRetentionMatchesSQL(t *testing.T) {
 				sameTable(t, res.Rows, want)
 			}
 			run(Query{Output: "grid"}, "cohorts")
+			run(Query{Output: "grid", IdentifiedBy: "install"}, "cohorts")
+			run(Query{Output: "grid", IdentifiedBy: "user"}, "cohorts")
 			run(Query{Output: "curve", IdentifiedBy: "install"}, "install-retention")
 			run(Query{Output: "curve", IdentifiedBy: "user"}, "signed-in-retention")
 			if offsets >= 45 {
@@ -418,6 +429,12 @@ func TestRetentionSignsIn(t *testing.T) {
 	}
 	if fmt.Sprint(grid) != fmt.Sprint(wantGrid) {
 		t.Errorf("grid %q, want %q (a's user days have no user cohort of 2026-09-01)", grid, wantGrid)
+	}
+	if got := answer(Query{Output: "grid", IdentifiedBy: "user"}); fmt.Sprint(got) != fmt.Sprint(wantGrid[:2]) {
+		t.Errorf("user grid %q, want the grid's user rows", got)
+	}
+	if got := answer(Query{Output: "grid", IdentifiedBy: "install"}); fmt.Sprint(got) != fmt.Sprint(wantGrid[2:]) {
+		t.Errorf("install grid %q, want the grid's install rows", got)
 	}
 	if got := answer(Query{Output: "curve", IdentifiedBy: "install"}); fmt.Sprint(got) != fmt.Sprint([][]string{
 		{"0", "1"}, {"1", "0.5"}, {"2", "0"}, {"3", "0"}, {"4", "0"}, {"5", "0"}, {"6", "0"}, {"7", "0"}}) {

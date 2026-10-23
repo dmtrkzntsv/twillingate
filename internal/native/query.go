@@ -39,7 +39,7 @@ type Query struct {
 	Order       string   `json:"order,omitempty" jsonschema:"breakdown and attributes values only: a metric name to rank groups by, descending, or one of its dimensions (an attributes' attribute and value among them) to sort them by, ascending, ties by the other dimensions ascending (default: the first metric; an attributes with day by day, the first metric descending, event_name, attribute and value, else by event_name, attribute, the first metric descending and value); limit keeps the first groups in that order"`
 	// The retention kind's fields.
 	Output       string `json:"output,omitempty" jsonschema:"retention and attributes only, required. An attributes: values (a row per dimensions, attribute and value) or keys (attribute, events, values, keys_total: a row per attribute, its events and distinct values, keys_total the number of attributes; the limit busiest, by events, then those keep names). A retention: grid (cohort, identified_by, offset, size, returned, retention: a row per cohort, identity kind and day back, offset the days since the cohort day), curve (offset, retention: one identity kind's cohorts pooled per day back) or milestones (one row, a d<n> column per milestone: the curve's retention that day back)"`
-	IdentifiedBy string `json:"identified_by,omitempty" jsonschema:"retention curve and milestones only, required: install or user, the cohorts pooled (a grid has both)"`
+	IdentifiedBy string `json:"identified_by,omitempty" jsonschema:"retention only: install or user, the cohorts a curve or milestones pools (required there); on a grid optional, its rows of that kind alone (without it, both)"`
 	Offsets      int    `json:"offsets,omitempty" jsonschema:"retention only: the days back counted, 1 to 90 (default 45)"`
 	Milestones   []int  `json:"milestones,omitempty" jsonschema:"retention milestones only: 1 to 6 distinct days back, each 0 to offsets (default 7, 30 and 45)"`
 	// The attributes kind's.
@@ -641,8 +641,8 @@ func (q Query) validateRetention() error {
 		return invalid("output", "%q is not one of %s", q.Output, strings.Join(RetentionOutputs, ", "))
 	}
 	switch {
-	case q.Output == "grid" && q.IdentifiedBy != "":
-		return invalid("identified_by", "a grid has both install and user; only a curve or milestones takes identified_by")
+	case q.Output == "grid" && q.IdentifiedBy != "" && !slices.Contains(IdentifiedBy, q.IdentifiedBy):
+		return invalid("identified_by", "%q is not install or user; a grid without it has both", q.IdentifiedBy)
 	case q.Output != "grid" && !slices.Contains(IdentifiedBy, q.IdentifiedBy):
 		return invalid("identified_by", "%q is not install or user, which a %s needs", q.IdentifiedBy, q.Output)
 	}

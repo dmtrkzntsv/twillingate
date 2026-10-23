@@ -352,7 +352,8 @@ type retentionKey struct {
 // kind's row at an offset exists only when that kind has a size in the
 // cohort (the SQL's inner join on offset 0).
 //   - grid: a row per cohort, kind and offset with any actor back, by
-//     cohort descending, kind, offset;
+//     cohort descending, kind, offset; with identified_by, that kind's
+//     rows only;
 //   - curve: the kind's cohorts pooled per offset o, over those whose
 //     cohort + o is before today: the actors back over the cohort sizes,
 //     0 over none; a row per offset some cohort reached;
@@ -378,7 +379,9 @@ func (s scan) retention(ctx context.Context, from, to civil.Date) (Result, error
 	if s.q.Output == "grid" {
 		keys := make([]retentionKey, 0, len(counts))
 		for k := range counts {
-			keys = append(keys, k)
+			if s.q.IdentifiedBy == "" || k.user == (s.q.IdentifiedBy == "user") {
+				keys = append(keys, k)
+			}
 		}
 		slices.SortFunc(keys, func(a, b retentionKey) int {
 			switch {
