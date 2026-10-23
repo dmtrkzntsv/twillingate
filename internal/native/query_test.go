@@ -223,6 +223,8 @@ func TestValidate(t *testing.T) {
 		{"series day", Query{Kind: "trend", Table: "events", Metrics: count(), Series: "day"}, "series"},
 		{"series_limit neg", Query{Kind: "trend", Table: "events", Metrics: count(), Series: "path", SeriesLimit: -1}, "series_limit"},
 		{"series_limit 51", Query{Kind: "trend", Table: "events", Metrics: count(), Series: "path", SeriesLimit: 51}, "series_limit"},
+		{"series_limit unsplit", Query{Kind: "trend", Table: "events", Metrics: count(), SeriesLimit: 3}, "series_limit"},
+		{"series_limit on several metrics", Query{Kind: "trend", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "actors"}}, SeriesLimit: 3}, "series_limit"},
 		{"series_limit on stat", Query{Kind: "stat", Table: "events", Metrics: count(), SeriesLimit: 3}, "series_limit"},
 		{"round 7", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "avg", Column: "value", Round: ptr(7)}}}, "metrics[0].round"},
 		{"round negative", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "avg", Column: "value", Round: ptr(-1)}}}, "metrics[1].round"},

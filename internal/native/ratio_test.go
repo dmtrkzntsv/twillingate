@@ -212,3 +212,83 @@ func TestRatioAllDeclined(t *testing.T) {
 		t.Errorf("all declined: %q, want 0", res.Rows[0][0])
 	}
 }
+
+// A ratio in a trend: filled, its days without rows stay empty (a ratio
+// is not counted); beside another metric, in a long trend; and split
+// into series, ranked by the ratio over the range.
+func TestRatioTrends(t *testing.T) {
+	f := engineFixture(t)
+	e := New(Options{Dir: f.Dir, Workers: 3})
+	const before = "2026-07-28" // days without rows before the fixture's
+	landing := []Filter{{Column: "event_name", Op: "eq", Values: []string{"landing"}}}
+	perVisitor := func(as string) Metric {
+		return Metric{Op: "ratio", As: as, Num: &Metric{Op: "count", Where: landing}, Den: &Metric{Op: "actors"}}
+	}
+	const ratioSQL = `count(*) FILTER (WHERE "event_name" = 'landing')::DOUBLE / NULLIF(count(DISTINCT "actor_id"), 0)`
+	cases := []struct {
+		name, from string
+		q          Query
+		sql        string
+		check      func(t *testing.T, rows [][]string)
+	}{
+		{name: "filled", from: before, q: Query{Kind: "trend", Table: "views", Fill: "zero", Metrics: []Metric{perVisitor("r")}},
+			sql: `WITH w AS (SELECT "day" AS x, ` + ratioSQL + ` AS y FROM views WHERE ` + inRange + ` GROUP BY 1),
+				d AS (SELECT CAST(range AS DATE) AS x FROM range(DATE '%[1]s', DATE '%[2]s' + INTERVAL 1 DAY, INTERVAL 1 DAY))
+				SELECT d.x, w.y FROM d LEFT JOIN w USING (x) ORDER BY 1`,
+			check: func(t *testing.T, rows [][]string) {
+				var empty int
+				for _, r := range rows {
+					if r[1] == "" {
+						empty++
+					}
+				}
+				if len(rows) != 45 || empty == 0 || empty == len(rows) {
+					t.Errorf("%d rows, %d empty: want 45 days, some empty", len(rows), empty)
+				}
+			}},
+		{name: "long", q: Query{Kind: "trend", Table: "views", Metrics: []Metric{{Op: "count", As: "views"}, perVisitor("per_visitor")}},
+			sql: `SELECT x, series, y FROM (
+				SELECT "day" AS x, 'views' AS series, 0 AS k, count(*)::DOUBLE AS y FROM views WHERE ` + inRange + ` GROUP BY 1
+				UNION ALL SELECT "day", 'per_visitor', 1, ` + ratioSQL + ` FROM views WHERE ` + inRange + ` GROUP BY 1
+			) ORDER BY x, k`},
+		{name: "series", q: Query{Kind: "trend", Table: "views", Series: "country", SeriesLimit: 2, Metrics: []Metric{perVisitor("r")}},
+			sql: `WITH g AS (SELECT "country", ` + ratioSQL + ` AS r FROM views WHERE ` + inRange + ` GROUP BY 1),
+				top AS (SELECT "country" FROM g ORDER BY r DESC NULLS LAST, "country" ASC NULLS LAST LIMIT 2)
+				SELECT "day", v."country", ` + ratioSQL + ` FROM views v JOIN top ON top."country" IS NOT DISTINCT FROM v."country"
+					WHERE ` + inRange + ` GROUP BY ALL ORDER BY "day", v."country" ASC NULLS LAST`,
+			check: func(t *testing.T, rows [][]string) {
+				seen := map[string]bool{}
+				for _, r := range rows {
+					seen[r[1]] = true
+				}
+				if len(seen) != 2 {
+					t.Errorf("series %v, want 2", seen)
+				}
+			}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if c.from == "" {
+				c.from = engineFrom
+			}
+			res, err := e.Answer(context.Background(), c.q, Params{Project: 1, From: date(t, c.from), To: date(t, today)}, engineRules)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(res.Columns, c.q.Columns()) {
+				t.Fatalf("columns %q, want %q", res.Columns, c.q.Columns())
+			}
+			want := duckTable(t, f, c.sql, c.from, today)
+			if len(want) == 0 {
+				t.Fatal("the SQL returns no rows: a weak case")
+			}
+			sameTable(t, res.Rows, want)
+			if c.check != nil {
+				c.check(t, res.Rows)
+			}
+			if res.Truncated || len(res.Approximate) > 0 {
+				t.Errorf("truncated %v, approximate %q", res.Truncated, res.Approximate)
+			}
+		})
+	}
+}

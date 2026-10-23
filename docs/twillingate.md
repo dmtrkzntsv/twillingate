@@ -1708,7 +1708,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `order` | breakdown, attributes | a metric name to rank the groups by, descending, ties by the dimensions; or one of the dimensions to sort the groups by, ascending, ties by the other dimensions (`"order": "day"` puts a breakdown by day in date order). Default the first metric; `limit` keeps the first groups in that order; an attributes' default differs (below) |
 | `other` | breakdown | `true` adds an `Other` row (every dimension `Other`) summing the groups past `limit`, when there are two or more; a single one past it is listed under its own name, so `"limit": 4` gives at most five rows |
 | `series` | trend | a column to split each day by |
-| `series_limit` | trend | how many series, 1 to 50, those ranking first by the metric over the range (default 5) |
+| `series_limit` | trend | how many series, 1 to 50, those ranking first by the metric over the range (default 5); only with `series` (a trend without one is refused) |
 | `fill` | trend | `zero` gives every day of the range its row, for every kept series or metric: a counted metric (`count`, `actors`, `users`, `groups`, `bounces`, `weight`, `daily_*`, `days`) reads `0` where it is empty, the others stay empty; `""` or absent, only the days with rows |
 | `compare` | stat | `previous` adds a `previous_<name>` column per metric, over as many days ending the day before `from`; `""` or absent, none |
 | `output` | retention, attributes | a retention's `grid`, `curve` or `milestones`; an attributes' `values` or `keys` (required) |

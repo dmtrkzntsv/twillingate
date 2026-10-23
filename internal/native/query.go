@@ -32,7 +32,7 @@ type Query struct {
 	Dimensions  []string `json:"dimensions,omitempty" jsonschema:"breakdown only, 1 to 3: columns to group by, each one a filter's column may name on the table (path, country, event_name, attr_<key>, …; resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), but duration_sec and views on sessions and views and events on identities; attributes only: day, event_name or both, in that order, before its attribute and value"`
 	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by, one a filter's column may name on the table except day (resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), and except duration_sec and views on sessions and views and events on identities"`
 	Fill        string   `json:"fill,omitempty" jsonschema:"trend only: zero gives every day of the range a row, for every kept series or metric: a counted metric (count, actors, users, groups, bounces, weight, daily_sum, daily_max, daily_avg, days) reads 0 where it is empty, the others stay empty"`
-	SeriesLimit int      `json:"series_limit,omitempty" jsonschema:"trend only: how many series, 1 to 50, the top ones by the metric over the range (default 5)"`
+	SeriesLimit int      `json:"series_limit,omitempty" jsonschema:"a trend with a series only: how many series, 1 to 50, the top ones by the metric over the range (default 5)"`
 	Compare     string   `json:"compare,omitempty" jsonschema:"stat only: previous adds each metric over as many days ending the day before from"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown and attributes only: how many groups, 1 to 1000 (default 20; an attributes' values all of them, its keys 50)"`
 	Other       bool     `json:"other,omitempty" jsonschema:"breakdown only: fold the groups past limit into one row whose dimensions read Other, when there are two or more: a single one is listed under its own name (limit 4 gives at most 5 rows)"`
@@ -193,9 +193,9 @@ func (q Query) Columns() []string {
 // bucket) are number; day, user_first_seen and group_first_seen are day;
 // a trend's series and every other column, attr_<key> included, text. A
 // breakdown with other has its dimensions text, its Other row reading
-// "Other" in each. A retention's cohort is day, identified_by text, the others number. An
-// attributes' attribute and value are text (its keys' attribute text,
-// the others number). It does not validate q.
+// "Other" in each. A retention's cohort is day, identified_by text, the
+// others number. An attributes' attribute and value are text (its keys'
+// attribute text, the others number). It does not validate q.
 func (q Query) ColumnTypes() []string {
 	var types []string
 	switch q.Kind {
@@ -571,6 +571,9 @@ func (q Query) Validate() error {
 	}
 	if q.SeriesLimit < 0 || q.SeriesLimit > maxSeries || (q.SeriesLimit > 0 && q.Kind != "trend") {
 		return invalid("series_limit", "%d is not between 1 and %d for a trend", q.SeriesLimit, maxSeries)
+	}
+	if q.SeriesLimit > 0 && q.Series == "" {
+		return invalid("series_limit", "a trend without a series takes none")
 	}
 	switch q.Compare {
 	case "":

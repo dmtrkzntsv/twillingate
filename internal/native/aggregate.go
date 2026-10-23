@@ -888,7 +888,11 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 				} else {
 					v = c.Times[i]
 				}
-				np.isum[x] += v
+				// A day or time is only bounded (no sum or avg takes one),
+				// and a sum of microsecond times can overflow: skip it.
+				if n.form == formNumber {
+					np.isum[x] += v
+				}
 				if first || v < np.imin[x] {
 					np.imin[x] = v
 				}
