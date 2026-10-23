@@ -10,3 +10,4 @@ WITH d AS (
 SELECT country, SUM(visitors) AS value
 FROM d
 GROUP BY country
+ORDER BY value DESC, country

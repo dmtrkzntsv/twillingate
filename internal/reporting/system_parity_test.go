@@ -14,6 +14,7 @@ import (
 	"testing"
 	"testing/fstest"
 
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 )
 
@@ -23,6 +24,13 @@ import (
 // both must return the same column names in the same order and the same
 // rows in the same order, numbers compared as numbers. A difference is
 // accepted only where parityAllowances names it, with its gap id.
+//
+// The old SQL's COALESCE(x, '') (top-pages' path, campaigns' medium and
+// campaign) merges NULL with '' in one group; the native engine keeps
+// them apart. Both forms never occur: every event reaches the files
+// through archive's line, which leaves an empty field out, so a field not
+// sent reads NULL and '' is never stored. Only the order of a tie can
+// differ: the SQL sorts that group's '' first, native its NULL last.
 
 // parityPresets are the presets the harness compares on.
 var parityPresets = []string{"7d", "30d", "90d"}
@@ -565,4 +573,54 @@ func mapFS(files map[string]string) fstest.MapFS {
 		out[p] = mapFile(content)
 	}
 	return out
+}
+
+// TestViewsStatsOverNoEvents pins what the Views dashboard's stats show
+// for a project with no events, natively and in their old SQL. The
+// differences are G2's: an empty metric is blank, where the old SQL read
+// 0 (the stat component draws a blank figure, not "0").
+func TestViewsStatsOverNoEvents(t *testing.T) {
+	ctx := context.Background()
+	st, files := newTestStoreAndFiles(t, 1000)
+	if err := Migrate(ctx, st, files); err != nil {
+		t.Fatalf("Migrate: %v", err)
+	}
+	pid := mustCreateProject(t, st, "empty")
+	svc := New(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})})
+	from, to := "2026-10-01", "2026-10-07"
+	cases := []struct {
+		name   string
+		native []string // the native row
+		old    []string // the old SQL's row
+		why    string
+	}{
+		{"visitors", []string{"", ""}, []string{"0", "0"}, "G2: daily_sum over no rows is empty; the SQL COALESCEd it to 0"},
+		{"bounce-rate", []string{""}, []string{"0"}, "G2: bounce_rate over no sessions is empty; the SQL wrote 0"},
+		{"avg-session", []string{""}, []string{"0"}, "G2: avg over no sessions is empty; the SQL wrote 0"},
+		{"consent-share", []string{""}, []string{""}, "none: a ratio over a 0 denominator is empty, as the SQL's NULL"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, err := svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, svc, 1, c.name), ProjectID: pid, From: from, To: to})
+			if err != nil {
+				t.Fatal(err)
+			}
+			nat, ok := got.Data.(readsql.Result)
+			if !ok || len(nat.Rows) != 1 || !slices.Equal(nat.Rows[0], c.native) {
+				t.Errorf("native %v, want one row %q (%s)", got.Data, c.native, c.why)
+			}
+			b, err := os.ReadFile("testdata/system-sql/views/" + c.name + ".sql")
+			if err != nil {
+				t.Fatal(err)
+			}
+			res, err := svc.sources["sql"].Load(ctx, string(b), Params{ProjectID: pid, From: from, To: to})
+			if err != nil {
+				t.Fatal(err)
+			}
+			old, ok := res.(readsql.Result)
+			if !ok || len(old.Rows) != 1 || !slices.Equal(old.Rows[0], c.old) {
+				t.Errorf("old SQL %v, want one row %q (%s)", res, c.old, c.why)
+			}
+		})
+	}
 }
