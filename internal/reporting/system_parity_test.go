@@ -748,11 +748,15 @@ func TestSystemStatsOverNoEvents(t *testing.T) {
 		{"product/total-events", []string{"0", "0"}, []string{"0", "0"}, "none: a count over no rows is 0 in both"},
 		{"product/peak-dau", []string{""}, []string{""}, "none: daily_max over no days is empty, as the SQL's MAX over no rows"},
 		{"product/avg-dau", []string{""}, []string{""}, "none: daily_avg over no days is empty, as the SQL's AVG over no rows"},
+		{"users/active-users", []string{"0"}, []string{"0"}, "none: users over no rows is 0 in both"},
+		{"users/new-users", []string{"0"}, []string{"0"}, "none: users over no rows is 0 in both"},
+		{"users/actions", []string{"0"}, []string{"0"}, "none: a count over no rows is 0 in both"},
+		{"users/actions-per-user", []string{""}, []string{"0"}, "G2: a ratio over no users is empty; the SQL wrote 0"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dir, name, _ := strings.Cut(c.name, "/")
-			got, err := svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, svc, map[string]int64{"views": 1, "product": 2}[dir], name), ProjectID: pid, From: from, To: to})
+			got, err := svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, svc, map[string]int64{"views": 1, "product": 2, "users": 3, "groups": 4}[dir], name), ProjectID: pid, From: from, To: to})
 			if err != nil {
 				t.Fatal(err)
 			}
