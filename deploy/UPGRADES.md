@@ -1397,6 +1397,6 @@ output fields.
 - **On the day**, these differ from the release before:
   - `views_overview` without `kind` counts an actor seen under two kinds on one day as one visitor, not two.
   - A distinct count past 1,024 ids in one row is estimated within about ±2%, and the table's `note` names its column.
-  - `views_breakdown` returns at most 1,000 rows, and `views_overview` and `product_events` at most 1,000 rows each.
+  - Where `CONSOLE_QUERY_ROWS_MAX` was raised above 1,000 (or set to 0), `views_breakdown` returns at most 1,000 rows, and `views_overview` and `product_events` at most 1,000 rows each, marked `truncated` when cut.
 
 Rollback: install the previous release; nothing in the database changed.

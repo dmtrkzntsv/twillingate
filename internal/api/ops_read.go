@@ -220,9 +220,9 @@ func (h *host) viewsOverview(ctx context.Context, in overviewIn) (tableOut, erro
 	if in.Kind != "" {
 		where = []native.Filter{{Column: "kind", Op: "eq", Values: []string{in.Kind}}}
 	}
-	limit := min(h.queryRows, maxBreakdownLimit)
+	limit := h.rowCap()
 	views, err := h.answer(ctx, native.Query{Kind: "breakdown", Table: "views", Dimensions: []string{"day"}, Order: "day",
-		Limit: limit, Where: where, Metrics: []native.Metric{
+		Limit: min(limit+1, maxBreakdownLimit), Where: where, Metrics: []native.Metric{
 			{Op: "daily_sum", Of: "actors", As: "visitors"}, {Op: "count", As: "views"}}}, p)
 	if err != nil {
 		return tableOut{}, err
@@ -232,6 +232,10 @@ func (h *host) viewsOverview(ctx context.Context, in overviewIn) (tableOut, erro
 			{Op: "count", As: "sessions"}, {Op: "bounces"}, {Op: "sum", Column: "duration_sec", As: "duration_sec"}}}, p)
 	if err != nil {
 		return tableOut{}, err
+	}
+	cut := len(views.Rows) > limit
+	if cut {
+		views.Rows = views.Rows[:limit]
 	}
 	byDay := make(map[string][]string, len(sessions.Rows))
 	for _, r := range sessions.Rows {
@@ -246,13 +250,24 @@ func (h *host) viewsOverview(ctx context.Context, in overviewIn) (tableOut, erro
 		out.Rows = append(out.Rows, []string{r[0], r[1], r[2], strconv.FormatInt(n, 10), strconv.FormatInt(bounces, 10),
 			strconv.FormatInt(secs, 10), roundRate(bounces, max(n, 1)), strconv.FormatInt(secs/max(n, 1), 10)})
 	}
-	h.markPartial(&out, views.Truncated || sessions.Truncated || len(views.Rows) == limit && limit < rangeDays(p),
+	// At the engine's 1,000 there is no asking for one more day.
+	h.markPartial(&out, views.Truncated || sessions.Truncated || cut || len(views.Rows) == maxBreakdownLimit && limit < rangeDays(p),
 		append(views.Approximate, sessions.Approximate...))
 	return out, nil
 }
 
 // maxBreakdownLimit is a native breakdown's most groups.
 const maxBreakdownLimit = 1000
+
+// rowCap is the most rows a tool answering natively returns:
+// CONSOLE_QUERY_ROWS_MAX (0 or below for none) within the engine's
+// 1,000 groups.
+func (h *host) rowCap() int {
+	if h.queryRows <= 0 {
+		return maxBreakdownLimit
+	}
+	return min(h.queryRows, maxBreakdownLimit)
+}
 
 // rangeParams is in's project and days as a native query's, ok false
 // when to is before from: a range of no day, which answers no row.
@@ -291,6 +306,7 @@ func (h *host) markPartial(out *tableOut, truncated bool, approximate []string) 
 		notes = append(notes, fmt.Sprintf("truncated to %d rows; results are PARTIAL — narrow the range or raise the limit", len(out.Rows)))
 	}
 	if len(approximate) > 0 {
+		approximate = slices.Clone(approximate)
 		slices.Sort(approximate)
 		notes = append(notes, fmt.Sprintf("%s past 1,024 distinct ids are estimated (about ±2%%)", strings.Join(slices.Compact(approximate), ", ")))
 	}
@@ -302,7 +318,9 @@ func (h *host) markPartial(out *tableOut, truncated bool, approximate []string) 
 // viewsDimension is one breakdown of the views table: the native
 // dimensions it groups by, the columns it returns them as, and the filter
 // that leaves views out, if any. A value not sent (NULL) reads as the
-// empty string.
+// empty string, as the old SQL's COALESCE(col, '') read it: the two agree
+// because the files never hold an empty string (archive's log leaves
+// empty fields out), so NULL and '' never split one value in two.
 type viewsDimension struct {
 	dims  []string
 	cols  []string
@@ -350,7 +368,7 @@ func dimensionNames() string {
 type breakdownIn struct {
 	rangeIn
 	Dimension string `json:"dimension" jsonschema:"one of: app_versions, browsers, consent, countries, devices, displays, hosts, kinds, locales, os, paths, platforms, referrers, utm"`
-	Limit     int    `json:"limit,omitempty" jsonschema:"top-N rows, default 20"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"top-N rows, default 20, at most 1000"`
 }
 
 // viewsBreakdown answers a native breakdown of the views by the
@@ -373,9 +391,9 @@ func (h *host) viewsBreakdown(ctx context.Context, in breakdownIn) (tableOut, er
 	if limit <= 0 {
 		limit = 20
 	}
-	n := min(limit, h.queryRows, maxBreakdownLimit)
+	n := min(limit, h.rowCap())
 	keys := len(dim.dims)
-	res, more, err := h.topRows(ctx, native.Query{Kind: "breakdown", Table: "views", Dimensions: dim.dims, Order: "visitors",
+	res, more, tied, err := h.topRows(ctx, native.Query{Kind: "breakdown", Table: "views", Dimensions: dim.dims, Order: "visitors",
 		Where: dim.where, Metrics: []native.Metric{{Op: "daily_sum", Of: "actors", As: "visitors"}, {Op: "count", As: "views"}}},
 		p, n, func(a, b []string) int {
 			if c := cmp.Compare(cellInt(b[keys]), cellInt(a[keys])); c != 0 {
@@ -390,34 +408,26 @@ func (h *host) viewsBreakdown(ctx context.Context, in breakdownIn) (tableOut, er
 		return tableOut{}, err
 	}
 	out := tableOut{Columns: cols, Rows: res.Rows}
-	h.markPartial(&out, res.Truncated || more && n < limit, res.Approximate)
+	h.markPartial(&out, res.Truncated || more && n < limit || tied, res.Approximate)
 	return out, nil
 }
 
 // topRows answers q, a breakdown ranked by its order metric, with its n
 // first rows in the order less sorts them: the tool's own, which breaks
 // the ties on the metric otherwise than the engine (by the dimensions).
-// It asks for more groups than n until the groups tied with the n-th are
-// all in (or the engine's most, 1,000, are), so the n kept are the ones
-// the tool's order puts first. more says whether groups past the n were
-// left out.
+// It asks for the engine's most groups (1,000) at once, which costs no
+// more than fewer (a breakdown aggregates every group anyway), sorts them
+// and keeps n. more says whether groups past the n were left out; tied
+// that the groups tied with the n-th ran past the 1,000, so the n kept
+// may not be the ones the tool's order puts first.
 func (h *host) topRows(ctx context.Context, q native.Query, p native.Params, n int,
-	less func(a, b []string) int) (res native.Result, more bool, err error) {
-	rank := -1
-	fetch := min(n+1, maxBreakdownLimit)
-	for {
-		q.Limit = fetch
-		if res, err = h.answer(ctx, q, p); err != nil {
-			return native.Result{}, false, err
-		}
-		if rank < 0 {
-			rank = slices.Index(res.Columns, q.Order)
-		}
-		rows := res.Rows
-		if len(rows) < fetch || fetch == maxBreakdownLimit || n >= len(rows) || rows[n-1][rank] != rows[len(rows)-1][rank] {
-			break
-		}
-		fetch = min(2*fetch, maxBreakdownLimit)
+	less func(a, b []string) int) (res native.Result, more, tied bool, err error) {
+	q.Limit = maxBreakdownLimit
+	if res, err = h.answer(ctx, q, p); err != nil {
+		return native.Result{}, false, false, err
+	}
+	if rows, rank := res.Rows, slices.Index(res.Columns, q.Order); len(rows) == maxBreakdownLimit && n < len(rows) {
+		tied = rows[n-1][rank] == rows[len(rows)-1][rank]
 	}
 	slices.SortStableFunc(res.Rows, less)
 	if res.Rows == nil {
@@ -426,7 +436,7 @@ func (h *host) topRows(ctx context.Context, q native.Query, p native.Params, n i
 	if len(res.Rows) > n {
 		res.Rows, more = res.Rows[:n], true
 	}
-	return res, more, nil
+	return res, more, tied, nil
 }
 
 // register exposes every operation once, for MCP and (where a route is

@@ -422,3 +422,30 @@ func TestNativeToolsWithoutTheEngine(t *testing.T) {
 		t.Error("views_overview answered without an engine")
 	}
 }
+
+// CONSOLE_QUERY_ROWS_MAX at 0 (or below) is no cap: the tools answer in
+// full, within the engine's 1,000.
+func TestNativeToolsWithoutARowCap(t *testing.T) {
+	h, _ := newTestHost(t)
+	ctx := context.Background()
+	blog := rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}
+	for _, cap := range []int{0, -1} {
+		h.queryRows = cap
+		ov, err := h.viewsOverview(ctx, overviewIn{rangeIn: blog})
+		if err != nil || ov.Truncated || len(ov.Rows) != 9 {
+			t.Errorf("cap %d: views_overview = %+v, %v; want 9 days, whole", cap, ov, err)
+		}
+		bd, err := h.viewsBreakdown(ctx, breakdownIn{rangeIn: blog, Dimension: "paths", Limit: 2})
+		if err != nil || bd.Truncated || len(bd.Rows) != 2 {
+			t.Errorf("cap %d: views_breakdown = %+v, %v; want 2 rows, whole", cap, bd, err)
+		}
+		pe, err := h.productEvents(ctx, productEventsIn{rangeIn: blog})
+		if err != nil || pe.Events.Truncated || len(pe.Events.Rows) != 2 || len(pe.Totals.Rows) != 2 {
+			t.Errorf("cap %d: product_events = %+v, %v; want 2 rows each, whole", cap, pe, err)
+		}
+		names, err := h.eventNames(ctx, blog)
+		if err != nil || len(names.Events) == 0 {
+			t.Errorf("cap %d: event_names = %+v, %v; want the names", cap, names, err)
+		}
+	}
+}

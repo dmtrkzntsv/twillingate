@@ -1440,7 +1440,7 @@ history starts where the files' does. `query`, the count of events in
 | `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project, from the event files: `views`, product `events` and measure `samples` per day and in total, `last_received_at` (when the newest event arrived, whatever the range; `null` for an archived project unless `project_id` names it), `first_day` (the oldest day the files hold; a month's file counts from its first day), and `size` (`{total_bytes, measured_at}`: the project's event file bytes as the daily pass of the process that keeps the files last measured them, at 03:00 UTC and at start; `null` until the first measurement), with each day's measured `total_bytes` in the series (`null` on days not measured); plus the database's size on disk now and per day (`database_series`) |
 | `views_overview` | `kind` (optional) | Per day: visitors (distinct per day: an actor seen under two kinds on one day counts once), views, and the `sessions` table's sessions, bounces, `duration_sec`, `bounce_rate` and `avg_session_sec` (a day with views but no session reads `0` for each), over every kind unless `kind` filters one. Today included. At most 1,000 days, the earliest |
 | `views_breakdown` | `dimension`, `limit` (default 20, at most 1,000) | Top rows of one dimension (the table below), busiest by visitors (distinct per day and value, added up over the range), then by views, then by the values. Two-key dimensions return both columns. A value not sent reads as empty |
-| `product_events` | `event` (optional filter) | Count and unique users (distinct per day) per event name and day, by day, the most events first, then by name; plus daily totals. At most 1,000 rows each, the earliest days' |
+| `product_events` | `event` (optional filter) | Count and unique users (distinct per day) per event name and day, by day, the most events first, then by name; plus daily totals. At most 1,000 rows each, the earliest days': a cut inside a day keeps that day's names alphabetically, not the busiest |
 | `product_attributes` | `event` (optional filter) | At most 92 days a call (a longer range is refused: use `query` for it). Count, unique users and unique groups (`0` when no group was involved) per event, day and value of every key the events carried, with no declaration needed: each custom attribute key and the eighteen reserved keys listed in [Attributes](#attributes), `$path` and `$utm_source` among them |
 | `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys `product_attributes` breaks down (`$browser`, `$path`, …); a key none carried gives no rows |
 | `retention` | `actor` (`user` or `install`) | Cohort curves for the cohorts that began in the range, every offset, counted over the days before today (UTC), plus `aggregated_through`, the newest such day with views or product events — cohorts and offsets after it are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
@@ -1452,7 +1452,11 @@ history starts where the files' does. `query`, the count of events in
 queries](#structured-queries) are: a distinct count past
 1,024 ids in one row (one day, or one value's day) is estimated (about ±2%),
 and their `note` names the columns holding an estimate. A table cut short
-by `CONSOLE_QUERY_ROWS_MAX` says `truncated`, as it did before.
+by `CONSOLE_QUERY_ROWS_MAX` (or by the engine's 1,000 rows) says
+`truncated`, as it did before; at exactly 1,000 rows (`views_overview` over
+a longer range, `product_events`) it says so even when nothing was left
+out, the engine answering at most 1,000. `views_breakdown` says so too when
+more than 1,000 values tie on visitors with its last row.
 
 `views_breakdown`'s dimensions, the columns each returns and what it reads
 from the `views` table:

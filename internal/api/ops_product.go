@@ -87,7 +87,7 @@ func (h *host) productEvents(ctx context.Context, in productEventsIn) (productEv
 // first, over p, by day: at most CONSOLE_QUERY_ROWS_MAX rows (and the
 // engine's 1,000), the earliest days', the rest noted as left out.
 func (h *host) byDay(ctx context.Context, p native.Params, dims []string, where []native.Filter, metrics []native.Metric) (tableOut, error) {
-	n := min(h.queryRows, maxBreakdownLimit)
+	n := h.rowCap()
 	res, err := h.answer(ctx, native.Query{Kind: "breakdown", Table: "product", Dimensions: dims, Order: "day",
 		Limit: min(n+1, maxBreakdownLimit), Where: where, Metrics: metrics}, p)
 	if err != nil {

@@ -130,7 +130,9 @@ const eventNamesMax = 200
 // measures name of the range in the event files, rules applied, the
 // busiest eventNamesMax first, ties by name. Product counts events;
 // measures count samples. $ names are left out: rules refuse them. A
-// result past the row cap is refused, never a partial list.
+// result past the row cap is refused, never a partial list. Should more
+// than 1,000 names tie with the 200th, the ones kept are the engine's
+// first 1,000 sorted (topRows), not the first 200 by name over them all.
 func (h *host) eventNames(ctx context.Context, in rangeIn) (eventNamesOut, error) {
 	if err := h.checkRange(ctx, in); err != nil {
 		return eventNamesOut{}, err
@@ -140,7 +142,7 @@ func (h *host) eventNames(ctx context.Context, in rangeIn) (eventNamesOut, error
 	if !ok {
 		return out, nil
 	}
-	res, _, err := h.topRows(ctx, native.Query{Kind: "breakdown", Table: "events", Dimensions: []string{"family", "event_name"},
+	res, _, _, err := h.topRows(ctx, native.Query{Kind: "breakdown", Table: "events", Dimensions: []string{"family", "event_name"},
 		Order: "count", Metrics: []native.Metric{{Op: "count"}}, Where: []native.Filter{
 			{Column: "family", Op: "in", Values: []string{"product", "measures"}},
 			{Column: "event_name", Op: "not_prefix", Values: []string{"$"}}}},
@@ -153,7 +155,7 @@ func (h *host) eventNames(ctx context.Context, in rangeIn) (eventNamesOut, error
 	if err != nil {
 		return eventNamesOut{}, err
 	}
-	if res.Truncated || len(res.Rows) > h.queryRows {
+	if res.Truncated || len(res.Rows) > h.rowCap() {
 		return eventNamesOut{}, invalidf("too many rows; narrow the date range")
 	}
 	for _, row := range res.Rows {
