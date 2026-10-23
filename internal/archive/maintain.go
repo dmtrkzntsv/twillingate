@@ -402,7 +402,8 @@ func (c column) ident() string { return ident(c.name) }
 
 // merge writes every day file and segment of month, with the month file
 // if a crashed merge left one, as the month file, then deletes the days.
-// It reports whether the month had days to merge.
+// It runs in Go, without the engine (mergeFiles). It reports whether the
+// month had days to merge.
 func (a *Archive) merge(ctx context.Context, dir string, names []string, month string) (bool, error) {
 	var days []string
 	for _, n := range names {
@@ -427,7 +428,7 @@ func (a *Archive) merge(ctx context.Context, dir string, names []string, month s
 	for _, n := range days {
 		inputs = append(inputs, filepath.Join(dir, n))
 	}
-	if err := a.write(ctx, "COPY ("+mergeQuery(inputs)+") TO ", filepath.Join(dir, month+".parquet")); err != nil {
+	if err := mergeFiles(ctx, inputs, filepath.Join(dir, month+".parquet")); err != nil {
 		return false, err
 	}
 	for _, n := range days {
@@ -445,14 +446,6 @@ func segment(dotN string) int {
 	return n
 }
 
-// mergeQuery is the merge's SELECT of files, given oldest first (a month
-// file a crashed merge left, then each day's file and its segments in
-// order): every id once, from the first file that holds it (a file holds
-// an id once), ordered by family and ts. As in the dump, the first row
-// per id is found over the ids and a row key alone, and the sort, which
-// spills, carries the rows.
-func mergeQuery(files []string) string { return mergeSelect(files, files) }
-
 // sqlList is paths as a SQL list of string literals.
 func sqlList(paths []string) string {
 	q := make([]string, len(paths))
@@ -460,19 +453,6 @@ func sqlList(paths []string) string {
 		q[i] = quote(p)
 	}
 	return "[" + strings.Join(q, ", ") + "]"
-}
-
-// mergeSelect reads files and keys each row by the position in order of
-// its file's name, as read_parquet reports it (the path as given, today).
-// A name that order does not hold would key the row NULL and the IN would
-// drop it, then the merge would delete its day: it fails the query instead.
-func mergeSelect(files, order []string) string {
-	rows := "read_parquet(" + sqlList(files) + ", union_by_name=true, filename=true, file_row_number=true)"
-	key := "coalesce(list_position(" + sqlList(order) + ", filename), error('archive: merge input not matched: ' || filename))" +
-		" * 4294967296 + file_row_number"
-	firsts := "SELECT min(k) FROM (SELECT id, " + key + " AS k FROM " + rows + ") GROUP BY id"
-	return "SELECT * EXCLUDE (filename, file_row_number, k) FROM (SELECT *, " + key + " AS k FROM " + rows +
-		") WHERE k IN (" + firsts + ") ORDER BY family, ts"
 }
 
 // write runs copyTo (a COPY … TO, missing its target) into out.tmp, makes

@@ -1409,11 +1409,13 @@ Rollback: install the previous release; nothing in the database changed.
 
 ### Upgrading to the daily pass in Go (no migration)
 
-The daily pass writes each day's Parquet file itself, without an engine
-child.
+The daily pass writes each day's Parquet file and merges each month's
+itself, without an engine child.
 
 - **Before the upgrade**, nothing to check by hand.
-- **On the day**, day files written from now on have smaller row groups: one per family and day, at most 65,536 rows each. Older files are left as they are until retention. Nothing to do.
+- **On the day**, day and month files written from now on have smaller row groups: one per family and day, at most 65,536 rows each. Older files are left as they are until retention. Nothing to do.
+- A month file also gains every fixed column none of its days had, all empty: a month whose days were written by a release that lacked `install_id`, `user_name` and `group_name` now has them. Readers already read a missing column as empty, so no answer changes.
+- A month whose day file is not in order (one edited by hand) is not merged: the pass logs `not sorted by family and ts` with the file's name, and the month stays as day files, which read as before. A day file with a column of another type (also only by hand) is refused the same way, the column named.
 - A log line edited by hand reads differently in three ways. Ingest never writes such a line, so no logged event changes:
   - A text attribute holding a JSON number keeps it as written: `1.50` stays `"1.50"`, where it became `"1.5"`.
   - A timestamp with an offset is converted to UTC: `12:00:00+02:00` is stored as 10:00, where the offset was dropped and 12:00 stored.
