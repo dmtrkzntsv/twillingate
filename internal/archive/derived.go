@@ -108,7 +108,10 @@ func closeAll(files []*eventsFile) {
 }
 
 // read is rows from to to of column name in row group g: nil (every row
-// NULL) when the file lacks it.
+// NULL) when the file lacks it. A whole column chunk is decoded for any
+// range of it, so an old DuckDB-written group, which holds several days,
+// is decoded once for each day it holds (deriveSessions reads a day at a
+// time); a Go-written group holds one day.
 func (e *eventsFile) read(g int, name string, from, to int) (*vector, error) {
 	ic, ok := e.cols[name]
 	if !ok {

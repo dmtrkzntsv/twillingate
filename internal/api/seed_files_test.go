@@ -126,7 +126,7 @@ func newHostFiles(t *testing.T, reg *manage.Registry) *hostFiles {
 // writeHostFiles writes hostEvents into raw and runs the daily pass as of
 // today, so every day is in its Parquet file and the sessions and
 // identities are derived, as on a console whose import has run.
-func writeHostFiles(ctx context.Context, dir, raw string) error {
+func writeHostFiles(ctx context.Context, raw string) error {
 	log, err := archive.OpenLog(raw)
 	if err != nil {
 		return err

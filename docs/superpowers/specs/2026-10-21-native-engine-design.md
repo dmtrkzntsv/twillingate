@@ -715,6 +715,111 @@ Why, and what the numbers do not cover:
 - Nothing was measured cold (the OS cache was warm), and "released
   after" (memory returned after a load) was not measured.
 
+## Measurements (step 4)
+
+The daily pass in Go (dump, merge, derive) against the old pass on DuckDB,
+and the built-in dashboards again on files the Go pass wrote. Method,
+every cell and the tools: `scripts/native-bench/RESULTS.md`, "Step 4".
+GOMAXPROCS=2 throughout, behind the quiet-host gate (31 of 32 pass cells
+and all 46 dashboard cells started at a 1-minute load of 0.86 to 1.00; one
+DuckDB dump cell at 1.35). "Best" is the fastest of 3 warm runs, each a
+fresh process; peak is VmHWM of the Go process (a test binary at rest at
+25 MB), plus the engine child for DuckDB (2 threads, 512 MB, the
+defaults).
+
+**The pass**, on step 3f's 2026-09 month written as one log a day. "Pass"
+is the merge day's pass: the last day's log dumped, the month merged from
+it and the 29 other days' files, then the month's sessions, identities and
+aliases derived. Wall best, peak (largest over runs and phases):
+
+| Case | Volume | Go, no limit | Go, GOMEMLIMIT=128MiB | DuckDB (Go + child) |
+| --- | --- | --- | --- | --- |
+| Pass | 100k | 1.22 s, 56 MB | 1.23 s, 55 MB | 812 ms, 364 MB |
+| Pass | 1M | 9.62 s, 146 MB | 9.61 s, 143 MB | 7.67 s, 918 MB |
+| 30 logs dumped | 100k | 2.81 s, 50 MB | 2.82 s, 50 MB | 2.91 s, 245 MB |
+| 30 logs dumped | 1M | 25.8 s, 138 MB | 25.8 s, 135 MB | 24.8 s, 411 MB |
+| Leftover DuckDB month file + 30 Go days (merge, derive) | 1M | 8.94 s, 176 MB | 9.00 s, 149 MB | 7.52 s, 904 MB |
+| Pass, 2,000 attribute keys | 100k | 15.4 s, 349 MB | 15.9 s, 217 MB | out of memory at 512 MB |
+| Pass, 2,000 attribute keys | 1M | 90.9 s, 398 MB | 95.0 s, 227 MB | out of memory at 512 MB |
+
+At 1M the pass's phases are dump 0.87 s, merge 6.8 s, derive 2.0 s; the
+merge is the peak (146 MB, with what the dump left resident). Against the
+targets and the old pass:
+
+- **Peak under ~150 MB at 1M: met** for the pass (146 MB) and the dump
+  (138 MB); the rare leftover-month merge reaches 176 MB (149 MB under
+  128MiB). The old pass's child took 900 MB. Rebuilding a year at 1M a month
+  at a time (31 days dumped in one pass, then the merge, then identities
+  over every month so far) peaked at 149 to 167 MB in 33 to 36 s a month.
+- **Time:** single-threaded Go is within 1.0 to 1.3x of DuckDB's 2 threads
+  (the dump is even; the merge 1.2x).
+- **Wide logs** (each of the 8 product attributes spread over 250 names):
+  the old pass fails the dump and the merge at its 512 MB limit; the Go
+  pass completes, in 91 s at 1M, almost all of it the by-column writer
+  encoding 2,041 columns, nearly all NULL, in 90 groups. Its memory is
+  footers: parquet-go decodes about 1 KB per column per row group, so a
+  wide day file's footer is about 6 MB and the wide month's (2,041 columns
+  times 90 groups) about 150 MB. The merge held every input's footer (457
+  MB peak); it now holds at most four decoded (`maxFooters`), 219 MB. The
+  derive's read of the month's footer (about 150 MB live) is now the peak.
+- **GOMEMLIMIT is a soft GC target, not a bound.** At 128MiB it changes
+  nothing on the ordinary pass (126 against 123 collections, the same GC
+  CPU), whose peak RSS is already past 128MiB in a 25 MB process; on the
+  wide pass it cuts the peak from 398 to 227 MB at 8x the GC CPU (8.2
+  against 1.0 s, 5% of wall). At 256MiB: 129 MB and 0.5 s of GC on the
+  ordinary pass (as without a limit), 280 MB and 1.6 s on the wide one. **Decision: the unit and
+  compose files move from 128MiB to 256MiB**: the ordinary pass at 1M plus
+  the server's own memory exceeds 128MiB, and a lower target buys nothing
+  on it.
+
+**The dashboards on Go-written files** (step 3f's events rebuilt through
+the Go pass: a month file has 90 row groups, one per family per day, where
+step 3f's had 1 at 100k and 9 of 122,880 rows at 1M). Native best, step 3f
+against step 4, and step 3f's DuckDB best:
+
+| Dashboard | Range | 1M 3f | 1M step 4 | 1M DuckDB | 100k 3f | 100k step 4 | 100k DuckDB |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | 7 d | 874 ms | 711 ms | 604 ms | 278 ms | 316 ms | 376 ms |
+| Views (20) | 30 d | 2.15 s | 2.09 s | 1.09 s | 377 ms | 461 ms | 446 ms |
+| Views (20) | 90 d | 6.11 s | 6.09 s | 2.78 s | 1.03 s | 1.40 s | 603 ms |
+| Views (20) | 365 d | 23.9 s | 23.7 s | 11.5 s | 3.71 s | 5.02 s | 1.31 s |
+| Product (10) | 7 d | 698 ms | 472 ms | 522 ms | 150 ms | 192 ms | 211 ms |
+| Product (10) | 30 d | 1.51 s | 1.45 s | 1.71 s | 228 ms | 310 ms | 308 ms |
+| Product (10) | 90 d | 4.38 s | 4.00 s | 2.39 s | 605 ms | 891 ms | 364 ms |
+| Product (10) | 365 d | 16.9 s | 15.8 s | 5.64 s | 2.08 s | 3.23 s | 633 ms |
+| Users (6) | 30 d | 511 ms | 648 ms | 396 ms | 65 ms | 149 ms | 165 ms |
+| Groups (6) | 30 d | 246 ms | 390 ms | 243 ms | 31 ms | 140 ms | 144 ms |
+| Retention (5), first load | 30 d | 2.06 s | 1.76 s | 1.21 s | 178 ms | 405 ms | 280 ms |
+| Web Vitals (11) | 30 d | 111 ms | 259 ms | 334 ms | 44 ms | 170 ms | 189 ms |
+| Measures (2) | 30 d | 29 ms | 50 ms | 71 ms | 8.8 ms | 32 ms | 44 ms |
+
+**The file layout does not close the Views and Product gap.** At 1M only
+the 7-day loads gain (Views 19%, Product 32%: a week now prunes to its
+days' groups); from 30 days the change is 0 to 9%, and Views stays about 2x
+DuckDB at 30 d and over the year, Product 1.7x at 90 d and 2.8x over the
+year. The gap is the per-scan cost of 20 (or 10) scans a load, not reading
+too many rows, as step 3f's note on one breakdown (110 to 170 ms against 60
+to 115 ms) said; sharing a pass over the files between a load's widgets,
+or a cheaper scan, is still the lever, and step 5's cache for the year.
+Peaks fall at 1M (Views over the year 651 to 534 MB, Product 693 to 591 MB).
+
+The smaller groups cost the small dashboards: at 100k every dashboard is
+slower than on step 3f's one group a month (Views 1.1 to 1.4x, Product 1.3
+to 1.6x, Users, Groups, Web Vitals and Measures 2 to 6x, many of them now
+slower than DuckDB), and at 1M Users, Groups, Web Vitals and Measures are
+1.1 to 2.5x slower. A 100k month's group holds about 1,100 rows of one
+family and day, so a scan pays the per-group cost (a chunk's pages and
+dictionary set up per column) 90 times where it paid it once. Whether to
+keep "a group per family per day" for small projects (say, cut at the day
+only past some rows, or at the family only) is open; it changes the
+writers' cut rule and the native reader's pruning assumptions, so it is
+for the owner to decide, not done here.
+
+The same footer cost reaches the native reader, which decodes every file's
+footer on each scan: on a project with 2,000 attribute keys a month's
+footer is about 150 MB decoded, ten times a DuckDB-written month's (9
+groups).
+
 ## Left to the builder
 
 - Field names and JSON schema of the language; the exact metric and

@@ -12,8 +12,12 @@
 //
 // MEASURE_DIR holds raw/ (generated on the first run: MEASURE_MONTHS
 // months, default 12, of MEASURE_MONTH_EVENTS events ending 2026-09-30,
-// with group ids and web vitals, then the daily pass). Without
-// MEASURE_CELL the run only generates. MEASURE_CELL=<engine>:<dir>:<days>
+// with group ids and web vitals, then the daily pass). With MEASURE_FROM,
+// another such directory, its month files are not generated but rebuilt
+// through the daily pass in Go (step 4): each month written as one log a
+// day, as ingest writes them, then dumped, merged and derived, a month at a
+// time, so the files have the Go pass's row groups. Without MEASURE_CELL
+// the run only generates. MEASURE_CELL=<engine>:<dir>:<days>
 // (engine native or duckdb, dir a system dashboard's directory such as
 // views) runs the dashboard once (the first run) and MEASURE_PASSES times
 // more (default 3), and writes the cell as JSON to MEASURE_OUT.
@@ -145,6 +149,52 @@ func childPeaks(stop <-chan struct{}) func() map[int]int {
 	}
 }
 
+// rebuildThroughPass writes each month file of src as logs under raw/1
+// and runs the daily pass in Go as of the third day of the next month, a
+// month at a time: the dump, the merge, the sessions, and the identities
+// and aliases over every month so far. Each month's pass is logged with
+// its time and peak RSS (VmHWM, reset before it).
+func rebuildThroughPass(t *testing.T, src, raw string) {
+	months, err := filepath.Glob(filepath.Join(src, "????-??.parquet"))
+	if err != nil || len(months) == 0 {
+		t.Fatalf("no month files in %s: %v", src, err)
+	}
+	slices.Sort(months)
+	pdir := filepath.Join(raw, "1")
+	if err := os.MkdirAll(pdir, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	log, err := archive.OpenLog(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer log.Close()
+	a := archive.New(log, slog.Default())
+	for _, m := range months {
+		ym := strings.TrimSuffix(filepath.Base(m), ".parquet")
+		first, err := civil.Parse(ym + "-01")
+		if err != nil {
+			t.Fatal(err)
+		}
+		began := time.Now()
+		lines := archivetest.WriteLogs(t, m, pdir)
+		wrote := time.Since(began)
+		if err := os.WriteFile("/proc/self/clear_refs", []byte("5"), 0); err != nil {
+			t.Fatal(err)
+		}
+		began = time.Now()
+		today := civil.DateOf(first.Time().AddDate(0, 1, 2))
+		if err := a.Maintain(context.Background(), today, 1, 3650); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := os.Stat(filepath.Join(pdir, ym+".parquet")); err != nil {
+			t.Fatalf("%s: not merged: %v", ym, err)
+		}
+		t.Logf("%s: %d lines written as logs in %v; the pass (dump, merge, derive) %v, peak RSS %d MB",
+			ym, lines, wrote.Round(time.Millisecond), time.Since(began).Round(time.Millisecond), procStatusKB("self", "VmHWM")/1024)
+	}
+}
+
 func TestMeasureSystemDashboard(t *testing.T) {
 	months, perMonth, passes := measureEnv("MEASURE_MONTHS", 12), measureEnv("MEASURE_MONTH_EVENTS", 1_000_000), measureEnv("MEASURE_PASSES", 3)
 	dir := os.Getenv("MEASURE_DIR")
@@ -164,7 +214,9 @@ func TestMeasureSystemDashboard(t *testing.T) {
 	}
 
 	// 1. The files, generated once and derived by the daily pass.
-	if _, err := os.Stat(filepath.Join(raw, "1", "identities.parquet")); err != nil {
+	if _, err := os.Stat(filepath.Join(raw, "1", "identities.parquet")); err != nil && os.Getenv("MEASURE_FROM") != "" {
+		rebuildThroughPass(t, filepath.Join(os.Getenv("MEASURE_FROM"), "raw", "1"), raw)
+	} else if err != nil {
 		self, _ := os.Executable()
 		genEng, err := engine.New(engine.Options{Path: self, Env: []string{appEngineChild + "=1"}, AllowedDirs: []string{raw},
 			SpillRoot: filepath.Join(work, "gen-spill"), SlotDir: filepath.Join(work, "gen-slots"), MaxChildren: 1,
