@@ -84,11 +84,10 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		return err
 	}
 	defer st.Close()
-	// The engine (raw-first D8): the reporting migrator validates SQL
-	// system widgets on the event files through it (none while no system
-	// widget reads SQL, so it runs no query there), the ingest process's
-	// daily pass dumps and merges through it, the console's widgets and
-	// query read the files through it. A child starts on the first
+	// The engine (raw-first D8) serves SQL over the event files alone: the
+	// reporting migrator checks the SQL widgets through it at start-up, the
+	// console's SQL widgets and the query tool's sql mode read the files
+	// through it. A child starts on the first
 	// request, so a process that needs none runs none. Closed after the
 	// jobs runner and the HTTP surfaces return (Serve waits for both), its
 	// last users.
@@ -106,7 +105,12 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	}
 	ops := manage.NewOps(reg, st)
 	ops.FormDraftDays = cfg.Forms.DraftDays
-	ops.Presence = &filePresence{reader: files, reg: reg, timeout: cfg.Console.QueryTimeout}
+	// The native engine answers the console's structured queries, the
+	// rule-save checks and form attribution over the files in Go; the
+	// engine child serves SQL alone (the query tool's sql mode, SQL
+	// widgets and their start-up check).
+	nat := native.New(native.Options{Dir: cfg.EventsDir})
+	ops.Presence = &filePresence{nat: nat, reg: reg, timeout: cfg.Console.QueryTimeout}
 	if len(reg.Snapshot(ctx).Projects()) == 0 {
 		logger.Warn("no projects configured; create one with `twillingate project create` or an API management operation")
 	}
@@ -150,11 +154,12 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 
 	runner := jobs.New(st, cfg, reg, salter, logger, time.Now)
 	if archiveLog != nil {
-		runner.WithArchive(archive.New(archiveLog, eng, logger))
+		runner.WithArchive(archive.New(archiveLog, logger))
 		// Form attribution (raw-first PR 5b): the process that ingests
 		// looks each submission's source up in the files a minute after
-		// it arrives and writes its event to the log.
-		runner.WithAttribution(files, archiveLog)
+		// it arrives (natively, no engine child) and writes its event to
+		// the log.
+		runner.WithAttribution(nat, archiveLog)
 	}
 	jobsCtx, stopJobs := context.WithCancel(context.Background())
 	jobsDone := make(chan struct{})
@@ -185,7 +190,6 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	var surfaces []httpSurface
 	var apiClose func() error
 	widgets := newWidgetFiles(cfg, files, reg)
-	nat := native.New(native.Options{Dir: cfg.EventsDir})
 	switch {
 	case runConsole && runIngest && cfg.Console.Addr == cfg.IngestAddr:
 		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger, files, nat, widgets)

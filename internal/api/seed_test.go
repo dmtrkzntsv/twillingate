@@ -87,7 +87,7 @@ func hostTemplate(t *testing.T) string {
 		seed(`UPDATE projects SET allowed_origins = '["https://blog.example.com"]' WHERE id=1`)
 
 		raw := filepath.Join(dir, "raw")
-		if err := writeHostFiles(ctx, filepath.Join(dir, "engine"), raw); err != nil {
+		if err := writeHostFiles(ctx, raw); err != nil {
 			t.Fatal(err)
 		}
 		files, closeFiles, err := templateFiles(ctx, filepath.Join(dir, "engine"), raw, st)

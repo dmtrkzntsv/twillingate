@@ -18,7 +18,7 @@ services:
       - path: .env
         required: false
     environment:
-      - GOMEMLIMIT=128MiB
+      - GOMEMLIMIT=256MiB
 
 volumes:
   data:

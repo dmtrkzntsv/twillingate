@@ -1406,3 +1406,25 @@ files natively, with the same inputs and output fields.
   - `retention` lists offsets up to 90 days after the cohort day; it listed every offset the range allowed. A project whose actors the engine cannot hold in memory is refused.
 
 Rollback: install the previous release; nothing in the database changed.
+
+### Upgrading to the daily pass in Go (no migration)
+
+The daily pass writes each day's Parquet file, merges each month's and
+derives the sessions, identities and aliases files itself, in the server
+process, without an engine child: it no longer takes an `ENGINE_MAX_CHILDREN`
+slot, and `ENGINE_MEMORY_LIMIT` no longer bounds it. `GOMEMLIMIT`, the
+server's soft memory target, now covers it: the unit and compose files raise
+it from 128MiB to 256MiB, since the pass on a month of a million events
+peaks near 150 MB of resident memory on the day the month is merged.
+
+- **Before the upgrade**, nothing to check by hand on a systemd install: the installer rewrites the unit with `GOMEMLIMIT=256MiB`. A drop-in that sets `GOMEMLIMIT`, or a compose file of your own, keeps its value: raise a `128MiB` there to `256MiB`.
+- **On the day**, day and month files written from now on have different row groups: one per family, cut at a day once it holds 32,768 rows, at most 65,536 rows each. Older files are left as they are until retention. Nothing to do.
+- The derived files (`sessions/`, `identities.parquet`, `aliases.parquet`) hold the same rows for events ingest writes. They are rewritten only when the events under them change, as before; the ones already there are kept.
+- A month file also gains every fixed column none of its days had, all empty: a month whose days were written by a release that lacked `install_id`, `user_name` and `group_name` now has them. Readers already read a missing column as empty, so no answer changes.
+- A month whose day file is not in order (one edited by hand) is not merged: the pass logs `not sorted by family and ts` with the file's name, and the month stays as day files, which read as before. A day file with a column of another type (also only by hand) is refused the same way, the column named.
+- A log line edited by hand reads differently in three ways. Ingest never writes such a line, so no logged event changes:
+  - A text attribute holding a JSON number keeps it as written: `1.50` stays `"1.50"`, where it became `"1.5"`.
+  - A timestamp with an offset is converted to UTC: `12:00:00+02:00` is stored as 10:00, where the offset was dropped and 12:00 stored.
+  - A `day` given as a timestamp (`"2026-09-10T12:00:00Z"`) fails the dump, where it was read as that date. The log stays pending (`<day>.parquet.dumping`) and holds its month back from the merge until it is corrected.
+
+Rollback: install the previous release; it reads the files this one wrote.

@@ -68,8 +68,20 @@ func dashboardsCmd(args []string) error {
 	out := fs.String("out", "RESULTS.md", "Markdown file the tables are appended to")
 	only := fs.String("volumes", "100k,1m", "volumes to run")
 	passes := fs.Int("passes", 3, "warm runs per cell after the first")
+	engines := fs.String("engines", "native,duckdb", "engines to run")
+	from := fs.String("from", "", "a root whose <volume>/raw month files are rebuilt through the Go pass instead of generated (step 4)")
+	before := fs.String("before", "", "an earlier run's dashboards.json, compared against this one's native cells")
+	ranges := fs.String("ranges", "", "day ranges to run (default all); with -small, the dashboards without a year run only these")
+	small := fs.String("small", "", "the ranges the dashboards without a year run (default as -ranges)")
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	wantDays := func(year bool, days int) bool {
+		list := *ranges
+		if !year && *small != "" {
+			list = *small
+		}
+		return list == "" || slices.Contains(strings.Split(list, ","), fmt.Sprint(days))
 	}
 	if fs.NArg() != 1 || *bin == "" || *pkg == "" {
 		return errors.New("usage: native-bench dashboards -bin app.test -pkg <checkout>/internal/app [-out RESULTS.md] [-volumes 100k,1m] <root>")
@@ -93,15 +105,18 @@ func dashboardsCmd(args []string) error {
 		gen := osexec.Command(*bin, "-test.run", "^TestMeasureSystemDashboard$", "-test.v", "-test.timeout", "2h")
 		gen.Dir, gen.Stdout, gen.Stderr = *pkg, os.Stdout, os.Stderr
 		gen.Env = append(os.Environ(), "MEASURE_DIR="+dir, fmt.Sprintf("MEASURE_MONTH_EVENTS=%d", v.perMonth))
+		if *from != "" {
+			gen.Env = append(gen.Env, "MEASURE_FROM="+filepath.Join(*from, v.name))
+		}
 		if err := gen.Run(); err != nil {
 			return fmt.Errorf("%s: generating: %w", v.name, err)
 		}
 		for _, days := range []int{7, 30, 90, 365} {
 			for _, d := range dashboards3f {
-				if days == 365 && !d.year {
+				if days == 365 && !d.year || !wantDays(d.year, days) {
 					continue
 				}
-				for _, eng := range []string{"native", "duckdb"} {
+				for _, eng := range strings.Split(*engines, ",") {
 					path := filepath.Join(cellsDir, fmt.Sprintf("%s-%s-%d.json", eng, d.dir, days))
 					var c dashCell
 					if b, err := os.ReadFile(path); err == nil && json.Unmarshal(b, &c) == nil && c.Volume != "" {
@@ -152,6 +167,17 @@ func dashboardsCmd(args []string) error {
 		return err
 	}
 	md := dashboardsMD(all, start, *passes)
+	if *before != "" {
+		b, err := os.ReadFile(*before)
+		if err != nil {
+			return err
+		}
+		var old []dashCell
+		if err := json.Unmarshal(b, &old); err != nil {
+			return err
+		}
+		md = dashboardsCompareMD(all, old, start, *passes)
+	}
 	f, err := os.OpenFile(*out, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		return err
@@ -244,6 +270,81 @@ func dashboardsMD(all []dashCell, start time.Time, passes int) string {
 				fmt.Fprintf(&sb, "| %s (%d / %d) | %d d | %s | %s | %s | %s | %s | %s (%s + %s) | %s | %s / %s |\n",
 					d.title, n.Widgets, q.Widgets, days, dashMS(n.FirstMS), dashMS(n.BestMS), dashMS(q.FirstMS), dashMS(q.BestMS),
 					mb(n.SelfPeak), mb(q.SelfPeak+q.ChildPeak), mb(q.SelfPeak), mb(q.ChildPeak), slowest(n), flag(n), flag(q))
+			}
+		}
+	}
+	fmt.Fprintf(&sb, "\nLoad average (1 min) at cell start: %.2f to %.2f; cells that started above %.1f (the gate gave up): %d of %d.\n",
+		lo, hi, quietLoad, unquiet, len(all))
+	return sb.String()
+}
+
+// dashboardsCompareMD is the native cells of all (step 4, on files the Go
+// pass wrote) against the same cells of before (step 3f, on files DuckDB
+// wrote), with before's DuckDB cell for reference.
+func dashboardsCompareMD(all, before []dashCell, start time.Time, passes int) string {
+	var sb strings.Builder
+	key := func(vol, eng, dir string, days int) string { return fmt.Sprintf("%s|%s|%s|%d", vol, eng, dir, days) }
+	old := map[string]dashCell{}
+	for _, c := range before {
+		old[key(c.Volume, c.Engine, c.Dashboard, c.Days)] = c
+	}
+	var loads []float64
+	unquiet := 0
+	for _, c := range all {
+		loads = append(loads, c.GateLoad)
+		if !c.Quiet {
+			unquiet++
+		}
+	}
+	lo, hi := minMax(loads)
+	fmt.Fprintf(&sb, "\n## Step 4: built-in dashboards on files the Go pass wrote\n\n"+
+		"Started %s. The same cells as step 3f (`native-bench dashboards`, `TestMeasureSystemDashboard`, one fresh "+
+		"process a cell, GOMAXPROCS=2, every widget at once, a first run then %d more, \"best\" the fastest), native only, "+
+		"on step 3f's events rebuilt through the daily pass in Go: each month written as one log a day, then dumped, "+
+		"merged and derived a month at a time (`MEASURE_FROM`), so a month file has a row group per family per day "+
+		"(about 90) where step 3f's DuckDB-written ones had one (100k) or 9 of 122,880 rows (1M). \"3f\" columns are "+
+		"step 3f's cells; \"change\" is step 4's best over step 3f's native best. Before every cell the bench waits "+
+		"until the 1-minute load average is at most %.1f.\n", start.UTC().Format(time.RFC3339), passes, quietLoad)
+	for _, v := range volumes {
+		has := false
+		for _, c := range all {
+			has = has || c.Volume == v.name
+		}
+		if !has {
+			continue
+		}
+		fmt.Fprintf(&sb, "\n### Step 4 dashboards, volume %s (%d events a month)\n\n", v.name, v.perMonth)
+		sb.WriteString("| Dashboard | Range | 3f native first / best | Step 4 native first / best | Change (best) | 3f DuckDB best | 3f native peak | Step 4 native peak | Slowest widget (best run) | Load at start |\n")
+		sb.WriteString("| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
+		for _, d := range dashboards3f {
+			for _, days := range []int{7, 30, 90, 365} {
+				var n dashCell
+				found := false
+				for _, c := range all {
+					if c.Volume == v.name && c.Engine == "native" && c.Dashboard == d.dir && c.Days == days {
+						n, found = c, true
+					}
+				}
+				if !found {
+					continue
+				}
+				o, okO := old[key(v.name, "native", d.dir, days)]
+				q, okQ := old[key(v.name, "duckdb", d.dir, days)]
+				was, change, duck, oldPeak := "–", "–", "–", "–"
+				if okO {
+					was = dashMS(o.FirstMS) + " / " + dashMS(o.BestMS)
+					change = fmt.Sprintf("%.2fx", n.BestMS/o.BestMS)
+					oldPeak = mb(o.SelfPeak)
+				}
+				if okQ {
+					duck = dashMS(q.BestMS)
+				}
+				load := fmt.Sprintf("%.2f", n.GateLoad)
+				if !n.Quiet {
+					load += " (unquiet)"
+				}
+				fmt.Fprintf(&sb, "| %s (%d) | %d d | %s | %s / %s | %s | %s | %s | %s | %s | %s |\n", d.title, n.Widgets, days, was,
+					dashMS(n.FirstMS), dashMS(n.BestMS), change, duck, oldPeak, mb(n.SelfPeak), slowest(n), load)
 			}
 		}
 	}

@@ -244,24 +244,38 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 			return Result{}, err
 		}
 	}
+	var res Result
+	err = e.turn(ctx, func() error {
+		var err error
+		res, err = e.answerOnce(ctx, q, filters, metrics, p, rules)
+		return err
+	})
+	return res, err
+}
+
+// turn runs once in one of MaxScans turns, waiting for it first and
+// giving up when ctx is done. A file the daily pass removes while once
+// reads (an error wrapping fs.ErrNotExist) fails the attempt; once runs
+// again, on the files as they are then, up to maxAttempts times.
+func (e *Engine) turn(ctx context.Context, once func() error) error {
 	if err := ctx.Err(); err != nil {
-		return Result{}, err
+		return err
 	}
 	select {
 	case e.sem <- struct{}{}:
 	case <-ctx.Done():
-		return Result{}, ctx.Err()
+		return ctx.Err()
 	}
 	defer func() { <-e.sem }()
 	backoff := retryBackoff
 	for attempt := 1; ; attempt++ {
-		res, err := e.answerOnce(ctx, q, filters, metrics, p, rules)
+		err := once()
 		if err == nil || !errors.Is(err, fs.ErrNotExist) || attempt == maxAttempts {
-			return res, err
+			return err
 		}
 		select {
 		case <-ctx.Done():
-			return Result{}, ctx.Err()
+			return ctx.Err()
 		case <-time.After(backoff):
 		}
 		backoff = min(backoff*2, retryBackoffMax)
@@ -390,6 +404,7 @@ type scan struct {
 	metrics []metricSpec // the query's metrics, their filters compiled (not resolved: newAgg resolves them)
 	project int64
 	rules   ruleSet
+	logs    logReader // reads the logs; nil: readLog
 }
 
 // family is the family the query's table holds ("" for events: all).
@@ -433,7 +448,7 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 			return nil, nil, err
 		}
 		rows := ids.rowsIn(&r) // only those first seen in r put together
-		if err := charge(rows.bytes()); err != nil {
+		if err := charge(rows.Bytes()); err != nil {
 			return nil, nil, err
 		}
 		b := identityBatch(rows, s.project)
@@ -482,7 +497,11 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 		var b *Batch
 		var err error
 		if g.index < 0 {
-			b, err = readLog(g.file, read, fam, r)
+			logs := s.logs
+			if logs == nil {
+				logs = readLog
+			}
+			b, err = logs(g.file, read, fam, r)
 		} else {
 			b, err = readers[w].read(g, read, fam, r)
 		}
