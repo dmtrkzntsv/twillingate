@@ -163,7 +163,7 @@ func TestQuerySourceValidate(t *testing.T) {
 			"stat.value: the query's column is text, not number"},
 		{"attribute into number", widget("stat", "{}", `{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"count","as":"value"}],"dimensions":["attr_n"]},"rename":{"attr_n":"previous"}}`),
 			"stat.previous: the query's column is text, not number"},
-		{"retention offset into day", widget("stat", "{}", `{"query":{"kind":"retention","output":"curve","identified_by":"user"},"rename":{"retention":"value","day":"x"}}`),
+		{"retention offset into day", widget("stat", "{}", `{"query":{"kind":"retention","output":"curve","identified_by":"user"},"rename":{"retention":"value","offset":"x"}}`),
 			"stat.x: the query's column is number, not day"},
 		{"retention grid identified_by", widget("stat", "{}", `{"query":{"kind":"retention","output":"grid","identified_by":"user"}}`),
 			"query.identified_by: a grid has both install and user; only a curve or milestones takes identified_by"},
@@ -183,7 +183,7 @@ func TestQuerySourceValidate(t *testing.T) {
 		`{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"count","as":"previous"}],"dimensions":["display_width"]},"rename":{"display_width":"value"}}`,
 		`{"query":{"kind":"stat","table":"views","metrics":[{"op":"actors","as":"value"}],"compare":"previous"},"rename":{"previous_value":"previous"}}`,
 		`{"query":{"kind":"trend","table":"views","metrics":[{"op":"count","as":"value"}]},"rename":{"day":"x"}}`,
-		`{"query":{"kind":"retention","output":"curve","identified_by":"user"},"rename":{"retention":"value","day":"previous"}}`,
+		`{"query":{"kind":"retention","output":"curve","identified_by":"user"},"rename":{"retention":"value","offset":"previous"}}`,
 		`{"query":{"kind":"retention","output":"milestones","identified_by":"install","milestones":[7,30]},"rename":{"d7":"value","d30":"previous"}}`,
 	} {
 		if err := svc.validateWidget(context.Background(), comps, widget("stat", "{}", content)); err != nil {

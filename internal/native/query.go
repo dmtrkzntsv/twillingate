@@ -35,7 +35,7 @@ type Query struct {
 	Other       bool     `json:"other,omitempty" jsonschema:"breakdown only: fold the groups past limit into one row whose dimensions read Other"`
 	Order       string   `json:"order,omitempty" jsonschema:"breakdown only: a metric name to rank groups by, descending, or one of its dimensions to sort them by, ascending, ties by the other dimensions ascending (default: the first metric); limit keeps the first groups in that order"`
 	// The retention kind's fields.
-	Output       string `json:"output,omitempty" jsonschema:"retention only, required: grid (cohort, identified_by, day, size, returned, retention: a row per cohort, identity kind and day back), curve (day, retention: one identity kind's cohorts pooled per day back) or milestones (one row, a d<n> column per milestone: the curve's retention that day back)"`
+	Output       string `json:"output,omitempty" jsonschema:"retention only, required: grid (cohort, identified_by, offset, size, returned, retention: a row per cohort, identity kind and day back, offset the days since the cohort day), curve (offset, retention: one identity kind's cohorts pooled per day back) or milestones (one row, a d<n> column per milestone: the curve's retention that day back)"`
 	IdentifiedBy string `json:"identified_by,omitempty" jsonschema:"retention curve and milestones only, required: install or user, the cohorts pooled (a grid has both)"`
 	Offsets      int    `json:"offsets,omitempty" jsonschema:"retention only: the days back counted, 1 to 90 (default 45)"`
 	Milestones   []int  `json:"milestones,omitempty" jsonschema:"retention milestones only: 1 to 6 distinct days back, each 0 to offsets (default 7, 30 and 45)"`
@@ -130,8 +130,8 @@ func percent(q float64) string {
 // them for q, read from q alone: a stat's metrics, then with compare
 // previous a previous_<name> each; a trend's day, series when split, and
 // its metric; a breakdown's dimensions, then its metrics; a retention
-// grid's cohort, identified_by, day, size, returned and retention, a
-// curve's day and retention, milestones' d<n> each. It does not
+// grid's cohort, identified_by, offset, size, returned and retention, a
+// curve's offset and retention, milestones' d<n> each. It does not
 // validate q.
 func (q Query) Columns() []string {
 	var cols []string
@@ -139,9 +139,9 @@ func (q Query) Columns() []string {
 	case "retention":
 		switch q.Output {
 		case "grid":
-			return []string{"cohort", "identified_by", "day", "size", "returned", "retention"}
+			return []string{"cohort", "identified_by", "offset", "size", "returned", "retention"}
 		case "curve":
-			return []string{"day", "retention"}
+			return []string{"offset", "retention"}
 		}
 		for _, m := range q.milestones() {
 			cols = append(cols, "d"+strconv.Itoa(m))

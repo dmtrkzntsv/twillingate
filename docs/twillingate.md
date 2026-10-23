@@ -1849,13 +1849,19 @@ counts as a `user` from the first day it was one, an `install` before, so
 an install that signs in on its fourth day counts in its `install` cohort
 on days 0 to 2 and as a `user` from day 3. A cohort's size, per kind, is
 its count on day 0, and a kind has rows in a cohort only when it has a
-size there. `where` filters the events read, as on `events`; the other
-fields of the other kinds are refused.
+size there. `where` filters the events read, as on `events`, and so
+decides the cohorts too: an actor's cohort day is its first event that
+passes it. The other fields of the other kinds are refused.
 
-- **grid**: `cohort` (a day), `identified_by`, `day` (the offset), `size`,
-  `returned` and `retention` (`returned / size`); a row per cohort, kind
-  and offset with anyone back, by cohort descending, then kind, then day;
-- **curve**: `day` and `retention`, one kind's cohorts pooled: at each
+- **grid**: `cohort` (a day), `identified_by`, `offset` (a number: the
+  days since the cohort day), `size`, `returned` and `retention`
+  (`returned / size`); a row per cohort, kind and offset with anyone back,
+  by cohort descending, then kind, then offset. A grid has up to two rows
+  per cohort and offset, so a month of cohorts over 45 offsets can pass
+  `CONSOLE_QUERY_ROWS_MAX` (1,000 by default): the answer is then cut
+  there, keeping the newest cohorts, and `truncated`; narrow the range or
+  lower `offsets`;
+- **curve**: `offset` and `retention`, one kind's cohorts pooled: at each
   offset, those whose cohort day plus the offset is before today, their
   actors back over their sizes (`0` over none, a cohort with nobody back
   that day still in the sizes); a row per offset some cohort has reached;
@@ -1973,11 +1979,11 @@ referrer.
   "metrics": [{"op": "count", "as": "sessions"}, {"op": "bounce_rate"}, {"op": "avg", "column": "duration_sec"}]}}
 ```
 
-A retention grid: the cohorts of September, each kind's size and who came
-back on each of the 30 days after.
+A retention grid: the cohorts of September's first week, each kind's size
+and who came back on each of the 30 days after.
 
 ```json
-{"project_id": 1, "from": "2026-09-01", "to": "2026-09-30", "query": {
+{"project_id": 1, "from": "2026-09-01", "to": "2026-09-07", "query": {
   "kind": "retention", "output": "grid", "offsets": 30}}
 ```
 
