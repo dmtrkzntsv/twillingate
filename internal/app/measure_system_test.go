@@ -409,7 +409,8 @@ func TestMeasureSystemDashboard(t *testing.T) {
 	if err := reporting.Migrate(ctx, st, files); err != nil {
 		t.Fatal(err)
 	}
-	svc := reporting.New(st, files, reporting.Options{Native: native.New(native.Options{Dir: raw, Now: now})})
+	nat := native.New(native.Options{Dir: raw, Now: now})
+	svc := reporting.New(st, files, reporting.Options{Native: nat})
 
 	// 3. The requests: one function per widget.
 	type request struct {
@@ -432,6 +433,36 @@ func TestMeasureSystemDashboard(t *testing.T) {
 		ws, err := st.ListWidgets(ctx, meta.ID)
 		if err != nil {
 			t.Fatal(err)
+		}
+		// MEASURE_MANY: the dashboard's query widgets as one
+		// native.AnswerMany, straight to the engine.
+		if os.Getenv("MEASURE_MANY") != "" {
+			var nreqs []native.Request
+			var names []string
+			for _, w := range ws {
+				if w.SourceType != "query" {
+					continue
+				}
+				var c struct {
+					Query native.Query `json:"query"`
+				}
+				if err := json.Unmarshal([]byte(w.Source), &c); err != nil {
+					t.Fatalf("%s: %v", w.Name, err)
+				}
+				nreqs = append(nreqs, native.Request{Query: c.Query, Params: native.Params{Project: 1, From: from, To: last}})
+				names = append(names, w.Name)
+			}
+			reqs = append(reqs, request{"many", func() (int, error) {
+				n := 0
+				for i, a := range nat.AnswerAll(ctx, nreqs) {
+					if a.Err != nil {
+						return 0, fmt.Errorf("%s: %w", names[i], a.Err)
+					}
+					n += len(a.Result.Rows)
+				}
+				return n, nil
+			}})
+			break
 		}
 		for _, w := range ws {
 			if w.SourceType != "query" {
