@@ -32,7 +32,8 @@ var attrRules = archive.Rules{
 	},
 }
 
-// attrDay is one day's (index d) product and measures events of project 1
+// attrDay is one day's (index d) product and measures events (and a few
+// views, with attributes of their own) of project 1
 // with attributes: plan (sent as Plan on today's, so the month and day
 // files' attr_plan is the log's attr_Plan), color and colour, secret, an
 // item per event (many values), note (an empty value), and beta on
@@ -93,6 +94,12 @@ func attrDay(t testing.TB, day string, d int) []store.Event {
 			e.ActorID = fmt.Sprintf("a%d", k)
 		}
 		out = append(out, e)
+	}
+	// Views, whose attributes an attributes never reads.
+	for k := range 3 {
+		out = append(out, store.Event{ID: fmt.Sprintf("v-%s-%d", day, k), ProjectID: 1, Family: store.FamilyViews,
+			EventName: "$page_view", TS: base.Add(time.Duration(200+k) * time.Second), Host: "example.com", Path: "/",
+			ActorID: fmt.Sprintf("a%d", k), Attributes: map[string]string{"ref": fmt.Sprintf("r%d", k)}})
 	}
 	return out
 }
@@ -295,5 +302,133 @@ func TestAttributesTruncate(t *testing.T) {
 	}
 	if !got.Truncated || len(got.Rows) != 5 {
 		t.Errorf("truncated %v, %d rows", got.Truncated, len(got.Rows))
+	}
+}
+
+// listAttributesSQL is list_attributes' query (ops_attributes.go) over
+// families, project 1's range, its :limit and keep list bound and cond
+// added to its filter.
+func listAttributesSQL(families string, limit int, keep []string, cond string) string {
+	q := `row_number() OVER (ORDER BY events DESC, attr_key) <= ` + fmt.Sprint(limit)
+	if len(keep) > 0 {
+		lits := make([]string, len(keep))
+		for i, k := range keep {
+			lits[i] = "'" + strings.ReplaceAll(k, "'", "''") + "'"
+		}
+		q += ` OR attr_key IN (` + strings.Join(lits, ", ") + `)`
+	}
+	return `WITH a AS (
+  UNPIVOT (
+    SELECT COLUMNS('^(day|attr_.*)$'), CAST(NULL AS VARCHAR) AS "attr_$"
+    FROM events
+    WHERE family IN (` + families + `) AND ` + inRange + cond + `
+  )
+  ON COLUMNS('^attr_') INTO NAME col VALUE attr_value
+),
+k AS (
+  SELECT substr(col, 6) AS attr_key, count(*) AS events, count(DISTINCT attr_value) AS "values"
+  FROM a
+  GROUP BY col
+)
+SELECT attr_key, events, "values", count(*) OVER () AS keys_total
+FROM k
+QUALIFY ` + q + `
+ORDER BY events DESC, attr_key`
+}
+
+func TestAttributeKeysMatchDuckDB(t *testing.T) {
+	f := attrFixture(t)
+	e := New(Options{Dir: f.Dir, Workers: 3})
+	keys := func(table string, limit int, keep ...string) Query {
+		return Query{Kind: "attributes", Table: table, Output: "keys", Limit: limit, Keep: keep}
+	}
+	both := "'product', 'measures'"
+	web := keys("events", 2, "note")
+	web.Where = []Filter{{Column: "platform", Op: "eq", Values: []string{"web"}}}
+	cases := []struct {
+		name     string
+		q        Query
+		from, to string
+		sql      string
+	}{
+		{"default", Query{Kind: "attributes", Output: "keys"}, attrFrom, today, listAttributesSQL(both, 50, nil, "")},
+		{"all", keys("events", 1000), attrFrom, today, listAttributesSQL(both, 1000, nil, "")},
+		// limit under the keys, a kept key outside it, kept keys with no
+		// events (blocked, renamed away, never sent, and a spelling of
+		// a key the files spell otherwise).
+		{"limit and keep", keys("events", 2, "note", "secret", "colour", "nothing", "plan", "conn"), attrFrom, today,
+			listAttributesSQL(both, 2, []string{"note", "secret", "colour", "nothing", "plan", "conn"}, "")},
+		{"august", keys("events", 3, "beta"), attrFrom, "2026-08-31", listAttributesSQL(both, 3, []string{"beta"}, "")},
+		{"product", keys("product", 4, "conn"), attrFrom, today, listAttributesSQL("'product'", 4, []string{"conn"}, "")},
+		{"measures", keys("measures", 1, "Plan"), "2026-09-01", today, listAttributesSQL("'measures'", 1, []string{"Plan"}, "")},
+		{"where", web, attrFrom, today, listAttributesSQL(both, 2, []string{"note"}, ` AND platform = 'web'`)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			want := duckTableWith(t, f, attrRules, c.sql, c.from, c.to)
+			if len(want) < 2 {
+				t.Fatalf("the SQL returns %d rows: a weak case", len(want))
+			}
+			defer func(n int) { unpivotChunk = n }(unpivotChunk)
+			for _, chunk := range []int{1 << 16, 7} {
+				unpivotChunk = chunk
+				got, err := e.Answer(context.Background(), c.q, Params{Project: 1, From: date(t, c.from), To: date(t, c.to)}, attrRules)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !slices.Equal(got.Columns, c.q.Columns()) {
+					t.Errorf("columns %v, want %v", got.Columns, c.q.Columns())
+				}
+				if got.Truncated || len(got.Approximate) > 0 {
+					t.Errorf("truncated %v, approximate %v", got.Truncated, got.Approximate)
+				}
+				sameTable(t, got.Rows, want)
+			}
+		})
+	}
+
+	// The fixture holds what the cases are about: more keys than the
+	// limit, a kept key past it, measures' own key, and views' left out.
+	rows := duckTableWith(t, f, attrRules, listAttributesSQL(both, 2, []string{"note", "conn"}, ""), attrFrom, today)
+	got := map[string]bool{}
+	for _, r := range rows {
+		got[r[0]] = true
+		if r[3] == "2" || r[3] == "3" {
+			t.Errorf("keys_total %s: no more keys than the limit", r[3])
+		}
+	}
+	if len(rows) != 4 || !got["note"] || !got["conn"] {
+		t.Errorf("the kept keys are not past the limit: %v", rows)
+	}
+	all := duckTableWith(t, f, attrRules, listAttributesSQL("'views'", 100, nil, ""), attrFrom, today)
+	if len(all) == 0 || all[0][0] == "" {
+		t.Error("the views carry no attribute")
+	}
+	for _, r := range duckTableWith(t, f, attrRules, listAttributesSQL(both, 100, nil, ""), attrFrom, today) {
+		if r[0] == "ref" {
+			t.Error("the keys read the views")
+		}
+	}
+}
+
+func TestAttributeKeysApproximate(t *testing.T) {
+	f := archivetest.New(t)
+	var evs []store.Event
+	base := date(t, today).Time().Add(9 * time.Hour)
+	for k := range 1500 {
+		evs = append(evs, store.Event{ID: fmt.Sprintf("x-%d", k), ProjectID: 1, Family: store.FamilyProduct, EventName: "e",
+			TS: base.Add(time.Duration(k) * time.Millisecond), Attributes: map[string]string{"item": fmt.Sprint(k), "plan": "free"}})
+	}
+	f.Write(t, evs...)
+	e := New(Options{Dir: f.Dir, Workers: 2})
+	got, err := e.Answer(context.Background(), Query{Kind: "attributes", Output: "keys"}, Params{Project: 1, From: date(t, today), To: date(t, today)}, archive.Rules{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got.Approximate, []string{"values"}) {
+		t.Errorf("approximate %v, want values", got.Approximate)
+	}
+	if len(got.Rows) != 2 || got.Rows[0][0] != "item" || got.Rows[1][2] != "1" {
+		t.Errorf("rows %q", got.Rows)
 	}
 }

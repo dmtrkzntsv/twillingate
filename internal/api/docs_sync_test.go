@@ -640,10 +640,18 @@ func TestStructuredQueryDocument(t *testing.T) {
 			t.Errorf("example is refused: %v\n%s", err, b[1])
 		}
 		kinds[in.Query.Kind] = true
+		if in.Query.Kind == "attributes" {
+			kinds["attributes "+in.Query.Output] = true
+		}
 	}
 	for _, k := range native.Kinds {
 		if !kinds[k] {
 			t.Errorf("no example of a %s", k)
+		}
+	}
+	for _, o := range native.AttributeOutputs {
+		if !kinds["attributes "+o] {
+			t.Errorf("no example of an attributes' %s", o)
 		}
 	}
 	// The attributes kind's reserved keys, listed between "under its own

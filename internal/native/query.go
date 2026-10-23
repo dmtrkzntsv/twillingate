@@ -22,26 +22,27 @@ var ErrTooLarge = errors.New("native: the query needs more memory than allowed; 
 // by Series), a breakdown the metrics grouped by 1-3 Dimensions, a
 // retention its cohorts' days back (Output, IdentifiedBy, Offsets,
 // Milestones), an attributes the attribute keys and values its rows carry
-// (Output, Reserved).
+// (Output, Reserved, Keep).
 type Query struct {
-	Kind        string   `json:"kind" jsonschema:"stat: one row of metrics (with compare previous, a previous_<name> column each); trend: one metric per day, optionally split by series; breakdown: the metrics grouped by 1 to 3 dimensions; retention: the cohorts of users and installs first active in the range, and their days back (output, identified_by, offsets, milestones; no metrics); attributes: every attribute key and value the product or measures rows carry, with their metrics (output values; dimensions day and event_name, reserved)"`
-	Table       string   `json:"table,omitempty" jsonschema:"the rows read: events (every family), views, product or measures; or sessions, one row per session of views; or identities, one row per user or group first seen in the range (rules apply to neither); a retention reads events (absent or events); an attributes product or measures"`
-	Metrics     []Metric `json:"metrics,omitempty" jsonschema:"the aggregates, each an output column; a trend takes exactly 1; a retention none; an attributes count, actors, users, groups and actors_or_null"`
+	Kind        string   `json:"kind" jsonschema:"stat: one row of metrics (with compare previous, a previous_<name> column each); trend: one metric per day, optionally split by series; breakdown: the metrics grouped by 1 to 3 dimensions; retention: the cohorts of users and installs first active in the range, and their days back (output, identified_by, offsets, milestones; no metrics); attributes: every attribute key and value the product or measures rows carry, with their metrics (output values; dimensions day and event_name, reserved), or every key with its events and distinct values (output keys; limit, keep; no metrics)"`
+	Table       string   `json:"table,omitempty" jsonschema:"the rows read: events (every family), views, product or measures; or sessions, one row per session of views; or identities, one row per user or group first seen in the range (rules apply to neither); a retention reads events (absent or events); an attributes product or measures, its keys also events (product and measures both: the default)"`
+	Metrics     []Metric `json:"metrics,omitempty" jsonschema:"the aggregates, each an output column; a trend takes exactly 1; a retention and an attributes' keys none; an attributes' values count, actors, users, groups and actors_or_null"`
 	Where       []Filter `json:"where,omitempty" jsonschema:"filters, all of which a row must satisfy"`
 	Dimensions  []string `json:"dimensions,omitempty" jsonschema:"breakdown only, 1 to 3: columns to group by, each one a filter's column may name on the table (path, country, event_name, attr_<key>, …; resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), but duration_sec and views on sessions and views and events on identities; attributes only: day, event_name or both, in that order, before its attribute and value"`
 	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by, one a filter's column may name on the table except day (resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), and except duration_sec and views on sessions and views and events on identities"`
 	SeriesLimit int      `json:"series_limit,omitempty" jsonschema:"trend only: how many series, 1 to 50, the top ones by the metric over the range (default 5)"`
 	Compare     string   `json:"compare,omitempty" jsonschema:"stat only: previous adds each metric over as many days ending the day before from"`
-	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown and attributes only: how many groups, 1 to 1000 (default 20; an attributes all of them)"`
+	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown and attributes only: how many groups, 1 to 1000 (default 20; an attributes' values all of them, its keys 50)"`
 	Other       bool     `json:"other,omitempty" jsonschema:"breakdown only: fold the groups past limit into one row whose dimensions read Other"`
-	Order       string   `json:"order,omitempty" jsonschema:"breakdown and attributes only: a metric name to rank groups by, descending, or one of its dimensions (an attributes' attribute and value among them) to sort them by, ascending, ties by the other dimensions ascending (default: the first metric; an attributes with day by day, the first metric descending, event_name, attribute and value, else by event_name, attribute, the first metric descending and value); limit keeps the first groups in that order"`
+	Order       string   `json:"order,omitempty" jsonschema:"breakdown and attributes values only: a metric name to rank groups by, descending, or one of its dimensions (an attributes' attribute and value among them) to sort them by, ascending, ties by the other dimensions ascending (default: the first metric; an attributes with day by day, the first metric descending, event_name, attribute and value, else by event_name, attribute, the first metric descending and value); limit keeps the first groups in that order"`
 	// The retention kind's fields.
-	Output       string `json:"output,omitempty" jsonschema:"retention and attributes only, required. An attributes: values (a row per dimensions, attribute and value). A retention: grid (cohort, identified_by, offset, size, returned, retention: a row per cohort, identity kind and day back, offset the days since the cohort day), curve (offset, retention: one identity kind's cohorts pooled per day back) or milestones (one row, a d<n> column per milestone: the curve's retention that day back)"`
+	Output       string `json:"output,omitempty" jsonschema:"retention and attributes only, required. An attributes: values (a row per dimensions, attribute and value) or keys (attribute, events, values, keys_total: a row per attribute, its events and distinct values, keys_total the number of attributes; the limit busiest, by events, then those keep names). A retention: grid (cohort, identified_by, offset, size, returned, retention: a row per cohort, identity kind and day back, offset the days since the cohort day), curve (offset, retention: one identity kind's cohorts pooled per day back) or milestones (one row, a d<n> column per milestone: the curve's retention that day back)"`
 	IdentifiedBy string `json:"identified_by,omitempty" jsonschema:"retention curve and milestones only, required: install or user, the cohorts pooled (a grid has both)"`
 	Offsets      int    `json:"offsets,omitempty" jsonschema:"retention only: the days back counted, 1 to 90 (default 45)"`
 	Milestones   []int  `json:"milestones,omitempty" jsonschema:"retention milestones only: 1 to 6 distinct days back, each 0 to offsets (default 7, 30 and 45)"`
 	// The attributes kind's.
-	Reserved bool `json:"reserved,omitempty" jsonschema:"attributes only: also the reserved keys, each read from its column (empty read as NULL) under its own name, as $platform or $country"`
+	Reserved bool     `json:"reserved,omitempty" jsonschema:"attributes values only: also the reserved keys, each read from its column (empty read as NULL) under its own name, as $platform or $country"`
+	Keep     []string `json:"keep,omitempty" jsonschema:"attributes keys only: up to 100 attributes (the key without attr_, spelled exactly as the answer spells it) listed past the limit too, when the range has events carrying them"`
 }
 
 // The retention defaults: the days back counted, the milestones read.
@@ -135,8 +136,8 @@ func percent(q float64) string {
 // its metric; a breakdown's dimensions, then its metrics; a retention
 // grid's cohort, identified_by, offset, size, returned and retention, a
 // curve's offset and retention, milestones' d<n> each; an attributes'
-// dimensions, attribute and value, then its metrics. It does not
-// validate q.
+// dimensions, attribute and value, then its metrics (its keys'
+// attribute, events, values and keys_total). It does not validate q.
 func (q Query) Columns() []string {
 	var cols []string
 	switch q.Kind {
@@ -159,6 +160,9 @@ func (q Query) Columns() []string {
 	case "breakdown":
 		cols = append(cols, q.Dimensions...)
 	case "attributes":
+		if q.Output == "keys" {
+			return []string{"attribute", "events", "values", "keys_total"}
+		}
 		cols = append(cols, q.Dimensions...)
 		cols = append(cols, "attribute", "value")
 	}
@@ -181,7 +185,8 @@ func (q Query) Columns() []string {
 // other column, attr_<key> included, text. A breakdown with other has
 // its dimensions text, its Other row reading "Other" in each. A
 // retention's cohort is day, identified_by text, the others number. An
-// attributes' attribute and value are text. It does not validate q.
+// attributes' attribute and value are text (its keys' attribute text,
+// the others number). It does not validate q.
 func (q Query) ColumnTypes() []string {
 	var types []string
 	switch q.Kind {
@@ -203,6 +208,9 @@ func (q Query) ColumnTypes() []string {
 			types = append(types, "text")
 		}
 	case "attributes":
+		if q.Output == "keys" {
+			return []string{"text", "number", "number", "number"}
+		}
 		for _, d := range q.Dimensions {
 			types = append(types, columnType(d))
 		}
@@ -354,7 +362,7 @@ var (
 	// AttributeOutputs are an attributes' outputs; AttributeTables the
 	// tables it reads; AttributeDimensions its dimensions, in their order;
 	// AttributeOps its metrics.
-	AttributeOutputs    = []string{"values"}
+	AttributeOutputs    = []string{"values", "keys"}
 	AttributeTables     = []string{"product", "measures"}
 	AttributeDimensions = []string{"day", "event_name"}
 	AttributeOps        = []string{"count", "actors", "users", "groups", "actors_or_null"}
@@ -407,6 +415,9 @@ func (q Query) Validate() error {
 	}
 	if q.Reserved && q.Kind != "attributes" {
 		return invalid("reserved", "only an attributes takes reserved")
+	}
+	if len(q.Keep) > 0 && (q.Kind != "attributes" || q.Output != "keys") {
+		return invalid("keep", "only an attributes' keys takes keep")
 	}
 	switch q.Kind {
 	case "retention":
@@ -593,6 +604,9 @@ func (q Query) validateRetention() error {
 // product or measures, groups by its attribute and value after day and
 // event_name when named, and takes its own metrics.
 func (q Query) validateAttributes() error {
+	if q.Output == "keys" {
+		return q.validateAttributeKeys()
+	}
 	switch {
 	case !slices.Contains(AttributeTables, q.Table):
 		return invalid("table", "an attributes reads %s, not %q", strings.Join(AttributeTables, " or "), q.Table)
@@ -656,6 +670,71 @@ func (q Query) validateAttributes() error {
 	}
 	if q.Order != "" && !metricNames[q.Order] && !names[q.Order] {
 		return invalid("order", "%q is not a metric name, a dimension, attribute or value", q.Order)
+	}
+	return nil
+}
+
+// The attributes keys' bounds: the keys it keeps by default, the names
+// keep may list.
+const (
+	defaultKeysLimit = 50
+	maxKeep          = 100
+)
+
+// keysTable is an attributes keys' table, events when unset.
+func (q Query) keysTable() string {
+	if q.Table == "" {
+		return "events"
+	}
+	return q.Table
+}
+
+// keysLimit is an attributes keys' limit, its default when unset.
+func (q Query) keysLimit() int {
+	if q.Limit == 0 {
+		return defaultKeysLimit
+	}
+	return q.Limit
+}
+
+// validateAttributeKeys refuses a malformed attributes keys: it reads
+// events (product and measures), product or measures, and takes only
+// where, limit and keep beside them.
+func (q Query) validateAttributeKeys() error {
+	switch t := q.keysTable(); {
+	case t != "events" && !slices.Contains(AttributeTables, t):
+		return invalid("table", "an attributes' keys reads events, product or measures, not %q", q.Table)
+	case len(q.Metrics) > 0:
+		return invalid("metrics", "an attributes' keys takes none; its columns are attribute, events, values and keys_total")
+	case len(q.Dimensions) > 0:
+		return invalid("dimensions", "an attributes' keys takes none")
+	case q.Reserved:
+		return invalid("reserved", "an attributes' keys takes none")
+	case q.Order != "":
+		return invalid("order", "an attributes' keys are by events, descending, then attribute")
+	case q.Series != "":
+		return invalid("series", "an attributes takes none")
+	case q.SeriesLimit != 0:
+		return invalid("series_limit", "an attributes takes none")
+	case q.Compare != "":
+		return invalid("compare", "an attributes takes none")
+	case q.Other:
+		return invalid("other", "an attributes takes none")
+	case q.IdentifiedBy != "":
+		return invalid("identified_by", "an attributes takes none")
+	case q.Offsets != 0:
+		return invalid("offsets", "an attributes takes none")
+	case len(q.Milestones) > 0:
+		return invalid("milestones", "an attributes takes none")
+	case q.Limit < 0 || q.Limit > maxLimit:
+		return invalid("limit", "%d is not between 1 and %d", q.Limit, maxLimit)
+	case len(q.Keep) > maxKeep:
+		return invalid("keep", "%d names, at most %d", len(q.Keep), maxKeep)
+	}
+	for i, f := range q.Where {
+		if err := f.validate(q.keysTable(), fmt.Sprintf("where[%d]", i)); err != nil {
+			return err
+		}
 	}
 	return nil
 }

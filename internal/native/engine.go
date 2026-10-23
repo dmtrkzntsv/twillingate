@@ -170,7 +170,9 @@ var (
 //   - retention: its output's rows (scan.retention), over the cohorts of
 //     From to To, the days back up to the day before the clock's today;
 //   - attributes: its dimensions, attribute and value, then its metrics,
-//     a row per attribute value of the rows unpivoted (scan.attributes).
+//     a row per attribute value of the rows unpivoted (scan.attributes);
+//     output keys attribute, events, values and keys_total, a row per
+//     attribute (scan.attributeKeys).
 //
 // A truncated result (MaxGroups, MaxBytes) leaves the untracked groups
 // out of a breakdown's Other row too, and ranks a trend's tracked series

@@ -72,10 +72,15 @@ func TestValidate(t *testing.T) {
 			Metrics: count(), Order: "attribute"},
 		"attributes by day": {Kind: "attributes", Table: "product", Output: "values", Dimensions: []string{"day"},
 			Metrics: []Metric{{Op: "users", As: "n"}}, Order: "n"},
-		"retention grid":        {Kind: "retention", Output: "grid"},
-		"retention grid events": {Kind: "retention", Table: "events", Output: "grid", Offsets: 90, Where: []Filter{{Column: "country", Op: "eq", Values: []string{"DE"}}}},
-		"retention curve":       {Kind: "retention", Output: "curve", IdentifiedBy: "install", Offsets: 1},
-		"retention milestones":  {Kind: "retention", Output: "milestones", IdentifiedBy: "user"},
+		"attribute keys":        {Kind: "attributes", Output: "keys"},
+		"attribute keys events": {Kind: "attributes", Table: "events", Output: "keys", Limit: 1000, Keep: []string{"plan", "Plan"}},
+		"attribute keys product": {Kind: "attributes", Table: "product", Output: "keys", Limit: 1,
+			Where: []Filter{{Column: "event_name", Op: "eq", Values: []string{"x"}}}},
+		"attribute keys measures": {Kind: "attributes", Table: "measures", Output: "keys", Keep: make([]string, 100)},
+		"retention grid":          {Kind: "retention", Output: "grid"},
+		"retention grid events":   {Kind: "retention", Table: "events", Output: "grid", Offsets: 90, Where: []Filter{{Column: "country", Op: "eq", Values: []string{"DE"}}}},
+		"retention curve":         {Kind: "retention", Output: "curve", IdentifiedBy: "install", Offsets: 1},
+		"retention milestones":    {Kind: "retention", Output: "milestones", IdentifiedBy: "user"},
 		"retention own milestones": {Kind: "retention", Output: "milestones", IdentifiedBy: "install", Offsets: 14,
 			Milestones: []int{0, 1, 3, 7, 10, 14}},
 	}
@@ -90,6 +95,11 @@ func TestValidate(t *testing.T) {
 	}
 	attrs := func(edit func(q *Query)) Query {
 		q := Query{Kind: "attributes", Table: "product", Output: "values", Metrics: count()}
+		edit(&q)
+		return q
+	}
+	keys := func(edit func(q *Query)) Query {
+		q := Query{Kind: "attributes", Table: "events", Output: "keys"}
 		edit(&q)
 		return q
 	}
@@ -236,7 +246,18 @@ func TestValidate(t *testing.T) {
 		{"attributes on events", attrs(func(q *Query) { q.Table = "events" }), "table"},
 		{"attributes on views", attrs(func(q *Query) { q.Table = "views" }), "table"},
 		{"attributes no output", attrs(func(q *Query) { q.Output = "" }), "output"},
-		{"attributes keys", attrs(func(q *Query) { q.Output = "keys" }), "output"},
+		{"attributes keep", attrs(func(q *Query) { q.Keep = []string{"plan"} }), "keep"},
+		{"keep on a breakdown", Query{Kind: "breakdown", Table: "events", Metrics: count(), Dimensions: []string{"path"}, Keep: []string{"a"}}, "keep"},
+		{"keys on views", keys(func(q *Query) { q.Table = "views" }), "table"},
+		{"keys metrics", keys(func(q *Query) { q.Metrics = count() }), "metrics"},
+		{"keys dimensions", keys(func(q *Query) { q.Dimensions = []string{"day"} }), "dimensions"},
+		{"keys reserved", keys(func(q *Query) { q.Reserved = true }), "reserved"},
+		{"keys order", keys(func(q *Query) { q.Order = "events" }), "order"},
+		{"keys limit", keys(func(q *Query) { q.Limit = 1001 }), "limit"},
+		{"keys keep", keys(func(q *Query) { q.Keep = make([]string, 101) }), "keep"},
+		{"keys series", keys(func(q *Query) { q.Series = "path" }), "series"},
+		{"keys other", keys(func(q *Query) { q.Other = true }), "other"},
+		{"keys where", keys(func(q *Query) { q.Where = []Filter{{Column: "duration_sec", Op: "is_set"}} }), "where[0].column"},
 		{"attributes grid", attrs(func(q *Query) { q.Output = "grid" }), "output"},
 		{"attributes dims out of order", attrs(func(q *Query) { q.Dimensions = []string{"event_name", "day"} }), "dimensions"},
 		{"attributes dim path", attrs(func(q *Query) { q.Dimensions = []string{"path"} }), "dimensions[0]"},
@@ -330,6 +351,7 @@ func TestColumns(t *testing.T) {
 			[]string{"attribute", "value", "count", "users"}},
 		{"attributes per day", Query{Kind: "attributes", Output: "values", Dimensions: []string{"day", "event_name"}, Metrics: []Metric{{Op: "groups"}}},
 			[]string{"day", "event_name", "attribute", "value", "groups"}},
+		{"attribute keys", Query{Kind: "attributes", Output: "keys"}, []string{"attribute", "events", "values", "keys_total"}},
 		{"retention grid", Query{Kind: "retention", Output: "grid"},
 			[]string{"cohort", "identified_by", "offset", "size", "returned", "retention"}},
 		{"retention curve", Query{Kind: "retention", Output: "curve", IdentifiedBy: "user"}, []string{"offset", "retention"}},
@@ -371,6 +393,7 @@ func TestColumnTypes(t *testing.T) {
 			[]string{"text", "text", "number"}},
 		{"attributes", Query{Kind: "attributes", Output: "values", Dimensions: []string{"day", "event_name"}, Metrics: []Metric{{Op: "count"}, {Op: "actors"}}},
 			[]string{"day", "text", "text", "text", "number", "number"}},
+		{"attribute keys", Query{Kind: "attributes", Output: "keys"}, []string{"text", "number", "number", "number"}},
 		{"retention grid", Query{Kind: "retention", Output: "grid"},
 			[]string{"day", "text", "number", "number", "number", "number"}},
 		{"retention curve", Query{Kind: "retention", Output: "curve", IdentifiedBy: "install"}, []string{"number", "number"}},

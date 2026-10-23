@@ -395,8 +395,13 @@ type metricSpec struct {
 	msr      int      // index into agg.msrs, for percentile, mean and weight
 }
 
-// distinctOf is the id column a distinct op counts.
-var distinctOf = map[string]string{"actors": "actor_id", "users": "user_id", "groups": "group_id"}
+// distinctOf is the id column a distinct op counts: the metrics' own, and
+// the attributes keys' count of an attribute's values (opValues, which
+// no query names).
+var distinctOf = map[string]string{"actors": "actor_id", "users": "user_id", "groups": "group_id", opValues: attrValueCol}
+
+// opValues is the distinct count of the unpivoted values.
+const opValues = "attr_values"
 
 // distinctCol is one id column counted distinct over the rows of a mask:
 // set says whole-range sets per group are kept, day that per-day keys are.
@@ -562,7 +567,7 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 				a.nums = append(a.nums, numCol{name: m.Column, mask: mask, float: m.Column == "value" || m.Column == "sample_rate"})
 			}
 			m.num = i
-		case "actors", "users", "groups":
+		case "actors", "users", "groups", opValues:
 			m.distinct = dist(distinctOf[m.Op], mask)
 			if perDay {
 				a.distinct[m.distinct].day = true
@@ -1422,7 +1427,7 @@ func (m *merged) computeRaw(mt metricSpec, gs []int32, day int, whole bool) valu
 			return value{null: true}
 		}
 		return value{f: float64(b) / float64(n)}
-	case "actors", "users", "groups":
+	case "actors", "users", "groups", opValues:
 		if day >= 0 {
 			return intValue(m.dayCount(mt.distinct, gs[0], day))
 		}

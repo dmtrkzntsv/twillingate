@@ -1700,21 +1700,22 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | Field | Kinds | Meaning |
 | --- | --- | --- |
 | `kind` | all | `stat`, `trend`, `breakdown`, `retention` or `attributes` (below) |
-| `table` | all | `events` (every family), `views`, `product` or `measures`; or `sessions`, one row per session, or `identities`, one row per user or group (below); a retention reads `events`, and may leave it out; an attributes `product` or `measures` |
-| `metrics` | stat, trend, breakdown, attributes | the aggregates, each an output column; a trend takes exactly one |
+| `table` | all | `events` (every family), `views`, `product` or `measures`; or `sessions`, one row per session, or `identities`, one row per user or group (below); a retention reads `events`, and may leave it out; an attributes `product` or `measures`, its `keys` also `events` (product and measures both, the default) |
+| `metrics` | stat, trend, breakdown, attributes | the aggregates, each an output column; a trend takes exactly one; an attributes' `keys` none |
 | `where` | all | filters, `{column, op, values}`, every one of which a row must satisfy |
 | `dimensions` | breakdown, attributes | a breakdown's 1 to 3 columns to group by; an attributes' `day`, `event_name` or both, in that order, before its attribute and value |
-| `limit` | breakdown, attributes | groups returned, 1 to 1000 (default 20; an attributes all of them) |
+| `limit` | breakdown, attributes | groups returned, 1 to 1000 (default 20; an attributes' `values` all of them, its `keys` 50) |
 | `order` | breakdown, attributes | a metric name to rank the groups by, descending, ties by the dimensions; or one of the dimensions to sort the groups by, ascending, ties by the other dimensions (`"order": "day"` puts a breakdown by day in date order). Default the first metric; `limit` keeps the first groups in that order; an attributes' default differs (below) |
 | `other` | breakdown | `true` adds an `Other` row (every dimension `Other`) summing the groups past `limit`, when there are any |
 | `series` | trend | a column to split each day by |
 | `series_limit` | trend | how many series, 1 to 50, those ranking first by the metric over the range (default 5) |
 | `compare` | stat | `previous` adds a `previous_<name>` column per metric, over as many days ending the day before `from`; `""` or absent, none |
-| `output` | retention, attributes | a retention's `grid`, `curve` or `milestones`; an attributes' `values` (required) |
+| `output` | retention, attributes | a retention's `grid`, `curve` or `milestones`; an attributes' `values` or `keys` (required) |
 | `identified_by` | retention | `install` or `user`: the cohorts a `curve` or `milestones` pools (required there; a `grid` has both and refuses it) |
 | `offsets` | retention | the days back counted, 1 to 90 (default 45) |
 | `milestones` | retention | `milestones` only: 1 to 6 distinct days back, each 0 to `offsets` (default 7, 30 and 45, which need `offsets` of 45 or more) |
-| `reserved` | attributes | `true` adds the reserved keys (below) |
+| `reserved` | attributes | `values` only: `true` adds the reserved keys (below) |
+| `keep` | attributes | `keys` only: up to 100 attributes listed past `limit` too (below) |
 
 A dimension, series or filter column is one of `project_id`, `family`,
 `event_name`, `day`, `kind`, `actor_id`, `actor_kind`, `user_id`,
@@ -1865,6 +1866,17 @@ metric descending and `value`. It tracks as many groups as a breakdown,
 past which it is `truncated`; the other fields of the other kinds are
 refused.
 
+Output `keys` summarises the keys instead, as `list_attributes` does:
+`attribute`, `events` (its pseudo-rows), `values` (its distinct values,
+an empty one among them) and `keys_total` (the number of attributes), a
+row per attribute, by `events` descending, then `attribute`. It reads
+`events` (the rows of `product` and `measures` both: the default),
+`product` or `measures`, takes `where`, `limit` (the busiest attributes
+kept, 50 by default) and `keep` (attributes listed past `limit` too,
+named as the answer spells them, exactly: an attribute with no event in
+the range is not listed), and refuses `metrics`, `dimensions`,
+`reserved` and `order`.
+
 A `retention` answers what the built-in Retention dashboard shows, from
 the views and product events of actors identified by a `$user_id` or a
 stable `$install_id` (`actor_kind` `user` or `install`, `actor_id` not
@@ -1912,9 +1924,11 @@ as text:
 - **breakdown**: a column per dimension, then per metric; the `limit`
   groups first in `order`, then the `Other` row;
 - **retention**: its output's columns and rows, as above;
-- **attributes**: its dimensions, `attribute`, `value`, then its metrics.
+- **attributes**: its dimensions, `attribute`, `value`, then its metrics;
+  `keys` its `attribute`, `events`, `values` and `keys_total`.
 
-A distinct count over the range (`actors`, `users`, `groups`) is exact up
+A distinct count over the range (`actors`, `users`, `groups`, an
+attributes' `keys`' `values`) is exact up
 to 1,024 ids per group; past that it is estimated, within about ±2%, and
 its column is named in `approximate`. The `daily_*` metrics, and a
 trend's per-day counts, are always exact; but the series a split trend
@@ -1969,6 +1983,15 @@ with the reserved keys, as `product_attributes` lists them.
   "dimensions": ["day", "event_name"],
   "where": [{"column": "event_name", "op": "eq", "values": ["signup"]}],
   "metrics": [{"op": "count"}, {"op": "actors"}, {"op": "groups"}]}}
+```
+
+An attributes' keys: the twenty busiest attributes of the web's product
+events and measures, and `plan` however busy.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "attributes", "table": "events", "output": "keys", "limit": 20, "keep": ["plan"],
+  "where": [{"column": "platform", "op": "eq", "values": ["web"]}]}}
 ```
 
 A breakdown with filtered metrics side by side: per path, its views and

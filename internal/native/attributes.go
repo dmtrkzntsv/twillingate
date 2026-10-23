@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
@@ -76,7 +77,9 @@ type attrMetric struct {
 // left out and the result is truncated, as a breakdown's.
 func (s scan) attributes(ctx context.Context, from, to civil.Date) (Result, error) {
 	r := Range{From: from, To: to}
-	lo, hi := r.days()
+	if s.q.Output == "keys" {
+		return s.attributeKeys(ctx, r)
+	}
 	nullWhere := []Filter{{Column: nullActorCol, Op: "is_set"}}
 	nullFilters, err := compileFilters(nullWhere, "where")
 	if err != nil {
@@ -100,53 +103,10 @@ func (s scan) attributes(ctx context.Context, from, to civil.Date) (Result, erro
 		ams[i] = am
 	}
 	dims := append(slices.Clone(s.q.Dimensions), attrKeyCol, attrValueCol)
-	a, ms := newAgg(aggOptions{metrics: inner, dims: dims, from: lo, ndays: int(hi - lo + 1),
-		workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
-	charge := func(n int64) error {
-		a.mem.add(n)
-		if n > 0 {
-			return a.checkMemory()
-		}
-		return nil
-	}
-	have, err := s.e.columns()
+	m, ms, err := s.unpivoted(ctx, r, []string{s.q.Table}, inner, dims)
 	if err != nil {
 		return Result{}, err
 	}
-	spell := map[string]string{} // the view's spelling, by lower-case name
-	for _, c := range have {
-		if _, ok := spell[strings.ToLower(c)]; !ok {
-			spell[strings.ToLower(c)] = c
-		}
-	}
-	all, err := archive.ListFiles(s.e.dir)
-	if err != nil {
-		return Result{}, err
-	}
-	cols := []string{"day", "event_name", "actor_id", "user_id", "group_id", AttrCols}
-	more := func(cs ...string) {
-		for _, c := range cs {
-			if !slices.Contains(cols, c) {
-				cols = append(cols, c)
-			}
-		}
-	}
-	for _, f := range s.filters {
-		more(readColumns(f.column)...)
-	}
-	if s.q.Reserved {
-		for _, k := range reservedKeys {
-			more(ReservedKeyColumns[k])
-		}
-	}
-	us := make([]unpivoter, s.e.workers)
-	err = s.scanEvents(ctx, all[s.project], r, cols, nil, charge, func(w int, b *Batch) error {
-		return us[w].unpivot(b, s.filters, spell, s.q.Reserved, func(c *Batch) error { return a.add(w, c) })
-	})
-	if err != nil {
-		return Result{}, err
-	}
-	m := a.merge()
 
 	var out columnsOut
 	for _, d := range dims {
@@ -204,6 +164,112 @@ func (s scan) attributes(ctx context.Context, from, to civil.Date) (Result, erro
 			row = append(row, v.String())
 		}
 		rows = append(rows, row)
+	}
+	return out.result(rows, m.a.groups.dropped), nil
+}
+
+// unpivoted aggregates the pseudo-rows of tables' rows in r (each table
+// read in turn into the one aggregation) by dims, with the metrics inner.
+func (s scan) unpivoted(ctx context.Context, r Range, tables []string, inner []metricSpec, dims []string) (*merged, []metricSpec, error) {
+	lo, hi := r.days()
+	a, ms := newAgg(aggOptions{metrics: inner, dims: dims, from: lo, ndays: int(hi - lo + 1),
+		workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
+	charge := func(n int64) error {
+		a.mem.add(n)
+		if n > 0 {
+			return a.checkMemory()
+		}
+		return nil
+	}
+	have, err := s.e.columns()
+	if err != nil {
+		return nil, nil, err
+	}
+	spell := map[string]string{} // the view's spelling, by lower-case name
+	for _, c := range have {
+		if _, ok := spell[strings.ToLower(c)]; !ok {
+			spell[strings.ToLower(c)] = c
+		}
+	}
+	all, err := archive.ListFiles(s.e.dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	cols := []string{"day", "event_name", "actor_id", "user_id", "group_id", AttrCols}
+	more := func(cs ...string) {
+		for _, c := range cs {
+			if !slices.Contains(cols, c) {
+				cols = append(cols, c)
+			}
+		}
+	}
+	for _, f := range s.filters {
+		more(readColumns(f.column)...)
+	}
+	if s.q.Reserved {
+		for _, k := range reservedKeys {
+			more(ReservedKeyColumns[k])
+		}
+	}
+	us := make([]unpivoter, s.e.workers)
+	for _, t := range tables {
+		st := s
+		st.q.Table = t
+		err = st.scanEvents(ctx, all[s.project], r, cols, nil, charge, func(w int, b *Batch) error {
+			return us[w].unpivot(b, s.filters, spell, s.q.Reserved, func(c *Batch) error { return a.add(w, c) })
+		})
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	return a.merge(), ms, nil
+}
+
+// attributeKeys answers an attributes query, output keys, as
+// list_attributes' SQL does: per attribute of the pseudo-rows of its
+// table's rows (events: product's and measures'), events the
+// pseudo-rows and values the distinct values (an empty one a value;
+// exact up to hll.ExactLimit, then estimated), keys_total the number of
+// attributes; the limit first by events descending, then attribute, and
+// those keep names exactly (as SQL's IN) past them; in that order.
+func (s scan) attributeKeys(ctx context.Context, r Range) (Result, error) {
+	tables := []string{s.q.keysTable()}
+	if tables[0] == "events" {
+		tables = []string{"product", "measures"}
+	}
+	inner := []metricSpec{{Metric: Metric{Op: "count"}}, {Metric: Metric{Op: opValues}}}
+	m, ms, err := s.unpivoted(ctx, r, tables, inner, []string{attrKeyCol})
+	if err != nil {
+		return Result{}, err
+	}
+	var out columnsOut
+	for _, c := range s.q.Columns() {
+		out.add(c)
+	}
+	type key struct {
+		name           string
+		events, values value
+	}
+	vals := m.a.groups.vals
+	keys := make([]key, m.groups)
+	for g := range keys {
+		gs := []int32{int32(g)}
+		keys[g] = key{name: label(vals[g][0]), events: m.compute(ms[0], gs, -1), values: m.compute(ms[1], gs, -1)}
+	}
+	slices.SortFunc(keys, func(x, y key) int {
+		if c := cmpDesc(x.events, y.events); c != 0 {
+			return c
+		}
+		return strings.Compare(x.name, y.name)
+	})
+	total := strconv.Itoa(len(keys))
+	var rows [][]string
+	for i, k := range keys {
+		if i >= s.q.keysLimit() && !slices.Contains(s.q.Keep, k.name) {
+			continue
+		}
+		out.approx[2] = out.approx[2] || k.values.approx
+		rows = append(rows, []string{k.name, k.events.String(), k.values.String(), total})
 	}
 	return out.result(rows, m.a.groups.dropped), nil
 }
