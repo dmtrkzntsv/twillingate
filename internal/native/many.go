@@ -16,7 +16,9 @@ import (
 
 // Request is one query of an AnswerMany: Query over Params, with Rules
 // as Answer takes them. Ctx, when set, is the query's own context: once
-// it is done the query alone leaves (nil: the call's context).
+// it is done the query alone leaves (nil: the call's context). It should
+// derive from the call's context: the call's own being done stops only
+// the requests without one.
 type Request struct {
 	Query  Query
 	Params Params
@@ -36,9 +38,12 @@ const maxConsumers = 32
 
 // AnswerMany answers reqs as Answer answers each, each answer the same as
 // Answer's, and calls done once per request (i its index in reqs) as it
-// is answered: from any goroutine, never two at once. It returns after
-// the last call. done should return quickly: the answers of one scan are
-// handed to it in turn.
+// is answered, in the order answered, from one goroutine of its own:
+// never inside a turn or under a lock of the engine's, so a slow done
+// holds up only the calls to done after it, never a scan, this call's or
+// another's. It returns after the last call. A query that fails or
+// leaves its scan is answered at once; the others of one scan are
+// answered when that scan finishes.
 //
 // The stats, trends and breakdowns of one project read in one scan, in
 // one turn of MaxScans, when they read the same table class (the events
@@ -58,9 +63,15 @@ const maxConsumers = 32
 // alone takes one, and so does every query Answer answers; a scan feeds
 // at most MaxScans heavy aggregations (and maxConsumers in all) and
 // takes a turn for each (turnFor). Independent scans so run beside each
-// other as separate queries would.
+// other as separate queries would. Two exceptions: a request with more
+// heavy aggregations than there are turns (a compared stat with
+// MaxScans 1) is not split, and its scan takes every turn while holding
+// them all; and light aggregations take no turn of their own, bounded
+// only by their scan's budget below (twice MaxBytes a turn held).
 //
-// A shared scan also holds at most twice MaxBytes over its aggregations:
+// A shared scan also holds at most twice MaxBytes over its aggregations
+// (the identities their columns look up counted once, as are a gap
+// day's views):
 // once past it, the query holding the most leaves the scan and is
 // answered alone, by Answer, after it. A query whose context is done
 // leaves at once, answered with its error; the scan stops when none is
@@ -69,12 +80,9 @@ const maxConsumers = 32
 // query of the scan, and a file the daily pass removes meanwhile runs the
 // whole scan again, every query from scratch, as Answer runs again.
 func (e *Engine) AnswerMany(ctx context.Context, reqs []Request, done func(i int, a Answered)) {
-	var mu sync.Mutex
-	answer := func(i int, a Answered) {
-		mu.Lock()
-		defer mu.Unlock()
-		done(i, a)
-	}
+	q := newAnswerQueue(done)
+	defer q.wait() // after every producer below has ended
+	answer := q.put
 	type scanKey struct {
 		project  int64
 		sessions bool
@@ -215,6 +223,7 @@ type consumer struct {
 	read    []string // the columns its batches hold
 	ids     *firstSet
 	derived atomic.Int64 // bytes of gap days' views charged to a, being derived
+	idBytes atomic.Int64 // bytes of identities charged to a (firstSeen)
 }
 
 // prepare checks and compiles r, request i, for a shared scan, with its
@@ -389,6 +398,7 @@ func (sh *sharedScan) attempt(ctx context.Context) error {
 			c.read = rs.columns(c.a.columns())
 			c.ids = nil
 			c.derived.Store(0)
+			c.idBytes.Store(0)
 			c.mu.Unlock()
 			cons = append(cons, c)
 		}
@@ -444,13 +454,15 @@ type manyItem struct {
 	uses []use
 }
 
-// charge is c's charge, as aggregate's: n more bytes held, refused past
-// the bounds; nothing once c left the scan.
+// charge is c's charge for its identities (firstSeen), as aggregate's:
+// n more bytes held, refused past the bounds; nothing once c left the
+// scan.
 func (sh *sharedScan) charge(c *consumer) func(int64) error {
 	return func(n int64) error {
 		c.mu.RLock()
 		var err error
 		if c.a != nil {
+			c.idBytes.Add(n)
 			err = c.a.charge(n)
 		}
 		c.mu.RUnlock()
@@ -717,8 +729,10 @@ func (sh *sharedScan) feed(w int, c *consumer, b *Batch) bool {
 }
 
 // checkBudget evicts, while the scan's aggregations hold more than twice
-// MaxBytes put together, the live request holding the most (a gap day's
-// views counted once, though each consumer is charged them).
+// MaxBytes put together, the live request holding the most. A gap day's
+// views and the identities are counted once, though each consumer is
+// charged them: the identities, cached and shared, as the most any
+// consumer was charged.
 func (sh *sharedScan) checkBudget() {
 	sh.budget.Lock()
 	defer sh.budget.Unlock()
@@ -726,13 +740,15 @@ func (sh *sharedScan) checkBudget() {
 	for {
 		total := sh.derived.Load()
 		var most *manyReq
-		var mostN int64
+		var mostN, ids int64
 		for _, r := range sh.reqs {
 			var held int64
 			for _, c := range r.cons {
 				c.mu.RLock()
 				if c.a != nil {
-					held += c.a.mem.n.Load() - c.derived.Load()
+					id := c.idBytes.Load()
+					held += c.a.mem.n.Load() - c.derived.Load() - id
+					ids = max(ids, id)
 				}
 				c.mu.RUnlock()
 			}
@@ -741,7 +757,7 @@ func (sh *sharedScan) checkBudget() {
 				most, mostN = r, held
 			}
 		}
-		if total <= limit || mostN <= 0 {
+		if total+ids <= limit || mostN <= 0 {
 			return
 		}
 		sh.leave(most, reqEvicted, Answered{})
@@ -845,7 +861,9 @@ func (sh *sharedScan) chargeAll(uses []use) func(int64) error {
 }
 
 // weighted is a counting semaphore of size units, taken several at once:
-// the waiters are served in order, so a large one is not starved.
+// the waiters are served in order, so a large one is not starved. The
+// price is head-of-line blocking: a waiter behind a large one waits even
+// when its own units are free.
 type weighted struct {
 	size    int
 	mu      sync.Mutex
@@ -906,4 +924,67 @@ func (w *weighted) serve() {
 		w.waiters = w.waiters[1:]
 		close(wt.ready)
 	}
+}
+
+// answerQueue hands answers to done from one goroutine of its own, in the
+// order put, so whoever puts one (a scan's worker, under a turn) never
+// waits on done.
+type answerQueue struct {
+	mu      sync.Mutex
+	pending []queued
+	wake    chan struct{} // a put since the goroutine last looked
+	closed  bool
+	ended   chan struct{}
+}
+
+type queued struct {
+	i int
+	a Answered
+}
+
+func newAnswerQueue(done func(int, Answered)) *answerQueue {
+	q := &answerQueue{wake: make(chan struct{}, 1), ended: make(chan struct{})}
+	go func() {
+		defer close(q.ended)
+		for {
+			q.mu.Lock()
+			batch, closed := q.pending, q.closed
+			q.pending = nil
+			q.mu.Unlock()
+			for _, x := range batch {
+				done(x.i, x.a)
+			}
+			if len(batch) == 0 {
+				if closed {
+					return
+				}
+				<-q.wake
+			}
+		}
+	}()
+	return q
+}
+
+// put queues answer a of request i; it never blocks on done.
+func (q *answerQueue) put(i int, a Answered) {
+	q.mu.Lock()
+	q.pending = append(q.pending, queued{i, a})
+	q.mu.Unlock()
+	select {
+	case q.wake <- struct{}{}:
+	default:
+	}
+}
+
+// wait closes the queue, once nothing more is put, and returns after the
+// last answer is handed to done.
+func (q *answerQueue) wait() {
+	q.mu.Lock()
+	q.closed = true
+	q.mu.Unlock()
+	select {
+	case q.wake <- struct{}{}:
+	default:
+	}
+	<-q.ended
 }

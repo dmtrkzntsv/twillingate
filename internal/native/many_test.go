@@ -232,6 +232,11 @@ func manyRequests(t *testing.T) []Request {
 func TestAnswerManyEqualsAnswer(t *testing.T) {
 	rng := newRand(t)
 	t.Run("parity", func(t *testing.T) {
+		// It reruns the parity tests, which the race suite runs already;
+		// make check (no race) runs it.
+		if raceEnabled {
+			t.Skip("the parity rerun is too slow under the race detector; make check runs it")
+		}
 		parity := []struct {
 			name string
 			run  func(*testing.T)
@@ -623,5 +628,79 @@ func TestAnswerManyHeavyBoundAcrossCalls(t *testing.T) {
 	}
 	if widest.Load() != 2 {
 		t.Errorf("the widest turn weighed %d, want 2 (a scan of two heavy aggregations)", widest.Load())
+	}
+}
+
+// A done that blocks holds up neither the call's scans nor another
+// call's: the first answer is a query refused mid-scan (past a tiny
+// MaxBytes), under the scan's turn; every turn is released while done
+// waits on it, and another call answers meanwhile on the one turn.
+func TestAnswerManySlowDone(t *testing.T) {
+	f := engineFixture(t)
+	e := New(Options{Dir: f.Dir, MaxScans: 1, MaxBytes: 1 << 10})
+	p := Params{Project: 1, From: date(t, engineFrom), To: date(t, today)}
+	light := []Request{
+		{Query: Query{Kind: "stat", Table: "views", Metrics: count()}, Params: p, Rules: engineRules},
+		{Query: Query{Kind: "stat", Table: "product", Metrics: count()}, Params: p, Rules: engineRules},
+		{Query: Query{Kind: "trend", Table: "measures", Metrics: count()}, Params: p, Rules: engineRules},
+	}
+	refused := Request{Query: Query{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "daily_sum", Of: "actors"}}},
+		Params: p, Rules: engineRules}
+	if _, err := e.Answer(context.Background(), refused.Query, refused.Params, refused.Rules); !errors.Is(err, ErrTooLarge) {
+		t.Fatalf("the refused query: %v, want ErrTooLarge", err)
+	}
+	reqs := append([]Request{refused}, light...)
+	var held atomic.Int64
+	defer func(f func(int)) { onTurn = f }(onTurn)
+	onTurn = func(w int) { held.Add(int64(w)) }
+
+	release := make(chan struct{})
+	first := make(chan struct{})
+	var answered atomic.Int32
+	slow := make(chan struct{})
+	go func() {
+		defer close(slow)
+		e.AnswerMany(context.Background(), reqs, func(i int, a Answered) {
+			if answered.Add(1) == 1 {
+				if i != 0 || !errors.Is(a.Err, ErrTooLarge) {
+					t.Errorf("first answer %d: %v, want the refusal", i, a.Err)
+				}
+				close(first)
+				<-release // blocks while the scans go on
+			}
+		})
+	}()
+	<-first
+	// Another call runs to the end meanwhile, on the one turn.
+	other := make(chan []Answered, 1)
+	go func() { other <- e.AnswerAll(context.Background(), light) }()
+	select {
+	case got := <-other:
+		for i, a := range got {
+			if a.Err != nil {
+				t.Errorf("the other call's query %d: %v", i, a.Err)
+			}
+		}
+	case <-time.After(10 * time.Second):
+		close(release)
+		t.Fatal("the other call waits on the blocked done")
+	}
+	// The blocked call's scans end too: no turn is left held.
+	deadline := time.Now().Add(10 * time.Second)
+	for held.Load() != 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if n := held.Load(); n != 0 {
+		t.Errorf("%d turns held while done blocks", n)
+	}
+	select {
+	case <-slow:
+		t.Fatal("AnswerMany returned before its last done")
+	default:
+	}
+	close(release)
+	<-slow
+	if n := answered.Load(); n != int32(len(reqs)) {
+		t.Errorf("%d answers, want %d", n, len(reqs))
 	}
 }
