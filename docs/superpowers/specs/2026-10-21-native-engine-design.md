@@ -985,6 +985,12 @@ Each measured as step 4c's cells (`scripts/native-bench/RESULTS.md`,
   - The keys, and so every count, are the same as before.
   - Warm loads: Views 1.08 s without the log (from 1.62; DuckDB 1.09) and 1.13 s with it (from 1.67). Product 1.07 s both ways (from 1.18 and 1.19).
   - Peaks unchanged within the spread.
+- **2d, a chunk's first dictionary without a map:**
+  - A batch column's first dictionary page is taken as the batch's dictionary: its values are copied once into one shared string, and the indexes stand as they are.
+  - The lookup map is built only when a plain page or a second dictionary follows. In the bench's files, 5% of text chunks fall back to plain pages after their dictionary, and none has a second dictionary.
+  - The open log's dictionaries come from JSON values, so this does not apply to them.
+  - Warm loads: Views 0.80 s without the log and 0.86 s with it (DuckDB 1.09 s); Product 0.96 and 1.01 s (DuckDB 1.71 s). A Views cell allocates 3.6 GB, from 5.1 GB.
+- **After 2a to 2d,** native beats DuckDB's step 3f on both dashboards at 30 days and 1M: Views 0.73x, Product 0.56x. With today's log in range a warm load costs about what one without it does.
 
 ## Left to the builder
 

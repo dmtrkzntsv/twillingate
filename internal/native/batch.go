@@ -174,12 +174,27 @@ func (d *dictBuilder) index() {
 }
 
 // addDict adds a dictionary page's values (BYTE_ARRAY data and offsets)
-// and returns each one's index in the batch's dictionary; same when that
-// is the value's own index (the first dictionary of a batch, no value
-// repeated), so the page's indexes stand as they are.
+// and returns each one's index in the batch's dictionary, or same (and no
+// remap) when that is the value's own index. The batch's first dictionary
+// is taken as the batch's dictionary as it is, without building the
+// lookup (built only should a plain page or a second dictionary follow):
+// a dictionary page holds each value once, as the files' writers (DuckDB,
+// parquet-go) write it. Its values are copied out of the page into one
+// string, which the dictionary's entries share.
 func (d *dictBuilder) addDict(vals []byte, offs []uint32) (remap []int32, same bool) {
-	same = len(d.dict) == 0
-	remap = make([]int32, max(0, len(offs)-1))
+	n := max(0, len(offs)-1)
+	if len(d.dict) == 0 {
+		d.dict = make([]string, n)
+		if n > 0 {
+			all := string(vals[offs[0]:offs[n]])
+			for j := range n {
+				d.dict[j] = all[offs[j]-offs[0] : offs[j+1]-offs[0]]
+			}
+		}
+		return nil, true
+	}
+	same = true
+	remap = make([]int32, n)
 	for j := range remap {
 		remap[j] = d.id(vals[offs[j]:offs[j+1]])
 		same = same && remap[j] == int32(j)

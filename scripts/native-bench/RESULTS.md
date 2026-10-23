@@ -1241,3 +1241,30 @@ In a Views load, a per-day query adds about 1M rows; the array by dictionary ent
 - **Views at 30 days and 1M now matches DuckDB's step 3f** (1.08 s against 1.09 s); Product is 0.63x DuckDB's.
 - In the Views profile the per-day distinct path (`addDistinct` with the sets) is 0.32 s of CPU a load, from the sort's 1.05 s alone. A first version with one set per worker and column, not per day, took Views only to 1.36 s: its table outgrew the cache, and its growths and the merge's sort of every key cost about as much as the sort had.
 - The peaks are within the run-to-run spread: Product without the log gave 193 to 204 MB before and 194 to 211 MB after, over three runs each.
+
+### 2d: a chunk's first dictionary without a map
+
+`dictBuilder.addDict` put every entry of a chunk's dictionary page into a `map[string]int32`, one string allocation each. The first dictionary of a batch's column is now the batch's dictionary as it is: its values are copied out of the page once, into one string the entries share (so nothing aliases a reused page buffer), and the indexes stand as they are. The lookup map is built only when a plain page or a second dictionary follows. In the bench's September file, 961 of 1,014 text chunks have one dictionary and no plain page; 53 (in three columns, `id` among them) fall back to plain pages after their dictionary, and build the map as before; none has a second dictionary. The open log's cache builds its dictionaries from JSON values, which have no dictionary to take, so 2d does not apply there.
+
+"Before" is 2c. Load at start 0.86 to 0.96.
+
+| Dashboard | Open log | 2c first / best | 2d first / best | CPU (best warm) 2c / 2d | Change (best) | 3f DuckDB best | Peak 2c / 2d |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | no | 1.11 s / 1.08 s | 0.82 s / 0.80 s | 2.14 / 1.58 s | 0.74x | 1.09 s | 122 / 114 MB |
+| Views (20) | yes | 1.74 s / 1.13 s | 1.46 s / 0.86 s | 2.24 / 1.69 s | 0.76x | — | 151 / 149 MB |
+| Product (10) | no | 1.12 s / 1.07 s | 1.00 s / 0.96 s | 2.12 / 1.91 s | 0.90x | 1.71 s | 194–211 / 183 MB |
+| Product (10) | yes | 1.81 s / 1.07 s | 1.66 s / 1.01 s | 2.13 / 1.91 s | 0.94x | — | 219 / 201 MB |
+
+- **Views at 30 days and 1M is now 0.73x DuckDB's step 3f** (0.80 s against 1.09 s), Product 0.56x (0.96 s against 1.71 s).
+- A Views cell allocated 3.6 GB, from 5.1 GB after 2c (6.2 GB at step 4c). What remains in `dictBuilder` (9% of the CPU) is the chunks that fall back to plain pages.
+- The largest allocator is now the per-day sets' growth (1.0 GB a cell): each day's set starts at 16 slots and doubles.
+- `internal/native/bench_test.go` (log reads, sessions, identities) is unchanged within noise: it decodes JSON logs, not Parquet.
+
+### After 2a to 2d
+
+| Dashboard | Open log | Step 4b/4c (poll) | 2a best | 2d best | 3f DuckDB best |
+| --- | --- | --- | --- | --- | --- |
+| Views (20) | no | 1.93 s | 1.61 s | 0.80 s | 1.09 s |
+| Views (20) | yes | 9.12 s | 7.68 s | 0.86 s | — |
+| Product (10) | no | 1.36 s | 1.19 s | 0.96 s | 1.71 s |
+| Product (10) | yes | 4.96 s | 4.20 s | 1.01 s | — |

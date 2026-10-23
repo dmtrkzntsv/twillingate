@@ -228,8 +228,9 @@ func timeScale(cc parquet.ColumnChunk, name string) (mul, div int64, ok bool) {
 // numbers into the column's own slices, strings into Go strings. A
 // dictionary-encoded string page's dictionary joins the batch's, its
 // indexes kept as they are when that is the dictionary's first (no values
-// before it, none repeated); a plain page's strings join it one by one, so
-// the batch's dictionary holds each value once.
+// before it: it is then the batch's dictionary, with no lookup built); a
+// plain page's strings join it one by one, so the batch's dictionary holds
+// each value once.
 func readChunk(cc parquet.ColumnChunk, name string, n int) (*Column, error) {
 	kind := cc.Type().Kind()
 	c := &Column{}
@@ -253,8 +254,8 @@ func readChunk(cc parquet.ColumnChunk, name string, n int) (*Column, error) {
 	var (
 		db       dictBuilder
 		lastDict parquet.Dictionary
-		remap    []int32 // lastDict's entries' indexes in db.dict
-		same     bool    // remap is the identity
+		remap    []int32 // lastDict's entries' indexes in db.dict, unless same
+		same     bool    // they are their own indexes
 	)
 	pages := cc.Pages()
 	defer pages.Close()
@@ -285,9 +286,13 @@ func readChunk(cc parquet.ColumnChunk, name string, n int) (*Column, error) {
 				} else {
 					k := 0
 					for r := range rows {
-						if def != nil && def[r] == 0 {
+						switch {
+						case def != nil && def[r] == 0:
 							c.Idx = append(c.Idx, -1)
-						} else {
+						case same:
+							c.Idx = append(c.Idx, idx[k])
+							k++
+						default:
 							c.Idx = append(c.Idx, remap[idx[k]])
 							k++
 						}
