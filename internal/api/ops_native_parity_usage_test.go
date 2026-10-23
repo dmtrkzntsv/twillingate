@@ -419,10 +419,11 @@ func (n slowNative) Answer(ctx context.Context, q native.Query, p native.Params,
 	return n.Native.Answer(ctx, q, p, rules)
 }
 
-// retention and usage run their queries under one CONSOLE_QUERY_TIMEOUT:
-// two queries that each fit it but not together are refused with the
-// timeout's words.
-func TestRetentionAndUsageShareOneDeadline(t *testing.T) {
+// retention, usage, views_overview and product_events run their queries
+// under one CONSOLE_QUERY_TIMEOUT: two queries that each fit it but not
+// together are refused with the timeout's words. (list_attributes asks
+// twice only past native.MaxKeep named keys, so it is left out here.)
+func TestAnalyticsToolsShareOneDeadline(t *testing.T) {
 	h, _ := newTestHost(t)
 	h.queryTimeout = 400 * time.Millisecond
 	h.native = slowNative{Native: h.native, delay: 250 * time.Millisecond}
@@ -435,6 +436,15 @@ func TestRetentionAndUsageShareOneDeadline(t *testing.T) {
 	_, err = h.usage(ctx, usageIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-01", To: "2026-08-31"}})
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("usage: %v, want %q", err, want)
+	}
+	month := rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}
+	_, err = h.viewsOverview(ctx, overviewIn{rangeIn: month})
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("views_overview: %v, want %q", err, want)
+	}
+	_, err = h.productEvents(ctx, productEventsIn{rangeIn: month})
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("product_events: %v, want %q", err, want)
 	}
 }
 

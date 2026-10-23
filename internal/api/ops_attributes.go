@@ -46,6 +46,10 @@ type listAttributesOut struct {
 // reader applies the rules, so a key renamed away reads as its target and
 // a blocked key reads as none.
 func (h *host) listAttributes(ctx context.Context, in attributesIn) (listAttributesOut, error) {
+	// One deadline for every query the answer runs, however many keep
+	// batches.
+	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
+	defer cancel()
 	snap := h.reg.Snapshot(ctx)
 	fromD, toD, err := usageRange(in.usageRangeIn, time.Now())
 	if err != nil {

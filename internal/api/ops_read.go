@@ -146,6 +146,9 @@ type overviewIn struct {
 // bounce_rate of 0; avg_session_sec is the seconds over the sessions,
 // rounded down.
 func (h *host) viewsOverview(ctx context.Context, in overviewIn) (tableOut, error) {
+	// One deadline for every query the answer runs.
+	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
+	defer cancel()
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return tableOut{}, err
 	}

@@ -28,6 +28,9 @@ type productEventsOut struct {
 // v_product_daily kept them), by day, the most events first, then by
 // name; and per day, the events and the actors (active users).
 func (h *host) productEvents(ctx context.Context, in productEventsIn) (productEventsOut, error) {
+	// One deadline for every query the answer runs.
+	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
+	defer cancel()
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return productEventsOut{}, err
 	}
