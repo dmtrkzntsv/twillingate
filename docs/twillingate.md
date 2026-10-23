@@ -1782,7 +1782,7 @@ may name but not a dimension or series. It takes the metrics `count`
 | `weight` | | `measures` only: the samples' `1 / sample_rate` summed, the samples a sampled metric stands for |
 | `actors_or_null` | | `attributes` only: distinct `actor_id`, a NULL one counting as one more |
 | `share` | `of`: `count`, or on `measures` `weight` | breakdown, or trend with `series`: the group's `count` (or `weight`) divided by its partition's (`0.25`); empty when that is 0 |
-| `ratio` | `num` and `den`: each a metric of the table | `num` divided by `den` (`2.5`); empty when `den` is 0 or empty, or `num` is empty |
+| `ratio` | `num` and `den`: each a metric of the table | `num` divided by `den` (`2.5`); empty when `den` is 0 or empty, or `num` is empty; a counted `num` over no rows is 0 (below) |
 
 A percentile comes from `bucket`, as the built-in Web Vitals and
 Measures dashboards compute theirs: the weights are summed per bucket and
@@ -1810,7 +1810,11 @@ ratio itself takes no `where`, and a refusal names a side's field as
 `metrics[0].num.op`. Both sides are over the same rows: in an `Other`
 row each is put together over the groups it folds and then divided, and a
 `previous_` column divides the previous range's. A ratio is `approximate`
-when either side is, and its `round` rounds the quotient. Actions per
+when either side is, and its `round` rounds the quotient. A counted
+`num` (`count`, `actors`, `users`, `groups`, `bounces`, `weight` or a
+`daily_*`) with no rows reads `0` when `den` is above 0, so the ratio is
+`0` rather than empty: a `daily_*` or `weight` over no rows would be
+empty on its own, as SQL's `COALESCE(num, 0)` turns it into 0. Actions per
 user: `{"op": "ratio", "as": "per_user", "round": 1, "num": {"op":
 "count"}, "den": {"op": "users"}}`.
 
@@ -2033,8 +2037,10 @@ places.
 ```
 
 A stat of the share of consenting visitors: visitors counted per day
-with `$consent` 1, over those with any `$consent`, as the built-in Views
-dashboard's share with consent in force has it.
+with `$consent` 1, over those with any `$consent`; `0` when every one of
+them declined. It reads as the built-in Views dashboard's share with
+consent in force, which counts a visitor once per day and answer: the
+two differ only when a visitor changes their answer within a day.
 
 ```json
 {"project_id": 1, "query": {

@@ -405,6 +405,11 @@ type metricSpec struct {
 	ratioNum, ratioDen *metricSpec
 }
 
+// countedOps are the metrics that count rows, ids or weights: over no
+// rows each is 0, or the daily_* and weight NULL, which a ratio's
+// numerator reads as 0.
+var countedOps = setOf([]string{"count", "actors", "users", "groups", "bounces", "weight", "daily_sum", "daily_max", "daily_avg"})
+
 // distinctOf is the id column a distinct op counts: the metrics' own, and
 // the attributes keys' count of an attribute's values (opValues, which
 // no query names).
@@ -1398,9 +1403,13 @@ func (m *merged) computeRaw(mt metricSpec, gs []int32, day int, whole bool) valu
 	case "ratio":
 		// num / den as a DOUBLE, both over the same groups and day (an
 		// Other row's both folded first): NULL when den is 0 or NULL, or
-		// num NULL.
+		// num NULL; a counted num over no rows is 0 when den is above 0,
+		// as the widgets' COALESCE(num, 0) reads it.
 		num := m.computeRaw(*mt.ratioNum, gs, day, whole)
 		den := m.computeRaw(*mt.ratioDen, gs, day, whole)
+		if num.null && countedOps[mt.ratioNum.Op] && !den.null && den.num() > 0 {
+			num = intValue(0)
+		}
 		if num.null || den.null || den.num() == 0 {
 			return value{null: true}
 		}

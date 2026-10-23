@@ -198,7 +198,9 @@ var (
 // before groups and series are ranked by it, as SQL's ORDER BY of the
 // rounded column ranks them.
 // ratio is SQL's num::DOUBLE / NULLIF(den, 0) of its two metrics, each
-// with its own where (NULL when either is NULL), computed from the same
+// with its own where (NULL when either is NULL, but a counted num, a
+// daily_* or weight over no rows, reads 0 when den is above 0, as the
+// widgets' COALESCE(num, 0) has it), computed from the same
 // partials as the other metrics: over a breakdown's Other row both sides
 // are put together over its folded groups first, over a stat's previous
 // range both are the previous range's; approximate when either side is,

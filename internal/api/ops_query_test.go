@@ -358,3 +358,43 @@ func TestQueryStructuredBounds(t *testing.T) {
 		}
 	}
 }
+
+// A ratio's num and den are described as a metric but closed: no other
+// field, no as, round or num and den of their own, an op that is neither
+// ratio nor share, and a column that is a number.
+func TestQuerySchemaRatioSides(t *testing.T) {
+	h, _ := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	i := slices.IndexFunc(r.specs, func(s spec) bool { return s.Name == "query" })
+	if i < 0 {
+		t.Fatal("no query tool")
+	}
+	m := r.specs[i].in.Properties["query"].Properties["metrics"].Items
+	for _, side := range []string{"num", "den"} {
+		s := m.Properties[side]
+		if s == nil {
+			t.Fatalf("a metric has no %s", side)
+		}
+		if b, _ := json.Marshal(s.AdditionalProperties); string(b) != "false" {
+			t.Errorf("%s's additionalProperties = %s, want false", side, b)
+		}
+		for _, p := range []string{"as", "round", "num", "den"} {
+			if _, ok := s.Properties[p]; ok {
+				t.Errorf("%s has a %s property", side, p)
+			}
+		}
+		for _, p := range []string{"op", "q", "column", "of", "where"} {
+			if _, ok := s.Properties[p]; !ok {
+				t.Errorf("%s lacks a %s property", side, p)
+			}
+		}
+		ops := s.Properties["op"].Enum
+		if slices.Contains(ops, any("ratio")) || slices.Contains(ops, any("share")) || !slices.Contains(ops, any("daily_sum")) {
+			t.Errorf("%s's op enum = %v, want the metric ops but ratio and share", side, ops)
+		}
+		cols := s.Properties["column"].Enum
+		if slices.Contains(cols, any("day")) || slices.Contains(cols, any("received_at")) || !slices.Contains(cols, any("value")) {
+			t.Errorf("%s's column enum = %v, want the number columns", side, cols)
+		}
+	}
+}

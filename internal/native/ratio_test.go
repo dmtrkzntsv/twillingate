@@ -10,6 +10,7 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // ratio divides one metric by another, each with its own where, as the
@@ -20,9 +21,10 @@ func TestRatioMatchesDuckDB(t *testing.T) {
 	f := engineFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	actions := []Filter{{Column: "family", Op: "in", Values: []string{"views", "product"}}}
-	perActor := func(id string) Query {
+	// perActor is the actions per distinct id, op counting the ids.
+	perActor := func(id, op string) Query {
 		return Query{Kind: "stat", Table: "events", Where: append(slices.Clone(actions), Filter{Column: id, Op: "is_set"}),
-			Metrics: []Metric{{Op: "ratio", As: "value", Round: ptr(1), Num: &Metric{Op: "count"}, Den: &Metric{Op: id[:len(id)-3] + "s"}}}}
+			Metrics: []Metric{{Op: "ratio", As: "value", Round: ptr(1), Num: &Metric{Op: "count"}, Den: &Metric{Op: op}}}}
 	}
 	consent := Query{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "ratio", As: "value",
 		Num: &Metric{Op: "daily_sum", Of: "actors", Where: []Filter{{Column: "consent", Op: "eq", Values: []string{"1"}}}},
@@ -43,8 +45,8 @@ func TestRatioMatchesDuckDB(t *testing.T) {
 		prev     bool
 	}
 	cases := []tc{
-		{name: "actions per user", q: perActor("user_id"), cols: []string{"value"}, sql: []string{widgetSQL(t, "users/actions-per-user.sql")}},
-		{name: "actions per group", q: perActor("group_id"), cols: []string{"value"}, sql: []string{widgetSQL(t, "groups/actions-per-group.sql")}},
+		{name: "actions per user", q: perActor("user_id", "users"), cols: []string{"value"}, sql: []string{widgetSQL(t, "users/actions-per-user.sql")}},
+		{name: "actions per group", q: perActor("group_id", "groups"), cols: []string{"value"}, sql: []string{widgetSQL(t, "groups/actions-per-group.sql")}},
 		{name: "consent share", q: consent, cols: []string{"value"}, sql: []string{widgetSQL(t, "views/consent-share.sql")}},
 		{name: "breakdown with other", q: Query{Kind: "breakdown", Table: "events", Dimensions: []string{"country"}, Limit: 2, Other: true,
 			Metrics: []Metric{{Op: "count"}, {Op: "ratio", As: "per_buyer", Round: ptr(3),
@@ -107,7 +109,8 @@ func TestRatioMatchesDuckDB(t *testing.T) {
 }
 
 // A ratio is empty when its denominator is 0 or empty, or its numerator
-// empty; never a division by zero.
+// empty; never a division by zero. A counted numerator over no rows is 0,
+// not empty, when the denominator is above 0.
 func TestRatioEmpty(t *testing.T) {
 	f := engineFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 2})
@@ -117,13 +120,14 @@ func TestRatioEmpty(t *testing.T) {
 		{Op: "ratio", As: "den_empty", Num: &Metric{Op: "count"}, Den: &Metric{Op: "daily_sum", Of: "actors", Where: never}},
 		{Op: "ratio", As: "num_empty", Num: &Metric{Op: "max", Column: "display_width", Where: never}, Den: &Metric{Op: "count"}},
 		{Op: "ratio", As: "num_zero", Num: &Metric{Op: "count", Where: never}, Den: &Metric{Op: "count"}},
+		{Op: "ratio", As: "num_no_days", Num: &Metric{Op: "daily_sum", Of: "actors", Where: never}, Den: &Metric{Op: "count"}},
 	}}
 	p := Params{Project: 1, From: date(t, engineFrom), To: date(t, today)}
 	res, err := e.Answer(context.Background(), q, p, engineRules)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"", "", "", "0"}; !slices.Equal(res.Rows[0], want) {
+	if want := []string{"", "", "", "0", "0"}; !slices.Equal(res.Rows[0], want) {
 		t.Errorf("rows %q, want %q", res.Rows, want)
 	}
 	// No rows at all: every side 0 or empty.
@@ -131,8 +135,20 @@ func TestRatioEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := []string{"", "", "", ""}; !slices.Equal(res.Rows[0], want) {
+	if want := []string{"", "", "", "", ""}; !slices.Equal(res.Rows[0], want) {
 		t.Errorf("no rows: %q, want %q", res.Rows, want)
+	}
+	// The weight of no sample, over samples, is 0 too; a mean of none is not.
+	m := Query{Kind: "stat", Table: "measures", Metrics: []Metric{
+		{Op: "ratio", As: "weight", Num: &Metric{Op: "weight", Where: never}, Den: &Metric{Op: "count"}},
+		{Op: "ratio", As: "mean", Num: &Metric{Op: "mean", Where: never}, Den: &Metric{Op: "count"}},
+	}}
+	res, err = e.Answer(context.Background(), m, p, engineRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"0", ""}; !slices.Equal(res.Rows[0], want) {
+		t.Errorf("measures: %q, want %q", res.Rows, want)
 	}
 }
 
@@ -163,5 +179,36 @@ func TestRatioApproximate(t *testing.T) {
 	}
 	if !slices.Equal(res.Approximate, []string{"estimated"}) {
 		t.Errorf("approximate %q, want estimated", res.Approximate)
+	}
+}
+
+// When every visitor with a consent answer declined, the consent share
+// is 0, as views/consent-share.sql's COALESCE reads it: the numerator's
+// daily_sum has no days, and a counted numerator over none is 0.
+func TestRatioAllDeclined(t *testing.T) {
+	f := archivetest.New(t)
+	for d, day := range []string{"2026-09-07", "2026-09-08"} {
+		evs := visits(1, date(t, day).Time(), d*3, 6)
+		for i := range evs {
+			evs[i].Consent = []store.Consent{store.ConsentNone, store.ConsentUnknown}[i%2]
+		}
+		f.Write(t, evs...)
+	}
+	f.Maintain(t, today)
+	e := New(Options{Dir: f.Dir, Workers: 2})
+	q := Query{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "ratio", As: "value",
+		Num: &Metric{Op: "daily_sum", Of: "actors", Where: []Filter{{Column: "consent", Op: "eq", Values: []string{"1"}}}},
+		Den: &Metric{Op: "daily_sum", Of: "actors", Where: []Filter{{Column: "consent", Op: "is_set"}}}}}}
+	res, err := e.Answer(context.Background(), q, Params{Project: 1, From: date(t, "2026-09-07"), To: date(t, "2026-09-08")}, archive.Rules{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := duckTableWith(t, f, archive.Rules{}, widgetSQL(t, "views/consent-share.sql"), "2026-09-07", "2026-09-08")
+	if len(want) != 1 || want[0][0] == "" {
+		t.Fatalf("the SQL returns %q: a weak case", want)
+	}
+	sameTable(t, res.Rows, want)
+	if res.Rows[0][0] != "0" {
+		t.Errorf("all declined: %q, want 0", res.Rows[0][0])
 	}
 }

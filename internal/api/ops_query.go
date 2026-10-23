@@ -43,7 +43,11 @@ type Native interface {
 // metricSchema is native.Metric's schema, which the inference cannot
 // reach itself: its num and den are Metrics. They are described as
 // native.Metric's fields but as, round, num and den, the fields a
-// ratio's side does not take.
+// ratio's side does not take. As and Round are left out by their Go
+// names (renaming them breaks the side's schema, which
+// TestQuerySchemaRatioSides pins), and the copy is built with
+// reflect.StructOf, which panics, at init through expose.go, should
+// native.Metric ever gain an unexported field: keep its fields exported.
 func metricSchema() *jsonschema.Schema {
 	mt := reflect.TypeFor[native.Metric]()
 	fields := func(side reflect.Type) []reflect.StructField {
