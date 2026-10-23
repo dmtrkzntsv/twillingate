@@ -365,3 +365,110 @@ func TestQuerySourceLabels(t *testing.T) {
 		})
 	}
 }
+
+// TestQuerySourceLabelsKeepRows: labels relabel values only: two values
+// under one label stay two rows, and the "" key labels the empty value.
+func TestQuerySourceLabelsKeepRows(t *testing.T) {
+	_, files := newTestStoreAndFiles(t, 1000)
+	writeCountries(t, files)
+	files.Write(t, countryEvent(t, "e5", "2026-10-21", "d", ""))
+	src := querySources(t, files, nil)["query"]
+	content := `{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"actors"}],"dimensions":["country"]},` +
+		`"rename":{"country":"label","actors":"value"},"labels":{"label":{"DE":"Europe","FR":"Europe","":"Unknown"}}}`
+	if err := src.Validate(context.Background(), content, oneComponent(t, queryBarList)); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	got, err := src.Load(context.Background(), content, countryParams)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := readsql.Result{Columns: []string{"label", "value"}, Rows: [][]string{{"Europe", "2"}, {"Europe", "1"}, {"Unknown", "1"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Load = %+v, want %+v", got, want)
+	}
+}
+
+// TestQuerySourceColumns: columns keeps the named columns (after rename)
+// in its order, the rest dropped, before the component checks them; a
+// list that is empty, names no column or one twice is refused.
+func TestQuerySourceColumns(t *testing.T) {
+	svc, _ := newTestServiceOpts(t, Options{}, 1000)
+	files := filesOf(t, svc)
+	writeCountries(t, files)
+	svc.sources = querySources(t, files, nil)
+	src := svc.sources["query"]
+	bars, stat := oneComponent(t, queryBarList), oneComponent(t, queryStat)
+	breakdown := `{"kind":"breakdown","table":"events","metrics":[{"op":"count"},{"op":"actors"}],"dimensions":["country"]}`
+	content := `{"query":` + breakdown + `,"rename":{"country":"label"},"columns":["actors","label"]}`
+	if err := src.Validate(context.Background(), content, oneComponent(t, queryTable)); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	got, err := src.Load(context.Background(), content, countryParams)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := readsql.Result{Columns: []string{"actors", "label"}, Rows: [][]string{{"2", "DE"}, {"1", "FR"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Load = %+v, want %+v", got, want)
+	}
+
+	// The component reads the picked columns: dropping count lets bar_list
+	// take the rest; picking count for a number checks its type.
+	if err := src.Validate(context.Background(), `{"query":`+breakdown+`,"rename":{"country":"label","actors":"value"},"columns":["label","value"]}`, bars); err != nil {
+		t.Errorf("bar_list: %v", err)
+	}
+	wantRefusal(t, src.Validate(context.Background(), `{"query":`+breakdown+`,"rename":{"country":"value"},"columns":["value"]}`, stat),
+		store.ErrInvalid, "stat.value: the query's column is text, not number")
+	wantRefusal(t, src.Validate(context.Background(), `{"query":`+breakdown+`,"rename":{"country":"label","actors":"value"},"columns":["label"]}`, bars),
+		store.ErrInvalid, "bar_list needs value (number); columns are label")
+	for _, c := range []struct{ name, columns, msg string }{
+		{"empty", `[]`, "columns: name at least one; omit it to keep every column"},
+		{"unknown", `["country"]`, "columns: country is not a column of the query; its columns are label, count, actors"},
+		{"twice", `["label","count","label"]`, "columns: label is named twice"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			wantRefusal(t, src.Validate(context.Background(), `{"query":`+breakdown+`,"rename":{"country":"label"},"columns":`+c.columns+`}`,
+				oneComponent(t, queryTable)), store.ErrInvalid, c.msg)
+		})
+	}
+
+	// A table widget and its preview return the picked columns.
+	if err := svc.st.SyncReporting(context.Background(), store.ReportingSync{
+		Hash: "query", Version: "test", Components: []store.Component{oneComponent(t, queryTable).row()},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	d := mustCreate(t, svc, "Columns", WidgetSpec{Name: "t", Component: "table", Title: "t", Props: json.RawMessage(`{"mode":"local"}`),
+		Source: Source{Type: "query", Content: content}})
+	data, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: d.Widgets[0].ID, ProjectID: 1, From: "2026-10-20", To: "2026-10-21"})
+	if err != nil {
+		t.Fatalf("WidgetData: %v", err)
+	}
+	if res, ok := data.Data.(readsql.Result); !ok || !reflect.DeepEqual(res, want) {
+		t.Errorf("WidgetData = %+v, want %+v", data.Data, want)
+	}
+	pre, err := svc.Preview(context.Background(), PreviewIn{Component: "table", Props: json.RawMessage(`{"mode":"local"}`),
+		Source: Source{Type: "query", Content: content}, ProjectID: 1, From: "2026-10-20", To: "2026-10-21"})
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	if pre.Problem != "" || !reflect.DeepEqual(pre.Result, want) {
+		t.Errorf("Preview = %+v, want %+v", pre, want)
+	}
+}
+
+// pickColumns keeps the approximate marks of the columns it keeps.
+func TestPickColumnsApproximate(t *testing.T) {
+	res := readsql.Result{Columns: []string{"a", "b", "c"}, Rows: [][]string{{"1", "2", "3"}}, Approximate: []string{"a", "c"}}
+	got, err := pickColumns(res, []string{"c", "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := readsql.Result{Columns: []string{"c", "b"}, Rows: [][]string{{"3", "2"}}, Approximate: []string{"c"}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("pickColumns = %+v, want %+v", got, want)
+	}
+	if _, err := pickColumns(res, []string{"d"}); err == nil {
+		t.Error("pickColumns of a missing column: no error")
+	}
+}

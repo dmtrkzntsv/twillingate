@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"sort"
@@ -29,12 +30,15 @@ type Native interface {
 type RulesFunc func(ctx context.Context, project int64) archive.Rules
 
 // queryContent is a query source's content: a structured query, the
-// new names of the output columns the component reads under others, and
-// labels: per column (its name after rename), values shown as others.
+// new names of the output columns the component reads under others,
+// labels: per column (its name after rename), values shown as others,
+// and columns: the ones kept (after rename), in their order; nil keeps
+// every column.
 type queryContent struct {
-	Query  native.Query                 `json:"query"`
-	Rename map[string]string            `json:"rename,omitempty"`
-	Labels map[string]map[string]string `json:"labels,omitempty"`
+	Query   native.Query                 `json:"query"`
+	Rename  map[string]string            `json:"rename,omitempty"`
+	Labels  map[string]map[string]string `json:"labels,omitempty"`
+	Columns []string                     `json:"columns,omitempty"`
 }
 
 // querySource is the query SourceType: a structured query the native
@@ -54,32 +58,66 @@ func (*querySource) Follows(string) (project, rng bool) { return true, true }
 
 // parseQuery reads and checks content: one JSON object with no unknown
 // field, a valid query, a rename of its output columns onto distinct
-// names, and labels of text columns only. It returns the content and
-// the query's columns as renamed.
-func parseQuery(content string) (queryContent, []string, error) {
+// names, labels of text columns only, and columns naming distinct ones
+// of the renamed columns. It returns the content and the columns the
+// source returns, renamed and picked, with their types.
+func parseQuery(content string) (queryContent, []string, []string, error) {
 	if strings.TrimSpace(content) == "" {
-		return queryContent{}, nil, store.Refuse(store.ErrInvalid, "query source is empty")
+		return queryContent{}, nil, nil, store.Refuse(store.ErrInvalid, "query source is empty")
 	}
 	var qc queryContent
 	dec := json.NewDecoder(strings.NewReader(content))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&qc); err != nil {
-		return queryContent{}, nil, store.Refuse(store.ErrInvalid, "query source: %s", err)
+		return queryContent{}, nil, nil, store.Refuse(store.ErrInvalid, "query source: %s", err)
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return queryContent{}, nil, store.Refuse(store.ErrInvalid, "query source: more than one JSON value")
+		return queryContent{}, nil, nil, store.Refuse(store.ErrInvalid, "query source: more than one JSON value")
 	}
 	if err := qc.Query.Validate(); err != nil {
-		return queryContent{}, nil, queryErr(err)
+		return queryContent{}, nil, nil, queryErr(err)
 	}
 	cols, err := renamed(qc.Query.Columns(), qc.Rename)
 	if err != nil {
-		return queryContent{}, nil, err
+		return queryContent{}, nil, nil, err
 	}
-	if err := checkLabels(qc.Labels, cols, qc.Query.ColumnTypes()); err != nil {
-		return queryContent{}, nil, err
+	types := qc.Query.ColumnTypes()
+	if err := checkLabels(qc.Labels, cols, types); err != nil {
+		return queryContent{}, nil, nil, err
 	}
-	return qc, cols, nil
+	if qc.Columns == nil {
+		return qc, cols, types, nil
+	}
+	picked, err := pick(qc.Columns, cols)
+	if err != nil {
+		return queryContent{}, nil, nil, err
+	}
+	outCols, outTypes := make([]string, len(picked)), make([]string, len(picked))
+	for i, j := range picked {
+		outCols[i], outTypes[i] = cols[j], types[j]
+	}
+	return qc, outCols, outTypes, nil
+}
+
+// pick is the index in cols (renamed) of each of columns, refusing an
+// empty list, a name that is no column and one named twice.
+func pick(columns, cols []string) ([]int, error) {
+	if len(columns) == 0 {
+		return nil, store.Refuse(store.ErrInvalid, "columns: name at least one; omit it to keep every column")
+	}
+	out := make([]int, len(columns))
+	for i, c := range columns {
+		j := slices.Index(cols, c)
+		if j < 0 {
+			return nil, store.Refuse(store.ErrInvalid,
+				"columns: %s is not a column of the query; its columns are %s", c, strings.Join(cols, ", "))
+		}
+		if slices.Contains(columns[:i], c) {
+			return nil, store.Refuse(store.ErrInvalid, "columns: %s is named twice", c)
+		}
+		out[i] = j
+	}
+	return out, nil
 }
 
 // checkLabels refuses labels of a column that cols (renamed) lacks, and
@@ -180,18 +218,18 @@ func queryErr(err error) error {
 	return err
 }
 
-// Validate checks content and that its columns, renamed, fit c: their
+// Validate checks content and that its columns, renamed and picked, fit c: their
 // names, and their types against the ones c declares. It reads no data:
 // the columns and their types come from the query alone.
 func (*querySource) Validate(_ context.Context, content string, c Component) error {
-	qc, cols, err := parseQuery(content)
+	_, cols, types, err := parseQuery(content)
 	if err != nil {
 		return err
 	}
 	if err := c.checkColumns(cols); err != nil {
 		return err
 	}
-	return c.checkColumnTypes(cols, qc.Query.ColumnTypes())
+	return c.checkColumnTypes(cols, types)
 }
 
 func (s *querySource) Load(ctx context.Context, content string, p Params) (any, error) {
@@ -199,10 +237,14 @@ func (s *querySource) Load(ctx context.Context, content string, p Params) (any, 
 }
 
 // load answers content over p's project and range: at most
-// Files.MaxRows rows, under Files.Timeout, its columns renamed and its
-// values relabelled.
+// Files.MaxRows rows, under Files.Timeout, its columns renamed, its
+// values relabelled and its columns picked.
 func (s *querySource) load(ctx context.Context, content string, p Params) (readsql.Result, error) {
-	qc, cols, err := parseQuery(content)
+	qc, _, _, err := parseQuery(content)
+	if err != nil {
+		return readsql.Result{}, err
+	}
+	cols, err := renamed(qc.Query.Columns(), qc.Rename)
 	if err != nil {
 		return readsql.Result{}, err
 	}
@@ -259,8 +301,42 @@ func (s *querySource) load(ctx context.Context, content string, p Params) (reads
 		out.Rows = [][]string{}
 	}
 	relabel(out.Rows, out.Columns, qc.Labels)
+	if qc.Columns != nil {
+		if out, err = pickColumns(out, qc.Columns); err != nil {
+			return readsql.Result{}, err
+		}
+	}
 	if maxRows > 0 && len(out.Rows) > maxRows {
 		out.Rows, out.Truncated = out.Rows[:maxRows], true
+	}
+	return out, nil
+}
+
+// pickColumns is res with only columns, in their order: its rows'
+// values, and approximate marks, of those columns.
+func pickColumns(res readsql.Result, columns []string) (readsql.Result, error) {
+	idx := make([]int, len(columns))
+	for i, c := range columns {
+		j := slices.Index(res.Columns, c)
+		if j < 0 {
+			return readsql.Result{}, fmt.Errorf("reporting: the query returned no column %s", c)
+		}
+		idx[i] = j
+	}
+	out := readsql.Result{Columns: slices.Clone(columns), Rows: make([][]string, len(res.Rows)), Truncated: res.Truncated}
+	for r, row := range res.Rows {
+		picked := make([]string, len(idx))
+		for i, j := range idx {
+			if j < len(row) {
+				picked[i] = row[j]
+			}
+		}
+		out.Rows[r] = picked
+	}
+	for _, c := range res.Approximate {
+		if slices.Contains(columns, c) {
+			out.Approximate = append(out.Approximate, c)
+		}
 	}
 	return out, nil
 }

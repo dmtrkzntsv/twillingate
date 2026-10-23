@@ -71,15 +71,22 @@ Retention · Web Vitals · Measures.
   Markdown text (`md`). The component says which source types it accepts and
   which columns its query must return.
 
-A `query` source's content is `{"query": {…}, "rename": {…}, "labels": {…}}`:
+A `query` source's content is `{"query": {…}, "rename": {…}, "labels": {…}, "columns": […]}`:
 `query` is a [structured query](twillingate.md#structured-queries) (a stat, a
 trend or a breakdown), `rename`, optional, maps its output columns to the names
 the component reads (`{"day": "x", "previous_value": "previous"}`), and
 `labels`, optional, shows a column's values as others: keyed by the column's
 name after `rename`, each a map of value to label (`{"label": {"new": "New
 users", "returning": "Returning users"}}`). A value it does not list shows as it
-is; only a text column takes labels (a day or number column is refused), and a
-labelled column keeps its type and its `approximate` mark. A stat returns
+is, and the key `""` labels the empty value (`{"label": {"": "Unknown"}}`);
+labels replace values only and never merge rows, so two values under one label
+are two rows. Only a text column takes labels (a day or number column is
+refused), and a labelled column keeps its type and its `approximate` mark.
+`columns`, optional, keeps only the columns it names, by their names after
+`rename`, in its order (`["user_label", "days", "user_first_seen"]` drops
+`user_id` and shows first seen last); the component checks the columns kept, and
+an empty list, a name that is no column and a name given twice are refused.
+Without it every column is kept, in the order below. A stat returns
 its metrics, then `previous_<name>` each with `compare: previous`; a trend
 `day`, `series` when split, and its metric, or with several metrics `day`,
 `series` (each metric's name, its `as`) and `value`; a breakdown its
@@ -112,7 +119,7 @@ when at least one of its live widgets follows it. `get_dashboard` reports
 what to change: the component exists and accepts the source type; the SQL uses
 only the three parameters, runs, and returns the columns the component reads
 (checked on a sample project and range); a structured query is valid and, after
-`rename`, returns those columns, of the types they take (checked without
+`rename` and `columns`, returns those columns, of the types they take (checked without
 reading data); Markdown is not
 empty; props match the schema; the size is in range. Refusals come back as tool
 errors over MCP and as `400 invalid`, `404 not_found` or `409 conflict` over
@@ -1284,12 +1291,14 @@ widget's name (`widget visitors: …`), and nothing is created.
 | component gauge does not exist; list_components names the ones there are | Use a name from `list_components` or `reporting_guide`. |
 | line does not accept md; it accepts sql and query | `markdown` takes `md`; every other component takes `sql` and `query`. |
 | source type csv does not exist; there are md, query and sql | Set `source.type` to `sql`, `query` or `md`. |
-| query source: json: unknown field "metric" | A `query` source's content is `{"query": {…}, "rename": {…}}`, each field as [structured queries](twillingate.md#structured-queries) spells it. |
+| query source: json: unknown field "metric" | A `query` source's content is `{"query": {…}, "rename": {…}, "labels": {…}, "columns": […]}`, each query field as [structured queries](twillingate.md#structured-queries) spells it. |
 | query.dimensions: … | The structured query is malformed; the message names the field. |
 | rename: sessions is not a column of the query; its columns are day, actors | `rename` maps the query's own output columns. |
 | rename: a and b are both renamed value | Give each renamed column its own name, and none the query already returns. |
 | labels.status: not a column of the query; its columns are label, value | `labels` keys on a column's name after `rename`. |
 | labels.day: a day column takes no labels | Label a text column only; a day or number column keeps its values. |
+| columns: user_id is not a column of the query; its columns are user_label, days | `columns` names columns after `rename`. |
+| columns: days is named twice | Name each kept column once; omit `columns` to keep them all. |
 | a remote table takes sql only; a query source needs props.mode "local" | Drop `mode`, or write the table's source as `sql`. |
 | stat.value: the query's column is text, not number | Rename a column of that type onto the input: a metric for a number, `day` for a day. |
 | sql uses :path; widgets get only :project, :from and :to | Write the value into the SQL, or use one of the three. |
