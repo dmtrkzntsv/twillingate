@@ -114,10 +114,13 @@ A dashboard page loads its widgets over one streamed response
 (`POST /api/widgets/stream`, `text/event-stream`), so a proxy in front of the
 console must not buffer it, or the cards appear only once the last one is
 ready. Caddy's `reverse_proxy` and cloudflared flush `text/event-stream` as it
-comes. nginx honours the `X-Accel-Buffering: no` header the console sends; if
-your configuration ignores it (`proxy_ignore_headers X-Accel-Buffering`), add
-`proxy_buffering off;` to the console's `location`. A proxy read timeout under
-15 seconds cuts the stream between its keepalives.
+comes. With Caddy's `encode` in front of the console, check that a
+dashboard's cards appear one by one, or leave `text/event-stream` out of what
+it compresses. nginx honours the `X-Accel-Buffering: no` header the console
+sends; if your configuration ignores it (`proxy_ignore_headers
+X-Accel-Buffering`), add `proxy_buffering off;` to the console's `location`.
+The stream sends a keepalive every 15 seconds, well inside Cloudflare's
+100-second proxy timeout; a proxy read timeout under 15 seconds cuts it.
 
 ## Configure the collector
 

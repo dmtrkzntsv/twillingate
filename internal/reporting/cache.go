@@ -25,6 +25,8 @@ type flight struct {
 	cachedAt  time.Time
 	err       error
 	abandoned bool
+	ended     bool // settled; guarded by cache.mu
+	waiters   int  // how many claims joined it; guarded by cache.mu, read by tests
 }
 
 // cache is the two-age cache a Service's widget reads share (Options.
@@ -125,6 +127,7 @@ func (c *cache) claim(key string, fresh bool) (v any, at time.Time, f *flight, l
 		}
 	}
 	if f, ok := c.flights[key]; ok {
+		f.waiters++
 		return nil, time.Time{}, f, false
 	}
 	f = &flight{done: make(chan struct{})}
@@ -136,9 +139,18 @@ func (c *cache) claim(key string, fresh bool) (v any, at time.Time, f *flight, l
 // handed to every waiter, stamped now, which it returns; an error is
 // handed to them and not stored; abandoned stores nothing and sends the
 // waiters back to load for themselves.
+//
+// A flight is settled once: a later settle (a panic's or the stream's
+// final sweep, after the load already settled it) changes nothing and
+// returns the zero time.
 func (c *cache) settle(key string, f *flight, v any, err error, abandoned bool) time.Time {
 	at := c.clock()
 	c.mu.Lock()
+	if f.ended {
+		c.mu.Unlock()
+		return time.Time{}
+	}
+	f.ended = true
 	if c.flights[key] == f {
 		delete(c.flights, key)
 	}

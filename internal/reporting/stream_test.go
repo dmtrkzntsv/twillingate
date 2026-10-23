@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -278,7 +279,16 @@ func TestWidgetDataStreamCancels(t *testing.T) {
 		}
 		get <- err
 	}()
-	time.Sleep(50 * time.Millisecond) // let the GET reach the stream's flight
+	waitFor(t, "the GET to join the stream's load", func() bool {
+		svc.cache.mu.Lock()
+		defer svc.cache.mu.Unlock()
+		for _, f := range svc.cache.flights {
+			if f.waiters > 0 {
+				return true
+			}
+		}
+		return false
+	})
 	cancel()
 	select {
 	case got := <-streamed:
@@ -374,4 +384,94 @@ func hasPrefixed(keys []string, id int64) bool {
 		}
 	}
 	return false
+}
+
+// waitFor polls cond until it holds, failing the test after 10 s.
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	for deadline := time.Now().Add(10 * time.Second); !cond(); time.Sleep(time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+	}
+}
+
+// panicManyNative is the engine with AnswerMany panicking (a bug); a
+// GET's Answer is the engine's.
+type panicManyNative struct{ *native.Engine }
+
+func (panicManyNative) AnswerMany(context.Context, []native.Request, func(int, native.Answered)) {
+	panic("boom in AnswerMany")
+}
+
+// panicNative's every answer panics, and it has no AnswerMany, so the
+// stream loads each query widget alone.
+type panicNative struct{}
+
+func (panicNative) Answer(context.Context, native.Query, native.Params, archive.Rules) (native.Result, error) {
+	panic("boom in Answer")
+}
+
+// TestWidgetDataStreamPanics: a panic loading widgets fails each of them
+// with an internal error, the stream still answers every request, the
+// process goes on, and no flight is left open: a later GET loads.
+func TestWidgetDataStreamPanics(t *testing.T) {
+	f := newSystemFixture(t)
+	from, to := presetDates("7d", f.today)
+	for name, nat := range map[string]Native{
+		"AnswerMany": panicManyNative{native.New(native.Options{Dir: f.files.Dir})},
+		"Answer":     panicNative{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := New(f.st, f.files, Options{Native: nat, CacheAge: time.Minute, RefreshAge: time.Second})
+			d, err := svc.Dashboard(context.Background(), 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var reqs []WidgetRequest
+			queries, query := 0, int64(0)
+			for _, w := range d.Widgets {
+				reqs = append(reqs, WidgetRequest{WidgetID: w.ID, ProjectID: f.project, From: from, To: to})
+				if w.Source.Type == "query" {
+					queries++
+					query = w.ID
+				}
+			}
+			internal := 0
+			for _, r := range streamAll(t, context.Background(), svc, reqs) {
+				switch {
+				case errors.Is(r.Err, errInternal):
+					internal++
+				case r.Err != nil:
+					t.Errorf("widget %d: %v, want the internal error", r.WidgetID, r.Err)
+				}
+			}
+			if internal != queries || queries == 0 {
+				t.Errorf("%d internal errors for %d query widgets", internal, queries)
+			}
+			svc.cache.mu.Lock()
+			open := len(svc.cache.flights)
+			svc.cache.mu.Unlock()
+			if open != 0 {
+				t.Errorf("%d flights left open", open)
+			}
+			if name != "AnswerMany" {
+				return // a GET would answer through the panicking Answer
+			}
+			got := make(chan error, 1)
+			go func() {
+				_, err := svc.WidgetData(context.Background(), DataRequest{WidgetID: query,
+					ProjectID: f.project, From: from, To: to})
+				got <- err
+			}()
+			select {
+			case err := <-got:
+				if err != nil {
+					t.Errorf("GET after the panic: %v", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("GET after the panic is still waiting")
+			}
+		})
+	}
 }

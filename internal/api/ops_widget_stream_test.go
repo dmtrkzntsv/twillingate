@@ -48,18 +48,29 @@ func (n *heldNative) AnswerMany(ctx context.Context, reqs []native.Request, done
 // every.
 func streamServer(t *testing.T, every time.Duration) (*host, *httptest.Server, *heldNative) {
 	t.Helper()
+	var nat *heldNative
+	h, srv := streamServerWith(t, every, func(e *native.Engine) reporting.Native {
+		nat = &heldNative{Engine: e, open: make(chan struct{}), started: make(chan struct{})}
+		return nat
+	})
+	return h, srv, nat
+}
+
+// streamServerWith is streamServer with query widgets answered by what
+// mk makes of the host's engine.
+func streamServerWith(t *testing.T, every time.Duration, mk func(*native.Engine) reporting.Native) (*host, *httptest.Server) {
+	t.Helper()
 	h, _ := newTestHost(t)
 	st, err := store.Open("sqlite://" + testDBPaths[h])
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	nat := &heldNative{Engine: h.native.(*native.Engine), open: make(chan struct{}), started: make(chan struct{})}
-	h.rep = reporting.New(st, nil, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, Native: nat})
+	h.rep = reporting.New(st, nil, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, Native: mk(h.native.(*native.Engine))})
 	h.keepalive = every
 	srv := httptest.NewServer(newTestRegistrar(t, h).rest)
 	t.Cleanup(srv.Close)
-	return h, srv, nat
+	return h, srv
 }
 
 // sseEvent is one event of the stream, or a comment (name "").
@@ -322,6 +333,54 @@ func TestWidgetStreamNeedsAuth(t *testing.T) {
 		}
 		if c.want == 200 && !strings.HasSuffix(string(out), "event: done\ndata: {}\n\n") {
 			t.Errorf("authorized stream %q", out)
+		}
+	}
+}
+
+// panicManyNative is the engine with AnswerMany panicking (a bug).
+type panicManyNative struct{ *native.Engine }
+
+func (panicManyNative) AnswerMany(context.Context, []native.Request, func(int, native.Answered)) {
+	panic("boom in AnswerMany")
+}
+
+// TestWidgetStreamPanics: a panic in the engine's batch ends the stream
+// with each query widget's internal error and done, the server goes on,
+// and a GET of one of those widgets then answers.
+func TestWidgetStreamPanics(t *testing.T) {
+	h, srv := streamServerWith(t, time.Hour, func(e *native.Engine) reporting.Native { return panicManyNative{e} })
+	items, body := viewsWidgets(t, h)
+	resp := postStream(t, context.Background(), srv.URL, body)
+	sc := bufio.NewScanner(resp.Body)
+	sc.Buffer(make([]byte, 1<<20), 1<<20)
+	internal, widgets := 0, 0
+	var last sseEvent
+	for {
+		ev, ok := readEvent(t, sc)
+		if !ok {
+			break
+		}
+		last = ev
+		if ev.name == "widget" {
+			widgets++
+			if strings.Contains(ev.data, `"code":"internal"`) {
+				internal++
+			}
+		}
+	}
+	resp.Body.Close()
+	if last.name != "done" || widgets != len(items) || internal == 0 {
+		t.Fatalf("last %+v, %d widget events of %d, %d internal", last, widgets, len(items), internal)
+	}
+	for _, it := range items {
+		r, err := http.Get(fmt.Sprintf("%s/api/widgets/%d/data?project_id=1&from=%s&to=%s", srv.URL, it.WidgetID, it.From, it.To))
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := io.ReadAll(r.Body)
+		r.Body.Close()
+		if r.StatusCode != 200 {
+			t.Errorf("GET widget %d after the panic: %d %s", it.WidgetID, r.StatusCode, b)
 		}
 	}
 }

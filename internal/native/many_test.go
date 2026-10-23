@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -390,7 +391,10 @@ func TestAnswerManyCancelsOne(t *testing.T) {
 			t.Errorf("query %d: %v, want context.Canceled", i, a.Err)
 		}
 	}
-	if n := items.Load(); n > 2*scans.Load() || n >= total/2 {
+	// The bound is structural, not per scan: a request leaves through
+	// its context's AfterFunc, which runs beside the worker, so a worker
+	// may read a few more items before the scan sees none is live.
+	if n := items.Load(); n >= total/2 {
 		t.Errorf("%d items read in %d scans after every query left, of %d", n, scans.Load(), total)
 	}
 }
@@ -702,5 +706,69 @@ func TestAnswerManySlowDone(t *testing.T) {
 	<-slow
 	if n := answered.Load(); n != int32(len(reqs)) {
 		t.Errorf("%d answers, want %d", n, len(reqs))
+	}
+}
+
+// TestAnswerManyPanics: a panic answering one query (a bug) fails only
+// that query's requests with an internal error, in a shared scan, in a
+// query answered alone and in done, and the process goes on.
+func TestAnswerManyPanics(t *testing.T) {
+	f := engineFixture(t)
+	e := New(Options{Dir: f.Dir, Workers: 2})
+	all := manyRequests(t)
+	var reqs []Request
+	for _, r := range all {
+		if _, _, err := compileQuery(r.Query, r.Params); err == nil && r.Query.Table != "sessions" {
+			reqs = append(reqs, r)
+		}
+	}
+	want := answersOf(e, reqs)
+	var target, aloneQ Query
+	for _, r := range reqs {
+		if alone(r.Query) {
+			if aloneQ.Kind == "" {
+				aloneQ = r.Query
+			}
+		} else if target.Kind == "" {
+			target = r.Query
+		}
+	}
+	if target.Kind == "" || aloneQ.Kind == "" {
+		t.Fatal("no shared or alone query to break")
+	}
+	defer func(f func(Query)) { onAdd = f }(onAdd)
+	onAdd = func(q Query) {
+		if reflect.DeepEqual(q, target) {
+			panic("boom in a consumer")
+		}
+	}
+	defer func(f func(*Engine, Query, Params, archive.Rules, Result, error)) { answered = f }(answered)
+	answered = func(_ *Engine, q Query, _ Params, _ archive.Rules, _ Result, _ error) {
+		if reflect.DeepEqual(q, aloneQ) {
+			panic("boom alone")
+		}
+	}
+	broken := 0
+	got := make([]Answered, len(reqs))
+	e.AnswerMany(context.Background(), reqs, func(i int, a Answered) {
+		got[i] = a
+		if i == 0 {
+			panic("boom in done")
+		}
+	})
+	for i, r := range reqs {
+		if reflect.DeepEqual(r.Query, target) || reflect.DeepEqual(r.Query, aloneQ) {
+			broken++
+			if !errors.Is(got[i].Err, ErrInternal) {
+				t.Errorf("%+v: %v, want the internal error", r.Query, got[i].Err)
+			}
+			continue
+		}
+		if d := diffAnswer(got[i], want[i].res, want[i].err); d != "" {
+			t.Errorf("%+v: %s", r.Query, d)
+		}
+	}
+	if broken < 2 || broken >= len(reqs)/2 {
+		t.Fatalf("%d of %d requests broken", broken, len(reqs))
 	}
 }

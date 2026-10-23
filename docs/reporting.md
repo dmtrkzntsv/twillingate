@@ -480,8 +480,8 @@ data: {}
 
 - **One `widget` event per widget**, in the order they are ready: `data` is
   the GET route's body for that widget, byte for byte, and `error` carries
-  the code and message the GET route would answer (`invalid`, `not_found`,
-  `internal`). One widget's refusal never fails the others.
+  the code and message the GET route would answer: the GET route's codes
+  (`invalid`, `not_found`, `conflict`, `internal`). One widget's refusal never fails the others.
 - **Order.** Cached widgets come first. The query widgets the cache misses
   are answered together, those reading the same project's files in one
   scan, so a scan's widgets arrive when that scan finishes; sql and md

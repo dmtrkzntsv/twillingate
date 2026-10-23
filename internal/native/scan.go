@@ -37,6 +37,13 @@ func scanParallel[T any](ctx context.Context, groups []T, workers int, read func
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			// A panic reading (a bug) fails the scan rather than the
+			// process.
+			defer func() {
+				if p := recover(); p != nil {
+					fail(panicked(p))
+				}
+			}()
 			for g := range work {
 				select {
 				case <-done:

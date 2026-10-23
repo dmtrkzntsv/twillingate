@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -307,6 +308,11 @@ func wrapLoadErr(err error) error {
 	var vr viewRefusal
 	if errors.As(err, &vr) {
 		return vr.error
+	}
+	// A bug, not the widget: stays untyped, which the API answers as
+	// "internal" and logs.
+	if errors.Is(err, errInternal) || errors.Is(err, native.ErrInternal) {
+		return err
 	}
 	return store.Refuse(store.ErrInvalid,
 		"%s; if this started after an update, see the release notes at %s", err, ReleasesURL)

@@ -2,7 +2,9 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"runtime/debug"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
@@ -91,8 +93,17 @@ func (h *host) widgetStream(r *registrar) http.HandlerFunc {
 
 		results := make(chan reporting.WidgetResult, len(reqs))
 		go func() {
+			defer close(results)
+			// WidgetDataStream answers its own panics; this is the last
+			// guard, so a bug never takes the process down. The stream
+			// then ends with done, a widget left unanswered showing as
+			// pending, which the page loads alone.
+			defer func() {
+				if p := recover(); p != nil {
+					r.logger.Error("widget stream panicked", "panic", fmt.Sprint(p), "stack", string(debug.Stack()))
+				}
+			}()
 			h.rep.WidgetDataStream(ctx, reqs, func(res reporting.WidgetResult) { results <- res })
-			close(results)
 		}()
 		every := h.keepalive
 		if every <= 0 {
@@ -109,6 +120,10 @@ func (h *host) widgetStream(r *registrar) http.HandlerFunc {
 		for {
 			select {
 			case <-ctx.Done():
+				// The client went away: the answers still to come (each
+				// the context's error, or a load that finished just now)
+				// go into results, which nobody reads, and are dropped
+				// with it; WidgetDataStream never blocks on them.
 				return
 			case <-tick.C:
 				if !write([]byte(": keepalive\n\n")) {

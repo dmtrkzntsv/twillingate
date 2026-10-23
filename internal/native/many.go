@@ -5,7 +5,9 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strings"
 	"sync"
@@ -102,6 +104,11 @@ func (e *Engine) AnswerMany(ctx context.Context, reqs []Request, done func(i int
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
+				defer func() {
+					if p := recover(); p != nil {
+						answer(i, Answered{Err: panicked(p)})
+					}
+				}()
 				res, err := e.Answer(rctx, r.Query, r.Params, r.Rules)
 				answer(i, Answered{Result: res, Err: err})
 			}()
@@ -271,10 +278,28 @@ var errNoConsumer = errors.New("native: no query reads this item")
 // shared runs reqs, of project's table class, in one scan taking weight
 // of the engine's slots (one per heavy aggregation), then the ones the
 // budget evicted alone.
+//
+// A panic anywhere in it (a bug) does not crash the process: every
+// request of the scan not yet answered is answered with an internal
+// error, and the panic is logged with its stack.
 func (e *Engine) shared(ctx context.Context, project int64, sessions bool, reqs []*manyReq, weight int,
-	answer func(int, Answered)) {
+	outer func(int, Answered)) {
 	sctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	defer cancel()
+	// answer hands each request's first answer on and drops any later
+	// one, so a panic's sweep below answers only the requests nothing
+	// else has.
+	var amu sync.Mutex
+	answered := make(map[int]bool, len(reqs))
+	answer := func(i int, a Answered) {
+		amu.Lock()
+		first := !answered[i]
+		answered[i] = true
+		amu.Unlock()
+		if first {
+			outer(i, a)
+		}
+	}
 	sh := &sharedScan{e: e, project: project, sessions: sessions, reqs: reqs, answer: answer, cancel: cancel, live: len(reqs)}
 	// A request whose context is done leaves at once; each such call has
 	// ended before shared returns.
@@ -291,10 +316,25 @@ func (e *Engine) shared(ctx context.Context, project int64, sessions bool, reqs 
 			}
 		}
 	}
-	err := e.turnFor(sctx, weight, func() error { return sh.attempt(sctx) })
-	for _, stop := range stops {
-		stop()
+	var stopOnce sync.Once
+	stopAll := func() {
+		stopOnce.Do(func() {
+			for _, stop := range stops {
+				stop()
+			}
+		})
 	}
+	defer func() {
+		if p := recover(); p != nil {
+			err := panicked(p)
+			stopAll()
+			for _, r := range reqs {
+				answer(r.i, Answered{Err: err})
+			}
+		}
+	}()
+	err := e.turnFor(sctx, weight, func() error { return sh.attempt(sctx) })
+	stopAll()
 	var evicted []*manyReq
 	for _, r := range reqs {
 		sh.mu.Lock()
@@ -320,6 +360,11 @@ func (e *Engine) shared(ctx context.Context, project int64, sessions bool, reqs 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			defer func() {
+				if p := recover(); p != nil {
+					answer(r.i, Answered{Err: panicked(p)})
+				}
+			}()
 			res, err := e.Answer(r.ctx, r.req.Query, r.req.Params, r.req.Rules)
 			answer(r.i, Answered{Result: res, Err: err})
 		}()
@@ -425,19 +470,36 @@ func (sh *sharedScan) attempt(ctx context.Context) error {
 		}
 		r.state = reqFinishing
 		sh.mu.Unlock()
-		as := make([]aggregated, len(r.cons))
-		for k, c := range r.cons {
-			c.mu.Lock()
-			as[k] = aggregated{m: c.a.merge(), ms: c.ms}
-			c.a, c.ids = nil, nil
-			c.mu.Unlock()
-		}
-		res := r.s.result(as)
+		res, err := r.finish()
 		sh.mu.Lock()
+		if err != nil {
+			r.state = reqDone
+		}
 		r.res = res
 		sh.mu.Unlock()
+		if err != nil {
+			sh.answer(r.i, Answered{Err: err})
+		}
 	}
 	return nil
+}
+
+// finish is r's result from its aggregations, which it drops; a panic
+// in them fails r alone.
+func (r *manyReq) finish() (res Result, err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			res, err = Result{}, panicked(p)
+		}
+	}()
+	as := make([]aggregated, len(r.cons))
+	for k, c := range r.cons {
+		c.mu.Lock()
+		as[k] = aggregated{m: c.a.merge(), ms: c.ms}
+		c.a, c.ids = nil, nil
+		c.mu.Unlock()
+	}
+	return r.s.result(as), nil
 }
 
 // use is a consumer of one work item; all says every row of the item is
@@ -714,7 +776,7 @@ func (sh *sharedScan) feed(w int, c *consumer, b *Batch) bool {
 	a := c.a
 	var err error
 	if a != nil {
-		err = a.add(w, b)
+		err = c.add(a, w, b)
 	}
 	c.mu.RUnlock()
 	if a == nil {
@@ -726,6 +788,33 @@ func (sh *sharedScan) feed(w int, c *consumer, b *Batch) bool {
 	}
 	sh.checkBudget()
 	return true
+}
+
+// add is a.add(w, b), a panic in it (a bug) an error, which fails c's
+// request alone.
+func (c *consumer) add(a *agg, w int, b *Batch) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = panicked(p)
+		}
+	}()
+	onAdd(c.r.req.Query)
+	return a.add(w, b)
+}
+
+// onAdd is called as a shared scan feeds a batch to a query's
+// aggregation; a no-op in production, a variable only so a test can make
+// one panic.
+var onAdd = func(Query) {}
+
+// ErrInternal is a panic (a bug) turned into a query's error; its
+// message names no internals, the log has them.
+var ErrInternal = errors.New("native: internal error")
+
+// panicked is p, recovered, as an error, logged with its stack.
+func panicked(p any) error {
+	slog.Error("native: panic answering a query", "panic", fmt.Sprint(p), "stack", string(debug.Stack()))
+	return ErrInternal
 }
 
 // checkBudget evicts, while the scan's aggregations hold more than twice
@@ -952,7 +1041,7 @@ func newAnswerQueue(done func(int, Answered)) *answerQueue {
 			q.pending = nil
 			q.mu.Unlock()
 			for _, x := range batch {
-				done(x.i, x.a)
+				q.hand(done, x)
 			}
 			if len(batch) == 0 {
 				if closed {
@@ -963,6 +1052,17 @@ func newAnswerQueue(done func(int, Answered)) *answerQueue {
 		}
 	}()
 	return q
+}
+
+// hand calls done with x; a panic in done (the caller's) is logged and
+// the other answers still go out.
+func (q *answerQueue) hand(done func(int, Answered), x queued) {
+	defer func() {
+		if p := recover(); p != nil {
+			panicked(p)
+		}
+	}()
+	done(x.i, x.a)
 }
 
 // put queues answer a of request i; it never blocks on done.

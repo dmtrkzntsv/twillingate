@@ -376,7 +376,17 @@ func (s *querySource) loadMany(ctx context.Context, loads []queryLoad, done func
 		var wg sync.WaitGroup
 		for i, l := range loads {
 			wg.Go(func() {
-				res, err := s.load(ctx, l.content, l.p)
+				var res readsql.Result
+				err := errInternal
+				defer func() {
+					if p := recover(); p != nil {
+						logPanic(p)
+						mu.Lock()
+						defer mu.Unlock()
+						done(i, readsql.Result{}, err)
+					}
+				}()
+				res, err = s.load(ctx, l.content, l.p)
 				mu.Lock()
 				defer mu.Unlock()
 				done(i, res, err)

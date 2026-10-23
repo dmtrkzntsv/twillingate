@@ -2,6 +2,10 @@ package reporting
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -49,23 +53,64 @@ type WidgetResult struct {
 // take its cancellation: it runs the load again itself.
 func (s *Service) WidgetDataStream(ctx context.Context, reqs []WidgetRequest, emit func(WidgetResult)) {
 	var mu sync.Mutex
+	sent := make([]bool, len(reqs))
+	// send emits request i's answer, once: a later one (after a panic
+	// already answered it, or the sweep below) is dropped.
 	send := func(i int, d WidgetData, err error) {
 		mu.Lock()
 		defer mu.Unlock()
+		if sent[i] {
+			return
+		}
+		sent[i] = true
 		if err != nil {
 			d = WidgetData{}
 		}
 		emit(WidgetResult{Index: i, WidgetID: reqs[i].WidgetID, Data: d, Err: err})
 	}
 
-	// A claimed miss: the flight this call leads for key, and its
-	// request's prepared load.
+	// A claimed miss: the flight this call leads for key (nil when the
+	// source is not cacheable), and its request's prepared load.
 	type miss struct {
 		i int
 		p prepared
 		f *flight
 	}
 	var batch, alone, waits []miss
+	var wg sync.WaitGroup
+	// The last word, whatever happened before it (a panic, a request the
+	// engine never answered): once every load has ended, every flight
+	// this call claimed and did not settle is settled with an internal
+	// error, so no GET waits on it for ever, and every request not
+	// answered is answered with one.
+	defer func() {
+		if p := recover(); p != nil {
+			logPanic(p)
+		}
+		wg.Wait()
+		for _, ms := range [][]miss{batch, alone} {
+			for _, m := range ms {
+				if m.f != nil {
+					s.cache.settle(m.p.key, m.f, nil, errInternal, false)
+				}
+			}
+		}
+		for i := range reqs {
+			send(i, WidgetData{}, errInternal)
+		}
+	}()
+	// guard, deferred first in a load's goroutine, turns a panic in it
+	// into m's internal error, its flight settled with it.
+	guard := func(m miss) {
+		if p := recover(); p != nil {
+			logPanic(p)
+			if m.f != nil {
+				s.cache.settle(m.p.key, m.f, nil, errInternal, false)
+			}
+			send(m.i, WidgetData{}, errInternal)
+		}
+	}
+
 	for i, r := range reqs {
 		in := DataRequest{WidgetID: r.WidgetID, ProjectID: r.ProjectID, From: r.From, To: r.To, Fresh: r.Fresh}
 		p, err := s.prepare(ctx, in)
@@ -94,11 +139,9 @@ func (s *Service) WidgetDataStream(ctx context.Context, reqs []WidgetRequest, em
 		}
 	}
 
-	// settle ends m's flight with what its load returned; a load that
-	// failed because ctx ended is abandoned, so nothing is cached and a
-	// GET waiting on it loads for itself.
-	settle := func(m miss, v any, err error) {
-		at := s.cache.settle(m.p.key, m.f, v, err, err != nil && ctx.Err() != nil)
+	// answer emits m's answer from what its load returned (and its
+	// flight handed back at).
+	answer := func(m miss, v any, at time.Time, err error) {
 		if err != nil {
 			send(m.i, WidgetData{}, wrapLoadErr(err))
 			return
@@ -107,31 +150,23 @@ func (s *Service) WidgetDataStream(ctx context.Context, reqs []WidgetRequest, em
 		send(m.i, d, err)
 	}
 
-	var wg sync.WaitGroup
 	for _, m := range alone {
 		wg.Go(func() {
-			v, err := m.p.load(ctx)
-			if m.f != nil {
-				settle(m, v, err)
+			defer guard(m)
+			if m.f == nil { // not cacheable: finish stamps nothing
+				v, err := m.p.load(ctx)
+				answer(m, v, time.Time{}, err)
 				return
 			}
-			if err != nil {
-				send(m.i, WidgetData{}, wrapLoadErr(err))
-				return
-			}
-			d, err := m.p.finish(v, time.Time{}) // not cacheable: finish stamps nothing
-			send(m.i, d, err)
+			v, at, err := s.loadInto(ctx, m.p, m.f)
+			answer(m, v, at, err)
 		})
 	}
 	for _, m := range waits {
 		wg.Go(func() {
+			defer guard(miss{i: m.i, p: m.p}) // m.f is another request's flight
 			v, at, err := s.wait(ctx, m.p, m.f, reqs[m.i].Fresh)
-			if err != nil {
-				send(m.i, WidgetData{}, wrapLoadErr(err))
-				return
-			}
-			d, err := m.p.finish(v, at)
-			send(m.i, d, err)
+			answer(m, v, at, err)
 		})
 	}
 	if len(batch) > 0 {
@@ -141,14 +176,47 @@ func (s *Service) WidgetDataStream(ctx context.Context, reqs []WidgetRequest, em
 			loads[k] = queryLoad{content: m.p.w.Source, p: m.p.params}
 		}
 		qs.loadMany(ctx, loads, func(k int, res readsql.Result, err error) {
-			if err != nil {
-				settle(batch[k], nil, err)
-				return
+			m := batch[k]
+			defer guard(m)
+			var v any
+			if err == nil {
+				v = res
 			}
-			settle(batch[k], res, nil)
+			at := s.cache.settle(m.p.key, m.f, v, err, abandoned(ctx, err))
+			answer(m, v, at, err)
 		})
 	}
-	wg.Wait()
+}
+
+// errInternal is a widget's answer when loading it panicked (a bug) or
+// nothing answered it: an untyped error, which the API answers as
+// "internal" and logs.
+var errInternal = errors.New("reporting: internal error loading the widget")
+
+// logPanic logs a recovered panic with its stack.
+func logPanic(p any) {
+	slog.Error("reporting: panic loading a widget", "panic", fmt.Sprint(p), "stack", string(debug.Stack()))
+}
+
+// abandoned says whether a load's err is ctx ending (the client went
+// away) rather than an answer: nothing is cached, and a GET waiting on
+// the load runs it again.
+func abandoned(ctx context.Context, err error) bool { return err != nil && ctx.Err() != nil }
+
+// loadInto runs p's load in ctx as f's leader and settles f with it: a
+// load that failed because ctx ended is abandoned. A panic in the load
+// settles f with an internal error first, so no waiter waits for ever,
+// and goes on.
+func (s *Service) loadInto(ctx context.Context, p prepared, f *flight) (v any, at time.Time, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			s.cache.settle(p.key, f, nil, errInternal, false)
+			panic(r)
+		}
+	}()
+	v, err = p.load(ctx)
+	at = s.cache.settle(p.key, f, v, err, abandoned(ctx, err))
+	return v, at, err
 }
 
 // isQuery says whether p loads through the query source as a whole
@@ -179,11 +247,6 @@ func (s *Service) wait(ctx context.Context, p prepared, f *flight, fresh bool) (
 			f = next
 			continue
 		}
-		v, err := p.load(ctx)
-		at = s.cache.settle(p.key, next, v, err, err != nil && ctx.Err() != nil)
-		if err != nil {
-			return nil, time.Time{}, err
-		}
-		return v, at, nil
+		return s.loadInto(ctx, p, next)
 	}
 }
