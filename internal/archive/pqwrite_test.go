@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"unsafe"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/format"
@@ -395,24 +396,110 @@ func TestWriterFileIsAtomicAnd0640(t *testing.T) {
 }
 
 // TestWriterFallsBackToPlain: a VARCHAR column whose dictionary outgrows
-// dictMaxBytes goes on in PLAIN pages, and DuckDB reads both kinds back.
+// dictMaxBytes goes on in PLAIN pages, DuckDB reads both kinds back, and
+// the chunk's statistics stay exact across them: the minimum is in the
+// first (dictionary) page, a long maximum and NULLs in PLAIN pages after
+// the switch.
 func TestWriterFallsBackToPlain(t *testing.T) {
 	f := newFixture(t)
 	defer SetDictMaxBytes(1 << 10)()
 	dir := filepath.Join(f.log.Dir(), "w")
 	os.MkdirAll(dir, 0o750)
 	p := filepath.Join(dir, "plain.parquet")
+	const n = 20000
+	long := "path-~" + strings.Repeat("z", 3000) // sorts after every path-NNNNN
 	var rows []row
-	for i := range 20000 {
-		rows = append(rows, row{strValue(fmt.Sprintf("path-%05d", i)), intValue(int64(i))})
+	nulls := 0
+	for i := range n {
+		v := strValue(fmt.Sprintf("path-%05d", i))
+		switch {
+		case i == n-1:
+			v = strValue(long)
+		case i%7 == 3:
+			v, nulls = value{}, nulls+1
+		}
+		rows = append(rows, row{v, intValue(int64(i))})
 	}
 	writeRows(t, p, []pqColumn{{"path", colVarchar}, {"n", colBigint}}, nil, rows...)
-	md := openMeta(t, p).Metadata().RowGroups[0].Columns[0].MetaData
+	pf := openMeta(t, p)
+	md := pf.Metadata().RowGroups[0].Columns[0].MetaData
 	if got := fmt.Sprint(md.Encoding); !strings.Contains(got, "PLAIN") || !strings.Contains(got, "RLE_DICTIONARY") {
 		t.Errorf("encodings = %s, want PLAIN and RLE_DICTIONARY pages", got)
 	}
-	got := f.values(t, "SELECT count(DISTINCT path), min(path), max(path), count(*) FILTER (path = 'path-' || lpad(n::VARCHAR, 5, '0')) FROM read_parquet("+quote(p)+")")
-	if !eq(got, []string{"[20000 path-00000 path-19999 20000]"}) {
-		t.Errorf("read back %v", got)
+	st := md.Statistics
+	if string(st.MinValue) != "path-00000" || string(st.MaxValue) != long || st.NullCount != int64(nulls) {
+		t.Errorf("stats: min %.12q max %.12q (%d bytes) nulls %d, want path-00000, the %d-byte max, %d",
+			st.MinValue, st.MaxValue, len(st.MaxValue), st.NullCount, len(long), nulls)
+	}
+	// The pages: dictionary ones, then PLAIN ones holding NULLs too, the
+	// last one the long maximum.
+	pages := pf.RowGroups()[0].ColumnChunks()[0].Pages()
+	defer pages.Close()
+	var kinds []bool // dictionary-encoded, per page
+	plainNulls, lastPlain := int64(0), false
+	for {
+		pg, err := pages.ReadPage()
+		if err != nil {
+			break
+		}
+		dict := pg.Dictionary() != nil
+		kinds = append(kinds, dict)
+		if !dict {
+			plainNulls += pg.NumNulls()
+			_, hi, _ := pg.Bounds()
+			lastPlain = string(hi.ByteArray()) == long
+		}
+		parquet.Release(pg)
+	}
+	if len(kinds) < 3 || !kinds[0] || kinds[len(kinds)-1] || plainNulls == 0 || !lastPlain {
+		t.Errorf("pages (dictionary-encoded) %v, NULLs in PLAIN pages %d, max in the last PLAIN page %t", kinds, plainNulls, lastPlain)
+	}
+	got := f.values(t, "SELECT count(DISTINCT path), min(path), length(max(path)), count(*) - count(path), "+
+		"count(*) FILTER (path = 'path-' || lpad(n::VARCHAR, 5, '0')) FROM read_parquet("+quote(p)+")")
+	if want := fmt.Sprintf("[%d path-00000 %d %d %d]", n-nulls, len(long), nulls, n-nulls-1); !eq(got, []string{want}) {
+		t.Errorf("read back %v, want %s", got, want)
+	}
+}
+
+// TestWriterRefusesTheWrongKind: a value of another kind than its column
+// fails the writer, naming the column; a NULL fits any column. A value
+// stays 32 bytes, its kind in what would be padding.
+func TestWriterRefusesTheWrongKind(t *testing.T) {
+	if n := unsafe.Sizeof(value{}); n != 32 {
+		t.Errorf("a value is %d bytes, want 32", n)
+	}
+	dir := t.TempDir()
+	p := filepath.Join(dir, "kind.parquet")
+	w, err := newRowWriter(p, statsCols, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Write(row{value{}, value{}, value{}}); err != nil {
+		t.Errorf("NULLs refused: %v", err)
+	}
+	err = w.Write(row{strValue("views"), dateValue(1), timestampValue(5)})
+	if err == nil || !strings.Contains(err.Error(), "column n") {
+		t.Errorf("a TIMESTAMP in a BIGINT column: %v", err)
+	}
+	if err := w.Write(row{strValue("views"), dateValue(1), intValue(1)}); err == nil {
+		t.Error("the error is not sticky")
+	}
+	if err := w.Close(); err == nil || exists(p) || exists(p+".tmp") {
+		t.Errorf("Close = %v; file %t, .tmp %t", err, exists(p), exists(p+".tmp"))
+	}
+	for i, r := range []row{
+		{intValue(1), value{}, value{}},
+		{value{}, intValue(1), value{}},
+		{value{}, value{}, floatValue(1)},
+		{value{}, value{}, strValue("1")},
+	} {
+		w, err := newRowWriter(p, statsCols, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := w.Write(r); err == nil {
+			t.Errorf("%d: a value of the wrong kind is accepted", i)
+		}
+		w.Abort()
 	}
 }

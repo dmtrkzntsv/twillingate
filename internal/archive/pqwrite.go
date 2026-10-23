@@ -16,7 +16,7 @@ import (
 // writer gives each the physical and logical type DuckDB's COPY does, so
 // DuckDB's DESCRIBE of a file written here equals its DESCRIBE of one it
 // wrote itself.
-type colType int
+type colType uint8
 
 const (
 	colVarchar   colType = iota // BYTE_ARRAY, String logical type, dictionary encoded
@@ -32,8 +32,8 @@ type pqColumn struct {
 	Type colType
 }
 
-// value is one cell. Its column's type says how to read it, so it carries
-// no kind of its own: s holds a VARCHAR, n a BIGINT, a DATE's days since
+// value is one cell. k is its kind, which must be its column's type (Write
+// refuses another, a NULL excepted) and fits in what would be padding: s holds a VARCHAR, n a BIGINT, a DATE's days since
 // the epoch, a TIMESTAMP's unix microseconds or a DOUBLE's bits
 // (math.Float64bits); ok is false for NULL, so the zero value is NULL. It
 // is the native batch's vectors (Dict/Idx strings, Ints, Floats, Times)
@@ -44,16 +44,17 @@ type value struct {
 	s  string
 	n  int64
 	ok bool
+	k  colType
 }
 
 // row is one row's cells, in its file's column order.
 type row []value
 
-func strValue(s string) value       { return value{s: s, ok: true} }
-func intValue(n int64) value        { return value{n: n, ok: true} }
-func floatValue(f float64) value    { return value{n: int64(math.Float64bits(f)), ok: true} }
-func dateValue(days int32) value    { return value{n: int64(days), ok: true} }
-func timestampValue(us int64) value { return value{n: us, ok: true} }
+func strValue(s string) value       { return value{s: s, ok: true, k: colVarchar} }
+func intValue(n int64) value        { return value{n: n, ok: true, k: colBigint} }
+func floatValue(f float64) value    { return value{n: int64(math.Float64bits(f)), ok: true, k: colDouble} }
+func dateValue(days int32) value    { return value{n: int64(days), ok: true, k: colDate} }
+func timestampValue(us int64) value { return value{n: us, ok: true, k: colTimestamp} }
 func (v value) null() bool          { return !v.ok }
 func (v value) str() string         { return v.s }
 func (v value) int() int64          { return v.n }
@@ -94,11 +95,13 @@ const pendingRows = 256
 // and, for a VARCHAR column, its dictionary, bounded by dictMaxBytes of
 // values (about 100 bytes an entry in all). The group is written out and
 // released when cut; of an earlier group only its footer entry is kept.
-// Measured on 65,535 rows of 25 columns (21 VARCHARs): about 8 MB of heap
+// Measured on 65,000 rows of 25 columns (21 VARCHARs): about 8 MB of heap
 // with low-cardinality strings, about 31 MB with every string distinct, of
 // which about 10 MB is the group's compressed pages. Write keeps up to
 // pendingRows rows of parquet values, which point at the strings of the
 // rows written.
+//
+// It assumes a single writer per path: two at once share path.tmp.
 type rowWriter struct {
 	path string
 	cols []pqColumn
@@ -155,6 +158,12 @@ func (w *rowWriter) Write(r row) error {
 	if len(r) != len(w.cols) {
 		w.err = fmt.Errorf("archive: %s: row of %d values, want %d", filepath.Base(w.path), len(r), len(w.cols))
 		return w.err
+	}
+	for j, v := range r {
+		if v.ok && v.k != w.cols[j].Type {
+			w.err = fmt.Errorf("archive: %s: column %s: a value of the wrong kind", filepath.Base(w.path), w.cols[j].Name)
+			return w.err
+		}
 	}
 	if w.inGroup > 0 && (w.inGroup >= maxGroupRows || (w.cut != nil && w.havePrev && w.cut(w.prev, r))) {
 		if err := w.flushGroup(); err != nil {
@@ -221,9 +230,11 @@ func (w *rowWriter) flushGroup() error {
 	return nil
 }
 
-// Close finishes the file and puts it in place: on any failure nothing is
-// renamed and the .tmp is removed. A file of no rows has the full schema
-// and no row groups.
+// Close finishes the file and puts it in place: on a failure before the
+// rename nothing is renamed and the .tmp is removed. A failure to fsync
+// the directory after the rename leaves the new file in place, whole: only
+// its durability across a crash is in question. A file of no rows has the
+// full schema and no row groups.
 func (w *rowWriter) Close() error {
 	if w.done {
 		return w.err
