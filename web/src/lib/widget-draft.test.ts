@@ -28,12 +28,16 @@ function columnsOf(q: Q): string[] {
 // native.Query.ColumnTypes(), mirrored: each column's type, in order.
 function typesOf(q: Q): string[] {
   const numeric = ['project_id', 'display_width', 'display_height', 'consent', 'bucket']
-  const dim = (d: string) => (q.other ? 'text' : d === 'day' ? 'day' : numeric.includes(d) ? 'number' : 'text')
+  const days = ['day', 'user_first_seen', 'group_first_seen']
+  const dim = (d: string) => (q.other ? 'text' : days.includes(d) ? 'day' : numeric.includes(d) ? 'number' : 'text')
+  // A min or max of day is a day, of a time text.
+  const times = ['ts', 'received_at', 'started_at', 'ended_at']
+  const metric = (m: Q['metrics'][number]) => (m.column === 'day' ? 'day' : times.includes(m.column ?? '') ? 'text' : 'number')
   const types: string[] = []
   if (q.kind === 'trend') types.push('day', ...(q.series ? ['text'] : []))
   if (q.kind === 'breakdown') types.push(...(q.dimensions ?? []).map(dim))
-  types.push(...q.metrics.map(() => 'number'))
-  if (q.kind === 'stat' && q.compare === 'previous') types.push(...q.metrics.map(() => 'number'))
+  types.push(...q.metrics.map(metric))
+  if (q.kind === 'stat' && q.compare === 'previous') types.push(...q.metrics.map(metric))
   return types
 }
 

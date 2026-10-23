@@ -21,15 +21,41 @@ var identityColumns = []string{"project_id", "kind", "id", "name", "first_seen",
 // derived from.
 var identityEventColumns = []string{"family", "user_id", "user_name", "group_id", "group_name", "ts"}
 
-// statusColumns are the computed columns user_status and group_status:
-// whether a row's user (group) is new that day, by the id column they
-// read and the kind of identity they look it up as.
-var statusColumns = map[string]struct {
+// The computed columns an identity lookup gives a row: its user's (or
+// group's) status that day, label, or first-seen day.
+const (
+	idStatus = iota
+	idLabel
+	idFirst
+)
+
+// idColumn is one computed identity column: the id column it reads, the
+// kind of identity it looks it up as, and what it gives (idStatus,
+// idLabel, idFirst).
+type idColumn struct {
 	id    string
 	group bool
-}{
-	"user_status":  {"user_id", false},
-	"group_status": {"group_id", true},
+	gives int
+}
+
+// idColumns are the computed identity columns: user_status and
+// group_status (whether a row's user or group is new that day),
+// user_label and group_label (its combined name, else its id),
+// user_first_seen and group_first_seen (its first-seen day).
+var idColumns = map[string]idColumn{
+	"user_status":      {"user_id", false, idStatus},
+	"group_status":     {"group_id", true, idStatus},
+	"user_label":       {"user_id", false, idLabel},
+	"group_label":      {"group_id", true, idLabel},
+	"user_first_seen":  {"user_id", false, idFirst},
+	"group_first_seen": {"group_id", true, idFirst},
+}
+
+// isFirstSeen says whether column is user_first_seen or
+// group_first_seen, a day.
+func isFirstSeen(column string) bool {
+	c, ok := idColumns[column]
+	return ok && c.gives == idFirst
 }
 
 // everything is a range holding every day an event can have.
@@ -119,14 +145,37 @@ func (m identityMap) bytes() int64 {
 
 // firstMap is the day (days since 1970-01-01) each identity was first
 // seen, users and groups apart: all a status lookup needs, without the
-// names and counts an identityMap keeps.
-type firstMap struct{ users, groups map[string]int32 }
+// names and counts an identityMap keeps; and, loaded with names, each
+// identity's name as a label looks it up (names, nil without).
+type firstMap struct {
+	users, groups map[string]int32
+	names         map[identityKey]dated
+}
 
-// firstBytes is about what an entry costs in a firstMap, its id aside.
-const firstBytes = 32
+// dated is one identity's name within one part, as an identityMap's row
+// has it: the name of its latest named event and when that was (at; for
+// a derived file's row, its last_seen), and its last event (last), which
+// dates the part's name when a current file is combined with the logs.
+type dated struct {
+	name     string
+	named    bool
+	at, last int64
+}
 
-func newFirstMap() firstMap {
-	return firstMap{users: map[string]int32{}, groups: map[string]int32{}}
+// firstBytes is about what an entry costs in a firstMap, its id aside;
+// datedBytes what a name entry costs beside, its id and name aside.
+const (
+	firstBytes = 32
+	datedBytes = 72
+)
+
+// newFirstMap is an empty firstMap, with names when names.
+func newFirstMap(names bool) firstMap {
+	m := firstMap{users: map[string]int32{}, groups: map[string]int32{}}
+	if names {
+		m.names = map[identityKey]dated{}
+	}
+	return m
 }
 
 func (m firstMap) of(group bool) map[string]int32 {
@@ -151,7 +200,28 @@ func (m firstMap) see(group bool, id string, day int32) int64 {
 	return 0
 }
 
-// fold adds o's identities to m: the earlier day of each.
+// seeName notes identity k's event at ts, named name when named, in m's
+// names, as identityMap.see takes a name: the latest named event's; it
+// returns the bytes m grew by. A new id is copied, as see copies it.
+func (m firstMap) seeName(k identityKey, name string, named bool, ts int64) int64 {
+	cur, ok := m.names[k]
+	var grew int64
+	if !ok {
+		k.id = strings.Clone(k.id)
+		cur = dated{at: ts, last: ts}
+		grew = datedBytes + int64(len(k.id))
+	}
+	if named && (!cur.named || ts > cur.at) {
+		grew += int64(len(name) - len(cur.name))
+		cur.name, cur.named, cur.at = strings.Clone(name), true, ts
+	}
+	cur.last = max(cur.last, ts)
+	m.names[k] = cur
+	return grew
+}
+
+// fold adds o's identities to m: the earlier day of each, and the name of
+// the later named event, as identityMap.fold takes it.
 func (m firstMap) fold(o firstMap) {
 	for _, group := range []bool{false, true} {
 		ids := m.of(group)
@@ -160,6 +230,18 @@ func (m firstMap) fold(o firstMap) {
 				ids[id] = d
 			}
 		}
+	}
+	for k, x := range o.names {
+		cur, ok := m.names[k]
+		if !ok {
+			m.names[k] = x
+			continue
+		}
+		if x.named && (!cur.named || x.at > cur.at) {
+			cur.name, cur.named, cur.at = x.name, true, x.at
+		}
+		cur.last = max(cur.last, x.last)
+		m.names[k] = cur
 	}
 }
 
@@ -170,6 +252,9 @@ func (m firstMap) bytes() int64 {
 		for id := range ids {
 			n += firstBytes + int64(len(id))
 		}
+	}
+	for k, x := range m.names {
+		n += datedBytes + int64(len(k.id)+len(x.name))
 	}
 	return n
 }
@@ -235,9 +320,28 @@ func (s *identitySet) merge(b identity, okb bool, l identity, okl bool) identity
 	return b
 }
 
-// firstSet is one project's first-seen days, in the two parts an
-// identitySet has.
-type firstSet struct{ base, live firstMap }
+// firstSet is one project's first-seen days (and names, loaded with
+// them), in the two parts an identitySet has; current as there.
+type firstSet struct {
+	base, live firstMap
+	current    bool
+}
+
+// name is identity k's name, put together from the parts as
+// identitySet.merge puts it: with a current file, each part's dated by
+// its last event; else by its named event. ok is false when neither
+// part names it (or the set was loaded without names).
+func (s *firstSet) name(k identityKey) (string, bool) {
+	b, okb := s.base.names[k]
+	l, okl := s.live.names[k]
+	if s.current {
+		b.at, l.at = b.last, l.last
+	}
+	if okl && l.named && (!okb || !b.named || l.at > b.at) {
+		return l.name, true
+	}
+	return b.name, okb && b.named
+}
 
 // firstDay is the day (days since 1970-01-01) identity (group, id) was
 // first seen; ok false for an identity the set lacks.
@@ -310,11 +414,12 @@ func identityBatch(rows identityMap, project int64) *Batch {
 
 // idPart names one cached part of a project's identities: the stored
 // part or the live one (the open logs'), as whole rows (an identityMap)
-// or first-seen days only (a firstMap).
+// or first-seen days only (a firstMap), with the names or without.
 type idPart struct {
 	project int64
 	live    bool
 	first   bool
+	names   bool
 }
 
 // identityCache is the engine's cache of identity parts, each under the
@@ -487,36 +592,38 @@ func (e *Engine) identities(ctx context.Context, project int64, f archive.Files,
 	return &identitySet{base: base.full, live: live.full, current: p.current}, nil
 }
 
-// firstSeen is the first-seen days of project's identities, as
-// identities has them, cached and charged as identities says: what the
-// user_status and group_status columns look up, at a fraction of the
-// whole rows' memory.
-func (e *Engine) firstSeen(ctx context.Context, project int64, f archive.Files, charge func(int64) error) (*firstSet, error) {
+// firstSeen is the first-seen days of project's identities, with names
+// their names too, as identities has them, cached and charged as
+// identities says: what the computed identity columns (idColumns) look
+// up, at a fraction of the whole rows' memory. The parts with names are
+// cached apart from those without, which a status or first-seen day
+// alone reads.
+func (e *Engine) firstSeen(ctx context.Context, project int64, f archive.Files, names bool, charge func(int64) error) (*firstSet, error) {
 	p, err := newIdentityParts(f)
 	if err != nil {
 		return nil, err
 	}
-	base, err := e.identityPart(ctx, idPart{project: project, first: true}, p.baseSig, charge, func() (*identityEntry, error) {
+	base, err := e.identityPart(ctx, idPart{project: project, first: true, names: names}, p.baseSig, charge, func() (*identityEntry, error) {
 		var m firstMap
 		var err error
 		if p.current {
-			m, err = e.readFirstSeen(f.Identities, charge)
+			m, err = e.readFirstSeen(f.Identities, names, charge)
 		} else {
-			m, err = e.deriveFirstSeen(ctx, f.Parquet, nil, charge)
+			m, err = e.deriveFirstSeen(ctx, f.Parquet, nil, names, charge)
 		}
 		return &identityEntry{first: m, bytes: m.bytes()}, err
 	})
 	if err != nil {
 		return nil, err
 	}
-	live, err := e.identityPart(ctx, idPart{project: project, live: true, first: true}, p.liveSig, charge, func() (*identityEntry, error) {
-		m, err := e.deriveFirstSeen(ctx, nil, f.Logs, charge)
+	live, err := e.identityPart(ctx, idPart{project: project, live: true, first: true, names: names}, p.liveSig, charge, func() (*identityEntry, error) {
+		m, err := e.deriveFirstSeen(ctx, nil, f.Logs, names, charge)
 		return &identityEntry{first: m, bytes: m.bytes()}, err
 	})
 	if err != nil {
 		return nil, err
 	}
-	return &firstSet{base: base.first, live: live.first}, nil
+	return &firstSet{base: base.first, live: live.first, current: p.current}, nil
 }
 
 // identityPart is part, from the cache when held there under sig, else
@@ -602,19 +709,32 @@ func (e *Engine) readIdentities(path string, charge func(int64) error) (identity
 }
 
 // readFirstSeen reads the first-seen days of a derived identities file
-// (one project's), its kind, id and first_seen columns alone.
-func (e *Engine) readFirstSeen(path string, charge func(int64) error) (firstMap, error) {
-	out := newFirstMap()
-	err := readIdentityFile(path, []string{"kind", "id", "first_seen"}, func(b *Batch) error {
+// (one project's), its kind, id and first_seen columns alone; with names
+// its name and last_seen too, the name dated by last_seen as
+// readIdentities dates it.
+func (e *Engine) readFirstSeen(path string, names bool, charge func(int64) error) (firstMap, error) {
+	out := newFirstMap(names)
+	cols := []string{"kind", "id", "first_seen"}
+	if names {
+		cols = append(cols, "name", "last_seen")
+	}
+	err := readIdentityFile(path, cols, func(b *Batch) error {
 		_, kind := b.col("kind")
 		_, id := b.col("id")
 		_, first := b.col("first_seen")
+		_, name := b.col("name")
+		_, last := b.col("last_seen")
 		var grew int64
 		for i := range b.N {
 			k, _ := textAt(kind, i)
 			s, _ := textAt(id, i)
 			ts, _ := timeAt(first, i)
 			grew += out.see(k == "group", s, int32(microsDay(ts)))
+			if names {
+				n, named := textAt(name, i)
+				at, _ := timeAt(last, i)
+				grew += out.seeName(identityKey{k == "group", s}, n, named, at)
+			}
 		}
 		return charge(grew)
 	})
@@ -679,16 +799,24 @@ func (e *Engine) deriveIdentities(ctx context.Context, parquet, logs []string, c
 }
 
 // deriveFirstSeen derives one part of the first-seen days as
-// deriveIdentities derives one of identities, reading no names.
-func (e *Engine) deriveFirstSeen(ctx context.Context, parquet, logs []string, charge func(int64) error) (firstMap, error) {
+// deriveIdentities derives one of identities, reading no names unless
+// names.
+func (e *Engine) deriveFirstSeen(ctx context.Context, parquet, logs []string, names bool, charge func(int64) error) (firstMap, error) {
 	parts := make([]firstMap, e.workers)
 	for i := range parts {
-		parts[i] = newFirstMap()
+		parts[i] = newFirstMap(names)
 	}
-	err := e.scanIdentityEvents(ctx, parquet, logs, []string{"family", "user_id", "group_id", "ts"}, func(w int, b *Batch) error {
+	cols := []string{"family", "user_id", "group_id", "ts"}
+	if names {
+		cols = identityEventColumns
+	}
+	err := e.scanIdentityEvents(ctx, parquet, logs, cols, func(w int, b *Batch) error {
 		var grew int64
-		eachIdentity(b, func(k identityKey, _ string, _ bool, ts int64, _ bool) {
+		eachIdentity(b, func(k identityKey, name string, named bool, ts int64, _ bool) {
 			grew += parts[w].see(k.group, k.id, int32(microsDay(ts)))
+			if names {
+				grew += parts[w].seeName(k, name, named, ts)
+			}
 		})
 		return charge(grew)
 	})
@@ -768,19 +896,91 @@ func eachIdentity(b *Batch, fn func(k identityKey, name string, named bool, ts i
 	}
 }
 
-// addStatus sets b's user_status and group_status, those of them cols
-// names, from ids: new on the day its user (group) was first seen,
-// returning on a later day, NULL when the id is NULL or empty, when ids
-// lack it (an id only measures carried) or on a day before it was first
-// seen.
-func addStatus(b *Batch, cols []string, ids *firstSet) {
+// addIdentityColumns sets b's computed identity columns (idColumns),
+// those of them cols names, from ids:
+//   - a status: new on the day its user (group) was first seen,
+//     returning on a later day, NULL when the id is NULL or empty, when
+//     ids lack it (an id only measures carried) or on a day before it
+//     was first seen;
+//   - a label: the identity's name, else its id; NULL when the id is
+//     NULL or empty;
+//   - a first-seen day: NULL when the id is NULL or empty, or ids lack it.
+func addIdentityColumns(b *Batch, cols []string, ids *firstSet) {
 	for _, name := range cols {
-		s, ok := statusColumns[name]
+		c, ok := idColumns[name]
 		if !ok {
 			continue
 		}
-		b.Cols[name] = statusColumn(b, s.id, s.group, ids)
+		switch c.gives {
+		case idStatus:
+			b.Cols[name] = statusColumn(b, c.id, c.group, ids)
+		case idLabel:
+			b.Cols[name] = labelColumn(b, c.id, c.group, ids)
+		case idFirst:
+			b.Cols[name] = firstSeenColumn(b, c.id, c.group, ids)
+		}
 	}
+}
+
+// labelColumn is the label of each row's id: its identity's name, else
+// the id; NULL for a NULL or empty id.
+func labelColumn(b *Batch, idCol string, group bool, ids *firstSet) *Column {
+	_, ic := b.col(idCol)
+	out := &Column{Idx: make([]int32, b.N)}
+	if ic == nil || ic.Idx == nil {
+		for i := range out.Idx {
+			out.Idx[i] = -1
+		}
+		return out
+	}
+	var d textDict
+	label := make([]int32, len(ic.Dict))
+	for j, s := range ic.Dict {
+		label[j] = -1
+		if s == "" {
+			continue
+		}
+		if n, ok := ids.name(identityKey{group, s}); ok {
+			label[j] = d.id(n)
+		} else {
+			label[j] = d.id(s)
+		}
+	}
+	for i, j := range ic.Idx {
+		out.Idx[i] = -1
+		if j >= 0 {
+			out.Idx[i] = label[j]
+		}
+	}
+	out.Dict = d.dict
+	return out
+}
+
+// firstSeenColumn is the first-seen day of each row's id (days since
+// 1970-01-01); NULL for a NULL or empty id, or one ids lack.
+func firstSeenColumn(b *Batch, idCol string, group bool, ids *firstSet) *Column {
+	_, ic := b.col(idCol)
+	out := &Column{Ints: make([]int64, b.N), Null: make([]bool, b.N)}
+	var first []int64
+	var known []bool
+	if ic != nil && ic.Idx != nil {
+		first, known = make([]int64, len(ic.Dict)), make([]bool, len(ic.Dict))
+		for j, s := range ic.Dict {
+			if s != "" {
+				first[j], known[j] = ids.firstDay(group, s)
+			}
+		}
+	}
+	for i := range b.N {
+		out.Null[i] = true
+		if first == nil {
+			continue
+		}
+		if j := ic.Idx[i]; j >= 0 && known[j] {
+			out.Ints[i], out.Null[i] = first[j], false
+		}
+	}
+	return out
 }
 
 func statusColumn(b *Batch, idCol string, group bool, ids *firstSet) *Column {

@@ -408,7 +408,7 @@ type metricSpec struct {
 // countedOps are the metrics that count rows, ids or weights: over no
 // rows each is 0, or the daily_* and weight NULL, which a ratio's
 // numerator reads as 0.
-var countedOps = setOf([]string{"count", "actors", "users", "groups", "bounces", "weight", "daily_sum", "daily_max", "daily_avg"})
+var countedOps = setOf([]string{"count", "actors", "users", "groups", "bounces", "weight", "daily_sum", "daily_max", "daily_avg", "days"})
 
 // distinctOf is the id column a distinct op counts: the metrics' own, and
 // the attributes keys' count of an attribute's values (opValues, which
@@ -417,6 +417,10 @@ var distinctOf = map[string]string{"actors": "actor_id", "users": "user_id", "gr
 
 // opValues is the distinct count of the unpivoted values.
 const opValues = "attr_values"
+
+// daysCol is the column the days metric counts per day: none, so only
+// the keys marking a day with rows are kept.
+const daysCol = ""
 
 // distinctCol is one id column counted distinct over the rows of a mask:
 // set says whole-range sets per group are kept, day that per-day keys are.
@@ -599,6 +603,10 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 		case "daily_sum", "daily_max", "daily_avg":
 			m.distinct = dist(distinctOf[m.Of], mask)
 			a.distinct[m.distinct].day = true
+		case "days":
+			// No id: each (group, day) with rows has its one NULL key.
+			m.distinct = dist(daysCol, mask)
+			a.distinct[m.distinct].day = true
 		case "bounces", "bounce_rate":
 			a.bounces = true
 		case "percentile", "mean", "weight", "share":
@@ -663,7 +671,9 @@ func (a *agg) columns() []string {
 		add(n.name)
 	}
 	for _, d := range a.distinct {
-		add(d.name)
+		if d.name != daysCol {
+			add(d.name)
+		}
 	}
 	if a.bounces {
 		add("views")
@@ -1489,7 +1499,7 @@ func (m *merged) computeRaw(mt metricSpec, gs []int32, day int, whole bool) valu
 		n, approx := u.count()
 		return value{isInt: true, i: n, approx: approx}
 	}
-	// daily_*: the per-day distinct counts of the days with rows.
+	// daily_* and days: the per-day distinct counts of the days with rows.
 	var days []int64
 	switch {
 	case day >= 0:
@@ -1498,6 +1508,12 @@ func (m *merged) computeRaw(mt metricSpec, gs []int32, day int, whole bool) valu
 		days = m.groupDays(mt.distinct, gs[0])
 	default:
 		days = m.unionDays(mt.distinct, gs)
+	}
+	if mt.Op == "days" {
+		if day >= 0 {
+			return intValue(int64(boolInt(m.hasDay(mt.distinct, gs[0], day))))
+		}
+		return intValue(int64(len(days)))
 	}
 	if len(days) == 0 {
 		return value{null: true}
@@ -1686,6 +1702,14 @@ func (m *merged) dayCount(j int, g int32, day int) int64 {
 		return 0
 	}
 	return runs[i].n
+}
+
+// hasDay says whether group g has rows on day, of the mask column j
+// counts.
+func (m *merged) hasDay(j int, g int32, day int) bool {
+	cell := uint64(g)*uint64(m.a.ndays) + uint64(day)
+	_, ok := slices.BinarySearchFunc(m.runs[j], cell, func(r run, c uint64) int { return cmp.Compare(r.cell, c) })
+	return ok
 }
 
 // groupDays is group g's distinct ids per day with rows.

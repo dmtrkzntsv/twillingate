@@ -136,9 +136,10 @@ var (
 // reader's events view applies them; the sessions and identities tables,
 // derived from the events as stored, take none (scanSessions, identities).
 // identities holds the project's users and groups first seen in the
-// range, its day their first_seen's day; user_status and group_status
-// look each row's id up in their first-seen days alone (firstSeen), over
-// the whole history. Identities are cached between queries (at most
+// range, its day their first_seen's day; the computed identity columns
+// (user_status, user_label, user_first_seen and their group ones) look
+// each row's id up in their first-seen days alone (firstSeen), with the
+// names for a label, over the whole history. Identities are cached between queries (at most
 // MaxBytes of them), their stored and live parts apart, so a log's flush
 // derives only the logs' part again; while the derived identities file is
 // missing or stale (older than an events file), the next query that
@@ -180,7 +181,8 @@ var (
 // count is COUNT(*), actors, users and groups COUNT(DISTINCT actor_id),
 // user_id and group_id (NULL left out), sum, avg, min and max NULL over no
 // value, daily_* the per-day distinct counts' SUM, MAX or AVG over the
-// days with rows (NULL over none); on sessions bounces is COUNT(*) FILTER
+// days with rows (NULL over none), days count(DISTINCT day) (0 over
+// none); on sessions bounces is COUNT(*) FILTER
 // (WHERE views = 1) and bounce_rate that over COUNT(*) as a DOUBLE (NULL
 // over no session; an Other row's over its folded groups' sessions). On
 // measures, a sample weighs 1 / sample_rate: weight is SUM(1 /
@@ -448,7 +450,7 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 	var ids *firstSet
 	var err error
 	if len(status) > 0 {
-		if ids, err = s.e.firstSeen(ctx, s.project, files, charge); err != nil {
+		if ids, err = s.e.firstSeen(ctx, s.project, files, needsNames(status), charge); err != nil {
 			return err
 		}
 	}
@@ -477,7 +479,7 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 		}
 		b = s.rules.apply(b, fam)
 		if ids != nil {
-			addStatus(b, status, ids)
+			addIdentityColumns(b, status, ids)
 		}
 		return add(w, b)
 	})
@@ -489,8 +491,9 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 	return err
 }
 
-// statusColumns are the status columns (user_status, group_status) the
-// query's filters, its metrics' filters and dims name.
+// statusColumns are the computed identity columns (idColumns: the
+// status, label and first-seen ones) the query's filters, its metrics'
+// filters and dims name.
 func (s scan) statusColumns(dims []string) []string {
 	var out []string
 	fss := [][]filter{s.filters}
@@ -507,17 +510,23 @@ func (s scan) statusColumns(dims []string) []string {
 	}
 	for _, fs := range fss {
 		for _, f := range fs {
-			if _, ok := statusColumns[f.column]; ok && !slices.Contains(out, f.column) {
+			if _, ok := idColumns[f.column]; ok && !slices.Contains(out, f.column) {
 				out = append(out, f.column)
 			}
 		}
 	}
 	for _, d := range dims {
-		if _, ok := statusColumns[d]; ok && !slices.Contains(out, d) {
+		if _, ok := idColumns[d]; ok && !slices.Contains(out, d) {
 			out = append(out, d)
 		}
 	}
 	return out
+}
+
+// needsNames says whether any of cols, computed identity columns, is a
+// label, which looks names up.
+func needsNames(cols []string) bool {
+	return slices.ContainsFunc(cols, func(c string) bool { return idColumns[c].gives == idLabel })
 }
 
 // columnsOut is a result's columns, and marks the approximate ones.

@@ -114,7 +114,7 @@ func (s scan) retentionActors(ctx context.Context, spec retentionSpec, files arc
 	var ids *firstSet
 	var err error
 	if len(status) > 0 {
-		if ids, err = s.e.firstSeen(ctx, s.project, files, charge); err != nil {
+		if ids, err = s.e.firstSeen(ctx, s.project, files, needsNames(status), charge); err != nil {
 			return nil, err
 		}
 	}
@@ -148,7 +148,7 @@ func (s scan) retentionActors(ctx context.Context, spec retentionSpec, files arc
 		}
 		b = s.rules.apply(b, "")
 		if ids != nil {
-			addStatus(b, status, ids)
+			addIdentityColumns(b, status, ids)
 		}
 		grew, err := win.add(parts[w], b, s.filters)
 		if err != nil {

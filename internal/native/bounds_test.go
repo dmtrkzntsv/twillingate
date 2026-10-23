@@ -47,6 +47,12 @@ func TestBoundsMatchDuckDB(t *testing.T) {
 			{Op: "min", Column: "ts"}, {Op: "max", Column: "received_at"}}},
 			from: "2026-08-26", prev: true, cols: []string{"min_ts", "max_received_at", "previous_min_ts", "previous_max_received_at"},
 			sql: []string{`SELECT min("ts"), max("received_at") FROM events WHERE ` + inRange}},
+		// Most views say nothing of when they arrived: the first time is
+		// of those that do.
+		{name: "first arrival over partly-null rows", q: Query{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "min", Column: "received_at"}}},
+			cols: []string{"min_received_at"},
+			sql: []string{`SELECT min("received_at") FROM views WHERE ` + inRange + `
+				AND (SELECT count(*) FILTER (WHERE "received_at" IS NULL) > 0 AND count("received_at") > 0 FROM views WHERE ` + inRange + `)`}},
 		{name: "other", q: Query{Kind: "breakdown", Table: "events", Dimensions: []string{"country"}, Limit: 2, Other: true,
 			Metrics: []Metric{{Op: "count"}, {Op: "max", Column: "received_at", Where: product}, {Op: "min", Column: "day"}}},
 			cols: []string{"country", "count", "max_received_at", "min_day"},

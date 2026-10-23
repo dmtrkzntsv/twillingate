@@ -1730,8 +1730,10 @@ A dimension, series or filter column is one of `project_id`, `family`,
 `sample_rate` are read by the metrics. NULL reads as an empty string and
 sorts last; numbers sort by value.
 
-Eight more are computed from those, as the built-in dashboards group by
-them; they are text, so `gt`, `gte`, `lt` and `lte` do not take them:
+Twelve more are computed from those, as the built-in dashboards group by
+them; they are text, so `gt`, `gte`, `lt` and `lte` do not take them, but
+for `user_first_seen` and `group_first_seen`, which are days and take them
+as `day` does:
 
 | Column | Tables | Value |
 | --- | --- | --- |
@@ -1741,12 +1743,23 @@ them; they are text, so `gt`, `gte`, `lt` and `lte` do not take them:
 | `consent_state` | `events`, `views`, `product` | `given` (`consent` 1), `none` (0) or `unknown` (NULL) |
 | `user_status` | `events`, `views`, `product` | `new` on the day the row's `user_id` was first seen (its `first_seen` in `identities`, over the whole history the files hold, whatever the range), `returning` on a later day; NULL when `user_id` is empty, or not in `identities` (an id only measures carried), and on a measure sent before it was first seen |
 | `group_status` | `events`, `views`, `product` | the same of `group_id` |
+| `user_label` | `events`, `views`, `product` | the `name` of the row's `user_id` in `identities` (over the whole history, the latest name as `identities` combines it, so every row of a renamed user reads its current name), else the `user_id` itself; NULL when `user_id` is empty |
+| `group_label` | `events`, `views`, `product` | the same of `group_id` |
+| `user_first_seen` | `events`, `views`, `product` | the day the row's `user_id` was first seen (its `first_seen` in `identities`, a day); NULL when `user_id` is empty or not in `identities` |
+| `group_first_seen` | `events`, `views`, `product` | the same of `group_id` |
 | `vital` | `measures` | `LCP`, `INP`, `CLS`, `FCP` or `TTFB` for the web vitals' `event_name` (`$lcp`, `$inp`, `$cls`, `$fcp`, `$ttfb`); else NULL |
 | `vital_rating` | `measures` | a vital's sample rated by its bucket's value (as a percentile reads it, below) against the vital's two thresholds: `good` up to the first, `needs improvement` up to the second, else `poor`. LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800, as the built-in Web Vitals dashboard rates them; NULL for the other measures |
 
 `{"column": "user_status", "op": "eq", "values": ["new"]}` with the metric
 `users` counts the new users, as the built-in Users dashboard does (with
-`family` `in` `views`, `product`).
+`family` `in` `views`, `product`). Each label and first-seen day is a
+function of its id, so a breakdown by `user_id`, `user_label` and
+`user_first_seen` has one row per user, as the built-in top users table:
+`{"kind": "breakdown", "table": "events", "dimensions": ["user_id",
+"user_label", "user_first_seen"], "metrics": [{"op": "count"}, {"op":
+"days"}, {"op": "max", "column": "day"}], "where": [{"column": "family",
+"op": "in", "values": ["views", "product"]}, {"column": "user_id", "op":
+"is_set"}], "limit": 100}`.
 
 `sessions` is the table of that name in `schema://views`: the sessions of
 the views, derived as the event files are written and, for the days not
@@ -1775,6 +1788,7 @@ may name but not a dimension or series. It takes the metrics `count`
 | `actors`, `users`, `groups` | | distinct `actor_id`, `user_id`, `group_id` over the range (NULL left out) |
 | `sum`, `avg`, `min`, `max` | `column`: `value`, `sample_rate`, `display_width` or `display_height`; on `sessions` `duration_sec` or `views`; on `identities` `views` or `events`. `min` and `max` also take `day`, `ts` and `received_at`, on `sessions` `day`, `started_at` and `ended_at` (below) | the column's aggregate; empty over no value |
 | `daily_sum`, `daily_max`, `daily_avg` | `of`: `actors`, `users` or `groups` | the distinct count per day, summed, maxed or averaged over the days with rows |
+| `days` | | the distinct days with rows (`count(DISTINCT day)`), exact; `0` over none; not on `sessions` or `identities` |
 | `bounces` | | `sessions` only: the sessions of one view |
 | `bounce_rate` | | `sessions` only: `bounces` divided by the sessions (`0.25`), exact; empty over no session, and in an `Other` row over the sessions of the groups it folds |
 | `percentile` | `q`: above 0 and below 1 (`0.75`) | `measures` only: the `q` quantile of `value`, each sample weighing `1 / sample_rate`; empty over no sample |
@@ -1811,8 +1825,8 @@ ratio itself takes no `where`, and a refusal names a side's field as
 row each is put together over the groups it folds and then divided, and a
 `previous_` column divides the previous range's. A ratio is `approximate`
 when either side is, and its `round` rounds the quotient. A counted
-`num` (`count`, `actors`, `users`, `groups`, `bounces`, `weight` or a
-`daily_*`) with no rows reads `0` when `den` is above 0, so the ratio is
+`num` (`count`, `actors`, `users`, `groups`, `bounces`, `weight`, a
+`daily_*` or `days`) with no rows reads `0` when `den` is above 0, so the ratio is
 `0` rather than empty: a `daily_*` or `weight` over no rows would be
 empty on its own, as SQL's `COALESCE(num, 0)` turns it into 0. Actions per
 user: `{"op": "ratio", "as": "per_user", "round": 1, "num": {"op":
@@ -1843,12 +1857,13 @@ A metric takes two more optional fields:
   A row counts toward that metric only when it passes them too; the other
   metrics still count it. A group exists when any row passes the query's
   `where`, so a metric with none of its rows in a group reads `0` for
-  `count`, `actors`, `users`, `groups` and `bounces`, and empty for the
+  `count`, `actors`, `users`, `groups`, `bounces` and `days`, and empty for the
   others (`sum`, `avg`, `min`, `max`, `daily_*`, `bounce_rate`,
   `percentile`, `mean`, `weight`, `ratio`); `share` reads `0`, or empty when its
   whole partition has none. A `daily_*` metric with a `where` is
   over the days with rows that pass it (its `daily_avg` averages those
-  days only). They apply alike to the `previous_` columns, an `Other` row and a trend's
+  days only), and `days` counts those days (in a trend, `1` or `0` per
+  day). They apply alike to the `previous_` columns, an `Other` row and a trend's
   days; a trend still has a row for every day with rows.
 - `round`: 0 to 6 decimal places, half away from zero (`2.5` rounds to
   `3`), applied last, after `Other` is summed and before groups are ranked
@@ -1860,7 +1875,7 @@ A metric takes two more optional fields:
 | --- | --- |
 | `eq`, `ne`, `contains`, `prefix`, `not_prefix` | exactly one (`contains`, `prefix` and `not_prefix` on text columns only; `not_prefix` keeps text that does not start with the value, so `event_name` `not_prefix` `$` leaves out the system names) |
 | `in`, `not_in` | one or more |
-| `gt`, `gte`, `lt`, `lte` | exactly one: an integer, or `YYYY-MM-DD` on `day`; numeric columns only (`day`, `project_id`, `display_width`, `display_height`, `consent`, `bucket`; `duration_sec` and `views` on `sessions`; `views` and `events` on `identities`) |
+| `gt`, `gte`, `lt`, `lte` | exactly one: an integer, or `YYYY-MM-DD` on `day`, `user_first_seen` and `group_first_seen`; numeric columns and those days only (`day`, `user_first_seen`, `group_first_seen`, `project_id`, `display_width`, `display_height`, `consent`, `bucket`; `duration_sec` and `views` on `sessions`; `views` and `events` on `identities`) |
 | `is_set` | none: the column is not NULL, and on a text column not empty either |
 
 A NULL value fails every operator, `ne` and `not_in` included (as in

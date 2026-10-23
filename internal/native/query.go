@@ -75,7 +75,7 @@ func (q Query) milestones() []int {
 
 // Metric is one aggregate.
 type Metric struct {
-	Op     string   `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. measures alone takes percentile (the q quantile of value, a sample weighing 1 / sample_rate, read from its log-scale bucket: within about 2%), mean (value weighted so) and weight (the samples' 1 / sample_rate summed). ratio: num over den, two metrics of the table each with its own where, as a DOUBLE; empty when den is 0 or empty or num is empty, but a counted num (count, actors, users, groups, bounces, weight, daily_*) over no rows reads 0 when den is above 0; an Other row's both sides over its folded groups; approximate when either side is. share (trend and breakdown only): the group's of (count, or on measures weight) over its partition's: in a breakdown the groups of the same first dimension (all with one dimension; an Other row's is all of them), in a trend the day's; empty over none. sessions takes count (sessions), actors, share, ratio, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, share, ratio, sum, avg, min and max. attributes takes count, actors, users and groups (group_id's empty value left out) and its own actors_or_null (distinct actor_id, NULL counting as one)"`
+	Op     string   `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows; days: the distinct days with rows (0 over none; with a where, of the rows passing it), as the active days of the built-in top users and groups. measures alone takes percentile (the q quantile of value, a sample weighing 1 / sample_rate, read from its log-scale bucket: within about 2%), mean (value weighted so) and weight (the samples' 1 / sample_rate summed). ratio: num over den, two metrics of the table each with its own where, as a DOUBLE; empty when den is 0 or empty or num is empty, but a counted num (count, actors, users, groups, bounces, weight, daily_*, days) over no rows reads 0 when den is above 0; an Other row's both sides over its folded groups; approximate when either side is. share (trend and breakdown only): the group's of (count, or on measures weight) over its partition's: in a breakdown the groups of the same first dimension (all with one dimension; an Other row's is all of them), in a trend the day's; empty over none. sessions takes count (sessions), actors, share, ratio, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, share, ratio, sum, avg, min and max. attributes takes count, actors, users and groups (group_id's empty value left out) and its own actors_or_null (distinct actor_id, NULL counting as one)"`
 	Q      float64  `json:"q,omitempty" jsonschema:"percentile only, above 0 and below 1: the quantile (0.75 for p75)"`
 	Column string   `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views; on identities views or events. min and max also take day (a YYYY-MM-DD day) and ts or received_at (a UTC time, as 2026-09-01T08:00:05Z), on sessions day, started_at or ended_at; not on identities, nor in a ratio's side"`
 	Of     string   `json:"of,omitempty" jsonschema:"daily_sum, daily_max and daily_avg take actors, users or groups (what is counted distinct per day); share takes count or, on measures, weight"`
@@ -91,8 +91,8 @@ const maxRound = 6
 
 // Filter keeps the rows whose Column satisfies Op against Values.
 type Filter struct {
-	Column string   `json:"column" jsonschema:"one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent), user_status and group_status (new on the day the user_id or group_id was first seen, as identities has it, returning on a later day, NULL without one), these five on events, views and product only; on measures only, vital (LCP, INP, CLS, FCP or TTFB for the event_name $lcp, $inp, $cls, $fcp or $ttfb, else NULL) and vital_rating (good, needs improvement or poor: the sample's bucket value against the vital's thresholds, LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800; NULL for the other measures). On sessions instead: project_id, day, kind, actor_id, actor_kind, session_id, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign, and the numbers duration_sec and views. On identities instead: kind (user or group), id, name, day (first_seen's day), and the numbers views and events"`
-	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, not_prefix (text that does not start with the value), gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none (not NULL, and text not empty). gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, and only on numeric columns. NULL fails every op, ne and not_in included"`
+	Column string   `json:"column" jsonschema:"one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent), user_status and group_status (new on the day the user_id or group_id was first seen, as identities has it, returning on a later day, NULL without one), user_label and group_label (the identity's name, as identities has it, else the id; NULL without one), these seven on events, views and product only; computed, a day: user_first_seen and group_first_seen (the identity's first-seen day, as identities has it; NULL without one or when identities lacks it), on events, views and product only; on measures only, vital (LCP, INP, CLS, FCP or TTFB for the event_name $lcp, $inp, $cls, $fcp or $ttfb, else NULL) and vital_rating (good, needs improvement or poor: the sample's bucket value against the vital's thresholds, LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800; NULL for the other measures). On sessions instead: project_id, day, kind, actor_id, actor_kind, session_id, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign, and the numbers duration_sec and views. On identities instead: kind (user or group), id, name, day (first_seen's day), and the numbers views and events"`
+	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, not_prefix (text that does not start with the value), gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none (not NULL, and text not empty). gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, user_first_seen and group_first_seen, and only on numeric columns and those days. NULL fails every op, ne and not_in included"`
 	Values []string `json:"values,omitempty" jsonschema:"the values compared against, as text"`
 }
 
@@ -182,9 +182,10 @@ func (q Query) Columns() []string {
 // ColumnTypes are the types of Columns' columns, in the same order, read
 // from q alone: number, day or text, the type every value of the column
 // has (an empty value, NULL, aside). Metrics, a stat's previous_<name>
-// (a min or max of day day, of a time text) and the numeric columns (project_id, display_width, display_height,
-// consent, bucket) are number; day is day; a trend's series and every
-// other column, attr_<key> included, text. A breakdown with other has
+// (a min or max of day day, of a time text) and the numeric columns
+// (project_id, display_width, display_height, consent, bucket) are
+// number; day, user_first_seen and group_first_seen are day; a trend's
+// series and every other column, attr_<key> included, text. A breakdown with other has
 // its dimensions text, its Other row reading "Other" in each. A
 // retention's cohort is day, identified_by text, the others number. An
 // attributes' attribute and value are text (its keys' attribute text,
@@ -252,7 +253,7 @@ func (m Metric) valueType() string {
 // columnType is a dimension column's type, as ColumnTypes names it.
 func columnType(column string) string {
 	switch {
-	case column == "day":
+	case column == "day", isFirstSeen(column):
 		return "day"
 	case column == "bucket", plainColumns[column]:
 		return "number"
@@ -277,7 +278,8 @@ var Columns = []string{
 	"browser_locale", "app_version", "app_locale", "device", "device_model",
 	"display_width", "display_height", "country", "consent", "measure",
 	"resolution", "device_label", "platform_version", "consent_state",
-	"user_status", "group_status", "vital", "vital_rating",
+	"user_status", "group_status", "user_label", "group_label",
+	"user_first_seen", "group_first_seen", "vital", "vital_rating",
 }
 
 // computedTables are the tables each computed column (computedColumns)
@@ -289,6 +291,10 @@ var computedTables = map[string][]string{
 	"consent_state":    {"events", "views", "product"},
 	"user_status":      {"events", "views", "product"},
 	"group_status":     {"events", "views", "product"},
+	"user_label":       {"events", "views", "product"},
+	"group_label":      {"events", "views", "product"},
+	"user_first_seen":  {"events", "views", "product"},
+	"group_first_seen": {"events", "views", "product"},
 	"vital":            {"measures"},
 	"vital_rating":     {"measures"},
 }
@@ -348,7 +354,7 @@ func columnInfo(table, column string) (orderable, ok bool) {
 		return true, table == "measures"
 	}
 	if tables, found := computedTables[column]; found {
-		return false, slices.Contains(tables, table)
+		return isFirstSeen(column), slices.Contains(tables, table)
 	}
 	if rest, found := strings.CutPrefix(column, "attr_"); found {
 		return false, rest != ""
@@ -381,7 +387,7 @@ var (
 	AttributeDimensions = []string{"day", "event_name"}
 	AttributeOps        = []string{"count", "actors", "users", "groups", "actors_or_null"}
 	Tables              = []string{"events", "views", "product", "measures", "sessions", "identities"}
-	MetricOps           = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "bounces", "bounce_rate", "percentile", "mean", "weight", "share", "ratio", "actors_or_null"}
+	MetricOps           = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "days", "bounces", "bounce_rate", "percentile", "mean", "weight", "share", "ratio", "actors_or_null"}
 	ValueColumns        = []string{"value", "sample_rate", "display_width", "display_height"}
 	// SessionValueColumns are the columns sum, avg, min and max take on
 	// sessions (ValueColumns on the other tables).
@@ -938,7 +944,7 @@ func (f Filter) validate(table, p string) error {
 			return invalid(p+".op", "%s is not allowed on %s", f.Op, f.Column)
 		}
 		v := f.Values[0]
-		if f.Column == "day" {
+		if typeOf(f.Column) == typeDay {
 			if _, err := time.Parse(time.DateOnly, v); err != nil {
 				return invalid(p+".values", "%q is not a YYYY-MM-DD date", v)
 			}
