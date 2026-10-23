@@ -360,6 +360,16 @@ file layout and table names are part of the versioned contract.
    raw-first switch did).
 4. The daily pass in Go (DuckDB still in the tree for SQL widgets and the
    parity check).
+4c. **The shared scan** (owner, 2026-10-23, after step 4's measurements
+   left Views and Product at about 2x DuckDB from 30 days at 1M). One
+   pass over a project's files answers every compatible query of a
+   request. The engine gains `AnswerMany`, which plans one scan per
+   (project, table, rules), fans each batch out to every query's
+   aggregation, and gives each query exactly the rows its own scan would
+   have seen, so every answer is identical to `Answer`'s. The console
+   asks for a dashboard's widgets in one request. It is generic: nothing
+   in it knows a dashboard. A CPU profile of a dashboard load comes
+   first, so the work goes where the time is.
 5. The cache, only if it shows great results (owner, 2026-10-21): the
    default is no cache. It is built only when the measurements show the
    1-year target missed without it and the cache bringing that dashboard
