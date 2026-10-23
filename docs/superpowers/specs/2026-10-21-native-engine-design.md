@@ -941,6 +941,16 @@ reads and footers (about 24% of a no-log load). The per-query
 aggregation (per-day sort, hashing, `groupsOf`, merge: about half of a
 no-log Views load) stays, and needs its own work.
 
+### The profile's cheap fixes (step 4d)
+
+Each measured as step 4c's cells (`scripts/native-bench/RESULTS.md`,
+"Step 4d"), best of 3 warm loads.
+
+- **2a, the harness.** Only a DuckDB cell polls for engine children now.
+  The fair native numbers: Views 1.61 s without the log, 7.68 s with it;
+  Product 1.19 s and 4.20 s (step 4b's 1.93 s and 1.36 s carried the
+  poll). Views at 30 days and 1M is 1.48x DuckDB, Product 0.70x.
+
 ## Left to the builder
 
 - Field names and JSON schema of the language; the exact metric and

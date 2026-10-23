@@ -1152,3 +1152,20 @@ A load reads 18 to 35 MB of Parquet. Each widget's scan lists the file's groups 
 ### What a shared scan must share
 
 One scan per (project, table class) answers the load's widgets only if it shares the open log's decode first: 69 to 75% of a load's CPU with a log in range, read 20 (Views) or 11 (Product) times, where one decode per load (shared by the events consumers and the gap-day derivation) would take the Views load from about 15.4 s to about 4.4 s of CPU. Without a log, sharing the chunk reads (2.5x fewer, with their dictionary maps) and the footers saves about 0.77 s of Views' 3.2 s and 0.57 s of Product's 2.4 s. What stays per query is the aggregation: the per-day key sort (1.05 s of Views' 3.2 s), the id hashing, `groupsOf` and the merge, 1.7 s of Views' load, which neither the shared scan nor the per-batch memo touches. The per-batch memo targets the computed columns (3% of Views' load, none of Product's) and the per-entry hashes inside the id hashing (6% of Views', 18% of Product's, set inserts included), and pays only once a scan has several consumers. A cheaper per-day distinct (no comparison sort per batch), a first dictionary taken without the map, and a log decoded once per growth rather than per load are the costs beside it.
+
+## Step 4d: the profile's cheap fixes (Task 2)
+
+The cells of step 4c (`~/.cache/twbench-native/4/dash-T32768/1m`, Views (20 query widgets) and Product (10) over 30 days, with and without the open log of 2026-10-01, one fresh process a cell, GOMAXPROCS=2, `native.New`'s defaults, a first load then 3 warm loads, "best" the fastest), behind the same gate (1-minute load at most 1.0, polled every 10 s, up to 5 min), after each part. Cells and the script: `~/.cache/twbench-native/task2/`.
+
+### 2a: the harness polls only DuckDB cells
+
+`TestMeasureSystemDashboard` now polls /proc for engine children (every 20 ms) only in a DuckDB cell, whose queries run in those children, off the Go process's GOMAXPROCS. A native cell looks once, at the end, to check it spawned none. Every native number of steps 3f to 4c carried the poll; these are the fair "before" numbers.
+
+| Dashboard | Open log | Step 4b best (poll) | 2a first / best | 2a CPU (best warm) | Change (best) | 3f DuckDB best | Peak | Load at start |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | no | 1.93 s | 1.62 s / 1.61 s | 3.19 s | 0.84x | 1.09 s | 128 MB | 0.74 |
+| Views (20) | yes | 9.12 s (step 4c) | 7.72 s / 7.68 s | 15.27 s | 0.84x | — | 115 MB | 0.84 |
+| Product (10) | no | 1.36 s | 1.22 s / 1.19 s | 2.35 s | 0.87x | 1.71 s | 186 MB | 0.98 |
+| Product (10) | yes | 4.96 s (step 4c) | 4.68 s / 4.20 s | 8.27 s | 0.85x | — | 177 MB | 0.97 |
+
+Without the poll, native Views at 30 days and 1M is 1.48x DuckDB's step 3f best (not 1.8x), Product 0.70x. The numbers match step 4c's "no poll" column (1.61 s, 7.76 s, 1.22 s, 4.17 s).

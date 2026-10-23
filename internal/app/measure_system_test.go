@@ -39,9 +39,10 @@
 // holding <file> as <day>.log, its range ends on that day, and the
 // engine's clock says it is that day. MEASURE_MARK=1 stats a missing
 // /measure-mark-<n> before each load, so a trace of the process (strace)
-// can tell the loads apart; MEASURE_NO_POLL=1 does not look for engine
-// children (native spawns none), whose poll of /proc takes CPU from the
-// cell's GOMAXPROCS; MEASURE_CHUNKS=<file> writes each Parquet
+// can tell the loads apart; MEASURE_NO_POLL=1 does not poll a DuckDB
+// cell's engine children either (a native cell never polls: the poll of
+// /proc takes CPU from the cell's GOMAXPROCS; it looks once at the end);
+// MEASURE_CHUNKS=<file> writes each Parquet
 // file's column chunks (path, offset, row group, column) to it, to name
 // the trace's reads.
 package app
@@ -118,9 +119,10 @@ func procStatusKB(pid, field string) int {
 }
 
 // childPeaks records the VmHWM of every child of this process it sees,
-// by pid, until stop is closed: a child that exits between two looks
+// by pid, every 20 ms until stop is closed when poll, else only when the
+// returned function is called: a child that exits between two looks
 // keeps the last peak seen.
-func childPeaks(stop <-chan struct{}) func() map[int]int {
+func childPeaks(stop <-chan struct{}, poll bool) func() map[int]int {
 	var mu sync.Mutex
 	peaks := map[int]int{}
 	look := func() {
@@ -148,6 +150,12 @@ func childPeaks(stop <-chan struct{}) func() map[int]int {
 				peaks[pid] = max(peaks[pid], kb)
 				mu.Unlock()
 			}
+		}
+	}
+	if !poll {
+		return func() map[int]int {
+			look()
+			return maps.Clone(peaks)
 		}
 	}
 	go func() {
@@ -472,11 +480,12 @@ func TestMeasureSystemDashboard(t *testing.T) {
 	}
 
 	// 4. The loads: all at once, as the console sends them.
+	// Only a DuckDB cell polls for its engine children: the poll reads /proc
+	// every 20 ms on this process's own CPUs, which a native cell's queries
+	// run on (a DuckDB cell's run in the children). A native cell looks
+	// once, at the end, to check it spawned none.
 	stop := make(chan struct{})
-	peaks := func() map[int]int { return nil }
-	if os.Getenv("MEASURE_NO_POLL") == "" { // the poll reads /proc every 20 ms, on the cell's own CPUs
-		peaks = childPeaks(stop)
-	}
+	peaks := childPeaks(stop, eng == "duckdb" && os.Getenv("MEASURE_NO_POLL") == "")
 	cell := systemCell{Engine: eng, Dashboard: dash, Days: days, From: from.String(), To: last.String(), Widgets: len(reqs),
 		IdleRSS: procStatusKB("self", "VmRSS"), Rows: map[string]int{}, Load: loadAvg()}
 	mark := os.Getenv("MEASURE_MARK") != ""
