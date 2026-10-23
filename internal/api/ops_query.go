@@ -87,6 +87,7 @@ func queryEnums(in *jsonschema.Schema) {
 	q.Properties["kind"].Enum = enum(native.Kinds)
 	q.Properties["table"].Enum = enum(native.Tables)
 	q.Properties["compare"].Enum = enum([]string{"", "previous"})
+	q.Properties["fill"].Enum = enum([]string{"", "zero"})
 	q.Properties["output"].Enum = enum(slices.Concat(native.RetentionOutputs, native.AttributeOutputs))
 	q.Properties["identified_by"].Enum = enum(native.IdentifiedBy)
 	minOffsets, maxOffsets := 1.0, 90.0

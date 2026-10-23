@@ -212,6 +212,9 @@ func TestQuerySchemaDescribesStructured(t *testing.T) {
 	if e := r.specs[i].in.Properties["query"].Properties["compare"].Enum; !slices.Equal(e, []any{"", "previous"}) {
 		t.Errorf("compare's enum = %v, want \"\" and previous", e)
 	}
+	if e := r.specs[i].in.Properties["query"].Properties["fill"].Enum; !slices.Equal(e, []any{"", "zero"}) {
+		t.Errorf("fill's enum = %v, want \"\" and zero", e)
+	}
 	// A retention's and an attributes' own fields.
 	rq := r.specs[i].in.Properties["query"]
 	if e := rq.Properties["output"].Enum; !slices.Equal(e, []any{"grid", "curve", "milestones", "values", "keys"}) {

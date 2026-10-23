@@ -19,21 +19,23 @@ var ErrTooLarge = errors.New("native: the query needs more memory than allowed; 
 
 // Query is a structured query over one events table. Kind picks the shape:
 // a stat is one row of metrics, a trend one metric per day (optionally split
-// by Series), a breakdown the metrics grouped by 1-3 Dimensions, a
+// by Series, or up to five metrics as its series; Fill gives it every
+// day), a breakdown the metrics grouped by 1-3 Dimensions, a
 // retention its cohorts' days back (Output, IdentifiedBy, Offsets,
 // Milestones), an attributes the attribute keys and values its rows carry
 // (Output, Reserved, Keep).
 type Query struct {
-	Kind        string   `json:"kind" jsonschema:"stat: one row of metrics (with compare previous, a previous_<name> column each); trend: one metric per day, optionally split by series; breakdown: the metrics grouped by 1 to 3 dimensions; retention: the cohorts of users and installs first active in the range, and their days back (output, identified_by, offsets, milestones; no metrics); attributes: every attribute key and value the product or measures rows carry, with their metrics (output values; dimensions day and event_name, reserved), or every key with its events and distinct values (output keys; limit, keep; no metrics)"`
+	Kind        string   `json:"kind" jsonschema:"stat: one row of metrics (with compare previous, a previous_<name> column each); trend: one metric per day, optionally split by series, or 2 to 5 metrics per day as its series (day, series, value); breakdown: the metrics grouped by 1 to 3 dimensions; retention: the cohorts of users and installs first active in the range, and their days back (output, identified_by, offsets, milestones; no metrics); attributes: every attribute key and value the product or measures rows carry, with their metrics (output values; dimensions day and event_name, reserved), or every key with its events and distinct values (output keys; limit, keep; no metrics)"`
 	Table       string   `json:"table,omitempty" jsonschema:"the rows read: events (every family), views, product or measures; or sessions, one row per session of views; or identities, one row per user or group first seen in the range (rules apply to neither); a retention reads events (absent or events); an attributes product or measures, its keys also events (product and measures both: the default)"`
-	Metrics     []Metric `json:"metrics,omitempty" jsonschema:"the aggregates, each an output column; a trend takes exactly 1; a retention and an attributes' keys none; an attributes' values count, actors, users, groups and actors_or_null"`
+	Metrics     []Metric `json:"metrics,omitempty" jsonschema:"the aggregates, each an output column; a trend takes 1 to 5, exactly 1 when split by series; with more than 1 its answer is long, day, series (each metric's name) and value, a number, so none is a min or max of a day or time; a retention and an attributes' keys none; an attributes' values count, actors, users, groups and actors_or_null"`
 	Where       []Filter `json:"where,omitempty" jsonschema:"filters, all of which a row must satisfy"`
 	Dimensions  []string `json:"dimensions,omitempty" jsonschema:"breakdown only, 1 to 3: columns to group by, each one a filter's column may name on the table (path, country, event_name, attr_<key>, …; resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), but duration_sec and views on sessions and views and events on identities; attributes only: day, event_name or both, in that order, before its attribute and value"`
 	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by, one a filter's column may name on the table except day (resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), and except duration_sec and views on sessions and views and events on identities"`
+	Fill        string   `json:"fill,omitempty" jsonschema:"trend only: zero gives every day of the range a row, for every kept series or metric: a counted metric (count, actors, users, groups, bounces, weight, daily_sum, daily_max, daily_avg, days) reads 0 where it is empty, the others stay empty"`
 	SeriesLimit int      `json:"series_limit,omitempty" jsonschema:"trend only: how many series, 1 to 50, the top ones by the metric over the range (default 5)"`
 	Compare     string   `json:"compare,omitempty" jsonschema:"stat only: previous adds each metric over as many days ending the day before from"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown and attributes only: how many groups, 1 to 1000 (default 20; an attributes' values all of them, its keys 50)"`
-	Other       bool     `json:"other,omitempty" jsonschema:"breakdown only: fold the groups past limit into one row whose dimensions read Other"`
+	Other       bool     `json:"other,omitempty" jsonschema:"breakdown only: fold the groups past limit into one row whose dimensions read Other, when there are two or more: a single one is listed under its own name (limit 4 gives at most 5 rows)"`
 	Order       string   `json:"order,omitempty" jsonschema:"breakdown and attributes values only: a metric name to rank groups by, descending, or one of its dimensions (an attributes' attribute and value among them) to sort them by, ascending, ties by the other dimensions ascending (default: the first metric; an attributes with day by day, the first metric descending, event_name, attribute and value, else by event_name, attribute, the first metric descending and value); limit keeps the first groups in that order"`
 	// The retention kind's fields.
 	Output       string `json:"output,omitempty" jsonschema:"retention and attributes only, required. An attributes: values (a row per dimensions, attribute and value) or keys (attribute, events, values, keys_total: a row per attribute, its events and distinct values, keys_total the number of attributes; the limit busiest, by events, then those keep names). A retention: grid (cohort, identified_by, offset, size, returned, retention: a row per cohort, identity kind and day back, offset the days since the cohort day), curve (offset, retention: one identity kind's cohorts pooled per day back) or milestones (one row, a d<n> column per milestone: the curve's retention that day back)"`
@@ -135,11 +137,12 @@ func percent(q float64) string {
 // Columns are the result's column names, in order, as Answer returns
 // them for q, read from q alone: a stat's metrics, then with compare
 // previous a previous_<name> each; a trend's day, series when split, and
-// its metric; a breakdown's dimensions, then its metrics; a retention
-// grid's cohort, identified_by, offset, size, returned and retention, a
-// curve's offset and retention, milestones' d<n> each; an attributes'
-// dimensions, attribute and value, then its metrics (its keys'
-// attribute, events, values and keys_total). It does not validate q.
+// its metric, or with several metrics day, series and value; a
+// breakdown's dimensions, then its metrics; a retention grid's cohort,
+// identified_by, offset, size, returned and retention, a curve's offset
+// and retention, milestones' d<n> each; an attributes' dimensions,
+// attribute and value, then its metrics (its keys' attribute, events,
+// values and keys_total). It does not validate q.
 func (q Query) Columns() []string {
 	var cols []string
 	switch q.Kind {
@@ -156,8 +159,11 @@ func (q Query) Columns() []string {
 		return cols
 	case "trend":
 		cols = append(cols, "day")
-		if q.Series != "" {
+		if q.Series != "" || q.long() {
 			cols = append(cols, "series")
+		}
+		if q.long() {
+			return append(cols, "value")
 		}
 	case "breakdown":
 		cols = append(cols, q.Dimensions...)
@@ -182,12 +188,12 @@ func (q Query) Columns() []string {
 // ColumnTypes are the types of Columns' columns, in the same order, read
 // from q alone: number, day or text, the type every value of the column
 // has (an empty value, NULL, aside). Metrics, a stat's previous_<name>
-// (a min or max of day day, of a time text) and the numeric columns
-// (project_id, display_width, display_height, consent, bucket) are
-// number; day, user_first_seen and group_first_seen are day; a trend's
-// series and every other column, attr_<key> included, text. A breakdown with other has
-// its dimensions text, its Other row reading "Other" in each. A
-// retention's cohort is day, identified_by text, the others number. An
+// (a min or max of day day, of a time text), a trend's value and the
+// numeric columns (project_id, display_width, display_height, consent,
+// bucket) are number; day, user_first_seen and group_first_seen are day;
+// a trend's series and every other column, attr_<key> included, text. A
+// breakdown with other has its dimensions text, its Other row reading
+// "Other" in each. A retention's cohort is day, identified_by text, the others number. An
 // attributes' attribute and value are text (its keys' attribute text,
 // the others number). It does not validate q.
 func (q Query) ColumnTypes() []string {
@@ -207,8 +213,11 @@ func (q Query) ColumnTypes() []string {
 		return types
 	case "trend":
 		types = append(types, "day")
-		if q.Series != "" {
+		if q.Series != "" || q.long() {
 			types = append(types, "text")
+		}
+		if q.long() {
+			return append(types, "number")
 		}
 	case "attributes":
 		if q.Output == "keys" {
@@ -238,6 +247,10 @@ func (q Query) ColumnTypes() []string {
 	return types
 }
 
+// long says whether q is a trend of several metrics, whose answer is
+// long: day, series (the metric's name) and value.
+func (q Query) long() bool { return q.Kind == "trend" && len(q.Metrics) > 1 }
+
 // valueType is the type of m's values, as ColumnTypes names it: a min
 // or max of day is day, of a time text, every other metric number.
 func (m Metric) valueType() string {
@@ -261,10 +274,12 @@ func columnType(column string) string {
 	return "text"
 }
 
-// maxLimit bounds a breakdown's limit, maxSeries a trend's series_limit.
+// maxLimit bounds a breakdown's limit, maxSeries a trend's series_limit,
+// maxTrendMetrics an unsplit trend's metrics.
 const (
-	maxLimit  = 1000
-	maxSeries = 50
+	maxLimit        = 1000
+	maxSeries       = 50
+	maxTrendMetrics = 5
 )
 
 // Columns are the non-attribute columns a dimension, series or filter on
@@ -328,9 +343,9 @@ var (
 	identityFilterOnly = setOf([]string{"views", "events"})
 )
 
-// plainColumns are Columns, SessionColumns and IdentityColumns, each with whether it is
-// numeric (BIGINT, or the DATE day, which takes gt/lt against
-// YYYY-MM-DD); the computed ones are text.
+// plainColumns are Columns, SessionColumns and IdentityColumns, each with
+// whether it is numeric (BIGINT, or the DATE day, which takes gt/lt
+// against YYYY-MM-DD); the computed ones are text.
 var plainColumns = func() map[string]bool {
 	numeric := setOf([]string{"project_id", "day", "display_width", "display_height", "consent", "duration_sec", "views", "events"})
 	m := make(map[string]bool, len(Columns)+len(SessionColumns)+len(IdentityColumns))
@@ -459,6 +474,12 @@ func (q Query) Validate() error {
 	if len(q.Keep) > 0 && (q.Kind != "attributes" || q.Output != "keys") {
 		return invalid("keep", "only an attributes' keys takes keep")
 	}
+	switch {
+	case q.Fill != "" && q.Kind != "trend":
+		return invalid("fill", "only a trend fills its days")
+	case q.Fill != "" && q.Fill != "zero":
+		return invalid("fill", "%q is not zero", q.Fill)
+	}
 	switch q.Kind {
 	case "retention":
 		return q.validateRetention()
@@ -502,8 +523,10 @@ func (q Query) Validate() error {
 	}
 
 	switch {
-	case q.Kind == "trend" && len(q.Metrics) != 1:
-		return invalid("metrics", "a trend takes exactly 1, got %d", len(q.Metrics))
+	case q.Kind == "trend" && q.Series != "" && len(q.Metrics) != 1:
+		return invalid("metrics", "a trend split by series takes exactly 1, got %d", len(q.Metrics))
+	case q.Kind == "trend" && len(q.Metrics) > maxTrendMetrics:
+		return invalid("metrics", "a trend takes 1 to %d, got %d", maxTrendMetrics, len(q.Metrics))
 	case len(q.Metrics) < 1:
 		return invalid("metrics", "at least 1 is required")
 	}
@@ -512,6 +535,10 @@ func (q Query) Validate() error {
 	for i, m := range q.Metrics {
 		if err := m.validate(q.Kind, q.Table, i); err != nil {
 			return err
+		}
+		// A trend of several metrics has one value column, a number.
+		if q.long() && m.valueType() != "number" {
+			return invalid(fmt.Sprintf("metrics[%d].column", i), "%s of %s is not a number, which a trend of several metrics' value is", m.Op, m.Column)
 		}
 		// An unsplit trend's partition is the day's only group: its share
 		// would always be 1.

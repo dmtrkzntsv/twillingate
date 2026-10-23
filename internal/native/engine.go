@@ -35,9 +35,10 @@ type Options struct {
 	// sketch's worth each, or that sketch), the per-day distinct keys
 	// (16 bytes per distinct id and day, up to twice that per worker
 	// between compactions) and the measures' bucket histograms (an entry
-	// per cell and bucket with rows). It is checked after each batch, so a batch's
-	// growth may pass it. A stat or a trend without series, which has no
-	// group to leave out, is refused with ErrTooLarge once past MaxBytes.
+	// per cell and bucket with rows). It is checked after each batch, so
+	// a batch's growth may pass it. A stat or a trend without series,
+	// which has no group to leave out, is refused with ErrTooLarge once
+	// past MaxBytes.
 	// A breakdown or a split trend past it admits no new group (its rows
 	// are left out and the result says it is truncated); what the groups
 	// admitted add then (their sets and per-day keys) may take it to twice
@@ -139,12 +140,12 @@ var (
 // range, its day their first_seen's day; the computed identity columns
 // (user_status, user_label, user_first_seen and their group ones) look
 // each row's id up in their first-seen days alone (firstSeen), with the
-// names for a label, over the whole history. Identities are cached between queries (at most
-// MaxBytes of them), their stored and live parts apart, so a log's flush
-// derives only the logs' part again; while the derived identities file is
-// missing or stale (older than an events file), the next query that
-// needs them derives them again from every event the project's files
-// hold. A malformed query, or a filter value
+// names for a label, over the whole history. Identities are cached
+// between queries (at most MaxBytes of them), their stored and live
+// parts apart, so a log's flush derives only the logs' part again; while
+// the derived identities file is missing or stale (older than an events
+// file), the next query that needs them derives them again from every
+// event the project's files hold. A malformed query, or a filter value
 // that does not parse for its column, is refused with an error wrapping
 // ErrInvalid; one whose aggregation needs more than MaxBytes allows, with
 // one wrapping ErrTooLarge. Answer waits for one of MaxScans turns first,
@@ -162,12 +163,19 @@ var (
 //     series) with rows, by day then series; only the series_limit (5)
 //     series ranking first by the metric over the whole range, ties by
 //     their value (a distinct count past hll.ExactLimit ids ranks by its
-//     estimate; the per-day values stay exact);
+//     estimate; the per-day values stay exact). With several metrics
+//     (unsplit), day, series (the metric's name) and value: a row per
+//     day and metric with rows passing the metric's where (a ratio's,
+//     either side's), by day then the metrics' order. With fill zero,
+//     every day of the range has its row per kept series or metric, a
+//     counted metric (countedOps) reading 0 where it is empty;
 //   - breakdown: a column per dimension, then per metric; the limit (20)
 //     groups ranking first by the order metric (the first), ties by the
 //     dimensions, or with order naming a dimension sorted by it ascending,
 //     ties by the other dimensions; then with other an "Other" row (every
-//     dimension "Other") of the rest, when there is any.
+//     dimension "Other") of the rest, when there are two or more groups
+//     left (a single one is listed under its own name, so limit 4 gives
+//     at most 5 rows).
 //   - retention: its output's rows (scan.retention), over the cohorts of
 //     From to To, the days back up to the day before the clock's today;
 //   - attributes: its dimensions, attribute and value, then its metrics,
@@ -440,17 +448,17 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 }
 
 // scanEvents reads cols of the project's rows of the query's table in r
-// from files, with the rules applied and the status columns the query's
+// from files, with the rules applied and the identity columns the query's
 // filters or dims name added, and hands each batch to add, from the
 // workers (w the worker's index).
 func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols, dims []string, charge func(int64) error, add func(w int, b *Batch) error) error {
 	fam := s.family()
 	read := s.rules.columns(cols)
-	status := s.statusColumns(dims)
+	idCols := s.identityColumnsOf(dims)
 	var ids *firstSet
 	var err error
-	if len(status) > 0 {
-		if ids, err = s.e.firstSeen(ctx, s.project, files, needsNames(status), charge); err != nil {
+	if len(idCols) > 0 {
+		if ids, err = s.e.firstSeen(ctx, s.project, files, needsNames(idCols), charge); err != nil {
 			return err
 		}
 	}
@@ -479,7 +487,7 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 		}
 		b = s.rules.apply(b, fam)
 		if ids != nil {
-			addIdentityColumns(b, status, ids)
+			addIdentityColumns(b, idCols, ids)
 		}
 		return add(w, b)
 	})
@@ -491,10 +499,10 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 	return err
 }
 
-// statusColumns are the computed identity columns (idColumns: the
+// identityColumnsOf are the computed identity columns (idColumns: the
 // status, label and first-seen ones) the query's filters, its metrics'
 // filters and dims name.
-func (s scan) statusColumns(dims []string) []string {
+func (s scan) identityColumnsOf(dims []string) []string {
 	var out []string
 	fss := [][]filter{s.filters}
 	var add func(mt metricSpec)
@@ -628,19 +636,40 @@ func (s scan) trend(ctx context.Context, from, to civil.Date) (Result, error) {
 		series = series[:min(limit, len(series))]
 		slices.SortFunc(series, func(a, b int32) int { return cmpDim(typ, vals[a][0], vals[b][0]) })
 	}
-	cols.add(mt.Name())
+	long, fill := len(ms) > 1, s.q.Fill == "zero"
+	if long {
+		cols.add("series")
+		cols.add("value")
+	} else {
+		cols.add(mt.Name())
+	}
+	value := func(mt metricSpec, g int32, d int) string {
+		v := m.compute(mt, []int32{g}, d)
+		if fill && v.null && countedOps[mt.Op] {
+			return "0"
+		}
+		return v.String()
+	}
 	var rows [][]string
 	for d := range m.a.ndays {
 		day := formatDay(m.a.from + int64(d))
+		if long {
+			for _, mt := range ms {
+				if fill || m.metricRows(mt, 0, d) > 0 {
+					rows = append(rows, []string{day, mt.Name(), value(mt, 0, d)})
+				}
+			}
+			continue
+		}
 		for _, g := range series {
-			if m.rows(g, d) == 0 {
+			if !fill && m.rows(g, d) == 0 {
 				continue
 			}
 			row := []string{day}
 			if len(dims) > 0 {
 				row = append(row, label(m.a.groups.vals[g][0]))
 			}
-			rows = append(rows, append(row, m.compute(mt, []int32{g}, d).String()))
+			rows = append(rows, append(row, value(mt, g, d)))
 		}
 	}
 	return cols.result(rows, truncated), nil
@@ -701,6 +730,9 @@ func (s scan) breakdown(ctx context.Context, from, to civil.Date) (Result, error
 	limit := s.q.Limit
 	if limit == 0 {
 		limit = 20
+	}
+	if s.q.Other && len(gs) == limit+1 {
+		limit++ // a single group past the limit is listed, not folded
 	}
 	top, rest := gs[:min(limit, len(gs))], gs[min(limit, len(gs)):]
 	var rows [][]string

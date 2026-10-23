@@ -76,9 +76,12 @@ A `query` source's content is `{"query": {…}, "rename": {…}}`: `query` is a
 breakdown), and `rename`, optional, maps its output columns to the names the
 component reads (`{"day": "x", "previous_value": "previous"}`). A stat returns
 its metrics, then `previous_<name>` each with `compare: previous`; a trend
-`day`, `series` when split, and its metric; a breakdown its dimensions, then
-its metrics. Each column has a type the component's input must take: metrics
-and `previous_<name>` are numbers, `day` is a day, the numeric columns
+`day`, `series` when split, and its metric, or with several metrics `day`,
+`series` (each metric's name, its `as`) and `value`; a breakdown its
+dimensions, then its metrics. Each column has a type the component's input
+must take: metrics, a trend's `value` and `previous_<name>` are numbers (a
+`min` or `max` of a day a day, of a time text), `day`, `user_first_seen` and
+`group_first_seen` are days, the numeric columns
 (`project_id`, `display_width`, `display_height`, `consent`, `bucket`) are
 numbers, and the rest (a trend's `series`, `attr_<key>`, every other column)
 text, as is every dimension of a breakdown with `other`, whose `Other` row
@@ -282,7 +285,9 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 - Group in SQL: a widget gets at most `CONSOLE_QUERY_ROWS_MAX` rows (default
   1000) and `CONSOLE_QUERY_TIMEOUT` (default 30s). A result cut at the cap draws
   as "partial". A pie keeps to five slices, the rest summed as `Other`,
-  and a line chart to five lines: the palette has five colors.
+  and a line chart to five lines: the palette has five colors. A query's
+  `"limit": 4, "other": true` gives those five slices, a fifth group
+  listed under its own name when it is the only one left.
 - A widget that follows neither switcher says in its title what it is fixed
   to.
 - To move a widget, `update_widget` it with the `after` you want. Names are

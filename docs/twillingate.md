@@ -1701,14 +1701,15 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | --- | --- | --- |
 | `kind` | all | `stat`, `trend`, `breakdown`, `retention` or `attributes` (below) |
 | `table` | all | `events` (every family), `views`, `product` or `measures`; or `sessions`, one row per session, or `identities`, one row per user or group (below); a retention reads `events`, and may leave it out; an attributes `product` or `measures`, its `keys` also `events` (product and measures both, the default) |
-| `metrics` | stat, trend, breakdown, attributes | the aggregates, each an output column; a trend takes exactly one; an attributes' `keys` none |
+| `metrics` | stat, trend, breakdown, attributes | the aggregates, each an output column; a trend takes one to five, exactly one with `series` (several are its series, below); an attributes' `keys` none |
 | `where` | all | filters, `{column, op, values}`, every one of which a row must satisfy |
 | `dimensions` | breakdown, attributes | a breakdown's 1 to 3 columns to group by; an attributes' `day`, `event_name` or both, in that order, before its attribute and value |
 | `limit` | breakdown, attributes | groups returned, 1 to 1000 (default 20; an attributes' `values` all of them, its `keys` 50) |
 | `order` | breakdown, attributes | a metric name to rank the groups by, descending, ties by the dimensions; or one of the dimensions to sort the groups by, ascending, ties by the other dimensions (`"order": "day"` puts a breakdown by day in date order). Default the first metric; `limit` keeps the first groups in that order; an attributes' default differs (below) |
-| `other` | breakdown | `true` adds an `Other` row (every dimension `Other`) summing the groups past `limit`, when there are any |
+| `other` | breakdown | `true` adds an `Other` row (every dimension `Other`) summing the groups past `limit`, when there are two or more; a single one past it is listed under its own name, so `"limit": 4` gives at most five rows |
 | `series` | trend | a column to split each day by |
 | `series_limit` | trend | how many series, 1 to 50, those ranking first by the metric over the range (default 5) |
+| `fill` | trend | `zero` gives every day of the range its row, for every kept series or metric: a counted metric (`count`, `actors`, `users`, `groups`, `bounces`, `weight`, `daily_*`, `days`) reads `0` where it is empty, the others stay empty; `""` or absent, only the days with rows |
 | `compare` | stat | `previous` adds a `previous_<name>` column per metric, over as many days ending the day before `from`; `""` or absent, none |
 | `output` | retention, attributes | a retention's `grid`, `curve` or `milestones`; an attributes' `values` or `keys` (required) |
 | `identified_by` | retention | `install` or `user`: the cohorts a `curve` or `milestones` pools (required there; a `grid` has both and refuses it) |
@@ -1759,7 +1760,9 @@ function of its id, so a breakdown by `user_id`, `user_label` and
 "user_label", "user_first_seen"], "metrics": [{"op": "count"}, {"op":
 "days"}, {"op": "max", "column": "day"}], "where": [{"column": "family",
 "op": "in", "values": ["views", "product"]}, {"column": "user_id", "op":
-"is_set"}], "limit": 100}`.
+"is_set"}], "limit": 100}`. A label is not unique, though: two users
+who share a name have the same `user_label`, so a breakdown by
+`user_label` alone puts them in one row; group by the id beside it.
 
 `sessions` is the table of that name in `schema://views`: the sessions of
 the views, derived as the event files are written and, for the days not
@@ -1864,7 +1867,9 @@ A metric takes two more optional fields:
   over the days with rows that pass it (its `daily_avg` averages those
   days only), and `days` counts those days (in a trend, `1` or `0` per
   day). They apply alike to the `previous_` columns, an `Other` row and a trend's
-  days; a trend still has a row for every day with rows.
+  days; a trend of one metric still has a row for every day with rows,
+  one of several metrics a row per day with rows that pass its `where`
+  (below).
 - `round`: 0 to 6 decimal places, half away from zero (`2.5` rounds to
   `3`), applied last, after `Other` is summed and before groups are ranked
   by the metric; with `0` the value reads as an integer (`3`). A metric
@@ -1962,10 +1967,19 @@ as text:
 - **stat**: one row, a column per metric (then `previous_<name>` ones);
 - **trend**: `day`, `series` when split, then the metric; a row per day
   (and series) that has rows, by day then series. Days without rows are
-  absent, not zero. A trend over more days than `CONSOLE_QUERY_ROWS_MAX`
-  (1,000 by default) is always cut there, and `truncated`;
+  absent, not zero, unless `fill` is `zero`: then every day of the range
+  has a row per kept series (the series still chosen by their total over
+  the range), `0` for a counted metric. A trend of several metrics is
+  long: `day`, `series` (each metric's name, so its `as` is the label)
+  and `value`, a number, so no metric of it is a `min` or `max` of a
+  day or time; a row per day and metric, by day then the metrics'
+  order, each metric's on the days with rows that pass its `where` (a
+  `ratio`'s, either side's), or every day with `fill`. A trend over more
+  days than `CONSOLE_QUERY_ROWS_MAX` (1,000 by default) is always cut
+  there, and `truncated`;
 - **breakdown**: a column per dimension, then per metric; the `limit`
-  groups first in `order`, then the `Other` row;
+  groups first in `order`, then the `Other` row (or the one group past
+  `limit`, under its own name);
 - **retention**: its output's columns and rows, as above;
 - **attributes**: its dimensions, `attribute`, `value`, then its metrics;
   `keys` its `attribute`, `events`, `values` and `keys_total`.
@@ -2006,6 +2020,18 @@ A trend: signups per day, split by plan.
   "kind": "trend", "table": "product", "series": "attr_plan",
   "where": [{"column": "event_name", "op": "eq", "values": ["signup"]}],
   "metrics": [{"op": "count"}]}}
+```
+
+Two metrics as one trend's series, every day of the range drawn: new
+and returning users per day, as the built-in Users dashboard has them.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "trend", "table": "events", "fill": "zero",
+  "where": [{"column": "family", "op": "in", "values": ["views", "product"]}, {"column": "user_id", "op": "is_set"}],
+  "metrics": [
+    {"op": "users", "as": "New users", "where": [{"column": "user_status", "op": "eq", "values": ["new"]}]},
+    {"op": "users", "as": "Returning users", "where": [{"column": "user_status", "op": "eq", "values": ["returning"]}]}]}}
 ```
 
 A breakdown: the ten busiest paths by unique users, the rest as `Other`.

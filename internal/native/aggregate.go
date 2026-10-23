@@ -1387,6 +1387,15 @@ func (m *merged) cellsOf(g int32, day int, f func(x int)) {
 // rows is how many rows group g holds (on day, unless it is < 0).
 func (m *merged) rows(g int32, day int) int64 { return m.maskRows(0, g, day) }
 
+// metricRows is how many rows of group g on day pass mt's where: a
+// ratio's, those of either side.
+func (m *merged) metricRows(mt metricSpec, g int32, day int) int64 {
+	if mt.Op == "ratio" {
+		return m.metricRows(*mt.ratioNum, g, day) + m.metricRows(*mt.ratioDen, g, day)
+	}
+	return m.maskRows(mt.mask, g, day)
+}
+
 // maskRows is how many rows of mask group g holds (on day, unless it is
 // < 0).
 func (m *merged) maskRows(mask int, g int32, day int) int64 {
