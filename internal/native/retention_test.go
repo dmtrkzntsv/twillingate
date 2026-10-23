@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -303,11 +302,7 @@ func TestRetentionFiles(t *testing.T) {
 // offsets put in for its 45, and extra conditions added to acts.
 func retentionSQL(t *testing.T, name, now string, offsets int, where string) string {
 	t.Helper()
-	b, err := os.ReadFile(filepath.Join("..", "reporting", "system", "retention", name+".sql"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	sql := string(b)
+	sql := widgetFile(t, filepath.Join("retention", name+".sql"))
 	acts := "AND day <= :to + 45\n"
 	if !strings.Contains(sql, acts) {
 		t.Fatalf("%s: no %q in acts", name, acts)

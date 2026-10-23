@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
 	"reflect"
 	"regexp"
@@ -409,40 +408,6 @@ func TestRetentionKindIsSticky(t *testing.T) {
 		}
 		if !found {
 			t.Errorf("no %s row at offset %s in %v", w[0], w[1], rows)
-		}
-	}
-}
-
-// TestRetentionWidgetsShareTheirCTE: the five Retention widgets each carry
-// the same retention CTE, and the four curves the same text but for the
-// kind; a fix to one that misses the others fails here.
-func TestRetentionWidgetsShareTheirCTE(t *testing.T) {
-	read := func(name string) string {
-		t.Helper()
-		b, err := fs.ReadFile(systemFS, "system/retention/"+name+".sql")
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(b)
-	}
-	cte := func(name string) string {
-		t.Helper()
-		q := read(name)
-		start, end := strings.Index(q, "WITH acts AS ("), strings.Index(q, "\nretention AS (")
-		if start < 0 || end < 0 {
-			t.Fatalf("%s has no acts ... retention CTE", name)
-		}
-		return q[start : strings.Index(q[end:], "\n)")+end]
-	}
-	want := cte("cohorts")
-	for _, name := range []string{"install-milestones", "install-retention", "signed-in-milestones", "signed-in-retention"} {
-		if got := cte(name); got != want {
-			t.Errorf("%s's retention CTE differs from cohorts':\n%s\nwant\n%s", name, got, want)
-		}
-	}
-	for _, pair := range [][2]string{{"install-milestones", "signed-in-milestones"}, {"install-retention", "signed-in-retention"}} {
-		if a, b := read(pair[0]), strings.ReplaceAll(read(pair[1]), "actor_kind = 'user' AND", "actor_kind = 'install' AND"); a != b {
-			t.Errorf("%s and %s differ in more than the kind", pair[0], pair[1])
 		}
 	}
 }

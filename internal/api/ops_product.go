@@ -149,7 +149,8 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 	// One deadline for both queries.
 	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
-	// The Retention dashboard's cohorts (retention/cohorts.sql), every
+	// The Retention dashboard's old cohorts SQL (reporting's
+	// testdata/system-sql/retention/cohorts.sql), every
 	// offset: an actor identified by a $user_id or a stable $install_id
 	// joins the cohort of its first day with either, and is returned at
 	// offset k when it sent a view or product event k days later. It is a
