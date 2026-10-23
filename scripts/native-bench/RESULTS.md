@@ -1184,3 +1184,17 @@ The engine keeps each open log's decoded rows (`internal/native/logcache.go`): r
 - **With the log in range, a warm load now costs about what one without it does:** Views 1.73 s against 1.62 s, Product 1.20 s against 1.16 s. Warm loads decode nothing (the log does not grow between them in this bench); the first load still decodes it once per new column set (11 times for Views, 4 for Product), each waiting on the one before.
 - **The cached entry of the 33k-line log** (32,304 lines, 18 MB; `TestMeasureLogCache`, tag `measure`): 11.3 MB counted and 11.4 MB on the heap with the 23 columns a Views load asks for, 7.0 MB counted (6.3 MB heap) with Product's 7 (`attr_*` among them), 15.8 MB (16.2 MB heap) with every column. Decoding it cold takes 531 ms (`readLog`: 542 ms), a 10% growth (3,230 lines) 59 ms, and a warm query's rows 0.5 to 1.7 ms.
 - **The peak rose** with the log in range: 169 MB against 115 (Views), 219 against 177 (Product). The entry stays live (11 MB) and a re-decode for a new column holds the old entry and the new one at once on the first load, which the GC's headroom doubles.
+
+### 2b, fix round 1: every column on the first miss
+
+The first miss now decodes every column the log has: one decode, never again for a column (a key first seen in appended lines becomes a column, null for the rows before). The byte bound is unchanged.
+
+| Dashboard | Open log | 2a first / best | 2b (on demand) first / best | 2b (every column) first / best | CPU (best warm) | Peak 2a / on demand / every column | Load at start |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | no | 1.62 s / 1.61 s | 1.64 s / 1.62 s | 1.67 s / 1.63 s | 3.22 s | 128 / 121 / 123 MB | 0.96 |
+| Views (20) | yes | 7.72 s / 7.68 s | 7.22 s / 1.73 s | 2.29 s / 1.73 s | 3.42 s | 115 / 169 / 177 MB | 0.89 |
+| Product (10) | no | 1.22 s / 1.19 s | 1.30 s / 1.16 s | 1.19 s / 1.17 s | 2.33 s | 186 / 190 / 195 MB | 0.98 |
+| Product (10) | yes | 4.68 s / 4.20 s | 3.14 s / 1.20 s | 1.91 s / 1.20 s | 2.35 s | 177 / 219 / 238 MB | 0.90 |
+
+- **The first load with the log** drops from 7.22 to 2.29 s (Views) and 3.14 to 1.91 s (Product): one decode instead of 11 and 4. The warm loads are unchanged.
+- **The peak did not come back down:** with the log in range it is 62 MB (Views) and 61 MB (Product) above 2a's. The entry is 15.8 MB live, every query's rows of it are copied out (a family's rows, `Column.take`), and the GC's headroom doubles both. Without the log the peaks are within the run-to-run spread.

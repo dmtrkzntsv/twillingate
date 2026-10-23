@@ -2,7 +2,6 @@ package native
 
 import (
 	"context"
-	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -141,16 +140,8 @@ func (e *Engine) attributeProject(ctx context.Context, project int64, ls []archi
 		return nil, err
 	}
 	// The open logs are read through the engine's cache, which decodes a
-	// log for the aliases, the sessions of its day and the views alike.
-	logCols := slices.Clone(viewColumns)
-	for _, c := range append(rs.columns(attributionViewColumns), "family", "day", "user_id", "install_id") {
-		if !slices.Contains(logCols, c) {
-			logCols = append(logCols, c)
-		}
-	}
-	logs := func(path string, cols []string, family string, r Range) (*Batch, error) {
-		return e.logs.read(path, cols, family, r, logCols...)
-	}
+	// log once for the aliases, the sessions of its day and the views alike.
+	logs := e.readLog
 	if users != nil {
 		installs, err := e.aliasedInstalls(ctx, files, users, logs)
 		if err != nil {

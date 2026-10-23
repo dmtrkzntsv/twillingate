@@ -21,8 +21,9 @@ import (
 //   - An entry is a log's raw rows, before rules (each query applies its
 //     own after the cache): the first line of each id (FirstLines, its
 //     seen ids kept so the rule spans appends), of every family and day,
-//     with the columns any query asked for. A query asking for a column
-//     the entry lacks decodes the log again, whole, with the union.
+//     with every column the log has, so no query decodes it again for a
+//     column. A key first seen in appended lines is a column from then
+//     on, null for the rows before.
 //   - It is keyed by path and checked against the file's identity (device
 //     and inode) and size: a log rotated (renamed <day>.<n>.closed) and
 //     started again under its name is a new file, so a new entry; one
@@ -63,13 +64,12 @@ var onLogDecode = func(path string, offset int64) {}
 // appending (which writes only past the snapshot's rows) never races it.
 type logEntry struct {
 	id    fileID
-	size  int64    // bytes decoded: through the last complete line
-	lines int      // lines decoded, for errors' line numbers
-	cols  []string // the columns asked for (names and patterns, as readLog takes them)
+	size  int64 // bytes decoded: through the last complete line
+	lines int   // lines decoded, for errors' line numbers
 
 	keys     map[string]bool     // keys of the lines
 	names    []archive.LogColumn // the columns keys name (archive.LogColumns), nil once keys grow
-	builders map[string]*logCol  // by key; nil for a key cols cannot need
+	builders map[string]*logCol  // by key
 	first    archive.FirstLines
 	seen     int64 // bytes the seen ids take
 	n        int   // rows kept
@@ -105,10 +105,8 @@ func (x rowErr) error(path string) error {
 }
 
 // read is readLog(path, cols, family, r), its rows taken from the log's
-// entry. also names columns to decode beside cols should the log be
-// decoded (again), so a caller reading the log for several column sets
-// decodes it once.
-func (c *logCache) read(path string, cols []string, family string, r Range, also ...string) (*Batch, error) {
+// entry.
+func (c *logCache) read(path string, cols []string, family string, r Range) (*Batch, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -123,7 +121,7 @@ func (c *logCache) read(path string, cols []string, family string, r Range, also
 		return readLog(path, cols, family, r)
 	}
 	done := c.flight(path)
-	v, err := c.update(f, path, id, st.Size(), cols, also)
+	v, err := c.update(f, path, id, st.Size(), cols)
 	done()
 	if err != nil {
 		return nil, err
@@ -164,16 +162,12 @@ func (c *logCache) flight(path string) (done func()) {
 // update brings path's entry up to the file (f, id, its size now) with
 // the columns cols, and returns a snapshot of it for cols. The caller
 // holds path's flight.
-func (c *logCache) update(f *os.File, path string, id fileID, size int64, cols, also []string) (*logView, error) {
+func (c *logCache) update(f *os.File, path string, id fileID, size int64, cols []string) (*logView, error) {
 	c.mu.Lock()
 	x := c.entries[path]
 	c.mu.Unlock()
-	if x == nil || x.id != id || x.size > size || !covers(x.cols, cols) {
-		all := union(nil, cols)
-		if x != nil && x.id == id {
-			all = union(all, x.cols)
-		}
-		x = &logEntry{id: id, cols: union(all, also), keys: map[string]bool{}, builders: map[string]*logCol{}}
+	if x == nil || x.id != id || x.size > size {
+		x = &logEntry{id: id, keys: map[string]bool{}, builders: map[string]*logCol{}}
 	}
 	tail, err := x.decode(f, path, size)
 	if err != nil {
@@ -183,26 +177,6 @@ func (c *logCache) update(f *os.File, path string, id fileID, size int64, cols, 
 	v := x.view(cols, tail)
 	c.store(path, x)
 	return v, nil
-}
-
-// covers says whether have holds every one of want.
-func covers(have, want []string) bool {
-	for _, w := range want {
-		if !slices.Contains(have, w) {
-			return false
-		}
-	}
-	return true
-}
-
-// union is to with each of from it lacks appended.
-func union(to, from []string) []string {
-	for _, s := range from {
-		if !slices.Contains(to, s) {
-			to = append(to, s)
-		}
-	}
-	return to
 }
 
 // store caches x as path's entry, replacing what it had, and drops the
@@ -304,17 +278,10 @@ func (x *logEntry) add(line []byte) {
 	row := x.n
 	x.n++
 	for k, raw := range m {
-		b, known := x.builders[k]
-		if !known {
-			// The family and the day are always read: the queries filter
-			// on them.
-			if k == "family" || k == "day" || wanted(k, x.cols) {
-				b = &logCol{key: k, kind: logKind(k)}
-			}
-			x.builders[k] = b
-		}
+		b := x.builders[k]
 		if b == nil {
-			continue
+			b = &logCol{key: k, kind: logKind(k)} // pads the rows before it with null
+			x.builders[k] = b
 		}
 		if err := b.add(row, raw); err != nil {
 			kind := errCol
@@ -333,9 +300,6 @@ func (x *logEntry) measure() int64 {
 	n := x.seen + int64(len(x.errs))*64
 	for k, b := range x.builders {
 		n += int64(len(k)) + 32
-		if b == nil {
-			continue
-		}
 		c := &b.c
 		n += int64(cap(c.Idx))*4 + int64(cap(c.Ints)+cap(c.Floats)+cap(c.Times))*8 + int64(cap(c.Null))
 		for _, s := range b.db.dict {
@@ -365,7 +329,7 @@ func (x *logEntry) view(cols []string, tail []byte) *logView {
 	}
 	v := &logView{n: x.n, names: x.names, cols: map[string]*Column{}, errs: x.errs[:len(x.errs):len(x.errs)], line: x.lines + 1}
 	for k, b := range x.builders {
-		if b != nil && (k == "family" || k == "day" || wanted(k, cols)) {
+		if k == "family" || k == "day" || wanted(k, cols) {
 			v.cols[k] = b.finish(x.n)
 		}
 	}

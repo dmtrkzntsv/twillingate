@@ -960,6 +960,12 @@ Each measured as step 4c's cells (`scripts/native-bench/RESULTS.md`,
   (11 and 4 times, from 20 and 11). The 33k-line log's entry takes
   11.3 MB with Views' columns, 7.0 MB with Product's, 15.8 MB with all.
   The peak rose by 42 to 54 MB with the log in range.
+- **2b, fix round 1:** the first miss decodes every column the log has
+  (15.8 MB for the 33k-line log), never again for a column. The first
+  load with the log drops to 2.29 s (Views, from 7.22) and 1.91 s
+  (Product, from 3.14); warm loads stay 1.73 and 1.20 s. The peak with
+  the log in range stays about 60 MB above 2a's (177 against 115 MB,
+  238 against 177): the live entry and each query's copy of its rows.
 
 ## Left to the builder
 

@@ -18,8 +18,7 @@ import (
 
 // readCached is readLog(path, cols, family, r), checked against the log
 // cache's read of it: from a cold cache, from the same cache warm, and
-// from a cache that held the log with other columns (so it decodes the
-// log again with the union). Each must give readLog's batch (its columns,
+// from a cache a query of other columns filled first. Each must give readLog's batch (its columns,
 // their kinds and values) or its error.
 func readCached(t *testing.T, path string, cols []string, family string, r Range) (*Batch, error) {
 	t.Helper()
@@ -30,7 +29,7 @@ func readCached(t *testing.T, path string, cols []string, family string, r Range
 	for _, c := range []struct {
 		name  string
 		cache *logCache
-	}{{"cold", cold}, {"warm", cold}, {"other columns first", other}} {
+	}{{"cold", cold}, {"warm", cold}, {"filled by other columns", other}} {
 		got, err := c.cache.read(path, cols, family, r)
 		sameBatch(t, c.name, got, err, want, wantErr)
 	}
@@ -229,9 +228,10 @@ func TestLogCacheRotation(t *testing.T) {
 	}
 }
 
-// A query asking for a column the entry lacks decodes the log again,
-// whole, with the union; later queries of either set decode nothing.
-func TestLogCacheColumnsOnDemand(t *testing.T) {
+// The first miss decodes every column the log has: queries of any
+// columns after it decode nothing more, and a key first seen in appended
+// lines is a column from then on, null for the rows before.
+func TestLogCacheDecodesEveryColumnOnce(t *testing.T) {
 	decodes := countDecodes(t)
 	f := archivetest.New(t)
 	f.Write(t, events(t, 1, today, 3)...)
@@ -243,10 +243,10 @@ func TestLogCacheColumnsOnDemand(t *testing.T) {
 		decodes []int64
 	}{
 		{[]string{"id"}, []int64{0}},
-		{[]string{"id", "path"}, []int64{0}},
+		{[]string{"id", "path"}, nil},
 		{[]string{"path"}, nil},
-		{[]string{"id"}, nil},
-		{[]string{AttrCols}, []int64{0}},
+		{[]string{AttrCols}, nil},
+		{[]string{"*"}, nil},
 		{[]string{"id", "path", AttrCols}, nil},
 	} {
 		want, wantErr := readLog(path, s.cols, "views", day)
@@ -255,6 +255,16 @@ func TestLogCacheColumnsOnDemand(t *testing.T) {
 		if got := decodes(path); !slices.Equal(got, s.decodes) {
 			t.Errorf("%v: decodes at %v, want %v", s.cols, got, s.decodes)
 		}
+	}
+	size := fileSize(t, path)
+	appendFile(t, path, `{"v":1,"id":"new-key","family":"views","day":"`+today+`","attr_late":"l"}`+"\n")
+	for _, cols := range [][]string{{"id", "attr_late"}, {AttrCols}, {"*"}} {
+		want, wantErr := readLog(path, cols, "views", day)
+		got, err := c.read(path, cols, "views", day)
+		sameBatch(t, fmt.Sprint("new key ", cols), got, err, want, wantErr)
+	}
+	if got := decodes(path); !slices.Equal(got, []int64{size}) {
+		t.Errorf("new key: decodes at %v, want the appended line once", got)
 	}
 }
 
@@ -295,10 +305,8 @@ func TestLogCacheConcurrent(t *testing.T) {
 			}()
 		}
 		wg.Wait()
-		if got := n.Load(); !spread && got != 1 {
-			t.Errorf("16 queries at once: %d decodes, want 1", got)
-		} else if got > int32(len(sets)) {
-			t.Errorf("16 queries of %d column sets at once: %d decodes", len(sets), got)
+		if got := n.Load(); got != 1 {
+			t.Errorf("16 queries at once (spread %t): %d decodes, want 1", spread, got)
 		}
 	}
 	// And while it grows: every reader sees a log as readLog read it at
@@ -466,9 +474,8 @@ func TestEngineDecodesALogOnce(t *testing.T) {
 			}
 		}
 	}
-	got := decodes(path)
-	if len(got) == 0 || len(got) > len(qs) || slices.ContainsFunc(got, func(o int64) bool { return o != 0 }) {
-		t.Errorf("decodes at %v, want at most one per new column set", got)
+	if got := decodes(path); !slices.Equal(got, []int64{0}) {
+		t.Errorf("decodes at %v, want one", got)
 	}
 	late := events(t, 1, today, 1)
 	for i := range late {
