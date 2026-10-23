@@ -71,10 +71,15 @@ Retention · Web Vitals · Measures.
   Markdown text (`md`). The component says which source types it accepts and
   which columns its query must return.
 
-A `query` source's content is `{"query": {…}, "rename": {…}}`: `query` is a
-[structured query](twillingate.md#structured-queries) (a stat, a trend or a
-breakdown), and `rename`, optional, maps its output columns to the names the
-component reads (`{"day": "x", "previous_value": "previous"}`). A stat returns
+A `query` source's content is `{"query": {…}, "rename": {…}, "labels": {…}}`:
+`query` is a [structured query](twillingate.md#structured-queries) (a stat, a
+trend or a breakdown), `rename`, optional, maps its output columns to the names
+the component reads (`{"day": "x", "previous_value": "previous"}`), and
+`labels`, optional, shows a column's values as others: keyed by the column's
+name after `rename`, each a map of value to label (`{"label": {"new": "New
+users", "returning": "Returning users"}}`). A value it does not list shows as it
+is; only a text column takes labels (a day or number column is refused), and a
+labelled column keeps its type and its `approximate` mark. A stat returns
 its metrics, then `previous_<name>` each with `compare: previous`; a trend
 `day`, `series` when split, and its metric, or with several metrics `day`,
 `series` (each metric's name, its `as`) and `value`; a breakdown its
@@ -462,7 +467,7 @@ appears. `width` and `height` default to the component's size below.
 
 | Component | Accepts | Inputs: the columns the query returns | Props | Default width × height |
 | --- | --- | --- | --- | --- |
-| `stat` | `sql`, `query` | `value` number; `previous` number, optional (shows the change); `x` day, optional (a sparkline under the number, which becomes the series' `aggregate`) | `format`, `aggregate` (`sum`, `last`, `avg`) | 3 × 3 |
+| `stat` | `sql`, `query` | `value` number (an empty one shows "–", never 0); `previous` number, optional (shows the change; an empty one shows none); `x` day, optional (a sparkline under the number, which becomes the series' `aggregate`) | `format`, `aggregate` (`sum`, `last`, `avg`) | 3 × 3 |
 | `line` | `sql`, `query` | `x` day, text or number (numbers plot to scale, ascending); `y` number; `series` text, optional (one line per value; keep it to 5 lines, one per chart color, ranking the rest out in SQL) | `format`, `curve` (`linear`, `monotone`, `step`) | 6 × 8 |
 | `area` | `sql`, `query` | as `line` | `format`, `curve`, `stacked` | 6 × 8 |
 | `bar` | `sql`, `query` | `x` text or day; `y` number; `series` text, optional | `format`, `horizontal`, `stacked` | 6 × 8 |
@@ -547,6 +552,10 @@ the name the component reads:
 ```
 
 Props: `{"format": "number"}`
+
+An empty `value` (a metric with nothing to read, as `avg` or `ratio` over no
+rows) shows as "–" rather than 0, and an empty `previous` shows no change; a
+`0` still shows 0.
 
 ### `line`
 
@@ -1279,6 +1288,8 @@ widget's name (`widget visitors: …`), and nothing is created.
 | query.dimensions: … | The structured query is malformed; the message names the field. |
 | rename: sessions is not a column of the query; its columns are day, actors | `rename` maps the query's own output columns. |
 | rename: a and b are both renamed value | Give each renamed column its own name, and none the query already returns. |
+| labels.status: not a column of the query; its columns are label, value | `labels` keys on a column's name after `rename`. |
+| labels.day: a day column takes no labels | Label a text column only; a day or number column keeps its values. |
 | a remote table takes sql only; a query source needs props.mode "local" | Drop `mode`, or write the table's source as `sql`. |
 | stat.value: the query's column is text, not number | Rename a column of that type onto the input: a metric for a number, `day` for a day. |
 | sql uses :path; widgets get only :project, :from and :to | Write the value into the SQL, or use one of the three. |

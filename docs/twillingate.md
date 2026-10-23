@@ -1974,9 +1974,10 @@ as text:
   and `value`, a number, so no metric of it is a `min` or `max` of a
   day or time; a row per day and metric, by day then the metrics'
   order, each metric's on the days with rows that pass its `where` (a
-  `ratio`'s, either side's), or every day with `fill`. A trend over more
-  days than `CONSOLE_QUERY_ROWS_MAX` (1,000 by default) is always cut
-  there, and `truncated`;
+  `ratio`'s, either side's), or every day with `fill`. A trend with more
+  rows (its days, times its series or metrics) than
+  `CONSOLE_QUERY_ROWS_MAX` (1,000 by default) is always cut there, and
+  `truncated`;
 - **breakdown**: a column per dimension, then per metric; the `limit`
   groups first in `order`, then the `Other` row (or the one group past
   `limit`, under its own name);

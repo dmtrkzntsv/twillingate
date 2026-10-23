@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 
@@ -27,11 +28,13 @@ type Native interface {
 // project's own).
 type RulesFunc func(ctx context.Context, project int64) archive.Rules
 
-// queryContent is a query source's content: a structured query, and the
-// new names of the output columns the component reads under others.
+// queryContent is a query source's content: a structured query, the
+// new names of the output columns the component reads under others, and
+// labels: per column (its name after rename), values shown as others.
 type queryContent struct {
-	Query  native.Query      `json:"query"`
-	Rename map[string]string `json:"rename,omitempty"`
+	Query  native.Query                 `json:"query"`
+	Rename map[string]string            `json:"rename,omitempty"`
+	Labels map[string]map[string]string `json:"labels,omitempty"`
 }
 
 // querySource is the query SourceType: a structured query the native
@@ -50,29 +53,72 @@ func (*querySource) Cacheable() bool { return true }
 func (*querySource) Follows(string) (project, rng bool) { return true, true }
 
 // parseQuery reads and checks content: one JSON object with no unknown
-// field, a valid query, and a rename of its output columns onto distinct
-// names. It returns the query and its columns as renamed.
-func parseQuery(content string) (native.Query, []string, error) {
+// field, a valid query, a rename of its output columns onto distinct
+// names, and labels of text columns only. It returns the content and
+// the query's columns as renamed.
+func parseQuery(content string) (queryContent, []string, error) {
 	if strings.TrimSpace(content) == "" {
-		return native.Query{}, nil, store.Refuse(store.ErrInvalid, "query source is empty")
+		return queryContent{}, nil, store.Refuse(store.ErrInvalid, "query source is empty")
 	}
 	var qc queryContent
 	dec := json.NewDecoder(strings.NewReader(content))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&qc); err != nil {
-		return native.Query{}, nil, store.Refuse(store.ErrInvalid, "query source: %s", err)
+		return queryContent{}, nil, store.Refuse(store.ErrInvalid, "query source: %s", err)
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return native.Query{}, nil, store.Refuse(store.ErrInvalid, "query source: more than one JSON value")
+		return queryContent{}, nil, store.Refuse(store.ErrInvalid, "query source: more than one JSON value")
 	}
 	if err := qc.Query.Validate(); err != nil {
-		return native.Query{}, nil, queryErr(err)
+		return queryContent{}, nil, queryErr(err)
 	}
 	cols, err := renamed(qc.Query.Columns(), qc.Rename)
 	if err != nil {
-		return native.Query{}, nil, err
+		return queryContent{}, nil, err
 	}
-	return qc.Query, cols, nil
+	if err := checkLabels(qc.Labels, cols, qc.Query.ColumnTypes()); err != nil {
+		return queryContent{}, nil, err
+	}
+	return qc, cols, nil
+}
+
+// checkLabels refuses labels of a column that cols (renamed) lacks, and
+// of a day or number column: a label is text, which neither reads as.
+func checkLabels(labels map[string]map[string]string, cols, types []string) error {
+	keys := make([]string, 0, len(labels))
+	for k := range labels {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		i := slices.Index(cols, k)
+		if i < 0 {
+			return store.Refuse(store.ErrInvalid,
+				"labels.%s: not a column of the query; its columns are %s", k, strings.Join(cols, ", "))
+		}
+		if t := types[i]; t != "text" {
+			return store.Refuse(store.ErrInvalid, "labels.%s: a %s column takes no labels", k, t)
+		}
+	}
+	return nil
+}
+
+// relabel replaces, in place, each value of rows that labels lists for
+// its column; the rest pass through.
+func relabel(rows [][]string, cols []string, labels map[string]map[string]string) {
+	for i, c := range cols {
+		m := labels[c]
+		if len(m) == 0 {
+			continue
+		}
+		for _, row := range rows {
+			if i < len(row) {
+				if l, ok := m[row[i]]; ok {
+					row[i] = l
+				}
+			}
+		}
+	}
 }
 
 // renamed is cols with rename applied, refusing a key that is no column,
@@ -138,14 +184,14 @@ func queryErr(err error) error {
 // names, and their types against the ones c declares. It reads no data:
 // the columns and their types come from the query alone.
 func (*querySource) Validate(_ context.Context, content string, c Component) error {
-	q, cols, err := parseQuery(content)
+	qc, cols, err := parseQuery(content)
 	if err != nil {
 		return err
 	}
 	if err := c.checkColumns(cols); err != nil {
 		return err
 	}
-	return c.checkColumnTypes(cols, q.ColumnTypes())
+	return c.checkColumnTypes(cols, qc.Query.ColumnTypes())
 }
 
 func (s *querySource) Load(ctx context.Context, content string, p Params) (any, error) {
@@ -153,12 +199,14 @@ func (s *querySource) Load(ctx context.Context, content string, p Params) (any, 
 }
 
 // load answers content over p's project and range: at most
-// Files.MaxRows rows, under Files.Timeout, its columns renamed.
+// Files.MaxRows rows, under Files.Timeout, its columns renamed and its
+// values relabelled.
 func (s *querySource) load(ctx context.Context, content string, p Params) (readsql.Result, error) {
-	q, cols, err := parseQuery(content)
+	qc, cols, err := parseQuery(content)
 	if err != nil {
 		return readsql.Result{}, err
 	}
+	q := qc.Query
 	if s.native == nil {
 		return readsql.Result{}, store.Refuse(store.ErrInvalid, "structured queries are not available in this process")
 	}
@@ -210,6 +258,7 @@ func (s *querySource) load(ctx context.Context, content string, p Params) (reads
 	if out.Rows == nil {
 		out.Rows = [][]string{}
 	}
+	relabel(out.Rows, out.Columns, qc.Labels)
 	if maxRows > 0 && len(out.Rows) > maxRows {
 		out.Rows, out.Truncated = out.Rows[:maxRows], true
 	}

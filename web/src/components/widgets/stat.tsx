@@ -136,15 +136,19 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
     )
   }
 
-  const value = Number(records[0].value ?? 0)
+  // An empty value (nothing to read) is a blank figure, never 0, and has
+  // no change; so has an empty previous.
+  const raw = records[0].value
+  const value = typeof raw === 'number' ? raw : null
   const previous = records[0].previous
-  const delta = typeof previous === 'number' && previous !== 0 ? (value - previous) / previous : null
+  const delta =
+    value !== null && typeof previous === 'number' && previous !== 0 ? (value - previous) / previous : null
   // The change is an estimate when either side is.
   const deltaApprox = approximate(sql, 'value') || approximate(sql, 'previous')
 
   return (
     <div className={`flex h-full flex-col justify-center pt-1 ${card ? 'items-center gap-6' : 'items-start gap-2'}`}>
-      <Figure card={card}>{show(value)}</Figure>
+      <Figure card={card}>{value === null ? '–' : show(value)}</Figure>
       {delta !== null && (
         <div className={`flex items-center ${card ? 'gap-3 text-[22px] [&_svg]:size-5' : 'gap-1.5 text-xs'}`}>
           <span

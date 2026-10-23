@@ -204,11 +204,14 @@ func TestOtherNeverOneGroup(t *testing.T) {
 	f := engineFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	browsersStyle := func(paths string) string {
-		return `WITH b AS (SELECT "path" AS label, count(*) AS c, count(DISTINCT "actor_id") AS a,
-				ROW_NUMBER() OVER (ORDER BY count(*) DESC, "path") AS n
-			FROM views WHERE ` + inRange + ` AND "path" IN (` + paths + `) GROUP BY "path")
-			SELECT CASE WHEN n <= 4 OR (SELECT count(*) FROM b) <= 5 THEN label ELSE 'Other' END AS label, SUM(c), SUM(a)
-			FROM b GROUP BY 1 ORDER BY MIN(n)`
+		// Other's actors are distinct over the folded paths together, not
+		// a sum of each path's.
+		return `WITH b AS (SELECT "path" AS label, ROW_NUMBER() OVER (ORDER BY count(*) DESC, "path") AS n
+			FROM views WHERE ` + inRange + ` AND "path" IN (` + paths + `) GROUP BY "path"),
+			k AS (SELECT label, n, CASE WHEN n <= 4 OR (SELECT count(*) FROM b) <= 5 THEN label ELSE 'Other' END AS g FROM b)
+			SELECT k.g, count(*), count(DISTINCT "actor_id")
+			FROM views JOIN k ON "path" = k.label WHERE ` + inRange + `
+			GROUP BY k.g ORDER BY MIN(k.n)`
 	}
 	for _, c := range []struct {
 		name  string

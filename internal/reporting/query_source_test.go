@@ -328,3 +328,40 @@ func TestQuerySourceApproximate(t *testing.T) {
 		t.Errorf("empty day: envelope %s names approximate", b)
 	}
 }
+
+// TestQuerySourceLabels: labels relabel a column's values after rename,
+// keyed on the renamed name; values not listed pass through, and a
+// column that is no column, or a day or number, is refused.
+func TestQuerySourceLabels(t *testing.T) {
+	_, files := newTestStoreAndFiles(t, 1000)
+	writeCountries(t, files)
+	src := querySources(t, files, nil)["query"]
+	bars := oneComponent(t, queryBarList)
+	content := `{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"actors"}],"dimensions":["country"]},` +
+		`"rename":{"country":"label","actors":"value"},"labels":{"label":{"DE":"Germany","US":"United States"}}}`
+	if err := src.Validate(context.Background(), content, bars); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	got, err := src.Load(context.Background(), content, countryParams)
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := readsql.Result{Columns: []string{"label", "value"}, Rows: [][]string{{"Germany", "2"}, {"FR", "1"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Load = %+v, want %+v", got, want)
+	}
+
+	table := oneComponent(t, queryTable)
+	for _, c := range []struct{ name, content, msg string }{
+		{"unknown column", `{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"actors"}],"dimensions":["country"]},"rename":{"country":"label"},"labels":{"country":{"DE":"Germany"}}}`,
+			"labels.country: not a column of the query; its columns are label, actors"},
+		{"day column", `{"query":{"kind":"trend","table":"events","metrics":[{"op":"count"}]},"labels":{"day":{"2026-10-20":"Monday"}}}`,
+			"labels.day: a day column takes no labels"},
+		{"number column", `{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"actors"}],"dimensions":["country"]},"labels":{"actors":{"1":"one"}}}`,
+			"labels.actors: a number column takes no labels"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			wantRefusal(t, src.Validate(context.Background(), c.content, table), store.ErrInvalid, c.msg)
+		})
+	}
+}

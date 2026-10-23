@@ -86,6 +86,26 @@ describe('stat', () => {
     expect(screen.getByText('5')).toBeInTheDocument()
   })
 
+  it('shows an empty value as a dash, never 0', () => {
+    renderStat({ columns: ['value', 'previous'], rows: [['', '100']], truncated: false, approximate: ['value'] })
+    expect(screen.getByText('–')).toBeInTheDocument()
+    expect(screen.queryByText('0')).not.toBeInTheDocument()
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument()
+  })
+
+  it('still shows a zero value as 0', () => {
+    renderStat({ columns: ['value'], rows: [['0']], truncated: false })
+    expect(screen.getByText('0')).toBeInTheDocument()
+    expect(screen.queryByText('–')).not.toBeInTheDocument()
+  })
+
+  it('shows no change line when previous is empty', () => {
+    renderStat({ columns: ['value', 'previous'], rows: [['120', '']], truncated: false })
+    expect(screen.getByText('120')).toBeInTheDocument()
+    expect(screen.queryByText(/%/)).not.toBeInTheDocument()
+    expect(screen.queryByText('vs previous')).not.toBeInTheDocument()
+  })
+
   it('renders nothing broken for an empty result', () => {
     const { container } = renderStat({ columns: ['value'], rows: [], truncated: false })
     expect(container.firstChild).toBeEmptyDOMElement()
