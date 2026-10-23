@@ -93,8 +93,8 @@ func New(o Options) *Engine {
 
 // readLog is readLog's rows, from the engine's log cache: a batch per
 // family, each read-only.
-func (e *Engine) readLog(path string, cols []string, family string, r Range) ([]*Batch, error) {
-	return e.logs.read(path, cols, family, r)
+func (e *Engine) readLog(ctx context.Context, path string, cols []string, family string, r Range) ([]*Batch, error) {
+	return e.logs.read(ctx, path, cols, family, r)
 }
 
 // today is the clock's UTC day.
@@ -510,7 +510,7 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 				logs = s.e.readLog
 			}
 			var err error
-			if bs, err = logs(g.file, read, fam, r); err != nil {
+			if bs, err = logs(ctx, g.file, read, fam, r); err != nil {
 				return err
 			}
 		} else {

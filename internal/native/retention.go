@@ -141,7 +141,7 @@ func (s scan) retentionActors(ctx context.Context, spec retentionSpec, files arc
 		var bs []*Batch
 		if g.index < 0 {
 			var err error
-			if bs, err = s.e.readLog(g.file, read, "", r); err != nil {
+			if bs, err = s.e.readLog(ctx, g.file, read, "", r); err != nil {
 				return err
 			}
 		} else {

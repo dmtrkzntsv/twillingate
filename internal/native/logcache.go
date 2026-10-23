@@ -2,6 +2,7 @@ package native
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -59,7 +60,10 @@ func newLogCache(max int64) *logCache {
 }
 
 // fileID tells a file from another that took its name.
-type fileID struct{ dev, ino uint64 }
+type fileID struct {
+	dev, ino uint64
+	birth    int64 // nanoseconds since 1970 where the file system keeps it, else 0
+}
 
 // onLogDecode is called as the cache decodes a log's lines from offset
 // on (0: the whole log); a variable so a test can count the decodes.
@@ -80,6 +84,7 @@ type logEntry struct {
 	errs     []rowErr
 
 	bytes   int64 // what the entry takes
+	held    int64 // what it takes while a decode adds to it, counted as it goes
 	charged int64 // bytes counted in the cache's total
 	used    uint64
 }
@@ -138,32 +143,32 @@ func (x rowErr) error(path string) error {
 }
 
 // read is readLog(path, cols, family, r), its rows taken from the log's
-// entry.
-func (c *logCache) read(path string, cols []string, family string, r Range) ([]*Batch, error) {
+// entry. It waits for the log's flight (another query decoding it) until
+// ctx is done, and sizes the file only once it holds the flight, so a
+// waiter never takes a size older than what the entry has decoded.
+func (c *logCache) read(ctx context.Context, path string, cols []string, family string, r Range) ([]*Batch, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
-	st, err := f.Stat()
+	done, err := c.flight(ctx, path)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
+		return nil, err
 	}
-	id, ok := fileIdentity(st)
-	if !ok || c.isBig(path, id) {
-		return readLogBatches(path, cols, family, r)
-	}
-	done := c.flight(path)
-	v, err := c.update(f, path, id, st.Size(), cols)
+	v, ok, err := c.update(f, path, cols)
 	done()
 	if err != nil {
 		return nil, err
+	}
+	if !ok { // too large to keep, or no identity to keep it by
+		return readLogBatches(ctx, path, cols, family, r)
 	}
 	return v.batches(path, cols, family, r)
 }
 
 // readLogBatches is readLog's batch, as a logReader gives it.
-func readLogBatches(path string, cols []string, family string, r Range) ([]*Batch, error) {
+func readLogBatches(_ context.Context, path string, cols []string, family string, r Range) ([]*Batch, error) {
 	b, err := readLog(path, cols, family, r)
 	if err != nil {
 		return nil, err
@@ -171,17 +176,9 @@ func readLogBatches(path string, cols []string, family string, r Range) ([]*Batc
 	return []*Batch{b}, nil
 }
 
-// isBig says whether path, while it is the file id, is too large to keep.
-func (c *logCache) isBig(path string, id fileID) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	big, ok := c.big[path]
-	return ok && big == id
-}
-
-// flight waits while another query decodes path, then registers this
-// one's; done ends it.
-func (c *logCache) flight(path string) (done func()) {
+// flight waits while another query decodes path (or until ctx is done),
+// then registers this one's; done ends it.
+func (c *logCache) flight(ctx context.Context, path string) (done func(), err error) {
 	for {
 		c.mu.Lock()
 		ch, busy := c.flights[path]
@@ -194,33 +191,75 @@ func (c *logCache) flight(path string) (done func()) {
 				delete(c.flights, path)
 				c.mu.Unlock()
 				close(ch)
-			}
+			}, nil
 		}
 		c.mu.Unlock()
-		<-ch
+		onFlightWait(path)
+		select {
+		case <-ch:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
 }
 
-// update brings path's entry up to the file (f, id, its size now) with
-// the columns cols, and returns a snapshot of it for cols. The caller
-// holds path's flight.
-func (c *logCache) update(f *os.File, path string, id fileID, size int64, cols []string) (*logView, error) {
+// onFlightWait is called as a query starts waiting for path's flight; a
+// variable so a test can tell.
+var onFlightWait = func(path string) {}
+
+// errTooBig stops a decode whose entry would pass the cache's bound.
+var errTooBig = errors.New("log too large to keep")
+
+// update brings path's entry up to the file f as it is now, and returns
+// a snapshot of it for cols; ok false when the log is not kept (too large,
+// or a file without an identity), for readLog to read. The caller holds
+// path's flight.
+func (c *logCache) update(f *os.File, path string, cols []string) (v *logView, ok bool, err error) {
+	id, ok := fileIdentity(f)
+	if !ok {
+		return nil, false, nil
+	}
+	st, err := f.Stat()
+	if err != nil {
+		return nil, false, fmt.Errorf("%s: %w", path, err)
+	}
+	size := st.Size()
 	c.mu.Lock()
 	x := c.entries[path]
+	big, isBig := c.big[path]
 	c.mu.Unlock()
-	if x == nil || x.id != id || x.size > size {
+	if isBig && big == id {
+		return nil, false, nil
+	}
+	if x != nil && (x.id != id || x.size > size || !endsLine(f, x.size)) {
+		x = nil // another file, or one cut: decoded again
+	}
+	fresh := x == nil
+	if fresh {
 		x = &logEntry{id: id, keys: map[string]bool{}}
 	}
-	tail, err := x.decode(f, path, size)
-	if err != nil {
-		return nil, err
+	before := x.size
+	tail, err := x.decode(f, path, size, c.max)
+	if errors.Is(err, errTooBig) {
+		c.drop(path, id)
+		return nil, false, nil
 	}
-	for _, p := range x.parts { // every column to the part's rows: views then only read them
-		for _, b := range p.builders {
-			b.pad(p.n)
+	if err != nil {
+		return nil, false, err
+	}
+	grew := x.size != before
+	if grew || fresh {
+		for _, p := range x.parts { // every column to the part's rows: views then only read them
+			for _, b := range p.builders {
+				b.pad(p.n)
+			}
 		}
 	}
-	v := x.view(cols, tail)
+	v = x.view(cols, tail)
+	if !grew && !fresh {
+		c.touch(path, x)
+		return v, true, nil
+	}
 	// The dictionaries' lookups (a map entry per value) are built again
 	// only when the log grows: between growths they would take about a
 	// third of the entry.
@@ -231,15 +270,75 @@ func (c *logCache) update(f *os.File, path string, id fileID, size int64, cols [
 	}
 	x.bytes = x.measure()
 	c.store(path, x)
-	return v, nil
+	return v, true, nil
+}
+
+// endsLine says whether f's byte before offset (the end of what an entry
+// decoded) is a newline: a log only grows, so unless it was cut and grew
+// again in place, it still is.
+func endsLine(f *os.File, offset int64) bool {
+	if offset == 0 {
+		return true
+	}
+	var b [1]byte
+	n, err := f.ReadAt(b[:], offset-1)
+	return n == 1 && err == nil && b[0] == '\n'
+}
+
+// touch marks path's entry, x, used.
+func (c *logCache) touch(path string, x *logEntry) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.entries[path] == x {
+		c.tick++
+		x.used = c.tick
+	}
+}
+
+// drop forgets path's entry and marks the file id big: too large to keep.
+func (c *logCache) drop(path string, id fileID) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if old := c.entries[path]; old != nil {
+		c.bytes -= old.charged
+		delete(c.entries, path)
+	}
+	c.big[path] = id
 }
 
 // store caches x as path's entry, replacing what it had, and drops the
 // least recently used entries while the cache holds more than max. An
 // entry larger than max alone is not cached, and its file is marked big.
+// Entries and big marks of other paths that no longer name their file
+// (dumped, rotated) are dropped first.
 func (c *logCache) store(path string, x *logEntry) {
 	c.mu.Lock()
+	others := make(map[string]fileID, len(c.entries)+len(c.big))
+	for p, y := range c.entries {
+		others[p] = y.id
+	}
+	for p, id := range c.big {
+		others[p] = id
+	}
+	delete(others, path)
+	c.mu.Unlock()
+	var gone []string
+	for p, id := range others { // stat outside the lock
+		if now, ok := pathIdentity(p); !ok || now != id {
+			gone = append(gone, p)
+		}
+	}
+	c.mu.Lock()
 	defer c.mu.Unlock()
+	for _, p := range gone {
+		if y := c.entries[p]; y != nil && y.id == others[p] {
+			c.bytes -= y.charged
+			delete(c.entries, p)
+		}
+		if id, ok := c.big[p]; ok && id == others[p] {
+			delete(c.big, p)
+		}
+	}
 	if old := c.entries[path]; old != nil {
 		c.bytes -= old.charged
 		delete(c.entries, path)
@@ -275,12 +374,16 @@ func (c *logCache) size() int64 {
 }
 
 // decode reads f's complete lines past x.size, up to size, into x, and
-// returns the bytes past the last of them (a line not yet complete).
-func (x *logEntry) decode(f *os.File, path string, size int64) ([]byte, error) {
+// returns the bytes past the last of them (a line not yet complete). It
+// stops with errTooBig as soon as x would take more than limit bytes
+// (counted as it goes, about as measure counts them), leaving x half
+// read.
+func (x *logEntry) decode(f *os.File, path string, size, limit int64) ([]byte, error) {
 	if x.size == size {
 		return nil, nil
 	}
 	onLogDecode(path, x.size)
+	x.held = x.bytes
 	sr := io.NewSectionReader(f, x.size, size-x.size)
 	br := bufio.NewReaderSize(sr, int(min(1<<20, max(4096, size-x.size))))
 	var buf []byte
@@ -298,6 +401,9 @@ func (x *logEntry) decode(f *os.File, path string, size int64) ([]byte, error) {
 		x.size += int64(len(line))
 		x.lines++
 		x.add(line)
+		if x.held > limit {
+			return nil, errTooBig
+		}
 		if rerr != nil {
 			return nil, nil
 		}
@@ -341,8 +447,15 @@ func (x *logEntry) add(line []byte) {
 		if b == nil {
 			b = &logCol{key: k, kind: logKind(k)} // pads the rows before it with null
 			p.builders[k] = b
+			x.held += int64(len(k)) + 32 + int64(row)*valueBytes(b.kind)
 		}
-		if err := b.add(row, raw); err != nil {
+		dict := len(b.db.dict)
+		x.held += valueBytes(b.kind)
+		err := b.add(row, raw)
+		if len(b.db.dict) > dict {
+			x.held += int64(len(b.db.dict[dict])) + 16 + 40 // the value and its lookup
+		}
+		if err != nil {
 			kind := errCol
 			if k == "day" {
 				kind = errDay
@@ -358,6 +471,15 @@ func (x *logEntry) add(line []byte) {
 	} else {
 		p.dayMin, p.dayMax = min(p.dayMin, v), max(p.dayMax, v)
 	}
+}
+
+// valueBytes is what a row takes in a column of kind, as measure counts
+// it (the null flag of a non-string kind among it).
+func valueBytes(kind colKind) int64 {
+	if kind == kindString {
+		return 4
+	}
+	return 9
 }
 
 // seen says whether a kept line has id (ok false for none): the first

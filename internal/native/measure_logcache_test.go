@@ -13,6 +13,7 @@
 package native
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -67,19 +68,19 @@ func TestMeasureLogCache(t *testing.T) {
 	before := heapNow()
 	c := newLogCache(1 << 40)
 	began = time.Now()
-	if _, err := c.read(path, cols, "", r); err != nil {
+	if _, err := c.read(context.Background(), path, cols, "", r); err != nil {
 		t.Fatal(err)
 	}
 	cold := time.Since(began)
 	appendFile(t, path, string(rest))
 	rest = nil
 	began = time.Now()
-	if _, err := c.read(path, cols, "", r); err != nil {
+	if _, err := c.read(context.Background(), path, cols, "", r); err != nil {
 		t.Fatal(err)
 	}
 	grown := time.Since(began)
 	began = time.Now()
-	if _, err := c.read(path, cols, "views", r); err != nil {
+	if _, err := c.read(context.Background(), path, cols, "views", r); err != nil {
 		t.Fatal(err)
 	}
 	warm := time.Since(began)

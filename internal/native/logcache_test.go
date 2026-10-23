@@ -3,6 +3,7 @@ package native
 import (
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"math"
@@ -13,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
@@ -28,12 +30,12 @@ func readCached(t *testing.T, path string, cols []string, family string, r Range
 	want, wantErr := readLog(path, cols, family, r)
 	cold := newLogCache(1 << 30)
 	other := newLogCache(1 << 30)
-	_, _ = other.read(path, []string{"id", "event_name"}, "views", r) // only warms it
+	_, _ = other.read(context.Background(), path, []string{"id", "event_name"}, "views", r) // only warms it
 	for _, c := range []struct {
 		name  string
 		cache *logCache
 	}{{"cold", cold}, {"warm", cold}, {"filled by other columns", other}} {
-		got, err := c.cache.read(path, cols, family, r)
+		got, err := c.cache.read(context.Background(), path, cols, family, r)
 		sameBatch(t, c.name, got, err, want, wantErr)
 	}
 	return want, wantErr
@@ -159,7 +161,7 @@ func TestLogCacheGrows(t *testing.T) {
 		t.Helper()
 		for _, fam := range []string{"", "views", "product"} {
 			want, wantErr := readLog(path, cols, fam, day)
-			got, err := c.read(path, cols, fam, day)
+			got, err := c.read(context.Background(), path, cols, fam, day)
 			sameBatch(t, step+" "+fam, got, err, want, wantErr)
 		}
 		if got := decodes(path); !slices.Equal(got, wantDecodes) {
@@ -217,7 +219,7 @@ func TestLogCacheRotation(t *testing.T) {
 	c := newLogCache(1 << 30)
 	cols := []string{"id", "event_name", "path"}
 	day := rng(t, today, today)
-	if _, err := c.read(path, cols, "", day); err != nil {
+	if _, err := c.read(context.Background(), path, cols, "", day); err != nil {
 		t.Fatal(err)
 	}
 	old, err := os.ReadFile(path)
@@ -235,7 +237,7 @@ func TestLogCacheRotation(t *testing.T) {
 	}
 	decodes(path)
 	want, wantErr := readLog(path, cols, "", day)
-	got, err := c.read(path, cols, "", day)
+	got, err := c.read(context.Background(), path, cols, "", day)
 	sameBatch(t, "rotated", got, err, want, wantErr)
 	if got := decodes(path); !slices.Equal(got, []int64{0}) {
 		t.Errorf("decodes at %v, want the new file whole", got)
@@ -267,7 +269,7 @@ func TestLogCacheDecodesEveryColumnOnce(t *testing.T) {
 		{[]string{"id", "path", AttrCols}, nil},
 	} {
 		want, wantErr := readLog(path, s.cols, "views", day)
-		got, err := c.read(path, s.cols, "views", day)
+		got, err := c.read(context.Background(), path, s.cols, "views", day)
 		sameBatch(t, fmt.Sprint(s.cols), got, err, want, wantErr)
 		if got := decodes(path); !slices.Equal(got, s.decodes) {
 			t.Errorf("%v: decodes at %v, want %v", s.cols, got, s.decodes)
@@ -277,7 +279,7 @@ func TestLogCacheDecodesEveryColumnOnce(t *testing.T) {
 	appendFile(t, path, `{"v":1,"id":"new-key","family":"views","day":"`+today+`","attr_late":"l"}`+"\n")
 	for _, cols := range [][]string{{"id", "attr_late"}, {AttrCols}, {"*"}} {
 		want, wantErr := readLog(path, cols, "views", day)
-		got, err := c.read(path, cols, "views", day)
+		got, err := c.read(context.Background(), path, cols, "views", day)
 		sameBatch(t, fmt.Sprint("new key ", cols), got, err, want, wantErr)
 	}
 	if got := decodes(path); !slices.Equal(got, []int64{size}) {
@@ -317,7 +319,7 @@ func TestLogCacheConcurrent(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				got, err := c.read(path, sets[i], "", day)
+				got, err := c.read(context.Background(), path, sets[i], "", day)
 				sameBatch(t, fmt.Sprint(round, sets[i]), got, err, wants[i], nil)
 			}()
 		}
@@ -353,7 +355,7 @@ func TestLogCacheConcurrent(t *testing.T) {
 					return
 				default:
 				}
-				bs, err := c.read(path, []string{"id", "path"}, "", day)
+				bs, err := c.read(context.Background(), path, []string{"id", "path"}, "", day)
 				if err != nil {
 					t.Error(err)
 					return
@@ -375,7 +377,7 @@ func TestLogCacheConcurrent(t *testing.T) {
 	}
 	wg.Wait()
 	want, _ := readLog(path, []string{"id", "path"}, "", day)
-	got, err := c.read(path, []string{"id", "path"}, "", day)
+	got, err := c.read(context.Background(), path, []string{"id", "path"}, "", day)
 	sameBatch(t, "grown while read", got, err, want, nil)
 }
 
@@ -391,7 +393,7 @@ func TestLogCacheBound(t *testing.T) {
 	cols := []string{"id", "path", "event_name"}
 	day := rng(t, today, today)
 	probe := newLogCache(1 << 30)
-	if _, err := probe.read(a, cols, "", day); err != nil {
+	if _, err := probe.read(context.Background(), a, cols, "", day); err != nil {
 		t.Fatal(err)
 	}
 	one := probe.size()
@@ -403,7 +405,7 @@ func TestLogCacheBound(t *testing.T) {
 	small := newLogCache(one - 1)
 	for i := range 3 {
 		want, _ := readLog(a, cols, "", day)
-		got, err := small.read(a, cols, "", day)
+		got, err := small.read(context.Background(), a, cols, "", day)
 		sameBatch(t, fmt.Sprint("too large ", i), got, err, want, nil)
 	}
 	if got := decodes(a); !slices.Equal(got, []int64{0}) {
@@ -416,7 +418,7 @@ func TestLogCacheBound(t *testing.T) {
 	// Room for one entry: the second log's pushes the first out.
 	lru := newLogCache(one + one/2)
 	for _, p := range []string{a, b, a} {
-		if _, err := lru.read(p, cols, "", day); err != nil {
+		if _, err := lru.read(context.Background(), p, cols, "", day); err != nil {
 			t.Fatal(err)
 		}
 		if lru.size() > lru.max {
@@ -549,8 +551,10 @@ func entrySum(x *logEntry) uint64 {
 					put(0)
 				}
 			}
-			for _, s := range p.builders[k].db.dict {
+			d := p.builders[k].db.dict
+			for _, s := range d[:cap(d)] {
 				h.Write([]byte(s))
+				h.Write([]byte{0})
 			}
 		}
 	}
@@ -576,7 +580,8 @@ func TestLogCacheBatchesAreNotWritten(t *testing.T) {
 	f.Write(t, evs...)
 	f.Write(t, late...)
 	path := logOf(t, f, 1)
-	e := New(Options{Dir: f.Dir})
+	// The clock a day on, so a retention counts the log's day.
+	e := New(Options{Dir: f.Dir, Now: func() time.Time { return date(t, today).Time().Add(36 * time.Hour) }})
 	rules := archive.Rules{
 		Events: []store.EventRule{
 			evRule(1, store.FamilyProduct, "ev1", store.EventRuleRename, "signup"),
@@ -590,6 +595,9 @@ func TestLogCacheBatchesAreNotWritten(t *testing.T) {
 		{Kind: "breakdown", Table: "views", Dimensions: []string{"event_name", "user_status"}, Metrics: count()},
 		{Kind: "breakdown", Table: "events", Dimensions: []string{"user_label", "family"}, Metrics: count()},
 		{Kind: "trend", Table: "product", Metrics: count()},
+		{Kind: "retention", Output: "grid"},
+		{Kind: "attributes", Table: "product", Output: "values", Dimensions: []string{"event_name"},
+			Metrics: []Metric{{Op: "count"}, {Op: "actors"}}},
 	}
 	// Fill the cache, then check every query against it.
 	if _, err := e.Answer(context.Background(), qs[0], Params{Project: 1, From: date(t, today), To: date(t, today)}, rules); err != nil {
@@ -606,7 +614,7 @@ func TestLogCacheBatchesAreNotWritten(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if len(res.Rows) == 0 {
+			if len(res.Rows) == 0 && q.Kind != "retention" {
 				t.Errorf("%s %s from %s: no rows", q.Kind, q.Table, from)
 			}
 			if got := entrySum(x); got != before {
@@ -627,5 +635,190 @@ func TestLogCacheBatchesAreNotWritten(t *testing.T) {
 	}
 	if e.logs.entries[path] != x || entrySum(x) != before {
 		t.Error("the entry changed")
+	}
+}
+
+// A query waiting for another's decode sizes the log once it holds the
+// flight: a waiter that opened the log before it grew takes the grown
+// entry as it is, rather than as a file cut to the size it saw.
+func TestLogCacheSizesUnderTheFlight(t *testing.T) {
+	decodes := countDecodes(t)
+	f := archivetest.New(t)
+	f.Write(t, events(t, 1, today, 5)...)
+	path := logOf(t, f, 1)
+	c := newLogCache(1 << 30)
+	cols := []string{"id", "path"}
+	day := rng(t, today, today)
+	if _, err := c.read(context.Background(), path, cols, "", day); err != nil {
+		t.Fatal(err)
+	}
+	first := fileSize(t, path)
+	decodes(path)
+
+	waiting := make(chan struct{})
+	old := onFlightWait
+	onFlightWait = func(string) { close(waiting); onFlightWait = func(string) {} }
+	t.Cleanup(func() { onFlightWait = old })
+	done, err := c.flight(context.Background(), path) // a query decoding
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan []*Batch, 1)
+	go func() { // a query that sees the log at its first size, then waits
+		bs, err := c.read(context.Background(), path, cols, "", day)
+		if err != nil {
+			t.Error(err)
+		}
+		got <- bs
+	}()
+	<-waiting
+	more := events(t, 1, today, 3)
+	for i := range more {
+		more[i].ID += "-more"
+	}
+	f.Write(t, more...)
+	src, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := c.update(src, path, cols); err != nil { // the decoding query, past the first size
+		t.Fatal(err)
+	}
+	src.Close()
+	done()
+	want, err := readLog(path, cols, "", day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sameBatch(t, "waiter", <-got, nil, want, nil)
+	if got := decodes(path); !slices.Equal(got, []int64{first}) {
+		t.Errorf("decodes at %v, want the growth once (from %d), never the whole log again", got, first)
+	}
+
+	// A waiter whose context ends gives up.
+	done, _ = c.flight(context.Background(), path)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.read(ctx, path, cols, "", day); !errors.Is(err, context.Canceled) {
+		t.Errorf("err = %v, want Canceled", err)
+	}
+	done()
+}
+
+// A log cut in place and grown again past what the entry read is decoded
+// again whole.
+func TestLogCacheCutAndRegrown(t *testing.T) {
+	decodes := countDecodes(t)
+	f := archivetest.New(t)
+	f.Write(t, events(t, 1, today, 5)...)
+	path := logOf(t, f, 1)
+	c := newLogCache(1 << 30)
+	cols := []string{"id", "event_name"}
+	day := rng(t, today, today)
+	if _, err := c.read(context.Background(), path, cols, "", day); err != nil {
+		t.Fatal(err)
+	}
+	size := fileSize(t, path)
+	if err := os.Truncate(path, size-7); err != nil { // mid-line
+		t.Fatal(err)
+	}
+	appendFile(t, path, "\n"+`{"v":1,"id":"after-cut","family":"views","day":"`+today+`","event_name":"x"}`+"\n")
+	if fileSize(t, path) <= size {
+		t.Fatal("not regrown past the entry")
+	}
+	decodes(path)
+	want, wantErr := readLog(path, cols, "", day)
+	got, err := c.read(context.Background(), path, cols, "", day)
+	sameBatch(t, "cut", got, err, want, wantErr)
+	if got := decodes(path); !slices.Equal(got, []int64{0}) {
+		t.Errorf("decodes at %v, want the whole log again", got)
+	}
+}
+
+// A decode stops as soon as the entry would pass the bound, not after
+// the whole log; the log is then read per query, and so is one that grows
+// past the bound.
+func TestLogCacheDecodeStopsAtTheBound(t *testing.T) {
+	f := archivetest.New(t)
+	f.Write(t, events(t, 1, today, 200)...)
+	path := logOf(t, f, 1)
+	size := fileSize(t, path)
+	probe := newLogCache(1 << 30)
+	day := rng(t, today, today)
+	if _, err := probe.read(context.Background(), path, []string{"id"}, "", day); err != nil {
+		t.Fatal(err)
+	}
+	full := probe.size()
+
+	src, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	x := &logEntry{keys: map[string]bool{}}
+	if _, err := x.decode(src, path, size, full/10); !errors.Is(err, errTooBig) {
+		t.Fatalf("err = %v, want errTooBig", err)
+	}
+	if x.size > size/4 {
+		t.Errorf("stopped at byte %d of %d with a tenth of the entry's bytes allowed", x.size, size)
+	}
+
+	cols := []string{"id", "path"}
+	c := newLogCache(full / 10)
+	want, _ := readLog(path, cols, "", day)
+	got, err := c.read(context.Background(), path, cols, "", day)
+	sameBatch(t, "too large", got, err, want, nil)
+	if c.size() != 0 || !c.isBigNow(path) {
+		t.Errorf("cache holds %d bytes, big %v", c.size(), c.big)
+	}
+
+	// Growth past the bound: kept, then dropped and read per query.
+	g := archivetest.New(t)
+	g.Write(t, events(t, 1, today, 20)...)
+	gp := logOf(t, g, 1)
+	c = newLogCache(full / 2)
+	if _, err := c.read(context.Background(), gp, cols, "", day); err != nil || len(c.entries) != 1 {
+		t.Fatalf("not kept: %v, %d entries", err, len(c.entries))
+	}
+	more := events(t, 1, today, 300)
+	for i := range more {
+		more[i].ID += "-more"
+	}
+	g.Write(t, more...)
+	want, _ = readLog(gp, cols, "", day)
+	got, err = c.read(context.Background(), gp, cols, "", day)
+	sameBatch(t, "grown too large", got, err, want, nil)
+	if len(c.entries) != 0 || c.size() != 0 || !c.isBigNow(gp) {
+		t.Errorf("grown too large: %d entries of %d bytes, big %v", len(c.entries), c.size(), c.big)
+	}
+}
+
+// isBigNow says whether path is marked too large to keep.
+func (c *logCache) isBigNow(path string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.big[path]
+	return ok
+}
+
+// Storing an entry drops those of logs no longer there (dumped, rotated).
+func TestLogCachePrunesGoneLogs(t *testing.T) {
+	f := archivetest.New(t)
+	f.Write(t, events(t, 1, today, 3)...)
+	f.Write(t, events(t, 2, today, 3)...)
+	a, b := logOf(t, f, 1), logOf(t, f, 2)
+	c := newLogCache(1 << 30)
+	day := rng(t, today, today)
+	if _, err := c.read(context.Background(), a, []string{"id"}, "", day); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(a, strings.TrimSuffix(a, ".log")+".1.closed"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.read(context.Background(), b, []string{"id"}, "", day); err != nil {
+		t.Fatal(err)
+	}
+	if got := keys2(c.entries); !slices.Equal(got, []string{b}) || c.size() != c.entries[b].bytes {
+		t.Errorf("entries %v (%d bytes), want only %s", got, c.size(), b)
 	}
 }

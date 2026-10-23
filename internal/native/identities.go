@@ -775,7 +775,7 @@ func (e *Engine) scanIdentityEvents(ctx context.Context, parquet, logs, cols []s
 	readers := make([]groupReader, e.workers)
 	err = scanParallel(ctx, work, e.workers, func(w int, g group) error {
 		if g.index < 0 {
-			bs, err := e.readLog(g.file, cols, "", everything)
+			bs, err := e.readLog(ctx, g.file, cols, "", everything)
 			if err != nil {
 				return err
 			}

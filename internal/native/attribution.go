@@ -229,7 +229,7 @@ func (e *Engine) aliasedInstalls(ctx context.Context, f archive.Files, users map
 		return nil, err
 	}
 	for _, path := range f.Logs {
-		bs, err := logs(path, cols, "", everything)
+		bs, err := logs(ctx, path, cols, "", everything)
 		if err != nil {
 			return nil, err
 		}

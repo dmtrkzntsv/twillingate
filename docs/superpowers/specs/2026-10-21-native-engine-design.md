@@ -972,6 +972,13 @@ Each measured as step 4c's cells (`scripts/native-bench/RESULTS.md`,
   - The 33k-line log's entry is now 7.7 MB on the heap.
   - Warm loads with the log: Views 1.67 s, Product 1.20 s.
   - The peak with the log is 154 MB (Views, 2a 115) and 210 MB (Product, 2a 177). It is set in the first load by the one decode's transient (its builders and lookup maps), which the GC doubles. A heap profile shows the per-query copies were about 1% of the bytes allocated, not the cause.
+- **2b, fix round 3 (review):**
+  - A query sizes the log only once it holds the log's flight.
+  - A decode stops as soon as the entry would pass the bound, and the log is then read per query.
+  - Growth re-decodes from 0 if the byte before the decoded end is no longer a newline.
+  - A file is told apart by device, inode and birth time (statx).
+  - Entries of logs gone from their path are pruned.
+- **Ruling: rows need not come in line order.** An all-families query gets a batch per family, each in line order. A reader that breaks ties by the order it meets rows (identities' name at equal timestamps keeps the first met) may break one differently than line order would. This is accepted: the order across files already varies with the parallel workers, and within one log it is the same for the same log.
 
 ## Left to the builder
 
