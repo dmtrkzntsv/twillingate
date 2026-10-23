@@ -1368,18 +1368,21 @@ Rollback: install the previous release; nothing in the database changed.
 
 The built-in dashboards read the event files natively: their widgets are
 structured queries, no longer SQL. The start replaces each built-in
-widget in place, keeping its id; copies you made keep their SQL.
+widget in place, keeping its id, except Web Vitals' "By device and
+browser", which it removes for two new widgets; copies you made keep
+their SQL.
 
 - **Before the upgrade**, nothing to check by hand.
 - **On the day**, these differ from the release before:
-  - Stats over a range with no data are blank (–), not 0: visitors, bounce rate, avg session, actions per user and per group, the five vitals (G2).
-  - Daily active users and groups show every day of the range, with 0 on days without activity (G11).
-  - App versions shows true distinct users and groups. The header no longer says "(at least)", so a saved sort or filter on the old header resets (G6).
-  - Users by app version shows the 50 busiest versions. Within a day, series are ordered by name (G13, G21).
-  - Attribute values is a table that loads at once, up to the console's row cap, attribute by attribute. It no longer pages through the server (G7).
-  - The p75-by-day measures chart keeps time measures only (G8).
-  - Web vitals "by device and browser" is now two widgets (G9).
+  - Stats over a range with no data are blank (–), not 0: visitors, bounce rate, avg session, actions per user and per group.
+  - The five web-vitals stats show "–" over a range with no samples, where they said "No data for this range".
+  - Daily active users and groups show every day of the range, with 0 on days without activity.
+  - App versions shows true distinct users and groups. The header no longer says "(at least)", so a saved sort or filter on the old header resets.
+  - Users by app version shows the 50 busiest versions. Within a day, series are ordered by name.
+  - Attribute values is a table that loads at once, up to the console's row cap, attribute by attribute. It no longer pages through the server.
+  - The p75-by-day measures chart keeps time measures only, at most 50, the slowest by p75 over the range.
+  - Web vitals "by device and browser" is now two widgets, "By device" and "By browser"; a share of the old table no longer shows it.
   - The browsers and operating-systems "Other" row counts a visitor once per day across the folded browsers (it used to count once per browser).
-  - Distinct counts over ranges past 1,024 ids are estimated within about ±2% and marked ≈ (G14).
+  - Distinct counts over ranges past 1,024 ids are estimated within about ±2% and marked ≈.
 
 Rollback: install the previous release; it restores the built-in widgets' SQL on start.
