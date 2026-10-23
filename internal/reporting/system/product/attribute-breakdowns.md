@@ -3,5 +3,5 @@ built-in `$` keys (browsers, systems, pages) are on the Views dashboard.
 Count is the events that carried a value, Users and Groups the distinct
 people and groups who sent it in the range. For a value's trend by day,
 chart it on a dashboard of your own.
-Filter the table by attribute or value; it lists up to the row cap,
-attribute by attribute, each one's busiest values first.
+Filter the table by attribute or value; it lists attribute by attribute,
+each one's busiest values first, and leaves out the rows past the row cap.

@@ -53,6 +53,10 @@ const (
 	reshape
 	// columnsOnly: only the column names and their order are compared.
 	columnsOnly
+	// sameRows (G21 only): the same rows, every value compared exactly,
+	// in another order: a trend's rows within a day by series, where the
+	// SQL ordered them by value.
+	sameRows
 )
 
 // reshape and columnsOnly are for the reshapes (G6-G9) alone. A
@@ -72,12 +76,14 @@ func (k allowKind) String() string {
 		return "reshape"
 	case columnsOnly:
 		return "columns-only"
+	case sameRows:
+		return "same-rows"
 	}
 	return fmt.Sprintf("allowKind(%d)", int(k))
 }
 
 // allowance is one accepted difference of one widget: the gap it is
-// (G2, G6-G11, G13-G15), its kind, the columns it covers (by the
+// (G2, G6-G11, G13-G15, G21), its kind, the columns it covers (by the
 // widget's column names, after rename) and why.
 type allowance struct {
 	Gap     string
@@ -87,7 +93,10 @@ type allowance struct {
 }
 
 // parityGaps are the gap ids an allowance may name.
-var parityGaps = []string{"G2", "G6", "G7", "G8", "G9", "G10", "G11", "G13", "G14", "G15"}
+//
+// G21 is the harness's own: a trend's rows within a day are ordered by
+// series, not by value.
+var parityGaps = []string{"G2", "G6", "G7", "G8", "G9", "G10", "G11", "G13", "G14", "G15", "G21"}
 
 // parityAllowances names, per system widget ("<dashboard dir>/<widget>"),
 // the differences from its old SQL the harness accepts. An allowance no
@@ -97,8 +106,9 @@ var parityGaps = []string{"G2", "G6", "G7", "G8", "G9", "G10", "G11", "G13", "G1
 var parityAllowances = map[string][]allowance{
 	"product/app-versions": {{Gap: "G6", Kind: reshape,
 		Reason: "true distinct users and groups per version over the range, where the SQL showed the largest per (day, event) count, headed \"(at least)\"; TestAppVersionsAtLeastTheOldFloors holds them to it"}},
-	"product/users-by-app-version": {{Gap: "G6", Kind: reshape,
-		Reason: "true distinct users per day and version, ordered by series, where the SQL showed the largest per-event count, ordered by it; TestAppVersionsAtLeastTheOldFloors holds them to it"}},
+	// G6's true per-day distinct users equal the SQL's floors on the
+	// fixture; TestAppVersionsAtLeastTheOldFloors holds them to at least.
+	"product/users-by-app-version": {{Gap: "G21", Kind: sameRows}},
 }
 
 // newSystemWidgets names the system query widgets that have no old SQL
@@ -290,6 +300,10 @@ func (a allowance) check(earlier []allowance) string {
 	}
 	switch a.Kind {
 	case blankStat:
+	case sameRows:
+		if a.Gap != "G21" {
+			return "only G21 may reorder rows"
+		}
 	case fillZero, approx:
 		if len(a.Columns) == 0 {
 			return "names no columns"
@@ -368,6 +382,11 @@ func compareParity(want, got readsql.Result, allows []allowance) ([]string, []bo
 		}
 		gotRows = kept
 	}
+	if i := find(sameRows); i >= 0 && len(wantRows) == len(gotRows) {
+		if r, moved := inWantOrder(wantRows, gotRows); r != nil {
+			gotRows, used[i] = r, moved
+		}
+	}
 	if len(wantRows) != len(gotRows) {
 		return []string{fmt.Sprintf("%d rows, the old SQL's %d:\n native %q\n    sql %q", len(gotRows), len(wantRows), gotRows, wantRows)}, used
 	}
@@ -391,6 +410,30 @@ func compareParity(want, got readsql.Result, allows []allowance) ([]string, []bo
 		}
 	}
 	return diffs, used
+}
+
+// inWantOrder returns got's rows in want's order when both hold the same
+// rows (cells compared by sameNumber), and whether that moved any; nil
+// when they do not, so the rows are compared as they came.
+func inWantOrder(want, got [][]string) ([][]string, bool) {
+	taken := make([]bool, len(got))
+	out := make([][]string, 0, len(want))
+	moved := false
+	for wi, w := range want {
+		j := -1
+		for gi, g := range got {
+			if !taken[gi] && slices.EqualFunc(w, g, sameNumber) {
+				j = gi
+				break
+			}
+		}
+		if j < 0 {
+			return nil, false
+		}
+		taken[j], moved = true, moved || j != wi
+		out = append(out, got[j])
+	}
+	return out, moved
 }
 
 // sameNumber says whether two cells are equal: as strings, or as numbers
@@ -429,6 +472,22 @@ var fakeSystem = mapFS(map[string]string{
 	"views/count.query":    `{"query":{"kind":"stat","table":"views","metrics":[{"op":"count","as":"value"}]}}`,
 })
 
+// fakeTrendSystem is a Views dashboard of one trend, views/devices: views
+// per day and device, rows within a day by device.
+var fakeTrendSystem = mapFS(map[string]string{
+	"views/dashboard.json": `{"id": 1, "title": "Views", "group_title": "Reports", "range": "7d", "sidebar": true, "project_tab": true, "layout": [{"widget": "devices"}]}`,
+	"views/devices.json":   `{"component": "line", "title": "Devices", "props": {"format": "number"}}`,
+	"views/devices.query":  `{"query":{"kind":"trend","table":"views","series":"device","where":[{"column":"device","op":"is_set"}],"metrics":[{"op":"count","as":"y"}]},"rename":{"day":"x"}}`,
+})
+
+// devicesSQL is views/devices as the old SQL would have it, with y
+// standing for its count and order for its ORDER BY.
+func devicesSQL(y, order string) fs.FS {
+	return mapFS(map[string]string{"views/devices.sql": `SELECT day AS x, device AS series, ` + y + ` AS y FROM views
+		WHERE project_id = :project AND day BETWEEN :from AND :to AND device IS NOT NULL
+		GROUP BY day, device ORDER BY ` + order})
+}
+
 // countSQL is views/count as the old SQL would have it, with value
 // standing for the expression it returns.
 func countSQL(value string) string {
@@ -452,6 +511,7 @@ func TestParityHarnessOnAFakeWidget(t *testing.T) {
 	}
 	old := func(sql string) fs.FS { return mapFS(map[string]string{"views/count.sql": sql}) }
 	approx2 := map[string][]allowance{"views/count": {{Gap: "G14", Kind: approx, Columns: []string{"value"}}}}
+	sameRows21 := map[string][]allowance{"views/devices": {{Gap: "G21", Kind: sameRows}}}
 	cases := []struct {
 		name   string
 		cfg    parityConfig
@@ -493,10 +553,23 @@ func TestParityHarnessOnAFakeWidget(t *testing.T) {
 		{"fill-zero on a replaced row", parityConfig{oldSQL: old(countSQL("count(*) * 2 AS value")),
 			allow: map[string][]allowance{"views/count": {{Gap: "G11", Kind: fillZero, Columns: []string{"value"}}}}},
 			[]string{"views/count 7d: row 0 value", "views/count: allowance G11 fill-zero is needed on no preset"}},
+		// same-rows on a trend: a reorder passes, a changed value does not.
+		{"rows by value, without same-rows", parityConfig{system: fakeTrendSystem, oldSQL: devicesSQL("count(*)", "x, y, series DESC")},
+			[]string{"views/devices 30d: row"}},
+		{"rows by value, with same-rows", parityConfig{system: fakeTrendSystem, oldSQL: devicesSQL("count(*)", "x, y, series DESC"), allow: sameRows21}, nil},
+		{"a changed value, with same-rows", parityConfig{system: fakeTrendSystem, oldSQL: devicesSQL("count(*) * 2", "x, y, series DESC"), allow: sameRows21},
+			[]string{"views/devices 30d: row 0 y", "views/devices: allowance G21 same-rows is needed on no preset"}},
+		{"same-rows never needed", parityConfig{system: fakeTrendSystem, oldSQL: devicesSQL("count(*)", "x, series"), allow: sameRows21},
+			[]string{"views/devices: allowance G21 same-rows is needed on no preset"}},
+		{"same-rows off G21", parityConfig{oldSQL: old(countSQL("count(*) AS value")),
+			allow: map[string][]allowance{"views/count": {{Gap: "G15", Kind: sameRows}}}},
+			[]string{"allowance G15 same-rows: only G21 may reorder rows"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			c.cfg.system = fakeSystem
+			if c.cfg.system == nil {
+				c.cfg.system = fakeSystem
+			}
 			problems := runParity(t, c.cfg, fixture)
 			if len(c.wantIn) == 0 && len(problems) > 0 {
 				t.Fatalf("problems:\n%s", strings.Join(problems, "\n"))
@@ -555,6 +628,12 @@ func TestCompareParityAllowances(t *testing.T) {
 		{"columns only", res(stat, []string{"1", "2"}), res(stat, []string{"5", "6"}), []allowance{{Gap: "G7", Kind: columnsOnly, Reason: "r"}}, 0, []bool{true}},
 		{"columns only, other columns", res(stat), res(trend), []allowance{{Gap: "G7", Kind: columnsOnly, Reason: "r"}}, 1, []bool{false}},
 		{"reshape", res(stat), res(trend, []string{"a", "b"}), []allowance{{Gap: "G6", Kind: reshape, Reason: "r"}}, 0, []bool{true}},
+		{"same rows reordered", res(trend, []string{"a", "4"}, []string{"b", "1"}), res(trend, []string{"b", "1"}, []string{"a", "4"}),
+			[]allowance{{Gap: "G21", Kind: sameRows}}, 0, []bool{true}},
+		{"same rows in order", res(trend, []string{"a", "4"}, []string{"b", "1"}), res(trend, []string{"a", "4"}, []string{"b", "1"}),
+			[]allowance{{Gap: "G21", Kind: sameRows}}, 0, []bool{false}},
+		{"same rows, a value changed", res(trend, []string{"a", "4"}, []string{"b", "1"}), res(trend, []string{"b", "2"}, []string{"a", "4"}),
+			[]allowance{{Gap: "G21", Kind: sameRows}}, 4, []bool{false}},
 		{"approx on another column", res(stat, []string{"100", "100"}), res(stat, []string{"100", "101"}),
 			[]allowance{{Gap: "G14", Kind: approx, Columns: []string{"value"}}}, 1, []bool{false}},
 	}
