@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
@@ -867,6 +868,36 @@ func TestDistinctKeysTrackedRowsOnly(t *testing.T) {
 	}
 	if a.mem.n.Load() <= 0 {
 		t.Error("no memory counted")
+	}
+}
+
+// A group's values are its own: a batch's dictionary, taken from a
+// chunk's dictionary page, shares one string, which a kept group must not
+// hold on to.
+func TestGroupsDoNotKeepTheBatchDictionary(t *testing.T) {
+	var db dictBuilder
+	db.addDict(byteArray("/a", "/b", "/c"))
+	lo := uintptr(unsafe.Pointer(unsafe.StringData(db.dict[0])))
+	hi := uintptr(unsafe.Pointer(unsafe.StringData(db.dict[2]))) + uintptr(len(db.dict[2]))
+	a, _ := newAgg(aggOptions{metrics: []metricSpec{{Metric: Metric{Op: "count"}}}, dims: []string{"path"},
+		ndays: 1, workers: 1, maxGroups: 10, maxBytes: 1 << 20})
+	b := &Batch{N: 3, Cols: map[string]*Column{
+		"day":  {Ints: []int64{0, 0, 0}},
+		"path": {Dict: db.dict, Idx: []int32{0, 2, 0}},
+	}}
+	if err := a.add(0, b); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.groups.vals) != 2 {
+		t.Fatalf("groups %v, want 2", a.groups.vals)
+	}
+	for _, g := range a.groups.vals {
+		if p := uintptr(unsafe.Pointer(unsafe.StringData(g[0].s))); p >= lo && p < hi {
+			t.Errorf("group %q points into the batch's dictionary", g[0].s)
+		}
+	}
+	if got := []string{a.groups.vals[0][0].s, a.groups.vals[1][0].s}; !slices.Equal(got, []string{"/a", "/c"}) {
+		t.Errorf("groups %v", got)
 	}
 }
 

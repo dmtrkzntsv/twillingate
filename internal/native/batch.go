@@ -179,12 +179,16 @@ func (d *dictBuilder) index() {
 // is taken as the batch's dictionary as it is, without building the
 // lookup (built only should a plain page or a second dictionary follow):
 // a dictionary page holds each value once, as the files' writers (DuckDB,
-// parquet-go) write it. Its values are copied out of the page into one
-// string, which the dictionary's entries share.
+// parquet-go) write it. Should one repeat a value anyway, the batch has two
+// entries of one value: its readers resolve entries by value (group keys,
+// id hashes, retention's map, the identities' lookups), so that costs
+// double work, not a wrong answer. Its values are copied out of the page
+// into one string, which the dictionary's entries share: a reader that
+// keeps a value past the batch copies it (strings.Clone).
 func (d *dictBuilder) addDict(vals []byte, offs []uint32) (remap []int32, same bool) {
 	n := max(0, len(offs)-1)
 	if len(d.dict) == 0 {
-		d.dict = make([]string, n)
+		d.dict, d.ids = make([]string, n), nil
 		if n > 0 {
 			all := string(vals[offs[0]:offs[n]])
 			for j := range n {

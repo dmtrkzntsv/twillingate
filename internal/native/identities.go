@@ -713,6 +713,16 @@ func (e *Engine) deriveIdentities(ctx context.Context, parquet, logs []string, c
 	err := e.scanIdentityEvents(ctx, parquet, logs, identityEventColumns, func(w int, b *Batch) error {
 		var grew int64
 		eachIdentity(b, func(k identityKey, name string, named bool, ts int64, view bool) {
+			// See keeps k's id and the name it takes as they are: they are
+			// a batch dictionary's, which may share one chunk-sized
+			// string, so a new id and a name taken are copied first.
+			cur, ok := parts[w][k]
+			if !ok {
+				k.ID = strings.Clone(k.ID)
+			}
+			if named && (!ok || !cur.Named || ts > cur.NameAt) {
+				name = strings.Clone(name)
+			}
 			grew += parts[w].See(k, name, named, ts, view)
 		})
 		return charge(grew)

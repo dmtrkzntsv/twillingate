@@ -110,9 +110,30 @@ func (s *daySet) insert(k dayKey) {
 	}
 }
 
+// reserve grows s's table, unless large enough, to hold n keys within
+// three quarters.
+func (s *daySet) reserve(n int) {
+	if n == 0 {
+		return
+	}
+	size := max(daySetMin, len(s.slots))
+	for 4*n > 3*size {
+		size *= 2
+	}
+	if size > len(s.slots) {
+		s.resize(size)
+	}
+}
+
 func (s *daySet) grow() int64 {
+	old := len(s.slots)
+	size := max(daySetMin, 2*old)
+	s.resize(size)
+	return int64(size-old) * dayKeyBytes
+}
+
+func (s *daySet) resize(size int) {
 	old := s.slots
-	size := max(daySetMin, 2*len(old))
 	s.slots, s.n = make([]dayKey, size), 0
 	s.shift = uint(64 - bits.TrailingZeros(uint(size)))
 	for _, e := range old {
@@ -120,7 +141,6 @@ func (s *daySet) grow() int64 {
 			s.insert(e)
 		}
 	}
-	return int64(size-len(old)) * dayKeyBytes
 }
 
 // each calls f with every key of s, in no order.
@@ -138,10 +158,13 @@ func sortedUnique(s []uint64) []uint64 {
 }
 
 // mergeSets returns the sets' keys in one set, releasing the others: the
-// largest takes theirs.
+// largest takes theirs, its table sized once for all of them. What it
+// grows by at the merge is not charged, as the merge's arrays are not.
 func mergeSets(sets []*daySet) daySet {
 	var into *daySet
+	total := 0
 	for _, s := range sets {
+		total += s.n
 		if into == nil || s.n > into.n {
 			into = s
 		}
@@ -149,6 +172,7 @@ func mergeSets(sets []*daySet) daySet {
 	if into == nil {
 		return daySet{}
 	}
+	into.reserve(total)
 	for _, s := range sets {
 		if s != into {
 			s.each(func(k dayKey) { into.add(k) })
@@ -275,6 +299,11 @@ func (t *groupTable) resolve(keys []string, tuples [][]dimVal, out []int32, mem 
 			}
 			id = int32(len(t.vals))
 			t.ids[k] = id
+			// A tuple's strings are a batch dictionary's, which may share
+			// one chunk-sized string: a kept group copies its own.
+			for j := range tuples[i] {
+				tuples[i][j].s = strings.Clone(tuples[i][j].s)
+			}
 			t.vals = append(t.vals, tuples[i])
 			mem.add(2*int64(len(k)) + mapEntryBytes + int64(len(tuples[i]))*32)
 		}
@@ -1086,6 +1115,9 @@ func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *Batch, sel, gids []
 			continue
 		}
 		day := off(i)
+		if day < 0 || day >= len(days) {
+			return fmt.Errorf("native: a row's day is outside the range")
+		}
 		cell := uint64(g)*uint64(a.ndays) + uint64(day)
 		if x < 0 {
 			if cell != last {

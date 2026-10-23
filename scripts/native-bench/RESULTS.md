@@ -1260,6 +1260,10 @@ In a Views load, a per-day query adds about 1M rows; the array by dictionary ent
 - The largest allocator is now the per-day sets' growth (1.0 GB a cell): each day's set starts at 16 slots and doubles.
 - `internal/native/bench_test.go` (log reads, sessions, identities) is unchanged within noise: it decodes JSON logs, not Parquet.
 
+### 2c/2d, fix round 1: kept strings copied
+
+Since 2d a batch's dictionary entries share one chunk-sized string, so a value kept past the batch would hold the whole chunk's string, uncharged. A new group now copies its tuple's strings, and the identities derived from events copy a new id and a name they take (retention's map and the first-seen sets already copied). `mergeSets` sizes the merged table once. A row whose day falls outside the range is an error, not a panic. Warm loads without the log, re-measured beside 2d: Views 0.80 to 0.81 s (2d 0.79 to 0.80 s), Product 0.98 to 0.99 s (2d 0.96 s), CPU the same; within the spread.
+
 ### After 2a to 2d
 
 | Dashboard | Open log | Step 4b/4c (poll) | 2a best | 2d best | 3f DuckDB best |
