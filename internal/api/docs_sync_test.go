@@ -647,7 +647,8 @@ func TestStructuredQueryDocument(t *testing.T) {
 	}
 	for _, list := range [][]string{native.Kinds, native.Tables, native.Columns, native.SessionColumns, native.MetricOps,
 		native.ValueColumns, native.SessionValueColumns, native.IdentityColumns, native.IdentityValueColumns,
-		native.OfColumns, native.ShareOfColumns, native.FilterOps, native.RetentionOutputs, native.IdentifiedBy} {
+		native.OfColumns, native.ShareOfColumns, native.FilterOps, native.RetentionOutputs, native.IdentifiedBy,
+		native.AttributeOutputs, native.AttributeTables, native.AttributeDimensions, native.AttributeOps} {
 		for _, name := range list {
 			if !strings.Contains(body, "`"+name+"`") {
 				t.Errorf("the Structured queries section does not name `%s`", name)
