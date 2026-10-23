@@ -1,9 +1,15 @@
+// The parity harness for the analytics tools: each tool's native answer
+// checked against the SQL it ran before, over the same files. When DuckDB
+// leaves (step 6 of the native engine plan), these tests go with it, and
+// the native kinds' own tests (internal/native) remain the reference.
+
 package api
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -249,15 +255,28 @@ func toolTable(t *testing.T, v any) tableOut {
 	return out
 }
 
-// sameAnswer fails unless got's columns and rows are want's, cell for
-// cell as text.
-func sameAnswer(t *testing.T, name string, got, want tableOut) {
+// sameNumbers fails unless got's columns and rows are want's, cell for
+// cell as text or, with tol above 0, as numbers within tol relative to
+// want's (DuckDB prints a DOUBLE 200.0, the engine 200). A tol of 0 holds
+// every cell to its text.
+func sameNumbers(t *testing.T, name string, got, want tableOut, tol float64) {
 	t.Helper()
 	if !slices.Equal(got.Columns, want.Columns) {
 		t.Errorf("%s: columns %q, want %q", name, got.Columns, want.Columns)
 		return
 	}
-	if !slices.EqualFunc(got.Rows, want.Rows, slices.Equal) {
+	cell := func(a, b string) bool {
+		if a == b {
+			return true
+		}
+		if tol <= 0 {
+			return false
+		}
+		x, err1 := strconv.ParseFloat(a, 64)
+		y, err2 := strconv.ParseFloat(b, 64)
+		return err1 == nil && err2 == nil && math.Abs(x-y) <= tol*max(1, math.Abs(y))
+	}
+	if !slices.EqualFunc(got.Rows, want.Rows, func(a, b []string) bool { return slices.EqualFunc(a, b, cell) }) {
 		t.Errorf("%s:\n got %q\nwant %q", name, got.Rows, want.Rows)
 	}
 }
@@ -315,7 +334,7 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 				} else {
 					want = old(r, oldViewsOverviewSQL(` AND kind = :kind`), kind(k))
 				}
-				sameAnswer(t, name, toolTable(t, got), want)
+				sameNumbers(t, name, toolTable(t, got), want, 0)
 			}
 		}
 		if !sawG15 {
@@ -351,7 +370,7 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 			if len(want.Rows) == 0 || want.Rows[0][3] != "0" {
 				t.Fatalf("the old SQL still counts sessions: %q", want.Rows)
 			}
-			sameAnswer(t, fmt.Sprintf("kind %q without sessions", k), toolTable(t, got), want)
+			sameNumbers(t, fmt.Sprintf("kind %q without sessions", k), toolTable(t, got), want, 0)
 		}
 	})
 
@@ -364,7 +383,7 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 						t.Fatal(err)
 					}
 					want := old(r, oldViewsBreakdownSQL(dim), map[string]enginesql.Value{":limit": {Type: "BIGINT", Text: strconv.Itoa(limit)}})
-					sameAnswer(t, fmt.Sprintf("%s %s..%s limit %d", name, r.From, r.To, limit), toolTable(t, got), want)
+					sameNumbers(t, fmt.Sprintf("%s %s..%s limit %d", name, r.From, r.To, limit), toolTable(t, got), want, 0)
 				}
 			}
 		}
@@ -379,12 +398,12 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 				}
 				name := fmt.Sprintf("%s..%s event %q", r.From, r.To, event)
 				if event == "" {
-					sameAnswer(t, name+" events", got.Events, old(r, oldProductEventsSQL("", `day, "count" DESC, event_name`), nil))
-					sameAnswer(t, name+" totals", got.Totals, old(r, oldProductTotalsSQL, nil))
+					sameNumbers(t, name+" events", got.Events, old(r, oldProductEventsSQL("", `day, "count" DESC, event_name`), nil), 0)
+					sameNumbers(t, name+" totals", got.Totals, old(r, oldProductTotalsSQL, nil), 0)
 					continue
 				}
-				sameAnswer(t, name+" events", got.Events, old(r, oldProductEventsSQL(` AND event_name = :event`, `day`),
-					map[string]enginesql.Value{":event": {Type: "VARCHAR", Text: event}}))
+				sameNumbers(t, name+" events", got.Events, old(r, oldProductEventsSQL(` AND event_name = :event`, `day`),
+					map[string]enginesql.Value{":event": {Type: "VARCHAR", Text: event}}), 0)
 				if got.Totals.Columns != nil || got.Totals.Rows != nil {
 					t.Errorf("%s: totals %v, want none with an event", name, got.Totals)
 				}

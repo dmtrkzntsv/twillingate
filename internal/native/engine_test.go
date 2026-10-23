@@ -493,7 +493,7 @@ func TestKindsMatchDuckDB(t *testing.T) {
 		// any_set: a path or a device model or a display width above 0 (the
 		// fixture leaves each out on some views, and all three on a few).
 		all("breakdown any_set", Query{Kind: "breakdown", Table: "views", Dimensions: []string{"country"}, Order: "country",
-			Where: []Filter{{Op: "any_set", Columns: []string{"path", "device_model"}}},
+			Where:   []Filter{{Op: "any_set", Columns: []string{"path", "device_model"}}},
 			Metrics: []Metric{{Op: "count"}, {Op: "count", As: "shown", Where: []Filter{{Op: "any_set", Columns: []string{"device_model", "resolution"}}}}}},
 			[]string{"country", "count", "shown"},
 			`SELECT "country", count(*), count(*) FILTER (WHERE "device_model" <> '' OR ("display_width" > 0 AND "display_height" > 0))

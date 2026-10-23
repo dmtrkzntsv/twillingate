@@ -1,3 +1,9 @@
+// The parity harness for the system dashboards: each built-in widget's
+// native answer checked against its old SQL (testdata/system-sql/). When
+// DuckDB leaves (step 6 of the native engine plan), this test and
+// testdata/system-sql/ go with it, and the native kinds' own tests
+// (internal/native) remain the reference.
+
 package reporting
 
 import (

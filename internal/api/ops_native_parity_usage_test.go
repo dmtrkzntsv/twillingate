@@ -1,3 +1,8 @@
+// The parity harness for the analytics tools: each tool's native answer
+// checked against the SQL it ran before, over the same files. When DuckDB
+// leaves (step 6 of the native engine plan), these tests go with it, and
+// the native kinds' own tests (internal/native) remain the reference.
+
 package api
 
 import (
@@ -293,7 +298,7 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 					}
 					sawLateSignIn = slices.Equal(s1, []string{"0", "1"})
 				}
-				sameAnswer(t, name, got.tableOut, want)
+				sameNumbers(t, name, got.tableOut, want, 0)
 				through, err := h.filesTable(ctx, r, oldAggregatedThroughSQL, nil)
 				if err != nil {
 					t.Fatal(err)
@@ -327,7 +332,7 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		sameAnswer(t, "cut", got.tableOut, want)
+		sameNumbers(t, "cut", got.tableOut, want, 0)
 		if !got.Truncated || got.Note != want.Note || !want.Truncated {
 			t.Errorf("cut: truncated %v note %q, want %v %q", got.Truncated, got.Note, want.Truncated, want.Note)
 		}

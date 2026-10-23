@@ -25,6 +25,7 @@
   - **G14:** distinct counts over a range past 1,024 ids are estimated and marked ≈. The allowance is ±2% on those columns.
   - **G15:** `daily_*` is counted per day and group, not per day and a finer key.
   - **G10:** new/returning labels (unless relabelled to match).
+  - **G21:** a trend's rows within a day are ordered by series, not by value.
   - **The reshapes, which change the widget:**
     - **G6:** app versions show true distinct counts, and the "(at least)" header text goes.
     - **G7:** attribute values becomes a local table, capped at the row limit.

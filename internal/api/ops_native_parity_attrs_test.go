@@ -1,9 +1,13 @@
+// The parity harness for the analytics tools: each tool's native answer
+// checked against the SQL it ran before, over the same files. When DuckDB
+// leaves (step 6 of the native engine plan), these tests go with it, and
+// the native kinds' own tests (internal/native) remain the reference.
+
 package api
 
 import (
 	"context"
 	"fmt"
-	"math"
 	"slices"
 	"sort"
 	"strconv"
@@ -229,28 +233,6 @@ func writeAttributeEdges(t *testing.T, h *host) {
 	}
 }
 
-// sameNumbers fails unless got's columns and rows are want's, cells equal
-// as text or, both numbers, as numbers (DuckDB prints a DOUBLE 200.0,
-// the engine 200).
-func sameNumbers(t *testing.T, name string, got, want tableOut) {
-	t.Helper()
-	if !slices.Equal(got.Columns, want.Columns) {
-		t.Errorf("%s: columns %q, want %q", name, got.Columns, want.Columns)
-		return
-	}
-	cell := func(a, b string) bool {
-		if a == b {
-			return true
-		}
-		x, err1 := strconv.ParseFloat(a, 64)
-		y, err2 := strconv.ParseFloat(b, 64)
-		return err1 == nil && err2 == nil && math.Abs(x-y) <= 1e-9*max(1, math.Abs(y))
-	}
-	if !slices.EqualFunc(got.Rows, want.Rows, func(a, b []string) bool { return slices.EqualFunc(a, b, cell) }) {
-		t.Errorf("%s:\n got %q\nwant %q", name, got.Rows, want.Rows)
-	}
-}
-
 // TestAttributeToolsMatchTheirOldSQL runs product_attributes, measures,
 // list_attributes and identities natively and checks each answer against
 // the tool's old SQL over the same files: the template's Parquet days and
@@ -299,7 +281,7 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 						t.Errorf("the old SQL reads %s: the rules are not applied", row[2])
 					}
 				}
-				sameAnswer(t, fmt.Sprintf("%s..%s event %q", r.From, r.To, event), toolTable(t, got), want)
+				sameNumbers(t, fmt.Sprintf("%s..%s event %q", r.From, r.To, event), toolTable(t, got), want, 0)
 			}
 		}
 		if !sawFresh || !sawRenamed {
@@ -324,7 +306,7 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 						value = oldMeasureAttr(t, h, key)
 					}
 					sameNumbers(t, fmt.Sprintf("%s..%s name %q attr_key %q", r.From, r.To, name, key), toolTable(t, got),
-						old(r, oldMeasuresSQL(cond, value), vals))
+						old(r, oldMeasuresSQL(cond, value), vals), 1e-9)
 				}
 			}
 		}
@@ -396,7 +378,7 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 							row[1], sawNameIsID = "", true
 						}
 					}
-					sameAnswer(t, fmt.Sprintf("%s..%s %s limit %d", r.From, r.To, kind, limit), toolTable(t, got), want)
+					sameNumbers(t, fmt.Sprintf("%s..%s %s limit %d", r.From, r.To, kind, limit), toolTable(t, got), want, 0)
 				}
 			}
 		}
