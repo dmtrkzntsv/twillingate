@@ -109,9 +109,10 @@ func closeAll(files []*eventsFile) {
 
 // read is rows from to to of column name in row group g: nil (every row
 // NULL) when the file lacks it. A whole column chunk is decoded for any
-// range of it, so an old DuckDB-written group, which holds several days,
-// is decoded once for each day it holds (deriveSessions reads a day at a
-// time); a Go-written group holds one day.
+// range of it, so a group holding several days is decoded once for each
+// day it holds (deriveSessions reads a day at a time): an old
+// DuckDB-written group, or a Go-written month file's group, which is cut
+// at a day only past dayCutRows rows (eventsCut).
 func (e *eventsFile) read(g int, name string, from, to int) (*vector, error) {
 	ic, ok := e.cols[name]
 	if !ok {
@@ -196,9 +197,9 @@ func cmpSessionsKey(a, b sessionsKey) int {
 // sessionsSelect over eventsOf(inputs). It works one project's day at a
 // time: it reads each row group's family, project_id and day to find the
 // days its views are in, then, for each (project, day) in order (NULL
-// last), the groups holding it, keeping only those views. A Go-written
-// file holds a day's views in its own groups, so each is read once; an
-// older DuckDB file's group spans days and is read once per day it holds.
+// last), the groups holding it, keeping only those views. A group that
+// spans days, an older DuckDB file's or a Go-written one cut at a day only
+// past dayCutRows rows (eventsCut), is read once per day it holds.
 //
 // A view without a ts is sessionized at the epoch, as native's
 // deriveSessions does; sessionsSelect would read it otherwise. Ingest

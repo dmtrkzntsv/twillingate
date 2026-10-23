@@ -1,5 +1,8 @@
 package archive
 
+// The DuckDB COPYs of sessionsSelect, identitiesSelect and aliasesSelect
+// these tests compare with leave with DuckDB in step 6.
+
 import (
 	"context"
 	"encoding/json"

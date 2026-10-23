@@ -1,5 +1,8 @@
 package native
 
+// attributionSQL, the attribution's DuckDB oracle, leaves with DuckDB in
+// step 6.
+
 import (
 	"context"
 	"fmt"

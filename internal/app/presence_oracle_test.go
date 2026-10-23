@@ -1,5 +1,7 @@
 package app
 
+// The DuckDB presence oracle in this file leaves with DuckDB in step 6.
+
 import (
 	"context"
 	"strconv"

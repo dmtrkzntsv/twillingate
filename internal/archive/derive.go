@@ -29,6 +29,11 @@ const (
 // a session when the client declared none: agg_views_daily's 30 minutes.
 const sessionGapSeconds = 1800
 
+// sessionsSelect, identitiesSelect and aliasesSelect are the derived
+// files' oracle in the tests (derived.go writes the files in Go), and the
+// Reader's SQL views still use them (reader.go): they leave with DuckDB in
+// step 6.
+
 // sessionsSelect is the SELECT of the sessions of src's views, src being a
 // relation with the events' columns. Views split as viewSessionsCTE
 // (store/sqlite/aggregate_views.go) splits them: a view with a session id

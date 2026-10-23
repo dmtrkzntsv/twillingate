@@ -23,7 +23,13 @@ child, the process that answers SQL, may take up to
 `ENGINE_MEMORY_LIMIT` (512 MB by default) for a few seconds. The daily pass
 writes the event files in the server process, in Go, and starts no child;
 on a month of a million events it peaks near 150 MB of resident memory
-(measured in a process of 25 MB at rest), on the day a month is merged. Only SQL starts a child: a widget's SQL, `query`'s and the
+(measured in a process of 25 MB at rest), on the day a month is merged.
+Its memory follows rows, not bytes: the dump holds about 45 bytes a line
+of the day's log (a day of a million lines, about 900 MB of log, peaks
+near 110 MB), and the merge about 40 bytes a row of the month. At volume
+the console's reads, not the pass, set the server's peak: a year-long
+Views or Product dashboard at a million events a month peaks at 520 to
+670 MB in the console process. Only SQL starts a child: a widget's SQL, `query`'s and the
 console's check of the users' SQL widgets at start. An ingest process never
 starts one, since the form-attribution lookup, like the daily pass, the
 built-in widgets and the check before a rename or merge rule is saved,
