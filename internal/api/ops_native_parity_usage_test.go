@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -172,6 +174,8 @@ func oldNewestArrival(latest map[int64]string, ids []int64, vals map[string]engi
 //     offsets the native grid counts, the one difference allowed; with
 //     the template's August days, a 391-day usage range has rows in both
 //     of its 333-day breakdowns;
+//   - a measure and a blocked event on 2026-08-27, the day after blog's
+//     newest view or product event, which aggregated_through stays on;
 //   - s1's view on 2026-08-26
 //     received at a fraction of a second, the newest arrival;
 //   - docs (2) views on 2026-08-21, then archived; and a third project,
@@ -196,6 +200,8 @@ func writeRetentionEdges(t *testing.T, h *host) {
 	v := 3.0
 	measure := ev(1, store.FamilyMeasures, "load", "2026-05-10", "m9", store.ActorInstall)
 	measure.Measure, measure.Value = store.MeasureTime, &v
+	after := ev(1, store.FamilyMeasures, "load", "2026-08-27", "s1", store.ActorUser)
+	after.Measure, after.Value = store.MeasureTime, &v
 	late := view("2026-08-26", "s1", store.ActorUser)
 	late.TS = time.Date(2026, 8, 26, 11, 0, 0, 123456000, time.UTC)
 	writeHostEvents(t, h,
@@ -219,6 +225,8 @@ func writeRetentionEdges(t *testing.T, h *host) {
 		view("2025-10-01", "o1", store.ActorInstall),
 		view("2026-01-15", "o1", store.ActorInstall),
 		late,
+		after,
+		ev(1, store.FamilyProduct, "spam", "2026-08-27", "s1", store.ActorUser),
 		ev(2, store.FamilyViews, "$page_view", "2026-08-21", "d1", store.ActorInstall),
 	)
 	if _, err := h.ops.RenameEvent(ctx, "test", 1, "product", "old_evt", "new_evt"); err != nil {
@@ -293,6 +301,9 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 				if len(through.Rows) != 1 || got.AggregatedThrough != through.Rows[0][0] {
 					t.Errorf("%s: aggregated_through %q, want %q", name, got.AggregatedThrough, through.Rows)
 				}
+				if r.ProjectID == 1 && got.AggregatedThrough != "2026-08-26" {
+					t.Errorf("%s: aggregated_through %q, want 2026-08-26: a measure or a blocked event moved it", name, got.AggregatedThrough)
+				}
 				if got.Truncated || got.Note != retentionNote {
 					t.Errorf("%s: truncated %v, note %q", name, got.Truncated, got.Note)
 				}
@@ -304,8 +315,9 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 	})
 
 	t.Run("retention under the row cap", func(t *testing.T) {
+		rows := h.queryRows
 		h.queryRows = 3
-		defer func() { h.queryRows = 1000 }()
+		defer func() { h.queryRows = rows }()
 		r := rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}
 		got, err := h.retention(ctx, retentionIn{rangeIn: r, Actor: "user"})
 		if err != nil {
@@ -389,4 +401,91 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 			t.Error("no row past the first 333 days: a weak case")
 		}
 	})
+}
+
+// slowNative is a native engine that waits delay before each answer, or
+// until its context is done.
+type slowNative struct {
+	Native
+	delay time.Duration
+}
+
+func (n slowNative) Answer(ctx context.Context, q native.Query, p native.Params, rules archive.Rules) (native.Result, error) {
+	select {
+	case <-time.After(n.delay):
+	case <-ctx.Done():
+		return native.Result{}, ctx.Err()
+	}
+	return n.Native.Answer(ctx, q, p, rules)
+}
+
+// retention and usage run their queries under one CONSOLE_QUERY_TIMEOUT:
+// two queries that each fit it but not together are refused with the
+// timeout's words.
+func TestRetentionAndUsageShareOneDeadline(t *testing.T) {
+	h, _ := newTestHost(t)
+	h.queryTimeout = 400 * time.Millisecond
+	h.native = slowNative{Native: h.native, delay: 250 * time.Millisecond}
+	want := enginesql.Timeout(h.queryTimeout)
+	ctx := context.Background()
+	_, err := h.retention(ctx, retentionIn{rangeIn: rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}, Actor: "user"})
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("retention: %v, want %q", err, want)
+	}
+	_, err = h.usage(ctx, usageIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-01", To: "2026-08-31"}})
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("usage: %v, want %q", err, want)
+	}
+}
+
+// oldEventsSQL is limits' events_30d count before the native engine.
+const oldEventsSQL = `SELECT count(*) FROM events WHERE day >= CAST($from AS DATE)`
+
+// events_30d counts what the old SQL counted: every family and project
+// with files (the archived one too), rules applied (a blocked event left
+// out, a renamed one kept), from the 30th day back on, today included.
+func TestCountEventsMatchesItsOldSQL(t *testing.T) {
+	h, _ := newTestHost(t)
+	ctx := context.Background()
+	today := civil.Today(time.Now())
+	at := func(daysBack int) time.Time { return today.AddDays(-daysBack).Time().Add(time.Hour) }
+	v := 1.0
+	var evs []store.Event
+	for _, back := range []int{0, 1, 29, 30, 31} {
+		evs = append(evs,
+			store.Event{ProjectID: 1, Family: store.FamilyViews, EventName: "$page_view", Kind: "web", Path: "/", TS: at(back)},
+			store.Event{ProjectID: 1, Family: store.FamilyProduct, EventName: "spam", Kind: "web", TS: at(back)},
+			store.Event{ProjectID: 1, Family: store.FamilyProduct, EventName: "old_evt", Kind: "web", TS: at(back)},
+			store.Event{ProjectID: 1, Family: store.FamilyMeasures, EventName: "load", Measure: store.MeasureTime, Value: &v, TS: at(back)},
+			store.Event{ProjectID: 2, Family: store.FamilyViews, EventName: "$page_view", Kind: "web", Path: "/", TS: at(back)})
+	}
+	writeHostEvents(t, h, evs...)
+	if _, err := h.ops.RenameEvent(ctx, "test", 1, "product", "old_evt", "new_evt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.ops.BlockEvent(ctx, "test", 1, "product", "spam"); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.ops.ArchiveProject(ctx, "test", 2); err != nil {
+		t.Fatal(err)
+	}
+	got, err := h.countEvents(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err := h.runFiles(ctx, archive.Scoped{SQL: oldEventsSQL, MaxRows: 1,
+		Args: []engine.Arg{{Name: "from", Value: today.AddDays(-29).String()}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := cellInt(cellText(res.Rows[0][0]))
+	// today, 1 and 29 days back: blog's view, renamed event and measure,
+	// and docs' view, each day.
+	if got != want || want != 12 {
+		t.Errorf("events_30d %d, old SQL %d, want 12", got, want)
+	}
+	h.native = nil
+	if _, err := h.countEvents(ctx); err == nil {
+		t.Error("counted without an engine")
+	}
 }

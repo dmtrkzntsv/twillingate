@@ -93,6 +93,10 @@ func New(o Options) *Engine {
 // today is the clock's UTC day.
 func (e *Engine) today() civil.Date { return civil.DateOf(e.now()) }
 
+// Today is the UTC day of the engine's clock, the day a retention counts
+// up to, leaving it out.
+func (e *Engine) Today() civil.Date { return e.today() }
+
 // charge is a fresh budget of MaxBytes: each call adds n bytes (n < 0
 // gives them back) and, once past MaxBytes, refuses with ErrTooLarge. It
 // is safe from several goroutines at once.

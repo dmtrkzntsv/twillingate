@@ -2,24 +2,19 @@ package api
 
 import (
 	"context"
-	"strconv"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
 // eventCountTTL is how long a count of the last 30 days' events answers
 // limits before the next read starts another.
 const eventCountTTL = 5 * time.Minute
-
-// eventsSQL counts the events of every family and project from $from on
-// (raw-first Decision 3): DuckDB answers the day filter from the files'
-// row-group statistics, and the open logs are part of the events table, so
-// one query counts both.
-const eventsSQL = `SELECT count(*) FROM events WHERE day >= CAST($from AS DATE)`
 
 // eventCount caches the last 30 days' events for limits. The count reads
 // a month of files (seconds on a busy server), so it runs at most once per
@@ -105,17 +100,36 @@ func (c *eventCount) startLocked() chan struct{} {
 }
 
 // countEvents counts the events of the 30 days ending today (UTC) in the
-// event files, rules applied, under CONSOLE_QUERY_TIMEOUT. limits reports
-// the window as of its read: only a count started before midnight and
-// read after it is a day behind its window, for at most 2 x eventCountTTL.
+// event files, of every family and of every project that has files,
+// rules applied: a native count per project from that day on, summed,
+// under one CONSOLE_QUERY_TIMEOUT. limits reports the window as of its
+// read: only a count started before midnight and read after it is a day
+// behind its window, for at most 2 x eventCountTTL.
 func (h *host) countEvents(ctx context.Context) (int64, error) {
-	from := civil.Today(time.Now()).AddDays(-29).String()
-	res, err := h.runFiles(ctx, archive.Scoped{SQL: eventsSQL, MaxRows: 1,
-		Args: []engine.Arg{{Name: "from", Value: from}}})
+	if h.native == nil {
+		return 0, invalidf("the event files cannot be queried by this process")
+	}
+	all, err := archive.ListFiles(h.eventsDir)
 	if err != nil {
 		return 0, err
 	}
-	return strconv.ParseInt(cellText(res.Rows[0][0]), 10, 64)
+	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
+	defer cancel()
+	from := civil.Today(time.Now()).AddDays(-29)
+	// No upper bound, as the day filter had none.
+	to, _ := civil.Parse("9999-12-31")
+	var n int64
+	for _, id := range slices.Sorted(maps.Keys(all)) {
+		res, err := h.answer(ctx, native.Query{Kind: "stat", Table: "events", Metrics: []native.Metric{{Op: "count"}}},
+			native.Params{Project: id, From: from, To: to})
+		if err != nil {
+			return 0, err
+		}
+		if len(res.Rows) == 1 {
+			n += cellInt(res.Rows[0][0])
+		}
+	}
+	return n, nil
 }
 
 // newHostEventCount is the host's cache of countEvents, its failures

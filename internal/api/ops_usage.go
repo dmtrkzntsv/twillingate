@@ -81,6 +81,9 @@ func (h *host) usage(ctx context.Context, in usageIn) (usageOut, error) {
 	if err != nil {
 		return usageOut{}, err
 	}
+	// One deadline for every query the answer runs, however many projects.
+	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
+	defer cancel()
 	out := usageOut{From: fromD.String(), To: toD.String(), Projects: []projectUsage{}}
 	if res, err := h.db.Run(ctx, `SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()`); err == nil && len(res.Rows) == 1 {
 		out.DatabaseBytes, _ = strconv.ParseInt(res.Rows[0][0], 10, 64)

@@ -38,6 +38,8 @@ type queryOut struct {
 // Native answers structured queries over the event files (native.Engine).
 type Native interface {
 	Answer(ctx context.Context, q native.Query, p native.Params, rules archive.Rules) (native.Result, error)
+	// Today is the engine's clock's UTC day.
+	Today() civil.Date
 }
 
 // metricSchema is native.Metric's schema, which the inference cannot
@@ -310,6 +312,18 @@ func filesError(err error, timeout time.Duration) error {
 		return invalidf("%s", enginesql.ChildExited)
 	}
 	return err
+}
+
+// cellRows is an engine result's rows as text (cellText), never nil.
+func cellRows(rows [][]any) [][]string {
+	out := make([][]string, len(rows))
+	for i, row := range rows {
+		out[i] = make([]string, len(row))
+		for j, v := range row {
+			out[i][j] = cellText(v)
+		}
+	}
+	return out
 }
 
 // cellText is an engine value as query's text: NULL as "" (as SQLite's

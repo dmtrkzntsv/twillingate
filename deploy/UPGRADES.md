@@ -1403,6 +1403,6 @@ files natively, with the same inputs and output fields.
   - `list_attributes` estimates a key's `values` past 1,024 distinct values (about ±2%).
   - `identities` leaves `name` empty for an id whose display name is the id itself.
   - `measures` prints a whole number without a decimal: `200`, where it printed `200.0`.
-  - `retention` lists offsets up to 90 days after the cohort day; it listed every offset the range allowed.
+  - `retention` lists offsets up to 90 days after the cohort day; it listed every offset the range allowed. A project whose actors the engine cannot hold in memory is refused.
 
 Rollback: install the previous release; nothing in the database changed.

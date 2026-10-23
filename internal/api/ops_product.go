@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"slices"
-	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
@@ -181,6 +180,9 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 	if p == nil {
 		return retentionOut{}, h.unknownProjectErr(ctx, in.ProjectID)
 	}
+	// One deadline for every query the answer runs.
+	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
+	defer cancel()
 	out := retentionOut{tableOut: tableOut{Columns: retentionColumns, Rows: [][]string{}}}
 	if params, ok := rangeParams(in.rangeIn); ok {
 		res, err := h.answer(ctx, native.Query{Kind: "retention", Output: "grid", IdentifiedBy: in.Actor, Offsets: retentionOffsets}, params)
@@ -219,8 +221,11 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 // applied, "" with none; so recent cohorts read as "not counted yet",
 // never as zero.
 func (h *host) aggregatedThrough(ctx context.Context, project int64) (string, error) {
+	if h.native == nil {
+		return "", invalidf("the event files cannot be queried by this process")
+	}
 	first, _ := civil.Parse("1970-01-01")
-	last := civil.Today(time.Now()).AddDays(-1)
+	last := h.native.Today().AddDays(-1) // the retention's today
 	if last.Before(first) {
 		return "", nil
 	}

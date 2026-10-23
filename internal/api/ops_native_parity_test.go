@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -150,6 +151,24 @@ func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[st
 		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — narrow the range or raise the limit", h.queryRows)
 	}
 	return out, nil
+}
+
+// runFiles runs q on the event files under CONSOLE_QUERY_TIMEOUT, with the
+// registry's rules, for the tools' old SQL the parity tests keep: a
+// failure reads as filesError words it.
+func (h *host) runFiles(ctx context.Context, q archive.Scoped) (engine.Result, error) {
+	if h.files == nil {
+		return engine.Result{}, invalidf("the event files cannot be queried by this process")
+	}
+	timeout := h.queryTimeout
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	events, attrs := h.reg.Snapshot(ctx).RuleLists()
+	res, err := h.files.QueryScoped(ctx, q, archive.Rules{Events: events, Attributes: attrs})
+	if err != nil {
+		return engine.Result{}, filesError(err, timeout)
+	}
+	return res, nil
 }
 
 // writeParityEdges adds to blog's files the cases the tools' presets

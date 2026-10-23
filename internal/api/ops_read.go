@@ -14,8 +14,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
@@ -104,36 +102,6 @@ type tableOut struct {
 	Rows      [][]string `json:"rows"`
 	Truncated bool       `json:"truncated,omitempty"`
 	Note      string     `json:"note,omitempty"`
-}
-
-// runFiles runs q on the event files under CONSOLE_QUERY_TIMEOUT, with the
-// registry's rules, for the tools' own SQL: a failure reads as filesError
-// words it.
-func (h *host) runFiles(ctx context.Context, q archive.Scoped) (engine.Result, error) {
-	if h.files == nil {
-		return engine.Result{}, invalidf("the event files cannot be queried by this process")
-	}
-	timeout := h.queryTimeout
-	ctx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-	events, attrs := h.reg.Snapshot(ctx).RuleLists()
-	res, err := h.files.QueryScoped(ctx, q, archive.Rules{Events: events, Attributes: attrs})
-	if err != nil {
-		return engine.Result{}, filesError(err, timeout)
-	}
-	return res, nil
-}
-
-// cellRows is an engine result's rows as text (cellText), never nil.
-func cellRows(rows [][]any) [][]string {
-	out := make([][]string, len(rows))
-	for i, row := range rows {
-		out[i] = make([]string, len(row))
-		for j, v := range row {
-			out[i][j] = cellText(v)
-		}
-	}
-	return out
 }
 
 // ---- list_projects ----

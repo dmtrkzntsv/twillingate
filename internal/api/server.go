@@ -57,7 +57,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 		ingestURL: cfg.IngestURL, logger: logger, limits: limitsFrom(cfg),
 		ingestDisabled: cfg.IngestDisabled, files: files, native: nat, eventsDir: cfg.EventsDir,
 		queryTimeout: cfg.Console.QueryTimeout, queryRows: cfg.Console.QueryMaxRows}
-	if files != nil {
+	if nat != nil {
 		h.events = h.newHostEventCount()
 		// Counted from the start, so the first limits read (the Projects
 		// page) does not wait for a month of files.

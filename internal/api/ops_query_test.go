@@ -57,6 +57,8 @@ type fakeNative struct {
 	err      error
 }
 
+func (f *fakeNative) Today() civil.Date { return civil.Today(time.Now()) }
+
 func (f *fakeNative) Answer(ctx context.Context, q native.Query, p native.Params, rules archive.Rules) (native.Result, error) {
 	_, f.deadline = ctx.Deadline()
 	f.q, f.p, f.rules = q, p, rules
