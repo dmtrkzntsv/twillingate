@@ -433,7 +433,7 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 			return nil, nil, err
 		}
 		rows := ids.rowsIn(&r) // only those first seen in r put together
-		if err := charge(rows.bytes()); err != nil {
+		if err := charge(rows.Bytes()); err != nil {
 			return nil, nil, err
 		}
 		b := identityBatch(rows, s.project)

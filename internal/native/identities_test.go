@@ -192,7 +192,7 @@ func TestIdentitiesRowsMatchDuckDB(t *testing.T) {
 			if !ok || formatDay(day) != row[4][:10] {
 				t.Errorf("%s %s first seen on %s (%t), want %s", row[1], row[2], formatDay(day), ok, row[4][:10])
 			}
-			if name, _ := first.name(identityKey{row[1] == "group", row[2]}); name != row[3] {
+			if name, _ := first.name(identityKey{Group: row[1] == "group", ID: row[2]}); name != row[3] {
 				t.Errorf("%s %s named %q, want %q", row[1], row[2], name, row[3])
 			}
 		}

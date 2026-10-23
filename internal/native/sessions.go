@@ -1,9 +1,7 @@
 package native
 
 import (
-	"cmp"
 	"context"
-	"slices"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
@@ -18,10 +16,6 @@ var sessionColumns = []string{
 	"duration_sec", "views", "entry_host", "entry_path", "exit_path", "referrer_source",
 	"utm_source", "utm_medium", "utm_campaign",
 }
-
-// sessionGapSeconds is archive's: the silence after which an actor's next
-// undeclared view starts a session.
-const sessionGapSeconds = 1800
 
 // viewColumns are the columns of the views a gap day's sessions are
 // derived from.
@@ -85,54 +79,6 @@ func (e *Engine) scanSessions(ctx context.Context, project int64, r Range, cols 
 	return err
 }
 
-// viewRow is one view of a gap day, as sessionizing orders it: by kind and
-// actor (the partition), then ts and id (NULL ids last, as DuckDB sorts
-// them ascending). b and i find the row's other columns.
-type viewRow struct {
-	kind, actor, sid, id        string
-	kindNull, actorNull, idNull bool
-	ts                          int64 // unix microseconds
-	b, i                        int32
-}
-
-// viewRowBytes is about what a viewRow costs.
-const viewRowBytes = 96
-
-func cmpViewRow(a, b viewRow) int {
-	if c := cmpPartition(a, b); c != 0 {
-		return c
-	}
-	if c := cmp.Compare(a.ts, b.ts); c != 0 {
-		return c
-	}
-	if c := cmp.Compare(boolInt(a.idNull), boolInt(b.idNull)); c != 0 {
-		return c
-	}
-	return cmp.Compare(a.id, b.id)
-}
-
-func cmpPartition(a, b viewRow) int {
-	if c := cmp.Compare(boolInt(a.kindNull), boolInt(b.kindNull)); c != 0 {
-		return c
-	}
-	if c := cmp.Compare(a.kind, b.kind); c != 0 {
-		return c
-	}
-	if c := cmp.Compare(boolInt(a.actorNull), boolInt(b.actorNull)); c != 0 {
-		return c
-	}
-	return cmp.Compare(a.actor, b.actor)
-}
-
-// seconds is ts's whole seconds: floor(epoch(ts)).
-func seconds(ts int64) int64 {
-	s := ts / 1e6
-	if ts%1e6 < 0 {
-		s--
-	}
-	return s
-}
-
 // batchBytes is about what b's columns take.
 func batchBytes(b *Batch) int64 {
 	var n int64
@@ -145,35 +91,9 @@ func batchBytes(b *Batch) int64 {
 	return n
 }
 
-// session is one session being derived: its first and last view (indexes
-// into the day's sorted rows) and its views.
-type session struct {
-	first, last int
-	views       int64
-	declared    bool
-}
-
-// sessionKey is a session's key within its partition: a declared session
-// id ('id:' in archive), or the run of undeclared views ('gap:').
-type sessionKey struct {
-	declared bool
-	sid      string
-	run      int
-}
-
 // deriveSessions derives project's sessions of day (days since 1970-01-01)
 // from its views in events (Parquet files and logs, read without rules),
-// as archive's sessionsSelect does:
-//   - views are partitioned by (kind, actor_id), NULL one value, and
-//     ordered by whole second t, then ts and id;
-//   - a view with a session id belongs to that id's session; any other
-//     starts a session when it is the partition's first view or comes more
-//     than sessionGapSeconds after the view before it, whichever session
-//     that was in. Views in one second are one peer group, as the window's
-//     running sum counts them together: the group's first view decides;
-//   - a session's entry columns are its first view's by (ts, id), its exit
-//     path its last view's, its duration the whole seconds between them,
-//     its session_id the declared id or NULL.
+// as archive's sessionsSelect does (archive.Sessionize).
 //
 // gr reads the Parquet row groups (the worker's reader); charge as
 // scanSessions describes.
@@ -232,7 +152,7 @@ func deriveSessions(project, day int64, events archive.Files, gr *groupReader, c
 		}
 		n += b.N
 	}
-	if err := hold(int64(n) * viewRowBytes); err != nil {
+	if err := hold(int64(n) * archive.SessionViewBytes); err != nil {
 		return nil, err
 	}
 	const (
@@ -249,108 +169,69 @@ func deriveSessions(project, day int64, events archive.Files, gr *groupReader, c
 		cUTMMedium
 		cUTMCampaign
 	)
-	rows := make([]viewRow, 0, n)
+	rows := make([]archive.SessionView, 0, n)
 	for k, b := range batches {
 		c := cols[k]
 		for i := range b.N {
-			r := viewRow{b: int32(k), i: int32(i)}
+			r := archive.SessionView{Batch: int32(k), Row: int32(i)}
 			var ok bool
-			r.kind, ok = textAt(c[cKind], i)
-			r.kindNull = !ok
-			r.actor, ok = textAt(c[cActor], i)
-			r.actorNull = !ok
-			r.sid, _ = textAt(c[cSession], i)
-			r.id, ok = textAt(c[cID], i)
-			r.idNull = !ok
+			r.Kind, ok = textAt(c[cKind], i)
+			r.KindNull = !ok
+			r.Actor, ok = textAt(c[cActor], i)
+			r.ActorNull = !ok
+			r.SessionID, _ = textAt(c[cSession], i)
+			r.ID, ok = textAt(c[cID], i)
+			r.IDNull = !ok
 			if ts := c[cTS]; ts != nil && ts.Times != nil {
-				r.ts = ts.Times[i]
+				r.TS = ts.Times[i]
 			}
 			rows = append(rows, r)
 		}
 	}
-	slices.SortFunc(rows, cmpViewRow)
-
-	var (
-		sessions  []session
-		partition []int // each session's first row, for its kind and actor
-	)
-	for start := 0; start < len(rows); {
-		end := start + 1
-		for end < len(rows) && cmpPartition(rows[start], rows[end]) == 0 {
-			end++
-		}
-		keys := map[sessionKey]int{}
-		run := 0
-		var prev int64
-		for j := start; j < end; {
-			t := seconds(rows[j].ts)
-			k := j + 1
-			for k < end && seconds(rows[k].ts) == t {
-				k++
-			}
-			if rows[j].sid == "" && (j == start || t-prev > sessionGapSeconds) {
-				run++
-			}
-			for x := j; x < k; x++ {
-				key := sessionKey{run: run}
-				if sid := rows[x].sid; sid != "" {
-					key = sessionKey{declared: true, sid: sid}
-				}
-				s, ok := keys[key]
-				if !ok {
-					s = len(sessions)
-					keys[key] = s
-					sessions = append(sessions, session{first: x, declared: key.declared})
-					partition = append(partition, start)
-				}
-				sessions[s].last = x
-				sessions[s].views++
-			}
-			prev, j = t, k
-		}
-		start = end
-	}
+	sessions := archive.Sessionize(rows)
 
 	m := len(sessions)
-	text := func(of func(s session) viewRow, col int) *Column {
+	text := func(of func(s archive.Session) archive.SessionView, col int) *Column {
 		return textColumn(m, func(i int) (string, bool) {
 			r := of(sessions[i])
-			return textAt(cols[r.b][col], int(r.i))
+			return textAt(cols[r.Batch][col], int(r.Row))
 		})
 	}
-	first := func(s session) viewRow { return rows[s.first] }
-	last := func(s session) viewRow { return rows[s.last] }
+	first := func(s archive.Session) archive.SessionView { return rows[s.First] }
+	last := func(s archive.Session) archive.SessionView { return rows[s.Last] }
 	out := &Batch{N: m, Cols: make(map[string]*Column, len(sessionColumns))}
-	ints := func(v func(s session) int64) *Column {
+	ints := func(v func(s archive.Session) int64) *Column {
 		c := &Column{Ints: make([]int64, m)}
 		for i, s := range sessions {
 			c.Ints[i] = v(s)
 		}
 		return c
 	}
-	out.Cols["project_id"] = ints(func(session) int64 { return project })
-	out.Cols["day"] = ints(func(session) int64 { return day })
+	out.Cols["project_id"] = ints(func(archive.Session) int64 { return project })
+	out.Cols["day"] = ints(func(archive.Session) int64 { return day })
 	out.Cols["kind"] = textColumn(m, func(i int) (string, bool) {
-		r := rows[partition[i]]
-		return r.kind, !r.kindNull
+		r := rows[sessions[i].Partition]
+		return r.Kind, !r.KindNull
 	})
 	out.Cols["actor_id"] = textColumn(m, func(i int) (string, bool) {
-		r := rows[partition[i]]
-		return r.actor, !r.actorNull
+		r := rows[sessions[i].Partition]
+		return r.Actor, !r.ActorNull
 	})
 	out.Cols["actor_kind"] = text(first, cActorKind)
 	out.Cols["session_id"] = textColumn(m, func(i int) (string, bool) {
 		s := sessions[i]
-		return rows[s.first].sid, s.declared
+		return rows[s.First].SessionID, s.Declared
 	})
 	started := &Column{Times: make([]int64, m)}
 	ended := &Column{Times: make([]int64, m)}
 	for i, s := range sessions {
-		started.Times[i], ended.Times[i] = rows[s.first].ts, rows[s.last].ts
+		started.Times[i], ended.Times[i] = rows[s.First].TS, rows[s.Last].TS
 	}
 	out.Cols["started_at"], out.Cols["ended_at"] = started, ended
-	out.Cols["duration_sec"] = ints(func(s session) int64 { return seconds(rows[s.last].ts) - seconds(rows[s.first].ts) })
-	out.Cols["views"] = ints(func(s session) int64 { return s.views })
+	out.Cols["duration_sec"] = ints(func(s archive.Session) int64 {
+		return archive.Seconds(rows[s.Last].TS) - archive.Seconds(rows[s.First].TS)
+	})
+	out.Cols["views"] = ints(func(s archive.Session) int64 { return s.Views })
 	out.Cols["entry_host"] = text(first, cHost)
 	out.Cols["entry_path"] = text(first, cPath)
 	out.Cols["exit_path"] = text(last, cPath)
