@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/maphash"
 	"math"
+	"math/bits"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,8 +25,8 @@ import (
 //     of it: index group*nd + day, nd being 1 or the range's days;
 //   - counts, sums, minima and maxima are dense arrays per cell;
 //   - per-day distinct ids are 16-byte keys, the (group, day) and the id's
-//     64-bit hash, sorted and deduplicated per batch, compacted as they
-//     grow and merged at the end: exact but for a hash collision (odds
+//     64-bit hash, each once in a hash set per worker and day (daySet),
+//     merged at the end: exact but for a hash collision (odds
 //     about n²/2^65 among a day's n ids), and a (group, day) with rows but
 //     only NULL ids still has a key, so it counts as a day with rows;
 //   - whole-range distinct ids are a dset per group, keyed by 32 bits of
@@ -62,35 +63,73 @@ type dayKey struct{ c, h uint64 }
 func (k dayKey) cell() uint64 { return k.c >> 1 }
 func (k dayKey) null() bool   { return k.c&1 == 1 }
 
-func cmpDayKey(a, b dayKey) int {
-	if a.c != b.c {
-		return cmp.Compare(a.c, b.c)
-	}
-	return cmp.Compare(a.h, b.h)
+// daySet is one worker's per-day keys of one day, each once: an
+// open-addressing table probed linearly, its slots holding c+1 (0: an
+// empty slot; c never reaches the largest uint64), grown to twice its size
+// past three quarters full. So memory follows the distinct keys rather
+// than the rows, no batch is sorted, and a batch, mostly of one day, probes
+// a table of that day's ids alone.
+type daySet struct {
+	slots []dayKey
+	n     int
+	shift uint // 64 - log2(len(slots))
 }
 
-// keySink is one worker's per-day keys: each batch's sorted and
-// deduplicated, appended, and the whole compacted once it is twice its
-// size after the last compaction (and past compactAt keys), so memory
-// follows the distinct keys rather than the rows.
-type keySink struct {
-	keys      []dayKey
-	compacted int
+// daySetMin is a set's first size, in slots; daySetBytes a set's header.
+const (
+	daySetMin   = 16
+	daySetBytes = 40
+)
+
+func (s *daySet) slot(k dayKey) uint64 {
+	return ((k.c*0x9E3779B97F4A7C15 ^ k.h) * 0xBF58476D1CE4E5B9) >> s.shift
 }
 
-// compactAt is a variable so a test can lower it.
-var compactAt = 1 << 20
-
-// addGroup appends a batch's keys and returns how many bytes the sink's
-// array grew by.
-func (k *keySink) addGroup(group []dayKey) int64 {
-	before := cap(k.keys)
-	k.keys = append(k.keys, sortedUniqueKeys(group)...)
-	if len(k.keys) > compactAt && len(k.keys) > 2*k.compacted {
-		k.keys = sortedUniqueKeys(k.keys)
-		k.compacted = len(k.keys)
+// add adds k and returns how many bytes the set's table grew by.
+func (s *daySet) add(k dayKey) int64 {
+	var grew int64
+	if 4*(s.n+1) > 3*len(s.slots) {
+		grew = s.grow()
 	}
-	return int64(cap(k.keys)-before) * dayKeyBytes
+	s.insert(dayKey{c: k.c + 1, h: k.h})
+	return grew
+}
+
+// insert puts the stored key k (c already +1) in its slot, unless there.
+func (s *daySet) insert(k dayKey) {
+	mask := uint64(len(s.slots) - 1)
+	for i := s.slot(k); ; i = (i + 1) & mask {
+		switch e := s.slots[i]; {
+		case e == k:
+			return
+		case e.c == 0:
+			s.slots[i] = k
+			s.n++
+			return
+		}
+	}
+}
+
+func (s *daySet) grow() int64 {
+	old := s.slots
+	size := max(daySetMin, 2*len(old))
+	s.slots, s.n = make([]dayKey, size), 0
+	s.shift = uint(64 - bits.TrailingZeros(uint(size)))
+	for _, e := range old {
+		if e.c != 0 {
+			s.insert(e)
+		}
+	}
+	return int64(size-len(old)) * dayKeyBytes
+}
+
+// each calls f with every key of s, in no order.
+func (s *daySet) each(f func(dayKey)) {
+	for _, e := range s.slots {
+		if e.c != 0 {
+			f(dayKey{c: e.c - 1, h: e.h})
+		}
+	}
 }
 
 func sortedUnique(s []uint64) []uint64 {
@@ -98,24 +137,27 @@ func sortedUnique(s []uint64) []uint64 {
 	return slices.Compact(s)
 }
 
-func sortedUniqueKeys(s []dayKey) []dayKey {
-	slices.SortFunc(s, cmpDayKey)
-	return slices.Compact(s)
-}
-
-// mergeKeys returns the sinks' keys sorted, each once, releasing each
-// sink's array once copied.
-func mergeKeys(sinks []*keySink) []dayKey {
-	n := 0
-	for _, s := range sinks {
-		n += len(s.keys)
+// mergeSets returns the sets' keys in one set, releasing the others: the
+// largest takes theirs.
+func mergeSets(sets []*daySet) daySet {
+	var into *daySet
+	for _, s := range sets {
+		if into == nil || s.n > into.n {
+			into = s
+		}
 	}
-	all := make([]dayKey, 0, n)
-	for _, s := range sinks {
-		all = append(all, s.keys...)
-		s.keys, s.compacted = nil, 0
+	if into == nil {
+		return daySet{}
 	}
-	return sortedUniqueKeys(all)
+	for _, s := range sets {
+		if s != into {
+			s.each(func(k dayKey) { into.add(k) })
+			*s = daySet{}
+		}
+	}
+	out := *into
+	*into = daySet{}
+	return out
 }
 
 // dset is one group's distinct ids over the whole range: exact, as keys
@@ -501,14 +543,14 @@ type part struct {
 	bounces [][]int64 // per mask, per cell, rows with views 1 (when agg.bounces)
 	nums    []numPart
 	msrs    []msrPart
-	sets    [][]dset // per distinct column, per group; nil without set
-	days    []keySink
+	sets    [][]dset   // per distinct column, per group; nil without set
+	days    [][]daySet // per distinct column with day keys, per day of the range
 	// scratch, reused across batches
 	sel, gids  []int32
 	pass       [][]bool // per mask but 0, per row of the batch: whether it passes
 	hashes     []uint64
 	keys       []uint64
-	buf        []dayKey
+	seen       []uint64 // per dictionary entry: the cell+1 its id was last added to the per-day keys for, in this batch
 	resolveIDs []int32
 	grew       int64 // bytes the partials grew by in this batch
 }
@@ -751,7 +793,13 @@ func (p *part) grow(a *agg, groups int) {
 	}
 	if p.sets == nil {
 		p.sets = make([][]dset, len(a.distinct))
-		p.days = make([]keySink, len(a.distinct))
+		p.days = make([][]daySet, len(a.distinct))
+		for j, d := range a.distinct {
+			if d.day {
+				p.days[j] = make([]daySet, a.ndays)
+				p.grew += int64(a.ndays) * daySetBytes
+			}
+		}
 	}
 	for j, d := range a.distinct {
 		if d.set {
@@ -1011,7 +1059,17 @@ func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *Batch, sel, gids []
 		}
 	}
 	p.hashes, p.keys = hashes, keys
-	buf := p.buf[:0]
+	// seen skips the id's rows after its first in a cell, as long as its
+	// rows keep to one cell (a batch is mostly one day): only a key not
+	// yet added since the id's last cell probes the set.
+	seen := p.seen
+	if d.day && c != nil {
+		seen = growTo(seen[:0], len(c.Dict))
+		clear(seen)
+		p.seen = seen
+	}
+	last := ^uint64(0) // the cell whose NULL key was added last
+	days := p.days[j]
 	for k, i := range sel {
 		g := gids[k]
 		if g < 0 || (keep != nil && !keep[i]) {
@@ -1024,21 +1082,23 @@ func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *Batch, sel, gids []
 		if d.set && x >= 0 {
 			p.grew += p.sets[j][g].add(keys[x])
 		}
-		if d.day {
-			cell := uint64(g)*uint64(a.ndays) + uint64(off(i))
-			key := dayKey{c: cell<<1 | 1}
-			if x >= 0 {
-				key = dayKey{c: cell << 1, h: hashes[x]}
+		if !d.day {
+			continue
+		}
+		day := off(i)
+		cell := uint64(g)*uint64(a.ndays) + uint64(day)
+		if x < 0 {
+			if cell != last {
+				p.grew += days[day].add(dayKey{c: cell<<1 | 1})
+				last = cell
 			}
-			if n := len(buf); n == 0 || buf[n-1] != key {
-				buf = append(buf, key)
-			}
+			continue
+		}
+		if seen[x] != cell+1 {
+			p.grew += days[day].add(dayKey{c: cell << 1, h: hashes[x]})
+			seen[x] = cell + 1
 		}
 	}
-	if d.day {
-		p.grew += p.days[j].addGroup(buf)
-	}
-	p.buf = buf
 	return nil
 }
 
@@ -1175,7 +1235,7 @@ type merged struct {
 	msrs    []msrPart
 	hists   [][]histEntry // per measure column with hist: sorted by cell, then bucket
 	sets    [][]dset
-	keys    [][]dayKey // per distinct column with day keys: all of them
+	days    [][]daySet // per distinct column with day keys, per day: all of them
 	runs    [][]run    // and their counts per (group, day)
 	// parts are the groups of each partition a share is taken over, by
 	// partition (nil: one, every group); partOf is each group's.
@@ -1294,20 +1354,29 @@ func (a *agg) merge() *merged {
 		m.hists[j] = es
 		hists[j] = nil
 	}
-	m.keys = make([][]dayKey, len(a.distinct))
+	m.days = make([][]daySet, len(a.distinct))
 	m.runs = make([][]run, len(a.distinct))
 	for j, d := range a.distinct {
 		if !d.day {
 			continue
 		}
-		sinks := make([]*keySink, 0, len(a.parts))
+		m.days[j] = make([]daySet, a.ndays)
+		sets := make([]*daySet, 0, len(a.parts))
+		for day := range a.ndays {
+			sets = sets[:0]
+			for w := range a.parts {
+				if a.parts[w].days != nil {
+					sets = append(sets, &a.parts[w].days[j][day])
+				}
+			}
+			m.days[j][day] = mergeSets(sets)
+		}
 		for w := range a.parts {
 			if a.parts[w].days != nil {
-				sinks = append(sinks, &a.parts[w].days[j])
+				a.parts[w].days[j] = nil
 			}
 		}
-		m.keys[j] = mergeKeys(sinks)
-		m.runs[j] = runsOf(m.keys[j])
+		m.runs[j] = runsOf(m.days[j])
 	}
 	return m
 }
@@ -1364,18 +1433,27 @@ func mergeNum(dst, src *numPart, float bool, cells int) {
 	}
 }
 
-// runsOf counts sorted keys' non-NULL ids per cell.
-func runsOf(keys []dayKey) []run {
+// runsOf counts each cell's distinct non-NULL ids, in cell order: a
+// day's keys' cells are sorted, as plain integers, then the cells.
+func runsOf(days []daySet) []run {
 	var out []run
-	for _, k := range keys {
-		c := k.cell()
-		if len(out) == 0 || out[len(out)-1].cell != c {
-			out = append(out, run{cell: c})
-		}
-		if !k.null() {
-			out[len(out)-1].n++
+	var cs []uint64
+	for d := range days {
+		cs = cs[:0]
+		days[d].each(func(k dayKey) { cs = append(cs, k.c) })
+		slices.Sort(cs)
+		for x, c := range cs {
+			if x == 0 || cs[x-1]>>1 != c>>1 {
+				out = append(out, run{cell: c >> 1})
+			}
+			if c&1 == 0 {
+				out[len(out)-1].n++
+			}
 		}
 	}
+	// A cell is group*ndays + day: by day, the cells of each group come
+	// in order but the groups interleave.
+	slices.SortFunc(out, func(a, b run) int { return cmp.Compare(a.cell, b.cell) })
 	return out
 }
 
@@ -1754,17 +1832,24 @@ func (m *merged) unionDays(j int, gs []int32) []int64 {
 		}
 	}
 	nd := uint64(m.a.ndays)
-	var keys []dayKey
-	for _, k := range m.keys[j] {
-		cell := k.cell()
-		if g := cell / nd; in[g] {
-			keys = append(keys, dayKey{c: (cell%nd)<<1 | k.c&1, h: k.h})
+	var out []int64
+	for d := range m.days[j] {
+		// The day's keys of the groups gs, without their group: a NULL
+		// key marks rows, the others are the ids.
+		var ids daySet
+		rows := false
+		m.days[j][d].each(func(k dayKey) {
+			if !in[k.cell()/nd] {
+				return
+			}
+			rows = true
+			if !k.null() {
+				ids.add(dayKey{h: k.h})
+			}
+		})
+		if rows {
+			out = append(out, int64(ids.n))
 		}
-	}
-	runs := runsOf(sortedUniqueKeys(keys))
-	out := make([]int64, len(runs))
-	for i, r := range runs {
-		out[i] = r.n
 	}
 	return out
 }

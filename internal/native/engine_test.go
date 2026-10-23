@@ -855,7 +855,11 @@ func TestDistinctKeysTrackedRowsOnly(t *testing.T) {
 	if err := a.add(0, b); err != nil {
 		t.Fatal(err)
 	}
-	if keys := a.parts[0].days[ms[0].distinct].keys; len(keys) != 1 || keys[0].null() {
+	var keys []dayKey
+	for _, s := range a.parts[0].days[ms[0].distinct] {
+		s.each(func(k dayKey) { keys = append(keys, k) })
+	}
+	if len(keys) != 1 || keys[0].null() {
 		t.Errorf("per-day keys %v, want 1 (only the filtered rows' actor)", keys)
 	}
 	if h := a.parts[0].hashes; h[1] != 0 || h[2] != 0 || h[3] != 0 {
@@ -863,6 +867,49 @@ func TestDistinctKeysTrackedRowsOnly(t *testing.T) {
 	}
 	if a.mem.n.Load() <= 0 {
 		t.Error("no memory counted")
+	}
+}
+
+// A daySet holds each key once, through its growths and a merge, and
+// counts its table's bytes exactly.
+func TestDaySet(t *testing.T) {
+	want := map[dayKey]bool{}
+	var sets [3]daySet
+	var grew [3]int64
+	for i := range 20000 {
+		// Few cells and ids, so most adds repeat a key; the cell's low
+		// bit marks a NULL key, whose hash is 0.
+		k := dayKey{c: uint64(i*7%61) << 1, h: uint64(i*13%997) * 0x9E3779B97F4A7C15}
+		if i%10 == 0 {
+			k = dayKey{c: uint64(i%61)<<1 | 1}
+		}
+		want[k] = true
+		w := i % 3
+		grew[w] += sets[w].add(k)
+	}
+	for w := range sets {
+		if grew[w] != int64(len(sets[w].slots))*dayKeyBytes {
+			t.Errorf("set %d: grew %d bytes, has %d slots", w, grew[w], len(sets[w].slots))
+		}
+		if 4*sets[w].n > 3*len(sets[w].slots) {
+			t.Errorf("set %d: %d keys in %d slots", w, sets[w].n, len(sets[w].slots))
+		}
+	}
+	merged := mergeSets([]*daySet{&sets[0], &sets[1], &sets[2]})
+	seen := map[dayKey]bool{}
+	merged.each(func(k dayKey) {
+		if seen[k] || !want[k] {
+			t.Fatalf("key %v: twice or never added", k)
+		}
+		seen[k] = true
+	})
+	if len(seen) != len(want) {
+		t.Errorf("%d keys merged, want %d", len(seen), len(want))
+	}
+	for _, s := range sets {
+		if s.slots != nil {
+			t.Error("a merged set kept its table")
+		}
 	}
 }
 

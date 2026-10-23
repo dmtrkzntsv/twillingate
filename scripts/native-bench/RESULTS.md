@@ -1222,3 +1222,22 @@ The first miss now decodes every column the log has: one decode, never again for
 - In that load the GC goal reaches 96 MB, against 73 MB in 2a. Live after a GC stays 21 to 43 MB, close to 2a's 25 to 36.
 - So the extra is the one decode's transient: every column's builders with their lookup maps (about 12 MB) while the other widgets' scans run. The kept entry and the copies are not the cause.
 - Warm loads add nothing to the peak.
+
+### 2c: per-day distinct ids without sorting each batch
+
+The per-day keys (a cell and the id's 64-bit hash) were sorted and deduplicated per batch (`slices.SortFunc`), appended to the worker's array and compacted past 1M keys. They are now put in an open-addressing hash set per worker, distinct column and day of the range (`daySet`, linear probing, grown at three quarters full, its table's bytes charged to `MaxBytes`). A batch is mostly of one day, so it probes a table of that day's ids alone, which stays in cache. A per-batch array by dictionary entry (the cell its id was last added for) skips an id's repeated rows in a cell before any probe. At the merge each day's sets are folded into the largest, and the counts per cell come from sorting each day's cells as plain integers. The keys and so the counts are the same as before; the whole-range sets and their sketches are untouched.
+
+In a Views load, a per-day query adds about 1M rows; the array by dictionary entry leaves about 400k probes for about 200k distinct keys.
+
+"Before" is the tree after 2b fix round 3 (`1ca918b`), measured in the same session. Load at start 0.88 to 0.98.
+
+| Dashboard | Open log | Before first / best | 2c first / best | CPU (best warm) before / 2c | Change (best) | 3f DuckDB best | Peak before / 2c |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | no | 1.72 s / 1.62 s | 1.11 s / 1.08 s | 3.21 / 2.14 s | 0.66x | 1.09 s | 128 / 122 MB |
+| Views (20) | yes | 2.24 s / 1.67 s | 1.74 s / 1.13 s | 3.30 / 2.24 s | 0.68x | — | 149 / 151 MB |
+| Product (10) | no | 1.26 s / 1.18 s | 1.12 s / 1.07 s | 2.33 / 2.12 s | 0.91x | 1.71 s | 193–204 / 194–211 MB |
+| Product (10) | yes | 2.11 s / 1.19 s | 1.81 s / 1.07 s | 2.37 / 2.13 s | 0.90x | — | 219 / 219 MB |
+
+- **Views at 30 days and 1M now matches DuckDB's step 3f** (1.08 s against 1.09 s); Product is 0.63x DuckDB's.
+- In the Views profile the per-day distinct path (`addDistinct` with the sets) is 0.32 s of CPU a load, from the sort's 1.05 s alone. A first version with one set per worker and column, not per day, took Views only to 1.36 s: its table outgrew the cache, and its growths and the merge's sort of every key cost about as much as the sort had.
+- The peaks are within the run-to-run spread: Product without the log gave 193 to 204 MB before and 194 to 211 MB after, over three runs each.

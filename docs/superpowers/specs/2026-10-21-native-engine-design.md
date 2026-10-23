@@ -979,6 +979,12 @@ Each measured as step 4c's cells (`scripts/native-bench/RESULTS.md`,
   - A file is told apart by device, inode and birth time (statx).
   - Entries of logs gone from their path are pruned.
 - **Ruling: rows need not come in line order.** An all-families query gets a batch per family, each in line order. A reader that breaks ties by the order it meets rows (identities' name at equal timestamps keeps the first met) may break one differently than line order would. This is accepted: the order across files already varies with the parallel workers, and within one log it is the same for the same log.
+- **2c, per-day distinct without a sort:**
+  - The per-day keys go into an open-addressing hash set per worker, distinct column and day (`daySet`), its table charged to `MaxBytes`.
+  - An array by dictionary entry skips an id's repeated rows in a cell before any probe.
+  - The keys, and so every count, are the same as before.
+  - Warm loads: Views 1.08 s without the log (from 1.62; DuckDB 1.09) and 1.13 s with it (from 1.67). Product 1.07 s both ways (from 1.18 and 1.19).
+  - Peaks unchanged within the spread.
 
 ## Left to the builder
 
