@@ -917,3 +917,172 @@ Notes on the step 4 dashboards (written by hand after the run):
   more than step 3f's one or nine: see the spec's "Measurements (step 4)".
 - Every cell is in `~/.cache/twbench-native/4/dash/<volume>/cells/` and
   `~/.cache/twbench-native/4/dash/dashboards.json`.
+
+## Step 4b: a day cuts a group only past T rows
+
+Run 2026-10-23 from 08:25 local (78 cells, 0 above the gate; load 0.85 to 1.00). The step 3f events rebuilt through the Go pass once per T (`ARCHIVE_DAY_CUT_ROWS=T native-bench dashboards -engines native -ranges 7,30,90,365 -small 30 -from <3f root> -before <3f dashboards.json>`, `internal/archive/measure_daycut.go`), native only: Views and Product at 7, 30, 90 and 365 days, the rest at 30. Best of 3 warm runs (Retention: the first load); "per day" is step 4's group per family and day; DuckDB is step 3f's. Chosen: T = 32,768. The per-T tables with first runs and slowest widgets follow; every cell is in `~/.cache/twbench-native/4/dash-T<T>/`.
+
+
+**100k**
+
+| Dashboard | Range | 3f | per day | T=16384 | T=32768 | T=65536 | DuckDB (3f) | Peak per day / T=16384 / T=32768 / T=65536 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views | 7 d | 278 ms | 316 ms | 82 ms | 81 ms | 140 ms | 376 ms | 91 / 57 / 59 / 64 MB |
+| Views | 30 d | 377 ms | 461 ms | 230 ms | 234 ms | 218 ms | 446 ms | 92 / 64 / 69 / 68 MB |
+| Views | 90 d | 1.03 s | 1.40 s | 638 ms | 595 ms | 617 ms | 603 ms | 107 / 77 / 79 / 86 MB |
+| Views | 1 y | 3.71 s | 5.02 s | 2.26 s | 2.12 s | 2.09 s | 1.31 s | 139 / 110 / 118 / 127 MB |
+| Product | 7 d | 150 ms | 192 ms | 91 ms | 112 ms | 121 ms | 211 ms | 103 / 75 / 82 / 77 MB |
+| Product | 30 d | 228 ms | 310 ms | 190 ms | 186 ms | 164 ms | 308 ms | 120 / 106 / 102 / 99 MB |
+| Product | 90 d | 605 ms | 891 ms | 481 ms | 485 ms | 454 ms | 364 ms | 155 / 130 / 139 / 138 MB |
+| Product | 1 y | 2.08 s | 3.23 s | 1.68 s | 1.68 s | 1.59 s | 633 ms | 169 / 166 / 182 / 186 MB |
+| Users | 30 d | 65 ms | 149 ms | 73 ms | 70 ms | 59 ms | 165 ms | 109 / 80 / 78 / 82 MB |
+| Groups | 30 d | 31 ms | 140 ms | 46 ms | 41 ms | 38 ms | 144 ms | 98 / 69 / 68 / 73 MB |
+| Retention (first load) | 30 d | 178 ms | 405 ms | 182 ms | 188 ms | 178 ms | 422 ms | 72 / 60 / 64 / 66 MB |
+| Web Vitals | 30 d | 44 ms | 170 ms | 27 ms | 23 ms | 20 ms | 189 ms | 85 / 52 / 49 / 50 MB |
+| Measures | 30 d | 8.8 ms | 32 ms | 5.0 ms | 4.8 ms | 4.1 ms | 44 ms | 76 / 47 / 47 / 48 MB |
+
+**1M**
+
+| Dashboard | Range | 3f | per day | T=16384 | T=32768 | T=65536 | DuckDB (3f) | Peak per day / T=16384 / T=32768 / T=65536 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views | 7 d | 874 ms | 711 ms | 581 ms | 540 ms | 639 ms | 604 ms | 102 / 92 / 96 / 94 MB |
+| Views | 30 d | 2.15 s | 2.09 s | 1.95 s | 1.93 s | 1.97 s | 1.09 s | 141 / 136 / 131 / 129 MB |
+| Views | 90 d | 6.11 s | 6.09 s | 5.47 s | 5.66 s | 5.68 s | 2.78 s | 225 / 210 / 188 / 213 MB |
+| Views | 1 y | 23.94 s | 23.71 s | 21.87 s | 21.89 s | 22.70 s | 11.49 s | 534 / 556 / 522 / 517 MB |
+| Product | 7 d | 698 ms | 472 ms | 442 ms | 449 ms | 487 ms | 522 ms | 164 / 142 / 148 / 152 MB |
+| Product | 30 d | 1.51 s | 1.45 s | 1.37 s | 1.36 s | 1.42 s | 1.71 s | 200 / 194 / 188 / 205 MB |
+| Product | 90 d | 4.38 s | 4.00 s | 3.81 s | 3.82 s | 3.96 s | 2.39 s | 266 / 262 / 255 / 271 MB |
+| Product | 1 y | 16.88 s | 15.76 s | 14.75 s | 14.77 s | 15.73 s | 5.64 s | 591 / 629 / 670 / 575 MB |
+| Users | 30 d | 511 ms | 648 ms | 602 ms | 568 ms | 540 ms | 396 ms | 214 / 200 / 198 / 200 MB |
+| Groups | 30 d | 246 ms | 390 ms | 334 ms | 308 ms | 289 ms | 243 ms | 153 / 129 / 130 / 128 MB |
+| Retention (first load) | 30 d | 2.06 s | 1.76 s | 1.67 s | 1.78 s | 1.92 s | 1.31 s | 90 / 84 / 84 / 91 MB |
+| Web Vitals | 30 d | 111 ms | 259 ms | 176 ms | 140 ms | 123 ms | 334 ms | 86 / 71 / 70 / 68 MB |
+| Measures | 30 d | 29 ms | 50 ms | 35 ms | 29 ms | 22 ms | 71 ms | 79 / 66 / 61 / 59 MB |
+
+The 1M pass with T = 32,768 (`TestMeasurePass`, case pass, 4 runs a limit, load 0.86 to 0.98): 26 row groups (90 before), 9.8 s (dump 0.87 s, merge 6.7 s, derive 2.25 s), peak 130 to 136 MB with no limit, 128 to 146 MB at 256MiB, 131 to 139 MB at 128MiB.
+
+### T = 16384
+
+Started 2026-10-23T15:23:04Z. The same cells as step 3f (`native-bench dashboards`, `TestMeasureSystemDashboard`, one fresh process a cell, GOMAXPROCS=2, every widget at once, a first run then 3 more, "best" the fastest), native only, on step 3f's events rebuilt through the daily pass in Go: each month written as one log a day, then dumped, merged and derived a month at a time (`MEASURE_FROM`), so a month file has a row group per family per day (about 90) where step 3f's DuckDB-written ones had one (100k) or 9 of 122,880 rows (1M). "3f" columns are step 3f's cells; "change" is step 4's best over step 3f's native best. Before every cell the bench waits until the 1-minute load average is at most 1.0.
+
+#### Step 4b T=16384 dashboards, volume 100k (100000 events a month)
+
+| Dashboard | Range | 3f native first / best | Step 4 native first / best | Change (best) | 3f DuckDB best | 3f native peak | Step 4 native peak | Slowest widget (best run) | Load at start |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | 7 d | 297 ms / 278 ms | 112 ms / 82 ms | 0.30x | 376 ms | 87 MB | 57 MB | top-pages 76 ms | 0.94 |
+| Views (20) | 30 d | 382 ms / 377 ms | 248 ms / 230 ms | 0.61x | 446 ms | 93 MB | 64 MB | countries 229 ms | 0.94 |
+| Views (20) | 90 d | 1.09 s / 1.03 s | 656 ms / 638 ms | 0.62x | 603 ms | 139 MB | 77 MB | visitors 637 ms | 0.95 |
+| Views (20) | 365 d | 3.67 s / 3.71 s | 2.27 s / 2.26 s | 0.61x | 1.31 s | 160 MB | 110 MB | devices 2263 ms | 0.93 |
+| Product (10) | 7 d | 166 ms / 150 ms | 115 ms / 91 ms | 0.61x | 211 ms | 89 MB | 75 MB | app-versions 83 ms | 0.94 |
+| Product (10) | 30 d | 280 ms / 228 ms | 221 ms / 190 ms | 0.84x | 308 ms | 110 MB | 106 MB | total-events 190 ms | 0.95 |
+| Product (10) | 90 d | 640 ms / 605 ms | 512 ms / 481 ms | 0.80x | 364 ms | 155 MB | 130 MB | events 473 ms | 0.95 |
+| Product (10) | 365 d | 2.10 s / 2.08 s | 1.72 s / 1.68 s | 0.81x | 633 ms | 209 MB | 166 MB | peak-dau 1666 ms | 1.00 |
+| Users (6) | 30 d | 80 ms / 65 ms | 96 ms / 73 ms | 1.12x | 165 ms | 83 MB | 80 MB | actions 72 ms | 0.95 |
+| Groups (6) | 30 d | 54 ms / 31 ms | 71 ms / 46 ms | 1.46x | 144 ms | 77 MB | 69 MB | top-groups 45 ms | 0.95 |
+| Retention (5) | 30 d | 178 ms / 1.9 ms | 182 ms / 1.4 ms | 0.75x | 280 ms | 91 MB | 60 MB | cohorts 0 ms | 0.95 |
+| Web Vitals (11) | 30 d | 49 ms / 44 ms | 27 ms / 27 ms | 0.62x | 189 ms | 65 MB | 52 MB | by-page 23 ms | 0.95 |
+| Measures (2) | 30 d | 12 ms / 8.8 ms | 9.1 ms / 5.0 ms | 0.57x | 44 ms | 58 MB | 47 MB | metrics 4 ms | 0.95 |
+
+#### Step 4b T=16384 dashboards, volume 1m (1000000 events a month)
+
+| Dashboard | Range | 3f native first / best | Step 4 native first / best | Change (best) | 3f DuckDB best | 3f native peak | Step 4 native peak | Slowest widget (best run) | Load at start |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | 7 d | 911 ms / 874 ms | 628 ms / 581 ms | 0.67x | 604 ms | 135 MB | 92 MB | top-pages 581 ms | 0.85 |
+| Views (20) | 30 d | 2.20 s / 2.15 s | 2.00 s / 1.95 s | 0.91x | 1.09 s | 171 MB | 136 MB | consent-states 1953 ms | 0.95 |
+| Views (20) | 90 d | 6.70 s / 6.11 s | 5.56 s / 5.47 s | 0.89x | 2.78 s | 238 MB | 210 MB | visitors-by-kind 5452 ms | 0.97 |
+| Views (20) | 365 d | 24.47 s / 23.94 s | 22.06 s / 21.87 s | 0.91x | 11.49 s | 651 MB | 556 MB | consent-states 21850 ms | 0.87 |
+| Product (10) | 7 d | 712 ms / 698 ms | 480 ms / 442 ms | 0.63x | 522 ms | 169 MB | 142 MB | total-events 426 ms | 0.95 |
+| Product (10) | 30 d | 1.64 s / 1.51 s | 1.39 s / 1.37 s | 0.90x | 1.71 s | 236 MB | 194 MB | attribute-values 1366 ms | 0.94 |
+| Product (10) | 90 d | 4.33 s / 4.38 s | 3.92 s / 3.81 s | 0.87x | 2.39 s | 315 MB | 262 MB | attribute-values 3808 ms | 0.98 |
+| Product (10) | 365 d | 17.74 s / 16.88 s | 15.05 s / 14.75 s | 0.87x | 5.64 s | 693 MB | 629 MB | users-by-app-version 14750 ms | 0.99 |
+| Users (6) | 30 d | 645 ms / 511 ms | 754 ms / 602 ms | 1.18x | 396 ms | 216 MB | 200 MB | active-users 602 ms | 0.87 |
+| Groups (6) | 30 d | 349 ms / 246 ms | 442 ms / 334 ms | 1.36x | 243 ms | 143 MB | 129 MB | actions-per-group 319 ms | 0.87 |
+| Retention (5) | 30 d | 2.06 s / 1.6 ms | 1.67 s / 1.6 ms | 1.04x | 1.21 s | 118 MB | 84 MB | install-milestones 1 ms | 0.88 |
+| Web Vitals (11) | 30 d | 153 ms / 111 ms | 198 ms / 176 ms | 1.59x | 334 ms | 81 MB | 71 MB | lcp 167 ms | 0.88 |
+| Measures (2) | 30 d | 29 ms / 29 ms | 41 ms / 35 ms | 1.20x | 71 ms | 83 MB | 66 MB | p75-by-day 35 ms | 0.97 |
+
+Load average (1 min) at cell start: 0.85 to 1.00; cells that started above 1.0 (the gate gave up): 0 of 26.
+
+### T = 32768
+
+Started 2026-10-23T15:44:30Z. The same cells as step 3f (`native-bench dashboards`, `TestMeasureSystemDashboard`, one fresh process a cell, GOMAXPROCS=2, every widget at once, a first run then 3 more, "best" the fastest), native only, on step 3f's events rebuilt through the daily pass in Go: each month written as one log a day, then dumped, merged and derived a month at a time (`MEASURE_FROM`), so a month file has a row group per family per day (about 90) where step 3f's DuckDB-written ones had one (100k) or 9 of 122,880 rows (1M). "3f" columns are step 3f's cells; "change" is step 4's best over step 3f's native best. Before every cell the bench waits until the 1-minute load average is at most 1.0.
+
+#### Step 4b T=32768 dashboards, volume 100k (100000 events a month)
+
+| Dashboard | Range | 3f native first / best | Step 4 native first / best | Change (best) | 3f DuckDB best | 3f native peak | Step 4 native peak | Slowest widget (best run) | Load at start |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | 7 d | 297 ms / 278 ms | 82 ms / 81 ms | 0.29x | 376 ms | 87 MB | 59 MB | visitors-and-views 81 ms | 0.99 |
+| Views (20) | 30 d | 382 ms / 377 ms | 242 ms / 234 ms | 0.62x | 446 ms | 93 MB | 69 MB | visitors 232 ms | 0.99 |
+| Views (20) | 90 d | 1.09 s / 1.03 s | 628 ms / 595 ms | 0.58x | 603 ms | 139 MB | 79 MB | consent-states 583 ms | 0.98 |
+| Views (20) | 365 d | 3.67 s / 3.71 s | 2.15 s / 2.12 s | 0.57x | 1.31 s | 160 MB | 118 MB | referrers 2123 ms | 0.97 |
+| Product (10) | 7 d | 166 ms / 150 ms | 140 ms / 112 ms | 0.75x | 211 ms | 89 MB | 82 MB | events 112 ms | 0.99 |
+| Product (10) | 30 d | 280 ms / 228 ms | 227 ms / 186 ms | 0.82x | 308 ms | 110 MB | 102 MB | events-by-name 185 ms | 0.99 |
+| Product (10) | 90 d | 640 ms / 605 ms | 517 ms / 485 ms | 0.80x | 364 ms | 155 MB | 139 MB | events 481 ms | 0.97 |
+| Product (10) | 365 d | 2.10 s / 2.08 s | 1.72 s / 1.68 s | 0.81x | 633 ms | 209 MB | 182 MB | attribute-values 1682 ms | 0.97 |
+| Users (6) | 30 d | 80 ms / 65 ms | 90 ms / 70 ms | 1.07x | 165 ms | 83 MB | 78 MB | new-users 63 ms | 0.98 |
+| Groups (6) | 30 d | 54 ms / 31 ms | 73 ms / 41 ms | 1.31x | 144 ms | 77 MB | 68 MB | daily-active-groups 40 ms | 0.98 |
+| Retention (5) | 30 d | 178 ms / 1.9 ms | 188 ms / 1.4 ms | 0.73x | 280 ms | 91 MB | 64 MB | install-milestones 1 ms | 0.98 |
+| Web Vitals (11) | 30 d | 49 ms / 44 ms | 30 ms / 23 ms | 0.51x | 189 ms | 65 MB | 49 MB | fcp 14 ms | 0.98 |
+| Measures (2) | 30 d | 12 ms / 8.8 ms | 9.0 ms / 4.8 ms | 0.55x | 44 ms | 58 MB | 47 MB | p75-by-day 4 ms | 0.98 |
+
+#### Step 4b T=32768 dashboards, volume 1m (1000000 events a month)
+
+| Dashboard | Range | 3f native first / best | Step 4 native first / best | Change (best) | 3f DuckDB best | 3f native peak | Step 4 native peak | Slowest widget (best run) | Load at start |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | 7 d | 911 ms / 874 ms | 585 ms / 540 ms | 0.62x | 604 ms | 135 MB | 96 MB | consent-share 540 ms | 0.94 |
+| Views (20) | 30 d | 2.20 s / 2.15 s | 1.97 s / 1.93 s | 0.90x | 1.09 s | 171 MB | 131 MB | visitors-and-views 1911 ms | 0.93 |
+| Views (20) | 90 d | 6.70 s / 6.11 s | 5.70 s / 5.66 s | 0.93x | 2.78 s | 238 MB | 188 MB | display-resolutions 5656 ms | 1.00 |
+| Views (20) | 365 d | 24.47 s / 23.94 s | 22.23 s / 21.89 s | 0.91x | 11.49 s | 651 MB | 522 MB | top-pages 21869 ms | 0.98 |
+| Product (10) | 7 d | 712 ms / 698 ms | 495 ms / 449 ms | 0.64x | 522 ms | 169 MB | 148 MB | users-by-app-version 448 ms | 0.93 |
+| Product (10) | 30 d | 1.64 s / 1.51 s | 1.44 s / 1.36 s | 0.90x | 1.71 s | 236 MB | 188 MB | avg-dau 1361 ms | 0.93 |
+| Product (10) | 90 d | 4.33 s / 4.38 s | 3.96 s / 3.82 s | 0.87x | 2.39 s | 315 MB | 255 MB | daily-active-users 3801 ms | 0.92 |
+| Product (10) | 365 d | 17.74 s / 16.88 s | 15.21 s / 14.77 s | 0.88x | 5.64 s | 693 MB | 670 MB | daily-active-users 14755 ms | 0.90 |
+| Users (6) | 30 d | 645 ms / 511 ms | 684 ms / 568 ms | 1.11x | 396 ms | 216 MB | 198 MB | top-users 567 ms | 0.86 |
+| Groups (6) | 30 d | 349 ms / 246 ms | 405 ms / 308 ms | 1.25x | 243 ms | 143 MB | 130 MB | daily-active-groups 306 ms | 0.94 |
+| Retention (5) | 30 d | 2.06 s / 1.6 ms | 1.78 s / 1.6 ms | 1.01x | 1.21 s | 118 MB | 84 MB | install-milestones 1 ms | 0.94 |
+| Web Vitals (11) | 30 d | 153 ms / 111 ms | 179 ms / 140 ms | 1.26x | 334 ms | 81 MB | 70 MB | lcp 124 ms | 1.00 |
+| Measures (2) | 30 d | 29 ms / 29 ms | 39 ms / 29 ms | 0.99x | 71 ms | 83 MB | 61 MB | p75-by-day 29 ms | 1.00 |
+
+Load average (1 min) at cell start: 0.86 to 1.00; cells that started above 1.0 (the gate gave up): 0 of 26.
+
+### T = 65536
+
+Started 2026-10-23T16:08:52Z. The same cells as step 3f (`native-bench dashboards`, `TestMeasureSystemDashboard`, one fresh process a cell, GOMAXPROCS=2, every widget at once, a first run then 3 more, "best" the fastest), native only, on step 3f's events rebuilt through the daily pass in Go: each month written as one log a day, then dumped, merged and derived a month at a time (`MEASURE_FROM`), so a month file has a row group per family per day (about 90) where step 3f's DuckDB-written ones had one (100k) or 9 of 122,880 rows (1M). "3f" columns are step 3f's cells; "change" is step 4's best over step 3f's native best. Before every cell the bench waits until the 1-minute load average is at most 1.0.
+
+#### Step 4b T=65536 dashboards, volume 100k (100000 events a month)
+
+| Dashboard | Range | 3f native first / best | Step 4 native first / best | Change (best) | 3f DuckDB best | 3f native peak | Step 4 native peak | Slowest widget (best run) | Load at start |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | 7 d | 297 ms / 278 ms | 158 ms / 140 ms | 0.50x | 376 ms | 87 MB | 64 MB | consent-share 139 ms | 1.00 |
+| Views (20) | 30 d | 382 ms / 377 ms | 229 ms / 218 ms | 0.58x | 446 ms | 93 MB | 68 MB | display-resolutions 205 ms | 1.00 |
+| Views (20) | 90 d | 1.09 s / 1.03 s | 621 ms / 617 ms | 0.60x | 603 ms | 139 MB | 86 MB | browsers 611 ms | 0.92 |
+| Views (20) | 365 d | 3.67 s / 3.71 s | 2.09 s / 2.09 s | 0.56x | 1.31 s | 160 MB | 127 MB | operating-systems 2090 ms | 1.00 |
+| Product (10) | 7 d | 166 ms / 150 ms | 133 ms / 121 ms | 0.81x | 211 ms | 89 MB | 77 MB | events 114 ms | 1.00 |
+| Product (10) | 30 d | 280 ms / 228 ms | 202 ms / 164 ms | 0.72x | 308 ms | 110 MB | 99 MB | attribute-values 164 ms | 1.00 |
+| Product (10) | 90 d | 640 ms / 605 ms | 466 ms / 454 ms | 0.75x | 364 ms | 155 MB | 138 MB | avg-dau 446 ms | 1.00 |
+| Product (10) | 365 d | 2.10 s / 2.08 s | 1.62 s / 1.59 s | 0.77x | 633 ms | 209 MB | 186 MB | events 1589 ms | 0.95 |
+| Users (6) | 30 d | 80 ms / 65 ms | 91 ms / 59 ms | 0.90x | 165 ms | 83 MB | 82 MB | actions-per-user 49 ms | 0.92 |
+| Groups (6) | 30 d | 54 ms / 31 ms | 62 ms / 38 ms | 1.21x | 144 ms | 77 MB | 73 MB | daily-active-groups 37 ms | 0.92 |
+| Retention (5) | 30 d | 178 ms / 1.9 ms | 178 ms / 2.0 ms | 1.08x | 280 ms | 91 MB | 66 MB | cohorts 0 ms | 0.92 |
+| Web Vitals (11) | 30 d | 49 ms / 44 ms | 28 ms / 20 ms | 0.45x | 189 ms | 65 MB | 50 MB | cls-by-day 19 ms | 0.92 |
+| Measures (2) | 30 d | 12 ms / 8.8 ms | 8.8 ms / 4.1 ms | 0.47x | 44 ms | 58 MB | 48 MB | p75-by-day 4 ms | 0.92 |
+
+#### Step 4b T=65536 dashboards, volume 1m (1000000 events a month)
+
+| Dashboard | Range | 3f native first / best | Step 4 native first / best | Change (best) | 3f DuckDB best | 3f native peak | Step 4 native peak | Slowest widget (best run) | Load at start |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | 7 d | 911 ms / 874 ms | 674 ms / 639 ms | 0.73x | 604 ms | 135 MB | 94 MB | visitors 638 ms | 0.97 |
+| Views (20) | 30 d | 2.20 s / 2.15 s | 2.03 s / 1.97 s | 0.92x | 1.09 s | 171 MB | 129 MB | visitors 1956 ms | 0.89 |
+| Views (20) | 90 d | 6.70 s / 6.11 s | 5.67 s / 5.68 s | 0.93x | 2.78 s | 238 MB | 213 MB | visitors-and-views 5656 ms | 0.95 |
+| Views (20) | 365 d | 24.47 s / 23.94 s | 22.72 s / 22.70 s | 0.95x | 11.49 s | 651 MB | 517 MB | devices 22700 ms | 0.86 |
+| Product (10) | 7 d | 712 ms / 698 ms | 522 ms / 487 ms | 0.70x | 522 ms | 169 MB | 152 MB | avg-dau 471 ms | 0.89 |
+| Product (10) | 30 d | 1.64 s / 1.51 s | 1.52 s / 1.42 s | 0.94x | 1.71 s | 236 MB | 205 MB | events 1417 ms | 0.85 |
+| Product (10) | 90 d | 4.33 s / 4.38 s | 3.95 s / 3.96 s | 0.90x | 2.39 s | 315 MB | 271 MB | daily-active-users 3942 ms | 1.00 |
+| Product (10) | 365 d | 17.74 s / 16.88 s | 15.81 s / 15.73 s | 0.93x | 5.64 s | 693 MB | 575 MB | peak-dau 15730 ms | 0.94 |
+| Users (6) | 30 d | 645 ms / 511 ms | 690 ms / 540 ms | 1.06x | 396 ms | 216 MB | 200 MB | actions-per-user 527 ms | 0.94 |
+| Groups (6) | 30 d | 349 ms / 246 ms | 402 ms / 289 ms | 1.18x | 243 ms | 143 MB | 128 MB | daily-active-groups 265 ms | 0.94 |
+| Retention (5) | 30 d | 2.06 s / 1.6 ms | 1.92 s / 1.5 ms | 0.94x | 1.21 s | 118 MB | 91 MB | signed-in-milestones 1 ms | 0.94 |
+| Web Vitals (11) | 30 d | 153 ms / 111 ms | 131 ms / 123 ms | 1.11x | 334 ms | 81 MB | 68 MB | by-page 122 ms | 0.94 |
+| Measures (2) | 30 d | 29 ms / 29 ms | 33 ms / 22 ms | 0.76x | 71 ms | 83 MB | 59 MB | metrics 22 ms | 0.95 |
+
+Load average (1 min) at cell start: 0.85 to 1.00; cells that started above 1.0 (the gate gave up): 0 of 26.

@@ -809,16 +809,96 @@ to 1.6x, Users, Groups, Web Vitals and Measures 2 to 6x, many of them now
 slower than DuckDB), and at 1M Users, Groups, Web Vitals and Measures are
 1.1 to 2.5x slower. A 100k month's group holds about 1,100 rows of one
 family and day, so a scan pays the per-group cost (a chunk's pages and
-dictionary set up per column) 90 times where it paid it once. Whether to
-keep "a group per family per day" for small projects (say, cut at the day
-only past some rows, or at the family only) is open; it changes the
-writers' cut rule and the native reader's pruning assumptions, so it is
-for the owner to decide, not done here.
+dictionary set up per column) 90 times where it paid it once. That rule was then
+changed (step 4b, below).
 
 The same footer cost reaches the native reader, which decodes every file's
 footer on each scan: on a project with 2,000 attribute keys a month's
 footer is about 150 MB decoded, ten times a DuckDB-written month's (9
 groups).
+
+### Step 4b: a day cuts a group only past T rows
+
+The owner's ruling: an events file's group is cut where the family
+changes, always; where the day changes only once the open group holds T
+rows; and at 65,536 rows. A day file holds one day (but for a late
+event, whose day follows its ts), so there only the family and the cap
+cut. The derived files are unchanged. A group may now span several days:
+the native reader keeps it when its day bounds meet the range and takes
+it whole (`all`) only when the whole span is inside, else it filters the
+rows (`TestParquetGroupSpanningDays`, a range starting and ending inside
+a group).
+
+The step 3f events were rebuilt through the Go pass with each T and the
+dashboards run again, native only, behind the gate (78 cells at a load of
+0.85 to 1.00). Native best (Retention: first load), with step 3f's
+DuckDB-written files, step 4's group per family and day, and step 3f's
+DuckDB best (Retention: first) for reference; peak is the native process's:
+
+**100k**
+
+| Dashboard | Range | 3f | per day | T=16384 | T=32768 | T=65536 | DuckDB (3f) | Peak per day / T=16384 / T=32768 / T=65536 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views | 7 d | 278 ms | 316 ms | 82 ms | 81 ms | 140 ms | 376 ms | 91 / 57 / 59 / 64 MB |
+| Views | 30 d | 377 ms | 461 ms | 230 ms | 234 ms | 218 ms | 446 ms | 92 / 64 / 69 / 68 MB |
+| Views | 90 d | 1.03 s | 1.40 s | 638 ms | 595 ms | 617 ms | 603 ms | 107 / 77 / 79 / 86 MB |
+| Views | 1 y | 3.71 s | 5.02 s | 2.26 s | 2.12 s | 2.09 s | 1.31 s | 139 / 110 / 118 / 127 MB |
+| Product | 7 d | 150 ms | 192 ms | 91 ms | 112 ms | 121 ms | 211 ms | 103 / 75 / 82 / 77 MB |
+| Product | 30 d | 228 ms | 310 ms | 190 ms | 186 ms | 164 ms | 308 ms | 120 / 106 / 102 / 99 MB |
+| Product | 90 d | 605 ms | 891 ms | 481 ms | 485 ms | 454 ms | 364 ms | 155 / 130 / 139 / 138 MB |
+| Product | 1 y | 2.08 s | 3.23 s | 1.68 s | 1.68 s | 1.59 s | 633 ms | 169 / 166 / 182 / 186 MB |
+| Users | 30 d | 65 ms | 149 ms | 73 ms | 70 ms | 59 ms | 165 ms | 109 / 80 / 78 / 82 MB |
+| Groups | 30 d | 31 ms | 140 ms | 46 ms | 41 ms | 38 ms | 144 ms | 98 / 69 / 68 / 73 MB |
+| Retention (first load) | 30 d | 178 ms | 405 ms | 182 ms | 188 ms | 178 ms | 422 ms | 72 / 60 / 64 / 66 MB |
+| Web Vitals | 30 d | 44 ms | 170 ms | 27 ms | 23 ms | 20 ms | 189 ms | 85 / 52 / 49 / 50 MB |
+| Measures | 30 d | 8.8 ms | 32 ms | 5.0 ms | 4.8 ms | 4.1 ms | 44 ms | 76 / 47 / 47 / 48 MB |
+
+**1M**
+
+| Dashboard | Range | 3f | per day | T=16384 | T=32768 | T=65536 | DuckDB (3f) | Peak per day / T=16384 / T=32768 / T=65536 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views | 7 d | 874 ms | 711 ms | 581 ms | 540 ms | 639 ms | 604 ms | 102 / 92 / 96 / 94 MB |
+| Views | 30 d | 2.15 s | 2.09 s | 1.95 s | 1.93 s | 1.97 s | 1.09 s | 141 / 136 / 131 / 129 MB |
+| Views | 90 d | 6.11 s | 6.09 s | 5.47 s | 5.66 s | 5.68 s | 2.78 s | 225 / 210 / 188 / 213 MB |
+| Views | 1 y | 23.94 s | 23.71 s | 21.87 s | 21.89 s | 22.70 s | 11.49 s | 534 / 556 / 522 / 517 MB |
+| Product | 7 d | 698 ms | 472 ms | 442 ms | 449 ms | 487 ms | 522 ms | 164 / 142 / 148 / 152 MB |
+| Product | 30 d | 1.51 s | 1.45 s | 1.37 s | 1.36 s | 1.42 s | 1.71 s | 200 / 194 / 188 / 205 MB |
+| Product | 90 d | 4.38 s | 4.00 s | 3.81 s | 3.82 s | 3.96 s | 2.39 s | 266 / 262 / 255 / 271 MB |
+| Product | 1 y | 16.88 s | 15.76 s | 14.75 s | 14.77 s | 15.73 s | 5.64 s | 591 / 629 / 670 / 575 MB |
+| Users | 30 d | 511 ms | 648 ms | 602 ms | 568 ms | 540 ms | 396 ms | 214 / 200 / 198 / 200 MB |
+| Groups | 30 d | 246 ms | 390 ms | 334 ms | 308 ms | 289 ms | 243 ms | 153 / 129 / 130 / 128 MB |
+| Retention (first load) | 30 d | 2.06 s | 1.76 s | 1.67 s | 1.78 s | 1.92 s | 1.31 s | 90 / 84 / 84 / 91 MB |
+| Web Vitals | 30 d | 111 ms | 259 ms | 176 ms | 140 ms | 123 ms | 334 ms | 86 / 71 / 70 / 68 MB |
+| Measures | 30 d | 29 ms | 50 ms | 35 ms | 29 ms | 22 ms | 71 ms | 79 / 66 / 61 / 59 MB |
+
+- **Every T beats the group per family and day in every cell at 100k**,
+  by 1.6 to 8x, and step 3f's one group a month in most (Views 7 d 81
+  against 278 ms, Web Vitals 23 against 44 ms); Users and Groups stay a
+  little slower than step 3f below T = 65,536, Retention's first load
+  about even. At 1M every T is faster than the group per day in every
+  cell but Retention's first load (1.67 to 1.92 against 1.76 s): Views and
+  Product by 0 to 24%, the small dashboards by 7 to 56%.
+- **T = 65,536 (no day cut)** loses the short ranges: Views 7 d is 140 ms
+  at 100k (81 at 32,768) and 639 ms at 1M (540), since a group then holds
+  up to 65,536 rows of many days.
+- **Chosen: T = 32,768** (`dayCutRows`). No T wins every cell. 32,768 is
+  within 4% of the best on every Views and Product cell at 1M and within
+  7% on Views at 100k, keeps the 1M 7-day gain (Views 540 ms, 10% under
+  DuckDB's 604 ms), and on the small dashboards sits between 16,384 and
+  65,536 (65,536 is 10 to 25% faster there, at the short ranges' cost);
+  Product at 100k is 16,384's or 65,536's best by up to 20 ms.
+- **The gap is not closed:** from 30 days at 1M Views stays 1.8 to 2.0x
+  DuckDB and Product 1.6 to 2.6x from 90 days. The layout was not the
+  cause.
+- **The 1M pass with T = 32,768** (4 runs each, load 0.86 to 0.98): the
+  month has 26 row groups (90 before), 9.8 s (dump 0.87 s, merge 6.7 s,
+  derive 2.25 s); peak 130 to 136 MB without a limit, 128 to 146 MB at
+  256MiB, 131 to 139 MB at 128MiB, against 143 to 146 MB with a group per
+  day. The derive is 0.27 s slower: deriveSessions reads a day at a time,
+  so a group of several days is decoded once per day it holds.
+- A wide month's footer shrinks with its groups (columns times groups):
+  26 groups against 90, so the 2,000-key month's about 150 MB becomes
+  about 45 MB (arithmetic, not measured).
 
 ## Left to the builder
 
