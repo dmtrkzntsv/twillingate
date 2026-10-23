@@ -752,6 +752,10 @@ func TestSystemStatsOverNoEvents(t *testing.T) {
 		{"users/new-users", []string{"0"}, []string{"0"}, "none: users over no rows is 0 in both"},
 		{"users/actions", []string{"0"}, []string{"0"}, "none: a count over no rows is 0 in both"},
 		{"users/actions-per-user", []string{""}, []string{"0"}, "G2: a ratio over no users is empty; the SQL wrote 0"},
+		{"groups/active-groups", []string{"0"}, []string{"0"}, "none: groups over no rows is 0 in both"},
+		{"groups/new-groups", []string{"0"}, []string{"0"}, "none: groups over no rows is 0 in both"},
+		{"groups/actions", []string{"0"}, []string{"0"}, "none: a count over no rows is 0 in both"},
+		{"groups/actions-per-group", []string{""}, []string{"0"}, "G2: a ratio over no groups is empty; the SQL wrote 0"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
