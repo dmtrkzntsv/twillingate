@@ -32,7 +32,7 @@ describe('carryProps', () => {
 
 describe('needsHint', () => {
   it('names required and optional columns', () => {
-    expect(needsHint(widgets.line.contract)).toBe('needs x (day or text), y (number); optional series (text)')
+    expect(needsHint(widgets.line.contract)).toBe('needs x (day or text or number), y (number); optional series (text)')
     expect(needsHint(widgets.table.contract)).toBe('any columns')
     expect(needsHint(widgets.markdown.contract)).toBe('markdown text')
     // A component that takes a query alone still reads columns.

@@ -4,7 +4,7 @@ import {
   ChartContainer,
   ChartTooltip,
 } from '@/components/ui/chart'
-import { activeDot, axis, formatTick, grid, niceTicks, seriesColor, seriesConfig, stackTotals, valueAxis, valuesOf } from '@/lib/chart'
+import { activeDot, axis, formatTick, grid, niceTicks, numericX, seriesColor, seriesConfig, stackTotals, valueAxis, valuesOf } from '@/lib/chart'
 import { approximate, formatValue, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
@@ -19,12 +19,12 @@ interface AreaProps {
 
 export const contract: Contract = {
   description:
-    'A trend over time or category, filled under the line; use `stacked` to show parts of a whole changing over time.',
+    'A trend over time, a number (plotted to scale) or category, filled under the line; use `stacked` to show parts of a whole changing over time.',
   accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [
-      { name: 'x', types: ['day', 'text'] },
+      { name: 'x', types: ['day', 'text', 'number'] },
       { name: 'y', types: ['number'] },
       { name: 'series', types: ['text'], optional: true },
     ],
@@ -89,7 +89,11 @@ export default function Area({ data, props }: WidgetProps<AreaProps>) {
   const format = props.format ?? 'number'
   const curve = props.curve ?? 'monotone'
   const hasSeries = sql.columns.includes('series')
-  const { rows, keys } = hasSeries ? pivot(records, 'x', 'series', 'y') : { rows: records, keys: ['y'] }
+  const pivoted = hasSeries ? pivot(records, 'x', 'series', 'y') : { rows: records, keys: ['y'] }
+  const keys = pivoted.keys
+  // Numbers on x (a retention curve's offsets) plot to scale, in order.
+  const numeric = numericX(pivoted.rows)
+  const rows = numeric?.rows ?? pivoted.rows
   const config = hasSeries ? seriesConfig(keys) : { y: { label: 'y' } }
   // Overlapping areas each keep a lighter wash so the ones behind still show.
   const ticks = niceTicks(props.stacked ? stackTotals(rows, keys) : valuesOf(rows, keys))
@@ -108,7 +112,7 @@ export default function Area({ data, props }: WidgetProps<AreaProps>) {
           ))}
         </defs>
         <CartesianGrid {...grid} />
-        <XAxis dataKey="x" {...axis} interval="preserveStartEnd" minTickGap={card ? CARD_TICK_GAP : 24} tickFormatter={formatTick} />
+        <XAxis dataKey="x" {...axis} {...numeric?.axis} interval="preserveStartEnd" minTickGap={card ? CARD_TICK_GAP : 24} tickFormatter={formatTick} />
         <YAxis {...valueAxis} ticks={ticks} domain={[ticks[0], ticks[ticks.length - 1]]} tickFormatter={(v: number) => formatValue(v, format)} />
         <ChartTooltip
           cursor={{ strokeWidth: 1 }}
