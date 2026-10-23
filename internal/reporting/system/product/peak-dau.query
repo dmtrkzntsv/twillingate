@@ -1,0 +1,1 @@
+{"query":{"kind":"stat","table":"product","metrics":[{"op":"daily_max","of":"actors","as":"value"}]}}

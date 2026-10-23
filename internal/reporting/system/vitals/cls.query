@@ -1,0 +1,1 @@
+{"query":{"kind":"stat","table":"measures","where":[{"column":"event_name","op":"eq","values":["$cls"]}],"metrics":[{"op":"percentile","q":0.75,"round":3,"as":"value"}]}}

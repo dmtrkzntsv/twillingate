@@ -1436,16 +1436,30 @@ history starts where the files' does. `query`, the count of events in
 | --- | --- | --- |
 | `list_projects` | none | Every project with its `project_id`, name, `archived` and `archived_at` (RFC 3339, only when archived), and `allowed_origins`, in the order `move_project` sets. Call this first — every other tool needs a `project_id` |
 | `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in two groups: `retention` (`RETENTION_DAYS`, `RETENTION_ARCHIVED_DAYS`, `RETENTION_FORMS_DRAFT_DAYS`) and `ingest`: `INGEST_LATE_DAYS`, then the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`kept forever`). Nothing is capped. The output also carries `events_30d`, `{count, from, to}`: the events in the event files from `from` through `to` (the 30 days ending today, UTC), of every family and project, rules applied (what the server's disk and its dashboards' scans of a month follow), counted at most every 5 minutes: a call past the 5 minutes answers the previous count and starts the next, one past 10 waits for it, so the count is never more than 10 minutes old. Absent when the last count failed, `CONSOLE_QUERY_TIMEOUT` included (a failure is logged once and kept for the same 5 minutes), and on a server that cannot read the files. And `ingest_disabled`, `true` when `INGEST_DISABLED` is set and every ingest route refuses with `429` |
-| `list_attributes` | `from`, `to` (optional: the last 30 days; at most 92 days) | The project's attributes from the event files, rules applied, busiest first: each key's `events` (the product events and measures of the range that carried it) and `values` (its distinct values over the range), `received`, `blocked` and `aliases` (the keys renamed or merged into it; absent when none) — for the 500 busiest keys plus every key a rule names (`received` false when none carried it: a blocked key always, its values hidden from every read); a key renamed away reads as its target and is listed only in its target's `aliases`. Also `keys_total`, the distinct keys received |
+| `list_attributes` | `from`, `to` (optional: the last 30 days; at most 400 days) | The project's attributes from the event files, rules applied, busiest first: each key's `events` (the product events and measures of the range that carried it) and `values` (its distinct values over the range), `received`, `blocked` and `aliases` (the keys renamed or merged into it; absent when none) — for the 500 busiest keys plus every key a rule names (`received` false when none carried it: a blocked key always, its values hidden from every read); a key renamed away reads as its target and is listed only in its target's `aliases`. Also `keys_total`, the distinct keys received. A key's `values` past 1,024 are estimated (about ±2%). A range with more keys than the engine counts in one pass is refused: narrow it |
 | `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project, from the event files: `views`, product `events` and measure `samples` per day and in total, `last_received_at` (when the newest event arrived, whatever the range; `null` for an archived project unless `project_id` names it), `first_day` (the oldest day the files hold; a month's file counts from its first day), and `size` (`{total_bytes, measured_at}`: the project's event file bytes as the daily pass of the process that keeps the files last measured them, at 03:00 UTC and at start; `null` until the first measurement), with each day's measured `total_bytes` in the series (`null` on days not measured); plus the database's size on disk now and per day (`database_series`) |
-| `views_overview` | `kind` (optional) | Per day: visitors (distinct per day and kind, added up), views, and the `sessions` table's sessions, bounces, `duration_sec`, `bounce_rate` and `avg_session_sec`, summed across kinds unless `kind` filters one. Today included |
-| `views_breakdown` | `dimension`, `limit` (default 20) | Top rows of one dimension (the table below), busiest by visitors (distinct per day and value, added up over the range). Two-key dimensions return both columns. A value not sent reads as empty |
-| `product_events` | `event` (optional filter) | Count and unique users (distinct per day) per event name and day, plus daily totals |
-| `product_attributes` | `event` (optional filter) | At most 92 days a call (a longer range is refused: use `query` for it). Count, unique users and unique groups (`0` when no group was involved) per event, day and value of every key the events carried, with no declaration needed: each custom attribute key and the eighteen reserved keys listed in [Attributes](#attributes), `$path` and `$utm_source` among them |
-| `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys `product_attributes` breaks down (`$browser`, `$path`, …); a key none carried gives no rows |
-| `retention` | `actor` (`user` or `install`) | Cohort curves for the cohorts that began in the range, every offset, counted over the days before today (UTC), plus `aggregated_through`, the newest such day with views or product events — cohorts and offsets after it are **absent, not zero**. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
-| `identities` | `kind` (`user` or `group`), `limit` (default 50) | Per user or group, busiest first (views plus product events in the range): its `actors` and `users` (itself for a user, its members for a group), each distinct per day and added up over the days, its `views`, `events` and the display `name` sent with its latest event. **Surfaces personal data on projects whose clients send ids** |
+| `views_overview` | `kind` (optional) | Per day: visitors (distinct per day: an actor seen under two kinds on one day counts once), views, and the `sessions` table's sessions, bounces, `duration_sec`, `bounce_rate` and `avg_session_sec` (a day with views but no session reads `0` for each), over every kind unless `kind` filters one. Today included. At most 1,000 days, the earliest |
+| `views_breakdown` | `dimension`, `limit` (default 20, at most 1,000) | Top rows of one dimension (the table below), busiest by visitors (distinct per day and value, added up over the range), then by views, then by the values. Two-key dimensions return both columns. A value not sent reads as empty |
+| `product_events` | `event` (optional filter) | Count and unique users (distinct per day) per event name and day, by day, the most events first, then by name; plus daily totals. At most 1,000 rows each, the earliest days': a cut inside a day keeps that day's names alphabetically, not the busiest |
+| `product_attributes` | `event` (optional filter) | Count, unique users and unique groups (`0` when no group was involved) per event, day and value of every key the events carried, with no declaration needed: each custom attribute key and the eighteen reserved keys listed in [Attributes](#attributes), `$path` and `$utm_source` among them; by day, the most events first, then by event, key and value. At most 1,000 rows, the earliest days'; a range the engine cannot hold in memory is refused (narrow it, or filter by `event`) |
+| `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys `product_attributes` breaks down (`$browser`, `$path`, …); a key none carried gives no rows. By metric, kind and value; at most 1,000 rows |
+| `retention` | `actor` (`user` or `install`) | Cohort curves for the cohorts that began in the range, every offset up to 90 days after the cohort day (the [retention grid](#structured-queries)'s horizon; a later day back is not listed), by cohort, then offset, counted over the days before today (UTC), plus `aggregated_through`, the newest such day with views or product events — cohorts and offsets after it are **absent, not zero**. A project whose actors' retention state the engine cannot hold in memory is refused. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
+| `identities` | `kind` (`user` or `group`), `limit` (default 50) | Per user or group, busiest first (views plus product events in the range): its `actors` and `users` (itself for a user, its members for a group), each distinct per day and added up over the days, its `views`, `events` and the display `name` sent with its latest event (empty when none was sent, and when the name is the id itself). At most 1,000 rows. **Surfaces personal data on projects whose clients send ids** |
 | `query` | `sql`, or `project_id`, `from`, `to` (optional: the 30 days ending today, UTC) and `query` | One of two, never both. `query` is a structured query over one project, answered natively: a stat, a trend, a breakdown, a retention or an attributes, see [Structured queries](#structured-queries). `sql` is a single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them: see [Writing SQL against the event files](#writing-sql-against-the-event-files); it reads those seven tables only (no table function but `range`, `generate_series` and `unnest`, no schema-qualified name such as `main.events`), every project's rows, and takes none of `project_id`, `from` and `to`. Row-capped and time-limited either way |
+
+`views_overview`, `views_breakdown`, `product_events`, `product_attributes`,
+`measures`, `identities`, `list_attributes`, `retention` and `usage` (and
+the `event-names` route) are answered by the native engine, as [structured
+queries](#structured-queries) are: a distinct count past 1,024 ids in one
+row (one day, or one value's day) is estimated (about ±2%), and the
+table's `note` names the columns holding an estimate. A table cut short
+by `CONSOLE_QUERY_ROWS_MAX` (or by the engine's 1,000 rows) says
+`truncated`, as it did before, and so does one past the groups the engine
+tracks in one pass (100,000); at exactly 1,000 rows (`views_overview` over
+a longer range, `product_events`, `product_attributes`, `measures`, and
+`identities` with a `limit` past the cap) it says so even when nothing was
+left out, the engine answering at most 1,000. `views_breakdown` says so
+too when more than 1,000 values tie on visitors with its last row.
 
 `views_breakdown`'s dimensions, the columns each returns and what it reads
 from the `views` table:
@@ -1539,7 +1553,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `POST` | `/api/projects/{project_id}/attribute-rules/merge` | `merge_attribute` | body: `from`, `to` → as `rename_attribute` |
 | `POST` | `/api/projects/{project_id}/attribute-rules/block` | `block_attribute` | body: `key` → `{"rule":{…}}`; `to` is absent for a block |
 | `POST` | `/api/projects/{project_id}/attribute-rules/remove` | `remove_attribute_rule` | body: `key` → `{"status":"removed"}`; a body because keys may contain `/` |
-| `GET` | `/api/projects/{project_id}/event-names` | `event_names`, REST only: no MCP tool | query: `from`, `to` → `{"events":[{"family","name","events"}]}`: product events and measure samples in the range, the busiest 200, busiest first; `$` names, which take no rule, are left out |
+| `GET` | `/api/projects/{project_id}/event-names` | `event_names`, REST only: no MCP tool | query: `from`, `to` → `{"events":[{"family","name","events"}]}`: product events and measure samples in the range, the busiest 200, busiest first, ties by name; `$` names, which take no rule, are left out |
 | `GET` | `/api/projects/{project_id}/forms` | `list_forms` | query: `archived` |
 | `POST` | `/api/projects/{project_id}/forms/{name}/approve` | `approve_form` | body: `expected_fields` |
 | `PATCH` | `/api/projects/{project_id}/forms/{name}` | `update_form` | body: fields to change (merge); `closes_at: null` reopens |
@@ -1702,7 +1716,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `kind` | all | `stat`, `trend`, `breakdown`, `retention` or `attributes` (below) |
 | `table` | all | `events` (every family), `views`, `product` or `measures`; or `sessions`, one row per session, or `identities`, one row per user or group (below); a retention reads `events`, and may leave it out; an attributes `product` or `measures`, its `keys` also `events` (product and measures both, the default) |
 | `metrics` | stat, trend, breakdown, attributes | the aggregates, each an output column; a trend takes one to five, exactly one with `series` (several are its series, below); an attributes' `keys` none |
-| `where` | all | filters, `{column, op, values}`, every one of which a row must satisfy |
+| `where` | all | filters, `{column, op, values}` (`{op, columns}` for `any_set`), every one of which a row must satisfy |
 | `dimensions` | breakdown, attributes | a breakdown's 1 to 3 columns to group by; an attributes' `day`, `event_name` or both, in that order, before its attribute and value |
 | `limit` | breakdown, attributes | groups returned, 1 to 1000 (default 20; an attributes' `values` all of them, its `keys` 50) |
 | `order` | breakdown, attributes | a metric name to rank the groups by, descending, ties by the dimensions; or one of the dimensions to sort the groups by, ascending, ties by the other dimensions (`"order": "day"` puts a breakdown by day in date order). Default the first metric; `limit` keeps the first groups in that order; an attributes' default differs (below) |
@@ -1712,11 +1726,11 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `fill` | trend | `zero` gives every day of the range its row, for every kept series or metric: a counted metric (`count`, `actors`, `users`, `groups`, `bounces`, `weight`, `daily_*`, `days`) reads `0` where it is empty, the others stay empty; `""` or absent, only the days with rows |
 | `compare` | stat | `previous` adds a `previous_<name>` column per metric, over as many days ending the day before `from`; `""` or absent, none |
 | `output` | retention, attributes | a retention's `grid`, `curve` or `milestones`; an attributes' `values` or `keys` (required) |
-| `identified_by` | retention | `install` or `user`: the cohorts a `curve` or `milestones` pools (required there; a `grid` has both and refuses it) |
+| `identified_by` | retention | `install` or `user`: the cohorts a `curve` or `milestones` pools (required there); on a `grid`, optional: that kind's rows alone (without it, both) |
 | `offsets` | retention | the days back counted, 1 to 90 (default 45) |
 | `milestones` | retention | `milestones` only: 1 to 6 distinct days back, each 0 to `offsets` (default 7, 30 and 45, which need `offsets` of 45 or more) |
 | `reserved` | attributes | `values` only: `true` adds the reserved keys (below) |
-| `keep` | attributes | `keys` only: up to 100 attributes listed past `limit` too (below) |
+| `keep` | attributes | `keys` only: up to 1,000 attributes listed past `limit` too (below) |
 
 A dimension, series or filter column is one of `project_id`, `family`,
 `event_name`, `day`, `kind`, `actor_id`, `actor_kind`, `user_id`,
@@ -1882,6 +1896,7 @@ A metric takes two more optional fields:
 | `in`, `not_in` | one or more |
 | `gt`, `gte`, `lt`, `lte` | exactly one: an integer, or `YYYY-MM-DD` on `day`, `user_first_seen` and `group_first_seen`; numeric columns and those days only (`day`, `user_first_seen`, `group_first_seen`, `project_id`, `display_width`, `display_height`, `consent`, `bucket`; `duration_sec` and `views` on `sessions`; `views` and `events` on `identities`) |
 | `is_set` | none: the column is not NULL, and on a text column not empty either |
+| `any_set` | none, and `columns` (2 to 5) in place of `column`: at least one of them is set, as `is_set` says; `{"op": "any_set", "columns": ["utm_source", "utm_medium", "utm_campaign"]}` keeps the rows carrying any UTM tag |
 
 A NULL value fails every operator, `ne` and `not_in` included (as in
 SQL): `{"column": "country", "op": "ne", "values": ["DE"]}` leaves out the
@@ -1945,7 +1960,8 @@ passes it. The other fields of the other kinds are refused.
 - **grid**: `cohort` (a day), `identified_by`, `offset` (a number: the
   days since the cohort day), `size`, `returned` and `retention`
   (`returned / size`); a row per cohort, kind and offset with anyone back,
-  by cohort descending, then kind, then offset. A grid has up to two rows
+  by cohort descending, then kind, then offset, or with `identified_by`
+  that kind's rows alone. A grid has up to two rows
   per cohort and offset, so a month of cohorts over 45 offsets can pass
   `CONSOLE_QUERY_ROWS_MAX` (1,000 by default): the answer is then cut
   there, keeping the newest cohorts, and `truncated`; narrow the range or

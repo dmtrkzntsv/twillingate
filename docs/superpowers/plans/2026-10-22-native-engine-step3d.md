@@ -50,7 +50,7 @@
   Values are formatted as DuckDB prints them. Retention is a DOUBLE, compared with tolerance in parity.
 - **Memory:** the per-actor state over all history is charged to `MaxBytes`. Past the budget the query is refused with `ErrTooLarge`. Retention is a single-group answer, like a stat.
 - `ColumnTypes()`, Validate, the MCP schema, `docs/twillingate.md` "Structured queries" (bound by `TestStructuredQueryDocument`) and the 3a query widget source (`rename` maps these columns onto components; the editor templates mirror `ColumnTypes`) change in the same commits.
-- `make check` must pass before each commit: `PATH=/usr/local/go/bin:$PATH GOTMPDIR=~/.cache/gotmp make check`. Never use `/tmp`. Never mention prices, tiers, plans, margins, customers, cloud or private services.
+- `make check` must pass before each commit: `PATH=/usr/local/go/bin:$PATH GOTMPDIR=~/.cache/gotmp make check`. Never use `/tmp`.
 
 ## Review Focus
 

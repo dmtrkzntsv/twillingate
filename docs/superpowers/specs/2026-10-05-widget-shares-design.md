@@ -88,7 +88,7 @@ out of scope.
 
   **"Built with twillingate.dev".** Every share page ends with a footer
   line, `Built with <a href="https://twillingate.dev">twillingate.dev</a>`,
-  the same on every install, hosted or self-hosted, with no setting to
+  the same on every install, with no setting to
   change or hide it. The link is plain: no UTM parameters, since the
   referrer already names the share's host, and no `nofollow`, since
   `noindex` keeps the page itself out of search and the link is an honest
@@ -110,8 +110,7 @@ out of scope.
   proxy's tailnet address). `docs/deployment.md` shows it as a Caddy site
   with a `handle /share/*` block, a `handle` for a `remote_ip
   private_ranges 100.64.0.0/10` matcher, and a 404 for the rest. A console
-  that is already public (one claude.ai reaches over MCP, or a hosted
-  plan) needs nothing.
+  that is already public (one claude.ai reaches over MCP) needs nothing.
 
 - **D3. Embedding is an image link, not an iframe.** The Share dialog's
   "Copy embed code" gives:

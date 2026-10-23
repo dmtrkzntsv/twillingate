@@ -1,0 +1,1 @@
+{"query":{"kind":"retention","output":"milestones","identified_by":"install"},"rename":{"d7":"D7","d30":"D30","d45":"D45"}}

@@ -1,0 +1,1 @@
+{"query":{"kind":"trend","table":"measures","series":"vital","where":[{"column":"vital","op":"in","values":["LCP","INP","FCP","TTFB"]}],"metrics":[{"op":"percentile","q":0.75,"round":0,"as":"y"}]},"rename":{"day":"x"}}

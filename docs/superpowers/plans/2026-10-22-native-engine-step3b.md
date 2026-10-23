@@ -54,7 +54,7 @@ The language, validation, MCP schema and `docs/twillingate.md` "Structured queri
   - `sum`, `avg`, `min`, `max` take `duration_sec` or `views`.
   - `actors` counts distinct `actor_id` over sessions.
 - Memory stays under the step 2 budget (`MaxBytes`). The live session derivation keeps per-actor state only for one day of one project at a time.
-- `make check` must pass before each commit: `PATH=/usr/local/go/bin:$PATH GOTMPDIR=~/.cache/gotmp make check`. Never use `/tmp`. Never mention prices, tiers, plans, margins, customers, cloud or private services.
+- `make check` must pass before each commit: `PATH=/usr/local/go/bin:$PATH GOTMPDIR=~/.cache/gotmp make check`. Never use `/tmp`.
 
 ## Review Focus
 

@@ -1,0 +1,1 @@
+{"query":{"kind":"breakdown","table":"views","dimensions":["host"],"order":"Views","limit":20,"where":[{"column":"host","op":"is_set"}],"metrics":[{"op":"daily_sum","of":"actors","as":"Visitors"},{"op":"count","as":"Views"}]},"rename":{"host":"Host"}}

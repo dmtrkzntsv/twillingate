@@ -46,9 +46,10 @@ func TestMigrateSyncsComponents(t *testing.T) {
 
 // TestMigrateWithoutEventFilesSpawnsNoChild: on a fresh install, with no
 // event file under EVENTS_DIR, the reporting migrator has nothing to
-// check the system widgets on, so it syncs them without the engine: no
-// child is spawned (a spawn creates engine/) and the next start with
-// files checks them.
+// check the system widgets on, so it syncs them without the engine and
+// marks the sync unchecked; the next start with files checks them. No
+// system widget reads SQL any more, so that check runs no query either:
+// neither start spawns a child (a spawn creates engine/).
 func TestMigrateWithoutEventFilesSpawnsNoChild(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -72,8 +73,8 @@ func TestMigrateWithoutEventFilesSpawnsNoChild(t *testing.T) {
 	if err := Migrate(ctx, cfg, st); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "engine")); err != nil {
-		t.Errorf("stat engine/: %v, want the widgets checked on the files by a child", err)
+	if _, err := os.Stat(filepath.Join(dir, "engine")); !os.IsNotExist(err) {
+		t.Errorf("stat engine/: %v, want it not to exist: no system widget reads SQL, yet a child was spawned", err)
 	}
 	if hash, _ := st.ReportingHash(ctx); strings.HasPrefix(hash, "unchecked:") {
 		t.Errorf("ReportingHash = %q after a start with files, still unchecked", hash)
@@ -126,10 +127,11 @@ func TestServeBootsWithReportingMigration(t *testing.T) {
 }
 
 // TestMigrateRefusesAnotherUserBeforeTheEngine: a command run as anyone but
-// the database file's owner (root, say) is refused before the reporting
-// migrator's first query spawns an engine child, which would leave
-// engine/ and raw/ owned by that user. On a release that changed nothing
-// it spawns nothing, so it goes on.
+// the database file's owner (root, say) must not spawn an engine child,
+// which would leave engine/ and raw/ owned by that user. The reporting
+// migrator's files refuse their first query, the one that would spawn it,
+// before it reaches the engine, and every query after. No system widget
+// reads SQL any more, so Migrate itself runs no query and goes on.
 func TestMigrateRefusesAnotherUserBeforeTheEngine(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -139,28 +141,33 @@ func TestMigrateRefusesAnotherUserBeforeTheEngine(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	// Without an event file the migrator runs no query (above), so there
-	// would be nothing to refuse.
-	writeEvent(t, cfg.EventsDir)
 	owner := geteuid
 	t.Cleanup(func() { geteuid = owner })
 	geteuid = func() int { return os.Geteuid() + 1 }
 
-	err = Migrate(ctx, cfg, st)
-	if err == nil || !strings.Contains(err.Error(), "service user") || !strings.Contains(err.Error(), "twillingate migrate") {
-		t.Fatalf("err = %v, want a refusal naming the service user and the command", err)
+	inner := &failingFiles{}
+	files := &ownerFiles{Files: inner, path: DatabasePath(cfg.Database)}
+	for range 2 {
+		_, err = files.Query(ctx, archive.Scoped{})
+		if err == nil || !strings.Contains(err.Error(), "service user") || !strings.Contains(err.Error(), "twillingate migrate") {
+			t.Fatalf("err = %v, want a refusal naming the service user and the command", err)
+		}
+	}
+	if inner.queries != 0 {
+		t.Errorf("%d queries reached the engine past the refusal", inner.queries)
+	}
+
+	writeEvent(t, cfg.EventsDir)
+	if err := Migrate(ctx, cfg, st); err != nil {
+		t.Fatalf("another user, no system SQL to check: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "engine")); !os.IsNotExist(err) {
-		t.Errorf("stat engine/: %v, want it not to exist: a refused run spawned a child", err)
+		t.Errorf("stat engine/: %v, want it not to exist: another user's run spawned a child", err)
 	}
 
 	geteuid = owner
-	if err := Migrate(ctx, cfg, st); err != nil {
-		t.Fatalf("as the owner: %v", err)
-	}
-	geteuid = func() int { return os.Geteuid() + 1 }
-	if err := Migrate(ctx, cfg, st); err != nil {
-		t.Fatalf("another user, nothing to check: %v", err)
+	if _, err := (&ownerFiles{Files: inner, path: DatabasePath(cfg.Database)}).Query(ctx, archive.Scoped{}); err != nil || inner.queries != 1 {
+		t.Errorf("as the owner: err %v, %d queries; want it passed on", err, inner.queries)
 	}
 }
 

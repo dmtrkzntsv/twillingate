@@ -717,3 +717,88 @@ func TestCheckGroupsRefusesGroupTitleOnATab(t *testing.T) {
 		t.Error("group_title on a tab: want an error")
 	}
 }
+
+// manifestWithQueryStat returns testManifest with its stat replaced by
+// queryStat, a stat that accepts a query source as well as sql.
+func manifestWithQueryStat(t *testing.T) []byte {
+	t.Helper()
+	var m manifest
+	if err := json.Unmarshal(testManifest(t), &m); err != nil {
+		t.Fatal(err)
+	}
+	var stat manifestComponent
+	if err := json.Unmarshal([]byte(queryStat), &stat); err != nil {
+		t.Fatal(err)
+	}
+	for i, c := range m.Components {
+		if c.Name == "stat" {
+			m.Components[i] = stat
+		}
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// TestMigrateSystemWidgetSourceType: a release that turns a system
+// widget's users.sql into users.query changes that widget's source type
+// and content in place, keeping its id, while a user's copy of the
+// dashboard made before the upgrade keeps its SQL.
+func TestMigrateSystemWidgetSourceType(t *testing.T) {
+	st, files := newTestStoreAndFiles(t, 1000)
+	ctx := context.Background()
+	system, dir := systemFSCopy(t)
+	manifest := manifestWithQueryStat(t)
+
+	if err := migrateFrom(ctx, st, files, system, manifest); err != nil {
+		t.Fatal(err)
+	}
+	users := func(dashboardID int64) store.Widget {
+		t.Helper()
+		ws, err := st.ListWidgets(ctx, dashboardID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, w := range ws {
+			if w.Name == "users" {
+				return w
+			}
+		}
+		t.Fatalf("dashboard %d has no widget users", dashboardID)
+		return store.Widget{}
+	}
+	before := users(1)
+	if before.SourceType != "sql" {
+		t.Fatalf("users source type = %s before the upgrade, want sql", before.SourceType)
+	}
+	svc := New(st, files, Options{})
+	cp, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	const query = `{"query":{"kind":"stat","table":"views","metrics":[{"op":"count","as":"value"}]}}`
+	if err := os.Remove(filepath.Join(dir, "retention", "users.sql")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "retention", "users.query"), []byte(query), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := migrateFrom(ctx, st, files, system, manifest); err != nil {
+		t.Fatal(err)
+	}
+
+	after := users(1)
+	if after.ID != before.ID {
+		t.Errorf("widget id changed: %d -> %d, want kept", before.ID, after.ID)
+	}
+	if after.SourceType != "query" || after.Source != query {
+		t.Errorf("users = %s %q, want query %q", after.SourceType, after.Source, query)
+	}
+	copied := users(cp.ID)
+	if copied.SourceType != "sql" || copied.Source != before.Source {
+		t.Errorf("the user's copy = %s %q, want its SQL kept: sql %q", copied.SourceType, copied.Source, before.Source)
+	}
+}

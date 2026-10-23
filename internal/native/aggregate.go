@@ -639,6 +639,10 @@ func filtersKey(where []Filter) string {
 	for _, f := range where {
 		b.WriteString(strconv.Quote(f.Column))
 		b.WriteString(strconv.Quote(f.Op))
+		for _, c := range f.Columns {
+			b.WriteString(strconv.Quote(c))
+		}
+		b.WriteByte('|')
 		for _, v := range f.Values {
 			b.WriteString(strconv.Quote(v))
 		}
@@ -657,8 +661,10 @@ func (a *agg) columns() []string {
 	}
 	for _, fs := range append([][]filter{a.filters}, a.masks...) {
 		for _, f := range fs {
-			for _, c := range readColumns(f.column) {
-				add(c)
+			for _, col := range f.columns() {
+				for _, c := range readColumns(col) {
+					add(c)
+				}
 			}
 		}
 	}

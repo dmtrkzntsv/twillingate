@@ -1,0 +1,1 @@
+{"query":{"kind":"stat","table":"events","where":[{"column":"family","op":"in","values":["views","product"]},{"column":"group_id","op":"is_set"}],"metrics":[{"op":"count","as":"value"}]}}

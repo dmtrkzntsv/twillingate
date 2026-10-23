@@ -4,8 +4,8 @@
   "props": {
     "formats": {
       "Events": "number",
-      "Users (at least)": "number",
-      "Groups (at least)": "number"
+      "Users": "number",
+      "Groups": "number"
     },
     "colorscale": [
       "Events"

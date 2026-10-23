@@ -7,8 +7,9 @@ import (
 	"time"
 )
 
-// ---- ops_read.go: filesTable() and checkRange() branches not reached
-// via the happy-path *Overview/*Breakdown tests ----
+// ---- filesTable (the parity tests' DuckDB helper, over runFiles and
+// filesError) and checkRange() branches not reached via the happy-path
+// *Overview/*Breakdown tests ----
 
 func TestFilesTableTruncatesErrorsAndTimesOut(t *testing.T) {
 	h, _ := newTestHost(t)

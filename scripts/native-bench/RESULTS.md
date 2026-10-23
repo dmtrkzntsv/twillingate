@@ -650,3 +650,125 @@ Notes on step 1b (written by hand after the run):
   `attrvalues-approx` cell (`-rows`), written after the measurement; they are
   kept under `<root>/<volume>/rows1b/`, and every cell under
   `<root>/matrix1b-<volume>.json`.
+
+## Step 3f: built-in dashboards
+
+Run 2026-10-23 from 07:36Z (92 cells, 1h04m); the 6 cells the gate gave up on (load 1.6 to 5.3) and one whose warm runs were slower than its first (native Product 365 d at 1M) were re-run from 08:40Z, all behind the gate, and their first numbers dropped. Every cell is a fresh process (`native-bench dashboards`, which runs the main module's `TestMeasureSystemDashboard`, `internal/app/measure_system_test.go`) with GOMAXPROCS=2: one dashboard over one range ending 2026-09-30, every widget requested at once as the console sends them, once ("first") and then 3 times more ("best" = the fastest of those); wall is from the first request to the last answer. Native = the dashboard's query widgets through `reporting.Service.WidgetData` with `native.New`'s defaults (MaxScans 2, 2 workers each). DuckDB = the old SQL kept for parity (`internal/reporting/testdata/system-sql`, and `vitals-by-device-browser.sql` for the two vitals widgets split from it) through `Service.Preview` (uncached), so through `archive.Reader` and the engine child at the defaults (2 threads at GOMAXPROCS=2, one query at a time, 512 MB); its first run includes spawning the child and building the views. Neither side has a result cache; native keeps file footers and identities between runs in the process, so its warm runs reuse them. Peak = VmHWM: native is the Go process; DuckDB is the Go process plus the engine child ("Go + child"). Before every cell the bench waits until the 1-minute load average is at most 1.0 (polling every 10s, giving up after 5m0s and flagging the cell). Data: `archivetest.Generated` at 100k and 1M events a month, 12 months (2025-10 to 2026-09), with group ids (2,000 groups) and web vitals (half the measures), then the daily pass (sessions, identities, aliases); new files under `~/.cache/twbench-native/3f/`, since step 1's had neither group ids nor vitals.
+
+### Step 3f, volume 100k (100000 events a month)
+
+| Dashboard (widgets native / SQL) | Range | Native first | Native best | DuckDB first | DuckDB best | Native peak | DuckDB peak (Go + child) | Slowest native widget (best run) | Load at start (native / DuckDB) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20 / 20) | 7 d | 297 ms | 278 ms | 494 ms | 376 ms | 87 MB | 145 MB (42 MB + 104 MB) | browsers 277 ms | 0.96 / 0.96 |
+| Views (20 / 20) | 30 d | 382 ms | 377 ms | 531 ms | 446 ms | 93 MB | 159 MB (42 MB + 117 MB) | consent-states 360 ms | 0.90 / 0.90 |
+| Views (20 / 20) | 90 d | 1.09 s | 1.03 s | 809 ms | 603 ms | 139 MB | 168 MB (43 MB + 125 MB) | display-resolutions 1008 ms | 0.91 / 0.97 |
+| Views (20 / 20) | 365 d | 3.67 s | 3.71 s | 1.45 s | 1.31 s | 160 MB | 254 MB (42 MB + 212 MB) | top-pages 3712 ms | 0.87 / 0.96 |
+| Product (10 / 10) | 7 d | 166 ms | 150 ms | 292 ms | 211 ms | 89 MB | 168 MB (42 MB + 126 MB) | users-by-app-version 147 ms | 0.96 / 0.97 |
+| Product (10 / 10) | 30 d | 280 ms | 228 ms | 418 ms | 308 ms | 110 MB | 225 MB (42 MB + 183 MB) | events-by-name 211 ms | 0.90 / 0.90 |
+| Product (10 / 10) | 90 d | 640 ms | 605 ms | 465 ms | 364 ms | 155 MB | 224 MB (42 MB + 182 MB) | peak-dau 604 ms | 0.97 / 0.96 |
+| Product (10 / 10) | 365 d | 2.10 s | 2.08 s | 737 ms | 633 ms | 209 MB | 210 MB (42 MB + 167 MB) | attribute-values 2075 ms | 0.89 / 0.99 |
+| Users (6 / 6) | 7 d | 70 ms | 44 ms | 247 ms | 155 ms | 76 MB | 157 MB (41 MB + 116 MB) | daily-active-users 43 ms | 0.97 / 0.97 |
+| Users (6 / 6) | 30 d | 80 ms | 65 ms | 272 ms | 165 ms | 83 MB | 149 MB (41 MB + 107 MB) | daily-active-users 57 ms | 0.90 / 0.90 |
+| Users (6 / 6) | 90 d | 178 ms | 154 ms | 297 ms | 201 ms | 108 MB | 162 MB (41 MB + 121 MB) | actions 154 ms | 0.96 / 0.96 |
+| Groups (6 / 6) | 7 d | 47 ms | 20 ms | 222 ms | 137 ms | 70 MB | 150 MB (41 MB + 109 MB) | actions-per-group 19 ms | 0.97 / 0.97 |
+| Groups (6 / 6) | 30 d | 54 ms | 31 ms | 232 ms | 144 ms | 77 MB | 152 MB (41 MB + 111 MB) | new-groups 20 ms | 0.90 / 0.99 |
+| Groups (6 / 6) | 90 d | 114 ms | 82 ms | 260 ms | 169 ms | 91 MB | 163 MB (41 MB + 122 MB) | active-groups 71 ms | 0.96 / 0.96 |
+| Retention (5 / 5) | 7 d | 182 ms | 1.6 ms | 378 ms | 287 ms | 81 MB | 146 MB (42 MB + 105 MB) | install-milestones 1 ms | 0.89 / 0.89 |
+| Retention (5 / 5) | 30 d | 178 ms | 1.9 ms | 422 ms | 280 ms | 91 MB | 150 MB (42 MB + 108 MB) | cohorts 0 ms | 0.99 / 0.99 |
+| Retention (5 / 5) | 90 d | 186 ms | 1.9 ms | 381 ms | 294 ms | 80 MB | 145 MB (41 MB + 104 MB) | cohorts 0 ms | 0.96 / 0.96 |
+| Web Vitals (11 / 10) | 7 d | 41 ms | 38 ms | 283 ms | 188 ms | 64 MB | 150 MB (41 MB + 109 MB) | by-device 31 ms | 0.89 / 0.89 |
+| Web Vitals (11 / 10) | 30 d | 49 ms | 44 ms | 275 ms | 189 ms | 65 MB | 150 MB (42 MB + 109 MB) | by-device 43 ms | 0.99 / 0.99 |
+| Web Vitals (11 / 10) | 90 d | 122 ms | 117 ms | 301 ms | 214 ms | 77 MB | 156 MB (42 MB + 114 MB) | p75-by-day 110 ms | 0.87 / 0.87 |
+| Measures (2 / 2) | 7 d | 11 ms | 5.7 ms | 120 ms | 43 ms | 62 MB | 132 MB (41 MB + 92 MB) | metrics 5 ms | 0.89 / 0.89 |
+| Measures (2 / 2) | 30 d | 12 ms | 8.8 ms | 115 ms | 44 ms | 58 MB | 139 MB (41 MB + 97 MB) | p75-by-day 8 ms | 0.91 / 0.91 |
+| Measures (2 / 2) | 90 d | 31 ms | 24 ms | 118 ms | 48 ms | 74 MB | 138 MB (41 MB + 98 MB) | p75-by-day 23 ms | 0.87 / 0.87 |
+
+### Step 3f, volume 1m (1000000 events a month)
+
+| Dashboard (widgets native / SQL) | Range | Native first | Native best | DuckDB first | DuckDB best | Native peak | DuckDB peak (Go + child) | Slowest native widget (best run) | Load at start (native / DuckDB) |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20 / 20) | 7 d | 911 ms | 874 ms | 732 ms | 604 ms | 135 MB | 162 MB (42 MB + 120 MB) | visitors-by-kind 874 ms | 0.91 / 1.00 |
+| Views (20 / 20) | 30 d | 2.20 s | 2.15 s | 1.24 s | 1.09 s | 171 MB | 208 MB (42 MB + 166 MB) | devices 2116 ms | 1.00 / 0.94 |
+| Views (20 / 20) | 90 d | 6.70 s | 6.11 s | 2.88 s | 2.78 s | 238 MB | 387 MB (43 MB + 344 MB) | countries 6111 ms | 0.93 / 0.88 |
+| Views (20 / 20) | 365 d | 24.47 s | 23.94 s | 14.57 s | 11.49 s | 651 MB | 810 MB (44 MB + 767 MB) | devices 23939 ms | 0.91 / 0.92 |
+| Product (10 / 10) | 7 d | 712 ms | 698 ms | 619 ms | 522 ms | 169 MB | 328 MB (42 MB + 286 MB) | peak-dau 685 ms | 1.00 / 0.90 |
+| Product (10 / 10) | 30 d | 1.64 s | 1.51 s | 1.89 s | 1.71 s | 236 MB | 790 MB (42 MB + 748 MB) | avg-dau 1514 ms | 0.94 / 0.96 |
+| Product (10 / 10) | 90 d | 4.33 s | 4.38 s | 2.55 s | 2.39 s | 315 MB | 657 MB (43 MB + 614 MB) | attribute-values 4377 ms | 0.92 / 0.88 |
+| Product (10 / 10) | 365 d | 17.74 s | 16.88 s | 5.72 s | 5.64 s | 693 MB | 886 MB (43 MB + 843 MB) | avg-dau 16879 ms | 0.97 / 0.97 |
+| Users (6 / 6) | 7 d | 333 ms | 193 ms | 352 ms | 260 ms | 152 MB | 173 MB (41 MB + 132 MB) | actions 192 ms | 0.90 / 0.98 |
+| Users (6 / 6) | 30 d | 645 ms | 511 ms | 521 ms | 396 ms | 216 MB | 218 MB (42 MB + 176 MB) | daily-active-users 511 ms | 0.96 / 0.96 |
+| Users (6 / 6) | 90 d | 1.62 s | 1.69 s | 849 ms | 749 ms | 281 MB | 265 MB (42 MB + 222 MB) | new-users 1665 ms | 0.96 / 0.92 |
+| Groups (6 / 6) | 7 d | 239 ms | 113 ms | 266 ms | 179 ms | 131 MB | 155 MB (42 MB + 113 MB) | new-groups 101 ms | 0.98 / 0.98 |
+| Groups (6 / 6) | 30 d | 349 ms | 246 ms | 326 ms | 243 ms | 143 MB | 164 MB (41 MB + 123 MB) | actions 245 ms | 1.00 / 1.00 |
+| Groups (6 / 6) | 90 d | 830 ms | 728 ms | 538 ms | 409 ms | 162 MB | 189 MB (42 MB + 148 MB) | new-groups 727 ms | 1.00 / 1.00 |
+| Retention (5 / 5) | 7 d | 1.94 s | 2.1 ms | 1.32 s | 1.23 s | 116 MB | 183 MB (43 MB + 141 MB) | cohorts 0 ms | 0.98 / 0.95 |
+| Retention (5 / 5) | 30 d | 2.06 s | 1.6 ms | 1.31 s | 1.21 s | 118 MB | 186 MB (43 MB + 143 MB) | install-milestones 1 ms | 1.00 / 1.00 |
+| Retention (5 / 5) | 90 d | 1.96 s | 2.1 ms | 1.39 s | 1.21 s | 116 MB | 186 MB (42 MB + 143 MB) | install-milestones 2 ms | 1.00 / 1.00 |
+| Web Vitals (11 / 10) | 7 d | 82 ms | 80 ms | 342 ms | 247 ms | 76 MB | 154 MB (41 MB + 113 MB) | by-page 72 ms | 0.91 / 0.91 |
+| Web Vitals (11 / 10) | 30 d | 153 ms | 111 ms | 406 ms | 334 ms | 81 MB | 155 MB (42 MB + 114 MB) | by-browser 110 ms | 0.94 / 0.94 |
+| Web Vitals (11 / 10) | 90 d | 334 ms | 317 ms | 438 ms | 340 ms | 104 MB | 160 MB (42 MB + 118 MB) | lcp 300 ms | 1.00 / 0.91 |
+| Measures (2 / 2) | 7 d | 21 ms | 16 ms | 138 ms | 51 ms | 72 MB | 136 MB (41 MB + 95 MB) | metrics 12 ms | 1.00 / 1.00 |
+| Measures (2 / 2) | 30 d | 29 ms | 29 ms | 162 ms | 71 ms | 83 MB | 141 MB (41 MB + 100 MB) | p75-by-day 29 ms | 0.93 / 0.93 |
+| Measures (2 / 2) | 90 d | 89 ms | 67 ms | 153 ms | 77 ms | 93 MB | 149 MB (41 MB + 108 MB) | metrics 66 ms | 0.91 / 0.91 |
+
+Load average (1 min) at cell start: 0.87 to 1.00; cells that started above 1.0 (the gate gave up): 0 of 92.
+
+Analytics tools at 1M, 30 d (2026-09-01 to 09-30), one process (`go test -tags measure -run TestMeasureTools ./internal/api`, `internal/api/measure_tools_test.go`), GOMAXPROCS=2, started at load 0.89; each tool alone, twice on each side; old SQL = the parity harness's constants through `filesTable` (archive.Reader, engine child at 2 threads, started by a throwaway query before the first timing):
+
+| Tool | Native first | Native second | Old SQL first | Old SQL second |
+| --- | --- | --- | --- | --- |
+| views_overview | 145.8 ms | 130.5 ms | 85.3 ms | 67.7 ms |
+| product_events | 237.7 ms | 260.7 ms | 152.6 ms | 139.1 ms |
+| event_names | 21.7 ms | 22.2 ms | 24.1 ms | 24.3 ms |
+| product_attributes | 1026.6 ms | 970.5 ms | 3535.8 ms | 3527.6 ms |
+| measures | 21.5 ms | 20.8 ms | 46.0 ms | 33.8 ms |
+| retention (user) | 1775.9 ms | 185.1 ms | 2154.5 ms | 2208.4 ms |
+| identities (user) | 436.3 ms | 363.2 ms | 168.5 ms | 160.5 ms |
+| identities (group) | 224.2 ms | 221.9 ms | 103.3 ms | 99.5 ms |
+| views_breakdown app_versions | 63.5 ms | 59.8 ms | 35.8 ms | 37.7 ms |
+| views_breakdown browsers | 123.5 ms | 125.2 ms | 80.6 ms | 80.6 ms |
+| views_breakdown consent | 128.9 ms | 127.9 ms | 58.1 ms | 66.3 ms |
+| views_breakdown countries | 132.1 ms | 129.5 ms | 62.8 ms | 64.8 ms |
+| views_breakdown devices | 123.0 ms | 118.1 ms | 78.1 ms | 77.6 ms |
+| views_breakdown displays | 145.1 ms | 152.6 ms | 90.4 ms | 88.6 ms |
+| views_breakdown hosts | 115.2 ms | 117.8 ms | 70.7 ms | 69.3 ms |
+| views_breakdown kinds | 117.4 ms | 113.4 ms | 61.6 ms | 64.5 ms |
+| views_breakdown locales | 123.5 ms | 133.2 ms | 79.0 ms | 76.1 ms |
+| views_breakdown os | 129.3 ms | 128.4 ms | 91.5 ms | 80.5 ms |
+| views_breakdown paths | 170.9 ms | 165.2 ms | 115.7 ms | 109.9 ms |
+| views_breakdown platforms | 119.9 ms | 112.1 ms | 70.5 ms | 65.0 ms |
+| views_breakdown referrers | 137.8 ms | 138.3 ms | 87.2 ms | 79.5 ms |
+| views_breakdown utm | 60.7 ms | 66.5 ms | 44.5 ms | 41.1 ms |
+
+Notes on step 3f (written by hand after the run):
+
+- The files are DuckDB-written month files, as this branch's daily pass
+  writes them: one row group a month at 100k, 9 groups of 122,880 rows at
+  1M. Step 1b chose 1-day groups (`pqgo-1d`), which come with the Go
+  writer (step 4, not on this branch), so no scan here prunes days inside
+  a month: a 7-day range reads the whole month's groups of its family.
+  Re-measure after step 4.
+- Each widget is its own scan and at most two scan at once (MaxScans 2),
+  so a dashboard costs roughly the sum of its scans over two. The
+  per-widget times in the cells include that queueing; the slowest-widget
+  column is the last to finish, not the most expensive scan. One native
+  breakdown at 1M and 30 d takes 110 to 170 ms (tools table) against 60
+  to 115 ms for DuckDB's one query; Views has 20 such scans.
+- Retention's first run reads the identities, which the native engine
+  then caches in the process, so its warm runs (about 2 ms) reuse them;
+  its first run is the honest uncached figure (1.9 to 2.1 s at 1M).
+  Product's attribute-values and the DAU widgets dominate its long ranges.
+- Peak memory grows with the range on the native side: 651 MB (Views) and
+  693 MB (Product) at 1M and 365 d. It is below the DuckDB Go + child sum
+  in every cell but one (Users, 90 d, 1M: 281 against 265 MB).
+- Idle RSS before the first request was 37 to 38 MB in both modes; that is
+  the measure test binary (which carries both engines and the tests), not
+  the server.
+- The generated data: 2,000 groups on a quarter of the product events and
+  on the views of signed-in visitors; half the measures are vitals ($lcp,
+  $inp, $cls, $fcp, $ttfb with a device and a browser). Users and groups
+  repeat every month, as in step 1, so distinct counts over 30 d and 365 d
+  are close.
+- Every cell is in `~/.cache/twbench-native/3f/<volume>/cells/` and
+  `~/.cache/twbench-native/3f/dashboards.json`; the first pass's table is
+  `RESULTS-3f-run1.md` beside them.

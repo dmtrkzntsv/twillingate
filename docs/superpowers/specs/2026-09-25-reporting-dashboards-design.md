@@ -17,8 +17,7 @@ removes Evidence.
   image with about 990 npm packages that snapshots the whole SQLite file
   and rebuilds a static site. Running it means Docker, a second compose
   file, and in the two-server topology a litestream replica at home. None
-  of that is "open a page, log in, look". A hosted twillingate cloud
-  cannot hand each customer that stack.
+  of that is "open a page, log in, look".
 - **Only a developer can add a report.** Pages are Markdown files in the
   repo. An agent that already answers questions over MCP (`query`,
   `views_breakdown`, …) cannot save what it found as a chart; the answer
@@ -823,7 +822,7 @@ In the same PR as the change:
 
 ## Out of scope
 
-- Multi-tenant cloud: accounts, billing, one database per tenant.
+- Several tenants in one install: accounts, one database per tenant.
 - A native desktop app (Wails or Tauri) around the same bundle.
 - Any editing in the UI.
 - Deleting on request. Agents archive and restore projects, dashboards

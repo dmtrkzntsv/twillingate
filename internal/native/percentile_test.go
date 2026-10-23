@@ -2,7 +2,9 @@ package native
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"math"
 	"os"
 	"path/filepath"
@@ -87,12 +89,23 @@ func widgetSQL(t *testing.T, name string) string {
 // widgetSQLOf is widgetSQL for project.
 func widgetSQLOf(t *testing.T, name string, project int64) string {
 	t.Helper()
+	s := strings.ReplaceAll(widgetFile(t, name), "%", "%%")
+	return strings.NewReplacer(":project", strconv.FormatInt(project, 10), ":from", "DATE '%[1]s'", ":to", "DATE '%[2]s'").Replace(s)
+}
+
+// widgetFile is a system widget's SQL file name as written: under
+// system/, or, for a widget the native engine answers, where its old SQL
+// is kept.
+func widgetFile(t *testing.T, name string) string {
+	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "reporting", "system", name))
+	if errors.Is(err, fs.ErrNotExist) {
+		b, err = os.ReadFile(filepath.Join("..", "reporting", "testdata", "system-sql", name))
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := strings.ReplaceAll(string(b), "%", "%%")
-	return strings.NewReplacer(":project", strconv.FormatInt(project, 10), ":from", "DATE '%[1]s'", ":to", "DATE '%[2]s'").Replace(s)
+	return string(b)
 }
 
 // pctSQL is the widgets' percentile recipe over measures grouped by

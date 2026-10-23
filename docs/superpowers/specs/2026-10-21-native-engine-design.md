@@ -639,6 +639,82 @@ source).
   compares 0 with 0) and repeats the same users every month (30 d and
   365 d have the same distinct users per value).
 
+## Measurements (step 3f)
+
+Every built-in dashboard loaded as the console loads it (all widgets at
+once), native against the old SQL on DuckDB, on fresh files at 100k and
+1M events a month (a year, with group ids and web vitals), GOMAXPROCS=2,
+behind the quiet-host gate (every cell started at a 1-minute load of
+0.87 to 1.00). "Best" is the fastest of 3 warm runs in the same process;
+no result cache on either side. Peak is VmHWM: the Go process for
+native, the Go process plus the engine child for DuckDB. Method, the
+100k table and the tools: `scripts/native-bench/RESULTS.md`, "Step 3f".
+
+At 1M (wall first / best; peak):
+
+| Dashboard | Range | Native | DuckDB | Native peak | DuckDB peak |
+| --- | --- | --- | --- | --- | --- |
+| Views (20) | 7 d | 911 / 874 ms | 732 / 604 ms | 135 MB | 162 MB |
+| Views (20) | 30 d | 2.20 / 2.15 s | 1.24 / 1.09 s | 171 MB | 208 MB |
+| Views (20) | 90 d | 6.70 / 6.11 s | 2.88 / 2.78 s | 238 MB | 387 MB |
+| Views (20) | 365 d | 24.5 / 23.9 s | 14.6 / 11.5 s | 651 MB | 810 MB |
+| Product (10) | 7 d | 712 / 698 ms | 619 / 522 ms | 169 MB | 328 MB |
+| Product (10) | 30 d | 1.64 / 1.51 s | 1.89 / 1.71 s | 236 MB | 790 MB |
+| Product (10) | 90 d | 4.33 / 4.38 s | 2.55 / 2.39 s | 315 MB | 657 MB |
+| Product (10) | 365 d | 17.7 / 16.9 s | 5.72 / 5.64 s | 693 MB | 886 MB |
+| Users (6) | 30 d | 645 / 511 ms | 521 / 396 ms | 216 MB | 218 MB |
+| Groups (6) | 30 d | 349 / 246 ms | 326 / 243 ms | 143 MB | 164 MB |
+| Retention (5) | 90 d (default) | 1.96 s / 2 ms | 1.39 / 1.21 s | 116 MB | 186 MB |
+| Web Vitals (11 / 10) | 30 d (default) | 153 / 111 ms | 406 / 334 ms | 81 MB | 155 MB |
+| Measures (2) | 30 d | 29 / 29 ms | 162 / 71 ms | 83 MB | 141 MB |
+
+Against the targets:
+
+- **Peak under ~150 MB: missed at 1M for the large dashboards, met for
+  the small ones.** Met at 1M by Retention, Web Vitals, Measures at every
+  range, Groups to 30 d and Views at 7 d; missed by Views from 30 d
+  (171 MB, up to 651 MB over the year), Product at every range (169 to
+  693 MB), Users at every range (152 to 281 MB) and Groups at 90 d. At 100k only Views over the
+  year (160 MB) and Product from 90 d (155 and 209 MB) miss it. Native
+  is below DuckDB's Go-plus-child peak in every cell but one (Users, 90 d,
+  1M: 281 against 265 MB), often by half.
+- **30-day dashboard under 0.5 s at 1M, uncached: missed for Views
+  (2.15 s), Product (1.51 s), Users (511 ms) and Retention (2.06 s on the
+  first load); met for Groups (246 ms), Web Vitals (111 ms) and Measures
+  (29 ms).** Views at 30 d is twice as slow as DuckDB's 1.09 s.
+- **Tens of ms at 100k, 30 days: met for Users (65 ms), Groups (31 ms),
+  Web Vitals (44 ms) and Measures (9 ms); missed for Views (377 ms),
+  Product (228 ms) and Retention's first load (178 ms).**
+- **1-year dashboard at 1M (under ~3 s cold, under 1 s with a warm
+  cache): missed by far, and slower than DuckDB.** Views takes 23.9 s
+  (DuckDB 11.5 s) and Product 16.9 s (DuckDB 5.6 s), uncached with the OS
+  cache warm; no engine cache exists yet (step 5).
+- **Against DuckDB:** native is faster for Web Vitals and Measures at
+  every range (1.1 to 3.2x at 1M, the gap closing at 90 d), for Groups and Users at 7 d, for Product at
+  30 d (1.51 against 1.71 s at 1M) and for Views up to 30 d at 100k; it is
+  slower for Views from 7 d at 1M, for Users from 30 d at 1M, and for
+  Views and Product from 90 d at both volumes (2.1 to 3.3x over the
+  year).
+
+Why, and what the numbers do not cover:
+
+- The files are DuckDB-written month files (one row group a month at
+  100k, 122,880 rows a group at 1M), as this branch's daily pass writes
+  them. Step 1b's 1-day groups come with the Go writer (step 4), so no
+  scan here prunes days inside a month. Step 1b's trio gains came on
+  those smaller groups; this has to be measured again after step 4.
+- Each widget is its own scan, two at a time (MaxScans 2): a dashboard
+  costs about the sum of its scans over two, and Views has 20. One native
+  views breakdown at 1M over 30 d takes 110 to 170 ms against 60 to 115
+  ms for the old SQL (the tools table), so the per-scan cost, not only
+  the count, is behind the miss. Sharing one pass over the files between
+  the widgets of a load, or a cheaper scan, is what would close it; the
+  per-day cache of step 5 is the lever for the 1-year target.
+- Retention's warm loads take 2 ms because the engine caches identities
+  in the process; its first load (about 2 s at 1M) is the uncached figure.
+- Nothing was measured cold (the OS cache was warm), and "released
+  after" (memory returned after a load) was not measured.
+
 ## Left to the builder
 
 - Field names and JSON schema of the language; the exact metric and

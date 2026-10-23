@@ -39,12 +39,12 @@ type Query struct {
 	Order       string   `json:"order,omitempty" jsonschema:"breakdown and attributes values only: a metric name to rank groups by, descending, or one of its dimensions (an attributes' attribute and value among them) to sort them by, ascending, ties by the other dimensions ascending (default: the first metric; an attributes with day by day, the first metric descending, event_name, attribute and value, else by event_name, attribute, the first metric descending and value); limit keeps the first groups in that order"`
 	// The retention kind's fields.
 	Output       string `json:"output,omitempty" jsonschema:"retention and attributes only, required. An attributes: values (a row per dimensions, attribute and value) or keys (attribute, events, values, keys_total: a row per attribute, its events and distinct values, keys_total the number of attributes; the limit busiest, by events, then those keep names). A retention: grid (cohort, identified_by, offset, size, returned, retention: a row per cohort, identity kind and day back, offset the days since the cohort day), curve (offset, retention: one identity kind's cohorts pooled per day back) or milestones (one row, a d<n> column per milestone: the curve's retention that day back)"`
-	IdentifiedBy string `json:"identified_by,omitempty" jsonschema:"retention curve and milestones only, required: install or user, the cohorts pooled (a grid has both)"`
+	IdentifiedBy string `json:"identified_by,omitempty" jsonschema:"retention only: install or user, the cohorts a curve or milestones pools (required there); on a grid optional, its rows of that kind alone (without it, both)"`
 	Offsets      int    `json:"offsets,omitempty" jsonschema:"retention only: the days back counted, 1 to 90 (default 45)"`
 	Milestones   []int  `json:"milestones,omitempty" jsonschema:"retention milestones only: 1 to 6 distinct days back, each 0 to offsets (default 7, 30 and 45)"`
 	// The attributes kind's.
 	Reserved bool     `json:"reserved,omitempty" jsonschema:"attributes values only: also the reserved keys, each read from its column (empty read as NULL) under its own name, as $platform or $country"`
-	Keep     []string `json:"keep,omitempty" jsonschema:"attributes keys only: up to 100 attributes (the key without attr_, spelled exactly as the answer spells it) listed past the limit too, when the range has events carrying them"`
+	Keep     []string `json:"keep,omitempty" jsonschema:"attributes keys only: up to 1000 attributes (the key without attr_, spelled exactly as the answer spells it) listed past the limit too, when the range has events carrying them"`
 }
 
 // The retention defaults: the days back counted, the milestones read.
@@ -93,10 +93,15 @@ const maxRound = 6
 
 // Filter keeps the rows whose Column satisfies Op against Values.
 type Filter struct {
-	Column string   `json:"column" jsonschema:"one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent), user_status and group_status (new on the day the user_id or group_id was first seen, as identities has it, returning on a later day, NULL without one), user_label and group_label (the identity's name, as identities has it, else the id; NULL without one), these seven on events, views and product only; computed, a day: user_first_seen and group_first_seen (the identity's first-seen day, as identities has it; NULL without one or when identities lacks it), on events, views and product only; on measures only, vital (LCP, INP, CLS, FCP or TTFB for the event_name $lcp, $inp, $cls, $fcp or $ttfb, else NULL) and vital_rating (good, needs improvement or poor: the sample's bucket value against the vital's thresholds, LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800; NULL for the other measures). On sessions instead: project_id, day, kind, actor_id, actor_kind, session_id, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign, and the numbers duration_sec and views. On identities instead: kind (user or group), id, name, day (first_seen's day), and the numbers views and events"`
-	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, not_prefix (text that does not start with the value), gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none (not NULL, and text not empty). gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, user_first_seen and group_first_seen, and only on numeric columns and those days. NULL fails every op, ne and not_in included"`
+	Column string   `json:"column,omitempty" jsonschema:"required but for any_set: one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent), user_status and group_status (new on the day the user_id or group_id was first seen, as identities has it, returning on a later day, NULL without one), user_label and group_label (the identity's name, as identities has it, else the id; NULL without one), these seven on events, views and product only; computed, a day: user_first_seen and group_first_seen (the identity's first-seen day, as identities has it; NULL without one or when identities lacks it), on events, views and product only; on measures only, vital (LCP, INP, CLS, FCP or TTFB for the event_name $lcp, $inp, $cls, $fcp or $ttfb, else NULL) and vital_rating (good, needs improvement or poor: the sample's bucket value against the vital's thresholds, LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800; NULL for the other measures). On sessions instead: project_id, day, kind, actor_id, actor_kind, session_id, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign, and the numbers duration_sec and views. On identities instead: kind (user or group), id, name, day (first_seen's day), and the numbers views and events"`
+	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, not_prefix (text that does not start with the value), gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none (not NULL, and text not empty); any_set none, and columns instead of column (at least one of them is set, as is_set says). gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, user_first_seen and group_first_seen, and only on numeric columns and those days. NULL fails every op, ne and not_in included"`
 	Values []string `json:"values,omitempty" jsonschema:"the values compared against, as text"`
+	// Columns are any_set's columns, in place of Column.
+	Columns []string `json:"columns,omitempty" jsonschema:"any_set only, in place of column: 2 to 5 columns, of which a row passes when at least one is set (not NULL, and text not empty)"`
 }
+
+// maxAnySet bounds any_set's columns.
+const maxAnySet = 5
 
 // Name is the metric's output column: As, else derived from the op.
 func (m Metric) Name() string {
@@ -418,7 +423,7 @@ var (
 	OfColumns           = []string{"actors", "users", "groups"}
 	// ShareOfColumns are what share takes as of (weight on measures only).
 	ShareOfColumns = []string{"count", "weight"}
-	FilterOps      = []string{"eq", "ne", "in", "not_in", "contains", "prefix", "not_prefix", "gt", "gte", "lt", "lte", "is_set"}
+	FilterOps      = []string{"eq", "ne", "in", "not_in", "contains", "prefix", "not_prefix", "gt", "gte", "lt", "lte", "is_set", "any_set"}
 )
 
 var (
@@ -636,8 +641,8 @@ func (q Query) validateRetention() error {
 		return invalid("output", "%q is not one of %s", q.Output, strings.Join(RetentionOutputs, ", "))
 	}
 	switch {
-	case q.Output == "grid" && q.IdentifiedBy != "":
-		return invalid("identified_by", "a grid has both install and user; only a curve or milestones takes identified_by")
+	case q.Output == "grid" && q.IdentifiedBy != "" && !slices.Contains(IdentifiedBy, q.IdentifiedBy):
+		return invalid("identified_by", "%q is not install or user; a grid without it has both", q.IdentifiedBy)
 	case q.Output != "grid" && !slices.Contains(IdentifiedBy, q.IdentifiedBy):
 		return invalid("identified_by", "%q is not install or user, which a %s needs", q.IdentifiedBy, q.Output)
 	}
@@ -744,11 +749,11 @@ func (q Query) validateAttributes() error {
 	return nil
 }
 
-// The attributes keys' bounds: the keys it keeps by default, the names
-// keep may list.
+// The attributes keys' bounds: the keys it keeps by default, and MaxKeep
+// the names keep may list.
 const (
 	defaultKeysLimit = 50
-	maxKeep          = 100
+	MaxKeep          = 1000
 )
 
 // keysTable is an attributes keys' table, events when unset.
@@ -798,8 +803,8 @@ func (q Query) validateAttributeKeys() error {
 		return invalid("milestones", "an attributes takes none")
 	case q.Limit < 0 || q.Limit > maxLimit:
 		return invalid("limit", "%d is not between 1 and %d", q.Limit, maxLimit)
-	case len(q.Keep) > maxKeep:
-		return invalid("keep", "%d names, at most %d", len(q.Keep), maxKeep)
+	case len(q.Keep) > MaxKeep:
+		return invalid("keep", "%d names, at most %d", len(q.Keep), MaxKeep)
 	}
 	for i, f := range q.Where {
 		if err := f.validate(q.keysTable(), fmt.Sprintf("where[%d]", i)); err != nil {
@@ -947,6 +952,25 @@ func (m Metric) validateRatio(kind, table, p string) error {
 // validate refuses a malformed filter; p is its path (where[0],
 // metrics[1].where[0]).
 func (f Filter) validate(table, p string) error {
+	if f.Op == "any_set" {
+		switch n := len(f.Columns); {
+		case f.Column != "":
+			return invalid(p+".column", "any_set takes columns, not column")
+		case n < 2 || n > maxAnySet:
+			return invalid(p+".columns", "any_set takes 2 to %d columns, got %d", maxAnySet, n)
+		case len(f.Values) != 0:
+			return invalid(p+".values", "any_set takes none")
+		}
+		for j, c := range f.Columns {
+			if _, ok := columnInfo(table, c); !ok {
+				return invalid(fmt.Sprintf("%s.columns[%d]", p, j), "%q is not a column of %s", c, table)
+			}
+		}
+		return nil
+	}
+	if len(f.Columns) > 0 {
+		return invalid(p+".columns", "only any_set takes columns")
+	}
 	orderable, ok := columnInfo(table, f.Column)
 	if !ok {
 		return invalid(p+".column", "%q is not a column of %s", f.Column, table)

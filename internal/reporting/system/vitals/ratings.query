@@ -1,0 +1,1 @@
+{"query":{"kind":"breakdown","table":"measures","dimensions":["vital","vital_rating"],"order":"vital","where":[{"column":"vital","op":"is_set"}],"metrics":[{"op":"share","of":"weight","as":"y"}]},"rename":{"vital":"x","vital_rating":"series"}}

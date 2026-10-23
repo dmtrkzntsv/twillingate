@@ -1,0 +1,1 @@
+{"query":{"kind":"trend","table":"product","series":"app_version","series_limit":50,"where":[{"column":"app_version","op":"is_set"}],"metrics":[{"op":"actors","as":"y"}]},"rename":{"day":"x"}}

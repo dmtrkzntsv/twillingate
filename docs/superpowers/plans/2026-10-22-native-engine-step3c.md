@@ -45,7 +45,7 @@ Two computed dimensions on `measures` (`vital`, `vital_rating`) and a `share` me
   - `vital_rating` = `good` when `approx_value` ≤ good, `needs improvement` when ≤ poor, otherwise `poor`, with thresholds (good, poor) LCP (2500, 4000), INP (200, 500), CLS (0.1, 0.25), FCP (1800, 3000), TTFB (800, 1800). It is NULL for non-vitals.
 - **Approximation:** percentiles come from buckets with about 2% resolution by design. The `approximate` flag is about distinct-count sketches only, so percentiles are not flagged. The docs say a percentile is the bucket boundary's value.
 - Validation, the MCP schema tags, `docs/twillingate.md` "Structured queries" (bound by `TestStructuredQueryDocument`) and `ColumnTypes()` (all new metrics are number) change in the same commits.
-- `make check` must pass before each commit: `PATH=/usr/local/go/bin:$PATH GOTMPDIR=~/.cache/gotmp make check`. Never use `/tmp`. Never mention prices, tiers, plans, margins, customers, cloud or private services.
+- `make check` must pass before each commit: `PATH=/usr/local/go/bin:$PATH GOTMPDIR=~/.cache/gotmp make check`. Never use `/tmp`.
 
 ## Review Focus
 

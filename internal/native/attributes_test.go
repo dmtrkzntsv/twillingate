@@ -120,11 +120,11 @@ func attrFixture(t testing.TB) *archivetest.Files {
 	return f
 }
 
-// attrWidgetSQL is the Product dashboard's attribute values query as written,
+// attrWidgetSQL is the Product dashboard's attribute values SQL, kept in testdata,
 // over table, its parameters spelled for duckTable.
 func attrWidgetSQL(t *testing.T, table string) string {
 	t.Helper()
-	b, err := os.ReadFile("../reporting/system/product/attribute-values.sql")
+	b, err := os.ReadFile("../reporting/testdata/system-sql/product/attribute-values.sql")
 	if err != nil {
 		t.Fatal(err)
 	}

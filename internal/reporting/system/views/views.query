@@ -1,0 +1,1 @@
+{"query":{"kind":"stat","table":"views","compare":"previous","metrics":[{"op":"count","as":"value"}]},"rename":{"previous_value":"previous"}}

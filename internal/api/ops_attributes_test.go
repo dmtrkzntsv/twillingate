@@ -4,13 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -168,27 +171,73 @@ func TestListAttributesCapsTheKeys(t *testing.T) {
 	}
 }
 
-// TestListAttributesRefusesPast92Days: list_attributes reads every value
-// of the range, so it covers at most product_attributes' 92 days a call;
-// its default, the last 30 days, fits.
-func TestListAttributesRefusesPast92Days(t *testing.T) {
+// TestListAttributesCoversAYear: list_attributes reads the native
+// engine, so a range runs to usage's 400 days (the 92-day cap went with
+// DuckDB); its default is the last 30 days. Past the engine's groups the
+// list would be partial, and is refused.
+func TestListAttributesCoversAYear(t *testing.T) {
 	h, cs := newTestHost(t)
 	ctx := context.Background()
-	_, err := h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-05-01", To: "2026-08-01"}})
-	if !errors.Is(err, manage.ErrInvalid) || !strings.Contains(err.Error(), "92 days") {
-		t.Errorf("93 days: %v, want refused naming 92 days", err)
+	out, err := h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2025-08-03", To: "2026-09-06"}})
+	if err != nil || len(out.Attributes) == 0 {
+		t.Errorf("400 days = %+v, %v", out, err)
 	}
-	if _, err := h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-05-02", To: "2026-08-01"}}); err != nil {
-		t.Errorf("92 days: %v", err)
+	if _, err := h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2025-08-02", To: "2026-09-06"}}); !errors.Is(err, manage.ErrInvalid) {
+		t.Errorf("401 days: %v, want refused", err)
 	}
-	out, err := h.listAttributes(ctx, attributesIn{ProjectID: 1})
-	if err != nil {
+	if out, err = h.listAttributes(ctx, attributesIn{ProjectID: 1}); err != nil {
 		t.Fatal(err)
 	}
 	if from, _ := time.Parse(time.DateOnly, out.From); out.To != time.Now().UTC().Format(time.DateOnly) || from.AddDate(0, 0, 29).Format(time.DateOnly) != out.To {
 		t.Errorf("default range %s..%s, want the last 30 days", out.From, out.To)
 	}
-	if res := callTool(t, cs, "list_attributes", map[string]any{"project_id": 1, "from": "2026-01-01", "to": "2026-08-01"}); !res.IsError {
-		t.Errorf("MCP 213 days = %s, want refused", textOf(res))
+	if res := callTool(t, cs, "list_attributes", map[string]any{"project_id": 1, "from": "2026-01-01", "to": "2026-08-01"}); res.IsError {
+		t.Errorf("MCP 213 days = %s", textOf(res))
+	}
+	h.native = native.New(native.Options{Dir: h.eventsDir, MaxGroups: 1})
+	_, err = h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-21"}})
+	if !errors.Is(err, manage.ErrInvalid) || !strings.Contains(err.Error(), "narrow the date range") {
+		t.Errorf("past the engine's groups: %v, want refused", err)
+	}
+}
+
+// More rule-named keys than one query keeps are asked in turns, each key
+// listed once with its own counts.
+func TestListAttributesKeepsEveryRuleNamedKey(t *testing.T) {
+	h, _ := newTestHost(t)
+	ctx := context.Background()
+	defer func(n int) { attributeKeysLimit = n }(attributeKeysLimit)
+	attributeKeysLimit = 1
+	at := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
+	writeHostEvents(t, h, store.Event{ProjectID: 1, Family: store.FamilyProduct, EventName: "e", TS: at,
+		Attributes: map[string]string{"zz_last": "v"}})
+	for i := range native.MaxKeep {
+		if _, err := h.ops.BlockAttribute(ctx, "test", 1, fmt.Sprintf("k%04d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := h.ops.MergeAttribute(ctx, "test", 1, "zz_old", "zz_last"); err != nil {
+		t.Fatal(err)
+	}
+	out, err := h.listAttributes(ctx, attributesIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-21", To: "2026-08-21"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(out.Attributes); n != native.MaxKeep+2 {
+		t.Errorf("%d keys, want the busiest, zz_last and the %d blocked", n, native.MaxKeep)
+	}
+	// The merged answers keep the old order: events descending, then key.
+	// plan (team x2) is the busiest, zz_last (asked in the second turn,
+	// rule keys going by key) next, then the blocked keys, by key.
+	if got := out.Attributes[:2]; len(out.Attributes) < 2 ||
+		got[0].Key != "plan" || got[0].Events != 2 || !got[0].Received ||
+		got[1].Key != "zz_last" || got[1].Events != 1 || !got[1].Received || !slices.Equal(got[1].Aliases, []string{"zz_old"}) {
+		t.Errorf("first keys = %+v, want plan (2), then zz_last (1)", out.Attributes[:min(2, len(out.Attributes))])
+	}
+	if !slices.IsSortedFunc(out.Attributes[2:], func(a, b attributeOut) int { return strings.Compare(a.Key, b.Key) }) {
+		t.Error("the blocked keys are not by key")
+	}
+	if out.KeysTotal != 2 {
+		t.Errorf("keys_total = %d, want 2 (plan, zz_last)", out.KeysTotal)
 	}
 }

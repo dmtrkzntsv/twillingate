@@ -1,0 +1,1 @@
+{"query":{"kind":"retention","output":"grid","offsets":45},"rename":{"cohort":"Cohort","identified_by":"Identified by","offset":"Day","size":"Size","returned":"Returned","retention":"Retention"}}

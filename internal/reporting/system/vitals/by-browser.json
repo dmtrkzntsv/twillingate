@@ -1,6 +1,6 @@
 {
   "component": "table",
-  "title": "By device and browser",
+  "title": "By browser",
   "props": {
     "formats": {
       "Samples": "number",

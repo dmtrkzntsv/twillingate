@@ -27,6 +27,14 @@ type Generated struct {
 	// event named "rare", for "first time an event happened" questions; -1
 	// for none.
 	RareMonth int
+	// Groups, when above 0, gives a quarter of the product events and the
+	// views of the signed-in visitors a group_id (and group_name), one of
+	// Groups, for the Groups dashboard; 0 sends none.
+	Groups int
+	// Vitals turns half the measures into web vitals ($lcp, $inp, $cls,
+	// $fcp, $ttfb, with a device and a browser), for the Web Vitals
+	// dashboard; the other half stay the custom measure "load".
+	Vitals bool
 }
 
 // Generate writes the month files of g under dir (a raw/ directory) as
@@ -92,9 +100,35 @@ func (g Generated) monthSQL(index int, from time.Time, out string) string {
 	if index == g.RareMonth {
 		rare = product / 2
 	}
+	var viewGroup, productGroup string
+	if g.Groups > 0 {
+		viewGroup = fmt.Sprintf(`
+       CASE WHEN a %% 7 = 0 THEN 'g-' || (a %% %[1]d) END AS group_id,
+       CASE WHEN a %% 7 = 0 THEN 'Group ' || (a %% %[1]d) END AS group_name,`, g.Groups)
+		productGroup = fmt.Sprintf(`
+       CASE WHEN i %% 4 = 0 THEN 'g-' || (i %% %[1]d) END AS group_id,
+       CASE WHEN i %% 4 = 0 THEN 'Group ' || (i %% %[1]d) END AS group_name,`, g.Groups)
+	}
 	device := "(" + pick("a", 31, "desktop", "mobile", "tablet") + ")"
+	browser := pick("a", 23, "chrome", "safari", "firefox", "edge", "samsung internet", "opera")
+	// The measures: "load" (a time), or with Vitals half of them one of the
+	// five vitals by i, valued in each one's usual range, skewed low.
+	measure := `'load' AS event_name, (i % 1000)::DOUBLE AS value, 'time' AS measure,`
+	if g.Vitals {
+		measure = `CASE WHEN i % 10 < 5 THEN 'load' ELSE ['$lcp', '$inp', '$cls', '$fcp', '$ttfb'][i % 5 + 1] END AS event_name,
+       CASE WHEN i % 10 < 5 THEN (i % 1000)::DOUBLE
+            ELSE [800 + 5000 * pow((hash(i * 89) % 10000) / 10000.0, 2), 30 + 900 * pow((hash(i * 89) % 10000) / 10000.0, 2),
+                  0.5 * pow((hash(i * 89) % 10000) / 10000.0, 3), 500 + 4000 * pow((hash(i * 89) % 10000) / 10000.0, 2),
+                  100 + 2500 * pow((hash(i * 89) % 10000) / 10000.0, 2)][i % 5 + 1] END AS value,
+       CASE WHEN i % 10 >= 5 AND i % 5 = 2 THEN 'number' ELSE 'time' END AS measure,
+       CASE WHEN i % 10 >= 5 THEN {DEVICE} END AS device, CASE WHEN i % 10 >= 5 THEN {BROWSER} END AS browser,`
+		measure = strings.NewReplacer("{DEVICE}", device, "{BROWSER}", browser).Replace(measure)
+	}
 	size := "CAST(floor(10 * pow((hash(a * 43) % 10000) / 10000.0, 1.6)) AS INTEGER)"
 	r := strings.NewReplacer(
+		"{VIEW_GROUP}", viewGroup,
+		"{PRODUCT_GROUP}", productGroup,
+		"{MEASURE}", measure,
 		"{OUT}", out,
 		"{START}", from.Format("2006-01-02 15:04:05"),
 		"{MONTH_US}", strconv.FormatInt(monthUS, 10),
@@ -107,7 +141,7 @@ func (g Generated) monthSQL(index int, from time.Time, out string) string {
 		"{DEVICE}", device,
 		"{OS}", pick("a", 17, "windows", "macos", "ios", "android", "linux"),
 		"{OS_VERSION}", pick("a", 19, "10", "11", "14.5", "17.2", "13", "12", "6.1", "15"),
-		"{BROWSER}", pick("a", 23, "chrome", "safari", "firefox", "edge", "samsung internet", "opera"),
+		"{BROWSER}", browser,
 		"{BROWSER_VERSION}", pick("a", 29, "129.0", "128.0", "17.6", "130.0", "127.0", "126.0", "125.0", "16.5"),
 		"{LOCALE}", pick("a", 37, "en-US", "en-GB", "de-DE", "fr-FR", "es-ES", "pt-BR", "ja-JP", "pl-PL"),
 		"{COUNTRY}", pick("a", 13, countries...),
@@ -142,7 +176,7 @@ SELECT uuid()::VARCHAR AS id, {PROJECT}::BIGINT AS project_id, 'views' AS family
        TIMESTAMP '{START}' + to_microseconds(start_us + (k * gap_s + CASE WHEN long_gap AND k >= 2 THEN 2700 ELSE 0 END) * 1000000 + 1000000) AS received_at,
        CASE WHEN a % 10 = 0 THEN 'app' ELSE 'web' END AS kind, 'v-' || a AS actor_id,
        CASE WHEN a % 10 = 0 THEN 'install' ELSE 'connection' END AS actor_kind,
-       CASE WHEN a % 7 = 0 THEN 'u-' || a END AS user_id,
+       CASE WHEN a % 7 = 0 THEN 'u-' || a END AS user_id,{VIEW_GROUP}
        CASE WHEN declared THEN 's-{MONTH}-' || sid END AS session_id,
        CASE WHEN a % 10 = 0 THEN NULL ELSE {HOST} END AS host,
        '/p/' || CAST(floor(2000 * pow((hash(sid * 7 + k) % 10000) / 10000.0, 3)) AS INTEGER) AS path,
@@ -164,7 +198,7 @@ SELECT uuid()::VARCHAR AS id, {PROJECT}::BIGINT AS project_id, 'product' AS fami
        TIMESTAMP '{START}' + to_microseconds(CAST(hash(i * 5 + 1) % {MONTH_US} AS BIGINT)) AS ts,
        TIMESTAMP '{START}' + to_microseconds(CAST(hash(i * 5 + 1) % {MONTH_US} AS BIGINT) + 1000000) AS received_at,
        'web' AS kind, 'v-' || (hash(i * 7919) % 300000) AS actor_id, 'connection' AS actor_kind,
-       CASE WHEN i % 3 = 0 THEN 'u-' || (i % 50000) END AS user_id, 's-p{MONTH}-' || (i // 30) AS session_id,
+       CASE WHEN i % 3 = 0 THEN 'u-' || (i % 50000) END AS user_id,{PRODUCT_GROUP} 's-p{MONTH}-' || (i // 30) AS session_id,
        'www.example.com' AS host, '/p/' || (i % 500) AS path, 'web' AS platform,
        ['macos', 'windows', 'ios', 'android'][i % 4 + 1] AS os, ['chrome', 'safari', 'firefox'][i % 3 + 1] AS browser,
        ['DE', 'US', 'FR', 'GB'][i % 4 + 1] AS country, 1::BIGINT AS consent, 1::DOUBLE AS sample_rate,
@@ -174,13 +208,12 @@ SELECT uuid()::VARCHAR AS id, {PROJECT}::BIGINT AS project_id, 'product' AS fami
        (i % 300)::VARCHAR || '.' || (i % 100)::VARCHAR AS attr_cart_value
 FROM range({PRODUCT}) t(i)
 UNION ALL BY NAME
-SELECT uuid()::VARCHAR AS id, {PROJECT}::BIGINT AS project_id, 'measures' AS family, 'load' AS event_name,
+SELECT uuid()::VARCHAR AS id, {PROJECT}::BIGINT AS project_id, 'measures' AS family, {MEASURE}
        TIMESTAMP '{START}' + to_microseconds(CAST(hash(i * 5 + 3) % {MONTH_US} AS BIGINT)) AS ts,
        TIMESTAMP '{START}' + to_microseconds(CAST(hash(i * 5 + 3) % {MONTH_US} AS BIGINT) + 1000000) AS received_at,
-       'web' AS kind, 'v-' || (hash(i * 7919) % 300000) AS actor_id, 'connection' AS actor_kind,
+       'web' AS kind, 'v-' || a AS actor_id, 'connection' AS actor_kind,
        'www.example.com' AS host, '/p/' || (i % 500) AS path, 'web' AS platform,
-       ['DE', 'US', 'FR', 'GB'][i % 4 + 1] AS country, 1::BIGINT AS consent,
-       (i % 1000)::DOUBLE AS value, 'time' AS measure, 1::DOUBLE AS sample_rate
-FROM range({MEASURES}) t(i)
+       ['DE', 'US', 'FR', 'GB'][i % 4 + 1] AS country, 1::BIGINT AS consent, 1::DOUBLE AS sample_rate
+FROM (SELECT i, CAST(hash(i * 7919) % 300000 AS BIGINT) AS a FROM range({MEASURES}) t(i))
 ) ORDER BY family, ts) TO '{OUT}' (FORMAT parquet, COMPRESSION zstd)`)
 }

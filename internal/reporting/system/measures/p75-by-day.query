@@ -1,0 +1,1 @@
+{"query":{"kind":"trend","table":"measures","series":"event_name","series_limit":50,"where":[{"column":"event_name","op":"not_prefix","values":["$"]},{"column":"measure","op":"eq","values":["time"]}],"metrics":[{"op":"percentile","q":0.75,"round":3,"as":"y"}]},"rename":{"day":"x"}}

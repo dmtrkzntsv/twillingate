@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/fs"
 	"os"
 	"reflect"
 	"regexp"
@@ -413,40 +412,6 @@ func TestRetentionKindIsSticky(t *testing.T) {
 	}
 }
 
-// TestRetentionWidgetsShareTheirCTE: the five Retention widgets each carry
-// the same retention CTE, and the four curves the same text but for the
-// kind; a fix to one that misses the others fails here.
-func TestRetentionWidgetsShareTheirCTE(t *testing.T) {
-	read := func(name string) string {
-		t.Helper()
-		b, err := fs.ReadFile(systemFS, "system/retention/"+name+".sql")
-		if err != nil {
-			t.Fatal(err)
-		}
-		return string(b)
-	}
-	cte := func(name string) string {
-		t.Helper()
-		q := read(name)
-		start, end := strings.Index(q, "WITH acts AS ("), strings.Index(q, "\nretention AS (")
-		if start < 0 || end < 0 {
-			t.Fatalf("%s has no acts ... retention CTE", name)
-		}
-		return q[start : strings.Index(q[end:], "\n)")+end]
-	}
-	want := cte("cohorts")
-	for _, name := range []string{"install-milestones", "install-retention", "signed-in-milestones", "signed-in-retention"} {
-		if got := cte(name); got != want {
-			t.Errorf("%s's retention CTE differs from cohorts':\n%s\nwant\n%s", name, got, want)
-		}
-	}
-	for _, pair := range [][2]string{{"install-milestones", "signed-in-milestones"}, {"install-retention", "signed-in-retention"}} {
-		if a, b := read(pair[0]), strings.ReplaceAll(read(pair[1]), "actor_kind = 'user' AND", "actor_kind = 'install' AND"); a != b {
-			t.Errorf("%s and %s differ in more than the kind", pair[0], pair[1])
-		}
-	}
-}
-
 // systemWidgetOf finds system dashboard id's widget name on svc.
 func systemWidgetOf(t *testing.T, svc *Service, id int64, name string) int64 {
 	t.Helper()
@@ -487,13 +452,13 @@ func systemWidget(t *testing.T, f systemFixture, id int64, name string) int64 {
 	return 0
 }
 
-// TestAttributeValuesCountEachValueOnce: "Attribute values" is a remote
-// table with one row per (attribute, value) of the range's product events,
-// however many days carried it. Paging through it, for every preset,
-// yields exactly the (attribute, value) pairs the files hold, a quiet value
-// among a burst of others included. And its figures are exact for the
-// range: Count the events carrying the value, Users and Groups distinct
-// over the whole range, not per day or event, with no group a 0.
+// TestAttributeValuesCountEachValueOnce: "Attribute values" is a table
+// with one row per (attribute, value) of the range's product events,
+// however many days carried it. For every preset it holds exactly the
+// (attribute, value) pairs the files hold, a quiet value among a burst of
+// others included. And its figures are exact for the range: Count the
+// events carrying the value, Users and Groups distinct over the whole
+// range, not per day or event, with no group a 0.
 func TestAttributeValuesCountEachValueOnce(t *testing.T) {
 	ctx := context.Background()
 	f := newSystemFixture(t)
@@ -527,59 +492,57 @@ func TestAttributeValuesCountEachValueOnce(t *testing.T) {
 	coupon("c9", "u8", "g8", "checkout", 1, "SAVE", f.neighbour)
 	f.files.Write(t, extra...)
 
-	from, to := presetDates("7d", f.today)
-	got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: id, ProjectID: f.project, From: from, To: to,
-		Filters: `[{"column":"Attribute","op":"=","value":"coupon"}]`})
-	if err != nil {
-		t.Fatal(err)
+	load := func(preset string) readsql.Result {
+		t.Helper()
+		from, to := presetDates(preset, f.today)
+		got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: id, ProjectID: f.project, From: from, To: to})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res := got.Data.(readsql.Result)
+		if res.Truncated {
+			t.Fatalf("%s: truncated at %d rows; the seed is meant to fit under the cap", preset, len(res.Rows))
+		}
+		return res
 	}
-	res := got.Data.(readsql.Result)
+	res := load("7d")
 	if want := []string{"Attribute", "Value", "Count", "Users", "Groups"}; !slices.Equal(res.Columns, want) {
 		t.Fatalf("columns %v, want %v", res.Columns, want)
+	}
+	var coupons [][]string
+	for i, r := range res.Rows {
+		if column(t, res, i, "Attribute") == "coupon" {
+			coupons = append(coupons, r)
+		}
 	}
 	want := [][]string{
 		{"coupon", "SAVE", "4", "2", "1"},
 		{"coupon", "FREE", "2", "2", "2"},
 		{"coupon", "SPRING", "1", "1", "0"},
 	}
-	if !slices.EqualFunc(res.Rows, want, slices.Equal) {
-		t.Errorf("coupon over 7d: rows %v, want %v", res.Rows, want)
+	if !slices.EqualFunc(coupons, want, slices.Equal) {
+		t.Errorf("coupon over 7d: rows %v, want %v", coupons, want)
 	}
 
 	for _, preset := range systemPresets {
 		from, to := presetDates(preset, f.today)
+		res := load(preset)
 		shown := map[string]bool{}
-		collected, matched := 0, -1
-		for offset := 0; ; offset += 50 {
-			got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: id, ProjectID: f.project, From: from, To: to, Offset: offset, Limit: 50})
-			if err != nil {
-				t.Fatal(err)
+		for i := range res.Rows {
+			pair := column(t, res, i, "Attribute") + "=" + column(t, res, i, "Value")
+			if shown[pair] {
+				t.Errorf("%s: %s appears twice", preset, pair)
 			}
-			res := got.Data.(readsql.Result)
-			if got.Page == nil {
-				t.Fatalf("%s: no page block", preset)
-			}
-			matched = got.Page.Matched
-			for i := range res.Rows {
-				pair := column(t, res, i, "Attribute") + "=" + column(t, res, i, "Value")
-				if shown[pair] {
-					t.Errorf("%s: %s appears twice", preset, pair)
-				}
-				shown[pair] = true
-			}
-			collected += len(res.Rows)
-			if len(res.Rows) < 50 {
-				break
-			}
+			shown[pair] = true
 		}
 		pairs := f.rows(t, fmt.Sprintf(`SELECT DISTINCT substr(attr_key, 6), attr_value FROM (UNPIVOT (
 			SELECT COLUMNS('^attr_') FROM product WHERE day BETWEEN DATE '%s' AND DATE '%s'
 		) ON COLUMNS('^attr_') INTO NAME attr_key VALUE attr_value)`, from, to))
-		if collected != matched || matched != len(pairs) {
-			t.Errorf("%s: collected %d rows, Page.Matched %d, the files hold %d pairs", preset, collected, matched, len(pairs))
+		if len(res.Rows) != len(pairs) {
+			t.Errorf("%s: %d rows, the files hold %d pairs", preset, len(res.Rows), len(pairs))
 		}
 		if preset == "30d" && len(pairs) < 120 {
-			t.Errorf("30d: the files hold %d attribute values; the seed does not exercise paging", len(pairs))
+			t.Errorf("30d: the files hold %d attribute values; the seed does not exercise the burst", len(pairs))
 		}
 		for _, r := range pairs {
 			if !shown[r[0]+"="+r[1]] {
@@ -615,12 +578,12 @@ func TestAttributeValuesWithoutAttributes(t *testing.T) {
 			id = w.ID
 		}
 	}
-	got, err := svc.WidgetData(ctx, DataRequest{WidgetID: id, ProjectID: pid, From: from, To: to, Limit: 50})
+	got, err := svc.WidgetData(ctx, DataRequest{WidgetID: id, ProjectID: pid, From: from, To: to})
 	if err != nil {
 		t.Fatalf("attribute-values: %v", err)
 	}
-	if res := got.Data.(readsql.Result); len(res.Rows) != 0 || got.Page == nil || got.Page.Matched != 0 {
-		t.Errorf("attribute-values: rows %v, page %+v; want none", res.Rows, got.Page)
+	if res := got.Data.(readsql.Result); len(res.Rows) != 0 {
+		t.Errorf("attribute-values: rows %v; want none", res.Rows)
 	}
 
 	example := regexp.MustCompile(`"source": \{"type": "sql", "content": ("(?:[^"\\]|\\.)*")\}\}`).
@@ -658,77 +621,6 @@ func docSection(t *testing.T, doc, heading string) string {
 		}
 	}
 	return rest
-}
-
-// TestAttributeValuesFilterByAliases: the table's filters and sort name
-// the columns the viewer sees ("Attribute", "Users"), not the
-// query's own, and run over every row rather than a page of them.
-func TestAttributeValuesFilterByAliases(t *testing.T) {
-	ctx := context.Background()
-	f := newSystemFixture(t)
-	id := attributeValuesWidget(t, f)
-	from, to := presetDates("90d", f.today)
-	// The seed holds $app_version (a typed column, never an attribute)
-	// and plan, which the filter names, so only plan comes out. A third
-	// attribute with the largest user counts must be filtered out, and
-	// would head the sort if the filter were ignored. A second plan value
-	// with more users than the seed's gives the sort something to order.
-	day := f.today.AddDays(-5).String()
-	var extra []store.Event
-	for i := 0; i < 3; i++ {
-		for a := 0; a < 20; a++ {
-			e := event(t, fmt.Sprintf("ref-%d-%d", i, a), f.project, store.FamilyProduct, "click", day)
-			e.ActorID, e.Attributes = fmt.Sprintf("ref-actor-%d", a), map[string]string{"ref": fmt.Sprintf("r%d", i)}
-			extra = append(extra, e)
-		}
-	}
-	for a := 0; a < 7; a++ {
-		e := event(t, fmt.Sprintf("team-%d", a), f.project, store.FamilyProduct, "click", day)
-		e.ActorID, e.Attributes = fmt.Sprintf("team-actor-%d", a), map[string]string{"plan": "team"}
-		extra = append(extra, e)
-	}
-	f.files.Write(t, extra...)
-	if f.count(t, fmt.Sprintf(`SELECT count(*) FROM product WHERE day BETWEEN DATE '%s' AND DATE '%s' AND attr_ref IS NOT NULL`, from, to)) == 0 {
-		t.Fatal("the files hold no ref values in the range; the filter has nothing to exclude")
-	}
-	got, err := f.svc.WidgetData(ctx, DataRequest{
-		WidgetID: id, ProjectID: f.project, From: from, To: to,
-		Filters: `[{"column":"Attribute","op":"in","value":["$app_version","plan"]}]`,
-		Sort:    "Users:desc",
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	res := got.Data.(readsql.Result)
-	if len(res.Rows) == 0 {
-		t.Fatal("no rows for plan; the seed does not exercise the filter")
-	}
-	prev, numbers, empty := 0.0, 0, false
-	for i := range res.Rows {
-		if a := column(t, res, i, "Attribute"); a != "plan" {
-			t.Errorf("row %d: Attribute %q; a filter for $app_version and plan shows plan alone", i, a)
-		}
-		cell := column(t, res, i, "Users")
-		if cell == "" { // NULL sorts last in a descending sort
-			empty = true
-			continue
-		}
-		if empty {
-			t.Errorf("row %d: a value follows an empty Users cell", i)
-		}
-		n, err := strconv.ParseFloat(cell, 64)
-		if err != nil {
-			t.Fatalf("row %d: Users %q: %v", i, cell, err)
-		}
-		if numbers > 0 && n > prev {
-			t.Errorf("row %d: Users %v follows %v; the sort is not descending", i, n, prev)
-		}
-		prev = n
-		numbers++
-	}
-	if numbers < 2 {
-		t.Errorf("%d Users values; too few to check the sort", numbers)
-	}
 }
 
 // TestTopEventsKeepsTheBusiest: "Top events" draws one line for each of
@@ -833,11 +725,11 @@ func TestBrowsersAndSystemsByName(t *testing.T) {
 }
 
 // TestVitalsStatsBlankWithoutSamples: collection is opt-in, so a
-// project without vitals is the common case, and a stat drawn from a
-// NULL value renders 0 — a perfect score. Each vital stat returns no row
-// instead, for the neighbour (no measures), and a value for the seeded
-// project; none carries a previous period (stat reads a rise as good,
-// and a vital is better lower).
+// project without vitals is the common case, and it must not read 0 — a
+// perfect score. Each vital stat answers one row whose value is blank
+// (the stat component draws a dash) for the neighbour (no measures), and
+// a value for the seeded project; none carries a previous period (stat
+// reads a rise as good, and a vital is better lower).
 func TestVitalsStatsBlankWithoutSamples(t *testing.T) {
 	ctx := context.Background()
 	f := newSystemFixture(t)
@@ -861,8 +753,8 @@ func TestVitalsStatsBlankWithoutSamples(t *testing.T) {
 			if strings.Join(res.Columns, ",") != "value" {
 				t.Errorf("%s: columns %v, want only value", w.Name, res.Columns)
 			}
-			if want := map[bool]int{true: 1, false: 0}[pid == f.project]; len(res.Rows) != want {
-				t.Errorf("%s project %d: %d rows %v, want %d", w.Name, pid, len(res.Rows), res.Rows, want)
+			if len(res.Rows) != 1 || (res.Rows[0][0] == "") != (pid != f.project) {
+				t.Errorf("%s project %d: rows %v, want one, blank only without samples", w.Name, pid, res.Rows)
 			}
 		}
 	}
@@ -1019,6 +911,9 @@ func systemEvents(projectID int64, today civil.Date) []store.Event {
 					ActorKind: "user", Platform: "web", Value: &m.value, Measure: m.measure, SampleRate: rate}
 				if m.name != "checkout_api" {
 					e.Path, e.Browser = []string{"/", "/pricing", "/docs", "/"}[i%4], []string{"chrome", "safari"}[i%2]
+					if i == 11 {
+						e.Browser = "edge" // fewest samples, yet before safari by name: By browser's order is by samples
+					}
 					e.Device = []string{"desktop", "mobile"}[i%4/2]
 				}
 				add(e)

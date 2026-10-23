@@ -1,0 +1,1 @@
+{"query":{"kind":"trend","table":"views","series":"platform_version","series_limit":50,"where":[{"column":"platform_version","op":"is_set"}],"metrics":[{"op":"actors","as":"y"}]},"rename":{"day":"x"}}
