@@ -15,7 +15,8 @@ type measuresIn struct {
 }
 
 // measures answers percentiles from the log-scale buckets of the measures
-// table, as the Measures dashboard does (measures/metrics.sql): each
+// table, as the Measures dashboard does (its percentile metric; the old
+// SQL is reporting's testdata/system-sql/measures/metrics.sql): each
 // sample weighs 1 / sample_rate, so sampled rows count at full size
 // (design decisions 18-20), and a percentile is the first bucket whose
 // running weight reaches its share of the total.
