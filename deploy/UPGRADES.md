@@ -1381,7 +1381,7 @@ their SQL.
   - Users by app version shows the 50 busiest versions. Within a day, series are ordered by name.
   - Attribute values is a table that loads at once, up to the console's row cap, attribute by attribute. It no longer pages through the server.
   - The p75-by-day measures chart keeps time measures only, at most 50, the slowest by p75 over the range.
-  - Web vitals "by device and browser" is now two widgets, "By device" and "By browser"; a share of the old table no longer shows it.
+  - Web vitals "by device and browser" is now two widgets, "By device" and "By browser"; a share of the old table keeps its picture but no longer links to a widget.
   - The browsers and operating-systems "Other" row counts a visitor once per day across the folded browsers (it used to count once per browser).
   - Distinct counts over ranges past 1,024 ids are estimated within about ±2% and marked ≈.
 

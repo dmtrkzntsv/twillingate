@@ -32,10 +32,10 @@ var _ reporting.Store = store.Store(nil)
 //
 // The reporting migrator validates every system widget on the event
 // files, so Migrate builds an engine on this binary for it, closed before
-// it returns. This release's system widgets carry no SQL (they are
-// structured queries, answered without the engine), so that check runs
-// no query and spawns no child; what follows stays for a release whose
-// system widgets read SQL, until DuckDB leaves. The engine spawns its
+// it returns. While no system widget reads SQL (they are structured
+// queries, answered without the engine), that check runs no query and
+// spawns no child; what follows stays for system widgets that read SQL,
+// until DuckDB leaves. The engine spawns its
 // child only when a query runs, which is only when the release's system
 // definition changed, a system widget reads SQL, and EVENTS_DIR holds an
 // event file to check it on: most runs spawn none, and neither does a
@@ -78,8 +78,8 @@ func migrate(ctx context.Context, cfg *config.Config, st store.Store, reader *ar
 	// No event file at all (a fresh install): nothing to check the system
 	// widgets on, so the migrator runs no query and spawns no child
 	// (reporting.Migrate with nil Files); the first start with files
-	// checks them. This release's system widgets carry no SQL, so even
-	// that check runs no query.
+	// checks them. While no system widget reads SQL, even that check runs
+	// no query.
 	some, err := hasEventFiles(cfg.EventsDir)
 	if err != nil {
 		return err
@@ -97,11 +97,11 @@ func migrate(ctx context.Context, cfg *config.Config, st store.Store, reader *ar
 }
 
 // migrateQueryTimeout bounds each query of the reporting migrator's check
-// of the system widgets' SQL (none in this release's, which carry no
-// SQL; kept for SQL system widgets until DuckDB leaves): long enough for the first to load a month of
-// logs at the cap that the daily pass has not dumped yet, short enough
-// that a start which cannot load them goes on (ErrUnchecked) while ingest
-// waits.
+// of the system widgets' SQL (none while no system widget reads SQL;
+// kept for SQL system widgets until DuckDB leaves): long enough for the
+// first to load a month of logs at the cap that the daily pass has not
+// dumped yet, short enough that a start which cannot load them goes on
+// (ErrUnchecked) while ingest waits.
 const migrateQueryTimeout = 5 * time.Minute
 
 // migrateReporting runs the reporting migrator on files. A check of the
@@ -117,8 +117,8 @@ func migrateReporting(ctx context.Context, st store.Store, files reporting.Files
 	return err
 }
 
-// reportingMigrate is reporting.Migrate; tests replace it, since no
-// system widget of this release reads SQL for a check to fail on.
+// reportingMigrate is reporting.Migrate; tests replace it, since there is
+// no check to fail on while no system widget reads SQL.
 var reportingMigrate = reporting.Migrate
 
 // geteuid is the effective uid Migrate checks against the database file's

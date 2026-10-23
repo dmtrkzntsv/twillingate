@@ -37,16 +37,18 @@ type host struct {
 	logger    *slog.Logger
 	// limits are the limits in force (limitsFrom), which limits reports.
 	limits []limitOut
-	// events caches the last 30 days' events (eventcount.go); nil in a
-	// process without an engine, where limits leaves events_30d out.
+	// events caches the last 30 days' events (eventcount.go), counted
+	// natively; nil when native is, where limits leaves events_30d out.
 	events *eventCount
 	// ingestDisabled is INGEST_DISABLED, which limits reports.
 	ingestDisabled bool
-	// files runs SQL over the raw event files (archive.Reader); nil in a
-	// process without an engine, where the tools that read them refuse.
+	// files runs the query tool's SQL over the raw event files
+	// (archive.Reader), its only use; nil in a process without an engine,
+	// where that SQL is refused.
 	files Files
-	// native answers the query tool's structured queries over the event
-	// files; nil in a process that cannot read them, where those refuse.
+	// native answers the query tool's structured queries and the
+	// analytics tools over the event files; nil in a process that cannot
+	// read them, where those refuse.
 	native Native
 	// eventsDir is EVENTS_DIR, whose file names say each project's days.
 	eventsDir string
