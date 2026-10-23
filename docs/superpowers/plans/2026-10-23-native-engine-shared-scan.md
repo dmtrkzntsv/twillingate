@@ -87,16 +87,35 @@ No code change beyond the profiling hook.
 
 - [ ] Profile, record the result, and commit: `docs: profile a dashboard load on the native engine`.
 
-### Task 2: Memoise per batch
+### Task 2: The cheap fixes the profile found (replaces "memoise per batch")
 
-**Files:** `internal/native/batch.go`, `filter.go` (`batchColumn`, computed columns), `aggregate.go` (`addDistinct`'s per-dictionary hashes). Add a per-batch memo, created per batch, so each computed column and each id-dictionary hash vector is built once per batch whatever reads it. The memo's bytes are charged to memory.
+Ruling after Task 1's profile (spec "Profile (step 4c)"):
+- With today in range, decoding the open log is 69–75% of a load's CPU: about 575 ms a decode, done once per widget.
+- Without the open log, about half of a load is per-query work: the per-day distinct sort (33% of Views), `map[string]int32` dictionary building (22–27%), id hashing and merge.
+- Computed columns are 3%, so the per-batch memo is dropped.
 
-**Tests:**
-- Every native parity test passes.
-- A unit test shows a computed column is built once for a filter plus a dimension.
-- The benchmarks in `internal/native/bench_test.go` show no regression, and an improvement for a query that uses `device_label` in both its filter and its dimension.
+Each part below is its own commit, measured with the Task 1 harness (Views and Product, 30 days, 1M, with and without the log) behind the quiet-host gate.
 
-- [ ] Commit: `perf(native): build a batch's computed columns and id hashes once`.
+**2a. The harness.** Its /proc poll for child processes ran on the native cell's cores and slowed native by 14–16%. Poll only for DuckDB cells, or from outside the cell's cores. Re-run the step 4b native Views and Product 30-day cells so the before-numbers are fair. Commit: `test(app): keep the measurement's process poll off native cells`.
+
+**2b. The decoded open log is kept.** The engine keeps each open log's decoded batch: the union of columns any query asked for, with columns added on demand. It is keyed by (path, inode, size). Logs only grow, so when a log has grown, only the bytes past the decoded size are decoded and appended, after the torn-line rule.
+- The cache is bounded by bytes: LRU within `MaxBytes`, charged like the identities cache. A log that would not fit is decoded per query as today.
+- The rules are applied per query after the cache, as today, so the cache holds raw rows.
+- The id dedup (first line per id) spans appends: the cache keeps the seen-id set.
+- Tests:
+  - parity of every log test, cached against uncached;
+  - growth between queries, including a torn tail completed later;
+  - a rotation (a new inode) drops the entry;
+  - concurrency;
+  - the byte bound.
+
+Commit: `perf(native): decode an open log once and keep it while it grows`.
+
+**2c. Per-day distinct without a comparison sort on every batch.** Replace the per-batch key sort in the daily distinct path (`addDistinct` and the per-day sets) with per-day hash sets or a radix approach. Exact counts must stay exact, and the HLL past 1,024 must stay identical in value. The parity tests pass. Commit: `perf(native): count per-day distinct ids without sorting each batch`.
+
+**2d. A chunk's first dictionary without a map.** When a column chunk's dictionary is the first for the batch's column, adopt it as the batch dictionary directly. Remap through a map only when a later chunk or page brings a second dictionary. Commit: `perf(native): take a chunk's dictionary as the batch's without a map`.
+
+**After 2a–2d,** re-measure. Record per-part gains in RESULTS.md and the spec. Task 3 then shares what remains: footers, chunk reads, and the one decoded log, which 2b already shares.
 
 ### Task 3: `AnswerMany`
 
