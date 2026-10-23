@@ -35,16 +35,22 @@ const (
 	// SQL's is 0 or blank, and the SQL may return no row where native
 	// returns one.
 	blankStat allowKind = iota + 1
-	// fillZero (G11): native has extra rows whose Columns are all 0,
-	// which the SQL has no row for.
+	// fillZero (G11): native has extra rows whose Columns (the metrics)
+	// are all 0 and whose other columns (the key: a day, a series) match
+	// no SQL row's: a missing day or series filled, never a row replaced.
 	fillZero
 	// approx (G14): Columns are within ±2% of the SQL's.
 	approx
-	// reshape (G6-G9): the widget changed; nothing is compared.
+	// reshape (G6-G9 only): the widget changed; nothing is compared.
 	reshape
 	// columnsOnly: only the column names and their order are compared.
 	columnsOnly
 )
+
+// reshape and columnsOnly are for the reshapes (G6-G9) alone. A
+// difference of another gap (G10's labels, G13's series cap, G15's
+// daily counts) needs a kind of its own, as narrow as the ones above,
+// rather than either of these.
 
 func (k allowKind) String() string {
 	switch k {
@@ -148,7 +154,11 @@ func runParity(t *testing.T, cfg parityConfig, fixture func(*testing.T) systemFi
 			if err != nil {
 				t.Fatalf("%s %s: old SQL: %v", w.key, preset, err)
 			}
-			diffs, u := compareParity(old.(readsql.Result), nat, allows)
+			oldRes, ok := old.(readsql.Result)
+			if !ok {
+				t.Fatalf("%s %s: old SQL returned %T", w.key, preset, old)
+			}
+			diffs, u := compareParity(oldRes, nat, allows)
 			for _, d := range diffs {
 				problems = append(problems, fmt.Sprintf("%s %s: %s", w.key, preset, d))
 			}
@@ -243,8 +253,8 @@ func parityWidgets(t *testing.T, cfg parityConfig) ([]parityWidget, []string) {
 		if !compared[key] {
 			problems = append(problems, fmt.Sprintf("%s: has allowances, but is no system query widget with old SQL", key))
 		}
-		for _, a := range allows {
-			if p := a.check(); p != "" {
+		for i, a := range allows {
+			if p := a.check(allows[:i]); p != "" {
 				problems = append(problems, fmt.Sprintf("%s: allowance %s %s: %s", key, a.Gap, a.Kind, p))
 			}
 		}
@@ -253,10 +263,17 @@ func parityWidgets(t *testing.T, cfg parityConfig) ([]parityWidget, []string) {
 	return ws, problems
 }
 
-// check returns what is wrong with a, or "".
-func (a allowance) check() string {
+// reshapeGaps are the gaps a reshape or columnsOnly allowance may name.
+var reshapeGaps = []string{"G6", "G7", "G8", "G9"}
+
+// check returns what is wrong with a, given the widget's allowances
+// before it (earlier), or "".
+func (a allowance) check(earlier []allowance) string {
 	if !slices.Contains(parityGaps, a.Gap) {
 		return "unknown gap; there are " + strings.Join(parityGaps, ", ")
+	}
+	if slices.ContainsFunc(earlier, func(e allowance) bool { return e.Kind == a.Kind }) {
+		return "a second allowance of this kind on the widget; merge them"
 	}
 	switch a.Kind {
 	case blankStat:
@@ -265,6 +282,9 @@ func (a allowance) check() string {
 			return "names no columns"
 		}
 	case reshape, columnsOnly:
+		if !slices.Contains(reshapeGaps, a.Gap) {
+			return "only the reshapes (" + strings.Join(reshapeGaps, ", ") + ") may skip rows; give this gap a narrow kind of its own"
+		}
 		if strings.TrimSpace(a.Reason) == "" {
 			return "gives no reason"
 		}
@@ -318,7 +338,16 @@ func compareParity(want, got readsql.Result, allows []allowance) ([]string, []bo
 					zero = false
 				}
 			}
-			if zero && !slices.ContainsFunc(wantRows, func(w []string) bool { return sameRow(w, r) }) {
+			// The key is every column fill does not cover.
+			sameKey := func(w []string) bool {
+				for c := range r {
+					if !covers(fill, c) && (c >= len(w) || !sameNumber(w[c], r[c])) {
+						return false
+					}
+				}
+				return true
+			}
+			if zero && !slices.ContainsFunc(wantRows, sameKey) {
 				used[fill] = true
 				continue
 			}
@@ -364,24 +393,18 @@ func sameNumber(a, b string) bool {
 }
 
 // within says whether got is a number within frac of want, relative to
-// want (absolute when want is 0).
+// want: ±2% of 3 is ±0.06, not ±0.02 of a floor of 1. Only a want of 0,
+// which has no relative band, takes frac as an absolute one.
 func within(want, got string, frac float64) bool {
 	x, err1 := strconv.ParseFloat(want, 64)
 	y, err2 := strconv.ParseFloat(got, 64)
-	return err1 == nil && err2 == nil && math.Abs(x-y) <= frac*math.Max(1, math.Abs(x))
-}
-
-// sameRow says whether two rows are equal cell by cell (sameNumber).
-func sameRow(a, b []string) bool {
-	if len(a) != len(b) {
+	if err1 != nil || err2 != nil {
 		return false
 	}
-	for i := range a {
-		if !sameNumber(a[i], b[i]) {
-			return false
-		}
+	if x == 0 {
+		return math.Abs(y) <= frac
 	}
-	return true
+	return math.Abs(x-y) <= frac*math.Abs(x)
 }
 
 // fakeSystem is a system definition of one converted widget,
@@ -446,6 +469,17 @@ func TestParityHarnessOnAFakeWidget(t *testing.T) {
 		{"malformed allowance", parityConfig{oldSQL: old(countSQL("count(*) AS value")),
 			allow: map[string][]allowance{"views/count": {{Gap: "G99", Kind: columnsOnly, Reason: "x"}, {Gap: "G6", Kind: reshape}}}},
 			[]string{"allowance G99 columns-only: unknown gap", "allowance G6 reshape: gives no reason"}},
+		{"reshape or columns only off the reshapes", parityConfig{oldSQL: old(countSQL("count(*) AS value")),
+			allow: map[string][]allowance{"views/count": {{Gap: "G10", Kind: reshape, Reason: "labels"}, {Gap: "G13", Kind: columnsOnly, Reason: "50 series"}}}},
+			[]string{"allowance G10 reshape: only the reshapes", "allowance G13 columns-only: only the reshapes"}},
+		{"two allowances of a kind", parityConfig{oldSQL: old(countSQL("count(*) * 1.01 AS value")),
+			allow: map[string][]allowance{"views/count": {{Gap: "G14", Kind: approx, Columns: []string{"value"}}, {Gap: "G14", Kind: approx, Columns: []string{"previous"}}}}},
+			[]string{"allowance G14 approx: a second allowance of this kind"}},
+		// A stat's one row has no key, so it always matches the SQL's:
+		// fill-zero never stands in for a different value.
+		{"fill-zero on a replaced row", parityConfig{oldSQL: old(countSQL("count(*) * 2 AS value")),
+			allow: map[string][]allowance{"views/count": {{Gap: "G11", Kind: fillZero, Columns: []string{"value"}}}}},
+			[]string{"views/count 7d: row 0 value", "views/count: allowance G11 fill-zero is needed on no preset"}},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -493,8 +527,20 @@ func TestCompareParityAllowances(t *testing.T) {
 			res(trend, []string{"2026-09-30", "0"}, []string{"2026-10-01", "4"}, []string{"2026-10-02", "0"}), []allowance{fill}, 0, []bool{true}},
 		{"a filled day is not zero", res(trend, []string{"2026-10-01", "4"}),
 			res(trend, []string{"2026-09-30", "1"}, []string{"2026-10-01", "4"}), []allowance{fill}, 1, []bool{false}},
-		{"columns only", res(stat, []string{"1", "2"}), res(stat, []string{"5", "6"}), []allowance{{Gap: "G10", Kind: columnsOnly, Reason: "r"}}, 0, []bool{true}},
-		{"columns only, other columns", res(stat), res(trend), []allowance{{Gap: "G10", Kind: columnsOnly, Reason: "r"}}, 1, []bool{false}},
+		{"a replaced day", res(trend, []string{"2026-10-01", "4"}),
+			res(trend, []string{"2026-10-01", "0"}), []allowance{fill}, 1, []bool{false}},
+		{"a replaced day among filled ones", res(trend, []string{"2026-10-01", "4"}),
+			res(trend, []string{"2026-09-30", "0"}, []string{"2026-10-01", "0"}), []allowance{fill}, 1, []bool{true}},
+		{"a filled series", res([]string{"x", "series", "y"}, []string{"2026-10-01", "a", "4"}),
+			res([]string{"x", "series", "y"}, []string{"2026-10-01", "a", "4"}, []string{"2026-10-01", "b", "0"}), []allowance{fill}, 0, []bool{true}},
+		{"approx is relative", res(stat, []string{"0.5", "1"}), res(stat, []string{"0.515", "1"}),
+			[]allowance{{Gap: "G14", Kind: approx, Columns: []string{"value"}}}, 1, []bool{false}},
+		{"approx within 2%", res(stat, []string{"0.5", "1"}), res(stat, []string{"0.509", "1"}),
+			[]allowance{{Gap: "G14", Kind: approx, Columns: []string{"value"}}}, 0, []bool{true}},
+		{"approx at 0", res(stat, []string{"0", "1"}), res(stat, []string{"0.01", "1"}),
+			[]allowance{{Gap: "G14", Kind: approx, Columns: []string{"value"}}}, 0, []bool{true}},
+		{"columns only", res(stat, []string{"1", "2"}), res(stat, []string{"5", "6"}), []allowance{{Gap: "G7", Kind: columnsOnly, Reason: "r"}}, 0, []bool{true}},
+		{"columns only, other columns", res(stat), res(trend), []allowance{{Gap: "G7", Kind: columnsOnly, Reason: "r"}}, 1, []bool{false}},
 		{"reshape", res(stat), res(trend, []string{"a", "b"}), []allowance{{Gap: "G6", Kind: reshape, Reason: "r"}}, 0, []bool{true}},
 		{"approx on another column", res(stat, []string{"100", "100"}), res(stat, []string{"100", "101"}),
 			[]allowance{{Gap: "G14", Kind: approx, Columns: []string{"value"}}}, 1, []bool{false}},
