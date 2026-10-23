@@ -168,7 +168,7 @@ func newRowWriter(path string, cols []pqColumn, cut func(prev, next row) bool) (
 func pqOptions(schema *parquet.Schema) []parquet.WriterOption {
 	return []parquet.WriterOption{
 		schema,
-		parquet.Compression(&parquet.Zstd),
+		parquet.Compression(zstdPages),
 		parquet.DictionaryMaxBytes(dictMaxBytes),
 		parquet.PageBufferSize(pageBytes),
 		parquet.CreatedBy("twillingate", "", ""),
@@ -382,7 +382,7 @@ func pqSchema(cols []pqColumn) (*parquet.Schema, error) {
 		default:
 			return nil, fmt.Errorf("column %s: unknown type %d", c.Name, c.Type)
 		}
-		fields[i] = pqField{Node: parquet.Compressed(parquet.Optional(leaf), &parquet.Zstd), name: c.Name}
+		fields[i] = pqField{Node: parquet.Compressed(parquet.Optional(leaf), zstdPages), name: c.Name}
 	}
 	return parquet.NewSchema("twillingate", pqGroup{Node: parquet.Group{}, fields: fields}), nil
 }
