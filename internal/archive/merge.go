@@ -9,8 +9,8 @@ import (
 	"hash/maphash"
 	"io"
 	"os"
-	"runtime"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/parquet-go/parquet-go"
@@ -90,7 +90,7 @@ type mergeInput struct {
 	id       int // leaf index of id, -1 when missing
 	rows     int64
 	drop     []uint64
-	repeats  int64 // rows marked in drop
+	repeats  int64   // rows marked in drop
 	groupRow []int64 // each row group's first row in the file
 }
 
@@ -148,6 +148,13 @@ func openInput(path string) (*mergeInput, error) {
 	for _, rg := range pf.Metadata().RowGroups {
 		in.groupRow = append(in.groupRow, start)
 		start += rg.NumRows
+	}
+	// Pass 1 sizes the drop bits by the footer's count and pass 2 walks
+	// the groups: the two must agree, or rows past the bits would be
+	// misread.
+	if start != in.rows {
+		f.Close()
+		return nil, fmt.Errorf("archive: %s: row groups hold %d rows, footer says %d", filepath.Base(path), start, in.rows)
 	}
 	in.drop = make([]uint64, (in.rows+63)/64)
 	return in, nil
@@ -381,8 +388,12 @@ func (m *monthMerge) writeRows(ctx context.Context, w *rowWriter) error {
 			heap.Fix(h, 0)
 		}
 	}
-	// Every row is written or marked: a row neither would be dropped
-	// without a word.
+	// Every row pass 1 kept must be written: a kept row pass 2 did not
+	// write (a group read short, a row skipped as marked though pass 1
+	// counted it) would be dropped without a word. The check catches a
+	// drift in the count of rows; it cannot tell a bitset misaligned with
+	// the rows it marks, which drops as many rows as it keeps: the parity
+	// suite (TestGoMergeMatchesDuckDB) guards that.
 	if written != m.kept {
 		return fmt.Errorf("archive: merge wrote %d rows, want %d", written, m.kept)
 	}

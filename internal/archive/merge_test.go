@@ -2,6 +2,7 @@ package archive
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/parquet-go/parquet-go/encoding/thrift"
 )
 
 // mergeQuery is the merge's SELECT of files, given oldest first (a month
@@ -33,7 +35,6 @@ func mergeSelect(files, order []string) string {
 	return "SELECT * EXCLUDE (filename, file_row_number, k) FROM (SELECT *, " + key + " AS k FROM " + rows +
 		") WHERE k IN (" + firsts + ") ORDER BY family, ts"
 }
-
 
 // mergeCase is one month's inputs, oldest first, that both merges read.
 type mergeCase struct {
@@ -441,5 +442,41 @@ func TestMergeSendsTheEngineNothing(t *testing.T) {
 	}
 	if n, ids := f.rows(t, "2026-09.parquet"); n != 11000 || ids != 11000 {
 		t.Fatalf("month file: %d rows, %d ids; want 11000 and 11000", n, ids)
+	}
+}
+
+// TestMergeRefusesAFooterThatMiscounts: a footer whose row count is not
+// the sum of its row groups' fails the merge, naming the file, before
+// pass 1 sizes its drop bits by that count.
+func TestMergeRefusesAFooterThatMiscounts(t *testing.T) {
+	f := newFixture(t)
+	f.write(t, evOf(1, "a", "2026-09-01T10:00:00Z"), evOf(1, "b", "2026-09-01T11:00:00Z"))
+	f.maintain(t, "2026-09-02")
+	day := f.project1("2026-09-01.parquet")
+	b, err := os.ReadFile(day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	md, err := footerOf(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	md.NumRows++
+	foot, err := thrift.Marshal(new(thrift.CompactProtocol), md)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := int(binary.LittleEndian.Uint32(b[len(b)-8:]))
+	out := append(append([]byte{}, b[:len(b)-8-n]...), foot...)
+	out = binary.LittleEndian.AppendUint32(out, uint32(len(foot)))
+	if err := os.WriteFile(day, append(out, "PAR1"...), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	err = mergeFiles(context.Background(), []string{day}, f.project1("2026-09.parquet"))
+	if err == nil || !strings.Contains(err.Error(), "archive: 2026-09-01.parquet: row groups hold 2 rows, footer says 3") {
+		t.Fatalf("err = %v, want the miscounting footer refused", err)
+	}
+	if exists(f.project1("2026-09.parquet")) {
+		t.Fatal("a refused merge left a file")
 	}
 }
