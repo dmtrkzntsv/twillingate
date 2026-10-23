@@ -64,6 +64,7 @@ type Engine struct {
 	colFiles map[string]fileCols // each Parquet file's columns, by path
 
 	idCache identityCache // each project's identities, up to MaxBytes of them
+	logs    *logCache     // each open log's decoded rows, up to MaxBytes of them
 	retMemo retentionMemo // recent retention tallies, so a dashboard's widgets scan once
 
 	now func() time.Time
@@ -87,7 +88,12 @@ func New(o Options) *Engine {
 		o.Now = time.Now
 	}
 	return &Engine{dir: o.Dir, workers: o.Workers, maxGroups: o.MaxGroups, maxBytes: o.MaxBytes, sem: make(chan struct{}, o.MaxScans),
-		logKeys: archive.NewKeyScanner(), idCache: identityCache{max: o.MaxBytes}, now: o.Now}
+		logKeys: archive.NewKeyScanner(), idCache: identityCache{max: o.MaxBytes}, logs: newLogCache(o.MaxBytes), now: o.Now}
+}
+
+// readLog is readLog's batch, from the engine's log cache.
+func (e *Engine) readLog(path string, cols []string, family string, r Range) (*Batch, error) {
+	return e.logs.read(path, cols, family, r)
 }
 
 // today is the clock's UTC day.
@@ -146,7 +152,9 @@ var (
 // each row's id up in their first-seen days alone (firstSeen), with the
 // names for a label, over the whole history. Identities are cached
 // between queries (at most MaxBytes of them), their stored and live
-// parts apart, so a log's flush derives only the logs' part again; while
+// parts apart, so a log's flush derives only the logs' part again; so
+// are the open logs' decoded rows (at most MaxBytes of them, logCache),
+// so a log is decoded once while it grows rather than once a query; while
 // the derived identities file is missing or stale (older than an events
 // file), the next query that needs them derives them again from every
 // event the project's files hold. A malformed query, or a filter value
@@ -404,7 +412,7 @@ type scan struct {
 	metrics []metricSpec // the query's metrics, their filters compiled (not resolved: newAgg resolves them)
 	project int64
 	rules   ruleSet
-	logs    logReader // reads the logs; nil: readLog
+	logs    logReader // reads the logs; nil: the engine's readLog
 }
 
 // family is the family the query's table holds ("" for events: all).
@@ -499,7 +507,7 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 		if g.index < 0 {
 			logs := s.logs
 			if logs == nil {
-				logs = readLog
+				logs = s.e.readLog
 			}
 			b, err = logs(g.file, read, fam, r)
 		} else {

@@ -1169,3 +1169,18 @@ The cells of step 4c (`~/.cache/twbench-native/4/dash-T32768/1m`, Views (20 quer
 | Product (10) | yes | 4.96 s (step 4c) | 4.68 s / 4.20 s | 8.27 s | 0.85x | — | 177 MB | 0.97 |
 
 Without the poll, native Views at 30 days and 1M is 1.48x DuckDB's step 3f best (not 1.8x), Product 0.70x. The numbers match step 4c's "no poll" column (1.61 s, 7.76 s, 1.22 s, 4.17 s).
+
+### 2b: an open log decoded once while it grows
+
+The engine keeps each open log's decoded rows (`internal/native/logcache.go`): raw rows before rules, of every family and day, with the union of the columns queries asked for, keyed by path and checked against the file's device, inode and size. A grown log decodes only its new complete lines (the seen-id set kept, so the first line per id spans appends); the torn tail past the last newline is decoded per query and never kept; a query asking for a column the entry lacks decodes the whole log again with the union (picked over keeping line offsets, since `encoding/json` into a map is 83% of a decode whichever key is wanted). Concurrent queries share one decode per log; entries are LRU within `MaxBytes`, and a log whose entry alone is larger is read per query by `readLog` as before. Every reader of a log goes through it: the events scans, the gap-day sessions derivation, the identities' live part, retention, presence, attributes and attribution (whose per-call cache it replaces).
+
+| Dashboard | Open log | 2a first / best | 2b first / best | 2b CPU (best warm) | Change (best) | 2a peak | 2b peak | Log decodes, first load | Load at start |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | no | 1.62 s / 1.61 s | 1.64 s / 1.62 s | 3.20 s | 1.01x | 128 MB | 121 MB | — | 0.78 |
+| Views (20) | yes | 7.72 s / 7.68 s | 7.22 s / 1.73 s | 3.44 s | 0.23x | 115 MB | 169 MB | 11 (was 20 a load) | 0.87 |
+| Product (10) | no | 1.22 s / 1.19 s | 1.30 s / 1.16 s | 2.32 s | 0.98x | 186 MB | 190 MB | — | 0.89 |
+| Product (10) | yes | 4.68 s / 4.20 s | 3.14 s / 1.20 s | 2.38 s | 0.29x | 177 MB | 219 MB | 4 (was 11 a load) | 0.98 |
+
+- **With the log in range, a warm load now costs about what one without it does:** Views 1.73 s against 1.62 s, Product 1.20 s against 1.16 s. Warm loads decode nothing (the log does not grow between them in this bench); the first load still decodes it once per new column set (11 times for Views, 4 for Product), each waiting on the one before.
+- **The cached entry of the 33k-line log** (32,304 lines, 18 MB; `TestMeasureLogCache`, tag `measure`): 11.3 MB counted and 11.4 MB on the heap with the 23 columns a Views load asks for, 7.0 MB counted (6.3 MB heap) with Product's 7 (`attr_*` among them), 15.8 MB (16.2 MB heap) with every column. Decoding it cold takes 531 ms (`readLog`: 542 ms), a 10% growth (3,230 lines) 59 ms, and a warm query's rows 0.5 to 1.7 ms.
+- **The peak rose** with the log in range: 169 MB against 115 (Views), 219 against 177 (Product). The entry stays live (11 MB) and a re-decode for a new column holds the old entry and the new one at once on the first load, which the GC's headroom doubles.

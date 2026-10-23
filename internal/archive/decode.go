@@ -80,6 +80,16 @@ func (f *FirstLines) Keep(id string, ok bool) bool {
 	return true
 }
 
+// Seen says whether Keep would refuse the line with id (ok false for
+// none), without noting it.
+func (f *FirstLines) Seen(id string, ok bool) bool {
+	if !ok {
+		return f.nullSeen
+	}
+	_, dup := f.seen[id]
+	return dup
+}
+
 // JSONText is a JSON value as DuckDB's json_extract_string gives it: a
 // string's content, any other value's JSON text; ok false for a null or
 // missing value.

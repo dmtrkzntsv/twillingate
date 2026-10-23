@@ -81,60 +81,6 @@ func (e *Engine) Attribute(ctx context.Context, ls []archive.Lookup, days int, r
 // attributionViewColumns are the columns attributionViews reads.
 var attributionViewColumns = append([]string{"actor_kind", "actor_id", "ts", "id"}, newestColumns...)
 
-// callLogs reads each open log once for one project's attribution:
-// every row, with cols (the family and day among them), kept while the
-// attribution runs. A read of fewer columns, of the views or of every
-// family, takes the rows it asks for from them; any other read is
-// readLog's. The aliases, the sessions of a log's day and the views all
-// read a log through it.
-//
-// A log's batch is charged once, as it is read. A read of part of it is
-// a copy of those rows (filterBatch), which a gap day's derivation
-// charges again while it holds them: the count then overstates the
-// memory by at most that day's views, for the derivation's length, a
-// margin taken over keeping the two charges apart.
-type callLogs struct {
-	cols   []string
-	charge func(int64) error
-
-	mu   sync.Mutex
-	logs map[string]*callLog
-}
-
-type callLog struct {
-	once sync.Once
-	b    *Batch
-	err  error
-}
-
-func (v *callLogs) read(path string, cols []string, family string, r Range) (*Batch, error) {
-	if (family != "views" && family != "") ||
-		slices.ContainsFunc(cols, func(c string) bool { return !slices.Contains(v.cols, c) }) {
-		return readLog(path, cols, family, r)
-	}
-	v.mu.Lock()
-	l := v.logs[path]
-	if l == nil {
-		l = &callLog{}
-		v.logs[path] = l
-	}
-	v.mu.Unlock()
-	l.once.Do(func() {
-		l.b, l.err = readLog(path, v.cols, "", everything)
-		if l.err == nil {
-			l.err = v.charge(batchBytes(l.b))
-		}
-	})
-	if l.err != nil {
-		return nil, l.err
-	}
-	if l.b.N == 0 {
-		return l.b, nil
-	}
-	from, to := r.days()
-	return filterBatch(l.b, family, from, to), nil
-}
-
 // whoKey is one actor a lookup follows.
 type whoKey struct{ kind, id string }
 
@@ -194,17 +140,19 @@ func (e *Engine) attributeProject(ctx context.Context, project int64, ls []archi
 	if err != nil {
 		return nil, err
 	}
-	// The open logs are read once, for the aliases, the sessions of their
-	// days and the views alike.
+	// The open logs are read through the engine's cache, which decodes a
+	// log for the aliases, the sessions of its day and the views alike.
 	logCols := slices.Clone(viewColumns)
 	for _, c := range append(rs.columns(attributionViewColumns), "family", "day", "user_id", "install_id") {
 		if !slices.Contains(logCols, c) {
 			logCols = append(logCols, c)
 		}
 	}
-	logs := &callLogs{cols: logCols, charge: charge, logs: map[string]*callLog{}}
+	logs := func(path string, cols []string, family string, r Range) (*Batch, error) {
+		return e.logs.read(path, cols, family, r, logCols...)
+	}
 	if users != nil {
-		installs, err := e.aliasedInstalls(ctx, files, users, logs.read)
+		installs, err := e.aliasedInstalls(ctx, files, users, logs)
 		if err != nil {
 			return nil, err
 		}
@@ -213,11 +161,11 @@ func (e *Engine) attributeProject(ctx context.Context, project int64, ls []archi
 		}
 	}
 
-	sources, err := e.attributionSources(ctx, project, &a, logs.read, charge)
+	sources, err := e.attributionSources(ctx, project, &a, logs, charge)
 	if err != nil {
 		return nil, err
 	}
-	s := scan{e: e, q: Query{Table: "views"}, project: project, rules: rs, logs: logs.read}
+	s := scan{e: e, q: Query{Table: "views"}, project: project, rules: rs, logs: logs}
 	newest, err := e.attributionViews(ctx, s, files, &a, charge)
 	if err != nil {
 		return nil, err

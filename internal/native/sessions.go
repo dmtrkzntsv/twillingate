@@ -42,7 +42,7 @@ const gapIndex = -2
 // day is done.
 func (e *Engine) scanSessions(ctx context.Context, project int64, r Range, cols []string,
 	charge func(int64) error, add func(w int, b *Batch) error) error {
-	return e.scanSessionsWith(ctx, project, r, cols, readLog, charge, add)
+	return e.scanSessionsWith(ctx, project, r, cols, e.readLog, charge, add)
 }
 
 // logReader reads a log's rows as readLog does.

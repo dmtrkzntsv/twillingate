@@ -950,6 +950,16 @@ Each measured as step 4c's cells (`scripts/native-bench/RESULTS.md`,
   The fair native numbers: Views 1.61 s without the log, 7.68 s with it;
   Product 1.19 s and 4.20 s (step 4b's 1.93 s and 1.36 s carried the
   poll). Views at 30 days and 1M is 1.48x DuckDB, Product 0.70x.
+- **2b, the decoded open log is kept** (`logCache`): raw rows of every
+  family, the union of the columns asked for, keyed by path, inode and
+  size; a grown log decodes only its new complete lines, a torn tail is
+  decoded per query and never kept, a new column decodes the log again
+  with the union, LRU within `MaxBytes`. With today in range a warm load
+  drops from 7.68 to 1.73 s (Views) and 4.20 to 1.20 s (Product), about
+  a no-log load; the first load decodes the log once per new column set
+  (11 and 4 times, from 20 and 11). The 33k-line log's entry takes
+  11.3 MB with Views' columns, 7.0 MB with Product's, 15.8 MB with all.
+  The peak rose by 42 to 54 MB with the log in range.
 
 ## Left to the builder
 

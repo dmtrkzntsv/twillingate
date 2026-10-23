@@ -777,7 +777,7 @@ func (e *Engine) scanIdentityEvents(ctx context.Context, parquet, logs, cols []s
 		var b *Batch
 		var err error
 		if g.index < 0 {
-			b, err = readLog(g.file, cols, "", everything)
+			b, err = e.readLog(g.file, cols, "", everything)
 		} else {
 			b, err = readers[w].read(g, cols, "", everything)
 		}
