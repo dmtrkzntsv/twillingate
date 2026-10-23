@@ -44,7 +44,7 @@ type Query struct {
 	Milestones   []int  `json:"milestones,omitempty" jsonschema:"retention milestones only: 1 to 6 distinct days back, each 0 to offsets (default 7, 30 and 45)"`
 	// The attributes kind's.
 	Reserved bool     `json:"reserved,omitempty" jsonschema:"attributes values only: also the reserved keys, each read from its column (empty read as NULL) under its own name, as $platform or $country"`
-	Keep     []string `json:"keep,omitempty" jsonschema:"attributes keys only: up to 100 attributes (the key without attr_, spelled exactly as the answer spells it) listed past the limit too, when the range has events carrying them"`
+	Keep     []string `json:"keep,omitempty" jsonschema:"attributes keys only: up to 1000 attributes (the key without attr_, spelled exactly as the answer spells it) listed past the limit too, when the range has events carrying them"`
 }
 
 // The retention defaults: the days back counted, the milestones read.
@@ -749,11 +749,11 @@ func (q Query) validateAttributes() error {
 	return nil
 }
 
-// The attributes keys' bounds: the keys it keeps by default, the names
-// keep may list.
+// The attributes keys' bounds: the keys it keeps by default, and MaxKeep
+// the names keep may list.
 const (
 	defaultKeysLimit = 50
-	maxKeep          = 100
+	MaxKeep          = 1000
 )
 
 // keysTable is an attributes keys' table, events when unset.
@@ -803,8 +803,8 @@ func (q Query) validateAttributeKeys() error {
 		return invalid("milestones", "an attributes takes none")
 	case q.Limit < 0 || q.Limit > maxLimit:
 		return invalid("limit", "%d is not between 1 and %d", q.Limit, maxLimit)
-	case len(q.Keep) > maxKeep:
-		return invalid("keep", "%d names, at most %d", len(q.Keep), maxKeep)
+	case len(q.Keep) > MaxKeep:
+		return invalid("keep", "%d names, at most %d", len(q.Keep), MaxKeep)
 	}
 	for i, f := range q.Where {
 		if err := f.validate(q.keysTable(), fmt.Sprintf("where[%d]", i)); err != nil {

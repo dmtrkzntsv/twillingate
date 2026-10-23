@@ -1727,7 +1727,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `offsets` | retention | the days back counted, 1 to 90 (default 45) |
 | `milestones` | retention | `milestones` only: 1 to 6 distinct days back, each 0 to `offsets` (default 7, 30 and 45, which need `offsets` of 45 or more) |
 | `reserved` | attributes | `values` only: `true` adds the reserved keys (below) |
-| `keep` | attributes | `keys` only: up to 100 attributes listed past `limit` too (below) |
+| `keep` | attributes | `keys` only: up to 1,000 attributes listed past `limit` too (below) |
 
 A dimension, series or filter column is one of `project_id`, `family`,
 `event_name`, `day`, `kind`, `actor_id`, `actor_kind`, `user_id`,

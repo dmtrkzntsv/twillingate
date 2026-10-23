@@ -265,9 +265,13 @@ func (s scan) attributeKeys(ctx context.Context, r Range) (Result, error) {
 		return strings.Compare(x.name, y.name)
 	})
 	total := strconv.Itoa(len(keys))
+	keep := make(map[string]bool, len(s.q.Keep))
+	for _, k := range s.q.Keep {
+		keep[k] = true
+	}
 	var rows [][]string
 	for i, k := range keys {
-		if i >= s.q.keysLimit() && !slices.Contains(s.q.Keep, k.name) {
+		if i >= s.q.keysLimit() && !keep[k.name] {
 			continue
 		}
 		out.approx[2] = out.approx[2] || k.values.approx

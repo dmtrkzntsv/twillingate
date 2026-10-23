@@ -220,8 +220,8 @@ func TestQuerySchemaDescribesStructured(t *testing.T) {
 	if e := rq.Properties["output"].Enum; !slices.Equal(e, []any{"grid", "curve", "milestones", "values", "keys"}) {
 		t.Errorf("output's enum = %v", e)
 	}
-	if k := rq.Properties["keep"]; k.MaxItems == nil || *k.MaxItems != 100 {
-		t.Errorf("keep = %+v, want at most 100", k)
+	if k := rq.Properties["keep"]; k.MaxItems == nil || *k.MaxItems != 1000 {
+		t.Errorf("keep = %+v, want at most 1000", k)
 	}
 	if e := rq.Properties["identified_by"].Enum; !slices.Equal(e, []any{"install", "user"}) {
 		t.Errorf("identified_by's enum = %v", e)

@@ -96,7 +96,7 @@ func queryEnums(in *jsonschema.Schema) {
 	q.Properties["milestones"].Items.Minimum, q.Properties["milestones"].Items.Maximum = &minMilestone, &maxOffsets
 	maxMilestones := 6
 	q.Properties["milestones"].MaxItems = &maxMilestones
-	maxKeep := 100
+	maxKeep := native.MaxKeep
 	q.Properties["keep"].MaxItems = &maxKeep
 	m := q.Properties["metrics"].Items
 	m.Properties["op"].Enum = enum(native.MetricOps)
