@@ -77,7 +77,7 @@ func (q Query) milestones() []int {
 type Metric struct {
 	Op     string   `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. measures alone takes percentile (the q quantile of value, a sample weighing 1 / sample_rate, read from its log-scale bucket: within about 2%), mean (value weighted so) and weight (the samples' 1 / sample_rate summed). ratio: num over den, two metrics of the table each with its own where, as a DOUBLE; empty when den is 0 or empty or num is empty; an Other row's both sides over its folded groups; approximate when either side is. share (trend and breakdown only): the group's of (count, or on measures weight) over its partition's: in a breakdown the groups of the same first dimension (all with one dimension; an Other row's is all of them), in a trend the day's; empty over none. sessions takes count (sessions), actors, share, ratio, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, share, ratio, sum, avg, min and max. attributes takes count, actors, users and groups (group_id's empty value left out) and its own actors_or_null (distinct actor_id, NULL counting as one)"`
 	Q      float64  `json:"q,omitempty" jsonschema:"percentile only, above 0 and below 1: the quantile (0.75 for p75)"`
-	Column string   `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views; on identities views or events"`
+	Column string   `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views; on identities views or events. min and max also take day (a YYYY-MM-DD day) and ts or received_at (a UTC time, as 2026-09-01T08:00:05Z), on sessions day, started_at or ended_at; not on identities, nor in a ratio's side"`
 	Of     string   `json:"of,omitempty" jsonschema:"daily_sum, daily_max and daily_avg take actors, users or groups (what is counted distinct per day); share takes count or, on measures, weight"`
 	As     string   `json:"as,omitempty" jsonschema:"the output column's name (default: op, or op_column, or op_of, as share_weight; a percentile's p and 100 q, as p75 or p99.9)"`
 	Round  *int     `json:"round,omitempty" jsonschema:"optional, 0 to 6: decimal places to round the value to, half away from zero (an integer stays as it is)"`
@@ -182,7 +182,7 @@ func (q Query) Columns() []string {
 // ColumnTypes are the types of Columns' columns, in the same order, read
 // from q alone: number, day or text, the type every value of the column
 // has (an empty value, NULL, aside). Metrics, a stat's previous_<name>
-// and the numeric columns (project_id, display_width, display_height,
+// (a min or max of day day, of a time text) and the numeric columns (project_id, display_width, display_height,
 // consent, bucket) are number; day is day; a trend's series and every
 // other column, attr_<key> included, text. A breakdown with other has
 // its dimensions text, its Other row reading "Other" in each. A
@@ -226,15 +226,27 @@ func (q Query) ColumnTypes() []string {
 			}
 		}
 	}
-	for range q.Metrics {
-		types = append(types, "number")
+	for _, m := range q.Metrics {
+		types = append(types, m.valueType())
 	}
 	if q.Kind == "stat" && q.Compare == "previous" {
-		for range q.Metrics {
-			types = append(types, "number")
+		for _, m := range q.Metrics {
+			types = append(types, m.valueType())
 		}
 	}
 	return types
+}
+
+// valueType is the type of m's values, as ColumnTypes names it: a min
+// or max of day is day, of a time text, every other metric number.
+func (m Metric) valueType() string {
+	switch boundForms[m.Column] {
+	case formDay:
+		return "day"
+	case formTime:
+		return "text"
+	}
+	return "number"
 }
 
 // columnType is a dimension column's type, as ColumnTypes names it.
@@ -377,7 +389,12 @@ var (
 	// IdentityValueColumns are the columns sum, avg, min and max take on
 	// identities.
 	IdentityValueColumns = []string{"views", "events"}
-	OfColumns            = []string{"actors", "users", "groups"}
+	// BoundColumns are the columns min and max alone take beside
+	// ValueColumns on the event tables, SessionBoundColumns beside
+	// SessionValueColumns on sessions: a day, or a time.
+	BoundColumns        = []string{"day", "ts", "received_at"}
+	SessionBoundColumns = []string{"day", "started_at", "ended_at"}
+	OfColumns           = []string{"actors", "users", "groups"}
 	// ShareOfColumns are what share takes as of (weight on measures only).
 	ShareOfColumns = []string{"count", "weight"}
 	FilterOps      = []string{"eq", "ne", "in", "not_in", "contains", "prefix", "not_prefix", "gt", "gte", "lt", "lte", "is_set"}
@@ -388,6 +405,8 @@ var (
 	valueCols  = setOf(ValueColumns)
 	sessValue  = setOf(SessionValueColumns)
 	idValue    = setOf(IdentityValueColumns)
+	boundCols  = setOf(BoundColumns)
+	sessBound  = setOf(SessionBoundColumns)
 	idOps      = setOf([]string{"count", "share", "ratio", "sum", "avg", "min", "max"})
 	ofCols     = setOf(OfColumns)
 	filterOps  = setOf(FilterOps)
@@ -396,6 +415,19 @@ var (
 	measureOps = setOf([]string{"percentile", "mean", "weight"})
 	orderedOps = map[string]bool{"gt": true, "gte": true, "lt": true, "lte": true}
 )
+
+// A value's form: a number, a day (days since 1970-01-01) or a time
+// (unix microseconds, UTC).
+const (
+	formNumber = iota
+	formDay
+	formTime
+)
+
+// boundForms are the forms of the bound columns' values (BoundColumns,
+// SessionBoundColumns), which min and max keep; every other column's is
+// a number.
+var boundForms = map[string]int{"day": formDay, "ts": formTime, "received_at": formTime, "started_at": formTime, "ended_at": formTime}
 
 func setOf(xs []string) map[string]bool {
 	m := make(map[string]bool, len(xs))
@@ -742,12 +774,12 @@ func (q Query) validateAttributeKeys() error {
 }
 
 func (m Metric) validate(kind, table string, i int) error {
-	return m.validateAt(kind, table, fmt.Sprintf("metrics[%d]", i))
+	return m.validateAt(kind, table, fmt.Sprintf("metrics[%d]", i), false)
 }
 
 // validateAt is validate of the metric at path p (metrics[0], or a
-// ratio's side, metrics[0].num).
-func (m Metric) validateAt(kind, table, p string) error {
+// ratio's side, metrics[0].num, when side).
+func (m Metric) validateAt(kind, table, p string, side bool) error {
 	if !metricOps[m.Op] {
 		return invalid(p+".op", "%q is not a metric", m.Op)
 	}
@@ -796,13 +828,18 @@ func (m Metric) validateAt(kind, table, p string) error {
 		if m.Column == "" {
 			return invalid(p+".column", "%s needs a column", m.Op)
 		}
+		bound := (m.Op == "min" || m.Op == "max") && ((table == "sessions" && sessBound[m.Column]) ||
+			(table != "sessions" && table != "identities" && boundCols[m.Column]))
 		switch {
+		case bound && side:
+			return invalid(p+".column", "%s of %s is not a number, which a ratio's side is", m.Op, m.Column)
+		case bound:
 		case table == "sessions" && !sessValue[m.Column]:
-			return invalid(p+".column", "%q is not duration_sec or views, the numbers of sessions", m.Column)
+			return invalid(p+".column", "%q is not duration_sec or views, the numbers of sessions (min and max also take day, started_at and ended_at)", m.Column)
 		case table == "identities" && !idValue[m.Column]:
 			return invalid(p+".column", "%q is not views or events, the numbers of identities", m.Column)
 		case table != "sessions" && table != "identities" && !valueCols[m.Column]:
-			return invalid(p+".column", "%q is not value, sample_rate, display_width or display_height", m.Column)
+			return invalid(p+".column", "%q is not value, sample_rate, display_width or display_height (min and max also take day, ts and received_at)", m.Column)
 		}
 		if m.Of != "" {
 			return invalid(p+".of", "%s takes no of", m.Op)
@@ -864,7 +901,7 @@ func (m Metric) validateRatio(kind, table, p string) error {
 		case side.m.Round != nil:
 			return invalid(sp+".round", "a ratio's side is not rounded; give the ratio round")
 		}
-		if err := side.m.validateAt(kind, table, sp); err != nil {
+		if err := side.m.validateAt(kind, table, sp, true); err != nil {
 			return err
 		}
 	}

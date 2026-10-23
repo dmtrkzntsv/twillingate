@@ -95,13 +95,17 @@ func queryEnums(in *jsonschema.Schema) {
 	q.Properties["keep"].MaxItems = &maxKeep
 	m := q.Properties["metrics"].Items
 	m.Properties["op"].Enum = enum(native.MetricOps)
-	var columns []string // each table's, in order, each once
-	for _, c := range slices.Concat(native.ValueColumns, native.SessionValueColumns, native.IdentityValueColumns) {
-		if !slices.Contains(columns, c) {
-			columns = append(columns, c)
+	once := func(lists ...[]string) []string { // each list's, in order, each once
+		var out []string
+		for _, c := range slices.Concat(lists...) {
+			if !slices.Contains(out, c) {
+				out = append(out, c)
+			}
 		}
+		return out
 	}
-	m.Properties["column"].Enum = enum(columns)
+	numbers := once(native.ValueColumns, native.SessionValueColumns, native.IdentityValueColumns)
+	m.Properties["column"].Enum = enum(once(numbers, native.BoundColumns, native.SessionBoundColumns))
 	m.Properties["of"].Enum = enum(slices.Concat(native.OfColumns, native.ShareOfColumns))
 	minRound, maxRound := 0.0, 6.0
 	m.Properties["round"].Minimum, m.Properties["round"].Maximum = &minRound, &maxRound
@@ -113,7 +117,7 @@ func queryEnums(in *jsonschema.Schema) {
 	for _, side := range []string{"num", "den"} {
 		s := m.Properties[side]
 		s.Properties["op"].Enum = enum(sideOps)
-		s.Properties["column"].Enum = m.Properties["column"].Enum
+		s.Properties["column"].Enum = enum(numbers) // a side is a number: no day or time
 		s.Properties["of"].Enum = enum(native.OfColumns)
 		s.Properties["q"].ExclusiveMinimum, s.Properties["q"].ExclusiveMaximum = &minQ, &maxQ
 		s.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)

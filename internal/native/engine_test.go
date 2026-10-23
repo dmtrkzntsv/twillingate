@@ -56,7 +56,8 @@ func engineCountry(i int) string {
 
 // engineDay is one day's events of project 1: views by most of 30 actors
 // (each always from one country) and two without an actor, product events
-// with attributes, measures with values.
+// with attributes, measures with values; most product events and some
+// views with received_at.
 func engineDay(t testing.TB, day string, d int) []store.Event {
 	t.Helper()
 	base := date(t, day).Time().Add(8 * time.Hour)
@@ -65,6 +66,11 @@ func engineDay(t testing.TB, day string, d int) []store.Event {
 	add := func(e store.Event) {
 		e.ProjectID = 1
 		e.TS = base.Add(time.Duration(n) * time.Second)
+		// Most product events and some views say when they arrived,
+		// minutes later for some.
+		if (e.Family == store.FamilyProduct && n%4 != 0) || (e.Family == store.FamilyViews && n%7 == 0) {
+			e.ReceivedAt = e.TS.Add(time.Duration(n%5) * time.Minute)
+		}
 		e.ID = fmt.Sprintf("e-%s-%d", day, n)
 		e.Host = "example.com"
 		n++

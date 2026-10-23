@@ -331,3 +331,30 @@ func TestQueryStructuredRatio(t *testing.T) {
 		}
 	}
 }
+
+// min and max of a day or a time pass MCP's schema, whose column enum
+// lists them; sum of day passes it and Validate refuses it.
+func TestQueryStructuredBounds(t *testing.T) {
+	h, cs := newTestHost(t)
+	q := map[string]any{"kind": "breakdown", "table": "events", "dimensions": []any{"user_id"}, "metrics": []any{
+		map[string]any{"op": "max", "column": "day"}, map[string]any{"op": "max", "column": "received_at"}, map[string]any{"op": "min", "column": "ts"}}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "query": q}); res.IsError {
+		t.Errorf("min and max of a day or time over MCP: %s", textOf(res))
+	}
+	s := map[string]any{"kind": "stat", "table": "sessions", "metrics": []any{map[string]any{"op": "min", "column": "started_at"}}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "query": s}); res.IsError {
+		t.Errorf("min started_at over MCP: %s", textOf(res))
+	}
+	q["metrics"] = []any{map[string]any{"op": "sum", "column": "day"}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "query": q}); !res.IsError || !strings.Contains(textOf(res), "metrics[0].column") {
+		t.Errorf("sum of day over MCP: %s", textOf(res))
+	}
+	r := newTestRegistrar(t, h)
+	i := slices.IndexFunc(r.specs, func(s spec) bool { return s.Name == "query" })
+	col := r.specs[i].in.Properties["query"].Properties["metrics"].Items.Properties["column"].Enum
+	for _, c := range slices.Concat(native.BoundColumns, native.SessionBoundColumns) {
+		if !slices.Contains(col, any(c)) {
+			t.Errorf("a metric's column enum %v lacks %s", col, c)
+		}
+	}
+}

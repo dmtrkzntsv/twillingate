@@ -316,9 +316,12 @@ func viewOf(b *Batch, name string, typ colType, sel []int32) (dimView, error) {
 func formatDay(d int64) string { return time.Unix(d*86400, 0).UTC().Format(time.DateOnly) }
 
 // value is one metric's result: NULL, an integer or a float, and whether
-// a sketch estimated it.
+// a sketch estimated it. form says how an integer reads: a number, a day
+// (YYYY-MM-DD) or a time (RFC 3339 in UTC, as the engine's child prints
+// a TIMESTAMP: its fraction only when it has one, trailing zeros cut).
 type value struct {
 	null, isInt, approx bool
+	form                int
 	i                   int64
 	f                   float64
 }
@@ -329,6 +332,10 @@ func (v value) String() string {
 	switch {
 	case v.null:
 		return ""
+	case v.form == formDay:
+		return formatDay(v.i)
+	case v.form == formTime:
+		return time.UnixMicro(v.i).UTC().Format(time.RFC3339Nano)
 	case v.isInt:
 		return strconv.FormatInt(v.i, 10)
 	}
@@ -415,11 +422,12 @@ type distinctCol struct {
 }
 
 // numCol is one numeric column summed, averaged or bounded over the rows
-// of a mask.
+// of a mask; a day or time (form) only bounded, read as an integer.
 type numCol struct {
 	name  string
 	mask  int
 	float bool
+	form  int
 }
 
 // msrCol is the measures' partials over the rows of a mask: per cell the
@@ -572,7 +580,7 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 			if !ok {
 				i = len(a.nums)
 				numIdx[colMask{m.Column, mask}] = i
-				a.nums = append(a.nums, numCol{name: m.Column, mask: mask, float: m.Column == "value" || m.Column == "sample_rate"})
+				a.nums = append(a.nums, numCol{name: m.Column, mask: mask, float: m.Column == "value" || m.Column == "sample_rate", form: boundForms[m.Column]})
 			}
 			m.num = i
 		case "actors", "users", "groups", opValues:
@@ -858,8 +866,13 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 				if first || v > np.fmax[x] {
 					np.fmax[x] = v
 				}
-			case !n.float && c.Ints != nil:
-				v := c.Ints[i]
+			case !n.float && (c.Ints != nil || c.Times != nil):
+				var v int64
+				if c.Ints != nil {
+					v = c.Ints[i]
+				} else {
+					v = c.Times[i]
+				}
 				np.isum[x] += v
 				if first || v < np.imin[x] {
 					np.imin[x] = v
@@ -1544,9 +1557,9 @@ func (m *merged) evalNum(mt metricSpec, gs []int32, day int) value {
 	case mt.Op == "sum":
 		return intValue(isum)
 	case mt.Op == "min":
-		return intValue(imin)
+		return value{isInt: true, i: imin, form: m.a.nums[mt.num].form}
 	}
-	return intValue(imax)
+	return value{isInt: true, i: imax, form: m.a.nums[mt.num].form}
 }
 
 // shareOf is what share mt is taken of over the groups gs (on day, unless

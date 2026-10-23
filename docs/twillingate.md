@@ -1773,7 +1773,7 @@ may name but not a dimension or series. It takes the metrics `count`
 | --- | --- | --- |
 | `count` | | rows |
 | `actors`, `users`, `groups` | | distinct `actor_id`, `user_id`, `group_id` over the range (NULL left out) |
-| `sum`, `avg`, `min`, `max` | `column`: `value`, `sample_rate`, `display_width` or `display_height`; on `sessions` `duration_sec` or `views`; on `identities` `views` or `events` | the column's aggregate; empty over no value |
+| `sum`, `avg`, `min`, `max` | `column`: `value`, `sample_rate`, `display_width` or `display_height`; on `sessions` `duration_sec` or `views`; on `identities` `views` or `events`. `min` and `max` also take `day`, `ts` and `received_at`, on `sessions` `day`, `started_at` and `ended_at` (below) | the column's aggregate; empty over no value |
 | `daily_sum`, `daily_max`, `daily_avg` | `of`: `actors`, `users` or `groups` | the distinct count per day, summed, maxed or averaged over the days with rows |
 | `bounces` | | `sessions` only: the sessions of one view |
 | `bounce_rate` | | `sessions` only: `bounces` divided by the sessions (`0.25`), exact; empty over no session, and in an `Other` row over the sessions of the groups it folds |
@@ -1813,6 +1813,19 @@ row each is put together over the groups it folds and then divided, and a
 when either side is, and its `round` rounds the quotient. Actions per
 user: `{"op": "ratio", "as": "per_user", "round": 1, "num": {"op":
 "count"}, "den": {"op": "users"}}`.
+
+`min` and `max` of `day` are the first and last day with rows
+(`2026-09-01`, a day column, as `MAX(day)` reads in SQL: the built-in
+Users dashboard's last seen is `{"op": "max", "column": "day"}` in a
+breakdown by `user_id`). Of `ts` or `received_at` (on `sessions`
+`started_at` or `ended_at`) they are the first and last time, in UTC, as
+`2026-09-01T08:00:05Z`: RFC 3339, to the second the files store, the way
+`sql` prints a `TIMESTAMP` (a fraction would show only if one were
+stored); a text column. `max` of `received_at` is when the newest event in
+the range arrived, empty when none says. Both are empty over no row, take
+a metric `where`, an `Other` row's groups, `compare` and a trend's days
+like any metric, but neither `sum` nor `avg` takes those columns, nor
+does a ratio's side, and `identities` takes none of them.
 
 A metric's column is named by `as`, else `op`, `op_column` (`sum_value`),
 `op_of` (`daily_sum_actors`, `share_weight`) or, for a percentile, `p` and `100 × q`
