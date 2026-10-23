@@ -156,7 +156,10 @@ WHERE ts >= TIMESTAMP '%s' GROUP BY ALL ORDER BY actor_kind DESC, actor_id LIMIT
 	}
 	t.Logf("%d lookups (%d users), window 7 days to %s, open log of %d views", len(ls), users, at.Format(time.RFC3339), n)
 	var got, want []archive.Found
-	run("native", func() (f []archive.Found, err error) { got, err = e.Attribute(ctx, ls, 7, archive.Rules{}); return got, err })
+	run("native", func() (f []archive.Found, err error) {
+		got, err = e.Attribute(ctx, ls, 7, archive.Rules{})
+		return got, err
+	})
 	run("duckdb", func() (f []archive.Found, err error) {
 		want, err = oracleAttribute(ctx, reader, dir, ls, 7, archive.Rules{})
 		return want, err
