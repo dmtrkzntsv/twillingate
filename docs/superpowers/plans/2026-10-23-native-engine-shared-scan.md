@@ -13,7 +13,7 @@
 
   Per-batch memoisation means each batch builds a computed column once and hashes an id dictionary once for every consumer.
 - **Reporting.** `reporting.Service.WidgetDataMany` checks each widget as `WidgetData` does and serves cache hits. The misses go into one `AnswerMany`.
-- **Console.** It calls `POST /api/widgets/data`, a REST-only route, through a dataloader that collects the widget-data calls made in the same tick. Each card keeps its own react-query entry.
+- **Console (owner, 2026-10-23).** A dashboard load or refresh is one request, `POST /api/widgets/stream`, whose response streams one Server-Sent Event per widget as soon as that widget is ready. Cache hits come first, then each shared-scan group as it finishes. Each card keeps its own react-query entry, filled when its event arrives. Single-widget loads keep `GET /api/widgets/{id}/data`.
 - **MCP tools.** The tools that run several queries per call use `AnswerMany`.
 
 **Tech Stack:** Go (`internal/native`, `internal/reporting`, `internal/api`), React/TypeScript (`web/`).
@@ -37,16 +37,21 @@
 - **Errors.**
   - A query that fails validation, or fails on a batch (for example "column is not text"), fails only its own result.
   - A scan-level error (I/O, a corrupt file) fails every consumer of that scan with that error, as each would have failed alone.
-- **The batch route.**
-  - It is `POST /api/widgets/data`, REST-only, never an MCP tool.
+- **The stream route.**
+  - It is `POST /api/widgets/stream`, REST-only, never an MCP tool.
   - The request body is `{"widgets": [{"widget_id", "project_id", "from", "to", "fresh"}]}`, at most 64 widgets.
-  - The response is `{"widgets": [{"widget_id", "data" | "error": {"code", "message"}}]}`, in request order.
-  - It uses the same auth and per-widget checks as `GET /api/widgets/{id}/data`.
+  - The response is `text/event-stream`. Each widget gets one `event: widget` with `data: {"widget_id", "data"}` or `data: {"widget_id", "error": {"code", "message"}}`, where `data` has the same JSON as the GET route's body and `error` has the same codes. Events arrive in completion order. A final `event: done` closes the stream.
+  - A `: keepalive` comment goes out every 15 s, and every event is flushed. Response headers: `Cache-Control: no-cache` and `X-Accel-Buffering: no`.
+  - Closing the request cancels its widgets' queries.
+  - The same auth and per-widget checks apply as for `GET /api/widgets/{id}/data`.
   - Remote-table views (paging, sort, filters, distinct) stay on the GET route.
+  - The proxy used in production (Caddy, `deploy/`) must not buffer the stream. Check its config, and document any needed setting in `docs/deployment.md`.
   - `docs/twillingate.md` lists the route, and `internal/api/docs_sync_test.go` stays green.
 - **The cache.** The reporting cache is keyed per widget, unchanged. Only misses are batched, and their results are stored per widget as today. Concurrent identical widget loads still share one load (singleflight).
 - **Web.**
-  - The dataloader lives in `web/src/lib/api.ts` (or `widget-query.ts`). It collects the `widgetData` calls made in one macrotask (`setTimeout 0`), sends one POST per (project, from, to), at most 64 widgets each, and resolves each call with its own result or error.
+  - `web/src/lib/widget-stream.ts` opens the stream for a dashboard's widgets: all of them on load, all of them with `fresh` on refresh and auto-refresh, using `fetch` with the console's auth and a stream reader, not `EventSource`. It parses SSE and calls `queryClient.setQueryData` for each widget's existing query key.
+  - Cards render as their data arrives. A card still pending when the stream ends or fails falls back to its own GET.
+  - React-query's per-widget fetch stays the path for a single card, for example a newly added widget or a remote table.
   - A refresh with `fresh` goes through the same path.
   - A query widget can be refreshed like an SQL one. Today `canRefresh` and `WidgetCard` allow `'sql'` only, which is a bug.
   - The 360px phone rule and the pointer-cursor rule apply.
@@ -148,33 +153,42 @@ func (e *Engine) AnswerMany(ctx context.Context, reqs []Request, ctxs []context.
 
 - [ ] Write the tests first, then implement and run `go test -race ./internal/native/` and `make check`. Commit: `perf(native): answer several queries from one scan`.
 
-### Task 4: Reporting and the batch route
+### Task 4: Reporting and the stream route
 
 **Files:**
-- `internal/reporting/data.go`: `WidgetDataMany(ctx, []WidgetRequest) []WidgetResult`. Each request goes through `WidgetData`'s checks; cache hits and misses are handled per widget. The misses' query-source loads go into one `AnswerMany` per project. SQL-source widgets fall back to their own loads.
+- `internal/reporting/data.go`: `WidgetDataStream(ctx, []WidgetRequest, emit func(WidgetResult))`.
+  - Each request goes through `WidgetData`'s checks. Cache hits are emitted at once.
+  - The misses' query-source loads go into `AnswerMany` per project. Each shared-scan group's results are emitted, and cached per widget, as soon as the group finishes. That may need `AnswerMany` to call back per group; extend Task 3's API if so.
+  - SQL-source widgets run their own loads concurrently and emit when done.
+  - `emit` is serialised.
 - `query_source.go` exposes a batched load.
-- `internal/api/ops_reporting.go` and `rest.go`: the `POST /api/widgets/data` route.
+- `internal/api`: the `POST /api/widgets/stream` route, with SSE writing, flush, keepalive, and cancellation on client close.
 - `docs/twillingate.md` and the docs sync.
+- `docs/deployment.md`: proxy buffering. Check the repo's Caddy config and the prod notes.
 
 **Tests:**
-- `TestWidgetDataManyEqualsWidgetData` runs over every built-in dashboard and preset on the system fixture.
-- Per-widget errors (a widget id that is missing, archived, or in another project) fail only their own entry.
-- Cache hits are served without a scan.
+- `TestWidgetDataStreamEqualsWidgetData` runs over every built-in dashboard and preset on the system fixture, so every widget's data equals its GET's.
+- Cache hits are emitted before any scan finishes.
+- A per-widget error (missing, archived, other project) fails only its event.
+- Closing the client cancels the queries.
+- Keepalive is sent.
 - Review Focus 2.
-- REST route tests: auth, the 64-widget cap, ordering.
+- Route tests cover auth, the 64-widget cap, and that `done` arrives last.
 
-- [ ] Commit: `feat(api): load a dashboard's widgets in one request`.
+- [ ] Commit: `feat(api): stream a dashboard's widgets from one request`.
 
-### Task 5: The console's dataloader
+### Task 5: The console loads a dashboard through the stream
 
 **Files:**
-- `web/src/lib/api.ts` (or `widget-query.ts`): the dataloader described in the Global Constraints.
-- `WidgetCard.tsx` and `widget-query.ts`: query widgets become refreshable.
-- Tests:
-  - vitest: the calls of one tick become one POST per (project, from, to), each call gets its own result or error, and a refresh goes through it;
-  - e2e: a dashboard load makes one data request. Assert this with Playwright's request log in an existing dashboard spec.
+- `web/src/lib/widget-stream.ts`, as described in the Global Constraints.
+- The dashboard page and project dashboard tab (`Dashboard.tsx`, `ProjectDashboardTab.tsx`): open the stream on load, refresh and auto-refresh.
+- `WidgetCard.tsx` and `widget-query.ts`: a query widget becomes refreshable, and a card shows its own loading state until its event arrives.
 
-- [ ] Run `cd web && npm test && npm run e2e`, then `make check`. Commit: `perf(web): ask for a dashboard's widgets in one request`.
+**Tests:**
+- vitest: SSE parsing, including events split across chunks and comments; each widget's data lands in its own key; a widget missing from a failed stream falls back to GET; refresh sends `fresh`.
+- e2e: a dashboard load makes one stream request and no per-widget GETs; the widgets render; refresh makes one stream request. Assert with Playwright's request log in an existing dashboard spec. The phone and cursor specs pass.
+
+- [ ] Run `cd web && npm test && npm run e2e`, then `make check`. Commit: `perf(web): load a dashboard's widgets from one streamed request`.
 
 ### Task 6: MCP tools on `AnswerMany`
 
@@ -189,7 +203,7 @@ Each runs its queries as one `AnswerMany`. Outputs are unchanged, and the existi
 
 ### Task 7: Measure and document
 
-Re-run the dashboard matrix from step 4b: native, 100k and 1M; Views and Product at 7d/30d/90d/1y; the rest at 30d. Run it through `WidgetDataMany`, so as the console loads now, behind the quiet-host gate. Report:
+Re-run the dashboard matrix from step 4b: native, 100k and 1M; Views and Product at 7d/30d/90d/1y; the rest at 30d. Run it through `WidgetDataStream` (time to first widget and to the last), so as the console loads now, behind the quiet-host gate. Report:
 - wall time, before (step 4b) and after;
 - peak RSS against step 4b;
 - one row with today's open log in range.
