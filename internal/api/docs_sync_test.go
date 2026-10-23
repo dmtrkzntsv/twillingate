@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
 	"slices"
@@ -644,6 +645,18 @@ func TestStructuredQueryDocument(t *testing.T) {
 		if !kinds[k] {
 			t.Errorf("no example of a %s", k)
 		}
+	}
+	// The attributes kind's reserved keys, listed between "under its own
+	// name:" and "Those are grouped": exactly the engine's.
+	_, rest, _ := strings.Cut(body, "under its own name:")
+	listed, _, _ := strings.Cut(rest, "Those are grouped")
+	var named []string
+	for _, m := range regexp.MustCompile("`(\\$[a-z_]+)`").FindAllStringSubmatch(listed, -1) {
+		named = append(named, m[1])
+	}
+	slices.Sort(named)
+	if want := slices.Sorted(maps.Keys(native.ReservedKeyColumns)); !slices.Equal(named, want) {
+		t.Errorf("the attributes' reserved keys are %v, want %v", named, want)
 	}
 	for _, list := range [][]string{native.Kinds, native.Tables, native.Columns, native.SessionColumns, native.MetricOps,
 		native.ValueColumns, native.SessionValueColumns, native.IdentityColumns, native.IdentityValueColumns,

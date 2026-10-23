@@ -1705,7 +1705,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `where` | all | filters, `{column, op, values}`, every one of which a row must satisfy |
 | `dimensions` | breakdown, attributes | a breakdown's 1 to 3 columns to group by; an attributes' `day`, `event_name` or both, in that order, before its attribute and value |
 | `limit` | breakdown, attributes | groups returned, 1 to 1000 (default 20; an attributes all of them) |
-| `order` | breakdown, attributes | a metric name to rank the groups by, descending, ties by the dimensions; or one of the dimensions to sort the groups by, ascending, ties by the other dimensions (`"order": "day"` puts a breakdown by day in date order). Default the first metric; `limit` keeps the first groups in that order |
+| `order` | breakdown, attributes | a metric name to rank the groups by, descending, ties by the dimensions; or one of the dimensions to sort the groups by, ascending, ties by the other dimensions (`"order": "day"` puts a breakdown by day in date order). Default the first metric; `limit` keeps the first groups in that order; an attributes' default differs (below) |
 | `other` | breakdown | `true` adds an `Other` row (every dimension `Other`) summing the groups past `limit`, when there are any |
 | `series` | trend | a column to split each day by |
 | `series_limit` | trend | how many series, 1 to 50, those ranking first by the metric over the range (default 5) |
@@ -1854,10 +1854,10 @@ then `attribute` (the key) and `value`: output `values` has a row per
 group, the dimensions, `attribute`, `value`, then a column per metric.
 An attribute is named as the files' first spelling of it, so keys equal
 but for case (`plan`, `Plan`) are one. It takes the metrics `count`,
-`users` (here distinct `actor_id`, NULL left out), `groups` (distinct
-`group_id`, empty left out) and its own `actors_or_null` (distinct
-`actor_id`, NULL counting as one, as the Product dashboard counts its
-users), none with a `where` of its own; `where` filters the rows before
+`actors`, `users`, `groups` (an empty `group_id` left out) and its own
+`actors_or_null` (distinct `actor_id`, NULL counting as one, as the
+Product dashboard counts its users; `actors` is `product_attributes`'
+unique users), none with a `where` of its own; `where` filters the rows before
 they are unpivoted. Without `order` the rows are by `day`, the first
 metric descending, then `event_name`, `attribute` and `value` when
 `day` is a dimension, else by `event_name`, `attribute`, the first
@@ -1968,7 +1968,7 @@ with the reserved keys, as `product_attributes` lists them.
   "kind": "attributes", "table": "product", "output": "values", "reserved": true,
   "dimensions": ["day", "event_name"],
   "where": [{"column": "event_name", "op": "eq", "values": ["signup"]}],
-  "metrics": [{"op": "count"}, {"op": "users"}, {"op": "groups"}]}}
+  "metrics": [{"op": "count"}, {"op": "actors"}, {"op": "groups"}]}}
 ```
 
 A breakdown with filtered metrics side by side: per path, its views and

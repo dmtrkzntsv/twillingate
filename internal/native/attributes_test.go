@@ -3,7 +3,6 @@ package native
 import (
 	"context"
 	"fmt"
-	"maps"
 	"os"
 	"slices"
 	"sort"
@@ -50,6 +49,9 @@ func attrDay(t testing.TB, day string, d int) []store.Event {
 			Platform: []string{"web", "ios"}[k%2], AppVersion: []string{"", "1.0", "1.1"}[(k+d)%3]}
 		if k%5 != 4 {
 			e.ActorID = fmt.Sprintf("a%d", (k+d)%6)
+		}
+		if k%3 == 0 && e.ActorID != "" {
+			e.UserID = fmt.Sprintf("u%d", (k+d)%2) // several actors share a user
 		}
 		if k%4 == 1 {
 			e.GroupID = fmt.Sprintf("g%d", (k+d)%3)
@@ -126,25 +128,16 @@ func attrWidgetSQL(t *testing.T, table string) string {
 	return s
 }
 
-// apiKeyColumns is internal/api's keyColumns (ops_measures.go), which
-// product_attributes reads the reserved keys from.
-var apiKeyColumns = map[string]string{
-	"$platform": "platform", "$os": "os", "$app_version": "app_version", "$app_locale": "app_locale",
-	"$kind": "kind", "$browser": "browser", "$device": "device", "$browser_locale": "browser_locale",
-	"$country": "country", "$host": "host", "$path": "path", "$referrer": "referrer_source",
-	"$utm_source": "utm_source", "$utm_medium": "utm_medium", "$utm_campaign": "utm_campaign",
-	"$os_version": "os_version", "$browser_version": "browser_version", "$device_model": "device_model",
-}
-
-// apiReservedKeys is internal/api's reservedKeys (ops_product.go).
+// apiReservedKeys is internal/api's reservedKeys (ops_product.go), over
+// the keys it shares with the engine.
 func apiReservedKeys() string {
-	keys := make([]string, 0, len(apiKeyColumns))
-	for k := range apiKeyColumns {
+	keys := make([]string, 0, len(ReservedKeyColumns))
+	for k := range ReservedKeyColumns {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for i, k := range keys {
-		keys[i] = "nullif(" + apiKeyColumns[k] + `, '') AS "attr_` + k + `"`
+		keys[i] = "nullif(" + ReservedKeyColumns[k] + `, '') AS "attr_` + k + `"`
 	}
 	return strings.Join(keys, ",\n           ")
 }
@@ -168,12 +161,6 @@ GROUP BY day, event_name, col, attr_value
 ORDER BY day, "count" DESC, event_name, attr_key, attr_value`
 }
 
-func TestReservedKeysAreAPIs(t *testing.T) {
-	if !maps.Equal(reservedKeyColumns, apiKeyColumns) {
-		t.Errorf("reservedKeyColumns %v\nwant %v", reservedKeyColumns, apiKeyColumns)
-	}
-}
-
 func TestAttributesMatchDuckDB(t *testing.T) {
 	f := attrFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
@@ -182,7 +169,9 @@ func TestAttributesMatchDuckDB(t *testing.T) {
 	measures := widget
 	measures.Table = "measures"
 	perDay := Query{Kind: "attributes", Table: "product", Output: "values", Dimensions: []string{"day", "event_name"},
-		Reserved: true, Metrics: []Metric{{Op: "count"}, {Op: "users"}, {Op: "groups"}}}
+		Reserved: true, Metrics: []Metric{{Op: "count"}, {Op: "actors"}, {Op: "groups"}}}
+	people := Query{Kind: "attributes", Table: "product", Output: "values", Dimensions: []string{"event_name"},
+		Metrics: []Metric{{Op: "actors"}, {Op: "users"}, {Op: "count"}}}
 	signup := perDay
 	signup.Where = []Filter{{Column: "event_name", Op: "eq", Values: []string{"signup"}}}
 	cases := []struct {
@@ -196,6 +185,11 @@ func TestAttributesMatchDuckDB(t *testing.T) {
 		{"widget august", widget, attrFrom, "2026-08-31", attrWidgetSQL(t, "product")},
 		{"widget measures", measures, attrFrom, today, attrWidgetSQL(t, "measures")},
 		{"product_attributes", perDay, attrFrom, today, productAttributesSQL("")},
+		{"actors and users", people, attrFrom, today, `SELECT event_name, substr(col, 6) AS a, attr_value,
+			count(DISTINCT actor_id) AS n, count(DISTINCT user_id), count(*) FROM (
+			UNPIVOT (SELECT event_name, actor_id, user_id, COLUMNS('^attr_') FROM product WHERE ` + inRange + `)
+			ON COLUMNS('^attr_') INTO NAME col VALUE attr_value)
+			GROUP BY ALL ORDER BY event_name, a, n DESC, attr_value`},
 		{"product_attributes signup", signup, "2026-09-05", today, productAttributesSQL(` AND event_name = 'signup'`)},
 	}
 	for _, c := range cases {
@@ -239,8 +233,8 @@ func TestAttributesMatchDuckDB(t *testing.T) {
 			t.Errorf("the widget has attribute %q", a)
 		}
 	}
-	// A NULL actor counts as a user in the widget, as none in product_attributes.
-	q := Query{Kind: "attributes", Table: "product", Output: "values", Metrics: []Metric{{Op: "users"}, {Op: "actors_or_null"}}}
+	// A NULL actor counts as one in the widget, as none in product_attributes.
+	q := Query{Kind: "attributes", Table: "product", Output: "values", Metrics: []Metric{{Op: "actors"}, {Op: "actors_or_null"}}}
 	got, err := e.Answer(context.Background(), q, Params{Project: 1, From: date(t, attrFrom), To: date(t, today)}, attrRules)
 	if err != nil {
 		t.Fatal(err)
@@ -250,7 +244,19 @@ func TestAttributesMatchDuckDB(t *testing.T) {
 		differ = differ || r[2] != r[3]
 	}
 	if !differ {
-		t.Error("users and actors_or_null agree on every value: no NULL actor")
+		t.Error("actors and actors_or_null agree on every value: no NULL actor")
+	}
+	// Users are distinct user_id, not actors.
+	q = Query{Kind: "attributes", Table: "product", Output: "values", Metrics: []Metric{{Op: "actors"}, {Op: "users"}}}
+	if got, err = e.Answer(context.Background(), q, Params{Project: 1, From: date(t, attrFrom), To: date(t, today)}, attrRules); err != nil {
+		t.Fatal(err)
+	}
+	differ = false
+	for _, r := range got.Rows {
+		differ = differ || (r[2] != r[3] && r[3] != "0")
+	}
+	if !differ {
+		t.Error("actors and users agree on every value")
 	}
 }
 

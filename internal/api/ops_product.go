@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 )
 
@@ -69,7 +70,7 @@ const productAttributesMaxDays = 92
 // productAttributes breaks the product events down by every attribute key
 // they carried (one attr_<key> column each, unpivoted as the Product
 // dashboard's attribute values are) and by every reserved key in
-// keyColumns, read from its typed column under an "attr_$…" name no key
+// native.ReservedKeyColumns, read from its typed column under an "attr_$…" name no key
 // can produce (ingest never stores a $ key as an attribute), so the
 // unpivot always has a column. The COLUMNS pattern takes the fixed columns too: one that
 // matched nothing (no event ever carried an attribute) would be an error.
@@ -110,13 +111,13 @@ ORDER BY day, "count" DESC, event_name, attr_key, attr_value`
 // reservedKeys selects each reserved key's column, empty read as NULL, as
 // "attr_<key>", in key order.
 func reservedKeys() string {
-	keys := make([]string, 0, len(keyColumns))
-	for k := range keyColumns {
+	keys := make([]string, 0, len(native.ReservedKeyColumns))
+	for k := range native.ReservedKeyColumns {
 		keys = append(keys, k)
 	}
 	sort.Strings(keys)
 	for i, k := range keys {
-		keys[i] = "nullif(" + keyColumns[k] + `, '') AS "attr_` + k + `"`
+		keys[i] = "nullif(" + native.ReservedKeyColumns[k] + `, '') AS "attr_` + k + `"`
 	}
 	return strings.Join(keys, ",\n           ")
 }

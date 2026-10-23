@@ -19,10 +19,14 @@ import (
 // by the query's dimensions, then attribute and value, as SQL's UNPIVOT
 // then GROUP BY has them.
 
-// reservedKeyColumns are the reserved keys an attributes query with
-// reserved reads, each from its typed column: internal/api's keyColumns,
-// which product_attributes unpivots under the same names.
-var reservedKeyColumns = map[string]string{
+// ReservedKeyColumns are the reserved keys read from a typed column of
+// the event files, by key: an attributes query's with reserved, and
+// internal/api's breakdowns' and product_attributes' (the nine
+// v_product_attrs and v_measures_attrs always had, and the nine a project
+// could declare there, migration 040's mapping). On the files every one
+// breaks down, declared or not; any other key reads its attr_<key>
+// column.
+var ReservedKeyColumns = map[string]string{
 	"$platform": "platform", "$os": "os", "$app_version": "app_version", "$app_locale": "app_locale",
 	"$kind": "kind", "$browser": "browser", "$device": "device", "$browser_locale": "browser_locale",
 	"$country": "country", "$host": "host", "$path": "path", "$referrer": "referrer_source",
@@ -30,11 +34,11 @@ var reservedKeyColumns = map[string]string{
 	"$os_version": "os_version", "$browser_version": "browser_version", "$device_model": "device_model",
 }
 
-// reservedKeys are reservedKeyColumns' keys, sorted.
-var reservedKeys = slices.Sorted(maps.Keys(reservedKeyColumns))
+// reservedKeys are ReservedKeyColumns' keys, sorted.
+var reservedKeys = slices.Sorted(maps.Keys(ReservedKeyColumns))
 
-// The pseudo-rows' own columns, beside day, event_name, actor_id and
-// group_id (group_id's empty value read as NULL).
+// The pseudo-rows' own columns, beside day, event_name, actor_id, user_id
+// and group_id (group_id's empty value read as NULL).
 const (
 	attrKeyCol   = "attribute"
 	attrValueCol = "value"
@@ -47,7 +51,7 @@ const (
 var unpivotChunk = 1 << 16
 
 // attrMetric is one attributes metric resolved to the aggregation's: the
-// one it reads (count, actors, groups) and, for actors_or_null, the count
+// one it reads (count, actors, users, groups) and, for actors_or_null, the count
 // of the pseudo-rows without an actor, which adds one when there is any.
 type attrMetric struct {
 	Metric
@@ -56,10 +60,11 @@ type attrMetric struct {
 
 // attributes answers an attributes query, output values: a row per
 // (dimensions, attribute, value) of the pseudo-rows, its metrics: count
-// the pseudo-rows, users the distinct actor_id (NULL left out, as
+// the pseudo-rows, actors the distinct actor_id (NULL left out, as
 // count(DISTINCT) has it), actors_or_null the same with NULL counting as
-// one (as product/attribute-values.sql's GROUPING SETS has it), groups the
-// distinct group_id (NULL and empty left out). An attribute's name is its
+// one (as product/attribute-values.sql's GROUPING SETS has it), users the
+// distinct user_id and groups the distinct group_id (NULL and empty left
+// out). An attribute's name is its
 // column's without attr_, spelled as the reader's events view spells it
 // (the first spelling of the files' columns, unionColumns), so keys equal
 // but for case in different files are one. The rows are ordered by order
@@ -86,12 +91,8 @@ func (s scan) attributes(ctx context.Context, from, to civil.Date) (Result, erro
 	for i, m := range s.q.Metrics {
 		am := attrMetric{Metric: m, nulls: -1}
 		switch m.Op {
-		case "count":
-			am.inner = add(Metric{Op: "count"}, nil)
-		case "users":
-			am.inner = add(Metric{Op: "actors"}, nil)
-		case "groups":
-			am.inner = add(Metric{Op: "groups"}, nil)
+		case "count", "actors", "users", "groups":
+			am.inner = add(Metric{Op: m.Op}, nil)
 		case "actors_or_null":
 			am.inner = add(Metric{Op: "actors"}, nil)
 			am.nulls = add(Metric{Op: "count", Where: nullWhere}, nullFilters)
@@ -122,7 +123,7 @@ func (s scan) attributes(ctx context.Context, from, to civil.Date) (Result, erro
 	if err != nil {
 		return Result{}, err
 	}
-	cols := []string{"day", "event_name", "actor_id", "group_id", AttrCols}
+	cols := []string{"day", "event_name", "actor_id", "user_id", "group_id", AttrCols}
 	more := func(cs ...string) {
 		for _, c := range cs {
 			if !slices.Contains(cols, c) {
@@ -135,7 +136,7 @@ func (s scan) attributes(ctx context.Context, from, to civil.Date) (Result, erro
 	}
 	if s.q.Reserved {
 		for _, k := range reservedKeys {
-			more(reservedKeyColumns[k])
+			more(ReservedKeyColumns[k])
 		}
 	}
 	us := make([]unpivoter, s.e.workers)
@@ -242,9 +243,9 @@ func (s scan) attributeOrder(dims []string, ams []attrMetric) []sortKey {
 // unpivoter is one worker's unpivot of its batches into pseudo-rows,
 // its arrays reused from chunk to chunk.
 type unpivoter struct {
-	sel                                 []int32
-	day                                 []int64
-	event, actor, null, group, key, val []int32
+	sel                                       []int32
+	day                                       []int64
+	event, actor, user, null, group, key, val []int32
 }
 
 // unpivot hands the pseudo-rows of b's rows that pass filters to emit,
@@ -278,6 +279,10 @@ func (u *unpivoter) unpivot(b *Batch, filters []filter, spell map[string]string,
 	if err != nil {
 		return err
 	}
+	user, err := text("user_id")
+	if err != nil {
+		return err
+	}
 	group, err := text("group_id")
 	if err != nil {
 		return err
@@ -303,7 +308,7 @@ func (u *unpivoter) unpivot(b *Batch, filters []filter, spell map[string]string,
 	reservedFrom = len(srcs)
 	if reserved {
 		for _, k := range reservedKeys {
-			c, err := text(reservedKeyColumns[k])
+			c, err := text(ReservedKeyColumns[k])
 			if err != nil {
 				return err
 			}
@@ -326,7 +331,10 @@ func (u *unpivoter) unpivot(b *Batch, filters []filter, spell map[string]string,
 			remap[j][x] = -1
 		}
 	}
-	var noGroup []bool // group_id's empty entries
+	// noGroup marks group_id's empty entries, read as NULL as the SQL's
+	// nullif has it; the files never hold one (an empty field is left
+	// out), so this only guards the count of groups.
+	var noGroup []bool
 	if group != nil {
 		noGroup = make([]bool, len(group.Dict))
 		for x, v := range group.Dict {
@@ -340,12 +348,13 @@ func (u *unpivoter) unpivot(b *Batch, filters []filter, spell map[string]string,
 		return c.Idx[i]
 	}
 	reset := func() {
-		u.day, u.event, u.actor, u.null, u.group, u.key, u.val = u.day[:0], u.event[:0], u.actor[:0], u.null[:0], u.group[:0], u.key[:0], u.val[:0]
+		u.day, u.event, u.actor, u.user, u.null, u.group, u.key, u.val = u.day[:0], u.event[:0], u.actor[:0], u.user[:0], u.null[:0], u.group[:0], u.key[:0], u.val[:0]
 	}
 	flush := func() error {
 		c := &Batch{N: len(u.day), Cols: map[string]*Column{
 			"day":        {Ints: u.day},
 			"actor_id":   {Idx: u.actor},
+			"user_id":    {Idx: u.user},
 			nullActorCol: {Dict: []string{"1"}, Idx: u.null},
 			"group_id":   {Idx: u.group},
 			attrKeyCol:   {Dict: names, Idx: u.key},
@@ -353,6 +362,9 @@ func (u *unpivoter) unpivot(b *Batch, filters []filter, spell map[string]string,
 		}}
 		if actor != nil {
 			c.Cols["actor_id"].Dict = actor.Dict
+		}
+		if user != nil {
+			c.Cols["user_id"].Dict = user.Dict
 		}
 		if group != nil {
 			c.Cols["group_id"].Dict = group.Dict
@@ -366,7 +378,7 @@ func (u *unpivoter) unpivot(b *Batch, filters []filter, spell map[string]string,
 	}
 	reset()
 	for _, i := range sel {
-		ev, act, grp := at(event, i), at(actor, i), at(group, i)
+		ev, act, usr, grp := at(event, i), at(actor, i), at(user, i), at(group, i)
 		if grp >= 0 && noGroup[grp] {
 			grp = -1
 		}
@@ -392,7 +404,8 @@ func (u *unpivoter) unpivot(b *Batch, filters []filter, spell map[string]string,
 				continue
 			}
 			u.day = append(u.day, day.Ints[i])
-			u.event, u.actor, u.null, u.group = append(u.event, ev), append(u.actor, act), append(u.null, nul), append(u.group, grp)
+			u.event, u.actor, u.user = append(u.event, ev), append(u.actor, act), append(u.user, usr)
+			u.null, u.group = append(u.null, nul), append(u.group, grp)
 			u.key, u.val = append(u.key, int32(j)), append(u.val, v)
 			if len(u.day) >= unpivotChunk {
 				if err := flush(); err != nil {
