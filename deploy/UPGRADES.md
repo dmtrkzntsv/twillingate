@@ -1386,3 +1386,17 @@ their SQL.
   - Distinct counts over ranges past 1,024 ids are estimated within about ±2% and marked ≈.
 
 Rollback: install the previous release; it restores the built-in widgets' SQL on start.
+
+### Upgrading to analytics tools on the native engine (no migration)
+
+`views_overview`, `views_breakdown`, `product_events` and the console's
+event-names route read the event files natively, with the same inputs and
+output fields.
+
+- **Before the upgrade**, nothing to check by hand.
+- **On the day**, these differ from the release before:
+  - `views_overview` without `kind` counts an actor seen under two kinds on one day as one visitor, not two.
+  - A distinct count past 1,024 ids in one row is estimated within about ±2%, and the table's `note` names its column.
+  - `views_breakdown` returns at most 1,000 rows, and `views_overview` and `product_events` at most 1,000 rows each.
+
+Rollback: install the previous release; nothing in the database changed.

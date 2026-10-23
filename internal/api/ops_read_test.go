@@ -213,9 +213,10 @@ func TestViewsBreakdownHostsDimension(t *testing.T) {
 }
 
 // TestViewsFiguresAreSummedPerDay pins the views tools to the figures
-// SQLite's views gave: visitors distinct per day (and kind), added up over
-// the range, not distinct over it. u9 views /docs on two days; m02 views
-// as web and as app on one (hostEvents).
+// SQLite's views gave: visitors distinct per day, added up over the
+// range, not distinct over it. u9 views /docs on two days; m02 views as
+// web and as app on one (hostEvents), one visitor of the day's overview
+// since the native engine (G15: per day, no longer per day and kind).
 func TestViewsFiguresAreSummedPerDay(t *testing.T) {
 	_, cs := newTestHost(t)
 	res := callTool(t, cs, "views_breakdown", map[string]any{
@@ -225,8 +226,8 @@ func TestViewsFiguresAreSummedPerDay(t *testing.T) {
 	}
 	res = callTool(t, cs, "views_overview", map[string]any{
 		"project_id": 1, "from": "2026-08-25", "to": "2026-08-25"})
-	if out := textOf(res); res.IsError || !strings.Contains(out, `"rows":[["2026-08-25","2","2",`) {
-		t.Errorf("overview of 08-25 = %s, want 2 visitors (one per kind) and 2 views", out)
+	if out := textOf(res); res.IsError || !strings.Contains(out, `"rows":[["2026-08-25","1","2",`) {
+		t.Errorf("overview of 08-25 = %s, want 1 visitor (distinct over the day's kinds) and 2 views", out)
 	}
 	res = callTool(t, cs, "views_overview", map[string]any{
 		"project_id": 1, "from": "2026-08-25", "to": "2026-08-25", "kind": "app"})

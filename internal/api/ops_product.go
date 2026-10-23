@@ -1,7 +1,9 @@
 package api
 
 import (
+	"cmp"
 	"context"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -33,32 +35,75 @@ func eventFilter(event string) (string, map[string]enginesql.Value) {
 	return ` AND event_name = :event`, map[string]enginesql.Value{":event": {Type: "VARCHAR", Text: event}}
 }
 
+// productEvents answers two native breakdowns of the product events: per
+// day and name, the events and the actors among them (unique users, as
+// v_product_daily kept them), by day, the most events first, then by
+// name; and per day, the events and the actors (active users).
 func (h *host) productEvents(ctx context.Context, in productEventsIn) (productEventsOut, error) {
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return productEventsOut{}, err
 	}
-	// Unique users are distinct per day and event, as v_product_daily kept
-	// them; the totals' active users distinct per day.
-	cond, vals := eventFilter(in.Event)
-	order := `day, "count" DESC, event_name`
+	out := productEventsOut{
+		Events: tableOut{Columns: []string{"day", "event_name", "count", "unique_users"}, Rows: [][]string{}},
+		Totals: tableOut{Columns: []string{"day", "total_events", "active_users"}, Rows: [][]string{}},
+	}
 	if in.Event != "" {
-		order = `day`
+		out.Totals = tableOut{}
 	}
-	events, err := h.filesTable(ctx, in.rangeIn, `SELECT day, event_name, count(*) AS "count", count(DISTINCT actor_id) AS unique_users
-FROM product WHERE project_id = :project AND day BETWEEN :from AND :to`+cond+`
-GROUP BY day, event_name
-ORDER BY `+order, vals)
-	if err != nil || in.Event != "" {
-		return productEventsOut{Events: events}, err
+	p, ok := rangeParams(in.rangeIn)
+	if !ok {
+		return out, nil
 	}
-	totals, err := h.filesTable(ctx, in.rangeIn, `SELECT day, count(*) AS total_events, count(DISTINCT actor_id) AS active_users
-FROM product WHERE project_id = :project AND day BETWEEN :from AND :to
-GROUP BY day
-ORDER BY day`, nil)
+	var where []native.Filter
+	if in.Event != "" {
+		where = []native.Filter{{Column: "event_name", Op: "eq", Values: []string{in.Event}}}
+	}
+	events, err := h.byDay(ctx, p, []string{"day", "event_name"}, where,
+		[]native.Metric{{Op: "count", As: "count"}, {Op: "actors", As: "unique_users"}})
 	if err != nil {
 		return productEventsOut{}, err
 	}
-	return productEventsOut{Events: events, Totals: totals}, nil
+	slices.SortStableFunc(events.Rows, func(a, b []string) int {
+		if c := cmp.Compare(a[0], b[0]); c != 0 {
+			return c
+		}
+		if c := cmp.Compare(cellInt(b[2]), cellInt(a[2])); c != 0 {
+			return c
+		}
+		return cmp.Compare(a[1], b[1])
+	})
+	out.Events = events
+	if in.Event != "" {
+		return out, nil
+	}
+	if out.Totals, err = h.byDay(ctx, p, []string{"day"}, nil,
+		[]native.Metric{{Op: "count", As: "total_events"}, {Op: "actors", As: "active_users"}}); err != nil {
+		return productEventsOut{}, err
+	}
+	return out, nil
+}
+
+// byDay answers a native breakdown of the product events by dims, day
+// first, over p, by day: at most CONSOLE_QUERY_ROWS_MAX rows (and the
+// engine's 1,000), the earliest days', the rest noted as left out.
+func (h *host) byDay(ctx context.Context, p native.Params, dims []string, where []native.Filter, metrics []native.Metric) (tableOut, error) {
+	n := min(h.queryRows, maxBreakdownLimit)
+	res, err := h.answer(ctx, native.Query{Kind: "breakdown", Table: "product", Dimensions: dims, Order: "day",
+		Limit: min(n+1, maxBreakdownLimit), Where: where, Metrics: metrics}, p)
+	if err != nil {
+		return tableOut{}, err
+	}
+	out := tableOut{Columns: res.Columns, Rows: res.Rows}
+	if out.Rows == nil {
+		out.Rows = [][]string{}
+	}
+	cut := len(out.Rows) > n
+	if cut {
+		out.Rows = out.Rows[:n]
+	}
+	// At the engine's 1,000 there is no asking for one more.
+	h.markPartial(&out, res.Truncated || cut || len(out.Rows) == maxBreakdownLimit, res.Approximate)
+	return out, nil
 }
 
 // productAttributesMaxDays bounds product_attributes' range: its rows are

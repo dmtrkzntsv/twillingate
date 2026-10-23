@@ -1,11 +1,14 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -14,7 +17,9 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -196,72 +201,140 @@ type overviewIn struct {
 	Kind string `json:"kind,omitempty" jsonschema:"optional: only this kind (web, app, cli, …); absent sums every kind per day"`
 }
 
+// viewsOverview answers two native breakdowns by day, joined here: the
+// views' visitors (distinct per day) and views, and the sessions'
+// sessions, bounces and seconds, as the Views dashboard reads them. A day
+// with views but no session reads 0 sessions, bounces and seconds, a
+// bounce_rate of 0; avg_session_sec is the seconds over the sessions,
+// rounded down.
 func (h *host) viewsOverview(ctx context.Context, in overviewIn) (tableOut, error) {
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return tableOut{}, err
 	}
-	kind, vals := "", map[string]enginesql.Value(nil)
-	if in.Kind != "" {
-		kind, vals = ` AND kind = :kind`, map[string]enginesql.Value{":kind": {Type: "VARCHAR", Text: in.Kind}}
+	p, ok := rangeParams(in.rangeIn)
+	cols := []string{"day", "visitors", "views", "sessions", "bounces", "duration_sec", "bounce_rate", "avg_session_sec"}
+	if !ok {
+		return tableOut{Columns: cols, Rows: [][]string{}}, nil
 	}
-	// Visitors are distinct per day and kind, added up over a day's kinds;
-	// sessions, bounces and durations are the sessions table's, as the
-	// Views dashboard reads them.
-	q := `WITH v AS (
-  SELECT day, count(DISTINCT actor_id) AS visitors, count(*) AS views
-  FROM views WHERE project_id = :project AND day BETWEEN :from AND :to` + kind + `
-  GROUP BY day, kind
-), vd AS (
-  SELECT day, SUM(visitors) AS visitors, SUM(views) AS views FROM v GROUP BY day
-), sd AS (
-  SELECT day, count(*) AS sessions, count(*) FILTER (WHERE views = 1) AS bounces,
-         COALESCE(SUM(duration_sec), 0) AS duration_sec
-  FROM sessions WHERE project_id = :project AND day BETWEEN :from AND :to` + kind + `
-  GROUP BY day
-)
-SELECT vd.day, vd.visitors, vd.views, COALESCE(sd.sessions, 0) AS sessions,
-       COALESCE(sd.bounces, 0) AS bounces, COALESCE(sd.duration_sec, 0) AS duration_sec,
-       ROUND(COALESCE(sd.bounces, 0)::DOUBLE / greatest(COALESCE(sd.sessions, 0), 1), 3) AS bounce_rate,
-       CAST(COALESCE(sd.duration_sec, 0) // greatest(COALESCE(sd.sessions, 0), 1) AS BIGINT) AS avg_session_sec
-FROM vd LEFT JOIN sd ON sd.day = vd.day
-ORDER BY vd.day`
-	return h.filesTable(ctx, in.rangeIn, q, vals)
+	var where []native.Filter
+	if in.Kind != "" {
+		where = []native.Filter{{Column: "kind", Op: "eq", Values: []string{in.Kind}}}
+	}
+	limit := min(h.queryRows, maxBreakdownLimit)
+	views, err := h.answer(ctx, native.Query{Kind: "breakdown", Table: "views", Dimensions: []string{"day"}, Order: "day",
+		Limit: limit, Where: where, Metrics: []native.Metric{
+			{Op: "daily_sum", Of: "actors", As: "visitors"}, {Op: "count", As: "views"}}}, p)
+	if err != nil {
+		return tableOut{}, err
+	}
+	sessions, err := h.answer(ctx, native.Query{Kind: "breakdown", Table: "sessions", Dimensions: []string{"day"}, Order: "day",
+		Limit: limit, Where: where, Metrics: []native.Metric{
+			{Op: "count", As: "sessions"}, {Op: "bounces"}, {Op: "sum", Column: "duration_sec", As: "duration_sec"}}}, p)
+	if err != nil {
+		return tableOut{}, err
+	}
+	byDay := make(map[string][]string, len(sessions.Rows))
+	for _, r := range sessions.Rows {
+		byDay[r[0]] = r[1:]
+	}
+	out := tableOut{Columns: cols, Rows: make([][]string, 0, len(views.Rows))}
+	for _, r := range views.Rows {
+		n, bounces, secs := int64(0), int64(0), int64(0)
+		if s, ok := byDay[r[0]]; ok {
+			n, bounces, secs = cellInt(s[0]), cellInt(s[1]), cellInt(s[2])
+		}
+		out.Rows = append(out.Rows, []string{r[0], r[1], r[2], strconv.FormatInt(n, 10), strconv.FormatInt(bounces, 10),
+			strconv.FormatInt(secs, 10), roundRate(bounces, max(n, 1)), strconv.FormatInt(secs/max(n, 1), 10)})
+	}
+	h.markPartial(&out, views.Truncated || sessions.Truncated || len(views.Rows) == limit && limit < rangeDays(p),
+		append(views.Approximate, sessions.Approximate...))
+	return out, nil
+}
+
+// maxBreakdownLimit is a native breakdown's most groups.
+const maxBreakdownLimit = 1000
+
+// rangeParams is in's project and days as a native query's, ok false
+// when to is before from: a range of no day, which answers no row.
+func rangeParams(in rangeIn) (native.Params, bool) {
+	from, err1 := civil.Parse(in.From)
+	to, err2 := civil.Parse(in.To)
+	if err1 != nil || err2 != nil || to.Before(from) {
+		return native.Params{}, false
+	}
+	return native.Params{Project: in.ProjectID, From: from, To: to}, true
+}
+
+// rangeDays is the days of p's range, from and to included.
+func rangeDays(p native.Params) int {
+	return int(p.To.Time().Sub(p.From.Time()).Hours()/24) + 1
+}
+
+// cellInt is a native integer cell; an empty one (NULL) is 0.
+func cellInt(s string) int64 {
+	n, _ := strconv.ParseInt(s, 10, 64)
+	return n
+}
+
+// roundRate is num/den rounded to 3 places, half away from zero, as the
+// tools' SQL printed ROUND(… ::DOUBLE, 3): the shortest decimal (1, 0.25).
+func roundRate(num, den int64) string {
+	return strconv.FormatFloat(math.Round(float64(num)/float64(den)*1000)/1000, 'f', -1, 64)
+}
+
+// markPartial notes on out what the tools' SQL noted: a table cut short,
+// and (new with the native engine) the columns holding an estimate.
+func (h *host) markPartial(out *tableOut, truncated bool, approximate []string) {
+	var notes []string
+	if truncated {
+		out.Truncated = true
+		notes = append(notes, fmt.Sprintf("truncated to %d rows; results are PARTIAL — narrow the range or raise the limit", len(out.Rows)))
+	}
+	if len(approximate) > 0 {
+		slices.Sort(approximate)
+		notes = append(notes, fmt.Sprintf("%s past 1,024 distinct ids are estimated (about ±2%%)", strings.Join(slices.Compact(approximate), ", ")))
+	}
+	out.Note = strings.Join(notes, "; ")
 }
 
 // ---- views_breakdown ----
 
-// viewsDimension is one breakdown of the views table: the columns it
-// returns, each with its key expression (an absent value reads as the empty
-// string, as SQLite's views stored it), and the views it leaves out, if any.
+// viewsDimension is one breakdown of the views table: the native
+// dimensions it groups by, the columns it returns them as, and the filter
+// that leaves views out, if any. A value not sent (NULL) reads as the
+// empty string.
 type viewsDimension struct {
+	dims  []string
 	cols  []string
-	exprs []string
-	where string
+	where []native.Filter
 }
 
-// orEmpty is a nullable column as a key: NULL (not sent) reads as empty.
-func orEmpty(col string) string { return "COALESCE(" + col + ", '')" }
+// isSet keeps the views whose column is set.
+func isSet(col string) []native.Filter { return []native.Filter{{Column: col, Op: "is_set"}} }
+
+// anySet keeps the views with any of cols set.
+func anySet(cols ...string) []native.Filter {
+	return []native.Filter{{Op: "any_set", Columns: cols}}
+}
+
+// same is a dimension returned under its own name.
+func same(dims ...string) viewsDimension { return viewsDimension{dims: dims, cols: dims} }
 
 var viewsDimensions = map[string]viewsDimension{
-	"kinds":     {cols: []string{"kind"}, exprs: []string{orEmpty("kind")}},
-	"paths":     {cols: []string{"path"}, exprs: []string{orEmpty("path")}},
-	"hosts":     {cols: []string{"host"}, exprs: []string{orEmpty("host")}},
-	"referrers": {cols: []string{"source"}, exprs: []string{orEmpty("referrer_source")}},
-	"utm": {cols: []string{"utm_source", "utm_medium", "utm_campaign"},
-		exprs: []string{orEmpty("utm_source"), orEmpty("utm_medium"), orEmpty("utm_campaign")},
-		where: "(utm_source <> '' OR utm_medium <> '' OR utm_campaign <> '')"},
-	"countries":    {cols: []string{"country"}, exprs: []string{orEmpty("country")}},
-	"platforms":    {cols: []string{"platform"}, exprs: []string{orEmpty("platform")}},
-	"os":           {cols: []string{"os", "os_version"}, exprs: []string{orEmpty("os"), orEmpty("os_version")}},
-	"browsers":     {cols: []string{"browser", "browser_version"}, exprs: []string{orEmpty("browser"), orEmpty("browser_version")}},
-	"app_versions": {cols: []string{"platform", "app_version"}, exprs: []string{orEmpty("platform"), "app_version"}, where: "app_version <> ''"},
-	"devices":      {cols: []string{"device", "device_model"}, exprs: []string{orEmpty("device"), orEmpty("device_model")}},
-	"displays": {cols: []string{"display"}, exprs: []string{"concat(display_width, 'x', display_height)"},
-		where: "display_width > 0 AND display_height > 0"},
-	"consent": {cols: []string{"consent"},
-		exprs: []string{"CASE consent WHEN 1 THEN 'given' WHEN 0 THEN 'none' ELSE 'unknown' END"}},
-	"locales": {cols: []string{"browser_locale", "app_locale"}, exprs: []string{orEmpty("browser_locale"), orEmpty("app_locale")},
-		where: "(browser_locale <> '' OR app_locale <> '')"},
+	"kinds":        same("kind"),
+	"paths":        same("path"),
+	"hosts":        same("host"),
+	"referrers":    {dims: []string{"referrer_source"}, cols: []string{"source"}},
+	"utm":          {dims: []string{"utm_source", "utm_medium", "utm_campaign"}, cols: []string{"utm_source", "utm_medium", "utm_campaign"}, where: anySet("utm_source", "utm_medium", "utm_campaign")},
+	"countries":    same("country"),
+	"platforms":    same("platform"),
+	"os":           same("os", "os_version"),
+	"browsers":     same("browser", "browser_version"),
+	"app_versions": {dims: []string{"platform", "app_version"}, cols: []string{"platform", "app_version"}, where: isSet("app_version")},
+	"devices":      same("device", "device_model"),
+	"displays":     {dims: []string{"resolution"}, cols: []string{"display"}, where: isSet("resolution")},
+	"consent":      {dims: []string{"consent_state"}, cols: []string{"consent"}},
+	"locales":      {dims: []string{"browser_locale", "app_locale"}, cols: []string{"browser_locale", "app_locale"}, where: anySet("browser_locale", "app_locale")},
 }
 
 // dimensionNames lists the enum, sorted, for the schema text and errors.
@@ -280,6 +353,9 @@ type breakdownIn struct {
 	Limit     int    `json:"limit,omitempty" jsonschema:"top-N rows, default 20"`
 }
 
+// viewsBreakdown answers a native breakdown of the views by the
+// dimension's columns: visitors (distinct per day and value, added up)
+// and views, the busiest by visitors, then views, then the values.
 func (h *host) viewsBreakdown(ctx context.Context, in breakdownIn) (tableOut, error) {
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return tableOut{}, err
@@ -288,33 +364,69 @@ func (h *host) viewsBreakdown(ctx context.Context, in breakdownIn) (tableOut, er
 	if !ok {
 		return tableOut{}, invalidf("unknown dimension %q; valid: %s", in.Dimension, dimensionNames())
 	}
+	cols := append(slices.Clone(dim.cols), "visitors", "views")
+	p, ok := rangeParams(in.rangeIn)
+	if !ok {
+		return tableOut{Columns: cols, Rows: [][]string{}}, nil
+	}
 	limit := in.Limit
 	if limit <= 0 {
 		limit = 20
 	}
-	// Visitors are distinct per day and key, added up over the range, as
-	// the views' breakdowns kept them.
-	keys := make([]string, len(dim.cols))
-	pos := make([]string, len(dim.cols))
-	for i, c := range dim.cols {
-		keys[i] = dim.exprs[i] + " AS " + c
-		pos[i] = strconv.Itoa(i + 1)
+	n := min(limit, h.queryRows, maxBreakdownLimit)
+	keys := len(dim.dims)
+	res, more, err := h.topRows(ctx, native.Query{Kind: "breakdown", Table: "views", Dimensions: dim.dims, Order: "visitors",
+		Where: dim.where, Metrics: []native.Metric{{Op: "daily_sum", Of: "actors", As: "visitors"}, {Op: "count", As: "views"}}},
+		p, n, func(a, b []string) int {
+			if c := cmp.Compare(cellInt(b[keys]), cellInt(a[keys])); c != 0 {
+				return c
+			}
+			if c := cmp.Compare(cellInt(b[keys+1]), cellInt(a[keys+1])); c != 0 {
+				return c
+			}
+			return slices.Compare(a[:keys], b[:keys])
+		})
+	if err != nil {
+		return tableOut{}, err
 	}
-	where := ""
-	if dim.where != "" {
-		where = " AND " + dim.where
+	out := tableOut{Columns: cols, Rows: res.Rows}
+	h.markPartial(&out, res.Truncated || more && n < limit, res.Approximate)
+	return out, nil
+}
+
+// topRows answers q, a breakdown ranked by its order metric, with its n
+// first rows in the order less sorts them: the tool's own, which breaks
+// the ties on the metric otherwise than the engine (by the dimensions).
+// It asks for more groups than n until the groups tied with the n-th are
+// all in (or the engine's most, 1,000, are), so the n kept are the ones
+// the tool's order puts first. more says whether groups past the n were
+// left out.
+func (h *host) topRows(ctx context.Context, q native.Query, p native.Params, n int,
+	less func(a, b []string) int) (res native.Result, more bool, err error) {
+	rank := -1
+	fetch := min(n+1, maxBreakdownLimit)
+	for {
+		q.Limit = fetch
+		if res, err = h.answer(ctx, q, p); err != nil {
+			return native.Result{}, false, err
+		}
+		if rank < 0 {
+			rank = slices.Index(res.Columns, q.Order)
+		}
+		rows := res.Rows
+		if len(rows) < fetch || fetch == maxBreakdownLimit || n >= len(rows) || rows[n-1][rank] != rows[len(rows)-1][rank] {
+			break
+		}
+		fetch = min(2*fetch, maxBreakdownLimit)
 	}
-	cols := strings.Join(dim.cols, ", ")
-	q := `WITH d AS (
-  SELECT ` + strings.Join(keys, ", ") + `, count(DISTINCT actor_id) AS visitors, count(*) AS views
-  FROM views WHERE project_id = :project AND day BETWEEN :from AND :to` + where + `
-  GROUP BY day, ` + strings.Join(pos, ", ") + `
-)
-SELECT ` + cols + `, SUM(visitors) AS visitors, SUM(views) AS views
-FROM d GROUP BY ` + cols + `
-ORDER BY SUM(visitors) DESC, SUM(views) DESC, ` + cols + `
-LIMIT :limit`
-	return h.filesTable(ctx, in.rangeIn, q, map[string]enginesql.Value{":limit": {Type: "BIGINT", Text: strconv.Itoa(limit)}})
+	slices.SortStableFunc(res.Rows, less)
+	if res.Rows == nil {
+		res.Rows = [][]string{}
+	}
+	if len(res.Rows) > n {
+		res.Rows, more = res.Rows[:n], true
+	}
+	return res, more, nil
 }
 
 // register exposes every operation once, for MCP and (where a route is
@@ -348,13 +460,13 @@ func (h *host) register(r *registrar) {
 		Description: "Usage per project over a range (default the last 30 days, at most 400), from the event files: views, product events and measure samples per day (every day, zeros included) and in total, when the newest event arrived (whatever the range), the oldest day the files hold, and the bytes the project's event files take (measured by the daily pass of the process that keeps them, which also runs at start: size is the latest, with the day it was measured_at, null until the first measurement; each series day carries that day's total_bytes, null on days not measured). Without project_id, every project. Also the database's size now and per day (database_series, null on days not measured)."},
 		h.usage)
 	expose(r, spec{Name: "views_overview", Annotations: ro, Method: "GET", Path: p + "/views/overview",
-		Description: "Daily views for one project: visitors (distinct per day and kind, added up), views, sessions, bounces, duration, with derived bounce_rate and avg_session_sec. Sums every kind (web, app, cli, …) unless kind is given. Read from the event files, today included."},
+		Description: "Daily views for one project: visitors (distinct per day), views, sessions, bounces, duration, with derived bounce_rate and avg_session_sec. Counts every kind (web, app, cli, …) unless kind is given. Read from the event files, today included; a note names the columns holding an estimate (distinct counts past 1,024 ids a day, about ±2%)."},
 		h.viewsOverview)
 	expose(r, spec{Name: "views_breakdown", Annotations: ro, Method: "GET", Path: p + "/views/breakdown",
-		Description: "Top values for one dimension of a project's views over a date range, from the event files; visitors are distinct per day and value, added up: kinds, paths, hosts, referrers, utm, countries, platforms, os, browsers, app_versions, devices, displays, consent or locales. Two-key dimensions (os, browsers, app_versions, devices, locales) return both columns. os, browser and device values are lower-case closed vocabularies with other (outside the list) and unknown (not declared) as distinct floors; platform is the surface (web, ios, electron, …) and never empty. consent is given, none or unknown (sent without $consent, or stored before it existed); none also includes views sent before the visitor answered a consent prompt. locales pairs the browser's language ($browser_locale) with the product's ($app_locale), either empty when not sent; views that sent neither are left out. A value not sent reads as empty."},
+		Description: "Top values for one dimension of a project's views over a date range, from the event files, busiest by visitors, then views; visitors are distinct per day and value, added up: kinds, paths, hosts, referrers, utm, countries, platforms, os, browsers, app_versions, devices, displays, consent or locales. Two-key dimensions (os, browsers, app_versions, devices, locales) return both columns. os, browser and device values are lower-case closed vocabularies with other (outside the list) and unknown (not declared) as distinct floors; platform is the surface (web, ios, electron, …) and never empty. consent is given, none or unknown (sent without $consent, or stored before it existed); none also includes views sent before the visitor answered a consent prompt. locales pairs the browser's language ($browser_locale) with the product's ($app_locale), either empty when not sent; views that sent neither are left out. A value not sent reads as empty."},
 		h.viewsBreakdown)
 	expose(r, spec{Name: "product_events", Annotations: ro, Method: "GET", Path: p + "/product/events",
-		Description: "Product events per day, from the event files: count and unique users per event name, plus daily totals. Unconditional — no attribute declaration is required to see it."},
+		Description: "Product events per day, from the event files: count and unique users per event name (the most events first within a day), plus daily totals. Unconditional — no attribute declaration is required to see it."},
 		h.productEvents)
 	expose(r, spec{Name: "product_attributes", Annotations: ro, Method: "GET", Path: p + "/product/attributes",
 		Description: "Attribute breakdowns for product events, from the event files: count, unique users and unique groups (0 when no group was involved) per value, per event, per day, over at most 92 days a call (narrow the range, or use query with source files for longer ones). Every key the events carried breaks down, with no declaration needed: each custom attribute key, and the reserved keys $platform, $os, $app_version, $app_locale, $kind, $browser, $device, $browser_locale, $country (derived from the connection's IP), $host, $path, $referrer, $utm_source, $utm_medium, $utm_campaign, $os_version, $browser_version and $device_model."},
@@ -427,7 +539,7 @@ func (h *host) register(r *registrar) {
 		Description: "Remove a project's rule for an attribute key: reads of the event files stop applying it, so events stored before the rule show the key as sent again (ingest stored the later ones as the rule said), and a block lets the key be stored again."},
 		h.removeAttributeRule)
 	restOnly(r, spec{Name: "event_names", Method: "GET", Path: p + "/event-names",
-		Description: "A project's product and measures event names in a range with their event counts, the busiest 200, busiest first. For the console's Settings page; not an MCP tool (product_events and measures answer agents)."},
+		Description: "A project's product and measures event names in a range with their event counts, the busiest 200, busiest first, ties by name. For the console's Settings page; not an MCP tool (product_events and measures answer agents)."},
 		h.eventNames)
 
 	expose(r, spec{Name: "integration_guide", Annotations: ro, // MCP only
