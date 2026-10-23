@@ -991,6 +991,10 @@ Each measured as step 4c's cells (`scripts/native-bench/RESULTS.md`,
   - The open log's dictionaries come from JSON values, so this does not apply to them.
   - Warm loads: Views 0.80 s without the log and 0.86 s with it (DuckDB 1.09 s); Product 0.96 and 1.01 s (DuckDB 1.71 s). A Views cell allocates 3.6 GB, from 5.1 GB.
 - **After 2a to 2d,** native beats DuckDB's step 3f on both dashboards at 30 days and 1M: Views 0.73x, Product 0.56x. With today's log in range a warm load costs about what one without it does.
+- **3, AnswerMany:**
+  - `Engine.AnswerMany` answers several queries, each answer Answer's: the stats, trends and breakdowns of one project, table class (the events files' tables, or sessions) and rule set read one scan in one turn, each footer and row group once with the union of their columns, each gap day's sessions derived once. Each query keeps its own aggregation (a stat with compare previous two), fed only the rows of its family and range. Retention, attributes and identities go alone through Answer.
+  - Memory: a scan holds at most twice MaxBytes over its aggregations (past it, the largest query is answered alone afterwards), and a call holds no more aggregations that keep distinct ids or histograms at once than MaxScans queries would. Unbounded, one scan per class made Views 0.54 s but peaked at 360 MB (today 121 MB).
+  - Warm loads as one call: Views 0.72 s (from 0.80) and 0.75 s with the log (0.86); Product 0.86 s (0.93) and 0.85 s (0.95). Every peak at or under today's (Views 107 against 121 MB, Product 136 against 187 MB).
 
 ## Left to the builder
 

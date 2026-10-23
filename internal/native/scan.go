@@ -7,7 +7,7 @@ import (
 	"sync"
 )
 
-// scanParallel hands groups, in order, to `workers` goroutines and calls
+// scanParallel hands groups (row groups, or any other work items), in order, to `workers` goroutines and calls
 // read(worker, g) for each from that worker's goroutine only, so read may
 // keep per-worker state (a groupReader) indexed by worker without locks.
 // Groups go out in file order, each to whichever worker is free first, so
@@ -15,12 +15,12 @@ import (
 // per run of its groups from it, and a worker that takes several groups of
 // one file in a row reuses it. The first error stops every worker and is
 // returned; so is ctx's error once it is done.
-func scanParallel(ctx context.Context, groups []group, workers int, read func(w int, g group) error) error {
+func scanParallel[T any](ctx context.Context, groups []T, workers int, read func(w int, g T) error) error {
 	if len(groups) == 0 {
 		return nil
 	}
 	workers = max(1, min(workers, len(groups)))
-	work := make(chan group)
+	work := make(chan T)
 	done := make(chan struct{})
 	var (
 		once     sync.Once

@@ -237,21 +237,9 @@ var (
 // group. It is NULL when the partition's total is 0, and never
 // approximate.
 func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Rules) (Result, error) {
-	if err := q.Validate(); err != nil {
-		return Result{}, err
-	}
-	if p.To.Before(p.From) {
-		return Result{}, invalid("to", "%s is before from %s", p.To, p.From)
-	}
-	filters, err := compileFilters(q.Where, "where")
+	filters, metrics, err := compileQuery(q, p)
 	if err != nil {
 		return Result{}, err
-	}
-	metrics := make([]metricSpec, len(q.Metrics))
-	for i, m := range q.Metrics {
-		if metrics[i], err = compileMetric(m, fmt.Sprintf("metrics[%d]", i)); err != nil {
-			return Result{}, err
-		}
 	}
 	var res Result
 	err = e.turn(ctx, func() error {
@@ -259,7 +247,35 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 		res, err = e.answerOnce(ctx, q, filters, metrics, p, rules)
 		return err
 	})
+	if answered != nil {
+		answered(e, q, p, rules, res, err)
+	}
 	return res, err
+}
+
+// answered, when set, is told each Answer's query and answer (after the
+// checks compileQuery makes); a test's recorder.
+var answered func(e *Engine, q Query, p Params, rules archive.Rules, res Result, err error)
+
+// compileQuery checks q over p and compiles its filters and metrics'.
+func compileQuery(q Query, p Params) ([]filter, []metricSpec, error) {
+	if err := q.Validate(); err != nil {
+		return nil, nil, err
+	}
+	if p.To.Before(p.From) {
+		return nil, nil, invalid("to", "%s is before from %s", p.To, p.From)
+	}
+	filters, err := compileFilters(q.Where, "where")
+	if err != nil {
+		return nil, nil, err
+	}
+	metrics := make([]metricSpec, len(q.Metrics))
+	for i, m := range q.Metrics {
+		if metrics[i], err = compileMetric(m, fmt.Sprintf("metrics[%d]", i)); err != nil {
+			return nil, nil, err
+		}
+	}
+	return filters, metrics, nil
 }
 
 // turn runs once in one of MaxScans turns, waiting for it first and
@@ -276,6 +292,7 @@ func (e *Engine) turn(ctx context.Context, once func() error) error {
 		return ctx.Err()
 	}
 	defer func() { <-e.sem }()
+	onTurn()
 	backoff := retryBackoff
 	for attempt := 1; ; attempt++ {
 		err := once()
@@ -290,6 +307,10 @@ func (e *Engine) turn(ctx context.Context, once func() error) error {
 		backoff = min(backoff*2, retryBackoffMax)
 	}
 }
+
+// onTurn is called as a scan takes one of the MaxScans turns; a variable
+// so a test can count them.
+var onTurn = func() {}
 
 // compileMetric is m with its filters compiled, and a ratio's sides
 // with theirs; p is its path (metrics[0]).
@@ -323,16 +344,74 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 	}
 	s := scan{e: e, q: q, filters: filters, metrics: metrics, project: p.Project, rules: rs}
 	switch q.Kind {
-	case "stat":
-		return s.stat(ctx, p.From, p.To)
-	case "trend":
-		return s.trend(ctx, p.From, p.To)
 	case "retention":
 		return s.retention(ctx, p.From, p.To)
 	case "attributes":
 		return s.attributes(ctx, p.From, p.To)
 	}
-	return s.breakdown(ctx, p.From, p.To)
+	specs := s.aggSpecs(p.From, p.To)
+	as := make([]aggregated, len(specs))
+	for i, sp := range specs {
+		m, ms, err := s.aggregate(ctx, sp.from, sp.to, sp.dims, sp.perDay, sp.sets)
+		if err != nil {
+			return Result{}, err
+		}
+		as[i] = aggregated{m: m, ms: ms}
+	}
+	return s.result(as), nil
+}
+
+// aggSpec is one aggregation a stat, trend or breakdown is answered from:
+// the query's metrics grouped by dims over [from, to], by day when
+// perDay; sets keeps whole-range distinct sets beside a trend's per-day
+// keys (scan.aggregate).
+type aggSpec struct {
+	from, to     civil.Date
+	dims         []string
+	perDay, sets bool
+}
+
+// aggregated is one aggSpec's aggregation merged, with its metrics
+// resolved.
+type aggregated struct {
+	m  *merged
+	ms []metricSpec
+}
+
+// aggSpecs are the aggregations s's stat, trend or breakdown of [from,
+// to] is answered from, in result's order: a stat's range, then with
+// compare "previous" as many days ending the day before from; a trend's
+// range by day, split by its series; a breakdown's range by its
+// dimensions.
+func (s scan) aggSpecs(from, to civil.Date) []aggSpec {
+	switch s.q.Kind {
+	case "stat":
+		specs := []aggSpec{{from: from, to: to}}
+		if s.q.Compare == "previous" {
+			days := int(epochDay(to)-epochDay(from)) + 1
+			specs = append(specs, aggSpec{from: from.AddDays(-days), to: from.AddDays(-1)})
+		}
+		return specs
+	case "trend":
+		var dims []string
+		if s.q.Series != "" {
+			dims = []string{s.q.Series}
+		}
+		return []aggSpec{{from: from, to: to, dims: dims, perDay: true, sets: len(dims) > 0}}
+	}
+	return []aggSpec{{from: from, to: to, dims: s.q.Dimensions}}
+}
+
+// result is s's stat, trend or breakdown answered from its aggregations,
+// as aggSpecs lists them.
+func (s scan) result(as []aggregated) Result {
+	switch s.q.Kind {
+	case "stat":
+		return s.stat(as)
+	case "trend":
+		return s.trend(as[0])
+	}
+	return s.breakdown(as[0])
 }
 
 // ruleSet is project's rules compiled. The files' columns, which only
@@ -429,16 +508,8 @@ func (s scan) family() string {
 // whole-range distinct sets beside a trend's per-day keys.
 func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string, perDay, sets bool) (*merged, []metricSpec, error) {
 	r := Range{From: from, To: to}
-	lo, hi := r.days()
-	a, ms := newAgg(aggOptions{metrics: s.metrics, filters: s.filters, dims: dims, perDay: perDay, sets: sets,
-		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
-	charge := func(n int64) error {
-		a.mem.add(n)
-		if n > 0 {
-			return a.checkMemory()
-		}
-		return nil
-	}
+	a, ms := s.newAgg(aggSpec{from: from, to: to, dims: dims, perDay: perDay, sets: sets})
+	charge := a.charge
 	if s.q.Table == "sessions" {
 		if err := s.e.scanSessions(ctx, s.project, r, a.columns(), charge, a.add); err != nil {
 			return nil, nil, err
@@ -473,6 +544,13 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 		return nil, nil, err
 	}
 	return a.merge(), ms, nil
+}
+
+// newAgg is the aggregation of sp, with the query's metrics resolved.
+func (s scan) newAgg(sp aggSpec) (*agg, []metricSpec) {
+	lo, hi := epochDay(sp.from), epochDay(sp.to)
+	return newAgg(aggOptions{metrics: s.metrics, filters: s.filters, dims: sp.dims, perDay: sp.perDay, sets: sp.sets,
+		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
 }
 
 // scanEvents reads cols of the project's rows of the query's table in r
@@ -604,33 +682,23 @@ func (c *columnsOut) result(rows [][]string, truncated bool) Result {
 	return res
 }
 
-func (s scan) stat(ctx context.Context, from, to civil.Date) (Result, error) {
+func (s scan) stat(as []aggregated) Result {
 	var cols columnsOut
 	var row []string
 	one := []int32{0}
-	values := func(from, to civil.Date, prefix string) error {
-		m, ms, err := s.aggregate(ctx, from, to, nil, false, false)
-		if err != nil {
-			return err
+	for k, x := range as {
+		prefix := ""
+		if k > 0 {
+			prefix = "previous_"
 		}
-		for _, mt := range ms {
+		for _, mt := range x.ms {
 			i := cols.add(prefix + mt.Name())
-			v := m.compute(mt, one, -1)
+			v := x.m.compute(mt, one, -1)
 			cols.approx[i] = v.approx
 			row = append(row, v.String())
 		}
-		return nil
 	}
-	if err := values(from, to, ""); err != nil {
-		return Result{}, err
-	}
-	if s.q.Compare == "previous" {
-		days := int(epochDay(to)-epochDay(from)) + 1
-		if err := values(from.AddDays(-days), from.AddDays(-1), "previous_"); err != nil {
-			return Result{}, err
-		}
-	}
-	return cols.result([][]string{row}, false), nil
+	return cols.result([][]string{row}, false)
 }
 
 func label(v dimVal) string {
@@ -640,15 +708,8 @@ func label(v dimVal) string {
 	return v.s
 }
 
-func (s scan) trend(ctx context.Context, from, to civil.Date) (Result, error) {
-	var dims []string
-	if s.q.Series != "" {
-		dims = []string{s.q.Series}
-	}
-	m, ms, err := s.aggregate(ctx, from, to, dims, true, len(dims) > 0)
-	if err != nil {
-		return Result{}, err
-	}
+func (s scan) trend(x aggregated) Result {
+	m, ms, dims := x.m, x.ms, x.m.a.dims
 	mt := ms[0]
 	var cols columnsOut
 	cols.add("day")
@@ -714,14 +775,11 @@ func (s scan) trend(ctx context.Context, from, to civil.Date) (Result, error) {
 			rows = append(rows, append(row, value(mt, g, d)))
 		}
 	}
-	return cols.result(rows, truncated), nil
+	return cols.result(rows, truncated)
 }
 
-func (s scan) breakdown(ctx context.Context, from, to civil.Date) (Result, error) {
-	m, ms, err := s.aggregate(ctx, from, to, s.q.Dimensions, false, false)
-	if err != nil {
-		return Result{}, err
-	}
+func (s scan) breakdown(x aggregated) Result {
+	m, ms := x.m, x.ms
 	var cols columnsOut
 	for _, d := range s.q.Dimensions {
 		cols.add(d)
@@ -807,5 +865,5 @@ func (s scan) breakdown(ctx context.Context, from, to civil.Date) (Result, error
 		}
 		rows = append(rows, metrics(row, rest, true))
 	}
-	return cols.result(rows, m.a.groups.dropped), nil
+	return cols.result(rows, m.a.groups.dropped)
 }

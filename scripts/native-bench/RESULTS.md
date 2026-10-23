@@ -1272,3 +1272,17 @@ Since 2d a batch's dictionary entries share one chunk-sized string, so a value k
 | Views (20) | yes | 9.12 s | 7.68 s | 0.86 s | — |
 | Product (10) | no | 1.36 s | 1.19 s | 0.96 s | 1.71 s |
 | Product (10) | yes | 4.96 s | 4.20 s | 1.01 s | — |
+
+### 3: a dashboard's widgets as one AnswerMany
+
+`native.Engine.AnswerMany` answers a dashboard's query widgets together: the stats, trends and breakdowns of one project, table class (the events files' tables, or sessions) and rule set read one scan, each footer and row group once, each widget keeping its own aggregation. The cells below run all of a dashboard's query widgets as one `AnswerAll` straight to the engine (`MEASURE_MANY=1`), beside today's per-widget `WidgetData` from the same binary. Load at start 0.88 to 1.00.
+
+| Dashboard | Open log | Per widget first / best | AnswerMany first / best | CPU (best warm) per widget / AnswerMany | Change (best) | Peak per widget / AnswerMany |
+| --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | no | 0.83 s / 0.80 s | 0.72 s / 0.72 s | 1.57 / 1.28 s | 0.90x | 121 / 107 MB |
+| Views (20) | yes | 1.42 s / 0.86 s | 1.36 s / 0.75 s | 1.70 / 1.33 s | 0.87x | 145 / 133 MB |
+| Product (10) | no | 1.03 s / 0.93 s | 0.95 s / 0.86 s | 1.85 / 1.56 s | 0.92x | 187 / 136 MB |
+| Product (10) | yes | 1.61–2.03 s / 0.95 s | 1.90–1.96 s / 0.85 s | 1.90 / 1.57 s | 0.89x | 204–221 / 163–167 MB |
+
+- **The memory rule sets the gain.** A widget that counts distinct ids per day (a `daily_*` metric, a trend of actors) keeps about 7.5 MB at 30 days and 1M (Views; 15 MB on Product), in per-day keys. A scan that feeds all of them at once holds them all: one scan per class made Views 0.54 s and Product 0.74 s, but peaked at 354–366 MB and 262 MB. So a call holds no more such aggregations at once than MaxScans queries would (two): a scan takes at most two, and the call's scans and alone queries share two slots. Its peak then stays at or under today's, and the gain is what one footer and row group read for several light widgets and two heavy ones saves.
+- The first load with the log in range is within its spread on Product (1.67 to 2.03 s per widget over three runs, 1.90 to 1.96 s as one call).

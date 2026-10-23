@@ -161,17 +161,10 @@ func (g *groupReader) close() error {
 // with that prefix, so batches differ in which of those they hold; a plain
 // name the file lacks reads all null.
 func (g *groupReader) read(gr group, cols []string, family string, r Range) (*Batch, error) {
-	if g.f == nil || g.f.path != gr.file {
-		if err := g.close(); err != nil {
-			return nil, err
-		}
-		f, err := openFile(gr.file)
-		if err != nil {
-			return nil, err
-		}
-		g.f = f
+	p, err := g.open(gr.file)
+	if err != nil {
+		return nil, err
 	}
-	p := g.f
 	requested := expandCols(p.cols, cols)
 	read := requested
 	if !gr.all {
@@ -181,6 +174,33 @@ func (g *groupReader) read(gr group, cols []string, family string, r Range) (*Ba
 		}
 		read = expandCols(nil, append(append([]string{}, requested...), extra...))
 	}
+	b, err := p.readGroup(gr, read)
+	if err != nil {
+		return nil, err
+	}
+	from, to := r.days()
+	return finish(b, requested, gr.all, family, from, to), nil
+}
+
+// open is file, open: the one the reader holds when it is that one, else
+// opened in its place.
+func (g *groupReader) open(file string) (*pqFile, error) {
+	if g.f == nil || g.f.path != file {
+		if err := g.close(); err != nil {
+			return nil, err
+		}
+		f, err := openFile(file)
+		if err != nil {
+			return nil, err
+		}
+		g.f = f
+	}
+	return g.f, nil
+}
+
+// readGroup reads every row of row group gr into a batch of the columns
+// read, named as they are (a name the file lacks reads all null).
+func (p *pqFile) readGroup(gr group, read []string) (*Batch, error) {
 	n := int(gr.rows)
 	b := &Batch{N: n, Cols: make(map[string]*Column, len(read))}
 	chunks := p.pf.RowGroups()[gr.index].ColumnChunks()
@@ -196,8 +216,7 @@ func (g *groupReader) read(gr group, cols []string, family string, r Range) (*Ba
 		}
 		b.Cols[name] = c
 	}
-	from, to := r.days()
-	return finish(b, requested, gr.all, family, from, to), nil
+	return b, nil
 }
 
 // timeScale is how column cc's INT64 values become unix microseconds:

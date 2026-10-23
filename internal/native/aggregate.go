@@ -857,6 +857,24 @@ func (a *agg) add(w int, b *Batch) error {
 	return a.checkMemory()
 }
 
+// heavy says whether the aggregation keeps distinct ids (days' keys, one
+// per group and day, do not count) or histograms, whose memory follows
+// the ids or the samples rather than the groups.
+func (a *agg) heavy() bool {
+	return slices.ContainsFunc(a.distinct, func(d *distinctCol) bool { return d.name != daysCol }) ||
+		slices.ContainsFunc(a.msrs, func(c msrCol) bool { return c.hist })
+}
+
+// charge counts n more bytes the aggregation holds (n < 0 gives them
+// back) and, for n > 0, checks the memory bounds as checkMemory does.
+func (a *agg) charge(n int64) error {
+	a.mem.add(n)
+	if n > 0 {
+		return a.checkMemory()
+	}
+	return nil
+}
+
 // checkMemory refuses the aggregation with ErrTooLarge once it holds more
 // than it may: MaxBytes when it has nothing to leave out (one group: a
 // stat, a trend without series), else twice that (past MaxBytes no group
