@@ -2,7 +2,10 @@ package native
 
 import (
 	"context"
+	"encoding/binary"
 	"fmt"
+	"hash/fnv"
+	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -36,8 +39,11 @@ func readCached(t *testing.T, path string, cols []string, family string, r Range
 	return want, wantErr
 }
 
-// sameBatch fails unless got (or gotErr) is want (or wantErr).
-func sameBatch(t *testing.T, name string, got *Batch, gotErr error, want *Batch, wantErr error) {
+// sameBatch fails unless got (or gotErr) holds want's rows (or is
+// wantErr): every batch with want's columns, each of its kinds, and
+// together want's rows, in any order (the cache hands a batch per
+// family).
+func sameBatch(t *testing.T, name string, got []*Batch, gotErr error, want *Batch, wantErr error) {
 	t.Helper()
 	if (gotErr == nil) != (wantErr == nil) || (gotErr != nil && gotErr.Error() != wantErr.Error()) {
 		t.Fatalf("%s: err %v, want %v", name, gotErr, wantErr)
@@ -45,18 +51,29 @@ func sameBatch(t *testing.T, name string, got *Batch, gotErr error, want *Batch,
 	if wantErr != nil {
 		return
 	}
-	if got.N != want.N || !slices.Equal(keys(got.Cols), keys(want.Cols)) {
-		t.Fatalf("%s: %d rows %v, want %d rows %v", name, got.N, keys(got.Cols), want.N, keys(want.Cols))
+	if len(got) == 0 {
+		t.Fatalf("%s: no batch", name)
 	}
 	names := keys(want.Cols)
-	for _, n := range names {
-		if g, w := colKindOf(got.Cols[n], got.N), colKindOf(want.Cols[n], want.N); g != w {
-			t.Fatalf("%s: column %s is %s, want %s", name, n, g, w)
+	var rows [][]string
+	n := 0
+	for _, b := range got {
+		if !slices.Equal(keys(b.Cols), names) {
+			t.Fatalf("%s: columns %v, want %v", name, keys(b.Cols), names)
 		}
+		for _, c := range names {
+			if g, w := colKindOf(b.Cols[c], b.N), colKindOf(want.Cols[c], want.N); g != "null" && w != "null" && g != w {
+				t.Fatalf("%s: column %s is %s, want %s", name, c, g, w)
+			}
+		}
+		rows = formatBatch(t, b, names, rows)
+		n += b.N
 	}
-	g, w := formatBatch(t, got, names, nil), formatBatch(t, want, names, nil)
-	if !slices.EqualFunc(g, w, slices.Equal) {
-		t.Fatalf("%s:\n got %q\nwant %q\ncols %v", name, g, w, names)
+	wantRows := formatBatch(t, want, names, nil)
+	sortRows(rows)
+	sortRows(wantRows)
+	if n != want.N || !slices.EqualFunc(rows, wantRows, slices.Equal) {
+		t.Fatalf("%s:\n got %q\nwant %q\ncols %v", name, rows, wantRows, names)
 	}
 }
 
@@ -336,20 +353,22 @@ func TestLogCacheConcurrent(t *testing.T) {
 					return
 				default:
 				}
-				b, err := c.read(path, []string{"id", "path"}, "", day)
+				bs, err := c.read(path, []string{"id", "path"}, "", day)
 				if err != nil {
 					t.Error(err)
 					return
 				}
 				ids := map[string]bool{}
-				_, ic := b.col("id")
-				for i := range b.N {
-					id := ic.Dict[ic.Idx[i]]
-					if ids[id] {
-						t.Errorf("reader %d: id %s twice", g, id)
-						return
+				for _, b := range bs {
+					_, ic := b.col("id")
+					for i := range b.N {
+						id := ic.Dict[ic.Idx[i]]
+						if ids[id] {
+							t.Errorf("reader %d: id %s twice", g, id)
+							return
+						}
+						ids[id] = true
 					}
-					ids[id] = true
 				}
 			}
 		}()
@@ -494,5 +513,119 @@ func TestEngineDecodesALogOnce(t *testing.T) {
 	}
 	if got := decodes(path); len(got) != 1 || got[0] == 0 {
 		t.Errorf("grown: decodes at %v, want one past the old end", got)
+	}
+}
+
+// entrySum is a checksum of every vector of x's parts: their values,
+// nulls and dictionaries, to the capacity (a write past a batch's rows
+// counts too).
+func entrySum(x *logEntry) uint64 {
+	h := fnv.New64a()
+	var b [8]byte
+	put := func(v uint64) {
+		binary.LittleEndian.PutUint64(b[:], v)
+		h.Write(b[:])
+	}
+	for _, p := range x.parts {
+		for _, k := range keys2(p.builders) {
+			c := p.builders[k].c
+			h.Write([]byte(k))
+			for _, v := range c.Idx[:cap(c.Idx)] {
+				put(uint64(v))
+			}
+			for _, v := range c.Ints[:cap(c.Ints)] {
+				put(uint64(v))
+			}
+			for _, v := range c.Times[:cap(c.Times)] {
+				put(uint64(v))
+			}
+			for _, v := range c.Floats[:cap(c.Floats)] {
+				put(math.Float64bits(v))
+			}
+			for _, v := range c.Null[:cap(c.Null)] {
+				if v {
+					put(1)
+				} else {
+					put(0)
+				}
+			}
+			for _, s := range p.builders[k].db.dict {
+				h.Write([]byte(s))
+			}
+		}
+	}
+	return h.Sum64()
+}
+
+// The batches the cache hands out are read-only: queries that apply
+// rules (an event renamed and one blocked, an attribute renamed) and add
+// the identity columns, of one family and of all, over its day and a
+// range it only partly fills, leave the entry's vectors as they were.
+func TestLogCacheBatchesAreNotWritten(t *testing.T) {
+	f := archivetest.New(t)
+	evs := events(t, 1, today, 12)
+	for i := range evs {
+		if i%3 == 0 {
+			evs[i].UserID, evs[i].UserName = fmt.Sprintf("u%d", i%4), "name"
+		}
+		if evs[i].Attributes != nil {
+			evs[i].Attributes["colour"] = "blue"
+		}
+	}
+	late := events(t, 1, "2026-09-09", 2) // late events: a part with two days
+	f.Write(t, evs...)
+	f.Write(t, late...)
+	path := logOf(t, f, 1)
+	e := New(Options{Dir: f.Dir})
+	rules := archive.Rules{
+		Events: []store.EventRule{
+			evRule(1, store.FamilyProduct, "ev1", store.EventRuleRename, "signup"),
+			evRule(1, store.FamilyProduct, "ev2", store.EventRuleBlock, ""),
+			evRule(1, store.FamilyViews, "ev0", store.EventRuleRename, "landing"),
+		},
+		Attributes: []store.AttributeRule{attrRule(1, "colour", store.EventRuleRename, "color")},
+	}
+	qs := []Query{
+		{Kind: "breakdown", Table: "product", Dimensions: []string{"event_name", "attr_color"}, Metrics: count()},
+		{Kind: "breakdown", Table: "views", Dimensions: []string{"event_name", "user_status"}, Metrics: count()},
+		{Kind: "breakdown", Table: "events", Dimensions: []string{"user_label", "family"}, Metrics: count()},
+		{Kind: "trend", Table: "product", Metrics: count()},
+	}
+	// Fill the cache, then check every query against it.
+	if _, err := e.Answer(context.Background(), qs[0], Params{Project: 1, From: date(t, today), To: date(t, today)}, rules); err != nil {
+		t.Fatal(err)
+	}
+	x := e.logs.entries[path]
+	if x == nil || len(x.parts) != 3 {
+		t.Fatalf("entry %+v, want three families", x)
+	}
+	before := entrySum(x)
+	for _, from := range []string{today, "2026-09-09"} {
+		for _, q := range qs {
+			res, err := e.Answer(context.Background(), q, Params{Project: 1, From: date(t, from), To: date(t, today)}, rules)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(res.Rows) == 0 {
+				t.Errorf("%s %s from %s: no rows", q.Kind, q.Table, from)
+			}
+			if got := entrySum(x); got != before {
+				t.Fatalf("%s %s from %s wrote the entry's vectors", q.Kind, q.Table, from)
+			}
+		}
+	}
+	// The renamed attribute and event read as the rules say, as they
+	// would without the cache.
+	res, err := e.Answer(context.Background(), qs[0], Params{Project: 1, From: date(t, today), To: date(t, today)}, rules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range res.Rows {
+		if row[0] == "ev1" || row[0] == "ev2" {
+			t.Errorf("rules not applied: %v", row)
+		}
+	}
+	if e.logs.entries[path] != x || entrySum(x) != before {
+		t.Error("the entry changed")
 	}
 }

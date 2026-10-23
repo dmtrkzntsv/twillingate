@@ -85,15 +85,14 @@ func TestMeasureLogCache(t *testing.T) {
 	warm := time.Since(began)
 	heap := int64(heapNow()) - int64(before)
 	x := c.entries[path]
-	built := 0
-	for _, b := range x.builders {
-		if b != nil {
-			built++
-		}
+	rows, built := 0, 0
+	for _, p := range x.parts {
+		rows += p.n
+		built += len(p.builders)
 	}
-	t.Logf("%d lines (%d MB), %d rows kept, %d columns built (cols %v): counted %.1f MB, heap %.1f MB; "+
+	t.Logf("%d lines (%d MB), %d rows kept in %d families, %d family columns (cols %v): counted %.1f MB, heap %.1f MB; "+
 		"readLog %v, cold %v, grown by %d lines %v, warm (views) %v",
-		nLines, mb, x.n, built, cols, float64(x.bytes)/(1<<20), float64(heap)/(1<<20),
+		nLines, mb, rows, len(x.parts), built, cols, float64(x.bytes)/(1<<20), float64(heap)/(1<<20),
 		uncached.Round(time.Millisecond), cold.Round(time.Millisecond), grownBy, grown.Round(time.Millisecond),
 		warm.Round(time.Microsecond))
 	runtime.KeepAlive(c)

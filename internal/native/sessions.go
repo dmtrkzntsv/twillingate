@@ -45,8 +45,9 @@ func (e *Engine) scanSessions(ctx context.Context, project int64, r Range, cols 
 	return e.scanSessionsWith(ctx, project, r, cols, e.readLog, charge, add)
 }
 
-// logReader reads a log's rows as readLog does.
-type logReader func(path string, cols []string, family string, r Range) (*Batch, error)
+// logReader reads a log's rows as readLog does, in one batch or several
+// (each read-only: their columns may be shared with other queries).
+type logReader func(path string, cols []string, family string, r Range) ([]*Batch, error)
 
 // scanSessionsWith is scanSessions, a gap day's logs read through logs.
 func (e *Engine) scanSessionsWith(ctx context.Context, project int64, r Range, cols []string, logs logReader,
@@ -133,12 +134,14 @@ func deriveSessions(project, day int64, events archive.Files, gr *groupReader, r
 		return hold(batchBytes(b))
 	}
 	for _, path := range logs {
-		b, err := readLogs(path, viewColumns, "views", dr)
+		bs, err := readLogs(path, viewColumns, "views", dr)
 		if err != nil {
 			return nil, err
 		}
-		if err := keep(b); err != nil {
-			return nil, err
+		for _, b := range bs {
+			if err := keep(b); err != nil {
+				return nil, err
+			}
 		}
 	}
 	for _, g := range groups {

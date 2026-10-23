@@ -152,12 +152,7 @@ type dictBuilder struct {
 }
 
 func (d *dictBuilder) id(b []byte) int32 {
-	if d.ids == nil {
-		d.ids = make(map[string]int32, len(d.dict))
-		for i, s := range d.dict {
-			d.ids[s] = int32(i)
-		}
-	}
+	d.index()
 	if id, ok := d.ids[string(b)]; ok {
 		return id
 	}
@@ -166,6 +161,16 @@ func (d *dictBuilder) id(b []byte) int32 {
 	d.ids[s] = id
 	d.dict = append(d.dict, s)
 	return id
+}
+
+// index builds the lookup from each value to its index, unless built.
+func (d *dictBuilder) index() {
+	if d.ids == nil {
+		d.ids = make(map[string]int32, len(d.dict))
+		for i, s := range d.dict {
+			d.ids[s] = int32(i)
+		}
+	}
 }
 
 // addDict adds a dictionary page's values (BYTE_ARRAY data and offsets)

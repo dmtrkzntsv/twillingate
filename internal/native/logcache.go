@@ -19,11 +19,18 @@ import (
 // appended to while open.
 //
 //   - An entry is a log's raw rows, before rules (each query applies its
-//     own after the cache): the first line of each id (FirstLines, its
-//     seen ids kept so the rule spans appends), of every family and day,
-//     with every column the log has, so no query decodes it again for a
-//     column. A key first seen in appended lines is a column from then
-//     on, null for the rows before.
+//     own after the cache): the first line of each id (as FirstLines
+//     keeps it; the id columns' values are the ids seen, so the rule
+//     spans appends), of every day, with every column the log has, so no
+//     query decodes it again for a column. A key first seen in appended
+//     lines is a column from then on, null for the rows before.
+//   - The rows are kept a part per family, so a query of a family whose
+//     rows all have a day in its range (a log holds its day's events, and
+//     the odd late one) gets the part's columns as they are, not a copy;
+//     a query of every family gets a batch per part. The batches handed
+//     out are each query's own (its Cols its own map), their columns the
+//     entry's and read-only: nothing downstream writes a column it is
+//     given (rules and the identity columns make new ones).
 //   - It is keyed by path and checked against the file's identity (device
 //     and inode) and size: a log rotated (renamed <day>.<n>.closed) and
 //     started again under its name is a new file, so a new entry; one
@@ -32,8 +39,7 @@ import (
 //     (the torn line ingest is still writing) are decoded per query, as
 //     readLog would, and kept once their newline arrives.
 //   - Entries take at most max bytes together (counted as batchBytes
-//     counts a batch, with the seen ids and the dictionaries' lookup
-//     maps), the least recently used dropped first, as the identities
+//     counts a batch), the least recently used dropped first, as the identities
 //     cache drops them. A log whose entry alone is larger is read per
 //     query by readLog, as before the cache, while it stays that file.
 //   - Concurrent queries missing a log, or finding it grown, decode it
@@ -69,15 +75,41 @@ type logEntry struct {
 
 	keys     map[string]bool     // keys of the lines
 	names    []archive.LogColumn // the columns keys name (archive.LogColumns), nil once keys grow
-	builders map[string]*logCol  // by key
-	first    archive.FirstLines
-	seen     int64 // bytes the seen ids take
-	n        int   // rows kept
+	parts    []*logPart          // by family, in the order first seen
+	nullSeen bool                // a line without an id was kept
 	errs     []rowErr
 
 	bytes   int64 // what the entry takes
 	charged int64 // bytes counted in the cache's total
 	used    uint64
+}
+
+// famKey is a family's value: ok false for a line without one (null).
+type famKey struct {
+	name string
+	ok   bool
+}
+
+// logPart is the kept rows of one family, in line order.
+type logPart struct {
+	fam      famKey
+	n        int
+	builders map[string]*logCol // by key
+	// The days of the rows: their bounds, and how many have none (null,
+	// or one that failed to read).
+	dayMin, dayMax int64
+	dayNulls       int
+}
+
+func (x *logEntry) part(fam famKey) *logPart {
+	for _, p := range x.parts {
+		if p.fam == fam {
+			return p
+		}
+	}
+	p := &logPart{fam: fam, builders: map[string]*logCol{}}
+	x.parts = append(x.parts, p)
+	return p
 }
 
 // rowErr is a value of a kept row (row) that failed to read, as readLog
@@ -86,6 +118,7 @@ type logEntry struct {
 // reading the row that ask for its key.
 type rowErr struct {
 	kind errKind
+	part int // index in the entry's parts
 	row  int
 	line int
 	key  string
@@ -106,7 +139,7 @@ func (x rowErr) error(path string) error {
 
 // read is readLog(path, cols, family, r), its rows taken from the log's
 // entry.
-func (c *logCache) read(path string, cols []string, family string, r Range) (*Batch, error) {
+func (c *logCache) read(path string, cols []string, family string, r Range) ([]*Batch, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -118,7 +151,7 @@ func (c *logCache) read(path string, cols []string, family string, r Range) (*Ba
 	}
 	id, ok := fileIdentity(st)
 	if !ok || c.isBig(path, id) {
-		return readLog(path, cols, family, r)
+		return readLogBatches(path, cols, family, r)
 	}
 	done := c.flight(path)
 	v, err := c.update(f, path, id, st.Size(), cols)
@@ -126,7 +159,16 @@ func (c *logCache) read(path string, cols []string, family string, r Range) (*Ba
 	if err != nil {
 		return nil, err
 	}
-	return v.batch(path, cols, family, r)
+	return v.batches(path, cols, family, r)
+}
+
+// readLogBatches is readLog's batch, as a logReader gives it.
+func readLogBatches(path string, cols []string, family string, r Range) ([]*Batch, error) {
+	b, err := readLog(path, cols, family, r)
+	if err != nil {
+		return nil, err
+	}
+	return []*Batch{b}, nil
 }
 
 // isBig says whether path, while it is the file id, is too large to keep.
@@ -167,14 +209,27 @@ func (c *logCache) update(f *os.File, path string, id fileID, size int64, cols [
 	x := c.entries[path]
 	c.mu.Unlock()
 	if x == nil || x.id != id || x.size > size {
-		x = &logEntry{id: id, keys: map[string]bool{}, builders: map[string]*logCol{}}
+		x = &logEntry{id: id, keys: map[string]bool{}}
 	}
 	tail, err := x.decode(f, path, size)
 	if err != nil {
 		return nil, err
 	}
-	x.bytes = x.measure()
+	for _, p := range x.parts { // every column to the part's rows: views then only read them
+		for _, b := range p.builders {
+			b.pad(p.n)
+		}
+	}
 	v := x.view(cols, tail)
+	// The dictionaries' lookups (a map entry per value) are built again
+	// only when the log grows: between growths they would take about a
+	// third of the entry.
+	for _, p := range x.parts {
+		for _, b := range p.builders {
+			b.db.ids = nil
+		}
+	}
+	x.bytes = x.measure()
 	c.store(path, x)
 	return v, nil
 }
@@ -269,41 +324,76 @@ func (x *logEntry) add(line []byte) {
 		x.errs = append(x.errs, rowErr{kind: errID, row: -1, line: x.lines, key: "id", err: err})
 		return
 	}
-	if !x.first.Keep(id, ok) {
+	if x.seen(id, ok) {
 		return
 	}
-	if ok {
-		x.seen += int64(len(id)) + 48
+	if !ok {
+		x.nullSeen = true
 	}
-	row := x.n
-	x.n++
+	var fam famKey
+	fam.name, fam.ok, _ = archive.JSONText(m["family"]) // a valid value: no error
+	p := x.part(fam)
+	pi := slices.Index(x.parts, p)
+	row := p.n
+	p.n++
 	for k, raw := range m {
-		b := x.builders[k]
+		b := p.builders[k]
 		if b == nil {
 			b = &logCol{key: k, kind: logKind(k)} // pads the rows before it with null
-			x.builders[k] = b
+			p.builders[k] = b
 		}
 		if err := b.add(row, raw); err != nil {
 			kind := errCol
 			if k == "day" {
 				kind = errDay
 			}
-			x.errs = append(x.errs, rowErr{kind: kind, row: row, line: x.lines, key: k, err: err})
+			x.errs = append(x.errs, rowErr{kind: kind, part: pi, row: row, line: x.lines, key: k, err: err})
 			b.pad(row + 1) // read as null; a query reading the row fails
 		}
 	}
+	if d := p.builders["day"]; d == nil || d.n <= row || (d.c.Null != nil && d.c.Null[row]) {
+		p.dayNulls++
+	} else if v := d.c.Ints[row]; p.n-p.dayNulls == 1 {
+		p.dayMin, p.dayMax = v, v
+	} else {
+		p.dayMin, p.dayMax = min(p.dayMin, v), max(p.dayMax, v)
+	}
+}
+
+// seen says whether a kept line has id (ok false for none): the first
+// line of each id is kept, every line without one counting as one id.
+// The kept ids are the id columns' values (a row's id is added to its
+// part's as the row is), so their dictionaries are the set.
+func (x *logEntry) seen(id string, ok bool) bool {
+	if !ok {
+		return x.nullSeen
+	}
+	for _, p := range x.parts {
+		if b := p.builders["id"]; b != nil {
+			b.db.index()
+			if _, dup := b.db.ids[id]; dup {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // measure is about what x takes: its columns as batchBytes counts them,
-// each dictionary value's lookup entry, the seen ids and the keys.
+// the dictionaries' lookups when built, and the keys.
 func (x *logEntry) measure() int64 {
-	n := x.seen + int64(len(x.errs))*64
-	for k, b := range x.builders {
-		n += int64(len(k)) + 32
-		c := &b.c
-		n += int64(cap(c.Idx))*4 + int64(cap(c.Ints)+cap(c.Floats)+cap(c.Times))*8 + int64(cap(c.Null))
-		for _, s := range b.db.dict {
-			n += int64(len(s)) + 16 + 40
+	n := int64(len(x.errs)) * 64
+	for _, p := range x.parts {
+		for k, b := range p.builders {
+			n += int64(len(k)) + 32
+			c := &b.c
+			n += int64(cap(c.Idx))*4 + int64(cap(c.Ints)+cap(c.Floats)+cap(c.Times))*8 + int64(cap(c.Null))
+			for _, s := range b.db.dict {
+				n += int64(len(s)) + 16
+			}
+			if b.db.ids != nil {
+				n += int64(len(b.db.dict)) * 40
+			}
 		}
 	}
 	return n
@@ -312,9 +402,8 @@ func (x *logEntry) measure() int64 {
 // logView is a snapshot of an entry for one query: the rows it held then,
 // and the columns the query reads, each cut to those rows.
 type logView struct {
-	n      int
 	names  []archive.LogColumn
-	cols   map[string]*Column // by key: the family, the day and those cols may need that the entry has
+	parts  []partView
 	errs   []rowErr
 	tailOK bool // the tail is a JSON object whose id no kept line has
 	tailM  map[string]json.RawMessage
@@ -322,16 +411,29 @@ type logView struct {
 	idErr  error
 }
 
+// partView is a part's snapshot.
+type partView struct {
+	fam            famKey
+	n              int
+	cols           map[string]*Column // by key: the family, the day and those cols may need that the part has
+	dayMin, dayMax int64
+	dayNulls       int
+}
+
 // view is x's snapshot for cols, with tail the bytes past its last line.
 func (x *logEntry) view(cols []string, tail []byte) *logView {
 	if x.names == nil {
 		x.names = archive.LogColumns(x.keys)
 	}
-	v := &logView{n: x.n, names: x.names, cols: map[string]*Column{}, errs: x.errs[:len(x.errs):len(x.errs)], line: x.lines + 1}
-	for k, b := range x.builders {
-		if k == "family" || k == "day" || wanted(k, cols) {
-			v.cols[k] = b.finish(x.n)
+	v := &logView{names: x.names, errs: x.errs[:len(x.errs):len(x.errs)], line: x.lines + 1}
+	for _, p := range x.parts {
+		pv := partView{fam: p.fam, n: p.n, cols: map[string]*Column{}, dayMin: p.dayMin, dayMax: p.dayMax, dayNulls: p.dayNulls}
+		for k, b := range p.builders {
+			if k == "family" || k == "day" || wanted(k, cols) {
+				pv.cols[k] = b.finish(p.n)
+			}
 		}
+		v.parts = append(v.parts, pv)
 	}
 	if len(tail) > 0 {
 		if m, _ := archive.DecodeLine(tail); m != nil {
@@ -339,7 +441,7 @@ func (x *logEntry) view(cols []string, tail []byte) *logView {
 			switch {
 			case err != nil:
 				v.idErr = err
-			case !x.first.Seen(id, ok):
+			case !x.seen(id, ok):
 				v.tailOK, v.tailM = true, m
 			}
 		}
@@ -347,29 +449,16 @@ func (x *logEntry) view(cols []string, tail []byte) *logView {
 	return v
 }
 
-// batch is readLog's batch of the view's rows: cols of the rows of family
-// (any, when "") with day in r.
-func (v *logView) batch(path string, cols []string, family string, r Range) (*Batch, error) {
+// batches is readLog's rows of the view, cols of the rows of family (any,
+// when "") with day in r, a batch per part (each of a part's rows, or a
+// copy of those in r) and one for the tail, at least one.
+func (v *logView) batches(path string, cols []string, family string, r Range) ([]*Batch, error) {
 	from, to := r.days()
-	fam, day := v.cols["family"], v.cols["day"]
-	var famOK []bool // by family index
-	if family != "" && fam != nil {
-		famOK = make([]bool, len(fam.Dict))
-		for i, s := range fam.Dict {
-			famOK[i] = s == family
-		}
+	ofFamily := func(p int) bool {
+		return family == "" || v.parts[p].fam == famKey{family, true}
 	}
-	ofFamily := func(i int) bool {
-		if family == "" {
-			return true
-		}
-		if fam == nil {
-			return false
-		}
-		f := fam.Idx[i]
-		return f >= 0 && famOK[f]
-	}
-	inRange := func(i int) bool {
+	inRange := func(p, i int) bool {
+		day := v.parts[p].cols["day"]
 		if day == nil || (day.Null != nil && day.Null[i]) {
 			return false
 		}
@@ -380,15 +469,9 @@ func (v *logView) batch(path string, cols []string, family string, r Range) (*Ba
 	for _, x := range v.errs {
 		switch {
 		case x.kind == errID,
-			x.kind == errDay && ofFamily(x.row),
-			x.kind == errCol && ofFamily(x.row) && inRange(x.row) && wanted(x.key, cols):
+			x.kind == errDay && ofFamily(x.part),
+			x.kind == errCol && ofFamily(x.part) && inRange(x.part, x.row) && wanted(x.key, cols):
 			return nil, x.error(path)
-		}
-	}
-	sel := make([]int32, 0, v.n)
-	for i := range v.n {
-		if ofFamily(i) && inRange(i) {
-			sel = append(sel, int32(i))
 		}
 	}
 	names := make([]string, len(v.names))
@@ -398,106 +481,105 @@ func (v *logView) batch(path string, cols []string, family string, r Range) (*Ba
 		keyOf[c.Name] = c.Key
 	}
 	requested := expandCols(names, cols)
-	n := len(sel)
-	out := &Batch{N: n, Cols: make(map[string]*Column, len(requested))}
-	for _, name := range requested {
-		k, ok := keyOf[name]
-		c := v.cols[k]
-		switch {
-		case !ok || c == nil:
-			out.Cols[name] = nullColumn(name, n)
-		case n == v.n:
-			out.Cols[name] = c
-		default:
-			out.Cols[name] = c.take(sel)
+	var out []*Batch
+	for pi, p := range v.parts {
+		if !ofFamily(pi) || p.n == p.dayNulls || p.dayMax < from || p.dayMin > to {
+			continue
 		}
+		var sel []int32
+		if p.dayNulls > 0 || p.dayMin < from || p.dayMax > to {
+			sel = make([]int32, 0, p.n)
+			for i := range p.n {
+				if inRange(pi, i) {
+					sel = append(sel, int32(i))
+				}
+			}
+		}
+		n := p.n
+		if sel != nil {
+			n = len(sel)
+		}
+		b := &Batch{N: n, Cols: make(map[string]*Column, len(requested))}
+		for _, name := range requested {
+			k, ok := keyOf[name]
+			c := p.cols[k]
+			switch {
+			case !ok || c == nil:
+				b.Cols[name] = nullColumn(name, n)
+			case sel == nil:
+				b.Cols[name] = c
+			default:
+				b.Cols[name] = c.take(sel)
+			}
+		}
+		out = append(out, b)
 	}
 	if v.idErr != nil {
 		return nil, fmt.Errorf("%s line %d: id: %w", path, v.line, v.idErr)
 	}
 	if v.tailOK {
-		if err := v.addTail(out, path, cols, requested, keyOf, family, from, to); err != nil {
+		b, err := v.tailBatch(path, cols, requested, keyOf, family, from, to)
+		if err != nil {
 			return nil, err
 		}
+		if b != nil {
+			out = append(out, b)
+		}
+	}
+	if len(out) == 0 {
+		b := &Batch{Cols: make(map[string]*Column, len(requested))}
+		for _, name := range requested {
+			b.Cols[name] = nullColumn(name, 0)
+		}
+		out = append(out, b)
 	}
 	return out, nil
 }
 
-// addTail adds the view's tail, a JSON object whose id no kept line has,
-// to out as readLog reads such a last line: a row when of family with day
-// in [from, to], its keys named as the complete lines name them (a key
-// only it has is not read).
-func (v *logView) addTail(out *Batch, path string, cols, requested []string, keyOf map[string]string, family string, from, to int64) error {
+// tailBatch is the view's tail, a JSON object whose id no kept line has,
+// as readLog reads such a last line: a row when of family with day in
+// [from, to] (nil when not), its keys named as the complete lines name
+// them (a key only it has is not read).
+func (v *logView) tailBatch(path string, cols, requested []string, keyOf map[string]string, family string, from, to int64) (*Batch, error) {
 	m := v.tailM
 	if family != "" {
 		if fam, ok, _ := archive.JSONText(m["family"]); !ok || fam != family {
-			return nil
+			return nil, nil
 		}
 	}
 	ds, ok, err := archive.JSONText(m["day"])
 	if err != nil {
-		return fmt.Errorf("%s line %d: day: %w", path, v.line, err)
+		return nil, fmt.Errorf("%s line %d: day: %w", path, v.line, err)
 	}
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	d, err := archive.ParseDay(ds)
 	if err != nil {
-		return fmt.Errorf("%s line %d: day: %w", path, v.line, err)
+		return nil, fmt.Errorf("%s line %d: day: %w", path, v.line, err)
 	}
 	if d < from || d > to {
-		return nil
+		return nil, nil
 	}
 	// Every key cols may need is cast, named or not, as readLog casts it.
+	vals := map[string]*Column{}
 	for k, raw := range m {
-		if wanted(k, cols) {
-			if err := (&logCol{key: k, kind: logKind(k)}).add(0, raw); err != nil {
-				return fmt.Errorf("%s line %d: %s: %w", path, v.line, k, err)
-			}
+		if !wanted(k, cols) {
+			continue
 		}
+		b := &logCol{key: k, kind: logKind(k)}
+		if err := b.add(0, raw); err != nil {
+			return nil, fmt.Errorf("%s line %d: %s: %w", path, v.line, k, err)
+		}
+		vals[k] = b.finish(1)
 	}
-	n := out.N
+	out := &Batch{N: 1, Cols: make(map[string]*Column, len(requested))}
 	for _, name := range requested {
-		k, named := keyOf[name]
-		raw, has := m[k]
-		has = named && has
-		var c *Column
-		if named {
-			c = v.cols[k]
-		}
-		switch {
-		case c == nil && !has:
-			out.Cols[name] = nullColumn(name, n+1)
-		case c == nil: // only the tail has the key: readLog's builder starts at it
-			b := &logCol{key: k, kind: logKind(k)}
-			if err := b.add(n, raw); err != nil {
-				return fmt.Errorf("%s line %d: %s: %w", path, v.line, k, err)
-			}
-			out.Cols[name] = b.finish(n + 1)
-		default:
-			src := out.Cols[name]
-			if n == v.n {
-				src = src.take(allRows(n)) // the entry's own: copied before it grows
-			}
-			// The dictionary is the entry's: clipped, it is copied as it grows.
-			b := &logCol{key: k, kind: logKind(k), c: *src, db: dictBuilder{dict: slices.Clip(src.Dict)}, n: n}
-			if has {
-				if err := b.add(n, raw); err != nil {
-					return fmt.Errorf("%s line %d: %s: %w", path, v.line, k, err)
-				}
-			}
-			out.Cols[name] = b.finish(n + 1)
+		if k, ok := keyOf[name]; ok && vals[k] != nil {
+			out.Cols[name] = vals[k]
+		} else {
+			out.Cols[name] = nullColumn(name, 1)
 		}
 	}
-	out.N = n + 1
-	return nil
-}
-
-// allRows is the selection of rows 0 to n-1.
-func allRows(n int) []int32 {
-	sel := make([]int32, n)
-	for i := range sel {
-		sel[i] = int32(i)
-	}
-	return sel
+	return out, nil
 }

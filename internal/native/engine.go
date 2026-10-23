@@ -91,8 +91,9 @@ func New(o Options) *Engine {
 		logKeys: archive.NewKeyScanner(), idCache: identityCache{max: o.MaxBytes}, logs: newLogCache(o.MaxBytes), now: o.Now}
 }
 
-// readLog is readLog's batch, from the engine's log cache.
-func (e *Engine) readLog(path string, cols []string, family string, r Range) (*Batch, error) {
+// readLog is readLog's rows, from the engine's log cache: a batch per
+// family, each read-only.
+func (e *Engine) readLog(path string, cols []string, family string, r Range) ([]*Batch, error) {
 	return e.logs.read(path, cols, family, r)
 }
 
@@ -502,25 +503,33 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 	work = append(work, groups...)
 	readers := make([]groupReader, s.e.workers)
 	err = scanParallel(ctx, work, s.e.workers, func(w int, g group) error {
-		var b *Batch
-		var err error
+		var bs []*Batch
 		if g.index < 0 {
 			logs := s.logs
 			if logs == nil {
 				logs = s.e.readLog
 			}
-			b, err = logs(g.file, read, fam, r)
+			var err error
+			if bs, err = logs(g.file, read, fam, r); err != nil {
+				return err
+			}
 		} else {
-			b, err = readers[w].read(g, read, fam, r)
+			b, err := readers[w].read(g, read, fam, r)
+			if err != nil {
+				return err
+			}
+			bs = []*Batch{b}
 		}
-		if err != nil {
-			return err
+		for _, b := range bs {
+			b = s.rules.apply(b, fam)
+			if ids != nil {
+				addIdentityColumns(b, idCols, ids)
+			}
+			if err := add(w, b); err != nil {
+				return err
+			}
 		}
-		b = s.rules.apply(b, fam)
-		if ids != nil {
-			addIdentityColumns(b, idCols, ids)
-		}
-		return add(w, b)
+		return nil
 	})
 	for i := range readers {
 		if cerr := readers[i].close(); err == nil {

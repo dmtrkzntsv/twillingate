@@ -966,6 +966,12 @@ Each measured as step 4c's cells (`scripts/native-bench/RESULTS.md`,
   (Product, from 3.14); warm loads stay 1.73 and 1.20 s. The peak with
   the log in range stays about 60 MB above 2a's (177 against 115 MB,
   238 against 177): the live entry and each query's copy of its rows.
+- **2b, fix round 2:**
+  - The entry keeps a part per family. A query whose family's rows all fall in its range gets the part's columns uncopied, read-only.
+  - The lookup maps are dropped between growths, and the id columns serve as the seen set.
+  - The 33k-line log's entry is now 7.7 MB on the heap.
+  - Warm loads with the log: Views 1.67 s, Product 1.20 s.
+  - The peak with the log is 154 MB (Views, 2a 115) and 210 MB (Product, 2a 177). It is set in the first load by the one decode's transient (its builders and lookup maps), which the GC doubles. A heap profile shows the per-query copies were about 1% of the bytes allocated, not the cause.
 
 ## Left to the builder
 

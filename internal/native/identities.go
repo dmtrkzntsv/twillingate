@@ -774,13 +774,19 @@ func (e *Engine) scanIdentityEvents(ctx context.Context, parquet, logs, cols []s
 	work = append(work, groups...)
 	readers := make([]groupReader, e.workers)
 	err = scanParallel(ctx, work, e.workers, func(w int, g group) error {
-		var b *Batch
-		var err error
 		if g.index < 0 {
-			b, err = e.readLog(g.file, cols, "", everything)
-		} else {
-			b, err = readers[w].read(g, cols, "", everything)
+			bs, err := e.readLog(g.file, cols, "", everything)
+			if err != nil {
+				return err
+			}
+			for _, b := range bs {
+				if err := each(w, b); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
+		b, err := readers[w].read(g, cols, "", everything)
 		if err != nil {
 			return err
 		}

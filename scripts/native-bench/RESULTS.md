@@ -1198,3 +1198,27 @@ The first miss now decodes every column the log has: one decode, never again for
 
 - **The first load with the log** drops from 7.22 to 2.29 s (Views) and 3.14 to 1.91 s (Product): one decode instead of 11 and 4. The warm loads are unchanged.
 - **The peak did not come back down:** with the log in range it is 62 MB (Views) and 61 MB (Product) above 2a's. The entry is 15.8 MB live, every query's rows of it are copied out (a family's rows, `Column.take`), and the GC's headroom doubles both. Without the log the peaks are within the run-to-run spread.
+
+### 2b, fix round 2: a family's rows without a copy
+
+**The heap first.** A heap profile and `GODEBUG=gctrace=1` of the Views cell with the log (after fix round 1) showed the per-query copies (`Column.take`, `pick`) were about 1% of the bytes allocated (0.07 of 5.75 GB), not the peak's cause. The peak is reached in the first load (first load alone: 149 MB against 2a's 118), and it follows the live heap: the GC lets the heap grow to twice what was live after the last cycle. The fix-round-1 entry was 16.2 MB on the heap, a quarter of it the dictionaries' lookup maps and the seen-id set, both kept between growths. In 2a the most live after a GC was 36 MB and the largest goal 73 MB; after fix round 1 it was 59 MB and 120 MB.
+
+**The change.**
+- The entry keeps a part per family. A query of a family whose rows all have a day in its range gets the part's columns as they are, with no copy (a log holds its day's events, and the odd late one). A query of every family gets a batch per part.
+- The handed-out batches are read-only. Each query gets its own `Batch` and `Cols` map, so identity columns and rules never touch the entry. Every column is padded to its part's rows at decode time, so a view never writes the entry either.
+- The dictionaries' lookup maps are dropped after each decode and built again only when the log grows.
+- The seen-id set is now the id columns' dictionaries.
+- The 33k-line log's entry: 8.4 MB counted, 7.7 MB on the heap (from 15.8 and 16.2). A cold decode takes 570 ms, a 10% growth 61 ms (the lookups built again included), and a warm Views query 0.9 ms.
+
+| Dashboard | Open log | 2a first / best | Fix 1 first / best | Fix 2 first / best | CPU (best warm) | Peak 2a / fix 1 / fix 2 | Load at start |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | no | 1.62 s / 1.61 s | 1.67 s / 1.63 s | 1.81 s / 1.62 s | 3.20 s | 128 / 123 / 118 MB | 0.80 |
+| Views (20) | yes | 7.72 s / 7.68 s | 2.29 s / 1.73 s | 2.26 s / 1.67 s | 3.29 s | 115 / 177 / 154 MB | 0.90 |
+| Product (10) | no | 1.22 s / 1.19 s | 1.19 s / 1.17 s | 1.21 s / 1.18 s | 2.31 s | 186 / 195 / 194 MB | 0.97 |
+| Product (10) | yes | 4.68 s / 4.20 s | 1.91 s / 1.20 s | 2.13 s / 1.20 s | 2.37 s | 177 / 238 / 210 MB | 0.89 |
+
+**The peak with the log is still 39 MB (Views) and 33 MB (Product) above 2a's**, short of the +20 MB goal.
+- It is reached in the first load: in the Views cell, 149 MB after the first load and 148 MB after three warm loads more.
+- In that load the GC goal reaches 96 MB, against 73 MB in 2a. Live after a GC stays 21 to 43 MB, close to 2a's 25 to 36.
+- So the extra is the one decode's transient: every column's builders with their lookup maps (about 12 MB) while the other widgets' scans run. The kept entry and the copies are not the cause.
+- Warm loads add nothing to the peak.
