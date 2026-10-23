@@ -725,11 +725,11 @@ func TestBrowsersAndSystemsByName(t *testing.T) {
 }
 
 // TestVitalsStatsBlankWithoutSamples: collection is opt-in, so a
-// project without vitals is the common case, and a stat drawn from a
-// NULL value renders 0 — a perfect score. Each vital stat returns no row
-// instead, for the neighbour (no measures), and a value for the seeded
-// project; none carries a previous period (stat reads a rise as good,
-// and a vital is better lower).
+// project without vitals is the common case, and it must not read 0 — a
+// perfect score. Each vital stat answers one row whose value is blank
+// (the stat component draws a dash) for the neighbour (no measures), and
+// a value for the seeded project; none carries a previous period (stat
+// reads a rise as good, and a vital is better lower).
 func TestVitalsStatsBlankWithoutSamples(t *testing.T) {
 	ctx := context.Background()
 	f := newSystemFixture(t)
@@ -753,8 +753,8 @@ func TestVitalsStatsBlankWithoutSamples(t *testing.T) {
 			if strings.Join(res.Columns, ",") != "value" {
 				t.Errorf("%s: columns %v, want only value", w.Name, res.Columns)
 			}
-			if want := map[bool]int{true: 1, false: 0}[pid == f.project]; len(res.Rows) != want {
-				t.Errorf("%s project %d: %d rows %v, want %d", w.Name, pid, len(res.Rows), res.Rows, want)
+			if len(res.Rows) != 1 || (res.Rows[0][0] == "") != (pid != f.project) {
+				t.Errorf("%s project %d: rows %v, want one, blank only without samples", w.Name, pid, res.Rows)
 			}
 		}
 	}

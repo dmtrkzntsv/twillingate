@@ -329,30 +329,29 @@ func TestMigrateChecksTheSystemWidgetsPastTheConsoleTimeout(t *testing.T) {
 }
 
 // TestMigrateStartsWhenTheSystemCheckCannotRun: a check of the system
-// widgets that runs out of time or memory, or whose child dies, is logged
-// as an error and the start goes on, so the daily pass that frees the
-// engine runs; a refusal of their SQL still stops it.
+// widgets that runs out of time or memory, or whose child dies, comes
+// back from the reporting migrator as ErrUnchecked (reporting's own tests
+// pin which causes do); it is logged as an error and the start goes on,
+// so the daily pass that frees the engine runs. A refusal of their SQL
+// still stops it.
 func TestMigrateStartsWhenTheSystemCheckCannotRun(t *testing.T) {
-	f := newWidgetsFixture(t)
 	ctx := context.Background()
-	for name, cause := range map[string]error{
-		"timeout":       context.DeadlineExceeded,
-		"out of memory": fmt.Errorf("%w: %w", archive.ErrLoadingLogs, &engine.QueryError{Msg: "Out of Memory Error: x"}),
-		"child exited":  engine.ErrChildExited,
-	} {
-		t.Run(name, func(t *testing.T) {
-			var out bytes.Buffer
-			files := &failingFiles{Files: f.files(t), err: cause}
-			if err := migrateReporting(ctx, f.st, files, slog.New(slog.NewTextHandler(&out, nil))); err != nil {
-				t.Fatalf("err = %v, want the start to go on", err)
-			}
-			if !strings.Contains(out.String(), "level=ERROR") || !strings.Contains(out.String(), "could not check the system dashboards") {
-				t.Errorf("logged %q, want the error", out.String())
-			}
-		})
+	f := newWidgetsFixture(t)
+	was := reportingMigrate
+	t.Cleanup(func() { reportingMigrate = was })
+	var out bytes.Buffer
+	reportingMigrate = func(context.Context, reporting.Store, reporting.Files) error {
+		return fmt.Errorf("%w: system dashboard 6 widget lcp: Out of Memory Error: x; the next start checks them again", reporting.ErrUnchecked)
 	}
-	files := &failingFiles{Files: f.files(t), err: &engine.QueryError{Msg: "Binder Error: Referenced column \"nope\" not found"}}
-	if err := migrateReporting(ctx, f.st, files, slog.New(slog.DiscardHandler)); err == nil || errors.Is(err, reporting.ErrUnchecked) {
+	if err := migrateReporting(ctx, f.st, nil, slog.New(slog.NewTextHandler(&out, nil))); err != nil {
+		t.Fatalf("err = %v, want the start to go on", err)
+	}
+	if !strings.Contains(out.String(), "level=ERROR") || !strings.Contains(out.String(), "could not check the system dashboards") || !strings.Contains(out.String(), "Out of Memory") {
+		t.Errorf("logged %q, want the error", out.String())
+	}
+	refused := errors.New(`reporting: system dashboard 6 widget lcp: Binder Error: Referenced column "nope" not found`)
+	reportingMigrate = func(context.Context, reporting.Store, reporting.Files) error { return refused }
+	if err := migrateReporting(ctx, f.st, nil, slog.New(slog.DiscardHandler)); !errors.Is(err, refused) {
 		t.Errorf("DuckDB's refusal: err = %v, want the start stopped", err)
 	}
 }

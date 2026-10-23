@@ -102,7 +102,7 @@ const migrateQueryTimeout = 5 * time.Minute
 // system widgets that could not run for want of time or memory is logged
 // as an error and the start goes on; the next start checks again.
 func migrateReporting(ctx context.Context, st store.Store, files reporting.Files, logger *slog.Logger) error {
-	err := reporting.Migrate(ctx, st, files)
+	err := reportingMigrate(ctx, st, files)
 	if errors.Is(err, reporting.ErrUnchecked) {
 		logger.Error("could not check the system dashboards on the event files; starting without, so the daily pass can run",
 			"error", err.Error())
@@ -110,6 +110,10 @@ func migrateReporting(ctx context.Context, st store.Store, files reporting.Files
 	}
 	return err
 }
+
+// reportingMigrate is reporting.Migrate; tests replace it, since no
+// system widget of this release reads SQL for a check to fail on.
+var reportingMigrate = reporting.Migrate
 
 // geteuid is the effective uid Migrate checks against the database file's
 // owner (checkOwner); tests replace it.

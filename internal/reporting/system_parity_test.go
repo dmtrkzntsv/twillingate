@@ -113,7 +113,10 @@ var parityAllowances = map[string][]allowance{
 
 // newSystemWidgets names the system query widgets that have no old SQL
 // to compare with (one split from another, say), each with the reason.
-var newSystemWidgets = map[string]string{}
+var newSystemWidgets = map[string]string{
+	"vitals/by-device":  "G9: split from by-device-browser; TestVitalsByDeviceAndBrowserSplitTheOldTable holds it to the old table's device rows",
+	"vitals/by-browser": "G9: split from by-device-browser; TestVitalsByDeviceAndBrowserSplitTheOldTable holds it to the old table's browser rows",
+}
 
 // TestSystemWidgetParity runs the harness on this release's system
 // widgets and the old SQL in testdata/system-sql.
@@ -722,10 +725,58 @@ func TestAppVersionsAtLeastTheOldFloors(t *testing.T) {
 	}
 }
 
-// TestSystemStatsOverNoEvents pins what the Views and Product dashboards'
-// stats show for a project with no events, natively and in their old SQL.
-// The differences are G2's: an empty metric is blank, where the old SQL
-// read 0 (the stat component draws a blank figure, not "0").
+// TestVitalsByDeviceAndBrowserSplitTheOldTable: Web Vitals' by-device and
+// by-browser tables (G9) are the old by-device-browser table split by its
+// Dimension column, which they drop: the same rows, values and order, on
+// every preset. The old SQL is testdata/vitals-by-device-browser.sql, kept
+// out of testdata/system-sql because no one widget answers it.
+func TestVitalsByDeviceAndBrowserSplitTheOldTable(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+	b, err := os.ReadFile("testdata/vitals-by-device-browser.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, preset := range parityPresets {
+		from, to := presetDates(preset, f.today)
+		res, err := f.svc.sources["sql"].Load(ctx, string(b), Params{ProjectID: f.project, From: from, To: to})
+		if err != nil {
+			t.Fatalf("%s: old SQL: %v", preset, err)
+		}
+		old, ok := res.(readsql.Result)
+		if !ok || !slices.Equal(old.Columns, []string{"Dimension", "Value", "Samples", "LCP p75 (ms)", "INP p75 (ms)", "CLS p75"}) {
+			t.Fatalf("%s: old SQL returned %v", preset, res)
+		}
+		for _, c := range []struct{ widget, dimension, column string }{{"by-device", "device", "Device"}, {"by-browser", "browser", "Browser"}} {
+			want := readsql.Result{Columns: append([]string{c.column}, old.Columns[2:]...)}
+			for _, r := range old.Rows {
+				if r[0] == c.dimension {
+					want.Rows = append(want.Rows, r[1:])
+				}
+			}
+			if len(want.Rows) < 2 {
+				t.Fatalf("%s %s: the old SQL has %d rows: a weak case", preset, c.widget, len(want.Rows))
+			}
+			got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, f.svc, 6, c.widget), ProjectID: f.project, From: from, To: to})
+			if err != nil {
+				t.Fatalf("%s %s: %v", preset, c.widget, err)
+			}
+			nat, ok := got.Data.(readsql.Result)
+			if !ok {
+				t.Fatalf("%s %s: native returned %T", preset, c.widget, got.Data)
+			}
+			diffs, _ := compareParity(want, nat, nil)
+			for _, d := range diffs {
+				t.Errorf("%s %s: %s", preset, c.widget, d)
+			}
+		}
+	}
+}
+
+// TestSystemStatsOverNoEvents pins what the system dashboards' stats show
+// for a project with no events, natively and in their old SQL. The
+// differences are G2's: an empty metric is blank, where the old SQL read
+// 0 or returned no row (the stat component draws a blank figure, not "0").
 func TestSystemStatsOverNoEvents(t *testing.T) {
 	ctx := context.Background()
 	st, files := newTestStoreAndFiles(t, 1000)
@@ -738,7 +789,7 @@ func TestSystemStatsOverNoEvents(t *testing.T) {
 	cases := []struct {
 		name   string   // <dashboard dir>/<widget>
 		native []string // the native row
-		old    []string // the old SQL's row
+		old    []string // the old SQL's row; nil for no row
 		why    string
 	}{
 		{"views/visitors", []string{"", ""}, []string{"0", "0"}, "G2: daily_sum over no rows is empty; the SQL COALESCEd it to 0"},
@@ -756,11 +807,16 @@ func TestSystemStatsOverNoEvents(t *testing.T) {
 		{"groups/new-groups", []string{"0"}, []string{"0"}, "none: groups over no rows is 0 in both"},
 		{"groups/actions", []string{"0"}, []string{"0"}, "none: a count over no rows is 0 in both"},
 		{"groups/actions-per-group", []string{""}, []string{"0"}, "G2: a ratio over no groups is empty; the SQL wrote 0"},
+		{"vitals/lcp", []string{""}, nil, "G2: a percentile over no samples is empty; the SQL returned no row"},
+		{"vitals/inp", []string{""}, nil, "G2: a percentile over no samples is empty; the SQL returned no row"},
+		{"vitals/cls", []string{""}, nil, "G2: a percentile over no samples is empty; the SQL returned no row"},
+		{"vitals/fcp", []string{""}, nil, "G2: a percentile over no samples is empty; the SQL returned no row"},
+		{"vitals/ttfb", []string{""}, nil, "G2: a percentile over no samples is empty; the SQL returned no row"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			dir, name, _ := strings.Cut(c.name, "/")
-			got, err := svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, svc, map[string]int64{"views": 1, "product": 2, "users": 3, "groups": 4}[dir], name), ProjectID: pid, From: from, To: to})
+			got, err := svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, svc, map[string]int64{"views": 1, "product": 2, "users": 3, "groups": 4, "vitals": 6}[dir], name), ProjectID: pid, From: from, To: to})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -777,7 +833,12 @@ func TestSystemStatsOverNoEvents(t *testing.T) {
 				t.Fatal(err)
 			}
 			old, ok := res.(readsql.Result)
-			if !ok || len(old.Rows) != 1 || !slices.Equal(old.Rows[0], c.old) {
+			switch {
+			case !ok:
+				t.Errorf("old SQL returned %T", res)
+			case c.old == nil && len(old.Rows) != 0:
+				t.Errorf("old SQL %v, want no row (%s)", old, c.why)
+			case c.old != nil && (len(old.Rows) != 1 || !slices.Equal(old.Rows[0], c.old)):
 				t.Errorf("old SQL %v, want one row %q (%s)", res, c.old, c.why)
 			}
 		})

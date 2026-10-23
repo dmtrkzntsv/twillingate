@@ -926,8 +926,9 @@ its log-scale histogram: `bucket` is a sample's bucket (base 1.04), whose
 value is `2 * pow(1.04, bucket) / 2.04` (within about 2%; 0 for bucket
 `-1000`, a value of 0), and a sampled row counts `1 / sample_rate` times.
 Sum that weight per bucket, run it up in bucket order, and take the first
-bucket whose running weight reaches the share wanted. The Web Vitals and
-Measures system dashboards are built this way. A name sent as two kinds
+bucket whose running weight reaches the share wanted. A `query`
+source's `percentile` metric reads it this way, and the Web Vitals and
+Measures system dashboards use that metric. A name sent as two kinds
 (`measure`) is two series, so group by both. p75 per metric:
 
 ```sql

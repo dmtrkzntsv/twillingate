@@ -15,7 +15,8 @@
     {"widget": "p75-by-day", "width": 6, "height": 8},
     {"widget": "cls-by-day", "width": 6, "height": 8},
     {"widget": "by-page", "width": 12, "height": 10},
-    {"widget": "by-device-browser", "width": 12, "height": 10},
+    {"widget": "by-device", "width": 6, "height": 8},
+    {"widget": "by-browser", "width": 6, "height": 8},
     {"widget": "thresholds", "width": 12, "height": 6}
   ]
 }
