@@ -123,6 +123,35 @@ ORDER BY day`
 // oldEventNamesSQL is event_names' SQL.
 const oldEventNamesSQL = `SELECT family, event_name, count(*) FROM events WHERE family IN ('product','measures') AND project_id = :project AND day BETWEEN :from AND :to AND event_name NOT LIKE '$%' GROUP BY ALL ORDER BY 3 DESC, 2 LIMIT 200`
 
+// filesTable runs one of the tools' old queries on the event files (DuckDB
+// SQL over the tables of archive.Reader), scoped to in's project: q's
+// :project, :from and :to are bound as BIGINT and DATEs, any other :name
+// from vals. Every cell reads as SQLite's did (tw_cell: NULL as "", 3 not
+// 3.0).
+func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[string]enginesql.Value) (tableOut, error) {
+	all := map[string]enginesql.Value{
+		":project": {Type: "BIGINT", Text: strconv.FormatInt(in.ProjectID, 10)},
+		":from":    {Type: "DATE", Text: in.From},
+		":to":      {Type: "DATE", Text: in.To},
+	}
+	for k, v := range vals {
+		all[k] = v
+	}
+	bound, args, err := enginesql.Bind(q, all)
+	if err != nil {
+		return tableOut{}, err
+	}
+	res, err := h.runFiles(ctx, archive.Scoped{SQL: enginesql.Text(bound), Args: args, MaxRows: h.queryRows, Scope: true, Project: in.ProjectID})
+	if err != nil {
+		return tableOut{}, err
+	}
+	out := tableOut{Columns: res.Columns, Rows: cellRows(res.Rows), Truncated: res.Truncated}
+	if res.Truncated {
+		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — narrow the range or raise the limit", h.queryRows)
+	}
+	return out, nil
+}
+
 // writeParityEdges adds to blog's files the cases the tools' presets
 // must agree on with their old SQL:
 //   - on 2026-08-22, views carrying only a UTM medium, only a UTM
@@ -420,6 +449,12 @@ func TestNativeToolsWithoutTheEngine(t *testing.T) {
 	blog := rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}
 	if _, err := h.viewsOverview(context.Background(), overviewIn{rangeIn: blog}); err == nil {
 		t.Error("views_overview answered without an engine")
+	}
+	if _, err := h.retention(context.Background(), retentionIn{rangeIn: blog, Actor: "user"}); err == nil {
+		t.Error("retention answered without an engine")
+	}
+	if _, err := h.usage(context.Background(), usageIn{ProjectID: 1}); err == nil {
+		t.Error("usage answered without an engine")
 	}
 }
 

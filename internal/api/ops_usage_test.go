@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -48,38 +47,6 @@ func TestUsageNewestArrivalOfLiveProjects(t *testing.T) {
 	}
 	if lr := one.Projects[0].LastReceivedAt; lr == nil || !strings.HasPrefix(*lr, "2026-") {
 		t.Errorf("archived docs asked for by id: last_received_at = %v, want its newest arrival", deref(lr))
-	}
-}
-
-// TestNewestArrivalQuery: the newest-arrival arm reads the projects asked
-// for, each from the first day of its newest file's month to that file's
-// last day, behind one condition on day spanning them all, so DuckDB
-// prunes the Parquet row groups on day even when the projects' ranges
-// differ (it does not push an OR of them into the scan). A project with
-// no files, or not asked for, has no condition.
-func TestNewestArrivalQuery(t *testing.T) {
-	latest := map[int64]string{1: "2026-08-26", 2: "2026-07-03", 3: "2026-09-10", 4: "bad"}
-	vals := map[string]enginesql.Value{}
-	q := newestArrival(latest, []int64{2, 1, 4, 5}, vals)
-	if !strings.HasPrefix(q, "SELECT project_id, NULL, NULL, NULL, max(received_at) FROM events WHERE day BETWEEN :nlo AND :nhi AND (") ||
-		!strings.HasSuffix(q, ") GROUP BY project_id") {
-		t.Errorf("query = %s", q)
-	}
-	if strings.Count(q, "project_id = :np") != 2 {
-		t.Errorf("want one condition for each of 1 and 2: %s", q)
-	}
-	want := map[string]string{":nlo": "2026-07-01", ":nhi": "2026-08-26", ":np0": "2", ":nf0": "2026-07-01", ":nt0": "2026-07-03",
-		":np1": "1", ":nf1": "2026-08-01", ":nt1": "2026-08-26"}
-	if len(vals) != len(want) {
-		t.Errorf("vals = %+v", vals)
-	}
-	for k, v := range want {
-		if vals[k].Text != v {
-			t.Errorf("%s = %q, want %q", k, vals[k].Text, v)
-		}
-	}
-	if q := newestArrival(latest, []int64{5}, map[string]enginesql.Value{}); q != "" {
-		t.Errorf("no project with files: %q, want none", q)
 	}
 }
 

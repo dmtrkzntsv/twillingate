@@ -20,7 +20,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -105,35 +104,6 @@ type tableOut struct {
 	Rows      [][]string `json:"rows"`
 	Truncated bool       `json:"truncated,omitempty"`
 	Note      string     `json:"note,omitempty"`
-}
-
-// filesTable runs one of the tools' own queries on the event files (DuckDB
-// SQL over the tables of archive.Reader), scoped to in's project: q's
-// :project, :from and :to are bound as BIGINT and DATEs, any other :name
-// from vals. Every cell reads as SQLite's did (tw_cell: NULL as "", 3 not
-// 3.0).
-func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[string]enginesql.Value) (tableOut, error) {
-	all := map[string]enginesql.Value{
-		":project": {Type: "BIGINT", Text: strconv.FormatInt(in.ProjectID, 10)},
-		":from":    {Type: "DATE", Text: in.From},
-		":to":      {Type: "DATE", Text: in.To},
-	}
-	for k, v := range vals {
-		all[k] = v
-	}
-	bound, args, err := enginesql.Bind(q, all)
-	if err != nil {
-		return tableOut{}, err
-	}
-	res, err := h.runFiles(ctx, archive.Scoped{SQL: enginesql.Text(bound), Args: args, MaxRows: h.queryRows, Scope: true, Project: in.ProjectID})
-	if err != nil {
-		return tableOut{}, err
-	}
-	out := tableOut{Columns: res.Columns, Rows: cellRows(res.Rows), Truncated: res.Truncated}
-	if res.Truncated {
-		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — narrow the range or raise the limit", h.queryRows)
-	}
-	return out, nil
 }
 
 // runFiles runs q on the event files under CONSOLE_QUERY_TIMEOUT, with the
@@ -486,7 +456,7 @@ func (h *host) register(r *registrar) {
 		Description: "Performance measures and Web Vitals, from the event files: per metric, samples, estimated count, mean and p50/p75/p95 from log-scale histograms (about ±2%). time is milliseconds, size bytes, number unitless. attr_key breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys product_attributes lists ($browser, $path, $utm_source, …); a key none carried gives no rows. At most 1,000 rows."},
 		h.measures)
 	expose(r, spec{Name: "retention", Annotations: ro, Method: "GET", Path: p + "/retention",
-		Description: "D1/D7/D30-style cohort curves from the event files, cohorted by how the actor was identified: actor=user or actor=install. Days before today (UTC) only: today is partial. Returns aggregated_through, the newest day counted: cohorts after it are absent, not zero. Empty for a project whose clients send neither $user_id nor $install_id."},
+		Description: "D1/D7/D30-style cohort curves from the event files, cohorted by how the actor was identified: actor=user or actor=install. Per cohort day of the range, the actors back on each day up to 90 days on, by cohort, then day back. Days before today (UTC) only: today is partial. Returns aggregated_through, the newest day counted: cohorts after it are absent, not zero. Empty for a project whose clients send neither $user_id nor $install_id."},
 		h.retention)
 	expose(r, spec{Name: "identities", Annotations: ro, Method: "GET", Path: p + "/identities",
 		Description: "Per-user or per-group activity over the range, from the event files: per id, its actors and users (distinct per day, added up over the days), views and product events, busiest first, with the display name sent with its latest event (empty when none was sent or it is the id itself). This surfaces personal data on projects whose clients send ids."},

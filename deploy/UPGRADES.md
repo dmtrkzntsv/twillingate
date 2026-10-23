@@ -1390,9 +1390,9 @@ Rollback: install the previous release; it restores the built-in widgets' SQL on
 ### Upgrading to analytics tools on the native engine (no migration)
 
 `views_overview`, `views_breakdown`, `product_events`,
-`product_attributes`, `measures`, `identities`, `list_attributes` and the
-console's event-names route read the event files natively, with the same
-inputs and output fields.
+`product_attributes`, `measures`, `identities`, `list_attributes`,
+`retention`, `usage` and the console's event-names route read the event
+files natively, with the same inputs and output fields.
 
 - **Before the upgrade**, nothing to check by hand.
 - **On the day**, these differ from the release before:
@@ -1403,5 +1403,6 @@ inputs and output fields.
   - `list_attributes` estimates a key's `values` past 1,024 distinct values (about ±2%).
   - `identities` leaves `name` empty for an id whose display name is the id itself.
   - `measures` prints a whole number without a decimal: `200`, where it printed `200.0`.
+  - `retention` lists offsets up to 90 days after the cohort day; it listed every offset the range allowed.
 
 Rollback: install the previous release; nothing in the database changed.

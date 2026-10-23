@@ -4,9 +4,10 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/native"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
 type productEventsIn struct {
@@ -152,6 +153,23 @@ type retentionOut struct {
 // retentionNote is the note retention carries when nothing else needs it.
 const retentionNote = "retention counts the days before today (UTC), today being partial; cohorts after aggregated_through are absent, not zero"
 
+// retentionOffsets is the days back the retention tool counts: the
+// native retention's maximum.
+const retentionOffsets = 90
+
+// retentionColumns are the retention tool's columns, as its SQL named them.
+var retentionColumns = []string{"cohort_day", "day_offset", "actors", "cohort_size"}
+
+// retention answers the native retention grid of the actor's kind, every
+// offset up to 90: per cohort of the range and day back, the actors back
+// and the cohort's size, by cohort, then offset, at most
+// CONSOLE_QUERY_ROWS_MAX rows (the earliest cohorts'). An actor
+// identified by a $user_id or a stable $install_id joins the cohort of
+// its first day with either, and is back at offset k when it sent a view
+// or product event k days later; it is a user from the first day it was
+// identified as one, an install before. Days before today only: today is
+// partial. aggregated_through is the newest such day with a view or
+// product event in the project's files.
 func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, error) {
 	if err := h.checkRange(ctx, in.rangeIn); err != nil {
 		return retentionOut{}, err
@@ -163,60 +181,57 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 	if p == nil {
 		return retentionOut{}, h.unknownProjectErr(ctx, in.ProjectID)
 	}
-	// One deadline for both queries.
-	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
-	defer cancel()
-	// The Retention dashboard's old cohorts SQL (reporting's
-	// testdata/system-sql/retention/cohorts.sql), every
-	// offset: an actor identified by a $user_id or a stable $install_id
-	// joins the cohort of its first day with either, and is returned at
-	// offset k when it sent a view or product event k days later. It is a
-	// user from the first day it was identified as one, an install before.
-	// Days before today only: today is partial.
-	tbl, err := h.filesTable(ctx, in.rangeIn, `WITH acts AS (
-  SELECT DISTINCT actor_id, actor_kind, day
-  FROM events
-  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''
-    AND day < current_date
-),
-firsts AS (
-  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day
-  FROM acts
-  WHERE actor_kind IN ('user', 'install')
-  GROUP BY actor_id
-),
-returned AS (
-  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,
-         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors
-  FROM (SELECT DISTINCT actor_id, day FROM acts) a
-  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day
-  WHERE f.cohort_day BETWEEN :from AND :to
-  GROUP BY 1, f.cohort_day, 3
-)
-SELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size
-FROM returned r
-JOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0
-WHERE r.actor_kind = :actor
-ORDER BY r.cohort_day, r.day_offset`, map[string]enginesql.Value{":actor": {Type: "VARCHAR", Text: in.Actor}})
+	out := retentionOut{tableOut: tableOut{Columns: retentionColumns, Rows: [][]string{}}}
+	if params, ok := rangeParams(in.rangeIn); ok {
+		res, err := h.answer(ctx, native.Query{Kind: "retention", Output: "grid", IdentifiedBy: in.Actor, Offsets: retentionOffsets}, params)
+		if err != nil {
+			return retentionOut{}, err
+		}
+		// cohort, identified_by, offset, size, returned, retention, by
+		// cohort descending: the tool's columns, by cohort, then offset.
+		for _, r := range res.Rows {
+			out.Rows = append(out.Rows, []string{r[0], r[2], r[4], r[3]})
+		}
+		slices.SortStableFunc(out.Rows, func(a, b []string) int {
+			if c := cmp.Compare(a[0], b[0]); c != 0 {
+				return c
+			}
+			return cmp.Compare(cellInt(a[1]), cellInt(b[1]))
+		})
+		if h.queryRows > 0 && len(out.Rows) > h.queryRows {
+			out.Rows = out.Rows[:h.queryRows]
+			h.markPartial(&out.tableOut, true, nil)
+		}
+	}
+	through, err := h.aggregatedThrough(ctx, in.ProjectID)
 	if err != nil {
 		return retentionOut{}, err
 	}
-	out := retentionOut{tableOut: tbl}
-	// How far the cohorts reach: the newest complete day with activity in
-	// the project's files, so recent cohorts read as "not counted yet",
-	// never as zero.
-	through, err := h.filesTable(ctx, in.rangeIn, `SELECT max(day) FROM events
-WHERE project_id = :project AND family IN ('views', 'product') AND day < current_date`, nil)
-	if err != nil {
-		return retentionOut{}, err
-	}
-	if len(through.Rows) == 1 {
-		out.AggregatedThrough = through.Rows[0][0]
-	}
+	out.AggregatedThrough = through
 	if out.Note == "" {
 		out.Note = retentionNote
 	}
 	return out, nil
+}
+
+// aggregatedThrough is how far a project's cohorts reach: the newest day
+// before today (UTC) with a view or product event in its files, rules
+// applied, "" with none; so recent cohorts read as "not counted yet",
+// never as zero.
+func (h *host) aggregatedThrough(ctx context.Context, project int64) (string, error) {
+	first, _ := civil.Parse("1970-01-01")
+	last := civil.Today(time.Now()).AddDays(-1)
+	if last.Before(first) {
+		return "", nil
+	}
+	res, err := h.answer(ctx, native.Query{Kind: "stat", Table: "events",
+		Metrics: []native.Metric{{Op: "max", Column: "day"}},
+		Where:   []native.Filter{{Column: "family", Op: "in", Values: []string{"views", "product"}}}},
+		native.Params{Project: project, From: first, To: last})
+	if err != nil || len(res.Rows) != 1 {
+		return "", err
+	}
+	return res.Rows[0][0], nil
 }
 
 type identitiesIn struct {
