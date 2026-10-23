@@ -1,5 +1,8 @@
 package archive
 
+// mergeQuery and mergeSelect, the merge's DuckDB oracle, leave with DuckDB
+// in step 6.
+
 import (
 	"context"
 	"encoding/binary"
@@ -55,7 +58,7 @@ func (f fixture) goDay(t *testing.T, dir, name, log string) string {
 	if err := cutTornLine(src); err != nil { // as claim does
 		t.Fatal(err)
 	}
-	if err := dumpLog(src, out); err != nil {
+	if err := dumpLog(context.Background(), src, out); err != nil {
 		t.Fatal(err)
 	}
 	os.Remove(src)

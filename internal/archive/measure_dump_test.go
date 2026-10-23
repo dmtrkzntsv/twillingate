@@ -5,7 +5,9 @@
 // 4 threads and 512 MB, as that test ran it): go test -tags measure -run
 // TestMeasureDumpPeak -v ./internal/archive with MEASURE_DUMP_LOG, a path,
 // and MEASURE_DUMP_SIDE, go or duckdb. The first run writes the log and
-// stops, so the next run's peak is the dump's alone. Not part of make check.
+// stops, so the next run's peak is the dump's alone; with
+// MEASURE_DUMP_LINES set it writes that many measureEvent lines instead of
+// the 45 MB log. Not part of make check.
 package archive
 
 import (
@@ -13,6 +15,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -65,7 +68,10 @@ func TestMeasureDumpPeak(t *testing.T) {
 		t.Skip("MEASURE_DUMP_LOG unset")
 	}
 	if _, err := os.Stat(src); err != nil {
-		if err := os.WriteFile(src, []byte(bigDumpLog(t)), 0o640); err != nil {
+		// MEASURE_DUMP_LINES writes that many measureEvent lines instead.
+		if n, _ := strconv.Atoi(os.Getenv("MEASURE_DUMP_LINES")); n > 0 {
+			writeMeasureLog(t, src, 11, 0, 0, n)
+		} else if err := os.WriteFile(src, []byte(bigDumpLog(t)), 0o640); err != nil {
 			t.Fatal(err)
 		}
 		t.Skip("wrote the log; run again")
@@ -75,10 +81,25 @@ func TestMeasureDumpPeak(t *testing.T) {
 	case "go":
 		before := vmHWM(t, "self")
 		start := time.Now()
-		if err := dumpLog(src, out); err != nil {
+		if err := dumpLog(context.Background(), src, out); err != nil {
 			t.Fatal(err)
 		}
 		t.Logf("go: %s, process peak RSS %.0f MB (%.0f MB before the dump)", time.Since(start).Round(time.Millisecond), vmHWM(t, "self"), before)
+	case "index": // pass 1 alone: what its index holds
+		before := heapAfterGC()
+		fh, err := os.Open(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer fh.Close()
+		d := newDumpIndex()
+		if err := d.read(context.Background(), fh, "log"); err != nil {
+			t.Fatal(err)
+		}
+		held := heapAfterGC() - before
+		t.Logf("index: %d lines, %.0f MB held (%.0f B a line); process peak RSS %.0f MB", len(d.lines),
+			float64(held)/(1<<20), float64(held)/float64(len(d.lines)), vmHWM(t, "self"))
+		runtime.KeepAlive(d)
 	case "duckdb":
 		data := t.TempDir()
 		self, _ := os.Executable()

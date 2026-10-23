@@ -254,7 +254,7 @@ func TestMeasurePass(t *testing.T) {
 			for _, src := range logPaths {
 				out := strings.TrimSuffix(src, ".dumping")
 				if side == "go" {
-					if err := dumpLog(src, out); err != nil {
+					if err := dumpLog(context.Background(), src, out); err != nil {
 						t.Fatal(err)
 					}
 				} else {
@@ -552,7 +552,7 @@ func preparePass(t *testing.T, month, dir string) {
 			t.Fatal(err)
 		}
 		for _, e := range entries {
-			if err := dumpLog(filepath.Join(dir, "logs", v, e.Name()),
+			if err := dumpLog(context.Background(), filepath.Join(dir, "logs", v, e.Name()),
 				filepath.Join(dir, "days-"+v, strings.TrimSuffix(e.Name(), ".dumping"))); err != nil {
 				t.Fatal(err)
 			}

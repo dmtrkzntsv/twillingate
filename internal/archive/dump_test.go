@@ -1,5 +1,8 @@
 package archive
 
+// dumpQuery and logKeys, the dump's DuckDB oracle, leave with DuckDB in
+// step 6.
+
 import (
 	"bufio"
 	"context"
@@ -197,7 +200,7 @@ func TestGoDumpMatchesDuckDB(t *testing.T) {
 			if err := f.duckDump(t, src, duck); err != nil {
 				t.Fatal(err)
 			}
-			if err := dumpLog(src, goFile); err != nil {
+			if err := dumpLog(context.Background(), src, goFile); err != nil {
 				t.Fatal(err)
 			}
 			if got, want := f.describe(t, goFile), f.describe(t, duck); !eq(got, want) {
@@ -300,6 +303,8 @@ func TestDumpFailsWhereDuckDBDid(t *testing.T) {
 		`{"id":"a","day":"10.11.2026"}` + "\n",
 		`{"id":"a","value":"x"}` + "\n",
 		`{"id":"a","consent":true}` + "\n",
+		`{"id":"a"}` + "\n" + `{"id":"a","ts":"yesterday"}` + "\n", // a repeat's ts is cast too
+		`{"v":1}` + "\n" + `{"v":2,"ts":"yesterday"}` + "\n",       // and a second line without an id
 	} {
 		src := f.project1(fmt.Sprintf("2026-10-%02d.parquet.dumping", i+1))
 		f.writeFile(t, filepath.Base(src), log)
@@ -307,7 +312,7 @@ func TestDumpFailsWhereDuckDBDid(t *testing.T) {
 		if err := f.duckDump(t, src, f.project1("duck.parquet")); err == nil {
 			t.Errorf("%q: DuckDB's dump went through", log)
 		}
-		if err := dumpLog(src, out); err == nil {
+		if err := dumpLog(context.Background(), src, out); err == nil {
 			t.Errorf("%q: the Go dump went through", log)
 		}
 		if exists(out) || exists(out+".tmp") {
@@ -328,7 +333,7 @@ func TestDumpKeepsTiesInFileOrder(t *testing.T) {
 		dumpView("v-b", "2026-10-11T10:00:00Z"), evOf(1, "p-z", "2026-10-11T10:00:00Z"), dumpView("v-a", "2026-10-11T10:00:00Z"),
 		evOf(1, "p-a", "2026-10-11T10:00:00Z"), late, evOf(1, "p-m", "2026-10-11T10:00:00Z")))
 	out := f.project1("2026-10-11.parquet")
-	if err := dumpLog(out+".dumping", out); err != nil {
+	if err := dumpLog(context.Background(), out+".dumping", out); err != nil {
 		t.Fatal(err)
 	}
 	got := f.values(t, "SELECT id FROM read_parquet("+quote(out)+", file_row_number=true) ORDER BY file_row_number")
@@ -343,7 +348,7 @@ func TestDumpKeepsTiesInFileOrder(t *testing.T) {
 	f.writeFile(t, "2026-10-11.parquet.dumping", logOf(t,
 		dumpView("v-b", "2026-10-11T10:00:00Z"), evOf(1, "p-z", "2026-10-11T10:00:00Z"), dumpView("v-a", "2026-10-11T10:00:00Z"),
 		evOf(1, "p-a", "2026-10-11T10:00:00Z"), late, evOf(1, "p-m", "2026-10-11T10:00:00Z")))
-	if err := dumpLog(out+".dumping", out); err != nil {
+	if err := dumpLog(context.Background(), out+".dumping", out); err != nil {
 		t.Fatal(err)
 	}
 	if got := groupRows(t, out); fmt.Sprint(got) != "[3 1 2]" {
@@ -362,7 +367,7 @@ func TestDumpSendsTheEngineNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	if err := a.dump(dir, "2026-10-11.parquet.dumping"); err != nil {
+	if err := a.dump(context.Background(), dir, "2026-10-11.parquet.dumping"); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("dumped 45 MB in %s", time.Since(start).Round(time.Millisecond))
@@ -400,25 +405,31 @@ func heapAfterGC() uint64 {
 	return m.HeapAlloc
 }
 
-// TestDumpHoldsALineAsTheKeysItHas: a log whose every line brings keys of
-// its own (5,000 lines, 3 keys each: 15,000 keys) is held as each line's
-// values, so the read's heap grows with the lines, not lines times keys
-// (dense rows would be 5,000 × 15,041 × 32 bytes, 2.4 GB). Such a log
-// dumps; the writer's buffers per column are logged, not bounded.
-func TestDumpHoldsALineAsTheKeysItHas(t *testing.T) {
+// TestDumpHoldsALineAsWhereItIs: pass 1 holds a kept line as where it is
+// in the log, whatever keys it brings: a log whose every line has keys of
+// its own (5,000 lines, 3 keys each: 15,000 keys) costs the index its
+// keys and a few dozen bytes a line, not lines times keys (dense rows
+// would be 5,000 × 15,041 × 32 bytes, 2.4 GB). Such a log dumps; the
+// writer's buffers per column are logged, not bounded.
+func TestDumpHoldsALineAsWhereItIs(t *testing.T) {
 	f := newFixture(t)
 	f.writeFile(t, "2026-10-11.parquet.dumping", manyKeysLog(t, 5000, 3))
 	src := f.project1("2026-10-11.parquet.dumping")
 	before := heapAfterGC()
-	d := newLogDump()
-	if err := d.read(src); err != nil {
+	d := newDumpIndex()
+	fh, err := os.Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fh.Close()
+	if err := d.read(context.Background(), fh, filepath.Base(src)); err != nil {
 		t.Fatal(err)
 	}
 	held := int64(heapAfterGC()) - int64(before)
 	runtime.KeepAlive(d)
-	t.Logf("read: %d keys, %d rows, %.1f MB held", len(d.keys), len(d.rows), float64(held)/(1<<20))
-	if len(d.keys) != len(fields)+15000 || len(d.rows) != 5000 {
-		t.Fatalf("%d keys, %d rows; want %d and 5000", len(d.keys), len(d.rows), len(fields)+15000)
+	t.Logf("read: %d keys, %d lines, %.1f MB held", len(d.keys), len(d.lines), float64(held)/(1<<20))
+	if len(d.keys) != len(fields)+15000 || len(d.lines) != 5000 {
+		t.Fatalf("%d keys, %d rows; want %d and 5000", len(d.keys), len(d.lines), len(fields)+15000)
 	}
 	if held > 32<<20 {
 		t.Fatalf("the read holds %d MB for 5,000 lines, want under 32 MB", held>>20)
@@ -447,7 +458,7 @@ func TestDumpHoldsALineAsTheKeysItHas(t *testing.T) {
 	}()
 	base := heapAfterGC()
 	start := time.Now()
-	err := dumpLog(small, f.project1("2026-10-12.parquet"))
+	err = dumpLog(context.Background(), small, f.project1("2026-10-12.parquet"))
 	close(stop)
 	<-sampled
 	if err != nil {
@@ -458,5 +469,53 @@ func TestDumpHoldsALineAsTheKeysItHas(t *testing.T) {
 		time.Since(start).Round(time.Millisecond), float64(grew)/(1<<20), float64(grew)/1024/float64(len(fields)+1500))
 	if got := f.values(t, "SELECT count(*), count(attr_k00250_1) FROM read_parquet("+quote(f.project1("2026-10-12.parquet"))+")"); !eq(got, []string{"[500 1]"}) {
 		t.Fatalf("rows = %v", got)
+	}
+}
+
+// TestDumpStopsWhenCancelled: a dump whose ctx is cancelled, before
+// either pass or during the second, writes no target and no .tmp, and the
+// pass keeps the claimed log for the next one.
+func TestDumpStopsWhenCancelled(t *testing.T) {
+	f := newFixture(t)
+	f.writeFile(t, "2026-10-11.parquet.dumping", manyKeysLog(t, 3*dumpCheckEvery, 1))
+	src := f.project1("2026-10-11.parquet.dumping")
+	out := f.project1("2026-10-11.parquet")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	dir := filepath.Join(f.log.Dir(), "1")
+	if err := f.a.dump(ctx, dir, filepath.Base(src)); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if !exists(src) || exists(out) || exists(out+".tmp") {
+		t.Fatalf("files = %v, want the claimed log alone", f.files(t))
+	}
+	// Cancelled in pass 2: after pass 1's index is sorted.
+	d := newDumpIndex()
+	fh, err := os.Open(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fh.Close()
+	if err := d.read(context.Background(), fh, "log"); err != nil {
+		t.Fatal(err)
+	}
+	cols := columnsOf(d.keySet())
+	pq := make([]pqColumn, len(cols))
+	col := make([]int, len(d.keys))
+	for i, c := range cols {
+		pq[i] = pqColumn{Name: c.name, Type: d.types[d.index[c.key]]}
+		col[d.index[c.key]] = i
+	}
+	d.sort()
+	w, err := newRowWriter(out, pq, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.write(ctx, fh, "log", w, col); !errors.Is(err, context.Canceled) {
+		t.Fatalf("pass 2: err = %v, want context.Canceled", err)
+	}
+	w.Abort()
+	if exists(out) || exists(out+".tmp") {
+		t.Fatalf("files = %v after pass 2 stopped, want the claimed log alone", f.files(t))
 	}
 }
