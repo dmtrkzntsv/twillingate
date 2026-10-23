@@ -21,7 +21,8 @@ func TestCastsMatchDuckDB(t *testing.T) {
 	f := newFixture(t)
 	values := []string{`"abc"`, `""`, `5`, `-7`, `"12"`, `"1280.6"`, `"1280.5"`, `"-2.5"`, `1.50`, `1e3`, `true`,
 		`{"k":1}`, `[1,2]`, `"é\u2028"`, `"x"`, `"1e300"`, `1e300`, `"0.25"`,
-		`"2026-09-10T12:00:00Z"`, `"2026-09-10T12:00:01.123456Z"`, `"2026-09-10"`, `"1969-12-31"`, `"10.09.2026"`, `"nope"`}
+		`"2026-09-10T12:00:00Z"`, `"2026-09-10T12:00:01.123456Z"`, `"2026-09-10"`, `"1969-12-31"`, `"10.09.2026"`, `"nope"`,
+		`"0x1p4"`, `" 12 "`, `" 1.5"`, `"1.5 "`, `"\t7"`}
 	cast := map[string]func(s string) (any, error){
 		"attr_v":        func(s string) (any, error) { return s, nil },
 		"display_width": func(s string) (any, error) { return ParseInt(s) },
@@ -40,6 +41,19 @@ func TestCastsMatchDuckDB(t *testing.T) {
 		`{"id":"a","attr_v":1e3}`:                        true,
 		`{"id":"a","day":"2026-09-10T12:00:00Z"}`:        true,
 		`{"id":"a","day":"2026-09-10T12:00:01.123456Z"}`: true,
+		// A number given as text: Go's ParseFloat reads hex ("0x1p4" is 16),
+		// DuckDB refuses it; DuckDB trims spaces around a number, Go refuses
+		// them. Ingest writes these columns as JSON numbers, never text.
+		`{"id":"a","value":"0x1p4"}`:         true,
+		`{"id":"a","display_width":"0x1p4"}`: true,
+		`{"id":"a","display_width":" 12 "}`:  true,
+		`{"id":"a","value":" 12 "}`:          true,
+		`{"id":"a","display_width":" 1.5"}`:  true,
+		`{"id":"a","value":" 1.5"}`:          true,
+		`{"id":"a","display_width":"1.5 "}`:  true,
+		`{"id":"a","value":"1.5 "}`:          true,
+		`{"id":"a","display_width":"\t7"}`:   true,
+		`{"id":"a","value":"\t7"}`:           true,
 	}
 	for _, v := range values {
 		for col, to := range cast {
@@ -75,7 +89,8 @@ func TestCastsMatchDuckDB(t *testing.T) {
 // without an escape gives what json.Unmarshal gives, invalid UTF-8
 // included.
 func TestJSONTextReadsStringsAsUnmarshalDoes(t *testing.T) {
-	for _, raw := range []string{`""`, `"abc"`, `"é"`, "\"a\xffb\"", `"a\"b"`, `"\u00e9\n"`, ` "x" `} {
+	for _, raw := range []string{`""`, `"abc"`, `"é"`, "\"a\xffb\"", `"a\"b"`, `"\u00e9\n"`, ` "x" `,
+		`"\u0000"`, `"a\/b"`, `"\ud83d\ude00"`, `"\ud800"`, "\"\xed\xa0\x80\"", "\"\xc0\xaf\"", "\"\U0001F600\"", "\"a\u2028b\""} {
 		var want string
 		if err := json.Unmarshal([]byte(raw), &want); err != nil {
 			t.Fatal(err)

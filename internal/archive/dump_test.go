@@ -10,8 +10,10 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -261,7 +263,9 @@ func (f fixture) orderedByFamilyAndTS(t *testing.T, path string) {
 		var ts int64 = math.MaxInt64
 		tsOK := r[1] != nil
 		if tsOK {
-			fmt.Sscan(fmt.Sprint(r[1]), &ts)
+			if _, err := fmt.Sscan(fmt.Sprint(r[1]), &ts); err != nil {
+				t.Fatalf("ts %v: %v", r[1], err)
+			}
 		}
 		return fam, ts, famOK, tsOK
 	}
@@ -363,5 +367,89 @@ func TestDumpSendsTheEngineNothing(t *testing.T) {
 	}
 	if n, ids := f.rows(t, "2026-10-11.parquet"); n != 6000 || ids != 6000 {
 		t.Fatalf("day file: %d rows, %d ids; want 6000 and 6000", n, ids)
+	}
+}
+
+// manyKeysLog is lines product events, each with keys attributes of
+// its own: lines × keys distinct keys in all.
+func manyKeysLog(t *testing.T, lines, keys int) string {
+	t.Helper()
+	var b strings.Builder
+	for i := 0; i < lines; i++ {
+		attrs := map[string]string{}
+		for k := 0; k < keys; k++ {
+			attrs[fmt.Sprintf("k%05d_%d", i, k)] = "v"
+		}
+		b.WriteString(logOf(t, withAttrs(evOf(1, fmt.Sprintf("id-%05d", i), "2026-10-11T10:00:00Z"), "", attrs)))
+	}
+	return b.String()
+}
+
+// heapAfterGC is the live heap after a collection.
+func heapAfterGC() uint64 {
+	var m runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&m)
+	return m.HeapAlloc
+}
+
+// TestDumpHoldsALineAsTheKeysItHas: a log whose every line brings keys of
+// its own (5,000 lines, 3 keys each: 15,000 keys) is held as each line's
+// values, so the read's heap grows with the lines, not lines times keys
+// (dense rows would be 5,000 × 15,041 × 32 bytes, 2.4 GB). Such a log
+// dumps; the writer's buffers per column are logged, not bounded.
+func TestDumpHoldsALineAsTheKeysItHas(t *testing.T) {
+	f := newFixture(t)
+	f.writeFile(t, "2026-10-11.parquet.dumping", manyKeysLog(t, 5000, 3))
+	src := f.project1("2026-10-11.parquet.dumping")
+	before := heapAfterGC()
+	d := newLogDump()
+	if err := d.read(src); err != nil {
+		t.Fatal(err)
+	}
+	held := int64(heapAfterGC()) - int64(before)
+	runtime.KeepAlive(d)
+	t.Logf("read: %d keys, %d rows, %.1f MB held", len(d.keys), len(d.rows), float64(held)/(1<<20))
+	if len(d.keys) != len(fields)+15000 || len(d.rows) != 5000 {
+		t.Fatalf("%d keys, %d rows; want %d and 5000", len(d.keys), len(d.rows), len(fields)+15000)
+	}
+	if held > 32<<20 {
+		t.Fatalf("the read holds %d MB for 5,000 lines, want under 32 MB", held>>20)
+	}
+	// The writer holds buffers per column (concern for the pass's budget):
+	// the dump itself runs on a tenth of the keys, so make check stays light.
+	small := f.project1("2026-10-12.parquet.dumping")
+	f.writeFile(t, filepath.Base(small), manyKeysLog(t, 500, 3))
+	var peak atomic.Uint64
+	stop := make(chan struct{})
+	sampled := make(chan struct{})
+	go func() {
+		defer close(sampled)
+		var m runtime.MemStats
+		for {
+			runtime.ReadMemStats(&m)
+			if m.HeapAlloc > peak.Load() {
+				peak.Store(m.HeapAlloc)
+			}
+			select {
+			case <-stop:
+				return
+			case <-time.After(5 * time.Millisecond):
+			}
+		}
+	}()
+	base := heapAfterGC()
+	start := time.Now()
+	err := dumpLog(small, f.project1("2026-10-12.parquet"))
+	close(stop)
+	<-sampled
+	if err != nil {
+		t.Fatal(err)
+	}
+	grew := int64(peak.Load()) - int64(base)
+	t.Logf("dump of 500 lines, %d columns: %s, heap peak %.0f MB above the start (%.0f KB a column)", len(fields)+1500,
+		time.Since(start).Round(time.Millisecond), float64(grew)/(1<<20), float64(grew)/1024/float64(len(fields)+1500))
+	if got := f.values(t, "SELECT count(*), count(attr_k00250_1) FROM read_parquet("+quote(f.project1("2026-10-12.parquet"))+")"); !eq(got, []string{"[500 1]"}) {
+		t.Fatalf("rows = %v", got)
 	}
 }

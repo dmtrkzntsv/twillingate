@@ -125,6 +125,9 @@ func (a *Archive) maintainProject(ctx context.Context, project int64, today civi
 	}
 	for _, n := range names {
 		if dumpingName.MatchString(n) {
+			if err := ctx.Err(); err != nil {
+				return errors.Join(append(errs, err)...)
+			}
 			if err := a.dump(dir, n); err != nil {
 				errs = append(errs, err)
 			} else {

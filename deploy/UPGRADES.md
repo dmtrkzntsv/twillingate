@@ -1414,6 +1414,9 @@ child.
 
 - **Before the upgrade**, nothing to check by hand.
 - **On the day**, day files written from now on have smaller row groups: one per family and day, at most 65,536 rows each. Older files are left as they are until retention. Nothing to do.
-- A log line edited by hand whose text attribute holds a JSON number keeps it as written (`1.50` stays `"1.50"`, where it became `"1.5"`). Ingest writes every attribute as a string, so no logged event changes.
+- A log line edited by hand reads differently in three ways. Ingest never writes such a line, so no logged event changes:
+  - A text attribute holding a JSON number keeps it as written: `1.50` stays `"1.50"`, where it became `"1.5"`.
+  - A timestamp with an offset is converted to UTC: `12:00:00+02:00` is stored as 10:00, where the offset was dropped and 12:00 stored.
+  - A `day` given as a timestamp (`"2026-09-10T12:00:00Z"`) fails the dump, where it was read as that date. The log stays pending (`<day>.parquet.dumping`) and holds its month back from the merge until it is corrected.
 
 Rollback: install the previous release; it reads the files this one wrote.

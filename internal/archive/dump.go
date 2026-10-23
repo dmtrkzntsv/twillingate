@@ -35,9 +35,14 @@ import (
 // lands (a fixed key has its own, every other is VARCHAR), so each kept
 // line becomes a row indexed by the order its keys were first seen, and
 // the rows are put in column order as they are written. Memory: the day's
-// kept lines as rows (a value per key, 32 bytes, plus the strings); each
-// line's parsed map is dropped once its row is built. A day is at most a
-// few tens of thousands of lines.
+// kept lines, each as the values of the keys it has (40 bytes a value, plus
+// the strings), so a log whose lines each bring keys of their own grows
+// with its values, not with lines times keys; each line's parsed map is
+// dropped once its row is built. A day is at most a few tens of thousands
+// of lines. The writer holds a page buffer per column (rowWriter).
+//
+// A key given twice in one object keeps its last value (Go's decoder);
+// ingest never writes one.
 func dumpLog(src, out string) error {
 	d := newLogDump()
 	if err := d.read(src); err != nil {
@@ -45,32 +50,34 @@ func dumpLog(src, out string) error {
 	}
 	cols := columnsOf(d.keySet())
 	pq := make([]pqColumn, len(cols))
-	from := make([]int, len(cols)) // column i's place in d's rows
+	col := make([]int, len(d.keys)) // each key's column
 	for i, c := range cols {
 		k := d.index[c.key]
 		pq[i] = pqColumn{Name: c.name, Type: d.types[k]}
-		from[i] = k
+		col[k] = i
 	}
-	// d indexes the fields first, in order, as columnsOf lists them.
-	fam, ts, day := fieldIndex("family"), fieldIndex("ts"), fieldIndex("day")
-	slices.SortStableFunc(d.rows, func(x, y row) int {
-		if c := nullsLast(x[fam], y[fam], func(a, b value) int { return strings.Compare(a.s, b.s) }); c != 0 {
+	slices.SortStableFunc(d.rows, func(x, y logRow) int {
+		if c := nullsLast(x.family, y.family, func(a, b value) int { return strings.Compare(a.s, b.s) }); c != 0 {
 			return c
 		}
-		return nullsLast(x[ts], y[ts], func(a, b value) int { return cmp.Compare(a.n, b.n) })
+		return nullsLast(x.ts, y.ts, func(a, b value) int { return cmp.Compare(a.n, b.n) })
 	})
+	// columnsOf lists the fields first, in order.
+	fam, day := fieldIndex("family"), fieldIndex("day")
 	w, err := newRowWriter(out, pq, func(prev, next row) bool { return prev[fam] != next[fam] || prev[day] != next[day] })
 	if err != nil {
 		return err
 	}
 	buf := make(row, len(cols))
+	var prev []logCell
 	for _, r := range d.rows {
-		for i, k := range from {
-			buf[i] = value{}
-			if k < len(r) {
-				buf[i] = r[k]
-			}
+		for _, c := range prev {
+			buf[col[c.key]] = value{}
 		}
+		for _, c := range r.cells {
+			buf[col[c.key]] = c.v
+		}
+		prev = r.cells
 		if err := w.Write(buf); err != nil {
 			w.Abort()
 			return err
@@ -80,15 +87,25 @@ func dumpLog(src, out string) error {
 }
 
 // logDump is a log being read for its dump: every key seen, in the order
-// first seen (the fields first), with its type, and the kept lines as rows
-// over those keys; a row is as long as the keys were when its line was
-// read.
+// first seen (the fields first), with its type, and the kept lines.
 type logDump struct {
 	index map[string]int
 	keys  []string
 	types []colType
-	rows  []row
+	rows  []logRow
 	first FirstLines
+}
+
+// logRow is a kept line: the values of the keys it has, by key index, with
+// its family and ts again for the sort.
+type logRow struct {
+	family, ts value
+	cells      []logCell
+}
+
+type logCell struct {
+	key int32
+	v   value
 }
 
 func newLogDump() *logDump {
@@ -166,14 +183,23 @@ func (d *logDump) line(line []byte) error {
 	if !d.first.Keep(id, ok) {
 		return nil
 	}
-	r := make(row, len(d.keys))
+	r := logRow{cells: make([]logCell, 0, len(m))}
 	for k, raw := range m {
 		i := d.index[k]
 		v, err := castValue(raw, d.types[i])
 		if err != nil {
 			return fmt.Errorf("%s: %w", visible(k), err)
 		}
-		r[i] = v
+		if v.null() {
+			continue
+		}
+		switch k {
+		case "family":
+			r.family = v
+		case "ts":
+			r.ts = v
+		}
+		r.cells = append(r.cells, logCell{int32(i), v})
 	}
 	d.rows = append(d.rows, r)
 	return nil
