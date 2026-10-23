@@ -33,7 +33,6 @@ A small leaf, `internal/shared/hll`, holds the distinct-count sketch. The `query
 - **Refusals:** `native.ErrInvalid`, matched with `errors.Is`. `internal/api` maps it to `invalidf` (400 over REST). Messages name the field.
 - **Docs:** the `query` row and the `POST /api/query` row in `docs/twillingate.md` change in the same commit as the tool (CLAUDE.md's table). The structured language gets a section in `docs/twillingate.md` next to "Writing SQL against the event files".
 - Run `make check` before each commit that touches Go outside `scripts/` (it builds the web UI, so it needs Node 22). Never use `/tmp`; use `GOTMPDIR=~/.cache/gotmp`. Go is at `/usr/local/go/bin/go`.
-- Never mention prices, tiers, plans, margins, customers, cloud or private services in committed text.
 
 ## Review Focus
 

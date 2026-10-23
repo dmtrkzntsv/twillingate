@@ -38,7 +38,7 @@
 - **`TestSystemDashboards`** keeps passing: every widget, every preset, non-empty on 7d (the `mayBeEmpty` list is updated only with a reason).
 - **Docs:** `docs/reporting.md` (anything describing built-in widgets or naming their SQL), `docs/twillingate.md` (fixed tools), and `deploy/UPGRADES.md`. The last one needs a short entry: built-in dashboards now read the native engine; visible differences G2, G6–G11, G13–G15; nothing to do.
 - **Commits:** `feat(reporting)!` only if a stored user-visible contract breaks; otherwise `feat(reporting)`. Tools dropped are `feat(api)!` (breaking for agents).
-- **Checks:** `make check` must pass before each commit (`PATH=/usr/local/go/bin:$PATH GOTMPDIR=~/.cache/gotmp make check`), and `cd web && npm run e2e` for tasks that change layouts. Never use `/tmp`. Never mention prices, tiers, plans, margins, customers, cloud or private services.
+- **Checks:** `make check` must pass before each commit (`PATH=/usr/local/go/bin:$PATH GOTMPDIR=~/.cache/gotmp make check`), and `cd web && npm run e2e` for tasks that change layouts. Never use `/tmp`.
 
 ## Review Focus
 

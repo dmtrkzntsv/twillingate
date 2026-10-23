@@ -37,7 +37,6 @@ Every component that accepts `sql` also accepts `query`. System dashboard widget
 - After changing widget contracts, regenerate and commit `internal/reporting/ui/components.json` (`make ui`), as CLAUDE.md requires.
 - Web: everything clickable keeps the pointer cursor (`web/e2e/cursor.spec.ts`), and nothing scrolls sideways at 360px (`web/e2e/phone.spec.ts`).
 - `make check` must pass before each commit (it needs Node 22 and Go on PATH: `PATH=/usr/local/go/bin:$PATH GOTMPDIR=~/.cache/gotmp make check`). Web changes also run `cd web && npm test` and `npm run e2e` (Playwright, Chromium at `/opt/pw-browsers` or the system one).
-- Never mention prices, tiers, plans, margins, customers, cloud or private services in committed text.
 
 ## Review Focus
 

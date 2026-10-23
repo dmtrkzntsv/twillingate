@@ -26,7 +26,6 @@
 - Exact queries must equal DuckDB's answers exactly. The approximate attribute-values query must keep each `Users` and `Groups` value within **2%** of the exact one, or within 1 where the exact value is under 50. `Count` stays exact.
 - No cache in this step. The owner's rule is no cache unless it shows great results.
 - Outputs go under `~/.cache/twbench-native/`, never `/tmp`. Use `GOTMPDIR=~/.cache/gotmp`. Go is at `/usr/local/go/bin/go`.
-- Never mention prices, tiers, plans, margins, customers, cloud or private services in committed text.
 
 ## Review Focus
 

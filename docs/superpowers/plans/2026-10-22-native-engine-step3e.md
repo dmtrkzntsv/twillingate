@@ -36,7 +36,7 @@
 - **Approximation:** `users` and `groups` over a whole range follow the engine's rule (exact up to 1,024 ids per group, then a sketch marked approximate). `values` in `keys` is exact or approximate by the same rule.
 - **Bounds:** high-cardinality attributes (e.g. 20,000 item ids) must stay within `MaxGroups`/`MaxBytes`. Past them a `values` answer truncates (or is refused), as breakdowns do. The step 2 ruling that `product_attributes` is capped at 92 days exists because DuckDB ran out of memory; the native engine refuses on its own budget instead, and the tool keeps its cap until step 3f decides.
 - Validate, `Columns()`/`ColumnTypes()` (attribute and value text, day a day, event_name text, metrics number), the MCP schema, and `docs/twillingate.md` "Structured queries" (bound by `TestStructuredQueryDocument`) change in the same commit.
-- `make check` must pass before each commit: `PATH=/usr/local/go/bin:$PATH GOTMPDIR=~/.cache/gotmp make check`. Never use `/tmp`. Never mention prices, tiers, plans, margins, customers, cloud or private services.
+- `make check` must pass before each commit: `PATH=/usr/local/go/bin:$PATH GOTMPDIR=~/.cache/gotmp make check`. Never use `/tmp`.
 
 ## Review Focus
 
