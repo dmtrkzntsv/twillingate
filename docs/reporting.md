@@ -163,7 +163,10 @@ reuses one only up to `REPORTING_REFRESH_MAX_AGE` old (default `1m`), and
 `refresh_after` says when a fresh load would run the query again. A viewer
 can turn on auto-refresh from a dashboard's top-right "…" menu: the page
 then reloads it every `auto_refresh_seconds` (the longer of the two, so
-each reload runs the queries again), only while its window has focus. Changing a
+each reload runs the queries again), only while its window has focus. The
+console loads a dashboard's widgets, and refreshes them, through one
+[stream](#streaming-a-dashboards-widgets) per 64 widgets, with `fresh` on a
+refresh; a single card, or a remote table's own page, uses the GET route. Changing a
 widget's source starts it on new entries. Widget queries run on the event files
 under the same guards as `query`: one read-only
 `SELECT`, `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_ROWS_MAX`.

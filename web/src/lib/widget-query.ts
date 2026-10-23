@@ -3,6 +3,7 @@ import { widgets } from '@/components/widgets'
 import type { WidgetModule } from '@/components/widgets/types'
 import { endpoints, type Widget, type WidgetData, type WidgetDataQuery } from './api'
 import { liveFilters, type TableView } from './table-view'
+import { loadWidget, streamParams } from './widget-stream'
 
 /** The widget's component, if the bundle has it: a null or unknown name means it was removed. */
 export function componentOf(widget: Widget): WidgetModule | undefined {
@@ -39,7 +40,7 @@ export function viewQuery(widget: Widget, view: TableView, columns: string[] | u
  */
 export function widgetQuery(widget: Widget, params: WidgetDataQuery, idle = false, view: Partial<WidgetDataQuery> = {}) {
   const selection = selectionKey(widget, params)
-  return queryOptions({
+  return queryOptions<WidgetData, Error, WidgetData, readonly unknown[]>({
     queryKey: [
       'widget',
       widget.widget_id,
@@ -50,7 +51,13 @@ export function widgetQuery(widget: Widget, params: WidgetDataQuery, idle = fals
       view.sort,
       view.offset,
     ] as const,
-    queryFn: () => endpoints.widgetData(widget.widget_id, { ...params, ...view }),
+    // The card's default view joins the other cards' in one stream
+    // (widget-stream.ts); a remote table's own page, filter or sort, which
+    // the stream does not take, has its own GET.
+    queryFn: ({ signal }) =>
+      Object.values(view).some((v) => v !== undefined)
+        ? endpoints.widgetData(widget.widget_id, { ...params, ...view })
+        : loadWidget({ ...streamParams(params), widget_id: widget.widget_id }, signal),
     // A widget whose component is gone has nothing to render the data with;
     // an idle one keeps showing what is cached but asks for nothing new.
     enabled: !idle && componentOf(widget) !== undefined,
@@ -111,8 +118,13 @@ export function shownViews(client: QueryClient, widget: Widget, params: WidgetDa
   })
 }
 
+/** Whether a widget's source can be refreshed at all: a sql or query source is cached, md is not. */
+export function refreshableSource(type: string | undefined): boolean {
+  return type === 'sql' || type === 'query'
+}
+
 /** Whether a widget's answer may be refreshed yet: cacheable and past `refresh_after`. */
 export function canRefresh(data: WidgetData | undefined, now: number): boolean {
-  if (!data?.refresh_after || data.source_type !== 'sql') return false
+  if (!data?.refresh_after || !refreshableSource(data.source_type)) return false
   return Date.parse(data.refresh_after) <= now
 }

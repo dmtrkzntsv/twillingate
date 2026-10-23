@@ -1,8 +1,8 @@
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { describe, expect, it } from 'vitest'
-import type { Widget, WidgetDataQuery } from './api'
+import type { Widget, WidgetData, WidgetDataQuery } from './api'
 import { emptyView, type TableView } from './table-view'
-import { isRemoteTable, shownViews, viewQuery, widgetQuery } from './widget-query'
+import { canRefresh, isRemoteTable, refreshableSource, shownViews, viewQuery, widgetQuery } from './widget-query'
 
 function widget(component: string | null, props: Record<string, unknown> = {}): Widget {
   return {
@@ -87,5 +87,24 @@ describe('shownViews', () => {
 
   it('names nothing when no card shows the widget, rather than an unshown first page', () => {
     expect(shownViews(new QueryClient(), widget('stat'), params)).toEqual([])
+  })
+})
+
+describe('canRefresh', () => {
+  const past = new Date(Date.now() - 1000).toISOString()
+  const answer = (source_type: WidgetData['source_type'], refresh_after: string | undefined = past) =>
+    ({ widget_id: 42, source_type, data: null, refresh_after }) as WidgetData
+
+  it('lets a sql or query answer be refreshed once past refresh_after', () => {
+    expect(canRefresh(answer('sql'), Date.now())).toBe(true)
+    expect(canRefresh(answer('query'), Date.now())).toBe(true)
+    expect(canRefresh(answer('query', new Date(Date.now() + 60_000).toISOString()), Date.now())).toBe(false)
+  })
+
+  it('never refreshes markdown, or an answer with no refresh_after', () => {
+    expect(canRefresh(answer('md'), Date.now())).toBe(false)
+    expect(canRefresh({ ...answer('sql'), refresh_after: undefined }, Date.now())).toBe(false)
+    expect(refreshableSource('md')).toBe(false)
+    expect(refreshableSource('query')).toBe(true)
   })
 })

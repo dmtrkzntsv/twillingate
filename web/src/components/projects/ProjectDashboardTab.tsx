@@ -11,6 +11,7 @@ import WidgetGrid from '@/components/WidgetGrid'
 import { useAutoRefresh } from '@/hooks/use-auto-refresh'
 import { useFreshness } from '@/hooks/use-freshness'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
+import { useSelectionSignal } from '@/hooks/use-selection-signal'
 import { useStoredState } from '@/hooks/use-stored-state'
 import { useWidgetActions } from '@/hooks/use-widget-actions'
 import type { DashboardDetail, DashboardsResponse, Project, ProjectTab, Widget } from '@/lib/api'
@@ -21,7 +22,7 @@ import { resolve } from '@/lib/ranges'
 import type { ShareContext } from '@/lib/share'
 import { chooseSelection } from '@/lib/selection'
 import { selectionParams, widgetParams } from '@/lib/view'
-import { refreshWidget, shownViews } from '@/lib/widget-query'
+import { refreshDashboard } from '@/lib/widget-stream'
 import ProjectTabMenu from './ProjectTabMenu'
 
 interface Props {
@@ -111,19 +112,20 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
   const showGrid = dashboard.widgets.length > 0
   const freshness = useFreshness(dashboard.widgets, paramsFor, showGrid)
   const [refreshing, setRefreshing] = useState(false)
+  // Refresh all and auto-refresh reload through one stream, with `fresh`
+  // (widget-stream.ts); leaving the selection stops what is still loading.
+  const selectionSignal = useSelectionSignal(paramsFor)
   const refreshAll = () => {
     setRefreshing(true)
-    const refreshes = freshness.refreshable.flatMap((w) =>
-      shownViews(client, w, paramsFor(w)).map((view) => refreshWidget(client, w, paramsFor(w), view))
-    )
-    void Promise.allSettled(refreshes).finally(() => setRefreshing(false))
+    // Each widget refreshes what its card shows, a remote table its current page.
+    void refreshDashboard(client, freshness.refreshable, paramsFor, selectionSignal()).finally(() => setRefreshing(false))
   }
 
   // The same per-viewer choice as on the dashboard page, kept per group.
   const autoSeconds = list.auto_refresh_seconds ?? 0
   const [autoOn, setAutoOn] = useStoredState(`twillingate.auto_refresh.${dashboard.group_id}`, (v) => (v === true ? true : null))
   useAutoRefresh(autoOn === true && showGrid, autoSeconds, () => {
-    void client.invalidateQueries({ queryKey: ['widget'] })
+    void refreshDashboard(client, dashboard.widgets, paramsFor, selectionSignal())
   })
 
   return (

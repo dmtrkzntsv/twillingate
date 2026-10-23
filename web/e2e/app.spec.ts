@@ -311,3 +311,51 @@ for (const viewport of VIEWPORTS) {
     await expect(page).toHaveURL(/[?&]range=custom&from=\d{4}-\d\d-\d\d&to=\d{4}-\d\d-\d\d/)
   })
 }
+
+test("a dashboard loads its widgets through one stream, and refreshes them through another", async ({ page, request }) => {
+  const id = (await dashboardIds(request)).get('Views')
+  expect(id).toBeDefined()
+  // The browser's clock, so the refresh need not wait out REPORTING_REFRESH_MAX_AGE.
+  await page.clock.install()
+  await login(page)
+  // The dashboard login lands on loads its own stream: let it finish first.
+  await expect(page.locator('[data-slot="widget-card"]').first()).toBeVisible()
+  await expect(page.getByRole('status', { name: 'Loading' })).toHaveCount(0)
+
+  const streams: { fresh: boolean[] }[] = []
+  const gets: string[] = []
+  page.on('request', (req) => {
+    const url = new URL(req.url())
+    if (req.method() === 'POST' && url.pathname === '/api/widgets/stream') {
+      const body = req.postDataJSON() as { widgets: { fresh?: boolean }[] }
+      streams.push({ fresh: body.widgets.map((w) => w.fresh === true) })
+    } else if (req.method() === 'GET' && /^\/api\/widgets\/\d+\/data$/.test(url.pathname)) {
+      gets.push(url.pathname)
+    }
+  })
+
+  await page.goto(`/app/dashboards/${id}`)
+  await page.waitForLoadState('networkidle')
+  const cards = page.locator('[data-slot="widget-card"]')
+  expect(await cards.count()).toBeGreaterThan(1)
+  // Every card has drawn its answer: none still loading, none failed.
+  await expect(page.getByRole('status', { name: 'Loading' })).toHaveCount(0)
+  await assertNoErrorCards(page)
+  expect(streams).toHaveLength(1)
+  expect(streams[0].fresh).toHaveLength(await cards.count())
+  expect(streams[0].fresh.every((f) => !f)).toBe(true)
+  expect(gets).toEqual([])
+
+  await page.clock.fastForward('02:00')
+  const refresh = page.getByRole('button', { name: 'Refresh all' })
+  await expect(refresh).not.toHaveAttribute('aria-disabled', 'true')
+  const refreshed = page.waitForRequest((req) => req.method() === 'POST' && req.url().endsWith('/api/widgets/stream'))
+  await refresh.click()
+  await refreshed
+  await page.waitForLoadState('networkidle')
+  await expect(page.getByRole('status', { name: 'Loading' })).toHaveCount(0)
+  expect(streams).toHaveLength(2)
+  expect(streams[1].fresh.length).toBeGreaterThan(1)
+  expect(streams[1].fresh.every((f) => f)).toBe(true)
+  expect(gets).toEqual([])
+})
