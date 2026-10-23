@@ -54,7 +54,7 @@ func newFixtureWith(t *testing.T, threads int, memory string) fixture {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { eng.Close(); l.Close() })
-	return fixture{l, eng, New(l, eng, slog.Default())}
+	return fixture{l, eng, New(l, slog.Default())}
 }
 
 // evOf is log_test.go's ev with the project first and ReceivedAt set.
@@ -138,7 +138,7 @@ func TestMaintainLogsWhatThePassDid(t *testing.T) {
 	f := newFixture(t)
 	f.write(t, evOf(1, "a", "2026-09-29T10:00:00Z"), evOf(1, "b", "2026-09-30T10:00:00Z"), evOf(2, "c", "2026-10-02T10:00:00Z"))
 	var buf strings.Builder
-	a := New(f.log, f.eng, slog.New(slog.NewTextHandler(&buf, nil)))
+	a := New(f.log, slog.New(slog.NewTextHandler(&buf, nil)))
 	today, _ := civil.Parse("2026-10-02")
 	if err := a.Maintain(context.Background(), today, 1, 400); err != nil {
 		t.Fatal(err)
@@ -151,65 +151,38 @@ func TestMaintainLogsWhatThePassDid(t *testing.T) {
 	}
 }
 
-// countingEngine counts the requests that reach the engine: each one
-// spawns a child when none runs. logReads counts those that read a log.
-type countingEngine struct {
-	Engine
-	requests, logReads int
-}
-
-func (e *countingEngine) count(sql string) {
-	e.requests++
-	if strings.Contains(sql, "read_json") || strings.Contains(sql, ".dumping") {
-		e.logReads++
-	}
-}
-
-func (e *countingEngine) Exec(ctx context.Context, sql string) error {
-	e.count(sql)
-	return e.Engine.Exec(ctx, sql)
-}
-
-func (e *countingEngine) Query(ctx context.Context, sql string, maxRows int, args ...engine.Arg) (engine.Result, error) {
-	e.count(sql)
-	return e.Engine.Query(ctx, sql, maxRows, args...)
-}
-
-// TestMaintainWithNothingToDoSpawnsNoChild: a pass whose work set is
-// empty, as the file names tell (no project, only today's log, or
-// everything dumped, merged and derived already), sends the engine no
-// request, so the boot pass of a fresh or idle install starts no child.
-func TestMaintainWithNothingToDoSpawnsNoChild(t *testing.T) {
+// TestMaintainNeverTouchesAnEngine: the daily pass runs in Go in the
+// calling process. A pass that dumps, merges, derives and deletes an
+// expired month starts no engine child: the fixture's engine never takes a
+// slot (its slot directory is made by the first child it spawns), and the
+// files it wrote are then read back through that engine.
+func TestMaintainNeverTouchesAnEngine(t *testing.T) {
 	f := newFixture(t)
-	eng := &countingEngine{Engine: f.eng}
-	a := New(f.log, eng, slog.Default())
-	pass := func(today string) {
+	pass := func(today string, retention int) {
 		t.Helper()
 		d, _ := civil.Parse(today)
-		if err := a.Maintain(context.Background(), d, 1, 400); err != nil {
+		if err := f.a.Maintain(context.Background(), d, 1, retention); err != nil {
 			t.Fatal(err)
 		}
 	}
-	pass("2026-10-12") // no project at all
-	f.write(t, evOf(1, "a", "2026-10-12T10:00:00Z"))
-	pass("2026-10-12") // only today's open log
-	if eng.requests != 0 {
-		t.Fatalf("%d engine requests with nothing to dump, merge or derive, want none", eng.requests)
+	pass("2026-10-12", 400) // no project at all
+	f.write(t, named(pageView("old", "o", "2026-06-10T10:00:00Z", "/"), "u0", "", "", ""),
+		named(pageView("a", "a", "2026-09-29T10:00:00Z", "/"), "u1", "Ada", "", ""),
+		evOf(1, "b", "2026-10-11T10:00:00Z"), evOf(1, "c", "2026-10-13T10:00:00Z"))
+	pass("2026-10-13", 100) // dumps, merges June and September, deletes June, derives
+	pass("2026-10-13", 100)
+	slots := filepath.Join(filepath.Dir(f.log.Dir()), "slots")
+	if _, err := os.Stat(slots); !os.IsNotExist(err) {
+		t.Fatalf("stat %s = %v: the pass started an engine child", slots, err)
 	}
-
-	f.write(t, evOf(1, "b", "2026-09-29T10:00:00Z"))
-	pass("2026-10-13") // dumps both days, merges September, derives
-	if eng.requests == 0 {
-		t.Fatal("no engine request for a pass with a merge and derived files to write")
+	if got := f.files(t); !eq(got, []string{"2026-09.parquet", "2026-10-11.parquet", "2026-10-13.log"}) {
+		t.Fatalf("files = %v", got)
 	}
-	if eng.logReads != 0 {
-		t.Fatalf("%d engine requests read a log: the dump goes through the engine", eng.logReads)
+	if got := f.derived(t); !eq(got, []string{aliasesFile, identitiesFile, "sessions/2026-09.parquet", "sessions/2026-10-11.parquet"}) {
+		t.Fatalf("derived = %v", got)
 	}
-	eng.requests = 0
-	pass("2026-10-13")
-	pass("2026-10-13")
-	if eng.requests != 0 {
-		t.Fatalf("%d engine requests on passes after everything is done, want none", eng.requests)
+	if got := f.values(t, "SELECT id, name, views FROM read_parquet('"+f.project1(identitiesFile)+"')"); !eq(got, []string{"[u1 Ada 1]"}) {
+		t.Fatalf("identities = %v", got)
 	}
 }
 

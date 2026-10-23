@@ -135,12 +135,7 @@ func writeHostFiles(ctx context.Context, dir, raw string) error {
 	if err := log.WriteEvents(ctx, hostEvents()); err != nil {
 		return err
 	}
-	eng, err := hostEngine(dir, raw)
-	if err != nil {
-		return err
-	}
-	defer eng.Close()
-	return archive.New(log, eng, slog.New(slog.DiscardHandler)).Maintain(ctx, civil.Today(time.Now()), 1, 400)
+	return archive.New(log, slog.New(slog.DiscardHandler)).Maintain(ctx, civil.Today(time.Now()), 1, 400)
 }
 
 // hostSession is one session of hostEvents: views page views over

@@ -416,12 +416,11 @@ func TestMergeFailsOnAnUnmatchedInput(t *testing.T) {
 	}
 }
 
-// TestMergeSendsTheEngineNothing: a month's merge runs in Go: no request
-// reaches the engine.
+// TestMergeSendsTheEngineNothing: a month's merge runs in Go (the Archive
+// holds no engine).
 func TestMergeSendsTheEngineNothing(t *testing.T) {
 	f := newFixture(t)
-	eng := &countingEngine{Engine: f.eng}
-	a := New(f.log, eng, f.a.logger)
+	a := f.a
 	dir := f.project1("")
 	f.goDay(t, dir, "2026-09-01.parquet", sortedLog(t, "2026-09-01", "a", 0, 5000, "1"))
 	f.goDay(t, dir, "2026-09-01.1.parquet", sortedLog(t, "2026-09-01", "a", 4000, 2000, "2"))
@@ -433,9 +432,6 @@ func TestMergeSendsTheEngineNothing(t *testing.T) {
 	merged, err := a.merge(context.Background(), filepath.Clean(dir), names, "2026-09")
 	if err != nil || !merged {
 		t.Fatalf("merge = %v, %v", merged, err)
-	}
-	if eng.requests != 0 {
-		t.Fatalf("%d engine requests from a merge, want none", eng.requests)
 	}
 	if got := f.files(t); !eq(got, []string{"2026-09.parquet"}) {
 		t.Fatalf("files = %v, want the month file alone", got)

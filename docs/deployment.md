@@ -18,8 +18,9 @@ widgets at `/share/`) — and its whole state is one SQLite file.
 Linux on amd64 or arm64 with glibc 2.35 or newer (Debian 12, Ubuntu 22.04 or
 later), or Docker on amd64 or arm64. 32-bit ARM is not built. Plan on 1 GB
 of memory: the server stays small (`GOMEMLIMIT` bounds it), and each engine
-child, the process that answers analytics queries, may take up to
-`ENGINE_MEMORY_LIMIT` (512 MB by default) for a few seconds. One `serve`
+child, the process that answers SQL, may take up to
+`ENGINE_MEMORY_LIMIT` (512 MB by default) for a few seconds. The daily pass
+writes the event files in the server process, in Go, and starts no child. One `serve`
 process runs one child at a time; `ENGINE_MAX_CHILDREN` bounds the children
 across every process on one data directory, so it matters for a split
 install (ingest and console as separate processes), where the default 2 lets
@@ -125,8 +126,8 @@ to it.
 | `CONSOLE_DATABASE_DSN` | Database the console reads for queries, as `sqlite://<path>` (a copy or replica of the store, say). Defaults to `DATABASE_DSN`. |
 | `CONSOLE_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `30s`. |
 | `CONSOLE_QUERY_ROWS_MAX` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
-| `ENGINE_MEMORY_LIMIT` | DuckDB's memory limit for each engine child, the process that answers analytics queries: `512MB`, `1GB`, `2GiB` (DuckDB's MB is 10^6 bytes). Outside GOMEMLIMIT, which bounds only the server. Default `512MB`. |
-| `ENGINE_MAX_CHILDREN` | Engine children running at once, across every process on one data directory. One `serve` process runs one child at a time, so this matters for a split install (ingest and console as two processes); a process waits for a free slot, and gets one within about a second from another process whose child is idle (an idle child yields its slot). Default 2. |
+| `ENGINE_MEMORY_LIMIT` | DuckDB's memory limit for each engine child, the process that answers SQL: a widget's SQL, `query`'s, and the form-attribution lookup. The daily pass does not use the engine: it dumps, merges and derives the event files in the server process. Outside GOMEMLIMIT, which bounds only the server. `512MB`, `1GB`, `2GiB` (DuckDB's MB is 10^6 bytes). Default `512MB`. |
+| `ENGINE_MAX_CHILDREN` | Engine children running at once (each takes one of these slots), across every process on one data directory; only SQL takes one, never the daily pass. One `serve` process runs one child at a time, so this matters for a split install (ingest and console as two processes); a process waits for a free slot, and gets one within about a second from another process whose child is idle (an idle child yields its slot). Default 2. |
 | `REPORTING_CACHE_MAX_AGE` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default `15m`. |
 | `REPORTING_REFRESH_MAX_AGE` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_MAX_AGE`; must not exceed it when that is non-zero. Default `1m`. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_MAX_AGE`, `REPORTING_REFRESH_MAX_AGE`) while its window has focus; both 0 removes the option. |
 
@@ -143,10 +144,10 @@ leftover one is ignored, so rename any still in `twillingate.env`.
 
 ### Raspberry Pi and low-resource hosts
 
-- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. One `serve` process runs one child at a time (the ingest process for the daily pass's files and the form-attribution lookup, the console's for every load of a widget that reads SQL and for `query`'s SQL, so the console's child is the busy one); on a split install, lower `ENGINE_MEMORY_LIMIT` rather than raise `ENGINE_MAX_CHILDREN`.
+- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. One `serve` process runs one child at a time (the ingest process for the form-attribution lookup, the console's for every load of a widget that reads SQL and for `query`'s SQL, so the console's child is the busy one); on a split install, lower `ENGINE_MEMORY_LIMIT` rather than raise `ENGINE_MAX_CHILDREN`.
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Set `GOMEMLIMIT` (unit and compose files ship `128MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory.
-- Plan on 1 GB of memory, as in [Install](#install): `GOMEMLIMIT` bounds the server alone, and the engine child may take up to `ENGINE_MEMORY_LIMIT` on top of it. On less, lower `ENGINE_MEMORY_LIMIT` (`256MB`) before anything else; queries then spill to disk and run slower.
+- Plan on 1 GB of memory, as in [Install](#install): `GOMEMLIMIT` bounds the server alone (the daily pass included: it runs in the server), and the engine child may take up to `ENGINE_MEMORY_LIMIT` on top of it. On less, lower `ENGINE_MEMORY_LIMIT` (`256MB`) before anything else; queries then spill to disk and run slower.
 - Lower `RETENTION_DAYS` if the event files outgrow the card: a month file is deleted once its last day is older, and nothing else holds events.
 
 ## The console
@@ -425,7 +426,7 @@ rotates at 00:00 UTC; a catch-up pass at startup means downtime
 across those times skips no day. With `LOG_FILE` set, install
 `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.
 
-The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began were copied in once, on the upgrade to v0.21, by that release's `twillingate events import`. The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (the built-in widgets answered without the engine, a widget's SQL through its child), `query`, the analytics tools (`views_overview` through `identities`), the count of events in `limits`, `list_attributes`, `usage` and the console's event names and newest days read them and the tables derived from them.
+The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began were copied in once, on the upgrade to v0.21, by that release's `twillingate events import`. The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass, in Go in the ingest process, without an engine child (`ENGINE_*` do not apply to it): the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (the built-in widgets answered without the engine, a widget's SQL through its child), `query`, the analytics tools (`views_overview` through `identities`), the count of events in `limits`, `list_attributes`, `usage` and the console's event names and newest days read them and the tables derived from them.
 
 ### Back up and restore
 

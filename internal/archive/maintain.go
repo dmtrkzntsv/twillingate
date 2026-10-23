@@ -18,18 +18,16 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
-// Archive maintains the files the Log fills, derives the sessions,
-// identities and aliases from them, and imports rows that never went
-// through ingest (import.go). It is the one caller allowed to write
-// through the engine's Exec.
+// Archive maintains the files the Log fills and derives the sessions,
+// identities and aliases from them. It runs in the calling process, in Go:
+// it holds no engine, so the daily pass starts no child.
 type Archive struct {
 	log    *Log
-	eng    Engine
 	logger *slog.Logger
 }
 
-func New(log *Log, eng Engine, logger *slog.Logger) *Archive {
-	return &Archive{log: log, eng: eng, logger: logger}
+func New(log *Log, logger *slog.Logger) *Archive {
+	return &Archive{log: log, logger: logger}
 }
 
 var (
@@ -194,15 +192,15 @@ func (a *Archive) derive(ctx context.Context, dir string, force bool, st *passSt
 		}
 	}
 	for _, day := range slices.Sorted(maps.Keys(pf.deriveDays)) {
-		if err := a.write(ctx, "COPY ("+sessionsSelect(eventsOf(pf.deriveDays[day]))+") TO ", filepath.Join(sdir, day+".parquet")); err != nil {
-			errs = append(errs, err)
+		if err := deriveSessions(ctx, pf.deriveDays[day], filepath.Join(sdir, day+".parquet")); err != nil {
+			errs = append(errs, fmt.Errorf("derive %s/%s.parquet: %w", sessionsDir, day, err))
 		} else {
 			st.derived++
 		}
 	}
 	for _, month := range slices.Sorted(maps.Keys(pf.deriveMonths)) {
-		if err := a.write(ctx, "COPY ("+sessionsSelect(eventsOf([]string{pf.deriveMonths[month]}))+") TO ", filepath.Join(sdir, month+".parquet")); err != nil {
-			errs = append(errs, err)
+		if err := deriveSessions(ctx, []string{pf.deriveMonths[month]}, filepath.Join(sdir, month+".parquet")); err != nil {
+			errs = append(errs, fmt.Errorf("derive %s/%s.parquet: %w", sessionsDir, month, err))
 		} else {
 			st.derived++
 		}
@@ -213,11 +211,20 @@ func (a *Archive) derive(ctx context.Context, dir string, force bool, st *passSt
 		}
 	}
 	if len(pf.Parquet) > 0 && (force || pf.identitiesDue) {
-		src := eventsOf(pf.Parquet)
-		for _, d := range []struct{ sel, file string }{{identitiesSelect(src), identitiesFile}, {aliasesSelect(src), aliasesFile}} {
+		// One read of every events file folds both: an error reading them
+		// fails both files.
+		fold, foldErr := foldIdentities(ctx, pf.Parquet)
+		for _, d := range []struct {
+			file  string
+			write func(*identityFold, string) error
+		}{{identitiesFile, (*identityFold).writeIdentities}, {aliasesFile, (*identityFold).writeAliases}} {
 			out := filepath.Join(dir, d.file)
-			if err := a.write(ctx, "COPY ("+d.sel+") TO ", out); err != nil {
-				errs = append(errs, err)
+			err := foldErr
+			if err == nil {
+				err = d.write(fold, out)
+			}
+			if err != nil {
+				errs = append(errs, fmt.Errorf("derive %s: %w", d.file, err))
 				// The old file is newer than every events file left after
 				// retention, so it would keep reading as current and keep
 				// expired users' names; missing, it is derived on read and
@@ -453,28 +460,6 @@ func sqlList(paths []string) string {
 		q[i] = quote(p)
 	}
 	return "[" + strings.Join(q, ", ") + "]"
-}
-
-// write runs copyTo (a COPY … TO, missing its target) into out.tmp, makes
-// it 0640 like the logs (DuckDB creates it under the process's umask),
-// fsyncs it, renames it over out and fsyncs the directory: a reader sees
-// the old file or the whole new one, and a crash leaves at most a .tmp.
-func (a *Archive) write(ctx context.Context, copyTo, out string) error {
-	tmp := out + ".tmp"
-	os.Remove(tmp)
-	if err := a.eng.Exec(ctx, copyTo+quote(tmp)+" (FORMAT parquet, COMPRESSION zstd)"); err != nil {
-		return fmt.Errorf("archive: %s: %w", filepath.Base(out), err)
-	}
-	if err := os.Chmod(tmp, 0o640); err != nil {
-		return fmt.Errorf("archive: %w", err)
-	}
-	if err := syncFile(tmp); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, out); err != nil {
-		return fmt.Errorf("archive: %w", err)
-	}
-	return syncFile(filepath.Dir(out))
 }
 
 // Sizes is Sizes over the log's directory: each project's file bytes.

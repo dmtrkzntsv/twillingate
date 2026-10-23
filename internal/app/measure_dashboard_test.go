@@ -156,7 +156,7 @@ func TestMeasureDashboards(t *testing.T) {
 			t.Fatal(err)
 		}
 		began = time.Now()
-		if err := archive.New(log, genEng, slog.Default()).Maintain(ctx, last.AddDays(2), 1, 3650); err != nil {
+		if err := archive.New(log, slog.Default()).Maintain(ctx, last.AddDays(2), 1, 3650); err != nil {
 			t.Fatal(err)
 		}
 		t.Logf("daily pass (derive sessions, identities, aliases): %v", time.Since(began).Round(time.Millisecond))

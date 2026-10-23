@@ -15,6 +15,10 @@ import "fmt"
 // ones and derives what they lack from the events (the open logs, a day
 // dumped since). They describe the events as stored: rules (D6) do not
 // apply to them. Deleting one loses nothing.
+//
+// The pass writes them in Go (derived.go), as the SELECTs below define
+// them; the reader runs the SELECTs through DuckDB for what the files
+// lack, and the tests hold the Go files to them.
 const (
 	sessionsDir    = "sessions"
 	identitiesFile = "identities.parquet"
@@ -126,10 +130,4 @@ func aliasesCombine(parts string) string {
        CAST(sum(events) AS BIGINT) AS events
 FROM (` + parts + `)
 GROUP BY project_id, user_id, install_id`
-}
-
-// eventsOf is files read as one relation with every fixed column at its
-// type: a column a file lacks (written before it existed) reads NULL.
-func eventsOf(files []string) string {
-	return "(" + emptyRow() + " UNION ALL BY NAME SELECT * FROM read_parquet(" + sqlList(files) + ", union_by_name=true))"
 }

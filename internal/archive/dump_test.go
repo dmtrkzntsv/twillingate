@@ -340,12 +340,10 @@ func TestDumpKeepsTiesInFileOrder(t *testing.T) {
 }
 
 // TestDumpSendsTheEngineNothing: claiming and dumping a log, the 45 MB one
-// included, sends the engine no request, so a pass with only dumps to do
-// starts no child for them.
+// included, runs in Go (the Archive holds no engine).
 func TestDumpSendsTheEngineNothing(t *testing.T) {
 	f := newFixture(t)
-	eng := &countingEngine{Engine: f.eng}
-	a := New(f.log, eng, f.a.logger)
+	a := f.a
 	f.writeFile(t, "2026-10-11.1.closed", bigDumpLog(t))
 	dir := filepath.Join(f.log.Dir(), "1")
 	if err := a.claim(dir, "2026-10-11.1.closed", "2026-10-11"); err != nil {
@@ -356,9 +354,6 @@ func TestDumpSendsTheEngineNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Logf("dumped 45 MB in %s", time.Since(start).Round(time.Millisecond))
-	if eng.requests != 0 {
-		t.Fatalf("%d engine requests from a dump, want none", eng.requests)
-	}
 	if got := f.files(t); !eq(got, []string{"2026-10-11.parquet"}) {
 		t.Fatalf("files = %v, want the day file alone", got)
 	}

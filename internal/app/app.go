@@ -150,7 +150,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 
 	runner := jobs.New(st, cfg, reg, salter, logger, time.Now)
 	if archiveLog != nil {
-		runner.WithArchive(archive.New(archiveLog, eng, logger))
+		runner.WithArchive(archive.New(archiveLog, logger))
 		// Form attribution (raw-first PR 5b): the process that ingests
 		// looks each submission's source up in the files a minute after
 		// it arrives and writes its event to the log.

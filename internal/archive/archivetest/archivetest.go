@@ -78,7 +78,7 @@ func New(t testing.TB) *Files {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &Files{Dir: l.Dir(), Log: l, Eng: eng, Reader: r, Archive: archive.New(l, eng, slog.Default())}
+	return &Files{Dir: l.Dir(), Log: l, Eng: eng, Reader: r, Archive: archive.New(l, slog.Default())}
 }
 
 // Write appends events to the logs of their days.
