@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"strings"
 
 	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/encoding/thrift"
@@ -318,23 +317,9 @@ func (f *wideFile) chunkWriter(t colType) (*chunkWriter, error) {
 	if len(md.ColumnOrders) == 1 {
 		cw.order, cw.hasOrder = md.ColumnOrders[0], true
 	}
-	cw.version, cw.createdBy = md.Version, strings.Clone(md.CreatedBy)
+	cw.version, cw.createdBy = md.Version, md.CreatedBy
 	f.chunk[t] = cw
 	return cw, nil
-}
-
-// footerHead and footerTail are FileMetaData's fields before and after its
-// row groups (field 4), which close splices in already encoded.
-type footerHead struct {
-	Version int32                              `thrift:"1,required"`
-	Schema  thrift.Slice[format.SchemaElement] `thrift:"2,required"`
-	NumRows int64                              `thrift:"3,required"`
-}
-
-type footerTail struct {
-	KeyValueMetadata thrift.Slice[format.KeyValue]    `thrift:"5,optional"`
-	CreatedBy        string                           `thrift:"6,optional"`
-	ColumnOrders     thrift.Slice[format.ColumnOrder] `thrift:"7,optional"`
 }
 
 // close writes the footer, its length and the magic. A file of no rows
@@ -343,9 +328,9 @@ func (f *wideFile) close() error {
 	if f.err != nil {
 		return f.err
 	}
-	head := footerHead{NumRows: f.numRows, Schema: make([]format.SchemaElement, 1, len(f.cols)+1)}
-	head.Schema[0] = format.SchemaElement{Name: "twillingate", NumChildren: thrift.New(int32(len(f.cols)))}
-	tail := footerTail{KeyValueMetadata: []format.KeyValue{}} // empty, as parquet-go writes it
+	md := &format.FileMetaData{NumRows: f.numRows, Schema: make([]format.SchemaElement, 1, len(f.cols)+1),
+		KeyValueMetadata: []format.KeyValue{}} // empty, as parquet-go writes it
+	md.Schema[0] = format.SchemaElement{Name: "twillingate", NumChildren: thrift.New(int32(len(f.cols)))}
 	orders := make([]format.ColumnOrder, 0, len(f.cols))
 	for i, col := range f.cols {
 		cw, err := f.chunkWriter(col.Type)
@@ -353,22 +338,22 @@ func (f *wideFile) close() error {
 			return err
 		}
 		if i == 0 {
-			head.Schema[0] = cw.root
-			head.Schema[0].Name = "twillingate"
-			head.Schema[0].NumChildren = thrift.New(int32(len(f.cols)))
-			head.Version, tail.CreatedBy = cw.version, cw.createdBy
+			md.Schema[0] = cw.root
+			md.Schema[0].Name = "twillingate"
+			md.Schema[0].NumChildren = thrift.New(int32(len(f.cols)))
+			md.Version, md.CreatedBy = cw.version, cw.createdBy
 		}
 		el := cw.leaf
 		el.Name = col.Name
-		head.Schema = append(head.Schema, el)
+		md.Schema = append(md.Schema, el)
 		if cw.hasOrder {
 			orders = append(orders, cw.order)
 		}
 	}
 	if len(orders) == len(f.cols) && len(orders) > 0 {
-		tail.ColumnOrders = orders
+		md.ColumnOrders = orders
 	}
-	parts, err := spliceFooter(head, f.rowGroups, tail)
+	parts, err := spliceFooter(md, f.rowGroups)
 	if err != nil {
 		return err
 	}
@@ -387,41 +372,39 @@ func (f *wideFile) close() error {
 	return f.write(end[:])
 }
 
-// spliceFooter is the compact-protocol FileMetaData of head, the encoded
-// row groups and tail, in parts to write one after another (the row
-// groups are not copied into one buffer). A struct's fields are written as deltas of their
-// ids, each ending in a stop byte, and a struct's encoding does not depend
-// on where it sits: so head's encoding without its stop, field 4's header
-// (delta 1, a list), the list's header (of structs) and its elements, then
-// tail's encoding with its first field's delta taken from 4, not 0.
-func spliceFooter(head footerHead, rowGroups [][]byte, tail footerTail) ([][]byte, error) {
+// spliceFooter is the compact-protocol encoding of md with rowGroups, each
+// already encoded, as its row groups: in parts to write one after another,
+// so the row groups are not copied into one buffer. md, its RowGroups
+// empty, is encoded once; its row groups field (4) then reads 0x19 0x0C
+// right after field 3, the field's header (delta 1, a list) and an empty
+// list of structs. The 0x0C gives way to the list's header for
+// len(rowGroups) structs, then the row groups, whose encoding does not
+// depend on where they sit, then the rest of md.
+func spliceFooter(md *format.FileMetaData, rowGroups [][]byte) ([][]byte, error) {
+	if len(md.RowGroups) != 0 {
+		return nil, errors.New("the footer's row groups are spliced in")
+	}
 	p := new(thrift.CompactProtocol)
-	h, err := thrift.Marshal(p, &head)
+	b, err := thrift.Marshal(p, md)
 	if err != nil {
 		return nil, err
 	}
-	t, err := thrift.Marshal(p, &tail)
+	// Where field 3 ends: fields 1 to 3 alone, then the empty field 4 and
+	// the stop byte.
+	h, err := thrift.Marshal(p, &format.FileMetaData{Version: md.Version, Schema: md.Schema, NumRows: md.NumRows})
 	if err != nil {
 		return nil, err
 	}
-	if len(h) == 0 || h[len(h)-1] != 0 || len(t) == 0 {
+	at := len(h) - 3
+	if at < 0 || !bytes.Equal(h[at:], []byte{0x19, 0x0c, 0}) || len(b) < at+2 || b[at] != 0x19 || b[at+1] != 0x0c {
 		return nil, errors.New("an unexpected footer encoding")
 	}
-	const list, structType = 0x9, 0xc
-	out := append(h[:len(h)-1:len(h)-1], 1<<4|list)
-	if n := len(rowGroups); n < 15 {
-		out = append(out, byte(n)<<4|structType)
-	} else {
-		out = binary.AppendUvarint(append(out, 0xf0|structType), uint64(n))
+	var header bytes.Buffer
+	if err := p.NewWriter(&header).WriteList(thrift.List{Size: int32(len(rowGroups)), Type: thrift.STRUCT}); err != nil {
+		return nil, err
 	}
-	if id := int(t[0] >> 4); t[0] != 0 {
-		if id <= 4 {
-			return nil, errors.New("an unexpected footer tail")
-		}
-		t[0] = byte(id-4)<<4 | t[0]&0xf
-	}
-	parts := make([][]byte, 0, len(rowGroups)+2)
-	parts = append(parts, out)
+	parts := make([][]byte, 0, len(rowGroups)+3)
+	parts = append(parts, b[:at+1], header.Bytes())
 	parts = append(parts, rowGroups...)
-	return append(parts, t), nil
+	return append(parts, b[at+2:]), nil
 }

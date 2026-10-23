@@ -1,9 +1,12 @@
 package archive
 
 import (
+	"bufio"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
 	"math"
 	"os"
 	"path/filepath"
@@ -781,12 +784,16 @@ func TestWideFooterMatchesNarrow(t *testing.T) {
 		r[6], r[7] = dateValue(int32(i/100)), timestampValue(int64(i))
 		rows = append(rows, r)
 	}
-	byFamily := func(prev, next row) bool { return prev[0] != next[0] }
+	// By family and every 90 rows: 34 groups, so the list's header takes
+	// its long form (past 14 elements).
+	cut := func(prev, next row) bool {
+		return prev[0] != next[0] || prev[7].timestamp()/90 != next[7].timestamp()/90
+	}
 	narrow, wide := filepath.Join(dir, "narrow.parquet"), filepath.Join(dir, "wide.parquet")
-	writeRows(t, narrow, cols, byFamily, rows...)
+	writeRows(t, narrow, cols, cut, rows...)
 	func() {
 		defer setByColumn(0, byColumnBytes)()
-		writeRows(t, wide, cols, byFamily, rows...)
+		writeRows(t, wide, cols, cut, rows...)
 	}()
 	footer := func(p string) *format.FileMetaData {
 		b, err := os.ReadFile(p)
@@ -814,9 +821,32 @@ func TestWideFooterMatchesNarrow(t *testing.T) {
 			t.Errorf("footers differ at %s", d)
 		}
 	}
-	if len(w.RowGroups) != 2 || w.RowGroups[1].Columns[3].MetaData.Statistics.NullCount != 1000 ||
-		w.RowGroups[0].Columns[4].MetaData.Statistics.NullCount != 2000 {
-		t.Errorf("the all-NULL chunks: %+v", w.RowGroups)
+	if len(w.RowGroups) < 30 {
+		t.Errorf("%d row groups, want 30 or more", len(w.RowGroups))
+	}
+	// v is all NULL in the views groups, b in the product ones.
+	for i, rg := range w.RowGroups {
+		null := 4
+		if string(rg.Columns[0].MetaData.Statistics.MinValue) == "views" {
+			null = 3
+		}
+		if st := rg.Columns[null].MetaData.Statistics; st.NullCount != rg.NumRows || st.MinValue != nil {
+			t.Errorf("group %d: column %s has %d nulls of %d rows", i, cols[null].Name, st.NullCount, rg.NumRows)
+		}
+	}
+}
+
+// TestWideFileRefusesTooManyRowGroups: past parquet-go's limit of row
+// groups, the by-column writer refuses as parquet-go does.
+func TestWideFileRefusesTooManyRowGroups(t *testing.T) {
+	f := newWideFile(bufio.NewWriter(io.Discard), statsCols)
+	f.rowGroups = make([][]byte, parquet.MaxRowGroups)
+	f.add(0, row{strValue("views"), dateValue(1), intValue(1)})
+	if err := f.writeGroup(1); !errors.Is(err, parquet.ErrTooManyRowGroups) {
+		t.Errorf("writeGroup = %v", err)
+	}
+	if err := f.writeGroup(1); !errors.Is(err, parquet.ErrTooManyRowGroups) {
+		t.Errorf("a second writeGroup = %v", err)
 	}
 }
 
