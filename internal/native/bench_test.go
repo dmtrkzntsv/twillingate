@@ -49,7 +49,7 @@ func BenchmarkDeriveSessions(b *testing.B) {
 	b.ResetTimer()
 	for b.Loop() {
 		var gr groupReader
-		if _, err := deriveSessions(1, day, files, &gr, func(int64) error { return nil }); err != nil {
+		if _, err := deriveSessions(1, day, files, &gr, readLog, func(int64) error { return nil }); err != nil {
 			b.Fatal(err)
 		}
 	}

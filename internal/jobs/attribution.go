@@ -11,7 +11,7 @@ import (
 )
 
 // Attributor finds where submissions came from in the event files
-// (*archive.Reader).
+// (*native.Engine).
 type Attributor interface {
 	Attribute(ctx context.Context, ls []archive.Lookup, days int, rules archive.Rules) ([]archive.Found, error)
 }

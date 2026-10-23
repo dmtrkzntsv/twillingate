@@ -27,9 +27,10 @@ on a month of a million events it peaks near 150 MB of resident memory
 process runs one child at a time; `ENGINE_MAX_CHILDREN` bounds the children
 across every process on one data directory, so it matters for a split
 install (ingest and console as separate processes), where the default 2 lets
-each have one. The ingest process starts a child only for the
-form-attribution lookup, each minute while submissions are pending whose
-project has events in the attribution window. `GOMEMLIMIT` does not
+each have one. Only SQL starts a child (a widget's SQL, `query`'s): the
+ingest process starts none, since the form-attribution lookup, like the
+daily pass, the built-in widgets and the check before a rename or merge
+rule is saved, reads the files in Go. `GOMEMLIMIT` does not
 cover the children.
 
 ### docker compose
@@ -129,8 +130,8 @@ to it.
 | `CONSOLE_DATABASE_DSN` | Database the console reads for queries, as `sqlite://<path>` (a copy or replica of the store, say). Defaults to `DATABASE_DSN`. |
 | `CONSOLE_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `30s`. |
 | `CONSOLE_QUERY_ROWS_MAX` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
-| `ENGINE_MEMORY_LIMIT` | DuckDB's memory limit for each engine child, the process that answers SQL: a widget's SQL, `query`'s, and the form-attribution lookup. The daily pass does not use the engine: it dumps, merges and derives the event files in the server process. Outside GOMEMLIMIT, the server's own soft memory target. `512MB`, `1GB`, `2GiB` (DuckDB's MB is 10^6 bytes). Default `512MB`. |
-| `ENGINE_MAX_CHILDREN` | Engine children running at once (each takes one of these slots), across every process on one data directory; only SQL takes one, never the daily pass. One `serve` process runs one child at a time, so this matters for a split install (ingest and console as two processes); a process waits for a free slot, and gets one within about a second from another process whose child is idle (an idle child yields its slot). Default 2. |
+| `ENGINE_MEMORY_LIMIT` | DuckDB's memory limit for each engine child, the process that answers SQL: a widget's SQL and `query`'s. The daily pass, the form-attribution lookup and the check before a rename or merge rule is saved do not use the engine: they read and write the event files in the server process. Outside GOMEMLIMIT, the server's own soft memory target. `512MB`, `1GB`, `2GiB` (DuckDB's MB is 10^6 bytes). Default `512MB`. |
+| `ENGINE_MAX_CHILDREN` | Engine children running at once (each takes one of these slots), across every process on one data directory; only SQL takes one, never the daily pass, the form-attribution lookup or a rule check. One `serve` process runs one child at a time, so this matters for a split install (ingest and console as two processes); a process waits for a free slot, and gets one within about a second from another process whose child is idle (an idle child yields its slot). Default 2. |
 | `REPORTING_CACHE_MAX_AGE` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default `15m`. |
 | `REPORTING_REFRESH_MAX_AGE` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_MAX_AGE`; must not exceed it when that is non-zero. Default `1m`. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_MAX_AGE`, `REPORTING_REFRESH_MAX_AGE`) while its window has focus; both 0 removes the option. |
 
@@ -147,7 +148,7 @@ leftover one is ignored, so rename any still in `twillingate.env`.
 
 ### Raspberry Pi and low-resource hosts
 
-- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. One `serve` process runs one child at a time (the ingest process for the form-attribution lookup, the console's for every load of a widget that reads SQL and for `query`'s SQL, so the console's child is the busy one); on a split install, lower `ENGINE_MEMORY_LIMIT` rather than raise `ENGINE_MAX_CHILDREN`.
+- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. One `serve` process runs one child at a time (the console's, for every load of a widget that reads SQL and for `query`'s SQL; the ingest process runs none); on a split install, lower `ENGINE_MEMORY_LIMIT` rather than raise `ENGINE_MAX_CHILDREN`.
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Keep `GOMEMLIMIT` (unit and compose files ship `256MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory. `GOMEMLIMIT` is a soft target, not a bound: the garbage collector works harder near it, and the process may go past it. The daily pass peaks near 150 MB on a month of a million events, and at about 230 to 400 MB on one with 2,000 distinct attribute keys (lower under a lower target, at more CPU).
 - Plan on 1 GB of memory, as in [Install](#install): `GOMEMLIMIT` is the server's own target (the daily pass included: it runs in the server), and the engine child may take up to `ENGINE_MEMORY_LIMIT` on top of it. On less, lower `ENGINE_MEMORY_LIMIT` (`256MB`) before anything else; queries then spill to disk and run slower.

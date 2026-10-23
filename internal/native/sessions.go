@@ -42,6 +42,15 @@ const gapIndex = -2
 // day is done.
 func (e *Engine) scanSessions(ctx context.Context, project int64, r Range, cols []string,
 	charge func(int64) error, add func(w int, b *Batch) error) error {
+	return e.scanSessionsWith(ctx, project, r, cols, readLog, charge, add)
+}
+
+// logReader reads a log's rows as readLog does.
+type logReader func(path string, cols []string, family string, r Range) (*Batch, error)
+
+// scanSessionsWith is scanSessions, a gap day's logs read through logs.
+func (e *Engine) scanSessionsWith(ctx context.Context, project int64, r Range, cols []string, logs logReader,
+	charge func(int64) error, add func(w int, b *Batch) error) error {
 	files, gaps, events, err := sessionSources(e.dir, project, r)
 	if err != nil {
 		return err
@@ -62,7 +71,7 @@ func (e *Engine) scanSessions(ctx context.Context, project int64, r Range, cols 
 		var b *Batch
 		var err error
 		if g.index == gapIndex {
-			b, err = deriveSessions(project, g.day, events, &readers[w], charge)
+			b, err = deriveSessions(project, g.day, events, &readers[w], logs, charge)
 		} else {
 			b, err = readers[w].read(g, cols, "", r)
 		}
@@ -95,9 +104,9 @@ func batchBytes(b *Batch) int64 {
 // from its views in events (Parquet files and logs, read without rules),
 // as archive's sessionsSelect does (archive.Sessionize).
 //
-// gr reads the Parquet row groups (the worker's reader); charge as
-// scanSessions describes.
-func deriveSessions(project, day int64, events archive.Files, gr *groupReader, charge func(int64) error) (*Batch, error) {
+// gr reads the Parquet row groups (the worker's reader), readLogs the
+// logs (readLog); charge as scanSessions describes.
+func deriveSessions(project, day int64, events archive.Files, gr *groupReader, readLogs logReader, charge func(int64) error) (*Batch, error) {
 	d := civil.DateOf(time.Unix(day*86400, 0).UTC())
 	dr := Range{From: d, To: d}
 	var held int64
@@ -124,7 +133,7 @@ func deriveSessions(project, day int64, events archive.Files, gr *groupReader, c
 		return hold(batchBytes(b))
 	}
 	for _, path := range logs {
-		b, err := readLog(path, viewColumns, "views", dr)
+		b, err := readLogs(path, viewColumns, "views", dr)
 		if err != nil {
 			return nil, err
 		}

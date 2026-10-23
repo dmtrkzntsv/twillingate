@@ -2,16 +2,55 @@ package app
 
 import (
 	"context"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// presenceFixture is the widgets fixture with a filePresence over its
-// files, and send, which appends one product event of project to them.
-func presenceFixture(t *testing.T) (*widgetsFixture, *filePresence, func(id string, project int64, name string, attrs map[string]string)) {
+// presence is manage.Presence, native or the SQL reference.
+type presence interface {
+	HasEvents(ctx context.Context, projectID int64, family store.Family, name string) (bool, error)
+	HasAttribute(ctx context.Context, projectID int64, key string) (bool, error)
+}
+
+// bothPresence asks the native filePresence and the SQL reference, and
+// fails the test unless they agree.
+type bothPresence struct {
+	t        *testing.T
+	nat, sql presence
+}
+
+func (b bothPresence) HasEvents(ctx context.Context, projectID int64, family store.Family, name string) (bool, error) {
+	got, err := b.nat.HasEvents(ctx, projectID, family, name)
+	want, werr := b.sql.HasEvents(ctx, projectID, family, name)
+	if err != nil || werr != nil || got != want {
+		b.t.Errorf("HasEvents(%d, %s, %q): native %v, %v; SQL %v, %v", projectID, family, name, got, err, want, werr)
+	}
+	return got, err
+}
+
+func (b bothPresence) HasAttribute(ctx context.Context, projectID int64, key string) (bool, error) {
+	got, err := b.nat.HasAttribute(ctx, projectID, key)
+	want, werr := b.sql.HasAttribute(ctx, projectID, key)
+	if err != nil || werr != nil || got != want {
+		b.t.Errorf("HasAttribute(%d, %q): native %v, %v; SQL %v, %v", projectID, key, got, err, want, werr)
+	}
+	return got, err
+}
+
+// presenceFixture is the widgets fixture with the native filePresence
+// over its files, checked against the SQL reference on every answer, and
+// send, which appends one product event of project to them, at at
+// (zero: 2026-08-20 noon).
+func presenceFixture(t *testing.T) (*widgetsFixture, presence, func(id string, project int64, name string, attrs map[string]string, at ...time.Time)) {
 	t.Helper()
 	f := newWidgetsFixture(t)
 	eng, reader, err := openFiles(f.cfg)
@@ -19,7 +58,7 @@ func presenceFixture(t *testing.T) (*widgetsFixture, *filePresence, func(id stri
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { eng.Close() })
-	send := func(id string, project int64, name string, attrs map[string]string) {
+	send := func(id string, project int64, name string, attrs map[string]string, when ...time.Time) {
 		t.Helper()
 		log, err := archive.OpenLog(f.cfg.EventsDir)
 		if err != nil {
@@ -27,13 +66,17 @@ func presenceFixture(t *testing.T) (*widgetsFixture, *filePresence, func(id stri
 		}
 		defer log.Close()
 		at := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+		if len(when) > 0 {
+			at = when[0]
+		}
 		if err := log.WriteEvents(context.Background(), []store.Event{{ID: id, ProjectID: project,
 			Family: store.FamilyProduct, EventName: name, TS: at, ReceivedAt: at, Kind: "app",
 			ActorID: "a", ActorKind: store.ActorInstall, SampleRate: 1, Attributes: attrs}}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	return f, &filePresence{reader: reader, reg: f.reg}, send
+	nat := &filePresence{nat: native.New(native.Options{Dir: f.cfg.EventsDir}), reg: f.reg}
+	return f, bothPresence{t: t, nat: nat, sql: &sqlPresence{reader: reader, reg: f.reg}}, send
 }
 
 // TestFilePresenceAppliesRules: the files answer through the registry's
@@ -111,4 +154,60 @@ func TestFilePresenceAttributeColumnAbsent(t *testing.T) {
 	if got, err := p.HasAttribute(ctx, 1, "theirs"); err != nil || got {
 		t.Errorf("another project's key: %v, %v; want false, nil", got, err)
 	}
+}
+
+// TestFilePresenceAttributeSpellings: a key matches its column without
+// regard to case, across a stored day file spelling it attr_Plan and an
+// open log spelling it attr_plan, and a key only the open log holds is
+// present; both as the SQL reference answers.
+func TestFilePresenceAttributeSpellings(t *testing.T) {
+	f, p, send := presenceFixture(t)
+	ctx := context.Background()
+	day := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	send("e1", 1, "a", map[string]string{"Plan": "pro"}, day)
+	send("e2", 2, "a", map[string]string{"Tier": "x"}, day)
+	log, err := archive.OpenLog(f.cfg.EventsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := archive.New(log, slog.New(slog.DiscardHandler)).Maintain(ctx, civil.DateOf(day.AddDate(0, 0, 1)), 1, 400); err != nil {
+		t.Fatal(err)
+	}
+	log.Close()
+	if !hasDayFile(t, f.cfg.EventsDir, 1, "2026-08-19.parquet") {
+		t.Fatal("no day file for 2026-08-19")
+	}
+	send("e3", 1, "a", map[string]string{"plan": "free", "fresh": "1"})
+	send("e4", 2, "a", map[string]string{"TIER": "y"})
+	for _, c := range []struct {
+		project int64
+		key     string
+		want    bool
+	}{
+		{1, "plan", true}, {1, "Plan", true}, {1, "PLAN", true},
+		{1, "fresh", true}, {1, "FRESH", true}, {2, "fresh", false},
+		{1, "tier", false}, {2, "tier", true}, {2, "Tier", true},
+		{1, "nokey", false}, {1, "", false},
+	} {
+		got, err := p.HasAttribute(ctx, c.project, c.key)
+		if err != nil || got != c.want {
+			t.Errorf("HasAttribute(%d, %q) = %v, %v; want %v", c.project, c.key, got, err, c.want)
+		}
+	}
+	// Renamed away, a stored and a live spelling read NULL alike.
+	if _, err := f.ops.RenameAttribute(ctx, "test", 1, "plan", "level"); err != nil {
+		t.Fatal(err)
+	}
+	for key, want := range map[string]bool{"plan": false, "Plan": false, "level": true, "LEVEL": true, "fresh": true} {
+		if got, err := p.HasAttribute(ctx, 1, key); err != nil || got != want {
+			t.Errorf("after plan > level: HasAttribute(1, %q) = %v, %v; want %v", key, got, err, want)
+		}
+	}
+}
+
+// hasDayFile says whether project's directory under dir holds name.
+func hasDayFile(t *testing.T, dir string, project int64, name string) bool {
+	t.Helper()
+	_, err := os.Stat(filepath.Join(dir, strconv.FormatInt(project, 10), name))
+	return err == nil
 }
