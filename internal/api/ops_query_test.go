@@ -306,3 +306,28 @@ func TestQueryStructuredCompareEmpty(t *testing.T) {
 		t.Errorf("compare \"\" over MCP: %s", textOf(res))
 	}
 }
+
+// A ratio's num and den, each a metric with its own where, pass MCP's
+// schema; a side with as, or a ratio inside, is refused.
+func TestQueryStructuredRatio(t *testing.T) {
+	_, cs := newTestHost(t)
+	ratio := func(num, den map[string]any) map[string]any {
+		return map[string]any{"kind": "stat", "table": "events", "metrics": []any{
+			map[string]any{"op": "ratio", "as": "value", "round": 1, "num": num, "den": den}}}
+	}
+	product := []any{map[string]any{"column": "family", "op": "eq", "values": []any{"product"}}}
+	q := ratio(map[string]any{"op": "count", "where": product}, map[string]any{"op": "users", "where": product})
+	res := callTool(t, cs, "query", map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "query": q})
+	if res.IsError {
+		t.Errorf("a ratio over MCP: %s", textOf(res))
+	}
+	for name, q := range map[string]map[string]any{
+		"as in a side": ratio(map[string]any{"op": "count", "as": "n"}, map[string]any{"op": "users"}),
+		"nested ratio": ratio(map[string]any{"op": "ratio", "num": map[string]any{"op": "count"}, "den": map[string]any{"op": "users"}},
+			map[string]any{"op": "users"}),
+	} {
+		if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "query": q}); !res.IsError {
+			t.Errorf("%s over MCP: accepted", name)
+		}
+	}
+}

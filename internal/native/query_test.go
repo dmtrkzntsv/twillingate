@@ -77,10 +77,18 @@ func TestValidate(t *testing.T) {
 		"attribute keys product": {Kind: "attributes", Table: "product", Output: "keys", Limit: 1,
 			Where: []Filter{{Column: "event_name", Op: "eq", Values: []string{"x"}}}},
 		"attribute keys measures": {Kind: "attributes", Table: "measures", Output: "keys", Keep: make([]string, 100)},
-		"retention grid":          {Kind: "retention", Output: "grid"},
-		"retention grid events":   {Kind: "retention", Table: "events", Output: "grid", Offsets: 90, Where: []Filter{{Column: "country", Op: "eq", Values: []string{"DE"}}}},
-		"retention curve":         {Kind: "retention", Output: "curve", IdentifiedBy: "install", Offsets: 1},
-		"retention milestones":    {Kind: "retention", Output: "milestones", IdentifiedBy: "user"},
+		"ratio stat": {Kind: "stat", Table: "events", Compare: "previous", Metrics: []Metric{{Op: "ratio", Round: ptr(1), As: "value",
+			Num: &Metric{Op: "count"}, Den: &Metric{Op: "users"}}}},
+		"ratio filtered sides": {Kind: "breakdown", Table: "views", Dimensions: []string{"country"}, Other: true, Order: "ratio",
+			Metrics: []Metric{{Op: "ratio",
+				Num: &Metric{Op: "daily_sum", Of: "actors", Where: []Filter{{Column: "consent", Op: "eq", Values: []string{"1"}}}},
+				Den: &Metric{Op: "daily_sum", Of: "actors", Where: []Filter{{Column: "consent", Op: "is_set"}}}}}},
+		"ratio trend":           {Kind: "trend", Table: "measures", Series: "event_name", Metrics: []Metric{{Op: "ratio", Num: &Metric{Op: "weight"}, Den: &Metric{Op: "count"}}}},
+		"ratio sessions":        {Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "ratio", Num: &Metric{Op: "sum", Column: "duration_sec"}, Den: &Metric{Op: "bounces"}}}},
+		"retention grid":        {Kind: "retention", Output: "grid"},
+		"retention grid events": {Kind: "retention", Table: "events", Output: "grid", Offsets: 90, Where: []Filter{{Column: "country", Op: "eq", Values: []string{"DE"}}}},
+		"retention curve":       {Kind: "retention", Output: "curve", IdentifiedBy: "install", Offsets: 1},
+		"retention milestones":  {Kind: "retention", Output: "milestones", IdentifiedBy: "user"},
 		"retention own milestones": {Kind: "retention", Output: "milestones", IdentifiedBy: "install", Offsets: 14,
 			Milestones: []int{0, 1, 3, 7, 10, 14}},
 	}
@@ -104,6 +112,9 @@ func TestValidate(t *testing.T) {
 		return q
 	}
 	st := func(w ...Filter) Query { return Query{Kind: "stat", Table: "events", Metrics: count(), Where: w} }
+	ratio := func(num, den *Metric) Query {
+		return Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "ratio", Num: num, Den: den}}}
+	}
 	invalid := []struct {
 		name string
 		q    Query
@@ -279,6 +290,24 @@ func TestValidate(t *testing.T) {
 		{"attributes series_limit", attrs(func(q *Query) { q.SeriesLimit = 2 }), "series_limit"},
 		{"attributes compare", attrs(func(q *Query) { q.Compare = "previous" }), "compare"},
 		{"attributes other", attrs(func(q *Query) { q.Other = true }), "other"},
+		{"ratio without num", ratio(nil, &Metric{Op: "count"}), "metrics[0].num"},
+		{"ratio without den", ratio(&Metric{Op: "count"}, nil), "metrics[0].den"},
+		{"nested ratio", ratio(&Metric{Op: "ratio", Num: &Metric{Op: "count"}, Den: &Metric{Op: "users"}}, &Metric{Op: "count"}), "metrics[0].num.op"},
+		{"as in a side", ratio(&Metric{Op: "count"}, &Metric{Op: "users", As: "u"}), "metrics[0].den.as"},
+		{"round in a side", ratio(&Metric{Op: "count", Round: ptr(1)}, &Metric{Op: "users"}), "metrics[0].num.round"},
+		{"share in a side", ratio(&Metric{Op: "share", Of: "count"}, &Metric{Op: "count"}), "metrics[0].num.op"},
+		{"bounces in a side on events", ratio(&Metric{Op: "count"}, &Metric{Op: "bounces"}), "metrics[0].den.op"},
+		{"bad side column", ratio(&Metric{Op: "sum", Column: "path"}, &Metric{Op: "count"}), "metrics[0].num.column"},
+		{"bad side where", ratio(&Metric{Op: "count", Where: []Filter{{Column: "nope", Op: "is_set"}}}, &Metric{Op: "count"}), "metrics[0].num.where[0].column"},
+		{"num on count", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count", Num: &Metric{Op: "count"}}}}, "metrics[0].num"},
+		{"den on users", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "users", Den: &Metric{Op: "count"}}}}, "metrics[0].den"},
+		{"ratio where", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "ratio", Num: &Metric{Op: "count"}, Den: &Metric{Op: "users"},
+			Where: []Filter{{Column: "path", Op: "is_set"}}}}}, "metrics[0].where"},
+		{"ratio column", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "ratio", Column: "value", Num: &Metric{Op: "count"}, Den: &Metric{Op: "users"}}}}, "metrics[0].column"},
+		{"ratio on identities side", Query{Kind: "stat", Table: "identities", Metrics: []Metric{{Op: "ratio", Num: &Metric{Op: "count"}, Den: &Metric{Op: "users"}}}}, "metrics[0].den.op"},
+		{"ratio in attributes", attrs(func(q *Query) {
+			q.Metrics = []Metric{{Op: "ratio", Num: &Metric{Op: "count"}, Den: &Metric{Op: "users"}}}
+		}), "metrics[0].op"},
 		{"attributes identified_by", attrs(func(q *Query) { q.IdentifiedBy = "user" }), "identified_by"},
 		{"attributes offsets", attrs(func(q *Query) { q.Offsets = 3 }), "offsets"},
 		{"attributes milestones", attrs(func(q *Query) { q.Milestones = []int{1} }), "milestones"},
@@ -323,6 +352,8 @@ func TestMetricName(t *testing.T) {
 		{Metric{Op: "weight"}, "weight"},
 		{Metric{Op: "share", Of: "weight"}, "share_weight"},
 		{Metric{Op: "share", Of: "count"}, "share_count"},
+		{Metric{Op: "ratio", Num: &Metric{Op: "count"}, Den: &Metric{Op: "users"}}, "ratio"},
+		{Metric{Op: "ratio", As: "per_user", Num: &Metric{Op: "count"}, Den: &Metric{Op: "users"}}, "per_user"},
 		{Metric{Op: "avg", Column: "value", Round: ptr(2), Where: []Filter{{Column: "path", Op: "is_set"}}}, "avg_value"},
 	} {
 		if got := c.m.Name(); got != c.want {

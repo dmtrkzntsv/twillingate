@@ -75,13 +75,15 @@ func (q Query) milestones() []int {
 
 // Metric is one aggregate.
 type Metric struct {
-	Op     string   `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. measures alone takes percentile (the q quantile of value, a sample weighing 1 / sample_rate, read from its log-scale bucket: within about 2%), mean (value weighted so) and weight (the samples' 1 / sample_rate summed). share (trend and breakdown only): the group's of (count, or on measures weight) over its partition's: in a breakdown the groups of the same first dimension (all with one dimension; an Other row's is all of them), in a trend the day's; empty over none. sessions takes count (sessions), actors, share, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, share, sum, avg, min and max. attributes takes count, actors, users and groups (group_id's empty value left out) and its own actors_or_null (distinct actor_id, NULL counting as one)"`
+	Op     string   `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. measures alone takes percentile (the q quantile of value, a sample weighing 1 / sample_rate, read from its log-scale bucket: within about 2%), mean (value weighted so) and weight (the samples' 1 / sample_rate summed). ratio: num over den, two metrics of the table each with its own where, as a DOUBLE; empty when den is 0 or empty or num is empty; an Other row's both sides over its folded groups; approximate when either side is. share (trend and breakdown only): the group's of (count, or on measures weight) over its partition's: in a breakdown the groups of the same first dimension (all with one dimension; an Other row's is all of them), in a trend the day's; empty over none. sessions takes count (sessions), actors, share, ratio, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, share, ratio, sum, avg, min and max. attributes takes count, actors, users and groups (group_id's empty value left out) and its own actors_or_null (distinct actor_id, NULL counting as one)"`
 	Q      float64  `json:"q,omitempty" jsonschema:"percentile only, above 0 and below 1: the quantile (0.75 for p75)"`
 	Column string   `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views; on identities views or events"`
 	Of     string   `json:"of,omitempty" jsonschema:"daily_sum, daily_max and daily_avg take actors, users or groups (what is counted distinct per day); share takes count or, on measures, weight"`
 	As     string   `json:"as,omitempty" jsonschema:"the output column's name (default: op, or op_column, or op_of, as share_weight; a percentile's p and 100 q, as p75 or p99.9)"`
 	Round  *int     `json:"round,omitempty" jsonschema:"optional, 0 to 6: decimal places to round the value to, half away from zero (an integer stays as it is)"`
 	Where  []Filter `json:"where,omitempty" jsonschema:"optional: filters, as the query's where, that a row must also satisfy to count toward this metric only; a group still exists from the query's where, so its metric may be 0 (count, distinct counts, bounces) or empty (the others)"`
+	Num    *Metric  `json:"num,omitempty" jsonschema:"ratio only, required: the numerator, a metric of the table with its own optional where, without as, round, share or ratio"`
+	Den    *Metric  `json:"den,omitempty" jsonschema:"ratio only, required: the denominator, as num"`
 }
 
 // maxRound bounds a metric's round.
@@ -367,7 +369,7 @@ var (
 	AttributeDimensions = []string{"day", "event_name"}
 	AttributeOps        = []string{"count", "actors", "users", "groups", "actors_or_null"}
 	Tables              = []string{"events", "views", "product", "measures", "sessions", "identities"}
-	MetricOps           = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "bounces", "bounce_rate", "percentile", "mean", "weight", "share", "actors_or_null"}
+	MetricOps           = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "bounces", "bounce_rate", "percentile", "mean", "weight", "share", "ratio", "actors_or_null"}
 	ValueColumns        = []string{"value", "sample_rate", "display_width", "display_height"}
 	// SessionValueColumns are the columns sum, avg, min and max take on
 	// sessions (ValueColumns on the other tables).
@@ -386,10 +388,10 @@ var (
 	valueCols  = setOf(ValueColumns)
 	sessValue  = setOf(SessionValueColumns)
 	idValue    = setOf(IdentityValueColumns)
-	idOps      = setOf([]string{"count", "share", "sum", "avg", "min", "max"})
+	idOps      = setOf([]string{"count", "share", "ratio", "sum", "avg", "min", "max"})
 	ofCols     = setOf(OfColumns)
 	filterOps  = setOf(FilterOps)
-	sessionOps = setOf([]string{"count", "actors", "share", "sum", "avg", "min", "max", "bounces", "bounce_rate"})
+	sessionOps = setOf([]string{"count", "actors", "share", "ratio", "sum", "avg", "min", "max", "bounces", "bounce_rate"})
 	bounceOps  = setOf([]string{"bounces", "bounce_rate"})
 	measureOps = setOf([]string{"percentile", "mean", "weight"})
 	orderedOps = map[string]bool{"gt": true, "gte": true, "lt": true, "lte": true}
@@ -740,18 +742,34 @@ func (q Query) validateAttributeKeys() error {
 }
 
 func (m Metric) validate(kind, table string, i int) error {
-	p := fmt.Sprintf("metrics[%d]", i)
+	return m.validateAt(kind, table, fmt.Sprintf("metrics[%d]", i))
+}
+
+// validateAt is validate of the metric at path p (metrics[0], or a
+// ratio's side, metrics[0].num).
+func (m Metric) validateAt(kind, table, p string) error {
 	if !metricOps[m.Op] {
 		return invalid(p+".op", "%q is not a metric", m.Op)
+	}
+	if m.Op == "ratio" {
+		if err := m.validateRatio(kind, table, p); err != nil {
+			return err
+		}
+	} else if m.Num != nil || m.Den != nil {
+		side := ".num"
+		if m.Num == nil {
+			side = ".den"
+		}
+		return invalid(p+side, "only a ratio takes num and den")
 	}
 	if m.Op == "actors_or_null" && kind != "attributes" {
 		return invalid(p+".op", "actors_or_null is a metric of attributes only")
 	}
 	if table == "sessions" && !sessionOps[m.Op] {
-		return invalid(p+".op", "%s is not a metric of sessions, which takes count, actors, share, bounces, bounce_rate, sum, avg, min and max", m.Op)
+		return invalid(p+".op", "%s is not a metric of sessions, which takes count, actors, share, ratio, bounces, bounce_rate, sum, avg, min and max", m.Op)
 	}
 	if table == "identities" && !idOps[m.Op] {
-		return invalid(p+".op", "%s is not a metric of identities, which takes count, share, sum, avg, min and max", m.Op)
+		return invalid(p+".op", "%s is not a metric of identities, which takes count, share, ratio, sum, avg, min and max", m.Op)
 	}
 	if table != "sessions" && bounceOps[m.Op] {
 		return invalid(p+".op", "%s is a metric of sessions only", m.Op)
@@ -819,6 +837,35 @@ func (m Metric) validate(kind, table string, i int) error {
 		}
 		if m.Of != "" {
 			return invalid(p+".of", "%s takes no of", m.Op)
+		}
+	}
+	return nil
+}
+
+// validateRatio refuses a malformed ratio at path p: num and den are
+// metrics of the table, each with its own where, but no as, round,
+// share or ratio; the ratio itself takes no where.
+func (m Metric) validateRatio(kind, table, p string) error {
+	if len(m.Where) > 0 {
+		return invalid(p+".where", "a ratio takes none; give num and den each its own")
+	}
+	for _, side := range []struct {
+		name string
+		m    *Metric
+	}{{"num", m.Num}, {"den", m.Den}} {
+		sp := p + "." + side.name
+		switch {
+		case side.m == nil:
+			return invalid(sp, "a ratio needs %s, a metric", side.name)
+		case side.m.Op == "ratio" || side.m.Op == "share":
+			return invalid(sp+".op", "%s is not a side of a ratio", side.m.Op)
+		case side.m.As != "":
+			return invalid(sp+".as", "a ratio's side has no name; give the ratio as")
+		case side.m.Round != nil:
+			return invalid(sp+".round", "a ratio's side is not rounded; give the ratio round")
+		}
+		if err := side.m.validateAt(kind, table, sp); err != nil {
+			return err
 		}
 	}
 	return nil

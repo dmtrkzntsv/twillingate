@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -37,6 +38,35 @@ type queryOut struct {
 // Native answers structured queries over the event files (native.Engine).
 type Native interface {
 	Answer(ctx context.Context, q native.Query, p native.Params, rules archive.Rules) (native.Result, error)
+}
+
+// metricSchema is native.Metric's schema, which the inference cannot
+// reach itself: its num and den are Metrics. They are described as
+// native.Metric's fields but as, round, num and den, the fields a
+// ratio's side does not take.
+func metricSchema() *jsonschema.Schema {
+	mt := reflect.TypeFor[native.Metric]()
+	fields := func(side reflect.Type) []reflect.StructField {
+		var out []reflect.StructField
+		for i := range mt.NumField() {
+			f := mt.Field(i)
+			switch {
+			case f.Type == reflect.PointerTo(mt) && side == nil:
+				continue
+			case f.Type == reflect.PointerTo(mt):
+				f.Type = reflect.PointerTo(side)
+			case side == nil && (f.Name == "As" || f.Name == "Round"):
+				continue
+			}
+			out = append(out, f)
+		}
+		return out
+	}
+	s, err := jsonschema.ForType(reflect.StructOf(fields(reflect.StructOf(fields(nil)))), nil)
+	if err != nil {
+		panic(fmt.Sprintf("api: schema for native.Metric: %v", err))
+	}
+	return s
 }
 
 // queryEnums lists the structured query's closed vocabularies in query's
@@ -79,6 +109,15 @@ func queryEnums(in *jsonschema.Schema) {
 	m.Properties["q"].ExclusiveMinimum, m.Properties["q"].ExclusiveMaximum = &minQ, &maxQ
 	m.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
 	q.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
+	sideOps := slices.DeleteFunc(slices.Clone(native.MetricOps), func(op string) bool { return op == "ratio" || op == "share" })
+	for _, side := range []string{"num", "den"} {
+		s := m.Properties[side]
+		s.Properties["op"].Enum = enum(sideOps)
+		s.Properties["column"].Enum = m.Properties["column"].Enum
+		s.Properties["of"].Enum = enum(native.OfColumns)
+		s.Properties["q"].ExclusiveMinimum, s.Properties["q"].ExclusiveMaximum = &minQ, &maxQ
+		s.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
+	}
 }
 
 // maxQueryDays bounds a structured query's range, from and to included.

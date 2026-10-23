@@ -393,6 +393,9 @@ type metricSpec struct {
 	num      int      // index into agg.nums, for sum/avg/min/max
 	distinct int      // index into agg.distinct, for actors/users/groups and daily_*
 	msr      int      // index into agg.msrs, for percentile, mean and weight
+	// ratioNum and ratioDen are a ratio's sides, resolved as hidden
+	// metrics: they share the masks and partials the others use.
+	ratioNum, ratioDen *metricSpec
 }
 
 // distinctOf is the id column a distinct op counts: the metrics' own, and
@@ -547,9 +550,14 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 		}
 		return i
 	}
-	out := make([]metricSpec, len(metrics))
-	for k, m := range metrics {
+	var resolve func(m metricSpec) metricSpec
+	resolve = func(m metricSpec) metricSpec {
 		m.num, m.distinct, m.msr = -1, -1, -1
+		if m.Op == "ratio" {
+			num, den := resolve(*m.ratioNum), resolve(*m.ratioDen)
+			m.ratioNum, m.ratioDen = &num, &den
+			return m
+		}
 		key := filtersKey(m.Where)
 		mask, ok := maskIdx[key]
 		if !ok {
@@ -594,7 +602,11 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 			}
 			m.msr = i
 		}
-		out[k] = m
+		return m
+	}
+	out := make([]metricSpec, len(metrics))
+	for k, m := range metrics {
+		out[k] = resolve(m)
 	}
 	return a, out
 }
@@ -1370,6 +1382,16 @@ func (m *merged) computeOther(mt metricSpec, gs []int32) value {
 
 func (m *merged) computeRaw(mt metricSpec, gs []int32, day int, whole bool) value {
 	switch mt.Op {
+	case "ratio":
+		// num / den as a DOUBLE, both over the same groups and day (an
+		// Other row's both folded first): NULL when den is 0 or NULL, or
+		// num NULL.
+		num := m.computeRaw(*mt.ratioNum, gs, day, whole)
+		den := m.computeRaw(*mt.ratioDen, gs, day, whole)
+		if num.null || den.null || den.num() == 0 {
+			return value{null: true}
+		}
+		return value{f: num.num() / den.num(), approx: num.approx || den.approx}
 	case "share":
 		part := -1
 		if m.partOf != nil && !whole && len(gs) > 0 {

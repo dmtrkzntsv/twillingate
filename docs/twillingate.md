@@ -1756,7 +1756,7 @@ dimension, series and filter columns are `project_id`, `day`, `kind`,
 `exit_path`, `referrer_source`, `utm_source`, `utm_medium` and
 `utm_campaign`; `duration_sec` and `views` are numbers a filter may name
 (`{"column": "views", "op": "gt", "values": ["1"]}`) but not a dimension
-or series. It takes the metrics `count` (sessions), `actors`, `share`, `sum`,
+or series. It takes the metrics `count` (sessions), `actors`, `share`, `ratio`, `sum`,
 `avg`, `min` and `max` of `duration_sec` or `views`, and its own
 `bounces` and `bounce_rate`; not `users`, `groups` or the `daily_*` ones.
 
@@ -1767,7 +1767,7 @@ range, and `day` is that day (a trend counts the new users and groups per
 day). Its dimension, series and filter columns are `kind` (`user` or
 `group`), `id`, `name` and `day`; `views` and `events` are numbers a filter
 may name but not a dimension or series. It takes the metrics `count`
-(identities), `share` and `sum`, `avg`, `min` and `max` of `views` or `events`.
+(identities), `share`, `ratio` and `sum`, `avg`, `min` and `max` of `views` or `events`.
 
 | Metric `op` | Takes | Counts |
 | --- | --- | --- |
@@ -1782,6 +1782,7 @@ may name but not a dimension or series. It takes the metrics `count`
 | `weight` | | `measures` only: the samples' `1 / sample_rate` summed, the samples a sampled metric stands for |
 | `actors_or_null` | | `attributes` only: distinct `actor_id`, a NULL one counting as one more |
 | `share` | `of`: `count`, or on `measures` `weight` | breakdown, or trend with `series`: the group's `count` (or `weight`) divided by its partition's (`0.25`); empty when that is 0 |
+| `ratio` | `num` and `den`: each a metric of the table | `num` divided by `den` (`2.5`); empty when `den` is 0 or empty, or `num` is empty |
 
 A percentile comes from `bucket`, as the built-in Web Vitals and
 Measures dashboards compute theirs: the weights are summed per bucket and
@@ -1803,6 +1804,16 @@ A stat is one group, and an unsplit trend has one per day, so both refuse `share
 `approximate`, and with a metric `where` (below) both the group's and the
 partition's are of the rows that pass it.
 
+A ratio's `num` and `den` are metrics the table takes, each with its own
+optional `where` (below), but no `as`, `round`, `share` or `ratio`; the
+ratio itself takes no `where`, and a refusal names a side's field as
+`metrics[0].num.op`. Both sides are over the same rows: in an `Other`
+row each is put together over the groups it folds and then divided, and a
+`previous_` column divides the previous range's. A ratio is `approximate`
+when either side is, and its `round` rounds the quotient. Actions per
+user: `{"op": "ratio", "as": "per_user", "round": 1, "num": {"op":
+"count"}, "den": {"op": "users"}}`.
+
 A metric's column is named by `as`, else `op`, `op_column` (`sum_value`),
 `op_of` (`daily_sum_actors`, `share_weight`) or, for a percentile, `p` and `100 × q`
 (`p75`, `p99.9`); two metrics may not share a name, nor,
@@ -1817,7 +1828,7 @@ A metric takes two more optional fields:
   `where`, so a metric with none of its rows in a group reads `0` for
   `count`, `actors`, `users`, `groups` and `bounces`, and empty for the
   others (`sum`, `avg`, `min`, `max`, `daily_*`, `bounce_rate`,
-  `percentile`, `mean`, `weight`); `share` reads `0`, or empty when its
+  `percentile`, `mean`, `weight`, `ratio`); `share` reads `0`, or empty when its
   whole partition has none. A `daily_*` metric with a `where` is
   over the days with rows that pass it (its `daily_avg` averages those
   days only). They apply alike to the `previous_` columns, an `Other` row and a trend's
@@ -2006,6 +2017,18 @@ places.
     {"op": "count", "as": "events", "where": [{"column": "family", "op": "eq", "values": ["product"]}]},
     {"op": "avg", "column": "value", "as": "mean", "round": 2,
      "where": [{"column": "family", "op": "eq", "values": ["measures"]}]}]}}
+```
+
+A stat of the share of consenting visitors: visitors counted per day
+with `$consent` 1, over those with any `$consent`, as the built-in Views
+dashboard's share with consent in force has it.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "stat", "table": "views", "compare": "previous",
+  "metrics": [{"op": "ratio", "as": "consent_share", "round": 3,
+    "num": {"op": "daily_sum", "of": "actors", "where": [{"column": "consent", "op": "eq", "values": ["1"]}]},
+    "den": {"op": "daily_sum", "of": "actors", "where": [{"column": "consent", "op": "is_set"}]}}]}}
 ```
 
 A breakdown of measures: per page, the samples of LCP and the p75 of

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"reflect"
 
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -182,6 +183,9 @@ var schemaOptions = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonsc
 	reflect.TypeFor[json.RawMessage](): {Type: "object"},
 	// update_form's closes_at: a time, or null to reopen.
 	reflect.TypeFor[optionalTime](): {Types: []string{"string", "null"}},
+	// A structured query's metric holds a ratio's sides, metrics too: a
+	// cycle the inference refuses (metricSchema).
+	reflect.TypeFor[native.Metric](): metricSchema(),
 }}
 
 // schemaFor infers T's schema with schemaOptions. A type it cannot

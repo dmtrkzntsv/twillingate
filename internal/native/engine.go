@@ -197,6 +197,12 @@ var (
 // DuckDB's ROUND rounds a DOUBLE, after Other is put together and
 // before groups and series are ranked by it, as SQL's ORDER BY of the
 // rounded column ranks them.
+// ratio is SQL's num::DOUBLE / NULLIF(den, 0) of its two metrics, each
+// with its own where (NULL when either is NULL), computed from the same
+// partials as the other metrics: over a breakdown's Other row both sides
+// are put together over its folded groups first, over a stat's previous
+// range both are the previous range's; approximate when either side is,
+// and rounded as the ratio says.
 // share is a group's of (count: its rows, of the metric's where when it
 // has one; weight: their SUM(1 / sample_rate)) over its partition's, as
 // SQL's x / SUM(x) OVER (PARTITION BY …) reads it before the limit: in a
@@ -216,9 +222,9 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 	if err != nil {
 		return Result{}, err
 	}
-	metricFilters := make([][]filter, len(q.Metrics))
+	metrics := make([]metricSpec, len(q.Metrics))
 	for i, m := range q.Metrics {
-		if metricFilters[i], err = compileFilters(m.Where, fmt.Sprintf("metrics[%d].where", i)); err != nil {
+		if metrics[i], err = compileMetric(m, fmt.Sprintf("metrics[%d]", i)); err != nil {
 			return Result{}, err
 		}
 	}
@@ -233,7 +239,7 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 	defer func() { <-e.sem }()
 	backoff := retryBackoff
 	for attempt := 1; ; attempt++ {
-		res, err := e.answerOnce(ctx, q, filters, metricFilters, p, rules)
+		res, err := e.answerOnce(ctx, q, filters, metrics, p, rules)
 		if err == nil || !errors.Is(err, fs.ErrNotExist) || attempt == maxAttempts {
 			return res, err
 		}
@@ -246,7 +252,29 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 	}
 }
 
-func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metricFilters [][]filter, p Params, rules archive.Rules) (Result, error) {
+// compileMetric is m with its filters compiled, and a ratio's sides
+// with theirs; p is its path (metrics[0]).
+func compileMetric(m Metric, p string) (metricSpec, error) {
+	where, err := compileFilters(m.Where, p+".where")
+	if err != nil {
+		return metricSpec{}, err
+	}
+	mt := metricSpec{Metric: m, where: where}
+	if m.Op == "ratio" {
+		num, err := compileMetric(*m.Num, p+".num")
+		if err != nil {
+			return metricSpec{}, err
+		}
+		den, err := compileMetric(*m.Den, p+".den")
+		if err != nil {
+			return metricSpec{}, err
+		}
+		mt.ratioNum, mt.ratioDen = &num, &den
+	}
+	return mt, nil
+}
+
+func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metrics []metricSpec, p Params, rules archive.Rules) (Result, error) {
 	var rs ruleSet
 	if q.Table != "sessions" && q.Table != "identities" { // derived from the events as stored
 		var err error
@@ -254,7 +282,7 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 			return Result{}, err
 		}
 	}
-	s := scan{e: e, q: q, filters: filters, metricFilters: metricFilters, project: p.Project, rules: rs}
+	s := scan{e: e, q: q, filters: filters, metrics: metrics, project: p.Project, rules: rs}
 	switch q.Kind {
 	case "stat":
 		return s.stat(ctx, p.From, p.To)
@@ -340,12 +368,12 @@ type fileCols struct {
 
 // scan runs one query's scans.
 type scan struct {
-	e             *Engine
-	q             Query
-	filters       []filter
-	metricFilters [][]filter // per metric, its own where
-	project       int64
-	rules         ruleSet
+	e       *Engine
+	q       Query
+	filters []filter
+	metrics []metricSpec // the query's metrics, their filters compiled (not resolved: newAgg resolves them)
+	project int64
+	rules   ruleSet
 }
 
 // family is the family the query's table holds ("" for events: all).
@@ -362,11 +390,7 @@ func (s scan) family() string {
 func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string, perDay, sets bool) (*merged, []metricSpec, error) {
 	r := Range{From: from, To: to}
 	lo, hi := r.days()
-	ms := make([]metricSpec, len(s.q.Metrics))
-	for i, m := range s.q.Metrics {
-		ms[i] = metricSpec{Metric: m, where: s.metricFilters[i]}
-	}
-	a, ms := newAgg(aggOptions{metrics: ms, filters: s.filters, dims: dims, perDay: perDay, sets: sets,
+	a, ms := newAgg(aggOptions{metrics: s.metrics, filters: s.filters, dims: dims, perDay: perDay, sets: sets,
 		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
 	charge := func(n int64) error {
 		a.mem.add(n)
@@ -467,7 +491,19 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 // query's filters, its metrics' filters and dims name.
 func (s scan) statusColumns(dims []string) []string {
 	var out []string
-	for _, fs := range append([][]filter{s.filters}, s.metricFilters...) {
+	fss := [][]filter{s.filters}
+	var add func(mt metricSpec)
+	add = func(mt metricSpec) {
+		fss = append(fss, mt.where)
+		if mt.ratioNum != nil {
+			add(*mt.ratioNum)
+			add(*mt.ratioDen)
+		}
+	}
+	for _, mt := range s.metrics {
+		add(mt)
+	}
+	for _, fs := range fss {
 		for _, f := range fs {
 			if _, ok := statusColumns[f.column]; ok && !slices.Contains(out, f.column) {
 				out = append(out, f.column)
