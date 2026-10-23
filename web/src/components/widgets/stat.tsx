@@ -1,136 +1,120 @@
-import { useId } from "react";
-import { ArrowDownRightIcon, ArrowUpRightIcon } from "lucide-react";
-import { Area, AreaChart, ResponsiveContainer, YAxis } from "recharts";
-import { useCardMode } from "@/components/share/card-mode";
-import { approx, approximate, formatValue, type Format } from "@/lib/format";
-import { toRecords } from "@/lib/records";
-import type { Contract, Example, SqlData, WidgetProps } from "./types";
+import { useId } from 'react'
+import { ArrowDownRightIcon, ArrowUpRightIcon } from 'lucide-react'
+import { Area, AreaChart, ResponsiveContainer, YAxis } from 'recharts'
+import { useCardMode } from '@/components/share/card-mode'
+import { approx, approximate, formatValue, type Format } from '@/lib/format'
+import { toRecords } from '@/lib/records'
+import type { Contract, Example, SqlData, WidgetProps } from './types'
 
 interface StatProps {
-  format?: Format;
-  aggregate?: "sum" | "last" | "avg";
+  format?: Format
+  aggregate?: 'sum' | 'last' | 'avg'
 }
 
 export const contract: Contract = {
   description:
     "A single number, optionally compared to a previous period; give `x` for a small trend line under it, and it becomes the series' aggregate.",
-  accepts: ["sql", "query"],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [
-      { name: "value", types: ["number"] },
-      { name: "previous", types: ["number"], optional: true },
-      { name: "x", types: ["day"], optional: true },
+      { name: 'value', types: ['number'] },
+      { name: 'previous', types: ['number'], optional: true },
+      { name: 'x', types: ['day'], optional: true },
     ],
   },
   props: {
-    type: "object",
+    type: 'object',
     properties: {
-      format: { enum: ["number", "percent", "duration"] },
-      aggregate: { enum: ["sum", "last", "avg"] },
+      format: { enum: ['number', 'percent', 'duration'] },
+      aggregate: { enum: ['sum', 'last', 'avg'] },
     },
     additionalProperties: false,
   },
   defaultWidth: 3,
   defaultHeight: 3,
-};
+}
 
 export const examples: Example[] = [
   {
-    title: "Visitors",
-    props: { format: "number", aggregate: "sum" },
+    title: 'Visitors',
+    props: { format: 'number', aggregate: 'sum' },
     data: {
-      columns: ["value", "x"],
+      columns: ['value', 'x'],
       rows: [
-        ["240", "2026-09-01"],
-        ["255", "2026-09-02"],
-        ["260", "2026-09-03"],
-        ["275", "2026-09-04"],
-        ["300", "2026-09-05"],
-        ["290", "2026-09-06"],
-        ["310", "2026-09-07"],
-        ["320", "2026-09-08"],
-        ["335", "2026-09-09"],
-        ["340", "2026-09-10"],
-        ["355", "2026-09-11"],
-        ["360", "2026-09-12"],
-        ["375", "2026-09-13"],
-        ["390", "2026-09-14"],
+        ['240', '2026-09-01'],
+        ['255', '2026-09-02'],
+        ['260', '2026-09-03'],
+        ['275', '2026-09-04'],
+        ['300', '2026-09-05'],
+        ['290', '2026-09-06'],
+        ['310', '2026-09-07'],
+        ['320', '2026-09-08'],
+        ['335', '2026-09-09'],
+        ['340', '2026-09-10'],
+        ['355', '2026-09-11'],
+        ['360', '2026-09-12'],
+        ['375', '2026-09-13'],
+        ['390', '2026-09-14'],
       ],
       truncated: false,
     },
   },
   {
-    title: "Bounce rate",
-    props: { format: "percent" },
+    title: 'Bounce rate',
+    props: { format: 'percent' },
     data: {
-      columns: ["value", "previous"],
-      rows: [["0.42", "0.47"]],
+      columns: ['value', 'previous'],
+      rows: [['0.42', '0.47']],
       truncated: false,
     },
   },
-];
+]
 
-function aggregate(values: number[], how: StatProps["aggregate"]): number {
-  if (values.length === 0) return 0;
-  if (how === "last") return values[values.length - 1];
-  const sum = values.reduce((a, b) => a + b, 0);
-  return how === "avg" ? sum / values.length : sum;
+function aggregate(values: number[], how: StatProps['aggregate']): number {
+  if (values.length === 0) return 0
+  if (how === 'last') return values[values.length - 1]
+  const sum = values.reduce((a, b) => a + b, 0)
+  return how === 'avg' ? sum / values.length : sum
 }
 
 export default function Stat({ data, props }: WidgetProps<StatProps>) {
-  const sql = data as SqlData;
-  const format = props.format ?? "number";
-  const records = toRecords(sql, contract);
+  const sql = data as SqlData
+  const format = props.format ?? 'number'
+  const records = toRecords(sql, contract)
   // On a share card the number is the picture: large and centred.
-  const card = useCardMode();
+  const card = useCardMode()
   // An SVG id, so only characters url(#...) takes as they are.
-  const fade = "spark" + useId().replace(/[^a-zA-Z0-9_-]/g, "");
-  if (records.length === 0) return null;
+  const fade = 'spark' + useId().replace(/[^a-zA-Z0-9_-]/g, '')
+  if (records.length === 0) return null
   // The headline is value's, marked when the result estimated it.
-  const show = (v: number) =>
-    approx(formatValue(v, format), approximate(sql, "value"));
+  const show = (v: number) => approx(formatValue(v, format), approximate(sql, 'value'))
 
-  if (sql.columns.includes("x")) {
+  if (sql.columns.includes('x')) {
     // An empty value is no point of the series, never a 0: left out of
     // the aggregate and the line; with none at all, the figure is blank.
     const series = records.flatMap((r, i) =>
-      typeof r.value === "number"
-        ? [{ x: String(r.x ?? i), value: r.value }]
-        : [],
-    );
-    if (series.length === 0) return <Blank card={card} />;
+      typeof r.value === 'number' ? [{ x: String(r.x ?? i), value: r.value }] : [],
+    )
+    if (series.length === 0) return <Blank card={card} />
     const value = aggregate(
       series.map((p) => p.value),
-      props.aggregate ?? "sum",
-    );
+      props.aggregate ?? 'sum',
+    )
     return (
-      <div
-        className={`flex h-full flex-col justify-between gap-1 pt-1 ${card ? "items-center gap-6" : ""}`}
-      >
+      <div className={`flex h-full flex-col justify-between gap-1 pt-1 ${card ? 'items-center gap-6' : ''}`}>
         <Figure card={card}>{show(value)}</Figure>
-        <div className={`-mx-1 min-h-8 flex-1 ${card ? "w-full" : ""}`}>
+        <div className={`-mx-1 min-h-8 flex-1 ${card ? 'w-full' : ''}`}>
           <ResponsiveContainer width="100%" height="100%">
-            <AreaChart
-              data={series}
-              margin={{ top: 4, right: 4, bottom: 2, left: 4 }}
-            >
+            <AreaChart data={series} margin={{ top: 4, right: 4, bottom: 2, left: 4 }}>
               <defs>
                 <linearGradient id={fade} x1="0" y1="0" x2="0" y2="1">
-                  <stop
-                    offset="0%"
-                    stopColor="var(--chart-1)"
-                    stopOpacity={0.28}
-                  />
-                  <stop
-                    offset="100%"
-                    stopColor="var(--chart-1)"
-                    stopOpacity={0}
-                  />
+                  <stop offset="0%" stopColor="var(--chart-1)" stopOpacity={0.28} />
+                  <stop offset="100%" stopColor="var(--chart-1)" stopOpacity={0} />
                 </linearGradient>
               </defs>
               {/* Its own range, not from zero: the sparkline is for the shape of the trend. */}
-              <YAxis hide domain={["dataMin", "dataMax"]} />
+              <YAxis hide domain={['dataMin', 'dataMax']} />
               <Area
                 type="monotone"
                 baseValue="dataMin"
@@ -140,9 +124,7 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
                 fill={`url(#${fade})`}
                 // Only the latest point gets a dot: where the number above stands now.
                 dot={(p: { index: number; cx?: number; cy?: number }) =>
-                  p.index === series.length - 1 &&
-                  p.cx !== undefined &&
-                  p.cy !== undefined ? (
+                  p.index === series.length - 1 && p.cx !== undefined && p.cy !== undefined ? (
                     <circle
                       key="last"
                       cx={p.cx}
@@ -162,77 +144,51 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
           </ResponsiveContainer>
         </div>
       </div>
-    );
+    )
   }
 
   // An empty value (nothing to read) is a blank figure, never 0, and has
   // no change; so has an empty previous.
-  const raw = records[0].value;
-  const value = typeof raw === "number" ? raw : null;
-  const previous = records[0].previous;
-  const delta =
-    value !== null && typeof previous === "number" && previous !== 0
-      ? (value - previous) / previous
-      : null;
+  const raw = records[0].value
+  const value = typeof raw === 'number' ? raw : null
+  const previous = records[0].previous
+  const delta = value !== null && typeof previous === 'number' && previous !== 0 ? (value - previous) / previous : null
   // The change is an estimate when either side is.
-  const deltaApprox = approximate(sql, "value") || approximate(sql, "previous");
+  const deltaApprox = approximate(sql, 'value') || approximate(sql, 'previous')
 
   return (
-    <div
-      className={`flex h-full flex-col justify-center pt-1 ${card ? "items-center gap-6" : "items-start gap-2"}`}
-    >
-      {value === null ? (
-        <Empty card={card} />
-      ) : (
-        <Figure card={card}>{show(value)}</Figure>
-      )}
+    <div className={`flex h-full flex-col justify-center pt-1 ${card ? 'items-center gap-6' : 'items-start gap-2'}`}>
+      {value === null ? <Empty card={card} /> : <Figure card={card}>{show(value)}</Figure>}
       {delta !== null && (
-        <div
-          className={`flex items-center ${card ? "gap-3 text-[22px] [&_svg]:size-5" : "gap-1.5 text-xs"}`}
-        >
+        <div className={`flex items-center ${card ? 'gap-3 text-[22px] [&_svg]:size-5' : 'gap-1.5 text-xs'}`}>
           <span
             className={
               delta >= 0
-                ? `inline-flex items-center gap-0.5 rounded-full bg-emerald-500/12 font-medium text-emerald-700 dark:text-emerald-400 ${card ? "px-3 py-1" : "px-1.5 py-0.5"}`
-                : `inline-flex items-center gap-0.5 rounded-full bg-red-500/12 font-medium text-red-700 dark:text-red-400 ${card ? "px-3 py-1" : "px-1.5 py-0.5"}`
+                ? `inline-flex items-center gap-0.5 rounded-full bg-emerald-500/12 font-medium text-emerald-700 dark:text-emerald-400 ${card ? 'px-3 py-1' : 'px-1.5 py-0.5'}`
+                : `inline-flex items-center gap-0.5 rounded-full bg-red-500/12 font-medium text-red-700 dark:text-red-400 ${card ? 'px-3 py-1' : 'px-1.5 py-0.5'}`
             }
           >
-            {delta >= 0 ? (
-              <ArrowUpRightIcon className="size-3" />
-            ) : (
-              <ArrowDownRightIcon className="size-3" />
-            )}
-            {approx(
-              `${delta >= 0 ? "+" : ""}${formatValue(delta, "percent")}`,
-              deltaApprox,
-            )}
+            {delta >= 0 ? <ArrowUpRightIcon className="size-3" /> : <ArrowDownRightIcon className="size-3" />}
+            {approx(`${delta >= 0 ? '+' : ''}${formatValue(delta, 'percent')}`, deltaApprox)}
           </span>
           <span className="text-muted-foreground">vs previous</span>
         </div>
       )}
     </div>
-  );
+  )
 }
 
 /** The headline number: large, proportional figures, never the series color. */
-function Figure({
-  children,
-  card,
-  label,
-}: {
-  children: string;
-  card: boolean;
-  label?: string;
-}) {
+function Figure({ children, card, label }: { children: string; card: boolean; label?: string }) {
   return (
     <span
-      className={`${card ? "text-[96px]" : "text-3xl"} leading-none font-semibold tracking-tight`}
-      role={label ? "img" : undefined}
+      className={`${card ? 'text-[96px]' : 'text-3xl'} leading-none font-semibold tracking-tight`}
+      role={label ? 'img' : undefined}
       aria-label={label}
     >
       {children}
     </span>
-  );
+  )
 }
 
 /** The figure of nothing to read: a dash, named for a screen reader. */
@@ -241,16 +197,14 @@ function Empty({ card }: { card: boolean }) {
     <Figure card={card} label="no value">
       –
     </Figure>
-  );
+  )
 }
 
 /** A stat with no value at all: the blank figure alone. */
 function Blank({ card }: { card: boolean }) {
   return (
-    <div
-      className={`flex h-full flex-col justify-center pt-1 ${card ? "items-center gap-6" : "items-start gap-2"}`}
-    >
+    <div className={`flex h-full flex-col justify-center pt-1 ${card ? 'items-center gap-6' : 'items-start gap-2'}`}>
       <Empty card={card} />
     </div>
-  );
+  )
 }
