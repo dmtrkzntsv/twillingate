@@ -7,6 +7,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"syscall"
@@ -523,9 +524,11 @@ func wideCols(attrs int) []pqColumn {
 
 // writeWide writes rows rows of wideCols(attrs) to path, each row with 5
 // attributes set, spread over the keys, and reports the peak heap in use
-// above what it was before, sampled every 256 rows. set counts the values
-// each attribute column got, lo and hi attr_k5's least and greatest.
-func writeWide(t testing.TB, path string, attrs, rows int) (peak uint64, set []int, lo, hi string) {
+// above what it was before, sampled every 256 rows and after Close. every,
+// when not 0, cuts a group every that many rows (as a day's families and
+// a month's days do). set counts the values each attribute column got, lo
+// and hi are attr_k5's least and greatest.
+func writeWide(t testing.TB, path string, attrs, rows, every int) (peak uint64, set []int, lo, hi string) {
 	cols := wideCols(attrs)
 	small := make([]string, 100)
 	for i := range small {
@@ -542,7 +545,11 @@ func writeWide(t testing.TB, path string, attrs, rows int) (peak uint64, set []i
 			peak = max(peak, ms.HeapInuse-base)
 		}
 	}
-	w, err := newRowWriter(path, cols, nil)
+	var cut func(prev, next row) bool
+	if every > 0 {
+		cut = func(prev, next row) bool { return prev[4].int()/int64(every) != next[4].int()/int64(every) }
+	}
+	w, err := newRowWriter(path, cols, cut)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -553,7 +560,7 @@ func writeWide(t testing.TB, path string, attrs, rows int) (peak uint64, set []i
 		r[1] = strValue("views")
 		r[2] = dateValue(20000)
 		r[3] = timestampValue(int64(i) * 1000)
-		r[4] = intValue(1)
+		r[4] = intValue(int64(i))
 		for j := 5; j < 40; j++ {
 			r[j] = strValue(small[(i+j)%30])
 		}
@@ -582,6 +589,7 @@ func writeWide(t testing.TB, path string, attrs, rows int) (peak uint64, set []i
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
+	sample()
 	return peak, set, lo, hi
 }
 
@@ -589,7 +597,7 @@ func writeWide(t testing.TB, path string, attrs, rows int) (peak uint64, set []i
 // (byColumnCols lowered) read back the same through DuckDB, with the same
 // types, row groups and statistics: every type, NULLs, a long string, an
 // all-NULL group, a dictionary that falls back to PLAIN, groups cut by
-// the cut rule and by byColumnCells; and an empty file.
+// the cut rule and by byColumnBytes; and an empty file.
 func TestWideFileMatchesNarrow(t *testing.T) {
 	f := newFixture(t)
 	defer SetDictMaxBytes(1 << 10)()
@@ -620,7 +628,7 @@ func TestWideFileMatchesNarrow(t *testing.T) {
 	narrow, wide := filepath.Join(dir, "narrow.parquet"), filepath.Join(dir, "wide.parquet")
 	writeRows(t, narrow, cols, byFamily, rows...)
 	func() {
-		defer setByColumn(0, 1200*6)()
+		defer setByColumn(0, 32<<10)()
 		writeRows(t, wide, cols, byFamily, rows...)
 	}()
 	ask := func(sql, p string) []string {
@@ -635,13 +643,21 @@ func TestWideFileMatchesNarrow(t *testing.T) {
 			t.Errorf("%s: by column %.300v, by row %.300v", q, got, want)
 		}
 	}
-	// The groups: by row, cut by family (2000, 1000); by column, also once
-	// 7,200 values are held, 1,385 rows (every fifth row has 2 of its 6).
+	// The groups: by row, cut by family (2000, 1000); by column, also each
+	// time 32 KiB of values are held, so the product rows take several.
 	if got := fmt.Sprint(groupRows(t, narrow)); got != "[2000 1000]" {
 		t.Errorf("by-row groups %s", got)
 	}
-	if got := fmt.Sprint(groupRows(t, wide)); got != "[1385 615 1000]" {
-		t.Errorf("by-column groups %s", got)
+	g := groupRows(t, wide)
+	var sum int64
+	product := -1
+	for i, n := range g {
+		if sum += n; sum == 2000 {
+			product = i + 1
+		}
+	}
+	if sum != 3000 || product < 3 || product == len(g) {
+		t.Errorf("by-column groups %v: the product rows in %d of them", g, product)
 	}
 	// Each column's statistics over the file: nulls summed, bounds folded.
 	stats := func(p string) []string {
@@ -676,7 +692,7 @@ func TestWideFileMatchesNarrow(t *testing.T) {
 
 	empty := filepath.Join(dir, "empty.parquet")
 	func() {
-		defer setByColumn(0, byColumnCells)()
+		defer setByColumn(0, byColumnBytes)()
 		writeRows(t, empty, cols, nil)
 	}()
 	if got, want := ask("SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM $f)", empty), ask("SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM $f)", narrow); !eq(got, want) {
@@ -685,6 +701,32 @@ func TestWideFileMatchesNarrow(t *testing.T) {
 	if got := ask("SELECT count(*) FROM $f", empty); !eq(got, []string{"[0]"}) || len(groupRows(t, empty)) != 0 {
 		t.Errorf("empty by column holds %v", got)
 	}
+}
+
+// footerDiff lists where a and b differ, by field path.
+func footerDiff(path string, a, b reflect.Value) []string {
+	if reflect.DeepEqual(a.Interface(), b.Interface()) {
+		return nil
+	}
+	switch a.Kind() {
+	case reflect.Struct:
+		var out []string
+		for i := range a.NumField() {
+			if a.Type().Field(i).IsExported() {
+				out = append(out, footerDiff(path+"."+a.Type().Field(i).Name, a.Field(i), b.Field(i))...)
+			}
+		}
+		return out
+	case reflect.Slice:
+		if a.Len() == b.Len() && a.IsNil() == b.IsNil() {
+			var out []string
+			for i := range a.Len() {
+				out = append(out, footerDiff(fmt.Sprintf("%s[%d]", path, i), a.Index(i), b.Index(i))...)
+			}
+			return out
+		}
+	}
+	return []string{fmt.Sprintf("%s: by row %v, by column %v", path, a.Interface(), b.Interface())}
 }
 
 // cmpStat compares two statistics bounds of a column of type t.
@@ -710,27 +752,98 @@ func cmpNum[T int32 | int64 | float64](a, b T) int {
 	return 0
 }
 
-// setByColumn sets byColumnCols and byColumnCells; the returned func
+// setByColumn sets byColumnCols and byColumnBytes; the returned func
 // restores them.
-func setByColumn(cols, cells int) func() {
-	oldCols, oldCells := byColumnCols, byColumnCells
-	byColumnCols, byColumnCells = cols, cells
-	return func() { byColumnCols, byColumnCells = oldCols, oldCells }
+func setByColumn(cols, held int) func() {
+	oldCols, oldHeld := byColumnCols, byColumnBytes
+	byColumnCols, byColumnBytes = cols, held
+	return func() { byColumnCols, byColumnBytes = oldCols, oldHeld }
+}
+
+// TestWideFooterMatchesNarrow: the footers of the same rows written by row
+// and by column decode equal but for where each chunk sits and the page
+// index the by-row file has, a chunk all NULL in one group among them.
+func TestWideFooterMatchesNarrow(t *testing.T) {
+	dir := t.TempDir()
+	cols := append([]pqColumn{{"family", colVarchar}, {"nulls", colVarchar}, {"nullb", colBigint}}, allTypes...)
+	var rows []row
+	for i := range 3000 {
+		fam := strValue("product")
+		if i >= 2000 {
+			fam = strValue("views")
+		}
+		r := row{fam, {}, {}, {}, {}, {}, {}, {}}
+		if i < 2000 { // v all NULL in the second group, b in the first
+			r[3] = strValue(fmt.Sprint("p", i))
+		} else {
+			r[4], r[5] = intValue(int64(i)), floatValue(float64(i))
+		}
+		r[6], r[7] = dateValue(int32(i/100)), timestampValue(int64(i))
+		rows = append(rows, r)
+	}
+	byFamily := func(prev, next row) bool { return prev[0] != next[0] }
+	narrow, wide := filepath.Join(dir, "narrow.parquet"), filepath.Join(dir, "wide.parquet")
+	writeRows(t, narrow, cols, byFamily, rows...)
+	func() {
+		defer setByColumn(0, byColumnBytes)()
+		writeRows(t, wide, cols, byFamily, rows...)
+	}()
+	footer := func(p string) *format.FileMetaData {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		md, err := footerOf(b)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := range md.RowGroups {
+			rg := &md.RowGroups[i]
+			rg.FileOffset = 0
+			for j := range rg.Columns {
+				c := &rg.Columns[j]
+				c.FileOffset, c.MetaData.DataPageOffset, c.MetaData.DictionaryPageOffset = 0, 0, 0
+				c.OffsetIndexOffset, c.OffsetIndexLength, c.ColumnIndexOffset, c.ColumnIndexLength = 0, 0, 0, 0
+			}
+		}
+		return md
+	}
+	n, w := footer(narrow), footer(wide)
+	if !reflect.DeepEqual(n, w) {
+		for _, d := range footerDiff("", reflect.ValueOf(n).Elem(), reflect.ValueOf(w).Elem()) {
+			t.Errorf("footers differ at %s", d)
+		}
+	}
+	if len(w.RowGroups) != 2 || w.RowGroups[1].Columns[3].MetaData.Statistics.NullCount != 1000 ||
+		w.RowGroups[0].Columns[4].MetaData.Statistics.NullCount != 2000 {
+		t.Errorf("the all-NULL chunks: %+v", w.RowGroups)
+	}
 }
 
 // TestWriterBoundsWideFiles: a day of 2,000 columns, nearly all sparse
 // attributes, is written by column in under 150 MB of heap (about 310 MB
-// by row), and DuckDB reads it back whole, with exact statistics.
+// by row), in 1 group and in 100, and DuckDB reads it back whole, with
+// exact statistics.
 func TestWriterBoundsWideFiles(t *testing.T) {
 	f := newFixture(t)
 	dir := filepath.Join(f.log.Dir(), "w")
 	os.MkdirAll(dir, 0o750)
-	p := filepath.Join(dir, "wide.parquet")
+	for _, every := range []int{0, 200} {
+		t.Run(fmt.Sprint("every ", every), func(t *testing.T) { checkWide(t, f, filepath.Join(dir, fmt.Sprint("wide", every, ".parquet")), every) })
+	}
+}
+
+func checkWide(t *testing.T, f fixture, p string, every int) {
 	const attrs, rows = 1960, 20000
-	peak, set, lo5, hi5 := writeWide(t, p, attrs, rows)
-	t.Logf("peak heap %.1f MB", float64(peak)/1e6)
+	peak, set, lo5, hi5 := writeWide(t, p, attrs, rows, every)
+	st, _ := os.Stat(p)
+	groups := len(groupRows(t, p))
+	t.Logf("peak heap %.1f MB, %d groups, file %.2f MB", float64(peak)/1e6, groups, float64(st.Size())/1e6)
 	if peak > 150e6 {
 		t.Errorf("peak heap %.1f MB, want under 150 MB", float64(peak)/1e6)
+	}
+	if want := max(1, rows/max(every, rows)); every > 0 && groups != rows/every || every == 0 && groups != want {
+		t.Errorf("%d groups", groups)
 	}
 	got := f.values(t, "SELECT count(*), count(DISTINCT id), count(attr_k0), count(attr_k977), count(attr_k1959), min(attr_k5), max(attr_k5) FROM read_parquet("+quote(p)+")")
 	if want := fmt.Sprintf("[%d %d %d %d %d %s %s]", rows, rows, set[0], set[977], set[1959], lo5, hi5); !eq(got, []string{want}) {

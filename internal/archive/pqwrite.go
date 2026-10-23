@@ -176,7 +176,11 @@ func pqOptions(schema *parquet.Schema) []parquet.WriterOption {
 }
 
 // Write appends r, which must have one value per column, each of its
-// column's type. r is not kept: the caller may reuse it.
+// column's type. r is not kept: the caller may reuse it. What the writer
+// keeps of r it copies (a by-column file into its arenas), but for up to
+// pendingRows rows of a narrow file, whose parquet values point at the
+// bytes of r's strings: Go strings, which do not change, are safe; a
+// string made over a buffer the caller reuses is not.
 func (w *rowWriter) Write(r row) error {
 	if w.err != nil {
 		return w.err
@@ -264,7 +268,7 @@ func (w *rowWriter) flushGroup() error {
 	var err error
 	if w.wide != nil {
 		err = w.wide.writeGroup(w.inGroup)
-	} else {
+	} else if w.inGroup > 0 {
 		err = w.pw.Flush()
 	}
 	if err != nil {
