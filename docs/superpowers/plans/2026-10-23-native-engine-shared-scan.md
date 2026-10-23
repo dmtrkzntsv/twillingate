@@ -12,7 +12,7 @@
   4. **Finish.** Each consumer then finishes as `Answer` does today.
 
   Per-batch memoisation means each batch builds a computed column once and hashes an id dictionary once for every consumer.
-- **Reporting.** `reporting.Service.WidgetDataMany` checks each widget as `WidgetData` does and serves cache hits. The misses go into one `AnswerMany`.
+- **Reporting.** `reporting.Service.WidgetDataStream` checks each widget as `WidgetData` does, emits cache hits at once, and emits the misses as each `AnswerMany` group finishes.
 - **Console (owner, 2026-10-23).** A dashboard load or refresh is one request, `POST /api/widgets/stream`, whose response streams one Server-Sent Event per widget as soon as that widget is ready. Cache hits come first, then each shared-scan group as it finishes. Each card keeps its own react-query entry, filled when its event arrives. Single-widget loads keep `GET /api/widgets/{id}/data`.
 - **MCP tools.** The tools that run several queries per call use `AnswerMany`.
 
