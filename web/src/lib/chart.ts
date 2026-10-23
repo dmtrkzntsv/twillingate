@@ -64,16 +64,15 @@ export function activeDot(color: string) {
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/
 
-const NUMBER = /^-?\d+(\.\d+)?$/
-
 /**
  * An x axis of numbers (a retention curve's offsets): when every row's
- * `key` is a number, the rows with it as one, ascending, and the axis
+ * `key` is a number (or a canonical number string: `String(Number(s)) === s`,
+ * so "1.10" and "007" stay text), the rows with it as one, ascending, and the axis
  * props that plot it to scale; null when any is a day or text, which keep
  * their rows' order on a category axis.
  */
 export function numericX<T extends Record<string, unknown>>(rows: T[], key = 'x') {
-  const isNumber = (v: unknown) => (typeof v === 'number' ? Number.isFinite(v) : typeof v === 'string' && NUMBER.test(v))
+  const isNumber = (v: unknown) => (typeof v === 'number' ? Number.isFinite(v) : typeof v === 'string' && v !== '' && String(Number(v)) === v)
   if (rows.length === 0 || !rows.every((r) => isNumber(r[key]))) return null
   const sorted = rows.map((r) => ({ ...r, [key]: Number(r[key]) })).sort((a, b) => a[key] - b[key])
   const integers = sorted.every((r) => Number.isInteger(r[key]))
