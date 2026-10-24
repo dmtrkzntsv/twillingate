@@ -24,6 +24,7 @@ internal/engine/     DuckDB in a child process of the binary (`twillingate engin
 internal/archive/    raw events as files under raw/: the per-day NDJSON log, the dump to Parquet, the month merge, retention by file, the derived sessions, identities and aliases, and the tables the dashboards and the query tool read
 internal/shared/     small generic leaf packages: civil (calendar dates), enginesql (DuckDB SQL checks), readsql, sortkey, version
 internal/shared/hll/ distinct counts, exact up to 1,024 ids then a HyperLogLog sketch (about ±2%), for internal/native
+sqlengine/           public protocol and client for an external SQL engine over a Unix socket; stdlib only, importable by other modules
 docs/                the three contract pages, embedded and served over MCP
 sdk/                 browser SDK source (TypeScript); the built file is embedded by internal/server
 web/                 dashboard web app source (React, TypeScript); the build is embedded by internal/reporting
