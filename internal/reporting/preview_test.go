@@ -93,7 +93,7 @@ func TestPreviewRefusals(t *testing.T) {
 		want string
 	}{
 		"unknown component": {sqlPreview("nope", "SELECT 1"), "component nope does not exist; list_components names the ones there are"},
-		"md source":         {PreviewIn{Component: "markdown", Source: Source{Type: "md", Content: "# hi"}}, "preview runs sql only; markdown is drawn as it is typed"},
+		"md source":         {PreviewIn{Component: "markdown", Source: Source{Type: "md", Content: "# hi"}}, "preview runs sql and query only; markdown is drawn as it is typed"},
 		"md-only component": {sqlPreview("markdown", "SELECT 1"), "markdown does not accept sql; it accepts md"},
 		"param":             {sqlPreview("table", "SELECT :other AS x"), "sql uses :other; widgets get only :project, :from and :to"},
 		"no project":        {sqlPreview("table", "SELECT :project AS p"), "the sql uses :project; pass project_id"},

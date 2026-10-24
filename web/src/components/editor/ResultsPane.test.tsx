@@ -42,6 +42,12 @@ describe('Rows', () => {
     expect(screen.getByRole('cell', { name: 'No rows' })).toBeInTheDocument()
   })
 
+  it('marks the header of an approximate column', () => {
+    render(<Rows state={onCalendar({ ...xy, approximate: ['y'] })} stale={false} />)
+    expect(screen.getByRole('columnheader', { name: '≈ y' })).toBeInTheDocument()
+    expect(screen.getByRole('columnheader', { name: 'x' })).toBeInTheDocument()
+  })
+
   it('shows the rows bare, and a refusal in their place', () => {
     const { rerender } = render(<Rows state={onCalendar(xy)} stale={false} />)
     expect(screen.getByRole('cell', { name: 'a' })).toBeInTheDocument()

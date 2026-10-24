@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { autocompletion, closeBrackets, closeBracketsKeymap, closeCompletion, completionKeymap } from '@codemirror/autocomplete'
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands'
+import { json } from '@codemirror/lang-json'
 import { markdown } from '@codemirror/lang-markdown'
 import { sql, PostgreSQL } from '@codemirror/lang-sql'
 import { bracketMatching, HighlightStyle, syntaxHighlighting } from '@codemirror/language'
@@ -11,7 +12,7 @@ import { paramCompletions, sqlNamespace } from '@/lib/sql-completion'
 import type { SchemaTable } from '@/lib/schema-views'
 
 export interface CodeEditorProps {
-  language: 'sql' | 'markdown'
+  language: 'sql' | 'json' | 'markdown'
   value: string
   onChange(next: string): void
   /** Called on Mod-Enter. */
@@ -52,7 +53,8 @@ const highlight = HighlightStyle.define([
 /**
  * CodeMirror 6 for a widget's SQL (DuckDB's, in the PostgreSQL dialect,
  * the closest CodeMirror has; completion of the event files' tables, their
- * columns and the three parameters) or its markdown. Mod-Enter runs.
+ * columns and the three parameters), its structured query (JSON) or its
+ * markdown. Mod-Enter runs.
  * Uncontrolled inside: `value` seeds it and replaces the text only when it
  * differs from what the editor holds (a reset), so the text typed in does not
  * come back through the prop as a second change.
@@ -82,7 +84,7 @@ export default function CodeEditor({ language, value, onChange, onRun, tables, l
           Prec.highest(keymap.of([{ key: 'Mod-Enter', run: () => (latest.current.onRun?.(), true) }])),
           EditorView.lineWrapping,
           theme,
-          placeholder(language === 'sql' ? 'SELECT …' : '# Notes'),
+          placeholder(language === 'sql' ? 'SELECT …' : language === 'json' ? '{"query": …}' : '# Notes'),
           EditorView.contentAttributes.of({ 'aria-label': label }),
           EditorView.updateListener.of((u) => {
             if (u.docChanged) latest.current.onChange(u.state.doc.toString())
@@ -114,7 +116,9 @@ export default function CodeEditor({ language, value, onChange, onRun, tables, l
               sql({ dialect: PostgreSQL, schema: sqlNamespace(latest.current.tables ?? []), upperCaseKeywords: true }),
               PostgreSQL.language.data.of({ autocomplete: paramCompletions }),
             ]
-          : markdown(),
+          : language === 'json'
+            ? json()
+            : markdown(),
       ),
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps -- tables is read through latest; tablesKey is its content

@@ -196,3 +196,50 @@ test('duplicates a widget and copies a built-in one onto a dashboard of its own'
     await request.post(`/api/dashboards/${id}/archive`, { headers: authHeaders() })
   }
 })
+
+test('adds a stat whose source is a structured query', async ({ page, request }) => {
+  test.setTimeout(60_000)
+  const stamp = Date.now()
+  const title = `Query ${stamp}`
+  const res = await request.post('/api/dashboards', {
+    headers: authHeaders(),
+    data: { title, range: '30d', widgets: [{ component: 'markdown', title: `Note ${stamp}`, source: { type: 'md', content: 'Hello' }, width: 6, height: 3 }] },
+  })
+  expect(res.ok(), await res.text()).toBeTruthy()
+  const id = ((await res.json()) as { dashboard_id: number }).dashboard_id
+  try {
+    await login(page)
+    await page.goto(`/app/dashboards/${id}`)
+    await page.getByRole('button', { name: 'Add widget' }).first().click()
+    const dialog = page.getByRole('dialog')
+    await dialog.getByLabel('Title').fill('Views by query')
+    await dialog.getByRole('combobox', { name: 'Visualization' }).click()
+    await page.getByRole('option', { name: 'stat', exact: true }).click()
+    // A new widget starts on SQL; Query starts from a stat over the views, renamed to value.
+    await expect(dialog.getByRole('button', { name: 'SQL', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await dialog.getByRole('button', { name: 'Query', exact: true }).click()
+    await expect(dialog.getByLabel('Query')).toContainText('"kind": "stat"')
+    // A query follows the project and the range: both switchers show. The seeded project holds views.
+    await dialog.getByRole('combobox', { name: 'Project' }).click()
+    await page.getByRole('option', { name: 'dev', exact: true }).click()
+    await expect(dialog.getByRole('button', { name: /^Range: / })).toBeVisible()
+    await dialog.getByRole('button', { name: /Run query/ }).click()
+    await expect(dialog.getByText(/^1 row · \d+ ms/)).toBeVisible()
+    await expect(dialog.getByRole('region', { name: 'Preview' })).toContainText(/[1-9]/)
+    await dialog.getByRole('button', { name: 'Save' }).click()
+    await expect(dialog).toBeHidden()
+    const card = page.locator('[data-slot="widget-card"]', { hasText: 'Views by query' })
+    await expect(card).toContainText(/\d/)
+
+    // It saved as a query, and opens on its query again.
+    const got = await request.get(`/api/dashboards/${id}`, { headers: authHeaders() })
+    const widgets = ((await got.json()) as { widgets: { title?: string; source: { type: string } }[] }).widgets
+    expect(widgets.find((w) => w.title === 'Views by query')?.source.type).toBe('query')
+    await cardMenu(page, 'Views by query')
+    await page.getByRole('menuitem', { name: 'Edit…' }).click()
+    await expect(dialog.getByRole('button', { name: 'Query', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect(dialog.getByLabel('Query')).toContainText('"rename"')
+  } finally {
+    await request.post(`/api/dashboards/${id}/archive`, { headers: authHeaders() })
+  }
+})

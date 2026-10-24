@@ -231,7 +231,7 @@ func stopsCheck(cause error) bool {
 // not start, ctx ended) stops the check and is returned with the failures
 // found so far.
 func CheckUserWidgets(ctx context.Context, st Store, files Files) ([]WidgetFailure, error) {
-	svc := &Service{st: st, files: files, sources: newSources(files, false, time.Now), now: time.Now}
+	svc := &Service{st: st, files: files, sources: newSources(files, false, time.Now, nil, nil), now: time.Now}
 	comps, err := svc.components(ctx)
 	if err != nil {
 		return nil, err

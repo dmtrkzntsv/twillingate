@@ -115,7 +115,7 @@ describe('WidgetEditor', () => {
     await new Promise((r) => setTimeout(r, 500))
     expect(preview).toHaveBeenCalledTimes(1)
     expect(screen.getByText('Changed since last run')).toBeInTheDocument()
-  })
+  }, 15_000)
 
   it('sends the range and shows its switcher when the sql reads :from and :to', async () => {
     const preview = vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({ columns: [], rows: [], truncated: false, elapsed_ms: 1 })
@@ -252,6 +252,54 @@ describe('WidgetEditor', () => {
     expect(screen.getByLabelText('Props JSON')).toHaveValue(JSON.stringify({ curve: 'step' }, null, 2))
     await userEvent.click(screen.getByRole('button', { name: 'Edit props as a form' }))
     expect(screen.getByLabelText('curve')).toHaveValue('step')
+  })
+
+  it('opens a query widget on its query and previews it with the project and range', async () => {
+    const content = '{"query":{"kind":"stat","table":"views","metrics":[{"op":"count"}]},"rename":{"count":"value"}}'
+    const preview = vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({ columns: [], rows: [], truncated: false, elapsed_ms: 1 })
+    open({ widget: { ...line, component: 'stat', props: {}, source: { type: 'query', content } } })
+    await waitFor(() => expect(preview).toHaveBeenCalled())
+    expect(preview.mock.calls[0][0]).toMatchObject({
+      component: 'stat', source: { type: 'query', content }, project_id: 1, from: '2026-09-08', to: '2026-09-14',
+    })
+    expect(screen.getByLabelText('Query')).toHaveValue(content)
+    expect(screen.queryByLabelText('SQL')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Query' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  it('switches between SQL and Query, keeping each one\'s text', async () => {
+    const { onSave } = open({ widget: line })
+    await userEvent.click(await screen.findByRole('button', { name: 'Query' }))
+    const query = screen.getByLabelText('Query') as HTMLTextAreaElement
+    expect(JSON.parse(query.value)).toMatchObject({ query: { kind: 'trend' }, rename: { day: 'x', count: 'y' } })
+    await userEvent.click(screen.getByRole('button', { name: 'SQL' }))
+    expect(screen.getByLabelText('SQL')).toHaveValue(line.source.content)
+    await userEvent.click(screen.getByRole('button', { name: 'Query' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ code: 'query', sql: line.source.content }))
+  })
+
+  it('moves an untouched query template to the new visualization', async () => {
+    open()
+    await userEvent.click(screen.getByRole('combobox', { name: 'Visualization' }))
+    await userEvent.click(await screen.findByRole('option', { name: /^stat$/ }))
+    await userEvent.click(screen.getByRole('button', { name: 'Query' }))
+    expect(JSON.parse((screen.getByLabelText('Query') as HTMLTextAreaElement).value).rename).toEqual({ count: 'value' })
+    await userEvent.click(screen.getByRole('combobox', { name: 'Visualization' }))
+    await userEvent.click(await screen.findByRole('option', { name: /^line$/ }))
+    expect(JSON.parse((screen.getByLabelText('Query') as HTMLTextAreaElement).value).rename).toEqual({ day: 'x', count: 'y' })
+  })
+
+  it('says why a remote table stored as a query shows its SQL', async () => {
+    open({ widget: { ...line, component: 'table', props: { mode: 'remote' }, source: { type: 'query', content: '{}' } } })
+    expect(await screen.findByLabelText('SQL')).toBeInTheDocument()
+    expect(screen.getByText('A remote table takes SQL only')).toBeInTheDocument()
+  })
+
+  it('offers no Query for a remote table', async () => {
+    open({ widget: { ...line, component: 'table', props: { mode: 'remote' } } })
+    expect(await screen.findByLabelText('SQL')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Query' })).toBeNull()
   })
 
   it('a markdown component has no Run and previews the text', async () => {

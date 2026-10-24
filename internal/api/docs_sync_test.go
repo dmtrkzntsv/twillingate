@@ -425,47 +425,57 @@ func TestReportingDocumentMatchesComponents(t *testing.T) {
 	}
 }
 
-// TestReportingExamplesWork: docs/reporting.md's Examples section has one
-// worked example per component in the manifest, and no other; each is
-// accepted by add_widget as written and loads, with project 1's seeded
-// rows, through widget_data. An example that stops validating after a
-// view or component change fails here, not in an agent's session.
+// TestReportingExamplesWork: docs/reporting.md's Examples section has at
+// least one worked example per component in the manifest, and none for a
+// component it does not have. An example is a "### `name`" heading (any
+// words may follow the name) with a sql, markdown or json block, the json
+// one a structured query source; each is accepted by add_widget as written
+// and loads, with project 1's seeded rows, through widget_data, with at
+// least one row unless it is Markdown. An example that stops validating
+// after a view or component change fails here, not in an agent's session.
 func TestReportingExamplesWork(t *testing.T) {
 	_, cs := newTestHost(t)
 	comps, err := reporting.ParseManifest(reporting.Manifest())
 	if err != nil {
 		t.Fatal(err)
 	}
+	inManifest := map[string]bool{}
+	for _, c := range comps {
+		inManifest[c.Name] = true
+	}
 	var dash struct {
 		ID int64 `json:"dashboard_id"`
 	}
 	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Examples"}, &dash)
 
-	block := regexp.MustCompile("(?s)```(sql|markdown)\n(.*?)```")
+	block := regexp.MustCompile("(?s)```(sql|markdown|json)\n(.*?)```")
 	props := regexp.MustCompile("(?m)^Props: `(.*)`$")
-	examples := map[string]bool{}
-	for _, part := range strings.Split(docSection(t, docs.Reporting, "## Examples"), "\n### `")[1:] {
+	types := map[string]string{"sql": "sql", "markdown": "md", "json": "query"}
+	examples := map[string]int{}
+	for i, part := range strings.Split(docSection(t, docs.Reporting, "## Examples"), "\n### `")[1:] {
 		name := part[:strings.Index(part, "`")]
-		examples[name] = true
+		examples[name]++
+		label := fmt.Sprintf("%s (example %d)", name, i+1)
+		if !inManifest[name] {
+			t.Errorf("example %s is for a component the manifest does not have", label)
+			continue
+		}
 		b := block.FindStringSubmatch(part)
 		p := props.FindStringSubmatch(part)
 		if b == nil || p == nil {
-			t.Errorf("example %s needs a sql or markdown block and a Props: line", name)
+			t.Errorf("example %s needs a sql, markdown or json block and a Props: line", label)
 			continue
 		}
-		source := map[string]any{"type": "sql", "content": b[2]}
-		if b[1] == "markdown" {
-			source["type"] = "md"
-		}
+		source := map[string]any{"type": types[b[1]], "content": b[2]}
 		var pr map[string]any
 		if err := json.Unmarshal([]byte(p[1]), &pr); err != nil {
-			t.Errorf("example %s props %s: %v", name, p[1], err)
+			t.Errorf("example %s props %s: %v", label, p[1], err)
 			continue
 		}
 		res := callTool(t, cs, "add_widget", map[string]any{"dashboard_id": dash.ID, "component": name,
-			"title": name, "props": pr, "source": source})
+			"title": fmt.Sprintf("%s %d", name, i+1), "props": pr, "source": source})
 		if res.IsError {
-			t.Errorf("example %s is refused: %s", name, textOf(res))
+			t.Errorf("example %s is refused: %s", label, textOf(res))
 			continue
 		}
 		var w struct {
@@ -474,18 +484,36 @@ func TestReportingExamplesWork(t *testing.T) {
 		if err := json.Unmarshal([]byte(textOf(res)), &w); err != nil {
 			t.Fatal(err)
 		}
-		if res := callTool(t, cs, "widget_data", map[string]any{"widget_id": w.ID, "project_id": 1,
-			"from": "2026-08-01", "to": "2026-08-26"}); res.IsError {
-			t.Errorf("example %s does not load: %s", name, textOf(res))
+		res = callTool(t, cs, "widget_data", map[string]any{"widget_id": w.ID, "project_id": 1,
+			"from": "2026-08-01", "to": "2026-08-26"})
+		if res.IsError {
+			t.Errorf("example %s does not load: %s", label, textOf(res))
+			continue
+		}
+		if b[1] == "markdown" {
+			continue
+		}
+		var d struct {
+			Data struct {
+				Rows [][]string `json:"rows"`
+			} `json:"data"`
+		}
+		if err := json.Unmarshal([]byte(textOf(res)), &d); err != nil {
+			t.Fatal(err)
+		}
+		if len(d.Data.Rows) == 0 {
+			t.Errorf("example %s loads no rows from project 1", label)
 		}
 	}
 	for _, c := range comps {
-		if !examples[c.Name] {
+		if examples[c.Name] == 0 {
 			t.Errorf("component %s has no worked example in docs/reporting.md", c.Name)
 		}
 	}
-	if len(examples) != len(comps) {
-		t.Errorf("docs/reporting.md has %d examples for %d components", len(examples), len(comps))
+	for _, name := range []string{"stat", "line", "bar_list"} {
+		if !strings.Contains(docSection(t, docs.Reporting, "## Examples"), "### `"+name+"` as a structured query") {
+			t.Errorf("docs/reporting.md has no structured query example for %s", name)
+		}
 	}
 }
 

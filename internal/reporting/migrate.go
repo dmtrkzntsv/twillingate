@@ -114,7 +114,7 @@ func migrateFrom(ctx context.Context, st Store, files Files, system fs.FS, manif
 	// now is the real clock rather than nil: a widget whose SQL follows
 	// :from/:to still needs sample dates bound before the LIMIT 0 query,
 	// or the engine refuses a parameter with no argument.
-	svc := &Service{st: st, files: files, sources: newSources(files, false, time.Now), now: time.Now}
+	svc := &Service{st: st, files: files, sources: newSources(files, false, time.Now, nil, nil), now: time.Now}
 	var unchecked error
 	noFiles := files == nil
 	if noFiles {

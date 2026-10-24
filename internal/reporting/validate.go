@@ -112,5 +112,17 @@ func (s *Service) validateWidget(ctx context.Context, comps map[string]Component
 	if err := comp.checkProps(json.RawMessage(w.Props)); err != nil {
 		return err
 	}
+	if err := checkRemoteTable(w); err != nil {
+		return err
+	}
 	return st.Validate(ctx, w.Source, comp)
+}
+
+// checkRemoteTable refuses a remote table (remoteTable) whose source is
+// not sql: only sql is filtered, sorted and paged on the server.
+func checkRemoteTable(w store.Widget) error {
+	if w.SourceType != "sql" && remoteTable(w) {
+		return store.Refuse(store.ErrInvalid, "a remote table takes sql only; a %s source needs props.mode \"local\"", w.SourceType)
+	}
+	return nil
 }

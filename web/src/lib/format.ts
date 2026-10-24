@@ -52,3 +52,13 @@ export function formatExact(v: number | null, f: Format = 'number'): string {
   if (f !== 'number' || v === null || !Number.isFinite(v)) return formatValue(v, f)
   return new Intl.NumberFormat(LOCALE, { maximumFractionDigits: 2 }).format(v)
 }
+
+/** Whether a result names `column` among those whose values are estimates. */
+export function approximate(data: { columns: string[]; approximate?: string[] }, column: string): boolean {
+  return data.approximate?.includes(column) === true
+}
+
+/** A shown value marked as an estimate when `on`: "≈" in front, except where there is no value (empty, or the dash). */
+export function approx(text: string, on: boolean): string {
+  return on && text !== '' && text !== '–' ? `≈${text}` : text
+}

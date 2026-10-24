@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -57,7 +58,7 @@ func devDir(t *testing.T, widgets ...struct{ name, component, ext, content strin
 func newDevHandler(t *testing.T, dirs []string) http.Handler {
 	t.Helper()
 	st, files := newTestStoreAndFiles(t, 1000)
-	return DevHandler(dirs, files, storeDB(t, st))
+	return DevHandler(dirs, files, nil, storeDB(t, st))
 }
 
 // devRequest is a request as a browser on this machine sends it: to a
@@ -219,8 +220,8 @@ func TestDevHandlerComponentsAndProjectsAndView(t *testing.T) {
 		SourceTypes []string `json:"source_types"`
 	}
 	getJSON(t, h, "/api/components", &comps)
-	if len(comps.SourceTypes) != 2 {
-		t.Errorf("source_types = %v, want md and sql", comps.SourceTypes)
+	if !reflect.DeepEqual(comps.SourceTypes, []string{"md", "query", "sql"}) {
+		t.Errorf("source_types = %v, want md, query and sql", comps.SourceTypes)
 	}
 
 	var projects struct {
@@ -418,7 +419,7 @@ func TestDevHandlerListsArchivedProjects(t *testing.T) {
 		store.AuditEntry{Actor: "test", Action: "project.archive"}); err != nil {
 		t.Fatal(err)
 	}
-	h := DevHandler([]string{devDir(t)}, files, storeDB(t, st))
+	h := DevHandler([]string{devDir(t)}, files, nil, storeDB(t, st))
 
 	var out devProjectsOut
 	getJSON(t, h, "/api/projects", &out)

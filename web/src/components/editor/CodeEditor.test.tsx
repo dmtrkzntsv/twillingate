@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, waitFor } from '@testing-library/react'
+import { language } from '@codemirror/language'
 import { EditorView, runScopeHandlers } from '@codemirror/view'
 import { CompletionContext, completionStatus, startCompletion } from '@codemirror/autocomplete'
 import CodeEditor from './CodeEditor'
@@ -14,6 +15,11 @@ describe('CodeEditor', () => {
   it('labels the editable area', () => {
     const { container } = render(<CodeEditor language="sql" label="SQL" value="SELECT 1" onChange={() => {}} />)
     expect(container.querySelector('.cm-content')?.getAttribute('aria-label')).toBe('SQL')
+  })
+
+  it('reads a structured query as JSON', async () => {
+    const { container } = render(<CodeEditor language="json" label="Query" value='{"query": {}}' onChange={() => {}} />)
+    await waitFor(() => expect(viewOf(container).state.facet(language)?.name).toBe('json'))
   })
 
   it('reports typing through onChange', () => {

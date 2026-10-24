@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -202,6 +203,26 @@ func (c Component) checkColumns(cols []string) error {
 		if !declared[col] {
 			return store.Refuse(store.ErrInvalid, "%s is not an input of %s", col, c.Name)
 		}
+	}
+	return nil
+}
+
+// checkColumnTypes checks the types a query's columns are known to have
+// (types[i] is cols[i]'s: number, day or text) against c's declared
+// inputs, before any row is read: a column fits a declared one that
+// names its type or text, which takes any value.
+func (c Component) checkColumnTypes(cols, types []string) error {
+	declared := make(map[string][]string, len(c.Inputs.Columns))
+	for _, decl := range c.Inputs.Columns {
+		declared[decl.Name] = decl.Types
+	}
+	for i, col := range cols {
+		want, ok := declared[col]
+		if !ok || slices.Contains(want, types[i]) || slices.Contains(want, "text") {
+			continue
+		}
+		return store.Refuse(store.ErrInvalid, "%s.%s: the query's column is %s, not %s",
+			c.Name, col, types[i], strings.Join(want, " or "))
 	}
 	return nil
 }

@@ -80,7 +80,7 @@ func TestSystemDashboardTiming(t *testing.T) {
 	}
 	t.Logf("project %d", projectID)
 
-	src := newSources(files, false, time.Now)["sql"]
+	src := newSources(files, false, time.Now, nil, nil)["sql"]
 	today := civil.Today(time.Now().UTC())
 	type timing struct {
 		widget, preset string

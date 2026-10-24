@@ -3,7 +3,7 @@ import type { Contract, Example } from './types'
 
 export const contract: Contract = {
   description: 'Countries shaded by value, ISO alpha-2; unmatched codes are listed below the map, not dropped.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [

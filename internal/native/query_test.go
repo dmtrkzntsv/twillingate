@@ -2,6 +2,7 @@ package native
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -18,6 +19,7 @@ func TestValidate(t *testing.T) {
 		"no compare":      {Kind: "stat", Table: "views", Metrics: []Metric{{Op: "count", As: "previous_users"}, {Op: "users"}}},
 		"breakdown":       {Kind: "breakdown", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "sum", Column: "value"}}, Dimensions: []string{"path", "day"}, Order: "sum_value", Limit: 1000, Other: true},
 		"daily":           {Kind: "stat", Table: "measures", Metrics: []Metric{{Op: "daily_max", Of: "users"}, {Op: "daily_sum", Of: "actors", As: "x"}}},
+		"order dimension": {Kind: "breakdown", Table: "events", Metrics: count(), Dimensions: []string{"path", "day"}, Order: "day", Limit: 1000},
 		"measures bucket": {Kind: "breakdown", Table: "measures", Metrics: count(), Dimensions: []string{"bucket"}, Where: []Filter{{Column: "bucket", Op: "gte", Values: []string{"3"}}}},
 		"filters": {Kind: "stat", Table: "events", Metrics: count(), Where: []Filter{
 			{Column: "attr_a", Op: "is_set"}, {Column: "country", Op: "in", Values: []string{"DE", "FR"}},
@@ -69,6 +71,7 @@ func TestValidate(t *testing.T) {
 		{"limit", Query{Kind: "breakdown", Table: "events", Metrics: count(), Dimensions: []string{"path"}, Limit: 1001}, "limit"},
 		{"limit negative", Query{Kind: "breakdown", Table: "events", Metrics: count(), Dimensions: []string{"path"}, Limit: -1}, "limit"},
 		{"order unknown", Query{Kind: "breakdown", Table: "events", Metrics: count(), Dimensions: []string{"path"}, Order: "nope"}, "order"},
+		{"order on a column not a dimension", Query{Kind: "breakdown", Table: "events", Metrics: count(), Dimensions: []string{"path"}, Order: "day"}, "order"},
 		{"order on stat", Query{Kind: "stat", Table: "events", Metrics: count(), Order: "count"}, "order"},
 		{"compare on trend", Query{Kind: "trend", Table: "events", Metrics: count(), Compare: "previous"}, "compare"},
 		{"compare bad", Query{Kind: "stat", Table: "events", Metrics: count(), Compare: "next"}, "compare"},
@@ -104,6 +107,56 @@ func TestMetricName(t *testing.T) {
 	} {
 		if got := m.Name(); got != want {
 			t.Errorf("%+v: %q, want %q", m, got, want)
+		}
+	}
+}
+
+func TestColumns(t *testing.T) {
+	cases := []struct {
+		name string
+		q    Query
+		want []string
+	}{
+		{"stat", Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "actors", As: "value"}}},
+			[]string{"count", "value"}},
+		{"stat compare", Query{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "count"}, {Op: "sum", Column: "value"}}, Compare: "previous"},
+			[]string{"count", "sum_value", "previous_count", "previous_sum_value"}},
+		{"trend", Query{Kind: "trend", Table: "events", Metrics: []Metric{{Op: "daily_max", Of: "users"}}},
+			[]string{"day", "daily_max_users"}},
+		{"trend series", Query{Kind: "trend", Table: "product", Metrics: count(), Series: "path"},
+			[]string{"day", "series", "count"}},
+		{"breakdown", Query{Kind: "breakdown", Table: "events", Metrics: []Metric{{Op: "actors"}, {Op: "count", As: "n"}}, Dimensions: []string{"country", "path"}},
+			[]string{"country", "path", "actors", "n"}},
+	}
+	for _, c := range cases {
+		if got := c.q.Columns(); !slices.Equal(got, c.want) {
+			t.Errorf("%s: Columns() = %v, want %v", c.name, got, c.want)
+		}
+	}
+}
+
+func TestColumnTypes(t *testing.T) {
+	cases := []struct {
+		name string
+		q    Query
+		want []string
+	}{
+		{"stat compare", Query{Kind: "stat", Metrics: []Metric{{Op: "count"}, {Op: "actors"}}, Compare: "previous"},
+			[]string{"number", "number", "number", "number"}},
+		{"trend", Query{Kind: "trend", Metrics: count()}, []string{"day", "number"}},
+		{"trend series", Query{Kind: "trend", Metrics: count(), Series: "display_width"}, []string{"day", "text", "number"}},
+		{"breakdown", Query{Kind: "breakdown", Metrics: count(),
+			Dimensions: []string{"day", "path", "attr_plan", "project_id", "display_width", "display_height", "consent", "bucket"}},
+			[]string{"day", "text", "text", "number", "number", "number", "number", "number", "number"}},
+		{"breakdown other", Query{Kind: "breakdown", Metrics: count(), Dimensions: []string{"day", "consent"}, Other: true},
+			[]string{"text", "text", "number"}},
+	}
+	for _, c := range cases {
+		if got := c.q.ColumnTypes(); !slices.Equal(got, c.want) {
+			t.Errorf("%s: ColumnTypes() = %v, want %v", c.name, got, c.want)
+		}
+		if n := len(c.q.Columns()); n != len(c.want) {
+			t.Errorf("%s: %d columns, %d types", c.name, n, len(c.want))
 		}
 	}
 }

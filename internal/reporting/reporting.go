@@ -75,6 +75,12 @@ type Options struct {
 	// ShareBaseURL is CONSOLE_URL without a trailing slash: the origin the
 	// public share links are built on. Empty turns CreateWidgetShare off.
 	ShareBaseURL string
+	// Native answers query widgets; nil refuses them when they load
+	// ("structured queries are not available").
+	Native Native
+	// Rules are the event and attribute rules a query widget reads with;
+	// nil applies none.
+	Rules RulesFunc
 	// Now stands in for time.Now in tests; nil means time.Now.
 	Now func() time.Time
 }
@@ -118,7 +124,7 @@ func New(st Store, files Files, opt Options) *Service {
 	return &Service{
 		st:           st,
 		files:        files,
-		sources:      newSources(files, true, now),
+		sources:      newSources(files, true, now, opt.Native, opt.Rules),
 		now:          now,
 		cache:        newCache(opt.CacheAge, opt.RefreshAge, now),
 		archivedDays: opt.ArchivedDays,

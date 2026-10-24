@@ -96,9 +96,9 @@ export interface DashboardsResponse {
   auto_refresh_seconds?: number
 }
 
-/** A widget's source: SQL for the chart components, Markdown for the markdown one. */
+/** A widget's source: SQL or a structured query (JSON) for the chart components, Markdown for the markdown one. */
 export interface WidgetSource {
-  type: 'sql' | 'md'
+  type: 'sql' | 'query' | 'md'
   content: string
 }
 
@@ -137,6 +137,8 @@ export interface SqlData {
   columns: string[]
   rows: string[][]
   truncated: boolean
+  /** The columns any value of which is an estimate, shown with "≈"; absent when every value is exact. */
+  approximate?: string[]
 }
 
 export interface MarkdownData {
@@ -145,7 +147,7 @@ export interface MarkdownData {
 
 export interface WidgetData {
   widget_id: number
-  source_type: 'sql' | 'md'
+  source_type: 'sql' | 'query' | 'md'
   project_id?: number
   from?: string
   to?: string
@@ -223,11 +225,11 @@ export interface WidgetContentBody {
   source?: WidgetSource
 }
 
-/** The preview body: an unsaved widget's SQL run with the project and range the editor holds. */
+/** The preview body: an unsaved widget's SQL or structured query run with the project and range the editor holds. */
 export interface PreviewBody {
   component: string
   props?: Record<string, unknown>
-  source: { type: 'sql'; content: string }
+  source: { type: 'sql' | 'query'; content: string }
   project_id?: number
   from?: string
   to?: string
@@ -542,7 +544,7 @@ export interface FoundSubmission extends Submission {
 export type DeleteSubmissionsBody = { ids: string[] } | { form: string; filters: string } | { search: string }
 
 export interface ComponentsResponse {
-  source_types: ('md' | 'sql')[]
+  source_types: ('md' | 'query' | 'sql')[]
   components: unknown[]
 }
 

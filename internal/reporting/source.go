@@ -23,17 +23,19 @@ type Params struct {
 	From, To  string
 }
 
-// SourceType is one kind of widget content: SQL over the event files, or
-// Markdown text. Validate is checked once, when a widget is saved;
-// Load runs on every read, with the viewer's chosen project and range.
+// SourceType is one kind of widget content: SQL over the event files, a
+// structured query the native engine answers, or Markdown text. Validate
+// is checked once, when a widget is saved; Load runs on every read, with
+// the viewer's chosen project and range.
 type SourceType interface {
 	Name() string
 	// Validate refuses content that does not fit c: a sql source checks
-	// it against the event files (params, shape, sample rows); refusals
-	// are store.ErrInvalid.
+	// it against the event files (params, shape, sample rows), a query
+	// source its columns, from the query alone; refusals are
+	// store.ErrInvalid.
 	Validate(ctx context.Context, content string, c Component) error
 	// Load runs content and returns the value a widget's component
-	// renders: readsql.Result for sql, Markdown for md.
+	// renders: readsql.Result for sql and query, Markdown for md.
 	Load(ctx context.Context, content string, p Params) (any, error)
 	// Cacheable reports whether Load's result may be kept across
 	// widgets/viewers until the next refresh (sql: true; md: false — it
@@ -52,16 +54,19 @@ type Markdown struct {
 }
 
 // newSources builds the registered source types against files and clock
-// now. sampleRows controls whether sql's Validate also runs a sample
-// query and checks its rows' types (true for a widget actually being
-// saved; false where only the query's shape matters). files and now may
-// be nil when the result is only used to enumerate or check registered
-// names (validSourceType, sortedSourceNames) — no method that touches
-// either is called in that case.
-func newSources(files Files, sampleRows bool, now func() time.Time) map[string]SourceType {
+// now, with nat answering query sources under rules. sampleRows controls
+// whether sql's Validate also runs a sample query and checks its rows'
+// types (true for a widget actually being saved; false where only the
+// query's shape matters). files and now may be nil when the result is
+// only used to enumerate or check registered names (validSourceType,
+// sortedSourceNames) — no method that touches either is called in that
+// case. nat nil fails a query source's Load, not its Validate, which
+// reads no data; rules nil applies none.
+func newSources(files Files, sampleRows bool, now func() time.Time, nat Native, rules RulesFunc) map[string]SourceType {
 	return map[string]SourceType{
-		"sql": &sqlSource{files: files, sampleRows: sampleRows, now: now},
-		"md":  mdSource{},
+		"sql":   &sqlSource{files: files, sampleRows: sampleRows, now: now},
+		"query": &querySource{files: files, native: nat, rules: rules},
+		"md":    mdSource{},
 	}
 }
 
@@ -69,12 +74,12 @@ func newSources(files Files, sampleRows bool, now func() time.Time) map[string]S
 // asks the same registry newSources builds, rather than keeping a second
 // list of names that could drift from it.
 func validSourceType(name string) bool {
-	_, ok := newSources(nil, false, nil)[name]
+	_, ok := newSources(nil, false, nil, nil, nil)[name]
 	return ok
 }
 
 // sortedSourceNames lists m's keys alphabetically, for a refusal that
-// names every registered source type ("there are md and sql").
+// names every registered source type ("there are md, query and sql").
 func sortedSourceNames(m map[string]SourceType) []string {
 	names := make([]string, 0, len(m))
 	for n := range m {

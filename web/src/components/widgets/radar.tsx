@@ -4,7 +4,7 @@ import {
   ChartTooltip,
 } from '@/components/ui/chart'
 import { seriesColor, seriesConfig } from '@/lib/chart'
-import type { Format } from '@/lib/format'
+import { approximate, type Format } from '@/lib/format'
 import { pivot, toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
 import { useCardMode } from '@/components/share/card-mode'
@@ -17,7 +17,7 @@ interface RadarProps {
 export const contract: Contract = {
   description:
     'Compare several axes at once, one shape per `series` value; keep the number of axes small (4–8) for readability.',
-  accepts: ['sql'],
+  accepts: ['sql', 'query'],
   inputs: {
     open: false,
     columns: [
@@ -86,7 +86,7 @@ export default function Radar({ data, props }: WidgetProps<RadarProps>) {
         <PolarAngleAxis dataKey="axis" tick={{ fontSize: 11, fill: 'var(--muted-foreground)' }} />
         {/* The largest value reaches the outer ring. */}
         <PolarRadiusAxis domain={[0, 'dataMax']} tick={false} axisLine={false} />
-        <ChartTooltip cursor={false} content={tooltip(format, { heading: 'axis' })} />
+        <ChartTooltip cursor={false} content={tooltip(format, { heading: 'axis', approximate: approximate(sql, 'value') })} />
         {hasSeries && legend()}
         {keys.map((key, i) => (
           <RechartsRadar

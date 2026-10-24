@@ -122,8 +122,9 @@ var (
 //     estimate; the per-day values stay exact);
 //   - breakdown: a column per dimension, then per metric; the limit (20)
 //     groups ranking first by the order metric (the first), ties by the
-//     dimensions, then with other an "Other" row (every dimension
-//     "Other") of the rest, when there is any.
+//     dimensions, or with order naming a dimension sorted by it ascending,
+//     ties by the other dimensions; then with other an "Other" row (every
+//     dimension "Other") of the rest, when there is any.
 //
 // A truncated result (MaxGroups, MaxBytes) leaves the untracked groups
 // out of a breakdown's Other row too, and ranks a trend's tracked series
@@ -448,7 +449,7 @@ func (s scan) breakdown(ctx context.Context, from, to civil.Date) (Result, error
 	for _, d := range s.q.Dimensions {
 		cols.add(d)
 	}
-	order := 0
+	order, byDim := 0, slices.Index(s.q.Dimensions, s.q.Order)
 	for i, mt := range ms {
 		cols.add(mt.Name())
 		if mt.Name() == s.q.Order {
@@ -457,22 +458,37 @@ func (s scan) breakdown(ctx context.Context, from, to civil.Date) (Result, error
 	}
 	vals, types := m.a.groups.vals, m.a.dimTypes
 	gs := make([]int32, m.groups)
-	rank := make([]value, m.groups)
 	for g := range gs {
 		gs[g] = int32(g)
-		rank[g] = m.compute(ms[order], []int32{int32(g)}, -1)
 	}
-	slices.SortFunc(gs, func(a, b int32) int {
-		if c := cmpDesc(rank[a], rank[b]); c != 0 {
-			return c
-		}
+	byDims := func(a, b int32) int {
 		for j, t := range types {
 			if c := cmpDim(t, vals[a][j], vals[b][j]); c != 0 {
 				return c
 			}
 		}
 		return 0
-	})
+	}
+	if byDim >= 0 {
+		// Ordered by a dimension: ascending, ties by the others.
+		slices.SortFunc(gs, func(a, b int32) int {
+			if c := cmpDim(types[byDim], vals[a][byDim], vals[b][byDim]); c != 0 {
+				return c
+			}
+			return byDims(a, b)
+		})
+	} else {
+		rank := make([]value, m.groups)
+		for g := range gs {
+			rank[g] = m.compute(ms[order], []int32{int32(g)}, -1)
+		}
+		slices.SortFunc(gs, func(a, b int32) int {
+			if c := cmpDesc(rank[a], rank[b]); c != 0 {
+				return c
+			}
+			return byDims(a, b)
+		})
+	}
 	limit := s.q.Limit
 	if limit == 0 {
 		limit = 20

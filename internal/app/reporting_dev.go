@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 )
@@ -23,7 +24,8 @@ const (
 
 // ReportingDev runs `twillingate reporting dev`: a read-only handle on
 // dbPath, for the project switcher, an engine on this binary over the
-// event files in eventsDir, where its sql widgets run, and
+// event files in eventsDir, where its sql widgets run, the native engine
+// over them for its query widgets, and
 // reporting.DevHandler, serving addr until ctx is cancelled. There is no
 // store, no registry and no auth here — cmd/twillingate/reporting.go has
 // already refused a non-loopback addr before this is called. Without a
@@ -46,8 +48,9 @@ func ReportingDev(ctx context.Context, dirs []string, dbPath, eventsDir, addr st
 	}
 	defer eng.Close()
 	files := newWidgetFiles(cfg, reader, nil)
+	nat := native.New(native.Options{Dir: eventsDir})
 
-	srv := &http.Server{Addr: addr, Handler: reporting.DevHandler(dirs, files, db), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: reporting.DevHandler(dirs, files, nat, db), ReadHeaderTimeout: 5 * time.Second}
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.ListenAndServe() }()
 	logger.Info("reporting dev serving", "addr", addr, "dirs", dirs)
