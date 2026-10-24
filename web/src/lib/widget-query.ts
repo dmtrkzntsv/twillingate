@@ -57,7 +57,8 @@ export function widgetQuery(widget: Widget, params: WidgetDataQuery, idle = fals
     queryFn: ({ signal }) =>
       Object.values(view).some((v) => v !== undefined)
         ? endpoints.widgetData(widget.widget_id, { ...params, ...view })
-        : loadWidget({ ...streamParams(params), widget_id: widget.widget_id }, signal),
+        : // The query's signal: a card that unmounts mid-load cancels its query and leaves the stream.
+          loadWidget({ ...streamParams(params), widget_id: widget.widget_id }, signal),
     // A widget whose component is gone has nothing to render the data with;
     // an idle one keeps showing what is cached but asks for nothing new.
     enabled: !idle && componentOf(widget) !== undefined,
@@ -127,4 +128,69 @@ export function refreshableSource(type: string | undefined): boolean {
 export function canRefresh(data: WidgetData | undefined, now: number): boolean {
   if (!data?.refresh_after || !refreshableSource(data.source_type)) return false
   return Date.parse(data.refresh_after) <= now
+}
+
+/** What a dashboard reloads: each widget with the query its card shows. */
+export interface DashboardItem {
+  widget: Widget
+  params: WidgetDataQuery
+}
+
+/**
+ * Loads a dashboard's widgets into their queries through one stream (one
+ * per 64 widgets): each answer, or refusal, lands in the query of its card
+ * under this selection (`widgetQuery`'s key, default view), as it arrives.
+ * `fresh` asks the server for answers at most REPORTING_REFRESH_MAX_AGE
+ * old, as Refresh all does. Aborting `signal` (the page left,
+ * or its project or range changed) cancels the queries still waiting and
+ * closes the stream; they go back to what they showed before.
+ */
+export async function loadDashboard(
+  client: QueryClient,
+  items: DashboardItem[],
+  { fresh = false, signal }: { fresh?: boolean; signal?: AbortSignal } = {}
+): Promise<PromiseSettledResult<WidgetData>[]> {
+  if (signal?.aborted) return []
+  const keys = items.map(({ widget, params }) => widgetQuery(widget, params).queryKey)
+  const cancel = () => {
+    for (const queryKey of keys) void client.cancelQueries({ queryKey, exact: true })
+  }
+  signal?.addEventListener('abort', cancel, { once: true })
+  try {
+    return await Promise.allSettled(
+      items.map(({ widget, params }, i) =>
+        client.fetchQuery({
+          queryKey: keys[i],
+          queryFn: ({ signal: own }) =>
+            loadWidget({ ...streamParams(params), widget_id: widget.widget_id, ...(fresh ? { fresh } : {}) }, own),
+          staleTime: 0,
+        })
+      )
+    )
+  } finally {
+    signal?.removeEventListener('abort', cancel)
+  }
+}
+
+/**
+ * Refresh all: refreshes what the cards of these widgets show, with `fresh`: every
+ * default view through one stream (`loadDashboard`), a remote table's own
+ * page, filter or sort on its own GET, as its card's refresh does.
+ */
+export function refreshDashboard(
+  client: QueryClient,
+  widgets: Widget[],
+  paramsFor: (widget: Widget) => WidgetDataQuery,
+  signal?: AbortSignal
+): Promise<unknown> {
+  const streamed: DashboardItem[] = []
+  const alone: Promise<unknown>[] = []
+  for (const widget of widgets) {
+    const params = paramsFor(widget)
+    for (const view of shownViews(client, widget, params)) {
+      if (view.filters === undefined && view.sort === undefined && view.offset === undefined) streamed.push({ widget, params })
+      else alone.push(refreshWidget(client, widget, params, view))
+    }
+  }
+  return Promise.allSettled([loadDashboard(client, streamed, { fresh: true, signal }), ...alone])
 }

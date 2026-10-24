@@ -22,7 +22,7 @@ import { resolve } from '@/lib/ranges'
 import type { ShareContext } from '@/lib/share'
 import { chooseSelection } from '@/lib/selection'
 import { selectionParams, widgetParams } from '@/lib/view'
-import { refreshDashboard } from '@/lib/widget-stream'
+import { refreshDashboard } from '@/lib/widget-query'
 import ProjectTabMenu from './ProjectTabMenu'
 
 interface Props {

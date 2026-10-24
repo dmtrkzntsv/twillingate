@@ -24,7 +24,7 @@ import { moveTabBody } from '@/lib/arrange'
 import { rememberDashboard } from '@/lib/last-dashboard'
 import { dashboardQuery, dashboardsQuery, projectsQuery } from '@/lib/queries'
 import type { ShareContext } from '@/lib/share'
-import { refreshDashboard } from '@/lib/widget-stream'
+import { refreshDashboard } from '@/lib/widget-query'
 
 /** `/dashboards/:id`: one dashboard in the app shell, as a report tab or a page of its own (D36). */
 export default function Dashboard() {

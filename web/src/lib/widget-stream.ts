@@ -1,8 +1,5 @@
-import type { QueryClient } from '@tanstack/react-query'
-import { ApiError, endpoints, type Widget, type WidgetData, type WidgetDataQuery, type WidgetStreamItem } from './api'
-// widget-query asks loadWidget for each answer; each module calls the other
-// only from inside functions, so the cycle is safe.
-import { refreshWidget, shownViews, widgetQuery } from './widget-query'
+import { ApiError, endpoints, type WidgetData, type WidgetDataQuery, type WidgetStreamItem } from './api'
+import { readSSE } from './sse'
 
 /**
  * A dashboard's widgets load through one streamed request,
@@ -21,68 +18,6 @@ import { refreshWidget, shownViews, widgetQuery } from './widget-query'
 
 /** The most widgets one stream request may carry (the route refuses more). */
 export const STREAM_MAX = 64
-
-/** One Server-Sent Event: its type (`message` when unnamed) and its data lines joined by newlines. */
-export interface SSEEvent {
-  event: string
-  data: string
-}
-
-/**
- * Parses a Server-Sent Events body as it arrives, chunk by chunk: a line or
- * an event split across chunks waits for the rest, lines end in LF, CRLF or
- * CR, comments (`: keepalive`) and unknown fields are skipped, and an event
- * with no data line is not dispatched (as EventSource does).
- */
-export class SSEParser {
-  private buffer = ''
-  private event = ''
-  private data: string[] = []
-
-  /** Feeds one chunk and returns the events it completes. */
-  push(chunk: string): SSEEvent[] {
-    this.buffer += chunk
-    const out: SSEEvent[] = []
-    let start = 0
-    for (let i = 0; i < this.buffer.length; i++) {
-      const c = this.buffer[i]
-      if (c !== '\n' && c !== '\r') continue
-      // A CR last in the chunk may be the first half of a CRLF: wait for the next one.
-      if (c === '\r' && i === this.buffer.length - 1) break
-      this.line(this.buffer.slice(start, i), out)
-      if (c === '\r' && this.buffer[i + 1] === '\n') i++
-      start = i + 1
-    }
-    this.buffer = this.buffer.slice(start)
-    return out
-  }
-
-  /** The body has ended: a last line without its end is read, but an event without its blank line is dropped. */
-  end(): SSEEvent[] {
-    const out: SSEEvent[] = []
-    if (this.buffer.length > 0) this.line(this.buffer.replace(/\r$/, ''), out)
-    this.buffer = ''
-    this.event = ''
-    this.data = []
-    return out
-  }
-
-  private line(line: string, out: SSEEvent[]) {
-    if (line === '') {
-      if (this.data.length > 0) out.push({ event: this.event || 'message', data: this.data.join('\n') })
-      this.event = ''
-      this.data = []
-      return
-    }
-    if (line.startsWith(':')) return
-    const colon = line.indexOf(':')
-    const field = colon < 0 ? line : line.slice(0, colon)
-    let value = colon < 0 ? '' : line.slice(colon + 1)
-    if (value.startsWith(' ')) value = value.slice(1)
-    if (field === 'event') this.event = value
-    else if (field === 'data') this.data.push(value)
-  }
-}
 
 /** One widget's event on the stream: its GET body, or the refusal the GET route would answer. */
 export type StreamAnswer =
@@ -114,32 +49,11 @@ export async function readStream(
   onAnswer: (answer: StreamAnswer) => void
 ): Promise<void> {
   const res = await endpoints.widgetStream(items, signal)
-  if (!res.body) throw new Error('the widget stream has no body')
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder()
-  const parser = new SSEParser()
-  const dispatch = (events: SSEEvent[]) => {
-    for (const e of events) {
-      if (e.event === 'done') return true
-      if (e.event !== 'widget') continue
-      const answer = answerOf(e.data)
-      if (answer) onAnswer(answer)
-    }
-    return false
-  }
-  try {
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) {
-        dispatch(parser.push(decoder.decode()))
-        dispatch(parser.end())
-        return
-      }
-      if (dispatch(parser.push(decoder.decode(value, { stream: true })))) return
-    }
-  } finally {
-    // Done read or not, the body is let go (a no-op once it has ended).
-    void reader.cancel().catch(() => {})
+  for await (const e of readSSE(res)) {
+    if (e.event === 'done') return
+    if (e.event !== 'widget') continue
+    const answer = answerOf(e.data)
+    if (answer) onAnswer(answer)
   }
 }
 
@@ -239,48 +153,6 @@ async function stream(pending: Pending[]): Promise<void> {
   for (const p of pending) if (!p.settled) void get(p)
 }
 
-/** What a dashboard reloads: each widget with the query its card shows. */
-export interface DashboardItem {
-  widget: Widget
-  params: WidgetDataQuery
-}
-
-/**
- * Loads a dashboard's widgets into their queries through one stream (one
- * per 64 widgets): each answer, or refusal, lands in the query of its card
- * under this selection (`widgetQuery`'s key, default view), as it arrives.
- * `fresh` asks the server for answers at most REPORTING_REFRESH_MAX_AGE
- * old, as Refresh all and auto-refresh do. Aborting `signal` (the page left,
- * or its project or range changed) cancels the queries still waiting and
- * closes the stream; they go back to what they showed before.
- */
-export async function loadDashboard(
-  client: QueryClient,
-  items: DashboardItem[],
-  { fresh = false, signal }: { fresh?: boolean; signal?: AbortSignal } = {}
-): Promise<PromiseSettledResult<WidgetData>[]> {
-  if (signal?.aborted) return []
-  const keys = items.map(({ widget, params }) => widgetQuery(widget, params).queryKey)
-  const cancel = () => {
-    for (const queryKey of keys) void client.cancelQueries({ queryKey, exact: true })
-  }
-  signal?.addEventListener('abort', cancel, { once: true })
-  try {
-    return await Promise.allSettled(
-      items.map(({ widget, params }, i) =>
-        client.fetchQuery({
-          queryKey: keys[i],
-          queryFn: ({ signal: own }) =>
-            loadWidget({ ...streamParams(params), widget_id: widget.widget_id, ...(fresh ? { fresh } : {}) }, own),
-          staleTime: 0,
-        })
-      )
-    )
-  } finally {
-    signal?.removeEventListener('abort', cancel)
-  }
-}
-
 /** The part of a widget's query a stream takes: its selection, never a remote table's view. */
 export function streamParams(params: WidgetDataQuery): Omit<WidgetStreamItem, 'widget_id'> {
   // Only what is set, so a widget's own GET asks for exactly what its card would.
@@ -293,25 +165,3 @@ export function streamParams(params: WidgetDataQuery): Omit<WidgetStreamItem, 'w
   }
 }
 
-/**
- * Refreshes what the cards of these widgets show, with `fresh`: every
- * default view through one stream (`loadDashboard`), a remote table's own
- * page, filter or sort on its own GET, as its card's refresh does.
- */
-export function refreshDashboard(
-  client: QueryClient,
-  widgets: Widget[],
-  paramsFor: (widget: Widget) => WidgetDataQuery,
-  signal?: AbortSignal
-): Promise<unknown> {
-  const streamed: DashboardItem[] = []
-  const alone: Promise<unknown>[] = []
-  for (const widget of widgets) {
-    const params = paramsFor(widget)
-    for (const view of shownViews(client, widget, params)) {
-      if (view.filters === undefined && view.sort === undefined && view.offset === undefined) streamed.push({ widget, params })
-      else alone.push(refreshWidget(client, widget, params, view))
-    }
-  }
-  return Promise.allSettled([loadDashboard(client, streamed, { fresh: true, signal }), ...alone])
-}

@@ -1,52 +1,8 @@
 import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { ApiError, endpoints, type Widget, type WidgetData, type WidgetDataQuery, type WidgetStreamItem } from './api'
-import { widgetQuery } from './widget-query'
-import { loadDashboard, refreshDashboard, SSEParser, STREAM_MAX } from './widget-stream'
-
-describe('SSEParser', () => {
-  it('reads events split anywhere across chunks', () => {
-    const p = new SSEParser()
-    const text = 'event: widget\ndata: {"a":1}\n\nevent: done\ndata: {}\n\n'
-    const events = []
-    for (const c of text) events.push(...p.push(c))
-    expect(events).toEqual([
-      { event: 'widget', data: '{"a":1}' },
-      { event: 'done', data: '{}' },
-    ])
-  })
-
-  it('takes CRLF and CR line ends, a CRLF split between chunks included', () => {
-    const p = new SSEParser()
-    expect(p.push('event: widget\r')).toEqual([])
-    // The last CR may yet be a CRLF's: the blank line it ends waits for the next chunk.
-    expect(p.push('\ndata: x\r\n\r')).toEqual([])
-    expect(p.push('data: y\r\n\r\n')).toEqual([
-      { event: 'widget', data: 'x' },
-      { event: 'message', data: 'y' },
-    ])
-    expect(p.push('data: z\r\r')).toEqual([])
-    expect(p.push('\n')).toEqual([{ event: 'message', data: 'z' }])
-    expect(p.push('data: w\r\r\r\n')).toEqual([{ event: 'message', data: 'w' }])
-  })
-
-  it('skips comments and unknown fields, and dispatches nothing without data', () => {
-    const p = new SSEParser()
-    expect(p.push(': keepalive\n\n')).toEqual([])
-    expect(p.push('event: widget\nid: 3\nretry: 10\n\n')).toEqual([])
-    expect(p.push('event: widget\n: note\ndata:no-space\n\n')).toEqual([{ event: 'widget', data: 'no-space' }])
-  })
-
-  it('joins several data lines with newlines', () => {
-    expect(new SSEParser().push('data: a\ndata: b\n\n')).toEqual([{ event: 'message', data: 'a\nb' }])
-  })
-
-  it('drops an event the body ends inside', () => {
-    const p = new SSEParser()
-    expect(p.push('event: widget\ndata: x')).toEqual([])
-    expect(p.end()).toEqual([])
-  })
-})
+import { loadDashboard, refreshDashboard, widgetQuery } from './widget-query'
+import { STREAM_MAX } from './widget-stream'
 
 function widget(id: number, extra: Partial<Widget> = {}): Widget {
   return {
@@ -281,6 +237,23 @@ describe('cards loading together', () => {
     await Promise.all(loads)
     expect(endpoints.widgetStream).toHaveBeenCalledTimes(1)
     expect(getSpy).not.toHaveBeenCalled()
+  })
+
+  it('refetch together without fresh when invalidated, as auto-refresh does', async () => {
+    const c = client()
+    const ws = [widget(1), widget(2)]
+    const stops = ws.map((w) => {
+      c.setQueryData(keyOf(w), answer(w.widget_id, { cached_at: 'before' }))
+      return new QueryObserver(c, widgetQuery(w, params)).subscribe(() => {})
+    })
+    const refetching = c.invalidateQueries({ queryKey: ['widget'] })
+    await streamOpened()
+    expect(opened[0].items).toEqual(ws.map((w) => ({ widget_id: w.widget_id, ...params })))
+    opened[0].send(event(1, { data: answer(1) }) + event(2, { data: answer(2) }) + done)
+    await refetching
+    expect(c.getQueryData(keyOf(ws[1]))).toEqual(answer(2))
+    expect(getSpy).not.toHaveBeenCalled()
+    stops.forEach((stop) => stop())
   })
 
   it("leave a remote table's own view on its GET", async () => {
