@@ -20,9 +20,16 @@ export interface Draft {
   markdown: string
 }
 
-/** The draft an edit starts from: the widget as stored, or empty for a new one (on sql, its components' first type). */
-export function draftOf(widget?: Widget): Draft {
-  if (!widget) return { title: '', component: null, props: {}, code: 'sql', sql: '', query: '', markdown: '' }
+/**
+ * The draft an edit starts from: the widget as stored, or empty for a new
+ * one: on sql, or on the query template when the server takes no SQL
+ * (`sql` false: no external SQL engine).
+ */
+export function draftOf(widget?: Widget, sql = true): Draft {
+  if (!widget) {
+    const empty: Draft = { title: '', component: null, props: {}, code: 'sql', sql: '', query: '', markdown: '' }
+    return sql ? empty : withCode(empty, 'query')
+  }
   const { type, content } = widget.source
   return {
     title: widget.title ?? '',
@@ -35,24 +42,36 @@ export function draftOf(widget?: Widget): Draft {
   }
 }
 
-/** The code types a component takes with these props, in its own order; a remote table runs its SQL per request, so it takes sql only. */
-export function codeTypesOf(component: string | null, props: Record<string, unknown>): CodeType[] {
+/**
+ * The code types a component takes with these props, in its own order; a
+ * remote table runs its SQL per request, so it takes sql only. `sql` false
+ * (the server has no external SQL engine) leaves sql out.
+ */
+export function codeTypesOf(component: string | null, props: Record<string, unknown>, sql = true): CodeType[] {
   if (!component) return []
   const accepts = widgets[component]?.contract.accepts ?? []
-  return accepts.filter((t): t is CodeType => (t === 'sql' || t === 'query') && !(t === 'query' && component === 'table' && props.mode === 'remote'))
+  return accepts.filter(
+    (t): t is CodeType =>
+      ((t === 'sql' && sql) || t === 'query') && !(t === 'query' && component === 'table' && props.mode === 'remote'),
+  )
 }
 
-/** The source type the draft writes: its chosen code type when the component takes it, otherwise the component's first. */
-export function sourceTypeOf(d: Pick<Draft, 'component' | 'props' | 'code'>): WidgetSource['type'] | null {
+/**
+ * The source type the draft writes: its chosen code type when the component
+ * takes it, otherwise the first the component takes; never sql when `sql`
+ * is false.
+ */
+export function sourceTypeOf(d: Pick<Draft, 'component' | 'props' | 'code'>, sql = true): WidgetSource['type'] | null {
   if (!d.component) return null
-  const codes = codeTypesOf(d.component, d.props)
+  const codes = codeTypesOf(d.component, d.props, sql)
   if (codes.includes(d.code)) return d.code
-  return widgets[d.component]?.contract.accepts[0] ?? null
+  if (codes.length > 0) return codes[0]
+  return widgets[d.component]?.contract.accepts.find((t) => sql || t !== 'sql') ?? null
 }
 
 /** The draft's source for its type; null while no component is chosen. */
-export function sourceOf(d: Draft): WidgetSource | null {
-  const type = sourceTypeOf(d)
+export function sourceOf(d: Draft, sql = true): WidgetSource | null {
+  const type = sourceTypeOf(d, sql)
   if (!type) return null
   return { type, content: type === 'md' ? d.markdown : type === 'query' ? d.query : d.sql }
 }
@@ -61,6 +80,16 @@ export function sourceOf(d: Draft): WidgetSource | null {
 export function withCode(d: Draft, code: CodeType): Draft {
   if (code === 'query' && d.query.trim() === '') return { ...d, code, query: queryTemplate(d.component) }
   return { ...d, code }
+}
+
+/**
+ * A SQL draft as a structured query, for a server with no external SQL
+ * engine: the component's query template, with title, component and props
+ * kept, except a remote table's mode (a query table is local).
+ */
+export function toQuery(d: Draft): Draft {
+  const { mode, ...rest } = d.props
+  return withCode({ ...d, props: mode === 'remote' ? rest : d.props, code: 'sql', query: '' }, 'query')
 }
 
 /**
@@ -154,9 +183,10 @@ export function changedFields(w: Widget, d: Draft): WidgetContentBody {
 }
 
 /** Whether closing the editor would lose something: an edit differs from the widget, an add from the empty draft. */
-export function isDirty(w: Widget | undefined, d: Draft): boolean {
-  // A template no one edited is not a change, once the draft is back on sql.
-  if (!w) return !same({ ...d, query: d.query === queryTemplate(d.component) ? '' : d.query }, draftOf())
+export function isDirty(w: Widget | undefined, d: Draft, sql = true): boolean {
+  // A template no one edited is not a change.
+  const untouched = (x: Draft) => ({ ...x, query: x.query === queryTemplate(x.component) ? '' : x.query })
+  if (!w) return !same(untouched(d), untouched(draftOf(undefined, sql)))
   return Object.keys(changedFields(w, d)).length > 0
 }
 
@@ -171,8 +201,8 @@ export function usesParams(sql: string): { project: boolean; range: boolean } {
 }
 
 /** Which switcher parameters the draft's source reads: a query always follows both, markdown neither. */
-export function paramsOf(d: Draft): { project: boolean; range: boolean } {
-  const type = sourceTypeOf(d)
+export function paramsOf(d: Draft, sql = true): { project: boolean; range: boolean } {
+  const type = sourceTypeOf(d, sql)
   if (type === 'query') return { project: true, range: true }
   if (type === 'sql') return usesParams(d.sql)
   return { project: false, range: false }

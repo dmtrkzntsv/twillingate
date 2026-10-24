@@ -119,6 +119,13 @@ export const findSubmissionsQuery = (projectId: number, search: string) => ({
   queryFn: () => endpoints.findSubmissions(projectId, { search }),
 })
 
+/**
+ * The components and the source types the server takes: sql is among them
+ * only when an external SQL engine is configured. It changes only with a
+ * restart.
+ */
+export const componentsQuery = { queryKey: ['components'], queryFn: () => endpoints.components(), staleTime: 10 * 60_000 }
+
 /** The query schema reference, for the SQL editor's completion; it changes only with a release. */
 export const schemaViewsQuery = { queryKey: ['schema-views'], queryFn: () => endpoints.schemaViews(), staleTime: Infinity }
 
