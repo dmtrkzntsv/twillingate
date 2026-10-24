@@ -2,7 +2,7 @@ import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { ApiError, endpoints, type Widget, type WidgetData, type WidgetDataQuery, type WidgetStreamItem } from './api'
 import { loadDashboard, refreshDashboard, widgetQuery } from './widget-query'
-import { FALLBACK_GETS, STREAM_MAX } from './widget-stream'
+import { FALLBACK_GETS, loadWidget, STREAM_MAX } from './widget-stream'
 
 function widget(id: number, extra: Partial<Widget> = {}): Widget {
   return {
@@ -321,5 +321,46 @@ describe('refreshDashboard', () => {
     await refreshing
     expect(c.getQueryData(keyOf(ws[0]))).toEqual(answer(1))
     unsubscribe.forEach((u) => u())
+  })
+})
+
+describe('fallback GETs', () => {
+  it(`run at most ${FALLBACK_GETS} at once across every failed stream, and skip a cancelled widget`, async () => {
+    vi.mocked(endpoints.widgetStream).mockRejectedValue(new ApiError(502, 'bad gateway'))
+    let running = 0
+    let most = 0
+    const releases: (() => void)[] = []
+    getSpy.mockImplementation(async (id) => {
+      running++
+      most = Math.max(most, running)
+      await new Promise<void>((r) => releases.push(r))
+      running--
+      return answer(id, { source_type: 'sql' })
+    })
+    // Two streams' worth: STREAM_MAX widgets, then 8 more.
+    const n = STREAM_MAX + 8
+    const controllers = Array.from({ length: n }, () => new AbortController())
+    const loads = controllers.map((c, i) =>
+      loadWidget({ widget_id: i + 1, ...params }, c.signal).then(
+        () => 'ok',
+        () => 'rejected'
+      )
+    )
+    await vi.waitFor(() => expect(releases).toHaveLength(FALLBACK_GETS))
+    expect(opened).toHaveLength(0) // both streams failed at once
+    expect(vi.mocked(endpoints.widgetStream)).toHaveBeenCalledTimes(2)
+    // The last widget is cancelled while it waits for a slot.
+    controllers[n - 1].abort()
+    for (let released = 0; released < n - 1; released++) {
+      await vi.waitFor(() => expect(releases.length).toBeGreaterThan(0))
+      expect(running).toBeLessThanOrEqual(FALLBACK_GETS)
+      releases.shift()!()
+    }
+    const got = await Promise.all(loads)
+    expect(most).toBe(FALLBACK_GETS)
+    expect(getSpy).toHaveBeenCalledTimes(n - 1)
+    expect(getSpy.mock.calls.map(([id]) => id)).not.toContain(n)
+    expect(got.at(-1)).toBe('rejected')
+    expect(got.slice(0, -1).every((g) => g === 'ok')).toBe(true)
   })
 })

@@ -19,7 +19,7 @@ import { readSSE } from './sse'
 /** The most widgets one stream request may carry (the route refuses more). */
 export const STREAM_MAX = 64
 
-/** The most GETs a failed stream's widgets load with at once. */
+/** The most GETs failed streams' widgets load with at once, every stream together. */
 export const FALLBACK_GETS = 6
 
 /** One widget's event on the stream: its GET body, or the refusal the GET route would answer. */
@@ -167,16 +167,41 @@ async function stream(pending: Pending[]): Promise<void> {
     for (const p of left) settle(p, () => p.reject(failed))
     return
   }
-  await getAll(left, FALLBACK_GETS)
+  await getAll(left)
 }
 
-/** Loads each of pending on its own GET, at most `limit` at once. */
-async function getAll(pending: Pending[], limit: number): Promise<void> {
-  let next = 0
-  const worker = async () => {
-    while (next < pending.length) await get(pending[next++])
+/** Fallback GETs running now, across every stream, and those waiting for one of the FALLBACK_GETS. */
+let fallbackRunning = 0
+const fallbackWaiting: (() => void)[] = []
+
+/** Runs `load` once fewer than FALLBACK_GETS fallback GETs run, across every stream. */
+async function inPool(load: () => Promise<void>): Promise<void> {
+  if (fallbackRunning >= FALLBACK_GETS) await new Promise<void>((r) => fallbackWaiting.push(r))
+  else fallbackRunning++
+  try {
+    await load()
+  } finally {
+    // The slot passes straight to the next waiter, or is freed.
+    const next = fallbackWaiting.shift()
+    if (next) next()
+    else fallbackRunning--
   }
-  await Promise.all(Array.from({ length: Math.min(limit, pending.length) }, worker))
+}
+
+/**
+ * Loads each of pending on its own GET, through the one pool of
+ * FALLBACK_GETS shared by every stream; a widget whose query was cancelled
+ * meanwhile is rejected rather than asked for.
+ */
+async function getAll(pending: Pending[]): Promise<void> {
+  await Promise.all(
+    pending.map((p) =>
+      inPool(async () => {
+        if (p.signal?.aborted) return settle(p, () => p.reject(p.signal?.reason))
+        await get(p)
+      })
+    )
+  )
 }
 
 /** The part of a widget's query a stream takes: its selection, never a remote table's view. */
