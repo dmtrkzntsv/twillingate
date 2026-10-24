@@ -82,7 +82,8 @@ marks a breaking change. Scopes match the tree: `store`, `server`, `jobs`,
 Releases are cut by hand with `gh workflow run release.yml` (optional `version`
 input; blank means next patch). Pushing to `main` publishes nothing. Pre-1.0:
 breaking changes bump the minor. The workflow has four jobs: `build` settles
-the version and builds the tarballs (`make dist`); `test` (`make check`, then
+the version and builds both architectures' static tarballs on one runner
+(`make dist`), then smoke-tests the amd64 binary; `test` (`make check`, then
 the race suite `make test`) and `build docker image` (pushed untagged, by
 digest) run side by side; `build and publish release` waits for all three,
 tags, hands the tarballs to `npx changelogithub`, then tags the image with the
@@ -93,8 +94,8 @@ can ship under one version; notes are not hand-edited.
 
 `make check` (vet, the coverage gate without `-race`, the SQLite-free packages
 with it) is what pull request CI runs; run it before pushing.
-`make build` compiles, with cgo (DuckDB, `internal/engine`), so it needs a C
-toolchain; `make test` runs the whole suite under `-race`, about
+`make build` compiles one static binary without cgo (`CGO_ENABLED=0`; no C
+toolchain, and `internal/archtest` refuses a cgo or DuckDB import); `make test` runs the whole suite under `-race`, about
 ten times slower because modernc SQLite is instrumented too, so CI runs it only
 in the release workflow. Each package must stay under go test's 10-minute
 default there: a test that needs a migrated database copies one from

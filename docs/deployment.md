@@ -15,8 +15,9 @@ widgets at `/share/`) — and its whole state is one SQLite file.
 
 ## Install
 
-Linux on amd64 or arm64 with glibc 2.35 or newer (Debian 12, Ubuntu 22.04 or
-later), or Docker on amd64 or arm64. 32-bit ARM is not built. Plan on 1 GB
+Linux on amd64 or arm64, or Docker on amd64 or arm64. The binary is
+static (pure Go, no cgo), so any Linux distribution runs it, whatever its C
+library. 32-bit ARM is not built. Plan on 1 GB
 of memory: the server stays small, near its soft memory target
 (`GOMEMLIMIT`, which the unit and compose files set to 256MiB). SQL runs
 on an [external SQL engine](#external-sql-engine), a process of its own
@@ -34,8 +35,8 @@ streamed request), and 387 to 405 MB when its widgets are asked for one
 by one. The built-in widgets' reader, in the console process, holds at
 most about 128 MiB of identities, 128 MiB of today's logs decoded
 (dropped after five idle minutes) and 256 MiB of aggregations (two scans
-at once, 128 MiB each), counted approximately. `serve` starts no engine
-child: SQL (a widget's, `query`'s and the console's check of the users' SQL
+at once, 128 MiB each), counted approximately. `serve` starts no other
+process: SQL (a widget's, `query`'s and the console's check of the users' SQL
 widgets at start) goes to the external SQL engine when `SQL_ENGINE_SOCKET`
 is set, and is refused when it is not, while the form-attribution lookup,
 the daily pass, the built-in widgets and the check before a rename or merge
@@ -45,6 +46,12 @@ rule is saved read the files in Go.
 
 Ingestion, the SDK and — once `CONSOLE_AUTH_DSN` is set — the console: MCP,
 REST and the [dashboards at /app/](#dashboards-at-app).
+The image (`ghcr.io/dmtrkzntsv/twillingate`, amd64 and arm64) is the
+static binary on a distroless base, with CA certificates and time zone
+data and nothing else: no shell, no package manager. It runs as uid and
+gid 10001 and keeps the database and the event files in the
+`/var/lib/twillingate` volume; run CLI commands through
+`docker compose exec twillingate twillingate …`.
 
 ```bash
 mkdir twillingate && cd twillingate
@@ -59,7 +66,7 @@ docker compose exec twillingate twillingate key issue -project-id 1 -label web
 ```bash
 # From a published release (no checkout needed):
 curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/twillingate/main/deploy/systemd/install.sh | sudo bash
-# Or from a checkout (Go, Node 22 and a C toolchain on the host): git clone, make build, then
+# Or from a checkout (Go and Node 22 on the host): git clone, make build, then
 sudo ./deploy/systemd/install.sh          # --user NAME to skip the prompt, --yes for defaults
 ```
 
@@ -167,7 +174,7 @@ leftover one is ignored, so rename any still in `twillingate.env`.
 
 ### Raspberry Pi and low-resource hosts
 
-- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. No twillingate process runs an engine child: SQL goes to the external SQL engine, if you run one, and the built-in dashboards need none.
+- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. twillingate runs as one process: SQL goes to the external SQL engine, if you run one, and the built-in dashboards need none.
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Keep `GOMEMLIMIT` (unit and compose files ship `256MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory. `GOMEMLIMIT` is a soft target, not a bound: the garbage collector works harder near it, and the process may go past it. The daily pass peaks near 150 MB on a month of a million events, and at about 230 to 400 MB on one with 2,000 distinct attribute keys (lower under a lower target, at more CPU).
 - Plan on 1 GB of memory, as in [Install](#install): `GOMEMLIMIT` is the server's own target (the daily pass included: it runs in the server). An external SQL engine on the same host needs memory of its own on top.
@@ -660,8 +667,8 @@ List each project's newest dated file (a day file, or a month file once the mont
 
 ```bash
 sudo -u twillingate sh -c 'for d in /var/lib/twillingate/raw/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done'
-# compose (the image has sh, grep and sort)
-docker compose exec twillingate sh -c 'for d in /var/lib/twillingate/raw/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done'
+# compose: the image has no shell, so list them from a throwaway container
+docker run --rm --volumes-from "$(docker compose ps -q twillingate)" alpine:3.20 sh -c 'for d in /var/lib/twillingate/raw/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done'
 ```
 
 The image carries no `sqlite3`: under compose, `docker compose stop

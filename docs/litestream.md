@@ -154,12 +154,13 @@ sudo rm /tmp/check.db*
 
 ```bash
 # docker compose: the images carry no sqlite3, so check the copy on the host
+# (and the collector's has no shell: litestream's container removes the copy)
 docker compose exec litestream litestream ltx -config /etc/litestream.yml \
   /var/lib/twillingate/twillingate.db
 docker compose exec litestream litestream restore -config /etc/litestream.yml \
   -o /var/lib/twillingate/check.db /var/lib/twillingate/twillingate.db
 docker compose cp twillingate:/var/lib/twillingate/check.db ./check.db
-docker compose exec twillingate rm /var/lib/twillingate/check.db
+docker compose exec litestream rm /var/lib/twillingate/check.db
 sqlite3 check.db 'PRAGMA quick_check;'                        # expect: ok
 sqlite3 check.db "SELECT COUNT(*) FROM projects;"             # expect: your project count
 rm check.db
@@ -216,8 +217,8 @@ sudo systemctl start twillingate litestream
 ```bash
 # Creates the data volume owned by the collector's user; mounted first by
 # the litestream image, it would belong to root and the restore would fail
-# with "permission denied".
-docker compose run --rm --no-deps --entrypoint true twillingate
+# with "permission denied". The image has no shell: `version` just exits.
+docker compose run --rm --no-deps twillingate version
 docker compose run --rm --no-deps litestream restore -config /etc/litestream.yml \
   -o /var/lib/twillingate/twillingate.db /var/lib/twillingate/twillingate.db
 docker compose up -d
