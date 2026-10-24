@@ -1,0 +1,8 @@
+{
+  "001 HasEvents(1, views, \"$page_view\")": true,
+  "002 HasEvents(1, product, \"$page_view\")": false,
+  "003 HasEvents(1, views, \"a\")": false,
+  "004 HasEvents(1, product, \"a\")": true,
+  "005 HasAttribute(1, \"plan\")": false,
+  "006 HasAttribute(1, \"tier\")": true
+}

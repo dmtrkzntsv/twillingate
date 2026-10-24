@@ -1,0 +1,6 @@
+{
+  "001 HasAttribute(1, \"nokey\")": false,
+  "002 HasEvents(1, product, \"a\")": false,
+  "003 HasAttribute(1, \"nokey\")": false,
+  "004 HasAttribute(1, \"theirs\")": false
+}

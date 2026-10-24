@@ -1,0 +1,18 @@
+{
+  "001 HasAttribute(1, \"plan\")": true,
+  "002 HasAttribute(1, \"Plan\")": true,
+  "003 HasAttribute(1, \"PLAN\")": true,
+  "004 HasAttribute(1, \"fresh\")": true,
+  "005 HasAttribute(1, \"FRESH\")": true,
+  "006 HasAttribute(2, \"fresh\")": false,
+  "007 HasAttribute(1, \"tier\")": false,
+  "008 HasAttribute(2, \"tier\")": true,
+  "009 HasAttribute(2, \"Tier\")": true,
+  "010 HasAttribute(1, \"nokey\")": false,
+  "011 HasAttribute(1, \"\")": false,
+  "012 HasAttribute(1, \"plan\")": false,
+  "013 HasAttribute(1, \"Plan\")": false,
+  "014 HasAttribute(1, \"level\")": true,
+  "015 HasAttribute(1, \"LEVEL\")": true,
+  "016 HasAttribute(1, \"fresh\")": true
+}
