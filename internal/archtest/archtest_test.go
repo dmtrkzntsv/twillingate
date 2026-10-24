@@ -180,14 +180,15 @@ func TestPackageGraph(t *testing.T) {
 
 // TestPureGo: twillingate builds without a C toolchain. No package the
 // module builds, tests and measurement builds included, depends on a
-// module whose path names duckdb, go.mod requires none, and none of the
-// module's own packages
-// uses cgo (import "C"). go list runs with cgo enabled, so a cgo file is
-// listed as one rather than left out.
+// module whose path names duckdb, go.mod requires none, and no package
+// outside the standard library, the module's own or a dependency's, uses
+// cgo (import "C"). go list runs with cgo enabled, so a cgo file is listed
+// as one rather than left out (the standard library's are, and drop out
+// with CGO_ENABLED=0).
 func TestPureGo(t *testing.T) {
 	_, thisFile, _, _ := runtime.Caller(0)
 	cmd := exec.Command("go", "list", "-deps", "-test", "-tags", "measure",
-		"-f", "{{.ImportPath}}|{{join .CgoFiles \" \"}}", "./...")
+		"-f", "{{.ImportPath}}|{{.Standard}}|{{join .CgoFiles \" \"}}", "./...")
 	cmd.Dir = filepath.Join(filepath.Dir(thisFile), "..", "..")
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
 	out, err := cmd.Output()
@@ -199,16 +200,22 @@ func TestPureGo(t *testing.T) {
 	}
 	ours := 0
 	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-		pkg, cgo, _ := strings.Cut(line, "|")
+		f := strings.SplitN(line, "|", 3)
+		if len(f) != 3 {
+			t.Fatalf("go list printed %q", line)
+		}
+		pkg, std, cgo := f[0], f[1] == "true", f[2]
 		if strings.Contains(strings.ToLower(pkg), "duckdb") {
 			t.Errorf("%s is in the build: twillingate must not depend on a DuckDB module", pkg)
 		}
-		if !strings.HasPrefix(pkg, module) || strings.Contains(pkg, "/node_modules/") {
+		if strings.Contains(pkg, "/node_modules/") { // a web dependency's Go, not built
 			continue
 		}
-		ours++
-		if cgo != "" {
+		if !std && cgo != "" {
 			t.Errorf("%s uses cgo (%s): twillingate builds with CGO_ENABLED=0", pkg, cgo)
+		}
+		if strings.HasPrefix(pkg, module) {
+			ours++
 		}
 	}
 	if ours < 15 {
