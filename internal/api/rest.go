@@ -186,6 +186,8 @@ func writeError(w http.ResponseWriter, logger *slog.Logger, req *http.Request, e
 func refusalOf(logger *slog.Logger, req *http.Request, err error) (int, apiError) {
 	switch {
 	case errors.Is(err, context.Canceled) && req.Context().Err() != nil:
+		// The client left: nobody reads the answer, so nothing is logged.
+		return http.StatusInternalServerError, apiError{Code: "internal", Message: "internal error"}
 	case errors.Is(err, manage.ErrInvalid):
 		return http.StatusBadRequest, apiError{Code: "invalid", Message: err.Error()}
 	case errors.Is(err, manage.ErrNotFound):
