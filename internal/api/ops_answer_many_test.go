@@ -9,7 +9,9 @@ import (
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
 // countingNative is the engine with its calls counted: each AnswerMany
@@ -149,5 +151,68 @@ func TestAnswerAllFailsWithTheFirstError(t *testing.T) {
 	h.native = nil
 	if _, err := h.viewsOverview(ctx, in); err == nil || !strings.Contains(err.Error(), "cannot be queried") {
 		t.Errorf("no engine: %v", err)
+	}
+}
+
+// groupedNative records each AnswerMany's projects, failing the requests
+// of the project fail and answering the others empty.
+type groupedNative struct {
+	*native.Engine
+	fail  int64
+	calls [][]int64
+}
+
+func (n *groupedNative) AnswerMany(ctx context.Context, reqs []native.Request, done func(int, native.Answered)) {
+	var ids []int64
+	for i, r := range reqs {
+		if len(ids) == 0 || ids[len(ids)-1] != r.Params.Project {
+			ids = append(ids, r.Params.Project)
+		}
+		if r.Params.Project == n.fail {
+			done(i, native.Answered{Err: errors.New("the files are gone")})
+			continue
+		}
+		done(i, native.Answered{})
+	}
+	n.calls = append(n.calls, ids)
+}
+
+// usage asks for at most usageProjectsPerCall projects a call, in order,
+// and a failure in one call leaves the later calls unasked.
+func TestUsageAsksInGroupsOfProjects(t *testing.T) {
+	h, _ := newTestHost(t)
+	eng := h.native.(*native.Engine)
+	ctx := context.Background()
+	var projects []*manage.Project
+	for id := range int64(20) {
+		projects = append(projects, &manage.Project{ID: id + 1})
+	}
+	day, _ := civil.Parse("2026-08-01")
+	n := &groupedNative{Engine: eng}
+	h.native = n
+	if _, err := h.usageCounts(ctx, projects, true, day, day); err != nil {
+		t.Fatal(err)
+	}
+	if want := (20 + usageProjectsPerCall - 1) / usageProjectsPerCall; len(n.calls) != want || usageProjectsPerCall != 8 {
+		t.Fatalf("%d calls of %d projects at most, want %d of 8", len(n.calls), usageProjectsPerCall, want)
+	}
+	var seen []int64
+	for _, c := range n.calls {
+		if len(c) > usageProjectsPerCall {
+			t.Errorf("a call of %d projects", len(c))
+		}
+		seen = append(seen, c...)
+	}
+	if len(seen) != 20 || seen[0] != 1 || seen[19] != 20 {
+		t.Errorf("projects asked, in order: %v", seen)
+	}
+
+	n = &groupedNative{Engine: eng, fail: 3}
+	h.native = n
+	if _, err := h.usageCounts(ctx, projects, true, day, day); err == nil || err.Error() != "the files are gone" {
+		t.Errorf("project 3 failing: %v", err)
+	}
+	if len(n.calls) != 1 {
+		t.Errorf("%d calls after the first failed, want only the first", len(n.calls))
 	}
 }

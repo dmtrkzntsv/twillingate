@@ -21,7 +21,7 @@ type Options struct {
 	Dir string
 	// Workers is how many goroutines one query scans with (default 2).
 	Workers int
-	// MaxScans is how many queries scan at once (default 2); the others
+	// MaxScans is how many queries scan at once (DefaultMaxScans); the others
 	// wait for a turn, or give up when their context is done.
 	MaxScans int
 	// MaxGroups is how many distinct groups a breakdown tracks (default
@@ -73,12 +73,15 @@ type Engine struct {
 }
 
 // New returns an engine over o.Dir.
+// DefaultMaxScans is Options.MaxScans when it is not set.
+const DefaultMaxScans = 2
+
 func New(o Options) *Engine {
 	if o.Workers <= 0 {
 		o.Workers = 2
 	}
 	if o.MaxScans <= 0 {
-		o.MaxScans = 2
+		o.MaxScans = DefaultMaxScans
 	}
 	if o.MaxGroups <= 0 {
 		o.MaxGroups = 100_000

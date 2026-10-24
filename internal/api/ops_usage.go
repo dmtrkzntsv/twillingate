@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"slices"
 	"strconv"
 	"time"
 
@@ -153,14 +154,35 @@ const usageChunkDays = maxBreakdownLimit / 3
 // applied: a breakdown by day and family per project, one per 333 days of
 // the range. It also reads when each project's newest row arrived
 // (newestArrival), for every project when asked, else for the live ones
-// only: an archived project's files only wait for the purge. Every
-// project's queries go in one call (answerAll), a project's sharing one
-// scan.
+// only: an archived project's files only wait for the purge. The
+// projects' queries go in calls (answerAll) of usageProjectsPerCall
+// projects, a project's sharing one scan, read in order: the first error
+// is returned and later calls never run.
 func (h *host) usageCounts(ctx context.Context, projects []*manage.Project, asked bool, fromD, toD civil.Date) (fileCounts, error) {
 	latest, err := archive.LatestDays(h.eventsDir)
 	if err != nil {
 		return fileCounts{}, err
 	}
+	out := fileCounts{days: map[int64]map[string]*usageTotals{}, received: map[int64]string{}}
+	for _, p := range projects {
+		out.days[p.ID] = map[string]*usageTotals{}
+	}
+	for group := range slices.Chunk(projects, usageProjectsPerCall) {
+		if err := h.usageGroup(ctx, group, asked, fromD, toD, latest, out); err != nil {
+			return fileCounts{}, err
+		}
+	}
+	return out, nil
+}
+
+// usageProjectsPerCall is the most projects usage asks for in one call:
+// four per engine turn, enough to keep the turns busy without queueing
+// every project's scans at once.
+const usageProjectsPerCall = 4 * native.DefaultMaxScans
+
+// usageGroup is usageCounts over one group of projects, in one call,
+// into out.
+func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked bool, fromD, toD civil.Date, latest map[int64]string, out fileCounts) error {
 	// asks is each request's project and whether it reads the newest
 	// arrival (else it is a chunk's breakdown), in the order the answers
 	// are read.
@@ -189,13 +211,9 @@ func (h *host) usageCounts(ctx context.Context, projects []*manage.Project, aske
 			asks = append(asks, ask{project: p.ID, arrival: true})
 		}
 	}
-	out := fileCounts{days: map[int64]map[string]*usageTotals{}, received: map[int64]string{}}
-	for _, p := range projects {
-		out.days[p.ID] = map[string]*usageTotals{}
-	}
 	for i, a := range h.answerAll(ctx, reqs) {
 		if a.Err != nil {
-			return fileCounts{}, a.Err
+			return a.Err
 		}
 		res, project := a.Result, asks[i].project
 		if asks[i].arrival {
@@ -205,7 +223,7 @@ func (h *host) usageCounts(ctx context.Context, projects []*manage.Project, aske
 			continue
 		}
 		if res.Truncated {
-			return fileCounts{}, invalidf("usage: too many rows; narrow the date range")
+			return invalidf("usage: too many rows; narrow the date range")
 		}
 		days := out.days[project]
 		for _, row := range res.Rows {
@@ -225,7 +243,7 @@ func (h *host) usageCounts(ctx context.Context, projects []*manage.Project, aske
 			}
 		}
 	}
-	return out, nil
+	return nil
 }
 
 // newestArrival is the query of when the newest row of a project

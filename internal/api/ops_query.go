@@ -242,6 +242,10 @@ type manyNative interface {
 	AnswerMany(ctx context.Context, reqs []native.Request, done func(i int, a native.Answered))
 }
 
+// The engine answers from shared scans: a drifted signature fails the
+// build rather than falling back to one query at a time.
+var _ manyNative = (*native.Engine)(nil)
+
 // answerAll answers a tool's queries as answer answers one, under one
 // CONSOLE_QUERY_TIMEOUT for them all and the registry's rules (each
 // request's own Rules and Ctx are ignored): from shared scans when the
