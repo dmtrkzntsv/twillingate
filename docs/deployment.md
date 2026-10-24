@@ -28,8 +28,13 @@ Its memory follows rows, not bytes: the dump holds about 45 bytes a line
 of the day's log (a day of a million lines, about 900 MB of log, peaks
 near 110 MB), and the merge about 40 bytes a row of the month. At volume
 the console's reads, not the pass, set the server's peak: a year-long
-Views or Product dashboard at a million events a month peaks at 520 to
-670 MB in the console process. Only SQL starts a child: a widget's SQL, `query`'s and the
+Views or Product dashboard at a million events a month peaks at about
+283 to 365 MB in the console process when the page loads it (one
+streamed request), and 387 to 405 MB when its widgets are asked for one
+by one. The built-in widgets' reader, in the console process, holds at
+most about 128 MiB of identities, 128 MiB of today's logs decoded
+(dropped after five idle minutes) and 256 MiB of aggregations (two scans
+at once, 128 MiB each), counted approximately. Only SQL starts a child: a widget's SQL, `query`'s and the
 console's check of the users' SQL widgets at start. An ingest process never
 starts one, since the form-attribution lookup, like the daily pass, the
 built-in widgets and the check before a rename or merge rule is saved,
