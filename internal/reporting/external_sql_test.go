@@ -23,8 +23,8 @@ import (
 // TestNoEngineRefusesSQL is Review Focus 1: a stored sql widget on a
 // dashboard, served by a process with no SQL engine, answers
 // ErrSQLEngine on its own card, through GET and the stream, while the
-// dashboard's other widgets load; saving and previewing sql are refused
-// the same way, sql is no source type, and the start-up check of the
+// dashboard's other widgets load; saving, previewing and duplicating sql
+// are refused the same way, sql is no source type, and the start-up check of the
 // users' widgets checks none.
 func TestNoEngineRefusesSQL(t *testing.T) {
 	ctx := context.Background()
@@ -75,6 +75,14 @@ func TestNoEngineRefusesSQL(t *testing.T) {
 	isRefusal("create", err)
 	_, err = none.Preview(ctx, PreviewIn{Component: "stat", Source: Source{Type: "sql", Content: "SELECT 1 AS value"}})
 	isRefusal("preview", err)
+	_, err = none.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: d.ID})
+	isRefusal("duplicate", err)
+	_, err = none.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: d.ID, WholeGroup: true})
+	isRefusal("duplicate the group", err)
+	md := mustCreate(t, with, "MD", note("About"))
+	if got, err := none.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: md.ID}); err != nil || len(got.Widgets) != 1 {
+		t.Errorf("duplicating a dashboard with no sql widget = %+v, %v; want it copied", got, err)
+	}
 	if got := strings.Join(none.SourceTypes(), ","); got != "md,query" {
 		t.Errorf("source types = %s, want md,query", got)
 	}

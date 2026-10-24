@@ -290,7 +290,8 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
   `agg_*` tables went with its events (migration 042).
 - SQL needs an external SQL engine (`SQL_ENGINE_SOCKET`). Without one,
   `list_components`' `source_types` leaves out `sql`; adding, copying,
-  updating the content of or previewing a `sql` widget is refused as
+  updating the content of or previewing a `sql` widget, and duplicating a
+  dashboard (or group) that holds one, is refused as
   `invalid` with "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)";
   a stored one stays on its dashboard, unarchived, and its card answers the
   same refusal while the dashboard's other widgets load. Use `query`
