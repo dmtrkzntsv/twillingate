@@ -2,7 +2,6 @@ package archive
 
 import (
 	"bufio"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,12 +12,11 @@ import (
 	"testing"
 )
 
-// TestCastsMatchDuckDB: each JSON value of a log line reads as the dump's
-// logSelect reads it (json_extract_string, then CAST to the column's
-// type): the same value at each type, or an error where the CAST fails
-// the query.
+// TestCastsMatchDuckDB: each JSON value of a log line reads as the golden
+// says the dump's logSelect read it in the old query engine
+// (json_extract_string, then CAST to the column's type): the same value
+// at each type, or an error where the CAST failed the query.
 func TestCastsMatchDuckDB(t *testing.T) {
-	f := newFixture(t)
 	values := []string{`"abc"`, `""`, `5`, `-7`, `"12"`, `"1280.6"`, `"1280.5"`, `"-2.5"`, `1.50`, `1e3`, `true`,
 		`{"k":1}`, `[1,2]`, `"é\u2028"`, `"x"`, `"1e300"`, `1e300`, `"0.25"`,
 		`"2026-09-10T12:00:00Z"`, `"2026-09-10T12:00:01.123456Z"`, `"2026-09-10"`, `"1969-12-31"`, `"10.09.2026"`, `"nope"`,
@@ -30,11 +28,9 @@ func TestCastsMatchDuckDB(t *testing.T) {
 		"day":           func(s string) (any, error) { return ParseDay(s) },
 		"value":         func(s string) (any, error) { return strconv.ParseFloat(s, 64) },
 	}
-	expr := map[string]string{"attr_v": "attr_v", "display_width": "display_width", "received_at": "epoch_us(received_at)",
-		"day": "day - DATE '1970-01-01'", "value": "value"}
-	// Where the native reader and DuckDB part, on values line never
-	// writes (a string for every VARCHAR, YYYY-MM-DD for day): DuckDB
-	// gives a JSON number's text in its own form (1.5, 1000.0), and reads a
+	// Where the native reader and the old engine part, on values line never
+	// writes (a string for every VARCHAR, YYYY-MM-DD for day): it
+	// gave a JSON number's text in its own form (1.5, 1000.0), and read a
 	// DATE from a timestamp's text.
 	known := map[string]bool{
 		`{"id":"a","attr_v":1.50}`:                       true,
@@ -42,7 +38,7 @@ func TestCastsMatchDuckDB(t *testing.T) {
 		`{"id":"a","day":"2026-09-10T12:00:00Z"}`:        true,
 		`{"id":"a","day":"2026-09-10T12:00:01.123456Z"}`: true,
 		// A number given as text: Go's ParseFloat reads hex ("0x1p4" is 16),
-		// DuckDB refuses it; DuckDB trims spaces around a number, Go refuses
+		// the old engine refused it and trimmed spaces around a number, Go refuses
 		// them. Ingest writes these columns as JSON numbers, never text.
 		`{"id":"a","value":"0x1p4"}`:         true,
 		`{"id":"a","display_width":"0x1p4"}`: true,
@@ -55,50 +51,33 @@ func TestCastsMatchDuckDB(t *testing.T) {
 		`{"id":"a","display_width":"\t7"}`:   true,
 		`{"id":"a","value":"\t7"}`:           true,
 	}
-	// DuckDB's answer for each line, frozen: its value as fmt.Sprint
-	// prints it, or that the CAST failed the query.
+	// The answer for each line, frozen: the value as fmt.Sprint prints it
+	// (received_at in microseconds, day in days since 1970-01-01), or that
+	// the CAST failed the query.
 	type castAnswer struct {
 		Value string `json:"value,omitempty"`
 		Error bool   `json:"error,omitempty"`
 	}
-	duck := map[string]castAnswer{}
-	for _, v := range values {
-		for col := range cast {
-			line := `{"id":"a","` + col + `":` + v + `}`
-			if known[line] {
-				continue
-			}
-			f.writeFile(t, "2026-09-10.log", line+"\n")
-			res, err := f.eng.Query(context.Background(), "SELECT "+expr[col]+" FROM "+f.logRel(t, "2026-09-10"), 0)
-			if err != nil {
-				duck[line] = castAnswer{Error: true}
-			} else {
-				duck[line] = castAnswer{Value: fmt.Sprint(res.Rows[0][0])}
-			}
-		}
-	}
-	want := frozen(t, "casts", duck)
+	got := map[string]castAnswer{}
 	for _, v := range values {
 		for col, to := range cast {
 			line := `{"id":"a","` + col + `":` + v + `}`
 			if known[line] {
 				continue
 			}
-			w, ok := want[line]
-			if !ok {
-				t.Fatalf("%s: no golden", line)
-			}
 			m, _ := DecodeLine([]byte(line))
-			s, ok, gerr := JSONText(m[col])
-			if gerr != nil || !ok {
-				t.Fatalf("%s: %v %v", line, ok, gerr)
+			s, ok, err := JSONText(m[col])
+			if err != nil || !ok {
+				t.Fatalf("%s: %v %v", line, ok, err)
 			}
-			goVal, gerr := to(s)
-			if w.Error != (gerr != nil) || (!w.Error && w.Value != fmt.Sprint(goVal)) {
-				t.Errorf("%s: DuckDB %+v, Go %v (%v)", line, w, goVal, gerr)
+			if goVal, err := to(s); err != nil {
+				got[line] = castAnswer{Error: true}
+			} else {
+				got[line] = castAnswer{Value: fmt.Sprint(goVal)}
 			}
 		}
 	}
+	frozen(t, "casts", got)
 	for _, raw := range []string{``, `null`, ` null `} {
 		if _, ok, err := JSONText(json.RawMessage(raw)); ok || err != nil {
 			t.Errorf("%q: ok %v, err %v; want NULL", raw, ok, err)

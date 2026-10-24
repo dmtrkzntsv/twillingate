@@ -1,7 +1,7 @@
 package archive
 
-// dumpQuery and logKeys, the dump's DuckDB oracle, leave with DuckDB in
-// step 6.
+// logKeys, the old dump's key scan, stays for the tests of the SQL the
+// Reader runs (derive_test.go's logRel).
 
 import (
 	"bufio"
@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"math"
 	"os"
 	"path/filepath"
@@ -21,21 +22,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/golden"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// dumpQuery is the dump's SELECT of a log as DuckDB ran it before the dump
-// moved to Go (dumpLog), kept as the parity tests' oracle: logSelect,
-// strict, over every key of the log, every column's type spelled out.
-func dumpQuery(path string) (string, error) {
-	keys, err := logKeys(path)
-	if err != nil {
-		return "", err
-	}
-	return logSelect(path, columnsOf(keys), false), nil
-}
-
-// logKeys returns every key of a log's lines, for the oracle (dumpLog
+// logKeys returns every key of a log's lines, for logSelect (dumpLog
 // collects them as it reads). A line that is not a JSON object fails it,
 // as DuckDB would.
 func logKeys(path string) (map[string]bool, error) {
@@ -91,14 +82,17 @@ func measureOf(id, at string, value float64) store.Event {
 	return e
 }
 
-// dumpCase is one log both dumps read. allowed names the ids whose
-// column attr_n holds a JSON number, the parity's one allowed difference:
-// the Go dump keeps its text as written (as native's live log read does),
-// DuckDB gave its own form (1.50 → "1.5"). Ingest writes every VARCHAR
-// as a string, so no real line has one.
+// dumpCase is one log the dump tests read. allowed names the ids whose
+// column attr_n holds a JSON number, the one allowed difference from the
+// golden (frozen from the dump the old query engine ran): the Go dump
+// keeps its text as written (as native's live log read does), the old
+// dump gave its own form (1.50 → "1.5"), kept in was as the golden
+// keeps it. Ingest writes every VARCHAR as a string, so no real line has
+// one.
 type dumpCase struct {
 	name, log string
 	allowed   map[string]string // id → the Go dump's attr_n
+	was       map[string]string // id → the old dump's attr_n, as the golden keeps it
 }
 
 // dumpCases are the logs of every dump test in maintain_test.go, and
@@ -149,7 +143,7 @@ func dumpCases(t *testing.T) []dumpCase {
 			`{"v":1,"id":"n3","family":"product","ts":"2026-10-11T10:00:02Z","attr_n":true}`,
 			`{"v":1,"id":"n4","family":"product","ts":"2026-10-11T10:00:03Z","attr_n":"1.50"}`,
 			""}, "\n"),
-			allowed: map[string]string{"n1": "1.50", "n2": "1e3"}},
+			allowed: map[string]string{"n1": "1.50", "n2": "1e3"}, was: map[string]string{"n1": "[1.5]", "n2": "[1000.0]"}},
 	}
 	return cases
 }
@@ -169,26 +163,16 @@ func bigDumpLog(t *testing.T) string {
 	return b.String()
 }
 
-// duckDump writes src as out through the oracle, as the dump did before.
-func (f fixture) duckDump(t *testing.T, src, out string) error {
-	t.Helper()
-	q, err := dumpQuery(src)
-	if err != nil {
-		return err
-	}
-	return f.eng.Exec(context.Background(), "COPY ("+q+") TO "+quote(out)+" (FORMAT parquet, COMPRESSION zstd)")
-}
-
 // TestGoDumpMatchesDuckDB: for every log of the dump tests, and lines the
-// ingest never writes, the Go dump's file equals the one DuckDB's COPY of
-// dumpQuery wrote, read through DuckDB: the same columns of the same types
-// in the same order, and the same rows. DuckDB left the order of rows
-// equal in (family, ts) unspecified, so the rows are compared as a
-// multiset and the Go file's own order is checked: (family, ts)
-// non-decreasing, NULLs last. The one allowed difference is dumpCase's:
-// a JSON number in a VARCHAR column keeps its text.
+// ingest never writes, the Go dump's file, read back, is its golden (the
+// file the old query engine's COPY of the dump's SELECT wrote): the same
+// columns of the same types in the same order, and the same rows. The old
+// dump left the order of rows equal in (family, ts) unspecified, so the
+// rows are compared as a multiset and the Go file's own order is checked:
+// (family, ts) non-decreasing, NULLs last. The one allowed difference is
+// dumpCase's: a JSON number in a VARCHAR column keeps its text.
 func TestGoDumpMatchesDuckDB(t *testing.T) {
-	f := newFixtureWith(t, 4, "512MB")
+	f := newFixture(t)
 	cases := append(dumpCases(t), dumpCase{name: "45 MB of repeated ids", log: bigDumpLog(t)})
 	for i, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -197,112 +181,60 @@ func TestGoDumpMatchesDuckDB(t *testing.T) {
 			if err := cutTornLine(src); err != nil { // as claim does
 				t.Fatal(err)
 			}
-			duck, goFile := f.project1(fmt.Sprintf("duck-%d.parquet", i)), f.project1(fmt.Sprintf("go-%d.parquet", i))
-			if err := f.duckDump(t, src, duck); err != nil {
-				t.Fatal(err)
-			}
+			goFile := f.project1(fmt.Sprintf("go-%d.parquet", i))
 			if err := dumpLog(context.Background(), src, goFile); err != nil {
 				t.Fatal(err)
 			}
-			if got, want := f.describe(t, goFile), f.describe(t, duck); !eq(got, want) {
-				t.Fatalf("Go file's columns\n%v\nwant DuckDB's\n%v", got, want)
-			}
-			rel := func(p string) string { return "read_parquet(" + quote(p) + ")" }
-			var allowed []string
-			for id := range c.allowed {
-				allowed = append(allowed, quote(id))
-			}
-			slices.Sort(allowed)
-			// The golden: DuckDB's file, the allowed ids' attr_n NULL in its
-			// rows and kept apart, as DuckDB gave it.
-			sel := "*"
-			if len(allowed) > 0 {
-				sel = "* REPLACE (CASE WHEN id IN (" + strings.Join(allowed, ", ") + ") THEN NULL ELSE attr_n END AS attr_n)"
+			p := readTable(t, goFile)
+			orderedByFamilyAndTS(t, p)
+			// The allowed ids' attr_n: the JSON text as written, then NULL
+			// in the rows the golden holds, which keeps the old form apart.
+			if len(c.allowed) > 0 {
+				id, n := p.col(t, "id"), p.col(t, "attr_n")
+				for _, r := range p.rows {
+					text, ok := c.allowed[fmt.Sprint(r[id])]
+					if !ok {
+						continue
+					}
+					if got := fmt.Sprint([]any{r[n]}); got != "["+text+"]" || got == c.was[fmt.Sprint(r[id])] {
+						t.Errorf("%s: attr_n = %v, want the JSON text %s, not the golden's %s", r[id], got, text, c.was[fmt.Sprint(r[id])])
+					}
+					r[n] = nil
+				}
 			}
 			type dumpAnswer struct {
 				File    fileAnswer        `json:"file"`
 				Allowed map[string]string `json:"allowed_attr_n,omitempty"`
 			}
-			if !skipDigest(t, c.name) {
-				duckAnswer := dumpAnswer{File: f.answerOf(t, duck, sel, false)}
-				for id := range c.allowed {
-					if duckAnswer.Allowed == nil {
-						duckAnswer.Allowed = map[string]string{}
-					}
-					duckAnswer.Allowed[id] = strings.Join(f.values(t, "SELECT attr_n FROM "+rel(duck)+" WHERE id = "+quote(id)), " ")
-				}
-				want := frozen(t, c.name, duckAnswer)
-				sameAnswer(t, "Go dump", f.answerOf(t, goFile, sel, false), want.File)
-				for id, text := range c.allowed {
-					if got := f.values(t, "SELECT attr_n FROM "+rel(goFile)+" WHERE id = "+quote(id)); !eq(got, []string{"[" + text + "]"}) || eq(got, []string{want.Allowed[id]}) {
-						t.Errorf("%s: attr_n = %v, want the JSON text %s, not DuckDB's golden %s", id, got, text, want.Allowed[id])
-					}
-				}
+			got := dumpAnswer{File: answerOf(t, p, false), Allowed: c.was}
+			want := golden.Get(t, golden.For(t, *updateGolden), c.name, got)
+			sameAnswer(t, "Go dump", got.File, want.File)
+			if !maps.Equal(got.Allowed, want.Allowed) {
+				t.Errorf("allowed attr_n %v, the golden's %v", got.Allowed, want.Allowed)
 			}
-			if len(allowed) == 0 {
-				f.sameRows(t, rel(goFile), rel(duck))
-			} else {
-				in := "id IN (" + strings.Join(allowed, ", ") + ")"
-				f.sameRows(t, "(SELECT * FROM "+rel(goFile)+" WHERE NOT "+in+")", "(SELECT * FROM "+rel(duck)+" WHERE NOT "+in+")")
-				f.sameRows(t, "(SELECT * EXCLUDE (attr_n) FROM "+rel(goFile)+" WHERE "+in+")",
-					"(SELECT * EXCLUDE (attr_n) FROM "+rel(duck)+" WHERE "+in+")")
-				for id, want := range c.allowed {
-					got := f.values(t, "SELECT attr_n FROM "+rel(goFile)+" WHERE id = "+quote(id))
-					if !eq(got, []string{"[" + want + "]"}) {
-						t.Errorf("%s: attr_n = %v, want the JSON text %s", id, got, want)
-					}
-					if duck := f.values(t, "SELECT attr_n FROM "+rel(duck)+" WHERE id = "+quote(id)); eq(duck, got) {
-						t.Errorf("%s: DuckDB's attr_n is %v too: the allowance is not needed", id, duck)
-					}
-				}
-			}
-			f.orderedByFamilyAndTS(t, goFile)
 		})
 	}
 }
 
-// describe is DuckDB's DESCRIBE of a Parquet file: name, type, nullable.
-func (f fixture) describe(t *testing.T, path string) []string {
-	t.Helper()
-	return f.values(t, `SELECT column_name, column_type, "null" FROM (DESCRIBE SELECT * FROM read_parquet(`+quote(path)+"))")
-}
-
-// sameRows fails unless relations a and b hold the same rows, each as
-// many times.
-func (f fixture) sameRows(t *testing.T, a, b string) {
-	t.Helper()
-	q := "SELECT count(*) FROM ((SELECT * FROM " + a + " EXCEPT ALL SELECT * FROM " + b + ") UNION ALL (SELECT * FROM " + b + " EXCEPT ALL SELECT * FROM " + a + "))"
-	if got := f.values(t, q); !eq(got, []string{"[0]"}) {
-		t.Errorf("rows differing between %s and %s: %v\n%s\n%s", a, b, got,
-			f.values(t, "SELECT * FROM "+a+" EXCEPT ALL SELECT * FROM "+b), f.values(t, "SELECT * FROM "+b+" EXCEPT ALL SELECT * FROM "+a))
-	}
-	if na, nb := f.values(t, "SELECT count(*) FROM "+a), f.values(t, "SELECT count(*) FROM "+b); !eq(na, nb) {
-		t.Errorf("%s rows, want %s", na, nb)
-	}
-}
-
-// orderedByFamilyAndTS fails unless the file's rows, in file order, are
+// orderedByFamilyAndTS fails unless p's rows, in file order, are
 // non-decreasing in family, then ts, NULLs last.
-func (f fixture) orderedByFamilyAndTS(t *testing.T, path string) {
+func orderedByFamilyAndTS(t *testing.T, p pqTable) {
 	t.Helper()
-	res, err := f.eng.Query(context.Background(), "SELECT family, epoch_us(ts) FROM read_parquet("+quote(path)+", file_row_number=true) ORDER BY file_row_number", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	rows := p.pick(t, "family", "ts")
 	key := func(r []any) (string, int64, bool, bool) {
 		fam, famOK := r[0].(string)
 		var ts int64 = math.MaxInt64
 		tsOK := r[1] != nil
 		if tsOK {
-			if _, err := fmt.Sscan(fmt.Sprint(r[1]), &ts); err != nil {
+			if _, err := fmt.Sscan(fmt.Sprint(epochUS(t, r[1])), &ts); err != nil {
 				t.Fatalf("ts %v: %v", r[1], err)
 			}
 		}
 		return fam, ts, famOK, tsOK
 	}
-	for i := 1; i < len(res.Rows); i++ {
-		pf, pt, pfOK, ptOK := key(res.Rows[i-1])
-		nf, nt, nfOK, ntOK := key(res.Rows[i])
+	for i := 1; i < len(rows); i++ {
+		pf, pt, pfOK, ptOK := key(rows[i-1])
+		nf, nt, nfOK, ntOK := key(rows[i])
 		famCmp := 0
 		switch {
 		case pfOK && nfOK:
@@ -313,14 +245,14 @@ func (f fixture) orderedByFamilyAndTS(t *testing.T, path string) {
 			famCmp = 1
 		}
 		if famCmp > 0 || (famCmp == 0 && ((!ptOK && ntOK) || (ptOK && ntOK && pt > nt))) {
-			t.Fatalf("row %d (%v) after row %d (%v): not in (family, ts) order", i, res.Rows[i], i-1, res.Rows[i-1])
+			t.Fatalf("row %d (%v) after row %d (%v): not in (family, ts) order", i, rows[i], i-1, rows[i-1])
 		}
 	}
 }
 
 // TestDumpFailsWhereDuckDBDid: a line that is not a JSON object, or a value
-// its column cannot hold, fails both dumps, and the Go dump leaves no
-// file and no .tmp.
+// its column cannot hold, fails the Go dump as it failed the old one (the
+// golden), leaving no file and no .tmp.
 func TestDumpFailsWhereDuckDBDid(t *testing.T) {
 	f := newFixture(t)
 	for i, log := range []string{
@@ -337,10 +269,7 @@ func TestDumpFailsWhereDuckDBDid(t *testing.T) {
 		src := f.project1(fmt.Sprintf("2026-10-%02d.parquet.dumping", i+1))
 		f.writeFile(t, filepath.Base(src), log)
 		out := strings.TrimSuffix(src, ".dumping")
-		if failed := frozen(t, log, f.duckDump(t, src, f.project1("duck.parquet")) != nil); !failed {
-			t.Errorf("%q: DuckDB's dump went through", log)
-		}
-		if err := dumpLog(context.Background(), src, out); err == nil {
+		if failed := frozen(t, log, dumpLog(context.Background(), src, out) != nil); !failed {
 			t.Errorf("%q: the Go dump went through", log)
 		}
 		if exists(out) || exists(out+".tmp") {
@@ -364,7 +293,7 @@ func TestDumpKeepsTiesInFileOrder(t *testing.T) {
 	if err := dumpLog(context.Background(), out+".dumping", out); err != nil {
 		t.Fatal(err)
 	}
-	got := f.values(t, "SELECT id FROM read_parquet("+quote(out)+", file_row_number=true) ORDER BY file_row_number")
+	got := texts(readTable(t, out, "id").pick(t, "id"))
 	if want := []string{"[p-z]", "[p-a]", "[p-m]", "[p-late-day]", "[v-b]", "[v-a]"}; !eq(got, want) {
 		t.Fatalf("rows = %v, want %v: ties in file order", got, want)
 	}
@@ -495,7 +424,8 @@ func TestDumpHoldsALineAsWhereItIs(t *testing.T) {
 	grew := int64(peak.Load()) - int64(base)
 	t.Logf("dump of 500 lines, %d columns: %s, heap peak %.0f MB above the start (%.0f KB a column)", len(fields)+1500,
 		time.Since(start).Round(time.Millisecond), float64(grew)/(1<<20), float64(grew)/1024/float64(len(fields)+1500))
-	if got := f.values(t, "SELECT count(*), count(attr_k00250_1) FROM read_parquet("+quote(f.project1("2026-10-12.parquet"))+")"); !eq(got, []string{"[500 1]"}) {
+	back := readTable(t, f.project1("2026-10-12.parquet"), "attr_k00250_1").pick(t, "attr_k00250_1")
+	if got := fmt.Sprint(len(back), len(slices.DeleteFunc(back, func(r []any) bool { return r[0] == nil }))); got != "500 1" {
 		t.Fatalf("rows = %v", got)
 	}
 }

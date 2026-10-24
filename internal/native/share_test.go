@@ -22,7 +22,7 @@ func TestRatingsMatchWidget(t *testing.T) {
 	if want := []string{"vital", "vital_rating", "y"}; !slices.Equal(res.Columns, want) {
 		t.Fatalf("columns %q, want %q", res.Columns, want)
 	}
-	want := duckTable(t, f, widgetSQL(t, "vitals/ratings.sql"), vitalsFrom, today)
+	want := goldenTable(t, widgetSQL(t, "vitals/ratings.sql"), vitalsFrom, today, res.Rows)
 	if len(want) < 6 {
 		t.Fatalf("the SQL returns %d rows: a weak case", len(want))
 	}
@@ -38,9 +38,10 @@ func TestRatingsMatchWidget(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want = duckTable(t, f, `SELECT CASE WHEN event_name IN ('$lcp', '$inp', '$cls', '$fcp', '$ttfb') THEN upper(substr(event_name, 2)) END AS v,
-		count(*) FROM measures WHERE `+inRange+` GROUP BY v HAVING v IS NULL`, vitalsFrom, today)
-	if last := res.Rows[len(res.Rows)-1]; last[0] != "" || last[1] != "" || last[2] != want[0][1] {
+	last := res.Rows[len(res.Rows)-1]
+	want = goldenTable(t, `SELECT CASE WHEN event_name IN ('$lcp', '$inp', '$cls', '$fcp', '$ttfb') THEN upper(substr(event_name, 2)) END AS v,
+		count(*) FROM measures WHERE `+inRange+` GROUP BY v HAVING v IS NULL`, vitalsFrom, today, [][]string{{last[0], last[2]}})
+	if last[0] != "" || last[1] != "" || last[2] != want[0][1] {
 		t.Errorf("the non-vitals' row %q, want NULL, NULL, %s", last, want[0][1])
 	}
 }
@@ -114,7 +115,7 @@ func TestShareMatchesDuckDB(t *testing.T) {
 			if !slices.Equal(res.Columns, c.cols) {
 				t.Fatalf("columns %q, want %q", res.Columns, c.cols)
 			}
-			want := duckTable(t, f, c.sql, engineFrom, today)
+			want := goldenTable(t, c.sql, engineFrom, today, res.Rows)
 			if len(want) < 3 {
 				t.Fatalf("the SQL returns %d rows: a weak case", len(want))
 			}

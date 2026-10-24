@@ -1,8 +1,7 @@
 // The parity harness for the analytics tools: each tool's native answer
-// checked against the SQL it ran before, over the same files, and against
-// that SQL's answer frozen in testdata/<Test>.golden.json (oldTable).
-// When DuckDB leaves (step 6 of the native engine plan), the SQL goes and
-// the goldens remain the reference.
+// checked against the answer the SQL it ran before gave over the same
+// files, frozen in testdata/<Test>.golden.json (oldTable). The SQL stays
+// as the goldens' key and record; it is no longer run.
 
 package api
 
@@ -23,8 +22,9 @@ import (
 )
 
 // The SQL product_attributes, measures, list_attributes and identities
-// ran before the native engine answered them, kept to check the native
-// answers against (TestAttributeToolsMatchTheirOldSQL).
+// ran before the native engine answered them, whose answers the goldens
+// keep to check the native answers against
+// (TestAttributeToolsMatchTheirOldSQL).
 
 // oldReservedKeys selects each reserved key's column, empty read as NULL,
 // as "attr_<key>", in key order (product_attributes' reservedKeys).
@@ -96,17 +96,7 @@ func oldMeasureAttr(t *testing.T, h *host, key string) string {
 	if col, ok := native.ReservedKeyColumns[key]; ok {
 		return "nullif(" + col + ", '')"
 	}
-	res, err := h.runFiles(context.Background(), archive.Scoped{SQL: "SELECT column_name FROM (DESCRIBE SELECT * FROM measures)"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var cols []string
-	for _, row := range res.Rows {
-		if c, ok := row[0].(string); ok {
-			cols = append(cols, c)
-		}
-	}
-	cols = frozen(t, "measures' columns", cols)
+	cols := frozen(t, "measures' columns", measuresColumns(t, h))
 	if col, ok := enginesql.AttrColumn(cols, key); ok {
 		return col
 	}
@@ -245,9 +235,9 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 	h, _ := newTestHost(t)
 	writeAttributeEdges(t, h)
 	ctx := context.Background()
-	old := func(in rangeIn, q string, vals map[string]enginesql.Value) tableOut {
+	old := func(in rangeIn, q string, vals map[string]enginesql.Value, got tableOut) tableOut {
 		t.Helper()
-		return oldTable(t, h, in, q, vals)
+		return oldTable(t, h, in, q, vals, got, nil)
 	}
 	ranges := []rangeIn{
 		{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"},
@@ -268,9 +258,9 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 				}
 				var want tableOut
 				if event == "" {
-					want = old(r, oldProductAttributesSQL(""), nil)
+					want = old(r, oldProductAttributesSQL(""), nil, toolTable(t, got))
 				} else {
-					want = old(r, oldProductAttributesSQL(` AND event_name = :event`), map[string]enginesql.Value{":event": text(event)})
+					want = old(r, oldProductAttributesSQL(` AND event_name = :event`), map[string]enginesql.Value{":event": text(event)}, toolTable(t, got))
 				}
 				for _, row := range want.Rows {
 					sawFresh = sawFresh || row[2] == "fresh"
@@ -304,7 +294,7 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 						value = oldMeasureAttr(t, h, key)
 					}
 					sameNumbers(t, fmt.Sprintf("%s..%s name %q attr_key %q", r.From, r.To, name, key), toolTable(t, got),
-						old(r, oldMeasuresSQL(cond, value), vals), 1e-9)
+						old(r, oldMeasuresSQL(cond, value), vals, toolTable(t, got)), 1e-9)
 				}
 			}
 		}
@@ -328,16 +318,18 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				// The rules name new_key and noisy (blocked).
-				want := old(r, oldListAttributesSQL(`row_number() OVER (ORDER BY events DESC, attr_key) <= :limit OR attr_key IN (:k0, :k1)`),
-					map[string]enginesql.Value{":limit": {Type: "BIGINT", Text: strconv.Itoa(limit)}, ":k0": text("new_key"), ":k1": text("noisy")})
 				var rows [][]string
 				var total int64
+				table := tableOut{Columns: []string{"attr_key", "events", "values", "keys_total"}}
 				for _, a := range got.Attributes {
 					if a.Received {
 						rows = append(rows, []string{a.Key, strconv.FormatInt(a.Events, 10), strconv.FormatInt(a.Values, 10)})
+						table.Rows = append(table.Rows, append(slices.Clone(rows[len(rows)-1]), strconv.FormatInt(got.KeysTotal, 10)))
 					}
 				}
+				// The rules name new_key and noisy (blocked).
+				want := old(r, oldListAttributesSQL(`row_number() OVER (ORDER BY events DESC, attr_key) <= :limit OR attr_key IN (:k0, :k1)`),
+					map[string]enginesql.Value{":limit": {Type: "BIGINT", Text: strconv.Itoa(limit)}, ":k0": text("new_key"), ":k1": text("noisy")}, table)
 				var wantRows [][]string
 				for _, row := range want.Rows {
 					wantRows = append(wantRows, row[:3])
@@ -367,15 +359,20 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 					if n == 0 {
 						n = 50
 					}
-					want := old(r, oldIdentitiesSQL(kind), map[string]enginesql.Value{":kind": text(kind), ":limit": {Type: "BIGINT", Text: strconv.Itoa(n)}})
-					for _, row := range want.Rows {
-						// The difference allowed: a name that is the id
-						// itself reads as none (user_label gives the id for
-						// an id without a name).
-						if row[1] != "" && row[1] == row[0] {
-							row[1], sawNameIsID = "", true
+					// The difference allowed: a name that is the id itself
+					// reads as none (user_label gives the id for an id
+					// without a name).
+					nameIsID := func(o tableOut) tableOut {
+						o = cloneTable(o)
+						for _, row := range o.Rows {
+							if row[1] != "" && row[1] == row[0] {
+								row[1], sawNameIsID = "", true
+							}
 						}
+						return o
 					}
+					want := nameIsID(oldTable(t, h, r, oldIdentitiesSQL(kind), map[string]enginesql.Value{":kind": text(kind), ":limit": {Type: "BIGINT", Text: strconv.Itoa(n)}},
+						toolTable(t, got), nameIsID))
 					sameNumbers(t, fmt.Sprintf("%s..%s %s limit %d", r.From, r.To, kind, limit), toolTable(t, got), want, 0)
 				}
 			}
@@ -387,7 +384,7 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 }
 
 // Under a row cap below their answers the four tools say the table is
-// cut, as filesTable did; identities only when its own limit is past the
+// cut, as the old SQL did; identities only when its own limit is past the
 // cap.
 func TestAttributeToolsUnderTheRowCap(t *testing.T) {
 	h, _ := newTestHost(t)

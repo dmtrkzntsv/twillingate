@@ -94,8 +94,8 @@ func (f *widgetsFixture) write(t *testing.T, id string, project int64, family st
 }
 
 // openFiles builds an engine on this binary (EngineOptions) and a reader
-// over EVENTS_DIR, the caller closing the engine: the SQL reference the
-// tests check against, and what a test SQL engine runs on.
+// over EVENTS_DIR, the caller closing the engine: what a test SQL engine
+// runs on.
 func openFiles(cfg *config.Config) (*engine.Engine, *archive.Reader, error) {
 	opts, err := EngineOptions(cfg)
 	if err != nil {

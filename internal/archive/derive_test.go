@@ -33,7 +33,7 @@ func (f fixture) logRel(t *testing.T, day string) string {
 // lone view is a session of one; product events are not views. The entry
 // view gives the path, referrer and UTMs, the exit view its path.
 func TestSessionsSplitAsAggViewsDailyDoes(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	a1 := pageView("a1", "a", "2026-10-11T10:00:00Z", "/")
 	a1.ReferrerSource, a1.UTMSource = "google", "nl"
 	s1 := pageView("s1", "s", "2026-10-11T11:00:00Z", "/app")
@@ -61,7 +61,7 @@ func TestSessionsSplitAsAggViewsDailyDoes(t *testing.T) {
 // TestSessionsCutAtMidnight: an actor's views either side of midnight UTC
 // are two sessions, one per day, as the daily rollup has them.
 func TestSessionsCutAtMidnight(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	f.write(t, pageView("a1", "a", "2026-10-11T23:55:00Z", "/"), pageView("a2", "a", "2026-10-12T00:05:00Z", "/"))
 	rel := "(SELECT * FROM " + f.logRel(t, "2026-10-11") + " UNION ALL BY NAME SELECT * FROM " + f.logRel(t, "2026-10-12") + ")"
 	got := f.values(t, "SELECT CAST(day AS VARCHAR), views FROM ("+sessionsSelect(rel)+") ORDER BY day")
@@ -79,7 +79,7 @@ func named(e store.Event, user, userName, group, groupName string) store.Event {
 // the name of the latest event that carried one; first and last seen;
 // views and product events counted, measures not.
 func TestIdentitiesKeepTheLatestNameAndCount(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	m := evOf(1, "m1", "2026-10-11T13:00:00Z")
 	m.Family = store.FamilyMeasures
 	f.write(t,
@@ -107,7 +107,7 @@ func TestIdentitiesKeepTheLatestNameAndCount(t *testing.T) {
 // set with no name keeps the older one, counts add, first_seen is the
 // earliest.
 func TestIdentitiesCombineKeepsTheLatestName(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	f.write(t,
 		named(evOf(1, "p1", "2026-10-11T09:00:00Z"), "u1", "Ada", "", ""),
 		named(evOf(1, "p2", "2026-10-11T09:00:00Z"), "u2", "Bo", "", ""),
@@ -126,7 +126,7 @@ func TestIdentitiesCombineKeepsTheLatestName(t *testing.T) {
 // event, with first seen and the events; an install never signed in pairs
 // with nothing. Combining two sets adds them.
 func TestAliasesPairUserAndInstall(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	pair := func(e store.Event, user, install string) store.Event {
 		e.UserID, e.InstallID = user, install
 		return e
@@ -153,7 +153,7 @@ func TestAliasesPairUserAndInstall(t *testing.T) {
 // SELECT gives its columns at their types, which a reader's empty tables
 // rely on.
 func TestDerivedSelectsOverNothingAreTyped(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	empty := "(" + emptyRow() + ")"
 	for name, tc := range map[string]struct{ sql, want string }{
 		"sessions": {sessionsSelect(empty), "[[project_id BIGINT] [day DATE] [kind VARCHAR] [actor_id VARCHAR] [actor_kind VARCHAR] [session_id VARCHAR] " +
@@ -184,10 +184,10 @@ func TestMaintainDerivesTheClosedDays(t *testing.T) {
 	if got := f.derived(t); !eq(got, want) {
 		t.Fatalf("derived = %v, want %v", got, want)
 	}
-	if got := f.values(t, "SELECT actor_id, views FROM read_parquet('"+f.project1("sessions/2026-10-10.parquet")+"')"); !eq(got, []string{"[a 2]"}) {
+	if got := texts(readTable(t, f.project1("sessions/2026-10-10.parquet"), "actor_id", "views").pick(t, "actor_id", "views")); !eq(got, []string{"[a 2]"}) {
 		t.Fatalf("sessions of 2026-10-10 = %v", got)
 	}
-	if got := f.values(t, "SELECT id, name, views FROM read_parquet('"+f.project1(identitiesFile)+"')"); !eq(got, []string{"[u1 Ada 1]"}) {
+	if got := texts(readTable(t, f.project1(identitiesFile), "id", "name", "views").pick(t, "id", "name", "views")); !eq(got, []string{"[u1 Ada 1]"}) {
 		t.Fatalf("identities = %v", got)
 	}
 }
@@ -208,7 +208,7 @@ func TestALateEventRederivesItsDay(t *testing.T) {
 	if got := f.files(t); !eq(got, []string{"2026-10-11.1.parquet", "2026-10-11.parquet"}) {
 		t.Fatalf("files = %v, want the day file and a segment", got)
 	}
-	if got := f.values(t, "SELECT actor_id FROM read_parquet('"+f.project1("sessions/2026-10-11.parquet")+"') ORDER BY actor_id"); !eq(got, []string{"[a]", "[b]"}) {
+	if got := sortedTexts(readTable(t, f.project1("sessions/2026-10-11.parquet"), "actor_id").pick(t, "actor_id")); !eq(got, []string{"[a]", "[b]"}) {
 		t.Fatalf("sessions of 2026-10-11 = %v, want a's and the late b's", got)
 	}
 }
@@ -226,7 +226,7 @@ func TestAMergedMonthHasOneSessionsFile(t *testing.T) {
 	if got := f.derived(t); !eq(got, []string{aliasesFile, identitiesFile, "sessions/2026-09.parquet"}) {
 		t.Fatalf("derived after the merge = %v", got)
 	}
-	if got := f.values(t, "SELECT count(*) FROM read_parquet('"+f.project1("sessions/2026-09.parquet")+"')"); !eq(got, []string{"[2]"}) {
+	if got := len(readTable(t, f.project1("sessions/2026-09.parquet")).rows); got != 2 {
 		t.Fatalf("sessions of September = %v, want 2", got)
 	}
 }
@@ -257,7 +257,7 @@ func TestRetentionTakesTheDerivedFilesAlong(t *testing.T) {
 	f.write(t, named(pageView("a1", "u1", "2026-07-10T10:00:00Z", "/"), "u1", "", "", ""),
 		named(pageView("b1", "u2", "2026-10-10T10:00:00Z", "/"), "u2", "", "", ""))
 	f.maintain(t, "2026-10-12")
-	if got := f.values(t, "SELECT id FROM read_parquet('"+f.project1(identitiesFile)+"') ORDER BY id"); !eq(got, []string{"[u1]", "[u2]"}) {
+	if got := sortedTexts(readTable(t, f.project1(identitiesFile), "id").pick(t, "id")); !eq(got, []string{"[u1]", "[u2]"}) {
 		t.Fatalf("identities before = %v", got)
 	}
 	d, _ := civil.Parse("2026-10-12")
@@ -267,7 +267,7 @@ func TestRetentionTakesTheDerivedFilesAlong(t *testing.T) {
 	if got := f.derived(t); !eq(got, []string{aliasesFile, identitiesFile, "sessions/2026-10-10.parquet"}) {
 		t.Fatalf("derived = %v, want July's sessions gone", got)
 	}
-	if got := f.values(t, "SELECT id FROM read_parquet('"+f.project1(identitiesFile)+"')"); !eq(got, []string{"[u2]"}) {
+	if got := texts(readTable(t, f.project1(identitiesFile), "id").pick(t, "id")); !eq(got, []string{"[u2]"}) {
 		t.Fatalf("identities after = %v, want u1 gone with July", got)
 	}
 }
@@ -323,15 +323,12 @@ func TestDeriveReadsFilesWrittenBeforeTheNewColumns(t *testing.T) {
 		named(evOf(1, "p2", "2026-10-11T10:00:00Z"), "u1", "Ada", "", ""))
 	f.maintain(t, "2026-10-12")
 	old := f.project1("2026-10-10.parquet")
-	if err := f.eng.Exec(context.Background(), "COPY (SELECT * EXCLUDE (install_id, user_name, group_name) FROM read_parquet('"+old+
-		"')) TO '"+old+".tmp' (FORMAT parquet)"); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Rename(old+".tmp", old); err != nil {
+	writeTable(t, old+".x", readTable(t, old).without("install_id", "user_name", "group_name"))
+	if err := os.Rename(old+".x", old); err != nil {
 		t.Fatal(err)
 	}
 	f.maintain(t, "2026-10-12")
-	if got := f.values(t, "SELECT id, name, events FROM read_parquet('"+f.project1(identitiesFile)+"')"); !eq(got, []string{"[u1 Ada 2]"}) {
+	if got := texts(readTable(t, f.project1(identitiesFile), "id", "name", "events").pick(t, "id", "name", "events")); !eq(got, []string{"[u1 Ada 2]"}) {
 		t.Fatalf("identities = %v", got)
 	}
 }

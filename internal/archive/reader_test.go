@@ -35,7 +35,7 @@ func ask(t *testing.T, r *Reader, rules Rules, sql string) string {
 }
 
 func TestReaderReadsFilesAndLogsAsOneTable(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	at := "2026-10-11T10:00:00Z"
 	view := store.Event{ID: "v1", ProjectID: 1, Family: store.FamilyViews, EventName: "$page_view", TS: ts(at), ReceivedAt: ts(at), Path: "/"}
 	p1 := evOf(1, "p1", at)
@@ -63,7 +63,7 @@ func TestReaderReadsFilesAndLogsAsOneTable(t *testing.T) {
 }
 
 func TestReaderFollowsNewLinesAndThePass(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	r := f.reader(t)
 	f.write(t, evOf(1, "a", "2026-10-11T10:00:00Z"))
 	if got := ask(t, r, Rules{}, "SELECT count(*) FROM events"); got != "[[1]]" {
@@ -107,7 +107,7 @@ func fastRetries(t *testing.T) {
 // answers once it stops.
 func TestReaderRetriesWhileAFileKeepsVanishing(t *testing.T) {
 	fastRetries(t)
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	f.write(t, evOf(1, "a", "2026-10-11T10:00:00Z"))
 	for _, fails := range []int{1, 2, maxAttempts - 1} {
 		eng := &vanishing{Engine: f.eng, fails: fails}
@@ -125,7 +125,7 @@ func TestReaderRetriesWhileAFileKeepsVanishing(t *testing.T) {
 // A query that keeps failing stops at the bound, with the last error.
 func TestReaderStopsRetryingAtTheBound(t *testing.T) {
 	fastRetries(t)
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	f.write(t, evOf(1, "a", "2026-10-11T10:00:00Z"))
 	eng := &vanishing{Engine: f.eng, fails: 1000}
 	r, err := NewReader(f.log.Dir(), eng)
@@ -160,7 +160,7 @@ func TestReaderRetriesStopWhenTheContextIsDone(t *testing.T) {
 	was := retryBackoff
 	retryBackoff = time.Hour
 	t.Cleanup(func() { retryBackoff = was })
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	f.write(t, evOf(1, "a", "2026-10-11T10:00:00Z"))
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -182,7 +182,7 @@ func TestReaderRetriesStopWhenTheContextIsDone(t *testing.T) {
 // TestReaderCountsWhatACrashedMergeLeftOnce is Review Focus 2 through the
 // tables: the month file and a day it merged both on disk.
 func TestReaderCountsWhatACrashedMergeLeftOnce(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	f.write(t, evOf(1, "a", "2026-09-29T10:00:00Z"), evOf(1, "b", "2026-09-30T10:00:00Z"))
 	f.maintain(t, "2026-10-01") // dumps both days; September is not final yet
 	day := filepath.Join(f.log.Dir(), "1", "2026-09-30.parquet")
@@ -201,7 +201,7 @@ func TestReaderCountsWhatACrashedMergeLeftOnce(t *testing.T) {
 
 // TestReaderSkipsATornLine is Review Focus 3.
 func TestReaderSkipsATornLine(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	f.write(t, evOf(1, "a", "2026-10-12T10:00:00Z"), evOf(1, "b", "2026-10-12T11:00:00Z"))
 	appendTo(t, filepath.Join(f.log.Dir(), "1", "2026-10-12.log"), `{"v":1,"id":"torn","fam`)
 	if got := ask(t, f.reader(t), Rules{}, "SELECT id FROM events ORDER BY id"); got != "[[a] [b]]" {
@@ -211,7 +211,7 @@ func TestReaderSkipsATornLine(t *testing.T) {
 
 // TestReaderOnAnEmptyDirectory is Review Focus 4: a fresh install.
 func TestReaderOnAnEmptyDirectory(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	r, err := NewReader(filepath.Join(t.TempDir(), "raw"), f.eng)
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +232,7 @@ func TestReaderOnAnEmptyDirectory(t *testing.T) {
 
 // TestReaderAppliesRulesOnRead is Review Focus 5.
 func TestReaderAppliesRulesOnRead(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	at := "2026-10-12T10:00:00Z"
 	e := func(project int64, id, name string, attrs map[string]string) store.Event {
 		ev := evOf(project, id, at)
@@ -288,7 +288,7 @@ func (c *counting) Exec(ctx context.Context, sql string) error {
 }
 
 func TestReaderBuildsOnlyWhenSomethingChanged(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	f.write(t, evOf(1, "a", "2026-10-12T10:00:00Z"))
 	eng := &counting{Engine: f.eng}
 	r, err := NewReader(f.log.Dir(), eng)
@@ -336,7 +336,7 @@ func (e *retired) Query(ctx context.Context, sql string, maxRows int, args ...en
 }
 
 func TestReaderRebuildsAndRetriesOnAFreshChild(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	f.write(t, evOf(1, "a", "2026-10-11T10:00:00Z"))
 	for _, name := range []string{"events", "views", "product", "measures", "_tw_all", "_tw_hot"} {
 		eng := &retired{Engine: f.eng, msg: "Catalog Error: Table with name " + name + " does not exist!\nDid you mean \"pg_tables\"?", fails: 1}
@@ -351,7 +351,7 @@ func TestReaderRebuildsAndRetriesOnAFreshChild(t *testing.T) {
 }
 
 func TestReaderDoesNotRetryAUsersTypo(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	eng := &retired{Engine: f.eng, msg: "Catalog Error: Table with name eventz does not exist!\nDid you mean \"events\"?", fails: 1}
 	r, err := NewReader(f.log.Dir(), eng)
 	if err != nil {
@@ -366,7 +366,7 @@ func TestReaderDoesNotRetryAUsersTypo(t *testing.T) {
 // TestReaderAppliesRulesOnKeysAndNamesWithNUL: SQL text is cut at a NUL, so
 // a rule naming one is spelled in the statement without it.
 func TestReaderAppliesRulesOnKeysAndNamesWithNUL(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	ev := evOf(1, "1", "2026-10-12T10:00:00Z")
 	ev.EventName, ev.Attributes = "n\x00m", map[string]string{"a\x00b": "v"}
 	f.write(t, ev)
@@ -384,7 +384,7 @@ func TestReaderAppliesRulesOnKeysAndNamesWithNUL(t *testing.T) {
 }
 
 func TestReaderAppliesRulesOnKeysThatMeetOrCollide(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	at := "2026-10-12T10:00:00Z"
 	e := func(id string, attrs map[string]string) store.Event {
 		ev := evOf(1, id, at)
@@ -421,7 +421,7 @@ func TestReaderRuleBetweenKeysThatDifferInCase(t *testing.T) {
 		{"lower to upper", "plan", "Plan"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			f := newFixture(t)
+			f := newSQLFixture(t)
 			at := "2026-10-12T10:00:00Z"
 			a := evOf(1, "a", at)
 			a.Attributes = map[string]string{"plan": "pro"}
@@ -473,7 +473,7 @@ func TestReaderNamesTheLoadOfTheLogs(t *testing.T) {
 // TestReaderSessionsJoinStoredAndLive: a dumped and derived day reads from
 // its session file, today from the open log.
 func TestReaderSessionsJoinStoredAndLive(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	f.write(t, pageView("a1", "a", "2026-10-11T10:00:00Z", "/"), pageView("a2", "a", "2026-10-11T11:00:00Z", "/"),
 		pageView("c1", "c", "2026-10-12T09:00:00Z", "/"))
 	f.maintain(t, "2026-10-12")
@@ -487,7 +487,7 @@ func TestReaderSessionsJoinStoredAndLive(t *testing.T) {
 // day whose session file is older than its events, and a day with a late
 // log beside its file, read from their events, each view once.
 func TestReaderDerivesAStaleDayOnRead(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	f.write(t, pageView("a1", "a", "2026-10-10T10:00:00Z", "/"), pageView("b1", "b", "2026-10-11T10:00:00Z", "/"))
 	f.maintain(t, "2026-10-12")
 	old := time.Now().Add(-time.Hour)
@@ -505,7 +505,7 @@ func TestReaderDerivesAStaleDayOnRead(t *testing.T) {
 // day and month files and no derived file yet, the tables read the same as
 // after the pass derived them.
 func TestReaderWithoutDerivedFiles(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	f.write(t, named(pageView("a1", "u1", "2026-09-29T10:00:00Z", "/"), "u1", "Ada", "", ""),
 		named(pageView("b1", "u2", "2026-10-10T10:00:00Z", "/"), "u2", "", "", ""))
 	f.maintain(t, "2026-10-12")
@@ -537,7 +537,7 @@ func TestReaderWithoutDerivedFiles(t *testing.T) {
 // and today's log fold into one row per id; today's name wins, an id
 // named only before keeps its name, counts add, first_seen stays.
 func TestReaderIdentitiesFoldStoredAndToday(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	f.write(t, named(evOf(1, "p1", "2026-10-11T09:00:00Z"), "u1", "Ada", "", ""),
 		named(evOf(1, "p2", "2026-10-11T09:00:00Z"), "u2", "Bo", "", ""))
 	f.maintain(t, "2026-10-12")
@@ -564,7 +564,7 @@ func TestReaderIdentitiesFoldStoredAndToday(t *testing.T) {
 
 // TestReaderAliases: stored pairs and today's fold into one row per pair.
 func TestReaderAliases(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	pair := func(e store.Event) store.Event { e.UserID, e.InstallID = "u1", "i1"; return e }
 	f.write(t, pair(evOf(1, "p1", "2026-10-11T09:00:00Z")))
 	f.maintain(t, "2026-10-12")
@@ -577,7 +577,7 @@ func TestReaderAliases(t *testing.T) {
 // TestReaderDerivedTablesOnAnEmptyDirectory: with nothing under raw/ the
 // three tables exist, empty, with their columns.
 func TestReaderDerivedTablesOnAnEmptyDirectory(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	r := f.reader(t)
 	for _, table := range []string{"sessions", "identities", "aliases"} {
 		if got := ask(t, r, Rules{}, "SELECT count(*) FROM "+table); got != "[[0]]" {
@@ -605,7 +605,7 @@ func askScoped(t *testing.T, r *Reader, project int64, sql string, args ...engin
 // product event, all on one closed day and today's log.
 func scopedFixture(t *testing.T) fixture {
 	t.Helper()
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	two := func(e store.Event) store.Event { e.ProjectID = 2; return e }
 	v := 3.0
 	m := two(store.Event{ID: "m2", Family: store.FamilyMeasures, EventName: "load", Measure: store.MeasureTime, Value: &v,
@@ -761,7 +761,7 @@ func TestScopedQueryAfterAFailedBuild(t *testing.T) {
 // TestMeasuresHaveBucket: the log-scale bucket of the SQLite migration:
 // ceil(ln(value) / ln(1.04)), and -1000 for a value of 1e-17 or less.
 func TestMeasuresHaveBucket(t *testing.T) {
-	f := newFixture(t)
+	f := newSQLFixture(t)
 	var evs []store.Event
 	for i, v := range []float64{0, 1e-18, 1, 1.04, 100} {
 		v := v
@@ -787,7 +787,7 @@ func TestMeasuresHaveBucket(t *testing.T) {
 }
 
 func TestMeasuresWithNoFiles(t *testing.T) {
-	r := newFixture(t).reader(t)
+	r := newSQLFixture(t).reader(t)
 	if got := ask(t, r, Rules{}, "SELECT count(*), max(bucket) FROM measures"); got != "[[0 <nil>]]" {
 		t.Errorf("measures with no files: %s", got)
 	}

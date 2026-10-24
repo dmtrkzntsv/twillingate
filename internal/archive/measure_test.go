@@ -24,6 +24,47 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
+// eventsOf is files read as one relation with every fixed column at its
+// type: a column a file lacks (written before it existed) reads NULL. It
+// is the relation the pass derived its files from through the old query
+// engine before the derivers moved to Go (derived.go).
+func eventsOf(files []string) string {
+	return "(" + emptyRow() + " UNION ALL BY NAME SELECT * FROM read_parquet(" + sqlList(files) + ", union_by_name=true))"
+}
+
+// dumpQuery is the dump's SELECT of a log as the old query engine ran it
+// before the dump moved to Go (dumpLog): logSelect, strict, over every
+// key of the log, every column's type spelled out. The measurements run
+// it, and it leaves with them.
+func dumpQuery(path string) (string, error) {
+	keys, err := logKeys(path)
+	if err != nil {
+		return "", err
+	}
+	return logSelect(path, columnsOf(keys), false), nil
+}
+
+// mergeQuery is the merge's SELECT of files, given oldest first (a month
+// file a crashed merge left, then each day's file and its segments in
+// order): every id once, from the first file that holds it (a file holds
+// an id once), ordered by family and ts. As in the dump, the first row
+// per id is found over the ids and a row key alone, and the sort, which
+// spills, carries the rows.
+func mergeQuery(files []string) string { return mergeSelect(files, files) }
+
+// mergeSelect reads files and keys each row by the position in order of
+// its file's name, as read_parquet reports it (the path as given, today).
+// A name that order does not hold would key the row NULL and the IN would
+// drop it, then the merge would delete its day: it fails the query instead.
+func mergeSelect(files, order []string) string {
+	rows := "read_parquet(" + sqlList(files) + ", union_by_name=true, filename=true, file_row_number=true)"
+	key := "coalesce(list_position(" + sqlList(order) + ", filename), error('archive: merge input not matched: ' || filename))" +
+		" * 4294967296 + file_row_number"
+	firsts := "SELECT min(k) FROM (SELECT id, " + key + " AS k FROM " + rows + ") GROUP BY id"
+	return "SELECT * EXCLUDE (filename, file_row_number, k) FROM (SELECT *, " + key + " AS k FROM " + rows +
+		") WHERE k IN (" + firsts + ") ORDER BY family, ts"
+}
+
 // measureEvent is a web product event with 12 attributes on day (1-based)
 // of September 2026; i makes its id.
 func measureEvent(day, i int) store.Event {

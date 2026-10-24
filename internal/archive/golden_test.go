@@ -1,7 +1,6 @@
 package archive
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -13,35 +12,30 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/golden"
 )
 
-// -update-golden rewrites testdata/*.golden.json from the oracle's
-// answers: DuckDB's until step 6b removes it, the Go code's after, and
-// then only for a deliberate change a review reads in the diff.
-var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/*.golden.json from the oracle's answers")
+// -update-golden rewrites testdata/*.golden.json from the Go code's
+// answers, only for a deliberate change a review reads in the diff. The
+// goldens were frozen from the old query engine's answers (step 6a); they
+// are the only reference now.
+var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/*.golden.json from the Go code's answers")
 
-// oracle returns the golden kept under key in t's test's file, and keeps
-// duck there first with -update-golden. The caller compares duck with it.
-func oracle[T any](t testing.TB, key string, duck T) T {
+// frozen returns the golden kept under key in t's test's file, keeping
+// got there first with -update-golden, and fails t unless got equals it
+// exactly.
+func frozen[T any](t testing.TB, key string, got T) T {
 	t.Helper()
-	return golden.Get(t, golden.For(t, *updateGolden), key, duck)
-}
-
-// frozen is oracle, failing t unless duck equals the golden exactly.
-func frozen[T any](t testing.TB, key string, duck T) T {
-	t.Helper()
-	want := oracle(t, key, duck)
-	if d := golden.Diff(duck, want); d != "" {
-		t.Errorf("%s: DuckDB's answer differs from its golden at %s", key, d)
+	want := golden.Get(t, golden.For(t, *updateGolden), key, got)
+	if d := golden.Diff(got, want); d != "" {
+		t.Errorf("%s: the answer differs from its golden at %s", key, d)
 	}
 	return want
 }
 
-// fileAnswer is a Parquet file as its golden keeps it: DuckDB's DESCRIBE
-// of it ("[name TYPE YES]") and its rows, each one JSON array in column
-// order as the engine sends a row (a TIMESTAMP as RFC 3339 text, a DATE
-// as YYYY-MM-DD, a number as a number), sorted by its text unless the
-// file's order is the answer. Past maxGoldenRows bytes of rows only their
-// count and the SHA-256 of the rows are kept: each golden.Compact, in
-// that order, joined by newlines.
+// fileAnswer is a Parquet file as its golden keeps it: the DESCRIBE of it
+// ("[name TYPE YES]") and its rows, each one JSON array in column order
+// as the engine sent a row (pqTable's values), sorted by its text unless
+// the file's order is the answer. Past maxGoldenRows bytes of rows only
+// their count and the SHA-256 of the rows are kept: each golden.Compact,
+// in that order, joined by newlines.
 type fileAnswer struct {
 	Columns    []string          `json:"columns"`
 	RowCount   int               `json:"row_count"`
@@ -51,23 +45,13 @@ type fileAnswer struct {
 
 const maxGoldenRows = 64 << 10
 
-// answerOf reads path through DuckDB as a fileAnswer: sel is the select
-// list (*, or * with EXCLUDE or REPLACE); ordered (with sel *) keeps the
-// file's order.
-func (f fixture) answerOf(t *testing.T, path, sel string, ordered bool) fileAnswer {
+// answerOf is p as a fileAnswer; ordered keeps the file's order.
+func answerOf(t testing.TB, p pqTable, ordered bool) fileAnswer {
 	t.Helper()
-	q := "SELECT " + sel + " FROM read_parquet(" + quote(path) + ")"
-	if ordered {
-		q = "SELECT * EXCLUDE (file_row_number) FROM read_parquet(" + quote(path) + ", file_row_number=true) ORDER BY file_row_number"
-	}
-	res, err := f.eng.Query(context.Background(), q, 0)
-	if err != nil {
-		t.Fatalf("%v\n%s", err, q)
-	}
-	a := fileAnswer{Columns: f.describe(t, path), RowCount: len(res.Rows)}
-	rows := make([]string, len(res.Rows))
+	a := fileAnswer{Columns: p.describe(), RowCount: len(p.rows)}
+	rows := make([]string, len(p.rows))
 	size := 0
-	for i, r := range res.Rows {
+	for i, r := range p.rows {
 		b, err := golden.Compact(r)
 		if err != nil {
 			t.Fatal(err)
@@ -87,6 +71,14 @@ func (f fixture) answerOf(t *testing.T, path, sel string, ordered bool) fileAnsw
 		a.Rows = append(a.Rows, json.RawMessage(r))
 	}
 	return a
+}
+
+// fileFrozen is the Go file at path read back (answerOf), failing t
+// unless it is the golden kept under key, what differs named.
+func fileFrozen(t *testing.T, key, name string, p pqTable, ordered bool) {
+	t.Helper()
+	got := answerOf(t, p, ordered)
+	sameAnswer(t, name, got, golden.Get(t, golden.For(t, *updateGolden), key, got))
 }
 
 // sameAnswer fails t unless got (the Go file's) is want (the golden's),
@@ -112,17 +104,4 @@ func sameAnswer(t *testing.T, name string, got, want fileAnswer) {
 			return
 		}
 	}
-}
-
-// skipDigest says whether the race suite skips key's golden: one kept as
-// a digest stands for a file read whole through DuckDB, too slow under
-// the race detector with the package near go test's 10 minutes. The
-// DuckDB comparison still runs there, and make check compares the golden.
-func skipDigest(t testing.TB, key string) bool {
-	t.Helper()
-	if !raceEnabled || *updateGolden {
-		return false
-	}
-	raw := golden.Get(t, golden.For(t, false), key, json.RawMessage(nil))
-	return strings.Contains(string(raw), `"rows_sha256"`)
 }

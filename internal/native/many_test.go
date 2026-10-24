@@ -229,7 +229,8 @@ func manyRequests(t *testing.T) []Request {
 // TestAnswerManyEqualsAnswer holds every AnswerMany answer to Answer's:
 // the parity tests' queries, batched in random orders and groupings on
 // their own engines, and the engine fixture's mixed batch, with the
-// groups and the bytes capped too.
+// groups and the bytes capped too. The parity tests, rerun, compare
+// Answer with their own goldens as they do alone.
 func TestAnswerManyEqualsAnswer(t *testing.T) {
 	rng := newRand(t)
 	t.Run("parity", func(t *testing.T) {
@@ -239,26 +240,28 @@ func TestAnswerManyEqualsAnswer(t *testing.T) {
 			t.Skip("the parity rerun is too slow under the race detector; make check runs it")
 		}
 		parity := []struct {
-			name string
-			run  func(*testing.T)
+			name, test string // test: the parity test's name, whose goldens it reads
+			run        func(*testing.T)
 		}{
-			{"kinds", TestKindsMatchDuckDB},
-			{"share", TestShareMatchesDuckDB},
-			{"ratings", TestRatingsMatchWidget},
-			{"ratio", TestRatioMatchesDuckDB},
-			{"ratio trends", TestRatioTrends},
-			{"trend", TestTrendMatchesDuckDB},
-			{"days", TestDaysMatchesDuckDB},
-			{"labels", TestIdentityLabelsMatchDuckDB},
-			{"percentiles", TestPercentilesMatchWidgets},
-			{"sessions", TestSessionsQueriesMatchDuckDB},
-			{"retention", TestRetentionMatchesSQL},
-			{"attributes", TestAttributesMatchDuckDB},
-			{"attribute keys", TestAttributeKeysMatchDuckDB},
-			{"identities", TestIdentitiesQueriesMatchDuckDB},
+			{"kinds", "TestKindsMatchDuckDB", TestKindsMatchDuckDB},
+			{"share", "TestShareMatchesDuckDB", TestShareMatchesDuckDB},
+			{"ratings", "TestRatingsMatchWidget", TestRatingsMatchWidget},
+			{"ratio", "TestRatioMatchesDuckDB", TestRatioMatchesDuckDB},
+			{"ratio trends", "TestRatioTrends", TestRatioTrends},
+			{"trend", "TestTrendMatchesDuckDB", TestTrendMatchesDuckDB},
+			{"days", "TestDaysMatchesDuckDB", TestDaysMatchesDuckDB},
+			{"labels", "TestIdentityLabelsMatchDuckDB", TestIdentityLabelsMatchDuckDB},
+			{"percentiles", "TestPercentilesMatchWidgets", TestPercentilesMatchWidgets},
+			{"sessions", "TestSessionsQueriesMatchDuckDB", TestSessionsQueriesMatchDuckDB},
+			{"retention", "TestRetentionMatchesSQL", TestRetentionMatchesSQL},
+			{"attributes", "TestAttributesMatchDuckDB", TestAttributesMatchDuckDB},
+			{"attribute keys", "TestAttributeKeysMatchDuckDB", TestAttributeKeysMatchDuckDB},
+			{"identities", "TestIdentitiesQueriesMatchDuckDB", TestIdentitiesQueriesMatchDuckDB},
 		}
 		for _, p := range parity {
 			t.Run(p.name, func(t *testing.T) {
+				// The parity test compares Answer with its own goldens.
+				parityOf.Store(t.Name(), p.test)
 				// Run with this t, so the fixtures live until the batches
 				// are checked.
 				engines := recordAnswers(func() { p.run(t) })

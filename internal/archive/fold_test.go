@@ -37,16 +37,9 @@ func orNull(p *string) any {
 	return *p
 }
 
-// sortedValues is f.values sorted.
-func (f fixture) sortedValues(t *testing.T, sql string) []string {
-	t.Helper()
-	out := f.values(t, sql)
-	slices.Sort(out)
-	return out
-}
-
 // TestSessionizeMatchesDuckDB: the sessions Sessionize splits a day's
-// views into are sessionsSelect's: a gap over 30 minutes in whole seconds
+// views into are the golden's, sessionsSelect's as the old query engine
+// ran it: a gap over 30 minutes in whole seconds
 // (1800.2 seconds is 1800), declared session ids (one of them "2", one
 // "") among undeclared views, an actor under two kinds, views without a
 // kind or an actor, two views in one second ordered by id, a repeated id
@@ -97,10 +90,6 @@ func TestSessionizeMatchesDuckDB(t *testing.T) {
 		view("web", "x6", "-", "17:00:00", "/noid", "id", nil),
 		view("web", "x6", "-", "17:05:00", "/noid2", "id", nil), // a second NULL id: dropped
 	)
-	want := frozen(t, "sessions", f.sortedValues(t, "SELECT kind, actor_id, actor_kind, session_id, epoch_us(started_at), epoch_us(ended_at), duration_sec, "+
-		"views, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign FROM ("+
-		sessionsSelect(f.logRel(t, foldDay))+")"))
-
 	var lines []logLine
 	var views []SessionView
 	for _, l := range readLogLines(t, path) {
@@ -130,8 +119,11 @@ func TestSessionizeMatchesDuckDB(t *testing.T) {
 			orNull(fl["utm_medium"]), orNull(fl["utm_campaign"])}))
 	}
 	slices.Sort(got)
-	if len(want) < 10 || !eq(got, want) {
-		t.Fatalf("sessions\n got %v\nwant %v", got, want)
+	// The golden: kind, actor_id, actor_kind, session_id, epoch_us(started_at),
+	// epoch_us(ended_at), duration_sec, views, entry_host, entry_path,
+	// exit_path, referrer_source, utm_source, utm_medium, utm_campaign.
+	if want := frozen(t, "sessions", got); len(want) < 10 {
+		t.Fatalf("sessions %v: a weak case", want)
 	}
 }
 
@@ -212,18 +204,18 @@ func identityRows(m IdentityMap) []string {
 }
 
 // TestIdentitiesFoldMatchesDuckDB: the identities See folds a log's
-// events into are identitiesSelect's, and so are two parts' put together
-// with Fold.
+// events into are the golden's (identitiesSelect's as the old query
+// engine ran it), and so are two parts' put together with Fold.
 func TestIdentitiesFoldMatchesDuckDB(t *testing.T) {
 	f := newFixture(t)
 	path := f.writeLines(t, identityLines()...)
-	want := frozen(t, "identities", f.sortedValues(t, "SELECT kind, id, name, epoch_us(first_seen), epoch_us(last_seen), views, events FROM ("+
-		identitiesSelect(f.logRel(t, foldDay))+")"))
 	lines := readLogLines(t, path)
 	whole := IdentityMap{}
 	seeIdentities(t, whole, lines)
-	if got := identityRows(whole); len(want) < 4 || !eq(got, want) {
-		t.Fatalf("identities\n got %v\nwant %v", got, want)
+	// The golden: kind, id, name, epoch_us(first_seen), epoch_us(last_seen), views, events.
+	want := frozen(t, "identities", identityRows(whole))
+	if len(want) < 4 {
+		t.Fatalf("identities %v: a weak case", want)
 	}
 	if whole.Bytes() <= 0 {
 		t.Errorf("bytes %d", whole.Bytes())
@@ -239,7 +231,8 @@ func TestIdentitiesFoldMatchesDuckDB(t *testing.T) {
 }
 
 // TestAliasesFoldMatchesDuckDB: the aliases See folds a log's events into
-// are aliasesSelect's, in its order: any family, a pair only when both
+// are the golden's (aliasesSelect's as the old query engine ran it), in
+// its order: any family, a pair only when both
 // ids are non-empty, an event without a ts counted but dating nothing
 // (a pair seen only so has no first or last seen); and so are two parts'
 // put together with Fold.
@@ -271,8 +264,6 @@ func TestAliasesFoldMatchesDuckDB(t *testing.T) {
 		ev("p8", "product", "13:00:00", "U1", "i1"),
 		ev("p1", "product", "14:00:00", "u1", "i9"), // a repeat: dropped
 	)
-	want := frozen(t, "aliases", f.values(t, "SELECT user_id, install_id, epoch_us(first_seen), epoch_us(last_seen), events FROM ("+
-		aliasesSelect(f.logRel(t, foldDay))+")"))
 	lines := readLogLines(t, path)
 	see := func(m AliasMap, lines []logLine) {
 		for _, l := range lines {
@@ -294,8 +285,10 @@ func TestAliasesFoldMatchesDuckDB(t *testing.T) {
 	}
 	whole := AliasMap{}
 	see(whole, lines)
-	if got := rows(whole); len(want) < 4 || !eq(got, want) {
-		t.Fatalf("aliases\n got %v\nwant %v", got, want)
+	// The golden: user_id, install_id, epoch_us(first_seen), epoch_us(last_seen), events.
+	want := frozen(t, "aliases", rows(whole))
+	if len(want) < 4 {
+		t.Fatalf("aliases %v: a weak case", want)
 	}
 	a, b := AliasMap{}, AliasMap{}
 	for i, l := range lines {

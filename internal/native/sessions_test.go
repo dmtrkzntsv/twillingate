@@ -169,7 +169,7 @@ func sessionRows(t *testing.T, e *Engine, project int64, from, to string) [][]st
 	return rows
 }
 
-// cellText is c's row i as text, as duckTable formats DuckDB's values.
+// cellText is c's row i as text, as the goldens keep the values.
 func cellText(c *Column, i int, day bool) string {
 	switch {
 	case c.Idx != nil:
@@ -207,21 +207,32 @@ func TestSessionsRowsMatchDuckDB(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got := sessionRows(t, e, sessionsProject, c.from, c.to)
-			want := duckTable(t, f, `SELECT `+sessionColumnList+` FROM sessions
-				WHERE "project_id" = 3 AND "day" BETWEEN DATE '%[1]s' AND DATE '%[2]s'`, c.from, c.to)
+			want := goldenTable(t, `SELECT `+sessionColumnList+` FROM sessions
+				WHERE "project_id" = 3 AND "day" BETWEEN DATE '%[1]s' AND DATE '%[2]s'`, c.from, c.to, got)
 			sortRows(want)
 			if c.name != "none" && len(want) == 0 {
-				t.Fatal("DuckDB has no sessions: a weak case")
+				t.Fatal("the golden has no sessions: a weak case")
 			}
 			sameTable(t, got, want)
 		})
 	}
-	// The rules the fixture is built for, read off DuckDB's answer.
-	rows := duckTable(t, f, `SELECT "actor_id", count(*) FROM sessions WHERE "project_id" = 3 AND "day" = DATE '%[1]s'
-		GROUP BY ALL`, "2026-09-03", "")
+	// The rules the fixture is built for, read off the sessions per actor.
+	perActor := map[string]int{}
+	actor := slices.Index(sessionColumns, "actor_id")
+	for _, r := range sessionRows(t, e, sessionsProject, "2026-09-03", "2026-09-03") {
+		perActor[r[actor]]++
+	}
+	var got [][]string
+	for a, n := range perActor {
+		got = append(got, []string{a, strconv.Itoa(n)})
+	}
+	sortRows(got)
+	rows := goldenTable(t, `SELECT "actor_id", count(*) FROM sessions WHERE "project_id" = 3 AND "day" = DATE '%[1]s'
+		GROUP BY ALL`, "2026-09-03", "", got)
 	sortRows(rows)
+	sameTable(t, got, rows)
 	if want := [][]string{{"", "1"}, {"x0", "2"}, {"x1", "4"}, {"x2", "2"}, {"x3", "2"}, {"x4", "1"}}; !slices.EqualFunc(rows, want, slices.Equal) {
-		t.Errorf("DuckDB's sessions per actor on September 3: %q, want %q", rows, want)
+		t.Errorf("sessions per actor on September 3: %q, want %q", rows, want)
 	}
 }
 
@@ -251,11 +262,11 @@ func TestSessionsStaleMonthMatchesDuckDB(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			got := sessionRows(t, e, sessionsProject, c.from, c.to)
-			want := duckTable(t, f, `SELECT `+sessionColumnList+` FROM sessions
-				WHERE "project_id" = 3 AND "day" BETWEEN DATE '%[1]s' AND DATE '%[2]s'`, c.from, c.to)
+			want := goldenTable(t, `SELECT `+sessionColumnList+` FROM sessions
+				WHERE "project_id" = 3 AND "day" BETWEEN DATE '%[1]s' AND DATE '%[2]s'`, c.from, c.to, got)
 			sortRows(want)
 			if len(want) == 0 {
-				t.Fatal("DuckDB has no sessions: a weak case")
+				t.Fatal("the golden has no sessions: a weak case")
 			}
 			sameTable(t, got, want)
 		})
@@ -355,7 +366,7 @@ func TestSessionsQueriesMatchDuckDB(t *testing.T) {
 			if !slices.Equal(res.Columns, c.cols) {
 				t.Fatalf("columns %q, want %q", res.Columns, c.cols)
 			}
-			want := duckTable(t, f, c.sql, from, to)
+			want := goldenTable(t, c.sql, from, to, res.Rows)
 			if len(want) == 0 {
 				t.Fatal("the SQL returns no rows: a weak case")
 			}

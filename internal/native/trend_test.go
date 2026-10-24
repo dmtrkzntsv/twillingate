@@ -145,11 +145,7 @@ func TestTrendMatchesDuckDB(t *testing.T) {
 			if !slices.Equal(res.Columns, c.q.Columns()) {
 				t.Fatalf("columns %q, want %q", res.Columns, c.q.Columns())
 			}
-			db := f
-			if c.e == idEngine {
-				db = ids
-			}
-			want := duckTableWith(t, db, c.rules, c.sql, c.from, c.to)
+			want := goldenTableWith(t, c.rules, c.sql, c.from, c.to, res.Rows)
 			if len(want) == 0 {
 				t.Fatal("the SQL returns no rows: a weak case")
 			}
@@ -231,7 +227,7 @@ func TestOtherNeverOneGroup(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := duckTable(t, f, browsersStyle("'"+strings.Join(c.paths, "', '")+"'"), engineFrom, today)
+			want := goldenTable(t, browsersStyle("'"+strings.Join(c.paths, "', '")+"'"), engineFrom, today, res.Rows)
 			sameTable(t, res.Rows, want)
 			last := res.Rows[len(res.Rows)-1][0]
 			if len(res.Rows) != c.rows || (last == "Other") != c.other {

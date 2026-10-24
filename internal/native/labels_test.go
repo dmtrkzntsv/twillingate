@@ -49,9 +49,9 @@ func TestIdentityLabelsMatchDuckDB(t *testing.T) {
 		out  func([]string) []string
 		sql  string
 		// check says what the case must show beside the SQL's rows.
-		check func(t *testing.T, rows [][]string)
+		check func(t *testing.T, e *Engine, rows [][]string)
 	}
-	labelled := func(t *testing.T, rows [][]string) {
+	labelled := func(t *testing.T, _ *Engine, rows [][]string) {
 		t.Helper()
 		named, nameless := false, false
 		for _, r := range rows {
@@ -67,8 +67,13 @@ func TestIdentityLabelsMatchDuckDB(t *testing.T) {
 		{name: "top groups", q: topGroups, out: groupsOut, sql: widgetSQLOf(t, "groups/top-groups.sql", identitiesProject), check: labelled},
 		{name: "users first seen lately", q: newUsers, out: usersOut,
 			sql: `SELECT * FROM (` + widgetSQLOf(t, "users/top-users.sql", identitiesProject) + `) WHERE "First seen" >= DATE '2026-09-02'`,
-			check: func(t *testing.T, rows [][]string) {
-				all := duckTable(t, f, widgetSQLOf(t, "users/top-users.sql", identitiesProject), from, to)
+			check: func(t *testing.T, e *Engine, rows [][]string) {
+				var users [][]string
+				for _, r := range answerRows(t, e, identitiesProject, topUsers, from, to, archive.Rules{}) {
+					users = append(users, usersOut(r))
+				}
+				all := goldenTable(t, widgetSQLOf(t, "users/top-users.sql", identitiesProject), from, to, users)
+				sameTable(t, users, all)
 				if len(rows) == 0 || len(rows) == len(all) {
 					t.Errorf("%d of %d users first seen lately: a weak case", len(rows), len(all))
 				}
@@ -78,7 +83,7 @@ func TestIdentityLabelsMatchDuckDB(t *testing.T) {
 				LEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = e.user_id
 				WHERE e.project_id = 4 AND e.family = 'views' AND e.day BETWEEN DATE '%[1]s' AND DATE '%[2]s'
 				GROUP BY l ORDER BY c DESC, l ASC NULLS LAST LIMIT 100`,
-			check: func(t *testing.T, rows [][]string) {
+			check: func(t *testing.T, e *Engine, rows [][]string) {
 				if !slices.ContainsFunc(rows, func(r []string) bool { return r[0] == "" }) {
 					t.Errorf("rows %q: no row without a user", rows)
 				}
@@ -89,7 +94,7 @@ func TestIdentityLabelsMatchDuckDB(t *testing.T) {
 				JOIN identities i ON i.project_id = 4 AND i.kind = 'group' AND i.id = e.group_id
 				WHERE e.project_id = 4 AND e.family = 'views' AND e.day BETWEEN DATE '%[1]s' AND DATE '%[2]s'
 				AND i.first_seen::DATE < DATE '2026-08-28' GROUP BY ALL ORDER BY 1, 2`,
-			check: func(t *testing.T, rows [][]string) {
+			check: func(t *testing.T, e *Engine, rows [][]string) {
 				series := map[string]bool{}
 				for _, r := range rows {
 					series[r[1]] = true
@@ -116,13 +121,13 @@ func TestIdentityLabelsMatchDuckDB(t *testing.T) {
 						got[i] = c.out(r)
 					}
 				}
-				want := duckTable(t, f, c.sql, from, to)
+				want := goldenTable(t, c.sql, from, to, got)
 				if len(want) == 0 {
 					t.Fatal("the SQL returns no rows: a weak case")
 				}
 				sameTable(t, got, want)
 				if c.check != nil {
-					c.check(t, res.Rows)
+					c.check(t, e, res.Rows)
 				}
 				if res.Truncated || len(res.Approximate) > 0 {
 					t.Errorf("truncated %v, approximate %q", res.Truncated, res.Approximate)
@@ -238,17 +243,7 @@ func TestDaysMatchesDuckDB(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			var want [][]string
-			for _, sql := range c.sql {
-				want = append(want, duckTable(t, f, sql, from, today)...)
-			}
-			if c.prev {
-				fd, td := date(t, from), date(t, today)
-				days := int(td.Time().Sub(fd.Time()).Hours()/24) + 1
-				pf := fd.Time().AddDate(0, 0, -days).Format(time.DateOnly)
-				pt := fd.Time().AddDate(0, 0, -1).Format(time.DateOnly)
-				want[0] = append(want[0], duckTable(t, f, c.sql[0], pf, pt)[0]...)
-			}
+			want := goldenTables(t, c.sql, from, today, c.prev, res.Rows)
 			if len(want) == 0 {
 				t.Fatal("the SQL returns no rows: a weak case")
 			}

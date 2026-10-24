@@ -1,8 +1,7 @@
 // The parity harness for the analytics tools: each tool's native answer
-// checked against the SQL it ran before, over the same files, and against
-// that SQL's answer frozen in testdata/<Test>.golden.json (oldTable).
-// When DuckDB leaves (step 6 of the native engine plan), the SQL goes and
-// the goldens remain the reference.
+// checked against the answer the SQL it ran before gave over the same
+// files, frozen in testdata/<Test>.golden.json (oldTable). The SQL stays
+// as the goldens' key and record; it is no longer run.
 
 package api
 
@@ -24,9 +23,9 @@ import (
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
-// The analytics tools' SQL before the native engine answered them, kept
-// to check the native answers against (TestToolsMatchTheirOldSQL). Each
-// runs through filesTable, the DuckDB reader, on the same files.
+// The analytics tools' SQL before the native engine answered them, whose
+// answers the goldens keep to check the native answers against
+// (TestToolsMatchTheirOldSQL).
 
 // oldViewsOverviewSQL is views_overview's SQL; kind is its kind filter
 // (` AND kind = :kind`) or "".
@@ -131,11 +130,10 @@ ORDER BY day`
 // oldEventNamesSQL is event_names' SQL.
 const oldEventNamesSQL = `SELECT family, event_name, count(*) FROM events WHERE family IN ('product','measures') AND project_id = :project AND day BETWEEN :from AND :to AND event_name NOT LIKE '$%' GROUP BY ALL ORDER BY 3 DESC, 2 LIMIT 200`
 
-// filesTable runs one of the tools' old queries on the event files (DuckDB
-// SQL over the tables of archive.Reader), scoped to in's project: q's
-// :project, :from and :to are bound as BIGINT and DATEs, any other :name
-// from vals. Every cell reads as SQLite's did (tw_cell: NULL as "", 3 not
-// 3.0).
+// filesTable runs SQL on the event files through the host's SQL engine
+// (runFiles), scoped to in's project: q's :project, :from and :to are
+// bound as BIGINT and DATEs, any other :name from vals. Every cell reads
+// as SQLite's did (tw_cell: NULL as "", 3 not 3.0).
 func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[string]enginesql.Value) (tableOut, error) {
 	all := map[string]enginesql.Value{
 		":project": {Type: "BIGINT", Text: strconv.FormatInt(in.ProjectID, 10)},
@@ -161,9 +159,8 @@ func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[st
 }
 
 // runFiles runs q on the external SQL engine (the test engine over the
-// host's files) under CONSOLE_QUERY_TIMEOUT, with the registry's rules,
-// for the tools' old SQL the parity tests keep: a failure reads as the
-// query tool's sqlError words it.
+// host's files) under CONSOLE_QUERY_TIMEOUT, with the registry's rules: a
+// failure reads as the query tool's sqlError words it.
 func (h *host) runFiles(ctx context.Context, q archive.Scoped) (sqlengine.Result, error) {
 	if h.sql == nil {
 		return sqlengine.Result{}, invalidf("the event files cannot be queried by this process")
@@ -298,17 +295,41 @@ func sameNumbers(t *testing.T, name string, got, want tableOut, tol float64) {
 
 // TestToolsMatchTheirOldSQL runs views_overview, views_breakdown,
 // product_events and event_names natively and checks each answer against
-// the tool's old SQL over the same files, on the host's events and
-// writeParityEdges'. The one difference allowed is named where it is
-// checked: views_overview without kind counts visitors per day, not per
-// day and kind (G15).
+// the golden of the tool's old SQL over the same files, on the host's
+// events and writeParityEdges'. The one difference allowed is named where
+// it is checked: views_overview without kind counts visitors per day, not
+// per day and kind (G15).
 func TestToolsMatchTheirOldSQL(t *testing.T) {
 	h, _ := newTestHost(t)
 	writeParityEdges(t, h)
 	ctx := context.Background()
-	old := func(in rangeIn, q string, vals map[string]enginesql.Value) tableOut {
+	old := func(in rangeIn, q string, vals map[string]enginesql.Value, got tableOut) tableOut {
 		t.Helper()
-		return oldTable(t, h, in, q, vals)
+		return oldTable(t, h, in, q, vals, got, nil)
+	}
+	// g15 is the overview without kind as the golden of q keeps it (the
+	// old SQL's visitors per day and kind), its visitors then taken from
+	// the golden of overviewPerDaySQL: the native answer to compare with.
+	g15 := func(in rangeIn, q string, got tableOut) (tableOut, bool) {
+		t.Helper()
+		day := tableOut{Columns: []string{"day", "count(DISTINCT actor_id)"}}
+		for _, row := range got.Rows {
+			day.Rows = append(day.Rows, row[:2])
+		}
+		perDay := old(in, overviewPerDaySQL, nil, day)
+		saw := false
+		perDayVisitors := func(o tableOut) tableOut {
+			o = cloneTable(o)
+			for i, row := range o.Rows {
+				if i < len(perDay.Rows) {
+					saw = saw || row[1] != perDay.Rows[i][1]
+					row[1] = perDay.Rows[i][1]
+				}
+			}
+			return o
+		}
+		want := perDayVisitors(oldTable(t, h, in, q, nil, got, perDayVisitors))
+		return want, saw
 	}
 	ranges := []rangeIn{
 		{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"},
@@ -332,18 +353,13 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 				name := fmt.Sprintf("%s..%s kind %q", r.From, r.To, k)
 				var want tableOut
 				if k == "" {
-					want = old(r, oldViewsOverviewSQL(""), nil)
 					// G15: without kind, the visitors are distinct per day
 					// (an actor seen under two kinds on a day counts once).
-					perDay := old(r, overviewPerDaySQL, nil)
-					for i, row := range want.Rows {
-						if row[1] != perDay.Rows[i][1] {
-							sawG15 = true
-						}
-						row[1] = perDay.Rows[i][1]
-					}
+					var saw bool
+					want, saw = g15(r, oldViewsOverviewSQL(""), toolTable(t, got))
+					sawG15 = sawG15 || saw
 				} else {
-					want = old(r, oldViewsOverviewSQL(` AND kind = :kind`), kind(k))
+					want = old(r, oldViewsOverviewSQL(` AND kind = :kind`), kind(k), toolTable(t, got))
 				}
 				sameNumbers(t, name, toolTable(t, got), want, 0)
 			}
@@ -371,12 +387,11 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 				cond, vals = ` AND kind = :kind`, kind(k)
 			}
 			q := strings.Replace(oldViewsOverviewSQL(cond), "FROM sessions WHERE", "FROM sessions WHERE false AND", 1)
-			want := old(r, q, vals)
+			var want tableOut
 			if k == "" { // G15, as above
-				perDay := old(r, overviewPerDaySQL, nil)
-				for i, row := range want.Rows {
-					row[1] = perDay.Rows[i][1]
-				}
+				want, _ = g15(r, q, toolTable(t, got))
+			} else {
+				want = old(r, q, vals, toolTable(t, got))
 			}
 			if len(want.Rows) == 0 || want.Rows[0][3] != "0" {
 				t.Fatalf("the old SQL still counts sessions: %q", want.Rows)
@@ -393,7 +408,7 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					want := old(r, oldViewsBreakdownSQL(dim), map[string]enginesql.Value{":limit": {Type: "BIGINT", Text: strconv.Itoa(limit)}})
+					want := old(r, oldViewsBreakdownSQL(dim), map[string]enginesql.Value{":limit": {Type: "BIGINT", Text: strconv.Itoa(limit)}}, toolTable(t, got))
 					sameNumbers(t, fmt.Sprintf("%s %s..%s limit %d", name, r.From, r.To, limit), toolTable(t, got), want, 0)
 				}
 			}
@@ -409,12 +424,12 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 				}
 				name := fmt.Sprintf("%s..%s event %q", r.From, r.To, event)
 				if event == "" {
-					sameNumbers(t, name+" events", got.Events, old(r, oldProductEventsSQL("", `day, "count" DESC, event_name`), nil), 0)
-					sameNumbers(t, name+" totals", got.Totals, old(r, oldProductTotalsSQL, nil), 0)
+					sameNumbers(t, name+" events", got.Events, old(r, oldProductEventsSQL("", `day, "count" DESC, event_name`), nil, got.Events), 0)
+					sameNumbers(t, name+" totals", got.Totals, old(r, oldProductTotalsSQL, nil, got.Totals), 0)
 					continue
 				}
 				sameNumbers(t, name+" events", got.Events, old(r, oldProductEventsSQL(` AND event_name = :event`, `day`),
-					map[string]enginesql.Value{":event": {Type: "VARCHAR", Text: event}}), 0)
+					map[string]enginesql.Value{":event": {Type: "VARCHAR", Text: event}}, got.Events), 0)
 				if got.Totals.Columns != nil || got.Totals.Rows != nil {
 					t.Errorf("%s: totals %v, want none with an event", name, got.Totals)
 				}
@@ -428,8 +443,12 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			table := tableOut{Columns: []string{"family", "event_name", "count_star()"}}
+			for _, e := range got.Events {
+				table.Rows = append(table.Rows, []string{e.Family, e.Name, strconv.FormatInt(e.Events, 10)})
+			}
 			want := eventNamesOut{Events: []eventNameOut{}}
-			for _, row := range old(r, oldEventNamesSQL, nil).Rows {
+			for _, row := range old(r, oldEventNamesSQL, nil, table).Rows {
 				n, _ := strconv.ParseInt(row[2], 10, 64)
 				want.Events = append(want.Events, eventNameOut{Family: row[0], Name: row[1], Events: n})
 			}
@@ -441,7 +460,7 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 }
 
 // Under a row cap below their answers the tools say the table is cut, as
-// filesTable did, and event_names refuses a partial list.
+// the old SQL did, and event_names refuses a partial list.
 func TestNativeToolsUnderTheRowCap(t *testing.T) {
 	h, _ := newTestHost(t)
 	setGuards(t, h, h.queryTimeout, 2)

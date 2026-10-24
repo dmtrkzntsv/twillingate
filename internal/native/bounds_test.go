@@ -4,7 +4,6 @@ import (
 	"context"
 	"slices"
 	"testing"
-	"time"
 )
 
 // min and max take day, ts and received_at on the event tables (day,
@@ -89,17 +88,7 @@ func TestBoundsMatchDuckDB(t *testing.T) {
 			if !slices.Equal(res.Columns, c.cols) {
 				t.Fatalf("columns %q, want %q", res.Columns, c.cols)
 			}
-			var want [][]string
-			for _, sql := range c.sql {
-				want = append(want, duckTable(t, f, sql, c.from, c.to)...)
-			}
-			if c.prev {
-				from, to := date(t, c.from), date(t, c.to)
-				days := int(to.Time().Sub(from.Time()).Hours()/24) + 1
-				pf := from.Time().AddDate(0, 0, -days).Format(time.DateOnly)
-				pt := from.Time().AddDate(0, 0, -1).Format(time.DateOnly)
-				want[0] = append(want[0], duckTable(t, f, c.sql[0], pf, pt)[0]...)
-			}
+			want := goldenTables(t, c.sql, c.from, c.to, c.prev, res.Rows)
 			if len(want) == 0 || slices.ContainsFunc(want, func(r []string) bool { return r[len(r)-1] == "" }) {
 				t.Fatalf("the SQL returns %q: a weak case", want)
 			}

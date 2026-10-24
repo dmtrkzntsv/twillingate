@@ -1,43 +1,21 @@
 package archive
 
-// mergeQuery and mergeSelect, the merge's DuckDB oracle, leave with DuckDB
-// in step 6.
-
 import (
 	"context"
 	"encoding/binary"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/parquet-go/parquet-go"
 	"github.com/parquet-go/parquet-go/encoding/thrift"
 )
-
-// mergeQuery is the merge's SELECT of files, given oldest first (a month
-// file a crashed merge left, then each day's file and its segments in
-// order): every id once, from the first file that holds it (a file holds
-// an id once), ordered by family and ts. As in the dump, the first row
-// per id is found over the ids and a row key alone, and the sort, which
-// spills, carries the rows.
-func mergeQuery(files []string) string { return mergeSelect(files, files) }
-
-// mergeSelect reads files and keys each row by the position in order of
-// its file's name, as read_parquet reports it (the path as given, today).
-// A name that order does not hold would key the row NULL and the IN would
-// drop it, then the merge would delete its day: it fails the query instead.
-func mergeSelect(files, order []string) string {
-	rows := "read_parquet(" + sqlList(files) + ", union_by_name=true, filename=true, file_row_number=true)"
-	key := "coalesce(list_position(" + sqlList(order) + ", filename), error('archive: merge input not matched: ' || filename))" +
-		" * 4294967296 + file_row_number"
-	firsts := "SELECT min(k) FROM (SELECT id, " + key + " AS k FROM " + rows + ") GROUP BY id"
-	return "SELECT * EXCLUDE (filename, file_row_number, k) FROM (SELECT *, " + key + " AS k FROM " + rows +
-		") WHERE k IN (" + firsts + ") ORDER BY family, ts"
-}
 
 // mergeCase is one month's inputs, oldest first, that both merges read.
 type mergeCase struct {
@@ -65,31 +43,21 @@ func (f fixture) goDay(t *testing.T, dir, name, log string) string {
 	return out
 }
 
-// duckDay dumps log as dir/name with the oracle, as a release before the
-// Go dump wrote it.
-func (f fixture) duckDay(t *testing.T, dir, name, log string) string {
+// oldFile copies testdata/old-files/<set>/<name>, a file the old query
+// engine wrote (a release before the Go dump and merge wrote it from the
+// case's logs, frozen when step 6b removed that engine), as dir/name.
+// Installs still hold such files, so the Go merge and derivers read them.
+func oldFile(t *testing.T, dir, set, name string) string {
 	t.Helper()
-	src, out := filepath.Join(dir, name+".dumping"), filepath.Join(dir, name)
+	b, err := os.ReadFile(filepath.Join("testdata", "old-files", set, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(dir, name)
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(src, []byte(log), 0o640); err != nil {
-		t.Fatal(err)
-	}
-	if err := cutTornLine(src); err != nil { // as claim does
-		t.Fatal(err)
-	}
-	if err := f.duckDump(t, src, out); err != nil {
-		t.Fatal(err)
-	}
-	os.Remove(src)
-	return out
-}
-
-// duckCopy writes sql's rows as out through DuckDB.
-func (f fixture) duckCopy(t *testing.T, out, sql string) string {
-	t.Helper()
-	if err := f.eng.Exec(context.Background(), "COPY ("+sql+") TO "+quote(out)+" (FORMAT parquet, COMPRESSION zstd)"); err != nil {
+	if err := os.WriteFile(out, b, 0o640); err != nil {
 		t.Fatal(err)
 	}
 	return out
@@ -128,6 +96,9 @@ func mergeCases(t *testing.T, f fixture) []mergeCase {
 			return in
 		}
 	}
+	old := func(set string) func(t *testing.T, dir, name, log string) string {
+		return func(t *testing.T, dir, name, _ string) string { return oldFile(t, dir, set, name) }
+	}
 	const uuid = "ABCDEF01-2345-6789-ABCD-EF0123456789"
 	return []mergeCase{
 		{"keys equal but for case across days", func(t *testing.T, dir string) []string {
@@ -142,8 +113,8 @@ func mergeCases(t *testing.T, f fixture) []mergeCase {
 				withAttrs(evOf(1, "b", "2026-09-01T11:00:00Z"), "", map[string]string{"copy": "day"})))
 			d2 := f.goDay(t, dir, "2026-09-02.parquet", logOf(t, withAttrs(evOf(1, "c", "2026-09-02T10:00:00Z"), "", map[string]string{"copy": "day"}),
 				withAttrs(evOf(1, "d", "2026-09-02T10:00:00Z"), "", map[string]string{"copy": "day"})))
-			month := f.duckCopy(t, filepath.Join(dir, "2026-09.parquet"), "SELECT * REPLACE ('month' AS attr_copy) FROM read_parquet("+
-				sqlList([]string{d1, d2})+", union_by_name=true) WHERE id <> 'd' ORDER BY family, ts")
+			// d1 and d2 with attr_copy 'month', but for d.
+			month := oldFile(t, dir, "merge-leftover-month", "2026-09.parquet")
 			return []string{month, d1, d2}
 		}},
 		{"segments", func(t *testing.T, dir string) []string {
@@ -156,25 +127,23 @@ func mergeCases(t *testing.T, f fixture) []mergeCase {
 			return []string{day, seg1, seg2}
 		}},
 		{"duplicate ids within and across inputs", func(t *testing.T, dir string) []string {
-			d1 := f.goDay(t, dir, "src.parquet", logOf(t, withAttrs(evOf(1, "a", "2026-09-01T10:00:00Z"), "", map[string]string{"copy": "1"}),
-				withAttrs(evOf(1, "b", "2026-09-01T11:00:00Z"), "", map[string]string{"copy": "1"})))
-			twice := f.duckCopy(t, filepath.Join(dir, "2026-09-01.parquet"), "SELECT * FROM (SELECT * FROM read_parquet("+quote(d1)+
-				") UNION ALL SELECT * REPLACE ('2' AS attr_copy, ts + INTERVAL 1 HOUR AS ts) FROM read_parquet("+quote(d1)+")) ORDER BY family, ts")
+			// a and b with attr_copy 1, then again with 2 an hour later.
+			twice := oldFile(t, dir, "merge-duplicate-ids", "2026-09-01.parquet")
 			d2 := f.goDay(t, dir, "2026-09-02.parquet", logOf(t, withAttrs(evOf(1, "a", "2026-09-02T10:00:00Z"), "", map[string]string{"copy": "3"}),
 				withAttrs(evOf(1, "c", "2026-09-02T10:00:00Z"), "", map[string]string{"copy": "3"})))
 			return []string{twice, d2}
 		}},
 		{"older day files without the newer columns", func(t *testing.T, dir string) []string {
+			// Each a day's named event, without install_id, user_name and group_name.
 			var in []string
-			for i, day := range []string{"2026-10-10", "2026-10-11"} {
-				src := f.goDay(t, dir, fmt.Sprintf("new-%d.parquet", i), logOf(t, named(evOf(1, fmt.Sprintf("p%d", i), day+"T10:00:00Z"), "u1", "Ada", "g", "Team")))
-				in = append(in, f.duckCopy(t, filepath.Join(dir, day+".parquet"), "SELECT * EXCLUDE (install_id, user_name, group_name) FROM read_parquet("+quote(src)+")"))
+			for _, day := range []string{"2026-10-10", "2026-10-11"} {
+				in = append(in, oldFile(t, dir, "merge-older-days", day+".parquet"))
 			}
 			return in
 		}},
 		{"an older day file beside a new one", func(t *testing.T, dir string) []string {
-			src := f.goDay(t, dir, "new.parquet", logOf(t, named(evOf(1, "p1", "2026-10-10T10:00:00Z"), "u1", "", "", "")))
-			old := f.duckCopy(t, filepath.Join(dir, "2026-10-10.parquet"), "SELECT * EXCLUDE (install_id, user_name, group_name) FROM read_parquet("+quote(src)+")")
+			// p1 of u1, without install_id, user_name and group_name.
+			old := oldFile(t, dir, "merge-older-beside-new", "2026-10-10.parquet")
 			return []string{old, f.goDay(t, dir, "2026-10-11.parquet", logOf(t, named(evOf(1, "p2", "2026-10-11T10:00:00Z"), "u1", "Ada", "g", "Team")))}
 		}},
 		{"type-ambiguous VARCHAR", func(t *testing.T, dir string) []string {
@@ -186,11 +155,11 @@ func mergeCases(t *testing.T, f fixture) []mergeCase {
 			}
 		}},
 		{"every dump case as a day, Go-written", everyDump(f.goDay)},
-		{"every dump case as a day, DuckDB-written", everyDump(f.duckDay)},
+		{"every dump case as a day, DuckDB-written", everyDump(old("merge-dump-cases"))},
 		{"many rows", func(t *testing.T, dir string) []string {
 			return []string{
 				f.goDay(t, dir, "2026-09-01.parquet", sortedLog(t, "2026-09-01", "a", 0, 75000, "1")),
-				f.duckDay(t, dir, "2026-09-02.parquet", sortedLog(t, "2026-09-02", "b", 0, 30000, "1")),
+				f.goDay(t, dir, "2026-09-02.parquet", sortedLog(t, "2026-09-02", "b", 0, 30000, "1")),
 				f.goDay(t, dir, "2026-09-02.1.parquet", sortedLog(t, "2026-09-02", "b", 29000, 4000, "2")),
 				f.goDay(t, dir, "2026-09-03.parquet", sortedLog(t, "2026-09-01", "a", 74000, 3000, "3")),
 			}
@@ -210,14 +179,14 @@ func mergeCases(t *testing.T, f fixture) []mergeCase {
 	}
 }
 
-// TestGoMergeMatchesDuckDB: for each month's inputs, the Go merge's file
-// equals the one DuckDB's COPY of mergeQuery wrote, read through DuckDB:
-// DuckDB's columns, of the same types in the same order, then every fixed
-// column no input had, all NULL in every row; and the same rows, compared
-// as a multiset and in (family, ts, id) order. The Go file's own order is
-// (family, ts) non-decreasing, NULLs last.
+// TestGoMergeMatchesDuckDB: for each month's inputs, the Go merge's file,
+// read back, is its golden (the file the old query engine's COPY of
+// mergeQuery wrote): its columns, of the same types in the same order,
+// then every fixed column no input had, all NULL in every row; and the
+// same rows, compared as a multiset. The Go file's own order is (family,
+// ts) non-decreasing, NULLs last.
 func TestGoMergeMatchesDuckDB(t *testing.T) {
-	f := newFixtureWith(t, 4, "512MB")
+	f := newFixture(t)
 	for i, c := range mergeCases(t, f) {
 		t.Run(c.name, func(t *testing.T) {
 			dir := f.project1(fmt.Sprintf("case-%d", i))
@@ -225,68 +194,39 @@ func TestGoMergeMatchesDuckDB(t *testing.T) {
 				t.Fatal(err)
 			}
 			inputs := c.build(t, dir)
-			duck, goFile := filepath.Join(dir, "duck.parquet"), filepath.Join(dir, "go.parquet")
-			f.duckCopy(t, duck, mergeQuery(inputs))
+			goFile := filepath.Join(dir, "go.parquet")
 			if err := mergeFiles(context.Background(), inputs, goFile); err != nil {
 				t.Fatal(err)
 			}
-			digest := skipDigest(t, c.name)
-			var golden fileAnswer
-			if !digest {
-				golden = frozen(t, c.name, f.answerOf(t, duck, "*", false))
-			} else {
-				golden.Columns = f.describe(t, duck)
-			}
-			got, want := f.describe(t, goFile), golden.Columns
-			if len(got) < len(want) || !eq(got[:len(want)], want) {
-				t.Fatalf("Go file's columns\n%v\nwant DuckDB's first\n%v", got, want)
+			p := readTable(t, goFile)
+			orderedByFamilyAndTS(t, p)
+			// The fixed columns no input had come last, all NULL.
+			had := map[string]bool{}
+			for _, in := range inputs {
+				for _, col := range openMeta(t, in).Schema().Columns() {
+					had[strings.ToLower(col[0])] = true
+				}
 			}
 			var added []string
-			for _, d := range got[len(want):] {
-				var name, typ string
-				fmt.Sscan(strings.Trim(d, "[]"), &name, &typ)
-				if i := fieldOf(name); i < 0 || fields[i].typ != typ {
-					t.Fatalf("added column %s: not a fixed column of its type", d)
+			for j := len(p.names) - 1; j >= 0 && !had[strings.ToLower(p.names[j])]; j-- {
+				name := p.names[j]
+				if k := fieldOf(name); k < 0 || fields[k].typ != p.types[j] {
+					t.Fatalf("added column %s %s: not a fixed column of its type", name, p.types[j])
 				}
-				for _, w := range want {
-					if strings.HasPrefix(w, "["+name+" ") {
-						t.Fatalf("added column %s DuckDB has", name)
+				for _, r := range p.rows {
+					if r[j] != nil {
+						t.Fatalf("added column %s: a row not NULL", name)
 					}
 				}
-				added = append(added, ident(name))
-				if n := f.values(t, "SELECT count(*) FROM read_parquet("+quote(goFile)+") WHERE "+ident(name)+" IS NOT NULL"); !eq(n, []string{"[0]"}) {
-					t.Errorf("added column %s: %v rows not NULL", name, n)
+				added = append(added, name)
+			}
+			for _, n := range p.names[:len(p.names)-len(added)] {
+				if !had[strings.ToLower(n)] {
+					t.Fatalf("column %s no input had, before an input's", n)
 				}
 			}
-			goSel := "*"
-			if len(added) > 0 {
-				goSel = "* EXCLUDE (" + strings.Join(added, ", ") + ")"
-			}
-			if !digest {
-				goAnswer := f.answerOf(t, goFile, goSel, false)
-				goAnswer.Columns = goAnswer.Columns[:len(want)]
-				sameAnswer(t, "Go merge", goAnswer, golden)
-			}
-			goRel := "read_parquet(" + quote(goFile) + ")"
-			if len(added) > 0 {
-				goRel = "(SELECT " + goSel + " FROM " + goRel + ")"
-			}
-			duckRel := "read_parquet(" + quote(duck) + ")"
-			if len(want) > 200 {
-				// EXCEPT ALL over hundreds of columns runs DuckDB out of
-				// memory: each row is compared as its text instead.
-				asText := func(rel string) string {
-					return "(SELECT r::VARCHAR AS row, family, ts, id FROM " + rel + " r)"
-				}
-				goRel, duckRel = asText(goRel), asText(duckRel)
-			}
-			f.sameRows(t, goRel, duckRel)
-			order := " ORDER BY family NULLS LAST, ts NULLS LAST, id NULLS LAST"
-			if g, d := f.values(t, "SELECT * FROM "+goRel+order), f.values(t, "SELECT * FROM "+duckRel+order); !eq(g, d) {
-				t.Errorf("rows in (family, ts, id) order differ")
-			}
-			f.orderedByFamilyAndTS(t, goFile)
-			t.Logf("%d inputs, columns %d (+%d added), rows %v", len(inputs), len(want), len(added), f.values(t, "SELECT count(*) FROM "+duckRel))
+			fileFrozen(t, c.name, "Go merge", p.without(added...), false)
+			t.Logf("%d inputs, columns %d (+%d added), rows %d", len(inputs), len(p.names)-len(added), len(added), len(p.rows))
 		})
 	}
 }
@@ -306,7 +246,7 @@ func TestMergeKeepsTiesInInputOrder(t *testing.T) {
 	if err := mergeFiles(context.Background(), []string{d1, seg}, out); err != nil {
 		t.Fatal(err)
 	}
-	got := f.values(t, "SELECT id FROM read_parquet("+quote(out)+", file_row_number=true) ORDER BY file_row_number")
+	got := texts(readTable(t, out, "id").pick(t, "id"))
 	if want := []string{"[p-1a]", "[p-1b]", "[p-sa]", "[p-2]", "[v-1]", "[v-s]"}; !eq(got, want) {
 		t.Fatalf("rows = %v, want %v: ties by input, then row", got, want)
 	}
@@ -363,7 +303,15 @@ func TestMergeHoldsFewFooters(t *testing.T) {
 	if m.footers.decoded <= len(inputs)*2 {
 		t.Fatalf("decoded %d footers for %d inputs: pass 2 kept them", m.footers.decoded, len(inputs))
 	}
-	got := f.values(t, "SELECT count(*), count(DISTINCT id), count(*) FILTER (WHERE attr_copy = 'again') FROM read_parquet("+quote(out)+")")
+	ids, again := map[any]bool{}, 0
+	rows := readTable(t, out, "id", "attr_copy").pick(t, "id", "attr_copy")
+	for _, r := range rows {
+		ids[r[0]] = true
+		if r[1] == "again" {
+			again++
+		}
+	}
+	got := []string{fmt.Sprintf("[%d %d %d]", len(rows), len(ids), again)}
 	if want := []string{fmt.Sprintf("[%d %d 0]", 40*3*maxFooters, 40*3*maxFooters)}; !eq(got, want) {
 		t.Fatalf("rows, ids, repeats = %v, want %v", got, want)
 	}
@@ -379,11 +327,12 @@ func TestMergeKeepsTheFirstSpelling(t *testing.T) {
 	f.maintain(t, "2026-09-03")
 	f.maintain(t, "2026-10-05")
 	month := f.project1("2026-09.parquet")
-	got := f.values(t, `SELECT column_name FROM (DESCRIBE SELECT * FROM read_parquet(`+quote(month)+`)) WHERE lower(column_name) = 'attr_plan'`)
-	if !eq(got, []string{"[attr_Plan]"}) {
+	p := readTable(t, month)
+	got := slices.DeleteFunc(slices.Clone(p.names), func(n string) bool { return strings.ToLower(n) != "attr_plan" })
+	if !eq(got, []string{"attr_Plan"}) {
 		t.Fatalf("columns = %v, want attr_Plan alone", got)
 	}
-	if got := f.values(t, `SELECT id, "attr_Plan" FROM read_parquet(`+quote(month)+`) ORDER BY id`); !eq(got, []string{"[a A]", "[b b]"}) {
+	if got := sortedTexts(p.pick(t, "id", "attr_Plan")); !eq(got, []string{"[a A]", "[b b]"}) {
 		t.Fatalf("rows = %v", got)
 	}
 }
@@ -396,7 +345,9 @@ func TestMergeRefusesAnUnsortedInput(t *testing.T) {
 	f.write(t, evOf(1, "a", "2026-09-01T10:00:00Z"), evOf(1, "b", "2026-09-01T11:00:00Z"), evOf(1, "c", "2026-09-02T10:00:00Z"))
 	f.maintain(t, "2026-09-03")
 	day := f.project1("2026-09-01.parquet")
-	f.duckCopy(t, day+".x", "SELECT * FROM read_parquet("+quote(day)+") ORDER BY ts DESC")
+	p := readTable(t, day)
+	slices.Reverse(p.rows) // a at 10:00, b at 11:00: now ts descending
+	writeTable(t, day+".x", p)
 	if err := os.Rename(day+".x", day); err != nil {
 		t.Fatal(err)
 	}
@@ -422,20 +373,59 @@ func TestMergeRefusesAColumnOfAnotherType(t *testing.T) {
 	f.write(t, evOf(1, "a", "2026-09-01T10:00:00Z"), evOf(1, "b", "2026-09-02T10:00:00Z"))
 	f.maintain(t, "2026-09-03")
 	day := f.project1("2026-09-02.parquet")
-	for _, c := range []struct{ sel, want string }{
-		{"*, 7::BIGINT AS attr_n", "column attr_n is INT(64,true), want VARCHAR"},
-		{"* REPLACE (CAST(display_width AS INTEGER) AS display_width)", "column display_width is INT(32,true), want BIGINT"},
-		{"* REPLACE (CAST(ts AS TIMESTAMPTZ) AS ts)", "column ts is TIMESTAMP(isAdjustedToUTC=true,unit=MICROS), want TIMESTAMP"},
-		{"* REPLACE (CAST(value AS FLOAT) AS value)", "column value is FLOAT, want DOUBLE"},
+	b := readTable(t, day, "id", "family", "ts", "day").pick(t, "id", "family", "ts", "day")[0]
+	ts, err := time.Parse(time.RFC3339Nano, b[2].(string))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		col  string
+		node parquet.Node
+		v    parquet.Value
+		want string
+	}{
+		{"attr_n", parquet.Int(64), parquet.Int64Value(7), "column attr_n is INT(64,true), want VARCHAR"},
+		{"display_width", parquet.Int(32), parquet.Int32Value(1280), "column display_width is INT(32,true), want BIGINT"},
+		{"ts", parquet.TimestampAdjusted(parquet.Microsecond, true), parquet.Int64Value(ts.UnixMicro()),
+			"column ts is TIMESTAMP(isAdjustedToUTC=true,unit=MICROS), want TIMESTAMP"},
+		{"value", parquet.Leaf(parquet.FloatType), parquet.FloatValue(0.5), "column value is FLOAT, want DOUBLE"},
 	} {
-		odd := f.duckCopy(t, f.project1("odd.parquet"), "SELECT "+c.sel+" FROM read_parquet("+quote(day)+")")
+		// b's id, family, ts and day, and the column at its odd type.
+		group := parquet.Group{"id": parquet.Optional(parquet.String()), "family": parquet.Optional(parquet.String()),
+			"ts": parquet.Optional(parquet.TimestampAdjusted(parquet.Microsecond, false)), "day": parquet.Optional(parquet.Date())}
+		group[c.col] = parquet.Optional(c.node)
+		vals := map[string]parquet.Value{"id": parquet.ByteArrayValue([]byte("b")), "family": parquet.ByteArrayValue([]byte(b[1].(string))),
+			"ts": parquet.Int64Value(ts.UnixMicro()), "day": parquet.Int32Value(int32(ts.Unix() / 86400)), c.col: c.v}
+		odd := f.project1("odd.parquet")
+		writeOdd(t, odd, parquet.NewSchema("odd", group), vals)
 		err := mergeFiles(context.Background(), []string{f.project1("2026-09-01.parquet"), odd}, f.project1("2026-09.parquet"))
 		if err == nil || !strings.Contains(err.Error(), "odd.parquet: "+c.want) {
-			t.Errorf("%s: err = %v, want %q", c.sel, err, c.want)
+			t.Errorf("%s: err = %v, want %q", c.col, err, c.want)
 		}
 		if exists(f.project1("2026-09.parquet")) || exists(f.project1("2026-09.parquet.tmp")) {
-			t.Fatalf("%s: a refused merge left a file", c.sel)
+			t.Fatalf("%s: a refused merge left a file", c.col)
 		}
+	}
+}
+
+// writeOdd writes one row of vals, by column name, as path in schema.
+func writeOdd(t *testing.T, path string, schema *parquet.Schema, vals map[string]parquet.Value) {
+	t.Helper()
+	fh, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer fh.Close()
+	w := parquet.NewWriter(fh, schema)
+	row := make(parquet.Row, len(schema.Columns()))
+	for i, col := range schema.Columns() {
+		row[i] = vals[col[0]].Level(0, 1, i)
+	}
+	if _, err := w.WriteRows([]parquet.Row{row}); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
 	}
 }
 

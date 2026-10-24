@@ -12,38 +12,38 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 )
 
-// -update-golden rewrites testdata/*.golden.json from the oracle's
-// answers: DuckDB's until step 6b removes it, native's after, and then
-// only for a deliberate change a review reads in the diff.
-var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/*.golden.json from the oracle's answers")
+// -update-golden rewrites testdata/*.golden.json from native's answers,
+// only for a deliberate change a review reads in the diff. The goldens
+// were frozen from the old query engine's answers (step 6a); they are the
+// only reference now.
+var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/*.golden.json from native's answers")
 
-// oracle returns the golden kept under key in t's test's file, and keeps
-// duck there first with -update-golden. The caller compares duck with it.
-func oracle[T any](t testing.TB, key string, duck T) T {
+// keep returns the golden kept under key in t's test's file. With
+// -update-golden it first keeps got (native's answer, as the golden reads)
+// there, unless the golden held when the run began is alike (the test's
+// own comparison passes on it: an old answer an allowance accepts, say),
+// which then stays as it was.
+func keep[T any](t testing.TB, key string, got T, alike func(prev T) bool) T {
 	t.Helper()
-	return golden.Get(t, golden.For(t, *updateGolden), key, duck)
+	s := golden.For(t, *updateGolden)
+	if *updateGolden {
+		if prev, ok := golden.Previous[T](t, s, key); ok && alike(prev) {
+			got = prev
+		}
+	}
+	return golden.Get(t, s, key, got)
 }
 
-// frozen is oracle, failing t unless duck equals the golden exactly.
-func frozen[T any](t testing.TB, key string, duck T) T {
+// frozenResult is the golden of an old SQL's answer under key, got being
+// native's answer to compare with it under allows (compareParity): with
+// -update-golden a golden held that compares clean stays, else got is
+// kept.
+func frozenResult(t *testing.T, key string, got readsql.Result, allows []allowance) readsql.Result {
 	t.Helper()
-	want := oracle(t, key, duck)
-	if d := golden.Diff(duck, want); d != "" {
-		t.Errorf("%s: DuckDB's answer differs from its golden at %s", key, d)
-	}
-	return want
-}
-
-// frozenResult is an old SQL's answer (duck) frozen under key: DuckDB's
-// must be the golden's, numbers compared as numbers (sameNumber), with no
-// allowance; the golden's is returned to compare native's with.
-func frozenResult(t *testing.T, key string, duck readsql.Result) readsql.Result {
-	t.Helper()
-	want := oracle(t, key, duck)
-	if diffs, _ := compareParity(want, duck, nil); len(diffs) > 0 {
-		t.Errorf("%s: DuckDB's answer (below as native's) differs from its golden (as the SQL's):\n%s", key, strings.Join(diffs, "\n"))
-	}
-	return want
+	return keep(t, key, got, func(prev readsql.Result) bool {
+		diffs, _ := compareParity(prev, got, allows)
+		return len(diffs) == 0
+	})
 }
 
 // asked counts, per (sub)test, the times each query was asked.

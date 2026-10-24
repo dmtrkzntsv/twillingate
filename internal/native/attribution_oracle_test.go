@@ -1,7 +1,8 @@
-package native
+//go:build measure
 
-// attributionSQL, the attribution's DuckDB oracle, leaves with DuckDB in
-// step 6.
+// attributionSQL, the attribution's old SQL, is measured against native
+// (measure_attribution_test.go) and leaves with that measurement.
+package native
 
 import (
 	"context"
