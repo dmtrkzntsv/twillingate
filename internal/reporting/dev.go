@@ -51,13 +51,15 @@ type DevProjects interface {
 
 // DevHandler serves twillingate reporting dev: the routes a preview
 // needs, without auth, over dirs (each either a dashboard directory —
-// one holding dashboard.json — or a parent of several), files, where sql
-// widgets run, nat, which answers query widgets (without rules), and
-// projects, which lists the project switcher's choices. The component
+// one holding dashboard.json — or a parent of several), sql, the external
+// SQL engine sql widgets run on (nil: none), nat, which answers query
+// widgets (without rules), projects, which lists the project switcher's
+// choices, and opt's files and guards. The component
 // manifest is this build's own (ui/components.json, embedded, same as
 // the real server); only dirs is re-read on every request.
-func DevHandler(dirs []string, files Files, nat Native, projects DevProjects) http.Handler {
-	svc := &Service{files: files, sources: newSources(files, true, time.Now, nat, nil), now: time.Now}
+func DevHandler(dirs []string, sql SQL, nat Native, projects DevProjects, opt Options) http.Handler {
+	opt.Native, opt.Rules, opt.Now = nat, nil, time.Now
+	svc := newService(nil, sql, true, opt)
 	comps, err := ParseManifest(Manifest())
 	if err != nil {
 		// Embedded at build time: broken here means this build is broken,
@@ -364,7 +366,7 @@ func devComponents(svc *Service, comps []Component) http.HandlerFunc {
 	out := struct {
 		SourceTypes []string    `json:"source_types"`
 		Components  []Component `json:"components"`
-	}{SourceTypes: svc.SourceTypes(), Components: comps}
+	}{SourceTypes: svc.SourceTypes(), Components: WithSourceTypes(comps, svc.SourceTypes())}
 	return func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, out)
 	}

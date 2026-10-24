@@ -77,7 +77,7 @@ func (s *Service) WidgetData(ctx context.Context, in DataRequest) (WidgetData, e
 	// only the one goroutine that happens to run it, so it must not carry
 	// any one caller's cancellation — a client disconnecting partway
 	// through must not turn into a false CONSOLE_QUERY_TIMEOUT for every
-	// other request sharing the same load. Files applies its own
+	// other request sharing the same load. Each query has its own
 	// deadline (CONSOLE_QUERY_TIMEOUT) regardless.
 	loadCtx := context.WithoutCancel(ctx)
 
@@ -126,6 +126,12 @@ func (s *Service) prepare(ctx context.Context, in DataRequest) (prepared, error)
 	if w.Component == "" { // removed (D14): nothing left to check rows against
 		p.out.Removed, p.final = true, true
 		return p, nil
+	}
+	if w.SourceType == "sql" && s.sql == nil {
+		// Stored with an engine this process has not got: its card says
+		// why, whatever it is asked for, and the rest of the dashboard
+		// loads.
+		return prepared{}, ErrSQLEngine
 	}
 
 	followsProject, followsRange := s.follows(w)

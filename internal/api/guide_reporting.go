@@ -27,7 +27,7 @@ const serverInstructions = "To integrate a site or app, call integration_guide. 
 var guideSections = []string{"## Workflow", "## Rules"}
 
 func (h *host) reportingGuide(ctx context.Context, _ struct{}) (guideOut, error) {
-	comps, err := h.rep.Components(ctx)
+	comps, err := h.rep.ListedComponents(ctx)
 	if err != nil {
 		return guideOut{}, err
 	}

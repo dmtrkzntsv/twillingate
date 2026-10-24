@@ -18,9 +18,9 @@ widgets at `/share/`) — and its whole state is one SQLite file.
 Linux on amd64 or arm64 with glibc 2.35 or newer (Debian 12, Ubuntu 22.04 or
 later), or Docker on amd64 or arm64. 32-bit ARM is not built. Plan on 1 GB
 of memory: the server stays small, near its soft memory target
-(`GOMEMLIMIT`, which the unit and compose files set to 256MiB), and each engine
-child, the process that answers SQL, may take up to
-`ENGINE_MEMORY_LIMIT` (512 MB by default) for a few seconds. The daily pass
+(`GOMEMLIMIT`, which the unit and compose files set to 256MiB). SQL runs
+on an [external SQL engine](#external-sql-engine), a process of its own
+whose memory is not counted here. The daily pass
 writes the event files in the server process, in Go, and starts no child;
 on a month of a million events it peaks near 150 MB of resident memory
 (measured in a process of 25 MB at rest), on the day a month is merged.
@@ -34,16 +34,12 @@ streamed request), and 387 to 405 MB when its widgets are asked for one
 by one. The built-in widgets' reader, in the console process, holds at
 most about 128 MiB of identities, 128 MiB of today's logs decoded
 (dropped after five idle minutes) and 256 MiB of aggregations (two scans
-at once, 128 MiB each), counted approximately. Only SQL starts a child: a widget's SQL, `query`'s and the
-console's check of the users' SQL widgets at start. An ingest process never
-starts one, since the form-attribution lookup, like the daily pass, the
-built-in widgets and the check before a rename or merge rule is saved,
-reads the files in Go. One `serve` process with the console runs one child
-at a time; `ENGINE_MAX_CHILDREN` bounds the children across every process on
-one data directory, which the console, `twillingate reporting dev` and
-`twillingate engine -check` share, so the default 2 leaves a slot for a
-preview or a check beside a running console. `GOMEMLIMIT` does not
-cover the children.
+at once, 128 MiB each), counted approximately. `serve` starts no engine
+child: SQL (a widget's, `query`'s and the console's check of the users' SQL
+widgets at start) goes to the external SQL engine when `SQL_ENGINE_SOCKET`
+is set, and is refused when it is not, while the form-attribution lookup,
+the daily pass, the built-in widgets and the check before a rename or merge
+rule is saved read the files in Go.
 
 ### docker compose
 
@@ -154,8 +150,9 @@ The stream sends a keepalive every 15 seconds, well inside Cloudflare's
 | `CONSOLE_DATABASE_DSN` | Database the console reads for queries, as `sqlite://<path>` (a copy or replica of the store, say). Defaults to `DATABASE_DSN`. |
 | `CONSOLE_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `30s`. |
 | `CONSOLE_QUERY_ROWS_MAX` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
-| `ENGINE_MEMORY_LIMIT` | DuckDB's memory limit for each engine child, the process that answers SQL: a widget's SQL and `query`'s. The daily pass, the form-attribution lookup and the check before a rename or merge rule is saved do not use the engine: they read and write the event files in the server process. Outside GOMEMLIMIT, the server's own soft memory target. `512MB`, `1GB`, `2GiB` (DuckDB's MB is 10^6 bytes). Default `512MB`. |
-| `ENGINE_MAX_CHILDREN` | Engine children running at once (each takes one of these slots), across every process on one data directory; only SQL takes one, never the daily pass, the form-attribution lookup or a rule check, so an ingest process takes none. A `serve` process with the console runs one child at a time, and shares the slots with `reporting dev` and `engine -check`; a process waits for a free slot, and gets one within about a second from another process whose child is idle (an idle child yields its slot). Default 2. |
+| `SQL_ENGINE_SOCKET` | Path of the Unix socket of the [external SQL engine](#external-sql-engine) that answers SQL: a widget's and `query`'s. Unset or empty, there is none: SQL widgets and `query`'s `sql` are refused, `sql` leaves the component list, and everything else works. Give the console's process the same value as `reporting dev`. Default empty. |
+| `ENGINE_MEMORY_LIMIT` | DuckDB's memory limit for the child `twillingate engine -check` starts; no other command starts one, since SQL runs on the external SQL engine. `512MB`, `1GB`, `2GiB` (DuckDB's MB is 10^6 bytes). Default `512MB`. |
+| `ENGINE_MAX_CHILDREN` | Engine children running at once across every process on one data directory: `twillingate engine -check`'s, the only one left. Default 2. |
 | `REPORTING_CACHE_MAX_AGE` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default `15m`. |
 | `REPORTING_REFRESH_MAX_AGE` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_MAX_AGE`; must not exceed it when that is non-zero. Default `1m`. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_MAX_AGE`, `REPORTING_REFRESH_MAX_AGE`) while its window has focus; both 0 removes the option. |
 
@@ -172,10 +169,10 @@ leftover one is ignored, so rename any still in `twillingate.env`.
 
 ### Raspberry Pi and low-resource hosts
 
-- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. Only the console's process runs an engine child, one at a time (for every load of a widget that reads SQL and for `query`'s SQL); an ingest process runs none, so a split install needs no more slots. On a small host, lower `ENGINE_MEMORY_LIMIT` rather than raise `ENGINE_MAX_CHILDREN`, whose slots the console shares with `reporting dev` and `engine -check`.
+- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. No twillingate process runs an engine child: SQL goes to the external SQL engine, if you run one, and the built-in dashboards need none.
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Keep `GOMEMLIMIT` (unit and compose files ship `256MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory. `GOMEMLIMIT` is a soft target, not a bound: the garbage collector works harder near it, and the process may go past it. The daily pass peaks near 150 MB on a month of a million events, and at about 230 to 400 MB on one with 2,000 distinct attribute keys (lower under a lower target, at more CPU).
-- Plan on 1 GB of memory, as in [Install](#install): `GOMEMLIMIT` is the server's own target (the daily pass included: it runs in the server), and the engine child may take up to `ENGINE_MEMORY_LIMIT` on top of it. On less, lower `ENGINE_MEMORY_LIMIT` (`256MB`) before anything else; queries then spill to disk and run slower.
+- Plan on 1 GB of memory, as in [Install](#install): `GOMEMLIMIT` is the server's own target (the daily pass included: it runs in the server). An external SQL engine on the same host needs memory of its own on top.
 - Lower `RETENTION_DAYS` if the event files outgrow the card: a month file is deleted once its last day is older, and nothing else holds events.
 
 ## The console
@@ -304,6 +301,191 @@ running instances and leaves the bare unit disabled; reverse to go back.
 > the database, a console-only unit writes to that copy on every pass — or
 > accept that a two-process topology runs the idempotent daily pass twice.
 
+### External SQL engine
+
+twillingate answers SQL (SQL widgets, `query`'s `sql` and the console's
+start-up check of the users' SQL widgets) on an external SQL engine: a
+separate process that serves a small HTTP and JSON protocol on a Unix
+socket and reads the event files from its own read-only mount of
+`EVENTS_DIR`. Set `SQL_ENGINE_SOCKET` to its socket. Without one, SQL is
+refused as `invalid` with "SQL needs an external SQL engine
+(SQL_ENGINE_SOCKET)": `/api/components` and `list_components` leave `sql`
+out of `source_types`, a stored SQL widget stays on its dashboard (not
+archived) and its card shows that refusal while the rest loads, and the
+start-up check skips SQL widgets. Structured queries, the analytics tools
+and the built-in dashboards need no engine.
+
+At start, a `serve` with the console calls the engine's
+`GET /v1/health`; an ingest-only `serve` and the other commands that open
+the database call it only to check a system widget that reads SQL (none
+today), so they run whatever the engine's state. An engine that speaks
+another protocol version stops the start, naming both; one that does not answer is logged as a
+warning and the start goes on, each query trying it again, so the engine
+may start or restart after twillingate. A query the engine cannot answer
+then is refused with "the SQL engine failed (SQL_ENGINE_SOCKET)", and the
+cause is logged.
+
+The protocol, version 1 (the `sqlengine` package holds its types, a
+client and fixtures: [sqlengine/protocol.go](https://github.com/dmtrkzntsv/twillingate/blob/main/sqlengine/protocol.go)):
+
+- `GET /v1/health` answers `{"protocol": 1, "engine": "<name> <version>"}`.
+- `POST /v1/query` takes `{"sql", "args", "max_rows", "mode", "page",
+  "scope", "confine", "tables"}`. `args` binds the statement's `$tw_*`
+  names (strings). `mode` is `rows` (the statement's rows), `text` (every
+  cell as text), `shape` (the columns only), `page` (a filtered, sorted
+  page of a remote table, with `__tw_matched` and `__tw_total` appended) or
+  `count` (`["total","matched"]` for a page with no row). In mode `page`,
+  `max_rows` caps the page size: a `page.limit` of 0 means `max_rows`, and
+  a page whose limit exceeds it is refused. `scope` is a
+  project id or `null` for every project; `confine` keeps the SQL on the
+  seven tables. `tables` names the files to read: per project its Parquet
+  files, logs, session files and the days they do not cover yet,
+  identities and aliases, every path relative to `EVENTS_DIR` (the engine
+  refuses one that is absolute or climbs out), with the event and
+  attribute rules to apply. The deadline travels as `X-Timeout-Ms`, a
+  cancelled request as the connection closing.
+- A success is `{"columns", "rows", "truncated"}`: each cell JSON null, a
+  boolean, a number (a JSON number) or a string (dates, times, timestamps,
+  UUIDs, NaN and the infinities). twillingate reads at most 256 MiB of an
+  answer and refuses a longer one.
+- An error is `{"error": {"kind", "message"}}` with status 400 (`refused`,
+  `sql`), 409 (`stale`: a file the table spec names is gone), 503 with
+  `Retry-After` (`busy`), 504 (`timeout`) or 500 (`out_of_memory`,
+  `out_of_memory_loading_logs`, `exited`, `internal`). twillingate words
+  each kind for whoever asked: the engine's own message for `sql` and
+  `refused`, `CONSOLE_QUERY_TIMEOUT` for a timeout, what to narrow for
+  memory, retry for `busy`. A busy engine is not retried within the
+  request. A `stale` one is: the daily pass deletes a day's log once it is
+  dumped and a month's day files once they merge, so a spec built just
+  before can name a file that is gone when the engine reads it.
+  twillingate then builds the spec afresh and sends the query again, after
+  50 ms and then 100 ms, three attempts in all within the request's
+  timeout.
+
+The SQL is in DuckDB's dialect, which the docs and the built-in examples
+assume.
+
+#### Engine requirements
+
+What an engine must do to answer twillingate as it expects. Where a page
+already defines a behaviour, it is linked rather than repeated.
+
+- **Unknown fields.** Ignore any field of a request (top level or nested)
+  that version 1 does not define: version 1 grows by adding fields, and
+  an engine that refuses one breaks on the next release. twillingate
+  ignores unknown fields of an answer the same way.
+- **The seven tables.** `events`, `views`, `product`, `measures`,
+  `sessions`, `identities` and `aliases`, with the columns, types and
+  meanings in [Writing SQL against the event files](twillingate.md#writing-sql-against-the-event-files)
+  and `schema://views`. `events` is the union, by column name, of the
+  spec's Parquet files and open logs, with one `attr_<key>` VARCHAR column
+  per attribute key any of them carries; `views`, `product` and
+  `measures` are its rows of one `family`, `measures` with `bucket` added
+  as defined there. A file's columns may differ from another's: a column
+  a file lacks reads NULL. The `v` key of a log line (its format version)
+  is no column.
+- **Rules on read.** Apply `tables.rules` to `events` and the three
+  family tables, never to `sessions`, `identities` or `aliases`, which
+  describe the events as stored. Their meaning is in
+  [Event rules](twillingate.md#event-rules) and
+  [Attribute rules](twillingate.md#attribute-rules); on the wire, a merge
+  is a `rename` (both read the same), and these details are written down
+  only here:
+  - an event rule matches the project, the family and the exact name,
+    case-sensitively; a `rename` reads the event under `to`, a `block`
+    leaves it out, and so does a `rename` whose `to` is itself blocked in
+    the same project and family;
+  - an attribute rule covers the project's `product` and `measures` rows
+    only, and matches its key's column as DuckDB matches column names,
+    case-insensitively, so it also covers keys that differ only in case.
+    The renamed key's column reads NULL on those rows, as a blocked key's
+    does; the target's column reads the target's own value, else the
+    values of the keys renamed into it, in key order (a `coalesce`). A
+    target no file has yet is added as a column. A rename whose key and
+    target are the same column changes nothing, and a rename onto a
+    blocked key only blanks the renamed key.
+- **The open logs.** Each `.log` is NDJSON, one event per line, shaped
+  like its Parquet row: the column names above, attributes flat as
+  `attr_<key>` with the key as sent, empty fields left out. Keep the first
+  line per `id`, in file order: a resend appends the same `id` again. Read
+  the fixed keys at the types the column table gives (`ts` and
+  `received_at` as TIMESTAMP, `day` as DATE, `project_id`,
+  `display_width`, `display_height` and `consent` as BIGINT, `value` and
+  `sample_rate` as DOUBLE) and every other key as text, never inferring a
+  type from the values (a value that looks like a UUID or a time stays as
+  sent). Skip a line that does not parse: ingest may be writing the last
+  one. Of keys equal but for case, the first in byte order keeps its name
+  and each next one is named `<key>_<n>`, the first `n` free
+  (`attr_Plan`, `attr_plan_1`).
+- **Sessions.** `sessions` is the union of the spec's session files and,
+  for each project's `session_gaps` (days the files do not cover yet,
+  both ends inclusive), the sessions derived from that project's views of
+  those days, before the rules, as
+  [the sessions table](twillingate.md#writing-sql-against-the-event-files)
+  defines them: a view with a `session_id` belongs to that declared
+  session; any other starts a new one when it is the actor's first view of
+  the day or comes more than 30 minutes (1,800 seconds) after the
+  actor's previous view; the day is part of the session's key, so midnight
+  UTC cuts a session. Views at the same second are ordered by `id`;
+  `duration_sec` is the whole seconds between the first and the last
+  view. The built-in dashboards count sessions the same way, natively
+  (`internal/native`), and the session files are written to the same rule
+  (`internal/archive/derive.go`).
+- **Identities and aliases.** When the spec names a project's file, use it
+  and fold in what the project's open logs add; when it names none (`""`),
+  derive the table from every event of the project. Folding keeps one row
+  per key: the earliest `first_seen`, the latest `last_seen`, the counts
+  added up and the `name` sent with the latest event that carried one.
+- **`scope`.** With a project id, each of the seven tables reads only that
+  project's rows, as if the SQL had filtered `project_id` itself; `null`
+  reads every project the spec names. Scope keeps SQL on one project, but
+  only `confine` stops SQL written to leave it.
+- **`confine`.** Refuse, as `refused` and before anything runs, SQL that
+  reads anything but the seven tables and its own `WITH` names: a table
+  function other than `range`, `generate_series` and `unnest`, a file
+  named in `FROM`, a name with a schema or catalog (`main.events`), any
+  other table or view, and `SHOW`; the list is in
+  [Writing SQL against the event files](twillingate.md#writing-sql-against-the-event-files).
+  A path inside a string compared as text is just text. Whatever
+  `confine` says, run one read-only statement, never write, and read no
+  file the spec does not name.
+- **Arguments.** `args` binds `$tw_<name>` parameters, always as strings;
+  the SQL casts them (`CAST($tw_project AS BIGINT)`). A `$tw_p<n>` name is
+  the page's own.
+- **`text` and `page` cells.** Every cell as text, with column names and
+  order and row order kept: NULL as `""`, a DOUBLE, FLOAT or DECIMAL as
+  its DOUBLE's shortest text without a trailing `.0` (`100`, `3.5`), any
+  other value as DuckDB casts it to VARCHAR.
+- **`page` and `count`.** Filters and sort compare those cells, with the
+  semantics in [Filtering and paging a table](reporting.md#filtering-and-paging-a-table):
+  equality on the exact text, `<` and `>` as numbers when the value is a
+  decimal number and as code-point text otherwise, empty cells matching
+  only `!=` and `not in`, non-empty before empty, numbers before text,
+  ties broken by every column in order; without `sort`, the query's own
+  order. A `distinct` page answers the columns `value` (the cell),
+  `rows` (its row count, as text), then the two counts, one row per value
+  among the rows that pass the filters on the other columns (a filter on
+  the distinct column itself is ignored), the most rows first and then
+  by value in sort order; its `__tw_matched` counts values.
+- **Status and deadline.** Answer each kind with its status
+  (`Kind.Status`), `stale` whenever a spec file is missing or vanishes
+  mid-read. Stop a query when `X-Timeout-Ms` passes (504 `timeout`) or the
+  connection closes.
+
+**Running an external SQL engine next to twillingate.** Put the socket in a
+directory both processes can reach (a shared directory, or a volume mounted
+in both containers) and give twillingate its path as `SQL_ENGINE_SOCKET`.
+The socket is unauthenticated: anyone who can connect to it reads every
+project's events. Put it in a directory only the twillingate service user
+(or a group the two services share) can traverse, mode `0750`, with the
+socket itself at `0660`, and never on a path other users or containers
+reach. Mount `EVENTS_DIR` (`raw/`) into the engine read-only: it only
+reads, and twillingate alone writes the files. The engine may start
+before or after twillingate; at start twillingate checks the protocol
+version against `GET /v1/health` and refuses to start on a mismatch,
+while an engine that is down at that moment is only logged and retried by
+each query.
+
 ### Other auth modes
 
 ```bash
@@ -419,10 +601,9 @@ address, so behind a further proxy or CDN use `client_ip` with
 
 `twillingate reporting dev` previews dashboard files against a database on
 a loopback address, without a login; its usage is in
-[reporting.md](reporting.md#local-development). It runs its own engine
-child with the default `ENGINE_MEMORY_LIMIT` and `ENGINE_MAX_CHILDREN`,
-taking a slot in the `engine/slots` directory beside `-db`, which it shares
-with a server on the same data directory.
+[reporting.md](reporting.md#local-development). Its SQL widgets run on the
+external SQL engine at `SQL_ENGINE_SOCKET` in its environment, the
+server's; without it they are refused, and its other widgets load.
 
 ## Operate and recover
 
@@ -436,7 +617,7 @@ with a server on the same data directory.
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v0.9.2` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
 | Upgrade an install still below migration 042 (a release before v0.21.0) | upgrade to v0.21.x first and run `twillingate events import` there, as [UPGRADES.md](https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md) says; this release has no import, and its migration 042 refuses a database still holding events that were never imported |
-| Check the engine | `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate engine -check'` (the service user and its environment: as root it creates a root-owned `raw/` and `engine/` the service cannot write) starts an engine child the way the server does and runs one query: `engine ok: 42 in 63 ms (spawn and first query), DuckDB v1.5.6`. A failure names what stopped it (a missing library, `ENGINE_MEMORY_LIMIT`, all `ENGINE_MAX_CHILDREN` slots busy for 30 s). The start of `serve`, and of every command that opens the database, runs no child: the system dashboards' widgets are structured queries, answered without the engine, so a start has no SQL of theirs to check. |
+| Check the engine | `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate engine -check'` (the service user and its environment: as root it creates a root-owned `raw/` and `engine/` the service cannot write) starts a DuckDB engine child, the only command that still starts one, and runs one query: `engine ok: 42 in 63 ms (spawn and first query), DuckDB v1.5.6`. A failure names what stopped it (a missing library, `ENGINE_MEMORY_LIMIT`, all `ENGINE_MAX_CHILDREN` slots busy for 30 s). The start of `serve`, and of every command that opens the database, runs no child: the system dashboards' widgets are structured queries, answered without the engine, so a start has no SQL of theirs to check. |
 | Upgrade across a schema change | [Back up](#back-up-and-restore) first: migrations 012, 014, 015, 016 and 042 are irreversible. Pre-checks and what changes on the day: <https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md> (not served over MCP; open it in the repository) |
 | Database size | `du -h /var/lib/twillingate/twillingate.db` |
 | Recent config changes | `sqlite3 …/twillingate.db "SELECT * FROM audit_log ORDER BY ts DESC LIMIT 20"` |
@@ -454,7 +635,7 @@ rotates at 00:00 UTC; a catch-up pass at startup means downtime
 across those times skips no day. With `LOG_FILE` set, install
 `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.
 
-The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began were copied in once, on the upgrade to v0.21, by that release's `twillingate events import`. The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass, in Go in the ingest process, without an engine child (`ENGINE_*` do not apply to it): the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (the built-in widgets answered without the engine, a widget's SQL through its child), `query`, the analytics tools (`views_overview` through `identities`), the count of events in `limits`, `list_attributes`, `usage` and the console's event names and newest days read them and the tables derived from them.
+The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began were copied in once, on the upgrade to v0.21, by that release's `twillingate events import`. The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass, in Go in the ingest process, without an engine child (`ENGINE_*` do not apply to it): the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (the built-in widgets answered without the engine, a widget's SQL on the external SQL engine), `query`, the analytics tools (`views_overview` through `identities`), the count of events in `limits`, `list_attributes`, `usage` and the console's event names and newest days read them and the tables derived from them.
 
 ### Back up and restore
 

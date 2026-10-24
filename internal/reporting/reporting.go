@@ -78,20 +78,37 @@ type Options struct {
 	// Native answers query widgets; nil refuses them when they load
 	// ("structured queries are not available").
 	Native Native
-	// Rules are the event and attribute rules a query widget reads with;
-	// nil applies none.
+	// Rules are the event and attribute rules a query or sql widget reads
+	// with; nil applies none.
 	Rules RulesFunc
+	// EventsDir is EVENTS_DIR: the table spec a sql widget's query sends
+	// names its files relative to it, and the sample project is read from
+	// their names.
+	EventsDir string
+	// Live reports whether a project is live, for the sample project a
+	// sql widget is checked on; nil counts every project with files.
+	Live LiveFunc
+	// QueryTimeout is CONSOLE_QUERY_TIMEOUT, each sql query's and query
+	// widget load's deadline; 0 sets none.
+	QueryTimeout time.Duration
+	// QueryMaxRows is CONSOLE_QUERY_ROWS_MAX, the rows a sql or query
+	// widget loads and a remote table's largest page; 0 caps none.
+	QueryMaxRows int
 	// Now stands in for time.Now in tests; nil means time.Now.
 	Now func() time.Time
 }
 
+// LiveFunc reports whether project is live (not archived).
+type LiveFunc func(ctx context.Context, project int64) bool
+
 // Service is the reporting surface's composition root: the store slice
-// it reads and writes, the event files sql widgets query, the
+// it reads and writes, the external SQL engine sql widgets run on, the
 // registered source types content is checked and run against, and the
 // two-age cache their loaded values are served from.
 type Service struct {
 	st           Store
-	files        Files // nil: sql widgets fail (errNoFiles)
+	sql          *sqlEngine // nil: no engine, and sql is no source type
+	queryRows    int        // CONSOLE_QUERY_ROWS_MAX
 	sources      map[string]SourceType
 	now          func() time.Time
 	cache        *cache
@@ -113,31 +130,37 @@ type Service struct {
 	placeMu sync.Mutex
 }
 
-// New builds a Service. files is where sql widgets run; widgets are
-// validated with a sample query, so New always registers sql with
-// sampleRows true.
-func New(st Store, files Files, opt Options) *Service {
+// New builds a Service. sql is the external SQL engine sql widgets run
+// on, nil when none is configured; widgets are validated with a sample
+// query, so New registers sql (when there is an engine) with sampleRows
+// true.
+func New(st Store, sql SQL, opt Options) *Service {
+	s := newService(st, sql, true, opt)
+	s.cache = newCache(opt.CacheAge, opt.RefreshAge, s.now)
+	s.archivedDays = opt.ArchivedDays
+	s.shareBase = strings.TrimRight(opt.ShareBaseURL, "/")
+	s.shares = newShareCache(s.now, shareImageBytes)
+	return s
+}
+
+// newService is the part of a Service that loads and checks widgets: its
+// store, engine, guards and source types; sampleRows as newSources takes
+// it. New adds the cache and the shares; Migrate, CheckUserWidgets and
+// reporting dev use it as it is.
+func newService(st Store, sql SQL, sampleRows bool, opt Options) *Service {
 	now := opt.Now
 	if now == nil {
 		now = time.Now
 	}
+	eng := newSQLEngine(sql, opt)
 	return &Service{
-		st:           st,
-		files:        files,
-		sources:      newSources(files, true, now, opt.Native, opt.Rules),
-		now:          now,
-		cache:        newCache(opt.CacheAge, opt.RefreshAge, now),
-		archivedDays: opt.ArchivedDays,
-		shareBase:    strings.TrimRight(opt.ShareBaseURL, "/"),
-		shares:       newShareCache(now, shareImageBytes),
+		st:        st,
+		sql:       eng,
+		queryRows: opt.QueryMaxRows,
+		sources:   newSources(eng, sampleRows, now, opt.Native, opt.Rules, opt.QueryTimeout, opt.QueryMaxRows),
+		now:       now,
 	}
 }
 
-// maxRows is CONSOLE_QUERY_ROWS_MAX, a page's size cap; 0 without files,
-// where no page loads anyway.
-func (s *Service) maxRows() int {
-	if s.files == nil {
-		return 0
-	}
-	return s.files.MaxRows()
-}
+// maxRows is CONSOLE_QUERY_ROWS_MAX, a page's size cap.
+func (s *Service) maxRows() int { return s.queryRows }

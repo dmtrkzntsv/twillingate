@@ -56,8 +56,8 @@ Tables:
   aliases(project_id, user_id, install_id, first_seen, last_seen, events)  -- each user_id and install_id sent on the same event
 
 Cost note: a query without a day filter reads the project's whole history;
-COUNT(DISTINCT …) over a long range keeps every value in memory
-(ENGINE_MEMORY_LIMIT). Queries are row-capped and time-limited.`
+COUNT(DISTINCT …) over a long range keeps every value in memory, under
+the SQL engine's memory limit. Queries are row-capped and time-limited.`
 
 // schemaViews is schema://views and GET /api/schema/views: the event
 // files' tables, the only ones query reads.

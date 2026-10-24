@@ -80,7 +80,7 @@ func cmdReportingDev(args []string, stdout io.Writer) int {
 	logger := app.NewLogger(config.LogConfig{})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	if err := app.ReportingDev(ctx, dirs, dbPath, eventsDir, *addr, logger); err != nil {
+	if err := app.ReportingDev(ctx, dirs, dbPath, eventsDir, os.Getenv("SQL_ENGINE_SOCKET"), *addr, logger); err != nil {
 		fmt.Fprintln(stdout, err)
 		return 1
 	}

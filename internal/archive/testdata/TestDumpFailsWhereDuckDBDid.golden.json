@@ -1,0 +1,11 @@
+{
+  "[1]\n": true,
+  "{\"id\":\"a\",\"consent\":true}\n": true,
+  "{\"id\":\"a\",\"day\":\"10.11.2026\"}\n": true,
+  "{\"id\":\"a\",\"display_width\":\"wide\"}\n": true,
+  "{\"id\":\"a\",\"ts\":\"yesterday\"}\n": true,
+  "{\"id\":\"a\",\"value\":\"x\"}\n": true,
+  "{\"id\":\"a\"}\ngarbage\n": true,
+  "{\"id\":\"a\"}\n{\"id\":\"a\",\"ts\":\"yesterday\"}\n": true,
+  "{\"v\":1}\n{\"v\":2,\"ts\":\"yesterday\"}\n": true
+}

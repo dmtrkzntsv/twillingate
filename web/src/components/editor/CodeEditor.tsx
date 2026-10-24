@@ -23,6 +23,8 @@ export interface CodeEditorProps {
   label: string
   /** Edge to edge in a panel: no border or rounding of its own. */
   flush?: boolean
+  /** Shown, not edited; fixed when the editor is created (a change needs a new key). */
+  readOnly?: boolean
 }
 
 // Colors from the app's tokens, so light and dark both follow the theme.
@@ -59,7 +61,7 @@ const highlight = HighlightStyle.define([
  * differs from what the editor holds (a reset), so the text typed in does not
  * come back through the prop as a second change.
  */
-export default function CodeEditor({ language, value, onChange, onRun, tables, label, flush }: CodeEditorProps) {
+export default function CodeEditor({ language, value, onChange, onRun, tables, label, flush, readOnly = false }: CodeEditorProps) {
   const host = useRef<HTMLDivElement>(null)
   const view = useRef<EditorView | null>(null)
   const [lang] = useState(() => new Compartment())
@@ -90,6 +92,8 @@ export default function CodeEditor({ language, value, onChange, onRun, tables, l
             if (u.docChanged) latest.current.onChange(u.state.doc.toString())
           }),
           lang.of([]),
+          EditorState.readOnly.of(readOnly),
+          EditorView.editable.of(!readOnly),
         ],
       }),
     })

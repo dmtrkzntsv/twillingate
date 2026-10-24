@@ -535,14 +535,20 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 
 // copyLiveWidgets returns fresh copies of dashboardID's live widgets, in
 // order, with fresh spread keys; a widget whose component was removed
-// still copies, faithfully.
+// still copies, faithfully. A sql widget, in a process with no external
+// SQL engine, refuses the copy (ErrSQLEngine), as copy_widget and
+// create_dashboard refuse one.
 func (s *Service) copyLiveWidgets(ctx context.Context, dashboardID int64) ([]store.Widget, error) {
 	all, err := s.st.ListWidgets(ctx, dashboardID)
 	if err != nil {
 		return nil, err
 	}
+	_, hasSQL := s.sources["sql"]
 	var ws []store.Widget
 	for _, w := range all {
+		if w.ArchivedAt == "" && w.SourceType == "sql" && !hasSQL {
+			return nil, ErrSQLEngine
+		}
 		if w.ArchivedAt == "" {
 			ws = append(ws, freshCopy(w))
 		}

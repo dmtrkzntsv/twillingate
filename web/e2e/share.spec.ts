@@ -129,7 +129,7 @@ test('a 120-character title is cut to two lines on a cold page, in the card and 
         {
           component: 'stat',
           title: 'short',
-          source: { type: 'sql', content: 'SELECT 42 + 0 * :project AS value WHERE :from <= :to' },
+          source: { type: 'query', content: JSON.stringify({ query: { kind: 'stat', table: 'views', metrics: [{ op: 'count' }] }, rename: { count: 'value' } }) },
           width: 6,
           height: 4,
         },

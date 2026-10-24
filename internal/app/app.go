@@ -21,6 +21,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/pipeline"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/server"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
@@ -84,19 +85,31 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		return err
 	}
 	defer st.Close()
-	// The engine (raw-first D8) serves SQL over the event files alone: the
-	// reporting migrator checks the SQL widgets through it at start-up, the
-	// console's SQL widgets and the query tool's sql mode read the files
-	// through it. A child starts on the first
-	// request, so a process that needs none runs none. Closed after the
-	// jobs runner and the HTTP surfaces return (Serve waits for both), its
-	// last users.
-	eng, files, err := openFiles(cfg)
-	if err != nil {
-		return err
+	// The external SQL engine (SQL_ENGINE_SOCKET) answers SQL over the
+	// event files: the reporting migrator checks the SQL widgets through it
+	// at start-up, and the console's SQL widgets and the query tool's sql
+	// mode run on it. Without one, that SQL is refused. Closed after the
+	// HTTP surfaces and the widget check return (Serve waits for both),
+	// its last users.
+	// Only the console calls it at start (openSQL: another protocol
+	// version fails the start, an engine that does not answer is logged);
+	// an ingest-only process needs no engine, and its migrator reaches it
+	// lazily, only for a sql system widget to check.
+	var sql api.SQL
+	if runConsole {
+		client, err := openSQL(ctx, cfg.SQLEngineSocket, logger)
+		if err != nil {
+			return err
+		}
+		if client != nil {
+			defer client.Close()
+			sql = client
+		}
+	} else if lazy := newLazySQL(cfg.SQLEngineSocket, logger); lazy != nil {
+		defer lazy.Close()
+		sql = lazy
 	}
-	defer eng.Close()
-	if err := migrate(ctx, cfg, st, files, ""); err != nil {
+	if err := migrate(ctx, cfg, st, sql); err != nil {
 		return err
 	}
 	reg := manage.New(st, logger)
@@ -107,7 +120,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	ops.FormDraftDays = cfg.Forms.DraftDays
 	// The native engine answers the console's structured queries, the
 	// rule-save checks and form attribution over the files in Go; the
-	// engine child serves SQL alone (the query tool's sql mode, SQL
+	// external SQL engine serves SQL alone (the query tool's sql mode, SQL
 	// widgets and their start-up check).
 	nat := native.New(native.Options{Dir: cfg.EventsDir})
 	ops.Presence = &filePresence{nat: nat, reg: reg, timeout: cfg.Console.QueryTimeout}
@@ -189,10 +202,9 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	// each surface gets a listener of its own.
 	var surfaces []httpSurface
 	var apiClose func() error
-	widgets := newWidgetFiles(cfg, files, reg)
 	switch {
 	case runConsole && runIngest && cfg.Console.Addr == cfg.IngestAddr:
-		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger, files, nat, widgets)
+		protected, closeDB, err := api.Build(ctx, cfg, reg, ops, st, logger, sql, nat)
 		if err != nil {
 			stopBackground()
 			return err
@@ -203,7 +215,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		api.RegisterOn(mux, protected, cfg, false, logger)
 		surfaces = append(surfaces, httpSurface{cfg.IngestAddr, api.NotFoundPages(mux), "ingest,console"})
 	case runConsole:
-		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger, files, nat, widgets)
+		h, closeDB, err := api.NewHandler(ctx, cfg, reg, ops, st, logger, sql, nat)
 		if err != nil {
 			stopBackground()
 			return err
@@ -266,11 +278,16 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 
 	// The users' widgets are checked once the console answers, in the
 	// background: Serve does not wait for the queries, only for the check
-	// to stop before the engine closes.
+	// to stop before the client closes.
 	checkDone := make(chan struct{})
 	checkCtx, stopCheck := context.WithCancel(context.Background())
 	if runConsole {
-		go func() { checkUserWidgets(checkCtx, st, widgets, cfg.EventsDir, logger); close(checkDone) }()
+		var widgetSQL reporting.SQL
+		if sql != nil {
+			widgetSQL = sql
+		}
+		opt := api.WidgetOptions(cfg, reg, reporting.Options{})
+		go func() { checkUserWidgets(checkCtx, st, widgetSQL, opt, logger); close(checkDone) }()
 	} else {
 		close(checkDone)
 	}

@@ -286,6 +286,10 @@ func TestGoDerivedFilesMatchDuckDB(t *testing.T) {
 					t.Fatal(err)
 				}
 				f.sameDerived(t, out("go-sessions.parquet"), out("duck-sessions.parquet"), "project_id, day, started_at, actor_id")
+				if key := c.name + " sessions"; !skipDigest(t, key) {
+					want := frozen(t, key, f.answerOf(t, out("duck-sessions.parquet"), "*", false))
+					sameAnswer(t, "Go sessions", f.answerOf(t, out("go-sessions.parquet"), "*", false), want)
+				}
 			}
 			fold, err := foldIdentities(context.Background(), inputs)
 			if err != nil {
@@ -296,11 +300,19 @@ func TestGoDerivedFilesMatchDuckDB(t *testing.T) {
 				t.Fatal(err)
 			}
 			f.sameDerived(t, out("go-identities.parquet"), out("duck-identities.parquet"), "")
+			if key := c.name + " identities"; !skipDigest(t, key) {
+				want := frozen(t, key, f.answerOf(t, out("duck-identities.parquet"), "*", true))
+				sameAnswer(t, "Go identities", f.answerOf(t, out("go-identities.parquet"), "*", true), want)
+			}
 			f.duckCopy(t, out("duck-aliases.parquet"), aliasesSelect(src))
 			if err := fold.writeAliases(out("go-aliases.parquet")); err != nil {
 				t.Fatal(err)
 			}
 			f.sameDerived(t, out("go-aliases.parquet"), out("duck-aliases.parquet"), "")
+			if key := c.name + " aliases"; !skipDigest(t, key) {
+				want := frozen(t, key, f.answerOf(t, out("duck-aliases.parquet"), "*", true))
+				sameAnswer(t, "Go aliases", f.answerOf(t, out("go-aliases.parquet"), "*", true), want)
+			}
 			if n := f.values(t, "SELECT count(*) FROM read_parquet("+quote(out("duck-identities.parquet"))+")"); c.name != "no views and no identities" && eq(n, []string{"[0]"}) {
 				t.Errorf("case %s has no identities to compare", c.name)
 			}

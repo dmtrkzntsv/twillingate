@@ -1,0 +1,24 @@
+{
+  "35511b149e08": {
+    "rows": [
+      ["","1512"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT CASE WHEN event_name IN ('$lcp', '$inp', '$cls', '$fcp', '$ttfb') THEN upper(substr(event_name, 2)) END AS v,\n\t\tcount(*) FROM measures WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-09-01' AND DATE '2026-09-10' GROUP BY v HAVING v IS NULL"
+  },
+  "d3bd6a358762": {
+    "rows": [
+      ["CLS","good","0.2835820895522388"],
+      ["CLS","needs improvement","0.44243070362473347"],
+      ["CLS","poor","0.27398720682302774"],
+      ["INP","good","0.32222222222222224"],
+      ["INP","needs improvement","0.4494444444444444"],
+      ["INP","poor","0.22833333333333333"],
+      ["LCP","good","0.5761111111111111"],
+      ["LCP","needs improvement","0.26611111111111113"],
+      ["LCP","poor","0.15777777777777777"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Each vital's share of samples (by weight, 1 / sample_rate a sample) that\n-- rate good, needs improvement or poor against Google's thresholds, which\n-- live only here (they change: INP replaced FID in 2024), typed DOUBLE as\n-- the values they are compared with. A sample is rated by its bucket's\n-- value, as the percentiles read it.\nWITH t(name, good, poor) AS (VALUES ('$lcp', 2500::DOUBLE, 4000::DOUBLE), ('$inp', 200, 500), ('$cls', 0.1, 0.25), ('$fcp', 1800, 3000), ('$ttfb', 800, 1800)),\nm AS (\n  SELECT event_name, CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,\n         1 / sample_rate AS w\n  FROM measures\n  WHERE project_id = 1 AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n),\nr AS (\n  SELECT upper(substr(m.event_name, 2)) AS x,\n         CASE WHEN m.approx_value <= t.good THEN 'good' WHEN m.approx_value <= t.poor THEN 'needs improvement' ELSE 'poor' END AS series,\n         SUM(m.w) AS w\n  FROM m JOIN t ON t.name = m.event_name\n  GROUP BY 1, 2)\nSELECT x, series, w / SUM(w) OVER (PARTITION BY x) AS y FROM r ORDER BY x, series\n"
+  }
+}

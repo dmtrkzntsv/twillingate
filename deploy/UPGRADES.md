@@ -1428,3 +1428,40 @@ peaks near 150 MB of resident memory on the day the month is merged.
   - A `day` given as a timestamp (`"2026-09-10T12:00:00Z"`) fails the dump, where it was read as that date. The log stays pending (`<day>.parquet.dumping`) and holds its month back from the merge until it is corrected.
 
 Rollback: install the previous release; it reads the files this one wrote.
+
+### Upgrading to SQL on an external engine (no migration)
+
+SQL (SQL widgets, `query`'s `sql` and the start-up check of the users'
+SQL widgets) runs on an external SQL engine at `SQL_ENGINE_SOCKET` (see
+`docs/deployment.md`, "External SQL engine"); `serve` no longer starts an
+engine child for it. The built-in dashboards, structured queries and the
+analytics tools need no engine and are unaffected.
+
+- **What breaks:** SQL without an engine. With `SQL_ENGINE_SOCKET` unset, a
+  stored SQL widget stays on its dashboard, not archived, and its card
+  says "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)" while the
+  rest of the dashboard loads. Adding or previewing a SQL widget, and
+  `query` with `sql`, are refused with the same message (`invalid`, `400`
+  over REST), and the component list leaves `sql` out.
+- **Before the upgrade**, list your SQL widgets: `list_dashboards`, then
+  each user dashboard's widgets with `source.type` `sql`. With none, and
+  no script that sends `query` SQL, nothing else needs doing.
+- **What to do**, either: set `SQL_ENGINE_SOCKET` to the socket of a
+  running engine, which brings every SQL path back as it was; or convert
+  the SQL widgets to structured `query` widgets in the console's editor
+  (a remote table has no `query` form and needs the engine).
+- **Scoped columns:** a SQL widget that reads `:project` now sees only that
+  project's `attr_<key>` columns. Naming a key the project never sent is
+  an error ("Referenced column … not found") where it read NULL. Rewrite
+  such a widget to name only the project's keys.
+- **Start-up check:** a console whose engine speaks another protocol
+  version fails to start, naming both; one whose engine does not answer
+  logs a warning and goes on, and SQL is refused with "the SQL engine
+  failed" until it answers. An ingest-only process and the CLI commands
+  call the engine only to check a system widget that reads SQL (none
+  today). The first start after the upgrade also checks the users' SQL
+  widgets through the engine in the background; on an engine still loading
+  the event files a check may time out, widget by widget, and is logged as
+  unchecked, not failing. The next start checks them again.
+
+Rollback: install the previous release; nothing on disk changed.

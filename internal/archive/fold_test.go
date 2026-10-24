@@ -97,9 +97,9 @@ func TestSessionizeMatchesDuckDB(t *testing.T) {
 		view("web", "x6", "-", "17:00:00", "/noid", "id", nil),
 		view("web", "x6", "-", "17:05:00", "/noid2", "id", nil), // a second NULL id: dropped
 	)
-	want := f.sortedValues(t, "SELECT kind, actor_id, actor_kind, session_id, epoch_us(started_at), epoch_us(ended_at), duration_sec, "+
+	want := frozen(t, "sessions", f.sortedValues(t, "SELECT kind, actor_id, actor_kind, session_id, epoch_us(started_at), epoch_us(ended_at), duration_sec, "+
 		"views, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign FROM ("+
-		sessionsSelect(f.logRel(t, foldDay))+")")
+		sessionsSelect(f.logRel(t, foldDay))+")"))
 
 	var lines []logLine
 	var views []SessionView
@@ -217,8 +217,8 @@ func identityRows(m IdentityMap) []string {
 func TestIdentitiesFoldMatchesDuckDB(t *testing.T) {
 	f := newFixture(t)
 	path := f.writeLines(t, identityLines()...)
-	want := f.sortedValues(t, "SELECT kind, id, name, epoch_us(first_seen), epoch_us(last_seen), views, events FROM ("+
-		identitiesSelect(f.logRel(t, foldDay))+")")
+	want := frozen(t, "identities", f.sortedValues(t, "SELECT kind, id, name, epoch_us(first_seen), epoch_us(last_seen), views, events FROM ("+
+		identitiesSelect(f.logRel(t, foldDay))+")"))
 	lines := readLogLines(t, path)
 	whole := IdentityMap{}
 	seeIdentities(t, whole, lines)
@@ -271,8 +271,8 @@ func TestAliasesFoldMatchesDuckDB(t *testing.T) {
 		ev("p8", "product", "13:00:00", "U1", "i1"),
 		ev("p1", "product", "14:00:00", "u1", "i9"), // a repeat: dropped
 	)
-	want := f.values(t, "SELECT user_id, install_id, epoch_us(first_seen), epoch_us(last_seen), events FROM ("+
-		aliasesSelect(f.logRel(t, foldDay))+")")
+	want := frozen(t, "aliases", f.values(t, "SELECT user_id, install_id, epoch_us(first_seen), epoch_us(last_seen), events FROM ("+
+		aliasesSelect(f.logRel(t, foldDay))+")"))
 	lines := readLogLines(t, path)
 	see := func(m AliasMap, lines []logLine) {
 		for _, l := range lines {

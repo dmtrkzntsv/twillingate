@@ -1,0 +1,35 @@
+{
+  "30d": {
+    "columns": ["Dimension","Value","Samples","LCP p75 (ms)","INP p75 (ms)","CLS p75"],
+    "rows": [
+      ["browser","chrome","148","3164","313","0.054"],
+      ["browser","safari","34","5479","741","0.34"],
+      ["browser","edge","2","5269","586","0.08"],
+      ["device","desktop","92","2055","137","0"],
+      ["device","mobile","92","5066","659","0.302"]
+    ],
+    "truncated": false
+  },
+  "7d": {
+    "columns": ["Dimension","Value","Samples","LCP p75 (ms)","INP p75 (ms)","CLS p75"],
+    "rows": [
+      ["browser","chrome","33","3422","338","0.054"],
+      ["browser","safari","11","5269","713","0.327"],
+      ["browser","edge","2","5269","586","0.08"],
+      ["device","desktop","23","3291","301","0"],
+      ["device","mobile","23","5269","586","0.08"]
+    ],
+    "truncated": false
+  },
+  "90d": {
+    "columns": ["Dimension","Value","Samples","LCP p75 (ms)","INP p75 (ms)","CLS p75"],
+    "rows": [
+      ["browser","chrome","448","3164","313","0.054"],
+      ["browser","safari","94","5479","741","0.34"],
+      ["browser","edge","2","5269","586","0.08"],
+      ["device","desktop","272","2055","137","0"],
+      ["device","mobile","272","5066","659","0.314"]
+    ],
+    "truncated": false
+  }
+}

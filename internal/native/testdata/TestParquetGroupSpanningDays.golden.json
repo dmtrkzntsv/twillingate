@@ -1,0 +1,8 @@
+{
+  "a24a4067019a": {
+    "columns": ["id","project_id","family","event_name","ts","day","received_at","kind","actor_id","actor_kind","user_id","group_id","session_id","install_id","user_name","group_name","host","path","referrer_source","utm_source","utm_medium","utm_campaign","platform","os","os_version","os_name","browser","browser_version","browser_locale","app_version","app_locale","device","device_model","display_width","display_height","country","consent","value","measure","sample_rate","attr_plan","attr_color"],
+    "row_count": 900,
+    "rows_sha256": "b264a2c503c8a2792e99c0471779db563fa630eae61d2ad7d33d7123eb277fb9",
+    "sql": "SELECT * FROM events WHERE project_id = 1 ORDER BY id"
+  }
+}

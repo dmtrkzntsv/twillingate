@@ -44,7 +44,7 @@ func countedShareEnv(t *testing.T) (*shareEnv, *countingStore, http.Handler) {
 	st, files := newTestStoreAndFiles(t, 1000)
 	cs := &countingStore{Store: st}
 	e.st = st
-	e.svc = New(cs, files, Options{
+	e.svc = newFilesService(cs, files, Options{
 		ShareBaseURL: "https://c.example", ArchivedDays: 30,
 		Now: func() time.Time { return *e.now },
 	})

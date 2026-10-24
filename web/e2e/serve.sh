@@ -42,6 +42,25 @@ set +a
 
 "$bin" migrate
 "$bin" project create -name dev
+# A dashboard stored before an upgrade to a server with no external SQL
+# engine (this one has none): one SQL widget, which no longer runs and the
+# API no longer takes, written straight into the database, beside a
+# markdown note that still loads. widget-editor.spec.ts opens it.
+python3 - "$db" <<'PY'
+import sqlite3, sys
+con = sqlite3.connect(sys.argv[1])
+cur = con.execute("INSERT INTO dashboards (owner, title, sort_key, last_range) VALUES ('user', 'No SQL engine', 'a0', '7d')")
+dashboard = cur.lastrowid
+con.executemany(
+    "INSERT INTO widgets (dashboard_id, component, sort_key, width, height, name, title, props, source_type, source)"
+    " VALUES (?, ?, ?, ?, ?, ?, ?, '{}', ?, ?)",
+    [
+        (dashboard, "stat", "a0", 6, 4, "sql-stat", "Stored SQL", "sql", "SELECT 42 AS value"),
+        (dashboard, "markdown", "a1", 6, 4, "note", "Still here", "md", "Every other widget loads."),
+    ],
+)
+con.commit()
+PY
 # Widget SQL reads the event files, not SQLite: the seed writes its events as
 # closed logs under EVENTS_DIR (raw/ beside the database by default). Serve
 # starts at once, as on upgrade day: its boot pass dumps and merges them while

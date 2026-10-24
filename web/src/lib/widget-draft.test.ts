@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { Widget } from './api'
 import { widgets } from '@/components/widgets'
-import { addBody, changedFields, codeTypesOf, draftOf, isDirty, paramsOf, queryTemplate, sourceOf, sourceTypeOf, usesParams, withCode, withComponent } from './widget-draft'
+import { addBody, changedFields, codeTypesOf, draftOf, isDirty, paramsOf, queryTemplate, sourceOf, sourceTypeOf, toQuery, usesParams, withCode, withComponent } from './widget-draft'
 
 interface Q {
   kind: 'stat' | 'trend' | 'breakdown'
@@ -139,6 +139,46 @@ describe('query sources', () => {
     expect(t('pie')).toMatchObject({ query: { kind: 'breakdown', dimensions: ['path'] }, rename: { path: 'label', count: 'value' } })
     expect(t('bar_list').rename).toEqual({ path: 'label', count: 'value' })
     expect(t('table')).toEqual({ query: { kind: 'breakdown', table: 'views', metrics: [{ op: 'count' }], dimensions: ['path'], limit: 10 } })
+  })
+})
+
+describe('a server with no external SQL engine', () => {
+  it('offers no sql, and a remote table nothing', () => {
+    expect(codeTypesOf('line', {}, false)).toEqual(['query'])
+    expect(codeTypesOf('table', {}, false)).toEqual(['query'])
+    expect(codeTypesOf('table', { mode: 'remote' }, false)).toEqual([])
+    expect(codeTypesOf('line', {}, true)).toEqual(['sql', 'query'])
+  })
+  it('never falls back to sql', () => {
+    expect(sourceTypeOf({ component: 'stat', props: {}, code: 'sql' }, false)).toBe('query')
+    expect(sourceTypeOf({ component: 'table', props: { mode: 'remote' }, code: 'sql' }, false)).toBe('query')
+    expect(sourceTypeOf({ component: 'markdown', props: {}, code: 'sql' }, false)).toBe('md')
+    expect(sourceTypeOf({ component: 'stat', props: {}, code: 'sql' })).toBe('sql')
+    expect(sourceOf({ ...draftOf(), component: 'stat', sql: 'SELECT 1' }, false)?.type).toBe('query')
+  })
+  it('starts a new draft on the query template, which is not a change', () => {
+    const d = draftOf(undefined, false)
+    expect(d).toMatchObject({ code: 'query', query: queryTemplate(null), sql: '' })
+    expect(isDirty(undefined, d, false)).toBe(false)
+    expect(isDirty(undefined, withComponent(d, 'stat', {}), false)).toBe(true)
+    expect(isDirty(undefined, { ...d, query: '{}' }, false)).toBe(true)
+    // A stored widget opens as stored, SQL included.
+    expect(draftOf(line, false)).toMatchObject({ code: 'sql', sql: line.source.content })
+  })
+  it('writes no sql body', () => {
+    const remote = { ...draftOf(), component: 'table', props: { mode: 'remote' }, code: 'query' as const, sql: 'SELECT 1', query: '{}' }
+    expect(addBody(remote).source.type).toBe('sql')
+    expect(addBody(remote, false).source).toEqual({ type: 'query', content: '{}' })
+    expect(changedFields(line, { ...draftOf(line), code: 'query', query: '{}' }, false).source).toEqual({ type: 'query', content: '{}' })
+  })
+  it('converts a SQL draft to the query template, keeping title, component and props', () => {
+    const d = toQuery(draftOf(line))
+    expect(d).toMatchObject({ title: 'Visits', component: 'line', props: { curve: 'step' }, code: 'query', query: queryTemplate('line') })
+    expect(sourceOf(d, false)).toEqual({ type: 'query', content: queryTemplate('line') })
+    expect(changedFields(line, d)).toEqual({ source: { type: 'query', content: queryTemplate('line') } })
+    // A query table is local: a remote one drops its mode.
+    const remote = toQuery({ ...draftOf(line), component: 'table', props: { mode: 'remote', formats: { a: 'percent' } } })
+    expect(remote.props).toEqual({ formats: { a: 'percent' } })
   })
 })
 

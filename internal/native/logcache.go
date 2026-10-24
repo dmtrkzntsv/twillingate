@@ -58,9 +58,9 @@ type logCache struct {
 	bytes    int64
 	inflight int64 // bytes the decodes under way hold past what bytes counts of them
 	tick     uint64
-	entries map[string]*logEntry
-	flights map[string]chan struct{} // a decode under way, closed when done
-	big     map[string]fileID        // logs too large to keep, by path: readLog reads them while the file stays
+	entries  map[string]*logEntry
+	flights  map[string]chan struct{} // a decode under way, closed when done
+	big      map[string]fileID        // logs too large to keep, by path: readLog reads them while the file stays
 
 	now        func() time.Time // the clock entries are idle by
 	idleAfter  time.Duration    // how long an entry is kept unused

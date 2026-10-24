@@ -3,16 +3,11 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
-	"os"
-	"sync"
-	"syscall"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/api"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -31,43 +26,32 @@ var _ reporting.Store = store.Store(nil)
 // `twillingate events import` did that; this release has no import).
 //
 // The reporting migrator validates every system widget on the event
-// files, so Migrate builds an engine on this binary for it, closed before
-// it returns. While no system widget reads SQL (they are structured
-// queries, answered without the engine), that check runs no query and
-// spawns no child; what follows stays for system widgets that read SQL,
-// until DuckDB leaves. The engine spawns its
-// child only when a query runs, which is only when the release's system
-// definition changed, a system widget reads SQL, and EVENTS_DIR holds an
-// event file to check it on: most runs spawn none, and neither does a
-// fresh install's first. The run that does must be the database
-// owner's (checkOwner): a child spawned as root leaves engine/slots,
-// engine/spill and raw/ owned by root, which the service user then cannot
-// open. Migrate checks just before that first query, so a command run as
-// root on a release that changed nothing, or on an install with no event
-// file, goes on as before.
+// files, through the external SQL engine at SQL_ENGINE_SOCKET when one is
+// set. The engine is reached lazily (lazySQL): only a sql system widget's
+// check calls it, health first, so a command that finds none (while no
+// system widget reads SQL, every one) never does, and an engine that is
+// down or of another version does not stop `twillingate project …`.
+// Should one be checked, another protocol version fails the command and
+// an engine that does not answer is logged.
 //
 // That check is part of the boot, not a viewer's query: each of its
 // queries runs under migrateQueryTimeout rather than
-// CONSOLE_QUERY_TIMEOUT. On an upgrade's first start its first query
-// loads every log the daily pass has not dumped yet, which can take
-// minutes or more memory than the engine has; a check that cannot run
-// for that (reporting.ErrUnchecked) is logged and the start goes on, so
-// the pass runs and the next start checks again. A refusal of a system
-// widget's SQL still fails the start.
+// CONSOLE_QUERY_TIMEOUT. A check that cannot run (the engine is down,
+// busy, or short of time or memory: reporting.ErrUnchecked) is logged and
+// the start goes on, so the daily pass runs and the next start checks
+// again. A refusal of a system widget's SQL still fails the start.
 func Migrate(ctx context.Context, cfg *config.Config, st store.Store) error {
-	eng, reader, err := openFiles(cfg)
-	if err != nil {
-		return err
+	sql := newLazySQL(cfg.SQLEngineSocket, NewLogger(cfg.Log))
+	if sql == nil {
+		return migrate(ctx, cfg, st, nil)
 	}
-	defer eng.Close()
-	return migrate(ctx, cfg, st, reader, DatabasePath(cfg.Database))
+	defer sql.Close()
+	return migrate(ctx, cfg, st, sql)
 }
 
-// migrate is Migrate on the caller's reader: serve's, whose engine the
-// console goes on using. With owner set (the database file's path), the
-// reporting migrator's first query checks that this process runs as its
-// owner; serve passes "".
-func migrate(ctx context.Context, cfg *config.Config, st store.Store, reader *archive.Reader, owner string) error {
+// migrate is Migrate on the caller's engine client (nil: none): serve's,
+// which the console goes on using.
+func migrate(ctx context.Context, cfg *config.Config, st store.Store, sql reporting.SQL) error {
 	if err := st.Migrate(ctx); err != nil {
 		return err
 	}
@@ -76,39 +60,34 @@ func migrate(ctx context.Context, cfg *config.Config, st store.Store, reader *ar
 		return err
 	}
 	// No event file at all (a fresh install): nothing to check the system
-	// widgets on, so the migrator runs no query and spawns no child
-	// (reporting.Migrate with nil Files); the first start with files
-	// checks them. While no system widget reads SQL, even that check runs
-	// no query.
+	// widgets on, so the migrator sends no query (reporting.Migrate with
+	// no SQL); the first start with files checks them. While no system
+	// widget reads SQL, even that check sends none.
 	some, err := hasEventFiles(cfg.EventsDir)
 	if err != nil {
 		return err
 	}
-	var files reporting.Files
-	if some {
-		boot := newWidgetFiles(cfg, reader, reg)
-		boot.timeout = migrateQueryTimeout
-		files = boot
-		if owner != "" {
-			files = &ownerFiles{Files: files, path: owner}
-		}
+	if !some {
+		sql = nil
 	}
-	return migrateReporting(ctx, st, files, NewLogger(cfg.Log))
+	opt := api.WidgetOptions(cfg, reg, reporting.Options{})
+	opt.QueryTimeout = migrateQueryTimeout
+	return migrateReporting(ctx, st, sql, opt, NewLogger(cfg.Log))
 }
 
 // migrateQueryTimeout bounds each query of the reporting migrator's check
-// of the system widgets' SQL (none while no system widget reads SQL;
-// kept for SQL system widgets until DuckDB leaves): long enough for the
-// first to load a month of logs at the cap that the daily pass has not
-// dumped yet, short enough that a start which cannot load them goes on
-// (ErrUnchecked) while ingest waits.
+// of the system widgets' SQL (none while no system widget reads SQL):
+// long enough for an engine to load a month of logs at the cap that the
+// daily pass has not dumped yet, short enough that a start which cannot
+// goes on (ErrUnchecked) while ingest waits.
 const migrateQueryTimeout = 5 * time.Minute
 
-// migrateReporting runs the reporting migrator on files. A check of the
-// system widgets that could not run for want of time or memory is logged
-// as an error and the start goes on; the next start checks again.
-func migrateReporting(ctx context.Context, st store.Store, files reporting.Files, logger *slog.Logger) error {
-	err := reportingMigrate(ctx, st, files)
+// migrateReporting runs the reporting migrator on sql. A check of the
+// system widgets that could not run for want of time, memory or the
+// engine is logged as an error and the start goes on; the next start
+// checks again.
+func migrateReporting(ctx context.Context, st store.Store, sql reporting.SQL, opt reporting.Options, logger *slog.Logger) error {
+	err := reportingMigrate(ctx, st, sql, opt)
 	if errors.Is(err, reporting.ErrUnchecked) {
 		logger.Error("could not check the system dashboards on the event files; starting without, so the daily pass can run",
 			"error", err.Error())
@@ -120,46 +99,3 @@ func migrateReporting(ctx context.Context, st store.Store, files reporting.Files
 // reportingMigrate is reporting.Migrate; tests replace it, since there is
 // no check to fail on while no system widget reads SQL.
 var reportingMigrate = reporting.Migrate
-
-// geteuid is the effective uid Migrate checks against the database file's
-// owner (checkOwner); tests replace it.
-var geteuid = os.Geteuid
-
-// checkOwner refuses a run whose effective uid is not the owner of the
-// database file at path: the directories the run creates would belong to
-// that user, and the service user could not write them afterwards.
-// command is the one to show run as the service user.
-func checkOwner(path string, euid int, command string) error {
-	info, err := os.Stat(path)
-	if err != nil {
-		return err
-	}
-	st, ok := info.Sys().(*syscall.Stat_t)
-	if !ok || int(st.Uid) == euid {
-		return nil
-	}
-	return fmt.Errorf("%s belongs to uid %d, not %d: run it as the service user, as in sudo -u twillingate twillingate %s", path, st.Uid, euid, command)
-}
-
-// ownerFiles is Files that refuses its first query, the one that spawns
-// the engine's child, unless this process runs as the owner of the
-// database file at path (checkOwner), and every query after a refusal.
-type ownerFiles struct {
-	reporting.Files
-	path string
-	once sync.Once
-	err  error
-}
-
-func (f *ownerFiles) Query(ctx context.Context, q archive.Scoped) (engine.Result, error) {
-	f.once.Do(func() {
-		if err := checkOwner(f.path, geteuid(), "migrate"); err != nil {
-			f.err = fmt.Errorf("this release changed the system dashboards, which are checked with an engine child "+
-				"that must run as the database's owner: %w", err)
-		}
-	})
-	if f.err != nil {
-		return engine.Result{}, f.err
-	}
-	return f.Files.Query(ctx, q)
-}

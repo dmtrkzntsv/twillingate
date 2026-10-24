@@ -1,0 +1,146 @@
+{
+  "first_and_last_day_per_user 9c5971f7a0d1": {
+    "rows": [
+      ["u0","2026-08-02","2026-09-10"],
+      ["u1","2026-08-03","2026-09-08"],
+      ["u2","2026-08-04","2026-09-09"],
+      ["u3","2026-08-02","2026-09-10"],
+      ["u4","2026-08-03","2026-09-08"],
+      ["u5","2026-08-04","2026-09-09"],
+      ["","2026-08-02","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"user_id\", min(\"day\"), max(\"day\") FROM product WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n\t\t\t\tGROUP BY \"user_id\" ORDER BY \"user_id\" ASC NULLS LAST LIMIT 20"
+  },
+  "first_arrival_over_partly-null_rows 31a5b3d4d4e5": {
+    "rows": [
+      ["2026-08-02T08:00:00Z"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT min(\"received_at\") FROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n\t\t\t\tAND (SELECT count(*) FILTER (WHERE \"received_at\" IS NULL) > 0 AND count(\"received_at\") > 0 FROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10')"
+  },
+  "newest_arrival 693a5c1cf161": {
+    "rows": [
+      ["2026-08-10T08:00:00Z","2026-08-25T08:04:34Z"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT min(\"ts\"), max(\"received_at\") FROM events WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-10' AND DATE '2026-08-25'"
+  },
+  "newest_arrival e33d1c86aead": {
+    "rows": [
+      ["2026-08-26T08:00:00Z","2026-09-10T08:04:34Z"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT min(\"ts\"), max(\"received_at\") FROM events WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-26' AND DATE '2026-09-10'"
+  },
+  "other 75b5db23a510": {
+    "rows": [
+      ["","597","2026-09-01T08:04:29Z","2026-08-02"],
+      ["DE","520","2026-09-10T08:04:34Z","2026-08-02"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH g AS (SELECT \"country\", count(*) AS c, max(\"received_at\") FILTER (WHERE \"family\" = 'product') AS r, min(\"day\") AS d FROM events WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' GROUP BY \"country\"),\n\t\ttop AS (SELECT * FROM g ORDER BY c DESC, \"country\" ASC NULLS LAST LIMIT 2) SELECT \"country\", c, r, d FROM top ORDER BY c DESC, \"country\" ASC NULLS LAST"
+  },
+  "other 88dfd14a86f6": {
+    "rows": [
+      ["Other","611","2026-09-10T08:03:23Z","2026-08-02"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH g AS (SELECT \"country\", count(*) AS c, max(\"received_at\") FILTER (WHERE \"family\" = 'product') AS r, min(\"day\") AS d FROM events WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' GROUP BY \"country\"),\n\t\ttop AS (SELECT * FROM g ORDER BY c DESC, \"country\" ASC NULLS LAST LIMIT 2) SELECT 'Other', count(*) AS c, max(\"received_at\") FILTER (WHERE \"family\" = 'product') AS r, min(\"day\") AS d FROM events e WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n\t\t\t\t\tAND NOT EXISTS (SELECT 1 FROM top WHERE top.\"country\" IS NOT DISTINCT FROM e.\"country\") HAVING count(*) > 0"
+  },
+  "ranked_by_the_last_day d036c62f48d7": {
+    "rows": [
+      ["/p0","2026-09-01"],
+      ["/p1","2026-09-01"],
+      ["/p2","2026-09-01"],
+      ["/p3","2026-09-01"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"path\", max(\"day\") AS m FROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' AND \"day\" <= DATE '2026-09-01'\n\t\t\t\tGROUP BY \"path\" ORDER BY m DESC NULLS LAST, \"path\" ASC NULLS LAST LIMIT 4"
+  },
+  "sessions a4a8538842af": {
+    "rows": [
+      ["","123","2026-08-02T08:00:15Z","2026-09-10T08:00:19Z","2026-09-10"],
+      ["/p0","109","2026-08-02T08:00:04Z","2026-09-10T08:00:21Z","2026-09-10"],
+      ["/p3","74","2026-08-02T08:00:06Z","2026-09-10T08:00:08Z","2026-09-10"],
+      ["/p2","73","2026-08-02T08:00:01Z","2026-09-10T08:00:12Z","2026-09-10"],
+      ["/p5","73","2026-08-02T08:00:03Z","2026-09-10T08:00:05Z","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"entry_path\", count(*) AS c, min(\"started_at\"), max(\"ended_at\"), max(\"day\") FROM sessions WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n\t\t\t\tGROUP BY \"entry_path\" ORDER BY c DESC, \"entry_path\" ASC NULLS LAST LIMIT 5"
+  },
+  "top_groups_last_seen 597e7c7f7b33": {
+    "rows": [
+      ["g0","133","2026-09-10"],
+      ["g5","76","2026-09-10"],
+      ["g1","54","2026-09-10"],
+      ["g2","53","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"Group\", \"Actions\", \"Last seen\" FROM (-- Actions are the views and product events sent with the group_id. Users\n-- are distinct per day, so the range figure is the busiest day's: the same\n-- person on two days cannot be told apart from two people. First seen is\n-- the first event the files hold for the group (identities), which also\n-- names it.\nWITH d AS (\n  SELECT group_id AS id, day, count(*) AS actions, count(DISTINCT nullif(user_id, '')) AS users\n  FROM events\n  WHERE project_id = 1 AND family IN ('views', 'product') AND group_id <> ''\n    AND day BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n  GROUP BY group_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"Group\",\n       SUM(d.actions) AS \"Actions\",\n       MAX(d.users) AS \"Peak daily users\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 1 AND i.kind = 'group' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.actions) DESC, d.id\nLIMIT 100\n) ORDER BY \"Actions\" DESC, \"Group\""
+  },
+  "top_users_last_seen 36edb0d2525f": {
+    "rows": [
+      ["u0","56","2026-09-10"],
+      ["u4","52","2026-09-10"],
+      ["u3","28","2026-09-10"],
+      ["u1","27","2026-09-08"],
+      ["u2","27","2026-09-09"],
+      ["u8","27","2026-09-10"],
+      ["u16","25","2026-09-10"],
+      ["u20","25","2026-09-10"],
+      ["u28","25","2026-09-10"],
+      ["u5","25","2026-09-09"],
+      ["u12","24","2026-09-09"],
+      ["u24","24","2026-09-09"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"User\", \"Actions\", \"Last seen\" FROM (-- Actions are the views and product events sent with the user_id. First\n-- seen is the first event the files hold for the user (identities), which\n-- also names it.\nWITH d AS (\n  SELECT user_id AS id, day,\n         count(*) FILTER (WHERE family = 'views') AS views,\n         count(*) FILTER (WHERE family = 'product') AS events\n  FROM events\n  WHERE project_id = 1 AND family IN ('views', 'product') AND user_id <> ''\n    AND day BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n  GROUP BY user_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"User\",\n       SUM(d.views + d.events) AS \"Actions\",\n       SUM(d.events) AS \"Events\",\n       SUM(d.views) AS \"Views\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 1 AND i.kind = 'user' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.views + d.events) DESC, d.id\nLIMIT 100\n) ORDER BY \"Actions\" DESC, \"User\""
+  },
+  "trend b7babd2e2844": {
+    "rows": [
+      ["2026-08-02","2026-08-02T08:04:34Z"],
+      ["2026-08-03","2026-08-03T08:04:34Z"],
+      ["2026-08-04","2026-08-04T08:04:34Z"],
+      ["2026-08-05","2026-08-05T08:04:34Z"],
+      ["2026-08-06","2026-08-06T08:04:34Z"],
+      ["2026-08-07","2026-08-07T08:04:34Z"],
+      ["2026-08-08","2026-08-08T08:04:34Z"],
+      ["2026-08-09","2026-08-09T08:04:34Z"],
+      ["2026-08-10","2026-08-10T08:04:34Z"],
+      ["2026-08-11","2026-08-11T08:04:34Z"],
+      ["2026-08-12","2026-08-12T08:04:34Z"],
+      ["2026-08-13","2026-08-13T08:04:34Z"],
+      ["2026-08-14","2026-08-14T08:04:34Z"],
+      ["2026-08-15","2026-08-15T08:04:34Z"],
+      ["2026-08-16","2026-08-16T08:04:34Z"],
+      ["2026-08-17","2026-08-17T08:04:34Z"],
+      ["2026-08-18","2026-08-18T08:04:34Z"],
+      ["2026-08-19","2026-08-19T08:04:34Z"],
+      ["2026-08-20","2026-08-20T08:04:34Z"],
+      ["2026-08-21","2026-08-21T08:04:34Z"],
+      ["2026-08-22","2026-08-22T08:04:34Z"],
+      ["2026-08-23","2026-08-23T08:04:34Z"],
+      ["2026-08-24","2026-08-24T08:04:34Z"],
+      ["2026-08-25","2026-08-25T08:04:34Z"],
+      ["2026-08-26","2026-08-26T08:04:34Z"],
+      ["2026-08-27","2026-08-27T08:04:34Z"],
+      ["2026-08-28","2026-08-28T08:04:34Z"],
+      ["2026-08-29","2026-08-29T08:04:34Z"],
+      ["2026-08-30","2026-08-30T08:04:34Z"],
+      ["2026-08-31","2026-08-31T08:04:34Z"],
+      ["2026-09-01","2026-09-01T08:04:34Z"],
+      ["2026-09-02","2026-09-02T08:04:34Z"],
+      ["2026-09-03","2026-09-03T08:04:34Z"],
+      ["2026-09-04","2026-09-04T08:04:34Z"],
+      ["2026-09-05","2026-09-05T08:04:34Z"],
+      ["2026-09-06","2026-09-06T08:04:34Z"],
+      ["2026-09-07","2026-09-07T08:04:34Z"],
+      ["2026-09-08","2026-09-08T08:04:34Z"],
+      ["2026-09-09","2026-09-09T08:04:34Z"],
+      ["2026-09-10","2026-09-10T08:04:34Z"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"day\", max(\"received_at\") FROM product WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' GROUP BY \"day\" ORDER BY \"day\""
+  }
+}

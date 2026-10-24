@@ -6,7 +6,9 @@ reads. Agents are its only authors, through the tools and routes below. The MCP
 endpoint serves this file verbatim as `docs://reporting`; `reporting_guide`
 returns its live parts (components, views, projects, dashboards) with its
 [Workflow](#workflow) and [Rules](#rules) in one call. Widget SQL is DuckDB
-SQL over the event files: [Tables](#tables) lists what it reads.
+SQL over the event files: [Tables](#tables) lists what it reads. It runs on
+an external SQL engine (`SQL_ENGINE_SOCKET`, [deployment.md](deployment.md#external-sql-engine));
+without one, `sql` is no source type and the other widgets are unaffected.
 
 Collecting data and querying it with `query` are in
 [twillingate.md](twillingate.md); running the collector and enabling the console
@@ -286,6 +288,14 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 - Widget SQL is DuckDB SQL, one `SELECT`, over the seven tables in
   [Tables](#tables) and nothing else. The database's `v_*` views and
   `agg_*` tables went with its events (migration 042).
+- SQL needs an external SQL engine (`SQL_ENGINE_SOCKET`). Without one,
+  `list_components`' `source_types` leaves out `sql`; adding, copying,
+  updating the content of or previewing a `sql` widget, and duplicating a
+  dashboard (or group) that holds one, is refused as
+  `invalid` with "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)";
+  a stored one stays on its dashboard, unarchived, and its card answers the
+  same refusal while the dashboard's other widgets load. Use `query`
+  widgets instead, which need no engine.
 - Saving, previewing and running a widget refuse SQL that reads past the
   seven tables: a table function other than `range`, `generate_series`
   and `unnest` (`read_parquet`, `read_csv`, `glob` and the others read
@@ -293,6 +303,10 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
   (`main.events`, which would read every project's rows past `:project`)
   and any other table. A `WITH` name of the widget's own reads as usual,
   where it is in scope; a path inside a string compared as text is fine.
+- A widget whose SQL reads `:project` sees only that project's
+  `attr_<key>` columns: a key no event of the project carried is an error
+  ("Referenced column "attr_plan" not found"), not a column of NULLs. Name
+  only keys the project sends, or read them with `COLUMNS('^attr_')`.
 - The only parameters are `:project`, a BIGINT, and `:from` and `:to`,
   DATEs in UTC like `day`: `day BETWEEN :from AND :to`, and `:to - :from + 1`
   is the range's length in days. `?`, `$1` and `$name` are refused.
@@ -315,8 +329,10 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 
 ## Tables
 
-Widget SQL is DuckDB SQL ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction))
-over the raw events twillingate keeps as files beside its database: the
+Widget SQL is DuckDB SQL ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction)),
+the dialect the docs and the built-in examples assume, run by the
+external SQL engine over the raw events twillingate keeps as files beside
+its database: the
 seven tables `query` reads. Their columns, and how
 rules apply to them, are in [twillingate.md](twillingate.md#writing-sql-against-the-event-files).
 The files hold the events since the upgrade that began writing them, and
@@ -365,7 +381,7 @@ is older than `REPORTING_CACHE_MAX_AGE`:
 - Group in SQL and return what is drawn: rows past `CONSOLE_QUERY_ROWS_MAX`
   are cut.
 - `count(DISTINCT …)` over a long range keeps every value in memory, and
-  a query past `ENGINE_MEMORY_LIMIT` is refused. Count the rows of a
+  a query past the SQL engine's memory limit is refused. Count the rows of a
   `GROUP BY` subquery instead, which spills to disk, or narrow the
   range.
 - Today comes from the open logs, loaded again whenever they have grown;
@@ -1359,7 +1375,9 @@ widget's name (`widget visitors: …`), and nothing is created.
 | ? is not a parameter here; use :name | Use `:project`, `:from` or `:to`, or write the value into the SQL. `$1` and `$name` are refused the same way. |
 | sql must be a single statement; remove what follows the ';' | One `SELECT` (or `WITH … SELECT`). An unterminated string or comment and an unmatched `(` or `)` are refused too. |
 | query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the date range, or aggregate | Filter on `day`, group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |
-| the query ran out of the engine's memory (ENGINE_MEMORY_LIMIT) … | Count the rows of a `GROUP BY` subquery rather than `count(DISTINCT …)` over a large group, or narrow the range. |
+| the query ran out of the SQL engine's memory limit … | Count the rows of a `GROUP BY` subquery rather than `count(DISTINCT …)` over a large group, or narrow the range. |
+| the event files changed under the query on every attempt … | The daily pass was dumping or merging the files the query read; retry in a moment. |
+| the SQL engine's answer is larger than 256 MiB … | Return fewer rows or columns, or aggregate in SQL. |
 | DuckDB's own error, such as a column that does not exist (`Binder Error: Referenced column "visitors" not found …`) | Fix the query; try it with `query` first. |
 | markdown text is empty | Give the Markdown text. |
 | stat: … (a props schema error) | Match the props schema `list_components` returns; unknown props are refused. |
@@ -1420,6 +1438,17 @@ To fix them:
    `component` finds every widget on one.
 4. Check each with `widget_data`.
 
+**SQL widgets without an engine.** SQL runs on an external SQL engine
+(`SQL_ENGINE_SOCKET`). On an install that has none, a stored `sql` widget is
+not archived and not changed: its card, and its `widget_data`, answer
+"SQL needs an external SQL engine (SQL_ENGINE_SOCKET)" (`invalid`) while the
+dashboard's other widgets load. Either point `SQL_ENGINE_SOCKET` at a running
+engine, or convert the widget to a structured `query` source: open it in the
+console's editor (an existing SQL widget opens with a notice), pick the
+`query` source and rebuild it from the [Examples](#examples) that show the
+same component as a structured query, or send `update_widget` with a `query`
+source. A remote table has no `query` form: its SQL needs the engine.
+
 **Widgets written for SQLite.** Widget SQL used to be SQLite's, over the
 `v_*` views; it is now DuckDB's, over the event files, and nothing rewrote
 the widgets users had made. Such a widget fails with DuckDB's error and
@@ -1427,10 +1456,14 @@ the hint "widget SQL is DuckDB SQL over events, views, product, measures,
 sessions, identities and aliases; see docs://reporting". The console also
 logs each one when it starts (`widget SQL fails on the event files`, with
 `widget_id`, `dashboard_id` and `title`); a widget whose check ran out of
-time or memory is logged as `could not check widget on the event files`
+time or memory, or that the SQL engine was busy for or could not be
+reached for, is logged as `could not check widget on the event files`
 instead, and checked again at the next start. A timeout skips only that
-widget; running out of memory, or an engine child that died, ends the
-check there, and the widgets after it wait for the next start. Rewrite it by the
+widget, as do event files the daily pass kept moving under the query,
+until three widgets in a row end that way; that third one, running past
+the SQL engine's memory limit, a SQL engine whose worker died, a busy
+SQL engine and one that cannot be reached each end the check there,
+logged once as such, and the widgets after it wait for the next start. Rewrite it by the
 [Tables](#tables) section and the [Examples](#examples): `v_views_daily`
 becomes `views` grouped by day, `v_product_daily` `product` grouped by
 day and `event_name`, `v_measures_daily` `measures` with `bucket`,
@@ -1470,9 +1503,11 @@ Open `http://127.0.0.1:3100/`, which redirects to the dashboards at `/app/`.
   and never written: the view route answers but stores nothing, and the page
   offers no writes (no "…" menus, dragging or Restore buttons).
 - Widget SQL runs on the event files in `EVENTS_DIR` (default `raw/` beside
-  the database), through an engine child of the binary as in the console,
-  but without the projects' event and attribute rules: a renamed event
-  reads under the name it was stored with.
+  the database), on the external SQL engine at `SQL_ENGINE_SOCKET`, which
+  `reporting dev` reads from its environment as the console does (without
+  it, a SQL widget's card shows the refusal), but
+  without the projects' event and attribute rules: a renamed event reads
+  under the name it was stored with.
 - `-addr` is refused unless it is a loopback address, and a request naming
   any other host (`Host:`) gets `403`, so a page elsewhere cannot reach it
   by pointing its own name at `127.0.0.1`. There is no login: the page finds

@@ -1,0 +1,54 @@
+{
+  "7 days, rules {Events:[{ProjectID:1 Family:views Name:$bot_view Action:block To: CreatedAt:}] Attributes:[]}: 1/\"tie\" install:\"i1\" install \"\" connection \"h\" at 2026-10-14T12:00:00Z; 1/\"views\" install:\"i2\" install \"\" connection \"\" at 2026-10-14T12:00:00Z; 1/\"second\" install:\"i3\" install \"\" connection \"\" at 2026-10-14T12:00:00.9Z; 1/\"short\" install:\"i3\" install \"\" connection \"\" at 2026-10-12T12:00:00Z": [
+    {
+      "ID": "second",
+      "Newest": {
+        "Kind": "web",
+        "OS": "early"
+      },
+      "ProjectID": 1
+    },
+    {
+      "ID": "short",
+      "Newest": {
+        "Kind": "web",
+        "OS": "early"
+      },
+      "ProjectID": 1
+    },
+    {
+      "ID": "tie",
+      "Newest": {
+        "Kind": "web"
+      },
+      "ProjectID": 1,
+      "Source": {
+        "ReferrerSource": "from-connection"
+      }
+    },
+    {
+      "ID": "views",
+      "Newest": {
+        "Kind": "web",
+        "OS": "b"
+      },
+      "ProjectID": 1,
+      "Source": {
+        "UTMSource": "bot"
+      }
+    }
+  ],
+  "7 days: 1/\"views\" install:\"i2\" install \"\" connection \"\" at 2026-10-14T12:00:00Z": [
+    {
+      "ID": "views",
+      "Newest": {
+        "Kind": "web",
+        "OS": "blocked"
+      },
+      "ProjectID": 1,
+      "Source": {
+        "UTMSource": "bot"
+      }
+    }
+  ]
+}

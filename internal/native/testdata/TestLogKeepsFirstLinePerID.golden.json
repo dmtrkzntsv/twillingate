@@ -1,0 +1,11 @@
+{
+  "a5c2263bba0c": {
+    "columns": ["id","project_id","family","event_name","ts","day","received_at","kind","actor_id","actor_kind","user_id","group_id","session_id","install_id","user_name","group_name","host","path","referrer_source","utm_source","utm_medium","utm_campaign","platform","os","os_version","os_name","browser","browser_version","browser_locale","app_version","app_locale","device","device_model","display_width","display_height","country","consent","value","measure","sample_rate","attr_color","attr_plan"],
+    "rows": [
+      ["p1-2026-09-10-measures-0000","1","measures","ev2","2026-09-10T00:00:02.000000Z","2026-09-10","2026-09-10T00:00:02.000000Z","anonymous","a2","install",null,null,null,null,null,null,"example.com","/p2",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"390","800","US","0","0.6","lcp","1",null,"team"],
+      ["p1-2026-09-10-product-0000","1","product","ev1","2026-09-10T00:00:01.000000Z","2026-09-10",null,"anonymous","a1","install",null,null,null,null,null,null,"example.com","/p1",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"1280","801","DE","1",null,null,"1","red","pro"],
+      ["p1-2026-09-10-views-0000","1","views","ev0","2026-09-10T00:00:00.000000Z","2026-09-10","2026-09-10T00:00:00.000000Z","anonymous","a0","install","u0",null,null,null,null,null,"example.com","/p0",null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,"800",null,null,null,null,"1",null,null]
+    ],
+    "sql": "SELECT * FROM events WHERE project_id = 1"
+  }
+}

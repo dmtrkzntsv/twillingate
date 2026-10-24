@@ -65,11 +65,7 @@ func TestMeasureTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer eng.Close()
-	reader, err := archive.NewReader(raw, eng)
-	if err != nil {
-		t.Fatal(err)
-	}
-	h := &host{reg: reg, ops: ops, files: reader, native: native.New(native.Options{Dir: raw}), eventsDir: raw,
+	h := &host{reg: reg, ops: ops, sql: archivetest.ServeSQL(t, raw, eng).Client(t), native: native.New(native.Options{Dir: raw}), eventsDir: raw,
 		queryTimeout: 10 * time.Minute, queryRows: 1000, logger: logger}
 	r := rangeIn{ProjectID: 1, From: envOrDefault("MEASURE_FROM", "2026-09-01"), To: envOrDefault("MEASURE_TO", "2026-09-30")}
 	text := func(s string) enginesql.Value { return enginesql.Value{Type: "VARCHAR", Text: s} }

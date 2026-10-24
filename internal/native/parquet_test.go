@@ -248,8 +248,8 @@ func sortByFirst(rows [][]string) {
 // It returns the files.
 func matchDuckDB(t *testing.T, f *archivetest.Files) []string {
 	t.Helper()
-	res, err := f.Reader.Query(context.Background(),
-		"SELECT * FROM events WHERE project_id = 1 ORDER BY id", 0, archive.Rules{})
+	const q = "SELECT * FROM events WHERE project_id = 1 ORDER BY id"
+	res, err := f.Reader.Query(context.Background(), q, 0, archive.Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,6 +270,7 @@ func matchDuckDB(t *testing.T, f *archivetest.Files) []string {
 		want = append(want, r)
 	}
 	sortByFirst(want)
+	cols, want = frozenRows(t, q, archive.Rules{}, cols, want)
 
 	full := rng(t, "2026-08-01", "2026-09-30")
 	pq, logs, err := projectFiles(f.Dir, 1, full)
@@ -319,19 +320,25 @@ func TestParquetRowsMatchDuckDB(t *testing.T) {
 		gotSub = formatBatch(t, b, []string{"id", "attr_color", "attr_plan"}, gotSub)
 	}
 	sortByFirst(gotSub)
-	res, err := f.Reader.Query(context.Background(), "SELECT id, attr_color, attr_plan FROM events WHERE project_id = 1 "+
-		"AND family = 'product' AND day = DATE '2026-09-05' ORDER BY id", 0, archive.Rules{})
+	const q = "SELECT id, attr_color, attr_plan FROM events WHERE project_id = 1 " +
+		"AND family = 'product' AND day = DATE '2026-09-05' ORDER BY id"
+	res, err := f.Reader.Query(context.Background(), q, 0, archive.Rules{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(gotSub) != len(res.Rows) || len(gotSub) == 0 {
-		t.Fatalf("%d rows, want %d", len(gotSub), len(res.Rows))
-	}
+	duck := make([][]string, len(res.Rows))
 	for i, row := range res.Rows {
-		for j, v := range row {
-			if cell(t, v) != gotSub[i][j] {
-				t.Fatalf("row %d: got %q, want %v", i, gotSub[i], row)
-			}
+		for _, v := range row {
+			duck[i] = append(duck[i], cell(t, v))
+		}
+	}
+	_, want := frozenRows(t, q, archive.Rules{}, res.Columns, duck)
+	if len(gotSub) != len(want) || len(gotSub) == 0 {
+		t.Fatalf("%d rows, want %d", len(gotSub), len(want))
+	}
+	for i, row := range want {
+		if !slices.Equal(row, gotSub[i]) {
+			t.Fatalf("row %d: got %q, want %q", i, gotSub[i], row)
 		}
 	}
 }

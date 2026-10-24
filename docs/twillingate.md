@@ -1445,7 +1445,7 @@ history starts where the files' does. `query`, the count of events in
 | `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys `product_attributes` breaks down (`$browser`, `$path`, …); a key none carried gives no rows. By metric, kind and value; at most 1,000 rows |
 | `retention` | `actor` (`user` or `install`) | Cohort curves for the cohorts that began in the range, every offset up to 90 days after the cohort day (the [retention grid](#structured-queries)'s horizon; a later day back is not listed), by cohort, then offset, counted over the days before today (UTC), plus `aggregated_through`, the newest such day with views or product events — cohorts and offsets after it are **absent, not zero**. A project whose actors' retention state the engine cannot hold in memory is refused. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` (default 50) | Per user or group, busiest first (views plus product events in the range): its `actors` and `users` (itself for a user, its members for a group), each distinct per day and added up over the days, its `views`, `events` and the display `name` sent with its latest event (empty when none was sent, and when the name is the id itself). At most 1,000 rows. **Surfaces personal data on projects whose clients send ids** |
-| `query` | `sql`, or `project_id`, `from`, `to` (optional: the 30 days ending today, UTC) and `query` | One of two, never both. `query` is a structured query over one project, answered natively: a stat, a trend, a breakdown, a retention or an attributes, see [Structured queries](#structured-queries). `sql` is a single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them: see [Writing SQL against the event files](#writing-sql-against-the-event-files); it reads those seven tables only (no table function but `range`, `generate_series` and `unnest`, no schema-qualified name such as `main.events`), every project's rows, and takes none of `project_id`, `from` and `to`. Row-capped and time-limited either way |
+| `query` | `sql`, or `project_id`, `from`, `to` (optional: the 30 days ending today, UTC) and `query` | One of two, never both. `query` is a structured query over one project, answered natively: a stat, a trend, a breakdown, a retention or an attributes, see [Structured queries](#structured-queries). `sql` is a single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them, answered by an external SQL engine (`SQL_ENGINE_SOCKET`; without one the tool's schema and description leave `sql` out, and a call that sends it anyway is refused as `invalid`, "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)"): see [Writing SQL against the event files](#writing-sql-against-the-event-files); it reads those seven tables only (no table function but `range`, `generate_series` and `unnest`, no schema-qualified name such as `main.events`), every project's rows, and takes none of `project_id`, `from` and `to`. Row-capped and time-limited either way |
 
 `views_overview`, `views_breakdown`, `product_events`, `product_attributes`,
 `measures`, `identities`, `list_attributes`, `retention` and `usage` (and
@@ -1585,9 +1585,16 @@ given twice are all 400: a filter is never dropped silently.
 
 ### Writing SQL against the event files
 
-`query` runs one read-only `SELECT` through DuckDB over the raw events
-twillingate keeps as files beside its database; the analytics tools and the
-dashboards read the same tables. The
+Writing SQL needs an external SQL engine (`SQL_ENGINE_SOCKET`). The SQL
+is in DuckDB's dialect, which the docs and the built-in examples assume.
+
+`query` runs one read-only `SELECT` over the raw events twillingate keeps
+as files beside its database, on an external SQL engine at
+`SQL_ENGINE_SOCKET` ([deployment.md](deployment.md#external-sql-engine));
+without one, `sql` is refused as `invalid` with "SQL needs an external SQL
+engine (SQL_ENGINE_SOCKET)", and `query`'s structured queries, the
+analytics tools and the built-in dashboards, which need no engine, read
+the same tables. The
 files hold every project's events since the upgrade that began writing
 them, and the earlier raw days the database still held when
 `twillingate events import` ran on the upgrade to v0.21; nothing older can
@@ -1604,7 +1611,7 @@ it runs. `range`, `generate_series` and `unnest` are the table functions
 it may call, and its own `WITH` names read as usual; a path inside a string
 compared as text is just text. `query` reads every project's rows: filter
 `project_id`. `schema://views` lists the tables' columns. The dialect is
-DuckDB's ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction)),
+DuckDB's, which the docs and the built-in examples assume ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction)),
 close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
 `day BETWEEN DATE '2026-01-01' AND DATE '2026-01-31'`, `GROUP BY ALL`,
 `DESCRIBE events` for the columns.
@@ -1630,7 +1637,7 @@ is refused.
 | `consent` | BIGINT | 1, 0 or NULL |
 | `value`, `measure`, `sample_rate` | DOUBLE, VARCHAR, DOUBLE | `value` and `measure` are set on measures only; `sample_rate` is on every row, 1 unless the event was sampled |
 | `bucket` | INTEGER | `measures` only: the log-scale bucket of `value`, `ceil(ln(value) / ln(1.04))`, or `-1000` for a `value` of `1e-17` or less. Group by it to build a histogram; a bucket's width is about 4% of its value |
-| `attr_<key>` | VARCHAR | one per attribute key any event carried, the key as sent |
+| `attr_<key>` | VARCHAR | one per attribute key any event carried, the key as sent; in a widget scoped to one project (its SQL reads `:project`), one per key that project's events carried, so another project's key is an error ("Referenced column … not found"), not NULL |
 
 - **A field the event did not send is NULL,** not `''` (`value` and
   `measure` are NULL outside measures; `sample_rate` is the exception,
@@ -1693,12 +1700,12 @@ A person's events across devices, before and after signing in:
 
 The database's `v_*` views and `agg_*` tables went with its events
 (migration 042): name one here and the error says so and lists the tables
-the files hold. A query that runs out of the
-engine's memory (`ENGINE_MEMORY_LIMIT`) is refused with that cause: a
+the files hold. A query that runs past the
+SQL engine's memory limit is refused with that cause: a
 `COUNT(DISTINCT …)` over a large group is the usual one, rewritten as a
 `GROUP BY` in a subquery whose rows are then counted.
 When the open logs themselves do not fit that limit, whatever the query,
-the error says so: raise `ENGINE_MEMORY_LIMIT`.
+the error says so: raise the SQL engine's memory limit.
 
 ### Structured queries
 

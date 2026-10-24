@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -211,6 +212,33 @@ func TestGoDumpMatchesDuckDB(t *testing.T) {
 			for id := range c.allowed {
 				allowed = append(allowed, quote(id))
 			}
+			slices.Sort(allowed)
+			// The golden: DuckDB's file, the allowed ids' attr_n NULL in its
+			// rows and kept apart, as DuckDB gave it.
+			sel := "*"
+			if len(allowed) > 0 {
+				sel = "* REPLACE (CASE WHEN id IN (" + strings.Join(allowed, ", ") + ") THEN NULL ELSE attr_n END AS attr_n)"
+			}
+			type dumpAnswer struct {
+				File    fileAnswer        `json:"file"`
+				Allowed map[string]string `json:"allowed_attr_n,omitempty"`
+			}
+			if !skipDigest(t, c.name) {
+				duckAnswer := dumpAnswer{File: f.answerOf(t, duck, sel, false)}
+				for id := range c.allowed {
+					if duckAnswer.Allowed == nil {
+						duckAnswer.Allowed = map[string]string{}
+					}
+					duckAnswer.Allowed[id] = strings.Join(f.values(t, "SELECT attr_n FROM "+rel(duck)+" WHERE id = "+quote(id)), " ")
+				}
+				want := frozen(t, c.name, duckAnswer)
+				sameAnswer(t, "Go dump", f.answerOf(t, goFile, sel, false), want.File)
+				for id, text := range c.allowed {
+					if got := f.values(t, "SELECT attr_n FROM "+rel(goFile)+" WHERE id = "+quote(id)); !eq(got, []string{"[" + text + "]"}) || eq(got, []string{want.Allowed[id]}) {
+						t.Errorf("%s: attr_n = %v, want the JSON text %s, not DuckDB's golden %s", id, got, text, want.Allowed[id])
+					}
+				}
+			}
 			if len(allowed) == 0 {
 				f.sameRows(t, rel(goFile), rel(duck))
 			} else {
@@ -309,7 +337,7 @@ func TestDumpFailsWhereDuckDBDid(t *testing.T) {
 		src := f.project1(fmt.Sprintf("2026-10-%02d.parquet.dumping", i+1))
 		f.writeFile(t, filepath.Base(src), log)
 		out := strings.TrimSuffix(src, ".dumping")
-		if err := f.duckDump(t, src, f.project1("duck.parquet")); err == nil {
+		if failed := frozen(t, log, f.duckDump(t, src, f.project1("duck.parquet")) != nil); !failed {
 			t.Errorf("%q: DuckDB's dump went through", log)
 		}
 		if err := dumpLog(context.Background(), src, out); err == nil {

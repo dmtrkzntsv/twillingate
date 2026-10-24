@@ -1,0 +1,41 @@
+{
+  "7 days: 1/\"edge\" install:\"i4\" install \"\" connection \"\" at 2026-10-14T12:00:00Z; 1/\"named\" install:\"i5\" install \"\" connection \"\" at 2026-10-14T12:00:00Z; 1/\"nullid\" install:\"i6\" install \"\" connection \"\" at 2026-10-14T12:00:00Z; 2/\"two\" install:\"i5\" install \"\" connection \"\" at 2026-10-14T12:00:00Z": [
+    {
+      "ID": "edge",
+      "Newest": {
+        "Kind": "web"
+      },
+      "ProjectID": 1,
+      "Source": {
+        "ReferrerSource": "edge"
+      }
+    },
+    {
+      "ID": "named",
+      "Newest": {
+        "Kind": "web",
+        "OS": "named"
+      },
+      "ProjectID": 1
+    },
+    {
+      "ID": "nullid",
+      "Newest": {
+        "Kind": "web",
+        "OS": "nullid"
+      },
+      "ProjectID": 1
+    },
+    {
+      "ID": "two",
+      "Newest": {
+        "Kind": "web",
+        "OS": "two"
+      },
+      "ProjectID": 2,
+      "Source": {
+        "UTMSource": "p2"
+      }
+    }
+  ]
+}

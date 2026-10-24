@@ -8,11 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
 // Params is what a widget's source may read at load time: the dashboard's
@@ -53,30 +52,33 @@ type Markdown struct {
 	Markdown string `json:"markdown"`
 }
 
-// newSources builds the registered source types against files and clock
-// now, with nat answering query sources under rules. sampleRows controls
-// whether sql's Validate also runs a sample query and checks its rows'
-// types (true for a widget actually being saved; false where only the
-// query's shape matters). files and now may be nil when the result is
-// only used to enumerate or check registered names (validSourceType,
-// sortedSourceNames) — no method that touches either is called in that
-// case. nat nil fails a query source's Load, not its Validate, which
-// reads no data; rules nil applies none.
-func newSources(files Files, sampleRows bool, now func() time.Time, nat Native, rules RulesFunc) map[string]SourceType {
-	return map[string]SourceType{
-		"sql":   &sqlSource{files: files, sampleRows: sampleRows, now: now},
-		"query": &querySource{files: files, native: nat, rules: rules},
+// newSources builds the registered source types: sql on eng, with clock
+// now, only when there is an engine (eng non-nil); query answered by nat
+// under rules, each load under timeout (0: none) and at most maxRows rows
+// (0: all); and md. sampleRows controls whether sql's Validate also runs
+// a sample query and checks its rows' types (true for a widget actually
+// being saved; false where only the query's shape matters). nat nil
+// fails a query source's Load, not its Validate, which reads no data;
+// rules nil applies none.
+func newSources(eng *sqlEngine, sampleRows bool, now func() time.Time, nat Native, rules RulesFunc, timeout time.Duration, maxRows int) map[string]SourceType {
+	m := map[string]SourceType{
+		"query": &querySource{native: nat, rules: rules, timeout: timeout, maxRows: maxRows},
 		"md":    mdSource{},
 	}
+	if eng != nil {
+		m["sql"] = &sqlSource{eng: eng, sampleRows: sampleRows, now: now}
+	}
+	return m
 }
 
-// validSourceType reports whether name is a registered source type. It
-// asks the same registry newSources builds, rather than keeping a second
-// list of names that could drift from it.
-func validSourceType(name string) bool {
-	_, ok := newSources(nil, false, nil, nil, nil)[name]
-	return ok
-}
+// sourceTypes are the names of every source type this build has, sql
+// among them whether or not an engine is configured: what a component's
+// accepts may name.
+var sourceTypes = map[string]bool{"sql": true, "query": true, "md": true}
+
+// validSourceType reports whether name is a source type this build has
+// (sourceTypes), registered in this process or not.
+func validSourceType(name string) bool { return sourceTypes[name] }
 
 // sortedSourceNames lists m's keys alphabetically, for a refusal that
 // names every registered source type ("there are md, query and sql").
@@ -109,10 +111,10 @@ func (mdSource) Load(_ context.Context, content string, _ Params) (any, error) {
 }
 
 // sqlSource is the sql SourceType: a SELECT in DuckDB SQL run on the
-// event files through Files, parameterized on at most :project, :from
-// and :to.
+// event files by the external SQL engine, parameterized on at most
+// :project, :from and :to.
 type sqlSource struct {
-	files      Files
+	eng        *sqlEngine
 	sampleRows bool
 	now        func() time.Time // stands in for time.Now in tests; nil means time.Now
 }
@@ -133,7 +135,11 @@ func (s *sqlSource) clock() time.Time {
 // other input to bind.
 var allowedParams = map[string]bool{":project": true, ":from": true, ":to": true}
 
-func (s *sqlSource) Follows(content string) (project, rng bool) {
+func (s *sqlSource) Follows(content string) (project, rng bool) { return sqlFollows(content) }
+
+// sqlFollows is which of Params a widget's SQL reads, from its text
+// alone: a stored sql widget's, engine or none.
+func sqlFollows(content string) (project, rng bool) {
 	params, err := enginesql.Params(content)
 	if err != nil {
 		return false, false
@@ -175,35 +181,37 @@ func checkSQLParams(content string) ([]string, error) {
 // content reads :project, even to one with no rows (project 0 among them,
 // which reads none), and otherwise over every project, as a widget that
 // never names one read on SQLite (Decision 2). Either way it reads only
-// the seven tables (archive.Scoped.Confine): the save, the preview and
-// every run of a widget refuse the same SQL.
-func bindSQL(content string, params []string, p Params) (archive.Scoped, error) {
+// the seven tables (confine): the save, the preview and every run of a
+// widget refuse the same SQL.
+func bindSQL(content string, params []string, p Params) (boundSQL, error) {
 	bound, args, err := enginesql.Bind(content, map[string]enginesql.Value{
 		":project": {Type: "BIGINT", Text: strconv.FormatInt(p.ProjectID, 10)},
 		":from":    {Type: "DATE", Text: p.From},
 		":to":      {Type: "DATE", Text: p.To},
 	})
 	if err != nil {
-		return archive.Scoped{}, refuseText(err)
+		return boundSQL{}, refuseText(err)
 	}
-	q := archive.Scoped{SQL: bound, Args: args, Confine: true}
+	q := boundSQL{sql: bound, args: make(map[string]string, len(args)), confine: true}
+	for _, a := range args {
+		q.args[a.Name] = a.Value
+	}
 	for _, name := range params {
 		if name == ":project" {
-			q.Scope, q.Project = true, p.ProjectID
+			project := p.ProjectID
+			q.scope = &project
 		}
 	}
 	return q, nil
-}
-
-// rerun is a query on q's scope: sql with its args, at most maxRows rows.
-func rerun(q archive.Scoped, sql string, args []engine.Arg, maxRows int) archive.Scoped {
-	return archive.Scoped{SQL: sql, Args: args, MaxRows: maxRows, Scope: q.Scope, Project: q.Project, Confine: q.Confine}
 }
 
 func (s *sqlSource) Validate(ctx context.Context, content string, c Component) error {
 	params, err := checkSQLParams(content)
 	if err != nil {
 		return err
+	}
+	if s.eng == nil {
+		return ErrSQLEngine
 	}
 
 	// The engine refuses a parameter with no argument, so even the shape
@@ -212,14 +220,7 @@ func (s *sqlSource) Validate(ctx context.Context, content string, c Component) e
 	needsProject, needsRange := s.Follows(content)
 	var p Params
 	if needsProject {
-		if s.files == nil {
-			return errNoFiles
-		}
-		p.ProjectID, err = s.files.SampleProject(ctx)
-		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				return filesErr(s.files, err)
-			}
+		if p.ProjectID, err = s.eng.sampleProject(ctx); err != nil {
 			return err // an infrastructure error, not a refusal of content
 		}
 	}
@@ -233,7 +234,7 @@ func (s *sqlSource) Validate(ctx context.Context, content string, c Component) e
 		return err
 	}
 
-	res, err := runFiles(ctx, s.files, rerun(q, enginesql.Shape(q.SQL), q.Args, 0))
+	res, err := s.eng.ask(ctx, q, sqlengine.ModeShape, 0, nil)
 	if err != nil {
 		return err
 	}
@@ -244,7 +245,7 @@ func (s *sqlSource) Validate(ctx context.Context, content string, c Component) e
 		return nil
 	}
 
-	sample, err := runFiles(ctx, s.files, rerun(q, enginesql.Text(q.SQL), q.Args, 5))
+	sample, err := s.eng.ask(ctx, q, sqlengine.ModeText, 5, nil)
 	if err != nil {
 		return err
 	}
@@ -259,28 +260,31 @@ func (s *sqlSource) Load(ctx context.Context, content string, p Params) (any, er
 	if err != nil {
 		return nil, err
 	}
-	return loadRows(ctx, s.files, content, params, p)
+	return loadRows(ctx, s.eng, content, params, p)
 }
 
 // loadRows runs content, its params bound to p's values, for its rows as
-// text: at most Files.MaxRows of them, Truncated when more follow.
-// Shared by Load and Preview.
-func loadRows(ctx context.Context, files Files, content string, params []string, p Params) (readsql.Result, error) {
+// text: at most CONSOLE_QUERY_ROWS_MAX of them, Truncated when more
+// follow. Shared by Load and Preview.
+func loadRows(ctx context.Context, eng *sqlEngine, content string, params []string, p Params) (readsql.Result, error) {
 	q, err := bindSQL(content, params, p)
 	if err != nil {
 		return readsql.Result{}, err
 	}
-	if files == nil {
-		return readsql.Result{}, errNoFiles
+	if eng == nil {
+		return readsql.Result{}, ErrSQLEngine
 	}
 	// One row past the cap tells a full result from a cut one.
-	maxRows := files.MaxRows()
-	res, err := runFiles(ctx, files, rerun(q, enginesql.Text(q.SQL), q.Args, maxRows+1))
+	maxRows, limit := eng.maxRows, 0
+	if maxRows > 0 {
+		limit = maxRows + 1
+	}
+	res, err := eng.ask(ctx, q, sqlengine.ModeText, limit, nil)
 	if err != nil {
 		return readsql.Result{}, err
 	}
 	out := textResult(res)
-	if len(out.Rows) > maxRows {
+	if maxRows > 0 && len(out.Rows) > maxRows {
 		out.Rows, out.Truncated = out.Rows[:maxRows], true
 	}
 	return out, nil
@@ -301,8 +305,9 @@ func (e viewRefusal) Unwrap() error { return e.error }
 
 // LoadPage is Load for a remote table: content filtered, sorted and paged
 // by pg in the engine, with the matched and total counts, as readsql's
-// QueryPage does on SQLite: the shape for the columns, the page, and the
-// two counts when the page has no row to carry them.
+// QueryPage does on SQLite: the shape for the columns (and any refusal
+// of the widget's SQL itself), the page, and the two counts when the
+// page has no row to carry them.
 func (s *sqlSource) LoadPage(ctx context.Context, content string, p Params, pg readsql.Page) (readsql.PageResult, error) {
 	params, err := checkSQLParams(content)
 	if err != nil {
@@ -312,74 +317,81 @@ func (s *sqlSource) LoadPage(ctx context.Context, content string, p Params, pg r
 	if err != nil {
 		return readsql.PageResult{}, err
 	}
-	if s.files == nil {
-		return readsql.PageResult{}, errNoFiles
-	}
-	shape, err := runFiles(ctx, s.files, rerun(q, enginesql.Shape(q.SQL), q.Args, 0))
+	shape, err := s.eng.ask(ctx, q, sqlengine.ModeShape, 0, nil)
 	if err != nil {
 		return readsql.PageResult{}, err
 	}
-	cols := shape.Columns
-	stmt, err := enginesql.Page(q.SQL, q.Args, cols, pg, s.files.MaxRows())
+	page := enginePage(pg)
+	res, err := s.eng.ask(ctx, q, sqlengine.ModePage, s.eng.maxRows, &page)
 	if err != nil {
-		// content passed the scanner above, the only refusal of the text
-		// itself, so a refusal here is of pg: most often a column the
-		// query does not return.
-		return readsql.PageResult{}, viewRefusal{refuseText(err)}
-	}
-	res, err := runFiles(ctx, s.files, rerun(q, stmt.SQL, stmt.Args, 0))
-	if err != nil {
-		return readsql.PageResult{}, err
+		return readsql.PageResult{}, pageErr(err)
 	}
 
-	out := readsql.PageResult{Result: readsql.Result{Columns: cols, Rows: make([][]string, len(res.Rows))}}
+	out := readsql.PageResult{Result: readsql.Result{Columns: shape.Columns, Rows: make([][]string, len(res.Rows))}}
 	if pg.Distinct != "" {
 		out.Columns = []string{"value", "rows"}
 	}
-	keep := len(out.Columns)
 	if len(res.Rows) > 0 {
-		if out.Matched, err = count(res.Rows[0][keep]); err != nil {
-			return readsql.PageResult{}, err
-		}
-		if out.Total, err = count(res.Rows[0][keep+1]); err != nil {
-			return readsql.PageResult{}, err
-		}
+		// The page's own columns, then __tw_matched and __tw_total.
 		for i, row := range res.Rows {
-			out.Rows[i] = textRow(row[:keep])
+			if len(row) < 2 {
+				return readsql.PageResult{}, errors.New("reporting: a page row carries no counts")
+			}
+			out.Rows[i] = textRow(row[:len(row)-2])
 		}
-	} else if err := s.countEmpty(ctx, &out, q, cols, pg); err != nil {
+		last := res.Rows[0]
+		if out.Matched, err = count(last[len(last)-2]); err != nil {
+			return readsql.PageResult{}, err
+		}
+		if out.Total, err = count(last[len(last)-1]); err != nil {
+			return readsql.PageResult{}, err
+		}
+	} else if err := s.countEmpty(ctx, &out, q, page); err != nil {
 		return readsql.PageResult{}, err
 	}
 	out.Truncated = out.Matched > pg.Offset+len(out.Rows)
 	return out, nil
 }
 
+// pageErr is err from a page or count query: the engine's refusal there
+// is of the page (content passed the shape query before it, where any
+// refusal of the text itself comes), most often a column the query does
+// not return.
+func pageErr(err error) error {
+	var er engineRefused
+	if errors.As(err, &er) {
+		return viewRefusal{er.error}
+	}
+	return err
+}
+
 // countEmpty fills Matched and Total for a page with no rows, which has
-// no row to carry them. Offset 0 with no rows means nothing matched; a
-// page past the end still has to count what it skipped. q is the bound
-// query, bindSQL's.
-func (s *sqlSource) countEmpty(ctx context.Context, out *readsql.PageResult, q archive.Scoped, cols []string, pg readsql.Page) error {
-	total, matched, err := enginesql.Count(q.SQL, q.Args, cols, pg)
+// no row to carry them: the engine's count of what the page skipped
+// (matched is 0, not run, at offset 0, where no row means nothing
+// matched). q is the bound query, bindSQL's.
+func (s *sqlSource) countEmpty(ctx context.Context, out *readsql.PageResult, q boundSQL, page sqlengine.Page) error {
+	res, err := s.eng.ask(ctx, q, sqlengine.ModeCount, 0, &page)
 	if err != nil {
-		return viewRefusal{refuseText(err)}
+		return pageErr(err)
 	}
-	for _, c := range []struct {
-		stmt enginesql.Stmt
-		n    *int
-	}{{total, &out.Total}, {matched, &out.Matched}} {
-		if c.stmt.SQL == "" {
-			continue
-		}
-		res, err := runFiles(ctx, s.files, rerun(q, c.stmt.SQL, c.stmt.Args, 0))
-		if err != nil {
-			return err
-		}
-		if len(res.Rows) != 1 || len(res.Rows[0]) != 1 {
-			return errors.New("reporting: a page count returned no single cell")
-		}
-		if *c.n, err = count(res.Rows[0][0]); err != nil {
-			return err
-		}
+	if len(res.Rows) != 1 || len(res.Rows[0]) != 2 {
+		return errors.New("reporting: a page count returned no single row of two counts")
 	}
-	return nil
+	if out.Total, err = count(res.Rows[0][0]); err != nil {
+		return err
+	}
+	out.Matched, err = count(res.Rows[0][1])
+	return err
+}
+
+// enginePage is pg as the engine's protocol carries it.
+func enginePage(pg readsql.Page) sqlengine.Page {
+	out := sqlengine.Page{Filters: []sqlengine.Filter{}, Distinct: pg.Distinct, Limit: pg.Limit, Offset: pg.Offset}
+	for _, f := range pg.Filters {
+		out.Filters = append(out.Filters, sqlengine.Filter{Column: f.Column, Op: f.Op, Values: f.Values})
+	}
+	if pg.Sort != nil {
+		out.Sort = &sqlengine.Sort{Column: pg.Sort.Column, Desc: pg.Sort.Desc}
+	}
+	return out
 }

@@ -1,0 +1,14 @@
+{
+  "7 days: 1/\"user\" user:\"u1\" install \"\" connection \"\" at 2026-10-14T12:00:00Z": [
+    {
+      "ID": "user",
+      "Newest": {
+        "Kind": "web"
+      },
+      "ProjectID": 1,
+      "Source": {
+        "ReferrerSource": "google"
+      }
+    }
+  ]
+}

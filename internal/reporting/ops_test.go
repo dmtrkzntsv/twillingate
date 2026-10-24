@@ -181,7 +181,7 @@ func TestPlaceRetriesOnceOnConflict(t *testing.T) {
 	ctx := context.Background()
 	d := mustCreate(t, base, "DD", note("A"))
 
-	once := New(&racingStore{Store: base.st, limit: 1}, base.files, Options{})
+	once := newFilesService(&racingStore{Store: base.st, limit: 1}, filesOf(t, base), Options{})
 	w, err := once.AddWidget(ctx, "test", AddWidget{DashboardID: d.ID, WidgetSpec: note("Mine")})
 	if err != nil {
 		t.Fatalf("AddWidget after one lost race: %v", err)
@@ -194,7 +194,7 @@ func TestPlaceRetriesOnceOnConflict(t *testing.T) {
 	}
 
 	rs := &racingStore{Store: base.st, limit: 10}
-	always := New(rs, base.files, Options{})
+	always := newFilesService(rs, filesOf(t, base), Options{})
 	_, err = always.AddWidget(ctx, "test", AddWidget{DashboardID: d.ID, WidgetSpec: note("Again")})
 	if !errors.Is(err, store.ErrConflict) {
 		t.Errorf("err = %v, want ErrConflict", err)
@@ -204,7 +204,7 @@ func TestPlaceRetriesOnceOnConflict(t *testing.T) {
 	}
 	wantRefusal(t, err, store.ErrConflict, "dashboard "+itoa(d.ID)+" changed while placing this widget; try again")
 
-	named := New(&racingStore{Store: base.st, limit: 1, sameName: true}, base.files, Options{})
+	named := newFilesService(&racingStore{Store: base.st, limit: 1, sameName: true}, filesOf(t, base), Options{})
 	_, err = named.AddWidget(ctx, "test", AddWidget{DashboardID: d.ID, WidgetSpec: note("Taken")})
 	wantRefusal(t, err, store.ErrConflict, "widget name taken is already used on this dashboard")
 }
@@ -783,7 +783,7 @@ func TestUpdateWidgetLayoutKeepsAConcurrentEdit(t *testing.T) {
 	d := mustCreate(t, base, "DD", note("A"), note("B"))
 	a, b := d.Widgets[0].ID, d.Widgets[1].ID
 	retitle := func(_ context.Context, w store.Widget) store.Widget { w.Title = "Edited"; return w }
-	svc := New(&editingStore{Store: base.st, edit: retitle, cols: store.WidgetColumns{Content: true}}, base.files, Options{})
+	svc := newFilesService(&editingStore{Store: base.st, edit: retitle, cols: store.WidgetColumns{Content: true}}, filesOf(t, base), Options{})
 
 	w, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: a, Width: ptr(6), Height: ptr(4)})
 	if err != nil {
@@ -792,7 +792,7 @@ func TestUpdateWidgetLayoutKeepsAConcurrentEdit(t *testing.T) {
 	if w.Title != "Edited" || w.Width != 6 || w.Height != 4 {
 		t.Errorf("resized = %q %dx%d, want the edited title at 6x4", w.Title, w.Width, w.Height)
 	}
-	svc = New(&editingStore{Store: base.st, edit: retitle, cols: store.WidgetColumns{Content: true}}, base.files, Options{})
+	svc = newFilesService(&editingStore{Store: base.st, edit: retitle, cols: store.WidgetColumns{Content: true}}, filesOf(t, base), Options{})
 	w, err = svc.UpdateWidget(ctx, "test", UpdateWidget{ID: b, After: ptr(int64(0))})
 	if err != nil {
 		t.Fatal(err)
@@ -816,8 +816,8 @@ func TestUpdateWidgetContentKeepsAConcurrentLayout(t *testing.T) {
 		w.Width, w.Height, w.SortKey = 5, 3, "zz"
 		return w
 	}
-	svc := New(&editingStore{Store: base.st, edit: drag,
-		cols: store.WidgetColumns{SortKey: true, Width: true, Height: true}}, base.files, Options{})
+	svc := newFilesService(&editingStore{Store: base.st, edit: drag,
+		cols: store.WidgetColumns{SortKey: true, Width: true, Height: true}}, filesOf(t, base), Options{})
 
 	w, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: a, Title: ptr("New")})
 	if err != nil {
@@ -838,7 +838,7 @@ func TestUpdateWidgetWidthKeepsAConcurrentHeight(t *testing.T) {
 	d := mustCreate(t, base, "DD", note("A"))
 	a := d.Widgets[0].ID
 	taller := func(_ context.Context, w store.Widget) store.Widget { w.Height = 7; return w }
-	svc := New(&editingStore{Store: base.st, edit: taller, cols: store.WidgetColumns{Height: true}}, base.files, Options{})
+	svc := newFilesService(&editingStore{Store: base.st, edit: taller, cols: store.WidgetColumns{Height: true}}, filesOf(t, base), Options{})
 
 	w, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: a, Width: ptr(4)})
 	if err != nil {
@@ -857,8 +857,8 @@ func TestUpdateWidgetMoveKeepsAConcurrentSize(t *testing.T) {
 	d := mustCreate(t, base, "DD", note("A"), note("B"))
 	b := d.Widgets[1].ID
 	resize := func(_ context.Context, w store.Widget) store.Widget { w.Width, w.Height = 5, 7; return w }
-	svc := New(&editingStore{Store: base.st, edit: resize,
-		cols: store.WidgetColumns{Width: true, Height: true}}, base.files, Options{})
+	svc := newFilesService(&editingStore{Store: base.st, edit: resize,
+		cols: store.WidgetColumns{Width: true, Height: true}}, filesOf(t, base), Options{})
 
 	w, err := svc.UpdateWidget(ctx, "test", UpdateWidget{ID: b, After: ptr(int64(0))})
 	if err != nil {

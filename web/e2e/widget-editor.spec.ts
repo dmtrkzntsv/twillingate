@@ -36,12 +36,18 @@ async function cardMenu(page: Page, title: string): Promise<void> {
   await card.getByRole('button', { name: 'Widget actions' }).click()
 }
 
-/** Replaces the SQL editor's whole text. */
-async function typeSQL(page: Page, sql: string): Promise<void> {
-  await page.getByRole('dialog').getByLabel('SQL').click()
+/** Replaces the query editor's whole text with this structured query. */
+async function typeQuery(page: Page, query: object): Promise<void> {
+  await page.getByRole('dialog').getByLabel('Query', { exact: true }).click()
   await page.keyboard.press('ControlOrMeta+a')
-  await page.keyboard.insertText(sql)
+  await page.keyboard.insertText(JSON.stringify(query))
 }
+
+// Views per day, renamed to the line's inputs; `rename` picks which of them the result has.
+const trend = (rename: Record<string, string>) => ({
+  query: { kind: 'trend', table: 'views', metrics: [{ op: 'actors' }] },
+  rename,
+})
 
 test('builds a dashboard from a project and edits its widget', async ({ page, request }) => {
   test.setTimeout(90_000)
@@ -67,11 +73,8 @@ test('builds a dashboard from a project and edits its widget', async ({ page, re
     await dialog.getByLabel('Title').fill('Daily views')
     await dialog.getByRole('combobox', { name: 'Visualization' }).click()
     await page.getByRole('option', { name: 'line', exact: true }).click()
-    await typeSQL(
-      page,
-      'SELECT day AS x, count(DISTINCT actor_id) AS y FROM views WHERE project_id = :project AND day BETWEEN :from AND :to GROUP BY day'
-    )
-    // The query reads :project and :from/:to, so the editor offers both.
+    await typeQuery(page, trend({ day: 'x', actors: 'y' }))
+    // A query follows the project and the range, so the editor offers both.
     await expect(dialog.getByRole('combobox', { name: 'Project' })).toBeVisible()
     await expect(dialog.getByRole('button', { name: /^Range: / })).toBeVisible()
     await page.keyboard.press('ControlOrMeta+Enter')
@@ -84,7 +87,7 @@ test('builds a dashboard from a project and edits its widget', async ({ page, re
     const card = page.locator('[data-slot="widget-card"]', { hasText: 'Daily views' })
     await expect(card).toBeVisible()
 
-    // Edit the SQL: a run whose columns don't fit the line shows the problem with the rows.
+    // Edit the query: a run whose columns don't fit the line shows the problem with the rows.
     await cardMenu(page, 'Daily views')
     await page.getByRole('menuitem', { name: 'Edit…' }).click()
     await expect(dialog.getByRole('heading', { name: 'Edit widget' })).toBeVisible()
@@ -106,11 +109,10 @@ test('builds a dashboard from a project and edits its widget', async ({ page, re
     await surfaces.dblclick()
     await expect(surfaces).toHaveAttribute('aria-valuenow', String(tall))
     await halves.dblclick()
-    await typeSQL(page, 'SELECT day AS x FROM views WHERE project_id = :project LIMIT 3')
-    await expect(dialog.getByRole('button', { name: /^Range: / })).toHaveCount(0)
+    await typeQuery(page, trend({ day: 'x' }))
     await dialog.getByRole('button', { name: /Run query/ }).click()
     await expect(dialog.getByText(/line needs y/)).toBeVisible()
-    await typeSQL(page, 'SELECT day AS x, count(*) AS y FROM views WHERE project_id = :project GROUP BY day LIMIT 3')
+    await typeQuery(page, { query: { kind: 'trend', table: 'views', metrics: [{ op: 'count' }] }, rename: { day: 'x', count: 'y' } })
     await expect(dialog.getByText('Changed since last run')).toBeVisible()
     await dialog.getByRole('button', { name: 'Save' }).click()
     await expect(dialog).toBeHidden()
@@ -215,9 +217,10 @@ test('adds a stat whose source is a structured query', async ({ page, request })
     await dialog.getByLabel('Title').fill('Views by query')
     await dialog.getByRole('combobox', { name: 'Visualization' }).click()
     await page.getByRole('option', { name: 'stat', exact: true }).click()
-    // A new widget starts on SQL; Query starts from a stat over the views, renamed to value.
-    await expect(dialog.getByRole('button', { name: 'SQL', exact: true })).toHaveAttribute('aria-pressed', 'true')
-    await dialog.getByRole('button', { name: 'Query', exact: true }).click()
+    // With no external SQL engine (serve.sh sets none) a new widget starts on
+    // Query, with no SQL to switch to: a stat over the views, renamed to value.
+    await expect(dialog.getByRole('group', { name: 'Source type' })).toHaveCount(0)
+    await expect(dialog.getByRole('button', { name: 'SQL', exact: true })).toHaveCount(0)
     await expect(dialog.getByLabel('Query')).toContainText('"kind": "stat"')
     // A query follows the project and the range: both switchers show. The seeded project holds views.
     await dialog.getByRole('combobox', { name: 'Project' }).click()
@@ -237,9 +240,66 @@ test('adds a stat whose source is a structured query', async ({ page, request })
     expect(widgets.find((w) => w.title === 'Views by query')?.source.type).toBe('query')
     await cardMenu(page, 'Views by query')
     await page.getByRole('menuitem', { name: 'Edit…' }).click()
-    await expect(dialog.getByRole('button', { name: 'Query', exact: true })).toHaveAttribute('aria-pressed', 'true')
     await expect(dialog.getByLabel('Query')).toContainText('"rename"')
+    await expect(dialog.getByRole('button', { name: 'SQL', exact: true })).toHaveCount(0)
   } finally {
     await request.post(`/api/dashboards/${id}/archive`, { headers: authHeaders() })
   }
+})
+
+test('with no external SQL engine, offers no SQL or remote table, and converts a stored SQL widget to Query', async ({ page, request }) => {
+  test.setTimeout(60_000)
+  // serve.sh writes this dashboard straight into the database: the API no longer takes SQL.
+  const list = await request.get('/api/dashboards', { headers: authHeaders() })
+  const seeded = ((await list.json()) as { dashboards: { dashboard_id: number; title: string }[] }).dashboards.find(
+    (d) => d.title === 'No SQL engine'
+  )
+  expect(seeded, 'serve.sh seeds the No SQL engine dashboard').toBeDefined()
+  const components = await request.get('/api/components', { headers: authHeaders() })
+  expect(((await components.json()) as { source_types: string[] }).source_types).not.toContain('sql')
+
+  await login(page)
+  await page.goto(`/app/dashboards/${seeded!.dashboard_id}`)
+  // The SQL card shows the server's refusal; the rest of the dashboard loads.
+  const sqlCard = page.locator('[data-slot="widget-card"]', { hasText: 'Stored SQL' })
+  await expect(sqlCard.getByText('Query no longer runs')).toBeVisible()
+  await sqlCard.getByRole('button', { name: 'Details' }).click()
+  await expect(sqlCard.getByText('SQL needs an external SQL engine (SQL_ENGINE_SOCKET)')).toBeVisible()
+  await expect(page.locator('[data-slot="widget-card"]', { hasText: 'Still here' })).toContainText('Every other widget loads.')
+
+  // A new table offers no remote mode, and says why.
+  await page.getByRole('button', { name: 'Add widget' }).first().click()
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('combobox', { name: 'Visualization' }).click()
+  await page.getByRole('option', { name: 'table', exact: true }).click()
+  await expect(dialog.getByRole('button', { name: 'SQL', exact: true })).toHaveCount(0)
+  const mode = dialog.getByRole('combobox', { name: 'mode', exact: true })
+  await expect(mode.locator('option')).toHaveText(['default', 'local'])
+  await expect(dialog.getByText('A remote table needs the external SQL engine')).toBeVisible()
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await page.getByRole('button', { name: 'Discard' }).click()
+  await expect(dialog).toBeHidden()
+
+  // The stored SQL opens read-only with a notice; Convert to Query keeps the title and visualization.
+  await cardMenu(page, 'Stored SQL')
+  await page.getByRole('menuitem', { name: 'Edit…' }).click()
+  await expect(dialog.getByRole('heading', { name: 'Edit widget' })).toBeVisible()
+  await expect(dialog.getByText(/This widget is SQL, which needs the external SQL engine/)).toBeVisible()
+  const sql = dialog.getByLabel('SQL', { exact: true })
+  await expect(sql).toContainText('SELECT 42 AS value')
+  await expect(sql).toHaveAttribute('contenteditable', 'false')
+  await expect(dialog.getByRole('button', { name: 'Save' })).toBeDisabled()
+  await expect(dialog.getByRole('button', { name: /Run query/ })).toBeDisabled()
+  await dialog.getByRole('button', { name: 'Convert to Query' }).click()
+  await expect(dialog.getByLabel('Query', { exact: true })).toContainText('"kind": "stat"')
+  await expect(dialog.getByText(/This widget is SQL/)).toHaveCount(0)
+  await expect(dialog.getByRole('button', { name: 'SQL', exact: true })).toHaveCount(0)
+  await expect(dialog.getByLabel('Title')).toHaveValue('Stored SQL')
+  await expect(dialog.getByRole('combobox', { name: 'Visualization' })).toContainText('stat')
+  // The query runs as it would on save; the seeded widget is left as stored for other spec files.
+  await expect(dialog.getByText(/^1 row · \d+ ms/)).toBeVisible()
+  await expect(dialog.getByRole('button', { name: 'Save' })).toBeEnabled()
+  await dialog.getByRole('button', { name: 'Cancel' }).click()
+  await page.getByRole('button', { name: 'Discard' }).click()
+  await expect(dialog).toBeHidden()
 })

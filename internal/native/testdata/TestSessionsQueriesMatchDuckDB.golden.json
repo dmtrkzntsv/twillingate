@@ -1,0 +1,196 @@
+{
+  "breakdown edbcc5bbf6b8": {
+    "rows": [
+      ["/a","/c","13","1"],
+      ["/anon","/anon2","13","0"],
+      ["/app","/app","13","1"],
+      ["/d2","/d2b","13","1"],
+      ["/early","/early","13","1"],
+      ["/first","/second","13","1"],
+      ["/late","/late","13","1"],
+      ["/s1a","/s1b","13","1"],
+      ["/u1","/u2","13","1"],
+      ["/u3","/u3","13","1"],
+      ["/w","/w","13","1"],
+      ["/d","/e","12","1"],
+      ["/x5","/x5","7","1"],
+      ["/d","/late","1","1"],
+      ["/new","/new","1","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"entry_path\", \"exit_path\", count(*) AS c, count(DISTINCT \"actor_id\") FROM sessions WHERE \"project_id\" = 3 AND \"day\" BETWEEN DATE '2026-08-29' AND DATE '2026-09-10'\n\t\t\t\tGROUP BY ALL ORDER BY c DESC, \"entry_path\" ASC NULLS LAST, \"exit_path\" ASC NULLS LAST LIMIT 100"
+  },
+  "breakdown_bounce_rate_other 2329b71f73ed": {
+    "rows": [
+      ["bing","1","1","1"],
+      ["duck","1","7","7"],
+      ["Other","0.4166666666666667","65","156"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH g AS (SELECT \"referrer_source\" AS r, count(*) FILTER (WHERE \"views\" = 1)::DOUBLE / count(*) AS b,\n\t\t\t\tcount(*) FILTER (WHERE \"views\" = 1) AS n, count(*) AS c\n\t\t\tFROM sessions WHERE \"project_id\" = 3 AND \"day\" BETWEEN DATE '2026-08-29' AND DATE '2026-09-10' GROUP BY ALL),\n\t\ttop AS (SELECT * FROM g ORDER BY b DESC, r ASC NULLS LAST LIMIT 2) SELECT r, b, n, c FROM (\n\t\t\t\t\tSELECT 0 AS o, r, b, n, c FROM top\n\t\t\t\t\tUNION ALL\n\t\t\t\t\tSELECT 1, 'Other', count(*) FILTER (WHERE \"views\" = 1)::DOUBLE / count(*), count(*) FILTER (WHERE \"views\" = 1), count(*)\n\t\t\t\t\tFROM sessions s WHERE \"project_id\" = 3 AND \"day\" BETWEEN DATE '2026-08-29' AND DATE '2026-09-10' AND NOT EXISTS (SELECT 1 FROM top WHERE top.r IS NOT DISTINCT FROM s.\"referrer_source\")\n\t\t\t\t\tHAVING count(*) > 0)\n\t\t\t\tORDER BY o, b DESC, r ASC NULLS LAST"
+  },
+  "breakdown_entry_path e47225c094b6": {
+    "rows": [
+      ["/a","13"],
+      ["/anon","13"],
+      ["/app","13"],
+      ["/d","13"],
+      ["/d2","13"],
+      ["/early","13"],
+      ["/first","13"],
+      ["/late","13"],
+      ["/s1a","13"],
+      ["/u1","13"],
+      ["/u3","13"],
+      ["/w","13"],
+      ["/x5","7"],
+      ["/new","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"entry_path\", count(*) AS c FROM sessions WHERE \"project_id\" = 3 AND \"day\" BETWEEN DATE '2026-08-29' AND DATE '2026-09-10'\n\t\t\t\tGROUP BY ALL ORDER BY c DESC, \"entry_path\" ASC NULLS LAST LIMIT 20"
+  },
+  "breakdown_referred_bounces ed099de32744": {
+    "rows": [
+      ["/a","13","0","0","2400"],
+      ["/anon","13","","0",""],
+      ["/app","13","","0",""],
+      ["/d","13","","0",""],
+      ["/d2","13","","0",""],
+      ["/early","13","","0",""],
+      ["/first","13","","0",""],
+      ["/late","13","","0",""],
+      ["/s1a","13","","0",""],
+      ["/u1","13","","0",""],
+      ["/u3","13","","0",""],
+      ["/w","13","","0",""],
+      ["/x5","7","1","7","0"],
+      ["/new","1","1","1","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"entry_path\", count(*) AS c,\n\t\t\t\tROUND(CASE WHEN count(*) FILTER (WHERE \"referrer_source\" <> '') > 0 THEN\n\t\t\t\t\tcount(*) FILTER (WHERE \"views\" = 1 AND \"referrer_source\" <> '')::DOUBLE / count(*) FILTER (WHERE \"referrer_source\" <> '') END, 2),\n\t\t\t\tcount(*) FILTER (WHERE \"views\" = 1 AND \"referrer_source\" <> ''), avg(\"duration_sec\") FILTER (WHERE \"referrer_source\" <> '')\n\t\t\t\tFROM sessions WHERE \"project_id\" = 3 AND \"day\" BETWEEN DATE '2026-08-29' AND DATE '2026-09-10' GROUP BY ALL ORDER BY c DESC, \"entry_path\" ASC NULLS LAST LIMIT 100"
+  },
+  "filtered 567b87a33eac": {
+    "rows": [
+      ["","2026-08-29","1"],
+      ["","2026-08-30","1"],
+      ["","2026-08-31","1"],
+      ["","2026-09-01","1"],
+      ["","2026-09-02","1"],
+      ["","2026-09-03","1"],
+      ["","2026-09-04","1"],
+      ["","2026-09-05","1"],
+      ["","2026-09-06","1"],
+      ["","2026-09-07","1"],
+      ["","2026-09-08","1"],
+      ["","2026-09-09","1"],
+      ["","2026-09-10","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"referrer_source\", \"day\", count(*) AS c FROM sessions WHERE \"project_id\" = 3 AND \"day\" BETWEEN DATE '2026-08-29' AND DATE '2026-09-10' AND \"views\" > 1 AND \"duration_sec\" <= 1800\n\t\t\t\tAND \"session_id\" <> '2' AND \"entry_host\" <> ''\n\t\t\t\tGROUP BY ALL ORDER BY c DESC, \"referrer_source\" ASC NULLS LAST, \"day\" ASC LIMIT 100"
+  },
+  "stat 38b3497a6e7e": {
+    "rows": [
+      ["164","7"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT count(*), count(DISTINCT \"actor_id\") FROM sessions WHERE \"project_id\" = 3 AND \"day\" BETWEEN DATE '2026-08-29' AND DATE '2026-09-10'"
+  },
+  "stat_compare 66003d5ebf46": {
+    "rows": [
+      ["50","0.44","51","0.45098039215686275"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH c AS (SELECT count(*) AS n, count(*) FILTER (WHERE \"views\" = 1)::DOUBLE / count(*) AS r FROM sessions WHERE \"project_id\" = 3 AND \"day\" BETWEEN DATE '2026-09-03' AND DATE '2026-09-06'),\n\t\t\t\tp AS (SELECT count(*) AS n, count(*) FILTER (WHERE \"views\" = 1)::DOUBLE / count(*) AS r FROM sessions\n\t\t\t\t\tWHERE \"project_id\" = 3 AND \"day\" BETWEEN DATE '2026-08-30' AND DATE '2026-09-02')\n\t\t\t\tSELECT c.n, c.r, p.n, p.r FROM c, p"
+  },
+  "stat_empty 045e321ff171": {
+    "rows": [
+      ["0","0","","","","",""]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT count(*), count(*) FILTER (WHERE \"views\" = 1),\n\t\tCASE WHEN count(*) > 0 THEN count(*) FILTER (WHERE \"views\" = 1)::DOUBLE / count(*) END,\n\t\tavg(\"duration_sec\"), sum(\"views\"), min(\"duration_sec\"), max(\"views\") FROM sessions WHERE \"project_id\" = 3 AND \"day\" BETWEEN DATE '2026-07-01' AND DATE '2026-07-05'"
+  },
+  "stat_session_metrics 4a03f121f1f4": {
+    "rows": [
+      ["164","73","0.4451219512195122","704.2682926829268","269","0","3"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT count(*), count(*) FILTER (WHERE \"views\" = 1),\n\t\tCASE WHEN count(*) > 0 THEN count(*) FILTER (WHERE \"views\" = 1)::DOUBLE / count(*) END,\n\t\tavg(\"duration_sec\"), sum(\"views\"), min(\"duration_sec\"), max(\"views\") FROM sessions WHERE \"project_id\" = 3 AND \"day\" BETWEEN DATE '2026-08-29' AND DATE '2026-09-10'"
+  },
+  "trend e0c450f0b277": {
+    "rows": [
+      ["2026-08-29","13"],
+      ["2026-08-30","12"],
+      ["2026-08-31","13"],
+      ["2026-09-01","12"],
+      ["2026-09-02","14"],
+      ["2026-09-03","12"],
+      ["2026-09-04","13"],
+      ["2026-09-05","12"],
+      ["2026-09-06","13"],
+      ["2026-09-07","12"],
+      ["2026-09-08","13"],
+      ["2026-09-09","12"],
+      ["2026-09-10","13"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"day\", count(*) FROM sessions WHERE \"project_id\" = 3 AND \"day\" BETWEEN DATE '2026-08-29' AND DATE '2026-09-10' GROUP BY \"day\" ORDER BY \"day\""
+  },
+  "trend_bounce_rate 2d96c3f976ed": {
+    "rows": [
+      ["2026-08-29","0.46153846153846156"],
+      ["2026-08-30","0.4166666666666667"],
+      ["2026-08-31","0.46153846153846156"],
+      ["2026-09-01","0.4166666666666667"],
+      ["2026-09-02","0.5"],
+      ["2026-09-03","0.4166666666666667"],
+      ["2026-09-04","0.46153846153846156"],
+      ["2026-09-05","0.4166666666666667"],
+      ["2026-09-06","0.46153846153846156"],
+      ["2026-09-07","0.4166666666666667"],
+      ["2026-09-08","0.46153846153846156"],
+      ["2026-09-09","0.4166666666666667"],
+      ["2026-09-10","0.46153846153846156"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"day\", count(*) FILTER (WHERE \"views\" = 1)::DOUBLE / count(*) FROM sessions WHERE \"project_id\" = 3 AND \"day\" BETWEEN DATE '2026-08-29' AND DATE '2026-09-10' GROUP BY \"day\" ORDER BY \"day\""
+  },
+  "trend_by_kind c68b5adfffae": {
+    "rows": [
+      ["2026-08-29","app","1"],
+      ["2026-08-29","cli","1"],
+      ["2026-08-29","web","5"],
+      ["2026-08-30","app","1"],
+      ["2026-08-30","web","5"],
+      ["2026-08-31","app","1"],
+      ["2026-08-31","cli","1"],
+      ["2026-08-31","web","5"],
+      ["2026-09-01","app","1"],
+      ["2026-09-01","web","5"],
+      ["2026-09-02","app","1"],
+      ["2026-09-02","cli","1"],
+      ["2026-09-02","web","6"],
+      ["2026-09-03","app","1"],
+      ["2026-09-03","web","5"],
+      ["2026-09-04","app","1"],
+      ["2026-09-04","cli","1"],
+      ["2026-09-04","web","5"],
+      ["2026-09-05","app","1"],
+      ["2026-09-05","web","5"],
+      ["2026-09-06","app","1"],
+      ["2026-09-06","cli","1"],
+      ["2026-09-06","web","5"],
+      ["2026-09-07","app","1"],
+      ["2026-09-07","web","5"],
+      ["2026-09-08","app","1"],
+      ["2026-09-08","cli","1"],
+      ["2026-09-08","web","5"],
+      ["2026-09-09","app","1"],
+      ["2026-09-09","web","5"],
+      ["2026-09-10","app","1"],
+      ["2026-09-10","cli","1"],
+      ["2026-09-10","web","5"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"day\", \"kind\", count(DISTINCT \"actor_id\") FROM sessions WHERE \"project_id\" = 3 AND \"day\" BETWEEN DATE '2026-08-29' AND DATE '2026-09-10' GROUP BY ALL ORDER BY \"day\", \"kind\""
+  }
+}

@@ -241,7 +241,7 @@ func duckTableWith(t *testing.T, f *archivetest.Files, rules archive.Rules, sql,
 		}
 		out = append(out, r)
 	}
-	return out
+	return frozenTable(t, q, rules, out)
 }
 
 // sameCell says whether two cells are equal: as strings, or as numbers

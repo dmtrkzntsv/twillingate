@@ -201,15 +201,28 @@ func newSystemFixture(t *testing.T) systemFixture {
 	ctx := context.Background()
 	st, _ := newTestStore(t)
 	// A generous timeout: this runs under -race in make test.
-	files := &testFiles{Files: archivetest.New(t), st: st, timeout: 60 * time.Second, maxRows: 1000}
-	if err := Migrate(ctx, st, files); err != nil {
+	files := serveTestFiles(t, archivetest.New(t), st, 60*time.Second, 1000)
+	if err := Migrate(ctx, st, files, files.options(Options{})); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
-	today := civil.Today(time.Now().UTC())
+	today := systemToday
 	pid := mustCreateProject(t, st, "demo")
 	other := mustCreateProject(t, st, "neighbour")
 	archivetest.CopyDir(t, systemTemplate(t, pid, other, today), files.Dir)
-	return systemFixture{svc: New(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})}), st: st, files: files, project: pid, neighbour: other, today: today}
+	nat := native.New(native.Options{Dir: files.Dir, Now: func() time.Time { return today.Time().Add(12 * time.Hour) }})
+	return systemFixture{svc: newFilesService(st, files, Options{Native: nat}), st: st, files: files, project: pid, neighbour: other, today: today}
+}
+
+// systemToday is the system fixture's today, fixed so that its files, and
+// the answers testdata/*.golden.json keep of them, are the same on any
+// day: the native engine's clock reads it (noon), and the old SQL's
+// current_date is replaced by it (todaySQL). The service's own clock stays
+// real; every range the tests ask for ends by this day.
+var systemToday = civil.Date{Year: 2026, Month: 10, Day: 23}
+
+// todaySQL is q with DuckDB's current_date read as the fixture's today.
+func (f systemFixture) todaySQL(q string) string {
+	return strings.ReplaceAll(q, "current_date", "DATE '"+f.today.String()+"'")
 }
 
 // systemFiles is the raw/ directory every system fixture starts from,
@@ -261,7 +274,7 @@ func removeSystemTemplate() {
 }
 
 // rows runs q over the fixture's project in the files, every cell as the
-// widgets show it: a reference to hold a widget to.
+// widgets show it: a reference to hold a widget to, its answer frozen.
 func (f systemFixture) rows(t *testing.T, q string) [][]string {
 	t.Helper()
 	res, err := f.files.Reader.QueryScoped(context.Background(),
@@ -278,7 +291,10 @@ func (f systemFixture) rows(t *testing.T, q string) [][]string {
 			}
 		}
 	}
-	return out
+	// Frozen in testdata/<Test>.golden.json, sorted: the callers read the
+	// rows as a set.
+	slices.SortFunc(out, slices.Compare)
+	return frozen(t, queryKey(t, q), rowsAnswer{SQL: q, Rows: out}).Rows
 }
 
 // count is rows for a q that returns one number.
@@ -361,7 +377,7 @@ func TestRetentionMilestonesMatchCurve(t *testing.T) {
 func TestRetentionKindIsSticky(t *testing.T) {
 	ctx := context.Background()
 	st, files := newTestStoreAndFiles(t, 1000)
-	if err := Migrate(ctx, st, files); err != nil {
+	if err := Migrate(ctx, st, files, files.options(Options{})); err != nil {
 		t.Fatal(err)
 	}
 	pid := mustCreateProject(t, st, "sticky")
@@ -384,7 +400,7 @@ func TestRetentionKindIsSticky(t *testing.T) {
 	view("i", "install", 0)
 	view("i", "install", 5)
 	files.Write(t, evs...)
-	svc := New(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})})
+	svc := newFilesService(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})})
 	got, err := svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, svc, 5, "cohorts"), ProjectID: pid,
 		From: cohort.AddDays(-3).String(), To: cohort.String()})
 	if err != nil {
@@ -559,13 +575,13 @@ func TestAttributeValuesCountEachValueOnce(t *testing.T) {
 func TestAttributeValuesWithoutAttributes(t *testing.T) {
 	ctx := context.Background()
 	st, files := newTestStoreAndFiles(t, 1000)
-	if err := Migrate(ctx, st, files); err != nil {
+	if err := Migrate(ctx, st, files, files.options(Options{})); err != nil {
 		t.Fatal(err)
 	}
 	pid := mustCreateProject(t, st, "plain")
 	today := civil.Today(time.Now().UTC())
 	files.Write(t, event(t, "p1", pid, store.FamilyProduct, "signup", today.AddDays(-1).String()))
-	svc := New(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})})
+	svc := newFilesService(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})})
 	from, to := presetDates("7d", today)
 
 	d, err := svc.Dashboard(ctx, 2)
