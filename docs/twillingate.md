@@ -1689,7 +1689,9 @@ the error says so: raise `ENGINE_MEMORY_LIMIT`.
 
 `query`'s `query` field asks one project's event files a question without
 SQL: twillingate answers it itself, with the rules applied as everywhere
-else, over `project_id`'s days `from` through `to` (both `YYYY-MM-DD`;
+else (except on `sessions` and `identities`: the daily pass derives those
+from the events as stored, and the query derives the days it has not
+caught up with), over `project_id`'s days `from` through `to` (both `YYYY-MM-DD`;
 `to` defaults to today, UTC, and `from` to 29 days before `to`; at most
 1,100 days a call). A malformed query is refused as `invalid`, with a
 message naming the field (`dimensions`, `metrics[0].column`,
@@ -1698,7 +1700,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | Field | Kinds | Meaning |
 | --- | --- | --- |
 | `kind` | all | `stat`, `trend` or `breakdown` |
-| `table` | all | `events` (every family), `views`, `product` or `measures` |
+| `table` | all | `events` (every family), `views`, `product` or `measures`; or `sessions`, one row per session, or `identities`, one row per user or group (below) |
 | `metrics` | all | the aggregates, each an output column; a trend takes exactly one |
 | `where` | all | filters, `{column, op, values}`, every one of which a row must satisfy |
 | `dimensions` | breakdown | 1 to 3 columns to group by |
@@ -1722,12 +1724,51 @@ A dimension, series or filter column is one of `project_id`, `family`,
 `sample_rate` are read by the metrics. NULL reads as an empty string and
 sorts last; numbers sort by value.
 
+Six more are computed from those, as the built-in dashboards group by
+them; they are text, so `gt`, `gte`, `lt` and `lte` do not take them:
+
+| Column | Tables | Value |
+| --- | --- | --- |
+| `resolution` | `events`, `views` | `display_width` and `display_height` as `1920x1080`, where both are above 0; else NULL |
+| `device_label` | `events`, `views`, `product` | `device_model` when not empty, else `device` when not empty; else NULL |
+| `platform_version` | `events`, `views`, `product` | `platform`, a space, then `app_version` (`ios 2.4.1`), where `app_version` is not empty; else NULL |
+| `consent_state` | `events`, `views`, `product` | `given` (`consent` 1), `none` (0) or `unknown` (NULL) |
+| `user_status` | `events`, `views`, `product` | `new` on the day the row's `user_id` was first seen (its `first_seen` in `identities`, over the whole history the files hold, whatever the range), `returning` on a later day; NULL when `user_id` is empty, or not in `identities` (an id only measures carried), and on a measure sent before it was first seen |
+| `group_status` | `events`, `views`, `product` | the same of `group_id` |
+
+`{"column": "user_status", "op": "eq", "values": ["new"]}` with the metric
+`users` counts the new users, as the built-in Users dashboard does (with
+`family` `in` `views`, `product`).
+
+`sessions` is the table of that name in `schema://views`: the sessions of
+the views, derived as the event files are written and, for the days not
+derived yet, as the query reads them; rules do not apply to it. Its
+dimension, series and filter columns are `project_id`, `day`, `kind`,
+`actor_id`, `actor_kind`, `session_id`, `entry_host`, `entry_path`,
+`exit_path`, `referrer_source`, `utm_source`, `utm_medium` and
+`utm_campaign`; `duration_sec` and `views` are numbers a filter may name
+(`{"column": "views", "op": "gt", "values": ["1"]}`) but not a dimension
+or series. It takes the metrics `count` (sessions), `actors`, `sum`,
+`avg`, `min` and `max` of `duration_sec` or `views`, and its own
+`bounces` and `bounce_rate`; not `users`, `groups` or the `daily_*` ones.
+
+`identities` is the table of that name in `schema://views`: one row per
+user and per group of the project, over the whole history the files hold;
+rules do not apply to it. A query reads the identities first seen in its
+range, and `day` is that day (a trend counts the new users and groups per
+day). Its dimension, series and filter columns are `kind` (`user` or
+`group`), `id`, `name` and `day`; `views` and `events` are numbers a filter
+may name but not a dimension or series. It takes the metrics `count`
+(identities) and `sum`, `avg`, `min` and `max` of `views` or `events`.
+
 | Metric `op` | Takes | Counts |
 | --- | --- | --- |
 | `count` | | rows |
 | `actors`, `users`, `groups` | | distinct `actor_id`, `user_id`, `group_id` over the range (NULL left out) |
-| `sum`, `avg`, `min`, `max` | `column`: `value`, `sample_rate`, `display_width` or `display_height` | the column's aggregate; empty over no value |
+| `sum`, `avg`, `min`, `max` | `column`: `value`, `sample_rate`, `display_width` or `display_height`; on `sessions` `duration_sec` or `views`; on `identities` `views` or `events` | the column's aggregate; empty over no value |
 | `daily_sum`, `daily_max`, `daily_avg` | `of`: `actors`, `users` or `groups` | the distinct count per day, summed, maxed or averaged over the days with rows |
+| `bounces` | | `sessions` only: the sessions of one view |
+| `bounce_rate` | | `sessions` only: `bounces` divided by the sessions (`0.25`), exact; empty over no session, and in an `Other` row over the sessions of the groups it folds |
 
 A metric's column is named by `as`, else `op`, `op_column` (`sum_value`)
 or `op_of` (`daily_sum_actors`); two metrics may not share a name, nor,
@@ -1737,7 +1778,7 @@ with `compare`, may one be named `previous_<another's name>`.
 | --- | --- |
 | `eq`, `ne`, `contains`, `prefix` | exactly one |
 | `in`, `not_in` | one or more |
-| `gt`, `gte`, `lt`, `lte` | exactly one: an integer, or `YYYY-MM-DD` on `day`; numeric columns only (`day`, `project_id`, `display_width`, `display_height`, `consent`, `bucket`) |
+| `gt`, `gte`, `lt`, `lte` | exactly one: an integer, or `YYYY-MM-DD` on `day`; numeric columns only (`day`, `project_id`, `display_width`, `display_height`, `consent`, `bucket`; `duration_sec` and `views` on `sessions`; `views` and `events` on `identities`) |
 | `is_set` | none: the column is not NULL, and on a text column not empty either |
 
 A NULL value fails every operator, `ne` and `not_in` included (as in
@@ -1799,4 +1840,13 @@ A breakdown: the ten busiest paths by unique users, the rest as `Other`.
   "kind": "breakdown", "table": "views", "dimensions": ["path"],
   "metrics": [{"op": "users"}, {"op": "count", "as": "views"}],
   "order": "users", "limit": 10, "other": true}}
+```
+
+A breakdown of sessions: the bounce rate and average session length per
+referrer.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "breakdown", "table": "sessions", "dimensions": ["referrer_source"],
+  "metrics": [{"op": "count", "as": "sessions"}, {"op": "bounce_rate"}, {"op": "avg", "column": "duration_sec"}]}}
 ```

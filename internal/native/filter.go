@@ -30,12 +30,175 @@ func typeOf(column string) colType {
 	return typeString
 }
 
-// readColumn is the column a scan reads for column: value for bucket.
-func readColumn(column string) string {
-	if column == "bucket" {
-		return "value"
+// readColumns are the columns a scan reads for column: value for bucket,
+// a computed column's sources, a status column's id (with day, which a
+// scan always reads; the scan adds the status itself, from identities).
+func readColumns(column string) []string {
+	if c, ok := computedColumns[column]; ok {
+		return c.sources
 	}
-	return column
+	if column == "bucket" {
+		return []string{"value"}
+	}
+	if s, ok := statusColumns[column]; ok {
+		return []string{s.id}
+	}
+	return []string{column}
+}
+
+// batchColumn is b's column for column: computed from its sources for a
+// computed column, NULL values for a bucket b has no value column for, nil
+// when b lacks it (every row NULL).
+func batchColumn(b *Batch, column string) *Column {
+	if c, ok := computedColumns[column]; ok {
+		return c.compute(b)
+	}
+	if column == "bucket" {
+		if _, c := b.col("value"); c != nil {
+			return c
+		}
+		return nullColumn("value", b.N) // NULL values: bucket -1000
+	}
+	_, c := b.col(column)
+	return c
+}
+
+// computedColumn is a text column computed per row from source columns,
+// as the system widgets' SQL computes it.
+type computedColumn struct {
+	sources []string
+	compute func(b *Batch) *Column
+}
+
+// computedColumns are the computed dimension and filter columns:
+//   - resolution: display_width || 'x' || display_height when both are
+//     above 0, else NULL;
+//   - device_label: device_model when not empty, else device when not
+//     empty, else NULL;
+//   - platform_version: platform (NULL read as empty), a space, then
+//     app_version, when app_version is not empty, else NULL;
+//   - consent_state: given (consent 1), none (0), else unknown.
+var computedColumns = map[string]computedColumn{
+	"resolution":       {[]string{"display_width", "display_height"}, resolutionColumn},
+	"device_label":     {[]string{"device_model", "device"}, deviceLabelColumn},
+	"platform_version": {[]string{"platform", "app_version"}, platformVersionColumn},
+	"consent_state":    {[]string{"consent"}, consentStateColumn},
+}
+
+// textDict builds a computed text column's dictionary.
+type textDict struct {
+	ids  map[string]int32
+	dict []string
+}
+
+func (d *textDict) id(s string) int32 {
+	if id, ok := d.ids[s]; ok {
+		return id
+	}
+	if d.ids == nil {
+		d.ids = map[string]int32{}
+	}
+	id := int32(len(d.dict))
+	d.ids[s] = id
+	d.dict = append(d.dict, s)
+	return id
+}
+
+// textAt is c's value at row i; ok false for NULL (c nil: every row).
+func textAt(c *Column, i int) (s string, ok bool) {
+	if c == nil || c.Idx == nil || c.Idx[i] < 0 {
+		return "", false
+	}
+	return c.Dict[c.Idx[i]], true
+}
+
+// intAt is c's value at row i; ok false for NULL (c nil: every row).
+func intAt(c *Column, i int) (n int64, ok bool) {
+	if c == nil || c.Ints == nil || (c.Null != nil && c.Null[i]) {
+		return 0, false
+	}
+	return c.Ints[i], true
+}
+
+// textColumn is a column of b.N rows, each value(i)'s text or NULL.
+func textColumn(n int, value func(i int) (string, bool)) *Column {
+	var d textDict
+	idx := make([]int32, n)
+	for i := range idx {
+		if s, ok := value(i); ok {
+			idx[i] = d.id(s)
+		} else {
+			idx[i] = -1
+		}
+	}
+	return &Column{Dict: d.dict, Idx: idx}
+}
+
+func resolutionColumn(b *Batch) *Column {
+	_, w := b.col("display_width")
+	_, h := b.col("display_height")
+	type size struct{ w, h int64 }
+	names := map[size]string{}
+	return textColumn(b.N, func(i int) (string, bool) {
+		x, ok1 := intAt(w, i)
+		y, ok2 := intAt(h, i)
+		if !ok1 || !ok2 || x <= 0 || y <= 0 {
+			return "", false
+		}
+		s, ok := names[size{x, y}]
+		if !ok {
+			s = strconv.FormatInt(x, 10) + "x" + strconv.FormatInt(y, 10)
+			names[size{x, y}] = s
+		}
+		return s, true
+	})
+}
+
+func deviceLabelColumn(b *Batch) *Column {
+	_, model := b.col("device_model")
+	_, device := b.col("device")
+	return textColumn(b.N, func(i int) (string, bool) {
+		if s, ok := textAt(model, i); ok && s != "" {
+			return s, true
+		}
+		if s, ok := textAt(device, i); ok && s != "" {
+			return s, true
+		}
+		return "", false
+	})
+}
+
+func platformVersionColumn(b *Batch) *Column {
+	_, platform := b.col("platform")
+	_, version := b.col("app_version")
+	type pair struct{ p, v string }
+	names := map[pair]string{}
+	return textColumn(b.N, func(i int) (string, bool) {
+		v, ok := textAt(version, i)
+		if !ok || v == "" {
+			return "", false
+		}
+		p, _ := textAt(platform, i)
+		s, ok := names[pair{p, v}]
+		if !ok {
+			s = p + " " + v
+			names[pair{p, v}] = s
+		}
+		return s, true
+	})
+}
+
+func consentStateColumn(b *Batch) *Column {
+	_, c := b.col("consent")
+	return textColumn(b.N, func(i int) (string, bool) {
+		switch n, ok := intAt(c, i); {
+		case ok && n == 1:
+			return "given", true
+		case ok && n == 0:
+			return "none", true
+		}
+		return "unknown", true
+	})
 }
 
 // bucketOf is measures' bucket of a value, as the reader's measures view
@@ -158,10 +321,7 @@ func (f *filter) matchInt(n int64) bool {
 
 // apply clears keep[i] for the rows of b that do not pass.
 func (f *filter) apply(b *Batch, keep []bool) error {
-	_, c := b.col(readColumn(f.column))
-	if c == nil && f.typ == typeBucket {
-		c = nullColumn("value", b.N) // NULL values: bucket -1000
-	}
+	c := batchColumn(b, f.column)
 	if c == nil {
 		clear(keep) // all NULL: nothing passes
 		return nil

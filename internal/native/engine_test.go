@@ -91,6 +91,18 @@ func engineDay(t testing.TB, day string, d int) []store.Event {
 			e.EventName = "ev_old"
 		}
 		e.Consent = []store.Consent{store.ConsentUnknown, store.ConsentGiven, store.ConsentNone}[i%3]
+		e.DisplayHeight = []int{0, 844, 800}[(i+2*d)%3]
+		e.Device = []string{"", "mobile", "desktop", "tablet"}[i%4]
+		switch i % 7 {
+		case 1:
+			e.DeviceModel = "iPhone15,2"
+		case 3:
+			e.DeviceModel = "Pixel 8"
+		}
+		e.Platform = []string{"web", "ios", ""}[(i+d)%3]
+		if i%3 != 0 {
+			e.AppVersion = fmt.Sprintf("1.%d", (i+d)%3)
+		}
 		add(e)
 	}
 	for k := range 2 {
@@ -106,6 +118,15 @@ func engineDay(t testing.TB, day string, d int) []store.Event {
 		if k%4 == 1 {
 			e.GroupID = fmt.Sprintf("g%d", i%3)
 		}
+		e.Device = []string{"mobile", "", "desktop"}[k%3]
+		if k%5 == 2 {
+			e.DeviceModel = "Pixel 8"
+		}
+		e.Platform = []string{"android", "web"}[k%2]
+		if k%4 != 3 {
+			e.AppVersion = []string{"2.0", "2.1"}[(k+d)%2]
+		}
+		e.Consent = []store.Consent{store.ConsentGiven, store.ConsentNone, store.ConsentUnknown}[(k+d)%3]
 		e.Attributes = map[string]string{}
 		if k%5 != 4 {
 			e.Attributes["plan"] = []string{"free", "pro", "team"}[(k+d)%3]
@@ -368,6 +389,47 @@ func TestKindsMatchDuckDB(t *testing.T) {
 			Dimensions: []string{"attr_plan", "country"}, Order: "country", Limit: 7}, []string{"attr_plan", "country", "count"},
 			`SELECT "attr_plan", "country", count(*) FROM product WHERE `+inRange+`
 				GROUP BY ALL ORDER BY "country" ASC NULLS LAST, "attr_plan" ASC NULLS LAST LIMIT 7`),
+		all("breakdown resolution", Query{Kind: "breakdown", Table: "views", Metrics: []Metric{{Op: "count"}, {Op: "daily_sum", Of: "actors"}},
+			Dimensions: []string{"resolution"}, Limit: 50}, []string{"resolution", "count", "daily_sum_actors"},
+			`WITH r AS (SELECT CASE WHEN "display_width" > 0 AND "display_height" > 0
+					THEN concat("display_width", 'x', "display_height") END AS res, * FROM views WHERE `+inRange+`),
+				d AS (SELECT res, "day", count(DISTINCT "actor_id") AS n FROM r GROUP BY ALL)
+			SELECT r.res, count(*) AS c, (SELECT sum(n) FROM d WHERE d.res IS NOT DISTINCT FROM r.res) FROM r
+				GROUP BY r.res ORDER BY c DESC, r.res ASC NULLS LAST LIMIT 50`),
+		all("breakdown device label", Query{Kind: "breakdown", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "actors"}},
+			Dimensions: []string{"device_label", "family"}, Limit: 50}, []string{"device_label", "family", "count", "actors"},
+			`SELECT CASE WHEN "device_model" <> '' THEN "device_model" WHEN "device" <> '' THEN "device" END AS l, "family",
+				count(*) AS c, count(DISTINCT "actor_id") FROM events WHERE `+inRange+`
+				GROUP BY ALL ORDER BY c DESC, l ASC NULLS LAST, "family" ASC NULLS LAST LIMIT 50`),
+		all("trend platform version", Query{Kind: "trend", Table: "views", Metrics: []Metric{{Op: "actors"}}, Series: "platform_version",
+			SeriesLimit: 50}, []string{"day", "series", "actors"},
+			`WITH v AS (SELECT CASE WHEN "app_version" <> '' THEN COALESCE("platform", '') || ' ' || "app_version" END AS pv, *
+				FROM views WHERE `+inRange+`)
+			SELECT "day", pv, count(DISTINCT "actor_id") FROM v GROUP BY ALL ORDER BY "day", pv ASC NULLS LAST`),
+		all("breakdown product platform version", Query{Kind: "breakdown", Table: "product", Metrics: count(),
+			Dimensions: []string{"platform_version", "device_label"}, Limit: 50}, []string{"platform_version", "device_label", "count"},
+			`SELECT CASE WHEN "app_version" <> '' THEN COALESCE("platform", '') || ' ' || "app_version" END AS pv,
+				CASE WHEN "device_model" <> '' THEN "device_model" WHEN "device" <> '' THEN "device" END AS l, count(*) AS c
+				FROM product WHERE `+inRange+` GROUP BY ALL ORDER BY c DESC, pv ASC NULLS LAST, l ASC NULLS LAST LIMIT 50`),
+		all("breakdown consent state", Query{Kind: "breakdown", Table: "events", Metrics: []Metric{{Op: "count"}, {Op: "actors"}},
+			Dimensions: []string{"consent_state"}}, []string{"consent_state", "count", "actors"},
+			`SELECT CASE "consent" WHEN 1 THEN 'given' WHEN 0 THEN 'none' ELSE 'unknown' END AS s, count(*) AS c,
+				count(DISTINCT "actor_id") FROM events WHERE `+inRange+` GROUP BY s ORDER BY c DESC, s ASC LIMIT 20`),
+		all("filter consent given", Query{Kind: "breakdown", Table: "product", Metrics: count(), Dimensions: []string{"path"},
+			Where: []Filter{{Column: "consent_state", Op: "eq", Values: []string{"given"}},
+				{Column: "device_label", Op: "is_set"}}},
+			[]string{"path", "count"},
+			`SELECT "path", count(*) AS c FROM product WHERE `+inRange+` AND "consent" = 1
+				AND (CASE WHEN "device_model" <> '' THEN "device_model" WHEN "device" <> '' THEN "device" END) IS NOT NULL
+				GROUP BY "path" ORDER BY c DESC, "path" ASC NULLS LAST LIMIT 20`),
+		all("filter computed", Query{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "count"}, {Op: "actors"}},
+			Where: []Filter{{Column: "resolution", Op: "in", Values: []string{"390x844", "1280x800"}},
+				{Column: "platform_version", Op: "prefix", Values: []string{"ios "}}, {Column: "consent_state", Op: "ne", Values: []string{"none"}}}},
+			[]string{"count", "actors"},
+			`SELECT count(*), count(DISTINCT "actor_id") FROM views WHERE `+inRange+`
+				AND "display_width" > 0 AND "display_height" > 0 AND concat("display_width", 'x', "display_height") IN ('390x844', '1280x800')
+				AND "app_version" <> '' AND starts_with(COALESCE("platform", '') || ' ' || "app_version", 'ios ')
+				AND "consent" IS DISTINCT FROM 0`),
 		all("renamed event", Query{Kind: "breakdown", Table: "views", Metrics: count(), Dimensions: []string{"event_name"}},
 			[]string{"event_name", "count"},
 			`SELECT "event_name", count(*) AS c FROM views WHERE `+inRange+` GROUP BY "event_name" ORDER BY c DESC, "event_name" ASC NULLS LAST LIMIT 20`),
