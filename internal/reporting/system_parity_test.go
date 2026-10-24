@@ -1,8 +1,9 @@
 // The parity harness for the system dashboards: each built-in widget's
-// native answer checked against its old SQL (testdata/system-sql/). When
-// DuckDB leaves (step 6 of the native engine plan), this test and
-// testdata/system-sql/ go with it, and the native kinds' own tests
-// (internal/native) remain the reference.
+// native answer checked against its old SQL (testdata/system-sql/) and
+// that SQL's answer frozen in testdata/TestSystemWidgetParity.golden.json,
+// on the system fixture as of systemToday. When DuckDB leaves (step 6 of
+// the native engine plan), testdata/system-sql/ goes and the goldens,
+// compared under the same allowances, remain the reference.
 
 package reporting
 
@@ -131,7 +132,7 @@ func TestSystemWidgetParity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := parityConfig{system: system, oldSQL: os.DirFS("testdata/system-sql"), allow: parityAllowances, news: newSystemWidgets}
+	cfg := parityConfig{system: system, oldSQL: os.DirFS("testdata/system-sql"), allow: parityAllowances, news: newSystemWidgets, golden: true}
 	for _, p := range runParity(t, cfg, newSystemFixture) {
 		t.Error(p)
 	}
@@ -143,6 +144,10 @@ type parityConfig struct {
 	system, oldSQL fs.FS
 	allow          map[string][]allowance
 	news           map[string]string
+	// golden freezes each old SQL's answer in the test's golden file and
+	// compares native's with the golden's (the release's run; the
+	// harness's own tests on fake widgets keep none).
+	golden bool
 }
 
 // parityWidget is one system query widget to compare with its old SQL.
@@ -182,13 +187,16 @@ func runParity(t *testing.T, cfg parityConfig, fixture func(*testing.T) systemFi
 			if !ok {
 				t.Fatalf("%s %s: native returned %T", w.key, preset, got.Data)
 			}
-			old, err := f.svc.sources["sql"].Load(ctx, w.sql, Params{ProjectID: f.project, From: from, To: to})
+			old, err := f.svc.sources["sql"].Load(ctx, f.todaySQL(w.sql), Params{ProjectID: f.project, From: from, To: to})
 			if err != nil {
 				t.Fatalf("%s %s: old SQL: %v", w.key, preset, err)
 			}
 			oldRes, ok := old.(readsql.Result)
 			if !ok {
 				t.Fatalf("%s %s: old SQL returned %T", w.key, preset, old)
+			}
+			if cfg.golden {
+				oldRes = frozenResult(t, w.key+" "+preset, oldRes)
 			}
 			diffs, u := compareParity(oldRes, nat, allows)
 			for _, d := range diffs {
@@ -701,7 +709,7 @@ func TestAppVersionsAtLeastTheOldFloors(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			old := res.(readsql.Result)
+			old := frozenResult(t, c.name+" "+preset, res.(readsql.Result))
 			if len(old.Rows) == 0 || len(nat.Rows) != len(old.Rows) {
 				t.Fatalf("%s %s: native %d rows, old SQL %d; want the same, and some", c.name, preset, len(nat.Rows), len(old.Rows))
 			}
@@ -753,6 +761,7 @@ func TestVitalsByDeviceAndBrowserSplitTheOldTable(t *testing.T) {
 		if !ok || !slices.Equal(old.Columns, []string{"Dimension", "Value", "Samples", "LCP p75 (ms)", "INP p75 (ms)", "CLS p75"}) {
 			t.Fatalf("%s: old SQL returned %v", preset, res)
 		}
+		old = frozenResult(t, preset, old)
 		for _, c := range []struct{ widget, dimension, column string }{{"by-device", "device", "Device"}, {"by-browser", "browser", "Browser"}} {
 			want := readsql.Result{Columns: append([]string{c.column}, old.Columns[2:]...)}
 			for _, r := range old.Rows {

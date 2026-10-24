@@ -1,0 +1,14 @@
+{
+  "15600e126636": {
+    "rows": [
+      ["74"]
+    ],
+    "sql": "SELECT sum(n) FROM (SELECT count(DISTINCT actor_id) AS n FROM views\n\t\t\tWHERE day BETWEEN DATE '2026-10-16' AND DATE '2026-10-22' AND os <> '' GROUP BY day, os, os_version)"
+  },
+  "5b7139144882": {
+    "rows": [
+      ["69"]
+    ],
+    "sql": "SELECT sum(n) FROM (SELECT count(DISTINCT actor_id) AS n FROM views\n\t\t\tWHERE day BETWEEN DATE '2026-10-16' AND DATE '2026-10-22' AND browser <> '' GROUP BY day, browser, browser_version)"
+  }
+}
