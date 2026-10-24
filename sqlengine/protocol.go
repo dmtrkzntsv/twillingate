@@ -35,7 +35,7 @@ const (
 // X-Timeout-Ms header and cancellation as connection close, not here.
 type Request struct {
 	SQL     string         `json:"sql"`
-	Args    map[string]any `json:"args"` // the $tw_* names, without the dollar sign
+	Args    map[string]string `json:"args"` // the $tw_* names, without the dollar sign
 	MaxRows int            `json:"max_rows"`
 	Mode    Mode           `json:"mode"`
 	Page    *Page          `json:"page,omitempty"` // Mode page and count
