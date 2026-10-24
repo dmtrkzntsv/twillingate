@@ -1,10 +1,10 @@
 package native
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,19 +44,29 @@ func nativeRows(t *testing.T, f *archivetest.Files, rs ruleSet, cols []string, f
 	return got
 }
 
-// matchRules compares nativeRows with DuckDB's rows for q (SELECT … FROM
-// events WHERE project_id = 1 …) under the same rules, its columns as
-// DuckDB names them.
-func matchRules(t *testing.T, f *archivetest.Files, rules archive.Rules, q, family string) []string {
+// matchRules compares nativeRows with the golden rows of q (SELECT … FROM
+// events WHERE project_id = 1 …) under the same rules: its columns cols,
+// spelled as events spells them (names match regardless of case), or with
+// none given every column of events (eventsColumns).
+func matchRules(t *testing.T, f *archivetest.Files, rules archive.Rules, q, family string, cols ...string) []string {
 	t.Helper()
-	cols, want := duckRulesRows(t, f, q, rules)
+	all := eventsColumns(t, f.Dir, 1, rules)
+	if len(cols) == 0 {
+		cols = all
+	}
+	cols = slices.Clone(cols)
+	for i, c := range cols {
+		if j := slices.IndexFunc(all, func(a string) bool { return strings.EqualFold(a, c) }); j >= 0 {
+			cols[i] = all[j]
+		}
+	}
 	got := nativeRows(t, f, compile(t, f, 1, rules), cols, family)
-	sameRows(t, got, want, cols)
+	sameRows(t, got, wantRows(t, q, rules, cols, got), cols)
 	return cols
 }
 
 // compile compiles project p's rules against the columns of every file
-// under f.Dir, as the reader's events view sees them.
+// under f.Dir, as the events table sees them.
 func compile(t *testing.T, f *archivetest.Files, p int64, rules archive.Rules) ruleSet {
 	t.Helper()
 	have, err := unionColumns(f.Dir)
@@ -64,28 +74,6 @@ func compile(t *testing.T, f *archivetest.Files, p int64, rules archive.Rules) r
 		t.Fatal(err)
 	}
 	return compileRules(p, rules, have)
-}
-
-func duckRulesRows(t *testing.T, f *archivetest.Files, q string, rules archive.Rules) ([]string, [][]string) {
-	t.Helper()
-	res, err := f.Reader.Query(context.Background(), q, 0, rules)
-	if err != nil {
-		t.Fatal(err)
-	}
-	cols := slices.Clone(res.Columns)
-	if i := slices.Index(cols, "id"); i > 0 {
-		cols[0], cols[i] = cols[i], cols[0]
-	}
-	var rows [][]string
-	for _, row := range res.Rows {
-		r := make([]string, len(cols))
-		for j, name := range cols {
-			r[j] = cell(t, row[slices.Index(res.Columns, name)])
-		}
-		rows = append(rows, r)
-	}
-	sortByFirst(rows)
-	return frozenRows(t, q, rules, cols, rows)
 }
 
 func evRule(project int64, fam store.Family, name, action, to string) store.EventRule {
@@ -118,7 +106,7 @@ func rulesFixture(t *testing.T) *archivetest.Files {
 	return f
 }
 
-func TestEventRenameAndBlockMatchDuckDB(t *testing.T) {
+func TestEventRenameAndBlockMatchGolden(t *testing.T) {
 	f := rulesFixture(t)
 	// Lines without an event name or a family: a block whose condition
 	// they leave unknown drops them, as SQL's NOT (NULL) does.
@@ -164,8 +152,7 @@ func TestEventRenameAndBlockMatchDuckDB(t *testing.T) {
 			t.Errorf("columns %v lacks %s", read, c)
 		}
 	}
-	_, want := duckRulesRows(t, f, "SELECT id FROM events WHERE project_id = 1", rules)
-	sameRows(t, nativeRows(t, f, rs, []string{"id"}, ""), want, []string{"id"})
+	matchRules(t, f, rules, "SELECT id FROM events WHERE project_id = 1", "", "id")
 
 	// A merge's target keeps its index: the dictionary holds each name
 	// once, and the input's columns are left as they were.
@@ -188,7 +175,7 @@ func TestEventRenameAndBlockMatchDuckDB(t *testing.T) {
 	}
 }
 
-func TestAttributeRenameAndBlockMatchDuckDB(t *testing.T) {
+func TestAttributeRenameAndBlockMatchGolden(t *testing.T) {
 	f := rulesFixture(t)
 	rules := archive.Rules{Attributes: []store.AttributeRule{
 		attrRule(1, "size", store.EventRuleRename, "plan"),   // a merge: plan's own value first
@@ -220,14 +207,13 @@ func TestAttributeRenameAndBlockMatchDuckDB(t *testing.T) {
 	if slices.Contains(read, "attr_flag") {
 		t.Errorf("columns %v: a source of a blocked target", read)
 	}
-	matchRules(t, f, rules, "SELECT id, attr_tone, attr_plan FROM events WHERE project_id = 1", "")
-	_, rows := duckRulesRows(t, f, "SELECT id, attr_tone, attr_plan FROM events WHERE project_id = 1 AND family = 'measures'", rules)
-	sameRows(t, nativeRows(t, f, rs, want, "measures"), rows, want)
+	matchRules(t, f, rules, "SELECT id, attr_tone, attr_plan FROM events WHERE project_id = 1", "", want...)
+	matchRules(t, f, rules, "SELECT id, attr_tone, attr_plan FROM events WHERE project_id = 1 AND family = 'measures'", "measures", want...)
 }
 
 // A rename chain: b is both a target and renamed itself, so it reads
 // NULL, and c takes b's own value.
-func TestAttributeRenameChainMatchesDuckDB(t *testing.T) {
+func TestAttributeRenameChainMatchesGolden(t *testing.T) {
 	f := rulesFixture(t)
 	rules := archive.Rules{Attributes: []store.AttributeRule{
 		attrRule(1, "size", store.EventRuleRename, "shade"),
@@ -277,7 +263,7 @@ func TestAttributeRenameAcrossFiles(t *testing.T) {
 		attrRule(1, "plan", store.EventRuleRename, "color"),
 	}}
 	matchRules(t, f, rules, "SELECT * FROM events WHERE project_id = 1", "")
-	matchRules(t, f, rules, "SELECT id, attr_color FROM events WHERE project_id = 1", "")
+	matchRules(t, f, rules, "SELECT id, attr_color FROM events WHERE project_id = 1", "", "id", "attr_color")
 	rs := compile(t, f, 1, rules)
 	pq, _, err := projectFiles(f.Dir, 1, rng(t, "2026-08-01", "2026-08-31"))
 	if err != nil {
@@ -321,7 +307,7 @@ func TestAttributeRuleMatchesKeysAcrossCase(t *testing.T) {
 		if !slices.ContainsFunc(cols, func(c string) bool { return c == "attr_plan" || c == "attr_Plan" }) {
 			t.Fatalf("cols %v", cols)
 		}
-		matchRules(t, f, rules, "SELECT id, attr_plan, attr_tier FROM events WHERE project_id = 1", "")
+		matchRules(t, f, rules, "SELECT id, attr_plan, attr_tier FROM events WHERE project_id = 1", "", "id", "attr_plan", "attr_tier")
 	}
 	// The log alone holds attr_Plan and, with odd, attr_plan_1: plan is
 	// attr_Plan, as in DuckDB.
@@ -347,9 +333,12 @@ func TestRulesIgnoreViewsForAttributes(t *testing.T) {
 			attrRule(1, "junk", store.EventRuleBlock, ""),
 		},
 	}
-	_, rows := duckRulesRows(t, f, "SELECT id, attr_plan FROM events WHERE project_id = 1 AND id LIKE 'v-%'", rules)
+	views := slices.DeleteFunc(nativeRows(t, f, compile(t, f, 1, rules), []string{"id", "attr_plan"}, ""),
+		func(r []string) bool { return !strings.HasPrefix(r[0], "v-") })
+	rows := wantRows(t, "SELECT id, attr_plan FROM events WHERE project_id = 1 AND id LIKE 'v-%'", rules, []string{"id", "attr_plan"}, views)
+	sameRows(t, views, rows, []string{"id", "attr_plan"})
 	if len(rows) != 4 || rows[0][1] != "viewplan" {
-		t.Fatalf("DuckDB views rows %q", rows)
+		t.Fatalf("views rows %q", rows)
 	}
 	matchRules(t, f, rules, "SELECT * FROM events WHERE project_id = 1", "")
 	matchRules(t, f, rules, "SELECT * FROM events WHERE project_id = 1 AND family = 'views'", "views")

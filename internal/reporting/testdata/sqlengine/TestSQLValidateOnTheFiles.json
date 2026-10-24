@@ -1,0 +1,6 @@
+[
+{"mode":"shape","sql":"select day as x, count(*) as y from views\n\t\twhere project_id = CAST($tw_project AS BIGINT) and day >= CAST($tw_from AS DATE) and day <= CAST($tw_to AS DATE) group by day","scope":1,"confine":true,"max_rows":0,"answers":[{"columns":["x","y"],"rows":[]}]},
+{"mode":"text","sql":"select day as x, count(*) as y from views\n\t\twhere project_id = CAST($tw_project AS BIGINT) and day >= CAST($tw_from AS DATE) and day <= CAST($tw_to AS DATE) group by day","scope":1,"confine":true,"max_rows":5,"answers":[{"columns":["x","y"],"rows":[["2026-10-24","2"]]}]},
+{"mode":"shape","sql":"select 'n' || count(*) as value from views where project_id = CAST($tw_project AS BIGINT)","scope":1,"confine":true,"max_rows":0,"answers":[{"columns":["value"],"rows":[]}]},
+{"mode":"text","sql":"select 'n' || count(*) as value from views where project_id = CAST($tw_project AS BIGINT)","scope":1,"confine":true,"max_rows":5,"answers":[{"columns":["value"],"rows":[["n2"]]}]}
+]

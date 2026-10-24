@@ -412,8 +412,8 @@ func formatDay(d int64) string { return time.Unix(d*86400, 0).UTC().Format(time.
 
 // value is one metric's result: NULL, an integer or a float, and whether
 // a sketch estimated it. form says how an integer reads: a number, a day
-// (YYYY-MM-DD) or a time (RFC 3339 in UTC, as the engine's child prints
-// a TIMESTAMP: its fraction only when it has one, trailing zeros cut).
+// (YYYY-MM-DD) or a time (RFC 3339 in UTC, its fraction only when it has
+// one, trailing zeros cut).
 type value struct {
 	null, isInt, approx bool
 	form                int

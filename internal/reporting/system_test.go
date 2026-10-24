@@ -15,11 +15,9 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/docs"
-	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -215,15 +213,10 @@ func newSystemFixture(t *testing.T) systemFixture {
 
 // systemToday is the system fixture's today, fixed so that its files, and
 // the answers testdata/*.golden.json keep of them, are the same on any
-// day: the native engine's clock reads it (noon), and the old SQL's
-// current_date is replaced by it (todaySQL). The service's own clock stays
-// real; every range the tests ask for ends by this day.
+// day: the native engine's clock reads it (noon), as the old SQL's
+// current_date did when the goldens were frozen. The service's own clock
+// stays real; every range the tests ask for ends by this day.
 var systemToday = civil.Date{Year: 2026, Month: 10, Day: 23}
-
-// todaySQL is q with DuckDB's current_date read as the fixture's today.
-func (f systemFixture) todaySQL(q string) string {
-	return strings.ReplaceAll(q, "current_date", "DATE '"+f.today.String()+"'")
-}
 
 // systemFiles is the raw/ directory every system fixture starts from,
 // built once per test binary and day by systemTemplate, and removed by
@@ -273,34 +266,24 @@ func removeSystemTemplate() {
 	}
 }
 
-// rows runs q over the fixture's project in the files, every cell as the
-// widgets show it: a reference to hold a widget to, its answer frozen.
-func (f systemFixture) rows(t *testing.T, q string) [][]string {
+// rows is the golden of q over the fixture's project in the files, every
+// cell as the widgets show it (the old query engine's answer): a reference
+// to hold a widget to. got is the same read off the widget, kept with
+// -update-golden unless the golden held reads as the same set.
+func (f systemFixture) rows(t *testing.T, q string, got [][]string) [][]string {
 	t.Helper()
-	res, err := f.files.Reader.QueryScoped(context.Background(),
-		archive.Scoped{SQL: enginesql.Text(q), Scope: true, Project: f.project}, archive.Rules{})
-	if err != nil {
-		t.Fatalf("%s: %v", q, err)
-	}
-	out := make([][]string, len(res.Rows))
-	for i, r := range res.Rows {
-		out[i] = make([]string, len(r))
-		for j, c := range r {
-			if c != nil {
-				out[i][j] = fmt.Sprint(c)
-			}
-		}
-	}
-	// Frozen in testdata/<Test>.golden.json, sorted: the callers read the
-	// rows as a set.
-	slices.SortFunc(out, slices.Compare)
-	return frozen(t, queryKey(t, q), rowsAnswer{SQL: q, Rows: out}).Rows
+	// Sorted: the callers read the rows as a set.
+	got = slices.Clone(got)
+	slices.SortFunc(got, slices.Compare)
+	return keep(t, queryKey(t, q), rowsAnswer{SQL: q, Rows: got}, func(prev rowsAnswer) bool {
+		return prev.SQL == q && slices.EqualFunc(prev.Rows, got, slices.Equal)
+	}).Rows
 }
 
-// count is rows for a q that returns one number.
-func (f systemFixture) count(t *testing.T, q string) int {
+// count is rows for a q that returns one number, got the widget's.
+func (f systemFixture) count(t *testing.T, q string, got int) int {
 	t.Helper()
-	n, err := strconv.Atoi(f.rows(t, q)[0][0])
+	n, err := strconv.Atoi(f.rows(t, q, [][]string{{strconv.Itoa(got)}})[0][0])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -551,9 +534,13 @@ func TestAttributeValuesCountEachValueOnce(t *testing.T) {
 			}
 			shown[pair] = true
 		}
+		var shownPairs [][]string
+		for i := range res.Rows {
+			shownPairs = append(shownPairs, []string{column(t, res, i, "Attribute"), column(t, res, i, "Value")})
+		}
 		pairs := f.rows(t, fmt.Sprintf(`SELECT DISTINCT substr(attr_key, 6), attr_value FROM (UNPIVOT (
 			SELECT COLUMNS('^attr_') FROM product WHERE day BETWEEN DATE '%s' AND DATE '%s'
-		) ON COLUMNS('^attr_') INTO NAME attr_key VALUE attr_value)`, from, to))
+		) ON COLUMNS('^attr_') INTO NAME attr_key VALUE attr_value)`, from, to), shownPairs)
 		if len(res.Rows) != len(pairs) {
 			t.Errorf("%s: %d rows, the files hold %d pairs", preset, len(res.Rows), len(pairs))
 		}
@@ -733,7 +720,7 @@ func TestBrowsersAndSystemsByName(t *testing.T) {
 		// Visitors distinct per day and version, as the Views dashboard
 		// counts every breakdown.
 		want := f.count(t, fmt.Sprintf(`SELECT sum(n) FROM (SELECT count(DISTINCT actor_id) AS n FROM views
-			WHERE day BETWEEN DATE '%s' AND DATE '%s' AND %s <> '' GROUP BY day, %[3]s, %s)`, from, to, c.col, c.version))
+			WHERE day BETWEEN DATE '%s' AND DATE '%s' AND %s <> '' GROUP BY day, %[3]s, %s)`, from, to, c.col, c.version), total)
 		if total != want {
 			t.Errorf("%s: slices add up to %d visitors, the files hold %d", c.widget, total, want)
 		}

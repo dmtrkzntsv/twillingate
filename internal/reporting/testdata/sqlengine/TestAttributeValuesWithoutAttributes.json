@@ -1,0 +1,3 @@
+[
+{"mode":"text","sql":"SELECT substr(attr_key, 6) AS \"Attribute\", attr_value AS \"Value\", count(*) AS \"Count\" FROM (UNPIVOT (SELECT COLUMNS('^(day|attr_.*)$'), NULL::VARCHAR AS \"attr_$\" FROM product WHERE project_id = CAST($tw_project AS BIGINT) AND day BETWEEN CAST($tw_from AS DATE) AND CAST($tw_to AS DATE)) ON COLUMNS('^attr_') INTO NAME attr_key VALUE attr_value) GROUP BY attr_key, attr_value ORDER BY \"Attribute\", \"Count\" DESC, \"Value\"","scope":1,"confine":true,"max_rows":1001,"answers":[{"columns":["Attribute","Value","Count"],"rows":[]}]}
+]

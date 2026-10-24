@@ -1,0 +1,3 @@
+[
+{"mode":"text","sql":"SELECT count(*) AS n FROM views WHERE project_id = CAST($tw_project AS BIGINT)","scope":1,"confine":true,"max_rows":1001,"answers":[{"kind":"stale","message":"a file in the table spec is gone: archive: stat /home/dmitry/.cache/gotmp/TestStaleSpecRetried2295684333/002/raw/1/2026-10-01.log: no such file or directory"},{"columns":["n"],"rows":[["1"]]}]}
+]

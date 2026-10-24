@@ -2,7 +2,6 @@ package archive
 
 import (
 	"bufio"
-	"context"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -12,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -33,14 +33,6 @@ var allTypesRows = []row{
 	{value{}, value{}, value{}, value{}, value{}},
 	{strValue("it's"), intValue(0), floatValue(1e300), dateValue(0), timestampValue(0)},
 }
-
-// allTypesSQL is allTypesRows as DuckDB values.
-const allTypesSQL = `SELECT * FROM (VALUES
-	('héllo', -42::BIGINT, 1.5::DOUBLE, DATE '2025-10-31', TIMESTAMP '2025-11-01 00:00:05.123456'),
-	('', 9007199254740993::BIGINT, -0.1::DOUBLE, DATE '1969-12-31', TIMESTAMP '1969-12-31 23:59:59.999999'),
-	(NULL, NULL, NULL, NULL, NULL),
-	('it''s', 0::BIGINT, 1e300::DOUBLE, DATE '1970-01-01', TIMESTAMP '1970-01-01 00:00:00')
-) t(v, b, d, dt, ts)`
 
 func writeRows(t *testing.T, path string, cols []pqColumn, cut func(prev, next row, rows int) bool, rows ...row) {
 	t.Helper()
@@ -74,7 +66,7 @@ func openMeta(t *testing.T, path string) *parquet.File {
 	return pf
 }
 
-// leafFacts is what DuckDB reads from a leaf: its physical and logical
+// leafFacts is what a reader reads from a leaf: its physical and logical
 // type, repetition, and the chunks' codec and encodings.
 func leafFacts(pf *parquet.File) []string {
 	var out []string
@@ -99,28 +91,18 @@ func leafFacts(pf *parquet.File) []string {
 	return out
 }
 
-// TestWriterTypesMatchDuckDB: a file of every type reads back in DuckDB
-// with the types and values of the file DuckDB COPYs from the same values,
-// and its leaves are typed as DuckDB types them (native's reader goes by
-// those: pqwrite_native_test.go reads the values back through it).
-func TestWriterTypesMatchDuckDB(t *testing.T) {
-	f := newFixture(t)
-	ctx := context.Background()
-	dir := filepath.Join(f.log.Dir(), "w")
-	os.MkdirAll(dir, 0o750)
-	goFile, duckFile := filepath.Join(dir, "go.parquet"), filepath.Join(dir, "duck.parquet")
+// TestWriterTypesMatchGolden: a file of every type reads back with the
+// types and values of its golden, which holds what the old query engine
+// read from the file it COPYed from the same values, and
+// its leaves are typed as that file's are (native's reader goes by those:
+// pqwrite_native_test.go reads the values back through it).
+func TestWriterTypesMatchGolden(t *testing.T) {
+	dir := t.TempDir()
+	goFile := filepath.Join(dir, "go.parquet")
 	writeRows(t, goFile, allTypes, nil, allTypesRows...)
-	if err := f.eng.Exec(ctx, "COPY ("+allTypesSQL+") TO "+quote(duckFile)+" (FORMAT parquet, COMPRESSION zstd)"); err != nil {
-		t.Fatal(err)
-	}
-	describe := func(p string) []string {
-		return f.values(t, "SELECT column_name, column_type, \"null\" FROM (DESCRIBE SELECT * FROM read_parquet("+quote(p)+"))")
-	}
-	if got, want := describe(goFile), describe(duckFile); !eq(got, want) {
-		t.Errorf("DESCRIBE of the Go file = %v, of DuckDB's %v", got, want)
-	}
-	// DuckDB's file, frozen: its DESCRIBE, its rows as read below, and its
-	// leaves' types (the first five facts: the dictionary may differ).
+	// The golden: the file's DESCRIBE, its rows as v, b, d, dt and ts as
+	// text, then ts in microseconds, and its leaves' types (the first
+	// five facts: the dictionary may differ).
 	type typesAnswer struct {
 		Describe, Rows, Leaves []string
 	}
@@ -131,31 +113,20 @@ func TestWriterTypesMatchDuckDB(t *testing.T) {
 		}
 		return out
 	}
-	if got := describe(goFile); !eq(got, []string{"[v VARCHAR YES]", "[b BIGINT YES]", "[d DOUBLE YES]", "[dt DATE YES]", "[ts TIMESTAMP YES]"}) {
+	p := readTable(t, goFile)
+	if got := p.describe(); !eq(got, []string{"[v VARCHAR YES]", "[b BIGINT YES]", "[d DOUBLE YES]", "[dt DATE YES]", "[ts TIMESTAMP YES]"}) {
 		t.Errorf("DESCRIBE = %v", got)
 	}
-	read := func(p string) []string {
-		return f.values(t, "SELECT v, b, d, dt::VARCHAR, ts::VARCHAR, epoch_us(ts) FROM read_parquet("+quote(p)+")")
+	var rows [][]any
+	for _, r := range p.pick(t, "v", "b", "d", "dt", "ts") {
+		rows = append(rows, []any{r[0], r[1], r[2], r[3], tsText(t, r[4]), epochUS(t, r[4])})
 	}
-	if got, want := read(goFile), read(duckFile); !eq(got, want) {
-		t.Errorf("Go file reads %v, DuckDB's %v", got, want)
-	}
-	golden := frozen(t, "all types", typesAnswer{Describe: describe(duckFile), Rows: read(duckFile),
-		Leaves: leaves(leafFacts(openMeta(t, duckFile)))})
-	if got := describe(goFile); !eq(got, golden.Describe) {
-		t.Errorf("DESCRIBE of the Go file = %v, the golden's %v", got, golden.Describe)
-	}
-	if got := read(goFile); !eq(got, golden.Rows) {
-		t.Errorf("Go file reads %v, the golden's %v", got, golden.Rows)
-	}
-	if got := leaves(leafFacts(openMeta(t, goFile))); !eq(got, golden.Leaves) {
-		t.Errorf("Go leaves %v, the golden's %v", got, golden.Leaves)
-	}
-	// The leaves, as parquet-go reads them, equal DuckDB's but for where
-	// the dictionary is used: always on a VARCHAR here, where DuckDB judges
-	// by the values (and dictionary-encodes numbers too at times), which
-	// changes no type DuckDB or native reads.
-	gf, df := leafFacts(openMeta(t, goFile)), leafFacts(openMeta(t, duckFile))
+	frozen(t, "all types", typesAnswer{Describe: p.describe(), Rows: texts(rows), Leaves: leaves(leafFacts(openMeta(t, goFile)))})
+	// The leaves, as parquet-go reads them. The old engine's file had
+	// the same types (the golden's Leaves) but used the dictionary where
+	// it judged by the values (on numbers too at times); here it is always
+	// on a VARCHAR, which changes no type a reader reads.
+	gf := leafFacts(openMeta(t, goFile))
 	want := []string{
 		"v BYTE_ARRAY STRING optional=true ZSTD dict=true",
 		"b INT64 INT(64,true) optional=true ZSTD dict=false",
@@ -165,11 +136,6 @@ func TestWriterTypesMatchDuckDB(t *testing.T) {
 	}
 	if !eq(gf, want) {
 		t.Errorf("Go leaves:\n%s\nwant\n%s", strings.Join(gf, "\n"), strings.Join(want, "\n"))
-	}
-	for j := range gf {
-		if g, d := strings.Fields(gf[j]), strings.Fields(df[j]); strings.Join(g[:5], " ") != strings.Join(d[:5], " ") {
-			t.Errorf("Go leaf %s, DuckDB's %s", gf[j], df[j])
-		}
 	}
 	// The accessors read back what the constructors put in.
 	r := allTypesRows[0]
@@ -187,11 +153,11 @@ func TestWriterKeepsColumnOrder(t *testing.T) {
 	p := filepath.Join(dir, "order.parquet")
 	cols := []pqColumn{{"zeta", colBigint}, {"alpha", colVarchar}, {"Mid", colDate}, {"attr_b", colVarchar}, {"attr_a", colVarchar}}
 	writeRows(t, p, cols, nil, row{intValue(1), strValue("a"), dateValue(1), strValue("b"), value{}})
-	got := f.values(t, "SELECT column_name FROM (DESCRIBE SELECT * FROM read_parquet("+quote(p)+"))")
-	if !eq(got, []string{"[zeta]", "[alpha]", "[Mid]", "[attr_b]", "[attr_a]"}) {
+	back := readTable(t, p)
+	if got := back.names; !eq(got, []string{"zeta", "alpha", "Mid", "attr_b", "attr_a"}) {
 		t.Errorf("columns = %v", got)
 	}
-	if got := f.values(t, "SELECT * FROM read_parquet("+quote(p)+")"); !eq(got, []string{"[1 a 1970-01-02 b <nil>]"}) {
+	if got := texts(back.rows); !eq(got, []string{"[1 a 1970-01-02 b <nil>]"}) {
 		t.Errorf("rows = %v", got)
 	}
 	if _, err := newRowWriter(filepath.Join(dir, "dup.parquet"), []pqColumn{{"a", colBigint}, {"a", colVarchar}}, nil); err == nil {
@@ -339,12 +305,12 @@ func TestEmptyFileHasSchema(t *testing.T) {
 	if got := groupRows(t, p); len(got) != 0 {
 		t.Errorf("row groups = %v", got)
 	}
-	got := f.values(t, "SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM read_parquet("+quote(p)+"))")
-	if !eq(got, []string{"[v VARCHAR]", "[b BIGINT]", "[d DOUBLE]", "[dt DATE]", "[ts TIMESTAMP]"}) {
+	back := readTable(t, p)
+	if got := back.describe(); !eq(got, []string{"[v VARCHAR YES]", "[b BIGINT YES]", "[d DOUBLE YES]", "[dt DATE YES]", "[ts TIMESTAMP YES]"}) {
 		t.Errorf("DESCRIBE = %v", got)
 	}
-	if got := f.values(t, "SELECT count(*) FROM read_parquet("+quote(p)+")"); !eq(got, []string{"[0]"}) {
-		t.Errorf("count = %v", got)
+	if len(back.rows) != 0 {
+		t.Errorf("%d rows", len(back.rows))
 	}
 }
 
@@ -433,7 +399,7 @@ func TestWriterFileIsAtomicAnd0640(t *testing.T) {
 }
 
 // TestWriterFallsBackToPlain: a VARCHAR column whose dictionary outgrows
-// dictMaxBytes goes on in PLAIN pages, DuckDB reads both kinds back, and
+// dictMaxBytes goes on in PLAIN pages, both kinds read back, and
 // the chunk's statistics stay exact across them: the minimum is in the
 // first (dictionary) page, a long maximum and NULLs in PLAIN pages after
 // the switch.
@@ -491,9 +457,24 @@ func TestWriterFallsBackToPlain(t *testing.T) {
 	if len(kinds) < 3 || !kinds[0] || kinds[len(kinds)-1] || plainNulls == 0 || !lastPlain {
 		t.Errorf("pages (dictionary-encoded) %v, NULLs in PLAIN pages %d, max in the last PLAIN page %t", kinds, plainNulls, lastPlain)
 	}
-	got := f.values(t, "SELECT count(DISTINCT path), min(path), length(max(path)), count(*) - count(path), "+
-		"count(*) FILTER (path = 'path-' || lpad(n::VARCHAR, 5, '0')) FROM read_parquet("+quote(p)+")")
-	if want := fmt.Sprintf("[%d path-00000 %d %d %d]", n-nulls, len(long), nulls, n-nulls-1); !eq(got, []string{want}) {
+	distinct, lo, hi, null, at := map[string]bool{}, "", "", 0, 0
+	for _, r := range readTable(t, p, "path", "n").pick(t, "path", "n") {
+		if r[0] == nil {
+			null++
+			continue
+		}
+		path := r[0].(string)
+		distinct[path] = true
+		if lo == "" || path < lo {
+			lo = path
+		}
+		hi = max(hi, path)
+		if i, _ := strconv.Atoi(fmt.Sprint(r[1])); path == fmt.Sprintf("path-%05d", i) {
+			at++
+		}
+	}
+	got := fmt.Sprint([]any{len(distinct), lo, len(hi), null, at})
+	if want := fmt.Sprintf("[%d path-00000 %d %d %d]", n-nulls, len(long), nulls, n-nulls-1); got != want {
 		t.Errorf("read back %v, want %s", got, want)
 	}
 }
@@ -627,7 +608,7 @@ func writeWide(t testing.TB, path string, attrs, rows, every int) (peak uint64, 
 }
 
 // TestWideFileMatchesNarrow: the same rows written by row and by column
-// (byColumnCols lowered) read back the same through DuckDB, with the same
+// (byColumnCols lowered) read back the same, with the same
 // types, row groups and statistics: every type, NULLs, a long string, an
 // all-NULL group, a dictionary that falls back to PLAIN, groups cut by
 // the cut rule and by byColumnBytes; and an empty file.
@@ -664,17 +645,9 @@ func TestWideFileMatchesNarrow(t *testing.T) {
 		defer setByColumn(0, 32<<10)()
 		writeRows(t, wide, cols, byFamily, rows...)
 	}()
-	ask := func(sql, p string) []string {
-		return f.values(t, strings.ReplaceAll(sql, "$f", "read_parquet("+quote(p)+")"))
-	}
-	for _, q := range []string{
-		"SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM $f)",
-		"SELECT family, v, b, d, dt::VARCHAR, epoch_us(ts) FROM $f",
-		"SELECT count(*), count(v), min(v), length(max(v)), sum(b), sum(d), min(dt)::VARCHAR, max(ts)::VARCHAR FROM $f",
-	} {
-		if got, want := ask(q, wide), ask(q, narrow); !eq(got, want) {
-			t.Errorf("%s: by column %.300v, by row %.300v", q, got, want)
-		}
+	read := func(p string) []string { b := readTable(t, p); return append(b.describe(), texts(b.rows)...) }
+	if got, want := read(wide), read(narrow); !eq(got, want) {
+		t.Errorf("by column %.300v, by row %.300v", got, want)
 	}
 	// The groups: by row, cut by family (2000, 1000); by column, also each
 	// time 32 KiB of values are held, so the product rows take several.
@@ -728,10 +701,10 @@ func TestWideFileMatchesNarrow(t *testing.T) {
 		defer setByColumn(0, byColumnBytes)()
 		writeRows(t, empty, cols, nil)
 	}()
-	if got, want := ask("SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM $f)", empty), ask("SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM $f)", narrow); !eq(got, want) {
+	if got, want := readTable(t, empty).describe(), readTable(t, narrow).describe(); !eq(got, want) {
 		t.Errorf("empty by column: %v", got)
 	}
-	if got := ask("SELECT count(*) FROM $f", empty); !eq(got, []string{"[0]"}) || len(groupRows(t, empty)) != 0 {
+	if got := len(readTable(t, empty).rows); got != 0 || len(groupRows(t, empty)) != 0 {
 		t.Errorf("empty by column holds %v", got)
 	}
 }
@@ -882,18 +855,25 @@ func TestWideFileRefusesTooManyRowGroups(t *testing.T) {
 
 // TestWriterBoundsWideFiles: a day of 2,000 columns, nearly all sparse
 // attributes, is written by column in under 150 MB of heap (about 310 MB
-// by row), in 1 group and in 100, and DuckDB reads it back whole, with
-// exact statistics.
+// by row), in 1 group and in 100 (only 100 under race), and reads back
+// whole, with exact statistics.
 func TestWriterBoundsWideFiles(t *testing.T) {
 	f := newFixture(t)
 	dir := filepath.Join(f.log.Dir(), "w")
 	os.MkdirAll(dir, 0o750)
-	for _, every := range []int{0, 200} {
-		t.Run(fmt.Sprint("every ", every), func(t *testing.T) { checkWide(t, f, filepath.Join(dir, fmt.Sprint("wide", every, ".parquet")), every) })
+	everys := []int{0, 200}
+	if raceEnabled {
+		// One case under race: the cut groups, as the dump and the merge
+		// write the wide event files; the single group differs only in
+		// where its group ends.
+		everys = []int{200}
+	}
+	for _, every := range everys {
+		t.Run(fmt.Sprint("every ", every), func(t *testing.T) { checkWide(t, filepath.Join(dir, fmt.Sprint("wide", every, ".parquet")), every) })
 	}
 }
 
-func checkWide(t *testing.T, f fixture, p string, every int) {
+func checkWide(t *testing.T, p string, every int) {
 	const attrs, rows = 1960, 20000
 	peak, set, lo5, hi5 := writeWide(t, p, attrs, rows, every)
 	st, _ := os.Stat(p)
@@ -905,11 +885,28 @@ func checkWide(t *testing.T, f fixture, p string, every int) {
 	if want := max(1, rows/max(every, rows)); every > 0 && groups != rows/every || every == 0 && groups != want {
 		t.Errorf("%d groups", groups)
 	}
-	got := f.values(t, "SELECT count(*), count(DISTINCT id), count(attr_k0), count(attr_k977), count(attr_k1959), min(attr_k5), max(attr_k5) FROM read_parquet("+quote(p)+")")
-	if want := fmt.Sprintf("[%d %d %d %d %d %s %s]", rows, rows, set[0], set[977], set[1959], lo5, hi5); !eq(got, []string{want}) {
+	back := readTable(t, p, "id", "attr_k0", "attr_k977", "attr_k1959", "attr_k5")
+	ids, counts := map[any]bool{}, map[string]int{}
+	var min5, max5 string
+	for _, r := range back.pick(t, "id", "attr_k0", "attr_k977", "attr_k1959", "attr_k5") {
+		ids[r[0]] = true
+		for i, c := range []string{"attr_k0", "attr_k977", "attr_k1959"} {
+			if r[i+1] != nil {
+				counts[c]++
+			}
+		}
+		if v, ok := r[4].(string); ok {
+			if min5 == "" || v < min5 {
+				min5 = v
+			}
+			max5 = max(max5, v)
+		}
+	}
+	got := fmt.Sprintf("[%d %d %d %d %d %s %s]", len(back.rows), len(ids), counts["attr_k0"], counts["attr_k977"], counts["attr_k1959"], min5, max5)
+	if want := fmt.Sprintf("[%d %d %d %d %d %s %s]", rows, rows, set[0], set[977], set[1959], lo5, hi5); got != want {
 		t.Errorf("read back %v, want %s", got, want)
 	}
-	if got := f.values(t, "SELECT count(*) FROM (DESCRIBE SELECT * FROM read_parquet("+quote(p)+"))"); !eq(got, []string{"[2000]"}) {
+	if got := len(openMeta(t, p).Schema().Columns()); got != 2000 {
 		t.Errorf("columns %v", got)
 	}
 	// attr_k5's values: its null count and bounds in the statistics.

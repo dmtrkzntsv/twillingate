@@ -15,8 +15,8 @@ import (
 
 // readLog reads an open log (archive's NDJSON lines, one event each) into
 // one batch of the columns cols holding only the rows of family (any, when
-// "") with day in r: the rows the reader's events view holds for the log
-// (archive's logSelect, tolerant), as the Parquet path would yield them.
+// "") with day in r: the rows the events table holds for the log, read
+// as tolerantly as the dump reads it, as the Parquet path would yield them.
 //
 //   - Every line is decoded, but only the keys cols may need are parsed.
 //   - A line that is not a JSON object (the torn last line of a log ingest

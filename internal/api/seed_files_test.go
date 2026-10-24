@@ -4,43 +4,32 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
-	"strconv"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
-// hostFiles is a test host's event files: a reader over them, for the
-// presence checks, and a test SQL engine serving them
-// (archivetest.ServeSQL), where the query tool's sql and the sql widgets
-// run, as app's client reaches the console's raw/.
+// hostFiles is a test host's event files and a scripted SQL engine
+// answering for them (archivetest.FakeSQL), where the query tool's sql
+// and the sql widgets run, as app's client reaches the console's raw/.
+// The engine answers from the test's file under testdata/sqlengine
+// (FakeSQL.LoadTest), recorded from a real engine over these files, and
+// from the test's own scripts.
 type hostFiles struct {
-	reader *archive.Reader
 	dir    string
 	reg    *manage.Registry
-	sqle   *archivetest.SQLEngine
+	sqle   *archivetest.FakeSQL
 	client *sqlengine.Client
-}
-
-// query runs q over the files with the registry's rules, for the presence
-// checks: the engine's own question, no person's SQL.
-func (f *hostFiles) query(ctx context.Context, q archive.Scoped) (engine.Result, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	events, attrs := f.reg.Snapshot(ctx).RuleLists()
-	return f.reader.QueryScoped(ctx, q, archive.Rules{Events: events, Attributes: attrs})
 }
 
 // options is opt with what a host's widgets read with: the registry's
@@ -52,82 +41,43 @@ func (f *hostFiles) options(opt reporting.Options) reporting.Options {
 }
 
 // hostPresence is manage.Presence over a test host's event files, as
-// app's filePresence is over the console's: the target in the project's
-// whole history, with the registry's rules as they stand when asked.
-type hostPresence struct{ files *hostFiles }
+// app's filePresence is over the console's: the native engine's answer,
+// the target in the project's whole history, with the registry's rules as
+// they stand when asked.
+type hostPresence struct {
+	files *hostFiles
+	nat   *native.Engine
+}
+
+func (p hostPresence) rules(ctx context.Context) archive.Rules {
+	events, attrs := p.files.reg.Snapshot(ctx).RuleLists()
+	return archive.Rules{Events: events, Attributes: attrs}
+}
 
 func (p hostPresence) HasEvents(ctx context.Context, projectID int64, family store.Family, name string) (bool, error) {
-	res, err := p.files.query(ctx, archive.Scoped{SQL: `SELECT 1 FROM events WHERE project_id = CAST($p AS BIGINT) AND family = $f AND event_name = $n LIMIT 1`,
-		Args: []engine.Arg{{Name: "p", Value: strconv.FormatInt(projectID, 10)}, {Name: "f", Value: string(family)}, {Name: "n", Value: name}}})
-	return len(res.Rows) > 0, err
+	return p.nat.HasEvents(ctx, projectID, string(family), name, p.rules(ctx))
 }
 
 func (p hostPresence) HasAttribute(ctx context.Context, projectID int64, key string) (bool, error) {
-	res, err := p.files.query(ctx, archive.Scoped{SQL: "SELECT column_name FROM (DESCRIBE SELECT * FROM events)"})
-	if err != nil {
-		return false, err
-	}
-	var cols []string
-	for _, row := range res.Rows {
-		if c, ok := row[0].(string); ok {
-			cols = append(cols, c)
-		}
-	}
-	col, ok := enginesql.AttrColumn(cols, key)
-	if !ok {
-		return false, nil
-	}
-	res, err = p.files.query(ctx, archive.Scoped{SQL: "SELECT 1 FROM events WHERE project_id = CAST($p AS BIGINT) AND " + col + " IS NOT NULL LIMIT 1",
-		Args: []engine.Arg{{Name: "p", Value: strconv.FormatInt(projectID, 10)}}})
-	return len(res.Rows) > 0, err
-}
-
-// hostEngine is an engine on this test binary (TestMain serves the child,
-// archivetest.Child) over raw, its spill and slots under dir. It starts no
-// child until a query runs.
-func hostEngine(dir, raw string) (*engine.Engine, error) {
-	self, err := os.Executable()
-	if err != nil {
-		return nil, err
-	}
-	return engine.New(engine.Options{Path: self, Env: []string{archivetest.ChildEnv + "=1"},
-		AllowedDirs: []string{raw}, SpillRoot: filepath.Join(dir, "spill"), SlotDir: filepath.Join(dir, "slots"),
-		MaxChildren: 1, MemoryLimit: "256MB", Threads: 1})
+	return p.nat.HasAttribute(ctx, projectID, key, p.rules(ctx))
 }
 
 // newHostFiles copies the template's event files (hostTemplateRaw) into a
-// directory of t's and returns them for reg, with a reader and a test SQL
-// engine over the copy, closed with t: each host may add events of its
-// own.
+// directory of t's and returns them for reg, with a scripted SQL engine
+// for t that answers from t's own recordings, closed with t: each host
+// may add events of its own.
 func newHostFiles(t *testing.T, reg *manage.Registry) *hostFiles {
 	t.Helper()
-	dir := t.TempDir()
-	raw := filepath.Join(dir, "raw")
+	raw := filepath.Join(t.TempDir(), "raw")
 	archivetest.CopyDir(t, hostTemplateRaw, raw) // keeps the times the derived files' freshness reads
-	return serveHostFiles(t, dir, raw, reg)
+	return serveHostFiles(t, raw, reg, archivetest.NewFakeSQL(t).LoadTest(t, "testdata/sqlengine"))
 }
 
-// serveHostFiles is the files in raw for reg: a reader on an engine of
-// its own and a test SQL engine on another, their spill and slots under
-// dir, all closed with t.
-func serveHostFiles(t testing.TB, dir, raw string, reg *manage.Registry) *hostFiles {
+// serveHostFiles is the files in raw for reg, with sqle as their SQL
+// engine.
+func serveHostFiles(t testing.TB, raw string, reg *manage.Registry, sqle *archivetest.FakeSQL) *hostFiles {
 	t.Helper()
-	eng, err := hostEngine(filepath.Join(dir, "reader"), raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { eng.Close() })
-	reader, err := archive.NewReader(raw, eng)
-	if err != nil {
-		t.Fatal(err)
-	}
-	served, err := hostEngine(filepath.Join(dir, "sql"), raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { served.Close() })
-	sqle := archivetest.ServeSQL(t, raw, served)
-	return &hostFiles{reader: reader, dir: raw, reg: reg, sqle: sqle, client: sqle.Client(t)}
+	return &hostFiles{dir: raw, reg: reg, sqle: sqle, client: sqle.Client(t)}
 }
 
 // hostToday is the template's today, fixed so that the pass never ages the
@@ -300,13 +250,15 @@ func hostEvents() []store.Event {
 }
 
 // templateFiles is the template's own event files while hostTemplate
-// builds it, served for reporting.Migrate, until t ends.
-func templateFiles(ctx context.Context, t testing.TB, dir, raw string, st store.Store) (*hostFiles, error) {
+// builds it, served for reporting.Migrate, until t ends. Its SQL engine
+// has no script: t is whichever test builds the template first, and its
+// recordings belong to the engine of its own host, not this one.
+func templateFiles(ctx context.Context, t testing.TB, raw string, st store.Store) (*hostFiles, error) {
 	reg := manage.New(st, slog.New(slog.DiscardHandler))
 	if err := reg.Reload(ctx); err != nil {
 		return nil, err
 	}
-	return serveHostFiles(t, dir, raw, reg), nil
+	return serveHostFiles(t, raw, reg, archivetest.NewFakeSQL(t)), nil
 }
 
 // hostEventN numbers the events writeHostEvents writes, so no two share an id.

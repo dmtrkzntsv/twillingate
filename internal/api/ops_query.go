@@ -15,8 +15,8 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -233,7 +233,7 @@ func (h *host) answer(ctx context.Context, q native.Query, p native.Params) (nat
 // CONSOLE_QUERY_TIMEOUT's words, a refusal as invalid (nativeError).
 func (h *host) answerErr(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return invalidf("%s", enginesql.Timeout(h.queryTimeout))
+		return invalidf("%s", sqlbind.Timeout(h.queryTimeout))
 	}
 	return nativeError(err)
 }
@@ -404,15 +404,15 @@ func (h *host) sqlError(ctx context.Context, err error) error {
 	isKind := func(k sqlengine.Kind) bool { return errors.As(err, &se) && se.Kind == k }
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
-		return invalidf("%s", enginesql.Timeout(h.queryTimeout))
+		return invalidf("%s", sqlbind.Timeout(h.queryTimeout))
 	case ctx.Err() != nil: // the caller went away: whatever the engine said last
 		return err
 	case isKind(sqlengine.KindTimeout):
-		return invalidf("%s", enginesql.Timeout(h.queryTimeout))
+		return invalidf("%s", sqlbind.Timeout(h.queryTimeout))
 	case isKind(sqlengine.KindOutOfMemoryLoadingLog):
-		return invalidf("%s", enginesql.LogsOutOfMemory)
+		return invalidf("%s", sqlbind.LogsOutOfMemory)
 	case isKind(sqlengine.KindOutOfMemory):
-		return invalidf("%s", enginesql.OutOfMemory)
+		return invalidf("%s", sqlbind.OutOfMemory)
 	case isKind(sqlengine.KindRefused):
 		msg := se.Message
 		if sqliteTable.MatchString(msg) {
@@ -425,16 +425,16 @@ func (h *host) sqlError(ctx context.Context, err error) error {
 	case isKind(sqlengine.KindSQL):
 		return invalidf("SQL error (DuckDB): %s", se.Message)
 	case isKind(sqlengine.KindExited):
-		return invalidf("%s", enginesql.ChildExited)
+		return invalidf("%s", sqlbind.EngineExited)
 	case isKind(sqlengine.KindBusy):
-		return invalidf("%s", enginesql.Busy)
+		return invalidf("%s", sqlbind.Busy)
 	case isKind(sqlengine.KindStale):
-		return invalidf("%s", enginesql.Stale)
+		return invalidf("%s", sqlbind.Stale)
 	case errors.Is(err, sqlengine.ErrTooLarge):
-		return invalidf("%s", enginesql.TooLarge)
+		return invalidf("%s", sqlbind.TooLarge)
 	case errors.As(err, &se), errors.Is(err, sqlengine.ErrUnavailable):
 		h.logger.Warn("the SQL engine failed", "error", err.Error())
-		return invalidf("%s", enginesql.EngineFailed)
+		return invalidf("%s", sqlbind.EngineFailed)
 	}
 	return err
 }

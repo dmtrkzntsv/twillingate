@@ -1,0 +1,6 @@
+[
+{"mode":"text","sql":"SELECT 'many' AS value","scope":null,"confine":true,"max_rows":1001,"answers":[{"columns":["value"],"rows":[["many"]]}]},
+{"mode":"text","sql":"SELECT 1 AS value","scope":null,"confine":true,"max_rows":1001,"answers":[{"columns":["value"],"rows":[["1"]]}]},
+{"mode":"text","sql":"SELECT 'a' AS x","scope":null,"confine":true,"max_rows":1001,"answers":[{"columns":["x"],"rows":[["a"]]}]},
+{"mode":"text","sql":"SELECT 'a' AS label, 1 AS value, 2 AS z","scope":null,"confine":true,"max_rows":1001,"answers":[{"columns":["label","value","z"],"rows":[["a","1","2"]]}]}
+]

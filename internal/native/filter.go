@@ -280,8 +280,8 @@ func vitalRatingColumn(b *Batch) *Column {
 	})
 }
 
-// bucketOf is measures' bucket of a value, as the reader's measures view
-// computes it: ceil(ln(value)/ln(1.04)) above 1e-17, else (NULL among
+// bucketOf is measures' bucket of a value, as the measures table's bucket
+// column holds it: ceil(ln(value)/ln(1.04)) above 1e-17, else (NULL among
 // them) -1000.
 func bucketOf(v float64, null bool) int64 {
 	if !null && v > 1e-17 {

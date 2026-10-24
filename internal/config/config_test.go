@@ -37,8 +37,8 @@ func TestDefaultsApplied(t *testing.T) {
 	if c.Buffer.FlushMaxEvents != 1000 || c.Buffer.FlushInterval != 5*time.Second || c.Buffer.Capacity != 10000 {
 		t.Errorf("Buffer = %+v", c.Buffer)
 	}
-	if c.Engine.MemoryLimit != "512MB" || c.Engine.MaxChildren != 2 {
-		t.Errorf("Engine = %+v, want 512MB and 2", c.Engine)
+	if c.Ignored != nil || c.IgnoredWarning() != "" {
+		t.Errorf("Ignored = %v, want none", c.Ignored)
 	}
 	if c.IngestLateDays != 1 {
 		t.Errorf("IngestLateDays = %d, want 1", c.IngestLateDays)
@@ -133,9 +133,6 @@ func TestValidationErrors(t *testing.T) {
 		"no database":                     {"DATABASE_DSN": ""},
 		"bad geo scheme":                  base(map[string]string{"GEO_DSN": "???"}),
 		"zero retention days":             base(map[string]string{"RETENTION_DAYS": "0"}),
-		"zero engine children":            base(map[string]string{"ENGINE_MAX_CHILDREN": "0"}),
-		"engine memory not a size":        base(map[string]string{"ENGINE_MEMORY_LIMIT": "lots"}),
-		"engine memory no unit":           base(map[string]string{"ENGINE_MEMORY_LIMIT": "512"}),
 		"late days exceed retention":      base(map[string]string{"RETENTION_DAYS": "30", "INGEST_LATE_DAYS": "45"}),
 		"zero late days":                  base(map[string]string{"INGEST_LATE_DAYS": "0"}),
 		"negative late days":              base(map[string]string{"INGEST_LATE_DAYS": "-1"}),
@@ -161,8 +158,8 @@ func TestValidationErrors(t *testing.T) {
 }
 
 // TestEventsDir: the event files sit beside the database unless
-// EVENTS_DIR moves them; a relative path is made absolute, since the
-// engine child resolves paths from its own working directory.
+// EVENTS_DIR moves them; a relative path is made absolute, so it names
+// the same directory whatever the working directory.
 func TestEventsDir(t *testing.T) {
 	c, err := load(t, nil)
 	if err != nil || c.EventsDir != "/tmp/raw" {
@@ -179,9 +176,9 @@ func TestEventsDir(t *testing.T) {
 	}
 }
 
-// TestEventsDirMustNotHoldTheDatabase: the engine child may read and write
-// all of EVENTS_DIR, so a database inside it would be within reach of
-// widget and query SQL (raw-first spec D8).
+// TestEventsDirMustNotHoldTheDatabase: the SQL engine reads all of
+// EVENTS_DIR, so a database inside it would be within reach of widget and
+// query SQL (raw-first spec D8).
 func TestEventsDirMustNotHoldTheDatabase(t *testing.T) {
 	for name, vars := range map[string]map[string]string{
 		"the database's directory": {"EVENTS_DIR": "/tmp"},
@@ -820,14 +817,26 @@ func TestRetiredVariablesAreIgnored(t *testing.T) {
 	}
 }
 
-func TestEngineFromEnv(t *testing.T) {
-	for _, v := range []string{"1GB", "768MB", "1.5GB", "2GiB", "512mb"} {
-		c, err := load(t, map[string]string{"ENGINE_MEMORY_LIMIT": v, "ENGINE_MAX_CHILDREN": "4"})
+// TestRetiredEngineSettingsAreIgnored: an install that still sets
+// ENGINE_MEMORY_LIMIT or ENGINE_MAX_CHILDREN, whatever the value, loads,
+// and the warning names only the ones it sets.
+func TestRetiredEngineSettingsAreIgnored(t *testing.T) {
+	for _, c := range []struct {
+		vars map[string]string
+		want string
+	}{
+		{map[string]string{"ENGINE_MEMORY_LIMIT": "lots", "ENGINE_MAX_CHILDREN": "0"},
+			"ENGINE_MEMORY_LIMIT and ENGINE_MAX_CHILDREN are ignored: SQL runs in an external SQL engine"},
+		{map[string]string{"ENGINE_MEMORY_LIMIT": "512MB"}, "ENGINE_MEMORY_LIMIT is ignored: SQL runs in an external SQL engine"},
+		{map[string]string{"ENGINE_MAX_CHILDREN": "2"}, "ENGINE_MAX_CHILDREN is ignored: SQL runs in an external SQL engine"},
+		{map[string]string{"ENGINE_MAX_CHILDREN": ""}, ""},
+	} {
+		cfg, err := load(t, c.vars)
 		if err != nil {
-			t.Fatalf("ENGINE_MEMORY_LIMIT=%s: %v", v, err)
+			t.Fatalf("%v: %v", c.vars, err)
 		}
-		if c.Engine.MemoryLimit != v || c.Engine.MaxChildren != 4 {
-			t.Errorf("Engine = %+v", c.Engine)
+		if got := cfg.IgnoredWarning(); got != c.want {
+			t.Errorf("%v: warning = %q, want %q", c.vars, got, c.want)
 		}
 	}
 }

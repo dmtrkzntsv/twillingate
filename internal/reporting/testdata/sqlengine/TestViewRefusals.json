@@ -1,0 +1,7 @@
+[
+{"mode":"shape","sql":"SELECT 'a' AS \"Key\", 3 AS \"N\" UNION ALL SELECT 'b', 1 UNION ALL SELECT 'c', 2","scope":null,"confine":true,"max_rows":0,"answers":[{"columns":["Key","N"],"rows":[]}]},
+{"mode":"text","sql":"SELECT 'a' AS \"Key\", 3 AS \"N\" UNION ALL SELECT 'b', 1 UNION ALL SELECT 'c', 2","scope":null,"confine":true,"max_rows":5,"answers":[{"columns":["Key","N"],"rows":[["a","3"],["b","1"],["c","2"]]}]},
+{"mode":"page","sql":"SELECT 'a' AS \"Key\", 3 AS \"N\" UNION ALL SELECT 'b', 1 UNION ALL SELECT 'c', 2","page":{"filters":[{"column":"Zed","op":"=","values":["1"]}],"sort":null,"distinct":"","limit":1000,"offset":0},"scope":null,"confine":true,"max_rows":1000,"answers":[{"kind":"refused","message":"no column \"Zed\"; columns are Key, N"}]},
+{"mode":"page","sql":"SELECT 'a' AS \"Key\", 3 AS \"N\" UNION ALL SELECT 'b', 1 UNION ALL SELECT 'c', 2","page":{"filters":[],"sort":{"column":"Zed","desc":false},"distinct":"","limit":1000,"offset":0},"scope":null,"confine":true,"max_rows":1000,"answers":[{"kind":"refused","message":"no column \"Zed\"; columns are Key, N"}]},
+{"mode":"page","sql":"SELECT 'a' AS \"Key\", 3 AS \"N\" UNION ALL SELECT 'b', 1 UNION ALL SELECT 'c', 2","page":{"filters":[],"sort":null,"distinct":"Zed","limit":1000,"offset":0},"scope":null,"confine":true,"max_rows":1000,"answers":[{"kind":"refused","message":"no column \"Zed\"; columns are Key, N"}]}
+]

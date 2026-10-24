@@ -1113,6 +1113,45 @@ step 5 proceeds as the plan says: measure the real gain first, on Views
 and Product over a year at 1M, and drop the cache if it is under about
 8x.
 
+## Measurements (step 6)
+
+DuckDB, cgo and `internal/engine` gone (step 6b) against step 6a's tip
+(`6347225`, the last cgo build), both from `make build` on one x86-64
+host (4 cores). Idle RSS is `serve` with ingest and the console
+(`CONSOLE_AUTH_DSN` set, no `SQL_ENGINE_SOCKET`, `GOMEMLIMIT=256MiB` as
+the unit ships), read from `/proc/<pid>/status` 60 s after start, with no
+request but one `/healthz` just before the reading; a fresh data
+directory each run. "100k" is step 4's Go-written files
+(`archivetest.Generated` at 100,000 events a month, 12 months, rebuilt
+through the Go pass) copied into `raw/` beside a database holding project
+1, so the pass at start reads them. Three runs a
+cell, before and after interleaved, each behind the quiet-host gate (the
+1-minute load at most 1.0; all 12 cells started at 0.34 to 0.90, none
+gave up). No process had a child.
+
+| | Before (6a, cgo) | After (6b, pure Go) | Change |
+| --- | --- | --- | --- |
+| Binary (amd64, stripped) | 82.9 MB, dynamic (glibc, libstdc++) | 32.7 MB, static | −61% |
+| Binary gzipped (≈ tarball) | 30.5 MB | 12.1 MB | −60% |
+| Image, on disk / content (amd64) | 230 MB / 59.9 MB (v0.22.0 `latest`) | 51.7 MB / 12.9 MB | −78% / −78% |
+| Idle RSS, empty data dir (median; runs) | 43.4 MiB (42.8, 43.4, 43.5) | 36.0 MiB (35.7, 36.0, 36.1) | −17% |
+| Idle RSS, 100k data (median; runs) | 52.3 MiB (43.3, 52.3, 55.1) | 45.8 MiB (38.4, 45.8, 48.3) | −12% |
+
+One more run each, empty, split the RSS: before 15.9 MiB anonymous and
+27.2 MiB file-backed, after 14.8 MiB anonymous and 21.0 MiB
+file-backed. The file-backed part is the binary's pages the process has
+touched (the embedded web app and SDK included); the drop is mostly
+there, from no longer mapping DuckDB's code.
+
+Against the targets: **idle RSS is not met.** About 36 MiB with an
+empty data directory and 38 to 48 MiB with a year at 100k a month,
+against ~20 MB; only the anonymous memory, about 15 MiB, is under it.
+The rest is the binary's own pages, which the kernel may drop under
+pressure but which count in RSS. **The binary target (≤ 30 MB) is not
+met either,** by 2.7 MB. The image and the no-cgo goals are met. The
+100k runs vary by about 10 MiB from run to run on both builds, with the
+heap the start's pass and the console's checks leave behind.
+
 ## Left to the builder
 
 - Field names and JSON schema of the language; the exact metric and

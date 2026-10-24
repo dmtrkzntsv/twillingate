@@ -15,8 +15,9 @@ widgets at `/share/`) — and its whole state is one SQLite file.
 
 ## Install
 
-Linux on amd64 or arm64 with glibc 2.35 or newer (Debian 12, Ubuntu 22.04 or
-later), or Docker on amd64 or arm64. 32-bit ARM is not built. Plan on 1 GB
+Linux on amd64 or arm64, or Docker on amd64 or arm64. The binary is
+static (pure Go, no cgo), so any Linux distribution runs it, whatever its C
+library; `install.sh` sets it up as a systemd service, so it needs systemd. 32-bit ARM is not built. Plan on 1 GB
 of memory: the server stays small, near its soft memory target
 (`GOMEMLIMIT`, which the unit and compose files set to 256MiB). SQL runs
 on an [external SQL engine](#external-sql-engine), a process of its own
@@ -34,8 +35,8 @@ streamed request), and 387 to 405 MB when its widgets are asked for one
 by one. The built-in widgets' reader, in the console process, holds at
 most about 128 MiB of identities, 128 MiB of today's logs decoded
 (dropped after five idle minutes) and 256 MiB of aggregations (two scans
-at once, 128 MiB each), counted approximately. `serve` starts no engine
-child: SQL (a widget's, `query`'s and the console's check of the users' SQL
+at once, 128 MiB each), counted approximately. `serve` starts no other
+process: SQL (a widget's, `query`'s and the console's check of the users' SQL
 widgets at start) goes to the external SQL engine when `SQL_ENGINE_SOCKET`
 is set, and is refused when it is not, while the form-attribution lookup,
 the daily pass, the built-in widgets and the check before a rename or merge
@@ -45,6 +46,12 @@ rule is saved read the files in Go.
 
 Ingestion, the SDK and — once `CONSOLE_AUTH_DSN` is set — the console: MCP,
 REST and the [dashboards at /app/](#dashboards-at-app).
+The image (`ghcr.io/dmtrkzntsv/twillingate`, amd64 and arm64) is the
+static binary on a distroless base, with CA certificates and time zone
+data and nothing else: no shell, no package manager. It runs as uid and
+gid 10001 and keeps the database and the event files in the
+`/var/lib/twillingate` volume; run CLI commands through
+`docker compose exec twillingate twillingate …`.
 
 ```bash
 mkdir twillingate && cd twillingate
@@ -59,7 +66,7 @@ docker compose exec twillingate twillingate key issue -project-id 1 -label web
 ```bash
 # From a published release (no checkout needed):
 curl -fsSL https://raw.githubusercontent.com/dmtrkzntsv/twillingate/main/deploy/systemd/install.sh | sudo bash
-# Or from a checkout (Go, Node 22 and a C toolchain on the host): git clone, make build, then
+# Or from a checkout (Go and Node 22 on the host): git clone, make build, then
 sudo ./deploy/systemd/install.sh          # --user NAME to skip the prompt, --yes for defaults
 ```
 
@@ -151,8 +158,6 @@ The stream sends a keepalive every 15 seconds, well inside Cloudflare's
 | `CONSOLE_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `30s`. |
 | `CONSOLE_QUERY_ROWS_MAX` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
 | `SQL_ENGINE_SOCKET` | Path of the Unix socket of the [external SQL engine](#external-sql-engine) that answers SQL: a widget's and `query`'s. Unset or empty, there is none: SQL widgets and `query`'s `sql` are refused, `sql` leaves the component list, and everything else works. Give the console's process the same value as `reporting dev`. Default empty. |
-| `ENGINE_MEMORY_LIMIT` | DuckDB's memory limit for the child `twillingate engine -check` starts; no other command starts one, since SQL runs on the external SQL engine. `512MB`, `1GB`, `2GiB` (DuckDB's MB is 10^6 bytes). Default `512MB`. |
-| `ENGINE_MAX_CHILDREN` | Engine children running at once across every process on one data directory: `twillingate engine -check`'s, the only one left. Default 2. |
 | `REPORTING_CACHE_MAX_AGE` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default `15m`. |
 | `REPORTING_REFRESH_MAX_AGE` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_MAX_AGE`; must not exceed it when that is non-zero. Default `1m`. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_MAX_AGE`, `REPORTING_REFRESH_MAX_AGE`) while its window has focus; both 0 removes the option. |
 
@@ -169,7 +174,7 @@ leftover one is ignored, so rename any still in `twillingate.env`.
 
 ### Raspberry Pi and low-resource hosts
 
-- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. No twillingate process runs an engine child: SQL goes to the external SQL engine, if you run one, and the built-in dashboards need none.
+- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. twillingate runs as one process: SQL goes to the external SQL engine, if you run one, and the built-in dashboards need none.
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Keep `GOMEMLIMIT` (unit and compose files ship `256MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory. `GOMEMLIMIT` is a soft target, not a bound: the garbage collector works harder near it, and the process may go past it. The daily pass peaks near 150 MB on a month of a million events, and at about 230 to 400 MB on one with 2,000 distinct attribute keys (lower under a lower target, at more CPU).
 - Plan on 1 GB of memory, as in [Install](#install): `GOMEMLIMIT` is the server's own target (the daily pass included: it runs in the server). An external SQL engine on the same host needs memory of its own on top.
@@ -617,7 +622,6 @@ server's; without it they are refused, and its other widgets load.
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v0.9.2` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
 | Upgrade an install still below migration 042 (a release before v0.21.0) | upgrade to v0.21.x first and run `twillingate events import` there, as [UPGRADES.md](https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md) says; this release has no import, and its migration 042 refuses a database still holding events that were never imported |
-| Check the engine | `sudo -u twillingate sh -ac '. /etc/twillingate/twillingate.env; twillingate engine -check'` (the service user and its environment: as root it creates a root-owned `raw/` and `engine/` the service cannot write) starts a DuckDB engine child, the only command that still starts one, and runs one query: `engine ok: 42 in 63 ms (spawn and first query), DuckDB v1.5.6`. A failure names what stopped it (a missing library, `ENGINE_MEMORY_LIMIT`, all `ENGINE_MAX_CHILDREN` slots busy for 30 s). The start of `serve`, and of every command that opens the database, runs no child: the system dashboards' widgets are structured queries, answered without the engine, so a start has no SQL of theirs to check. |
 | Upgrade across a schema change | [Back up](#back-up-and-restore) first: migrations 012, 014, 015, 016 and 042 are irreversible. Pre-checks and what changes on the day: <https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md> (not served over MCP; open it in the repository) |
 | Database size | `du -h /var/lib/twillingate/twillingate.db` |
 | Recent config changes | `sqlite3 …/twillingate.db "SELECT * FROM audit_log ORDER BY ts DESC LIMIT 20"` |
@@ -635,7 +639,7 @@ rotates at 00:00 UTC; a catch-up pass at startup means downtime
 across those times skips no day. With `LOG_FILE` set, install
 `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.
 
-The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began were copied in once, on the upgrade to v0.21, by that release's `twillingate events import`. The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass, in Go in the ingest process, without an engine child (`ENGINE_*` do not apply to it): the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (the built-in widgets answered without the engine, a widget's SQL on the external SQL engine), `query`, the analytics tools (`views_overview` through `identities`), the count of events in `limits`, `list_attributes`, `usage` and the console's event names and newest days read them and the tables derived from them.
+The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began were copied in once, on the upgrade to v0.21, by that release's `twillingate events import`. The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass, in Go in the ingest process: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (the built-in widgets answered without the engine, a widget's SQL on the external SQL engine), `query`, the analytics tools (`views_overview` through `identities`), the count of events in `limits`, `list_attributes`, `usage` and the console's event names and newest days read them and the tables derived from them.
 
 ### Back up and restore
 
@@ -663,8 +667,8 @@ List each project's newest dated file (a day file, or a month file once the mont
 
 ```bash
 sudo -u twillingate sh -c 'for d in /var/lib/twillingate/raw/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done'
-# compose (the image has sh, grep and sort)
-docker compose exec twillingate sh -c 'for d in /var/lib/twillingate/raw/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done'
+# compose: the image has no shell, so list them from a throwaway container
+docker run --rm --volumes-from "$(docker compose ps -q twillingate)" alpine:3.20 sh -c 'for d in /var/lib/twillingate/raw/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done'
 ```
 
 The image carries no `sqlite3`: under compose, `docker compose stop

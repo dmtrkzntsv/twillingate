@@ -181,7 +181,7 @@ func retentionRows(t *testing.T, e *Engine, where []Filter, from, to string, off
 	return rows, nil
 }
 
-func TestRetentionStateMatchesDuckDB(t *testing.T) {
+func TestRetentionStateMatchesGolden(t *testing.T) {
 	f := retentionFixture(t)
 	for _, c := range []struct {
 		name     string
@@ -189,7 +189,7 @@ func TestRetentionStateMatchesDuckDB(t *testing.T) {
 		offsets  int
 		today    string
 		where    []Filter
-		sql      string // the where's conditions, for DuckDB
+		sql      string // the where's conditions, in the golden's SQL key
 	}{
 		{name: "every day", from: retentionFrom, to: "2026-09-09", offsets: 45},
 		{name: "first seen before the range", from: "2026-07-15", to: "2026-07-31", offsets: 30},
@@ -214,11 +214,11 @@ func TestRetentionStateMatchesDuckDB(t *testing.T) {
 				t.Fatal(err)
 			}
 			sql := strings.NewReplacer("{today}", now, "{offsets}", strconv.Itoa(c.offsets), "{where}", c.sql).Replace(retentionStateSQL)
-			want := duckTable(t, f, sql, c.from, c.to)
+			want := goldenTable(t, sql, c.from, c.to, got)
 			sortRows(want)
 			t.Logf("%d actors", len(want))
 			if empty := c.from < retentionFrom || c.from == today; len(want) == 0 && !empty {
-				t.Fatal("DuckDB has no actors: a weak case")
+				t.Fatal("the golden has no actors: a weak case")
 			}
 			sameTable(t, got, want)
 		})
@@ -298,7 +298,7 @@ func TestRetentionFiles(t *testing.T) {
 
 // retentionSQL is the built-in retention widget file name's SQL as
 // written, run on the fixture: today put in for current_date, the
-// parameters bound (from and to as duckTable's %[1]s and %[2]s), the
+// parameters bound (from and to as goldenTable's %[1]s and %[2]s), the
 // offsets put in for its 45, and extra conditions added to acts.
 func retentionSQL(t *testing.T, name, now string, offsets int, where string) string {
 	t.Helper()
@@ -367,7 +367,7 @@ func TestRetentionMatchesSQL(t *testing.T) {
 					}
 					sql = strings.Replace(sql, all, "FROM retention\nWHERE actor_kind = '"+q.IdentifiedBy+"' AND day_offset", 1)
 				}
-				want := duckTable(t, f, sql, c.from, c.to)
+				want := goldenTable(t, sql, c.from, c.to, res.Rows)
 				t.Logf("%s: %d rows", file, len(want))
 				if len(want) == 0 && c.name != "empty range" {
 					t.Fatalf("%s: no rows: a weak case", file)

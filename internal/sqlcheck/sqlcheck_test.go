@@ -53,11 +53,6 @@ var migrationSteps = map[string]bool{
 // migrationFile matches a Go migration step's file name.
 var migrationFile = regexp.MustCompile(`^store/sqlite/migration\d+\.go$`)
 
-// duckdbDir holds the code whose SQL is DuckDB's, not SQLite's: the engine
-// child (raw-first spec D8). Preparing it against SQLite proves nothing;
-// internal/engine's tests run it against DuckDB.
-const duckdbDir = "engine/"
-
 // siteFile is the file part of a site's key.
 func siteFile(s site) string { return s.key[:strings.LastIndexByte(s.key, ':')] }
 
@@ -73,7 +68,7 @@ func scanInternal(t *testing.T) []site {
 	}
 	checked := sites[:0]
 	for _, s := range sites {
-		if f := siteFile(s); !migrationSteps[f] && !strings.HasPrefix(f, duckdbDir) {
+		if !migrationSteps[siteFile(s)] {
 			checked = append(checked, s)
 		}
 	}
@@ -135,27 +130,6 @@ func TestDynamicSitesAreListed(t *testing.T) {
 	}
 	for _, key := range stale {
 		t.Errorf("dynamic lists %s, which builds no SQL at run time any more: remove the entry", key)
-	}
-}
-
-// TestDuckDBSitesAreNotPrepared: the engine's SQL is found by the scan and
-// left out of the SQLite checks, rather than missed.
-func TestDuckDBSitesAreNotPrepared(t *testing.T) {
-	all, err := scanSource("..")
-	if err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	for _, s := range all {
-		found = found || strings.HasPrefix(siteFile(s), duckdbDir)
-	}
-	if !found {
-		t.Fatalf("no SQL site under internal/%s: the scan no longer sees the engine, so this exclusion guards nothing", duckdbDir)
-	}
-	for _, s := range scanInternal(t) {
-		if strings.HasPrefix(siteFile(s), duckdbDir) {
-			t.Errorf("%s: DuckDB SQL reached the SQLite checks", s.pos)
-		}
 	}
 }
 

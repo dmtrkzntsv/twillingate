@@ -1,11 +1,13 @@
 package native
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"os"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -121,7 +123,7 @@ func attrFixture(t testing.TB) *archivetest.Files {
 }
 
 // attrWidgetSQL is the Product dashboard's attribute values SQL, kept in testdata,
-// over table, its parameters spelled for duckTable.
+// over table, its parameters spelled for goldenTable.
 func attrWidgetSQL(t *testing.T, table string) string {
 	t.Helper()
 	b, err := os.ReadFile("../reporting/testdata/system-sql/product/attribute-values.sql")
@@ -168,7 +170,7 @@ GROUP BY day, event_name, col, attr_value
 ORDER BY day, "count" DESC, event_name, attr_key, attr_value`
 }
 
-func TestAttributesMatchDuckDB(t *testing.T) {
+func TestAttributesMatchGolden(t *testing.T) {
 	f := attrFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	widget := Query{Kind: "attributes", Table: "product", Output: "values",
@@ -201,10 +203,7 @@ func TestAttributesMatchDuckDB(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			want := duckTableWith(t, f, attrRules, c.sql, c.from, c.to)
-			if len(want) < 10 {
-				t.Fatalf("the SQL returns %d rows: a weak case", len(want))
-			}
+			var want [][]string
 			// A batch's pseudo-rows in one chunk, and in many.
 			defer func(n int) { unpivotChunk = n }(unpivotChunk)
 			for _, chunk := range []int{1 << 16, 7} {
@@ -212,6 +211,11 @@ func TestAttributesMatchDuckDB(t *testing.T) {
 				got, err := e.Answer(context.Background(), c.q, Params{Project: 1, From: date(t, c.from), To: date(t, c.to)}, attrRules)
 				if err != nil {
 					t.Fatal(err)
+				}
+				if want == nil {
+					if want = goldenTableWith(t, attrRules, c.sql, c.from, c.to, got.Rows); len(want) < 10 {
+						t.Fatalf("the SQL returns %d rows: a weak case", len(want))
+					}
 				}
 				if !slices.Equal(got.Columns, c.q.Columns()) {
 					t.Errorf("columns %v, want %v", got.Columns, c.q.Columns())
@@ -225,7 +229,7 @@ func TestAttributesMatchDuckDB(t *testing.T) {
 	}
 
 	// The fixture holds what the cases are about.
-	rows := duckTableWith(t, f, attrRules, attrWidgetSQL(t, "product"), attrFrom, today)
+	rows := goldenAnswer(t, e, 1, widget, attrRules, attrWidgetSQL(t, "product"), attrFrom, today)
 	attrs := map[string]bool{}
 	for _, r := range rows {
 		attrs[r[0]] = true
@@ -276,9 +280,9 @@ func TestAttributesOrderAndLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := duckTableWith(t, f, attrRules, `SELECT substr(col, 6) AS a, attr_value, count(*) AS c FROM (
+	want := goldenTableWith(t, attrRules, `SELECT substr(col, 6) AS a, attr_value, count(*) AS c FROM (
 		UNPIVOT (SELECT COLUMNS('^attr_') FROM product WHERE `+inRange+`) ON COLUMNS('^attr_') INTO NAME col VALUE attr_value)
-		GROUP BY ALL ORDER BY c DESC, a, attr_value LIMIT 5`, attrFrom, today)
+		GROUP BY ALL ORDER BY c DESC, a, attr_value LIMIT 5`, attrFrom, today, got.Rows)
 	sameTable(t, got.Rows, want)
 
 	q = Query{Kind: "attributes", Table: "product", Output: "values", Dimensions: []string{"event_name"}, Metrics: []Metric{{Op: "count"}}}
@@ -286,9 +290,9 @@ func TestAttributesOrderAndLimit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want = duckTableWith(t, f, attrRules, `SELECT event_name, substr(col, 6) AS a, attr_value, count(*) AS c FROM (
+	want = goldenTableWith(t, attrRules, `SELECT event_name, substr(col, 6) AS a, attr_value, count(*) AS c FROM (
 		UNPIVOT (SELECT event_name, COLUMNS('^attr_') FROM product WHERE `+inRange+`) ON COLUMNS('^attr_') INTO NAME col VALUE attr_value)
-		GROUP BY ALL ORDER BY event_name, a, c DESC, attr_value`, attrFrom, today)
+		GROUP BY ALL ORDER BY event_name, a, c DESC, attr_value`, attrFrom, today, got.Rows)
 	sameTable(t, got.Rows, want)
 }
 
@@ -336,7 +340,7 @@ QUALIFY ` + q + `
 ORDER BY events DESC, attr_key`
 }
 
-func TestAttributeKeysMatchDuckDB(t *testing.T) {
+func TestAttributeKeysMatchGolden(t *testing.T) {
 	f := attrFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	keys := func(table string, limit int, keep ...string) Query {
@@ -365,16 +369,18 @@ func TestAttributeKeysMatchDuckDB(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			want := duckTableWith(t, f, attrRules, c.sql, c.from, c.to)
-			if len(want) < 2 {
-				t.Fatalf("the SQL returns %d rows: a weak case", len(want))
-			}
+			var want [][]string
 			defer func(n int) { unpivotChunk = n }(unpivotChunk)
 			for _, chunk := range []int{1 << 16, 7} {
 				unpivotChunk = chunk
 				got, err := e.Answer(context.Background(), c.q, Params{Project: 1, From: date(t, c.from), To: date(t, c.to)}, attrRules)
 				if err != nil {
 					t.Fatal(err)
+				}
+				if want == nil {
+					if want = goldenTableWith(t, attrRules, c.sql, c.from, c.to, got.Rows); len(want) < 2 {
+						t.Fatalf("the SQL returns %d rows: a weak case", len(want))
+					}
 				}
 				if !slices.Equal(got.Columns, c.q.Columns()) {
 					t.Errorf("columns %v, want %v", got.Columns, c.q.Columns())
@@ -389,7 +395,7 @@ func TestAttributeKeysMatchDuckDB(t *testing.T) {
 
 	// The fixture holds what the cases are about: more keys than the
 	// limit, a kept key past it, measures' own key, and views' left out.
-	rows := duckTableWith(t, f, attrRules, listAttributesSQL(both, 2, []string{"note", "conn"}, ""), attrFrom, today)
+	rows := goldenAnswer(t, e, 1, keys("events", 2, "note", "conn"), attrRules, listAttributesSQL(both, 2, []string{"note", "conn"}, ""), attrFrom, today)
 	got := map[string]bool{}
 	for _, r := range rows {
 		got[r[0]] = true
@@ -400,11 +406,42 @@ func TestAttributeKeysMatchDuckDB(t *testing.T) {
 	if len(rows) != 4 || !got["note"] || !got["conn"] {
 		t.Errorf("the kept keys are not past the limit: %v", rows)
 	}
-	all := duckTableWith(t, f, attrRules, listAttributesSQL("'views'", 100, nil, ""), attrFrom, today)
+	// The views' keys, which no attributes query reads: counted off their
+	// rows as the SQL counts them (each key's values, and distinct ones).
+	var attrCols []string
+	for _, c := range eventsColumns(t, f.Dir, 1, attrRules) {
+		if strings.HasPrefix(c, "attr_") {
+			attrCols = append(attrCols, c)
+		}
+	}
+	n, distinct := map[string]int{}, map[string]map[string]bool{}
+	for _, r := range nativeRows(t, f, compile(t, f, 1, attrRules), append([]string{"id"}, attrCols...), "views") {
+		for i, c := range attrCols {
+			if v := r[i+1]; v != nullCell {
+				k := strings.TrimPrefix(c, "attr_")
+				if distinct[k] == nil {
+					distinct[k] = map[string]bool{}
+				}
+				n[k]++
+				distinct[k][v] = true
+			}
+		}
+	}
+	var viewKeys [][]string
+	for k := range n {
+		viewKeys = append(viewKeys, []string{k, strconv.Itoa(n[k]), strconv.Itoa(len(distinct[k])), strconv.Itoa(len(n))})
+	}
+	slices.SortFunc(viewKeys, func(a, b []string) int {
+		x, _ := strconv.Atoi(a[1])
+		y, _ := strconv.Atoi(b[1])
+		return cmp.Or(cmp.Compare(y, x), strings.Compare(a[0], b[0]))
+	})
+	all := goldenTableWith(t, attrRules, listAttributesSQL("'views'", 100, nil, ""), attrFrom, today, viewKeys)
+	sameTable(t, viewKeys, all)
 	if len(all) == 0 || all[0][0] == "" {
 		t.Error("the views carry no attribute")
 	}
-	for _, r := range duckTableWith(t, f, attrRules, listAttributesSQL(both, 100, nil, ""), attrFrom, today) {
+	for _, r := range goldenAnswer(t, e, 1, keys("events", 100), attrRules, listAttributesSQL(both, 100, nil, ""), attrFrom, today) {
 		if r[0] == "ref" {
 			t.Error("the keys read the views")
 		}

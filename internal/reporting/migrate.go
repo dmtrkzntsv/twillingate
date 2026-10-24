@@ -39,7 +39,7 @@ var systemFS embed.FS
 
 // ErrUnchecked is Migrate's error when it synced the release's system
 // dashboards without checking every widget's SQL on the event files: a
-// query ran out of time or memory, or the engine's child died under it
+// query ran out of time or memory, or the SQL engine stopped under it
 // (resourceErr), or the engine was busy or could not be reached, which
 // says nothing of the SQL. On an upgrade's first
 // start that is most likely the logs the daily pass has not dumped yet,

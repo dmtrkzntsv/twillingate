@@ -10,6 +10,7 @@
 package archtest
 
 import (
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -29,14 +30,12 @@ var rank = map[string]int{
 	"internal/config":              0,
 	"internal/config/configtest":   0,
 	"internal/enrich":              0,
-	"internal/engine":              0,
 	"internal/archive":             0,
 	"internal/archive/archivetest": 0,
 	"internal/identity":            0,
 	"internal/native":              0,
 	"internal/geo":                 0,
 	"internal/shared/civil":        0,
-	"internal/shared/enginesql":    0,
 	"internal/shared/golden":       0,
 	"internal/shared/hll":          0,
 	"internal/shared/readsql":      0,
@@ -46,6 +45,7 @@ var rank = map[string]int{
 	"internal/store/sqlite":        0,
 	"internal/store/storetest":     0,
 	"internal/wire":                0,
+	"internal/reporting/sqlbind":   0,
 	"internal/manage":              1,
 	"internal/reporting":           1,
 	"internal/pipeline":            2,
@@ -175,5 +175,57 @@ func listImports(t *testing.T) map[string][]string {
 func TestPackageGraph(t *testing.T) {
 	for _, v := range violations(listImports(t)) {
 		t.Error(v)
+	}
+}
+
+// TestPureGo: twillingate builds without a C toolchain. No package the
+// module builds, tests and measurement builds included, depends on a
+// module whose path names duckdb, go.mod requires none, and no package
+// outside the standard library, the module's own or a dependency's, uses
+// cgo (import "C"). go list runs with cgo enabled, so a cgo file is listed
+// as one rather than left out (the standard library's are, and drop out
+// with CGO_ENABLED=0).
+func TestPureGo(t *testing.T) {
+	_, thisFile, _, _ := runtime.Caller(0)
+	cmd := exec.Command("go", "list", "-deps", "-test", "-tags", "measure",
+		"-f", "{{.ImportPath}}|{{.Standard}}|{{join .CgoFiles \" \"}}", "./...")
+	cmd.Dir = filepath.Join(filepath.Dir(thisFile), "..", "..")
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
+	out, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			t.Fatalf("go list: %v\n%s", err, ee.Stderr)
+		}
+		t.Fatalf("go list: %v", err)
+	}
+	ours := 0
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		f := strings.SplitN(line, "|", 3)
+		if len(f) != 3 {
+			t.Fatalf("go list printed %q", line)
+		}
+		pkg, std, cgo := f[0], f[1] == "true", f[2]
+		if strings.Contains(strings.ToLower(pkg), "duckdb") {
+			t.Errorf("%s is in the build: twillingate must not depend on a DuckDB module", pkg)
+		}
+		if strings.Contains(pkg, "/node_modules/") { // a web dependency's Go, not built
+			continue
+		}
+		if !std && cgo != "" {
+			t.Errorf("%s uses cgo (%s): twillingate builds with CGO_ENABLED=0", pkg, cgo)
+		}
+		if strings.HasPrefix(pkg, module) {
+			ours++
+		}
+	}
+	if ours < 15 {
+		t.Fatalf("go list listed only %d of the module's packages; the scan is broken, not the graph", ours)
+	}
+	mod, err := os.ReadFile(filepath.Join(cmd.Dir, "go.mod"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(strings.ToLower(string(mod)), "duckdb") {
+		t.Error("go.mod requires a DuckDB module: run go mod tidy")
 	}
 }

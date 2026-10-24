@@ -11,7 +11,7 @@ import (
 )
 
 // ruleSet is one project's event and attribute rules, compiled to apply to
-// its batches as archive's events view applies them (eventsView):
+// its batches as the events table applies them (docs://twillingate):
 //   - an event renamed or merged reads under its new name; a blocked one,
 //     and one renamed onto a blocked name, is left out;
 //   - an attribute key renamed or blocked reads NULL; a rename target reads
@@ -56,8 +56,8 @@ type attrCol struct {
 
 // compileRules compiles the rules of project p, ordered as archive's
 // sortRules orders them (the view's result depends on the order), against
-// have, the columns of every events file (unionColumns): as in eventsView,
-// an attribute rule whose source column no file holds is skipped, so a
+// have, the columns of every events file (unionColumns): as the events
+// table does, an attribute rule whose source column no file holds is skipped, so a
 // key that is only a rename target reads its sources even when a rule
 // renames it too.
 func compileRules(p int64, rules archive.Rules, have []string) ruleSet {
@@ -432,11 +432,11 @@ func (rs ruleSet) applyEvents(b *Batch, family string) *Batch {
 func visible(name string) string { return strings.ReplaceAll(name, "\x00", `\u0000`) }
 
 // unionColumns is the column names of every events file under dir, of
-// every project and day: the columns the reader's events view is built
-// over, whose rules eventsView checks against (a rule whose source key no
-// file holds is skipped). They come as DuckDB's union by name first sees
+// every project and day: the columns the events table is built over,
+// which its rules are checked against (a rule whose source key no file
+// holds is skipped). They come in the order a union by name first sees
 // them: the open logs, by project, then the Parquet files, so the first
-// spelling of a name equal to another but for case is the view's.
+// spelling of a name equal to another but for case is the table's.
 //
 // It reads every Parquet file's footer and every open log's keys:
 // Engine.columns keeps both, reading only what changed.

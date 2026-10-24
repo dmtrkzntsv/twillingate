@@ -1,0 +1,5 @@
+[
+{"mode":"shape","sql":"SELECT CAST(event_name AS INTEGER) AS n FROM product","scope":null,"confine":true,"max_rows":0,"answers":[{"columns":["n"],"rows":[]}]},
+{"mode":"text","sql":"SELECT CAST(event_name AS INTEGER) AS n FROM product","scope":null,"confine":true,"max_rows":5,"answers":[{"columns":["n"],"rows":[]}]},
+{"mode":"text","sql":"SELECT CAST(event_name AS INTEGER) AS n FROM product","scope":null,"confine":true,"max_rows":1001,"answers":[{"kind":"sql","message":"Conversion Error: Could not convert string 'x' to INT32 when casting from source column event_name\n\nLINE 1: SELECT tw_cell(COLUMNS(*)) FROM (SELECT CAST(event_name AS INTEGER) AS n FROM product\n                                                ^"}]}
+]

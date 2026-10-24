@@ -16,62 +16,56 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// presence is manage.Presence, native or the SQL reference.
+// presence is manage.Presence.
 type presence interface {
 	HasEvents(ctx context.Context, projectID int64, family store.Family, name string) (bool, error)
 	HasAttribute(ctx context.Context, projectID int64, key string) (bool, error)
 }
 
-// bothPresence asks the native filePresence and the SQL reference, and
-// fails the test unless they agree, and agree with the reference's
-// answer frozen in testdata/<Test>.golden.json, by the order asked (the
-// files and rules change between asks).
-type bothPresence struct {
-	t        *testing.T
-	nat, sql presence
-	asked    *int
+// goldenPresence asks the native filePresence and fails the test unless
+// it answers as the SQL it replaced did, that answer frozen in
+// testdata/<Test>.golden.json, by the order asked (the files and rules
+// change between asks).
+type goldenPresence struct {
+	t     *testing.T
+	nat   presence
+	asked *int
 }
 
-// frozen is the golden answer to the next question, what, the SQL
-// reference's (want) checked against it.
-func (b bothPresence) frozen(what string, want bool) bool {
+// frozen is the golden answer to the next question, what, native's (got)
+// checked against it.
+func (b goldenPresence) frozen(what string, got bool) bool {
 	b.t.Helper()
 	*b.asked++
-	return frozen(b.t, fmt.Sprintf("%03d %s", *b.asked, what), want)
+	return frozen(b.t, fmt.Sprintf("%03d %s", *b.asked, what), got)
 }
 
-func (b bothPresence) HasEvents(ctx context.Context, projectID int64, family store.Family, name string) (bool, error) {
+func (b goldenPresence) HasEvents(ctx context.Context, projectID int64, family store.Family, name string) (bool, error) {
 	got, err := b.nat.HasEvents(ctx, projectID, family, name)
-	want, werr := b.sql.HasEvents(ctx, projectID, family, name)
 	what := fmt.Sprintf("HasEvents(%d, %s, %q)", projectID, family, name)
-	if err != nil || werr != nil || got != want || got != b.frozen(what, want) {
-		b.t.Errorf("%s: native %v, %v; SQL %v, %v", what, got, err, want, werr)
+	if err != nil {
+		b.t.Errorf("%s: %v", what, err)
 	}
+	b.frozen(what, got)
 	return got, err
 }
 
-func (b bothPresence) HasAttribute(ctx context.Context, projectID int64, key string) (bool, error) {
+func (b goldenPresence) HasAttribute(ctx context.Context, projectID int64, key string) (bool, error) {
 	got, err := b.nat.HasAttribute(ctx, projectID, key)
-	want, werr := b.sql.HasAttribute(ctx, projectID, key)
 	what := fmt.Sprintf("HasAttribute(%d, %q)", projectID, key)
-	if err != nil || werr != nil || got != want || got != b.frozen(what, want) {
-		b.t.Errorf("%s: native %v, %v; SQL %v, %v", what, got, err, want, werr)
+	if err != nil {
+		b.t.Errorf("%s: %v", what, err)
 	}
+	b.frozen(what, got)
 	return got, err
 }
 
 // presenceFixture is the widgets fixture with the native filePresence
-// over its files, checked against the SQL reference on every answer, and
-// send, which appends one product event of project to them, at at
+// over its files, checked against its golden on every answer, and send, which appends one product event of project to them, at at
 // (zero: 2026-08-20 noon).
 func presenceFixture(t *testing.T) (*widgetsFixture, presence, func(id string, project int64, name string, attrs map[string]string, at ...time.Time)) {
 	t.Helper()
 	f := newWidgetsFixture(t)
-	eng, reader, err := openFiles(f.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { eng.Close() })
 	send := func(id string, project int64, name string, attrs map[string]string, when ...time.Time) {
 		t.Helper()
 		log, err := archive.OpenLog(f.cfg.EventsDir)
@@ -90,7 +84,7 @@ func presenceFixture(t *testing.T) (*widgetsFixture, presence, func(id string, p
 		}
 	}
 	nat := &filePresence{nat: native.New(native.Options{Dir: f.cfg.EventsDir}), reg: f.reg}
-	return f, bothPresence{t: t, nat: nat, sql: &sqlPresence{reader: reader, reg: f.reg}, asked: new(int)}, send
+	return f, goldenPresence{t: t, nat: nat, asked: new(int)}, send
 }
 
 // TestFilePresenceAppliesRules: the files answer through the registry's

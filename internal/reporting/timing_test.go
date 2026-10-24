@@ -4,7 +4,6 @@ import (
 	"context"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -12,50 +11,39 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
 // timingLimit is CONSOLE_QUERY_TIMEOUT's default: a system widget slower
 // than this cold would fail to load on an install left at the default.
 const timingLimit = 10 * time.Second
 
-// TestSystemDashboardTiming measures every system widget cold (no cache)
-// for every preset against real event files, opt-in: it runs only when
-// REPORTING_TIMING_EVENTS_DIR names a raw/ directory, e.g.
+// TestSystemDashboardTiming measures every system widget of SQL cold (no
+// cache) for every preset against real event files and an external SQL
+// engine, opt-in: it runs only when REPORTING_TIMING_EVENTS_DIR names a
+// raw/ directory and REPORTING_TIMING_SQL_ENGINE_SOCKET the socket of an
+// engine reading that directory, e.g.
 //
-//	REPORTING_TIMING_EVENTS_DIR=$PWD/local/raw go test ./internal/reporting/ -run Timing -v
+//	REPORTING_TIMING_EVENTS_DIR=$PWD/local/raw REPORTING_TIMING_SQL_ENGINE_SOCKET=$PWD/local/sql.sock \
+//	  go test ./internal/reporting/ -run Timing -v
 //
 // It reads the embedded system definition directly, picks the project
 // with the newest events, logs "dashboard/widget preset duration rows"
-// slowest first, and fails if any single load exceeds timingLimit. The
-// engine has DuckDB's default memory limit and four threads.
+// slowest first, and fails if any single load exceeds timingLimit.
 func TestSystemDashboardTiming(t *testing.T) {
 	dir := os.Getenv("REPORTING_TIMING_EVENTS_DIR")
-	if dir == "" {
-		t.Skip("REPORTING_TIMING_EVENTS_DIR is not set")
+	socket := os.Getenv("REPORTING_TIMING_SQL_ENGINE_SOCKET")
+	if dir == "" || socket == "" {
+		t.Skip("REPORTING_TIMING_EVENTS_DIR or REPORTING_TIMING_SQL_ENGINE_SOCKET is not set")
 	}
 	ctx := context.Background()
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	tmp := t.TempDir()
-	eng, err := engine.New(engine.Options{Path: self, Env: []string{archivetest.ChildEnv + "=1"},
-		AllowedDirs: []string{dir}, SpillRoot: filepath.Join(tmp, "spill"), SlotDir: filepath.Join(tmp, "slots"),
-		MaxChildren: 1, Threads: 4})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer eng.Close()
-	reader, err := archive.NewReader(dir, eng)
-	if err != nil {
-		t.Fatal(err)
-	}
+	client := sqlengine.Dial(socket)
+	t.Cleanup(client.Close)
 	// The read timeout sits well above timingLimit, so a slow widget is
 	// measured and reported rather than cut off.
-	files := serveTestFiles(t, &archivetest.Files{Dir: dir, Eng: eng, Reader: reader}, nil, 10*timingLimit, 1000)
+	files := &testFiles{Files: &archivetest.Files{Dir: dir}, timeout: 10 * timingLimit, maxRows: 1000, client: client}
 
 	system, err := fs.Sub(systemFS, "system")
 	if err != nil {

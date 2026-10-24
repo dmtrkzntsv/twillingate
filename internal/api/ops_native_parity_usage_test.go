@@ -1,8 +1,7 @@
 // The parity harness for the analytics tools: each tool's native answer
-// checked against the SQL it ran before, over the same files, and against
-// that SQL's answer frozen in testdata/<Test>.golden.json (oldTable).
-// When DuckDB leaves (step 6 of the native engine plan), the SQL goes and
-// the goldens remain the reference.
+// checked against the answer the SQL it ran before gave over the same
+// files, frozen in testdata/<Test>.golden.json (oldTable). The SQL stays
+// as the goldens' key and record; it is no longer run.
 
 package api
 
@@ -17,17 +16,16 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // The retention and usage tools' SQL before the native engine answered
-// them, kept to check the native answers against
-// (TestRetentionAndUsageMatchTheirOldSQL).
+// them, whose answers the goldens keep to check the native answers
+// against (TestRetentionAndUsageMatchTheirOldSQL).
 
 // oldRetentionSQL is retention's cohorts SQL, :actor its actor.
 const oldRetentionSQL = `WITH acts AS (
@@ -60,49 +58,48 @@ ORDER BY r.cohort_day, r.day_offset`
 const oldAggregatedThroughSQL = `SELECT max(day) FROM events
 WHERE project_id = :project AND family IN ('views', 'product') AND day < current_date`
 
-// oldUsageCounts is usage's counting before the native engine: the series
-// of one project (project, not 0) or of every project, and the newest
-// arrival of the projects in newestOf, in one DuckDB query.
-func oldUsageCounts(t *testing.T, h *host, project int64, newestOf []int64, fromD, toD civil.Date) fileCounts {
+// oldUsageCounts is usage's counting before the native engine, as its
+// golden keeps it: the series of one project (project, not 0) or of every
+// project, and the newest arrival of the projects in newestOf, counted in
+// one query, its rows as text, sorted (project_id, day, family, count,
+// then the newest arrival on a row of its own). got is native's counting
+// of the same, kept with -update-golden unless the golden held counts
+// the same.
+func oldUsageCounts(t *testing.T, project int64, newestOf []int64, fromD, toD civil.Date, got fileCounts) fileCounts {
 	t.Helper()
-	latest, err := archive.LatestDays(h.eventsDir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	vals := map[string]enginesql.Value{
-		":from": {Type: "DATE", Text: fromD.String()},
-		":to":   {Type: "DATE", Text: toD.String()},
-	}
-	where := `day BETWEEN :from AND :to`
-	if project != 0 {
-		where += ` AND project_id = :project`
-		vals[":project"] = enginesql.Value{Type: "BIGINT", Text: strconv.FormatInt(project, 10)}
-	}
-	q := `SELECT project_id, day, family, count(*), NULL FROM events WHERE ` + where + ` GROUP BY ALL`
-	if arm := oldNewestArrival(latest, newestOf, vals); arm != "" {
-		q += "\nUNION ALL\n" + arm
-	}
-	bound, args, err := enginesql.Bind(q, vals)
-	if err != nil {
-		t.Fatal(err)
-	}
-	res, err := h.runFiles(context.Background(), archive.Scoped{SQL: bound, Args: args})
-	if err != nil {
-		t.Fatalf("%v\n%s", err, q)
-	}
-	// DuckDB's rows, frozen in their text, sorted (UNION ALL and GROUP
-	// BY ALL leave the order open).
-	duck := make([][]string, len(res.Rows))
-	for i, row := range res.Rows {
-		duck[i] = make([]string, len(row))
-		for j, v := range row {
-			duck[i][j] = cellText(v)
+	rows := [][]string{}
+	for id, days := range got.days {
+		if project != 0 && id != project {
+			continue
+		}
+		for day, c := range days {
+			for fam, n := range map[store.Family]int64{store.FamilyViews: c.Views, store.FamilyProduct: c.Events, store.FamilyMeasures: c.Measures} {
+				if n > 0 {
+					rows = append(rows, []string{strconv.FormatInt(id, 10), day, string(fam), strconv.FormatInt(n, 10), ""})
+				}
+			}
 		}
 	}
-	slices.SortFunc(duck, func(a, b []string) int { return slices.Compare(a, b) })
+	for _, id := range newestOf {
+		if r := got.received[id]; r != "" {
+			rows = append(rows, []string{strconv.FormatInt(id, 10), "", "", "", r})
+		}
+	}
+	slices.SortFunc(rows, func(a, b []string) int { return slices.Compare(a, b) })
 	key := fmt.Sprintf("usage of project %d, newest of %v, %s..%s", project, newestOf, fromD, toD)
+	return countsOf(t, keep(t, key, rows, func(prev [][]string) bool {
+		c := countsOf(t, prev)
+		return maps.EqualFunc(c.days, got.days, func(a, b map[string]*usageTotals) bool {
+			return maps.EqualFunc(a, b, func(x, y *usageTotals) bool { return *x == *y })
+		}) && maps.Equal(c.received, got.received)
+	}))
+}
+
+// countsOf reads oldUsageCounts' rows back as counts.
+func countsOf(t *testing.T, rows [][]string) fileCounts {
+	t.Helper()
 	out := fileCounts{days: map[int64]map[string]*usageTotals{}, received: map[int64]string{}}
-	for _, cells := range frozen(t, key, duck) {
+	for _, cells := range rows {
 		id, err := strconv.ParseInt(cells[0], 10, 64)
 		if err != nil {
 			t.Fatal(err)
@@ -132,43 +129,6 @@ func oldUsageCounts(t *testing.T, h *host, project int64, newestOf []int64, from
 		}
 	}
 	return out
-}
-
-// oldNewestArrival is usage's newest-arrival arm: each project of ids
-// from the first day of its newest file's month to that file's last day,
-// behind one condition on day spanning them all.
-func oldNewestArrival(latest map[int64]string, ids []int64, vals map[string]enginesql.Value) string {
-	var conds []string
-	var lo, hi string
-	for _, id := range ids {
-		day, ok := latest[id]
-		if !ok {
-			continue
-		}
-		last, err := civil.Parse(day)
-		if err != nil {
-			continue
-		}
-		first, to := day[:8]+"01", last.String()
-		i := strconv.Itoa(len(conds))
-		vals[":np"+i] = enginesql.Value{Type: "BIGINT", Text: strconv.FormatInt(id, 10)}
-		vals[":nf"+i] = enginesql.Value{Type: "DATE", Text: first}
-		vals[":nt"+i] = enginesql.Value{Type: "DATE", Text: to}
-		conds = append(conds, "(project_id = :np"+i+" AND day BETWEEN :nf"+i+" AND :nt"+i+")")
-		if lo == "" || first < lo {
-			lo = first
-		}
-		if to > hi {
-			hi = to
-		}
-	}
-	if len(conds) == 0 {
-		return ""
-	}
-	vals[":nlo"] = enginesql.Value{Type: "DATE", Text: lo}
-	vals[":nhi"] = enginesql.Value{Type: "DATE", Text: hi}
-	return `SELECT project_id, NULL, NULL, NULL, max(received_at) FROM events WHERE day BETWEEN :nlo AND :nhi AND (` +
-		strings.Join(conds, " OR ") + `) GROUP BY project_id`
 }
 
 // writeRetentionEdges adds to the host's files (blog's August cohorts)
@@ -285,15 +245,21 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s: %v", name, err)
 				}
-				want := oldTable(t, h, r, oldRetentionSQL, map[string]enginesql.Value{":actor": {Type: "VARCHAR", Text: actor}})
 				// The allowed difference: no offset past 90.
-				want.Rows = slices.DeleteFunc(want.Rows, func(row []string) bool {
-					if cellInt(row[1]) > retentionOffsets {
-						sawPast90 = true
-						return true
-					}
-					return false
-				})
+				upTo90 := func(o tableOut) tableOut {
+					o = cloneTable(o)
+					o.Rows = slices.DeleteFunc(o.Rows, func(row []string) bool {
+						if cellInt(row[1]) > retentionOffsets {
+							sawPast90 = true
+							return true
+						}
+						return false
+					})
+					return o
+				}
+				asOld := got.tableOut
+				asOld.Note = "" // the old SQL gave no note under the cap; the note is checked below
+				want := upTo90(oldTable(t, h, r, oldRetentionSQL, map[string]sqlbind.Value{":actor": {Type: "VARCHAR", Text: actor}}, asOld, upTo90))
 				if actor == "install" && r.From == "2026-05-01" {
 					var s1 []string // cohort 2026-05-10 holds s1 alone
 					for _, row := range want.Rows {
@@ -304,7 +270,8 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 					sawLateSignIn = slices.Equal(s1, []string{"0", "1"})
 				}
 				sameNumbers(t, name, got.tableOut, want, 0)
-				through := oldTable(t, h, r, oldAggregatedThroughSQL, nil)
+				through := oldTable(t, h, r, oldAggregatedThroughSQL, nil,
+					tableOut{Columns: []string{`max("day")`}, Rows: [][]string{{got.AggregatedThrough}}}, nil)
 				if len(through.Rows) != 1 || got.AggregatedThrough != through.Rows[0][0] {
 					t.Errorf("%s: aggregated_through %q, want %q", name, got.AggregatedThrough, through.Rows)
 				}
@@ -330,7 +297,7 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := oldTable(t, h, r, oldRetentionSQL, map[string]enginesql.Value{":actor": {Type: "VARCHAR", Text: "user"}})
+		want := oldTable(t, h, r, oldRetentionSQL, map[string]sqlbind.Value{":actor": {Type: "VARCHAR", Text: "user"}}, got.tableOut, nil)
 		sameNumbers(t, "cut", got.tableOut, want, 0)
 		if !got.Truncated || got.Note != want.Note || !want.Truncated {
 			t.Errorf("cut: truncated %v note %q, want %v %q", got.Truncated, got.Note, want.Truncated, want.Note)
@@ -385,7 +352,7 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			want := oldUsageCounts(t, h, 0, live, from, to)
+			want := oldUsageCounts(t, 0, live, from, to, got)
 			delete(want.days, 0) // no project 0
 			check(c.from+" every project", all, got, want)
 			if want.days[1]["2025-10-01"] != nil {
@@ -398,7 +365,7 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				check(fmt.Sprintf("%s project %d", c.from, p.ID), []*manage.Project{p}, one, oldUsageCounts(t, h, p.ID, []int64{p.ID}, from, to))
+				check(fmt.Sprintf("%s project %d", c.from, p.ID), []*manage.Project{p}, one, oldUsageCounts(t, p.ID, []int64{p.ID}, from, to, one))
 			}
 		}
 		if !sawSecondChunk {
@@ -433,7 +400,7 @@ func TestAnalyticsToolsShareOneDeadline(t *testing.T) {
 	h, _ := newTestHost(t)
 	h.queryTimeout = 400 * time.Millisecond
 	h.native = slowNative{Native: h.native, delay: 250 * time.Millisecond}
-	want := enginesql.Timeout(h.queryTimeout)
+	want := sqlbind.Timeout(h.queryTimeout)
 	ctx := context.Background()
 	_, err := h.retention(ctx, retentionIn{rangeIn: rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}, Actor: "user"})
 	if err == nil || !strings.Contains(err.Error(), want) {
@@ -459,7 +426,8 @@ func TestAnalyticsToolsShareOneDeadline(t *testing.T) {
 	}
 }
 
-// oldEventsSQL is limits' events_30d count before the native engine.
+// oldEventsSQL is limits' events_30d count before the native engine,
+// whose answer the golden keeps.
 const oldEventsSQL = `SELECT count(*) FROM events WHERE day >= CAST($from AS DATE)`
 
 // events_30d counts what the old SQL counted: every family and project
@@ -494,14 +462,9 @@ func TestCountEventsMatchesItsOldSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := h.runFiles(ctx, archive.Scoped{SQL: oldEventsSQL, MaxRows: 1,
-		Args: []engine.Arg{{Name: "from", Value: today.AddDays(-29).String()}}})
-	if err != nil {
-		t.Fatal(err)
-	}
 	// The fixture's days are relative to today, and so the golden: the
 	// count over them, whatever today is.
-	want := frozen(t, "events_30d", cellInt(cellText(res.Rows[0][0])))
+	want := frozen(t, "events_30d", got)
 	// today, 1 and 29 days back: blog's view, renamed event and measure,
 	// and docs' view, each day.
 	if got != want || want != 12 {

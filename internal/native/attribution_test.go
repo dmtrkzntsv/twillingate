@@ -42,8 +42,9 @@ func sortFound(fs []archive.Found) {
 	})
 }
 
-// attributeBoth answers ls natively and through the old SQL (the oracle),
-// fails unless both agree, and returns the native answer by lookup id.
+// attributeBoth answers ls natively with one worker and with three, fails
+// unless both are the golden (the old SQL's answer), and returns the
+// native answer by lookup id.
 func attributeBoth(t *testing.T, f *archivetest.Files, days int, rules archive.Rules, ls ...archive.Lookup) map[string]archive.Found {
 	t.Helper()
 	ctx := context.Background()
@@ -53,18 +54,13 @@ func attributeBoth(t *testing.T, f *archivetest.Files, days int, rules archive.R
 		if err != nil {
 			t.Fatal(err)
 		}
-		want, err := oracleAttribute(ctx, f.Reader, f.Dir, ls, days, rules)
-		if err != nil {
-			t.Fatal(err)
-		}
 		if len(got) != len(ls) {
 			t.Fatalf("%d found for %d lookups", len(got), len(ls))
 		}
 		sortFound(got)
-		sortFound(want)
-		want = frozenFound(t, days, rules, ls, want)
+		want := frozenFound(t, days, rules, ls, got)
 		if !reflect.DeepEqual(got, want) {
-			t.Fatalf("workers %d: native\n%+v\nwant (SQL)\n%+v", workers, got, want)
+			t.Fatalf("workers %d: native\n%+v\nwant (the golden)\n%+v", workers, got, want)
 		}
 	}
 	got, _ := New(Options{Dir: f.Dir}).Attribute(ctx, ls, days, rules)

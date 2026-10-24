@@ -2,7 +2,6 @@ package native
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -19,6 +18,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/parquet-go/parquet-go"
 )
 
 // The seeded days: two in August, one in September; seed runs the daily
@@ -187,31 +187,6 @@ func formatBatch(t *testing.T, b *Batch, cols []string, out [][]string) [][]stri
 
 const microFormat = "2006-01-02T15:04:05.000000Z"
 
-// cell formats a DuckDB result cell (engine.Result, decoded with UseNumber).
-func cell(t *testing.T, v any) string {
-	t.Helper()
-	switch x := v.(type) {
-	case nil:
-		return nullCell
-	case json.Number:
-		if i, err := strconv.ParseInt(string(x), 10, 64); err == nil {
-			return strconv.FormatInt(i, 10)
-		}
-		fl, err := strconv.ParseFloat(string(x), 64)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return strconv.FormatFloat(fl, 'g', -1, 64)
-	case string:
-		if ts, err := time.Parse(time.RFC3339Nano, x); err == nil && strings.Contains(x, "T") {
-			return ts.UTC().Format(microFormat)
-		}
-		return x
-	}
-	t.Fatalf("cell %T %v", v, v)
-	return ""
-}
-
 // readAll reads every group with one reader per worker.
 func readAll(t *testing.T, groups []group, workers int, cols []string, family string, r Range) []*Batch {
 	t.Helper()
@@ -243,34 +218,18 @@ func sortByFirst(rows [][]string) {
 	slices.SortFunc(rows, func(a, b []string) int { return strings.Compare(a[0], b[0]) })
 }
 
-// matchDuckDB reads every row of project 1 in its Parquet files (two,
-// and no log) in every column of events, and compares them with DuckDB's.
-// It returns the files.
-func matchDuckDB(t *testing.T, f *archivetest.Files) []string {
+// matchGolden reads every row of project 1 in its Parquet files (two,
+// and no log) in every column of events, and compares them with the
+// golden. It returns the files.
+func matchGolden(t *testing.T, f *archivetest.Files) []string {
 	t.Helper()
 	const q = "SELECT * FROM events WHERE project_id = 1 ORDER BY id"
-	res, err := f.Reader.Query(context.Background(), q, 0, archive.Rules{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cols := slices.Clone(res.Columns)
-	idPos := slices.Index(cols, "id")
-	cols[0], cols[idPos] = cols[idPos], cols[0] // id first, to sort by
+	cols := eventsColumns(t, f.Dir, 1, archive.Rules{})
 	for _, want := range []string{"ts", "received_at", "day", "value", "sample_rate", "display_width", "consent", "attr_plan", "attr_color"} {
 		if !slices.Contains(cols, want) {
 			t.Fatalf("events lacks %s: %v", want, cols)
 		}
 	}
-	var want [][]string
-	for _, row := range res.Rows {
-		r := make([]string, len(cols))
-		for j, name := range cols {
-			r[j] = cell(t, row[slices.Index(res.Columns, name)])
-		}
-		want = append(want, r)
-	}
-	sortByFirst(want)
-	cols, want = frozenRows(t, q, archive.Rules{}, cols, want)
 
 	full := rng(t, "2026-08-01", "2026-09-30")
 	pq, logs, err := projectFiles(f.Dir, 1, full)
@@ -288,7 +247,7 @@ func matchDuckDB(t *testing.T, f *archivetest.Files) []string {
 	for _, b := range readAll(t, groups, 2, cols, "", full) {
 		got = formatBatch(t, b, cols, got)
 	}
-	sortByFirst(got)
+	want := wantRows(t, q, archive.Rules{}, cols, got)
 	if len(got) != len(want) {
 		t.Fatalf("%d rows, want %d", len(got), len(want))
 	}
@@ -300,11 +259,11 @@ func matchDuckDB(t *testing.T, f *archivetest.Files) []string {
 	return pq
 }
 
-func TestParquetRowsMatchDuckDB(t *testing.T) {
+func TestParquetRowsMatchGolden(t *testing.T) {
 	f := seed(t, 40)
-	pq := matchDuckDB(t, f)
+	pq := matchGolden(t, f)
 
-	// One family and one day, the attributes by pattern: the rows DuckDB
+	// One family and one day, the attributes by pattern: the rows SQL
 	// filters the same way, and every attr_ column a file holds.
 	day := rng(t, "2026-09-05", "2026-09-05")
 	groups, err := parquetGroups(pq, "product", day)
@@ -319,20 +278,9 @@ func TestParquetRowsMatchDuckDB(t *testing.T) {
 		}
 		gotSub = formatBatch(t, b, []string{"id", "attr_color", "attr_plan"}, gotSub)
 	}
-	sortByFirst(gotSub)
 	const q = "SELECT id, attr_color, attr_plan FROM events WHERE project_id = 1 " +
 		"AND family = 'product' AND day = DATE '2026-09-05' ORDER BY id"
-	res, err := f.Reader.Query(context.Background(), q, 0, archive.Rules{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	duck := make([][]string, len(res.Rows))
-	for i, row := range res.Rows {
-		for _, v := range row {
-			duck[i] = append(duck[i], cell(t, v))
-		}
-	}
-	_, want := frozenRows(t, q, archive.Rules{}, res.Columns, duck)
+	want := wantRows(t, q, archive.Rules{}, []string{"id", "attr_color", "attr_plan"}, gotSub)
 	if len(gotSub) != len(want) || len(gotSub) == 0 {
 		t.Fatalf("%d rows, want %d", len(gotSub), len(want))
 	}
@@ -352,14 +300,39 @@ func keys(m map[string]*Column) []string {
 	return out
 }
 
-// rewrite rewrites a Parquet file with small row groups, in the order the
-// daily pass writes (family, ts).
-func rewrite(t *testing.T, f *archivetest.Files, path string, groupRows int) {
+// rewrite rewrites a Parquet file the pass wrote (in (family, ts) order)
+// with row groups of groupRows rows, its schema and rows as they are.
+func rewrite(t *testing.T, path string, groupRows int) {
 	t.Helper()
+	in, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer in.Close()
+	st, err := in.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	pf, err := parquet.OpenFile(in, st.Size())
+	if err != nil {
+		t.Fatal(err)
+	}
 	tmp := path + ".tmp"
-	q := fmt.Sprintf("COPY (SELECT * FROM read_parquet('%s') ORDER BY family, ts) TO '%s' (FORMAT parquet, ROW_GROUP_SIZE %d)",
-		path, tmp, groupRows)
-	if err := f.Eng.Exec(context.Background(), q); err != nil {
+	out, err := os.Create(tmp)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer out.Close()
+	w := parquet.NewWriter(out, pf.Schema(), parquet.MaxRowsPerRowGroup(int64(groupRows)))
+	for _, rg := range pf.RowGroups() {
+		rows := rg.Rows()
+		_, err := parquet.CopyRows(w, rows)
+		rows.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
@@ -370,8 +343,8 @@ func rewrite(t *testing.T, f *archivetest.Files, path string, groupRows int) {
 func TestParquetPrunesByDay(t *testing.T) {
 	f := seed(t, 1500) // 9000 rows in August
 	month := filepath.Join(f.Dir, "1", "2026-08.parquet")
-	rewrite(t, f, month, 2048) // DuckDB's smallest row group
-	matchDuckDB(t, f)          // every column over many groups and pages
+	rewrite(t, month, 2048) // small row groups, as the old engine's smallest
+	matchGolden(t, f)       // every column over many groups and pages
 	all, err := parquetGroups([]string{month}, "", rng(t, "2026-08-01", "2026-08-31"))
 	if err != nil {
 		t.Fatal(err)
@@ -457,7 +430,7 @@ func TestParquetGroupSpanningDays(t *testing.T) {
 			t.Errorf("%s to %s: %d rows, want 100", c.from, c.to, n)
 		}
 	}
-	matchDuckDB(t, f)
+	matchGolden(t, f)
 }
 
 func TestParquetMissingColumns(t *testing.T) {
@@ -614,7 +587,7 @@ func byteArray(vals ...string) ([]byte, []uint32) {
 func TestParquetGroupsOfFamilies(t *testing.T) {
 	f := seed(t, 1500)
 	month := filepath.Join(f.Dir, "1", "2026-08.parquet")
-	rewrite(t, f, month, 2048) // by family: some groups hold measures alone
+	rewrite(t, month, 2048) // by family: some groups hold measures alone
 	r := rng(t, "2026-08-01", "2026-08-31")
 	all, err := parquetGroups([]string{month}, "", r)
 	if err != nil {

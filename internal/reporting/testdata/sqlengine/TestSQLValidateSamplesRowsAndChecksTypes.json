@@ -1,0 +1,6 @@
+[
+{"mode":"shape","sql":"select 3.5 as value","scope":null,"confine":true,"max_rows":0,"answers":[{"columns":["value"],"rows":[]}]},
+{"mode":"text","sql":"select 3.5 as value","scope":null,"confine":true,"max_rows":5,"answers":[{"columns":["value"],"rows":[["3.5"]]}]},
+{"mode":"shape","sql":"select 'oops' as value","scope":null,"confine":true,"max_rows":0,"answers":[{"columns":["value"],"rows":[]}]},
+{"mode":"text","sql":"select 'oops' as value","scope":null,"confine":true,"max_rows":5,"answers":[{"columns":["value"],"rows":[["oops"]]}]}
+]

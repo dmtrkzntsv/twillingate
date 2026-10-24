@@ -13,8 +13,8 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 )
 
 // source was removed one release after the database's events: it is an
@@ -177,7 +177,7 @@ func TestQueryStructuredDefaultsAndCaps(t *testing.T) {
 	fake.err = context.DeadlineExceeded
 	rec = serveREST(t, newTestRegistrar(t, h), "POST", "/api/query",
 		`{"project_id":1,"query":{"kind":"stat","table":"views","metrics":[{"op":"count"}]}}`)
-	if want := enginesql.Timeout(h.queryTimeout); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), want) {
+	if want := sqlbind.Timeout(h.queryTimeout); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), want) {
 		t.Errorf("deadline = %d %s, want 400 with %q", rec.Code, rec.Body, want)
 	}
 	fake.err = fmt.Errorf("%w: where[0].values: bad", native.ErrInvalid)

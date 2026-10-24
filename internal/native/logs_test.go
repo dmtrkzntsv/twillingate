@@ -1,7 +1,6 @@
 package native
 
 import (
-	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,28 +13,13 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// duckRows runs q (SELECT * FROM events …) on f's reader and returns its
-// columns, id first, and its rows formatted as cell does, sorted by id.
-func duckRows(t *testing.T, f *archivetest.Files, q string) ([]string, [][]string) {
+// wantRows sorts got (native's rows of q's columns cols) by id and
+// returns the golden's rows of q under rules.
+func wantRows(t *testing.T, q string, rules archive.Rules, cols []string, got [][]string) [][]string {
 	t.Helper()
-	res, err := f.Reader.Query(context.Background(), q, 0, archive.Rules{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	cols := slices.Clone(res.Columns)
-	if i := slices.Index(cols, "id"); i > 0 {
-		cols[0], cols[i] = cols[i], cols[0]
-	}
-	var rows [][]string
-	for _, row := range res.Rows {
-		r := make([]string, len(cols))
-		for j, name := range cols {
-			r[j] = cell(t, row[slices.Index(res.Columns, name)])
-		}
-		rows = append(rows, r)
-	}
-	sortByFirst(rows)
-	return frozenRows(t, q, archive.Rules{}, cols, rows)
+	sortByFirst(got)
+	_, want := goldenRows(t, q, rules, cols, got)
+	return want
 }
 
 func sameRows(t *testing.T, got, want [][]string, cols []string) {
@@ -69,12 +53,12 @@ func logOf(t *testing.T, f *archivetest.Files, project int64) string {
 	return logs[0]
 }
 
-func TestLogRowsMatchDuckDB(t *testing.T) {
+func TestLogRowsMatchGolden(t *testing.T) {
 	f := archivetest.New(t)
 	f.Write(t, events(t, 1, today, 30)...)
 	f.Write(t, odd("odd-1"))
 	f.Write(t, events(t, 2, today, 3)...)
-	cols, want := duckRows(t, f, "SELECT * FROM events WHERE project_id = 1")
+	cols := eventsColumns(t, f.Dir, 1, archive.Rules{})
 	for _, c := range []string{"attr_Plan", "attr_plan_1", `attr_a\u0000b`, "attr_color", "consent", "display_width"} {
 		if !slices.Contains(cols, c) {
 			t.Fatalf("events lacks %s: %v", c, cols)
@@ -92,9 +76,10 @@ func TestLogRowsMatchDuckDB(t *testing.T) {
 			t.Errorf("%s: wrong kind %+v", name, c)
 		}
 	}
-	sameRows(t, formatBatch(t, b, cols, nil), want, cols)
+	got := formatBatch(t, b, cols, nil)
+	sameRows(t, got, wantRows(t, "SELECT * FROM events WHERE project_id = 1", archive.Rules{}, cols, got), cols)
 
-	// The attributes by pattern, one family: what DuckDB filters the same way.
+	// The attributes by pattern, one family: what SQL filters the same way.
 	b, err = readCached(t, path, []string{"id", AttrCols}, "product", rng(t, today, today))
 	if err != nil {
 		t.Fatal(err)
@@ -103,8 +88,9 @@ func TestLogRowsMatchDuckDB(t *testing.T) {
 		t.Fatalf("attr_* read %v", got)
 	}
 	sub := []string{"id", "attr_Plan", `attr_a\u0000b`, "attr_color", "attr_plan_1"}
-	_, wantSub := duckRows(t, f, `SELECT id, attr_Plan, "attr_a\u0000b", attr_color, attr_plan_1 FROM events WHERE project_id = 1 AND family = 'product'`)
-	sameRows(t, formatBatch(t, b, sub, nil), wantSub, sub)
+	gotSub := formatBatch(t, b, sub, nil)
+	sameRows(t, gotSub, wantRows(t, `SELECT id, attr_Plan, "attr_a\u0000b", attr_color, attr_plan_1 FROM events WHERE project_id = 1 AND family = 'product'`,
+		archive.Rules{}, sub, gotSub), sub)
 
 	// A range without the log's day, and a family it lacks: no rows, the
 	// columns still there.
@@ -135,15 +121,17 @@ func TestLogKeepsFirstLinePerID(t *testing.T) {
 	}
 	f.Write(t, first...)
 	f.Write(t, second...)
-	cols, want := duckRows(t, f, "SELECT * FROM events WHERE project_id = 1")
-	if len(want) != 3 {
-		t.Fatalf("DuckDB: %d rows", len(want))
-	}
+	cols := eventsColumns(t, f.Dir, 1, archive.Rules{})
 	b, err := readCached(t, logOf(t, f, 1), cols, "", rng(t, today, today))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sameRows(t, formatBatch(t, b, cols, nil), want, cols)
+	got := formatBatch(t, b, cols, nil)
+	want := wantRows(t, "SELECT * FROM events WHERE project_id = 1", archive.Rules{}, cols, got)
+	if len(want) != 3 {
+		t.Fatalf("the golden: %d rows", len(want))
+	}
+	sameRows(t, got, want, cols)
 	// The kept line is the first even when the family asked for is the
 	// repeat's: it is not read.
 	b, err = readCached(t, logOf(t, f, 1), []string{"id", "event_name"}, "views", rng(t, today, today))
@@ -175,15 +163,17 @@ func TestLogSkipsBadLines(t *testing.T) {
 	appendTo("not json {\n\n[1,2]\nnull\n")
 	f.Write(t, evs[5:]...)
 	appendTo(`{"v":1,"id":"torn","attr_torn":"x`) // a line ingest is still writing
-	cols, want := duckRows(t, f, "SELECT * FROM events WHERE project_id = 1")
-	if len(want) != len(evs) || slices.Contains(cols, "attr_torn") {
-		t.Fatalf("DuckDB: %d rows, %v", len(want), cols)
-	}
+	cols := eventsColumns(t, f.Dir, 1, archive.Rules{})
 	b, err := readCached(t, path, cols, "", rng(t, today, today))
 	if err != nil {
 		t.Fatal(err)
 	}
-	sameRows(t, formatBatch(t, b, cols, nil), want, cols)
+	got := formatBatch(t, b, cols, nil)
+	want := wantRows(t, "SELECT * FROM events WHERE project_id = 1", archive.Rules{}, cols, got)
+	if len(want) != len(evs) || slices.Contains(cols, "attr_torn") {
+		t.Fatalf("the golden: %d rows, %v", len(want), cols)
+	}
+	sameRows(t, got, want, cols)
 }
 
 // fold names b's columns as a union by name across files does (DuckDB's
@@ -200,11 +190,11 @@ func fold(b *Batch, cols []string) *Batch {
 	return out
 }
 
-func TestLogAndParquetMatchDuckDB(t *testing.T) {
+func TestLogAndParquetMatchGolden(t *testing.T) {
 	f := seed(t, 20)
 	f.Write(t, events(t, 1, today, 20)...)
 	f.Write(t, odd("odd-1"))
-	cols, want := duckRows(t, f, "SELECT * FROM events WHERE project_id = 1")
+	cols := eventsColumns(t, f.Dir, 1, archive.Rules{})
 	full := rng(t, "2026-08-01", today)
 	pq, logs, err := projectFiles(f.Dir, 1, full)
 	if err != nil || len(pq) != 2 || len(logs) != 1 {
@@ -226,7 +216,7 @@ func TestLogAndParquetMatchDuckDB(t *testing.T) {
 		t.Fatalf("log columns %v", keys(b.Cols))
 	}
 	got = formatBatch(t, fold(b, cols), cols, got)
-	sameRows(t, got, want, cols)
+	sameRows(t, got, wantRows(t, "SELECT * FROM events WHERE project_id = 1", archive.Rules{}, cols, got), cols)
 	if !strings.HasSuffix(logs[0], today+".log") {
 		t.Errorf("log %s", logs[0])
 	}

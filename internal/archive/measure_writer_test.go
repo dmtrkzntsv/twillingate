@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -46,4 +47,21 @@ func TestMeasureWriterPeak(t *testing.T) {
 	}
 	t.Logf("%d columns, %d rows, %d groups: %s, peak heap %.0f MB, process peak RSS %.0f MB (%.0f MB before), file %.2f MB",
 		40+attrs, rows, len(openMeta(t, p).Metadata().RowGroups), took.Round(time.Millisecond), float64(peak)/1e6, rss, before, float64(st.Size())/1e6)
+}
+
+// vmHWM is the peak resident set of process pid ("self" for this one), in MB.
+func vmHWM(t *testing.T, pid string) float64 {
+	t.Helper()
+	b, err := os.ReadFile("/proc/" + pid + "/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range strings.Split(string(b), "\n") {
+		if f := strings.Fields(l); len(f) >= 2 && f[0] == "VmHWM:" {
+			kb, _ := strconv.ParseFloat(f[1], 64)
+			return kb / 1024
+		}
+	}
+	t.Fatal("no VmHWM")
+	return 0
 }

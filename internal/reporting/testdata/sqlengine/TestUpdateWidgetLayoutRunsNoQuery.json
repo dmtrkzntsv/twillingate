@@ -1,0 +1,5 @@
+[
+{"mode":"shape","sql":"SELECT 1 AS n","scope":null,"confine":true,"max_rows":0,"answers":[{"columns":["n"],"rows":[]}]},
+{"mode":"text","sql":"SELECT 1 AS n","scope":null,"confine":true,"max_rows":5,"answers":[{"columns":["n"],"rows":[["1"]]}]},
+{"mode":"shape","sql":"SELECT n FROM nowhere","scope":null,"confine":true,"max_rows":0,"answers":[{"kind":"refused","message":"\"nowhere\" is not a table here; SQL here reads only the tables events, views, product, measures, sessions, identities and aliases, by their plain names, and its own WITH names"}]}
+]
