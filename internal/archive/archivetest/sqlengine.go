@@ -56,16 +56,9 @@ func ServeSQL(t testing.TB, dir string, eng archive.Engine) *SQLEngine {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Not t.TempDir: a socket path must fit sun_path (108 bytes), and a
-	// test's directory carries the test's name.
-	sdir, err := os.MkdirTemp("", "sqle-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	s := &SQLEngine{Socket: filepath.Join(sdir, "e.sock"), dir: dir, reader: r}
+	s := &SQLEngine{Socket: socketPath(t), dir: dir, reader: r}
 	ln, err := net.Listen("unix", s.Socket)
 	if err != nil {
-		os.RemoveAll(sdir)
 		t.Fatal(err)
 	}
 	mux := http.NewServeMux()
@@ -77,9 +70,40 @@ func ServeSQL(t testing.TB, dir string, eng archive.Engine) *SQLEngine {
 	t.Cleanup(func() {
 		s.srv.Close()
 		<-done
-		os.RemoveAll(sdir)
 	})
 	return s
+}
+
+// maxSocketPath is the longest socket path socketPath gives: sun_path
+// holds 108 bytes on Linux and 104 on the BSDs, the terminating NUL
+// among them.
+const maxSocketPath = 103
+
+// socketPath is a path for the test's socket under t.TempDir, or, when
+// the test's name makes that too long for sun_path, under a short
+// directory of the user's cache directory, removed with the test.
+func socketPath(t testing.TB) string {
+	t.Helper()
+	if p := filepath.Join(t.TempDir(), "e.sock"); len(p) <= maxSocketPath {
+		return p
+	}
+	base, err := os.UserCacheDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dir, err := os.MkdirTemp(base, "sqle-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	p := filepath.Join(dir, "e.sock")
+	if len(p) > maxSocketPath {
+		t.Fatalf("no socket path short enough: %s", p)
+	}
+	return p
 }
 
 // ServeSQL serves f's files on f's engine until the test ends.
@@ -118,10 +142,10 @@ func (s *SQLEngine) health(w http.ResponseWriter, _ *http.Request) {
 
 func (s *SQLEngine) query(w http.ResponseWriter, hr *http.Request) {
 	ctx := hr.Context()
+	// Unknown fields are ignored, as every engine must: version 1 grows
+	// by adding fields.
 	var req sqlengine.Request
-	dec := json.NewDecoder(hr.Body)
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&req); err != nil {
+	if err := json.NewDecoder(hr.Body).Decode(&req); err != nil {
 		writeError(w, sqlengine.KindRefused, "the request body: "+err.Error())
 		return
 	}

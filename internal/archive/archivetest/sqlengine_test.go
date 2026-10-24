@@ -410,3 +410,42 @@ func TestErrorKinds(t *testing.T) {
 		}
 	}
 }
+
+// TestSQLEngineIgnoresUnknownFields: a request carrying a field version 1
+// does not define yet is answered as if it were not there, as every
+// engine must, so the protocol can grow by adding fields.
+func TestSQLEngineIgnoresUnknownFields(t *testing.T) {
+	f := New(t)
+	s := f.ServeSQL(t)
+	spec, err := archive.TableSpec(f.Dir, nil, archive.Rules{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := json.Marshal(sqlengine.Request{Mode: sqlengine.ModeRows, SQL: "SELECT 42 AS n", Tables: spec})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(body, &m); err != nil {
+		t.Fatal(err)
+	}
+	m["a_later_field"] = map[string]any{"x": 1}
+	m["tables"].(map[string]any)["a_later_field"] = true
+	body, _ = json.Marshal(m)
+	hc := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "unix", s.Socket)
+	}}}
+	defer hc.CloseIdleConnections()
+	resp, err := hc.Post("http://sqlengine/v1/query", "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	dec := json.NewDecoder(resp.Body)
+	dec.UseNumber()
+	var res sqlengine.Result
+	if err := dec.Decode(&res); err != nil || resp.StatusCode != http.StatusOK || fmt.Sprint(res.Rows) != "[[42]]" {
+		t.Errorf("with unknown fields: %d %+v, %v; want 42", resp.StatusCode, res, err)
+	}
+}
