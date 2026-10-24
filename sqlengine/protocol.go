@@ -34,14 +34,14 @@ const (
 // Request is the body of POST /v1/query. The deadline travels in the
 // X-Timeout-Ms header and cancellation as connection close, not here.
 type Request struct {
-	SQL     string         `json:"sql"`
+	SQL     string            `json:"sql"`
 	Args    map[string]string `json:"args"` // the $tw_* names, without the dollar sign
-	MaxRows int            `json:"max_rows"`
-	Mode    Mode           `json:"mode"`
-	Page    *Page          `json:"page,omitempty"` // Mode page and count
-	Scope   *int64         `json:"scope"`          // a project id, or null for every project
-	Confine bool           `json:"confine"`
-	Tables  Tables         `json:"tables"`
+	MaxRows int               `json:"max_rows"`
+	Mode    Mode              `json:"mode"`
+	Page    *Page             `json:"page,omitempty"` // Mode page and count
+	Scope   *int64            `json:"scope"`          // a project id, or null for every project
+	Confine bool              `json:"confine"`
+	Tables  Tables            `json:"tables"`
 }
 
 // Page is a table's view of its rows: filters combine with AND, Sort is
