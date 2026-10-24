@@ -1264,6 +1264,26 @@ In a Views load, a per-day query adds about 1M rows; the array by dictionary ent
 
 Since 2d a batch's dictionary entries share one chunk-sized string, so a value kept past the batch would hold the whole chunk's string, uncharged. A new group now copies its tuple's strings, and the identities derived from events copy a new id and a name they take (retention's map and the first-seen sets already copied). `mergeSets` sizes the merged table once. A row whose day falls outside the range is an error, not a panic. Warm loads without the log, re-measured beside 2d: Views 0.80 to 0.81 s (2d 0.79 to 0.80 s), Product 0.98 to 0.99 s (2d 0.96 s), CPU the same; within the spread.
 
+### 2c regression fix: a year's per-day keys within the budget
+
+At a year and 1M, Product's `daily-active-users`, `peak-dau` and `avg-dau` were refused ("about 129 MiB counted, 128 MiB allowed") since 2c. Counted at the merge, a year's sets held 4.79M keys in 11.96M slots of 16 bytes: about 40 bytes a key. Power-of-two tables grown at three quarters full sat at a 0.4 load for days of about 13k ids. The sorted arrays before 2c took 16 bytes a key, plus the append's slack.
+
+The keys of a day's set are now the id's 64-bit hash alone, 8 bytes, with the group in a 4-byte array beside it only when the aggregation has groups (the day is the set's; the cell is no longer stored). A NULL id's key and the empty slot take the hashes 1 and 0, an id hashing to either counted as 2 (odds 3/2^64). Tables of any size, slots placed by multiply-shift, grow by half past 85% full. `TestDaySetBytesPerKey`, 1k to 200k keys: 11.5 bytes a key on average and 13.9 at most, 17.3 and 20.8 with groups.
+
+Per widget unless marked, best of 3 warm loads, 1M, behind the gate (load 0.86 to 0.98). Before = `6cfc801` (head before the fix); `1ca918b` = before 2c.
+
+| Cell | `1ca918b` | Before | After |
+| --- | --- | --- | --- |
+| Product 1 y | 10 answered, 12.91 s, 632 MB | 3 refused, 9.06 s, 622 MB | 10 answered, 9.64 s, 405 MB |
+| Product 1 y, stream | – | 3 refused, 7.70 s, 557 MB (step 4c) | 10 answered, 8.12 s, 283 MB |
+| Views 1 y | 18.81 s, 564 MB | 8.51 s, 618 MB | 8.87 s, 387 MB |
+| Views 1 y, stream | – | 8.11 s, 572 MB (step 4c) | 8.05 s, 365 MB |
+| Views 30 d | 1.62 s | 0.80–0.81 s (fix round 1) | 0.83 s |
+| Product 30 d | 1.18 s | 0.98–0.99 s (fix round 1) | 0.95 s |
+
+- Both year peaks are now below `1ca918b`'s.
+- Views at 30 days is about 3% slower than after fix round 1 (0.83 against 0.80 to 0.81 s, interleaved runs). That is the cost of the denser tables' probes and of growing by half. A 0.8 cap measured the same.
+
 ### After 2a to 2d
 
 | Dashboard | Open log | Step 4b/4c (poll) | 2a best | 2d best | 3f DuckDB best |
@@ -1346,7 +1366,7 @@ Load average (1 min) at cell start: 0.60 to 1.00; cells that started above 1.0 (
 
 Notes:
 
-- **Product over 365 days at 1M is not a clean cell (‡).** Its three daily-active-users widgets (`daily-active-users`, `peak-dau`, `avg-dau`) are refused in every load, per widget and through the stream alike: "the query needs more memory than allowed (about 129 MiB counted, 128 MiB allowed)". Step 4b answered them. Bisected on this cell: `1ca918b` answers all ten (best 12.78 s, 593 MB), `0934b22` (2c, the per-day sets charged to `MaxBytes`) refuses the three. So the 1-year Product times above (7.70 s stream, 9.00 s per widget) are of a load that gave up on three widgets near the bound, and the 0.52x against step 4b is not a like-for-like gain. The cell's change against `1ca918b`'s full answer is 0.60x, the most it can be claimed. The stream did not cause it.
+- **Product over 365 days at 1M is not a clean cell (‡).** Its three daily-active-users widgets (`daily-active-users`, `peak-dau`, `avg-dau`) are refused in every load, per widget and through the stream alike: "the query needs more memory than allowed (about 129 MiB counted, 128 MiB allowed)". Step 4b answered them. Bisected on this cell: `1ca918b` answers all ten (best 12.78 s, 593 MB), `0934b22` (2c, the per-day sets charged to `MaxBytes`) refuses the three. So the 1-year Product times above (7.70 s stream, 9.00 s per widget) are of a load that gave up on three widgets near the bound, and the 0.52x against step 4b is not a like-for-like gain. The cell's change against `1ca918b`'s full answer is 0.60x, the most it can be claimed. The stream did not cause it. Fixed after this run (step 4d, "2c regression fix"): all ten answer, 9.64 s per widget and 8.12 s through the stream, at 283 MB (stream).
 - **The stream against per widget, same binary:** the stream's best is faster in every 1M cell, by 4% (Views 1 y, Product 7 d) to 21% (Measures), and uses 13 to 37% less CPU per load; Retention's first load is even (1.09 against 1.05 s). At 100k it is slower in two cells, Views 7 d (52 against 44 ms) and 30 d (111 against 99 ms), and within a few ms elsewhere. The gain is smaller than `MEASURE_MANY`'s in step 4d (Task 3): the heavy bound (MaxScans 2) leaves Views' 19 `daily_sum` widgets in about ten scans.
 - **The first widget** arrives in 10 to 50 ms for Views at 1M at every range but the year (144 ms), against a last widget of 0.23 to 8.1 s. On Product the first is `events` or the stat cards (38 ms to 1.07 s). With the open log, the first load's first widget waits on the log's one decode (692 ms Views, 655 ms Product); warm loads start at 31 and 100 ms.
 - **Peaks:** the stream's peak is at or below the per-widget peak of the same binary in every cell but Views 7 d at 1M (88 against 82 MB), Retention (90 against 84 MB) and Views 1 y at 100k (123 against 120 MB). Against step 4b, five cells are above it: at 1M Views 90 d (195 against 188 MB), Views 1 y (572 against 522 MB) and Retention (90 against 84 MB); at 100k Views 1 y (123 against 118 MB) and Retention (66 against 64 MB). The per-widget peaks of today's binary are higher still in the first two (224 and 610 MB), so the rise predates the stream (the per-day sets of 2c).

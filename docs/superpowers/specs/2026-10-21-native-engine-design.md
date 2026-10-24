@@ -985,6 +985,7 @@ Each measured as step 4c's cells (`scripts/native-bench/RESULTS.md`,
   - The keys, and so every count, are the same as before.
   - Warm loads: Views 1.08 s without the log (from 1.62; DuckDB 1.09) and 1.13 s with it (from 1.67). Product 1.07 s both ways (from 1.18 and 1.19).
   - Peaks unchanged within the spread.
+  - **Regression fix:** at a year and 1M the sets took about 40 bytes a key (power-of-two tables at a 0.4 load) and refused Product's three daily-active-users widgets at 129 of 128 MiB. A day's key is now the id's hash alone, 8 bytes (12 with a group beside it), in a table grown by half past 85% full: 11.5 bytes a key on average, 14 at most (17 and 21 with groups), against the sorted arrays' 16. All ten answer again (9.64 s, 405 MB per widget; `1ca918b` 12.78 s, 632 MB). Views 1 y peaks at 387 MB (`1ca918b` 564 MB). The 30-day loads stay about 0.83 s (Views) and 0.95 s (Product).
 - **2d, a chunk's first dictionary without a map:**
   - A batch column's first dictionary page is taken as the batch's dictionary: its values are copied once into one shared string, and the indexes stand as they are.
   - The lookup map is built only when a plain page or a second dictionary follows. In the bench's files, 5% of text chunks fall back to plain pages after their dictionary, and none has a second dictionary.
@@ -1029,20 +1030,22 @@ peak is VmHWM, DuckDB's the Go process plus its child):
 | Product (10) | 30 d | 1.19 s † | 981 ms | 95 / 862 ms | 1.84 s | 186 / 147 MB | 821 MB |
 | Product (10) | 30 d + log | 4.20 s † | 933 ms | 100 / 855 ms | – | 177 / 180 MB | – |
 | Product (10) | 90 d | 3.82 s | 2.59 s | 272 ms / 2.25 s | 2.75 s | 255 / 248 MB | 843 MB |
-| Product (10) | 1 y ‡ | 14.77 s | 9.00 s | 1.07 / 7.70 s | 6.80 s | 670 / 557 MB | 1,174 MB |
+| Product (10) | 1 y ‡ | 14.77 s | 9.64 s | 1.08 / 8.12 s | 6.80 s | 670 / 283 MB | 1,174 MB |
 | Users (6) | 30 d | 568 ms | 361 ms | 262 / 303 ms | 479 ms | 198 / 178 MB | 226 MB |
 | Groups (6) | 30 d | 308 ms | 197 ms | 77 / 159 ms | 327 ms | 130 / 122 MB | 186 MB |
 | Retention (5), first load | 30 d | 1.78 s | 1.05 s | 1.09 / 1.09 s | 1.52 s | 84 / 90 MB | 236 MB |
 | Web Vitals (11) | 30 d | 140 ms | 119 ms | 22 / 96 ms | 324 ms | 70 / 61 MB | 172 MB |
 | Measures (2) | 30 d | 29 ms | 28 ms | 22 / 22 ms | 71 ms | 61 / 57 MB | 153 MB |
 
-‡ Product over the year refuses its three daily-active-users widgets in
-every load, per widget and through the stream alike ("about 129 MiB
-counted, 128 MiB allowed"). Step 4b answered them; bisected on this cell,
-the refusal comes with 2c (`0934b22`, the per-day sets charged to
-`MaxBytes`), not with the stream. `1ca918b`, just before 2c, answers all
-ten in 12.78 s at 593 MB, so the year's real Product time today is
-unknown and its 7.70 s is a floor.
+‡ Product over the year first refused its three daily-active-users
+widgets in every load ("about 129 MiB counted, 128 MiB allowed"): 2c's
+per-day sets (`0934b22`) took about 40 bytes a key against the sorted
+arrays' 16. The regression fix (step 4d, "2c regression fix") makes a
+key 8 bytes (12 with groups) in tables grown by half past 85% full, and
+all ten answer again; the row is re-measured after it: 9.64 s per
+widget, 8.12 s through the stream, at 283 MB (`1ca918b`, before 2c:
+12.78 s at 593 MB). Views over the year, re-measured with it, is 8.05 s
+through the stream at 365 MB (above: 572 MB).
 
 At 100k the stream takes Views from 52 ms (7 d) to 865 ms (1 y), Product
 from 73 ms to 933 ms, and the 30-day small dashboards 5.5 to 37 ms
