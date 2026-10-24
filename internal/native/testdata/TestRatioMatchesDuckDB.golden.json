@@ -1,0 +1,109 @@
+{
+  "actions_per_group 6dddc1b7cb0e": {
+    "rows": [
+      ["79"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Actions are the views and product events sent with a group_id.\nSELECT CASE WHEN count(DISTINCT group_id) > 0\n            THEN ROUND(count(*)::DOUBLE / count(DISTINCT group_id), 1) ELSE 0 END AS value\nFROM events\nWHERE project_id = 1 AND family IN ('views', 'product') AND group_id <> ''\n  AND day BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n"
+  },
+  "actions_per_user c3efae3863dd": {
+    "rows": [
+      ["30.4"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Actions are the views and product events sent with a user_id.\nSELECT CASE WHEN count(DISTINCT user_id) > 0\n            THEN ROUND(count(*)::DOUBLE / count(DISTINCT user_id), 1) ELSE 0 END AS value\nFROM events\nWHERE project_id = 1 AND family IN ('views', 'product') AND user_id <> ''\n  AND day BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n"
+  },
+  "breakdown_ranked_by_the_ratio ba97b3c95eb2": {
+    "rows": [
+      ["/q2","26"],
+      ["/q1","25"],
+      ["","24.6"],
+      ["/q0","24"],
+      ["/p0","5.6"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"path\", ROUND(count(*)::DOUBLE / NULLIF(count(DISTINCT \"actor_id\"), 0), 2) AS r FROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n\t\t\t\tGROUP BY \"path\" ORDER BY r DESC NULLS LAST, \"path\" ASC NULLS LAST LIMIT 5"
+  },
+  "breakdown_with_other b48666d3a86d": {
+    "rows": [
+      ["","597","14.2"],
+      ["DE","520","17.4"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH g AS (SELECT \"country\", count(*) AS c, ROUND(count(*) FILTER (WHERE \"family\" = 'product')::DOUBLE\n\t\t/ NULLIF(count(DISTINCT \"actor_id\") FILTER (WHERE \"family\" = 'product'), 0), 3) AS pb FROM events WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' GROUP BY \"country\"),\n\t\ttop AS (SELECT * FROM g ORDER BY c DESC, \"country\" ASC NULLS LAST LIMIT 2) SELECT \"country\", c, pb FROM top ORDER BY c DESC, \"country\" ASC NULLS LAST"
+  },
+  "breakdown_with_other cfa7cde5a2a9": {
+    "rows": [
+      ["Other","611","15.667"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH g AS (SELECT \"country\", count(*) AS c, ROUND(count(*) FILTER (WHERE \"family\" = 'product')::DOUBLE\n\t\t/ NULLIF(count(DISTINCT \"actor_id\") FILTER (WHERE \"family\" = 'product'), 0), 3) AS pb FROM events WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' GROUP BY \"country\"),\n\t\ttop AS (SELECT * FROM g ORDER BY c DESC, \"country\" ASC NULLS LAST LIMIT 2) SELECT 'Other', count(*) AS c, ROUND(count(*) FILTER (WHERE \"family\" = 'product')::DOUBLE\n\t\t/ NULLIF(count(DISTINCT \"actor_id\") FILTER (WHERE \"family\" = 'product'), 0), 3) AS pb FROM events e WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n\t\t\t\t\tAND NOT EXISTS (SELECT 1 FROM top WHERE top.\"country\" IS NOT DISTINCT FROM e.\"country\") HAVING count(*) > 0"
+  },
+  "compare_previous 4a4f2f5131fe": {
+    "rows": [
+      ["697","32"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT count(*), ROUND(count(*) FILTER (WHERE \"family\" = 'product')::DOUBLE\n\t\t\t\t/ NULLIF(count(DISTINCT \"user_id\") FILTER (WHERE \"family\" = 'product'), 0), 2) FROM events WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-26' AND DATE '2026-09-10'"
+  },
+  "compare_previous 7a424f9a395d": {
+    "rows": [
+      ["688","32"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT count(*), ROUND(count(*) FILTER (WHERE \"family\" = 'product')::DOUBLE\n\t\t\t\t/ NULLIF(count(DISTINCT \"user_id\") FILTER (WHERE \"family\" = 'product'), 0), 2) FROM events WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-10' AND DATE '2026-08-25'"
+  },
+  "consent_share 3dc14ce32ff2": {
+    "rows": [
+      ["0.5"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Visitors are distinct per day and consent state, added up. A view sent\n-- without $consent is unknown and left out of the rate.\nWITH d AS (\n  SELECT consent, count(DISTINCT actor_id) AS visitors\n  FROM views\n  WHERE project_id = 1\n    AND day BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n    AND consent IS NOT NULL\n  GROUP BY day, consent\n)\nSELECT CASE WHEN SUM(visitors) > 0\n            THEN COALESCE(SUM(visitors) FILTER (WHERE consent = 1), 0)::DOUBLE / SUM(visitors)\n       END AS value\nFROM d\n"
+  },
+  "trend 31be2aec8e4b": {
+    "rows": [
+      ["2026-08-02","0.2"],
+      ["2026-08-03","0.15789473684210525"],
+      ["2026-08-04","0.15789473684210525"],
+      ["2026-08-05","0.15789473684210525"],
+      ["2026-08-06","0.10526315789473684"],
+      ["2026-08-07","0.1111111111111111"],
+      ["2026-08-08","0.16666666666666666"],
+      ["2026-08-09","0.15789473684210525"],
+      ["2026-08-10","0.21052631578947367"],
+      ["2026-08-11","0.16666666666666666"],
+      ["2026-08-12","0.21052631578947367"],
+      ["2026-08-13","0.10526315789473684"],
+      ["2026-08-14","0.15789473684210525"],
+      ["2026-08-15","0.15"],
+      ["2026-08-16","0.1111111111111111"],
+      ["2026-08-17","0.10526315789473684"],
+      ["2026-08-18","0.16666666666666666"],
+      ["2026-08-19","0.16666666666666666"],
+      ["2026-08-20","0.2222222222222222"],
+      ["2026-08-21","0.2222222222222222"],
+      ["2026-08-22","0.15789473684210525"],
+      ["2026-08-23","0.10526315789473684"],
+      ["2026-08-24","0.1111111111111111"],
+      ["2026-08-25","0.15789473684210525"],
+      ["2026-08-26","0.1111111111111111"],
+      ["2026-08-27","0.10526315789473684"],
+      ["2026-08-28","0.2"],
+      ["2026-08-29","0.21052631578947367"],
+      ["2026-08-30","0.16666666666666666"],
+      ["2026-08-31","0.15789473684210525"],
+      ["2026-09-01","0.15789473684210525"],
+      ["2026-09-02","0.16666666666666666"],
+      ["2026-09-03","0.16666666666666666"],
+      ["2026-09-04","0.16666666666666666"],
+      ["2026-09-05","0.16666666666666666"],
+      ["2026-09-06","0.2222222222222222"],
+      ["2026-09-07","0.2222222222222222"],
+      ["2026-09-08","0.21052631578947367"],
+      ["2026-09-09","0.1111111111111111"],
+      ["2026-09-10","0.15"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"day\", count(*) FILTER (WHERE \"event_name\" = 'landing')::DOUBLE / NULLIF(count(DISTINCT \"actor_id\"), 0)\n\t\t\t\tFROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' GROUP BY \"day\" ORDER BY \"day\""
+  }
+}

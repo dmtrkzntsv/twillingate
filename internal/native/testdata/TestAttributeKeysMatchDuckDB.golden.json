@@ -1,0 +1,103 @@
+{
+  "0e23d6571f9e": {
+    "rows": [
+      ["ref","66","3","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev2 Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:} {ProjectID:1 Key:secret Action:block To: CreatedAt:}]}",
+    "sql": "WITH a AS (\n  UNPIVOT (\n    SELECT COLUMNS('^(day|attr_.*)$'), CAST(NULL AS VARCHAR) AS \"attr_$\"\n    FROM events\n    WHERE family IN ('views') AND \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-20' AND DATE '2026-09-10'\n  )\n  ON COLUMNS('^attr_') INTO NAME col VALUE attr_value\n),\nk AS (\n  SELECT substr(col, 6) AS attr_key, count(*) AS events, count(DISTINCT attr_value) AS \"values\"\n  FROM a\n  GROUP BY col\n)\nSELECT attr_key, events, \"values\", count(*) OVER () AS keys_total\nFROM k\nQUALIFY row_number() OVER (ORDER BY events DESC, attr_key) <= 100\nORDER BY events DESC, attr_key"
+  },
+  "9fe54204c36f": {
+    "rows": [
+      ["Plan","282","3","7"],
+      ["item","242","9","7"],
+      ["color","132","3","7"],
+      ["conn","88","7","7"],
+      ["note","22","1","7"],
+      ["beta","4","2","7"],
+      ["plan_1","4","2","7"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev2 Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:} {ProjectID:1 Key:secret Action:block To: CreatedAt:}]}",
+    "sql": "WITH a AS (\n  UNPIVOT (\n    SELECT COLUMNS('^(day|attr_.*)$'), CAST(NULL AS VARCHAR) AS \"attr_$\"\n    FROM events\n    WHERE family IN ('product', 'measures') AND \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-20' AND DATE '2026-09-10'\n  )\n  ON COLUMNS('^attr_') INTO NAME col VALUE attr_value\n),\nk AS (\n  SELECT substr(col, 6) AS attr_key, count(*) AS events, count(DISTINCT attr_value) AS \"values\"\n  FROM a\n  GROUP BY col\n)\nSELECT attr_key, events, \"values\", count(*) OVER () AS keys_total\nFROM k\nQUALIFY row_number() OVER (ORDER BY events DESC, attr_key) <= 100\nORDER BY events DESC, attr_key"
+  },
+  "all 4efff8f36c05": {
+    "rows": [
+      ["Plan","282","3","7"],
+      ["item","242","9","7"],
+      ["color","132","3","7"],
+      ["conn","88","7","7"],
+      ["note","22","1","7"],
+      ["beta","4","2","7"],
+      ["plan_1","4","2","7"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev2 Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:} {ProjectID:1 Key:secret Action:block To: CreatedAt:}]}",
+    "sql": "WITH a AS (\n  UNPIVOT (\n    SELECT COLUMNS('^(day|attr_.*)$'), CAST(NULL AS VARCHAR) AS \"attr_$\"\n    FROM events\n    WHERE family IN ('product', 'measures') AND \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-20' AND DATE '2026-09-10'\n  )\n  ON COLUMNS('^attr_') INTO NAME col VALUE attr_value\n),\nk AS (\n  SELECT substr(col, 6) AS attr_key, count(*) AS events, count(DISTINCT attr_value) AS \"values\"\n  FROM a\n  GROUP BY col\n)\nSELECT attr_key, events, \"values\", count(*) OVER () AS keys_total\nFROM k\nQUALIFY row_number() OVER (ORDER BY events DESC, attr_key) <= 1000\nORDER BY events DESC, attr_key"
+  },
+  "august af64ce21ac29": {
+    "rows": [
+      ["Plan","156","3","5"],
+      ["item","132","9","5"],
+      ["color","72","3","5"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev2 Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:} {ProjectID:1 Key:secret Action:block To: CreatedAt:}]}",
+    "sql": "WITH a AS (\n  UNPIVOT (\n    SELECT COLUMNS('^(day|attr_.*)$'), CAST(NULL AS VARCHAR) AS \"attr_$\"\n    FROM events\n    WHERE family IN ('product', 'measures') AND \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-20' AND DATE '2026-08-31'\n  )\n  ON COLUMNS('^attr_') INTO NAME col VALUE attr_value\n),\nk AS (\n  SELECT substr(col, 6) AS attr_key, count(*) AS events, count(DISTINCT attr_value) AS \"values\"\n  FROM a\n  GROUP BY col\n)\nSELECT attr_key, events, \"values\", count(*) OVER () AS keys_total\nFROM k\nQUALIFY row_number() OVER (ORDER BY events DESC, attr_key) <= 3 OR attr_key IN ('beta')\nORDER BY events DESC, attr_key"
+  },
+  "default 282806ee95ae": {
+    "rows": [
+      ["Plan","282","3","7"],
+      ["item","242","9","7"],
+      ["color","132","3","7"],
+      ["conn","88","7","7"],
+      ["note","22","1","7"],
+      ["beta","4","2","7"],
+      ["plan_1","4","2","7"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev2 Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:} {ProjectID:1 Key:secret Action:block To: CreatedAt:}]}",
+    "sql": "WITH a AS (\n  UNPIVOT (\n    SELECT COLUMNS('^(day|attr_.*)$'), CAST(NULL AS VARCHAR) AS \"attr_$\"\n    FROM events\n    WHERE family IN ('product', 'measures') AND \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-20' AND DATE '2026-09-10'\n  )\n  ON COLUMNS('^attr_') INTO NAME col VALUE attr_value\n),\nk AS (\n  SELECT substr(col, 6) AS attr_key, count(*) AS events, count(DISTINCT attr_value) AS \"values\"\n  FROM a\n  GROUP BY col\n)\nSELECT attr_key, events, \"values\", count(*) OVER () AS keys_total\nFROM k\nQUALIFY row_number() OVER (ORDER BY events DESC, attr_key) <= 50\nORDER BY events DESC, attr_key"
+  },
+  "e37ea01ca956": {
+    "rows": [
+      ["Plan","282","3","7"],
+      ["item","242","9","7"],
+      ["conn","88","7","7"],
+      ["note","22","1","7"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev2 Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:} {ProjectID:1 Key:secret Action:block To: CreatedAt:}]}",
+    "sql": "WITH a AS (\n  UNPIVOT (\n    SELECT COLUMNS('^(day|attr_.*)$'), CAST(NULL AS VARCHAR) AS \"attr_$\"\n    FROM events\n    WHERE family IN ('product', 'measures') AND \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-20' AND DATE '2026-09-10'\n  )\n  ON COLUMNS('^attr_') INTO NAME col VALUE attr_value\n),\nk AS (\n  SELECT substr(col, 6) AS attr_key, count(*) AS events, count(DISTINCT attr_value) AS \"values\"\n  FROM a\n  GROUP BY col\n)\nSELECT attr_key, events, \"values\", count(*) OVER () AS keys_total\nFROM k\nQUALIFY row_number() OVER (ORDER BY events DESC, attr_key) <= 2 OR attr_key IN ('note', 'conn')\nORDER BY events DESC, attr_key"
+  },
+  "limit_and_keep 6f15591497f0": {
+    "rows": [
+      ["Plan","282","3","7"],
+      ["item","242","9","7"],
+      ["conn","88","7","7"],
+      ["note","22","1","7"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev2 Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:} {ProjectID:1 Key:secret Action:block To: CreatedAt:}]}",
+    "sql": "WITH a AS (\n  UNPIVOT (\n    SELECT COLUMNS('^(day|attr_.*)$'), CAST(NULL AS VARCHAR) AS \"attr_$\"\n    FROM events\n    WHERE family IN ('product', 'measures') AND \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-20' AND DATE '2026-09-10'\n  )\n  ON COLUMNS('^attr_') INTO NAME col VALUE attr_value\n),\nk AS (\n  SELECT substr(col, 6) AS attr_key, count(*) AS events, count(DISTINCT attr_value) AS \"values\"\n  FROM a\n  GROUP BY col\n)\nSELECT attr_key, events, \"values\", count(*) OVER () AS keys_total\nFROM k\nQUALIFY row_number() OVER (ORDER BY events DESC, attr_key) <= 2 OR attr_key IN ('note', 'secret', 'colour', 'nothing', 'plan', 'conn')\nORDER BY events DESC, attr_key"
+  },
+  "measures 44f15c1f3936": {
+    "rows": [
+      ["conn","40","7","3"],
+      ["Plan","36","2","3"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev2 Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:} {ProjectID:1 Key:secret Action:block To: CreatedAt:}]}",
+    "sql": "WITH a AS (\n  UNPIVOT (\n    SELECT COLUMNS('^(day|attr_.*)$'), CAST(NULL AS VARCHAR) AS \"attr_$\"\n    FROM events\n    WHERE family IN ('measures') AND \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  )\n  ON COLUMNS('^attr_') INTO NAME col VALUE attr_value\n),\nk AS (\n  SELECT substr(col, 6) AS attr_key, count(*) AS events, count(DISTINCT attr_value) AS \"values\"\n  FROM a\n  GROUP BY col\n)\nSELECT attr_key, events, \"values\", count(*) OVER () AS keys_total\nFROM k\nQUALIFY row_number() OVER (ORDER BY events DESC, attr_key) <= 1 OR attr_key IN ('Plan')\nORDER BY events DESC, attr_key"
+  },
+  "product 75feb3bf7384": {
+    "rows": [
+      ["item","242","9","5"],
+      ["Plan","198","3","5"],
+      ["color","132","3","5"],
+      ["note","22","1","5"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev2 Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:} {ProjectID:1 Key:secret Action:block To: CreatedAt:}]}",
+    "sql": "WITH a AS (\n  UNPIVOT (\n    SELECT COLUMNS('^(day|attr_.*)$'), CAST(NULL AS VARCHAR) AS \"attr_$\"\n    FROM events\n    WHERE family IN ('product') AND \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-20' AND DATE '2026-09-10'\n  )\n  ON COLUMNS('^attr_') INTO NAME col VALUE attr_value\n),\nk AS (\n  SELECT substr(col, 6) AS attr_key, count(*) AS events, count(DISTINCT attr_value) AS \"values\"\n  FROM a\n  GROUP BY col\n)\nSELECT attr_key, events, \"values\", count(*) OVER () AS keys_total\nFROM k\nQUALIFY row_number() OVER (ORDER BY events DESC, attr_key) <= 4 OR attr_key IN ('conn')\nORDER BY events DESC, attr_key"
+  },
+  "where f3f329e55893": {
+    "rows": [
+      ["Plan","172","3","6"],
+      ["conn","88","7","6"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev2 Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:} {ProjectID:1 Key:secret Action:block To: CreatedAt:}]}",
+    "sql": "WITH a AS (\n  UNPIVOT (\n    SELECT COLUMNS('^(day|attr_.*)$'), CAST(NULL AS VARCHAR) AS \"attr_$\"\n    FROM events\n    WHERE family IN ('product', 'measures') AND \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-20' AND DATE '2026-09-10' AND platform = 'web'\n  )\n  ON COLUMNS('^attr_') INTO NAME col VALUE attr_value\n),\nk AS (\n  SELECT substr(col, 6) AS attr_key, count(*) AS events, count(DISTINCT attr_value) AS \"values\"\n  FROM a\n  GROUP BY col\n)\nSELECT attr_key, events, \"values\", count(*) OVER () AS keys_total\nFROM k\nQUALIFY row_number() OVER (ORDER BY events DESC, attr_key) <= 2 OR attr_key IN ('note')\nORDER BY events DESC, attr_key"
+  }
+}

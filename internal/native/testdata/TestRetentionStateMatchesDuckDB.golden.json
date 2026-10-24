@@ -1,0 +1,101 @@
+{
+  "before_any_event fa2dd247d6f5": {
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = 1 AND family IN ('views', 'product') AND actor_id <> ''\n    AND actor_kind IN ('user', 'install')\n    AND day < DATE '2026-09-10' AND day <= DATE '2026-05-10' + 45 \n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\ndays AS (SELECT DISTINCT actor_id, day FROM acts)\nSELECT f.actor_id, strftime(f.cohort_day, '%Y-%m-%d'), strftime(f.user_day, '%Y-%m-%d'),\n  string_agg(CAST(d.day - f.cohort_day AS VARCHAR), ',' ORDER BY d.day)\nFROM firsts f JOIN days d ON d.actor_id = f.actor_id AND d.day >= f.cohort_day AND d.day <= f.cohort_day + 45\nWHERE f.cohort_day BETWEEN DATE '2026-05-01' AND DATE '2026-05-10'\nGROUP BY ALL ORDER BY f.actor_id"
+  },
+  "earlier_today 4c737a782890": {
+    "rows": [
+      ["i17","2026-08-02","","0,2,4,6,8,10,12,14,16"],
+      ["i18","2026-08-05","2026-08-08","0,3,6,9,12"],
+      ["i19","2026-08-08","","0,4,8"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = 1 AND family IN ('views', 'product') AND actor_id <> ''\n    AND actor_kind IN ('user', 'install')\n    AND day < DATE '2026-08-20' AND day <= DATE '2026-08-10' + 20 \n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\ndays AS (SELECT DISTINCT actor_id, day FROM acts)\nSELECT f.actor_id, strftime(f.cohort_day, '%Y-%m-%d'), strftime(f.user_day, '%Y-%m-%d'),\n  string_agg(CAST(d.day - f.cohort_day AS VARCHAR), ',' ORDER BY d.day)\nFROM firsts f JOIN days d ON d.actor_id = f.actor_id AND d.day >= f.cohort_day AND d.day <= f.cohort_day + 20\nWHERE f.cohort_day BETWEEN DATE '2026-08-01' AND DATE '2026-08-10'\nGROUP BY ALL ORDER BY f.actor_id"
+  },
+  "every_day 0bb851c71065": {
+    "rows": [
+      ["b1","2026-07-02","","0,5,10,15,20,25,30,35,40,45"],
+      ["i00","2026-06-12","2026-06-15","0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45"],
+      ["i01","2026-06-15","2026-06-15","0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38"],
+      ["i02","2026-06-18","","0,3,6,9,12,15,18,21,24,27,30,33,36,39"],
+      ["i03","2026-06-21","2026-06-25","0,4,8,12,16,20,24,28,32,36"],
+      ["i04","2026-06-24","","0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39"],
+      ["i05","2026-06-27","","0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38,40,42,44"],
+      ["i06","2026-06-30","2026-07-03","0,3,6,9,12,15,18,21,24,27,30,33,36,39"],
+      ["i07","2026-07-03","","0,4,8,12,16,20,24,28,32,36"],
+      ["i08","2026-07-06","2026-07-06","0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39"],
+      ["i09","2026-07-09","2026-07-13","0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38"],
+      ["i10","2026-07-12","","0,3,6,9,12,15,18,21,24,27,30,33,36,39,42,45"],
+      ["i11","2026-07-15","","0,4,8,12,16,20,24,28,32,36"],
+      ["i12","2026-07-18","2026-07-21","0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39"],
+      ["i13","2026-07-21","","0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38"],
+      ["i14","2026-07-24","","0,3,6,9,12,15,18,21,24,27,30,33,36,39"],
+      ["i15","2026-07-27","2026-07-27","0,4,8,12,16,20,24,28,32,36,40,44"],
+      ["i16","2026-07-30","","0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39"],
+      ["i17","2026-08-02","","0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38"],
+      ["i18","2026-08-05","2026-08-08","0,3,6,9,12,15,18,21,24,27,30,33"],
+      ["i19","2026-08-08","","0,4,8,12,16,20,24,28,32"],
+      ["i20","2026-08-11","","0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29"],
+      ["i21","2026-08-14","2026-08-18","0,2,4,6,8,10,12,14,16,18,20,22,24,26"],
+      ["i22","2026-08-17","2026-08-17","0,3,6,9,12,15,18,21"],
+      ["i23","2026-08-20","","0,4,8,12,16,20"],
+      ["i24","2026-08-23","2026-08-26","0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17"],
+      ["i25","2026-07-01","","0"],
+      ["i26","2026-08-29","","0,3,6,9"],
+      ["i27","2026-06-13","2026-06-17","0,4,8,12,16,20,24,28,32,36"],
+      ["i28","2026-06-16","","0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39"],
+      ["i29","2026-06-19","2026-06-19","0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30,32,34,36,38"],
+      ["m1","2026-07-12","","0,3,6,9,12,15,18,21,24,27,30,33,36,39,42,45"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = 1 AND family IN ('views', 'product') AND actor_id <> ''\n    AND actor_kind IN ('user', 'install')\n    AND day < DATE '2026-09-10' AND day <= DATE '2026-09-09' + 45 \n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\ndays AS (SELECT DISTINCT actor_id, day FROM acts)\nSELECT f.actor_id, strftime(f.cohort_day, '%Y-%m-%d'), strftime(f.user_day, '%Y-%m-%d'),\n  string_agg(CAST(d.day - f.cohort_day AS VARCHAR), ',' ORDER BY d.day)\nFROM firsts f JOIN days d ON d.actor_id = f.actor_id AND d.day >= f.cohort_day AND d.day <= f.cohort_day + 45\nWHERE f.cohort_day BETWEEN DATE '2026-06-12' AND DATE '2026-09-09'\nGROUP BY ALL ORDER BY f.actor_id"
+  },
+  "filtered 2df48c31af19": {
+    "rows": [
+      ["b1","2026-07-02","","0,5,10,15,20,25,30,35,40,45"],
+      ["i06","2026-07-03","2026-07-03","0,3,6,12,15,18,24,27,30,36"],
+      ["i08","2026-07-07","2026-07-07","0,1,2,4,5,6,8,9,10,12,13,14,16,17,18,20,21,22,24,25,26,28,29,30,32,33,34,36,37,38"],
+      ["i10","2026-07-15","","0,3,6,12,15,18,24,27,30,36,39,42"],
+      ["i12","2026-07-19","2026-07-21","0,1,2,4,5,6,8,9,10,12,13,14,16,17,18,20,21,22,24,25,26,28,29,30,32,33,34,36,37,38"],
+      ["i14","2026-07-27","","0,3,6,12,15,18,24,27,30,36"],
+      ["i16","2026-07-31","","0,1,2,4,5,6,8,9,10,12,13,14,16,17,18,20,21,22,24,25,26,28,29,30,32,33,34,36,37,38"],
+      ["i18","2026-08-08","2026-08-08","0,3,6,12,15,18,24,27,30"],
+      ["i20","2026-08-12","","0,1,2,4,5,6,8,9,10,12,13,14,16,17,18,20,21,22,24,25,26,28"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = 1 AND family IN ('views', 'product') AND actor_id <> ''\n    AND actor_kind IN ('user', 'install')\n    AND day < DATE '2026-09-10' AND day <= DATE '2026-08-15' + 45 AND \"country\" = 'DE' AND \"event_name\" <> 'signup'\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\ndays AS (SELECT DISTINCT actor_id, day FROM acts)\nSELECT f.actor_id, strftime(f.cohort_day, '%Y-%m-%d'), strftime(f.user_day, '%Y-%m-%d'),\n  string_agg(CAST(d.day - f.cohort_day AS VARCHAR), ',' ORDER BY d.day)\nFROM firsts f JOIN days d ON d.actor_id = f.actor_id AND d.day >= f.cohort_day AND d.day <= f.cohort_day + 45\nWHERE f.cohort_day BETWEEN DATE '2026-07-01' AND DATE '2026-08-15'\nGROUP BY ALL ORDER BY f.actor_id"
+  },
+  "first_seen_before_the_range b38fdee1504e": {
+    "rows": [
+      ["i11","2026-07-15","","0,4,8,12,16,20,24,28"],
+      ["i12","2026-07-18","2026-07-21","0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30"],
+      ["i13","2026-07-21","","0,2,4,6,8,10,12,14,16,18,20,22,24,26,28,30"],
+      ["i14","2026-07-24","","0,3,6,9,12,15,18,21,24,27,30"],
+      ["i15","2026-07-27","2026-07-27","0,4,8,12,16,20,24,28"],
+      ["i16","2026-07-30","","0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = 1 AND family IN ('views', 'product') AND actor_id <> ''\n    AND actor_kind IN ('user', 'install')\n    AND day < DATE '2026-09-10' AND day <= DATE '2026-07-31' + 30 \n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\ndays AS (SELECT DISTINCT actor_id, day FROM acts)\nSELECT f.actor_id, strftime(f.cohort_day, '%Y-%m-%d'), strftime(f.user_day, '%Y-%m-%d'),\n  string_agg(CAST(d.day - f.cohort_day AS VARCHAR), ',' ORDER BY d.day)\nFROM firsts f JOIN days d ON d.actor_id = f.actor_id AND d.day >= f.cohort_day AND d.day <= f.cohort_day + 30\nWHERE f.cohort_day BETWEEN DATE '2026-07-15' AND DATE '2026-07-31'\nGROUP BY ALL ORDER BY f.actor_id"
+  },
+  "from_today 62a8eb9d06d8": {
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = 1 AND family IN ('views', 'product') AND actor_id <> ''\n    AND actor_kind IN ('user', 'install')\n    AND day < DATE '2026-09-10' AND day <= DATE '2026-09-20' + 10 \n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\ndays AS (SELECT DISTINCT actor_id, day FROM acts)\nSELECT f.actor_id, strftime(f.cohort_day, '%Y-%m-%d'), strftime(f.user_day, '%Y-%m-%d'),\n  string_agg(CAST(d.day - f.cohort_day AS VARCHAR), ',' ORDER BY d.day)\nFROM firsts f JOIN days d ON d.actor_id = f.actor_id AND d.day >= f.cohort_day AND d.day <= f.cohort_day + 10\nWHERE f.cohort_day BETWEEN DATE '2026-09-10' AND DATE '2026-09-20'\nGROUP BY ALL ORDER BY f.actor_id"
+  },
+  "one_day ebd976d8b46a": {
+    "rows": [
+      ["i25","2026-07-01","","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = 1 AND family IN ('views', 'product') AND actor_id <> ''\n    AND actor_kind IN ('user', 'install')\n    AND day < DATE '2026-09-10' AND day <= DATE '2026-07-01' + 1 \n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\ndays AS (SELECT DISTINCT actor_id, day FROM acts)\nSELECT f.actor_id, strftime(f.cohort_day, '%Y-%m-%d'), strftime(f.user_day, '%Y-%m-%d'),\n  string_agg(CAST(d.day - f.cohort_day AS VARCHAR), ',' ORDER BY d.day)\nFROM firsts f JOIN days d ON d.actor_id = f.actor_id AND d.day >= f.cohort_day AND d.day <= f.cohort_day + 1\nWHERE f.cohort_day BETWEEN DATE '2026-07-01' AND DATE '2026-07-01'\nGROUP BY ALL ORDER BY f.actor_id"
+  },
+  "past_today 555204e7acc0": {
+    "rows": [
+      ["i22","2026-08-17","2026-08-17","0,3,6,9,12,15,18,21"],
+      ["i23","2026-08-20","","0,4,8,12,16,20"],
+      ["i24","2026-08-23","2026-08-26","0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17"],
+      ["i26","2026-08-29","","0,3,6,9"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = 1 AND family IN ('views', 'product') AND actor_id <> ''\n    AND actor_kind IN ('user', 'install')\n    AND day < DATE '2026-09-10' AND day <= DATE '2026-09-09' + 90 \n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\ndays AS (SELECT DISTINCT actor_id, day FROM acts)\nSELECT f.actor_id, strftime(f.cohort_day, '%Y-%m-%d'), strftime(f.user_day, '%Y-%m-%d'),\n  string_agg(CAST(d.day - f.cohort_day AS VARCHAR), ',' ORDER BY d.day)\nFROM firsts f JOIN days d ON d.actor_id = f.actor_id AND d.day >= f.cohort_day AND d.day <= f.cohort_day + 90\nWHERE f.cohort_day BETWEEN DATE '2026-08-15' AND DATE '2026-09-09'\nGROUP BY ALL ORDER BY f.actor_id"
+  }
+}

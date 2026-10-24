@@ -1,0 +1,354 @@
+{
+  "current_file_and_logs/top_groups 37b6042a7f12": {
+    "rows": [
+      ["Group 0.15","14","2","7","2026-08-25","2026-09-10"],
+      ["g2","7","1","7","2026-08-27","2026-09-10"],
+      ["Group 1.15","6","1","6","2026-08-30","2026-09-09"],
+      ["nogroup","1","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Actions are the views and product events sent with the group_id. Users\n-- are distinct per day, so the range figure is the busiest day's: the same\n-- person on two days cannot be told apart from two people. First seen is\n-- the first event the files hold for the group (identities), which also\n-- names it.\nWITH d AS (\n  SELECT group_id AS id, day, count(*) AS actions, count(DISTINCT nullif(user_id, '')) AS users\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND group_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY group_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"Group\",\n       SUM(d.actions) AS \"Actions\",\n       MAX(d.users) AS \"Peak daily users\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'group' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.actions) DESC, d.id\nLIMIT 100\n"
+  },
+  "current_file_and_logs/top_groups#01 37b6042a7f12": {
+    "rows": [
+      ["Group 0.15","14","2","7","2026-08-25","2026-09-10"],
+      ["g2","7","1","7","2026-08-27","2026-09-10"],
+      ["Group 1.15","6","1","6","2026-08-30","2026-09-09"],
+      ["nogroup","1","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Actions are the views and product events sent with the group_id. Users\n-- are distinct per day, so the range figure is the busiest day's: the same\n-- person on two days cannot be told apart from two people. First seen is\n-- the first event the files hold for the group (identities), which also\n-- names it.\nWITH d AS (\n  SELECT group_id AS id, day, count(*) AS actions, count(DISTINCT nullif(user_id, '')) AS users\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND group_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY group_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"Group\",\n       SUM(d.actions) AS \"Actions\",\n       MAX(d.users) AS \"Peak daily users\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'group' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.actions) DESC, d.id\nLIMIT 100\n"
+  },
+  "current_file_and_logs/top_users 964356d604dc": {
+    "rows": [
+      ["Renamed","9","2","7","7","2026-08-27","2026-09-10"],
+      ["User 3.15","9","2","7","7","2026-08-28","2026-09-10"],
+      ["User 5.13","8","1","7","7","2026-08-30","2026-09-10"],
+      ["User 7.15","8","2","6","6","2026-09-02","2026-09-09"],
+      ["User 0.16","7","0","7","7","2026-08-25","2026-09-10"],
+      ["User 2.16","7","0","7","7","2026-08-27","2026-09-10"],
+      ["User 6.16","7","0","7","7","2026-08-31","2026-09-10"],
+      ["User 4.14","6","0","6","6","2026-08-30","2026-09-09"],
+      ["Late","1","0","1","1","2026-09-03","2026-09-03"],
+      ["nobody","1","0","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Actions are the views and product events sent with the user_id. First\n-- seen is the first event the files hold for the user (identities), which\n-- also names it.\nWITH d AS (\n  SELECT user_id AS id, day,\n         count(*) FILTER (WHERE family = 'views') AS views,\n         count(*) FILTER (WHERE family = 'product') AS events\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND user_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY user_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"User\",\n       SUM(d.views + d.events) AS \"Actions\",\n       SUM(d.events) AS \"Events\",\n       SUM(d.views) AS \"Views\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.views + d.events) DESC, d.id\nLIMIT 100\n"
+  },
+  "current_file_and_logs/top_users#01 964356d604dc": {
+    "rows": [
+      ["Renamed","9","2","7","7","2026-08-27","2026-09-10"],
+      ["User 3.15","9","2","7","7","2026-08-28","2026-09-10"],
+      ["User 5.13","8","1","7","7","2026-08-30","2026-09-10"],
+      ["User 7.15","8","2","6","6","2026-09-02","2026-09-09"],
+      ["User 0.16","7","0","7","7","2026-08-25","2026-09-10"],
+      ["User 2.16","7","0","7","7","2026-08-27","2026-09-10"],
+      ["User 6.16","7","0","7","7","2026-08-31","2026-09-10"],
+      ["User 4.14","6","0","6","6","2026-08-30","2026-09-09"],
+      ["Late","1","0","1","1","2026-09-03","2026-09-03"],
+      ["nobody","1","0","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Actions are the views and product events sent with the user_id. First\n-- seen is the first event the files hold for the user (identities), which\n-- also names it.\nWITH d AS (\n  SELECT user_id AS id, day,\n         count(*) FILTER (WHERE family = 'views') AS views,\n         count(*) FILTER (WHERE family = 'product') AS events\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND user_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY user_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"User\",\n       SUM(d.views + d.events) AS \"Actions\",\n       SUM(d.events) AS \"Events\",\n       SUM(d.views) AS \"Views\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.views + d.events) DESC, d.id\nLIMIT 100\n"
+  },
+  "current_file_and_logs/users_first_seen_lately 89212b35d34c": {
+    "rows": [
+      ["User 7.15","8","2","6","6","2026-09-02","2026-09-09"],
+      ["Late","1","0","1","1","2026-09-03","2026-09-03"],
+      ["nobody","1","0","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT * FROM (-- Actions are the views and product events sent with the user_id. First\n-- seen is the first event the files hold for the user (identities), which\n-- also names it.\nWITH d AS (\n  SELECT user_id AS id, day,\n         count(*) FILTER (WHERE family = 'views') AS views,\n         count(*) FILTER (WHERE family = 'product') AS events\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND user_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY user_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"User\",\n       SUM(d.views + d.events) AS \"Actions\",\n       SUM(d.events) AS \"Events\",\n       SUM(d.views) AS \"Views\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.views + d.events) DESC, d.id\nLIMIT 100\n) WHERE \"First seen\" >= DATE '2026-09-02'"
+  },
+  "current_file_and_logs/users_first_seen_lately 964356d604dc": {
+    "rows": [
+      ["Renamed","9","2","7","7","2026-08-27","2026-09-10"],
+      ["User 3.15","9","2","7","7","2026-08-28","2026-09-10"],
+      ["User 5.13","8","1","7","7","2026-08-30","2026-09-10"],
+      ["User 7.15","8","2","6","6","2026-09-02","2026-09-09"],
+      ["User 0.16","7","0","7","7","2026-08-25","2026-09-10"],
+      ["User 2.16","7","0","7","7","2026-08-27","2026-09-10"],
+      ["User 6.16","7","0","7","7","2026-08-31","2026-09-10"],
+      ["User 4.14","6","0","6","6","2026-08-30","2026-09-09"],
+      ["Late","1","0","1","1","2026-09-03","2026-09-03"],
+      ["nobody","1","0","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Actions are the views and product events sent with the user_id. First\n-- seen is the first event the files hold for the user (identities), which\n-- also names it.\nWITH d AS (\n  SELECT user_id AS id, day,\n         count(*) FILTER (WHERE family = 'views') AS views,\n         count(*) FILTER (WHERE family = 'product') AS events\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND user_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY user_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"User\",\n       SUM(d.views + d.events) AS \"Actions\",\n       SUM(d.events) AS \"Events\",\n       SUM(d.views) AS \"Views\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.views + d.events) DESC, d.id\nLIMIT 100\n"
+  },
+  "current_file_and_logs/users_first_seen_lately#01 89212b35d34c": {
+    "rows": [
+      ["User 7.15","8","2","6","6","2026-09-02","2026-09-09"],
+      ["Late","1","0","1","1","2026-09-03","2026-09-03"],
+      ["nobody","1","0","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT * FROM (-- Actions are the views and product events sent with the user_id. First\n-- seen is the first event the files hold for the user (identities), which\n-- also names it.\nWITH d AS (\n  SELECT user_id AS id, day,\n         count(*) FILTER (WHERE family = 'views') AS views,\n         count(*) FILTER (WHERE family = 'product') AS events\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND user_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY user_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"User\",\n       SUM(d.views + d.events) AS \"Actions\",\n       SUM(d.events) AS \"Events\",\n       SUM(d.views) AS \"Views\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.views + d.events) DESC, d.id\nLIMIT 100\n) WHERE \"First seen\" >= DATE '2026-09-02'"
+  },
+  "current_file_and_logs/users_first_seen_lately#01 964356d604dc": {
+    "rows": [
+      ["Renamed","9","2","7","7","2026-08-27","2026-09-10"],
+      ["User 3.15","9","2","7","7","2026-08-28","2026-09-10"],
+      ["User 5.13","8","1","7","7","2026-08-30","2026-09-10"],
+      ["User 7.15","8","2","6","6","2026-09-02","2026-09-09"],
+      ["User 0.16","7","0","7","7","2026-08-25","2026-09-10"],
+      ["User 2.16","7","0","7","7","2026-08-27","2026-09-10"],
+      ["User 6.16","7","0","7","7","2026-08-31","2026-09-10"],
+      ["User 4.14","6","0","6","6","2026-08-30","2026-09-09"],
+      ["Late","1","0","1","1","2026-09-03","2026-09-03"],
+      ["nobody","1","0","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Actions are the views and product events sent with the user_id. First\n-- seen is the first event the files hold for the user (identities), which\n-- also names it.\nWITH d AS (\n  SELECT user_id AS id, day,\n         count(*) FILTER (WHERE family = 'views') AS views,\n         count(*) FILTER (WHERE family = 'product') AS events\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND user_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY user_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"User\",\n       SUM(d.views + d.events) AS \"Actions\",\n       SUM(d.events) AS \"Events\",\n       SUM(d.views) AS \"Views\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.views + d.events) DESC, d.id\nLIMIT 100\n"
+  },
+  "current_file_and_logs/views_by_label e925339ddf2b": {
+    "rows": [
+      ["","10"],
+      ["Renamed","7"],
+      ["User 0.16","7"],
+      ["User 2.16","7"],
+      ["User 3.15","7"],
+      ["User 5.13","7"],
+      ["User 6.16","7"],
+      ["User 4.14","6"],
+      ["User 7.15","6"],
+      ["Late","1"],
+      ["nobody","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT COALESCE(i.name, NULLIF(e.user_id, '')) AS l, count(*) AS c FROM events e\n\t\t\t\tLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = e.user_id\n\t\t\t\tWHERE e.project_id = 4 AND e.family = 'views' AND e.day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n\t\t\t\tGROUP BY l ORDER BY c DESC, l ASC NULLS LAST LIMIT 100"
+  },
+  "current_file_and_logs/views_by_label#01 e925339ddf2b": {
+    "rows": [
+      ["","10"],
+      ["Renamed","7"],
+      ["User 0.16","7"],
+      ["User 2.16","7"],
+      ["User 3.15","7"],
+      ["User 5.13","7"],
+      ["User 6.16","7"],
+      ["User 4.14","6"],
+      ["User 7.15","6"],
+      ["Late","1"],
+      ["nobody","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT COALESCE(i.name, NULLIF(e.user_id, '')) AS l, count(*) AS c FROM events e\n\t\t\t\tLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = e.user_id\n\t\t\t\tWHERE e.project_id = 4 AND e.family = 'views' AND e.day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n\t\t\t\tGROUP BY l ORDER BY c DESC, l ASC NULLS LAST LIMIT 100"
+  },
+  "current_file_and_logs/views_by_older_groups f0eb097c1e2d": {
+    "rows": [
+      ["2026-09-01","Group 0.15","2"],
+      ["2026-09-01","g2","1"],
+      ["2026-09-02","g2","1"],
+      ["2026-09-03","Group 0.15","2"],
+      ["2026-09-04","Group 0.15","2"],
+      ["2026-09-04","g2","1"],
+      ["2026-09-05","g2","1"],
+      ["2026-09-06","Group 0.15","2"],
+      ["2026-09-07","Group 0.15","2"],
+      ["2026-09-07","g2","1"],
+      ["2026-09-08","g2","1"],
+      ["2026-09-09","Group 0.15","2"],
+      ["2026-09-10","Group 0.15","2"],
+      ["2026-09-10","g2","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT e.day, COALESCE(i.name, e.group_id) AS l, count(*) FROM events e\n\t\t\t\tJOIN identities i ON i.project_id = 4 AND i.kind = 'group' AND i.id = e.group_id\n\t\t\t\tWHERE e.project_id = 4 AND e.family = 'views' AND e.day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n\t\t\t\tAND i.first_seen::DATE < DATE '2026-08-28' GROUP BY ALL ORDER BY 1, 2"
+  },
+  "current_file_and_logs/views_by_older_groups#01 f0eb097c1e2d": {
+    "rows": [
+      ["2026-09-01","Group 0.15","2"],
+      ["2026-09-01","g2","1"],
+      ["2026-09-02","g2","1"],
+      ["2026-09-03","Group 0.15","2"],
+      ["2026-09-04","Group 0.15","2"],
+      ["2026-09-04","g2","1"],
+      ["2026-09-05","g2","1"],
+      ["2026-09-06","Group 0.15","2"],
+      ["2026-09-07","Group 0.15","2"],
+      ["2026-09-07","g2","1"],
+      ["2026-09-08","g2","1"],
+      ["2026-09-09","Group 0.15","2"],
+      ["2026-09-10","Group 0.15","2"],
+      ["2026-09-10","g2","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT e.day, COALESCE(i.name, e.group_id) AS l, count(*) FROM events e\n\t\t\t\tJOIN identities i ON i.project_id = 4 AND i.kind = 'group' AND i.id = e.group_id\n\t\t\t\tWHERE e.project_id = 4 AND e.family = 'views' AND e.day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n\t\t\t\tAND i.first_seen::DATE < DATE '2026-08-28' GROUP BY ALL ORDER BY 1, 2"
+  },
+  "missing_file/top_groups 37b6042a7f12": {
+    "rows": [
+      ["Group 0.15","14","2","7","2026-08-25","2026-09-10"],
+      ["g2","7","1","7","2026-08-27","2026-09-10"],
+      ["Group 1.15","6","1","6","2026-08-30","2026-09-09"],
+      ["nogroup","1","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Actions are the views and product events sent with the group_id. Users\n-- are distinct per day, so the range figure is the busiest day's: the same\n-- person on two days cannot be told apart from two people. First seen is\n-- the first event the files hold for the group (identities), which also\n-- names it.\nWITH d AS (\n  SELECT group_id AS id, day, count(*) AS actions, count(DISTINCT nullif(user_id, '')) AS users\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND group_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY group_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"Group\",\n       SUM(d.actions) AS \"Actions\",\n       MAX(d.users) AS \"Peak daily users\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'group' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.actions) DESC, d.id\nLIMIT 100\n"
+  },
+  "missing_file/top_users 964356d604dc": {
+    "rows": [
+      ["User 1.15","9","2","7","7","2026-08-27","2026-09-10"],
+      ["User 3.15","9","2","7","7","2026-08-28","2026-09-10"],
+      ["User 5.13","8","1","7","7","2026-08-30","2026-09-10"],
+      ["User 7.15","8","2","6","6","2026-09-02","2026-09-09"],
+      ["User 0.16","7","0","7","7","2026-08-25","2026-09-10"],
+      ["User 2.16","7","0","7","7","2026-08-27","2026-09-10"],
+      ["User 6.16","7","0","7","7","2026-08-31","2026-09-10"],
+      ["User 4.14","6","0","6","6","2026-08-30","2026-09-09"],
+      ["Late","1","0","1","1","2026-09-03","2026-09-03"],
+      ["nobody","1","0","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Actions are the views and product events sent with the user_id. First\n-- seen is the first event the files hold for the user (identities), which\n-- also names it.\nWITH d AS (\n  SELECT user_id AS id, day,\n         count(*) FILTER (WHERE family = 'views') AS views,\n         count(*) FILTER (WHERE family = 'product') AS events\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND user_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY user_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"User\",\n       SUM(d.views + d.events) AS \"Actions\",\n       SUM(d.events) AS \"Events\",\n       SUM(d.views) AS \"Views\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.views + d.events) DESC, d.id\nLIMIT 100\n"
+  },
+  "missing_file/users_first_seen_lately 89212b35d34c": {
+    "rows": [
+      ["User 7.15","8","2","6","6","2026-09-02","2026-09-09"],
+      ["Late","1","0","1","1","2026-09-03","2026-09-03"],
+      ["nobody","1","0","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT * FROM (-- Actions are the views and product events sent with the user_id. First\n-- seen is the first event the files hold for the user (identities), which\n-- also names it.\nWITH d AS (\n  SELECT user_id AS id, day,\n         count(*) FILTER (WHERE family = 'views') AS views,\n         count(*) FILTER (WHERE family = 'product') AS events\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND user_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY user_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"User\",\n       SUM(d.views + d.events) AS \"Actions\",\n       SUM(d.events) AS \"Events\",\n       SUM(d.views) AS \"Views\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.views + d.events) DESC, d.id\nLIMIT 100\n) WHERE \"First seen\" >= DATE '2026-09-02'"
+  },
+  "missing_file/users_first_seen_lately 964356d604dc": {
+    "rows": [
+      ["User 1.15","9","2","7","7","2026-08-27","2026-09-10"],
+      ["User 3.15","9","2","7","7","2026-08-28","2026-09-10"],
+      ["User 5.13","8","1","7","7","2026-08-30","2026-09-10"],
+      ["User 7.15","8","2","6","6","2026-09-02","2026-09-09"],
+      ["User 0.16","7","0","7","7","2026-08-25","2026-09-10"],
+      ["User 2.16","7","0","7","7","2026-08-27","2026-09-10"],
+      ["User 6.16","7","0","7","7","2026-08-31","2026-09-10"],
+      ["User 4.14","6","0","6","6","2026-08-30","2026-09-09"],
+      ["Late","1","0","1","1","2026-09-03","2026-09-03"],
+      ["nobody","1","0","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Actions are the views and product events sent with the user_id. First\n-- seen is the first event the files hold for the user (identities), which\n-- also names it.\nWITH d AS (\n  SELECT user_id AS id, day,\n         count(*) FILTER (WHERE family = 'views') AS views,\n         count(*) FILTER (WHERE family = 'product') AS events\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND user_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY user_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"User\",\n       SUM(d.views + d.events) AS \"Actions\",\n       SUM(d.events) AS \"Events\",\n       SUM(d.views) AS \"Views\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.views + d.events) DESC, d.id\nLIMIT 100\n"
+  },
+  "missing_file/views_by_label e925339ddf2b": {
+    "rows": [
+      ["","10"],
+      ["User 0.16","7"],
+      ["User 1.15","7"],
+      ["User 2.16","7"],
+      ["User 3.15","7"],
+      ["User 5.13","7"],
+      ["User 6.16","7"],
+      ["User 4.14","6"],
+      ["User 7.15","6"],
+      ["Late","1"],
+      ["nobody","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT COALESCE(i.name, NULLIF(e.user_id, '')) AS l, count(*) AS c FROM events e\n\t\t\t\tLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = e.user_id\n\t\t\t\tWHERE e.project_id = 4 AND e.family = 'views' AND e.day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n\t\t\t\tGROUP BY l ORDER BY c DESC, l ASC NULLS LAST LIMIT 100"
+  },
+  "missing_file/views_by_older_groups f0eb097c1e2d": {
+    "rows": [
+      ["2026-09-01","Group 0.15","2"],
+      ["2026-09-01","g2","1"],
+      ["2026-09-02","g2","1"],
+      ["2026-09-03","Group 0.15","2"],
+      ["2026-09-04","Group 0.15","2"],
+      ["2026-09-04","g2","1"],
+      ["2026-09-05","g2","1"],
+      ["2026-09-06","Group 0.15","2"],
+      ["2026-09-07","Group 0.15","2"],
+      ["2026-09-07","g2","1"],
+      ["2026-09-08","g2","1"],
+      ["2026-09-09","Group 0.15","2"],
+      ["2026-09-10","Group 0.15","2"],
+      ["2026-09-10","g2","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT e.day, COALESCE(i.name, e.group_id) AS l, count(*) FROM events e\n\t\t\t\tJOIN identities i ON i.project_id = 4 AND i.kind = 'group' AND i.id = e.group_id\n\t\t\t\tWHERE e.project_id = 4 AND e.family = 'views' AND e.day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n\t\t\t\tAND i.first_seen::DATE < DATE '2026-08-28' GROUP BY ALL ORDER BY 1, 2"
+  },
+  "stale_file/top_groups 37b6042a7f12": {
+    "rows": [
+      ["Group 0.15","14","2","7","2026-08-25","2026-09-10"],
+      ["g2","7","1","7","2026-08-27","2026-09-10"],
+      ["Group 1.15","6","1","6","2026-08-30","2026-09-09"],
+      ["nogroup","1","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Actions are the views and product events sent with the group_id. Users\n-- are distinct per day, so the range figure is the busiest day's: the same\n-- person on two days cannot be told apart from two people. First seen is\n-- the first event the files hold for the group (identities), which also\n-- names it.\nWITH d AS (\n  SELECT group_id AS id, day, count(*) AS actions, count(DISTINCT nullif(user_id, '')) AS users\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND group_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY group_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"Group\",\n       SUM(d.actions) AS \"Actions\",\n       MAX(d.users) AS \"Peak daily users\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'group' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.actions) DESC, d.id\nLIMIT 100\n"
+  },
+  "stale_file/top_users 964356d604dc": {
+    "rows": [
+      ["User 1.15","9","2","7","7","2026-08-27","2026-09-10"],
+      ["User 3.15","9","2","7","7","2026-08-28","2026-09-10"],
+      ["User 5.13","8","1","7","7","2026-08-30","2026-09-10"],
+      ["User 7.15","8","2","6","6","2026-09-02","2026-09-09"],
+      ["User 0.16","7","0","7","7","2026-08-25","2026-09-10"],
+      ["User 2.16","7","0","7","7","2026-08-27","2026-09-10"],
+      ["User 6.16","7","0","7","7","2026-08-31","2026-09-10"],
+      ["User 4.14","6","0","6","6","2026-08-30","2026-09-09"],
+      ["Late","1","0","1","1","2026-09-03","2026-09-03"],
+      ["nobody","1","0","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Actions are the views and product events sent with the user_id. First\n-- seen is the first event the files hold for the user (identities), which\n-- also names it.\nWITH d AS (\n  SELECT user_id AS id, day,\n         count(*) FILTER (WHERE family = 'views') AS views,\n         count(*) FILTER (WHERE family = 'product') AS events\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND user_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY user_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"User\",\n       SUM(d.views + d.events) AS \"Actions\",\n       SUM(d.events) AS \"Events\",\n       SUM(d.views) AS \"Views\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.views + d.events) DESC, d.id\nLIMIT 100\n"
+  },
+  "stale_file/users_first_seen_lately 89212b35d34c": {
+    "rows": [
+      ["User 7.15","8","2","6","6","2026-09-02","2026-09-09"],
+      ["Late","1","0","1","1","2026-09-03","2026-09-03"],
+      ["nobody","1","0","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT * FROM (-- Actions are the views and product events sent with the user_id. First\n-- seen is the first event the files hold for the user (identities), which\n-- also names it.\nWITH d AS (\n  SELECT user_id AS id, day,\n         count(*) FILTER (WHERE family = 'views') AS views,\n         count(*) FILTER (WHERE family = 'product') AS events\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND user_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY user_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"User\",\n       SUM(d.views + d.events) AS \"Actions\",\n       SUM(d.events) AS \"Events\",\n       SUM(d.views) AS \"Views\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.views + d.events) DESC, d.id\nLIMIT 100\n) WHERE \"First seen\" >= DATE '2026-09-02'"
+  },
+  "stale_file/users_first_seen_lately 964356d604dc": {
+    "rows": [
+      ["User 1.15","9","2","7","7","2026-08-27","2026-09-10"],
+      ["User 3.15","9","2","7","7","2026-08-28","2026-09-10"],
+      ["User 5.13","8","1","7","7","2026-08-30","2026-09-10"],
+      ["User 7.15","8","2","6","6","2026-09-02","2026-09-09"],
+      ["User 0.16","7","0","7","7","2026-08-25","2026-09-10"],
+      ["User 2.16","7","0","7","7","2026-08-27","2026-09-10"],
+      ["User 6.16","7","0","7","7","2026-08-31","2026-09-10"],
+      ["User 4.14","6","0","6","6","2026-08-30","2026-09-09"],
+      ["Late","1","0","1","1","2026-09-03","2026-09-03"],
+      ["nobody","1","0","1","1","2026-09-10","2026-09-10"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Actions are the views and product events sent with the user_id. First\n-- seen is the first event the files hold for the user (identities), which\n-- also names it.\nWITH d AS (\n  SELECT user_id AS id, day,\n         count(*) FILTER (WHERE family = 'views') AS views,\n         count(*) FILTER (WHERE family = 'product') AS events\n  FROM events\n  WHERE project_id = 4 AND family IN ('views', 'product') AND user_id <> ''\n    AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n  GROUP BY user_id, day\n)\nSELECT COALESCE(i.name, d.id) AS \"User\",\n       SUM(d.views + d.events) AS \"Actions\",\n       SUM(d.events) AS \"Events\",\n       SUM(d.views) AS \"Views\",\n       count(DISTINCT d.day) AS \"Active days\",\n       MIN(i.first_seen::DATE) AS \"First seen\",\n       MAX(d.day) AS \"Last seen\"\nFROM d\nLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = d.id\nGROUP BY d.id, i.name\nORDER BY SUM(d.views + d.events) DESC, d.id\nLIMIT 100\n"
+  },
+  "stale_file/views_by_label e925339ddf2b": {
+    "rows": [
+      ["","10"],
+      ["User 0.16","7"],
+      ["User 1.15","7"],
+      ["User 2.16","7"],
+      ["User 3.15","7"],
+      ["User 5.13","7"],
+      ["User 6.16","7"],
+      ["User 4.14","6"],
+      ["User 7.15","6"],
+      ["Late","1"],
+      ["nobody","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT COALESCE(i.name, NULLIF(e.user_id, '')) AS l, count(*) AS c FROM events e\n\t\t\t\tLEFT JOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = e.user_id\n\t\t\t\tWHERE e.project_id = 4 AND e.family = 'views' AND e.day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n\t\t\t\tGROUP BY l ORDER BY c DESC, l ASC NULLS LAST LIMIT 100"
+  },
+  "stale_file/views_by_older_groups f0eb097c1e2d": {
+    "rows": [
+      ["2026-09-01","Group 0.15","2"],
+      ["2026-09-01","g2","1"],
+      ["2026-09-02","g2","1"],
+      ["2026-09-03","Group 0.15","2"],
+      ["2026-09-04","Group 0.15","2"],
+      ["2026-09-04","g2","1"],
+      ["2026-09-05","g2","1"],
+      ["2026-09-06","Group 0.15","2"],
+      ["2026-09-07","Group 0.15","2"],
+      ["2026-09-07","g2","1"],
+      ["2026-09-08","g2","1"],
+      ["2026-09-09","Group 0.15","2"],
+      ["2026-09-10","Group 0.15","2"],
+      ["2026-09-10","g2","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT e.day, COALESCE(i.name, e.group_id) AS l, count(*) FROM events e\n\t\t\t\tJOIN identities i ON i.project_id = 4 AND i.kind = 'group' AND i.id = e.group_id\n\t\t\t\tWHERE e.project_id = 4 AND e.family = 'views' AND e.day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n\t\t\t\tAND i.first_seen::DATE < DATE '2026-08-28' GROUP BY ALL ORDER BY 1, 2"
+  }
+}

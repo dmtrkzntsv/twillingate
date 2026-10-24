@@ -1,0 +1,14 @@
+{
+  "7 days: 1/\"x'y\" install:\"o'b\\x00x\" install \"'; DROP\" connection \"\" at 2026-10-14T12:00:00Z": [
+    {
+      "ID": "x'y",
+      "Newest": {
+        "Kind": "web"
+      },
+      "ProjectID": 1,
+      "Source": {
+        "ReferrerSource": "google"
+      }
+    }
+  ]
+}

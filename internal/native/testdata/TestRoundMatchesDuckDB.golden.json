@@ -1,0 +1,37 @@
+{
+  "4a9c01ccf49b": {
+    "rows": [
+      ["2.5","-2.5","0.125","1.005","2","1234.5678","-0.004","0.000123"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT ROUND(2.5::DOUBLE, 6), ROUND(-2.5::DOUBLE, 6), ROUND(0.125::DOUBLE, 6), ROUND(1.005::DOUBLE, 6), ROUND(2::DOUBLE, 6), ROUND(1234.5678::DOUBLE, 6), ROUND(-0.004::DOUBLE, 6), ROUND(0.0001234::DOUBLE, 6) WHERE '' = ''"
+  },
+  "53a507f7c95e": {
+    "rows": [
+      ["2.5","-2.5","0.13","1","2","1234.57","-0","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT ROUND(2.5::DOUBLE, 2), ROUND(-2.5::DOUBLE, 2), ROUND(0.125::DOUBLE, 2), ROUND(1.005::DOUBLE, 2), ROUND(2::DOUBLE, 2), ROUND(1234.5678::DOUBLE, 2), ROUND(-0.004::DOUBLE, 2), ROUND(0.0001234::DOUBLE, 2) WHERE '' = ''"
+  },
+  "895252e946b0": {
+    "rows": [
+      ["2.5","-2.5","0.125","1.005","2","1234.568","-0.004","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT ROUND(2.5::DOUBLE, 3), ROUND(-2.5::DOUBLE, 3), ROUND(0.125::DOUBLE, 3), ROUND(1.005::DOUBLE, 3), ROUND(2::DOUBLE, 3), ROUND(1234.5678::DOUBLE, 3), ROUND(-0.004::DOUBLE, 3), ROUND(0.0001234::DOUBLE, 3) WHERE '' = ''"
+  },
+  "a0a891b8d303": {
+    "rows": [
+      ["3","-3","0","1","2","1235","-0","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT ROUND(2.5::DOUBLE), ROUND(-2.5::DOUBLE), ROUND(0.125::DOUBLE), ROUND(1.005::DOUBLE), ROUND(2::DOUBLE), ROUND(1234.5678::DOUBLE), ROUND(-0.004::DOUBLE), ROUND(0.0001234::DOUBLE) WHERE '' = ''"
+  },
+  "d79a91f2611a": {
+    "rows": [
+      ["2.5","-2.5","0.1","1","2","1234.6","-0","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT ROUND(2.5::DOUBLE, 1), ROUND(-2.5::DOUBLE, 1), ROUND(0.125::DOUBLE, 1), ROUND(1.005::DOUBLE, 1), ROUND(2::DOUBLE, 1), ROUND(1234.5678::DOUBLE, 1), ROUND(-0.004::DOUBLE, 1), ROUND(0.0001234::DOUBLE, 1) WHERE '' = ''"
+  }
+}

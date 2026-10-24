@@ -1,0 +1,117 @@
+{
+  "7f8b1b038829": {
+    "rows": [
+      ["new","2"],
+      ["returning","8"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH s AS (SELECT e.*,\n\t\tCASE WHEN e.\"day\" = u.first_seen::DATE THEN 'new' WHEN e.\"day\" > u.first_seen::DATE THEN 'returning' END AS us,\n\t\tCASE WHEN e.\"day\" = g.first_seen::DATE THEN 'new' WHEN e.\"day\" > g.first_seen::DATE THEN 'returning' END AS gs\n\tFROM events e\n\tLEFT JOIN identities u ON u.project_id = 4 AND u.kind = 'user' AND u.id = e.user_id\n\tLEFT JOIN identities g ON g.project_id = 4 AND g.kind = 'group' AND g.id = e.group_id\n\tWHERE e.\"project_id\" = 4 AND e.\"day\" BETWEEN DATE '2026-09-01' AND DATE '2026-09-10') SELECT us, count(DISTINCT \"user_id\") FROM s WHERE us IS NOT NULL GROUP BY ALL ORDER BY 1"
+  },
+  "daily_active_users 56d2862bf886": {
+    "rows": [
+      ["2026-09-01","returning","5"],
+      ["2026-09-02","new","1"],
+      ["2026-09-02","returning","4"],
+      ["2026-09-03","new","1"],
+      ["2026-09-03","returning","6"],
+      ["2026-09-04","returning","5"],
+      ["2026-09-05","returning","5"],
+      ["2026-09-06","returning","6"],
+      ["2026-09-07","returning","5"],
+      ["2026-09-08","returning","5"],
+      ["2026-09-09","returning","6"],
+      ["2026-09-10","returning","6"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH s AS (SELECT e.*,\n\t\tCASE WHEN e.\"day\" = u.first_seen::DATE THEN 'new' WHEN e.\"day\" > u.first_seen::DATE THEN 'returning' END AS us,\n\t\tCASE WHEN e.\"day\" = g.first_seen::DATE THEN 'new' WHEN e.\"day\" > g.first_seen::DATE THEN 'returning' END AS gs\n\tFROM events e\n\tLEFT JOIN identities u ON u.project_id = 4 AND u.kind = 'user' AND u.id = e.user_id\n\tLEFT JOIN identities g ON g.project_id = 4 AND g.kind = 'group' AND g.id = e.group_id\n\tWHERE e.\"project_id\" = 4 AND e.\"day\" BETWEEN DATE '2026-09-01' AND DATE '2026-09-10') SELECT \"day\", us, count(DISTINCT \"user_id\") FROM s WHERE \"family\" IN ('views', 'product') AND \"user_id\" <> ''\n\t\t\t\tGROUP BY ALL ORDER BY \"day\", us ASC NULLS LAST"
+  },
+  "identities_by_kind b5fcabca4943": {
+    "rows": [
+      ["user","9","74","1.1111111111111112","12"],
+      ["group","3","38","0","20"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"kind\", count(*) AS c, sum(\"views\"), avg(\"events\"), max(\"views\") FROM identities WHERE \"project_id\" = 4 AND first_seen::DATE BETWEEN DATE '2026-08-25' AND DATE '2026-09-10'\n\t\t\t\tGROUP BY ALL ORDER BY c DESC, \"kind\" ASC"
+  },
+  "identities_by_name f3166b5e7253": {
+    "rows": [
+      ["u1","Renamed","2026-08-27","3"],
+      ["u3","User 3.15","2026-08-28","3"],
+      ["u5","User 5.13","2026-08-30","2"],
+      ["u7","User 7.15","2026-09-02","2"],
+      ["u0","User 0.16","2026-08-25","0"],
+      ["u2","User 2.16","2026-08-27","0"],
+      ["u4","User 4.14","2026-08-30","0"],
+      ["u6","User 6.16","2026-08-31","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"id\", \"name\", first_seen::DATE, sum(\"events\") AS s FROM identities WHERE \"project_id\" = 4 AND first_seen::DATE BETWEEN DATE '2026-08-25' AND DATE '2026-09-10'\n\t\t\t\tAND \"kind\" = 'user' AND \"views\" > 2 GROUP BY ALL ORDER BY s DESC, \"id\" ASC, \"name\" ASC NULLS LAST, 3 LIMIT 100"
+  },
+  "identities_first_seen_per_day 1f487cd9b962": {
+    "rows": [
+      ["2026-08-25","group","1"],
+      ["2026-08-25","user","1"],
+      ["2026-08-27","group","1"],
+      ["2026-08-27","user","2"],
+      ["2026-08-28","user","1"],
+      ["2026-08-30","group","1"],
+      ["2026-08-30","user","2"],
+      ["2026-08-31","user","1"],
+      ["2026-09-02","user","1"],
+      ["2026-09-03","user","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT first_seen::DATE, \"kind\", count(*) FROM identities WHERE \"project_id\" = 4 AND first_seen::DATE BETWEEN DATE '2026-08-25' AND DATE '2026-09-10' GROUP BY ALL ORDER BY 1, 2"
+  },
+  "identities_in_range 2d7761d716c0": {
+    "rows": [
+      ["2","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT count(*), min(\"events\") FROM identities WHERE \"project_id\" = 4 AND first_seen::DATE BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'"
+  },
+  "new_groups 3274912cbd95": {
+    "rows": [
+      ["0","0","0","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH s AS (SELECT e.*,\n\t\tCASE WHEN e.\"day\" = u.first_seen::DATE THEN 'new' WHEN e.\"day\" > u.first_seen::DATE THEN 'returning' END AS us,\n\t\tCASE WHEN e.\"day\" = g.first_seen::DATE THEN 'new' WHEN e.\"day\" > g.first_seen::DATE THEN 'returning' END AS gs\n\tFROM events e\n\tLEFT JOIN identities u ON u.project_id = 4 AND u.kind = 'user' AND u.id = e.user_id\n\tLEFT JOIN identities g ON g.project_id = 4 AND g.kind = 'group' AND g.id = e.group_id\n\tWHERE e.\"project_id\" = 4 AND e.\"day\" BETWEEN DATE '2026-09-01' AND DATE '2026-09-10') , p AS (SELECT count(DISTINCT \"group_id\") AS g, count(*) AS c FROM s WHERE \"family\" = 'product' AND gs = 'new'),\n\t\t\t\tq AS (SELECT count(DISTINCT e.\"group_id\") AS g, count(*) AS c FROM events e\n\t\t\t\t\tJOIN identities i ON i.project_id = 4 AND i.kind = 'group' AND i.id = e.group_id\n\t\t\t\t\tWHERE e.\"project_id\" = 4 AND e.\"family\" = 'product' AND e.\"day\" BETWEEN DATE '2026-08-22' AND DATE '2026-08-31'\n\t\t\t\t\tAND e.\"day\" = i.first_seen::DATE)\n\t\t\t\tSELECT p.g, p.c, q.g, q.c FROM p, q"
+  },
+  "new_users d11eed7fbecf": {
+    "rows": [
+      ["2"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT count(DISTINCT e.user_id) FILTER (WHERE e.day = i.first_seen::DATE) FROM events e\n\t\t\t\tJOIN identities i ON i.project_id = 4 AND i.kind = 'user' AND i.id = e.user_id\n\t\t\t\tWHERE e.project_id = 4 AND e.family IN ('views', 'product') AND e.user_id <> ''\n\t\t\t\tAND e.day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'"
+  },
+  "new_users_beside_all 11b2087b9c9c": {
+    "rows": [
+      ["9","2"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH s AS (SELECT e.*,\n\t\tCASE WHEN e.\"day\" = u.first_seen::DATE THEN 'new' WHEN e.\"day\" > u.first_seen::DATE THEN 'returning' END AS us,\n\t\tCASE WHEN e.\"day\" = g.first_seen::DATE THEN 'new' WHEN e.\"day\" > g.first_seen::DATE THEN 'returning' END AS gs\n\tFROM events e\n\tLEFT JOIN identities u ON u.project_id = 4 AND u.kind = 'user' AND u.id = e.user_id\n\tLEFT JOIN identities g ON g.project_id = 4 AND g.kind = 'group' AND g.id = e.group_id\n\tWHERE e.\"project_id\" = 4 AND e.\"day\" BETWEEN DATE '2026-09-01' AND DATE '2026-09-10') SELECT count(DISTINCT \"user_id\"), count(DISTINCT \"user_id\") FILTER (WHERE us = 'new') FROM s WHERE \"family\" IN ('views', 'product')"
+  },
+  "status_on_every_family 4843f8053d1d": {
+    "rows": [
+      ["returning","returning","views","34","4","3"],
+      ["returning","","views","31","4","0"],
+      ["","","measures","24","3","0"],
+      ["","","views","17","0","0"],
+      ["returning","","product","8","4","0"],
+      ["new","","views","5","5","0"],
+      ["new","new","views","3","3","3"],
+      ["new","","product","2","2","0"],
+      ["new","returning","views","1","1","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH s AS (SELECT e.*,\n\t\tCASE WHEN e.\"day\" = u.first_seen::DATE THEN 'new' WHEN e.\"day\" > u.first_seen::DATE THEN 'returning' END AS us,\n\t\tCASE WHEN e.\"day\" = g.first_seen::DATE THEN 'new' WHEN e.\"day\" > g.first_seen::DATE THEN 'returning' END AS gs\n\tFROM events e\n\tLEFT JOIN identities u ON u.project_id = 4 AND u.kind = 'user' AND u.id = e.user_id\n\tLEFT JOIN identities g ON g.project_id = 4 AND g.kind = 'group' AND g.id = e.group_id\n\tWHERE e.\"project_id\" = 4 AND e.\"day\" BETWEEN DATE '2026-08-25' AND DATE '2026-09-10') SELECT us, gs, \"family\", count(*) AS c, count(DISTINCT \"user_id\"), count(DISTINCT \"group_id\") FROM s\n\t\t\t\tGROUP BY ALL ORDER BY c DESC, us ASC NULLS LAST, gs ASC NULLS LAST, \"family\" ASC LIMIT 100"
+  },
+  "views_by_status 2f2f07c76bc0": {
+    "rows": [
+      ["new","/p1","1"],
+      ["new","","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH s AS (SELECT e.*,\n\t\tCASE WHEN e.\"day\" = u.first_seen::DATE THEN 'new' WHEN e.\"day\" > u.first_seen::DATE THEN 'returning' END AS us,\n\t\tCASE WHEN e.\"day\" = g.first_seen::DATE THEN 'new' WHEN e.\"day\" > g.first_seen::DATE THEN 'returning' END AS gs\n\tFROM events e\n\tLEFT JOIN identities u ON u.project_id = 4 AND u.kind = 'user' AND u.id = e.user_id\n\tLEFT JOIN identities g ON g.project_id = 4 AND g.kind = 'group' AND g.id = e.group_id\n\tWHERE e.\"project_id\" = 4 AND e.\"day\" BETWEEN DATE '2026-09-01' AND DATE '2026-09-10') SELECT us, \"path\", count(*) AS c FROM s WHERE \"family\" = 'views' AND us <> 'returning'\n\t\t\t\tGROUP BY ALL ORDER BY c DESC, us ASC NULLS LAST, \"path\" ASC NULLS LAST LIMIT 100"
+  }
+}

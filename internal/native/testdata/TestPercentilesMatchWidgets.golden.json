@@ -1,0 +1,120 @@
+{
+  "by_page a3f60b2713ad": {
+    "rows": [
+      ["/p21","30","4004","482","0.196"],
+      ["/p24","30","4004","482","0.327"],
+      ["/p27","30","2601","412","0.212"],
+      ["/p15","29","4004","521","0.302"],
+      ["/p18","29","4004","482","0.189"],
+      ["/p30","29","3422","501","0.23"],
+      ["/p12","28","3850","501","0.175"],
+      ["/p9","28","3850","482","0.168"],
+      ["/p3","27","3043","463","0.168"],
+      ["/p33","27","2705","445","0.34"],
+      ["/p6","27","3850","501","0.279"],
+      ["/p0","26","3043","463","0.269"],
+      ["/p36","26","3422","521","0.23"],
+      ["/p48","26","3559","482","0.269"],
+      ["/p51","26","3702","501","0.382"],
+      ["/p54","26","3702","521","0.258"],
+      ["/p57","26","2926","521","0.269"],
+      ["/p42","25","3559","396","0.368"],
+      ["/p45","25","3559","412","0.248"],
+      ["/p39","24","3559","463","0.248"],
+      ["/p22","23","4004","482","0.212"],
+      ["/p28","23","2601","412","0.221"],
+      ["/p16","22","4004","463","0.189"],
+      ["/p19","22","4004","482","0.196"],
+      ["/p25","22","2601","412","0.212"],
+      ["/p10","21","3850","501","0.182"],
+      ["/p13","21","3850","445","0.189"],
+      ["/p31","21","2705","428","0.23"],
+      ["/p7","21","3850","482","0.175"],
+      ["/p1","20","3043","463","0.269"],
+      ["/p34","20","3422","521","0.239"],
+      ["/p4","20","3043","482","0.168"],
+      ["/p49","20","3559","501","0.269"],
+      ["/p55","20","3702","521","0.279"],
+      ["/p43","19","3559","381","0.258"],
+      ["/p46","19","3559","412","0.258"],
+      ["/p52","19","3702","521","0.269"],
+      ["/p58","19","3043","521","0.269"],
+      ["/p37","18","3422","463","0.248"],
+      ["/p40","18","3559","396","0.248"],
+      ["/p23","16","4004","501","0.212"],
+      ["/p29","16","3422","501","0.221"],
+      ["/p17","15","3164","463","0.196"],
+      ["/p11","14","3164","445","0.175"],
+      ["/p14","14","4004","521","0.189"],
+      ["/p2","14","3702","463","0.161"],
+      ["/p20","14","4004","482","0.196"],
+      ["/p26","14","2601","412","0.327"],
+      ["/p35","14","3422","521","0.239"],
+      ["/p50","14","3559","482","0.269"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- The page each load reported. Samples counts the page loads that\n-- reported LCP; each p75 weighs a sample by 1 / sample_rate.\nWITH h AS (\n  SELECT path, event_name, bucket,\n         CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,\n         count(*) AS samples, SUM(1 / sample_rate) AS w\n  FROM measures\n  WHERE project_id = 1 AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n    AND event_name IN ('$lcp', '$inp', '$cls') AND path <> ''\n  GROUP BY path, event_name, bucket\n),\nc AS (\n  SELECT path, event_name, samples, approx_value,\n         SUM(w) OVER (PARTITION BY path, event_name ORDER BY bucket) AS run,\n         SUM(w) OVER (PARTITION BY path, event_name) AS total\n  FROM h\n),\np AS (\n  SELECT path, event_name, SUM(samples) AS samples,\n         MIN(approx_value) FILTER (WHERE run >= 0.75 * total) AS p75\n  FROM c\n  GROUP BY path, event_name\n)\nSELECT path AS \"Page\",\n       COALESCE(MAX(samples) FILTER (WHERE event_name = '$lcp'), 0) AS \"Samples\",\n       ROUND(MAX(p75) FILTER (WHERE event_name = '$lcp')) AS \"LCP p75 (ms)\",\n       ROUND(MAX(p75) FILTER (WHERE event_name = '$inp')) AS \"INP p75 (ms)\",\n       ROUND(MAX(p75) FILTER (WHERE event_name = '$cls'), 3) AS \"CLS p75\"\nFROM p\nGROUP BY path\nORDER BY 2 DESC, 1\nLIMIT 50\n"
+  },
+  "cls_p75_by_day 00fb24a8399b": {
+    "rows": [
+      ["2026-09-01","0.269"],
+      ["2026-09-02","0.258"],
+      ["2026-09-03","0.258"],
+      ["2026-09-05","0.258"],
+      ["2026-09-08","0.269"],
+      ["2026-09-09","0.258"],
+      ["2026-09-10","0.258"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- CLS p75 per day: the first bucket whose running weight (1 / sample_rate\n-- a sample) reaches 75% of that day's total.\nWITH h AS (\n  SELECT day, bucket, CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,\n         SUM(1 / sample_rate) AS w\n  FROM measures\n  WHERE project_id = 1 AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10' AND event_name = '$cls'\n  GROUP BY day, bucket\n),\nc AS (\n  SELECT day, approx_value,\n         SUM(w) OVER (PARTITION BY day ORDER BY bucket) AS run,\n         SUM(w) OVER (PARTITION BY day) AS total\n  FROM h\n)\nSELECT day AS x, ROUND(MIN(approx_value) FILTER (WHERE run >= 0.75 * total), 3) AS y\nFROM c\nGROUP BY day\nORDER BY x\n"
+  },
+  "lcp_p75 00af362ddc19": {
+    "rows": [
+      ["3422"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- p75 of $lcp in the range: the first bucket whose running weight\n-- (1 / sample_rate a sample) reaches 75% of the total (docs/reporting.md,\n-- \"Percentiles from measures\"). No row when the range has no samples, so\n-- the card is blank rather than a perfect 0. No previous period: stat\n-- shows a rise as good, and a vital is better lower.\nWITH cur AS (\n  SELECT bucket, CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,\n         SUM(1 / sample_rate) AS w\n  FROM measures\n  WHERE project_id = 1 AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10' AND event_name = '$lcp'\n  GROUP BY bucket),\nc AS (SELECT approx_value, SUM(w) OVER (ORDER BY bucket) AS run, SUM(w) OVER () AS total FROM cur)\nSELECT ROUND(MIN(approx_value) FILTER (WHERE run >= 0.75 * total)) AS value\nFROM c\nHAVING count(*) > 0\n"
+  },
+  "metrics 0ab7d2bc8d58": {
+    "rows": [
+      ["load","time","369","278.627","228.578","463.057","741.369"],
+      ["load","number","360","7.222","5.956","12.065","15.877"],
+      ["payload","size","360","15254.5","14607.233","22487.164","28453.436"],
+      ["score","number","360","0.4","0.398","0.589","0.806"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "-- Every metric but the reserved $ ones (the Web Vitals dashboard has\n-- those), one row per name and kind. time is in milliseconds, size in\n-- bytes, number unitless. A sample weighs 1 / sample_rate. Mean is exact\n-- (sum over weight); each percentile is the first bucket whose running\n-- weight reaches that share of the total, read as the bucket's value\n-- (docs/reporting.md, \"Percentiles from measures\"), within about 2%.\nWITH h AS (\n  SELECT event_name, measure, bucket,\n         CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,\n         count(*) AS samples, SUM(1 / sample_rate) AS w, SUM(value / sample_rate) AS s\n  FROM measures\n  WHERE project_id = 1 AND day BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'\n    AND event_name NOT LIKE '$%'\n  GROUP BY event_name, measure, bucket\n),\nc AS (\n  SELECT event_name, measure, samples, w, s, approx_value,\n         SUM(w) OVER (PARTITION BY event_name, measure ORDER BY bucket) AS run,\n         SUM(w) OVER (PARTITION BY event_name, measure) AS total\n  FROM h\n)\nSELECT event_name AS \"Metric\", measure AS \"Kind\", SUM(samples) AS \"Samples\",\n       ROUND(SUM(s) / SUM(w), 3) AS \"Mean\",\n       ROUND(MIN(approx_value) FILTER (WHERE run >= 0.5 * total), 3) AS \"p50\",\n       ROUND(MIN(approx_value) FILTER (WHERE run >= 0.75 * total), 3) AS \"p75\",\n       ROUND(MIN(approx_value) FILTER (WHERE run >= 0.95 * total), 3) AS \"p95\"\nFROM c\nGROUP BY event_name, measure\nORDER BY 3 DESC, 1, 2\nLIMIT 100\n"
+  },
+  "not_prefix_leaves_out_every_system_name bbc0e0366f20": {
+    "rows": [
+      ["load","729","144.17"],
+      ["payload","360","15254.5"],
+      ["score","360","0.4"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"event_name\", count(*), ROUND(SUM(value / sample_rate) / SUM(1 / sample_rate), 3) FROM measures\n\t\t\tWHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-09-01' AND DATE '2026-09-10' AND \"event_name\" NOT LIKE '$%' GROUP BY \"event_name\" ORDER BY \"event_name\""
+  },
+  "stat_compare 69e16a8ff86f": {
+    "rows": [
+      ["300","402","0.17937562189054732","0.3269386973333838","0.034959562403863775"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH h AS (\n\t\tSELECT bucket, CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,\n\t\t\tcount(*) AS samples, SUM(1 / sample_rate) AS w, SUM(value / sample_rate) AS s\n\t\tFROM measures WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-09-06' AND DATE '2026-09-10' AND \"event_name\" = '$cls' GROUP BY bucket),\n\tc AS (SELECT samples, w, s, approx_value, SUM(w) OVER ( ORDER BY bucket) AS run, SUM(w) OVER () AS total FROM h)\n\tSELECT SUM(samples), SUM(w), SUM(s) / SUM(w), MIN(approx_value) FILTER (WHERE run >= 0.9 * total), MIN(approx_value) FILTER (WHERE run >= 0.1 * total) FROM c"
+  },
+  "stat_compare a249253a96c0": {
+    "rows": [
+      ["400","536","0.17660820895522386","0.3269386973333838","0.03232208062487405"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH h AS (\n\t\tSELECT bucket, CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,\n\t\t\tcount(*) AS samples, SUM(1 / sample_rate) AS w, SUM(value / sample_rate) AS s\n\t\tFROM measures WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-31' AND DATE '2026-09-05' AND \"event_name\" = '$cls' GROUP BY bucket),\n\tc AS (SELECT samples, w, s, approx_value, SUM(w) OVER ( ORDER BY bucket) AS run, SUM(w) OVER () AS total FROM h)\n\tSELECT SUM(samples), SUM(w), SUM(s) / SUM(w), MIN(approx_value) FILTER (WHERE run >= 0.9 * total), MIN(approx_value) FILTER (WHERE run >= 0.1 * total) FROM c"
+  },
+  "weight_and_mean_with_other 736cbf3de253": {
+    "rows": [
+      ["$cls","700","938","0.17779424307036246","0.3977709150175367","0.015955087926032892"],
+      ["$inp","1350","1800","322.02777777777777","633.7249598216364","65.15790816111745"],
+      ["Other","2799","3753","3195.4068478550494","29591.573834014485","0.19635090937305913"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT * EXCLUDE o FROM (SELECT 0 AS o, * FROM (WITH h AS (\n\t\tSELECT \"event_name\", bucket, CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,\n\t\t\tcount(*) AS samples, SUM(1 / sample_rate) AS w, SUM(value / sample_rate) AS s\n\t\tFROM measures WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-09-01' AND DATE '2026-09-10' AND \"event_name\" IN ('$cls', '$inp') GROUP BY \"event_name\", bucket),\n\tc AS (SELECT \"event_name\", samples, w, s, approx_value, SUM(w) OVER (PARTITION BY \"event_name\" ORDER BY bucket) AS run, SUM(w) OVER (PARTITION BY \"event_name\") AS total FROM h)\n\tSELECT \"event_name\", SUM(samples), SUM(w), SUM(s) / SUM(w), MIN(approx_value) FILTER (WHERE run >= 0.999 * total), MIN(approx_value) FILTER (WHERE run >= 0.05 * total) FROM c GROUP BY \"event_name\" ORDER BY \"event_name\")\n\t\t\tUNION ALL SELECT 1, 'Other', * FROM (WITH h AS (\n\t\tSELECT bucket, CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,\n\t\t\tcount(*) AS samples, SUM(1 / sample_rate) AS w, SUM(value / sample_rate) AS s\n\t\tFROM measures WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-09-01' AND DATE '2026-09-10' AND \"event_name\" NOT IN ('$cls', '$inp', '$foo') GROUP BY bucket),\n\tc AS (SELECT samples, w, s, approx_value, SUM(w) OVER ( ORDER BY bucket) AS run, SUM(w) OVER () AS total FROM h)\n\tSELECT SUM(samples), SUM(w), SUM(s) / SUM(w), MIN(approx_value) FILTER (WHERE run >= 0.999 * total), MIN(approx_value) FILTER (WHERE run >= 0.05 * total) FROM c)) ORDER BY o, 2"
+  }
+}

@@ -1,0 +1,112 @@
+{
+  "a_log_grown 05132d4405a4": {
+    "rows": [
+      ["4","group","g0","Group 0.15","2026-08-25T06:00:00Z","2026-09-10T06:04:00Z","20","0"],
+      ["4","group","g1","Group 1.15","2026-08-30T06:03:00Z","2026-09-09T06:04:00Z","8","0"],
+      ["4","group","g2","","2026-08-27T06:01:00Z","2026-09-10T06:01:00Z","10","0"],
+      ["4","user","u0","User 0.16","2026-08-25T06:00:00Z","2026-09-10T06:00:00Z","12","0"],
+      ["4","user","u1","Renamed","2026-08-27T06:00:00Z","2026-09-10T22:00:00Z","11","3"],
+      ["4","user","u2","Grown","2026-08-27T06:01:00Z","2026-09-10T23:00:00Z","11","0"],
+      ["4","user","u3","User 3.15","2026-08-28T06:02:00Z","2026-09-10T06:02:00Z","10","3"],
+      ["4","user","u4","User 4.14","2026-08-30T06:03:00Z","2026-09-09T06:04:00Z","8","0"],
+      ["4","user","u5","User 5.13","2026-08-30T06:04:00Z","2026-09-10T06:03:00Z","8","2"],
+      ["4","user","u6","User 6.16","2026-08-31T06:04:00Z","2026-09-10T06:04:00Z","8","0"],
+      ["4","user","u7","User 7.15","2026-09-02T06:04:00Z","2026-09-09T06:07:00Z","6","2"],
+      ["4","group","g9","","2026-09-10T23:00:00Z","2026-09-10T23:00:00Z","1","0"],
+      ["4","user","late","Late","2026-09-03T20:00:00Z","2026-09-03T20:00:00Z","1","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"project_id\", \"kind\", \"id\", \"name\", \"first_seen\", \"last_seen\", \"views\", \"events\" FROM identities WHERE \"project_id\" = 4 AND '' = ''"
+  },
+  "a_log_grown 0a9d66ec0a0f": {
+    "rows": [
+      ["4","user","u7","User 7.15","2026-09-02T06:04:00Z","2026-09-09T06:07:00Z","6","2"],
+      ["4","group","g9","","2026-09-10T23:00:00Z","2026-09-10T23:00:00Z","1","0"],
+      ["4","user","late","Late","2026-09-03T20:00:00Z","2026-09-03T20:00:00Z","1","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"project_id\", \"kind\", \"id\", \"name\", \"first_seen\", \"last_seen\", \"views\", \"events\" FROM identities WHERE \"project_id\" = 4\n\t\t\tAND first_seen::DATE BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'"
+  },
+  "current_file_and_logs 05132d4405a4": {
+    "rows": [
+      ["4","group","g0","Group 0.15","2026-08-25T06:00:00Z","2026-09-10T06:04:00Z","20","0"],
+      ["4","group","g1","Group 1.15","2026-08-30T06:03:00Z","2026-09-09T06:04:00Z","8","0"],
+      ["4","group","g2","","2026-08-27T06:01:00Z","2026-09-10T06:01:00Z","10","0"],
+      ["4","user","u0","User 0.16","2026-08-25T06:00:00Z","2026-09-10T06:00:00Z","12","0"],
+      ["4","user","u1","Renamed","2026-08-27T06:00:00Z","2026-09-10T22:00:00Z","11","3"],
+      ["4","user","u2","User 2.16","2026-08-27T06:01:00Z","2026-09-10T06:01:00Z","10","0"],
+      ["4","user","u3","User 3.15","2026-08-28T06:02:00Z","2026-09-10T06:02:00Z","10","3"],
+      ["4","user","u4","User 4.14","2026-08-30T06:03:00Z","2026-09-09T06:04:00Z","8","0"],
+      ["4","user","u5","User 5.13","2026-08-30T06:04:00Z","2026-09-10T06:03:00Z","8","2"],
+      ["4","user","u6","User 6.16","2026-08-31T06:04:00Z","2026-09-10T06:04:00Z","8","0"],
+      ["4","user","u7","User 7.15","2026-09-02T06:04:00Z","2026-09-09T06:07:00Z","6","2"],
+      ["4","user","late","Late","2026-09-03T20:00:00Z","2026-09-03T20:00:00Z","1","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"project_id\", \"kind\", \"id\", \"name\", \"first_seen\", \"last_seen\", \"views\", \"events\" FROM identities WHERE \"project_id\" = 4 AND '' = ''"
+  },
+  "current_file_and_logs 0a9d66ec0a0f": {
+    "rows": [
+      ["4","user","u7","User 7.15","2026-09-02T06:04:00Z","2026-09-09T06:07:00Z","6","2"],
+      ["4","user","late","Late","2026-09-03T20:00:00Z","2026-09-03T20:00:00Z","1","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"project_id\", \"kind\", \"id\", \"name\", \"first_seen\", \"last_seen\", \"views\", \"events\" FROM identities WHERE \"project_id\" = 4\n\t\t\tAND first_seen::DATE BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'"
+  },
+  "missing_file 05132d4405a4": {
+    "rows": [
+      ["4","group","g0","Group 0.15","2026-08-25T06:00:00Z","2026-09-10T06:04:00Z","20","0"],
+      ["4","group","g1","Group 1.15","2026-08-30T06:03:00Z","2026-09-09T06:04:00Z","8","0"],
+      ["4","group","g2","","2026-08-27T06:01:00Z","2026-09-10T06:01:00Z","10","0"],
+      ["4","group","g9","","2026-09-10T23:00:00Z","2026-09-10T23:00:00Z","1","0"],
+      ["4","user","late","Late","2026-09-03T20:00:00Z","2026-09-03T20:00:00Z","1","0"],
+      ["4","user","u0","User 0.16","2026-08-25T06:00:00Z","2026-09-10T06:00:00Z","12","0"],
+      ["4","user","u1","User 1.15","2026-08-27T06:00:00Z","2026-09-10T22:00:00Z","11","3"],
+      ["4","user","u2","Grown","2026-08-27T06:01:00Z","2026-09-10T23:00:00Z","11","0"],
+      ["4","user","u3","User 3.15","2026-08-28T06:02:00Z","2026-09-10T06:02:00Z","10","3"],
+      ["4","user","u4","User 4.14","2026-08-30T06:03:00Z","2026-09-09T06:04:00Z","8","0"],
+      ["4","user","u5","User 5.13","2026-08-30T06:04:00Z","2026-09-10T06:03:00Z","8","2"],
+      ["4","user","u6","User 6.16","2026-08-31T06:04:00Z","2026-09-10T06:04:00Z","8","0"],
+      ["4","user","u7","User 7.15","2026-09-02T06:04:00Z","2026-09-09T06:07:00Z","6","2"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"project_id\", \"kind\", \"id\", \"name\", \"first_seen\", \"last_seen\", \"views\", \"events\" FROM identities WHERE \"project_id\" = 4 AND '' = ''"
+  },
+  "missing_file 0a9d66ec0a0f": {
+    "rows": [
+      ["4","group","g9","","2026-09-10T23:00:00Z","2026-09-10T23:00:00Z","1","0"],
+      ["4","user","late","Late","2026-09-03T20:00:00Z","2026-09-03T20:00:00Z","1","0"],
+      ["4","user","u7","User 7.15","2026-09-02T06:04:00Z","2026-09-09T06:07:00Z","6","2"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"project_id\", \"kind\", \"id\", \"name\", \"first_seen\", \"last_seen\", \"views\", \"events\" FROM identities WHERE \"project_id\" = 4\n\t\t\tAND first_seen::DATE BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'"
+  },
+  "stale_file 05132d4405a4": {
+    "rows": [
+      ["4","group","g0","Group 0.15","2026-08-25T06:00:00Z","2026-09-10T06:04:00Z","20","0"],
+      ["4","group","g1","Group 1.15","2026-08-30T06:03:00Z","2026-09-09T06:04:00Z","8","0"],
+      ["4","group","g2","","2026-08-27T06:01:00Z","2026-09-10T06:01:00Z","10","0"],
+      ["4","group","g9","","2026-09-10T23:00:00Z","2026-09-10T23:00:00Z","1","0"],
+      ["4","user","late","Late","2026-09-03T20:00:00Z","2026-09-03T20:00:00Z","1","0"],
+      ["4","user","u0","User 0.16","2026-08-25T06:00:00Z","2026-09-10T06:00:00Z","12","0"],
+      ["4","user","u1","User 1.15","2026-08-27T06:00:00Z","2026-09-10T22:00:00Z","11","3"],
+      ["4","user","u2","Grown","2026-08-27T06:01:00Z","2026-09-10T23:00:00Z","11","0"],
+      ["4","user","u3","User 3.15","2026-08-28T06:02:00Z","2026-09-10T06:02:00Z","10","3"],
+      ["4","user","u4","User 4.14","2026-08-30T06:03:00Z","2026-09-09T06:04:00Z","8","0"],
+      ["4","user","u5","User 5.13","2026-08-30T06:04:00Z","2026-09-10T06:03:00Z","8","2"],
+      ["4","user","u6","User 6.16","2026-08-31T06:04:00Z","2026-09-10T06:04:00Z","8","0"],
+      ["4","user","u7","User 7.15","2026-09-02T06:04:00Z","2026-09-09T06:07:00Z","6","2"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"project_id\", \"kind\", \"id\", \"name\", \"first_seen\", \"last_seen\", \"views\", \"events\" FROM identities WHERE \"project_id\" = 4 AND '' = ''"
+  },
+  "stale_file 0a9d66ec0a0f": {
+    "rows": [
+      ["4","group","g9","","2026-09-10T23:00:00Z","2026-09-10T23:00:00Z","1","0"],
+      ["4","user","late","Late","2026-09-03T20:00:00Z","2026-09-03T20:00:00Z","1","0"],
+      ["4","user","u7","User 7.15","2026-09-02T06:04:00Z","2026-09-09T06:07:00Z","6","2"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"project_id\", \"kind\", \"id\", \"name\", \"first_seen\", \"last_seen\", \"views\", \"events\" FROM identities WHERE \"project_id\" = 4\n\t\t\tAND first_seen::DATE BETWEEN DATE '2026-09-01' AND DATE '2026-09-10'"
+  }
+}

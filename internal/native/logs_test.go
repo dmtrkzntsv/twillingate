@@ -35,7 +35,7 @@ func duckRows(t *testing.T, f *archivetest.Files, q string) ([]string, [][]strin
 		rows = append(rows, r)
 	}
 	sortByFirst(rows)
-	return cols, rows
+	return frozenRows(t, q, archive.Rules{}, cols, rows)
 }
 
 func sameRows(t *testing.T, got, want [][]string, cols []string) {

@@ -1,0 +1,65 @@
+{
+  "1 days: 1/\"install\" install:\"i1\" install \"\" connection \"\" at 2026-10-14T12:00:00Z": [
+    {
+      "ID": "install",
+      "Newest": {
+        "Kind": "web",
+        "OS": "macos"
+      },
+      "ProjectID": 1
+    }
+  ],
+  "7 days: 1/\"user\" user:\"u1\" install \"\" connection \"\" at 2026-10-14T12:00:00Z; 1/\"install\" install:\"i1\" install \"\" connection \"\" at 2026-10-14T12:00:00Z; 1/\"sent-install\" connection:\"h\" install \"i1\" connection \"\" at 2026-10-14T12:00:00Z; 1/\"nobody\" connection:\"h2\" install \"\" connection \"\" at 2026-10-14T12:00:00Z; 2/\"other-project\" install:\"i1\" install \"\" connection \"\" at 2026-10-14T12:00:00Z": [
+    {
+      "ID": "install",
+      "Newest": {
+        "Kind": "web",
+        "OS": "macos"
+      },
+      "ProjectID": 1,
+      "Source": {
+        "ReferrerSource": "google",
+        "UTMCampaign": "oct",
+        "UTMSource": "cpc"
+      }
+    },
+    {
+      "ID": "nobody",
+      "ProjectID": 1
+    },
+    {
+      "ID": "sent-install",
+      "Newest": {
+        "Kind": "web",
+        "OS": "macos"
+      },
+      "ProjectID": 1,
+      "Source": {
+        "ReferrerSource": "google",
+        "UTMCampaign": "oct",
+        "UTMSource": "cpc"
+      }
+    },
+    {
+      "ID": "user",
+      "Newest": {
+        "Consent": 1,
+        "DisplayWidth": 390,
+        "GroupID": "g1",
+        "Kind": "web",
+        "OS": "ios",
+        "SessionID": "s1"
+      },
+      "ProjectID": 1,
+      "Source": {
+        "ReferrerSource": "google",
+        "UTMCampaign": "oct",
+        "UTMSource": "cpc"
+      }
+    },
+    {
+      "ID": "other-project",
+      "ProjectID": 2
+    }
+  ]
+}

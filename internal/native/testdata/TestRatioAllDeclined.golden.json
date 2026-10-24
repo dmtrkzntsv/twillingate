@@ -1,0 +1,8 @@
+{
+  "74831910f0ee": {
+    "rows": [
+      ["0"]
+    ],
+    "sql": "-- Visitors are distinct per day and consent state, added up. A view sent\n-- without $consent is unknown and left out of the rate.\nWITH d AS (\n  SELECT consent, count(DISTINCT actor_id) AS visitors\n  FROM views\n  WHERE project_id = 1\n    AND day BETWEEN DATE '2026-09-07' AND DATE '2026-09-08'\n    AND consent IS NOT NULL\n  GROUP BY day, consent\n)\nSELECT CASE WHEN SUM(visitors) > 0\n            THEN COALESCE(SUM(visitors) FILTER (WHERE consent = 1), 0)::DOUBLE / SUM(visitors)\n       END AS value\nFROM d\n"
+  }
+}

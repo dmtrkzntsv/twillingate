@@ -62,6 +62,7 @@ func attributeBoth(t *testing.T, f *archivetest.Files, days int, rules archive.R
 		}
 		sortFound(got)
 		sortFound(want)
+		want = frozenFound(t, days, rules, ls, want)
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("workers %d: native\n%+v\nwant (SQL)\n%+v", workers, got, want)
 		}
