@@ -23,23 +23,29 @@ import (
 // volume's directory.
 
 type dashCell struct {
-	Engine    string         `json:"engine"`
-	Dashboard string         `json:"dashboard"`
-	Days      int            `json:"days"`
-	From      string         `json:"from"`
-	To        string         `json:"to"`
-	Widgets   int            `json:"widgets"`
-	FirstMS   float64        `json:"first_ms"`
-	WarmMS    []float64      `json:"warm_ms"`
-	BestMS    float64        `json:"best_ms"`
-	SelfPeak  int            `json:"self_peak_kb"`
-	ChildPeak int            `json:"child_peak_kb"`
-	Children  int            `json:"children"`
-	IdleRSS   int            `json:"idle_rss_kb"`
-	First     map[string]int `json:"first_widget_ms"`
-	Best      map[string]int `json:"best_widget_ms"`
-	Rows      map[string]int `json:"rows"`
-	Load      string         `json:"load_at_start"`
+	Engine    string            `json:"engine"`
+	Mode      string            `json:"mode"` // widgets, many or stream (step 4c on; empty before)
+	OpenLog   bool              `json:"open_log"`
+	Dashboard string            `json:"dashboard"`
+	Days      int               `json:"days"`
+	From      string            `json:"from"`
+	To        string            `json:"to"`
+	Widgets   int               `json:"widgets"`
+	FirstMS   float64           `json:"first_ms"`
+	FirstOne  float64           `json:"first_widget_first_ms"`
+	BestOne   float64           `json:"best_widget_first_ms"`
+	WarmMS    []float64         `json:"warm_ms"`
+	WarmCPU   []float64         `json:"warm_cpu_ms"`
+	BestMS    float64           `json:"best_ms"`
+	SelfPeak  int               `json:"self_peak_kb"`
+	ChildPeak int               `json:"child_peak_kb"`
+	Children  int               `json:"children"`
+	IdleRSS   int               `json:"idle_rss_kb"`
+	First     map[string]int    `json:"first_widget_ms"`
+	Best      map[string]int    `json:"best_widget_ms"`
+	Rows      map[string]int    `json:"rows"`
+	Errors    map[string]string `json:"errors"`
+	Load      string            `json:"load_at_start"`
 	// Set by the bench.
 	Volume   string  `json:"volume"`
 	GateLoad float64 `json:"gate_load"`
@@ -68,7 +74,11 @@ func dashboardsCmd(args []string) error {
 	out := fs.String("out", "RESULTS.md", "Markdown file the tables are appended to")
 	only := fs.String("volumes", "100k,1m", "volumes to run")
 	passes := fs.Int("passes", 3, "warm runs per cell after the first")
-	engines := fs.String("engines", "native,duckdb", "engines to run")
+	engines := fs.String("engines", "native,duckdb", "engines to run; stream is native through one WidgetDataStream (MEASURE_STREAM)")
+	cellsName := fs.String("cells", "cells", "the directory under each volume the cells are kept in")
+	openLogs := fs.String("openlog", "", "<volume>=<log>,...: each volume's Views and Product at 30 days run again, but stream and native, with <log> as -today's open log")
+	today := fs.String("today", "2026-10-01", "the day an -openlog log is today's")
+	streamMD := fs.Bool("stream-md", false, "write step 4c's tables (stream against per widget, -before and DuckDB) instead")
 	from := fs.String("from", "", "a root whose <volume>/raw month files are rebuilt through the Go pass instead of generated (step 4)")
 	before := fs.String("before", "", "an earlier run's dashboards.json, compared against this one's native cells")
 	ranges := fs.String("ranges", "", "day ranges to run (default all); with -small, the dashboards without a year run only these")
@@ -97,7 +107,7 @@ func dashboardsCmd(args []string) error {
 			continue
 		}
 		dir := filepath.Join(root, v.name)
-		cellsDir := filepath.Join(dir, "cells")
+		cellsDir := filepath.Join(dir, *cellsName)
 		if err := os.MkdirAll(cellsDir, 0o750); err != nil {
 			return err
 		}
@@ -111,51 +121,86 @@ func dashboardsCmd(args []string) error {
 		if err := gen.Run(); err != nil {
 			return fmt.Errorf("%s: generating: %w", v.name, err)
 		}
+		logOf := map[string]string{}
+		for _, kv := range strings.Split(*openLogs, ",") {
+			if k, v, ok := strings.Cut(kv, "="); ok {
+				logOf[k] = v
+			}
+		}
+		type cellSpec struct {
+			dir  string
+			days int
+			log  bool
+		}
+		var specs []cellSpec
 		for _, days := range []int{7, 30, 90, 365} {
 			for _, d := range dashboards3f {
 				if days == 365 && !d.year || !wantDays(d.year, days) {
 					continue
 				}
-				for _, eng := range strings.Split(*engines, ",") {
-					path := filepath.Join(cellsDir, fmt.Sprintf("%s-%s-%d.json", eng, d.dir, days))
-					var c dashCell
-					if b, err := os.ReadFile(path); err == nil && json.Unmarshal(b, &c) == nil && c.Volume != "" {
-						logf("%s %s %s %dd: kept from an earlier run", v.name, eng, d.dir, days)
-						all = append(all, c)
-						continue
-					}
-					load, quiet := waitQuiet(quietLoad, quietPoll, dashQuietLimit, readLoad)
-					if !quiet {
-						logf("gate: gave up at load %.2f", load)
-					}
-					cmd := osexec.Command(*bin, "-test.run", "^TestMeasureSystemDashboard$", "-test.v", "-test.timeout", "30m")
-					cmd.Dir = *pkg
-					cmd.Env = append(os.Environ(), "GOMAXPROCS=2", "MEASURE_DIR="+dir,
-						fmt.Sprintf("MEASURE_MONTH_EVENTS=%d", v.perMonth), fmt.Sprintf("MEASURE_PASSES=%d", *passes),
-						fmt.Sprintf("MEASURE_CELL=%s:%s:%d", eng, d.dir, days), "MEASURE_OUT="+path+".tmp")
-					outb, err := cmd.CombinedOutput()
-					if err != nil {
-						return fmt.Errorf("%s %s %s %dd: %w\n%s", v.name, eng, d.dir, days, err, outb)
-					}
-					b, err := os.ReadFile(path + ".tmp")
-					if err != nil {
-						return err
-					}
-					if err := json.Unmarshal(b, &c); err != nil {
-						return err
-					}
-					c.Volume, c.GateLoad, c.Quiet = v.name, load, quiet
-					if b, err = json.Marshal(c); err != nil {
-						return err
-					}
-					if err := os.WriteFile(path, b, 0o644); err != nil {
-						return err
-					}
-					os.Remove(path + ".tmp")
-					logf("%s %s %s %dd: first %.0f ms, best %.0f ms, peak %d + %d MB, load %.2f%s", v.name, eng, d.dir, days,
-						c.FirstMS, c.BestMS, c.SelfPeak/1024, c.ChildPeak/1024, load, map[bool]string{false: " (unquiet)"}[quiet])
-					all = append(all, c)
+				specs = append(specs, cellSpec{d.dir, days, false})
+			}
+		}
+		if logOf[v.name] != "" {
+			specs = append(specs, cellSpec{"views", 30, true}, cellSpec{"product", 30, true})
+		}
+		for _, sp := range specs {
+			days := sp.days
+			for _, eng := range strings.Split(*engines, ",") {
+				if sp.log && eng == "duckdb" {
+					continue
 				}
+				suffix := ""
+				if sp.log {
+					suffix = "-log"
+				}
+				path := filepath.Join(cellsDir, fmt.Sprintf("%s-%s-%d%s.json", eng, sp.dir, days, suffix))
+				var c dashCell
+				if b, err := os.ReadFile(path); err == nil && json.Unmarshal(b, &c) == nil && c.Volume != "" {
+					logf("%s %s %s %dd: kept from an earlier run", v.name, eng, sp.dir, days)
+					all = append(all, c)
+					continue
+				}
+				load, quiet := waitQuiet(quietLoad, quietPoll, dashQuietLimit, readLoad)
+				if !quiet {
+					logf("gate: gave up at load %.2f", load)
+				}
+				cmd := osexec.Command(*bin, "-test.run", "^TestMeasureSystemDashboard$", "-test.v", "-test.timeout", "30m")
+				cmd.Dir = *pkg
+				cellEng := eng
+				cmd.Env = append(os.Environ(), "GOMAXPROCS=2", "MEASURE_KEEP_GOING=1", "MEASURE_DIR="+dir,
+					fmt.Sprintf("MEASURE_MONTH_EVENTS=%d", v.perMonth), fmt.Sprintf("MEASURE_PASSES=%d", *passes),
+					"MEASURE_OUT="+path+".tmp")
+				if eng == "stream" {
+					cellEng = "native"
+					cmd.Env = append(cmd.Env, "MEASURE_STREAM=1")
+				}
+				cmd.Env = append(cmd.Env, fmt.Sprintf("MEASURE_CELL=%s:%s:%d", cellEng, sp.dir, days))
+				if sp.log {
+					cmd.Env = append(cmd.Env, "MEASURE_OPEN_LOG="+logOf[v.name], "MEASURE_TODAY="+*today)
+				}
+				outb, err := cmd.CombinedOutput()
+				if err != nil {
+					return fmt.Errorf("%s %s %s %dd: %w\n%s", v.name, eng, sp.dir, days, err, outb)
+				}
+				b, err := os.ReadFile(path + ".tmp")
+				if err != nil {
+					return err
+				}
+				if err := json.Unmarshal(b, &c); err != nil {
+					return err
+				}
+				c.Volume, c.GateLoad, c.Quiet = v.name, load, quiet
+				if b, err = json.Marshal(c); err != nil {
+					return err
+				}
+				if err := os.WriteFile(path, b, 0o644); err != nil {
+					return err
+				}
+				os.Remove(path + ".tmp")
+				logf("%s %s %s %dd%s: first %.0f ms, best %.0f ms (first widget %.0f ms), peak %d + %d MB, load %.2f%s", v.name, eng, sp.dir, days, suffix,
+					c.FirstMS, c.BestMS, c.BestOne, c.SelfPeak/1024, c.ChildPeak/1024, load, map[bool]string{false: " (unquiet)"}[quiet])
+				all = append(all, c)
 			}
 		}
 	}
@@ -167,7 +212,19 @@ func dashboardsCmd(args []string) error {
 		return err
 	}
 	md := dashboardsMD(all, start, *passes)
-	if *before != "" {
+	if *streamMD {
+		var old []dashCell
+		if *before != "" {
+			b, err := os.ReadFile(*before)
+			if err != nil {
+				return err
+			}
+			if err := json.Unmarshal(b, &old); err != nil {
+				return err
+			}
+		}
+		md = dashboardsStreamMD(all, old, start, *passes)
+	} else if *before != "" {
 		b, err := os.ReadFile(*before)
 		if err != nil {
 			return err

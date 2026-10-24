@@ -45,6 +45,14 @@
 // MEASURE_CHUNKS=<file> writes each Parquet
 // file's column chunks (path, offset, row group, column) to it, to name
 // the trace's reads.
+//
+// MEASURE_STREAM=1 (step 4c, the shared scan) loads a native cell's query
+// widgets as the console does since the stream route: one
+// Service.WidgetDataStream of them all, its misses answered by the
+// engine's AnswerMany. Every mode records the time to the first widget
+// (the first emit; per widget, the fastest) beside the time to the last.
+// MEASURE_KEEP_GOING=1 records a refused widget's error in the cell
+// instead of failing the test, so a matrix carries on.
 package app
 
 import (
@@ -81,24 +89,29 @@ import (
 
 // systemCell is one cell's result, as the bench reads it.
 type systemCell struct {
-	Engine    string         `json:"engine"`
-	Dashboard string         `json:"dashboard"`
-	Days      int            `json:"days"`
-	From      string         `json:"from"`
-	To        string         `json:"to"`
-	Widgets   int            `json:"widgets"`
-	FirstMS   float64        `json:"first_ms"`
-	WarmMS    []float64      `json:"warm_ms"`
-	WarmCPU   []float64      `json:"warm_cpu_ms"` // user + system CPU of this process over each warm run
-	BestMS    float64        `json:"best_ms"`
-	SelfPeak  int            `json:"self_peak_kb"`  // VmHWM of this process
-	ChildPeak int            `json:"child_peak_kb"` // the sum over the engine children of each one's VmHWM
-	Children  int            `json:"children"`
-	IdleRSS   int            `json:"idle_rss_kb"` // VmRSS before the first request
-	First     map[string]int `json:"first_widget_ms"`
-	Best      map[string]int `json:"best_widget_ms"`
-	Rows      map[string]int `json:"rows"`
-	Load      string         `json:"load_at_start"`
+	Engine    string            `json:"engine"`
+	Mode      string            `json:"mode"` // widgets, many or stream
+	OpenLog   bool              `json:"open_log"`
+	Dashboard string            `json:"dashboard"`
+	Days      int               `json:"days"`
+	From      string            `json:"from"`
+	To        string            `json:"to"`
+	Widgets   int               `json:"widgets"`
+	FirstMS   float64           `json:"first_ms"`
+	FirstOne  float64           `json:"first_widget_first_ms"` // the first load's time to its first widget
+	BestOne   float64           `json:"best_widget_first_ms"`  // the best warm load's time to its first widget
+	WarmMS    []float64         `json:"warm_ms"`
+	WarmCPU   []float64         `json:"warm_cpu_ms"` // user + system CPU of this process over each warm run
+	BestMS    float64           `json:"best_ms"`
+	SelfPeak  int               `json:"self_peak_kb"`  // VmHWM of this process
+	ChildPeak int               `json:"child_peak_kb"` // the sum over the engine children of each one's VmHWM
+	Children  int               `json:"children"`
+	IdleRSS   int               `json:"idle_rss_kb"` // VmRSS before the first request
+	First     map[string]int    `json:"first_widget_ms"`
+	Best      map[string]int    `json:"best_widget_ms"`
+	Rows      map[string]int    `json:"rows"`
+	Errors    map[string]string `json:"errors,omitempty"` // with MEASURE_KEEP_GOING, each refused widget's last error
+	Load      string            `json:"load_at_start"`
 }
 
 func procStatusKB(pid, field string) int {
@@ -418,6 +431,10 @@ func TestMeasureSystemDashboard(t *testing.T) {
 		run  func() (int, error)
 	}
 	var reqs []request
+	// MEASURE_STREAM: the query widgets as one WidgetDataStream; reqs
+	// then holds one request per widget, never run, for its name.
+	var stream []reporting.WidgetRequest
+	mode := "widgets"
 	switch eng {
 	case "native":
 		var meta struct {
@@ -434,9 +451,21 @@ func TestMeasureSystemDashboard(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		if os.Getenv("MEASURE_STREAM") != "" {
+			mode = "stream"
+			for _, w := range ws {
+				if w.SourceType != "query" {
+					continue
+				}
+				stream = append(stream, reporting.WidgetRequest{WidgetID: w.ID, ProjectID: 1, From: from.String(), To: last.String()})
+				reqs = append(reqs, request{name: w.Name})
+			}
+			break
+		}
 		// MEASURE_MANY: the dashboard's query widgets as one
 		// native.AnswerMany, straight to the engine.
 		if os.Getenv("MEASURE_MANY") != "" {
+			mode = "many"
 			var nreqs []native.Request
 			var names []string
 			for _, w := range ws {
@@ -517,15 +546,56 @@ func TestMeasureSystemDashboard(t *testing.T) {
 	// once, at the end, to check it spawned none.
 	stop := make(chan struct{})
 	peaks := childPeaks(stop, eng == "duckdb" && os.Getenv("MEASURE_NO_POLL") == "")
-	cell := systemCell{Engine: eng, Dashboard: dash, Days: days, From: from.String(), To: last.String(), Widgets: len(reqs),
+	cell := systemCell{Engine: eng, Mode: mode, OpenLog: os.Getenv("MEASURE_OPEN_LOG") != "", Dashboard: dash, Days: days, From: from.String(), To: last.String(), Widgets: len(reqs),
 		IdleRSS: procStatusKB("self", "VmRSS"), Rows: map[string]int{}, Load: loadAvg()}
 	mark := os.Getenv("MEASURE_MARK") != ""
+	// refused records a widget's error: a test failure, or with
+	// MEASURE_KEEP_GOING a note in the cell, so a matrix carries on.
+	var refusedMu sync.Mutex
+	refused := func(name string, err error) {
+		if os.Getenv("MEASURE_KEEP_GOING") == "" {
+			t.Errorf("%s %s: %v", cellSpec, name, err)
+			return
+		}
+		refusedMu.Lock()
+		defer refusedMu.Unlock()
+		if cell.Errors == nil {
+			cell.Errors = map[string]string{}
+		}
+		cell.Errors[name] = err.Error()
+	}
 	loads := 0
-	load := func() (time.Duration, map[string]int) {
+	// load runs every request once and answers its wall, the time to its
+	// first widget and each widget's time.
+	load := func() (time.Duration, time.Duration, map[string]int) {
 		if mark {
 			os.Stat(fmt.Sprintf("/measure-mark-%d", loads)) //nolint:errcheck // the trace sees the call
 		}
 		loads++
+		if stream != nil {
+			per := map[string]int{}
+			var first time.Duration
+			began := time.Now()
+			svc.WidgetDataStream(ctx, stream, func(r reporting.WidgetResult) {
+				el := time.Since(began)
+				if first == 0 {
+					first = el
+				}
+				name := reqs[r.Index].name
+				per[name] = int(el.Milliseconds())
+				if r.Err != nil {
+					refused(name, r.Err)
+					return
+				}
+				res, ok := r.Data.Data.(readsql.Result)
+				if !ok {
+					t.Errorf("%s %s: data is %T", cellSpec, name, r.Data.Data)
+					return
+				}
+				cell.Rows[name] = len(res.Rows)
+			})
+			return time.Since(began), first, per
+		}
 		took := make([]time.Duration, len(reqs))
 		rows := make([]int, len(reqs))
 		var wg sync.WaitGroup
@@ -538,7 +608,7 @@ func TestMeasureSystemDashboard(t *testing.T) {
 				n, err := r.run()
 				took[i] = time.Since(b)
 				if err != nil {
-					t.Errorf("%s %s: %v", cellSpec, r.name, err)
+					refused(r.name, err)
 				}
 				rows[i] = n
 			}()
@@ -546,14 +616,17 @@ func TestMeasureSystemDashboard(t *testing.T) {
 		wg.Wait()
 		wall := time.Since(began)
 		per := map[string]int{}
+		first := wall
 		for i, r := range reqs {
 			per[r.name] = int(took[i].Milliseconds())
 			cell.Rows[r.name] = rows[i]
+			first = min(first, took[i])
 		}
-		return wall, per
+		return wall, first, per
 	}
-	wall, per := load()
-	cell.FirstMS, cell.First = float64(wall.Microseconds())/1000, per
+	msOf := func(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }
+	wall, one, per := load()
+	cell.FirstMS, cell.FirstOne, cell.First = msOf(wall), msOf(one), per
 	prof := os.Getenv("MEASURE_PROFILE")
 	if prof != "" {
 		f, err := os.Create(prof + "-cpu.pb.gz")
@@ -568,12 +641,12 @@ func TestMeasureSystemDashboard(t *testing.T) {
 	}
 	for pass := 0; pass < passes; pass++ {
 		cpu := cpuMS()
-		wall, per := load()
+		wall, one, per := load()
 		cell.WarmCPU = append(cell.WarmCPU, cpuMS()-cpu)
-		ms := float64(wall.Microseconds()) / 1000
+		ms := msOf(wall)
 		cell.WarmMS = append(cell.WarmMS, ms)
 		if cell.Best == nil || ms < cell.BestMS {
-			cell.BestMS, cell.Best = ms, per
+			cell.BestMS, cell.BestOne, cell.Best = ms, msOf(one), per
 		}
 	}
 	if prof != "" {
@@ -605,8 +678,8 @@ func TestMeasureSystemDashboard(t *testing.T) {
 		names = append(names, n)
 	}
 	slices.SortFunc(names, func(a, b string) int { return cell.Best[b] - cell.Best[a] })
-	t.Logf("%s: first %.0f ms, warm %v ms (CPU %v ms), self peak %d MB, children %d peak %d MB; slowest %v",
-		cellSpec, cell.FirstMS, cell.WarmMS, cell.WarmCPU, cell.SelfPeak/1024, cell.Children, cell.ChildPeak/1024, names[:min(3, len(names))])
+	t.Logf("%s %s: first widget %.0f ms of the first load, %.0f ms of the best; first %.0f ms, warm %v ms (CPU %v ms), self peak %d MB, children %d peak %d MB; slowest %v",
+		cellSpec, mode, cell.FirstOne, cell.BestOne, cell.FirstMS, cell.WarmMS, cell.WarmCPU, cell.SelfPeak/1024, cell.Children, cell.ChildPeak/1024, names[:min(3, len(names))])
 	if out := os.Getenv("MEASURE_OUT"); out != "" {
 		b, err := json.Marshal(cell)
 		if err != nil {

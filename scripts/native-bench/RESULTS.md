@@ -1297,3 +1297,58 @@ The turns are now weighted and the engine's own: `Answer`, `Attribute`, presence
 | Product (10) | 0.93 s / 187 MB | 0.86 s / 134 MB | 0.81 s / 170 MB |
 
 - Four a scan takes Views to 0.64 s at 137 MB, above today's 121 MB, which is why the default stays at MaxScans.
+
+## Step 4c: the dashboards loaded through one stream
+
+Run 2026-10-24 from 01:26Z to 01:51Z (86 cells) on step 4b's T = 32,768 files (`~/.cache/twbench-native/4/dash-T32768/{100k,1m}`; cells in `cells-4c/`, scripts in `~/.cache/twbench-native/task7/`). One fresh process a cell (`native-bench dashboards -engines stream,native,duckdb`, `TestMeasureSystemDashboard`, GOMAXPROCS=2), a first load then 3 more, "best" the fastest. Stream = the dashboard's query widgets as one `reporting.Service.WidgetDataStream` (`MEASURE_STREAM=1`), as the console loads a dashboard since the stream route: the misses (the reporting cache is off) answered together by `native.Engine.AnswerMany`; "first widget" is the first emit, "last" the call's return. Per widget = the same binary's per-widget `WidgetData`, every widget at once, as before the stream (first widget = the fastest). DuckDB = the old SQL through `Service.Preview` on the same files. Before = step 4b's native best at T = 32,768 (the harness then polled /proc, 14 to 16% of a native cell's wall), but step 4d's 2a cells (no poll) for Views and Product at 30 days and 1M (marked †). CPU is the process's (user + system) over the best warm load; peak is VmHWM (DuckDB: Go + child). "+ log" rows add an open log of today (2026-10-01) to a range ending today: at 1M step 4c's 32,304-line log, at 100k every tenth line of it (3,231 lines); the per-widget and stream cells only (DuckDB not run). ‡ marks a cell where widgets were refused in every load (per widget / stream), so their time is a refusal's. Before every cell the bench waits until the 1-minute load is at most 1.0.
+
+### Step 4c, volume 100k (100000 events a month)
+
+| Dashboard | Range | Before best | Per widget first / best | Stream first load: first widget / last | Stream best: first widget / last | Change (stream best / before) | CPU per load: per widget / stream | DuckDB first / best | Peak: before / per widget / stream | DuckDB peak | Slowest stream widget (best) | Load at start |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | 7 d | 81 ms | 53 ms / 44 ms | 13 ms / 58 ms | 5.4 ms / 52 ms | 0.64x | 85 ms / 68 ms | 481 ms / 368 ms | 59 MB / 55 MB / 55 MB | 150 MB | visitors-by-app-version 52 ms | 0.60 |
+| Views (20) | 30 d | 234 ms | 105 ms / 99 ms | 9.8 ms / 121 ms | 6.6 ms / 111 ms | 0.47x | 194 ms / 169 ms | 540 ms / 438 ms | 69 MB / 65 MB / 60 MB | 155 MB | visitors-by-app-version 110 ms | 0.89 |
+| Views (20) | 30 d + log | – | 182 ms / 115 ms | 80 ms / 203 ms | 8.3 ms / 113 ms | – | 224 ms / 175 ms | – | – / 70 MB / 66 MB | – | visitors-by-app-version 113 ms | 0.98 |
+| Views (20) | 90 d | 595 ms | 283 ms / 268 ms | 39 ms / 266 ms | 11 ms / 257 ms | 0.43x | 526 ms / 428 ms | 744 ms / 605 ms | 79 MB / 80 MB / 72 MB | 177 MB | visitors-by-app-version 257 ms | 0.97 |
+| Views (20) | 365 d | 2.12 s | 949 ms / 897 ms | 56 ms / 902 ms | 21 ms / 865 ms | 0.41x | 1.77 s / 1.50 s | 1.46 s / 1.34 s | 118 MB / 120 MB / 123 MB | 261 MB | visitors-by-app-version 864 ms | 0.97 |
+| Product (10) | 7 d | 112 ms | 95 ms / 81 ms | 20 ms / 87 ms | 13 ms / 73 ms | 0.65x | 158 ms / 114 ms | 347 ms / 212 ms | 82 MB / 94 MB / 69 MB | 161 MB | daily-active-users 72 ms | 0.71 |
+| Product (10) | 30 d | 186 ms | 170 ms / 149 ms | 21 ms / 168 ms | 16 ms / 159 ms | 0.86x | 258 ms / 213 ms | 414 ms / 321 ms | 102 MB / 109 MB / 80 MB | 220 MB | daily-active-users 159 ms | 0.98 |
+| Product (10) | 30 d + log | – | 295 ms / 154 ms | 76 ms / 272 ms | 15 ms / 155 ms | – | 263 ms / 217 ms | – | – / 98 MB / 86 MB | – | daily-active-users 154 ms | 0.98 |
+| Product (10) | 90 d | 485 ms | 361 ms / 320 ms | 43 ms / 353 ms | 36 ms / 323 ms | 0.67x | 632 ms / 537 ms | 484 ms / 374 ms | 139 MB / 137 MB / 107 MB | 213 MB | daily-active-users 322 ms | 0.98 |
+| Product (10) | 365 d | 1.68 s | 1.15 s / 1.07 s | 122 ms / 980 ms | 109 ms / 933 ms | 0.55x | 2.13 s / 1.72 s | 775 ms / 657 ms | 182 MB / 170 MB / 129 MB | 247 MB | daily-active-users 933 ms | 0.97 |
+| Users (6) | 30 d | 70 ms | 68 ms / 44 ms | 59 ms / 65 ms | 32 ms / 37 ms | 0.53x | 87 ms / 60 ms | 256 ms / 173 ms | 78 MB / 84 MB / 75 MB | 151 MB | actions 36 ms | 0.98 |
+| Groups (6) | 30 d | 41 ms | 46 ms / 28 ms | 33 ms / 51 ms | 13 ms / 24 ms | 0.60x | 54 ms / 40 ms | 262 ms / 169 ms | 68 MB / 73 MB / 67 MB | 159 MB | actions-per-group 24 ms | 0.98 |
+| Retention (5) | 30 d | 188 ms (first load) | 114 ms / 1.3 ms | 106 ms / 106 ms | 1.1 ms / 1.5 ms | 0.56x (first load) | 2.0 ms / 2.0 ms | 321 ms / 230 ms | 64 MB / 66 MB / 66 MB | 145 MB | cohorts 1 ms | 0.98 |
+| Web Vitals (11) | 30 d | 23 ms | 24 ms / 21 ms | 9.7 ms / 28 ms | 7.1 ms / 26 ms | 1.14x | 39 ms / 30 ms | 319 ms / 215 ms | 49 MB / 50 MB / 47 MB | 157 MB | by-page 25 ms | 0.97 |
+| Measures (2) | 30 d | 4.8 ms | 7.8 ms / 5.0 ms | 7.4 ms / 7.4 ms | 5.5 ms / 5.5 ms | 1.14x | 8.4 ms / 6.3 ms | 120 ms / 47 ms | 47 MB / 47 MB / 44 MB | 142 MB | metrics 5 ms | 0.97 |
+
+### Step 4c, volume 1m (1000000 events a month)
+
+| Dashboard | Range | Before best | Per widget first / best | Stream first load: first widget / last | Stream best: first widget / last | Change (stream best / before) | CPU per load: per widget / stream | DuckDB first / best | Peak: before / per widget / stream | DuckDB peak | Slowest stream widget (best) | Load at start |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | 7 d | 540 ms | 283 ms / 270 ms | 18 ms / 249 ms | 10 ms / 230 ms | 0.43x | 532 ms / 392 ms | 746 ms / 637 ms | 96 MB / 82 MB / 88 MB | 177 MB | visitors-by-app-version 229 ms | 0.98 |
+| Views (20) | 30 d | 1.61 s † | 815 ms / 791 ms | 27 ms / 755 ms | 20 ms / 728 ms | 0.45x | 1.57 s / 1.29 s | 1.38 s / 1.27 s | 131 MB / 122 MB / 110 MB | 244 MB | visitors-by-app-version 727 ms | 0.99 |
+| Views (20) | 30 d + log | 7.68 s † | 1.43 s / 845 ms | 692 ms / 1.35 s | 31 ms / 743 ms | 0.10x | 1.68 s / 1.33 s | – | – / 158 MB / 131 MB | – | visitors-by-app-version 742 ms | 0.94 |
+| Views (20) | 90 d | 5.66 s | 2.41 s / 2.38 s | 49 ms / 2.17 s | 47 ms / 2.13 s | 0.38x | 4.73 s / 3.82 s | 3.38 s / 3.16 s | 188 MB / 224 MB / 195 MB | 458 MB | visitors-by-app-version 2125 ms | 0.97 |
+| Views (20) | 365 d | 21.89 s | 8.55 s / 8.46 s | 166 ms / 8.56 s | 144 ms / 8.11 s | 0.37x | 16.86 s / 14.70 s | 13.09 s / 13.26 s | 522 MB / 610 MB / 572 MB | 1065 MB | top-pages 8110 ms | 0.85 |
+| Product (10) | 7 d | 449 ms | 360 ms / 316 ms | 47 ms / 345 ms | 38 ms / 304 ms | 0.68x | 628 ms / 488 ms | 662 ms / 555 ms | 148 MB / 146 MB / 114 MB | 287 MB | daily-active-users 304 ms | 0.90 |
+| Product (10) | 30 d | 1.19 s † | 1.02 s / 981 ms | 119 ms / 889 ms | 95 ms / 862 ms | 0.72x | 1.94 s / 1.57 s | 1.97 s / 1.84 s | 188 MB / 197 MB / 147 MB | 821 MB | daily-active-users 861 ms | 0.91 |
+| Product (10) | 30 d + log | 4.20 s † | 1.95 s / 933 ms | 655 ms / 1.91 s | 100 ms / 855 ms | 0.20x | 1.85 s / 1.54 s | – | – / 218 MB / 180 MB | – | daily-active-users 854 ms | 0.93 |
+| Product (10) | 90 d | 3.82 s | 2.77 s / 2.59 s | 305 ms / 2.31 s | 272 ms / 2.25 s | 0.59x | 5.13 s / 4.18 s | 2.77 s / 2.75 s | 255 MB / 273 MB / 248 MB | 843 MB | daily-active-users 2250 ms | 0.85 |
+| Product ‡ 3 / 3 refused (10) | 365 d | 14.77 s | 9.08 s / 9.00 s | 1.10 s / 7.94 s | 1.07 s / 7.70 s | 0.52x | 17.71 s / 14.87 s | 6.62 s / 6.80 s | 670 MB / 614 MB / 557 MB | 1174 MB | attribute-values 7696 ms | 0.95 |
+| Users (6) | 30 d | 568 ms | 461 ms / 361 ms | 385 ms / 435 ms | 262 ms / 303 ms | 0.53x | 721 ms / 520 ms | 588 ms / 479 ms | 198 MB / 202 MB / 178 MB | 226 MB | actions 302 ms | 0.90 |
+| Groups (6) | 30 d | 308 ms | 295 ms / 197 ms | 156 ms / 270 ms | 77 ms / 159 ms | 0.52x | 393 ms / 293 ms | 461 ms / 327 ms | 130 MB / 137 MB / 122 MB | 186 MB | actions-per-group 159 ms | 0.99 |
+| Retention (5) | 30 d | 1.78 s (first load) | 1.05 s / 1.5 ms | 1.09 s / 1.09 s | 1.0 ms / 1.3 ms | 0.61x (first load) | 2.4 ms / 1.8 ms | 1.52 s / 1.39 s | 84 MB / 84 MB / 90 MB | 236 MB | cohorts 1 ms | 0.99 |
+| Web Vitals (11) | 30 d | 140 ms | 125 ms / 119 ms | 28 ms / 105 ms | 22 ms / 96 ms | 0.69x | 232 ms / 146 ms | 454 ms / 324 ms | 70 MB / 65 MB / 61 MB | 172 MB | by-page 95 ms | 0.97 |
+| Measures (2) | 30 d | 29 ms | 30 ms / 28 ms | 27 ms / 27 ms | 22 ms / 22 ms | 0.76x | 52 ms / 33 ms | 172 ms / 71 ms | 61 MB / 69 MB / 57 MB | 153 MB | metrics 22 ms | 0.97 |
+
+Load average (1 min) at cell start: 0.60 to 1.00; cells that started above 1.0 (the gate gave up): 0 of 86.
+
+Notes:
+
+- **Product over 365 days at 1M is not a clean cell (‡).** Its three daily-active-users widgets (`daily-active-users`, `peak-dau`, `avg-dau`) are refused in every load, per widget and through the stream alike: "the query needs more memory than allowed (about 129 MiB counted, 128 MiB allowed)". Step 4b answered them. Bisected on this cell: `1ca918b` answers all ten (best 12.78 s, 593 MB), `0934b22` (2c, the per-day sets charged to `MaxBytes`) refuses the three. So the 1-year Product times above (7.70 s stream, 9.00 s per widget) are of a load that gave up on three widgets near the bound, and the 0.52x against step 4b is not a like-for-like gain. The cell's change against `1ca918b`'s full answer is 0.60x, the most it can be claimed. The stream did not cause it.
+- **The stream against per widget, same binary:** the stream's best is faster in every 1M cell, by 4% (Views 1 y, Product 7 d) to 21% (Measures), and uses 13 to 37% less CPU per load; Retention's first load is even (1.09 against 1.05 s). At 100k it is slower in two cells, Views 7 d (52 against 44 ms) and 30 d (111 against 99 ms), and within a few ms elsewhere. The gain is smaller than `MEASURE_MANY`'s in step 4d (Task 3): the heavy bound (MaxScans 2) leaves Views' 19 `daily_sum` widgets in about ten scans.
+- **The first widget** arrives in 10 to 50 ms for Views at 1M at every range but the year (144 ms), against a last widget of 0.23 to 8.1 s. On Product the first is `events` or the stat cards (38 ms to 1.07 s). With the open log, the first load's first widget waits on the log's one decode (692 ms Views, 655 ms Product); warm loads start at 31 and 100 ms.
+- **Peaks:** the stream's peak is at or below the per-widget peak of the same binary in every cell but Views 7 d at 1M (88 against 82 MB), Retention (90 against 84 MB) and Views 1 y at 100k (123 against 120 MB). Against step 4b, five cells are above it: at 1M Views 90 d (195 against 188 MB), Views 1 y (572 against 522 MB) and Retention (90 against 84 MB); at 100k Views 1 y (123 against 118 MB) and Retention (66 against 64 MB). The per-widget peaks of today's binary are higher still in the first two (224 and 610 MB), so the rise predates the stream (the per-day sets of 2c).
+- **DuckDB on the same files** (Go-written, 26 row groups a month at 1M) is slower than on step 3f's DuckDB-written files in most cells: Views 30 d 1.27 s (3f 1.09 s), Views 1 y 13.26 s (11.49 s), Product 1 y 6.80 s (5.64 s). Against step 3f's DuckDB the stream is 0.67x on Views and 0.50x on Product at 30 days and 1M.
+- **CPU** is 1.7 to 1.95 times the wall in the 1M stream cells of Views, Product, Users and Groups (1.5 for the two small ones): the load is still bound by its two Ps.
