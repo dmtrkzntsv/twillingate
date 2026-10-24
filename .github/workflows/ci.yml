@@ -48,8 +48,9 @@ jobs:
           fi
           printf 'go=%s\nweb=%s\ne2e=%s\nsdk=%s\n' "$go" "$web" "$e2e" "$sdk" | tee -a "$GITHUB_OUTPUT"
 
-  # Vet, the coverage gate without -race, the SQLite-free packages with it
-  # (make check), and a link of the binary.
+  # Vet, the coverage gate without -race and the SQLite-free packages with
+  # it (make check). The binary is pure Go, so the test builds already
+  # compile everything it links; the e2e job builds it too.
   check:
     needs: changes
     if: needs.changes.outputs.go == 'true'
@@ -76,7 +77,6 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm, cache-dependency-path: web/package-lock.json }
       - run: make check
-      - run: make build
 
   # The SDK bundles are committed (internal/server/twillingate.js and
   # twillingate-vitals.js) so the Go build never needs Node. This job keeps

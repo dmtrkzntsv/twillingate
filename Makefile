@@ -1,13 +1,6 @@
 BIN := twillingate
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-# --exclude-libs keeps the ~60,000 C++ symbols of DuckDB's static library
-# out of the binary's dynamic symbol table: 6.6 MB the loader reads at every
-# start, resident in every process, server and engine children alike (#195).
-# Nothing resolves them at run time (the engine loads no extension). GNU ld
-# and lld take it; macOS's linker does not, and has no such table to trim.
-comma := ,
-EXTLDFLAGS := $(if $(filter Linux,$(shell uname -s)),-extldflags=-Wl$(comma)--exclude-libs$(comma)ALL)
-LDFLAGS := -s -w $(EXTLDFLAGS) -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=$(VERSION)
+LDFLAGS := -s -w -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=$(VERSION)
 
 .PHONY: build ui test check vet dist docker run smoke test-install test-compose seed-demo clean
 
@@ -26,12 +19,10 @@ $(UI): web/node_modules/.package-lock.json $(WEB_SRC)
 web/node_modules/.package-lock.json: web/package-lock.json
 	cd web && npm ci
 
-# cgo: internal/engine links DuckDB's static library (raw-first spec D13),
-# so a build needs a C toolchain and targets the host. Release binaries come
-# from ubuntu-22.04 runners, one per architecture, for a glibc 2.35 floor
-# (release.yml); a binary built here needs this host's glibc.
+# Pure Go, no cgo: one static binary that needs no C toolchain to build and
+# no particular libc to run.
 build: $(UI)
-	CGO_ENABLED=1 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/twillingate
+	CGO_ENABLED=0 go build -trimpath -ldflags '$(LDFLAGS)' -o $(BIN) ./cmd/twillingate
 
 # GOPKGS excludes node_modules: some npm packages ship Go source that
 # go list ./... would otherwise treat as part of this module.
@@ -50,9 +41,8 @@ test: $(UI)
 # `make test` only.
 RACE_PKGS = ./internal/pipeline/... ./internal/identity/... ./internal/geo/...
 
-# vet covers the two release targets' code paths alike: both are 64-bit,
-# and 32-bit ARM is no longer built (DuckDB has no build for it, raw-first
-# spec D10).
+# vet covers the two release targets' code paths alike: both are 64-bit
+# (dist builds linux/amd64 and linux/arm64).
 vet:
 	go vet $(GOPKGS)
 
@@ -62,19 +52,20 @@ check: vet $(UI)
 	./scripts/coverage.sh
 	go test -race $(RACE_PKGS)
 
-# A release tarball for this host's architecture: binary + deploy/
-# (installer, units, configs). release.yml runs it on an amd64 and an arm64
-# runner and writes the SHA256SUMS the installer verifies over both.
-ARCH = $(shell go env GOARCH)
+# The release tarballs, one per architecture, cross-compiled from this host
+# (no cgo): binary + deploy/ (installer, units, configs). release.yml writes
+# the SHA256SUMS the installer verifies over both.
+DIST_ARCHES = amd64 arm64
 dist: $(UI)
-	@set -e; [ "$$(go env GOOS)" = linux ] || { echo "dist builds the Linux release, on Linux"; exit 1; }; \
-	stage=dist/stage-$(ARCH); rm -rf $$stage; mkdir -p $$stage; \
-	CGO_ENABLED=1 go build -trimpath -ldflags '$(LDFLAGS)' -o $$stage/$(BIN) ./cmd/twillingate; \
+	@set -e; for arch in $(DIST_ARCHES); do \
+	stage=dist/stage-$$arch; rm -rf $$stage; mkdir -p $$stage; \
+	CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags '$(LDFLAGS)' -o $$stage/$(BIN) ./cmd/twillingate; \
 	cp -r deploy $$stage/deploy; \
 	cp .env.example LICENSE $$stage/; \
-	tar -czf dist/$(BIN)-linux-$(ARCH).tar.gz -C $$stage .; \
+	tar -czf dist/$(BIN)-linux-$$arch.tar.gz -C $$stage .; \
 	rm -rf $$stage; \
-	echo "packaged dist/$(BIN)-linux-$(ARCH).tar.gz"
+	echo "packaged dist/$(BIN)-linux-$$arch.tar.gz"; \
+	done
 
 docker:
 	docker build --target runtime -t twillingate:$(VERSION) .
