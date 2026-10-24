@@ -19,9 +19,11 @@ internal/config/     environment loading
 internal/identity/   actor hashing and salt rotation
 internal/enrich/     User-Agent and URL parsing for web hits
 internal/geo/        MaxMind lookup
+internal/native/     structured queries (stat, trend, breakdown) answered in Go over the event files, no DuckDB
 internal/engine/     DuckDB in a child process of the binary (`twillingate engine`): the pipe's two ends, the slot semaphore
 internal/archive/    raw events as files under raw/: the per-day NDJSON log, the dump to Parquet, the month merge, retention by file, the derived sessions, identities and aliases, and the tables the dashboards and the query tool read
 internal/shared/     small generic leaf packages: civil (calendar dates), enginesql (DuckDB SQL checks), readsql, sortkey, version
+internal/shared/hll/ distinct counts, exact up to 1,024 ids then a HyperLogLog sketch (about ±2%), for internal/native
 docs/                the three contract pages, embedded and served over MCP
 sdk/                 browser SDK source (TypeScript); the built file is embedded by internal/server
 web/                 dashboard web app source (React, TypeScript); the build is embedded by internal/reporting

@@ -12,12 +12,55 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/google/jsonschema-go/jsonschema"
 )
 
 type queryIn struct {
-	SQL string `json:"sql" jsonschema:"a single read-only SELECT or WITH query in DuckDB SQL over the event files' tables (read schema://views first)"`
+	SQL       string        `json:"sql,omitempty" jsonschema:"a single read-only SELECT or WITH query in DuckDB SQL over the event files' tables (read schema://views first); give this or query, not both"`
+	ProjectID int64         `json:"project_id,omitempty" jsonschema:"with query: the project it reads (required); call list_projects first"`
+	From      string        `json:"from,omitempty" jsonschema:"with query: start day inclusive, YYYY-MM-DD (default: 29 days before to)"`
+	To        string        `json:"to,omitempty" jsonschema:"with query: end day inclusive, YYYY-MM-DD (default: today, UTC); at most 1100 days from from"`
+	Query     *native.Query `json:"query,omitempty" jsonschema:"a structured query (stat, trend or breakdown) over one project's events, answered natively; give this or sql, not both"`
 }
+
+// queryOut is query's answer: a table, and with a structured query the
+// columns holding a sketch's estimate.
+type queryOut struct {
+	tableOut
+	Approximate []string `json:"approximate,omitempty"`
+}
+
+// Native answers structured queries over the event files (native.Engine).
+type Native interface {
+	Answer(ctx context.Context, q native.Query, p native.Params, rules archive.Rules) (native.Result, error)
+}
+
+// queryEnums lists the structured query's closed vocabularies in query's
+// input schema, which a Go type cannot say.
+func queryEnums(in *jsonschema.Schema) {
+	enum := func(xs []string) []any {
+		out := make([]any, len(xs))
+		for i, x := range xs {
+			out[i] = x
+		}
+		return out
+	}
+	q := in.Properties["query"]
+	q.Properties["kind"].Enum = enum(native.Kinds)
+	q.Properties["table"].Enum = enum(native.Tables)
+	q.Properties["compare"].Enum = enum([]string{"", "previous"})
+	m := q.Properties["metrics"].Items
+	m.Properties["op"].Enum = enum(native.MetricOps)
+	m.Properties["column"].Enum = enum(native.ValueColumns)
+	m.Properties["of"].Enum = enum(native.OfColumns)
+	q.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
+}
+
+// maxQueryDays bounds a structured query's range, from and to included.
+const maxQueryDays = 1100
 
 // Files runs SQL over the raw event files (archive.Reader): query's SQL
 // over every project, the analytics tools' own SQL scoped to one.
@@ -25,11 +68,108 @@ type Files interface {
 	QueryScoped(ctx context.Context, q archive.Scoped, rules archive.Rules) (engine.Result, error)
 }
 
-// runQuery runs in.SQL on the event files. The source field went one
-// release after the database's events did: a client still sending it is
-// refused like any unknown field.
-func (h *host) runQuery(ctx context.Context, in queryIn) (tableOut, error) {
-	return h.runFilesQuery(ctx, in.SQL)
+// runQuery runs in.SQL on the event files, or in.Query natively: exactly
+// one of the two. The source field went one release after the database's
+// events did: a client still sending it is refused like any unknown field.
+func (h *host) runQuery(ctx context.Context, in queryIn) (queryOut, error) {
+	switch {
+	case in.SQL != "" && in.Query != nil:
+		return queryOut{}, invalidf("give sql or query, not both")
+	case in.Query != nil:
+		return h.runStructured(ctx, in)
+	case in.SQL == "":
+		return queryOut{}, invalidf("give sql (DuckDB SQL) or query (a structured query)")
+	case in.ProjectID != 0 || in.From != "" || in.To != "":
+		return queryOut{}, invalidf("project_id, from and to go with query; sql filters project_id and day itself")
+	}
+	out, err := h.runFilesQuery(ctx, in.SQL)
+	return queryOut{tableOut: out}, err
+}
+
+// runStructured answers in.Query over in.ProjectID's days in.From to
+// in.To (default: the 30 days ending today, UTC) with the native engine,
+// under CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_ROWS_MAX, with the
+// registry's rules as runFilesQuery applies them.
+func (h *host) runStructured(ctx context.Context, in queryIn) (queryOut, error) {
+	if in.ProjectID == 0 {
+		return queryOut{}, invalidf("query needs project_id; call list_projects first")
+	}
+	to, from := civil.Today(time.Now()), civil.Date{}
+	var err error
+	if in.To != "" {
+		if to, err = parseDay("to", in.To); err != nil {
+			return queryOut{}, err
+		}
+	}
+	from = to.AddDays(-29)
+	if in.From != "" {
+		if from, err = parseDay("from", in.From); err != nil {
+			return queryOut{}, err
+		}
+	}
+	if to.Before(from) {
+		return queryOut{}, invalidf("from %s is after to %s", from, to)
+	}
+	if days := int(to.Time().Sub(from.Time()).Hours()/24) + 1; days > maxQueryDays {
+		return queryOut{}, invalidf("from %s to %s is %d days; at most %d a call", from, to, days, maxQueryDays)
+	}
+	if err := in.Query.Validate(); err != nil {
+		return queryOut{}, nativeError(err)
+	}
+	if h.reg.Snapshot(ctx).Project(in.ProjectID) == nil {
+		return queryOut{}, h.unknownProjectErr(ctx, in.ProjectID)
+	}
+	if h.native == nil {
+		return queryOut{}, invalidf("the event files cannot be queried by this process")
+	}
+	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
+	defer cancel()
+	events, attrs := h.reg.Snapshot(ctx).RuleLists()
+	res, err := h.native.Answer(ctx, *in.Query, native.Params{Project: in.ProjectID, From: from, To: to},
+		archive.Rules{Events: events, Attributes: attrs})
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return queryOut{}, invalidf("%s", enginesql.Timeout(h.queryTimeout))
+		}
+		return queryOut{}, nativeError(err)
+	}
+	rows := res.Rows
+	if rows == nil {
+		rows = [][]string{}
+	}
+	out := queryOut{tableOut: tableOut{Columns: res.Columns, Rows: rows, Truncated: res.Truncated}, Approximate: res.Approximate}
+	if len(rows) > h.queryRows {
+		out.Rows, out.Truncated = rows[:h.queryRows], true
+	}
+	if out.Truncated {
+		out.Note = fmt.Sprintf("truncated (at most %d rows, and the groups one query tracks); results are PARTIAL — narrow the range, add a where or lower the limit", h.queryRows)
+	}
+	return out, nil
+}
+
+// parseDay reads a YYYY-MM-DD day for the field name.
+func parseDay(name, s string) (civil.Date, error) {
+	if !isDay(s) {
+		return civil.Date{}, invalidf("%s must be YYYY-MM-DD, got %q", name, s)
+	}
+	return civil.Parse(s)
+}
+
+// tooLarge is the refusal of a structured query that needs more memory
+// than the engine allows (native.ErrTooLarge).
+const tooLarge = "the query needs more memory than allowed; narrow the range or add filters"
+
+// nativeError words a refused structured query (native.ErrInvalid, whose
+// message names the field, or native.ErrTooLarge) as invalid; anything
+// else passes through.
+func nativeError(err error) error {
+	switch {
+	case errors.Is(err, native.ErrInvalid):
+		return invalidf("query: %s", strings.TrimPrefix(err.Error(), native.ErrInvalid.Error()+": "))
+	case errors.Is(err, native.ErrTooLarge):
+		return invalidf("%s", tooLarge)
+	}
+	return err
 }
 
 // runFilesQuery runs sql over the event files in the engine's child,

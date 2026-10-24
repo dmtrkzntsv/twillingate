@@ -11,16 +11,18 @@ import (
 	"sync"
 )
 
-// keyChunk is how many bytes keys reads of a log at a time: a first read of
+// keyChunk is how many bytes Keys reads of a log at a time: a first read of
 // a day's log costs this much memory, not the log's size. A variable so a
 // test can make it small enough to split lines.
 var keyChunk = 1 << 20
 
-// keyScanner remembers, per log, the keys of the lines read so far and
+// KeyScanner remembers, per log, the keys of the lines read so far and
 // where the first unread line starts, so a reader's rebuild reads only
 // what was appended since: a log only grows until it is rotated, and a
-// rotated log is a new path.
-type keyScanner struct {
+// rotated log is a new path. It is the one reader of a log's keys outside
+// DuckDB (the Reader's views, the native engine's attribute rules), safe
+// for concurrent use; its lock is held while it reads.
+type KeyScanner struct {
 	mu   sync.Mutex
 	logs map[string]*scannedLog
 }
@@ -31,16 +33,17 @@ type scannedLog struct {
 	keys map[string]bool
 }
 
-func newKeyScanner() *keyScanner { return &keyScanner{logs: map[string]*scannedLog{}} }
+// NewKeyScanner returns a scanner that has read no log.
+func NewKeyScanner() *KeyScanner { return &KeyScanner{logs: map[string]*scannedLog{}} }
 
-// keys returns the keys of path's complete lines: up to its last newline,
+// Keys returns the keys of path's complete lines: up to its last newline,
 // so a line ingest is still writing is read on a later call. A file that
 // is not the one read before at path (os.SameFile), or is shorter than
 // what was read, or does not end a line where the read stopped (a writer's
 // cut-back), is read from its start. A line that is not a JSON object
 // is skipped: the dump, not a reader, refuses it. The returned set is a
 // new copy: changing it does not change what the scanner holds.
-func (s *keyScanner) keys(path string) (map[string]bool, error) {
+func (s *KeyScanner) Keys(path string) (map[string]bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := os.Open(path)
@@ -104,8 +107,8 @@ func (sl *scannedLog) read(f *os.File, size int64) error {
 	}
 }
 
-// keep forgets every log but paths: the ones dumped or removed since.
-func (s *keyScanner) keep(paths []string) {
+// Keep forgets every log but paths: the ones dumped or removed since.
+func (s *KeyScanner) Keep(paths []string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	live := map[string]bool{}
