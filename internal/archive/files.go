@@ -55,6 +55,11 @@ type projectFiles struct {
 // neither events file nor log are left out. A missing raw/ lists nothing;
 // a project directory that vanishes while listing (a purge) is skipped.
 func ListFiles(dir string) (map[int64]Files, error) {
+	return listFiles(dir, func(int64) bool { return true })
+}
+
+// listFiles is ListFiles of the projects keep keeps.
+func listFiles(dir string, keep func(int64) bool) (map[int64]Files, error) {
 	entries, err := os.ReadDir(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return map[int64]Files{}, nil
@@ -65,7 +70,7 @@ func ListFiles(dir string) (map[int64]Files, error) {
 	out := map[int64]Files{}
 	for _, e := range entries {
 		id, err := strconv.ParseInt(e.Name(), 10, 64)
-		if err != nil || !e.IsDir() {
+		if err != nil || !e.IsDir() || !keep(id) {
 			continue
 		}
 		pdir := filepath.Join(dir, e.Name())

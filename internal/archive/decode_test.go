@@ -55,17 +55,38 @@ func TestCastsMatchDuckDB(t *testing.T) {
 		`{"id":"a","display_width":"\t7"}`:   true,
 		`{"id":"a","value":"\t7"}`:           true,
 	}
+	// DuckDB's answer for each line, frozen: its value as fmt.Sprint
+	// prints it, or that the CAST failed the query.
+	type castAnswer struct {
+		Value string `json:"value,omitempty"`
+		Error bool   `json:"error,omitempty"`
+	}
+	duck := map[string]castAnswer{}
+	for _, v := range values {
+		for col := range cast {
+			line := `{"id":"a","` + col + `":` + v + `}`
+			if known[line] {
+				continue
+			}
+			f.writeFile(t, "2026-09-10.log", line+"\n")
+			res, err := f.eng.Query(context.Background(), "SELECT "+expr[col]+" FROM "+f.logRel(t, "2026-09-10"), 0)
+			if err != nil {
+				duck[line] = castAnswer{Error: true}
+			} else {
+				duck[line] = castAnswer{Value: fmt.Sprint(res.Rows[0][0])}
+			}
+		}
+	}
+	want := frozen(t, "casts", duck)
 	for _, v := range values {
 		for col, to := range cast {
 			line := `{"id":"a","` + col + `":` + v + `}`
 			if known[line] {
 				continue
 			}
-			f.writeFile(t, "2026-09-10.log", line+"\n")
-			var duck any
-			res, err := f.eng.Query(context.Background(), "SELECT "+expr[col]+" FROM "+f.logRel(t, "2026-09-10"), 0)
-			if err == nil {
-				duck = res.Rows[0][0]
+			w, ok := want[line]
+			if !ok {
+				t.Fatalf("%s: no golden", line)
 			}
 			m, _ := DecodeLine([]byte(line))
 			s, ok, gerr := JSONText(m[col])
@@ -73,8 +94,8 @@ func TestCastsMatchDuckDB(t *testing.T) {
 				t.Fatalf("%s: %v %v", line, ok, gerr)
 			}
 			goVal, gerr := to(s)
-			if (err != nil) != (gerr != nil) || (err == nil && fmt.Sprint(duck) != fmt.Sprint(goVal)) {
-				t.Errorf("%s: DuckDB %v (%v), Go %v (%v)", line, duck, err, goVal, gerr)
+			if w.Error != (gerr != nil) || (!w.Error && w.Value != fmt.Sprint(goVal)) {
+				t.Errorf("%s: DuckDB %+v, Go %v (%v)", line, w, goVal, gerr)
 			}
 		}
 	}

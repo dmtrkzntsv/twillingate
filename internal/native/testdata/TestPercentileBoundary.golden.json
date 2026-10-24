@@ -1,0 +1,10 @@
+{
+  "ab702a529db7": {
+    "rows": [
+      ["even","20.08939945217019","29.737218726516645","4","25"],
+      ["half","0","5.090964618800283","4","3"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT event_name, p50, p75, w, m FROM (WITH h AS (\n\t\tSELECT \"event_name\", bucket, CASE WHEN bucket = -1000 THEN 0 ELSE 2 * pow(1.04, bucket) / 2.04 END AS approx_value,\n\t\t\tcount(*) AS samples, SUM(1 / sample_rate) AS w, SUM(value / sample_rate) AS s\n\t\tFROM measures WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-09-10' AND DATE '2026-09-10' AND true GROUP BY \"event_name\", bucket),\n\tc AS (SELECT \"event_name\", samples, w, s, approx_value, SUM(w) OVER (PARTITION BY \"event_name\" ORDER BY bucket) AS run, SUM(w) OVER (PARTITION BY \"event_name\") AS total FROM h)\n\tSELECT \"event_name\", SUM(samples), SUM(w), SUM(s) / SUM(w), MIN(approx_value) FILTER (WHERE run >= 0.5 * total), MIN(approx_value) FILTER (WHERE run >= 0.75 * total) FROM c GROUP BY \"event_name\" ORDER BY \"event_name\") t(event_name, n, w, m, p50, p75) ORDER BY event_name"
+  }
+}

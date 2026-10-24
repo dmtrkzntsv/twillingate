@@ -25,6 +25,7 @@ const module = "github.com/dmtrkzntsv/twillingate/"
 // internal/app except cmd/.
 var rank = map[string]int{
 	"docs":                         0,
+	"sqlengine":                    0,
 	"internal/config":              0,
 	"internal/config/configtest":   0,
 	"internal/enrich":              0,
@@ -36,6 +37,7 @@ var rank = map[string]int{
 	"internal/geo":                 0,
 	"internal/shared/civil":        0,
 	"internal/shared/enginesql":    0,
+	"internal/shared/golden":       0,
 	"internal/shared/hll":          0,
 	"internal/shared/readsql":      0,
 	"internal/shared/sortkey":      0,

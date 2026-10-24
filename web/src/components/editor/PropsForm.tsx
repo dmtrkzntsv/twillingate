@@ -18,6 +18,10 @@ interface FormProps {
   onValidity(ok: boolean): void
   /** All props as one JSON object instead of a field each; the editor's Settings bar flips it. */
   raw?: boolean
+  /** Enum options this server cannot serve, by prop key: left out of the list (unless chosen), with a line saying why. */
+  unavailable?: Record<string, { options: string[]; note: string }>
+  /** Shown, not edited: every control is disabled. */
+  disabled?: boolean
 }
 
 /** `value` with `key` set in place (kept in order), or removed when `v` is undefined. */
@@ -156,7 +160,7 @@ function EnumMap({
 }
 
 /** The props of one component as a form generated from its contract (spec D11), or as one JSON object. */
-export default function PropsForm({ component, value, onChange, columns, onValidity, raw = false }: FormProps) {
+export default function PropsForm({ component, value, onChange, columns, onValidity, raw = false, unavailable = {}, disabled = false }: FormProps) {
   const fields = fieldsOf(widgets[component]?.contract.props ?? {})
   const [rawText, setRawText] = useState(() => JSON.stringify(value, null, 2))
   const [rawBad, setRawBad] = useState(false)
@@ -188,7 +192,7 @@ export default function PropsForm({ component, value, onChange, columns, onValid
 
   if (raw) {
     return (
-      <div className="contents">
+      <fieldset disabled={disabled} className="contents">
         <SettingRow label="Props JSON" htmlFor="props-json">
           <Textarea
             id="props-json"
@@ -207,12 +211,12 @@ export default function PropsForm({ component, value, onChange, columns, onValid
           />
           {rawBad && <p className="mt-1.5 text-xs text-destructive">not valid JSON (an object is expected)</p>}
         </SettingRow>
-      </div>
+      </fieldset>
     )
   }
 
   return (
-    <div className="contents">
+    <fieldset disabled={disabled} className="contents">
       {fields.length === 0 && (
         <SettingRow label="Props">
           <p className="flex min-h-9 items-center text-sm text-muted-foreground">This visualization has none</p>
@@ -223,18 +227,23 @@ export default function PropsForm({ component, value, onChange, columns, onValid
         const key = `${component}:${f.key}`
         const set = (v: unknown) => onChange(put(value, f.key, v))
         switch (f.kind) {
-          case 'enum':
+          case 'enum': {
+            const chosen = typeof value[f.key] === 'string' ? (value[f.key] as string) : ''
+            const cut = unavailable[f.key]
+            const options = cut ? f.options.filter((o) => o === chosen || !cut.options.includes(o)) : f.options
             return (
               <SettingRow key={key} label={labelOf(f.key)} htmlFor={`prop-${f.key}`}>
                 <Default
                   id={`prop-${f.key}`}
                   aria-label={f.key}
-                  options={f.options}
-                  value={typeof value[f.key] === 'string' ? (value[f.key] as string) : ''}
+                  options={options}
+                  value={chosen}
                   onChange={(e) => set(e.target.value || undefined)}
                 />
+                {cut && <p className="mt-1.5 text-xs text-muted-foreground">{cut.note}</p>}
               </SettingRow>
             )
+          }
           case 'boolean':
             return (
               <SettingRow key={key} label={labelOf(f.key)} htmlFor={`prop-${f.key}`}>
@@ -254,6 +263,6 @@ export default function PropsForm({ component, value, onChange, columns, onValid
             return <JsonField key={key} name={f.key} value={value[f.key]} onValue={set} onBad={markBad(f.key)} />
         }
       })}
-    </div>
+    </fieldset>
   )
 }

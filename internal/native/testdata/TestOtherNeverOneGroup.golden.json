@@ -1,0 +1,34 @@
+{
+  "five 902e8871a917": {
+    "rows": [
+      ["/p0","112","20"],
+      ["/p1","112","20"],
+      ["/p2","77","20"],
+      ["/p3","76","20"],
+      ["/q0","24","1"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH b AS (SELECT \"path\" AS label, ROW_NUMBER() OVER (ORDER BY count(*) DESC, \"path\") AS n\n\t\t\tFROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' AND \"path\" IN ('/p0', '/p1', '/p2', '/p3', '/q0') GROUP BY \"path\"),\n\t\t\tk AS (SELECT label, n, CASE WHEN n <= 4 OR (SELECT count(*) FROM b) <= 5 THEN label ELSE 'Other' END AS g FROM b)\n\t\t\tSELECT k.g, count(*), count(DISTINCT \"actor_id\")\n\t\t\tFROM views JOIN k ON \"path\" = k.label WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n\t\t\tGROUP BY k.g ORDER BY MIN(k.n)"
+  },
+  "four f4d3c695ad88": {
+    "rows": [
+      ["/p0","112","20"],
+      ["/p1","112","20"],
+      ["/p2","77","20"],
+      ["/p3","76","20"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH b AS (SELECT \"path\" AS label, ROW_NUMBER() OVER (ORDER BY count(*) DESC, \"path\") AS n\n\t\t\tFROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' AND \"path\" IN ('/p0', '/p1', '/p2', '/p3') GROUP BY \"path\"),\n\t\t\tk AS (SELECT label, n, CASE WHEN n <= 4 OR (SELECT count(*) FROM b) <= 5 THEN label ELSE 'Other' END AS g FROM b)\n\t\t\tSELECT k.g, count(*), count(DISTINCT \"actor_id\")\n\t\t\tFROM views JOIN k ON \"path\" = k.label WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n\t\t\tGROUP BY k.g ORDER BY MIN(k.n)"
+  },
+  "six 53f82d5386ab": {
+    "rows": [
+      ["/p0","112","20"],
+      ["/p1","112","20"],
+      ["/p2","77","20"],
+      ["/p3","76","20"],
+      ["Other","94","21"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH b AS (SELECT \"path\" AS label, ROW_NUMBER() OVER (ORDER BY count(*) DESC, \"path\") AS n\n\t\t\tFROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' AND \"path\" IN ('/p0', '/p1', '/p2', '/p3', '/q0', '/p4') GROUP BY \"path\"),\n\t\t\tk AS (SELECT label, n, CASE WHEN n <= 4 OR (SELECT count(*) FROM b) <= 5 THEN label ELSE 'Other' END AS g FROM b)\n\t\t\tSELECT k.g, count(*), count(DISTINCT \"actor_id\")\n\t\t\tFROM views JOIN k ON \"path\" = k.label WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n\t\t\tGROUP BY k.g ORDER BY MIN(k.n)"
+  }
+}

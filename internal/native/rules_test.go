@@ -85,7 +85,7 @@ func duckRulesRows(t *testing.T, f *archivetest.Files, q string, rules archive.R
 		rows = append(rows, r)
 	}
 	sortByFirst(rows)
-	return cols, rows
+	return frozenRows(t, q, rules, cols, rows)
 }
 
 func evRule(project int64, fam store.Family, name, action, to string) store.EventRule {

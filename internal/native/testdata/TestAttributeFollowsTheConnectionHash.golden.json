@@ -1,0 +1,23 @@
+{
+  "7 days: 1/\"consented\" install:\"i1\" install \"i1\" connection \"h\" at 2026-10-14T12:00:00Z; 1/\"no-hash\" install:\"i1\" install \"i1\" connection \"\" at 2026-10-14T12:00:00Z": [
+    {
+      "ID": "consented",
+      "Newest": {
+        "Kind": "web",
+        "OS": "macos"
+      },
+      "ProjectID": 1,
+      "Source": {
+        "UTMSource": "newsletter"
+      }
+    },
+    {
+      "ID": "no-hash",
+      "Newest": {
+        "Kind": "web",
+        "OS": "macos"
+      },
+      "ProjectID": 1
+    }
+  ]
+}

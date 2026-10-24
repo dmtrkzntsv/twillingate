@@ -219,7 +219,7 @@ dashboard of many widgets cannot multiply peak memory. Widgets of one
 dashboard load run one or two at a time, as the measurements in
 raw-first found best on small boxes.
 
-**The cache.** A disposable per-day partial cache:
+**The cache (not built; dropped in the order of work, step 5).** A disposable per-day partial cache:
 
 - Lives under a cache directory (default under the data directory, e.g.
   `cache/`, configurable), with a size cap and least-recently-used
@@ -370,13 +370,15 @@ file layout and table names are part of the versioned contract.
    asks for a dashboard's widgets in one request. It is generic: nothing
    in it knows a dashboard. A CPU profile of a dashboard load comes
    first, so the work goes where the time is.
-5. The cache, only if it shows great results (owner, 2026-10-21): the
-   default is no cache. It is built only when the measurements show the
-   1-year target missed without it and the cache bringing that dashboard
-   several times faster, enough to justify its moving parts. Step 1b
-   found the 1-year target missed and an upper bound of 37x, so this step
-   proceeds; it measures the real gain first and drops the cache if the
-   gain is not large.
+5. ~~The cache~~ **dropped (owner, 2026-10-24).** After step 4c every
+   dashboard at 30 days beats DuckDB, and a cache would only help warm
+   long-range loads (mainly the 1-year range); it would not speed up a
+   first load. That gain does not justify its moving parts: files to
+   keep, invalidation on merges, late events, rules and retention. The
+   1-year target stays missed (about 8 s at 1M events/month); closing it
+   needs a cheaper scan, not a cache. The reporting layer's whole-answer
+   cache (`REPORTING_CACHE_MAX_AGE`) is unchanged. The "The cache"
+   section under "The engine" is kept as the design considered.
 6. The SQL hook, the final `feat!` release: DuckDB, cgo and
    `internal/engine` leave this repository in the same release.
 

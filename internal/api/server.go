@@ -36,11 +36,11 @@ const (
 // mounts nothing itself: NewHandler wraps it with its own mux for the
 // standalone listener, and app calls it directly to mount on the ingest
 // surface's mux via RegisterOn. rst is the store reporting reads and
-// writes; files is where the query tool reads the event files, and
-// widgets where sql widgets run on them, under the same
-// CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_ROWS_MAX as the query tool;
+// writes; sql is the external SQL engine the query tool's sql and sql
+// widgets run on (nil: none, and both are refused), under the same
+// CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_ROWS_MAX;
 // nat answers the query tool's structured queries and query widgets.
-func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, files Files, nat Native, widgets reporting.Files) (http.Handler, func() error, error) {
+func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, sql SQL, nat Native) (http.Handler, func() error, error) {
 	db, err := readsql.Open(cfg.Console.DBPath, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
 	if err != nil {
 		return nil, nil, err
@@ -51,11 +51,15 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 		return nil, nil, err
 	}
 	closeAll := func() error { return errors.Join(db.Close(), subs.Close()) }
-	rep := reporting.New(rst, widgets, reporting.Options{CacheAge: cfg.Reporting.CacheAge, RefreshAge: cfg.Reporting.RefreshAge,
-		ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL, Native: nat, Rules: registryRules(reg)})
+	var widgetSQL reporting.SQL
+	if sql != nil {
+		widgetSQL = sql
+	}
+	rep := reporting.New(rst, widgetSQL, WidgetOptions(cfg, reg, reporting.Options{CacheAge: cfg.Reporting.CacheAge,
+		RefreshAge: cfg.Reporting.RefreshAge, ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL, Native: nat}))
 	h := &host{db: db, subs: subs, reg: reg, ops: ops, rep: rep,
 		ingestURL: cfg.IngestURL, logger: logger, limits: limitsFrom(cfg),
-		ingestDisabled: cfg.IngestDisabled, files: files, native: nat, eventsDir: cfg.EventsDir,
+		ingestDisabled: cfg.IngestDisabled, sql: sql, native: nat, eventsDir: cfg.EventsDir,
 		queryTimeout: cfg.Console.QueryTimeout, queryRows: cfg.Console.QueryMaxRows}
 	if nat != nil {
 		h.events = h.newHostEventCount()
@@ -105,6 +109,28 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 	return protected, closeAll, nil
 }
 
+// WidgetOptions is opt with what sql and query widgets read with: the
+// registry's rules and live projects, EVENTS_DIR, CONSOLE_QUERY_TIMEOUT and
+// CONSOLE_QUERY_ROWS_MAX, as the query tool reads the same files. app
+// gives its start-up check of the users' widgets the same.
+func WidgetOptions(cfg *config.Config, reg *manage.Registry, opt reporting.Options) reporting.Options {
+	opt.Rules, opt.Live = registryRules(reg), registryLive(reg)
+	opt.EventsDir, opt.QueryTimeout, opt.QueryMaxRows = cfg.EventsDir, cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows
+	return opt
+}
+
+// registryLive reports a project live when the registry has it and it is
+// not archived; every project without a registry.
+func registryLive(reg *manage.Registry) reporting.LiveFunc {
+	if reg == nil {
+		return nil
+	}
+	return func(ctx context.Context, id int64) bool {
+		p := reg.Snapshot(ctx).Project(id)
+		return p != nil && !p.Archived
+	}
+}
+
 // registryRules is the rules query widgets read with: every project's
 // event and attribute rules, as the query tool's (runStructured); none
 // without a registry.
@@ -126,8 +152,8 @@ func registryRules(reg *manage.Registry) reporting.RulesFunc {
 // server's routes in token mode with a password configured; a browser
 // opening any other address gets the console's 404 page (NotFoundPages).
 // The func() error closes the read DB.
-func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, files Files, nat Native, widgets reporting.Files) (http.Handler, func() error, error) {
-	protected, closeDB, err := Build(ctx, cfg, reg, ops, rst, logger, files, nat, widgets)
+func NewHandler(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *manage.Ops, rst reporting.Store, logger *slog.Logger, sql SQL, nat Native) (http.Handler, func() error, error) {
+	protected, closeDB, err := Build(ctx, cfg, reg, ops, rst, logger, sql, nat)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -11,27 +11,173 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
-// Files is where sql widgets run: the event files through the engine.
-type Files interface {
-	// Query runs q's SELECT, scoped to its project when q.Scope, under the
-	// console's timeout, returning at most q.MaxRows rows (0: all).
-	Query(ctx context.Context, q archive.Scoped) (engine.Result, error)
-	// SampleProject is the live project with the newest events, 0 when none.
-	SampleProject(ctx context.Context) (int64, error)
-	Timeout() time.Duration
-	MaxRows() int
+// SQL is the external SQL engine sql widgets run on, over a Unix socket
+// (SQL_ENGINE_SOCKET); *sqlengine.Client is one. A nil SQL means no engine
+// is configured: sql is then no source type, and every SQL path answers
+// ErrSQLEngine.
+type SQL interface {
+	Query(ctx context.Context, req sqlengine.Request) (sqlengine.Result, error)
 }
 
-// errNoFiles fails a sql widget on a Service given no Files, rather than
-// a nil dereference. app wires Files everywhere; api's tests of the
-// handler's routing and auth build one without, and run no widget.
-var errNoFiles = errors.New("reporting: sql widgets run on the event files, and this process has none")
+// ErrSQLEngine refuses SQL in a process with no external SQL engine
+// configured: saving or previewing a sql widget, loading a stored one,
+// and the query tool's sql mode. It is a refusal (store.ErrInvalid), so a
+// stored widget's card shows it while the rest of its dashboard loads;
+// match it with errors.Is.
+var ErrSQLEngine error = &store.Refusal{Kind: store.ErrInvalid, Msg: "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)"}
+
+// sqlEngine runs a widget's SQL on the external engine: each query under
+// the console's timeout, over the files under dir (archive.TableSpec)
+// with the rules, scoped to the widget's project when it reads :project.
+type sqlEngine struct {
+	client  SQL
+	dir     string    // EVENTS_DIR, which the table spec's paths are relative to
+	rules   RulesFunc // nil applies none
+	live    LiveFunc  // nil counts every project with files as live
+	timeout time.Duration
+	maxRows int
+}
+
+// newSQLEngine is client with opt's files, rules and guards; nil without
+// a client.
+func newSQLEngine(client SQL, opt Options) *sqlEngine {
+	if client == nil {
+		return nil
+	}
+	return &sqlEngine{client: client, dir: opt.EventsDir, rules: opt.Rules, live: opt.Live,
+		timeout: opt.QueryTimeout, maxRows: opt.QueryMaxRows}
+}
+
+// boundSQL is a widget's SQL with its parameters bound (bindSQL): the
+// statement, its $tw_* arguments, the project it is scoped to (nil: every
+// project), and whether it reads only the seven tables.
+type boundSQL struct {
+	sql     string
+	args    map[string]string
+	scope   *int64
+	confine bool
+}
+
+// ask answers q in mode on the engine, at most maxRows rows (0: all), page
+// being the page of modes page and count. The table spec names the files
+// of q's project (every project's when unscoped) with its rules; an
+// engine that finds one of them gone (the daily pass moved it) gets a
+// fresh spec, within the timeout (sqlengine.QueryFresh). An error is
+// classified by e.err.
+func (e *sqlEngine) ask(ctx context.Context, q boundSQL, mode sqlengine.Mode, maxRows int, page *sqlengine.Page) (sqlengine.Result, error) {
+	if e == nil {
+		return sqlengine.Result{}, ErrSQLEngine
+	}
+	var projects []int64
+	var project int64
+	if q.scope != nil {
+		project = *q.scope
+		projects = []int64{project}
+	}
+	var rules archive.Rules
+	if e.rules != nil {
+		rules = e.rules(ctx, project)
+	}
+	if e.timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, e.timeout)
+		defer cancel()
+	}
+	var specErr error
+	res, err := sqlengine.QueryFresh(ctx, e.client, sqlengine.Request{SQL: q.sql, Args: q.args, MaxRows: maxRows, Mode: mode,
+		Page: page, Scope: q.scope, Confine: q.confine}, func() (sqlengine.Tables, error) {
+		t, err := archive.TableSpec(e.dir, projects, rules)
+		specErr = err
+		return t, err
+	})
+	if specErr != nil {
+		return sqlengine.Result{}, specErr
+	}
+	if err != nil {
+		return sqlengine.Result{}, e.err(ctx, err)
+	}
+	return res, nil
+}
+
+// sampleProject is the live project whose files hold the newest day (a
+// tie goes to the lowest id), from the file names alone, so it costs no
+// query; 0 when no live project has any.
+func (e *sqlEngine) sampleProject(ctx context.Context) (int64, error) {
+	days, err := archive.LatestDays(e.dir)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	var newest string
+	for pid, day := range days {
+		if (e.live == nil || e.live(ctx, pid)) && (day > newest || day == newest && pid < id) {
+			id, newest = pid, day
+		}
+	}
+	return id, nil
+}
+
+// err classifies an error from running a widget's own SQL, by the
+// engine's kind, as store.ErrInvalid where a person can act on it: SQL
+// the engine refused (it read past the seven tables) says what it read,
+// the timeout names its environment variable, running out of memory says
+// what to change, and the engine's own message on the SQL passes
+// through, with the hint when it names SQLite's; an answer past the
+// client's cap says to return less. The timeout (the engine's or ctx's),
+// running out of memory, a busy engine, a worker that died, files that
+// went stale on every attempt and an engine that failed or could not be
+// reached are a resourceErr: refused all the same, but no verdict on the
+// SQL. A caller
+// that went away keeps its own error. api's sqlError is the query tool's
+// own wording of the same.
+func (e *sqlEngine) err(ctx context.Context, err error) error {
+	resource := func(msg string, cause error) error {
+		return &resourceErr{store.Refuse(store.ErrInvalid, "%s", msg), cause}
+	}
+	var se *sqlengine.Error
+	isKind := func(k sqlengine.Kind) bool { return errors.As(err, &se) && se.Kind == k }
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
+		return resource(enginesql.Timeout(e.timeout), err)
+	case ctx.Err() != nil: // the caller went away: whatever the engine said last
+		return err
+	case isKind(sqlengine.KindTimeout):
+		// A timeout's cause says so (stopsCheck, Migrate's reason), as ctx's.
+		return resource(enginesql.Timeout(e.timeout), fmt.Errorf("%w: %w", context.DeadlineExceeded, err))
+	case isKind(sqlengine.KindOutOfMemoryLoadingLog):
+		return resource(enginesql.LogsOutOfMemory, err)
+	case isKind(sqlengine.KindOutOfMemory):
+		return resource(enginesql.OutOfMemory, err)
+	case isKind(sqlengine.KindRefused):
+		return engineRefused{store.Refuse(store.ErrInvalid, "%s", withHint(se.Message))}
+	case isKind(sqlengine.KindSQL):
+		return store.Refuse(store.ErrInvalid, "%s", withHint(oneLine(se.Message)))
+	case isKind(sqlengine.KindExited):
+		return resource(enginesql.ChildExited, err)
+	case isKind(sqlengine.KindBusy):
+		return resource(enginesql.Busy, err)
+	case isKind(sqlengine.KindStale):
+		return resource(enginesql.Stale, err)
+	case errors.Is(err, sqlengine.ErrTooLarge):
+		return store.Refuse(store.ErrInvalid, "%s", enginesql.TooLarge)
+	case errors.As(err, &se), errors.Is(err, sqlengine.ErrUnavailable):
+		return resource(enginesql.EngineFailed, err)
+	}
+	return err
+}
+
+// engineRefused is the engine's refusal of a request (KindRefused): the
+// SQL reads past the seven tables, or a page it cannot build. LoadPage
+// tells a refusal of its page from one of the widget by it.
+type engineRefused struct{ error }
+
+func (e engineRefused) Unwrap() error { return e.error }
 
 // sqliteHint follows an error that names what only SQLite had (Decision
 // 10): a widget written before the switch fails on the first such name,
@@ -57,46 +203,6 @@ var sqliteNames = regexp.MustCompile(`(?i)` +
 	`|argument types '(max|min)\(\w+, ` +
 	`|syntax error at or near`)
 
-// runFiles runs q on files, an error classified by filesErr.
-func runFiles(ctx context.Context, files Files, q archive.Scoped) (engine.Result, error) {
-	if files == nil {
-		return engine.Result{}, errNoFiles
-	}
-	res, err := files.Query(ctx, q)
-	if err != nil {
-		return engine.Result{}, filesErr(files, err)
-	}
-	return res, nil
-}
-
-// filesErr classifies an error from running a widget's own SQL as
-// store.ErrInvalid where a person can act on it: SQL that reads past the
-// tables (archive.Scoped.Confine) says what it read, the timeout names its
-// environment variable, running out of memory says what to change, and
-// DuckDB's own message passes through, with the hint when it names
-// SQLite's. Anything else (the child could not start) stays an internal
-// error. api's filesError is the query tool's own wording of the same.
-// The timeout, running out of memory and a child that died are a
-// resourceErr: refused all the same, but no verdict on the SQL.
-func filesErr(files Files, err error) error {
-	var qe *engine.QueryError
-	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return &resourceErr{store.Refuse(store.ErrInvalid, "%s", enginesql.Timeout(files.Timeout())), err}
-	case errors.Is(err, archive.ErrLoadingLogs) && errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
-		return &resourceErr{store.Refuse(store.ErrInvalid, "%s", enginesql.LogsOutOfMemory), err}
-	case errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
-		return &resourceErr{store.Refuse(store.ErrInvalid, "%s", enginesql.OutOfMemory), err}
-	case errors.Is(err, enginesql.ErrRefused):
-		return store.Refuse(store.ErrInvalid, "%s", withHint(strings.TrimPrefix(err.Error(), enginesql.ErrRefused.Error()+": ")))
-	case errors.As(err, &qe):
-		return store.Refuse(store.ErrInvalid, "%s", withHint(oneLine(qe.Msg)))
-	case errors.Is(err, engine.ErrChildExited):
-		return &resourceErr{store.Refuse(store.ErrInvalid, "%s", enginesql.ChildExited), err}
-	}
-	return err
-}
-
 // withHint is msg, with sqliteHint when it names what only SQLite had.
 func withHint(msg string) string {
 	if sqliteNames.MatchString(msg) {
@@ -106,7 +212,8 @@ func withHint(msg string) string {
 }
 
 // resourceErr is the refusal of a query that ran out of time or memory,
-// or whose child died under it: what a person reads, and an
+// whose worker died under it, or that the engine was too busy or broken
+// to answer: what a person reads, and an
 // errors.Is(store.ErrInvalid) like any refusal, but no failure of the SQL
 // itself. It keeps the engine's error as cause, so a check of the SQL
 // (CheckUserWidgets, Migrate) can tell the two apart (resourceCause).
@@ -153,7 +260,7 @@ func refuseText(err error) error {
 // textResult is res as a widget's rows: Text and the page wrap make every
 // cell tw_cell's text already, so a cell that is not a string is a count
 // the page added, or a value from SQL run without the wrap.
-func textResult(res engine.Result) readsql.Result {
+func textResult(res sqlengine.Result) readsql.Result {
 	out := readsql.Result{Columns: res.Columns, Rows: make([][]string, len(res.Rows)), Truncated: res.Truncated}
 	for i, row := range res.Rows {
 		out.Rows[i] = textRow(row)
@@ -197,13 +304,14 @@ type WidgetFailure struct {
 	WidgetID, DashboardID int64
 	Title                 string
 	Err                   error
-	// Unchecked: the check ran out of time or memory, or the engine's
-	// child died under it (resourceErr), which says nothing of the SQL.
-	// A plain timeout is that widget's own: its SQL may just be slow on
-	// the sample week, so the check goes on to the next. Running out of
-	// memory, a child that died, or a timeout while loading the open logs
-	// (archive.ErrLoadingLogs) say the engine itself is short, most often
-	// on the boot pass of an upgrade, and the next query would add to it:
+	// Unchecked: the check ran out of time or memory, or the engine was
+	// busy, failed or lost its worker under it, or the files went stale
+	// on every attempt (resourceErr), which says nothing of the SQL. A
+	// timeout or stale files are that widget's own: its SQL may just be
+	// slow on the sample week, or the daily pass was moving the files, so
+	// the check goes on to the next, unless the widgets before it ended
+	// the same way (maxSkips in a row). Anything else says the engine
+	// itself is short or down, and the next query would fare no better:
 	// the check stops there, and that failure is the last returned
 	// (Stopped).
 	Unchecked bool
@@ -212,11 +320,17 @@ type WidgetFailure struct {
 	Stopped bool
 }
 
-// stopsCheck reports whether cause, a resourceErr's, says the engine
-// itself is short (WidgetFailure.Unchecked) rather than that one widget's
-// query ran past the timeout.
-func stopsCheck(cause error) bool {
-	return !errors.Is(cause, context.DeadlineExceeded) || errors.Is(cause, archive.ErrLoadingLogs)
+// maxSkips is how many widgets in a row CheckUserWidgets skips (a
+// timeout, stale files) before it stops: past that, the engine is
+// struggling rather than one widget being slow, and is spared the rest.
+const maxSkips = 3
+
+// skipsWidget reports whether cause, a resourceErr's, is that one
+// widget's (its query ran past the timeout, or the files went stale under
+// it) rather than the engine itself being short or down.
+func skipsWidget(cause error) bool {
+	var se *sqlengine.Error
+	return errors.Is(cause, context.DeadlineExceeded) || errors.As(cause, &se) && se.Kind == sqlengine.KindStale
 }
 
 // CheckUserWidgets runs the check Migrate runs on the system widgets (the
@@ -225,13 +339,18 @@ func stopsCheck(cause error) bool {
 // returns those refused, in dashboard and widget order: most often SQL
 // written for SQLite before the switch. A widget whose component was
 // removed is left out; its dashboard says so already. A check that could
-// not run is returned as WidgetFailure.Unchecked: a plain timeout skips
-// that widget, and one the engine was short for (Stopped) ends the list
-// and the check. An error that is no refusal of a widget (the engine did
-// not start, ctx ended) stops the check and is returned with the failures
-// found so far.
-func CheckUserWidgets(ctx context.Context, st Store, files Files) ([]WidgetFailure, error) {
-	svc := &Service{st: st, files: files, sources: newSources(files, false, time.Now, nil, nil), now: time.Now}
+// not run is returned as WidgetFailure.Unchecked: a plain timeout or
+// stale files skip that widget, while the third such widget in a row and
+// one the engine was short for (Stopped) end the list and the check, so
+// an engine that is struggling is not sent the rest. An error that is no
+// refusal of a widget (the engine did not start, ctx ended) stops the
+// check and is returned with the failures found so far. Without an engine (sql nil) there is nothing to check
+// them on, and it checks none.
+func CheckUserWidgets(ctx context.Context, st Store, sql SQL, opt Options) ([]WidgetFailure, error) {
+	if sql == nil {
+		return nil, nil
+	}
+	svc := newService(st, sql, false, opt)
 	comps, err := svc.components(ctx)
 	if err != nil {
 		return nil, err
@@ -249,18 +368,24 @@ func CheckUserWidgets(ctx context.Context, st Store, files Files) ([]WidgetFailu
 		return nil, err
 	}
 	var out []WidgetFailure
+	skips := 0 // widgets skipped in a row
 	for _, w := range ws {
 		comp, ok := comps[w.Component]
 		if !live[w.DashboardID] || w.ArchivedAt != "" || w.SourceType != "sql" || !ok {
 			continue
 		}
 		err := svc.sources["sql"].Validate(ctx, w.Source, comp)
+		if cause := resourceCause(err); cause != nil && skipsWidget(cause) {
+			skips++
+		} else {
+			skips = 0
+		}
 		switch {
 		case err == nil:
 		case ctx.Err() != nil:
 			return out, ctx.Err()
 		case resourceCause(err) != nil:
-			stop := stopsCheck(resourceCause(err))
+			stop := skips == 0 || skips >= maxSkips
 			out = append(out, WidgetFailure{WidgetID: w.ID, DashboardID: w.DashboardID, Title: w.Title, Err: err, Unchecked: true, Stopped: stop})
 			if stop {
 				return out, nil

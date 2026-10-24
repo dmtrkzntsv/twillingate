@@ -1,0 +1,14 @@
+{
+  "001 HasEvents(1, product, \"a\")": true,
+  "002 HasEvents(1, product, \"b\")": false,
+  "003 HasEvents(2, product, \"a\")": false,
+  "004 HasEvents(1, measures, \"a\")": false,
+  "005 HasAttribute(1, \"plan\")": true,
+  "006 HasAttribute(1, \"level\")": false,
+  "007 HasAttribute(2, \"plan\")": false,
+  "008 HasEvents(1, product, \"b\")": true,
+  "009 HasEvents(1, product, \"a\")": false,
+  "010 HasAttribute(1, \"level\")": true,
+  "011 HasAttribute(1, \"plan\")": false,
+  "012 HasEvents(1, product, \"b\")": false
+}

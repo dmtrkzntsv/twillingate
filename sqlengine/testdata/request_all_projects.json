@@ -1,0 +1,1 @@
+{"sql":"SELECT 1","args":{},"max_rows":10,"mode":"rows","scope":null,"confine":false,"tables":{"version":1,"projects":[{"id":1,"parquet":[],"logs":[],"sessions":[],"session_gaps":[],"identities":"","aliases":""}],"rules":{"events":[],"attributes":[]}}}

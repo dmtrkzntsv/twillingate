@@ -52,6 +52,20 @@ describe('useWidgetEdits', () => {
     expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboards'] })
   })
 
+  it('never sends sql to a server with no external SQL engine, a remote table included', async () => {
+    client.setQueryData(['components'], { source_types: ['md', 'query'], components: [] })
+    const add = vi.spyOn(endpoints, 'addWidget').mockResolvedValue(visits)
+    const update = vi.spyOn(endpoints, 'updateWidget').mockResolvedValue(visits)
+    const { result } = renderHook(() => useWidgetEdits(), { wrapper })
+    const remote: Draft = { ...draft, component: 'table', props: { mode: 'remote' }, code: 'query', query: '{"query":{}}' }
+
+    await act(() => result.current.add(3, remote))
+    expect(add.mock.calls[0][1].source).toEqual({ type: 'query', content: '{"query":{}}' })
+
+    await act(() => result.current.update(visits, { ...remote, title: 'Visits', sql: 'SELECT 2' }))
+    expect(update.mock.calls[0][1]).toHaveProperty('source', { type: 'query', content: '{"query":{}}' })
+  })
+
   it('add throws a refusal for the editor to show, without a toast', async () => {
     vi.spyOn(endpoints, 'addWidget').mockRejectedValue(new ApiError(400, 'no such view'))
     const { result } = renderHook(() => useWidgetEdits(), { wrapper })

@@ -159,18 +159,22 @@ type Config struct {
 	IngestLateDays int
 	Database       string
 	// EventsDir (EVENTS_DIR) holds the event files (internal/archive):
-	// absolute, beside the database's file as raw/ unless set. The engine
-	// child may read and write all of it, so it never holds the database.
+	// absolute, beside the database's file as raw/ unless set. It never
+	// holds the database: the external SQL engine reads it whole.
 	EventsDir string
-	Geo       string
-	IngestURL string
-	Log       LogConfig
-	Buffer    BufferConfig
-	Retention Retention
-	Forms     FormsConfig
-	Reporting ReportingConfig
-	Engine    EngineConfig
-	Console   ConsoleConfig
+	// SQLEngineSocket (SQL_ENGINE_SOCKET) is the Unix socket of the
+	// external SQL engine that answers widget SQL and the query tool's
+	// sql (package sqlengine); "" means none, and SQL is refused.
+	SQLEngineSocket string
+	Geo             string
+	IngestURL       string
+	Log             LogConfig
+	Buffer          BufferConfig
+	Retention       Retention
+	Forms           FormsConfig
+	Reporting       ReportingConfig
+	Engine          EngineConfig
+	Console         ConsoleConfig
 }
 
 // Load builds the configuration from the process environment.
@@ -297,6 +301,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		QueryMaxRows: e.num("CONSOLE_QUERY_ROWS_MAX", 1000),
 	}
 	c.Console.DBPath = strings.TrimPrefix(c.Console.Database, "sqlite://")
+	c.SQLEngineSocket = e.str("SQL_ENGINE_SOCKET", "")
 	c.EventsDir = e.str("EVENTS_DIR", filepath.Join(filepath.Dir(strings.TrimPrefix(c.Database, "sqlite://")), "raw"))
 	if abs, err := filepath.Abs(c.EventsDir); err == nil {
 		c.EventsDir = abs
@@ -366,7 +371,7 @@ func (c *Config) validate() error {
 			continue
 		}
 		if rel, err := filepath.Rel(c.EventsDir, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("config: EVENTS_DIR (%s) must not hold the database (%s): the engine can read and write everything in it", c.EventsDir, path)
+			return fmt.Errorf("config: EVENTS_DIR (%s) must not hold the database (%s): the SQL engine reads everything in it", c.EventsDir, path)
 		}
 	}
 	if c.IngestLateDays < 1 {

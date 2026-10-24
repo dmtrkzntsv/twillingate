@@ -98,6 +98,9 @@ func (s *Service) validateWidget(ctx context.Context, comps map[string]Component
 			"component %s does not exist; list_components names the ones there are", w.Component)
 	}
 	st, ok := s.sources[w.SourceType]
+	if !ok && w.SourceType == "sql" {
+		return ErrSQLEngine
+	}
 	if !ok {
 		return store.Refuse(store.ErrInvalid,
 			"source type %s does not exist; there are %s", w.SourceType, joinAnd(sortedSourceNames(s.sources)))

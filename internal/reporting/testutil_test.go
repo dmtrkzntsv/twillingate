@@ -25,7 +25,7 @@ func newTestService(t *testing.T) *Service {
 func newTestServiceOpts(t *testing.T, opt Options, maxRows int) (*Service, store.Store) {
 	t.Helper()
 	st, files := newTestStoreAndFiles(t, maxRows)
-	svc := New(st, files, opt)
+	svc := newFilesService(st, files, opt)
 	syncReporting(t, svc, nil)
 	return svc, st
 }

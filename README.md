@@ -24,7 +24,7 @@ wires it into your code itself.
 
 **Then ask it for the numbers.** "How many visitors did myapp get last week, by
 country" beats clicking through a dashboard, and read tools plus a guarded SQL
-`query` tool answer it. If you like charts, the same agent builds dashboards,
+`query` tool (SQL needs an external SQL engine, see [deployment](docs/deployment.md#external-sql-engine)) answer it. If you like charts, the same agent builds dashboards,
 served at `/app/` on the console beside MCP and REST.
 
 ## Run it
@@ -105,7 +105,7 @@ install too.
 ```bash
 make check       # what PR CI runs: vet + coverage gate
 make test        # the full suite under -race (slow; the release runs it)
-make build       # single binary (needs Go, Node 22 and a C toolchain: it builds web/ first, and DuckDB links through cgo)
+make build       # single binary (needs Go, Node 22 and a C toolchain: it builds web/ first, and DuckDB still links through cgo for `engine -check`)
 make run         # local server on 127.0.0.1:8080 with a dev project
 make smoke       # boot the real binary, POST a batch, verify rows land
 make seed-demo   # 180 days of demo traffic in local/twillingate.db

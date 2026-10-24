@@ -27,7 +27,8 @@ import { projectsQuery, schemaViewsQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import { carryProps, fieldsOf, needsHint } from '@/lib/props-form'
 import { parseSchemaViews } from '@/lib/schema-views'
-import { codeTypesOf, draftOf, isDirty, paramsOf, sourceOf, sourceTypeOf, withCode, withComponent, type CodeType, type Draft } from '@/lib/widget-draft'
+import { codeTypesOf, draftOf, isDirty, paramsOf, sourceOf, sourceTypeOf, toQuery, withCode, withComponent, type CodeType, type Draft } from '@/lib/widget-draft'
+import { useSqlAvailable } from '@/hooks/use-sql-available'
 import { iconOf } from './component-icons'
 import PropsForm, { SettingRow } from './PropsForm'
 import Splitter from './Splitter'
@@ -112,9 +113,16 @@ const codeLabel: Record<CodeType, string> = { sql: 'SQL', query: 'Query' }
 
 const known = (c: string | null): c is string => c !== null && Object.hasOwn(widgets, c)
 
+/** What the editor says of a SQL widget on a server with no external SQL engine. */
+export const SQL_ENGINE_NOTICE =
+  'This widget is SQL, which needs the external SQL engine. Convert it to a structured query to edit it here.'
+
+/** The note beside a table's mode when the server has no external SQL engine. */
+const REMOTE_NEEDS_SQL = { mode: { options: ['remote'], note: 'A remote table needs the external SQL engine' } }
+
 /** The draft an editor opens on; a removed component opens with the visualization empty (spec D16). */
-function startDraft(widget?: Widget): Draft {
-  const d = draftOf(widget)
+function startDraft(widget: Widget | undefined, sql: boolean): Draft {
+  const d = draftOf(widget, sql)
   return known(d.component) ? d : { ...d, component: null }
 }
 
@@ -132,11 +140,18 @@ export default function WidgetEditor(p: WidgetEditorProps) {
 }
 
 function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorProps) {
-  const [draft, setDraft] = useState(() => startDraft(widget))
+  const engine = useSqlAvailable()
+  const [draft, setDraft] = useState(() => startDraft(widget, engine.sql))
+  // A new draft started on sql while the server's source types loaded, and it takes none: it moves to query.
+  if (!engine.sql && !widget && draft.code === 'sql') setDraft(withCode(draft, 'query'))
   const edit = (patch: Partial<Draft>) => setDraft((d) => ({ ...d, ...patch }))
+  // A stored SQL widget on a server with no external SQL engine: shown, not edited or run, until converted.
+  const locked = !engine.sql && widget?.source.type === 'sql' && draft.code === 'sql'
+  const sql = engine.sql || locked
 
   const projects = useQuery(projectsQuery)
-  const schema = useQuery(schemaViewsQuery)
+  // The SQL editor's completion, only where SQL can be written.
+  const schema = useQuery({ ...schemaViewsQuery, enabled: engine.known && engine.sql })
   const tables = useMemo(() => (schema.data ? parseSchemaViews(schema.data) : undefined), [schema.data])
   const live = (projects.data?.projects ?? []).filter((x) => !x.archived)
   const [picked, setPicked] = useState(defaults.projectId)
@@ -169,22 +184,22 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
 
   const component = known(draft.component) ? draft.component : null
   const module = component ? widgets[component] : undefined
-  const type = sourceTypeOf({ ...draft, component })
+  const type = sourceTypeOf({ ...draft, component }, sql)
   const markdown = type === 'md'
-  const codes = codeTypesOf(component, draft.props)
+  const codes = locked ? [] : codeTypesOf(component, draft.props, engine.sql)
   // The code the run reads: the query's JSON or the SQL.
   const code = type === 'query' ? draft.query : draft.sql
   const codeType: CodeType = type === 'query' ? 'query' : 'sql'
-  const uses = paramsOf({ ...draft, component })
+  const uses = paramsOf({ ...draft, component }, sql)
   // The dashboard hands over its range resolved; a preset picked here is resolved now.
   const span = range.from && range.to ? { from: range.from, to: range.to } : resolve(range.range, defaults.timezone, new Date())
   // What a run reads: a change to any of it after the run dims its rows.
   const runKey = JSON.stringify([codeType, code, uses.project ? projectId : null, uses.range ? span : null])
   const stale = ranWith !== null && ranWith.key !== runKey
   const last = ranOf(run)?.result
-  // What an automatic run reads; null while there is nothing it could run.
+  // What an automatic run reads; null while there is nothing it could run. SQL waits to know the server takes it.
   const autoKey =
-    component && !markdown && code.trim() !== '' && (!uses.project || projectId !== undefined)
+    component && !markdown && !locked && (engine.known || codeType !== 'sql') && code.trim() !== '' && (!uses.project || projectId !== undefined)
       ? JSON.stringify([component, codeType, draft.props, uses.project ? projectId : null, uses.range ? span : null])
       : null
   const ranAuto = useRef<string | null>(null)
@@ -194,7 +209,7 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
   const autoDue = autoKey !== null && autoKey !== ranAuto.current && (everRan ? ranWith.sql === code : editing)
 
   const runQuery = async (auto = false) => {
-    if (!component || markdown) return
+    if (!component || markdown || locked) return
     // Checked again as it fires: a run since it was scheduled may have made it moot.
     if (auto && !autoDue) return
     const n = ++latest.current
@@ -231,12 +246,18 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
     return () => clearTimeout(t)
   }, [autoDue, autoKey, everRan])
 
-  const dirty = isDirty(widget, draft)
-  const hasSource = (sourceOf(draft)?.content.trim() ?? '') !== ''
-  const canSave = component !== null && propsValid && !saving && (widget ? dirty : hasSource)
+  const dirty = isDirty(widget, draft, engine.sql)
+  const hasSource = (sourceOf(draft, sql)?.content.trim() ?? '') !== ''
+  const canSave = component !== null && !locked && propsValid && !saving && (widget ? dirty : hasSource)
 
   const save = async () => {
     if (!canSave || savingNow.current) return
+    // A draft that would be sql (a remote table typed into the props JSON) is
+    // never sent to a server with no external SQL engine.
+    if (!engine.sql && sourceOf(draft)?.type === 'sql') {
+      setSaveError('SQL needs an external SQL engine (SQL_ENGINE_SOCKET)')
+      return
+    }
     savingNow.current = true
     setSaving(true)
     setSaveError(null)
@@ -353,6 +374,7 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
               <div className={toolbar}>
                 <span className="mr-auto text-sm font-medium">Preview</span>
                 <Select
+                  disabled={locked}
                   value={component ?? ''}
                   onValueChange={(next) =>
                     setDraft((d) => withComponent(d, next, carryProps(d.props, widgets[next].contract.props)))
@@ -386,7 +408,14 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
               <div className={bar}>
                 <span className="mr-auto text-sm font-medium">Settings</span>
                 {hasFields && (
-                  <Button type="button" variant="ghost" size="sm" className="-mr-2 h-7 text-muted-foreground" onClick={() => setRaw(!raw)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="-mr-2 h-7 text-muted-foreground"
+                    disabled={locked}
+                    onClick={() => setRaw(!raw)}
+                  >
                     <BracesIcon />
                     {raw ? 'Edit props as a form' : 'Edit props as JSON'}
                   </Button>
@@ -422,6 +451,8 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
                       columns={last?.columns ?? []}
                       onValidity={setPropsValid}
                       raw={raw && hasFields}
+                      unavailable={engine.sql ? undefined : REMOTE_NEEDS_SQL}
+                      disabled={locked}
                     />
                   )}
                 </div>
@@ -455,7 +486,7 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
                   <>
                     {projectPicker}
                     {uses.range && <RangeSwitcher value={range} timezone={defaults.timezone} onChange={setRange} />}
-                    <Button type="button" variant="secondary" size="sm" disabled={!component} onClick={() => void runQuery()}>
+                    <Button type="button" variant="secondary" size="sm" disabled={!component || locked} onClick={() => void runQuery()}>
                       <PlayIcon />
                       Run query <Kbd className="bg-background/60">{RUN_KEYS}</Kbd>
                     </Button>
@@ -468,8 +499,9 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
                     <CodeEditor flush language="markdown" label="Markdown" value={draft.markdown} onChange={(md) => edit({ markdown: md })} />
                   ) : (
                     <CodeEditor
-                      key={codeType}
+                      key={`${codeType}:${locked}`}
                       flush
+                      readOnly={locked}
                       language={codeType === 'query' ? 'json' : 'sql'}
                       label={codeLabel[codeType]}
                       value={code}
@@ -486,7 +518,17 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
                     <span className="mr-auto text-sm font-medium">Rows</span>
                     {component && <RunStatus state={run} stale={stale} />}
                   </div>
-                  {component ? (
+                  {locked ? (
+                    <Alert className="rounded-none border-x-0 border-t-0 px-4 sm:px-6">
+                      <TriangleAlertIcon />
+                      <AlertDescription className="break-words">
+                        <p>{SQL_ENGINE_NOTICE}</p>
+                        <Button type="button" variant="secondary" size="sm" className="mt-1" onClick={() => setDraft(toQuery)}>
+                          Convert to Query
+                        </Button>
+                      </AlertDescription>
+                    </Alert>
+                  ) : component ? (
                     <Rows state={run} stale={stale} />
                   ) : (
                     <p className="px-4 py-4 text-sm text-muted-foreground sm:px-6">Choose a visualization to run</p>

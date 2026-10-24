@@ -13,10 +13,9 @@ import (
 	"testing"
 	"testing/fstest"
 
-	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
 // testManifest reads testdata/components.json, the same five-component
@@ -98,7 +97,7 @@ func TestMigrateFromFirstRunInsertsDashboards(t *testing.T) {
 	ctx := context.Background()
 	system, _ := systemFSCopy(t)
 
-	if err := migrateFrom(ctx, st, files, system, testManifest(t)); err != nil {
+	if err := migrateFrom(ctx, st, files, files.options(Options{}), system, testManifest(t)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -144,7 +143,7 @@ func TestMigrateFromFirstRunInsertsDashboards(t *testing.T) {
 func TestMigrateReleaseBuiltinsInSidebarAndProjectTabs(t *testing.T) {
 	st, files := newTestStoreAndFiles(t, 1000)
 	ctx := context.Background()
-	if err := Migrate(ctx, st, files); err != nil {
+	if err := Migrate(ctx, st, files, files.options(Options{})); err != nil {
 		t.Fatal(err)
 	}
 	ds, err := st.ListDashboards(ctx)
@@ -169,12 +168,12 @@ func TestMigrateFromSecondRunWithSameInputsWritesNothing(t *testing.T) {
 	system, _ := systemFSCopy(t)
 	manifest := testManifest(t)
 
-	if err := migrateFrom(ctx, st, files, system, manifest); err != nil {
+	if err := migrateFrom(ctx, st, files, files.options(Options{}), system, manifest); err != nil {
 		t.Fatal(err)
 	}
 	before := reportingMigrationCount(t, db)
 
-	if err := migrateFrom(ctx, st, files, system, manifest); err != nil {
+	if err := migrateFrom(ctx, st, files, files.options(Options{}), system, manifest); err != nil {
 		t.Fatal(err)
 	}
 	after := reportingMigrationCount(t, db)
@@ -191,7 +190,7 @@ func TestMigrateFromChangedWidgetKeepsIDBumpsCountKeepsView(t *testing.T) {
 	system, dir := systemFSCopy(t)
 	manifest := testManifest(t)
 
-	if err := migrateFrom(ctx, st, files, system, manifest); err != nil {
+	if err := migrateFrom(ctx, st, files, files.options(Options{}), system, manifest); err != nil {
 		t.Fatal(err)
 	}
 	before := reportingMigrationCount(t, db)
@@ -221,7 +220,7 @@ func TestMigrateFromChangedWidgetKeepsIDBumpsCountKeepsView(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := migrateFrom(ctx, st, files, system, manifest); err != nil {
+	if err := migrateFrom(ctx, st, files, files.options(Options{}), system, manifest); err != nil {
 		t.Fatal(err)
 	}
 	after := reportingMigrationCount(t, db)
@@ -261,7 +260,7 @@ func TestMigrateFromRemovedComponentNullsUserWidget(t *testing.T) {
 	ctx := context.Background()
 	system, _ := systemFSCopy(t)
 
-	if err := migrateFrom(ctx, st, files, system, testManifest(t)); err != nil {
+	if err := migrateFrom(ctx, st, files, files.options(Options{}), system, testManifest(t)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -276,7 +275,7 @@ func TestMigrateFromRemovedComponentNullsUserWidget(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := migrateFrom(ctx, st, files, system, manifestWithout(t, "pie")); err != nil {
+	if err := migrateFrom(ctx, st, files, files.options(Options{}), system, manifestWithout(t, "pie")); err != nil {
 		t.Fatal(err)
 	}
 
@@ -296,7 +295,7 @@ func TestMigrateFromInvalidSystemWidgetFailsAndWritesNothing(t *testing.T) {
 	system, dir := systemFSCopy(t)
 	manifest := testManifest(t)
 
-	if err := migrateFrom(ctx, st, files, system, manifest); err != nil {
+	if err := migrateFrom(ctx, st, files, files.options(Options{}), system, manifest); err != nil {
 		t.Fatal(err)
 	}
 	goodHash, err := st.ReportingHash(ctx)
@@ -310,7 +309,7 @@ func TestMigrateFromInvalidSystemWidgetFailsAndWritesNothing(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err = migrateFrom(ctx, st, files, system, manifest)
+	err = migrateFrom(ctx, st, files, files.options(Options{}), system, manifest)
 	if err == nil {
 		t.Fatal("want error: system widget missing a required column")
 	}
@@ -341,20 +340,25 @@ func TestMigrateFromInvalidSystemWidgetFailsAndWritesNothing(t *testing.T) {
 	}
 }
 
-// countingFiles is Files that counts its queries and, with err set, fails
-// each with it rather than run it.
+// countingFiles is the test files' SQL that counts its queries and, with
+// err set, fails each with it rather than run it.
 type countingFiles struct {
-	Files
+	*testFiles
 	err     error
 	queries int
 }
 
-func (f *countingFiles) Query(ctx context.Context, q archive.Scoped) (engine.Result, error) {
+func (f *countingFiles) Query(ctx context.Context, req sqlengine.Request) (sqlengine.Result, error) {
 	f.queries++
 	if f.err != nil {
-		return engine.Result{}, f.err
+		return sqlengine.Result{}, f.err
 	}
-	return f.Files.Query(ctx, q)
+	return f.testFiles.Query(ctx, req)
+}
+
+// engineErr is the engine's answer of kind k.
+func engineErr(k sqlengine.Kind, msg string) error {
+	return &sqlengine.Error{Status: k.Status(), Kind: k, Message: msg}
 }
 
 // TestMigrateFromResourceFailureSyncsAndChecksAgain: a system widget's
@@ -367,17 +371,21 @@ func TestMigrateFromResourceFailureSyncsAndChecksAgain(t *testing.T) {
 	manifest := testManifest(t)
 	for name, cause := range map[string]error{
 		"timeout":            context.DeadlineExceeded,
-		"out of memory":      &engine.QueryError{Msg: "Out of Memory Error: failed to allocate data of size 64.0 MiB"},
-		"logs out of memory": fmt.Errorf("%w: %w", archive.ErrLoadingLogs, &engine.QueryError{Msg: "Out of Memory Error: x"}),
-		"child exited":       engine.ErrChildExited,
+		"engine's timeout":   engineErr(sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms"),
+		"out of memory":      engineErr(sqlengine.KindOutOfMemory, "Out of Memory Error: failed to allocate data of size 64.0 MiB"),
+		"logs out of memory": engineErr(sqlengine.KindOutOfMemoryLoadingLog, "Out of Memory Error: x"),
+		"child exited":       engineErr(sqlengine.KindExited, "engine: child exited"),
+		"busy":               engineErr(sqlengine.KindBusy, "no free slot; retry later"),
+		"internal":           engineErr(sqlengine.KindInternal, "boom"),
+		"unavailable":        fmt.Errorf("%w: dial unix: no such file", sqlengine.ErrUnavailable),
 	} {
 		t.Run(name, func(t *testing.T) {
 			st, files := newTestStoreAndFiles(t, 1000)
 			system, dir := systemFSCopy(t)
 			addSystemWidget(t, dir, "visits", "SELECT 2 AS value")
 
-			failing := &countingFiles{Files: files, err: cause}
-			err := migrateFrom(ctx, st, failing, system, manifest)
+			failing := &countingFiles{testFiles: files, err: cause}
+			err := migrateFrom(ctx, st, failing, files.options(Options{}), system, manifest)
 			if !errors.Is(err, ErrUnchecked) || !strings.Contains(err.Error(), "widget users") {
 				t.Fatalf("err = %v, want ErrUnchecked naming widget users", err)
 			}
@@ -397,8 +405,8 @@ func TestMigrateFromResourceFailureSyncsAndChecksAgain(t *testing.T) {
 			}
 
 			// The next run checks every widget again, and records the hash.
-			working := &countingFiles{Files: files}
-			if err := migrateFrom(ctx, st, working, system, manifest); err != nil {
+			working := &countingFiles{testFiles: files}
+			if err := migrateFrom(ctx, st, working, files.options(Options{}), system, manifest); err != nil {
 				t.Fatal(err)
 			}
 			if working.queries != 2 {
@@ -424,7 +432,7 @@ func TestMigrateFromWithoutFilesRunsNoQuery(t *testing.T) {
 	system, dir := systemFSCopy(t)
 	addSystemWidget(t, dir, "visits", "SELECT 2 AS value")
 
-	if err := migrateFrom(ctx, st, nil, system, manifest); err != nil {
+	if err := migrateFrom(ctx, st, nil, Options{}, system, manifest); err != nil {
 		t.Fatalf("no files: %v, want the release synced", err)
 	}
 	ws, err := st.ListWidgets(ctx, 1)
@@ -439,8 +447,8 @@ func TestMigrateFromWithoutFilesRunsNoQuery(t *testing.T) {
 		t.Fatalf("ReportingHash = %q, %v; want it marked unchecked", hash, err)
 	}
 
-	working := &countingFiles{Files: files}
-	if err := migrateFrom(ctx, st, working, system, manifest); err != nil {
+	working := &countingFiles{testFiles: files}
+	if err := migrateFrom(ctx, st, working, files.options(Options{}), system, manifest); err != nil {
 		t.Fatal(err)
 	}
 	if working.queries != 2 {
@@ -453,7 +461,7 @@ func TestMigrateFromWithoutFilesRunsNoQuery(t *testing.T) {
 	st2, _ := newTestStoreAndFiles(t, 1000)
 	broken, dir2 := systemFSCopy(t)
 	addSystemWidget(t, dir2, "broken", "SELECT ? AS value")
-	err = migrateFrom(ctx, st2, nil, broken, manifest)
+	err = migrateFrom(ctx, st2, nil, Options{}, broken, manifest)
 	if !errors.Is(err, store.ErrInvalid) || !strings.Contains(err.Error(), "widget broken") {
 		t.Errorf("no files, refused SQL: err = %v, want widget broken refused", err)
 	}
@@ -467,13 +475,13 @@ func TestMigrateFromResourceFailureStillRefusesSQL(t *testing.T) {
 	st, files := newTestStoreAndFiles(t, 1000)
 	system, dir := systemFSCopy(t)
 	addSystemWidget(t, dir, "visits", "SELECT ? AS value")
-	err := migrateFrom(ctx, st, &countingFiles{Files: files, err: context.DeadlineExceeded}, system, testManifest(t))
+	err := migrateFrom(ctx, st, &countingFiles{testFiles: files, err: context.DeadlineExceeded}, files.options(Options{}), system, testManifest(t))
 	if errors.Is(err, ErrUnchecked) || !errors.Is(err, store.ErrInvalid) || !strings.Contains(err.Error(), "widget visits") {
 		t.Errorf("after a timeout: err = %v, want widget visits refused", err)
 	}
 
-	err = migrateFrom(ctx, st, &countingFiles{Files: files,
-		err: &engine.QueryError{Msg: "Binder Error: Referenced column \"nope\" not found"}}, system, testManifest(t))
+	err = migrateFrom(ctx, st, &countingFiles{testFiles: files,
+		err: engineErr(sqlengine.KindSQL, "Binder Error: Referenced column \"nope\" not found")}, files.options(Options{}), system, testManifest(t))
 	if errors.Is(err, ErrUnchecked) || !errors.Is(err, store.ErrInvalid) || !strings.Contains(err.Error(), "widget users") {
 		t.Errorf("DuckDB's refusal: err = %v, want widget users refused", err)
 	}
@@ -503,7 +511,7 @@ func TestMigrateFromSystemDashboardsSortByID(t *testing.T) {
 	ctx := context.Background()
 	system, _ := systemFSCopy(t)
 
-	if err := migrateFrom(ctx, st, files, system, testManifest(t)); err != nil {
+	if err := migrateFrom(ctx, st, files, files.options(Options{}), system, testManifest(t)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -545,7 +553,7 @@ func TestMigrateFromAcceptsUnregisteredTypeFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := migrateFrom(ctx, st, files, system, bad); err == nil {
+	if err := migrateFrom(ctx, st, files, files.options(Options{}), system, bad); err == nil {
 		t.Fatal("want error: accepts names an unregistered source type")
 	}
 
@@ -592,7 +600,7 @@ func TestMigrateFromGroupNamingMissingIDFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := migrateFrom(ctx, st, files, system, testManifest(t))
+	err := migrateFrom(ctx, st, files, files.options(Options{}), system, testManifest(t))
 	if err == nil {
 		t.Fatal("want error: group names a dashboard not in the release")
 	}
@@ -621,7 +629,7 @@ func TestMigrateFromGroupNamingATabFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := migrateFrom(ctx, st, files, system, testManifest(t))
+	err := migrateFrom(ctx, st, files, files.options(Options{}), system, testManifest(t))
 	if err == nil {
 		t.Fatal("want error: group names a dashboard that is itself in another group")
 	}
@@ -652,7 +660,7 @@ func TestMigrateFromNonContiguousGroupFails(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := migrateFrom(ctx, st, files, system, testManifest(t))
+	err := migrateFrom(ctx, st, files, files.options(Options{}), system, testManifest(t))
 	if err == nil {
 		t.Fatal("want error: group 1 is not contiguous")
 	}
@@ -675,7 +683,7 @@ func TestMigrateFromRefusesEmptyRange(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := migrateFrom(ctx, st, files, system, testManifest(t))
+	err := migrateFrom(ctx, st, files, files.options(Options{}), system, testManifest(t))
 	if err == nil {
 		t.Fatal("want error: dashboard.json with no range")
 	}
@@ -752,7 +760,7 @@ func TestMigrateSystemWidgetSourceType(t *testing.T) {
 	system, dir := systemFSCopy(t)
 	manifest := manifestWithQueryStat(t)
 
-	if err := migrateFrom(ctx, st, files, system, manifest); err != nil {
+	if err := migrateFrom(ctx, st, files, files.options(Options{}), system, manifest); err != nil {
 		t.Fatal(err)
 	}
 	users := func(dashboardID int64) store.Widget {
@@ -773,7 +781,7 @@ func TestMigrateSystemWidgetSourceType(t *testing.T) {
 	if before.SourceType != "sql" {
 		t.Fatalf("users source type = %s before the upgrade, want sql", before.SourceType)
 	}
-	svc := New(st, files, Options{})
+	svc := newFilesService(st, files, Options{})
 	cp, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -786,7 +794,7 @@ func TestMigrateSystemWidgetSourceType(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "retention", "users.query"), []byte(query), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := migrateFrom(ctx, st, files, system, manifest); err != nil {
+	if err := migrateFrom(ctx, st, files, files.options(Options{}), system, manifest); err != nil {
 		t.Fatal(err)
 	}
 

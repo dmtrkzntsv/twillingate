@@ -42,6 +42,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/api"
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
 	"github.com/dmtrkzntsv/twillingate/internal/config/configtest"
@@ -217,7 +218,7 @@ func TestMeasureDashboards(t *testing.T) {
 	}
 	eng, reader := newEngine(1)
 	began = time.Now()
-	if err := reporting.Migrate(ctx, st, newWidgetFiles(cfg, reader, reg)); err != nil {
+	if err := reporting.Migrate(ctx, st, archivetest.ServeSQL(t, cfg.EventsDir, eng).Client(t), api.WidgetOptions(cfg, reg, reporting.Options{})); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("reporting.Migrate (first query builds the tables, 59 widgets checked at LIMIT 0): %v", time.Since(began).Round(time.Millisecond))
@@ -275,7 +276,7 @@ func TestMeasureDashboards(t *testing.T) {
 				{"all at once, as a browser sends them (engine parallel 1; the engine's default at 2 threads)", 1, len(sqlWidgets)},
 			} {
 				eng, reader := newEngine(mode.parallel)
-				svc := reporting.New(st, newWidgetFiles(cfg, reader, reg), reporting.Options{})
+				svc := reporting.New(st, archivetest.ServeSQL(t, cfg.EventsDir, eng).Client(t), api.WidgetOptions(cfg, reg, reporting.Options{}))
 				load := loadAvg()
 				began := time.Now()
 				if _, err := reader.Query(ctx, "SELECT count(*) FROM events", 0, archive.Rules{}); err != nil {

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -22,17 +23,29 @@ type presence interface {
 }
 
 // bothPresence asks the native filePresence and the SQL reference, and
-// fails the test unless they agree.
+// fails the test unless they agree, and agree with the reference's
+// answer frozen in testdata/<Test>.golden.json, by the order asked (the
+// files and rules change between asks).
 type bothPresence struct {
 	t        *testing.T
 	nat, sql presence
+	asked    *int
+}
+
+// frozen is the golden answer to the next question, what, the SQL
+// reference's (want) checked against it.
+func (b bothPresence) frozen(what string, want bool) bool {
+	b.t.Helper()
+	*b.asked++
+	return frozen(b.t, fmt.Sprintf("%03d %s", *b.asked, what), want)
 }
 
 func (b bothPresence) HasEvents(ctx context.Context, projectID int64, family store.Family, name string) (bool, error) {
 	got, err := b.nat.HasEvents(ctx, projectID, family, name)
 	want, werr := b.sql.HasEvents(ctx, projectID, family, name)
-	if err != nil || werr != nil || got != want {
-		b.t.Errorf("HasEvents(%d, %s, %q): native %v, %v; SQL %v, %v", projectID, family, name, got, err, want, werr)
+	what := fmt.Sprintf("HasEvents(%d, %s, %q)", projectID, family, name)
+	if err != nil || werr != nil || got != want || got != b.frozen(what, want) {
+		b.t.Errorf("%s: native %v, %v; SQL %v, %v", what, got, err, want, werr)
 	}
 	return got, err
 }
@@ -40,8 +53,9 @@ func (b bothPresence) HasEvents(ctx context.Context, projectID int64, family sto
 func (b bothPresence) HasAttribute(ctx context.Context, projectID int64, key string) (bool, error) {
 	got, err := b.nat.HasAttribute(ctx, projectID, key)
 	want, werr := b.sql.HasAttribute(ctx, projectID, key)
-	if err != nil || werr != nil || got != want {
-		b.t.Errorf("HasAttribute(%d, %q): native %v, %v; SQL %v, %v", projectID, key, got, err, want, werr)
+	what := fmt.Sprintf("HasAttribute(%d, %q)", projectID, key)
+	if err != nil || werr != nil || got != want || got != b.frozen(what, want) {
+		b.t.Errorf("%s: native %v, %v; SQL %v, %v", what, got, err, want, werr)
 	}
 	return got, err
 }
@@ -76,7 +90,7 @@ func presenceFixture(t *testing.T) (*widgetsFixture, presence, func(id string, p
 		}
 	}
 	nat := &filePresence{nat: native.New(native.Options{Dir: f.cfg.EventsDir}), reg: f.reg}
-	return f, bothPresence{t: t, nat: nat, sql: &sqlPresence{reader: reader, reg: f.reg}}, send
+	return f, bothPresence{t: t, nat: nat, sql: &sqlPresence{reader: reader, reg: f.reg}, asked: new(int)}, send
 }
 
 // TestFilePresenceAppliesRules: the files answer through the registry's
@@ -198,9 +212,13 @@ func TestFilePresenceAttributeSpellings(t *testing.T) {
 	if _, err := f.ops.RenameAttribute(ctx, "test", 1, "plan", "level"); err != nil {
 		t.Fatal(err)
 	}
-	for key, want := range map[string]bool{"plan": false, "Plan": false, "level": true, "LEVEL": true, "fresh": true} {
-		if got, err := p.HasAttribute(ctx, 1, key); err != nil || got != want {
-			t.Errorf("after plan > level: HasAttribute(1, %q) = %v, %v; want %v", key, got, err, want)
+	// In a fixed order: the goldens are kept by the order asked.
+	for _, c := range []struct {
+		key  string
+		want bool
+	}{{"plan", false}, {"Plan", false}, {"level", true}, {"LEVEL", true}, {"fresh", true}} {
+		if got, err := p.HasAttribute(ctx, 1, c.key); err != nil || got != c.want {
+			t.Errorf("after plan > level: HasAttribute(1, %q) = %v, %v; want %v", c.key, got, err, c.want)
 		}
 	}
 }

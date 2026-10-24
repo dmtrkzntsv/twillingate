@@ -209,14 +209,15 @@ test('a table sorts by its header and remembers the sort across a reload', async
     headers: authHeaders(),
     data: {
       title: 'Sort check',
-      range: '7d',
+      range: '30d',
       widgets: [
         {
           component: 'table',
-          title: 'Scores',
+          title: 'Browsers',
+          // Biggest count first: the seed's browsers are not in A-to-Z order by count.
           source: {
-            type: 'sql',
-            content: "SELECT 'b' AS name, 1 AS score UNION ALL SELECT 'a', 3 UNION ALL SELECT 'c', 2",
+            type: 'query',
+            content: JSON.stringify({ query: { kind: 'breakdown', table: 'views', metrics: [{ op: 'count' }], dimensions: ['browser'], limit: 10 } }),
           },
           width: 6,
           height: 6,
@@ -226,15 +227,23 @@ test('a table sorts by its header and remembers the sort across a reload', async
   })
   expect(created.ok(), await created.text()).toBeTruthy()
   const { dashboard_id: id } = (await created.json()) as { dashboard_id: number }
+  const projects = await request.get('/api/projects', { headers: authHeaders() })
+  const dev = ((await projects.json()) as { projects: { project_id: number; name: string }[] }).projects.find((x) => x.name === 'dev')
+  expect(dev, 'no seeded dev project').toBeDefined()
 
   await login(page)
-  await page.goto(`/app/dashboards/${id}`)
+  await page.goto(`/app/dashboards/${id}?project=${dev!.project_id}`)
   const names = page.locator('tbody tr td:first-child')
-  await expect(names).toHaveText(['b', 'a', 'c'])
+  await expect(names.first()).toBeVisible()
+  const byCount = await names.allTextContents()
+  const aToZ = [...byCount].sort()
+  expect(byCount.length, 'the seed has several browsers').toBeGreaterThan(2)
+  expect(byCount, 'the query order is by count, not A to Z').not.toEqual(aToZ)
 
-  await page.getByRole('button', { name: 'score', exact: true }).click()
-  await expect(names).toHaveText(['a', 'c', 'b'])
-  await expect(page.getByRole('columnheader', { name: 'score', exact: true })).toHaveAttribute('aria-sort', 'descending')
+  // Text sorts A to Z on the first click.
+  await page.getByRole('button', { name: 'browser', exact: true }).click()
+  await expect(names).toHaveText(aToZ)
+  await expect(page.getByRole('columnheader', { name: 'browser', exact: true })).toHaveAttribute('aria-sort', 'ascending')
 
   // Kept by the card, with the filters, under the widget's own key.
   const stored = await page.evaluate(() =>
@@ -242,10 +251,10 @@ test('a table sorts by its header and remembers the sort across a reload', async
       .filter((k) => k.startsWith('twillingate.widget.'))
       .map((k) => [k, localStorage.getItem(k)])
   )
-  expect(stored).toEqual([[expect.stringMatching(/\.view$/), expect.stringContaining('"sort":{"column":"score","dir":"desc"}')]])
+  expect(stored).toEqual([[expect.stringMatching(/\.view$/), expect.stringContaining('"sort":{"column":"browser","dir":"asc"}')]])
 
   await page.reload()
-  await expect(names).toHaveText(['a', 'c', 'b'])
+  await expect(names).toHaveText(aToZ)
 })
 
 test('the attribute table filters and lists each value once', async ({ page, request }) => {

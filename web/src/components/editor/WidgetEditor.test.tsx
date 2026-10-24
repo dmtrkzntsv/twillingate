@@ -8,9 +8,22 @@ import { componentIcons } from './component-icons'
 import WidgetEditor, { shouldKeepOpenOnEscape } from './WidgetEditor'
 
 vi.mock('./CodeEditor', () => ({
-  default: ({ value, onChange, label, onRun }: { value: string; onChange: (v: string) => void; label: string; onRun?: () => void }) => (
+  default: ({
+    value,
+    onChange,
+    label,
+    onRun,
+    readOnly,
+  }: {
+    value: string
+    onChange: (v: string) => void
+    label: string
+    onRun?: () => void
+    readOnly?: boolean
+  }) => (
     <textarea
       aria-label={label}
+      readOnly={readOnly}
       value={value}
       onChange={(e) => onChange(e.target.value)}
       onKeyDown={(e) => e.key === 'Enter' && e.metaKey && onRun?.()}
@@ -45,6 +58,7 @@ beforeEach(() => {
   vi.spyOn(endpoints, 'schemaViews').mockResolvedValue('  v_views_daily(project_id, day, views)\n')
   // An edit runs its query as it opens: a test that cares about the answer sets its own.
   vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({ columns: [], rows: [], truncated: false, elapsed_ms: 1 })
+  vi.spyOn(endpoints, 'components').mockResolvedValue({ source_types: ['md', 'query', 'sql'], components: [] })
   vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [{ project_id: 1, name: 'Acme', allowed_origins: [] }] } as never)
 })
 
@@ -307,6 +321,97 @@ describe('WidgetEditor', () => {
     expect(await screen.findByRole('heading', { name: 'Hello' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /Run query/ })).toBeNull()
     expect(screen.getByLabelText('Markdown')).toHaveValue('# Hello')
+  })
+})
+
+describe('WidgetEditor with no external SQL engine', () => {
+  beforeEach(() => {
+    vi.spyOn(endpoints, 'components').mockResolvedValue({ source_types: ['md', 'query'], components: [] })
+  })
+
+  it('starts a new widget on Query, offers no SQL and fetches no schema', async () => {
+    const schema = vi.spyOn(endpoints, 'schemaViews')
+    const { onSave } = open()
+    await userEvent.click(screen.getByRole('combobox', { name: 'Visualization' }))
+    await userEvent.click(await screen.findByRole('option', { name: /^stat$/ }))
+    const query = await screen.findByLabelText('Query')
+    expect(JSON.parse((query as HTMLTextAreaElement).value).rename).toEqual({ count: 'value' })
+    expect(screen.queryByRole('button', { name: 'SQL' })).toBeNull()
+    expect(screen.queryByLabelText('SQL')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(onSave).toHaveBeenCalledWith(expect.objectContaining({ code: 'query', component: 'stat' }))
+    expect(schema).not.toHaveBeenCalled()
+  })
+
+  it('offers no remote table, and says why', async () => {
+    open({ widget: { ...line, component: 'table', props: {}, source: { type: 'query', content: '{}' } } })
+    const mode = (await screen.findByRole('combobox', { name: 'mode' })) as HTMLSelectElement
+    expect([...mode.options].map((o) => o.value)).toEqual(['', 'local'])
+    expect(screen.getByText('A remote table needs the external SQL engine')).toBeInTheDocument()
+  })
+
+  it('shows a stored SQL widget read-only with a notice, runs nothing, and converts it to Query', async () => {
+    const preview = vi.spyOn(endpoints, 'previewWidget')
+    const { onSave } = open({ widget: { ...line, props: { curve: 'step' } } })
+    expect(await screen.findByText(/This widget is SQL, which needs the external SQL engine/)).toBeInTheDocument()
+    expect(screen.getByLabelText('SQL')).toHaveValue(line.source.content)
+    expect(screen.getByLabelText('SQL')).toHaveAttribute('readonly')
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Run query/ })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Query' })).toBeNull()
+    // The visualization and props wait for Convert too: nothing that could not be saved.
+    expect(screen.getByRole('combobox', { name: 'Visualization' })).toBeDisabled()
+    expect(screen.getByLabelText('curve')).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Edit props as JSON/ })).toBeDisabled()
+    await new Promise((r) => setTimeout(r, 50))
+    expect(preview).not.toHaveBeenCalled()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Convert to Query' }))
+    const query = screen.getByLabelText('Query') as HTMLTextAreaElement
+    expect(JSON.parse(query.value)).toMatchObject({ query: { kind: 'trend' }, rename: { day: 'x', count: 'y' } })
+    expect(screen.queryByText(/This widget is SQL/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'SQL' })).toBeNull()
+    expect(screen.getByRole('combobox', { name: 'Visualization' })).toBeEnabled()
+    expect(screen.getByLabelText('curve')).toBeEnabled()
+    await waitFor(() => expect(preview).toHaveBeenCalled())
+    expect(preview.mock.calls[0][0].source.type).toBe('query')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({ code: 'query', title: 'Visits', component: 'line', props: { curve: 'step' } }),
+    )
+  })
+})
+
+describe('WidgetEditor saving with no external SQL engine', () => {
+  it('refuses a draft that would be sql, a remote table typed into the props JSON', async () => {
+    vi.spyOn(endpoints, 'components').mockResolvedValue({ source_types: ['md', 'query'], components: [] })
+    const { onSave } = open({ widget: { ...line, component: 'table', props: { mode: 'local' }, source: { type: 'query', content: '{}' } } })
+    await userEvent.click(await screen.findByRole('button', { name: /Edit props as JSON/ }))
+    const json = screen.getByLabelText('Props JSON')
+    await userEvent.clear(json)
+    await userEvent.type(json, '{{"mode":"remote"}')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('SQL needs an external SQL engine (SQL_ENGINE_SOCKET)')).toBeInTheDocument()
+    expect(onSave).not.toHaveBeenCalled()
+  })
+})
+
+describe('WidgetEditor while the source types load', () => {
+  it('treats SQL as available, so nothing flickers on a server with an engine', async () => {
+    vi.spyOn(endpoints, 'components').mockReturnValue(new Promise(() => {}))
+    open({ widget: line })
+    expect(await screen.findByLabelText('SQL')).not.toHaveAttribute('readonly')
+    expect(screen.getByRole('button', { name: 'Query' })).toBeInTheDocument()
+    expect(screen.queryByText(/This widget is SQL/)).toBeNull()
+  })
+
+  it("falls back to the components' own accepts when they fail to load, and then fetches the schema", async () => {
+    vi.spyOn(endpoints, 'components').mockRejectedValue(new Error('down'))
+    const schema = vi.spyOn(endpoints, 'schemaViews')
+    open({ widget: line })
+    await waitFor(() => expect(schema).toHaveBeenCalled())
+    expect(screen.getByRole('button', { name: 'Query' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'SQL' })).toBeInTheDocument()
   })
 })
 

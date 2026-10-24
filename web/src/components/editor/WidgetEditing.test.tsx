@@ -40,6 +40,7 @@ beforeEach(() => {
   vi.restoreAllMocks()
   vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [] })
   vi.spyOn(endpoints, 'schemaViews').mockResolvedValue('')
+  vi.spyOn(endpoints, 'components').mockResolvedValue({ source_types: ['md', 'query'], components: [] })
 })
 
 describe('WidgetEditingProvider', () => {
@@ -50,8 +51,14 @@ describe('WidgetEditingProvider', () => {
     expect(seen.every((v) => v !== null && v === seen[0])).toBe(true)
   })
 
+  it("reads the server's source types before the editor opens, so a new draft never flips once open", () => {
+    renderWrapped(page(true))
+    expect(endpoints.components).toHaveBeenCalledTimes(1)
+  })
+
   it('offers nothing while not enabled', () => {
     renderWrapped(page(false))
+    expect(endpoints.components).not.toHaveBeenCalled()
     expect(seen.every((v) => v === null)).toBe(true)
     expect(screen.queryByRole('button', { name: 'Add widget' })).not.toBeInTheDocument()
   })

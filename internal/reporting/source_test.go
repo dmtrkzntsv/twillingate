@@ -5,51 +5,71 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
-// fakeCall is one Files.Query a fakeFiles saw.
+// fakeCall is one query a fakeFiles saw.
 type fakeCall struct {
+	mode    sqlengine.Mode
 	sql     string
-	args    []engine.Arg
+	args    map[string]string
 	maxRows int
 	scope   bool
 	project int64
 }
 
-// fakeFiles is Files that runs nothing: it records each query and
+// fakeFiles is an engine that runs nothing: it records each query and
 // answers with answer's result (one row of value "1" by default).
 type fakeFiles struct {
 	calls   []fakeCall
-	sample  int64
-	answer  func(sql string, maxRows int) (engine.Result, error)
+	sample  int64 // the one project with files, 0 for none
+	answer  func(sql string, maxRows int) (sqlengine.Result, error)
 	maxRows int
 }
 
-func (f *fakeFiles) Query(_ context.Context, q archive.Scoped) (engine.Result, error) {
-	f.calls = append(f.calls, fakeCall{q.SQL, q.Args, q.MaxRows, q.Scope, q.Project})
-	if f.answer != nil {
-		return f.answer(q.SQL, q.MaxRows)
+func (f *fakeFiles) Query(_ context.Context, req sqlengine.Request) (sqlengine.Result, error) {
+	c := fakeCall{mode: req.Mode, sql: req.SQL, args: req.Args, maxRows: req.MaxRows}
+	if req.Scope != nil {
+		c.scope, c.project = true, *req.Scope
 	}
-	return engine.Result{Columns: []string{"value"}, Rows: [][]any{{"1"}}}, nil
+	f.calls = append(f.calls, c)
+	if f.answer != nil {
+		return f.answer(req.SQL, req.MaxRows)
+	}
+	return sqlengine.Result{Columns: []string{"value"}, Rows: [][]any{{"1"}}}, nil
 }
 
-func (f *fakeFiles) SampleProject(context.Context) (int64, error) { return f.sample, nil }
-func (f *fakeFiles) Timeout() time.Duration                       { return 5 * time.Second }
-func (f *fakeFiles) MaxRows() int                                 { return f.maxRows }
+// eng is the engine sqlSource runs on over f: its own events directory,
+// where only f.sample has a file, a 5s timeout and f's row cap.
+func (f *fakeFiles) eng(t *testing.T) *sqlEngine {
+	t.Helper()
+	dir := t.TempDir()
+	if f.sample != 0 {
+		pdir := filepath.Join(dir, strconv.FormatInt(f.sample, 10))
+		if err := os.MkdirAll(pdir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(pdir, "2026-10-15.log"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return newSQLEngine(f, Options{EventsDir: dir, QueryTimeout: 5 * time.Second, QueryMaxRows: f.maxRows})
+}
 
 // failing is a fakeFiles whose every query fails with err.
 func failing(err error) *fakeFiles {
-	return &fakeFiles{maxRows: 10, answer: func(string, int) (engine.Result, error) { return engine.Result{}, err }}
+	return &fakeFiles{maxRows: 10, answer: func(string, int) (sqlengine.Result, error) { return sqlengine.Result{}, err }}
 }
 
 func TestSQLFollows(t *testing.T) {
@@ -94,16 +114,16 @@ func TestSQLValidateRefusesUnsupportedParams(t *testing.T) {
 func TestSQLValidateBindsTheSampleProjectAndWeek(t *testing.T) {
 	f := &fakeFiles{sample: 7, maxRows: 10}
 	now := time.Date(2026, 10, 14, 23, 0, 0, 0, time.FixedZone("UTC-3", -3*3600)) // 2026-10-15 in UTC
-	s := &sqlSource{files: f, sampleRows: true, now: func() time.Time { return now }}
+	s := &sqlSource{eng: f.eng(t), sampleRows: true, now: func() time.Time { return now }}
 	content := "SELECT count(*) AS value FROM views WHERE project_id = :project AND day BETWEEN :from AND :to"
 	if err := s.Validate(context.Background(), content, testComponents(t)["stat"]); err != nil {
 		t.Fatal(err)
 	}
 	bound := "SELECT count(*) AS value FROM views WHERE project_id = CAST($tw_project AS BIGINT) AND day BETWEEN CAST($tw_from AS DATE) AND CAST($tw_to AS DATE)"
-	args := []engine.Arg{{Name: "tw_project", Value: "7"}, {Name: "tw_from", Value: "2026-10-09"}, {Name: "tw_to", Value: "2026-10-15"}}
+	args := map[string]string{"tw_project": "7", "tw_from": "2026-10-09", "tw_to": "2026-10-15"}
 	want := []fakeCall{
-		{enginesql.Shape(bound), args, 0, true, 7},
-		{enginesql.Text(bound), args, 5, true, 7},
+		{sqlengine.ModeShape, bound, args, 0, true, 7},
+		{sqlengine.ModeText, bound, args, 5, true, 7},
 	}
 	if !reflect.DeepEqual(f.calls, want) {
 		t.Errorf("calls = %+v\nwant  %+v", f.calls, want)
@@ -114,7 +134,7 @@ func TestSQLValidateBindsTheSampleProjectAndWeek(t *testing.T) {
 	if err := s.Validate(context.Background(), "SELECT 1 AS value", testComponents(t)["stat"]); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.calls) != 2 || f.calls[0].scope || f.calls[0].args != nil {
+	if len(f.calls) != 2 || f.calls[0].scope || len(f.calls[0].args) != 0 {
 		t.Errorf("calls = %+v, want two unscoped, without arguments", f.calls)
 	}
 }
@@ -123,22 +143,22 @@ func TestSQLValidateBindsTheSampleProjectAndWeek(t *testing.T) {
 // rows, so the release's own SQL passes on an install with no events.
 func TestSQLValidateShapeOnly(t *testing.T) {
 	f := &fakeFiles{maxRows: 10}
-	s := &sqlSource{files: f}
+	s := &sqlSource{eng: f.eng(t)}
 	if err := s.Validate(context.Background(), "SELECT 'x' AS value", testComponents(t)["stat"]); err != nil {
 		t.Fatal(err)
 	}
-	if len(f.calls) != 1 || f.calls[0].maxRows != 0 {
+	if len(f.calls) != 1 || f.calls[0].mode != sqlengine.ModeShape || f.calls[0].maxRows != 0 {
 		t.Errorf("calls = %+v, want the shape query alone", f.calls)
 	}
 }
 
 func TestSQLLoadBindsOnlyUsedParams(t *testing.T) {
 	f := &fakeFiles{maxRows: 10}
-	s := &sqlSource{files: f}
+	s := &sqlSource{eng: f.eng(t)}
 	if _, err := s.Load(context.Background(), "select :project as p", Params{ProjectID: 3, From: "2026-01-01", To: "2026-01-02"}); err != nil {
 		t.Fatal(err)
 	}
-	want := []fakeCall{{enginesql.Text("select CAST($tw_project AS BIGINT) as p"), []engine.Arg{{Name: "tw_project", Value: "3"}}, 11, true, 3}}
+	want := []fakeCall{{sqlengine.ModeText, "select CAST($tw_project AS BIGINT) as p", map[string]string{"tw_project": "3"}, 11, true, 3}}
 	if !reflect.DeepEqual(f.calls, want) {
 		t.Errorf("calls = %+v\nwant  %+v", f.calls, want)
 	}
@@ -150,7 +170,7 @@ func TestSQLLoadBindsOnlyUsedParams(t *testing.T) {
 // than every project's.
 func TestSQLProjectZeroScopesToNoRows(t *testing.T) {
 	f := &fakeFiles{maxRows: 10} // SampleProject: 0
-	s := &sqlSource{files: f}
+	s := &sqlSource{eng: f.eng(t)}
 	content := "SELECT count(*) AS value FROM views WHERE project_id = :project"
 	if _, err := s.Load(context.Background(), content, Params{}); err != nil {
 		t.Fatal(err)
@@ -168,9 +188,9 @@ func TestSQLProjectZeroScopesToNoRows(t *testing.T) {
 // TestSQLLoadTruncates: Load asks for one row past MaxRows, keeps
 // MaxRows of them and says the rest were cut; cells are text, NULL "".
 func TestSQLLoadTruncates(t *testing.T) {
-	rows := func(n int) func(string, int) (engine.Result, error) {
-		return func(_ string, maxRows int) (engine.Result, error) {
-			res := engine.Result{Columns: []string{"n", "x"}}
+	rows := func(n int) func(string, int) (sqlengine.Result, error) {
+		return func(_ string, maxRows int) (sqlengine.Result, error) {
+			res := sqlengine.Result{Columns: []string{"n", "x"}}
 			for i := range min(n, maxRows) {
 				res.Rows = append(res.Rows, []any{fmt.Sprint(i), nil})
 			}
@@ -178,7 +198,7 @@ func TestSQLLoadTruncates(t *testing.T) {
 		}
 	}
 	for n, wantTrunc := range map[int]bool{2: false, 3: false, 4: true, 10: true} {
-		s := &sqlSource{files: &fakeFiles{maxRows: 3, answer: rows(n)}}
+		s := &sqlSource{eng: (&fakeFiles{maxRows: 3, answer: rows(n)}).eng(t)}
 		v, err := s.Load(context.Background(), "SELECT 1", Params{})
 		if err != nil {
 			t.Fatal(err)
@@ -191,35 +211,45 @@ func TestSQLLoadTruncates(t *testing.T) {
 			t.Errorf("NULL cell = %q, want \"\"", res.Rows[0][1])
 		}
 	}
-	s := &sqlSource{files: &fakeFiles{maxRows: 3, answer: rows(0)}}
+	s := &sqlSource{eng: (&fakeFiles{maxRows: 3, answer: rows(0)}).eng(t)}
 	v, _ := s.Load(context.Background(), "SELECT 1", Params{})
 	if b, _ := json.Marshal(v); !strings.Contains(string(b), `"rows":[]`) {
 		t.Errorf("no rows = %s, want rows [] rather than null", b)
 	}
 }
 
-// TestFilesErrors: what reaches a person when a widget's query fails.
+// TestFilesErrors: what reaches a person when a widget's query fails, by
+// the engine's kind.
 func TestFilesErrors(t *testing.T) {
 	notes := "if this started after an update"
+	kind := func(k sqlengine.Kind, msg string) error {
+		return &sqlengine.Error{Status: k.Status(), Kind: k, Message: msg}
+	}
 	for name, c := range map[string]struct {
-		err  error
-		want string // the whole message, or "" for a pass-through
+		err      error
+		want     string // the whole message, or "" for a pass-through
+		resource bool   // no verdict on the SQL
 	}{
-		"timeout": {context.DeadlineExceeded,
-			enginesql.Timeout(5 * time.Second)},
-		"out of memory": {&engine.QueryError{Msg: "Out of Memory Error: failed to allocate"}, enginesql.OutOfMemory},
-		"logs out of memory": {fmt.Errorf("%w: %w", archive.ErrLoadingLogs, &engine.QueryError{Msg: "Out of Memory Error: x"}),
-			enginesql.LogsOutOfMemory},
-		"child exited": {engine.ErrChildExited, enginesql.ChildExited},
-		"duckdb": {&engine.QueryError{Msg: "Binder Error: Referenced column \"nope\" not found in FROM clause!\nCandidate bindings: \"day\"\n\nLINE 8: SELECT * FROM (select nope\n                     ^"},
-			"Binder Error: Referenced column \"nope\" not found in FROM clause! Candidate bindings: \"day\""},
-		"sqlite view": {&engine.QueryError{Msg: "Catalog Error: Table with name v_views_daily does not exist!"},
-			"Catalog Error: Table with name v_views_daily does not exist!; " + sqliteHint},
-		"sqlite function": {&engine.QueryError{Msg: "Catalog Error: Scalar Function with name julianday does not exist!"},
-			"Catalog Error: Scalar Function with name julianday does not exist!; " + sqliteHint},
-		"spawn": {engine.ErrSpawn, ""},
+		"timeout":        {context.DeadlineExceeded, enginesql.Timeout(5 * time.Second), true},
+		"engine timeout": {kind(sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms"), enginesql.Timeout(5 * time.Second), true},
+		"out of memory":  {kind(sqlengine.KindOutOfMemory, "Out of Memory Error: failed to allocate"), enginesql.OutOfMemory, true},
+		"logs out of memory": {kind(sqlengine.KindOutOfMemoryLoadingLog, "Out of Memory Error: x"),
+			enginesql.LogsOutOfMemory, true},
+		"child exited": {kind(sqlengine.KindExited, "engine: child exited"), enginesql.ChildExited, true},
+		"busy":         {kind(sqlengine.KindBusy, "no free slot; retry later"), enginesql.Busy, true},
+		"internal":     {kind(sqlengine.KindInternal, "engine: spawn: no such file"), enginesql.EngineFailed, true},
+		"unavailable":  {fmt.Errorf("%w: dial unix /x.sock: connect: connection refused", sqlengine.ErrUnavailable), enginesql.EngineFailed, true},
+		"duckdb": {kind(sqlengine.KindSQL, "Binder Error: Referenced column \"nope\" not found in FROM clause!\nCandidate bindings: \"day\"\n\nLINE 8: SELECT * FROM (select nope\n                     ^"),
+			"Binder Error: Referenced column \"nope\" not found in FROM clause! Candidate bindings: \"day\"", false},
+		"sqlite view": {kind(sqlengine.KindSQL, "Catalog Error: Table with name v_views_daily does not exist!"),
+			"Catalog Error: Table with name v_views_daily does not exist!; " + sqliteHint, false},
+		"sqlite function": {kind(sqlengine.KindSQL, "Catalog Error: Scalar Function with name julianday does not exist!"),
+			"Catalog Error: Scalar Function with name julianday does not exist!; " + sqliteHint, false},
+		"refused": {kind(sqlengine.KindRefused, "main.events names a schema"), "main.events names a schema", false},
+		"gone":    {fmt.Errorf("sqlengine: %w", context.Canceled), "", false},
+		"other":   {errors.New("reporting: something else"), "", false},
 	} {
-		s := &sqlSource{files: failing(c.err)}
+		s := &sqlSource{eng: failing(c.err).eng(t)}
 		_, err := s.Load(context.Background(), "SELECT 1", Params{})
 		if c.want == "" {
 			if !errors.Is(err, c.err) || errors.Is(err, store.ErrInvalid) {
@@ -231,11 +261,11 @@ func TestFilesErrors(t *testing.T) {
 		if strings.Contains(err.Error(), notes) {
 			t.Errorf("%s: the source adds the release notes pointer; WidgetData does", name)
 		}
-		// Time, memory and the child are no verdict on the SQL: a check of
-		// it tells them from DuckDB's refusals by their cause.
-		resource := name == "timeout" || name == "out of memory" || name == "logs out of memory" || name == "child exited"
-		if cause := resourceCause(err); (cause != nil) != resource || resource && !errors.Is(cause, c.err) {
-			t.Errorf("%s: resourceCause = %v, want the cause only for time, memory and the child", name, cause)
+		// Time, memory, the worker and the engine itself are no verdict on
+		// the SQL: a check of it tells them from the engine's refusals by
+		// their cause.
+		if cause := resourceCause(err); (cause != nil) != c.resource || c.resource && !errors.Is(cause, c.err) {
+			t.Errorf("%s: resourceCause = %v, want the cause only for time, memory, the worker and the engine", name, cause)
 		}
 	}
 }
@@ -243,7 +273,7 @@ func TestFilesErrors(t *testing.T) {
 // TestSQLiteHintOnTheEngine: the names a SQLite widget fails on in
 // DuckDB, as DuckDB words them, get the hint; other errors do not.
 func TestSQLiteHintOnTheEngine(t *testing.T) {
-	s := &sqlSource{files: newTestFiles(t), sampleRows: true}
+	s := &sqlSource{eng: newTestFiles(t).eng(), sampleRows: true}
 	table := testComponents(t)["table"]
 	for content, hint := range map[string]bool{
 		"SELECT * FROM v_views_daily":                                true,
@@ -322,7 +352,7 @@ func TestWidgetSQLReadsOnlyTheTables(t *testing.T) {
 }
 
 func TestSQLValidateRefusesSyntaxError(t *testing.T) {
-	s := &sqlSource{files: newTestFiles(t)}
+	s := &sqlSource{eng: newTestFiles(t).eng()}
 	err := s.Validate(context.Background(), "select from where", testComponents(t)["table"])
 	if !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("err = %v, want ErrInvalid", err)
@@ -348,12 +378,12 @@ func TestSQLValidateOnTheFiles(t *testing.T) {
 	content := `select day as x, count(*) as y from views
 		where project_id = :project and day >= :from and day <= :to group by day`
 	for _, sampleRows := range []bool{false, true} {
-		s := &sqlSource{files: f, sampleRows: sampleRows}
+		s := &sqlSource{eng: f.eng(), sampleRows: sampleRows}
 		if err := s.Validate(context.Background(), content, testComponents(t)["line"]); err != nil {
 			t.Errorf("sampleRows=%v: Validate = %v, want nil", sampleRows, err)
 		}
 	}
-	s := &sqlSource{files: f, sampleRows: true}
+	s := &sqlSource{eng: f.eng(), sampleRows: true}
 	err := s.Validate(context.Background(), "select 'n' || count(*) as value from views where project_id = :project", testComponents(t)["stat"])
 	wantRefusal(t, err, store.ErrInvalid, `stat.value: "n2" is not number`)
 }
@@ -366,17 +396,17 @@ func TestSQLValidateTimesOut(t *testing.T) {
 	stat := testComponents(t)["stat"]
 	// The first query starts the child and builds the tables, which the
 	// short timeout below is not for.
-	if err := (&sqlSource{files: f}).Validate(context.Background(), "SELECT 1 AS value", stat); err != nil {
+	if err := (&sqlSource{eng: f.eng()}).Validate(context.Background(), "SELECT 1 AS value", stat); err != nil {
 		t.Fatal(err)
 	}
 	f.timeout = 50 * time.Millisecond
-	s := &sqlSource{files: f, sampleRows: true}
+	s := &sqlSource{eng: f.eng(), sampleRows: true}
 	err := s.Validate(context.Background(), "SELECT sum(hash(i)) AS value FROM range(100000000000) t(i)", stat)
 	wantRefusal(t, err, store.ErrInvalid, enginesql.Timeout(50*time.Millisecond))
 }
 
 func TestSQLValidateChecksColumnsViaLimitZero(t *testing.T) {
-	s := &sqlSource{files: newTestFiles(t)}
+	s := &sqlSource{eng: newTestFiles(t).eng()}
 	line := testComponents(t)["line"]
 
 	if err := s.Validate(context.Background(), "select 1 as x, 2 as y", line); err != nil {
@@ -390,7 +420,7 @@ func TestSQLValidateChecksColumnsViaLimitZero(t *testing.T) {
 }
 
 func TestSQLValidateSamplesRowsAndChecksTypes(t *testing.T) {
-	s := &sqlSource{files: newTestFiles(t), sampleRows: true}
+	s := &sqlSource{eng: newTestFiles(t).eng(), sampleRows: true}
 	stat := testComponents(t)["stat"]
 
 	if err := s.Validate(context.Background(), "select 3.5 as value", stat); err != nil {
@@ -412,7 +442,7 @@ func TestSQLLoadOnTheFiles(t *testing.T) {
 	mustWriteEvent(t, f, "b1", blog, store.FamilyViews, "2026-08-20")
 	mustWriteEvent(t, f, "b2", blog, store.FamilyViews, "2026-08-21")
 	mustWriteEvent(t, f, "d1", docs, store.FamilyViews, "2026-08-20")
-	s := &sqlSource{files: f}
+	s := &sqlSource{eng: f.eng()}
 
 	v, err := s.Load(context.Background(),
 		"SELECT :project AS p, count(*) / 1 AS n, NULL AS z, min(day) AS d FROM views", Params{ProjectID: blog})
@@ -469,14 +499,14 @@ func TestMDLoadAndCacheable(t *testing.T) {
 	}
 }
 
-// TestSQLWithoutFiles: a Service given no Files fails a sql widget with
-// an error of its own rather than a nil dereference.
-func TestSQLWithoutFiles(t *testing.T) {
+// TestSQLWithoutAnEngine: a sql source with no engine fails with
+// ErrSQLEngine rather than a nil dereference.
+func TestSQLWithoutAnEngine(t *testing.T) {
 	s := &sqlSource{}
-	if _, err := s.Load(context.Background(), "SELECT 1", Params{}); !errors.Is(err, errNoFiles) {
-		t.Errorf("Load: err = %v, want errNoFiles", err)
+	if _, err := s.Load(context.Background(), "SELECT 1", Params{}); !errors.Is(err, ErrSQLEngine) {
+		t.Errorf("Load: err = %v, want ErrSQLEngine", err)
 	}
-	if err := s.Validate(context.Background(), "SELECT :project AS value", testComponents(t)["stat"]); !errors.Is(err, errNoFiles) {
-		t.Errorf("Validate: err = %v, want errNoFiles", err)
+	if err := s.Validate(context.Background(), "SELECT 1 AS value", testComponents(t)["stat"]); !errors.Is(err, ErrSQLEngine) {
+		t.Errorf("Validate: err = %v, want ErrSQLEngine", err)
 	}
 }

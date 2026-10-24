@@ -40,7 +40,8 @@ var systemFS embed.FS
 // ErrUnchecked is Migrate's error when it synced the release's system
 // dashboards without checking every widget's SQL on the event files: a
 // query ran out of time or memory, or the engine's child died under it
-// (resourceErr), which says nothing of the SQL. On an upgrade's first
+// (resourceErr), or the engine was busy or could not be reached, which
+// says nothing of the SQL. On an upgrade's first
 // start that is most likely the logs the daily pass has not dumped yet,
 // which the first query loads whole; failing the start would stop that
 // pass from ever running. The widgets after it are checked without a
@@ -59,26 +60,27 @@ var ErrUnchecked = errors.New("reporting: the system widgets' SQL was not all ch
 const uncheckedPrefix = "unchecked:"
 
 // Migrate syncs this release's embedded system definition (systemFS,
-// Manifest()) into st, validating every system widget's SQL on files.
+// Manifest()) into st, validating every system widget's SQL on the
+// external SQL engine sql, with opt's files, rules and timeout.
 //
-// A nil files means there are no event files to check on (a fresh
-// install): the widgets are checked without a query (paramsOnly), which
-// would spawn an engine child only to run every widget on nothing, and
-// the sync is recorded under the unchecked hash, so the first start with
-// files checks them all. Unlike ErrUnchecked this is no failure: Migrate
-// returns nil.
-func Migrate(ctx context.Context, st Store, files Files) error {
+// A nil sql means there is nothing to check on: no engine, or no event
+// files (a fresh install), where every widget would run on nothing. The
+// widgets are checked without a query (paramsOnly), and when any of them
+// reads SQL the sync is recorded under the unchecked hash, so the first
+// start with both checks them all. Unlike ErrUnchecked this is no
+// failure: Migrate returns nil.
+func Migrate(ctx context.Context, st Store, sql SQL, opt Options) error {
 	system, err := fs.Sub(systemFS, "system")
 	if err != nil {
 		return fmt.Errorf("reporting: system fs: %w", err)
 	}
-	return migrateFrom(ctx, st, files, system, Manifest())
+	return migrateFrom(ctx, st, sql, opt, system, Manifest())
 }
 
 // migrateFrom is Migrate's logic against an arbitrary system directory
 // and manifest, so a test can exercise it without the embedded release
 // definition.
-func migrateFrom(ctx context.Context, st Store, files Files, system fs.FS, manifest []byte) error {
+func migrateFrom(ctx context.Context, st Store, sql SQL, opt Options, system fs.FS, manifest []byte) error {
 	hash, err := hashSystem(system, manifest)
 	if err != nil {
 		return err
@@ -114,11 +116,13 @@ func migrateFrom(ctx context.Context, st Store, files Files, system fs.FS, manif
 	// now is the real clock rather than nil: a widget whose SQL follows
 	// :from/:to still needs sample dates bound before the LIMIT 0 query,
 	// or the engine refuses a parameter with no argument.
-	svc := &Service{st: st, files: files, sources: newSources(files, false, time.Now, nil, nil), now: time.Now}
+	opt.Native, opt.Now = nil, time.Now
+	svc := newService(st, sql, false, opt)
 	var unchecked error
-	noFiles := files == nil
+	noFiles := sql == nil
+	skipped := false // a sql widget checked without its query for want of sql
 	if noFiles {
-		svc.sources["sql"] = paramsOnly{svc.sources["sql"]}
+		svc.sources["sql"] = paramsOnly{&sqlSource{}}
 	}
 
 	dashboards := make([]store.SystemDashboard, 0, len(fds))
@@ -154,11 +158,14 @@ func migrateFrom(ctx context.Context, st Store, files Files, system fs.FS, manif
 					// a person's query, not the release's.
 					reason := cause.Error()
 					if errors.Is(cause, context.DeadlineExceeded) {
-						reason = fmt.Sprintf("its query took over %s", files.Timeout())
+						reason = fmt.Sprintf("its query took over %s", opt.QueryTimeout)
 					}
 					unchecked = fmt.Errorf("%w: system dashboard %d widget %s: %s; the next start checks them again",
 						ErrUnchecked, fd.ID, fw.Name, reason)
 					svc.sources["sql"] = paramsOnly{svc.sources["sql"]}
+				}
+				if noFiles && w.SourceType == "sql" {
+					skipped = true
 				}
 				widgets = append(widgets, w)
 			}
@@ -175,7 +182,7 @@ func migrateFrom(ctx context.Context, st Store, files Files, system fs.FS, manif
 		rows = append(rows, c.row())
 	}
 
-	if unchecked != nil || noFiles {
+	if unchecked != nil || skipped {
 		hash = uncheckedPrefix + hash
 	}
 	if err := st.SyncReporting(ctx, store.ReportingSync{

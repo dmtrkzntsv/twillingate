@@ -153,7 +153,7 @@ type previewWidgetIn struct {
 }
 
 func (h *host) listComponents(ctx context.Context, _ struct{}) (listComponentsOut, error) {
-	cs, err := h.rep.Components(ctx)
+	cs, err := h.rep.ListedComponents(ctx)
 	return listComponentsOut{SourceTypes: h.rep.SourceTypes(), Components: cs}, err
 }
 
