@@ -410,6 +410,49 @@ func TestParquetPrunesByDay(t *testing.T) {
 	}
 }
 
+// TestParquetGroupSpanningDays: a month file's group holds every day of
+// its family while it is small (the pass cuts at a day only past
+// dayCutRows rows), so a range that starts or ends inside the group keeps
+// it, does not take it whole, and reads only its own days' rows.
+func TestParquetGroupSpanningDays(t *testing.T) {
+	f := seed(t, 100) // August: 100 rows a family on the 10th and the 20th
+	month := filepath.Join(f.Dir, "1", "2026-08.parquet")
+	whole, err := parquetGroups([]string{month}, "views", rng(t, "2026-08-01", "2026-08-31"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(whole) != 1 || !whole[0].all || whole[0].rows != 200 {
+		t.Fatalf("views over the month: %+v, want one group of both days, taken whole", whole)
+	}
+	for _, c := range []struct{ from, to, day string }{
+		{"2026-08-15", "2026-08-25", "2026-08-20"}, // starts inside the group
+		{"2026-08-01", "2026-08-15", "2026-08-10"}, // ends inside it
+		{"2026-08-20", "2026-08-20", "2026-08-20"}, // its last day alone
+	} {
+		r := rng(t, c.from, c.to)
+		kept, err := parquetGroups([]string{month}, "views", r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(kept) != 1 || kept[0].all {
+			t.Fatalf("%s to %s: %+v, want the group kept, not whole", c.from, c.to, kept)
+		}
+		n := 0
+		for _, b := range readAll(t, kept, 2, []string{"id", "day", "family"}, "views", r) {
+			n += b.N
+			for i := range b.N {
+				if got := civil.DateOf(time.Unix(b.Cols["day"].Ints[i]*86400, 0)).String(); got != c.day {
+					t.Fatalf("%s to %s: a row of %s", c.from, c.to, got)
+				}
+			}
+		}
+		if n != 100 {
+			t.Errorf("%s to %s: %d rows, want 100", c.from, c.to, n)
+		}
+	}
+	matchDuckDB(t, f)
+}
+
 func TestParquetMissingColumns(t *testing.T) {
 	f := seed(t, 2)
 	day := filepath.Join(f.Dir, "1", "2026-09-05.parquet")

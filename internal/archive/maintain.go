@@ -1,12 +1,9 @@
 package archive
 
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"maps"
 	"os"
@@ -21,18 +18,16 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
-// Archive maintains the files the Log fills, derives the sessions,
-// identities and aliases from them, and imports rows that never went
-// through ingest (import.go). It is the one caller allowed to write
-// through the engine's Exec.
+// Archive maintains the files the Log fills and derives the sessions,
+// identities and aliases from them. It runs in the calling process, in Go:
+// it holds no engine, so the daily pass starts no child.
 type Archive struct {
 	log    *Log
-	eng    Engine
 	logger *slog.Logger
 }
 
-func New(log *Log, eng Engine, logger *slog.Logger) *Archive {
-	return &Archive{log: log, eng: eng, logger: logger}
+func New(log *Log, logger *slog.Logger) *Archive {
+	return &Archive{log: log, logger: logger}
 }
 
 var (
@@ -128,6 +123,9 @@ func (a *Archive) maintainProject(ctx context.Context, project int64, today civi
 	}
 	for _, n := range names {
 		if dumpingName.MatchString(n) {
+			if err := ctx.Err(); err != nil {
+				return errors.Join(append(errs, err)...)
+			}
 			if err := a.dump(ctx, dir, n); err != nil {
 				errs = append(errs, err)
 			} else {
@@ -194,15 +192,15 @@ func (a *Archive) derive(ctx context.Context, dir string, force bool, st *passSt
 		}
 	}
 	for _, day := range slices.Sorted(maps.Keys(pf.deriveDays)) {
-		if err := a.write(ctx, "COPY ("+sessionsSelect(eventsOf(pf.deriveDays[day]))+") TO ", filepath.Join(sdir, day+".parquet")); err != nil {
-			errs = append(errs, err)
+		if err := deriveSessions(ctx, pf.deriveDays[day], filepath.Join(sdir, day+".parquet")); err != nil {
+			errs = append(errs, fmt.Errorf("derive %s/%s.parquet: %w", sessionsDir, day, err))
 		} else {
 			st.derived++
 		}
 	}
 	for _, month := range slices.Sorted(maps.Keys(pf.deriveMonths)) {
-		if err := a.write(ctx, "COPY ("+sessionsSelect(eventsOf([]string{pf.deriveMonths[month]}))+") TO ", filepath.Join(sdir, month+".parquet")); err != nil {
-			errs = append(errs, err)
+		if err := deriveSessions(ctx, []string{pf.deriveMonths[month]}, filepath.Join(sdir, month+".parquet")); err != nil {
+			errs = append(errs, fmt.Errorf("derive %s/%s.parquet: %w", sessionsDir, month, err))
 		} else {
 			st.derived++
 		}
@@ -213,11 +211,20 @@ func (a *Archive) derive(ctx context.Context, dir string, force bool, st *passSt
 		}
 	}
 	if len(pf.Parquet) > 0 && (force || pf.identitiesDue) {
-		src := eventsOf(pf.Parquet)
-		for _, d := range []struct{ sel, file string }{{identitiesSelect(src), identitiesFile}, {aliasesSelect(src), aliasesFile}} {
+		// One read of every events file folds both: an error reading them
+		// fails both files.
+		fold, foldErr := foldIdentities(ctx, pf.Parquet)
+		for _, d := range []struct {
+			file  string
+			write func(*identityFold, string) error
+		}{{identitiesFile, (*identityFold).writeIdentities}, {aliasesFile, (*identityFold).writeAliases}} {
 			out := filepath.Join(dir, d.file)
-			if err := a.write(ctx, "COPY ("+d.sel+") TO ", out); err != nil {
-				errs = append(errs, err)
+			err := foldErr
+			if err == nil {
+				err = d.write(fold, out)
+			}
+			if err != nil {
+				errs = append(errs, fmt.Errorf("derive %s: %w", d.file, err))
 				// The old file is newer than every events file left after
 				// retention, so it would keep reading as current and keep
 				// expired users' names; missing, it is derived on read and
@@ -241,7 +248,7 @@ func (a *Archive) derive(ctx context.Context, dir string, force bool, st *passSt
 func (a *Archive) claim(dir, closed, day string) error {
 	src := filepath.Join(dir, closed)
 	// A log rotated after a failed cut-back can end in a torn line, which
-	// read_ndjson would fail on every pass.
+	// would fail the dump (dumpLog) on every pass.
 	if err := cutTornLine(src); err != nil {
 		return err
 	}
@@ -262,18 +269,14 @@ func (a *Archive) claim(dir, closed, day string) error {
 }
 
 // dump writes a claimed log (<target>.dumping) as its target unless the
-// target exists already, then deletes the log. Of an id the recent-ids
-// window let through twice, the line appended first is kept (dumpQuery).
+// target exists already, then deletes the log. It runs in Go, without the
+// engine (dumpLog); of an id the recent-ids window let through twice, the
+// line appended first is kept.
 func (a *Archive) dump(ctx context.Context, dir, pending string) error {
 	src := filepath.Join(dir, pending)
 	out := strings.TrimSuffix(src, ".dumping")
 	if !exists(out) {
-		q, err := dumpQuery(src)
-		if err != nil {
-			return err
-		}
-		q = "COPY (" + q + ") TO "
-		if err := a.write(ctx, q, out); err != nil {
+		if err := dumpLog(ctx, src, out); err != nil {
 			return err
 		}
 	}
@@ -281,65 +284,6 @@ func (a *Archive) dump(ctx context.Context, dir, pending string) error {
 		return fmt.Errorf("archive: %w", err)
 	}
 	return syncFile(dir)
-}
-
-// dumpQuery is the dump's SELECT of a log (logSelect, strict): every line
-// once per id, ordered by family and ts, with every column's type spelled
-// out. DuckDB inferring the types from one day's values would rewrite a
-// value for good ("ABCDEF01-…" read as a UUID comes back lower case,
-// "12:30" as a TIME comes back "12:30:00") and leave a month whose days
-// inferred different types unable to merge. The fixed keys take their type
-// from fields, every other key (attr_<key>, the key as stored) is VARCHAR,
-// and every fixed column is there even when no line has it.
-//
-// A repeated id keeps the line appended first, as SQLite keeps the first
-// row it receives: a repeat need not be the same event (the server does
-// not check), so a later one can differ in received_at, actor_id,
-// country or attributes. The lines are numbered in file order (WITH
-// ORDINALITY), the first number per id is found over the ids and numbers
-// alone, and only then are the lines it names sorted (a sort spills to
-// disk; a hash table of whole lines does not) and their columns extracted
-// as they stream into the file. A DISTINCT ON over the lines held them all
-// in a hash table and ran out of memory on smaller logs, worst with more
-// threads; measure_test.go compares this with the first release's dump.
-//
-// Each key is extracted by JSON pointer, so its case is kept; DuckDB's
-// column names are not case-sensitive, though (read_ndjson's columns={…}
-// refuses attr_Plan beside attr_plan as a duplicate). Of keys equal but for
-// case, the first in byte order keeps its name and each next one is named
-// <key>_<n>, the first n free: attr_Plan, attr_plan_1. Which column such a
-// key lands in can differ between days; no value is dropped.
-func dumpQuery(path string) (string, error) {
-	keys, err := logKeys(path)
-	if err != nil {
-		return "", err
-	}
-	return logSelect(path, columnsOf(keys), false), nil
-}
-
-// logSelect is a log's lines as typed rows (see dumpQuery): cols, every
-// id once, the line appended first kept, ordered by family and ts. A
-// strict select fails on a line that is not JSON; a tolerant one skips it,
-// for a reader that may meet the torn last line of a log ingest is still
-// writing (read_json_objects with ignore_errors reads such a line as a
-// NULL object).
-func logSelect(path string, cols []column, tolerant bool) string {
-	paths := make([]string, len(cols))
-	sel := make([]string, len(cols))
-	for i, c := range cols {
-		paths[i] = c.pointer()
-		sel[i] = "CAST(f[" + strconv.Itoa(i+1) + "] AS " + c.typ + ") AS " + c.ident()
-	}
-	src := "read_json_objects(" + quote(path) + ", format='newline_delimited'"
-	if tolerant {
-		src += ", ignore_errors=true"
-	}
-	lines := "(SELECT json, ordinality FROM " + src + ") WITH ORDINALITY WHERE json IS NOT NULL)"
-	firsts := "SELECT min(ordinality) FROM (SELECT json_extract_string(json, '/id') AS id, ordinality FROM " + lines + ") GROUP BY id"
-	unique := "SELECT json FROM (SELECT json, ordinality, json_extract_string(json, '/family') AS family, " +
-		"CAST(json_extract_string(json, '/ts') AS TIMESTAMP) AS ts FROM " + lines + ") WHERE ordinality IN (" + firsts + ") ORDER BY family, ts"
-	return "SELECT " + strings.Join(sel, ", ") + " FROM (SELECT json_extract_string(json, [" + strings.Join(paths, ", ") +
-		"]) AS f FROM (" + unique + "))"
 }
 
 // column is a key of a log and the column the dump reads it into.
@@ -423,35 +367,10 @@ func ident(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`
 
 func (c column) ident() string { return ident(c.name) }
 
-// logKeys returns every key of a log's lines. A line that is not a JSON
-// object fails it, as DuckDB would.
-func logKeys(path string) (map[string]bool, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("archive: %w", err)
-	}
-	defer f.Close()
-	keys := map[string]bool{}
-	dec := json.NewDecoder(bufio.NewReader(f))
-	for {
-		var m map[string]json.RawMessage
-		if err := dec.Decode(&m); errors.Is(err, io.EOF) {
-			return keys, nil
-		} else if err != nil {
-			return nil, fmt.Errorf("archive: %s: %w", filepath.Base(path), err)
-		}
-		if m == nil {
-			return nil, fmt.Errorf("archive: %s: a line is not an object", filepath.Base(path))
-		}
-		for k := range m {
-			keys[k] = true
-		}
-	}
-}
-
 // merge writes every day file and segment of month, with the month file
 // if a crashed merge left one, as the month file, then deletes the days.
-// It reports whether the month had days to merge.
+// It runs in Go, without the engine (mergeFiles). It reports whether the
+// month had days to merge.
 func (a *Archive) merge(ctx context.Context, dir string, names []string, month string) (bool, error) {
 	var days []string
 	for _, n := range names {
@@ -476,7 +395,7 @@ func (a *Archive) merge(ctx context.Context, dir string, names []string, month s
 	for _, n := range days {
 		inputs = append(inputs, filepath.Join(dir, n))
 	}
-	if err := a.write(ctx, "COPY ("+mergeQuery(inputs)+") TO ", filepath.Join(dir, month+".parquet")); err != nil {
+	if err := mergeFiles(ctx, inputs, filepath.Join(dir, month+".parquet")); err != nil {
 		return false, err
 	}
 	for _, n := range days {
@@ -492,58 +411,6 @@ func (a *Archive) merge(ctx context.Context, dir string, names []string, month s
 func segment(dotN string) int {
 	n, _ := strconv.Atoi(strings.TrimPrefix(dotN, "."))
 	return n
-}
-
-// mergeQuery is the merge's SELECT of files, given oldest first (a month
-// file a crashed merge left, then each day's file and its segments in
-// order): every id once, from the first file that holds it (a file holds
-// an id once), ordered by family and ts. As in the dump, the first row
-// per id is found over the ids and a row key alone, and the sort, which
-// spills, carries the rows.
-func mergeQuery(files []string) string { return mergeSelect(files, files) }
-
-// sqlList is paths as a SQL list of string literals.
-func sqlList(paths []string) string {
-	q := make([]string, len(paths))
-	for i, p := range paths {
-		q[i] = quote(p)
-	}
-	return "[" + strings.Join(q, ", ") + "]"
-}
-
-// mergeSelect reads files and keys each row by the position in order of
-// its file's name, as read_parquet reports it (the path as given, today).
-// A name that order does not hold would key the row NULL and the IN would
-// drop it, then the merge would delete its day: it fails the query instead.
-func mergeSelect(files, order []string) string {
-	rows := "read_parquet(" + sqlList(files) + ", union_by_name=true, filename=true, file_row_number=true)"
-	key := "coalesce(list_position(" + sqlList(order) + ", filename), error('archive: merge input not matched: ' || filename))" +
-		" * 4294967296 + file_row_number"
-	firsts := "SELECT min(k) FROM (SELECT id, " + key + " AS k FROM " + rows + ") GROUP BY id"
-	return "SELECT * EXCLUDE (filename, file_row_number, k) FROM (SELECT *, " + key + " AS k FROM " + rows +
-		") WHERE k IN (" + firsts + ") ORDER BY family, ts"
-}
-
-// write runs copyTo (a COPY … TO, missing its target) into out.tmp, makes
-// it 0640 like the logs (DuckDB creates it under the process's umask),
-// fsyncs it, renames it over out and fsyncs the directory: a reader sees
-// the old file or the whole new one, and a crash leaves at most a .tmp.
-func (a *Archive) write(ctx context.Context, copyTo, out string) error {
-	tmp := out + ".tmp"
-	os.Remove(tmp)
-	if err := a.eng.Exec(ctx, copyTo+quote(tmp)+" (FORMAT parquet, COMPRESSION zstd)"); err != nil {
-		return fmt.Errorf("archive: %s: %w", filepath.Base(out), err)
-	}
-	if err := os.Chmod(tmp, 0o640); err != nil {
-		return fmt.Errorf("archive: %w", err)
-	}
-	if err := syncFile(tmp); err != nil {
-		return err
-	}
-	if err := os.Rename(tmp, out); err != nil {
-		return fmt.Errorf("archive: %w", err)
-	}
-	return syncFile(filepath.Dir(out))
 }
 
 // Sizes is Sizes over the log's directory: each project's file bytes.

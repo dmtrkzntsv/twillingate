@@ -576,3 +576,52 @@ func sortedIDs(files map[int64]Files) []int64 {
 	slices.Sort(ids)
 	return ids
 }
+
+// logSelect is a log's lines as typed rows, as a reader of the open logs
+// reads them through DuckDB (the reader's events view): cols, every id
+// once, the line appended first kept, ordered by family and ts. The fixed
+// keys take their type from fields, every other key (attr_<key>, the key
+// as stored) is VARCHAR: DuckDB inferring the types from one day's values
+// would rewrite a value ("ABCDEF01-…" read as a UUID comes back lower
+// case, "12:30" as a TIME comes back "12:30:00"). A strict select fails on
+// a line that is not JSON; a tolerant one skips it, for a reader that may
+// meet the torn last line of a log ingest is still writing
+// (read_json_objects with ignore_errors reads such a line as a NULL
+// object). The dump reads the logs in Go (dumpLog); the strict select is
+// its oracle in the tests (dumpQuery).
+//
+// The lines are numbered in file order (WITH ORDINALITY), the first number
+// per id is found over the ids and numbers alone, and only then are the
+// lines it names sorted (a sort spills to disk; a hash table of whole
+// lines does not) and their columns extracted. Each key is extracted by
+// JSON pointer, so its case is kept; DuckDB's column names are not
+// case-sensitive, though, so of keys equal but for case the first in byte
+// order keeps its name and each next one is named <key>_<n>, the first n
+// free: attr_Plan, attr_plan_1 (columnsOf).
+func logSelect(path string, cols []column, tolerant bool) string {
+	paths := make([]string, len(cols))
+	sel := make([]string, len(cols))
+	for i, c := range cols {
+		paths[i] = c.pointer()
+		sel[i] = "CAST(f[" + strconv.Itoa(i+1) + "] AS " + c.typ + ") AS " + c.ident()
+	}
+	src := "read_json_objects(" + quote(path) + ", format='newline_delimited'"
+	if tolerant {
+		src += ", ignore_errors=true"
+	}
+	lines := "(SELECT json, ordinality FROM " + src + ") WITH ORDINALITY WHERE json IS NOT NULL)"
+	firsts := "SELECT min(ordinality) FROM (SELECT json_extract_string(json, '/id') AS id, ordinality FROM " + lines + ") GROUP BY id"
+	unique := "SELECT json FROM (SELECT json, ordinality, json_extract_string(json, '/family') AS family, " +
+		"CAST(json_extract_string(json, '/ts') AS TIMESTAMP) AS ts FROM " + lines + ") WHERE ordinality IN (" + firsts + ") ORDER BY family, ts"
+	return "SELECT " + strings.Join(sel, ", ") + " FROM (SELECT json_extract_string(json, [" + strings.Join(paths, ", ") +
+		"]) AS f FROM (" + unique + "))"
+}
+
+// sqlList is paths as a SQL list of string literals.
+func sqlList(paths []string) string {
+	q := make([]string, len(paths))
+	for i, p := range paths {
+		q[i] = quote(p)
+	}
+	return "[" + strings.Join(q, ", ") + "]"
+}

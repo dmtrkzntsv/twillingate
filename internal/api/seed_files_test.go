@@ -126,7 +126,7 @@ func newHostFiles(t *testing.T, reg *manage.Registry) *hostFiles {
 // writeHostFiles writes hostEvents into raw and runs the daily pass as of
 // today, so every day is in its Parquet file and the sessions and
 // identities are derived, as on a console whose import has run.
-func writeHostFiles(ctx context.Context, dir, raw string) error {
+func writeHostFiles(ctx context.Context, raw string) error {
 	log, err := archive.OpenLog(raw)
 	if err != nil {
 		return err
@@ -135,12 +135,7 @@ func writeHostFiles(ctx context.Context, dir, raw string) error {
 	if err := log.WriteEvents(ctx, hostEvents()); err != nil {
 		return err
 	}
-	eng, err := hostEngine(dir, raw)
-	if err != nil {
-		return err
-	}
-	defer eng.Close()
-	return archive.New(log, eng, slog.New(slog.DiscardHandler)).Maintain(ctx, civil.Today(time.Now()), 1, 400)
+	return archive.New(log, slog.New(slog.DiscardHandler)).Maintain(ctx, civil.Today(time.Now()), 1, 400)
 }
 
 // hostSession is one session of hostEvents: views page views over

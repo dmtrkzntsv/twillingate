@@ -5,6 +5,8 @@ import (
 	"math"
 	"strconv"
 	"strings"
+
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
 )
 
 // colType is how the engine reads a dimension, series or filter column.
@@ -352,7 +354,7 @@ func compileFilters(where []Filter, path string) ([]filter, error) {
 
 func parseValue(t colType, v string) (int64, error) {
 	if t == typeDay {
-		d, err := parseDay(v)
+		d, err := archive.ParseDay(v)
 		if err != nil {
 			return 0, fmt.Errorf("%q is not a YYYY-MM-DD date", v)
 		}

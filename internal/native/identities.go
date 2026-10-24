@@ -65,83 +65,12 @@ var everything = func() Range {
 	return Range{From: from, To: to}
 }()
 
-// identityKey is one identity: a user's id, or a group's.
-type identityKey struct {
-	group bool
-	id    string
-}
-
-// identity is one identity's row: its name and when that was sent (within
-// one part, the name's event; across parts, the part's last_seen), its
-// first and last event (unix microseconds), its views and product events.
-type identity struct {
-	name          string
-	named         bool
-	nameAt        int64
-	first, last   int64
-	views, events int64
-}
-
-// identityBytes is about what an identity costs in a map, its strings
-// aside.
-const identityBytes = 112
-
-// identityMap is a set of identities by key.
-type identityMap map[identityKey]identity
-
-// see adds one event of identity k to m, as identitiesSelect aggregates
-// one part: the name of the latest event that carried one
-// (arg_max(name, ts) FILTER (WHERE name IS NOT NULL)), the first and last
-// event, the views and product events counted. It returns the bytes m
-// grew by.
-func (m identityMap) see(k identityKey, name string, named bool, ts int64, view bool) int64 {
-	cur, ok := m[k]
-	var grew int64
-	if !ok {
-		cur = identity{first: ts, last: ts}
-		grew = identityBytes + int64(len(k.id))
-	}
-	if named && (!cur.named || ts > cur.nameAt) {
-		grew += int64(len(name) - len(cur.name))
-		cur.name, cur.named, cur.nameAt = name, true, ts
-	}
-	cur.first, cur.last = min(cur.first, ts), max(cur.last, ts)
-	if view {
-		cur.views++
-	} else {
-		cur.events++
-	}
-	m[k] = cur
-	return grew
-}
-
-// fold adds o's identities to m within one part: the name of the later
-// event, as see takes it.
-func (m identityMap) fold(o identityMap) {
-	for k, x := range o {
-		cur, ok := m[k]
-		if !ok {
-			m[k] = x
-			continue
-		}
-		if x.named && (!cur.named || x.nameAt > cur.nameAt) {
-			cur.name, cur.named, cur.nameAt = x.name, true, x.nameAt
-		}
-		cur.first, cur.last = min(cur.first, x.first), max(cur.last, x.last)
-		cur.views += x.views
-		cur.events += x.events
-		m[k] = cur
-	}
-}
-
-// bytes is about what m takes.
-func (m identityMap) bytes() int64 {
-	var n int64
-	for k, x := range m {
-		n += identityBytes + int64(len(k.id)+len(x.name))
-	}
-	return n
-}
+// An identity, its row and a set of them, as archive folds them.
+type (
+	identityKey = archive.IdentityKey
+	identity    = archive.Identity
+	identityMap = archive.IdentityMap
+)
 
 // firstMap is the day (days since 1970-01-01) each identity was first
 // seen, users and groups apart: all a status lookup needs, without the
@@ -201,15 +130,15 @@ func (m firstMap) see(group bool, id string, day int32) int64 {
 }
 
 // seeName notes identity k's event at ts, named name when named, in m's
-// names, as identityMap.see takes a name: the latest named event's; it
+// names, as identityMap.See takes a name: the latest named event's; it
 // returns the bytes m grew by. A new id is copied, as see copies it.
 func (m firstMap) seeName(k identityKey, name string, named bool, ts int64) int64 {
 	cur, ok := m.names[k]
 	var grew int64
 	if !ok {
-		k.id = strings.Clone(k.id)
+		k.ID = strings.Clone(k.ID)
 		cur = dated{at: ts, last: ts}
-		grew = datedBytes + int64(len(k.id))
+		grew = datedBytes + int64(len(k.ID))
 	}
 	if named && (!cur.named || ts > cur.at) {
 		grew += int64(len(name) - len(cur.name))
@@ -221,7 +150,7 @@ func (m firstMap) seeName(k identityKey, name string, named bool, ts int64) int6
 }
 
 // fold adds o's identities to m: the earlier day of each, and the name of
-// the later named event, as identityMap.fold takes it.
+// the later named event, as identityMap.Fold takes it.
 func (m firstMap) fold(o firstMap) {
 	for _, group := range []bool{false, true} {
 		ids := m.of(group)
@@ -254,7 +183,7 @@ func (m firstMap) bytes() int64 {
 		}
 	}
 	for k, x := range m.names {
-		n += datedBytes + int64(len(k.id)+len(x.name))
+		n += datedBytes + int64(len(k.ID)+len(x.name))
 	}
 	return n
 }
@@ -283,16 +212,16 @@ func (s *identitySet) rowsIn(r *Range) identityMap {
 	out := identityMap{}
 	for k, b := range s.base {
 		l, okl := s.live[k]
-		first := b.first
+		first := b.First
 		if okl {
-			first = min(first, l.first)
+			first = min(first, l.First)
 		}
 		if in(first) {
 			out[k] = s.merge(b, true, l, okl)
 		}
 	}
 	for k, l := range s.live {
-		if _, ok := s.base[k]; !ok && in(l.first) {
+		if _, ok := s.base[k]; !ok && in(l.First) {
 			out[k] = s.merge(identity{}, false, l, true)
 		}
 	}
@@ -303,7 +232,7 @@ func (s *identitySet) rowsIn(r *Range) identityMap {
 // of them ok.
 func (s *identitySet) merge(b identity, okb bool, l identity, okl bool) identity {
 	if s.current {
-		b.nameAt, l.nameAt = b.last, l.last
+		b.NameAt, l.NameAt = b.Last, l.Last
 	}
 	switch {
 	case !okb:
@@ -311,12 +240,12 @@ func (s *identitySet) merge(b identity, okb bool, l identity, okl bool) identity
 	case !okl:
 		return b
 	}
-	if l.named && (!b.named || l.nameAt > b.nameAt) {
-		b.name, b.named, b.nameAt = l.name, true, l.nameAt
+	if l.Named && (!b.Named || l.NameAt > b.NameAt) {
+		b.Name, b.Named, b.NameAt = l.Name, true, l.NameAt
 	}
-	b.first, b.last = min(b.first, l.first), max(b.last, l.last)
-	b.views += l.views
-	b.events += l.events
+	b.First, b.Last = min(b.First, l.First), max(b.Last, l.Last)
+	b.Views += l.Views
+	b.Events += l.Events
 	return b
 }
 
@@ -394,21 +323,21 @@ func identityBatch(rows identityMap, project int64) *Batch {
 	b := &Batch{N: n, Cols: make(map[string]*Column, len(identityColumns)+1)}
 	b.Cols["project_id"] = ints(func(identity) int64 { return project })
 	b.Cols["kind"] = textColumn(n, func(i int) (string, bool) {
-		if keys[i].group {
+		if keys[i].Group {
 			return "group", true
 		}
 		return "user", true
 	})
-	b.Cols["id"] = textColumn(n, func(i int) (string, bool) { return keys[i].id, true })
+	b.Cols["id"] = textColumn(n, func(i int) (string, bool) { return keys[i].ID, true })
 	b.Cols["name"] = textColumn(n, func(i int) (string, bool) {
 		x := rows[keys[i]]
-		return x.name, x.named
+		return x.Name, x.Named
 	})
-	b.Cols["first_seen"] = times(func(x identity) int64 { return x.first })
-	b.Cols["last_seen"] = times(func(x identity) int64 { return x.last })
-	b.Cols["views"] = ints(func(x identity) int64 { return x.views })
-	b.Cols["events"] = ints(func(x identity) int64 { return x.events })
-	b.Cols["day"] = ints(func(x identity) int64 { return microsDay(x.first) })
+	b.Cols["first_seen"] = times(func(x identity) int64 { return x.First })
+	b.Cols["last_seen"] = times(func(x identity) int64 { return x.Last })
+	b.Cols["views"] = ints(func(x identity) int64 { return x.Views })
+	b.Cols["events"] = ints(func(x identity) int64 { return x.Events })
+	b.Cols["day"] = ints(func(x identity) int64 { return microsDay(x.First) })
 	return b
 }
 
@@ -577,14 +506,14 @@ func (e *Engine) identities(ctx context.Context, project int64, f archive.Files,
 		} else {
 			m, err = e.deriveIdentities(ctx, f.Parquet, nil, charge)
 		}
-		return &identityEntry{full: m, bytes: m.bytes()}, err
+		return &identityEntry{full: m, bytes: m.Bytes()}, err
 	})
 	if err != nil {
 		return nil, err
 	}
 	live, err := e.identityPart(ctx, idPart{project: project, live: true}, p.liveSig, charge, func() (*identityEntry, error) {
 		m, err := e.deriveIdentities(ctx, nil, f.Logs, charge)
-		return &identityEntry{full: m, bytes: m.bytes()}, err
+		return &identityEntry{full: m, bytes: m.Bytes()}, err
 	})
 	if err != nil {
 		return nil, err
@@ -694,16 +623,16 @@ func (e *Engine) readIdentities(path string, charge func(int64) error) (identity
 			k, _ := textAt(kind, i)
 			s, _ := textAt(id, i)
 			x := identity{}
-			x.name, x.named = textAt(name, i)
-			x.first, _ = timeAt(first, i)
-			x.last, _ = timeAt(last, i)
-			x.nameAt = x.last
-			x.views, _ = intAt(views, i)
-			x.events, _ = intAt(events, i)
-			out[identityKey{group: k == "group", id: s}] = x
-			grew += int64(len(s) + len(x.name))
+			x.Name, x.Named = textAt(name, i)
+			x.First, _ = timeAt(first, i)
+			x.Last, _ = timeAt(last, i)
+			x.NameAt = x.Last
+			x.Views, _ = intAt(views, i)
+			x.Events, _ = intAt(events, i)
+			out[identityKey{Group: k == "group", ID: s}] = x
+			grew += int64(len(s) + len(x.Name))
 		}
-		return charge(grew + int64(len(out)-before)*identityBytes)
+		return charge(grew + int64(len(out)-before)*archive.IdentityBytes)
 	})
 	return out, err
 }
@@ -733,7 +662,7 @@ func (e *Engine) readFirstSeen(path string, names bool, charge func(int64) error
 			if names {
 				n, named := textAt(name, i)
 				at, _ := timeAt(last, i)
-				grew += out.seeName(identityKey{k == "group", s}, n, named, at)
+				grew += out.seeName(identityKey{Group: k == "group", ID: s}, n, named, at)
 			}
 		}
 		return charge(grew)
@@ -784,7 +713,7 @@ func (e *Engine) deriveIdentities(ctx context.Context, parquet, logs []string, c
 	err := e.scanIdentityEvents(ctx, parquet, logs, identityEventColumns, func(w int, b *Batch) error {
 		var grew int64
 		eachIdentity(b, func(k identityKey, name string, named bool, ts int64, view bool) {
-			grew += parts[w].see(k, name, named, ts, view)
+			grew += parts[w].See(k, name, named, ts, view)
 		})
 		return charge(grew)
 	})
@@ -793,7 +722,7 @@ func (e *Engine) deriveIdentities(ctx context.Context, parquet, logs []string, c
 	}
 	out := parts[0]
 	for _, p := range parts[1:] {
-		out.fold(p)
+		out.Fold(p)
 	}
 	return out, nil
 }
@@ -813,7 +742,7 @@ func (e *Engine) deriveFirstSeen(ctx context.Context, parquet, logs []string, na
 	err := e.scanIdentityEvents(ctx, parquet, logs, cols, func(w int, b *Batch) error {
 		var grew int64
 		eachIdentity(b, func(k identityKey, name string, named bool, ts int64, _ bool) {
-			grew += parts[w].see(k.group, k.id, int32(microsDay(ts)))
+			grew += parts[w].see(k.Group, k.ID, int32(microsDay(ts)))
 			if names {
 				grew += parts[w].seeName(k, name, named, ts)
 			}
@@ -891,7 +820,7 @@ func eachIdentity(b *Batch, fn func(k identityKey, name string, named bool, ts i
 				continue
 			}
 			n, named := textAt(name, i)
-			fn(identityKey{who.group, s}, n, named, t, f == "views")
+			fn(identityKey{Group: who.group, ID: s}, n, named, t, f == "views")
 		}
 	}
 }
@@ -940,7 +869,7 @@ func labelColumn(b *Batch, idCol string, group bool, ids *firstSet) *Column {
 		if s == "" {
 			continue
 		}
-		if n, ok := ids.name(identityKey{group, s}); ok {
+		if n, ok := ids.name(identityKey{Group: group, ID: s}); ok {
 			label[j] = d.id(n)
 		} else {
 			label[j] = d.id(s)

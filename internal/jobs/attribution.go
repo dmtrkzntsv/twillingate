@@ -11,7 +11,7 @@ import (
 )
 
 // Attributor finds where submissions came from in the event files
-// (*archive.Reader).
+// (*native.Engine).
 type Attributor interface {
 	Attribute(ctx context.Context, ls []archive.Lookup, days int, rules archive.Rules) ([]archive.Found, error)
 }
@@ -32,12 +32,13 @@ const attributionDelay = time.Minute
 
 // attributionGiveUp is how long a submission waits for a lookup that
 // works: past it, it is attributed with what its client sent alone, so a
-// broken engine costs attribution, never the conversion.
+// broken lookup costs attribution, never the conversion.
 const attributionGiveUp = time.Hour
 
 // attributionTimeout bounds one lookup: the minute tick also runs the
-// hour-0 salt rotation and the hour-3 daily pass, so a hung engine, or
-// engine slots all held by console queries, must not hold it. A timeout is
+// hour-0 salt rotation and the hour-3 daily pass, so a lookup waiting for
+// a native scan turn (MaxScans, shared with the console's structured
+// queries) or slowed by a large log must not hold it. A timeout is
 // a failed lookup: retried next minute, given up after attributionGiveUp.
 const attributionTimeout = 30 * time.Second
 
