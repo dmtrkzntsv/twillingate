@@ -2,6 +2,7 @@ import { useCallback, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError, endpoints, type Widget } from '@/lib/api'
+import { componentsQuery } from '@/lib/queries'
 import { addBody, changedFields, type Draft } from '@/lib/widget-draft'
 
 export interface WidgetEdits {
@@ -60,18 +61,21 @@ export function useWidgetEdits(): WidgetEdits {
     [client]
   )
 
+  // Whether the server takes SQL, as far as it has said: a save never sends sql to one that does not.
+  const sql = useCallback(() => client.getQueryData(componentsQuery.queryKey)?.source_types.includes('sql') ?? true, [client])
+
   const add = useCallback(
     async (dashboardId: number, draft: Draft) => {
-      await endpoints.addWidget(dashboardId, addBody(draft))
+      await endpoints.addWidget(dashboardId, addBody(draft, sql()))
       // The list counts each dashboard's live widgets.
       await refetch(dashboardId, [['dashboards']])
     },
-    [refetch]
+    [refetch, sql]
   )
 
   const update = useCallback(
     async (widget: Widget, draft: Draft) => {
-      const body = changedFields(widget, draft)
+      const body = changedFields(widget, draft, sql())
       if (Object.keys(body).length === 0) return
       await endpoints.updateWidget(widget.widget_id, body)
       // The card's cached answers were read with the old query or drawn
@@ -79,7 +83,7 @@ export function useWidgetEdits(): WidgetEdits {
       const answers = body.source || body.component || body.props ? [['widget', widget.widget_id]] : []
       await refetch(widget.dashboard_id, answers)
     },
-    [refetch]
+    [refetch, sql]
   )
 
   const rename = useCallback(

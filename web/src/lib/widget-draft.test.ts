@@ -165,6 +165,12 @@ describe('a server with no external SQL engine', () => {
     // A stored widget opens as stored, SQL included.
     expect(draftOf(line, false)).toMatchObject({ code: 'sql', sql: line.source.content })
   })
+  it('writes no sql body', () => {
+    const remote = { ...draftOf(), component: 'table', props: { mode: 'remote' }, code: 'query' as const, sql: 'SELECT 1', query: '{}' }
+    expect(addBody(remote).source.type).toBe('sql')
+    expect(addBody(remote, false).source).toEqual({ type: 'query', content: '{}' })
+    expect(changedFields(line, { ...draftOf(line), code: 'query', query: '{}' }, false).source).toEqual({ type: 'query', content: '{}' })
+  })
   it('converts a SQL draft to the query template, keeping title, component and props', () => {
     const d = toQuery(draftOf(line))
     expect(d).toMatchObject({ title: 'Visits', component: 'line', props: { curve: 'step' }, code: 'query', query: queryTemplate('line') })

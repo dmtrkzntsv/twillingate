@@ -1,4 +1,5 @@
-import { createContext, lazy, Suspense, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, lazy, Suspense, useContext, useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { PlusIcon } from 'lucide-react'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
@@ -6,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { useWidgetEdits } from '@/hooks/use-widget-edits'
 import type { DashboardInfo, Widget } from '@/lib/api'
 import { copyTargets } from '@/lib/arrange'
+import { componentsQuery } from '@/lib/queries'
 import CopyWidgetDialog from './CopyWidgetDialog'
 import type { EditorDefaults } from './WidgetEditor'
 
@@ -61,6 +63,12 @@ const WidgetEditor = lazy(() => import('./WidgetEditor'))
 export function WidgetEditingProvider({ dashboardId, enabled, defaults, copyTo, children }: Props) {
   const edits = useWidgetEdits()
   const navigate = useNavigate()
+  // The editor starts a new widget on SQL or Query by the server's source
+  // types: read them before it opens, so a new draft never flips once open.
+  const client = useQueryClient()
+  useEffect(() => {
+    if (enabled) void client.prefetchQuery(componentsQuery)
+  }, [enabled, client])
   // Kept while the dialog closes, so it closes on what it showed.
   const [editing, setEditing] = useState<{ open: boolean; dashboardId: number; widget?: Widget }>()
   const value = useMemo<WidgetEditing | null>(

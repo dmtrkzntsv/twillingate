@@ -359,6 +359,10 @@ describe('WidgetEditor with no external SQL engine', () => {
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
     expect(screen.getByRole('button', { name: /Run query/ })).toBeDisabled()
     expect(screen.queryByRole('button', { name: 'Query' })).toBeNull()
+    // The visualization and props wait for Convert too: nothing that could not be saved.
+    expect(screen.getByRole('combobox', { name: 'Visualization' })).toBeDisabled()
+    expect(screen.getByLabelText('curve')).toBeDisabled()
+    expect(screen.getByRole('button', { name: /Edit props as JSON/ })).toBeDisabled()
     await new Promise((r) => setTimeout(r, 50))
     expect(preview).not.toHaveBeenCalled()
 
@@ -367,12 +371,28 @@ describe('WidgetEditor with no external SQL engine', () => {
     expect(JSON.parse(query.value)).toMatchObject({ query: { kind: 'trend' }, rename: { day: 'x', count: 'y' } })
     expect(screen.queryByText(/This widget is SQL/)).toBeNull()
     expect(screen.queryByRole('button', { name: 'SQL' })).toBeNull()
+    expect(screen.getByRole('combobox', { name: 'Visualization' })).toBeEnabled()
+    expect(screen.getByLabelText('curve')).toBeEnabled()
     await waitFor(() => expect(preview).toHaveBeenCalled())
     expect(preview.mock.calls[0][0].source.type).toBe('query')
     await userEvent.click(screen.getByRole('button', { name: 'Save' }))
     expect(onSave).toHaveBeenCalledWith(
       expect.objectContaining({ code: 'query', title: 'Visits', component: 'line', props: { curve: 'step' } }),
     )
+  })
+})
+
+describe('WidgetEditor saving with no external SQL engine', () => {
+  it('refuses a draft that would be sql, a remote table typed into the props JSON', async () => {
+    vi.spyOn(endpoints, 'components').mockResolvedValue({ source_types: ['md', 'query'], components: [] })
+    const { onSave } = open({ widget: { ...line, component: 'table', props: { mode: 'local' }, source: { type: 'query', content: '{}' } } })
+    await userEvent.click(await screen.findByRole('button', { name: /Edit props as JSON/ }))
+    const json = screen.getByLabelText('Props JSON')
+    await userEvent.clear(json)
+    await userEvent.type(json, '{{"mode":"remote"}')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(await screen.findByText('SQL needs an external SQL engine (SQL_ENGINE_SOCKET)')).toBeInTheDocument()
+    expect(onSave).not.toHaveBeenCalled()
   })
 })
 

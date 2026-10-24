@@ -1,4 +1,4 @@
-import { replaceEqualDeep } from '@tanstack/react-query'
+import { queryOptions, replaceEqualDeep } from '@tanstack/react-query'
 import { endpoints, type DashboardDetail, type RangeQuery, type ShareState, type SubmissionsQuery } from './api'
 
 /** The dashboards list: the sidebar, the timezone, dev mode. */
@@ -124,7 +124,7 @@ export const findSubmissionsQuery = (projectId: number, search: string) => ({
  * only when an external SQL engine is configured. It changes only with a
  * restart.
  */
-export const componentsQuery = { queryKey: ['components'], queryFn: () => endpoints.components(), staleTime: 10 * 60_000 }
+export const componentsQuery = queryOptions({ queryKey: ['components'], queryFn: () => endpoints.components(), staleTime: 10 * 60_000 })
 
 /** The query schema reference, for the SQL editor's completion; it changes only with a release. */
 export const schemaViewsQuery = { queryKey: ['schema-views'], queryFn: () => endpoints.schemaViews(), staleTime: Infinity }

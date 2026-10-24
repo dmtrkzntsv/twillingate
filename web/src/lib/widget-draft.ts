@@ -153,9 +153,9 @@ export function queryTemplate(component: string | null): string {
   return JSON.stringify(content, null, 2)
 }
 
-/** The add_widget body for a draft; throws when no component is chosen. */
-export function addBody(d: Draft): WidgetBody {
-  const source = sourceOf(d)
+/** The add_widget body for a draft; throws when no component is chosen. `sql` false never writes a sql source. */
+export function addBody(d: Draft, sql = true): WidgetBody {
+  const source = sourceOf(d, sql)
   if (!d.component || !source) throw new Error('no component chosen')
   const title = d.title.trim()
   return { component: d.component, ...(title ? { title } : {}), props: d.props, source }
@@ -170,14 +170,14 @@ const sorted = (_key: string, v: unknown) =>
 
 const same = (a: unknown, b: unknown) => JSON.stringify(a, sorted) === JSON.stringify(b, sorted)
 
-/** The update_widget body for what the draft changed, and nothing else (spec D14). */
-export function changedFields(w: Widget, d: Draft): WidgetContentBody {
+/** The update_widget body for what the draft changed, and nothing else (spec D14). `sql` false never writes a sql source. */
+export function changedFields(w: Widget, d: Draft, sql = true): WidgetContentBody {
   const out: WidgetContentBody = {}
   const title = d.title.trim()
   if (title !== (w.title ?? '')) out.title = title
   if (d.component && d.component !== w.component) out.component = d.component
   if (!same(d.props, w.props ?? {})) out.props = d.props
-  const source = sourceOf(d)
+  const source = sourceOf(d, sql)
   if (source && (source.type !== w.source.type || source.content !== w.source.content)) out.source = source
   return out
 }

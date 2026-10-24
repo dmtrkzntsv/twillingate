@@ -252,6 +252,12 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
 
   const save = async () => {
     if (!canSave || savingNow.current) return
+    // A draft that would be sql (a remote table typed into the props JSON) is
+    // never sent to a server with no external SQL engine.
+    if (!engine.sql && sourceOf(draft)?.type === 'sql') {
+      setSaveError('SQL needs an external SQL engine (SQL_ENGINE_SOCKET)')
+      return
+    }
     savingNow.current = true
     setSaving(true)
     setSaveError(null)
@@ -368,6 +374,7 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
               <div className={toolbar}>
                 <span className="mr-auto text-sm font-medium">Preview</span>
                 <Select
+                  disabled={locked}
                   value={component ?? ''}
                   onValueChange={(next) =>
                     setDraft((d) => withComponent(d, next, carryProps(d.props, widgets[next].contract.props)))
@@ -401,7 +408,14 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
               <div className={bar}>
                 <span className="mr-auto text-sm font-medium">Settings</span>
                 {hasFields && (
-                  <Button type="button" variant="ghost" size="sm" className="-mr-2 h-7 text-muted-foreground" onClick={() => setRaw(!raw)}>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="-mr-2 h-7 text-muted-foreground"
+                    disabled={locked}
+                    onClick={() => setRaw(!raw)}
+                  >
                     <BracesIcon />
                     {raw ? 'Edit props as a form' : 'Edit props as JSON'}
                   </Button>
@@ -438,6 +452,7 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
                       onValidity={setPropsValid}
                       raw={raw && hasFields}
                       unavailable={engine.sql ? undefined : REMOTE_NEEDS_SQL}
+                      disabled={locked}
                     />
                   )}
                 </div>
