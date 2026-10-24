@@ -1,0 +1,395 @@
+{
+  "casts": {
+    "{\"id\":\"a\",\"attr_v\":\" 1.5\"}": {
+      "value": " 1.5"
+    },
+    "{\"id\":\"a\",\"attr_v\":\" 12 \"}": {
+      "value": " 12 "
+    },
+    "{\"id\":\"a\",\"attr_v\":\"\"}": {},
+    "{\"id\":\"a\",\"attr_v\":\"-2.5\"}": {
+      "value": "-2.5"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"0.25\"}": {
+      "value": "0.25"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"0x1p4\"}": {
+      "value": "0x1p4"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"1.5 \"}": {
+      "value": "1.5 "
+    },
+    "{\"id\":\"a\",\"attr_v\":\"10.09.2026\"}": {
+      "value": "10.09.2026"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"12\"}": {
+      "value": "12"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"1280.5\"}": {
+      "value": "1280.5"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"1280.6\"}": {
+      "value": "1280.6"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"1969-12-31\"}": {
+      "value": "1969-12-31"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"1e300\"}": {
+      "value": "1e300"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"2026-09-10\"}": {
+      "value": "2026-09-10"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"2026-09-10T12:00:00Z\"}": {
+      "value": "2026-09-10T12:00:00Z"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"2026-09-10T12:00:01.123456Z\"}": {
+      "value": "2026-09-10T12:00:01.123456Z"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"\\t7\"}": {
+      "value": "\t7"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"abc\"}": {
+      "value": "abc"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"nope\"}": {
+      "value": "nope"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"x\"}": {
+      "value": "x"
+    },
+    "{\"id\":\"a\",\"attr_v\":\"é\\u2028\"}": {
+      "value": "é\u2028"
+    },
+    "{\"id\":\"a\",\"attr_v\":-7}": {
+      "value": "-7"
+    },
+    "{\"id\":\"a\",\"attr_v\":1e300}": {
+      "value": "1e300"
+    },
+    "{\"id\":\"a\",\"attr_v\":5}": {
+      "value": "5"
+    },
+    "{\"id\":\"a\",\"attr_v\":[1,2]}": {
+      "value": "[1,2]"
+    },
+    "{\"id\":\"a\",\"attr_v\":true}": {
+      "value": "true"
+    },
+    "{\"id\":\"a\",\"attr_v\":{\"k\":1}}": {
+      "value": "{\"k\":1}"
+    },
+    "{\"id\":\"a\",\"day\":\" 1.5\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\" 12 \"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"-2.5\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"0.25\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"0x1p4\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"1.5 \"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"10.09.2026\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"12\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"1280.5\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"1280.6\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"1969-12-31\"}": {
+      "value": "-1"
+    },
+    "{\"id\":\"a\",\"day\":\"1e300\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"2026-09-10\"}": {
+      "value": "20706"
+    },
+    "{\"id\":\"a\",\"day\":\"\\t7\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"abc\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"nope\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"x\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":\"é\\u2028\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":-7}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":1.50}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":1e300}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":1e3}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":5}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":[1,2]}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":true}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"day\":{\"k\":1}}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":\"\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":\"-2.5\"}": {
+      "value": "-3"
+    },
+    "{\"id\":\"a\",\"display_width\":\"0.25\"}": {
+      "value": "0"
+    },
+    "{\"id\":\"a\",\"display_width\":\"10.09.2026\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":\"12\"}": {
+      "value": "12"
+    },
+    "{\"id\":\"a\",\"display_width\":\"1280.5\"}": {
+      "value": "1281"
+    },
+    "{\"id\":\"a\",\"display_width\":\"1280.6\"}": {
+      "value": "1281"
+    },
+    "{\"id\":\"a\",\"display_width\":\"1969-12-31\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":\"1e300\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":\"2026-09-10\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":\"2026-09-10T12:00:00Z\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":\"2026-09-10T12:00:01.123456Z\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":\"abc\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":\"nope\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":\"x\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":\"é\\u2028\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":-7}": {
+      "value": "-7"
+    },
+    "{\"id\":\"a\",\"display_width\":1.50}": {
+      "value": "2"
+    },
+    "{\"id\":\"a\",\"display_width\":1e300}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":1e3}": {
+      "value": "1000"
+    },
+    "{\"id\":\"a\",\"display_width\":5}": {
+      "value": "5"
+    },
+    "{\"id\":\"a\",\"display_width\":[1,2]}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":true}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"display_width\":{\"k\":1}}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\" 1.5\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\" 12 \"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"-2.5\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"0.25\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"0x1p4\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"1.5 \"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"10.09.2026\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"12\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"1280.5\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"1280.6\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"1969-12-31\"}": {
+      "value": "-86400000000"
+    },
+    "{\"id\":\"a\",\"received_at\":\"1e300\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"2026-09-10\"}": {
+      "value": "1788998400000000"
+    },
+    "{\"id\":\"a\",\"received_at\":\"2026-09-10T12:00:00Z\"}": {
+      "value": "1789041600000000"
+    },
+    "{\"id\":\"a\",\"received_at\":\"2026-09-10T12:00:01.123456Z\"}": {
+      "value": "1789041601123456"
+    },
+    "{\"id\":\"a\",\"received_at\":\"\\t7\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"abc\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"nope\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"x\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":\"é\\u2028\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":-7}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":1.50}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":1e300}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":1e3}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":5}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":[1,2]}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":true}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"received_at\":{\"k\":1}}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"value\":\"\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"value\":\"-2.5\"}": {
+      "value": "-2.5"
+    },
+    "{\"id\":\"a\",\"value\":\"0.25\"}": {
+      "value": "0.25"
+    },
+    "{\"id\":\"a\",\"value\":\"10.09.2026\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"value\":\"12\"}": {
+      "value": "12"
+    },
+    "{\"id\":\"a\",\"value\":\"1280.5\"}": {
+      "value": "1280.5"
+    },
+    "{\"id\":\"a\",\"value\":\"1280.6\"}": {
+      "value": "1280.6"
+    },
+    "{\"id\":\"a\",\"value\":\"1969-12-31\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"value\":\"1e300\"}": {
+      "value": "1e+300"
+    },
+    "{\"id\":\"a\",\"value\":\"2026-09-10\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"value\":\"2026-09-10T12:00:00Z\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"value\":\"2026-09-10T12:00:01.123456Z\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"value\":\"abc\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"value\":\"nope\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"value\":\"x\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"value\":\"é\\u2028\"}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"value\":-7}": {
+      "value": "-7"
+    },
+    "{\"id\":\"a\",\"value\":1.50}": {
+      "value": "1.5"
+    },
+    "{\"id\":\"a\",\"value\":1e300}": {
+      "value": "1e+300"
+    },
+    "{\"id\":\"a\",\"value\":1e3}": {
+      "value": "1000"
+    },
+    "{\"id\":\"a\",\"value\":5}": {
+      "value": "5"
+    },
+    "{\"id\":\"a\",\"value\":[1,2]}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"value\":true}": {
+      "error": true
+    },
+    "{\"id\":\"a\",\"value\":{\"k\":1}}": {
+      "error": true
+    }
+  }
+}

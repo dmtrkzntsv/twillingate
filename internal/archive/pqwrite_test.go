@@ -119,6 +119,18 @@ func TestWriterTypesMatchDuckDB(t *testing.T) {
 	if got, want := describe(goFile), describe(duckFile); !eq(got, want) {
 		t.Errorf("DESCRIBE of the Go file = %v, of DuckDB's %v", got, want)
 	}
+	// DuckDB's file, frozen: its DESCRIBE, its rows as read below, and its
+	// leaves' types (the first five facts: the dictionary may differ).
+	type typesAnswer struct {
+		Describe, Rows, Leaves []string
+	}
+	leaves := func(facts []string) []string {
+		out := make([]string, len(facts))
+		for i, l := range facts {
+			out[i] = strings.Join(strings.Fields(l)[:5], " ")
+		}
+		return out
+	}
 	if got := describe(goFile); !eq(got, []string{"[v VARCHAR YES]", "[b BIGINT YES]", "[d DOUBLE YES]", "[dt DATE YES]", "[ts TIMESTAMP YES]"}) {
 		t.Errorf("DESCRIBE = %v", got)
 	}
@@ -127,6 +139,17 @@ func TestWriterTypesMatchDuckDB(t *testing.T) {
 	}
 	if got, want := read(goFile), read(duckFile); !eq(got, want) {
 		t.Errorf("Go file reads %v, DuckDB's %v", got, want)
+	}
+	golden := frozen(t, "all types", typesAnswer{Describe: describe(duckFile), Rows: read(duckFile),
+		Leaves: leaves(leafFacts(openMeta(t, duckFile)))})
+	if got := describe(goFile); !eq(got, golden.Describe) {
+		t.Errorf("DESCRIBE of the Go file = %v, the golden's %v", got, golden.Describe)
+	}
+	if got := read(goFile); !eq(got, golden.Rows) {
+		t.Errorf("Go file reads %v, the golden's %v", got, golden.Rows)
+	}
+	if got := leaves(leafFacts(openMeta(t, goFile))); !eq(got, golden.Leaves) {
+		t.Errorf("Go leaves %v, the golden's %v", got, golden.Leaves)
 	}
 	// The leaves, as parquet-go reads them, equal DuckDB's but for where
 	// the dictionary is used: always on a VARCHAR here, where DuckDB judges
