@@ -15,8 +15,16 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
-// manyPresets are the presets TestSystemWidgetsAnswerManyEqualsAnswer runs.
-var manyPresets = []string{"today", "yesterday", "7d", "30d", "90d"}
+// equalityPresets are the presets TestSystemWidgetsAnswerManyEqualsAnswer
+// and TestWidgetDataStreamEqualsWidgetData run: every one, but under the
+// race detector 30d alone, to keep the package's race run short; make
+// check, without race, runs them all.
+func equalityPresets() []string {
+	if raceEnabled {
+		return []string{"30d"}
+	}
+	return systemPresets
+}
 
 // TestSystemWidgetsAnswerManyEqualsAnswer holds the native engine's
 // AnswerMany to Answer over every built-in query widget on the system
@@ -62,7 +70,7 @@ func TestSystemWidgetsAnswerManyEqualsAnswer(t *testing.T) {
 	f := newSystemFixture(t)
 	e := native.New(native.Options{Dir: f.files.Dir})
 	ctx := context.Background()
-	for _, preset := range manyPresets {
+	for _, preset := range equalityPresets() {
 		from, to := presetDates(preset, f.today)
 		p := native.Params{Project: f.project, From: mustDate(t, from), To: mustDate(t, to)}
 		var all []native.Request

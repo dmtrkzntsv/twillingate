@@ -60,7 +60,7 @@ func sameAsGet(t *testing.T, what string, svc *Service, req WidgetRequest, r Wid
 }
 
 // TestWidgetDataStreamEqualsWidgetData: every built-in dashboard's
-// widgets, streamed as one request for every preset, each answer the same
+// widgets, streamed as one request for every preset (equalityPresets), each answer the same
 // JSON as its GET, the cache off so both load.
 func TestWidgetDataStreamEqualsWidgetData(t *testing.T) {
 	ctx := context.Background()
@@ -80,7 +80,7 @@ func TestWidgetDataStreamEqualsWidgetData(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, preset := range systemPresets {
+		for _, preset := range equalityPresets() {
 			from, to := presetDates(preset, f.today)
 			reqs := make([]WidgetRequest, len(detail.Widgets))
 			for i, w := range detail.Widgets {
@@ -92,7 +92,7 @@ func TestWidgetDataStreamEqualsWidgetData(t *testing.T) {
 			}
 		}
 	}
-	if n < 100 {
+	if n < 60*len(equalityPresets()) { // 71 widgets a preset
 		t.Fatalf("compared %d widgets", n)
 	}
 }
