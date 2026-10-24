@@ -69,11 +69,13 @@ const maxConsumers = 32
 // heavy aggregations than there are turns (a compared stat with
 // MaxScans 1) is not split, and its scan takes every turn while holding
 // them all; and light aggregations take no turn of their own, bounded
-// only by their scan's budget below (twice MaxBytes a turn held).
+// only by their scan's budget below (MaxBytes a turn held). So the
+// aggregations of every call together hold about MaxScans × MaxBytes at
+// most, as MaxScans queries answered one by one would.
 //
-// A shared scan also holds at most twice MaxBytes over its aggregations
-// (the identities their columns look up counted once, as are a gap
-// day's views):
+// A shared scan holds at most MaxBytes for each turn it holds over its
+// aggregations (the identities their columns look up counted once, as
+// are a gap day's views):
 // once past it, the query holding the most leaves the scan and is
 // answered alone, by Answer, after it. A query whose context is done
 // leaves at once, answered with its error; the scan stops when none is
@@ -264,6 +266,7 @@ type sharedScan struct {
 	reqs     []*manyReq
 	answer   func(int, Answered)
 	cancel   context.CancelFunc
+	turns    int // the turns it holds (turnFor): its budget is a MaxBytes each
 
 	mu   sync.Mutex // the requests' states, live
 	live int
@@ -300,7 +303,8 @@ func (e *Engine) shared(ctx context.Context, project int64, sessions bool, reqs 
 			outer(i, a)
 		}
 	}
-	sh := &sharedScan{e: e, project: project, sessions: sessions, reqs: reqs, answer: answer, cancel: cancel, live: len(reqs)}
+	sh := &sharedScan{e: e, project: project, sessions: sessions, reqs: reqs, answer: answer, cancel: cancel, live: len(reqs),
+		turns: min(max(1, weight), e.slots.size)}
 	// A request whose context is done leaves at once; each such call has
 	// ended before shared returns.
 	stops := make([]func(), len(reqs))
@@ -840,15 +844,16 @@ func panicked(p any) error {
 	return ErrInternal
 }
 
-// checkBudget evicts, while the scan's aggregations hold more than twice
-// MaxBytes put together, the live request holding the most. A gap day's
+// checkBudget evicts, while the scan's aggregations hold more than
+// MaxBytes for each turn it holds, put together, the live request holding
+// the most. A gap day's
 // views and the identities are counted once, though each consumer is
 // charged them: the identities, cached and shared, as the most any
 // consumer was charged.
 func (sh *sharedScan) checkBudget() {
 	sh.budget.Lock()
 	defer sh.budget.Unlock()
-	limit := 2 * sh.e.maxBytes
+	limit := int64(sh.turns) * sh.e.maxBytes
 	for {
 		total := sh.derived.Load()
 		var most *manyReq

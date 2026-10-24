@@ -756,7 +756,7 @@ func TestLogCacheDecodeStopsAtTheBound(t *testing.T) {
 	}
 	defer src.Close()
 	x := &logEntry{keys: map[string]bool{}}
-	if _, err := x.decode(src, path, size, full/10); !errors.Is(err, errTooBig) {
+	if _, err := x.decode(src, path, size, full/10, nil); !errors.Is(err, errTooBig) {
 		t.Fatalf("err = %v, want errTooBig", err)
 	}
 	if x.size > size/4 {
@@ -820,5 +820,126 @@ func TestLogCachePrunesGoneLogs(t *testing.T) {
 	}
 	if got := keys2(c.entries); !slices.Equal(got, []string{b}) || c.size() != c.entries[b].bytes {
 		t.Errorf("entries %v (%d bytes), want only %s", got, c.size(), b)
+	}
+}
+
+// A decode counts against the cache as it grows, with the other decodes
+// under way: one that does not fit beside them is read per query, without
+// marking the log too large, and is kept once there is room.
+func TestLogCacheDecodesShareTheBound(t *testing.T) {
+	f := archivetest.New(t)
+	f.Write(t, events(t, 1, today, 30)...)
+	path := logOf(t, f, 1)
+	cols := []string{"id", "path"}
+	day := rng(t, today, today)
+	probe := newLogCache(1 << 30)
+	if _, err := probe.read(context.Background(), path, cols, "", day); err != nil {
+		t.Fatal(err)
+	}
+	one := probe.size()
+
+	c := newLogCache(2 * one)
+	other := &reservation{c: c, path: "elsewhere"} // another decode under way
+	if !other.hold(one + one/2) {
+		t.Fatal("the other decode got no room in an empty cache")
+	}
+	if (&reservation{c: c, path: "third"}).hold(one) {
+		t.Error("a third decode got room past the bound")
+	}
+	want, _ := readLog(path, cols, "", day)
+	got, err := c.read(context.Background(), path, cols, "", day)
+	sameBatch(t, "no room", got, err, want, nil)
+	if c.size() != 0 || len(c.entries) != 0 || c.isBigNow(path) {
+		t.Errorf("no room: %d entries of %d bytes, big %v", len(c.entries), c.size(), c.big)
+	}
+	if c.inflight != one+one/2 {
+		t.Errorf("in flight %d, want the other decode's %d", c.inflight, one+one/2)
+	}
+	other.release()
+	if c.inflight != 0 {
+		t.Errorf("in flight %d once released", c.inflight)
+	}
+	got, err = c.read(context.Background(), path, cols, "", day)
+	sameBatch(t, "room", got, err, want, nil)
+	if len(c.entries) != 1 || c.size() > c.max {
+		t.Errorf("room: %d entries of %d bytes, of %d", len(c.entries), c.size(), c.max)
+	}
+}
+
+// fakeClock is a clock a test moves.
+type fakeClock struct{ ns atomic.Int64 }
+
+func (f *fakeClock) now() time.Time          { return time.Unix(0, f.ns.Load()) }
+func (f *fakeClock) advance(d time.Duration) { f.ns.Add(int64(d)) }
+
+// An entry unused for idleAfter is dropped by the sweep, and so is one
+// whose log rotated, without another store; the sweep runs by itself
+// while there are entries, and stops once there are none.
+func TestLogCacheDropsIdleEntries(t *testing.T) {
+	f := archivetest.New(t)
+	f.Write(t, events(t, 1, today, 3)...)
+	f.Write(t, events(t, 2, today, 3)...)
+	a, b := logOf(t, f, 1), logOf(t, f, 2)
+	cols := []string{"id"}
+	day := rng(t, today, today)
+	clock := &fakeClock{}
+	clock.ns.Store(time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC).UnixNano())
+	c := newLogCache(1 << 30)
+	c.now = clock.now
+	c.sweepEvery = time.Hour // swept by hand below
+	read := func(p string) {
+		t.Helper()
+		if _, err := c.read(context.Background(), p, cols, "", day); err != nil {
+			t.Fatal(err)
+		}
+	}
+	held := func() []string {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		return keys2(c.entries)
+	}
+	read(a)
+	read(b)
+	clock.advance(4 * time.Minute)
+	read(a) // used again
+	c.sweep()
+	if got := held(); len(got) != 2 {
+		t.Fatalf("after 4 minutes: %v, want both", got)
+	}
+	clock.advance(2 * time.Minute)
+	c.sweep()
+	if got := held(); !slices.Equal(got, []string{a}) {
+		t.Errorf("after 6 minutes: %v, want the one used at 4 alone", got)
+	}
+	if err := os.Rename(a, strings.TrimSuffix(a, ".log")+".1.closed"); err != nil {
+		t.Fatal(err)
+	}
+	c.sweep()
+	if got := held(); len(got) != 0 || c.size() != 0 {
+		t.Errorf("rotated: %v of %d bytes, want none", got, c.size())
+	}
+
+	// By itself: every entry idle at once, the sweep drops them and stops.
+	c = newLogCache(1 << 30)
+	c.idleAfter, c.sweepEvery = 0, time.Millisecond
+	read = func(p string) {
+		t.Helper()
+		if _, err := c.read(context.Background(), p, cols, "", day); err != nil {
+			t.Fatal(err)
+		}
+	}
+	read(b)
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		c.mu.Lock()
+		n, timer := len(c.entries), c.sweeping
+		c.mu.Unlock()
+		if n == 0 && timer == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d entries, sweep %v after 10 s", n, timer != nil)
+		}
+		time.Sleep(time.Millisecond)
 	}
 }

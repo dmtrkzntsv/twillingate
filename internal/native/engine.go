@@ -46,6 +46,11 @@ type Options struct {
 	// workers' partials holds the per-day keys and the histograms twice
 	// for a moment, uncounted. A retention query charges its per-actor
 	// state and is refused with ErrTooLarge past MaxBytes.
+	//
+	// The engine as a whole holds at most about MaxBytes of identities
+	// (its cache), MaxBytes of open logs' decoded rows (its log cache,
+	// emptied after five idle minutes) and MaxScans × MaxBytes of
+	// aggregations (AnswerMany).
 	MaxBytes int64
 	// Now is the clock (default time.Now): its UTC day is today, which a
 	// retention query counts up to, leaving it out.
@@ -72,10 +77,10 @@ type Engine struct {
 	now func() time.Time
 }
 
-// New returns an engine over o.Dir.
 // DefaultMaxScans is Options.MaxScans when it is not set.
 const DefaultMaxScans = 2
 
+// New returns an engine over o.Dir.
 func New(o Options) *Engine {
 	if o.Workers <= 0 {
 		o.Workers = 2

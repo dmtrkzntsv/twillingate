@@ -10,6 +10,7 @@ import (
 	"os"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 )
@@ -40,23 +41,42 @@ import (
 //     (the torn line ingest is still writing) are decoded per query, as
 //     readLog would, and kept once their newline arrives.
 //   - Entries take at most max bytes together (counted as batchBytes
-//     counts a batch), the least recently used dropped first, as the identities
+//     counts a batch), the decodes under way counted with them as they
+//     grow, the least recently used dropped first, as the identities
 //     cache drops them. A log whose entry alone is larger is read per
-//     query by readLog, as before the cache, while it stays that file.
+//     query by readLog, as before the cache, while it stays that file;
+//     one that does not fit beside the decodes under way is read so by
+//     that query alone.
+//   - An entry not used for idleAfter is dropped, and so is one whose log
+//     rotated or was dumped, by a sweep every sweepEvery while the cache
+//     holds any: an idle server holds none for long.
 //   - Concurrent queries missing a log, or finding it grown, decode it
 //     once: the others wait, then read the entry.
 type logCache struct {
-	mu      sync.Mutex // never held over a read
-	max     int64
-	bytes   int64
-	tick    uint64
+	mu       sync.Mutex // never held over a read
+	max      int64
+	bytes    int64
+	inflight int64 // bytes the decodes under way hold past what bytes counts of them
+	tick     uint64
 	entries map[string]*logEntry
 	flights map[string]chan struct{} // a decode under way, closed when done
 	big     map[string]fileID        // logs too large to keep, by path: readLog reads them while the file stays
+
+	now        func() time.Time // the clock entries are idle by
+	idleAfter  time.Duration    // how long an entry is kept unused
+	sweepEvery time.Duration    // how often the sweep looks, while there are entries
+	sweeping   *time.Timer      // the next sweep, nil while there are no entries
 }
 
+// The log cache's idle bound and sweep period.
+const (
+	logIdleAfter  = 5 * time.Minute
+	logSweepEvery = time.Minute
+)
+
 func newLogCache(max int64) *logCache {
-	return &logCache{max: max, entries: map[string]*logEntry{}, flights: map[string]chan struct{}{}, big: map[string]fileID{}}
+	return &logCache{max: max, entries: map[string]*logEntry{}, flights: map[string]chan struct{}{}, big: map[string]fileID{},
+		now: time.Now, idleAfter: logIdleAfter, sweepEvery: logSweepEvery}
 }
 
 // fileID tells a file from another that took its name.
@@ -87,6 +107,7 @@ type logEntry struct {
 	held    int64 // what it takes while a decode adds to it, counted as it goes
 	charged int64 // bytes counted in the cache's total
 	used    uint64
+	usedAt  time.Time // when last used, by the cache's clock
 }
 
 // famKey is a family's value: ok false for a line without one (null).
@@ -210,6 +231,10 @@ var onFlightWait = func(path string) {}
 // errTooBig stops a decode whose entry would pass the cache's bound.
 var errTooBig = errors.New("log too large to keep")
 
+// errNoRoom stops a decode that does not fit the cache beside the other
+// decodes under way.
+var errNoRoom = errors.New("no room for the log beside the decodes under way")
+
 // update brings path's entry up to the file f as it is now, and returns
 // a snapshot of it for cols; ok false when the log is not kept (too large,
 // or a file without an identity), for readLog to read. The caller holds
@@ -232,19 +257,34 @@ func (c *logCache) update(f *os.File, path string, cols []string) (v *logView, o
 		return nil, false, nil
 	}
 	if x != nil && (x.id != id || x.size > size || !endsLine(f, x.size)) {
-		x = nil // another file, or one cut: decoded again
+		c.drop(path, id, false) // another file, or one cut: decoded again
+		x = nil
 	}
 	fresh := x == nil
 	if fresh {
 		x = &logEntry{id: id, keys: map[string]bool{}}
 	}
 	before := x.size
-	tail, err := x.decode(f, path, size, c.max)
-	if errors.Is(err, errTooBig) {
-		c.drop(path, id)
-		return nil, false, nil
+	// What the cache counts of x already: the decode reserves the rest
+	// as it grows.
+	c.mu.Lock()
+	var base int64
+	if c.entries[path] == x {
+		base = x.charged
 	}
-	if err != nil {
+	c.mu.Unlock()
+	res := &reservation{c: c, path: path, granted: base, base: base}
+	tail, err := x.decode(f, path, size, c.max, res)
+	res.release()
+	switch {
+	case errors.Is(err, errTooBig):
+		c.drop(path, id, true)
+		return nil, false, nil
+	case errors.Is(err, errNoRoom):
+		c.drop(path, id, false) // half decoded: decoded again next time
+		return nil, false, nil
+	case err != nil:
+		c.drop(path, id, false)
 		return nil, false, err
 	}
 	grew := x.size != before
@@ -291,19 +331,89 @@ func (c *logCache) touch(path string, x *logEntry) {
 	defer c.mu.Unlock()
 	if c.entries[path] == x {
 		c.tick++
-		x.used = c.tick
+		x.used, x.usedAt = c.tick, c.now()
 	}
 }
 
-// drop forgets path's entry and marks the file id big: too large to keep.
-func (c *logCache) drop(path string, id fileID) {
+// drop forgets path's entry and, when big, marks the file id too large
+// to keep.
+func (c *logCache) drop(path string, id fileID, big bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if old := c.entries[path]; old != nil {
 		c.bytes -= old.charged
 		delete(c.entries, path)
 	}
-	c.big[path] = id
+	if big {
+		c.big[path] = id
+	}
+}
+
+// reservation is what a decode of path holds of the cache: granted bytes
+// of it, base of them counted already in the cache's bytes (its entry's
+// charge), the rest in inflight.
+type reservation struct {
+	c       *logCache
+	path    string
+	granted int64
+	base    int64
+}
+
+// reserveChunk is how much a decode reserves at a time, at least.
+const reserveChunk = 256 << 10
+
+// hold makes sure the decode holds at least n bytes of the cache, making
+// room by dropping the least recently used entries of logs no decode
+// holds; false when even that leaves too little.
+func (r *reservation) hold(n int64) bool {
+	if r == nil || n <= r.granted {
+		return true
+	}
+	need := n - r.granted
+	c := r.c
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, ask := range []int64{max(need, reserveChunk), need} {
+		if c.room(r.path, ask) {
+			c.inflight += ask
+			r.granted += ask
+			return true
+		}
+	}
+	return false
+}
+
+// release gives back what the decode reserved, for store to count the
+// entry as measured.
+func (r *reservation) release() {
+	c := r.c
+	c.mu.Lock()
+	c.inflight -= r.granted - r.base
+	r.granted = r.base
+	c.mu.Unlock()
+}
+
+// room makes n more bytes fit, under c.mu, dropping the least recently
+// used entries but path's and those a decode holds; false when it cannot.
+func (c *logCache) room(path string, n int64) bool {
+	for c.bytes+c.inflight+n > c.max {
+		var oldest string
+		var at uint64
+		for p, y := range c.entries {
+			if _, busy := c.flights[p]; busy || p == path {
+				continue
+			}
+			if oldest == "" || y.used < at {
+				oldest, at = p, y.used
+			}
+		}
+		if oldest == "" {
+			return false
+		}
+		c.bytes -= c.entries[oldest].charged
+		delete(c.entries, oldest)
+	}
+	return true
 }
 
 // store caches x as path's entry, replacing what it had, and drops the
@@ -312,6 +422,31 @@ func (c *logCache) drop(path string, id fileID) {
 // Entries and big marks of other paths that no longer name their file
 // (dumped, rotated) are dropped first.
 func (c *logCache) store(path string, x *logEntry) {
+	c.prune(path)
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if old := c.entries[path]; old != nil {
+		c.bytes -= old.charged
+		delete(c.entries, path)
+	}
+	if x.bytes > c.max {
+		c.big[path] = x.id
+		return
+	}
+	delete(c.big, path)
+	c.room(path, x.bytes)
+	c.tick++
+	x.used, x.usedAt, x.charged = c.tick, c.now(), x.bytes
+	c.entries[path] = x
+	c.bytes += x.bytes
+	if c.sweeping == nil {
+		c.sweeping = time.AfterFunc(c.sweepEvery, c.sweepAndRearm)
+	}
+}
+
+// prune drops the entries and big marks, but path's, of logs no longer
+// there (dumped, rotated: another file under the name, or none).
+func (c *logCache) prune(path string) {
 	c.mu.Lock()
 	others := make(map[string]fileID, len(c.entries)+len(c.big))
 	for p, y := range c.entries {
@@ -339,31 +474,33 @@ func (c *logCache) store(path string, x *logEntry) {
 			delete(c.big, p)
 		}
 	}
-	if old := c.entries[path]; old != nil {
-		c.bytes -= old.charged
-		delete(c.entries, path)
+}
+
+// sweep drops the entries unused for idleAfter, and those of logs no
+// longer there; an entry a decode holds stays.
+func (c *logCache) sweep() {
+	c.prune("")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.now()
+	for p, y := range c.entries {
+		if _, busy := c.flights[p]; !busy && now.Sub(y.usedAt) >= c.idleAfter {
+			c.bytes -= y.charged
+			delete(c.entries, p)
+		}
 	}
-	if x.bytes > c.max {
-		c.big[path] = x.id
+}
+
+// sweepAndRearm sweeps, then sets the next sweep while entries are left.
+func (c *logCache) sweepAndRearm() {
+	c.sweep()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.entries) == 0 {
+		c.sweeping = nil
 		return
 	}
-	delete(c.big, path)
-	c.tick++
-	x.used, x.charged = c.tick, x.bytes
-	c.entries[path] = x
-	c.bytes += x.bytes
-	for c.bytes > c.max {
-		var oldest string
-		var at uint64
-		first := true
-		for p, y := range c.entries {
-			if first || y.used < at {
-				oldest, at, first = p, y.used, false
-			}
-		}
-		c.bytes -= c.entries[oldest].charged
-		delete(c.entries, oldest)
-	}
+	c.sweeping.Reset(c.sweepEvery)
 }
 
 // size is the bytes the cached entries take.
@@ -376,9 +513,10 @@ func (c *logCache) size() int64 {
 // decode reads f's complete lines past x.size, up to size, into x, and
 // returns the bytes past the last of them (a line not yet complete). It
 // stops with errTooBig as soon as x would take more than limit bytes
-// (counted as it goes, about as measure counts them), leaving x half
+// (counted as it goes, about as measure counts them), and with errNoRoom
+// as soon as res (nil: none) cannot hold what x takes, leaving x half
 // read.
-func (x *logEntry) decode(f *os.File, path string, size, limit int64) ([]byte, error) {
+func (x *logEntry) decode(f *os.File, path string, size, limit int64, res *reservation) ([]byte, error) {
 	if x.size == size {
 		return nil, nil
 	}
@@ -403,6 +541,9 @@ func (x *logEntry) decode(f *os.File, path string, size, limit int64) ([]byte, e
 		x.add(line)
 		if x.held > limit {
 			return nil, errTooBig
+		}
+		if !res.hold(x.held) {
+			return nil, errNoRoom
 		}
 		if rerr != nil {
 			return nil, nil
