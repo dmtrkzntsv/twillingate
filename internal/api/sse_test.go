@@ -143,3 +143,46 @@ func TestSSEWriterClientGone(t *testing.T) {
 		t.Errorf("write after the client left = %v, want errSSEClosed", err)
 	}
 }
+
+// TestSSEWriterStalledClient: a client that stops reading fails a write
+// once its deadline passes, which ends the stream, rather than holding
+// the handler forever.
+func TestSSEWriterStalledClient(t *testing.T) {
+	ended := make(chan error, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		s, err := newSSE(w, r)
+		if err != nil {
+			ended <- err
+			return
+		}
+		defer s.Close()
+		s.timeout = 50 * time.Millisecond
+		chunk := strings.Repeat("x", 64<<10)
+		for range 4096 { // 256 MiB: far past what the sockets buffer
+			if err := s.Event("big", chunk); err != nil {
+				select {
+				case <-s.Done():
+					ended <- err
+				default:
+					ended <- errors.New("a failed write left the stream open")
+				}
+				return
+			}
+		}
+		ended <- errors.New("every write went through to a client that reads nothing")
+	}))
+	defer srv.Close()
+	res, err := http.Get(srv.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close() // never read
+	select {
+	case err := <-ended:
+		if !errors.Is(err, errSSEClosed) {
+			t.Errorf("the stalled write: %v, want errSSEClosed", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the handler is still writing to a client that stopped reading")
+	}
+}

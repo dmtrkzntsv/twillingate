@@ -74,6 +74,7 @@ func (h *host) widgetStream(r *registrar) http.HandlerFunc {
 		ctx := withActor(req.Context(), "api")
 		stream, err := newSSE(w, req)
 		if err != nil {
+			r.logger.Warn("widget stream: the response cannot be flushed", "err", err)
 			return
 		}
 		// Closed before the handler returns, so the keepalive loop never
