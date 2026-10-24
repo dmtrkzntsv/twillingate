@@ -57,7 +57,7 @@ type host struct {
 	queryTimeout time.Duration
 	queryRows    int
 	// keepalive is how often POST /api/widgets/stream sends a keepalive
-	// comment; 0 is streamKeepalive. Tests shorten it.
+	// comment; 0 is sseKeepalive. Tests shorten it.
 	keepalive time.Duration
 }
 

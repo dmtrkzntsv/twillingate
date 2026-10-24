@@ -1,11 +1,10 @@
 package api
 
 import (
-	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"runtime/debug"
-	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 )
@@ -13,11 +12,6 @@ import (
 // maxStreamWidgets caps one POST /api/widgets/stream: more widgets are
 // refused before the stream starts.
 const maxStreamWidgets = 64
-
-// streamKeepalive is how often the widget stream sends a keepalive
-// comment, so a proxy or a browser does not take a long scan for a dead
-// connection.
-const streamKeepalive = 15 * time.Second
 
 type widgetStreamIn struct {
 	Widgets []widgetStreamItem `json:"widgets" jsonschema:"the widgets to load, at most 64, each as GET /api/widgets/{widget_id}/data takes it without a remote table's paging arguments"`
@@ -78,18 +72,13 @@ func (h *host) widgetStream(r *registrar) http.HandlerFunc {
 		}
 
 		ctx := withActor(req.Context(), "api")
-		rc := http.NewResponseController(w)
-		// A server write timeout would cut a long stream; the stream ends
-		// when its widgets are done or its client leaves instead.
-		_ = rc.SetWriteDeadline(time.Time{})
-		hd := w.Header()
-		hd.Set("Content-Type", "text/event-stream")
-		hd.Set("Cache-Control", "no-cache")
-		hd.Set("X-Accel-Buffering", "no") // nginx: do not buffer this response
-		w.WriteHeader(http.StatusOK)
-		if rc.Flush() != nil {
+		stream, err := newSSE(w, req)
+		if err != nil {
 			return
 		}
+		// Closed before the handler returns, so the keepalive loop never
+		// writes after it.
+		defer stream.Close()
 
 		results := make(chan reporting.WidgetResult, len(reqs))
 		go func() {
@@ -105,33 +94,20 @@ func (h *host) widgetStream(r *registrar) http.HandlerFunc {
 			}()
 			h.rep.WidgetDataStream(ctx, reqs, func(res reporting.WidgetResult) { results <- res })
 		}()
-		every := h.keepalive
-		if every <= 0 {
-			every = streamKeepalive
-		}
-		tick := time.NewTicker(every)
-		defer tick.Stop()
-		write := func(b []byte) bool {
-			if _, err := w.Write(b); err != nil {
-				return false
-			}
-			return rc.Flush() == nil
-		}
+		stream.Keepalive(h.keepalive)
 		for {
 			select {
-			case <-ctx.Done():
-				// The client went away: the answers still to come (each
-				// the context's error, or a load that finished just now)
-				// go into results, which nobody reads, and are dropped
-				// with it; WidgetDataStream never blocks on them.
+			case <-stream.Done():
+				// The client went away, or a write failed: the answers
+				// still to come (each the context's error, or a load that
+				// finished just now) go into results, which nobody reads,
+				// and are dropped with it; WidgetDataStream never blocks
+				// on them. Returning cancels the request's context, which
+				// stops every load still running.
 				return
-			case <-tick.C:
-				if !write([]byte(": keepalive\n\n")) {
-					return
-				}
 			case res, ok := <-results:
 				if !ok {
-					write([]byte("event: done\ndata: {}\n\n"))
+					_ = stream.Event("done", struct{}{})
 					return
 				}
 				ev := widgetEvent{WidgetID: res.WidgetID}
@@ -141,12 +117,13 @@ func (h *host) widgetStream(r *registrar) http.HandlerFunc {
 				} else {
 					ev.Data = &res.Data
 				}
-				b, err := json.Marshal(ev)
-				if err != nil {
+				err := stream.Event("widget", ev)
+				if err != nil && !errors.Is(err, errSSEClosed) {
+					// The answer did not marshal: the widget gets the error instead.
 					_, e := refusalOf(r.logger, req, err)
-					b, _ = json.Marshal(widgetEvent{WidgetID: res.WidgetID, Error: &e})
+					err = stream.Event("widget", widgetEvent{WidgetID: res.WidgetID, Error: &e})
 				}
-				if !write(append(append([]byte("event: widget\ndata: "), b...), '\n', '\n')) {
+				if err != nil {
 					return
 				}
 			}
