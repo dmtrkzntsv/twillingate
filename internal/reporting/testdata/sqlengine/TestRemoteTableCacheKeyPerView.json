@@ -1,0 +1,7 @@
+[
+{"mode":"shape","sql":"SELECT CAST(event_name AS INTEGER) AS \"N\" FROM product","scope":null,"confine":true,"max_rows":0,"answers":[{"columns":["N"],"rows":[]}]},
+{"mode":"text","sql":"SELECT CAST(event_name AS INTEGER) AS \"N\" FROM product","scope":null,"confine":true,"max_rows":5,"answers":[{"columns":["N"],"rows":[["1"],["2"]]}]},
+{"mode":"page","sql":"SELECT CAST(event_name AS INTEGER) AS \"N\" FROM product","page":{"filters":[],"sort":{"column":"N","desc":false},"distinct":"","limit":1000,"offset":0},"scope":null,"confine":true,"max_rows":1000,"answers":[{"columns":["N","__tw_matched","__tw_total"],"rows":[["1",2,2],["2",2,2]]}]},
+{"mode":"page","sql":"SELECT CAST(event_name AS INTEGER) AS \"N\" FROM product","page":{"filters":[],"sort":{"column":"N","desc":true},"distinct":"","limit":1000,"offset":0},"scope":null,"confine":true,"max_rows":1000,"answers":[{"columns":["N","__tw_matched","__tw_total"],"rows":[["3",3,3],["2",3,3],["1",3,3]]}]},
+{"mode":"page","sql":"SELECT CAST(event_name AS INTEGER) AS \"N\" FROM product","page":{"filters":[{"column":"N","op":">","values":["0"]}],"sort":null,"distinct":"","limit":1000,"offset":0},"scope":null,"confine":true,"max_rows":1000,"answers":[{"columns":["N","__tw_matched","__tw_total"],"rows":[["1",3,3],["2",3,3],["3",3,3]]}]}
+]

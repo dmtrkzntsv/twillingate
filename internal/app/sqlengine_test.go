@@ -216,16 +216,9 @@ func TestServeAnswersSQLThroughTheEngine(t *testing.T) {
 	}
 
 	t.Run("engine", func(t *testing.T) {
-		var eng *archivetest.SQLEngine
-		addr := serve(t, func(cfg *config.Config) string {
-			e, _, err := openFiles(cfg)
-			if err != nil {
-				t.Fatal(err)
-			}
-			t.Cleanup(func() { e.Close() })
-			eng = archivetest.ServeSQL(t, cfg.EventsDir, e)
-			return eng.Socket
-		})
+		eng := archivetest.NewFakeSQL(t).On(archivetest.And(archivetest.ModeIs(sqlengine.ModeRows), archivetest.SQLHas("SELECT count(*) AS n FROM events")),
+			archivetest.Rows([]string{"n"}, []any{1}))
+		addr := serve(t, func(*config.Config) string { return eng.Socket })
 		if code, body := query(t, addr); code != 200 || !strings.Contains(body, `"rows":[["1"]]`) {
 			t.Errorf("query = %d %s, want the one event counted", code, body)
 		}

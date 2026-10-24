@@ -1,0 +1,4 @@
+[
+{"mode":"rows","sql":"SELECT day, count(*) FROM views WHERE project_id=1 GROUP BY day","scope":null,"confine":true,"max_rows":1000,"answers":[{"columns":["day","count_star()"],"rows":[["2026-08-01",10],["2026-08-08",4],["2026-08-20",45],["2026-08-21",30],["2026-08-22",1],["2026-08-23",1],["2026-08-24",1],["2026-08-25",2],["2026-08-26",1]]}]},
+{"mode":"rows","sql":"ATTACH 'x' AS y","scope":null,"confine":true,"max_rows":1000,"answers":[{"kind":"sql","message":"engine: a query must be one SELECT statement"}]}
+]

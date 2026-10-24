@@ -1,0 +1,4 @@
+[
+{"mode":"shape","sql":"SELECT day AS x, count(*) AS y FROM views WHERE day BETWEEN CAST($tw_from AS DATE) AND CAST($tw_to AS DATE) GROUP BY day ORDER BY day","scope":null,"confine":true,"max_rows":0,"answers":[{"columns":["x","y"],"rows":[]}]},
+{"mode":"text","sql":"SELECT day AS x, count(*) AS y FROM views WHERE day BETWEEN CAST($tw_from AS DATE) AND CAST($tw_to AS DATE) GROUP BY day ORDER BY day","scope":null,"confine":true,"max_rows":5,"answers":[{"columns":["x","y"],"rows":[["2026-09-20","1"]]}]}
+]

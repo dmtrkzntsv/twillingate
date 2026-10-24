@@ -1,0 +1,5 @@
+[
+{"mode":"shape","sql":"SELECT 1 AS value","scope":null,"confine":true,"max_rows":0,"answers":[{"columns":["value"],"rows":[]}]},
+{"mode":"shape","sql":"SELECT sum(hash(i)) AS value FROM range(100000000000) t(i)","scope":null,"confine":true,"max_rows":0,"answers":[{"columns":["value"],"rows":[]}]},
+{"mode":"text","sql":"SELECT sum(hash(i)) AS value FROM range(100000000000) t(i)","scope":null,"confine":true,"max_rows":5,"answers":[{"hang":true}]}
+]

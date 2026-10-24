@@ -131,9 +131,8 @@ ORDER BY day`
 const oldEventNamesSQL = `SELECT family, event_name, count(*) FROM events WHERE family IN ('product','measures') AND project_id = :project AND day BETWEEN :from AND :to AND event_name NOT LIKE '$%' GROUP BY ALL ORDER BY 3 DESC, 2 LIMIT 200`
 
 // filesTable runs SQL on the event files through the host's SQL engine
-// (runFiles), scoped to in's project: q's :project, :from and :to are
-// bound as BIGINT and DATEs, any other :name from vals. Every cell reads
-// as SQLite's did (tw_cell: NULL as "", 3 not 3.0).
+// (runFiles), scoped to in's project, in mode text: q's :project, :from
+// and :to are bound as BIGINT and DATEs, any other :name from vals.
 func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[string]enginesql.Value) (tableOut, error) {
 	all := map[string]enginesql.Value{
 		":project": {Type: "BIGINT", Text: strconv.FormatInt(in.ProjectID, 10)},
@@ -147,7 +146,11 @@ func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[st
 	if err != nil {
 		return tableOut{}, err
 	}
-	res, err := h.runFiles(ctx, archive.Scoped{SQL: enginesql.Text(bound), Args: args, MaxRows: h.queryRows, Scope: true, Project: in.ProjectID})
+	named := map[string]string{}
+	for _, a := range args {
+		named[a.Name] = a.Value
+	}
+	res, err := h.runFiles(ctx, sqlengine.Request{SQL: bound, Args: named, MaxRows: h.queryRows, Mode: sqlengine.ModeText, Scope: &in.ProjectID})
 	if err != nil {
 		return tableOut{}, err
 	}
@@ -158,10 +161,11 @@ func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[st
 	return out, nil
 }
 
-// runFiles runs q on the external SQL engine (the test engine over the
-// host's files) under CONSOLE_QUERY_TIMEOUT, with the registry's rules: a
-// failure reads as the query tool's sqlError words it.
-func (h *host) runFiles(ctx context.Context, q archive.Scoped) (sqlengine.Result, error) {
+// runFiles sends req to the external SQL engine (the test engine for the
+// host's files) under CONSOLE_QUERY_TIMEOUT, with a table spec of req's
+// scope (every project when nil) and the registry's rules: a failure
+// reads as the query tool's sqlError words it.
+func (h *host) runFiles(ctx context.Context, req sqlengine.Request) (sqlengine.Result, error) {
 	if h.sql == nil {
 		return sqlengine.Result{}, invalidf("the event files cannot be queried by this process")
 	}
@@ -169,20 +173,18 @@ func (h *host) runFiles(ctx context.Context, q archive.Scoped) (sqlengine.Result
 	defer cancel()
 	events, attrs := h.reg.Snapshot(ctx).RuleLists()
 	var projects []int64
-	var scope *int64
-	if q.Scope {
-		projects, scope = []int64{q.Project}, &q.Project
+	if req.Scope != nil {
+		projects = []int64{*req.Scope}
 	}
 	tables, err := archive.TableSpec(h.eventsDir, projects, archive.Rules{Events: events, Attributes: attrs})
 	if err != nil {
 		return sqlengine.Result{}, err
 	}
-	args := map[string]string{}
-	for _, a := range q.Args {
-		args[a.Name] = a.Value
+	req.Tables = tables
+	if req.Mode == "" {
+		req.Mode = sqlengine.ModeRows
 	}
-	res, err := h.sql.Query(ctx, sqlengine.Request{SQL: q.SQL, Args: args, MaxRows: q.MaxRows, Mode: sqlengine.ModeRows,
-		Scope: scope, Confine: q.Confine, Tables: tables})
+	res, err := h.sql.Query(ctx, req)
 	if err != nil {
 		return sqlengine.Result{}, h.sqlError(ctx, err)
 	}

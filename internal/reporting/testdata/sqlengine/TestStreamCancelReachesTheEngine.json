@@ -1,0 +1,5 @@
+[
+{"mode":"shape","sql":"SELECT sum(hash(i)) AS value FROM range(CAST($tw_project AS BIGINT) * 100000000000) t(i)","scope":0,"confine":true,"max_rows":0,"answers":[{"columns":["value"],"rows":[]}]},
+{"mode":"text","sql":"SELECT sum(hash(i)) AS value FROM range(CAST($tw_project AS BIGINT) * 100000000000) t(i)","scope":0,"confine":true,"max_rows":5,"answers":[{"columns":["value"],"rows":[[""]]}]},
+{"mode":"text","sql":"SELECT sum(hash(i)) AS value FROM range(CAST($tw_project AS BIGINT) * 100000000000) t(i)","scope":1,"confine":true,"max_rows":1001,"answers":[{"hang":true}]}
+]

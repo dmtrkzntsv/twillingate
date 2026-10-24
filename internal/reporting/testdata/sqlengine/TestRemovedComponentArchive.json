@@ -1,0 +1,4 @@
+[
+{"mode":"shape","sql":"SELECT 'a' AS label, 1 AS value","scope":null,"confine":true,"max_rows":0,"answers":[{"columns":["label","value"],"rows":[]}]},
+{"mode":"text","sql":"SELECT 'a' AS label, 1 AS value","scope":null,"confine":true,"max_rows":5,"answers":[{"columns":["label","value"],"rows":[["a","1"]]}]}
+]

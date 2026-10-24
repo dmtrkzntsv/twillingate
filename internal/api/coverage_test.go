@@ -5,19 +5,27 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
-// ---- filesTable (the parity tests' DuckDB helper, over runFiles and
-// filesError) and checkRange() branches not reached via the happy-path
-// *Overview/*Breakdown tests ----
+// ---- filesTable (over runFiles and sqlError) and checkRange() branches
+// not reached via the happy-path *Overview/*Breakdown tests ----
 
+// TestFilesTableTruncatesErrorsAndTimesOut: what the engine answers
+// reaches the caller as the query tool words it, kind by kind, and a
+// truncated answer carries its note.
 func TestFilesTableTruncatesErrorsAndTimesOut(t *testing.T) {
 	h, _ := newTestHost(t)
 	ctx := context.Background()
 	blog := rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}
+	eng := archivetest.NewFakeSQL(t)
+	h.sql = eng.Client(t)
 
-	// truncation: blog's view days (2026-08-01, -08, -20 to -26), capped
-	// to 1.
+	// truncation: blog's view days, capped to 1.
+	eng.On(archivetest.SQLHas("SELECT DISTINCT day"), archivetest.Text([]string{"day"}, []string{"2026-08-01"}).Truncated())
 	setGuards(t, h, h.queryTimeout, 1)
 	out, err := h.filesTable(ctx, blog, `SELECT DISTINCT day FROM views WHERE project_id = :project AND day BETWEEN :from AND :to`, nil)
 	if err != nil {
@@ -26,18 +34,44 @@ func TestFilesTableTruncatesErrorsAndTimesOut(t *testing.T) {
 	if !out.Truncated || out.Note == "" || len(out.Rows) != 1 {
 		t.Errorf("out = %+v, want one row, Truncated, with a Note", out)
 	}
+	reqs := eng.Requests()
+	if r := reqs[len(reqs)-1]; r.Mode != sqlengine.ModeText || r.MaxRows != 1 || r.Scope == nil || *r.Scope != 1 ||
+		r.Args["tw_project"] != "1" || r.Args["tw_from"] != "2026-08-01" || r.Args["tw_to"] != "2026-08-31" || len(r.Tables.Projects) != 1 {
+		t.Errorf("request = %+v, want mode text, max_rows 1, blog's scope, args and files", r)
+	}
 	setGuards(t, h, h.queryTimeout, 1000)
 
-	// plain SQL error, not a timeout: must not carry the "exceeded" wording.
-	_, err = h.filesTable(ctx, blog, `SELECT no_such_column FROM views WHERE project_id = :project`, nil)
-	if err == nil {
-		t.Fatal("bad column did not error")
-	}
-	if strings.Contains(err.Error(), "exceeded") {
-		t.Errorf("plain SQL error worded as a timeout: %v", err)
+	binder := `Binder Error: Referenced column "no_such_column" not found in FROM clause!`
+	for _, c := range []struct {
+		name   string
+		answer archivetest.Answer
+		want   string
+	}{
+		{"sql", archivetest.Fail(sqlengine.KindSQL, binder), "SQL error (DuckDB): " + binder},
+		{"sql on an old table", archivetest.Fail(sqlengine.KindSQL, "Catalog Error: Table with name v_events does not exist!\nLINE 1"),
+			"Catalog Error: Table with name v_events does not exist!; the v_*, raw_* and agg_* tables went with the database's events. The event files hold"},
+		{"refused", archivetest.Fail(sqlengine.KindRefused, `"agg_views" is not a table here`),
+			`"agg_views" is not a table here; the v_*, raw_* and agg_* tables went with the database's events (docs://twillingate)`},
+		{"timeout", archivetest.Fail(sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms"), enginesql.Timeout(h.queryTimeout)},
+		{"out of memory", archivetest.Fail(sqlengine.KindOutOfMemory, "Out of Memory Error"), enginesql.OutOfMemory},
+		{"logs out of memory", archivetest.Fail(sqlengine.KindOutOfMemoryLoadingLog, "Out of Memory Error"), enginesql.LogsOutOfMemory},
+		{"exited", archivetest.Fail(sqlengine.KindExited, "the worker exited"), enginesql.ChildExited},
+		{"busy", archivetest.Fail(sqlengine.KindBusy, "no free slot"), enginesql.Busy},
+		{"stale", archivetest.Fail(sqlengine.KindStale, "a file in the table spec is gone"), enginesql.Stale},
+		{"internal", archivetest.Fail(sqlengine.KindInternal, "engine failed"), enginesql.EngineFailed},
+	} {
+		eng.On(archivetest.SQLHas("no_such_column"), c.answer)
+		_, err = h.filesTable(ctx, blog, `SELECT no_such_column FROM views WHERE project_id = :project`, nil)
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: err = %v, want %q", c.name, err, c.want)
+		}
+		if c.name != "timeout" && err != nil && strings.Contains(err.Error(), "exceeded") {
+			t.Errorf("%s: worded as a timeout: %v", c.name, err)
+		}
 	}
 
 	// timeout: a runaway query against a host with a tiny deadline.
+	eng.On(archivetest.SQLHas("range(100000000000)"), archivetest.Hang())
 	setGuards(t, h, 20*time.Millisecond, h.queryRows)
 	_, err = h.filesTable(ctx, blog, `SELECT count(*) FROM range(100000000000) a WHERE a.range % 7 = :project`, nil)
 	if err == nil {

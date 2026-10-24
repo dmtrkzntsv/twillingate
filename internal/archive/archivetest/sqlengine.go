@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -72,38 +70,6 @@ func ServeSQL(t testing.TB, dir string, eng archive.Engine) *SQLEngine {
 		<-done
 	})
 	return s
-}
-
-// maxSocketPath is the longest socket path socketPath gives: sun_path
-// holds 108 bytes on Linux and 104 on the BSDs, the terminating NUL
-// among them.
-const maxSocketPath = 103
-
-// socketPath is a path for the test's socket under t.TempDir, or, when
-// the test's name makes that too long for sun_path, under a short
-// directory of the user's cache directory, removed with the test.
-func socketPath(t testing.TB) string {
-	t.Helper()
-	if p := filepath.Join(t.TempDir(), "e.sock"); len(p) <= maxSocketPath {
-		return p
-	}
-	base, err := os.UserCacheDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(base, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	dir, err := os.MkdirTemp(base, "sqle-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	p := filepath.Join(dir, "e.sock")
-	if len(p) > maxSocketPath {
-		t.Fatalf("no socket path short enough: %s", p)
-	}
-	return p
 }
 
 // ServeSQL serves f's files on f's engine until the test ends.
@@ -315,14 +281,4 @@ func errorOf(ctx context.Context, err error) (sqlengine.Kind, string) {
 		return sqlengine.KindExited, err.Error()
 	}
 	return sqlengine.KindInternal, err.Error()
-}
-
-func writeError(w http.ResponseWriter, kind sqlengine.Kind, msg string) {
-	writeJSON(w, kind.Status(), sqlengine.ErrorBody{Error: sqlengine.ErrorDetail{Kind: kind, Message: msg}})
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
 }

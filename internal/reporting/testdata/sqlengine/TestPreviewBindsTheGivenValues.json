@@ -1,0 +1,3 @@
+[
+{"mode":"text","sql":"SELECT day AS x, count(*) AS y FROM views WHERE project_id = CAST($tw_project AS BIGINT) AND day BETWEEN CAST($tw_from AS DATE) AND CAST($tw_to AS DATE) GROUP BY day ORDER BY day","scope":1,"confine":true,"max_rows":1001,"answers":[{"columns":["x","y"],"rows":[["2026-09-01","1"],["2026-09-02","2"]]}]}
+]

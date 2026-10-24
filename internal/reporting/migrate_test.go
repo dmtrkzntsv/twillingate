@@ -458,7 +458,7 @@ func TestMigrateFromWithoutFilesRunsNoQuery(t *testing.T) {
 		t.Errorf("ReportingHash after a full check = %q, still unchecked", hash)
 	}
 
-	st2, _ := newTestStoreAndFiles(t, 1000)
+	st2, _ := newTestStore(t)
 	broken, dir2 := systemFSCopy(t)
 	addSystemWidget(t, dir2, "broken", "SELECT ? AS value")
 	err = migrateFrom(ctx, st2, nil, Options{}, broken, manifest)
