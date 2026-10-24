@@ -139,10 +139,27 @@ type Scoped struct {
 // between attempts, until it succeeds, fails otherwise, or ctx is done.
 // The last error is returned.
 func (r *Reader) QueryScoped(ctx context.Context, q Scoped, rules Rules) (engine.Result, error) {
+	return r.query(ctx, q, rules, func() (map[int64]Files, error) { return ListFiles(r.dir) }, true)
+}
+
+// QueryFiles is QueryScoped over files, not over what ListFiles lists in
+// the Reader's directory: for an engine answering an external SQL
+// engine's request, whose table spec (ResolveTables) names the files. The
+// tables are rebuilt whenever files or rules differ from what they were
+// built from, as QueryScoped rebuilds them. A file that vanished fails the
+// query at once: the list is the caller's, so a retry would read the same
+// one. A child replaced in between is retried as QueryScoped retries it.
+func (r *Reader) QueryFiles(ctx context.Context, q Scoped, files map[int64]Files, rules Rules) (engine.Result, error) {
+	return r.query(ctx, q, rules, func() (map[int64]Files, error) { return files, nil }, false)
+}
+
+// query is QueryScoped and QueryFiles: the files from list on each
+// attempt, a vanished file retried when relist.
+func (r *Reader) query(ctx context.Context, q Scoped, rules Rules, list func() (map[int64]Files, error), relist bool) (engine.Result, error) {
 	backoff := retryBackoff
 	for attempt := 1; ; attempt++ {
-		res, err := r.queryScoped(ctx, q, rules)
-		if err == nil || !(vanished(err) || lostTables(err)) || attempt == maxAttempts {
+		res, err := r.queryScoped(ctx, q, rules, list)
+		if err == nil || !(relist && vanished(err) || lostTables(err)) || attempt == maxAttempts {
 			return res, err
 		}
 		select {
@@ -161,13 +178,13 @@ var (
 	retryBackoffMax = time.Second
 )
 
-func (r *Reader) queryScoped(ctx context.Context, q Scoped, rules Rules) (engine.Result, error) {
+func (r *Reader) queryScoped(ctx context.Context, q Scoped, rules Rules, list func() (map[int64]Files, error)) (engine.Result, error) {
 	if q.Confine {
 		if err := r.confine(ctx, q.SQL); err != nil {
 			return engine.Result{}, err
 		}
 	}
-	if err := r.prepare(ctx, rules); err != nil {
+	if err := r.prepare(ctx, rules, list); err != nil {
 		return engine.Result{}, err
 	}
 	sql := q.SQL
@@ -248,10 +265,10 @@ func vanished(err error) bool {
 // prepare builds the tables unless the child holds them built from the
 // files and rules as they are now. A child without _tw_state (a new one)
 // answers a query error, which means: build.
-func (r *Reader) prepare(ctx context.Context, rules Rules) error {
+func (r *Reader) prepare(ctx context.Context, rules Rules, list func() (map[int64]Files, error)) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	files, err := ListFiles(r.dir)
+	files, err := list()
 	if err != nil {
 		return err
 	}
