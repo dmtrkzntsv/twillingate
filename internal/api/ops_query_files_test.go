@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // fakeFiles stands in for the external SQL engine: what query sends it
@@ -182,6 +183,43 @@ func TestQueryReadsTheFiles(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"code":"invalid"`) ||
 		!strings.Contains(rec.Body.String(), "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)") {
 		t.Errorf("REST without an engine = %d %s, want 400 invalid", rec.Code, rec.Body)
+	}
+}
+
+// TestQueryToolOffersSQLOnlyWithAnEngine: without an external SQL engine
+// the query tool's input schema has no sql and its description does not
+// offer it, so an agent is never offered SQL it would be refused; with
+// one it has both.
+func TestQueryToolOffersSQLOnlyWithAnEngine(t *testing.T) {
+	h, _ := newTestHost(t)
+	querySpec := func() spec {
+		t.Helper()
+		r := &registrar{mcp: mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil), logger: h.logger}
+		h.register(r)
+		for _, s := range r.specs {
+			if s.Name == "query" {
+				return s
+			}
+		}
+		t.Fatal("no query tool")
+		return spec{}
+	}
+	with := querySpec()
+	if _, ok := with.in.Properties["sql"]; !ok || !strings.Contains(with.Description, "sql is the escape hatch") {
+		t.Errorf("with an engine: sql in the schema %v, description %q; want both", ok, with.Description)
+	}
+	was := h.sql
+	h.sql = nil
+	t.Cleanup(func() { h.sql = was })
+	without := querySpec()
+	if _, ok := without.in.Properties["sql"]; ok {
+		t.Error("without an engine the schema still has sql")
+	}
+	if _, ok := without.in.Properties["query"]; !ok {
+		t.Error("without an engine the schema lost query")
+	}
+	if strings.Contains(without.Description, "sql") || strings.Contains(without.Description, "SQL") {
+		t.Errorf("without an engine the description offers SQL: %q", without.Description)
 	}
 }
 
