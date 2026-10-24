@@ -2,10 +2,10 @@
 // SQL engine: HTTP and JSON over a Unix socket, version 1. It holds the
 // request, response, error and table-spec types with their wire shapes
 // and a Client that sends them, and imports only the standard library so
-// an engine written in Go can import it too. Values in a Result are as
-// the pipe to the in-tree engine encodes them: numbers are JSON numbers
+// an engine written in Go can import it too. A value in a Result is JSON
+// null, a boolean, a JSON number or a string: numbers are JSON numbers
 // (decode with json.Decoder.UseNumber to keep them exact), while dates,
-// times, UUIDs, NaN and the infinities are strings.
+// times, timestamps, UUIDs, NaN and the infinities are strings.
 //
 // Two modes answer a shape of their own (Request.Mode):
 //   - page: the page's rows as text, its columns the query's with the two

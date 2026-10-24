@@ -74,7 +74,7 @@
 - **Checks.**
   - `make check` passes before each commit: `PATH=/usr/local/go/bin:$PATH GOTMPDIR=~/.cache/gotmp make check`.
   - Web tasks also run `cd web && npm test && npm run e2e`.
-  - Never use `/tmp`. Never mention prices, plans, customers, cloud or private services.
+  - Never use `/tmp`. Name no engine product or service.
 - **Commits.** Use Conventional Commits. The hook itself is `feat(api)!`: SQL now needs an external engine, which is breaking for installs that use SQL widgets.
 
 ## Review Focus

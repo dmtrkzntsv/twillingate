@@ -159,8 +159,8 @@ type Config struct {
 	IngestLateDays int
 	Database       string
 	// EventsDir (EVENTS_DIR) holds the event files (internal/archive):
-	// absolute, beside the database's file as raw/ unless set. The engine
-	// child may read and write all of it, so it never holds the database.
+	// absolute, beside the database's file as raw/ unless set. It never
+	// holds the database: the external SQL engine reads it whole.
 	EventsDir string
 	// SQLEngineSocket (SQL_ENGINE_SOCKET) is the Unix socket of the
 	// external SQL engine that answers widget SQL and the query tool's
@@ -371,7 +371,7 @@ func (c *Config) validate() error {
 			continue
 		}
 		if rel, err := filepath.Rel(c.EventsDir, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("config: EVENTS_DIR (%s) must not hold the database (%s): the engine can read and write everything in it", c.EventsDir, path)
+			return fmt.Errorf("config: EVENTS_DIR (%s) must not hold the database (%s): the SQL engine reads everything in it", c.EventsDir, path)
 		}
 	}
 	if c.IngestLateDays < 1 {
