@@ -112,8 +112,8 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
   const showGrid = dashboard.widgets.length > 0
   const freshness = useFreshness(dashboard.widgets, paramsFor, showGrid)
   const [refreshing, setRefreshing] = useState(false)
-  // Refresh all and auto-refresh reload through one stream, with `fresh`
-  // (widget-stream.ts); leaving the selection stops what is still loading.
+  // Refresh all reloads through one stream, with `fresh` (widget-stream.ts);
+  // leaving the selection stops what is still loading.
   const selectionSignal = useSelectionSignal(paramsFor)
   const refreshAll = () => {
     setRefreshing(true)
@@ -125,7 +125,7 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
   const autoSeconds = list.auto_refresh_seconds ?? 0
   const [autoOn, setAutoOn] = useStoredState(`twillingate.auto_refresh.${dashboard.group_id}`, (v) => (v === true ? true : null))
   useAutoRefresh(autoOn === true && showGrid, autoSeconds, () => {
-    void refreshDashboard(client, dashboard.widgets, paramsFor, selectionSignal())
+    void client.invalidateQueries({ queryKey: ['widget'] })
   })
 
   return (

@@ -134,8 +134,8 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
     return body ? move(id, body) : false
   }
 
-  // Refresh all and auto-refresh reload through one stream, with `fresh`
-  // (widget-stream.ts); leaving the selection stops what is still loading.
+  // Refresh all reloads through one stream, with `fresh` (widget-stream.ts);
+  // leaving the selection stops what is still loading.
   const selectionSignal = useSelectionSignal(paramsFor)
   const refreshAll = () => {
     setRefreshing(true)
@@ -144,12 +144,14 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   }
 
   // Auto-refresh is the viewer's own choice per dashboard, kept in this
-  // browser and off until turned on. Each reload is a refresh of every
-  // widget through one stream, with `fresh`, as Refresh all is.
+  // browser and off until turned on. Each reload is an ordinary one, without
+  // `fresh`: the interval is at least REPORTING_CACHE_MAX_AGE, so it runs the
+  // queries again rather than being served the answers already on screen.
+  // The cards' refetches start together, so they go out as one stream.
   const autoSeconds = list.auto_refresh_seconds ?? 0
   const [autoOn, setAutoOn] = useStoredState(`twillingate.auto_refresh.${dashboard.group_id}`, (v) => (v === true ? true : null))
   useAutoRefresh(autoOn === true && showGrid && !frozen, autoSeconds, () => {
-    void refreshDashboard(client, dashboard.widgets, paramsFor, selectionSignal())
+    void client.invalidateQueries({ queryKey: ['widget'] })
   })
 
   return (

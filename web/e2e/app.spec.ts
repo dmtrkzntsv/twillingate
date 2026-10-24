@@ -312,7 +312,7 @@ for (const viewport of VIEWPORTS) {
   })
 }
 
-test("a dashboard loads its widgets through one stream, and refreshes them through another", async ({ page, request }) => {
+test("a dashboard loads, refreshes and auto-refreshes its widgets, each through one stream", async ({ page, request }) => {
   const id = (await dashboardIds(request)).get('Views')
   expect(id).toBeDefined()
   // The browser's clock, so the refresh need not wait out REPORTING_REFRESH_MAX_AGE.
@@ -357,5 +357,19 @@ test("a dashboard loads its widgets through one stream, and refreshes them throu
   expect(streams).toHaveLength(2)
   expect(streams[1].fresh.length).toBeGreaterThan(1)
   expect(streams[1].fresh.every((f) => f)).toBe(true)
+  expect(gets).toEqual([])
+
+  // Auto-refresh is an ordinary reload: one stream again, without fresh.
+  await page.getByRole('button', { name: 'Dashboard actions' }).click()
+  await page.getByRole('menuitemcheckbox', { name: /^Auto-refresh every/ }).click()
+  await page.keyboard.press('Escape')
+  const reloaded = page.waitForRequest((req) => req.method() === 'POST' && req.url().endsWith('/api/widgets/stream'))
+  await page.clock.fastForward('16:00')
+  await reloaded
+  await page.waitForLoadState('networkidle')
+  await expect(page.getByRole('status', { name: 'Loading' })).toHaveCount(0)
+  expect(streams).toHaveLength(3)
+  expect(streams[2].fresh.length).toBeGreaterThan(1)
+  expect(streams[2].fresh.every((f) => !f)).toBe(true)
   expect(gets).toEqual([])
 })
