@@ -1,0 +1,1 @@
+{"query":{"kind":"stat","table":"views","where":[{"column":"consent","op":"in","values":["0","1"]}],"metrics":[{"op":"ratio","as":"value","num":{"op":"daily_sum","of":"actors","where":[{"column":"consent","op":"eq","values":["1"]}]},"den":{"op":"daily_sum","of":"actors"}}]}}

@@ -490,6 +490,15 @@ func TestKindsMatchDuckDB(t *testing.T) {
 					AND x."event_name" IS NOT DISTINCT FROM e."event_name" GROUP BY x."day")),
 				min("display_width") FILTER (WHERE "family" = 'measures')
 				FROM events e WHERE `+inRange+` GROUP BY "event_name" ORDER BY c DESC, "event_name" ASC NULLS LAST LIMIT 50`),
+		// any_set: a path or a device model or a display width above 0 (the
+		// fixture leaves each out on some views, and all three on a few).
+		all("breakdown any_set", Query{Kind: "breakdown", Table: "views", Dimensions: []string{"country"}, Order: "country",
+			Where:   []Filter{{Op: "any_set", Columns: []string{"path", "device_model"}}},
+			Metrics: []Metric{{Op: "count"}, {Op: "count", As: "shown", Where: []Filter{{Op: "any_set", Columns: []string{"device_model", "resolution"}}}}}},
+			[]string{"country", "count", "shown"},
+			`SELECT "country", count(*), count(*) FILTER (WHERE "device_model" <> '' OR ("display_width" > 0 AND "display_height" > 0))
+				FROM views WHERE `+inRange+` AND ("path" <> '' OR "device_model" <> '')
+				GROUP BY "country" ORDER BY "country" ASC NULLS LAST`),
 		all("trend metric filter", Query{Kind: "trend", Table: "views", Metrics: []Metric{{Op: "count", As: "landings",
 			Where: []Filter{{Column: "event_name", Op: "eq", Values: []string{"landing"}}}}}}, []string{"day", "landings"},
 			`SELECT "day", count(*) FILTER (WHERE "event_name" = 'landing') FROM views WHERE `+inRange+` GROUP BY "day" ORDER BY "day"`),

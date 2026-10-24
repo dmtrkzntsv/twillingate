@@ -161,7 +161,7 @@ One server takes up to **1M events a month** and keeps raw events for up to
   - **No index.** The directory is the list of files (about 100 per
     project at 3 years), a file's name is its day or month, and its Parquet
     footer holds its row count, which is what `usage`, `limits` and the
-    hosted allowance (Q7) read. A manifest table in SQLite would be a cache
+    event allowance (Q7) read. A manifest table in SQLite would be a cache
     of this; add it only if directory scans or footer reads show up.
   - Each event is written four times in its life (log, segment or day
     file, day file, month file), about 4 × 1.5 KB. Rewriting the day file at
@@ -229,7 +229,7 @@ One server takes up to **1M events a month** and keeps raw events for up to
   reason: closing DuckDB in-process and calling `malloc_trim` gives most
   of it back but settles ~64 MB above a server that never loaded it
   (macOS never returns it), while a child that exits returns everything,
-  which matters to a hosting operator with many idle customers. And the
+  which matters on a host running many idle installs. And the
   child can read the files and nothing else, so widget SQL never has a
   path to the SQLite file. The
   ingest process never initializes DuckDB and stays at today's footprint.
@@ -246,8 +246,8 @@ One server takes up to **1M events a month** and keeps raw events for up to
   the queries fought for the same two cores and spilled.
   - **A machine-wide cap on engine children.** Each child can reach ~700 MB
     for a few seconds, and nothing else bounds how many run at once: ten
-    projects' dashboards opening together on one install, or fifty
-    customers' on one host. A semaphore of lock files in a shared directory
+    projects' dashboards opening together on one install, or many
+    installs' on one host. A semaphore of lock files in a shared directory
     (`flock`, a handful of lines) holds the count under a configured
     maximum across processes; a `systemd` slice with `MemoryMax` is the
     backstop that turns the worst case into one killed child.
@@ -376,12 +376,12 @@ One server takes up to **1M events a month** and keeps raw events for up to
   matters; the `agg_*` tables are dropped with the rest of D11. A day that
   has raw rows is raw, so a day damaged by the raised window (Problem, last
   item) migrates from its rows.
-- **D20. The allowance is events in the last 30 days; the plan sets
-  retention.** Supersedes the 2026-10-09 spec's "raw events held": `limits`
+- **D20. The allowance is events in the last 30 days; retention is a
+  setting.** Supersedes the 2026-10-09 spec's "raw events held": `limits`
   reports the events received in the last 30 days, the sum of the day
   files' footer row counts plus the open logs' line counts for those days
-  (a few KB and ~10 ms a day; the 5-minute cache stays). Retention is a
-  plan term, 13 months or more, applied as `RETENTION_DAYS`. Derived
+  (a few KB and ~10 ms a day; the 5-minute cache stays). Retention is
+  `RETENTION_DAYS`. Derived
   tables (D16–D18) count for nothing.
 - **D21. `query` may scan everything.** No range or filter is required: a
   3-year question is the point, and the worst measured is 8 s at 2
@@ -433,26 +433,26 @@ One server takes up to **1M events a month** and keeps raw events for up to
 
 ### Hosting
 
-- **D14. One process per customer stays.** The event side (D2) makes a
+- **D14. One process per install stays.** The event side (D2) makes a
   tenant a directory, so one process could serve many, but it would need a
   router from hostname or ingest key to tenant, a tenant lifecycle and
   multi-tenant tests, and what it saves is idle RAM: a process idles at
   ~17–35 MB (Go runtime, SQLite's page cache as it fills, buffers; the
-  binary's pages are shared by the OS), so 100 customers on a host idle at
+  binary's pages are shared by the OS), so 100 installs on a host idle at
   2–3.5 GB, 1,000 at 20–35 GB. Everything else costs the same either way:
   a dashboard load is one engine child, the OS caches each Parquet file
-  once, the daily pass is seconds. The per-customer process keeps the
+  once, the daily pass is seconds. The per-install process keeps the
   isolation the OS gives (a crash, a leak, `MemoryMax`, `CPUQuota` and
-  metrics per unit, no path from one customer's data to another's),
+  metrics per unit, no path from one install's data to another's),
   independent upgrades, and the `twillingate@<name>` unit that exists.
   The two things it lacks, D8's cap on engine children and the daily-pass
   jitter, are small and wanted by a single install too. Revisit at hundreds
-  of customers per host; nothing in the layout prevents it then.
+  of installs per host; nothing in the layout prevents it then.
 - **D15. No second database for metadata.** Postgres for all tenants'
   settings would mean porting or duplicating 40 migrations, 8 triggers and
   every metadata query, and a server for self-hosters to run, in exchange
   for concurrent writers and several app servers on one database, which
-  the envelope does not need. One SQLite file per customer already
+  the envelope does not need. One SQLite file per install already
   isolates tenants.
 
 ### What goes away
@@ -773,8 +773,8 @@ meets D10's targets:
   sessions table (D16) takes the one slow query.
 - **Q6.** Settled 2026-10-12: only raw rows migrate; aggregates are
   dropped (D19). `deploy/UPGRADES.md` gets the runbook.
-- **Q7.** Settled 2026-10-12: events in the last 30 days; retention is a
-  plan term (D20).
+- **Q7.** Settled 2026-10-12: events in the last 30 days; retention is
+  `RETENTION_DAYS` (D20).
 - **Q8.** Settled 2026-10-12: yes, under the timeout, the memory limit and
   the cap on children (D21).
 
@@ -814,7 +814,7 @@ meets D10's targets:
      cohort; one actor's timeline; first occurrence of a common and a rare
      event name;
    - DuckDB's memory at a fixed limit (e.g. 256 MB, one process per
-     customer); appending a 10-second batch while queries run; deleting a
+     install); appending a 10-second batch while queries run; deleting a
      month (retention) and one actor's rows (erasure) from the DuckDB file,
      and the file size after.
    Fill the *estimates* and compare against D10's targets. Measure B (the

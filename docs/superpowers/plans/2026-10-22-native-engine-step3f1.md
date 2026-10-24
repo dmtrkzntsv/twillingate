@@ -52,7 +52,7 @@ The survey is `.superpowers/native-3f-mapping.md` (git-ignored scratch); this pl
   - The vitest suite and the widget gallery fixtures are updated.
 - **Parity:** every native addition gets DuckDB parity cases in the existing harness, comparing against the SQL the system widgets use where one exists (`users/actions-per-user.sql`, `views/consent-share.sql`, `users/top-users.sql`, `groups/top-groups.sql`, `users/daily-active-users.sql`).
 - **Validate, `Columns()`/`ColumnTypes()`, the MCP schema tags, `docs/twillingate.md` "Structured queries" (bound by `TestStructuredQueryDocument`) and `docs/reporting.md` (the source content and the `stat` behaviour) change in the same commit as the behaviour.** The web TS mirror in `web/src/lib/widget-draft.ts` follows `Columns()`/`ColumnTypes()` where it mirrors them.
-- **Checks before each commit:** `make check` (`PATH=/usr/local/go/bin:$PATH GOTMPDIR=~/.cache/gotmp make check`) must pass; web tasks also run `cd web && npm test` and `npm run e2e`. Never use `/tmp`. Never mention prices, tiers, plans, margins, customers, cloud or private services.
+- **Checks before each commit:** `make check` (`PATH=/usr/local/go/bin:$PATH GOTMPDIR=~/.cache/gotmp make check`) must pass; web tasks also run `cd web && npm test` and `npm run e2e`. Never use `/tmp`.
 
 ## Review Focus
 

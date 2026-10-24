@@ -10,15 +10,14 @@ Date: 2026-10-09 (replaces the monthly events cap of 2026-10-08)
   dashboard spends scanning the raw window. `usage` answers per project and
   per day, from raw rows and the daily pass's stored counts; nothing
   answers the total stored raw right now, across every project and family.
-- **Whoever runs a server needs it.** A hosting operator who runs one
-  twillingate per customer reads it to see which servers grow; a
-  self-hoster reads it to size the box. Both read it from outside, through
+- **Whoever runs a server needs it.** An operator who runs several
+  servers reads it to see which grow; a self-hoster reads it to size the
+  box. Both read it from outside, through
   the console API, without SQL.
 
 - **Nobody can stop a server taking data without stopping its console.**
   An operator pausing ingest for a migration, a restore or an abuse
-  incident, or a hosting portal putting a customer's server read-only, has
-  only the proxy. Doing it there duplicates twillingate's ingest routes
+  incident has only the proxy. Doing it there duplicates twillingate's ingest routes
   (three, one of them legacy) and its CORS answers, gets the status wrong
   easily (a 5xx makes the SDK queue every batch in each visitor's
   localStorage), and hides the reason from the console: the operator's own

@@ -2,15 +2,13 @@ package api
 
 import (
 	"context"
-	"fmt"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -83,6 +81,9 @@ func (h *host) usage(ctx context.Context, in usageIn) (usageOut, error) {
 	if err != nil {
 		return usageOut{}, err
 	}
+	// One deadline for every query the answer runs, however many projects.
+	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
+	defer cancel()
 	out := usageOut{From: fromD.String(), To: toD.String(), Projects: []projectUsage{}}
 	if res, err := h.db.Run(ctx, `SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()`); err == nil && len(res.Rows) == 1 {
 		out.DatabaseBytes, _ = strconv.ParseInt(res.Rows[0][0], 10, 64)
@@ -106,15 +107,7 @@ func (h *host) usage(ctx context.Context, in usageIn) (usageOut, error) {
 	if err != nil {
 		return usageOut{}, err
 	}
-	// The newest arrival of the project asked for, or of every live one:
-	// an archived project's files only wait for the purge.
-	var newestOf []int64
-	for _, p := range projects {
-		if in.ProjectID != 0 || !p.Archived {
-			newestOf = append(newestOf, p.ID)
-		}
-	}
-	counts, err := h.usageCounts(ctx, in.ProjectID, newestOf, fromD, toD)
+	counts, err := h.usageCounts(ctx, projects, in.ProjectID != 0, fromD, toD)
 	if err != nil {
 		return usageOut{}, err
 	}
@@ -151,121 +144,90 @@ type fileCounts struct {
 	received map[int64]string
 }
 
+// usageChunkDays is the most days one usage breakdown counts: a group per
+// day and family, three families, within the engine's 1,000 groups.
+const usageChunkDays = maxBreakdownLimit / 3
+
 // usageCounts counts the views, product events and measures of every day
-// of the range in the event files, of one project (project, not 0) or of
-// every project, and reads when each one's newest row arrived, in one
-// engine query; the newest arrival is read for the projects in newestOf
-// only (newestArrival).
-func (h *host) usageCounts(ctx context.Context, project int64, newestOf []int64, fromD, toD civil.Date) (fileCounts, error) {
+// of the range in the event files of each project, natively, rules
+// applied: a breakdown by day and family per project, one per 333 days of
+// the range. It also reads when each project's newest row arrived
+// (newestArrival), for every project when asked, else for the live ones
+// only: an archived project's files only wait for the purge.
+func (h *host) usageCounts(ctx context.Context, projects []*manage.Project, asked bool, fromD, toD civil.Date) (fileCounts, error) {
 	latest, err := archive.LatestDays(h.eventsDir)
 	if err != nil {
 		return fileCounts{}, err
 	}
-	vals := map[string]enginesql.Value{
-		":from": {Type: "DATE", Text: fromD.String()},
-		":to":   {Type: "DATE", Text: toD.String()},
-	}
-	// The series query, then the newest arrival per project: the arms'
-	// columns line up, NULL where an arm has nothing to say.
-	where := `day BETWEEN :from AND :to`
-	if project != 0 {
-		where += ` AND project_id = :project`
-		vals[":project"] = enginesql.Value{Type: "BIGINT", Text: strconv.FormatInt(project, 10)}
-	}
-	q := `SELECT project_id, day, family, count(*), NULL FROM events WHERE ` + where + ` GROUP BY ALL`
-	if arm := newestArrival(latest, newestOf, vals); arm != "" {
-		q += "\nUNION ALL\n" + arm
-	}
-	bound, args, err := enginesql.Bind(q, vals)
-	if err != nil {
-		return fileCounts{}, err
-	}
-	// Every row is wanted: at most three a day per project, and one more.
-	res, err := h.runFiles(ctx, archive.Scoped{SQL: bound, Args: args})
-	if err != nil {
-		return fileCounts{}, err
-	}
 	out := fileCounts{days: map[int64]map[string]*usageTotals{}, received: map[int64]string{}}
-	for _, row := range res.Rows {
-		cells := make([]string, len(row))
-		for i, v := range row {
-			cells[i] = cellText(v)
-		}
-		id, err := strconv.ParseInt(cells[0], 10, 64)
-		if err != nil {
-			return fileCounts{}, fmt.Errorf("usage: project id %q: %w", cells[0], err)
-		}
-		if cells[1] == "" {
-			if cells[4] != "" {
-				out.received[id] = cells[4]
+	for _, p := range projects {
+		days := map[string]*usageTotals{}
+		for lo := fromD; !toD.Before(lo); lo = lo.AddDays(usageChunkDays) {
+			hi := lo.AddDays(usageChunkDays - 1)
+			if toD.Before(hi) {
+				hi = toD
 			}
+			res, err := h.answer(ctx, native.Query{Kind: "breakdown", Table: "events", Dimensions: []string{"day", "family"},
+				Metrics: []native.Metric{{Op: "count"}}, Order: "day", Limit: maxBreakdownLimit},
+				native.Params{Project: p.ID, From: lo, To: hi})
+			if err != nil {
+				return fileCounts{}, err
+			}
+			if res.Truncated {
+				return fileCounts{}, invalidf("usage: too many rows; narrow the date range")
+			}
+			for _, row := range res.Rows {
+				c := days[row[0]]
+				if c == nil {
+					c = &usageTotals{}
+					days[row[0]] = c
+				}
+				n := cellInt(row[2])
+				switch store.Family(row[1]) {
+				case store.FamilyViews:
+					c.Views = n
+				case store.FamilyProduct:
+					c.Events = n
+				case store.FamilyMeasures:
+					c.Measures = n
+				}
+			}
+		}
+		out.days[p.ID] = days
+		if !asked && p.Archived {
 			continue
 		}
-		n, _ := strconv.ParseInt(cells[3], 10, 64)
-		if out.days[id] == nil {
-			out.days[id] = map[string]*usageTotals{}
+		r, err := h.newestArrival(ctx, p.ID, latest[p.ID])
+		if err != nil {
+			return fileCounts{}, err
 		}
-		c := out.days[id][cells[1]]
-		if c == nil {
-			c = &usageTotals{}
-			out.days[id][cells[1]] = c
-		}
-		switch store.Family(cells[2]) {
-		case store.FamilyViews:
-			c.Views = n
-		case store.FamilyProduct:
-			c.Events = n
-		case store.FamilyMeasures:
-			c.Measures = n
+		if r != "" {
+			out.received[p.ID] = r
 		}
 	}
 	return out, nil
 }
 
-// newestArrival is usageCounts' second arm: when the newest row of each
-// project in ids arrived, its arguments added to vals; "" when none of
-// them has files. A project's newest row is looked for from the first day
-// of the month of its newest file name (latest, archive.LatestDays: a
-// month's file counts as its last day, its rows may end earlier) to that
-// day, so it is found whatever the range and scans at most a month.
-//
-// The projects' conditions sit behind one on day alone spanning them all
-// (:nlo to :nhi): DuckDB pushes no day range into the Parquet scan from an
-// OR whose arms' day ranges differ, as the projects' do, so without it
-// every retained file is read whole (#196), while a plain day range skips
-// the row groups outside it.
-func newestArrival(latest map[int64]string, ids []int64, vals map[string]enginesql.Value) string {
-	var conds []string
-	var lo, hi string
-	for _, id := range ids {
-		day, ok := latest[id]
-		if !ok {
-			continue
-		}
-		last, err := civil.Parse(day)
-		if err != nil {
-			continue
-		}
-		first, to := day[:8]+"01", last.String()
-		i := strconv.Itoa(len(conds))
-		vals[":np"+i] = enginesql.Value{Type: "BIGINT", Text: strconv.FormatInt(id, 10)}
-		vals[":nf"+i] = enginesql.Value{Type: "DATE", Text: first}
-		vals[":nt"+i] = enginesql.Value{Type: "DATE", Text: to}
-		conds = append(conds, "(project_id = :np"+i+" AND day BETWEEN :nf"+i+" AND :nt"+i+")")
-		if lo == "" || first < lo {
-			lo = first
-		}
-		if to > hi {
-			hi = to
-		}
+// newestArrival is when the newest row of a project arrived, "" when it
+// has none: the newest received_at from the first day of the month of its
+// newest file name (latest, archive.LatestDays: a month's file counts as
+// its last day, its rows may end earlier) to that day, so it is found
+// whatever the range and scans at most a month.
+func (h *host) newestArrival(ctx context.Context, project int64, latest string) (string, error) {
+	last, err := civil.Parse(latest)
+	if err != nil {
+		return "", nil // no files
 	}
-	if len(conds) == 0 {
-		return ""
+	first, err := civil.Parse(latest[:8] + "01")
+	if err != nil {
+		return "", nil
 	}
-	vals[":nlo"] = enginesql.Value{Type: "DATE", Text: lo}
-	vals[":nhi"] = enginesql.Value{Type: "DATE", Text: hi}
-	return `SELECT project_id, NULL, NULL, NULL, max(received_at) FROM events WHERE day BETWEEN :nlo AND :nhi AND (` +
-		strings.Join(conds, " OR ") + `) GROUP BY project_id`
+	res, err := h.answer(ctx, native.Query{Kind: "stat", Table: "events", Metrics: []native.Metric{{Op: "max", Column: "received_at"}}},
+		native.Params{Project: project, From: first, To: last})
+	if err != nil || len(res.Rows) != 1 {
+		return "", err
+	}
+	return res.Rows[0][0], nil
 }
 
 // readSizes answers every project's latest size, by project id: its

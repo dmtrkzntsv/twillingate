@@ -1,0 +1,1 @@
+{"query":{"kind":"retention","output":"curve","identified_by":"install","offsets":45},"rename":{"offset":"x","retention":"y"}}

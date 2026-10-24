@@ -1,0 +1,1 @@
+{"query":{"kind":"trend","table":"views","metrics":[{"op":"count","as":"Views"},{"op":"daily_sum","of":"actors","as":"Visitors"}]},"rename":{"day":"x","value":"y"}}

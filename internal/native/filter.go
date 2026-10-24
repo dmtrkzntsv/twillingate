@@ -290,9 +290,11 @@ func bucketOf(v float64, null bool) int64 {
 
 // filter is one Filter compiled: its values parsed for the column's type.
 // A NULL matches no operator, as in SQL (ne and not_in leave NULLs out
-// too); is_set is NOT NULL and, for text, not empty.
+// too); is_set is NOT NULL and, for text, not empty; any_set is one is_set
+// per column in anyOf, of which a row passes one.
 type filter struct {
 	column string
+	anyOf  []filter
 	typ    colType
 	op     string
 	strs   map[string]bool
@@ -307,6 +309,18 @@ type filter struct {
 func compileFilters(where []Filter, path string) ([]filter, error) {
 	out := make([]filter, len(where))
 	for i, f := range where {
+		if f.Op == "any_set" {
+			each := make([]Filter, len(f.Columns))
+			for j, col := range f.Columns {
+				each[j] = Filter{Column: col, Op: "is_set"}
+			}
+			anyOf, err := compileFilters(each, fmt.Sprintf("%s[%d].columns", path, i))
+			if err != nil {
+				return nil, err
+			}
+			out[i] = filter{op: f.Op, anyOf: anyOf}
+			continue
+		}
 		c := filter{column: f.Column, typ: typeOf(f.Column), op: f.Op}
 		if c.typ == typeString {
 			c.strs = make(map[string]bool, len(f.Values))
@@ -399,8 +413,23 @@ func (f *filter) matchInt(n int64) bool {
 	return false
 }
 
+// columns are the filter's columns: any_set's, else its one.
+func (f *filter) columns() []string {
+	if f.anyOf == nil {
+		return []string{f.column}
+	}
+	out := make([]string, len(f.anyOf))
+	for i := range f.anyOf {
+		out[i] = f.anyOf[i].column
+	}
+	return out
+}
+
 // apply clears keep[i] for the rows of b that do not pass.
 func (f *filter) apply(b *Batch, keep []bool) error {
+	if f.anyOf != nil {
+		return f.applyAny(b, keep)
+	}
 	c := batchColumn(b, f.column)
 	if c == nil {
 		clear(keep) // all NULL: nothing passes
@@ -437,6 +466,30 @@ func (f *filter) apply(b *Batch, keep []bool) error {
 			if (c.Null != nil && c.Null[i]) || !f.matchInt(n) {
 				keep[i] = false
 			}
+		}
+	}
+	return nil
+}
+
+// applyAny clears keep[i] for the rows of b where none of any_set's
+// columns is set.
+func (f *filter) applyAny(b *Batch, keep []bool) error {
+	set := make([]bool, b.N)
+	one := make([]bool, b.N)
+	for j := range f.anyOf {
+		for i := range one {
+			one[i] = true
+		}
+		if err := f.anyOf[j].apply(b, one); err != nil {
+			return err
+		}
+		for i, ok := range one {
+			set[i] = set[i] || ok
+		}
+	}
+	for i, ok := range set {
+		if !ok {
+			keep[i] = false
 		}
 	}
 	return nil

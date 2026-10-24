@@ -38,6 +38,8 @@ type queryOut struct {
 // Native answers structured queries over the event files (native.Engine).
 type Native interface {
 	Answer(ctx context.Context, q native.Query, p native.Params, rules archive.Rules) (native.Result, error)
+	// Today is the engine's clock's UTC day.
+	Today() civil.Date
 }
 
 // metricSchema is native.Metric's schema, which the inference cannot
@@ -96,7 +98,7 @@ func queryEnums(in *jsonschema.Schema) {
 	q.Properties["milestones"].Items.Minimum, q.Properties["milestones"].Items.Maximum = &minMilestone, &maxOffsets
 	maxMilestones := 6
 	q.Properties["milestones"].MaxItems = &maxMilestones
-	maxKeep := 100
+	maxKeep := native.MaxKeep
 	q.Properties["keep"].MaxItems = &maxKeep
 	m := q.Properties["metrics"].Items
 	m.Properties["op"].Enum = enum(native.MetricOps)
@@ -189,19 +191,9 @@ func (h *host) runStructured(ctx context.Context, in queryIn) (queryOut, error) 
 	if h.reg.Snapshot(ctx).Project(in.ProjectID) == nil {
 		return queryOut{}, h.unknownProjectErr(ctx, in.ProjectID)
 	}
-	if h.native == nil {
-		return queryOut{}, invalidf("the event files cannot be queried by this process")
-	}
-	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
-	defer cancel()
-	events, attrs := h.reg.Snapshot(ctx).RuleLists()
-	res, err := h.native.Answer(ctx, *in.Query, native.Params{Project: in.ProjectID, From: from, To: to},
-		archive.Rules{Events: events, Attributes: attrs})
+	res, err := h.answer(ctx, *in.Query, native.Params{Project: in.ProjectID, From: from, To: to})
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return queryOut{}, invalidf("%s", enginesql.Timeout(h.queryTimeout))
-		}
-		return queryOut{}, nativeError(err)
+		return queryOut{}, err
 	}
 	rows := res.Rows
 	if rows == nil {
@@ -215,6 +207,27 @@ func (h *host) runStructured(ctx context.Context, in queryIn) (queryOut, error) 
 		out.Note = fmt.Sprintf("truncated (at most %d rows, and the groups one query tracks); results are PARTIAL — narrow the range, add a where or lower the limit", h.queryRows)
 	}
 	return out, nil
+}
+
+// answer answers q natively under CONSOLE_QUERY_TIMEOUT, with the
+// registry's rules as runFilesQuery applies them: the query tool's
+// structured queries and the analytics tools' own. A refusal or a timeout
+// reads as invalid (nativeError).
+func (h *host) answer(ctx context.Context, q native.Query, p native.Params) (native.Result, error) {
+	if h.native == nil {
+		return native.Result{}, invalidf("the event files cannot be queried by this process")
+	}
+	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
+	defer cancel()
+	events, attrs := h.reg.Snapshot(ctx).RuleLists()
+	res, err := h.native.Answer(ctx, q, p, archive.Rules{Events: events, Attributes: attrs})
+	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			return native.Result{}, invalidf("%s", enginesql.Timeout(h.queryTimeout))
+		}
+		return native.Result{}, nativeError(err)
+	}
+	return res, nil
 }
 
 // parseDay reads a YYYY-MM-DD day for the field name.
@@ -299,6 +312,18 @@ func filesError(err error, timeout time.Duration) error {
 		return invalidf("%s", enginesql.ChildExited)
 	}
 	return err
+}
+
+// cellRows is an engine result's rows as text (cellText), never nil.
+func cellRows(rows [][]any) [][]string {
+	out := make([][]string, len(rows))
+	for i, row := range rows {
+		out[i] = make([]string, len(row))
+		for j, v := range row {
+			out[i][j] = cellText(v)
+		}
+	}
+	return out
 }
 
 // cellText is an engine value as query's text: NULL as "" (as SQLite's

@@ -1363,3 +1363,46 @@ On the day:
   from scripts and saved prompts.
 
 Rollback: install the previous release; nothing in the database changed.
+
+### Upgrading to built-in dashboards on the native engine (no migration)
+
+The built-in dashboards read the event files natively: their widgets are
+structured queries, no longer SQL. The start replaces each built-in
+widget in place, keeping its id, except Web Vitals' "By device and
+browser", which it removes for two new widgets; copies you made keep
+their SQL.
+
+- **Before the upgrade**, nothing to check by hand.
+- **On the day**, these differ from the release before:
+  - Stats over a range with no data are blank (–), not 0: visitors, bounce rate, avg session, actions per user and per group.
+  - The five web-vitals stats show "–" over a range with no samples, where they said "No data for this range".
+  - Daily active users and groups show every day of the range, with 0 on days without activity.
+  - App versions shows true distinct users and groups. The header no longer says "(at least)", so a saved sort or filter on the old header resets.
+  - Users by app version shows the 50 busiest versions. Within a day, series are ordered by name.
+  - Attribute values is a table that loads at once, up to the console's row cap, attribute by attribute. It no longer pages through the server.
+  - The p75-by-day measures chart keeps time measures only, at most 50, the slowest by p75 over the range.
+  - Web vitals "by device and browser" is now two widgets, "By device" and "By browser"; a share of the old table keeps its picture but no longer links to a widget.
+  - The browsers and operating-systems "Other" row counts a visitor once per day across the folded browsers (it used to count once per browser).
+  - Distinct counts over ranges past 1,024 ids are estimated within about ±2% and marked ≈.
+
+Rollback: install the previous release; it restores the built-in widgets' SQL on start.
+
+### Upgrading to analytics tools on the native engine (no migration)
+
+`views_overview`, `views_breakdown`, `product_events`,
+`product_attributes`, `measures`, `identities`, `list_attributes`,
+`retention`, `usage` and the console's event-names route read the event
+files natively, with the same inputs and output fields.
+
+- **Before the upgrade**, nothing to check by hand.
+- **On the day**, these differ from the release before:
+  - `views_overview` without `kind` counts an actor seen under two kinds on one day as one visitor, not two.
+  - A distinct count past 1,024 ids in one row is estimated within about ±2%, and the table's `note` names its column.
+  - Where `CONSOLE_QUERY_ROWS_MAX` was raised above 1,000 (or set to 0), `views_breakdown`, `product_attributes`, `measures` and `identities` return at most 1,000 rows, and `views_overview` and `product_events` at most 1,000 rows each, marked `truncated` when cut.
+  - `product_attributes` and `list_attributes` take ranges past 92 days (`list_attributes` up to 400); a range the engine cannot hold is refused, or for `product_attributes` marked `truncated`.
+  - `list_attributes` estimates a key's `values` past 1,024 distinct values (about ±2%).
+  - `identities` leaves `name` empty for an id whose display name is the id itself.
+  - `measures` prints a whole number without a decimal: `200`, where it printed `200.0`.
+  - `retention` lists offsets up to 90 days after the cohort day; it listed every offset the range allowed. A project whose actors the engine cannot hold in memory is refused.
+
+Rollback: install the previous release; nothing in the database changed.

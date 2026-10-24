@@ -1,0 +1,1 @@
+{"query":{"kind":"breakdown","table":"views","dimensions":["browser"],"limit":4,"other":true,"where":[{"column":"browser","op":"is_set"}],"metrics":[{"op":"daily_sum","of":"actors","as":"value"}]},"rename":{"browser":"label"}}

@@ -197,7 +197,7 @@ func TestLimitsWithoutEvents30dWhenTheCountCannotBeRead(t *testing.T) {
 	h, cs := newTestHost(t)
 	var logs bytes.Buffer
 	h.logger = slog.New(slog.NewTextHandler(&logs, nil))
-	h.files = &fakeFiles{err: errors.New("the child is gone")}
+	h.native = &fakeNative{err: errors.New("the files are gone")}
 	h.events = h.newHostEventCount()
 	out, err := h.listLimits(context.Background(), struct{}{})
 	if err != nil {
@@ -218,7 +218,7 @@ func TestLimitsWithoutEvents30dWhenTheCountCannotBeRead(t *testing.T) {
 	}
 
 	logs.Reset()
-	h.files, h.events = nil, nil
+	h.native, h.events = nil, nil
 	if out, err := h.listLimits(context.Background(), struct{}{}); err != nil || out.Events30d != nil || len(out.Limits) == 0 {
 		t.Errorf("no engine: out = %+v, %v; want limits and no events_30d", out, err)
 	}

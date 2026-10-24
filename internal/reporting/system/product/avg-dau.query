@@ -1,0 +1,1 @@
+{"query":{"kind":"stat","table":"product","metrics":[{"op":"daily_avg","of":"actors","round":1,"as":"value"}]}}

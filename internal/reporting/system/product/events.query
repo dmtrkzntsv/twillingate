@@ -1,0 +1,1 @@
+{"query":{"kind":"breakdown","table":"product","dimensions":["event_name"],"limit":1000,"metrics":[{"op":"count","as":"Total"},{"op":"daily_max","of":"actors","as":"Peak daily uniques"}]},"rename":{"event_name":"Event"}}

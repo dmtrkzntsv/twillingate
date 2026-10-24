@@ -57,6 +57,8 @@ type fakeNative struct {
 	err      error
 }
 
+func (f *fakeNative) Today() civil.Date { return civil.Today(time.Now()) }
+
 func (f *fakeNative) Answer(ctx context.Context, q native.Query, p native.Params, rules archive.Rules) (native.Result, error) {
 	_, f.deadline = ctx.Deadline()
 	f.q, f.p, f.rules = q, p, rules
@@ -220,8 +222,8 @@ func TestQuerySchemaDescribesStructured(t *testing.T) {
 	if e := rq.Properties["output"].Enum; !slices.Equal(e, []any{"grid", "curve", "milestones", "values", "keys"}) {
 		t.Errorf("output's enum = %v", e)
 	}
-	if k := rq.Properties["keep"]; k.MaxItems == nil || *k.MaxItems != 100 {
-		t.Errorf("keep = %+v, want at most 100", k)
+	if k := rq.Properties["keep"]; k.MaxItems == nil || *k.MaxItems != 1000 {
+		t.Errorf("keep = %+v, want at most 1000", k)
 	}
 	if e := rq.Properties["identified_by"].Enum; !slices.Equal(e, []any{"install", "user"}) {
 		t.Errorf("identified_by's enum = %v", e)
@@ -298,6 +300,39 @@ func TestQueryStructuredMetricWhere(t *testing.T) {
 	q["metrics"] = []any{map[string]any{"op": "count", "round": 7}}
 	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "query": q}); !res.IsError {
 		t.Error("round 7 over MCP: accepted")
+	}
+}
+
+// any_set names columns and no column: it passes MCP's schema in the
+// query's where, in a metric's and in a ratio side's, and a filter
+// without a column is still refused, by the query's own validation.
+func TestQueryStructuredAnySetOverMCP(t *testing.T) {
+	_, cs := newTestHost(t)
+	anySet := []any{map[string]any{"op": "any_set", "columns": []any{"path", "device_model"}}}
+	q := map[string]any{"kind": "breakdown", "table": "views", "dimensions": []any{"kind"}, "where": anySet,
+		"metrics": []any{
+			map[string]any{"op": "count"},
+			map[string]any{"op": "count", "as": "shown", "where": anySet},
+			map[string]any{"op": "ratio", "as": "part",
+				"num": map[string]any{"op": "count", "where": anySet}, "den": map[string]any{"op": "count"}},
+		}}
+	res := callTool(t, cs, "query", map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "query": q})
+	if res.IsError {
+		t.Fatalf("any_set over MCP: %s", textOf(res))
+	}
+	var out struct {
+		Columns []string   `json:"columns"`
+		Rows    [][]string `json:"rows"`
+	}
+	if err := json.Unmarshal([]byte(textOf(res)), &out); err != nil || len(out.Rows) == 0 ||
+		!slices.Equal(out.Columns, []string{"kind", "count", "shown", "part"}) {
+		t.Errorf("any_set over MCP = %v %v (%v), want kind, count, shown and part over some rows", out.Columns, out.Rows, err)
+	}
+	q = map[string]any{"kind": "stat", "table": "views", "metrics": []any{map[string]any{"op": "count"}},
+		"where": []any{map[string]any{"op": "is_set"}}}
+	res = callTool(t, cs, "query", map[string]any{"project_id": 1, "query": q})
+	if !res.IsError || !strings.Contains(textOf(res), "where[0].column") {
+		t.Errorf("is_set without a column over MCP = %v %s, want refused naming where[0].column", res.IsError, textOf(res))
 	}
 }
 

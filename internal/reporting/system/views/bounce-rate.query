@@ -1,0 +1,1 @@
+{"query":{"kind":"stat","table":"sessions","metrics":[{"op":"bounce_rate","as":"value"}]}}

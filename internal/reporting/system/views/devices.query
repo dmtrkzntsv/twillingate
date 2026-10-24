@@ -1,0 +1,1 @@
+{"query":{"kind":"breakdown","table":"views","dimensions":["device_label"],"limit":15,"where":[{"column":"device_label","op":"is_set"}],"metrics":[{"op":"daily_sum","of":"actors","as":"value"}]},"rename":{"device_label":"label"}}

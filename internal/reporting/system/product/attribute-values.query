@@ -1,0 +1,1 @@
+{"query":{"kind":"attributes","table":"product","output":"values","metrics":[{"op":"count","as":"Count"},{"op":"actors_or_null","as":"Users"},{"op":"groups","as":"Groups"}]},"rename":{"attribute":"Attribute","value":"Value"}}

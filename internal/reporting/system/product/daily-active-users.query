@@ -1,0 +1,1 @@
+{"query":{"kind":"trend","table":"product","metrics":[{"op":"actors","as":"y"}]},"rename":{"day":"x"}}

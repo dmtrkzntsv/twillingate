@@ -165,8 +165,8 @@ func TestQuerySourceValidate(t *testing.T) {
 			"stat.previous: the query's column is text, not number"},
 		{"retention offset into day", widget("stat", "{}", `{"query":{"kind":"retention","output":"curve","identified_by":"user"},"rename":{"retention":"value","offset":"x"}}`),
 			"stat.x: the query's column is number, not day"},
-		{"retention grid identified_by", widget("stat", "{}", `{"query":{"kind":"retention","output":"grid","identified_by":"user"}}`),
-			"query.identified_by: a grid has both install and user; only a curve or milestones takes identified_by"},
+		{"retention grid identified_by", widget("stat", "{}", `{"query":{"kind":"retention","output":"grid","identified_by":"group"}}`),
+			`query.identified_by: "group" is not install or user; a grid without it has both`},
 		{"other day into day", widget("stat", "{}", `{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"count","as":"value"}],"dimensions":["day"],"other":true},"rename":{"day":"x"}}`),
 			"stat.x: the query's column is text, not day"},
 	}

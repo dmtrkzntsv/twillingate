@@ -1,9 +1,10 @@
 package api
 
 import (
+	"cmp"
 	"context"
-	"strconv"
 
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -121,29 +122,44 @@ func (h *host) removeEventRule(ctx context.Context, in eventNameIn) (okOut, erro
 	return okOut{Status: "removed"}, nil
 }
 
-// eventNamesSQL is every product and measures name of the range in the
-// event files, busiest 200 first, rules applied (a project sending
-// generated names would otherwise exceed the row cap). Product counts
-// events; measures count samples. $ names are left out: rules refuse them.
-const eventNamesSQL = `SELECT family, event_name, count(*) FROM events WHERE family IN ('product','measures') AND project_id = :project AND day BETWEEN :from AND :to AND event_name NOT LIKE '$%' GROUP BY ALL ORDER BY 3 DESC, 2 LIMIT 200`
+// eventNamesMax is how many names event_names lists: a project sending
+// generated names would otherwise exceed the row cap.
+const eventNamesMax = 200
 
-// eventNames feeds the console's Settings page with eventNamesSQL's names.
-// A result past the row cap is refused, never a partial list.
+// eventNames feeds the console's Settings page: every product and
+// measures name of the range in the event files, rules applied, the
+// busiest eventNamesMax first, ties by name. Product counts events;
+// measures count samples. $ names are left out: rules refuse them. A
+// result past the row cap is refused, never a partial list. Should more
+// than 1,000 names tie with the 200th, the ones kept are the engine's
+// first 1,000 sorted (topRows), not the first 200 by name over them all.
 func (h *host) eventNames(ctx context.Context, in rangeIn) (eventNamesOut, error) {
 	if err := h.checkRange(ctx, in); err != nil {
 		return eventNamesOut{}, err
 	}
-	res, err := h.filesTable(ctx, in, eventNamesSQL, nil)
+	out := eventNamesOut{Events: []eventNameOut{}}
+	p, ok := rangeParams(in)
+	if !ok {
+		return out, nil
+	}
+	res, _, _, err := h.topRows(ctx, native.Query{Kind: "breakdown", Table: "events", Dimensions: []string{"family", "event_name"},
+		Order: "count", Metrics: []native.Metric{{Op: "count"}}, Where: []native.Filter{
+			{Column: "family", Op: "in", Values: []string{"product", "measures"}},
+			{Column: "event_name", Op: "not_prefix", Values: []string{"$"}}}},
+		p, eventNamesMax, func(a, b []string) int {
+			if c := cmp.Compare(cellInt(b[2]), cellInt(a[2])); c != 0 {
+				return c
+			}
+			return cmp.Compare(a[1], b[1])
+		})
 	if err != nil {
 		return eventNamesOut{}, err
 	}
-	if res.Truncated {
+	if res.Truncated || len(res.Rows) > h.rowCap() {
 		return eventNamesOut{}, invalidf("too many rows; narrow the date range")
 	}
-	out := eventNamesOut{Events: make([]eventNameOut, 0, len(res.Rows))}
 	for _, row := range res.Rows {
-		n, _ := strconv.ParseInt(row[2], 10, 64)
-		out.Events = append(out.Events, eventNameOut{Family: row[0], Name: row[1], Events: n})
+		out.Events = append(out.Events, eventNameOut{Family: row[0], Name: row[1], Events: cellInt(row[2])})
 	}
 	return out, nil
 }

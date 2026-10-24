@@ -1,0 +1,1 @@
+{"query":{"kind":"breakdown","table":"views","dimensions":["utm_source","utm_medium","utm_campaign"],"limit":20,"where":[{"column":"utm_source","op":"is_set"}],"metrics":[{"op":"daily_sum","of":"actors","as":"Visitors"},{"op":"count","as":"Views"}]},"rename":{"utm_source":"Source","utm_medium":"Medium","utm_campaign":"Campaign"}}
