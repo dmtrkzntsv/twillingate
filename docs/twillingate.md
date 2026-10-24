@@ -1585,6 +1585,9 @@ given twice are all 400: a filter is never dropped silently.
 
 ### Writing SQL against the event files
 
+Writing SQL needs an external SQL engine (`SQL_ENGINE_SOCKET`), and the
+dialect the reference engine speaks is DuckDB's.
+
 `query` runs one read-only `SELECT` over the raw events twillingate keeps
 as files beside its database, on an external SQL engine at
 `SQL_ENGINE_SOCKET` ([deployment.md](deployment.md#external-sql-engine));

@@ -357,6 +357,15 @@ client and fixtures: [sqlengine/protocol.go](https://github.com/dmtrkzntsv/twill
 The dialect the reference engine speaks, and the docs describe, is
 DuckDB's.
 
+**Running an external SQL engine next to twillingate.** Put the socket in a
+directory both processes can reach (a shared directory, or a volume mounted
+in both containers) and give twillingate its path as `SQL_ENGINE_SOCKET`.
+Mount `EVENTS_DIR` (`raw/`) into the engine read-only: it only reads, and
+twillingate alone writes the files. The engine may start before or after
+twillingate; at start twillingate checks the protocol version against
+`GET /v1/health` and refuses to start on a mismatch, while an engine that is
+down at that moment is only logged and retried by each query.
+
 ### Other auth modes
 
 ```bash

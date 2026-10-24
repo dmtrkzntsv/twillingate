@@ -1437,29 +1437,31 @@ SQL widgets) runs on an external SQL engine at `SQL_ENGINE_SOCKET` (see
 engine child for it. The built-in dashboards, structured queries and the
 analytics tools need no engine and are unaffected.
 
+- **What breaks:** SQL without an engine. With `SQL_ENGINE_SOCKET` unset, a
+  stored SQL widget stays on its dashboard, not archived, and its card
+  says "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)" while the
+  rest of the dashboard loads. Adding or previewing a SQL widget, and
+  `query` with `sql`, are refused with the same message (`invalid`, `400`
+  over REST), and the component list leaves `sql` out.
 - **Before the upgrade**, list your SQL widgets: `list_dashboards`, then
   each user dashboard's widgets with `source.type` `sql`. With none, and
   no script that sends `query` SQL, nothing else needs doing.
-- **On the day, without an engine** (`SQL_ENGINE_SOCKET` unset): a SQL
-  widget stays on its dashboard, not archived, and its card says "SQL
-  needs an external SQL engine (SQL_ENGINE_SOCKET)" while the rest of the
-  dashboard loads; adding or previewing one, and `query` with `sql`, are
-  refused with the same message (`invalid`, `400` over REST). The
-  component list leaves `sql` out. Rewrite such widgets as `query` widgets,
-  or set up an engine.
-- **With an engine**: set `SQL_ENGINE_SOCKET` to its socket. A console
-  whose engine speaks another protocol version fails to start, naming
-  both; one whose engine does not answer logs a warning and goes on, and
-  SQL is refused with "the SQL engine failed" until it answers. An
-  ingest-only process and the CLI commands call the engine only to check
-  a system widget that reads SQL (none today).
-- On the first start after the upgrade, the console checks the users' SQL
-  widgets through the engine in the background; on an engine still
-  loading the event files a check may time out, widget by widget, and is
-  logged as unchecked, not failing. The next start checks them again.
-- A SQL widget that reads `:project` now sees only that project's
-  `attr_<key>` columns: naming a key the project never sent is an error
-  ("Referenced column … not found") where it read NULL. Rewrite such a
-  widget to name only the project's keys.
+- **What to do**, either: set `SQL_ENGINE_SOCKET` to the socket of a
+  running engine, which brings every SQL path back as it was; or convert
+  the SQL widgets to structured `query` widgets in the console's editor
+  (a remote table has no `query` form and needs the engine).
+- **Scoped columns:** a SQL widget that reads `:project` now sees only that
+  project's `attr_<key>` columns. Naming a key the project never sent is
+  an error ("Referenced column … not found") where it read NULL. Rewrite
+  such a widget to name only the project's keys.
+- **Start-up check:** a console whose engine speaks another protocol
+  version fails to start, naming both; one whose engine does not answer
+  logs a warning and goes on, and SQL is refused with "the SQL engine
+  failed" until it answers. An ingest-only process and the CLI commands
+  call the engine only to check a system widget that reads SQL (none
+  today). The first start after the upgrade also checks the users' SQL
+  widgets through the engine in the background; on an engine still loading
+  the event files a check may time out, widget by widget, and is logged as
+  unchecked, not failing. The next start checks them again.
 
 Rollback: install the previous release; nothing on disk changed.

@@ -1434,6 +1434,17 @@ To fix them:
    `component` finds every widget on one.
 4. Check each with `widget_data`.
 
+**SQL widgets without an engine.** SQL runs on an external SQL engine
+(`SQL_ENGINE_SOCKET`). On an install that has none, a stored `sql` widget is
+not archived and not changed: its card, and its `widget_data`, answer
+"SQL needs an external SQL engine (SQL_ENGINE_SOCKET)" (`invalid`) while the
+dashboard's other widgets load. Either point `SQL_ENGINE_SOCKET` at a running
+engine, or convert the widget to a structured `query` source: open it in the
+console's editor (an existing SQL widget opens with a notice), pick the
+`query` source and rebuild it from the [Examples](#examples) that show the
+same component as a structured query, or send `update_widget` with a `query`
+source. A remote table has no `query` form: its SQL needs the engine.
+
 **Widgets written for SQLite.** Widget SQL used to be SQLite's, over the
 `v_*` views; it is now DuckDB's, over the event files, and nothing rewrote
 the widgets users had made. Such a widget fails with DuckDB's error and
@@ -1484,8 +1495,9 @@ Open `http://127.0.0.1:3100/`, which redirects to the dashboards at `/app/`.
   and never written: the view route answers but stores nothing, and the page
   offers no writes (no "…" menus, dragging or Restore buttons).
 - Widget SQL runs on the event files in `EVENTS_DIR` (default `raw/` beside
-  the database), on the external SQL engine at `SQL_ENGINE_SOCKET` as in
-  the console (without it, a SQL widget's card shows the refusal), but
+  the database), on the external SQL engine at `SQL_ENGINE_SOCKET`, which
+  `reporting dev` reads from its environment as the console does (without
+  it, a SQL widget's card shows the refusal), but
   without the projects' event and attribute rules: a renamed event reads
   under the name it was stored with.
 - `-addr` is refused unless it is a loopback address, and a request naming
