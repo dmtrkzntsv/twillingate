@@ -130,8 +130,13 @@ func serveHostFiles(t testing.TB, dir, raw string, reg *manage.Registry) *hostFi
 	return &hostFiles{reader: reader, dir: raw, reg: reg, sqle: sqle, client: sqle.Client(t)}
 }
 
+// hostToday is the template's today, fixed so that the pass never ages the
+// goldens out (400-day retention would drop hostEvents in late 2027): the
+// same way reporting pins systemToday.
+var hostToday = civil.Date{Year: 2026, Month: 10, Day: 23}
+
 // writeHostFiles writes hostEvents into raw and runs the daily pass as of
-// today, so every day is in its Parquet file and the sessions and
+// hostToday, so every day is in its Parquet file and the sessions and
 // identities are derived, as on a console whose import has run.
 func writeHostFiles(ctx context.Context, raw string) error {
 	log, err := archive.OpenLog(raw)
@@ -142,7 +147,7 @@ func writeHostFiles(ctx context.Context, raw string) error {
 	if err := log.WriteEvents(ctx, hostEvents()); err != nil {
 		return err
 	}
-	return archive.New(log, slog.New(slog.DiscardHandler)).Maintain(ctx, civil.Today(time.Now()), 1, 400)
+	return archive.New(log, slog.New(slog.DiscardHandler)).Maintain(ctx, hostToday, 1, 400)
 }
 
 // hostSession is one session of hostEvents: views page views over
