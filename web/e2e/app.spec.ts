@@ -312,7 +312,7 @@ for (const viewport of VIEWPORTS) {
   })
 }
 
-test("a dashboard loads, refreshes and auto-refreshes its widgets, each through one stream", async ({ page, request }) => {
+test("a dashboard loads, refreshes, auto-refreshes and switches range, each through one stream", async ({ page, request }) => {
   const id = (await dashboardIds(request)).get('Views')
   expect(id).toBeDefined()
   // The browser's clock, so the refresh need not wait out REPORTING_REFRESH_MAX_AGE.
@@ -371,5 +371,17 @@ test("a dashboard loads, refreshes and auto-refreshes its widgets, each through 
   expect(streams).toHaveLength(3)
   expect(streams[2].fresh.length).toBeGreaterThan(1)
   expect(streams[2].fresh.every((f) => !f)).toBe(true)
+  expect(gets).toEqual([])
+
+  // Another range: every card asks again, together, through one stream.
+  const switched = page.waitForRequest((req) => req.method() === 'POST' && req.url().endsWith('/api/widgets/stream'))
+  await page.getByRole('button', { name: /^Range:/ }).click()
+  await page.getByRole('menuitemradio', { name: 'Last month' }).click()
+  await switched
+  await page.waitForLoadState('networkidle')
+  await expect(page.getByRole('status', { name: 'Loading' })).toHaveCount(0)
+  await assertNoErrorCards(page)
+  expect(streams).toHaveLength(4)
+  expect(streams[3].fresh.length).toBeGreaterThan(1)
   expect(gets).toEqual([])
 })

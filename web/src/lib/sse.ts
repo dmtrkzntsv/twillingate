@@ -23,6 +23,9 @@ export interface SSEEvent {
  */
 export class SSEParser {
   private buffer = ''
+  // How far the buffer has been searched for a line end, so a long line
+  // arriving in many chunks is scanned once, not once per chunk.
+  private scanned = 0
   private event = ''
   private data: string[] = []
   private id = ''
@@ -32,16 +35,26 @@ export class SSEParser {
     this.buffer += chunk
     const out: SSEEvent[] = []
     let start = 0
-    for (let i = 0; i < this.buffer.length; i++) {
-      const c = this.buffer[i]
-      if (c !== '\n' && c !== '\r') continue
+    let i = this.scanned
+    for (;;) {
+      const lf = this.buffer.indexOf('\n', i)
+      const cr = this.buffer.indexOf('\r', i)
+      const end = lf < 0 ? cr : cr < 0 ? lf : Math.min(lf, cr)
+      if (end < 0) {
+        i = this.buffer.length
+        break
+      }
       // A CR last in the chunk may be the first half of a CRLF: wait for the next one.
-      if (c === '\r' && i === this.buffer.length - 1) break
-      this.line(this.buffer.slice(start, i), out)
-      if (c === '\r' && this.buffer[i + 1] === '\n') i++
-      start = i + 1
+      if (end === cr && end === this.buffer.length - 1) {
+        i = end
+        break
+      }
+      this.line(this.buffer.slice(start, end), out)
+      i = end === cr && this.buffer[end + 1] === '\n' ? end + 2 : end + 1
+      start = i
     }
     this.buffer = this.buffer.slice(start)
+    this.scanned = i - start
     return out
   }
 
@@ -50,6 +63,7 @@ export class SSEParser {
     const out: SSEEvent[] = []
     if (this.buffer.length > 0) this.line(this.buffer.replace(/\r$/, ''), out)
     this.buffer = ''
+    this.scanned = 0
     this.event = ''
     this.data = []
     return out

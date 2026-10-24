@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 )
@@ -68,9 +69,13 @@ func (s *sseWriter) Close() {
 
 // Event writes one event, `event: name` and `data: ` data as JSON, and
 // flushes it. A value that does not marshal is refused before anything is
-// written, so the stream stays whole; a failed write answers errSSEClosed
+// written, so the stream stays whole, as is a name with a line break in
+// it, which would end the event early; a failed write answers errSSEClosed
 // and ends the stream.
 func (s *sseWriter) Event(name string, data any) error {
+	if strings.ContainsAny(name, "\r\n") {
+		return fmt.Errorf("api: event name %q has a line break", name)
+	}
 	b, err := json.Marshal(data)
 	if err != nil {
 		return err

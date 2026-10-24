@@ -46,6 +46,21 @@ describe('SSEParser', () => {
   })
 })
 
+describe('SSEParser on a long line', () => {
+  it('reads a 1 MB data line fed in 1 KB chunks in linear time', () => {
+    const p = new SSEParser()
+    const payload = 'x'.repeat(1 << 20)
+    const text = `event: big\ndata: ${payload}\n\n`
+    const started = performance.now()
+    const events = []
+    for (let i = 0; i < text.length; i += 1024) events.push(...p.push(text.slice(i, i + 1024)))
+    // Rescanning the buffer from its start per chunk would read about half a billion characters here.
+    expect(performance.now() - started).toBeLessThan(2000)
+    expect(events).toHaveLength(1)
+    expect(events[0].data.length).toBe(payload.length)
+  })
+})
+
 describe('SSEParser ids', () => {
   it('carries the last id over to later events until another is set', () => {
     const p = new SSEParser()

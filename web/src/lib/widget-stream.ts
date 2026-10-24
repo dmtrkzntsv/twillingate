@@ -134,7 +134,8 @@ async function stream(pending: Pending[]): Promise<void> {
     settle(p, () => p.reject(p.signal?.reason))
     if (pending.every((o) => o.settled)) controller.abort()
   }
-  for (const p of pending) p.signal?.addEventListener('abort', () => leave(p), { once: true })
+  const leaves = pending.map((p) => () => leave(p))
+  pending.forEach((p, i) => p.signal?.addEventListener('abort', leaves[i], { once: true }))
   try {
     await readStream(
       pending.map((p) => p.item),
@@ -148,6 +149,9 @@ async function stream(pending: Pending[]): Promise<void> {
     )
   } catch {
     // The stream failed: what it left unanswered loads on its own, below.
+  } finally {
+    // The stream is over; a widget left to its own GET below is cancelled by its query.
+    pending.forEach((p, i) => p.signal?.removeEventListener('abort', leaves[i]))
   }
   if (controller.signal.aborted) return
   for (const p of pending) if (!p.settled) void get(p)

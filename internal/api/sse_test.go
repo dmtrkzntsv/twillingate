@@ -31,6 +31,9 @@ func TestSSEWriter(t *testing.T) {
 		if err := s.Event("bad", func() {}); err == nil || errors.Is(err, errSSEClosed) {
 			t.Errorf("Event(func) = %v, want a marshal error", err)
 		}
+		if err := s.Event("bad\nname", 1); err == nil || errors.Is(err, errSSEClosed) {
+			t.Errorf("Event with a line break in its name = %v, want a refusal", err)
+		}
 		_ = s.Comment("note")
 		_ = s.Event("done", struct{}{})
 	}))
