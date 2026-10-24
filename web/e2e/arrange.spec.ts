@@ -447,6 +447,9 @@ test('moves a widget from the keyboard', async ({ page, request }) => {
   await page.getByRole('button', { name: 'Move E2E W1' }).focus()
   await page.keyboard.press('Space')
   await announced('E2E W1')
+  // dnd-kit's keyboard sensor listens for the arrows only from a timeout
+  // after the pick-up: let that run first.
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 0)))
   await page.keyboard.press('ArrowRight')
   await announced('E2E W1 moved to position 2 of 3')
   await page.keyboard.press('Space')
@@ -474,6 +477,9 @@ test('moves a wide widget from the keyboard past narrower ones', async ({ page, 
   await page.getByRole('button', { name: 'Move E2E W1' }).focus()
   await page.keyboard.press('Space')
   await announced('E2E W1')
+  // dnd-kit's keyboard sensor listens for the arrows only from a timeout
+  // after the pick-up: let that run first.
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 0)))
   await page.keyboard.press('ArrowRight')
   await announced('E2E W1 moved to position 2 of 4')
   await page.keyboard.press('Space')
