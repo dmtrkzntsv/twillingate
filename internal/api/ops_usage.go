@@ -82,9 +82,9 @@ func (h *host) usage(ctx context.Context, in usageIn) (usageOut, error) {
 	if err != nil {
 		return usageOut{}, err
 	}
-	// One deadline for every query the answer runs, however many projects.
-	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
-	defer cancel()
+	// Each query has a CONSOLE_QUERY_TIMEOUT of its own (the database's
+	// through h.db, the event files' through answerEach), so many projects
+	// do not share one.
 	out := usageOut{From: fromD.String(), To: toD.String(), Projects: []projectUsage{}}
 	if res, err := h.db.Run(ctx, `SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()`); err == nil && len(res.Rows) == 1 {
 		out.DatabaseBytes, _ = strconv.ParseInt(res.Rows[0][0], 10, 64)
@@ -157,7 +157,8 @@ const usageChunkDays = maxBreakdownLimit / 3
 // only: an archived project's files only wait for the purge. The
 // projects' queries go in calls (answerAll) of usageProjectsPerCall
 // projects, a project's sharing one scan, read in order: the first error
-// is returned and later calls never run.
+// is returned and later calls never run. Each query has a
+// CONSOLE_QUERY_TIMEOUT of its own (answerEach).
 func (h *host) usageCounts(ctx context.Context, projects []*manage.Project, asked bool, fromD, toD civil.Date) (fileCounts, error) {
 	latest, err := archive.LatestDays(h.eventsDir)
 	if err != nil {
@@ -211,7 +212,7 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 			asks = append(asks, ask{project: p.ID, arrival: true})
 		}
 	}
-	for i, a := range h.answerAll(ctx, reqs) {
+	for i, a := range h.answerEach(ctx, reqs) {
 		if a.Err != nil {
 			return a.Err
 		}

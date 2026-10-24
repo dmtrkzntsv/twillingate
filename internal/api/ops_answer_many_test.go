@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
@@ -214,5 +215,61 @@ func TestUsageAsksInGroupsOfProjects(t *testing.T) {
 	}
 	if len(n.calls) != 1 {
 		t.Errorf("%d calls after the first failed, want only the first", len(n.calls))
+	}
+}
+
+// ctxNative records the contexts of each AnswerMany, the call's and each
+// request's, and answers every request empty.
+type ctxNative struct {
+	*native.Engine
+	call context.Context
+	reqs []context.Context
+}
+
+func (n *ctxNative) AnswerMany(ctx context.Context, reqs []native.Request, done func(int, native.Answered)) {
+	n.call = ctx
+	for i, r := range reqs {
+		n.reqs = append(n.reqs, r.Ctx)
+		done(i, native.Answered{})
+	}
+}
+
+// usage gives each request a CONSOLE_QUERY_TIMEOUT of its own, from the
+// call's context, which has none: projects waiting for the engine's
+// turns do not share one.
+func TestUsageTimesEachRequest(t *testing.T) {
+	h, _ := newTestHost(t)
+	eng := h.native.(*native.Engine)
+	ctx := context.Background()
+	var projects []*manage.Project
+	for id := range int64(3) {
+		projects = append(projects, &manage.Project{ID: id + 1})
+	}
+	day, _ := civil.Parse("2026-08-01")
+	n := &ctxNative{Engine: eng}
+	h.native = n
+	before := time.Now()
+	if _, err := h.usageCounts(ctx, projects, true, day, day); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := n.call.Deadline(); ok {
+		t.Error("the call's context has a deadline of its own")
+	}
+	if len(n.reqs) < len(projects) {
+		t.Fatalf("%d requests", len(n.reqs))
+	}
+	for i, rc := range n.reqs {
+		dl, ok := rc.Deadline()
+		if !ok || dl.Before(before.Add(h.queryTimeout)) || dl.After(time.Now().Add(h.queryTimeout)) {
+			t.Errorf("request %d: deadline %v (%v), want CONSOLE_QUERY_TIMEOUT from the call", i, dl, ok)
+		}
+		for _, other := range n.reqs[:i] {
+			if other == rc {
+				t.Errorf("request %d shares a context", i)
+			}
+		}
+		if rc.Err() == nil {
+			t.Errorf("request %d: its context is not released after the call", i)
+		}
 	}
 }

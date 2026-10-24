@@ -254,6 +254,20 @@ var _ manyNative = (*native.Engine)(nil)
 // answer's. A caller reads the answers in order and stops at the first
 // error, so a tool fails with the error it failed with one by one.
 func (h *host) answerAll(ctx context.Context, reqs []native.Request) []native.Answered {
+	return h.answerRequests(ctx, reqs, false)
+}
+
+// answerEach is answerAll with a CONSOLE_QUERY_TIMEOUT of its own for
+// each request (its Ctx), derived from ctx, rather than one for them all:
+// for a tool whose requests are many projects' each, which wait for the
+// engine's turns in turn.
+func (h *host) answerEach(ctx context.Context, reqs []native.Request) []native.Answered {
+	return h.answerRequests(ctx, reqs, true)
+}
+
+// answerRequests is answerAll, with a timeout of its own for each request
+// when each is set.
+func (h *host) answerRequests(ctx context.Context, reqs []native.Request, each bool) []native.Answered {
 	out := make([]native.Answered, len(reqs))
 	if h.native == nil {
 		err := invalidf("the event files cannot be queried by this process")
@@ -262,14 +276,26 @@ func (h *host) answerAll(ctx context.Context, reqs []native.Request) []native.An
 		}
 		return out
 	}
-	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
-	defer cancel()
+	if !each {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, h.queryTimeout)
+		defer cancel()
+	}
+	// own is a request's context: its own timeout when each, else ctx.
+	own := func() (context.Context, context.CancelFunc) {
+		if each {
+			return context.WithTimeout(ctx, h.queryTimeout)
+		}
+		return ctx, func() {}
+	}
 	events, attrs := h.reg.Snapshot(ctx).RuleLists()
 	rules := archive.Rules{Events: events, Attributes: attrs}
 	if m, ok := h.native.(manyNative); ok {
 		all := make([]native.Request, len(reqs))
 		for i, r := range reqs {
-			all[i] = native.Request{Query: r.Query, Params: r.Params, Rules: rules}
+			rctx, cancel := own()
+			defer cancel()
+			all[i] = native.Request{Query: r.Query, Params: r.Params, Rules: rules, Ctx: rctx}
 		}
 		m.AnswerMany(ctx, all, func(i int, a native.Answered) {
 			if a.Err != nil {
@@ -282,7 +308,9 @@ func (h *host) answerAll(ctx context.Context, reqs []native.Request) []native.An
 	var err error
 	for i, r := range reqs {
 		if err == nil {
-			out[i].Result, err = h.native.Answer(ctx, r.Query, r.Params, rules)
+			rctx, cancel := own()
+			out[i].Result, err = h.native.Answer(rctx, r.Query, r.Params, rules)
+			cancel()
 			if err != nil {
 				err = h.answerErr(err)
 			}
