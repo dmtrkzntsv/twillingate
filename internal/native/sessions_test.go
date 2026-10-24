@@ -279,6 +279,7 @@ func TestSessionsQueriesMatchDuckDB(t *testing.T) {
 				count(*) FILTER (WHERE "views" = 1) AS n, count(*) AS c
 			FROM sessions WHERE ` + in + ` GROUP BY ALL),
 		top AS (SELECT * FROM g ORDER BY b DESC, r ASC NULLS LAST LIMIT 2) `
+	referred := []Filter{{Column: "referrer_source", Op: "is_set"}}
 	cases := []struct {
 		name     string
 		q        Query
@@ -313,6 +314,15 @@ func TestSessionsQueriesMatchDuckDB(t *testing.T) {
 					FROM sessions s WHERE ` + in + ` AND NOT EXISTS (SELECT 1 FROM top WHERE top.r IS NOT DISTINCT FROM s."referrer_source")
 					HAVING count(*) > 0)
 				ORDER BY o, b DESC, r ASC NULLS LAST`},
+		{name: "breakdown referred bounces", q: Query{Kind: "breakdown", Table: "sessions", Dimensions: []string{"entry_path"}, Limit: 100,
+			Metrics: []Metric{{Op: "count"}, {Op: "bounce_rate", As: "rb", Round: ptr(2), Where: referred},
+				{Op: "bounces", As: "b", Where: referred}, {Op: "avg", Column: "duration_sec", As: "d", Where: referred}}},
+			cols: []string{"entry_path", "count", "rb", "b", "d"},
+			sql: `SELECT "entry_path", count(*) AS c,
+				ROUND(CASE WHEN count(*) FILTER (WHERE "referrer_source" <> '') > 0 THEN
+					count(*) FILTER (WHERE "views" = 1 AND "referrer_source" <> '')::DOUBLE / count(*) FILTER (WHERE "referrer_source" <> '') END, 2),
+				count(*) FILTER (WHERE "views" = 1 AND "referrer_source" <> ''), avg("duration_sec") FILTER (WHERE "referrer_source" <> '')
+				FROM sessions WHERE ` + in + ` GROUP BY ALL ORDER BY c DESC, "entry_path" ASC NULLS LAST LIMIT 100`},
 		{name: "stat", q: Query{Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "count"}, {Op: "actors"}}},
 			cols: []string{"count", "actors"}, sql: `SELECT count(*), count(DISTINCT "actor_id") FROM sessions WHERE ` + in},
 		{name: "trend", q: Query{Kind: "trend", Table: "sessions", Metrics: count()}, cols: []string{"day", "count"},

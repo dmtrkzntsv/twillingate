@@ -1695,7 +1695,7 @@ caught up with), over `project_id`'s days `from` through `to` (both `YYYY-MM-DD`
 `to` defaults to today, UTC, and `from` to 29 days before `to`; at most
 1,100 days a call). A malformed query is refused as `invalid`, with a
 message naming the field (`dimensions`, `metrics[0].column`,
-`where[1].values`); an unknown project is `not_found`.
+`where[1].values`, `metrics[2].where[0].op`); an unknown project is `not_found`.
 
 | Field | Kinds | Meaning |
 | --- | --- | --- |
@@ -1724,7 +1724,7 @@ A dimension, series or filter column is one of `project_id`, `family`,
 `sample_rate` are read by the metrics. NULL reads as an empty string and
 sorts last; numbers sort by value.
 
-Six more are computed from those, as the built-in dashboards group by
+Eight more are computed from those, as the built-in dashboards group by
 them; they are text, so `gt`, `gte`, `lt` and `lte` do not take them:
 
 | Column | Tables | Value |
@@ -1735,6 +1735,8 @@ them; they are text, so `gt`, `gte`, `lt` and `lte` do not take them:
 | `consent_state` | `events`, `views`, `product` | `given` (`consent` 1), `none` (0) or `unknown` (NULL) |
 | `user_status` | `events`, `views`, `product` | `new` on the day the row's `user_id` was first seen (its `first_seen` in `identities`, over the whole history the files hold, whatever the range), `returning` on a later day; NULL when `user_id` is empty, or not in `identities` (an id only measures carried), and on a measure sent before it was first seen |
 | `group_status` | `events`, `views`, `product` | the same of `group_id` |
+| `vital` | `measures` | `LCP`, `INP`, `CLS`, `FCP` or `TTFB` for the web vitals' `event_name` (`$lcp`, `$inp`, `$cls`, `$fcp`, `$ttfb`); else NULL |
+| `vital_rating` | `measures` | a vital's sample rated by its bucket's value (as a percentile reads it, below) against the vital's two thresholds: `good` up to the first, `needs improvement` up to the second, else `poor`. LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800, as the built-in Web Vitals dashboard rates them; NULL for the other measures |
 
 `{"column": "user_status", "op": "eq", "values": ["new"]}` with the metric
 `users` counts the new users, as the built-in Users dashboard does (with
@@ -1748,7 +1750,7 @@ dimension, series and filter columns are `project_id`, `day`, `kind`,
 `exit_path`, `referrer_source`, `utm_source`, `utm_medium` and
 `utm_campaign`; `duration_sec` and `views` are numbers a filter may name
 (`{"column": "views", "op": "gt", "values": ["1"]}`) but not a dimension
-or series. It takes the metrics `count` (sessions), `actors`, `sum`,
+or series. It takes the metrics `count` (sessions), `actors`, `share`, `sum`,
 `avg`, `min` and `max` of `duration_sec` or `views`, and its own
 `bounces` and `bounce_rate`; not `users`, `groups` or the `daily_*` ones.
 
@@ -1759,7 +1761,7 @@ range, and `day` is that day (a trend counts the new users and groups per
 day). Its dimension, series and filter columns are `kind` (`user` or
 `group`), `id`, `name` and `day`; `views` and `events` are numbers a filter
 may name but not a dimension or series. It takes the metrics `count`
-(identities) and `sum`, `avg`, `min` and `max` of `views` or `events`.
+(identities), `share` and `sum`, `avg`, `min` and `max` of `views` or `events`.
 
 | Metric `op` | Takes | Counts |
 | --- | --- | --- |
@@ -1769,14 +1771,59 @@ may name but not a dimension or series. It takes the metrics `count`
 | `daily_sum`, `daily_max`, `daily_avg` | `of`: `actors`, `users` or `groups` | the distinct count per day, summed, maxed or averaged over the days with rows |
 | `bounces` | | `sessions` only: the sessions of one view |
 | `bounce_rate` | | `sessions` only: `bounces` divided by the sessions (`0.25`), exact; empty over no session, and in an `Other` row over the sessions of the groups it folds |
+| `percentile` | `q`: above 0 and below 1 (`0.75`) | `measures` only: the `q` quantile of `value`, each sample weighing `1 / sample_rate`; empty over no sample |
+| `mean` | | `measures` only: `value` weighted so, `SUM(value / sample_rate) / SUM(1 / sample_rate)`; empty over no sample |
+| `weight` | | `measures` only: the samples' `1 / sample_rate` summed, the samples a sampled metric stands for |
+| `share` | `of`: `count`, or on `measures` `weight` | breakdown, or trend with `series`: the group's `count` (or `weight`) divided by its partition's (`0.25`); empty when that is 0 |
 
-A metric's column is named by `as`, else `op`, `op_column` (`sum_value`)
-or `op_of` (`daily_sum_actors`); two metrics may not share a name, nor,
+A percentile comes from `bucket`, as the built-in Web Vitals and
+Measures dashboards compute theirs: the weights are summed per bucket and
+run up in ascending bucket order, and the answer is the value of the
+first bucket whose running weight reaches `q` of the total. That value is
+the bucket's representative, `2 × 1.04^bucket / 2.04` (`0` for bucket
+`-1000`), so a percentile is within about 2% of the samples' own; it is
+exact to that resolution, not an estimate, and never `approximate`. An
+`Other` row's percentile puts its groups' buckets together.
+
+A share's partition is, in a breakdown, the groups with the same value of
+the first dimension (every group with one dimension), as SQL's
+`x / SUM(x) OVER (PARTITION BY first dimension)` has it before the limit:
+groups past `limit` still count toward their partition, and the `Other`
+row's partition is every group. In a trend it is the day's groups, every
+series, not only those kept (a series ranks by its share over the range)
+unless the answer is `truncated` (below).
+A stat is one group, and an unsplit trend has one per day, so both refuse `share` (its value would always be 1). A share is exact, never
+`approximate`, and with a metric `where` (below) both the group's and the
+partition's are of the rows that pass it.
+
+A metric's column is named by `as`, else `op`, `op_column` (`sum_value`),
+`op_of` (`daily_sum_actors`, `share_weight`) or, for a percentile, `p` and `100 × q`
+(`p75`, `p99.9`); two metrics may not share a name, nor,
 with `compare`, may one be named `previous_<another's name>`.
+
+A metric takes two more optional fields:
+
+- `where`: filters of its own, the same columns and operators as the
+  query's `where` (a refusal names them as `metrics[2].where[0].column`).
+  A row counts toward that metric only when it passes them too; the other
+  metrics still count it. A group exists when any row passes the query's
+  `where`, so a metric with none of its rows in a group reads `0` for
+  `count`, `actors`, `users`, `groups` and `bounces`, and empty for the
+  others (`sum`, `avg`, `min`, `max`, `daily_*`, `bounce_rate`,
+  `percentile`, `mean`, `weight`); `share` reads `0`, or empty when its
+  whole partition has none. A `daily_*` metric with a `where` is
+  over the days with rows that pass it (its `daily_avg` averages those
+  days only). They apply alike to the `previous_` columns, an `Other` row and a trend's
+  days; a trend still has a row for every day with rows.
+- `round`: 0 to 6 decimal places, half away from zero (`2.5` rounds to
+  `3`), applied last, after `Other` is summed and before groups are ranked
+  by the metric; with `0` the value reads as an integer (`3`). A metric
+  whose value is an integer already (`count`, `sum` of an integer column)
+  stays as it is.
 
 | Filter `op` | Values |
 | --- | --- |
-| `eq`, `ne`, `contains`, `prefix` | exactly one |
+| `eq`, `ne`, `contains`, `prefix`, `not_prefix` | exactly one (`contains`, `prefix` and `not_prefix` on text columns only; `not_prefix` keeps text that does not start with the value, so `event_name` `not_prefix` `$` leaves out the system names) |
 | `in`, `not_in` | one or more |
 | `gt`, `gte`, `lt`, `lte` | exactly one: an integer, or `YYYY-MM-DD` on `day`; numeric columns only (`day`, `project_id`, `display_width`, `display_height`, `consent`, `bucket`; `duration_sec` and `views` on `sessions`; `views` and `events` on `identities`) |
 | `is_set` | none: the column is not NULL, and on a text column not empty either |
@@ -1805,7 +1852,7 @@ metric past 1,024 ids that choice rests on estimates. A query tracks at
 most 100,000 groups (a trend as many series × days as ten times that) in
 at most 128 MiB of memory: past either, or past `CONSOLE_QUERY_ROWS_MAX`
 rows, a breakdown's or a split trend's answer is `truncated`, its
-untracked groups left out (of `Other` too), and `note` says so; narrow
+untracked groups left out (of `Other` too, and of a `share`'s partition, which then counts only the tracked groups or series), and `note` says so; narrow
 the range, add a filter or lower the limit. A stat or an unsplit trend
 has no group to leave out: one that needs more memory (a `daily_*` metric
 or a trend's distinct count over many days with many ids, whose per-day
@@ -1840,6 +1887,46 @@ A breakdown: the ten busiest paths by unique users, the rest as `Other`.
   "kind": "breakdown", "table": "views", "dimensions": ["path"],
   "metrics": [{"op": "users"}, {"op": "count", "as": "views"}],
   "order": "users", "limit": 10, "other": true}}
+```
+
+A breakdown with filtered metrics side by side: per path, its views and
+its product events, and the mean of the measures sent from it, to two
+places.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "breakdown", "table": "events", "dimensions": ["path"],
+  "metrics": [
+    {"op": "count", "as": "views", "where": [{"column": "family", "op": "eq", "values": ["views"]}]},
+    {"op": "count", "as": "events", "where": [{"column": "family", "op": "eq", "values": ["product"]}]},
+    {"op": "avg", "column": "value", "as": "mean", "round": 2,
+     "where": [{"column": "family", "op": "eq", "values": ["measures"]}]}]}}
+```
+
+A breakdown of measures: per page, the samples of LCP and the p75 of
+LCP, INP and CLS, as the built-in Web Vitals dashboard's table has them.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "breakdown", "table": "measures", "dimensions": ["path"], "limit": 50,
+  "where": [{"column": "event_name", "op": "in", "values": ["$lcp", "$inp", "$cls"]},
+            {"column": "path", "op": "ne", "values": [""]}],
+  "metrics": [
+    {"op": "count", "as": "samples", "where": [{"column": "event_name", "op": "eq", "values": ["$lcp"]}]},
+    {"op": "percentile", "q": 0.75, "as": "lcp_p75", "round": 0, "where": [{"column": "event_name", "op": "eq", "values": ["$lcp"]}]},
+    {"op": "percentile", "q": 0.75, "as": "inp_p75", "round": 0, "where": [{"column": "event_name", "op": "eq", "values": ["$inp"]}]},
+    {"op": "percentile", "q": 0.75, "as": "cls_p75", "round": 3, "where": [{"column": "event_name", "op": "eq", "values": ["$cls"]}]}]}}
+```
+
+A breakdown of ratings: each vital's share of samples, by weight, rated
+good, needs improvement or poor, as the built-in Web Vitals dashboard's
+ratings chart has them.
+
+```json
+{"project_id": 1, "query": {
+  "kind": "breakdown", "table": "measures", "dimensions": ["vital", "vital_rating"], "order": "vital",
+  "where": [{"column": "vital", "op": "is_set"}],
+  "metrics": [{"op": "share", "of": "weight", "as": "share", "round": 3}]}}
 ```
 
 A breakdown of sessions: the bounce rate and average session length per

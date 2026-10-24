@@ -8,6 +8,7 @@ import (
 	"math"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -30,7 +31,11 @@ import (
 //   - whole-range distinct ids are a dset per group, keyed by 32 bits of
 //     the same hash above the fingerprint a sketch takes: exact while it
 //     holds at most hll.ExactLimit ids, then a sketch;
-//   - no id string is kept: each batch dictionary's ids are hashed once.
+//   - no id string is kept: each batch dictionary's ids are hashed once;
+//   - measures' weights (1 / sample_rate) and weighted values are dense
+//     arrays per cell, and a percentile's histogram one map per worker of
+//     (cell, bucket) to the bucket's weight, sorted by cell then bucket
+//     once merged.
 //
 // The aggregation's memory is counted as it grows (memory) and bounded by
 // Options.MaxBytes: see there.
@@ -46,6 +51,7 @@ const (
 	mapEntryBytes = 48
 	sketchBytes   = 1 << 14
 	dayKeyBytes   = 16
+	histKeyBytes  = mapEntryBytes + 24
 )
 
 // dayKey is one per-day distinct key: c is the cell (group*ndays + day)
@@ -329,6 +335,20 @@ func (v value) String() string {
 	return strconv.FormatFloat(v.f, 'f', -1, 64)
 }
 
+// round is v rounded to *places decimals, as DuckDB's ROUND rounds a
+// DOUBLE: half away from zero, of v times 10^places; an integer, NULL, or
+// places nil leave v as it is.
+func (v value) round(places *int) value {
+	if places == nil || v.null || v.isInt {
+		return v
+	}
+	mod := math.Pow(10, float64(*places))
+	if r := math.Round(v.f*mod) / mod; !math.IsInf(r, 0) && !math.IsNaN(r) {
+		v.f = r
+	}
+	return v
+}
+
 func (v value) num() float64 {
 	if v.isInt {
 		return float64(v.i)
@@ -368,29 +388,74 @@ func cmpDim(typ colType, a, b dimVal) int {
 // metricSpec is one metric, resolved against the aggregation's columns.
 type metricSpec struct {
 	Metric
-	num      int // index into agg.nums, for sum/avg/min/max
-	distinct int // index into agg.distinct, for actors/users/groups and daily_*
+	where    []filter // the metric's own filters, compiled
+	mask     int      // index into agg.masks: the rows the metric counts
+	num      int      // index into agg.nums, for sum/avg/min/max
+	distinct int      // index into agg.distinct, for actors/users/groups and daily_*
+	msr      int      // index into agg.msrs, for percentile, mean and weight
 }
 
 // distinctOf is the id column a distinct op counts.
 var distinctOf = map[string]string{"actors": "actor_id", "users": "user_id", "groups": "group_id"}
 
-// distinctCol is one id column counted distinct: set says whole-range
-// sets per group are kept, day that per-day keys are.
+// distinctCol is one id column counted distinct over the rows of a mask:
+// set says whole-range sets per group are kept, day that per-day keys are.
 type distinctCol struct {
 	name     string
+	mask     int
 	set, day bool
 }
 
-// numCol is one numeric column summed, averaged or bounded.
+// numCol is one numeric column summed, averaged or bounded over the rows
+// of a mask.
 type numCol struct {
 	name  string
+	mask  int
 	float bool
+}
+
+// msrCol is the measures' partials over the rows of a mask: per cell the
+// weights (1 / sample_rate) and weighted values (value / sample_rate),
+// and with hist the weight per bucket.
+type msrCol struct {
+	mask int
+	hist bool
+}
+
+// histKey is a histogram entry's key: a cell and a bucket of it.
+type histKey struct {
+	cell   int
+	bucket int64
+}
+
+// histEntry is a merged histogram's entry: the weight of a cell's bucket.
+type histEntry struct {
+	histKey
+	w float64
+}
+
+// msrPart is one mask's measure partials per cell: rows with a weight
+// (wn) and their weights summed (w); rows with a weight and a value (sn)
+// and their weighted values summed (s); and the weight per (cell, bucket).
+type msrPart struct {
+	wn, sn []int64
+	w, s   []float64
+	hist   map[histKey]float64
+}
+
+// colMask keys a column's partials by the mask of rows they read.
+type colMask struct {
+	col  string
+	mask int
 }
 
 // agg is one scan's aggregation.
 type agg struct {
-	filters  []filter
+	filters []filter
+	// masks are the rows each metric counts, beside the filters: masks[0]
+	// every row (the groups' rows), the others each a distinct set of a
+	// metric's own filters.
+	masks    [][]filter
 	dims     []string // the group's columns: a breakdown's dimensions, a trend's series
 	dimTypes []colType
 	groups   *groupTable // nil for the one group of a stat or a trend without series
@@ -399,20 +464,23 @@ type agg struct {
 	nd       int // cells per group: ndays in a trend, else 1
 	nums     []numCol
 	distinct []*distinctCol
-	bounces  bool // count sessions of one view per cell (bounces, bounce_rate)
+	bounces  bool // count sessions of one view per cell and mask (bounces, bounce_rate)
+	msrs     []msrCol
 	parts    []part
 	mem      memory
 }
 
 // part is one worker's partials.
 type part struct {
-	count   []int64
-	bounces []int64 // per cell, rows with views 1 (when agg.bounces)
+	count   [][]int64 // per mask, per cell
+	bounces [][]int64 // per mask, per cell, rows with views 1 (when agg.bounces)
 	nums    []numPart
+	msrs    []msrPart
 	sets    [][]dset // per distinct column, per group; nil without set
 	days    []keySink
 	// scratch, reused across batches
 	sel, gids  []int32
+	pass       [][]bool // per mask but 0, per row of the batch: whether it passes
 	hashes     []uint64
 	keys       []uint64
 	buf        []dayKey
@@ -445,7 +513,7 @@ type aggOptions struct {
 // newAgg sets up an aggregation and returns its metrics resolved.
 func newAgg(o aggOptions) (*agg, []metricSpec) {
 	metrics, filters, dims, perDay, from, ndays, maxGroups, distinctSets := o.metrics, o.filters, o.dims, o.perDay, o.from, o.ndays, o.maxGroups, o.sets
-	a := &agg{filters: filters, dims: dims, from: from, ndays: ndays, nd: 1, parts: make([]part, o.workers)}
+	a := &agg{filters: filters, masks: [][]filter{nil}, dims: dims, from: from, ndays: ndays, nd: 1, parts: make([]part, o.workers)}
 	a.mem.max = o.maxBytes
 	if perDay {
 		a.nd = ndays
@@ -462,31 +530,40 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 		}
 		a.groups = &groupTable{ids: map[string]int32{}, max: max(1, limit)}
 	}
-	numIdx := map[string]int{}
-	distIdx := map[string]int{}
-	dist := func(col string) int {
-		i, ok := distIdx[col]
+	maskIdx := map[string]int{"": 0}
+	numIdx := map[colMask]int{}
+	distIdx := map[colMask]int{}
+	dist := func(col string, mask int) int {
+		i, ok := distIdx[colMask{col, mask}]
 		if !ok {
 			i = len(a.distinct)
-			distIdx[col] = i
-			a.distinct = append(a.distinct, &distinctCol{name: col})
+			distIdx[colMask{col, mask}] = i
+			a.distinct = append(a.distinct, &distinctCol{name: col, mask: mask})
 		}
 		return i
 	}
 	out := make([]metricSpec, len(metrics))
 	for k, m := range metrics {
-		m.num, m.distinct = -1, -1
+		m.num, m.distinct, m.msr = -1, -1, -1
+		key := filtersKey(m.Where)
+		mask, ok := maskIdx[key]
+		if !ok {
+			mask = len(a.masks)
+			maskIdx[key] = mask
+			a.masks = append(a.masks, m.where)
+		}
+		m.mask = mask
 		switch m.Op {
 		case "sum", "avg", "min", "max":
-			i, ok := numIdx[m.Column]
+			i, ok := numIdx[colMask{m.Column, mask}]
 			if !ok {
 				i = len(a.nums)
-				numIdx[m.Column] = i
-				a.nums = append(a.nums, numCol{name: m.Column, float: m.Column == "value" || m.Column == "sample_rate"})
+				numIdx[colMask{m.Column, mask}] = i
+				a.nums = append(a.nums, numCol{name: m.Column, mask: mask, float: m.Column == "value" || m.Column == "sample_rate"})
 			}
 			m.num = i
 		case "actors", "users", "groups":
-			m.distinct = dist(distinctOf[m.Op])
+			m.distinct = dist(distinctOf[m.Op], mask)
 			if perDay {
 				a.distinct[m.distinct].day = true
 			}
@@ -494,14 +571,42 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 				a.distinct[m.distinct].set = true
 			}
 		case "daily_sum", "daily_max", "daily_avg":
-			m.distinct = dist(distinctOf[m.Of])
+			m.distinct = dist(distinctOf[m.Of], mask)
 			a.distinct[m.distinct].day = true
 		case "bounces", "bounce_rate":
 			a.bounces = true
+		case "percentile", "mean", "weight", "share":
+			if m.Op == "share" && m.Of != "weight" {
+				break // a share of count reads the mask's counts
+			}
+			i := slices.IndexFunc(a.msrs, func(c msrCol) bool { return c.mask == mask })
+			if i < 0 {
+				i = len(a.msrs)
+				a.msrs = append(a.msrs, msrCol{mask: mask})
+			}
+			if m.Op == "percentile" {
+				a.msrs[i].hist = true
+			}
+			m.msr = i
 		}
 		out[k] = m
 	}
 	return a, out
+}
+
+// filtersKey is a metric's filters as a key: metrics with the same
+// filters share a mask ("" for none).
+func filtersKey(where []Filter) string {
+	var b strings.Builder
+	for _, f := range where {
+		b.WriteString(strconv.Quote(f.Column))
+		b.WriteString(strconv.Quote(f.Op))
+		for _, v := range f.Values {
+			b.WriteString(strconv.Quote(v))
+		}
+		b.WriteByte(';')
+	}
+	return b.String()
 }
 
 // columns is what a scan must read for the aggregation.
@@ -512,9 +617,11 @@ func (a *agg) columns() []string {
 			cols = append(cols, c)
 		}
 	}
-	for _, f := range a.filters {
-		for _, c := range readColumns(f.column) {
-			add(c)
+	for _, fs := range append([][]filter{a.filters}, a.masks...) {
+		for _, f := range fs {
+			for _, c := range readColumns(f.column) {
+				add(c)
+			}
 		}
 	}
 	for _, d := range a.dims {
@@ -531,6 +638,10 @@ func (a *agg) columns() []string {
 	if a.bounces {
 		add("views")
 	}
+	if len(a.msrs) > 0 {
+		add("value")
+		add("sample_rate")
+	}
 	return cols
 }
 
@@ -538,23 +649,35 @@ func (a *agg) columns() []string {
 // p.grew.
 func (p *part) grow(a *agg, groups int) {
 	cells := groups * a.nd
-	if len(p.count) >= cells {
+	have := 0
+	if p.count != nil {
+		have = len(p.count[0])
+	}
+	if have >= cells {
 		return
 	}
-	cells = max(cells, 2*len(p.count))
-	// Per cell: the count, and per numeric column 4 numbers; per group a
-	// set header per distinct column.
-	perCell := int64(8 + 32*len(a.nums) + 8*boolInt(a.bounces))
+	cells = max(cells, 2*have)
+	// Per cell: the count per mask (and bounces), and per numeric column 4
+	// numbers; per group a set header per distinct column.
+	perCell := int64(8*len(a.masks)*(1+boolInt(a.bounces)) + 32*len(a.nums) + 32*len(a.msrs))
 	perGroup := int64(0)
 	for _, d := range a.distinct {
 		if d.set {
 			perGroup += 48
 		}
 	}
-	p.grew += int64(cells-len(p.count))*perCell + int64(cells-len(p.count))/int64(a.nd)*perGroup
-	p.count = growTo(p.count, cells)
-	if a.bounces {
-		p.bounces = growTo(p.bounces, cells)
+	p.grew += int64(cells-have)*perCell + int64(cells-have)/int64(a.nd)*perGroup
+	if p.count == nil {
+		p.count = make([][]int64, len(a.masks))
+		if a.bounces {
+			p.bounces = make([][]int64, len(a.masks))
+		}
+	}
+	for k := range a.masks {
+		p.count[k] = growTo(p.count[k], cells)
+		if a.bounces {
+			p.bounces[k] = growTo(p.bounces[k], cells)
+		}
 	}
 	if p.nums == nil {
 		p.nums = make([]numPart, len(a.nums))
@@ -567,6 +690,18 @@ func (p *part) grow(a *agg, groups int) {
 		} else {
 			np.isum, np.imin, np.imax = growTo(np.isum, cells), growTo(np.imin, cells), growTo(np.imax, cells)
 		}
+	}
+	if p.msrs == nil {
+		p.msrs = make([]msrPart, len(a.msrs))
+		for j, c := range a.msrs {
+			if c.hist {
+				p.msrs[j].hist = map[histKey]float64{}
+			}
+		}
+	}
+	for j := range a.msrs {
+		mp := &p.msrs[j]
+		mp.wn, mp.sn, mp.w, mp.s = growTo(mp.wn, cells), growTo(mp.sn, cells), growTo(mp.w, cells), growTo(mp.s, cells)
 	}
 	if p.sets == nil {
 		p.sets = make([][]dset, len(a.distinct))
@@ -643,19 +778,37 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 		}
 		return int(gids[k])*a.nd + off(i)
 	}
-	for k, i := range sel {
-		if gids[k] >= 0 {
-			p.count[cell(k, i)]++
+	// pass is each mask's rows (nil for mask 0: every row).
+	if len(p.pass) < len(a.masks) {
+		p.pass = make([][]bool, len(a.masks))
+	}
+	for k := 1; k < len(a.masks); k++ {
+		if p.pass[k], err = passRows(b, a.masks[k], p.pass[k]); err != nil {
+			return err
 		}
 	}
+	pass := p.pass[:len(a.masks)]
+	pass[0] = nil
+	var views *Column
 	if a.bounces {
-		_, c := b.col("views")
-		if c == nil || c.Ints == nil {
+		if _, views = b.col("views"); views == nil || views.Ints == nil {
 			return fmt.Errorf("native: a batch without views")
 		}
+	}
+	for mask, keep := range pass {
+		count := p.count[mask]
 		for k, i := range sel {
-			if gids[k] >= 0 && (c.Null == nil || !c.Null[i]) && c.Ints[i] == 1 {
-				p.bounces[cell(k, i)]++
+			if gids[k] >= 0 && (keep == nil || keep[i]) {
+				count[cell(k, i)]++
+			}
+		}
+		if views == nil {
+			continue
+		}
+		bounces := p.bounces[mask]
+		for k, i := range sel {
+			if gids[k] >= 0 && (keep == nil || keep[i]) && (views.Null == nil || !views.Null[i]) && views.Ints[i] == 1 {
+				bounces[cell(k, i)]++
 			}
 		}
 	}
@@ -665,8 +818,9 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 			continue
 		}
 		np := &p.nums[j]
+		keep := pass[n.mask]
 		for k, i := range sel {
-			if gids[k] < 0 || (c.Null != nil && c.Null[i]) {
+			if gids[k] < 0 || (keep != nil && !keep[i]) || (c.Null != nil && c.Null[i]) {
 				continue
 			}
 			x := cell(k, i)
@@ -701,15 +855,82 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 			}
 		}
 	}
+	if err := a.addMeasures(p, b, sel, gids, pass, cell); err != nil {
+		return err
+	}
 	for j, d := range a.distinct {
-		if err := a.addDistinct(p, j, d, b, sel, gids, off); err != nil {
+		if err := a.addDistinct(p, j, d, b, sel, gids, pass[d.mask], off); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *Batch, sel, gids []int32, off func(int32) int) error {
+// addMeasures adds the rows sel (those of each mask) to the measure
+// partials: a row without a sample_rate has no weight and counts toward
+// none; one without a value is in bucket -1000 and adds to the weights,
+// not the weighted values, as SUM(value / sample_rate) leaves it out.
+func (a *agg) addMeasures(p *part, b *Batch, sel, gids []int32, pass [][]bool, cell func(int, int32) int) error {
+	if len(a.msrs) == 0 {
+		return nil
+	}
+	_, val := b.col("value")
+	_, rate := b.col("sample_rate")
+	for _, c := range []struct {
+		name string
+		col  *Column
+	}{{"value", val}, {"sample_rate", rate}} {
+		if c.col != nil && c.col.Floats == nil && c.col.Ints == nil {
+			return fmt.Errorf("native: column %s is not a number", c.name)
+		}
+	}
+	if rate == nil {
+		return nil
+	}
+	num := func(c *Column, i int32) (float64, bool) {
+		switch {
+		case c == nil || (c.Null != nil && c.Null[i]):
+			return 0, false
+		case c.Floats != nil:
+			return c.Floats[i], true
+		}
+		return float64(c.Ints[i]), true
+	}
+	for j, mc := range a.msrs {
+		mp := &p.msrs[j]
+		keep := pass[mc.mask]
+		for k, i := range sel {
+			if gids[k] < 0 || (keep != nil && !keep[i]) {
+				continue
+			}
+			r, ok := num(rate, i)
+			if !ok {
+				continue
+			}
+			x := cell(k, i)
+			w := 1 / r
+			mp.wn[x]++
+			mp.w[x] += w
+			v, hasValue := num(val, i)
+			if hasValue {
+				mp.sn[x]++
+				mp.s[x] += v / r
+			}
+			if mc.hist {
+				key := histKey{cell: x, bucket: bucketOf(v, !hasValue)}
+				if _, ok := mp.hist[key]; !ok {
+					p.grew += histKeyBytes
+				}
+				mp.hist[key] += w
+			}
+		}
+	}
+	return nil
+}
+
+// addDistinct adds the ids of column d of the rows sel (those keep, when
+// not nil, passes) to their groups' sets and per-day keys.
+func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *Batch, sel, gids []int32, keep []bool, off func(int32) int) error {
 	_, c := b.col(d.name)
 	// hashes is each dictionary entry's hash, of the entries the tracked
 	// rows use only (the others are not hashed); keys the whole-range keys:
@@ -721,7 +942,7 @@ func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *Batch, sel, gids []
 		}
 		used := make([]bool, len(c.Dict))
 		for k, i := range sel {
-			if x := c.Idx[i]; gids[k] >= 0 && x >= 0 {
+			if x := c.Idx[i]; gids[k] >= 0 && x >= 0 && (keep == nil || keep[i]) {
 				used[x] = true
 			}
 		}
@@ -738,7 +959,7 @@ func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *Batch, sel, gids []
 	buf := p.buf[:0]
 	for k, i := range sel {
 		g := gids[k]
-		if g < 0 {
+		if g < 0 || (keep != nil && !keep[i]) {
 			continue
 		}
 		x := int32(-1)
@@ -893,12 +1114,46 @@ type run struct {
 type merged struct {
 	a       *agg
 	groups  int
-	count   []int64
-	bounces []int64
+	count   [][]int64 // per mask
+	bounces [][]int64 // per mask
 	nums    []numPart
+	msrs    []msrPart
+	hists   [][]histEntry // per measure column with hist: sorted by cell, then bucket
 	sets    [][]dset
 	keys    [][]dayKey // per distinct column with day keys: all of them
 	runs    [][]run    // and their counts per (group, day)
+	// parts are the groups of each partition a share is taken over, by
+	// partition (nil: one, every group); partOf is each group's.
+	parts       [][]int32
+	partOf      []int32
+	shareTotals map[shareKey]float64
+}
+
+// shareKey is a cached share total: of a mask's rows (count) or a
+// measure column's weights, over a partition (-1: every group), on a day
+// (-1: all).
+type shareKey struct {
+	weight    bool
+	idx, part int
+	day       int
+}
+
+// partitionBy splits the groups into partitions by their first
+// dimension's value, which a breakdown's share is taken over.
+func (m *merged) partitionBy() {
+	ids := map[dimVal]int32{}
+	m.partOf = make([]int32, m.groups)
+	for g := range m.groups {
+		v := m.a.groups.vals[g][0]
+		id, ok := ids[v]
+		if !ok {
+			id = int32(len(m.parts))
+			ids[v] = id
+			m.parts = append(m.parts, nil)
+		}
+		m.parts[id] = append(m.parts[id], int32(g))
+		m.partOf[g] = id
+	}
 }
 
 // merge puts the workers' partials together, releasing them.
@@ -908,9 +1163,15 @@ func (a *agg) merge() *merged {
 		m.groups = a.groups.len()
 	}
 	cells := m.groups * a.nd
-	m.count = make([]int64, cells)
+	m.count = make([][]int64, len(a.masks))
 	if a.bounces {
-		m.bounces = make([]int64, cells)
+		m.bounces = make([][]int64, len(a.masks))
+	}
+	for k := range a.masks {
+		m.count[k] = make([]int64, cells)
+		if a.bounces {
+			m.bounces[k] = make([]int64, cells)
+		}
 	}
 	m.nums = make([]numPart, len(a.nums))
 	for j, n := range a.nums {
@@ -920,6 +1181,16 @@ func (a *agg) merge() *merged {
 			np.fsum, np.fmin, np.fmax = make([]float64, cells), make([]float64, cells), make([]float64, cells)
 		} else {
 			np.isum, np.imin, np.imax = make([]int64, cells), make([]int64, cells), make([]int64, cells)
+		}
+	}
+	m.msrs = make([]msrPart, len(a.msrs))
+	m.hists = make([][]histEntry, len(a.msrs))
+	hists := make([]map[histKey]float64, len(a.msrs))
+	for j, c := range a.msrs {
+		mp := &m.msrs[j]
+		mp.wn, mp.sn, mp.w, mp.s = make([]int64, cells), make([]int64, cells), make([]float64, cells), make([]float64, cells)
+		if c.hist {
+			hists[j] = map[histKey]float64{}
 		}
 	}
 	m.sets = make([][]dset, len(a.distinct))
@@ -932,14 +1203,21 @@ func (a *agg) merge() *merged {
 		p := &a.parts[w]
 		// A worker's arrays may be longer than the groups (they grow
 		// ahead); the cells past them hold nothing.
-		for x, c := range p.count[:min(len(p.count), cells)] {
-			m.count[x] += c
+		for k, count := range p.count {
+			for x, c := range count[:min(len(count), cells)] {
+				m.count[k][x] += c
+			}
 		}
-		for x, c := range p.bounces[:min(len(p.bounces), cells)] {
-			m.bounces[x] += c
+		for k, bounces := range p.bounces {
+			for x, c := range bounces[:min(len(bounces), cells)] {
+				m.bounces[k][x] += c
+			}
 		}
 		for j := range p.nums {
 			mergeNum(&m.nums[j], &p.nums[j], a.nums[j].float, cells)
+		}
+		for j := range p.msrs {
+			mergeMsr(&m.msrs[j], &p.msrs[j], hists[j], cells)
 		}
 		for j := range p.sets {
 			for g := range p.sets[j][:min(len(p.sets[j]), m.groups)] {
@@ -947,7 +1225,19 @@ func (a *agg) merge() *merged {
 			}
 			p.sets[j] = nil
 		}
-		p.count, p.bounces, p.nums = nil, nil, nil
+		p.count, p.bounces, p.nums, p.msrs = nil, nil, nil, nil
+	}
+	for j, h := range hists {
+		if h == nil {
+			continue
+		}
+		es := make([]histEntry, 0, len(h))
+		for k, w := range h {
+			es = append(es, histEntry{histKey: k, w: w})
+		}
+		slices.SortFunc(es, func(a, b histEntry) int { return cmpHistKey(a.histKey, b.histKey) })
+		m.hists[j] = es
+		hists[j] = nil
 	}
 	m.keys = make([][]dayKey, len(a.distinct))
 	m.runs = make([][]run, len(a.distinct))
@@ -965,6 +1255,31 @@ func (a *agg) merge() *merged {
 		m.runs[j] = runsOf(m.keys[j])
 	}
 	return m
+}
+
+// mergeMsr adds src's measure partials to dst's, its histogram to hist.
+func mergeMsr(dst, src *msrPart, hist map[histKey]float64, cells int) {
+	for x, n := range src.wn[:min(len(src.wn), cells)] {
+		if n == 0 {
+			continue
+		}
+		dst.wn[x] += n
+		dst.w[x] += src.w[x]
+		dst.sn[x] += src.sn[x]
+		dst.s[x] += src.s[x]
+	}
+	for k, w := range src.hist {
+		if k.cell < cells {
+			hist[k] += w
+		}
+	}
+}
+
+func cmpHistKey(a, b histKey) int {
+	if a.cell != b.cell {
+		return cmp.Compare(a.cell, b.cell)
+	}
+	return cmp.Compare(a.bucket, b.bucket)
 }
 
 func mergeNum(dst, src *numPart, float bool, cells int) {
@@ -1025,32 +1340,80 @@ func (m *merged) cellsOf(g int32, day int, f func(x int)) {
 }
 
 // rows is how many rows group g holds (on day, unless it is < 0).
-func (m *merged) rows(g int32, day int) int64 {
+func (m *merged) rows(g int32, day int) int64 { return m.maskRows(0, g, day) }
+
+// maskRows is how many rows of mask group g holds (on day, unless it is
+// < 0).
+func (m *merged) maskRows(mask int, g int32, day int) int64 {
 	var n int64
-	m.cellsOf(g, day, func(x int) { n += m.count[x] })
+	m.cellsOf(g, day, func(x int) { n += m.count[mask][x] })
 	return n
 }
 
 // compute is metric mt over the rows of the groups gs: on one day of the
-// range (a trend's cell; gs one group then) or, when day < 0, over all.
+// range (a trend's cell; gs one group then) or, when day < 0, over all;
+// rounded as mt says.
 func (m *merged) compute(mt metricSpec, gs []int32, day int) value {
+	return m.computeRaw(mt, gs, day, false).round(mt.Round)
+}
+
+// computeOther is compute for a breakdown's Other row: its share is over
+// every group.
+func (m *merged) computeOther(mt metricSpec, gs []int32) value {
+	return m.computeRaw(mt, gs, -1, true).round(mt.Round)
+}
+
+func (m *merged) computeRaw(mt metricSpec, gs []int32, day int, whole bool) value {
 	switch mt.Op {
+	case "share":
+		part := -1
+		if m.partOf != nil && !whole && len(gs) > 0 {
+			part = int(m.partOf[gs[0]])
+		}
+		total := m.shareTotal(mt, part, day)
+		if total == 0 {
+			return value{null: true}
+		}
+		return value{f: m.shareOf(mt, gs, day) / total}
 	case "count":
 		var n int64
 		for _, g := range gs {
-			n += m.rows(g, day)
+			n += m.maskRows(mt.mask, g, day)
 		}
 		return intValue(n)
 	case "sum", "avg", "min", "max":
 		return m.evalNum(mt, gs, day)
+	case "percentile":
+		return m.percentile(mt, gs, day)
+	case "mean", "weight":
+		// SUM(value / sample_rate) / SUM(1 / sample_rate), and the latter
+		// alone: NULL over no row (no value, for the mean).
+		mp := &m.msrs[mt.msr]
+		var wn, sn int64
+		var w, s float64
+		for _, g := range gs {
+			m.cellsOf(g, day, func(x int) {
+				wn += mp.wn[x]
+				w += mp.w[x]
+				sn += mp.sn[x]
+				s += mp.s[x]
+			})
+		}
+		switch {
+		case wn == 0 || (mt.Op == "mean" && sn == 0):
+			return value{null: true}
+		case mt.Op == "weight":
+			return value{f: w}
+		}
+		return value{f: s / w}
 	case "bounces", "bounce_rate":
 		// Sessions of one view, and their share of the sessions: DuckDB's
 		// count(*) FILTER (WHERE views = 1)::DOUBLE / count(*), empty over
 		// none.
 		var b, n int64
 		for _, g := range gs {
-			n += m.rows(g, day)
-			m.cellsOf(g, day, func(x int) { b += m.bounces[x] })
+			n += m.maskRows(mt.mask, g, day)
+			m.cellsOf(g, day, func(x int) { b += m.bounces[mt.mask][x] })
 		}
 		switch {
 		case mt.Op == "bounces":
@@ -1157,6 +1520,112 @@ func (m *merged) evalNum(mt metricSpec, gs []int32, day int) value {
 		return intValue(imin)
 	}
 	return intValue(imax)
+}
+
+// shareOf is what share mt is taken of over the groups gs (on day, unless
+// it is < 0): the rows of its mask, or their weights.
+func (m *merged) shareOf(mt metricSpec, gs []int32, day int) float64 {
+	if mt.Of != "weight" {
+		var n int64
+		for _, g := range gs {
+			n += m.maskRows(mt.mask, g, day)
+		}
+		return float64(n)
+	}
+	var w float64
+	mp := &m.msrs[mt.msr]
+	for _, g := range gs {
+		m.cellsOf(g, day, func(x int) { w += mp.w[x] })
+	}
+	return w
+}
+
+// shareTotal is shareOf over partition part's groups (every group when
+// part < 0), cached.
+func (m *merged) shareTotal(mt metricSpec, part, day int) float64 {
+	k := shareKey{weight: mt.Of == "weight", idx: mt.mask, part: part, day: day}
+	if k.weight {
+		k.idx = mt.msr
+	}
+	if t, ok := m.shareTotals[k]; ok {
+		return t
+	}
+	var gs []int32
+	if part >= 0 {
+		gs = m.parts[part]
+	} else {
+		gs = make([]int32, m.groups)
+		for g := range gs {
+			gs[g] = int32(g)
+		}
+	}
+	t := m.shareOf(mt, gs, day)
+	if m.shareTotals == nil {
+		m.shareTotals = map[shareKey]float64{}
+	}
+	m.shareTotals[k] = t
+	return t
+}
+
+// percentile is mt's quantile over the rows of the groups gs (on day,
+// unless it is < 0), as the widgets' SQL reads it from the buckets: their
+// weights summed per bucket, the running sum in ascending bucket order
+// against the total, and the value of the first bucket whose running sum
+// reaches q of the total; NULL over no row.
+func (m *merged) percentile(mt metricSpec, gs []int32, day int) value {
+	h := m.hists[mt.msr]
+	var bs []histEntry
+	cells := 0
+	for _, g := range gs {
+		m.cellsOf(g, day, func(x int) {
+			i, _ := slices.BinarySearchFunc(h, x, func(e histEntry, c int) int { return cmp.Compare(e.cell, c) })
+			if i < len(h) && h[i].cell == x {
+				cells++
+			}
+			for ; i < len(h) && h[i].cell == x; i++ {
+				bs = append(bs, h[i])
+			}
+		})
+	}
+	if len(bs) == 0 {
+		return value{null: true}
+	}
+	if cells > 1 {
+		// Several cells' histograms: one weight per bucket.
+		slices.SortStableFunc(bs, func(a, b histEntry) int { return cmp.Compare(a.bucket, b.bucket) })
+		n := 0
+		for _, e := range bs {
+			if n > 0 && bs[n-1].bucket == e.bucket {
+				bs[n-1].w += e.w
+				continue
+			}
+			bs[n] = e
+			n++
+		}
+		bs = bs[:n]
+	}
+	var total float64
+	for _, e := range bs {
+		total += e.w
+	}
+	at := mt.Q * total
+	var run float64
+	for _, e := range bs {
+		run += e.w
+		if run >= at {
+			return value{f: bucketValue(e.bucket)}
+		}
+	}
+	return value{null: true}
+}
+
+// bucketValue is a bucket's representative value, as the widgets' SQL
+// reads it: 0 for -1000, else 2 * 1.04^bucket / 2.04.
+func bucketValue(b int64) float64 {
+	if b == -1000 {
+		return 0
+	}
+	return 2 * math.Pow(1.04, float64(b)) / 2.04
 }
 
 // dayCount is the distinct ids of group g on day.

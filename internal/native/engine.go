@@ -3,6 +3,7 @@ package native
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"slices"
@@ -31,16 +32,18 @@ type Options struct {
 	// MaxBytes bounds one scan's aggregation (default 128 MiB), counted
 	// approximately: the groups with their strings, the per-cell arrays,
 	// the whole-range distinct sets (exact keys, at most about one 16 KiB
-	// sketch's worth each, or that sketch) and the per-day distinct keys
+	// sketch's worth each, or that sketch), the per-day distinct keys
 	// (16 bytes per distinct id and day, up to twice that per worker
-	// between compactions). It is checked after each batch, so a batch's
+	// between compactions) and the measures' bucket histograms (an entry
+	// per cell and bucket with rows). It is checked after each batch, so a batch's
 	// growth may pass it. A stat or a trend without series, which has no
 	// group to leave out, is refused with ErrTooLarge once past MaxBytes.
 	// A breakdown or a split trend past it admits no new group (its rows
 	// are left out and the result says it is truncated); what the groups
 	// admitted add then (their sets and per-day keys) may take it to twice
 	// MaxBytes, past which it is refused with ErrTooLarge too. Merging the
-	// workers' partials holds the per-day keys twice for a moment.
+	// workers' partials holds the per-day keys and the histograms twice
+	// for a moment, uncounted.
 	MaxBytes int64
 }
 
@@ -146,7 +149,29 @@ var (
 // value, daily_* the per-day distinct counts' SUM, MAX or AVG over the
 // days with rows (NULL over none); on sessions bounces is COUNT(*) FILTER
 // (WHERE views = 1) and bounce_rate that over COUNT(*) as a DOUBLE (NULL
-// over no session; an Other row's over its folded groups' sessions).
+// over no session; an Other row's over its folded groups' sessions). On
+// measures, a sample weighs 1 / sample_rate: weight is SUM(1 /
+// sample_rate), mean SUM(value / sample_rate) over that, and percentile
+// the widgets' recipe over the log-scale buckets (bucket 2 * 1.04^bucket /
+// 2.04, 0 for -1000): the value of the first bucket, ascending, whose
+// running weight reaches q of the total (NULL over no row; an Other row's
+// over its folded groups' buckets put together); not approximate, the
+// buckets being the answer's resolution.
+// A metric with a where counts only the rows that pass it too (SQL's
+// FILTER): its groups are still those of the query's where, so a group
+// none of whose rows pass reads 0 for count, a distinct count and
+// bounces, NULL for the others. A metric with round is rounded as
+// DuckDB's ROUND rounds a DOUBLE, after Other is put together and
+// before groups and series are ranked by it, as SQL's ORDER BY of the
+// rounded column ranks them.
+// share is a group's of (count: its rows, of the metric's where when it
+// has one; weight: their SUM(1 / sample_rate)) over its partition's, as
+// SQL's x / SUM(x) OVER (PARTITION BY …) reads it before the limit: in a
+// breakdown the groups of its first dimension's value (every group with
+// one dimension), in a trend the day's groups, every series (over the
+// range when the series are ranked); an Other row's partition is every
+// group. It is NULL when the partition's total is 0, and never
+// approximate.
 func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Rules) (Result, error) {
 	if err := q.Validate(); err != nil {
 		return Result{}, err
@@ -154,9 +179,15 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 	if p.To.Before(p.From) {
 		return Result{}, invalid("to", "%s is before from %s", p.To, p.From)
 	}
-	filters, err := compileFilters(q.Where)
+	filters, err := compileFilters(q.Where, "where")
 	if err != nil {
 		return Result{}, err
+	}
+	metricFilters := make([][]filter, len(q.Metrics))
+	for i, m := range q.Metrics {
+		if metricFilters[i], err = compileFilters(m.Where, fmt.Sprintf("metrics[%d].where", i)); err != nil {
+			return Result{}, err
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return Result{}, err
@@ -169,7 +200,7 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 	defer func() { <-e.sem }()
 	backoff := retryBackoff
 	for attempt := 1; ; attempt++ {
-		res, err := e.answerOnce(ctx, q, filters, p, rules)
+		res, err := e.answerOnce(ctx, q, filters, metricFilters, p, rules)
 		if err == nil || !errors.Is(err, fs.ErrNotExist) || attempt == maxAttempts {
 			return res, err
 		}
@@ -182,7 +213,7 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 	}
 }
 
-func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, p Params, rules archive.Rules) (Result, error) {
+func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metricFilters [][]filter, p Params, rules archive.Rules) (Result, error) {
 	var rs ruleSet
 	if q.Table != "sessions" && q.Table != "identities" { // derived from the events as stored
 		var err error
@@ -190,7 +221,7 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, p Pa
 			return Result{}, err
 		}
 	}
-	s := scan{e: e, q: q, filters: filters, project: p.Project, rules: rs}
+	s := scan{e: e, q: q, filters: filters, metricFilters: metricFilters, project: p.Project, rules: rs}
 	switch q.Kind {
 	case "stat":
 		return s.stat(ctx, p.From, p.To)
@@ -272,11 +303,12 @@ type fileCols struct {
 
 // scan runs one query's scans.
 type scan struct {
-	e       *Engine
-	q       Query
-	filters []filter
-	project int64
-	rules   ruleSet
+	e             *Engine
+	q             Query
+	filters       []filter
+	metricFilters [][]filter // per metric, its own where
+	project       int64
+	rules         ruleSet
 }
 
 // family is the family the query's table holds ("" for events: all).
@@ -295,7 +327,7 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 	lo, hi := r.days()
 	ms := make([]metricSpec, len(s.q.Metrics))
 	for i, m := range s.q.Metrics {
-		ms[i] = metricSpec{Metric: m}
+		ms[i] = metricSpec{Metric: m, where: s.metricFilters[i]}
 	}
 	a, ms := newAgg(aggOptions{metrics: ms, filters: s.filters, dims: dims, perDay: perDay, sets: sets,
 		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
@@ -386,12 +418,14 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 }
 
 // statusColumns are the status columns (user_status, group_status) the
-// query's filters and dims name.
+// query's filters, its metrics' filters and dims name.
 func (s scan) statusColumns(dims []string) []string {
 	var out []string
-	for _, f := range s.filters {
-		if _, ok := statusColumns[f.column]; ok && !slices.Contains(out, f.column) {
-			out = append(out, f.column)
+	for _, fs := range append([][]filter{s.filters}, s.metricFilters...) {
+		for _, f := range fs {
+			if _, ok := statusColumns[f.column]; ok && !slices.Contains(out, f.column) {
+				out = append(out, f.column)
+			}
 		}
 	}
 	for _, d := range dims {
@@ -536,6 +570,9 @@ func (s scan) breakdown(ctx context.Context, from, to civil.Date) (Result, error
 		}
 	}
 	vals, types := m.a.groups.vals, m.a.dimTypes
+	if len(types) > 1 && slices.ContainsFunc(ms, func(mt metricSpec) bool { return mt.Op == "share" }) {
+		m.partitionBy()
+	}
 	gs := make([]int32, m.groups)
 	for g := range gs {
 		gs[g] = int32(g)
@@ -574,9 +611,14 @@ func (s scan) breakdown(ctx context.Context, from, to civil.Date) (Result, error
 	}
 	top, rest := gs[:min(limit, len(gs))], gs[min(limit, len(gs)):]
 	var rows [][]string
-	metrics := func(row []string, groups []int32) []string {
+	metrics := func(row []string, groups []int32, other bool) []string {
 		for i, mt := range ms {
-			v := m.compute(mt, groups, -1)
+			var v value
+			if other {
+				v = m.computeOther(mt, groups)
+			} else {
+				v = m.compute(mt, groups, -1)
+			}
 			if v.approx {
 				cols.approx[len(types)+i] = true
 			}
@@ -589,14 +631,14 @@ func (s scan) breakdown(ctx context.Context, from, to civil.Date) (Result, error
 		for _, v := range vals[g] {
 			row = append(row, label(v))
 		}
-		rows = append(rows, metrics(row, []int32{g}))
+		rows = append(rows, metrics(row, []int32{g}, false))
 	}
 	if s.q.Other && len(rest) > 0 {
 		row := make([]string, 0, len(cols.names))
 		for range types {
 			row = append(row, "Other")
 		}
-		rows = append(rows, metrics(row, rest))
+		rows = append(rows, metrics(row, rest, true))
 	}
 	return cols.result(rows, m.a.groups.dropped), nil
 }
