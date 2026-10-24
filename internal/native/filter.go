@@ -22,7 +22,7 @@ func typeOf(column string) colType {
 	switch {
 	case column == "bucket":
 		return typeBucket
-	case column == "day":
+	case column == "day", isFirstSeen(column):
 		return typeDay
 	case plainColumns[column]:
 		return typeInt
@@ -31,8 +31,9 @@ func typeOf(column string) colType {
 }
 
 // readColumns are the columns a scan reads for column: value for bucket,
-// a computed column's sources, a status column's id (with day, which a
-// scan always reads; the scan adds the status itself, from identities).
+// a computed column's sources, a computed identity column's id (with
+// day, which a scan always reads; the scan adds the column itself, from
+// identities).
 func readColumns(column string) []string {
 	if c, ok := computedColumns[column]; ok {
 		return c.sources
@@ -40,7 +41,7 @@ func readColumns(column string) []string {
 	if column == "bucket" {
 		return []string{"value"}
 	}
-	if s, ok := statusColumns[column]; ok {
+	if s, ok := idColumns[column]; ok {
 		return []string{s.id}
 	}
 	return []string{column}

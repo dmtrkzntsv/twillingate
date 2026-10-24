@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -80,12 +81,18 @@ func vitalsFixture(t testing.TB) *archivetest.Files {
 // %[1]s to %[2]s.
 func widgetSQL(t *testing.T, name string) string {
 	t.Helper()
+	return widgetSQLOf(t, name, 1)
+}
+
+// widgetSQLOf is widgetSQL for project.
+func widgetSQLOf(t *testing.T, name string, project int64) string {
+	t.Helper()
 	b, err := os.ReadFile(filepath.Join("..", "reporting", "system", name))
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := strings.ReplaceAll(string(b), "%", "%%")
-	return strings.NewReplacer(":project", "1", ":from", "DATE '%[1]s'", ":to", "DATE '%[2]s'").Replace(s)
+	return strings.NewReplacer(":project", strconv.FormatInt(project, 10), ":from", "DATE '%[1]s'", ":to", "DATE '%[2]s'").Replace(s)
 }
 
 // pctSQL is the widgets' percentile recipe over measures grouped by

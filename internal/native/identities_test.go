@@ -181,8 +181,9 @@ func TestIdentitiesRowsMatchDuckDB(t *testing.T) {
 		}
 		sameTable(t, inRange, want)
 
-		// The first-seen days a status looks up are every identity's.
-		first, err := e.firstSeen(context.Background(), identitiesProject, listFiles(t, e)[identitiesProject], func(int64) error { return nil })
+		// The first-seen days a status looks up are every identity's, and
+		// the names a label looks up their names.
+		first, err := e.firstSeen(context.Background(), identitiesProject, listFiles(t, e)[identitiesProject], true, func(int64) error { return nil })
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -190,6 +191,9 @@ func TestIdentitiesRowsMatchDuckDB(t *testing.T) {
 			day, ok := first.firstDay(row[1] == "group", row[2])
 			if !ok || formatDay(day) != row[4][:10] {
 				t.Errorf("%s %s first seen on %s (%t), want %s", row[1], row[2], formatDay(day), ok, row[4][:10])
+			}
+			if name, _ := first.name(identityKey{row[1] == "group", row[2]}); name != row[3] {
+				t.Errorf("%s %s named %q, want %q", row[1], row[2], name, row[3])
 			}
 		}
 		if n := len(first.base.users) + len(first.base.groups) + len(first.live.users) + len(first.live.groups); n < len(got) {
@@ -460,7 +464,7 @@ func TestIdentitiesPartsCachedApart(t *testing.T) {
 		if _, err := e.identities(ctx, identitiesProject, files, free); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := e.firstSeen(ctx, identitiesProject, files, free); err != nil {
+		if _, err := e.firstSeen(ctx, identitiesProject, files, false, free); err != nil {
 			t.Fatal(err)
 		}
 	}

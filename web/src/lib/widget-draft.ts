@@ -92,8 +92,9 @@ export function queryTemplate(component: string | null): string {
   } else if (component === 'calendar') {
     content = { query: { kind: 'trend', table: 'views', metrics }, rename: { count: 'value' } }
   } else if (component === 'combo') {
-    // A trend takes one metric: the combo's two are a breakdown by day, in
-    // date order (order names the dimension) rather than by count.
+    // A trend of several metrics is long (day, series, value): the combo's
+    // two columns are a breakdown by day, in date order (order names the
+    // dimension) rather than by count.
     const query = {
       kind: 'breakdown', table: 'views', metrics: [{ op: 'count' }, { op: 'actors' }], dimensions: ['day'], order: 'day', limit: 1000,
     }

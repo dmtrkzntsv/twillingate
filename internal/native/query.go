@@ -19,21 +19,23 @@ var ErrTooLarge = errors.New("native: the query needs more memory than allowed; 
 
 // Query is a structured query over one events table. Kind picks the shape:
 // a stat is one row of metrics, a trend one metric per day (optionally split
-// by Series), a breakdown the metrics grouped by 1-3 Dimensions, a
+// by Series, or up to five metrics as its series; Fill gives it every
+// day), a breakdown the metrics grouped by 1-3 Dimensions, a
 // retention its cohorts' days back (Output, IdentifiedBy, Offsets,
 // Milestones), an attributes the attribute keys and values its rows carry
 // (Output, Reserved, Keep).
 type Query struct {
-	Kind        string   `json:"kind" jsonschema:"stat: one row of metrics (with compare previous, a previous_<name> column each); trend: one metric per day, optionally split by series; breakdown: the metrics grouped by 1 to 3 dimensions; retention: the cohorts of users and installs first active in the range, and their days back (output, identified_by, offsets, milestones; no metrics); attributes: every attribute key and value the product or measures rows carry, with their metrics (output values; dimensions day and event_name, reserved), or every key with its events and distinct values (output keys; limit, keep; no metrics)"`
+	Kind        string   `json:"kind" jsonschema:"stat: one row of metrics (with compare previous, a previous_<name> column each); trend: one metric per day, optionally split by series, or 2 to 5 metrics per day as its series (day, series, value); breakdown: the metrics grouped by 1 to 3 dimensions; retention: the cohorts of users and installs first active in the range, and their days back (output, identified_by, offsets, milestones; no metrics); attributes: every attribute key and value the product or measures rows carry, with their metrics (output values; dimensions day and event_name, reserved), or every key with its events and distinct values (output keys; limit, keep; no metrics)"`
 	Table       string   `json:"table,omitempty" jsonschema:"the rows read: events (every family), views, product or measures; or sessions, one row per session of views; or identities, one row per user or group first seen in the range (rules apply to neither); a retention reads events (absent or events); an attributes product or measures, its keys also events (product and measures both: the default)"`
-	Metrics     []Metric `json:"metrics,omitempty" jsonschema:"the aggregates, each an output column; a trend takes exactly 1; a retention and an attributes' keys none; an attributes' values count, actors, users, groups and actors_or_null"`
+	Metrics     []Metric `json:"metrics,omitempty" jsonschema:"the aggregates, each an output column; a trend takes 1 to 5, exactly 1 when split by series; with more than 1 its answer is long, day, series (each metric's name) and value, a number, so none is a min or max of a day or time; a retention and an attributes' keys none; an attributes' values count, actors, users, groups and actors_or_null"`
 	Where       []Filter `json:"where,omitempty" jsonschema:"filters, all of which a row must satisfy"`
 	Dimensions  []string `json:"dimensions,omitempty" jsonschema:"breakdown only, 1 to 3: columns to group by, each one a filter's column may name on the table (path, country, event_name, attr_<key>, …; resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), but duration_sec and views on sessions and views and events on identities; attributes only: day, event_name or both, in that order, before its attribute and value"`
 	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by, one a filter's column may name on the table except day (resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), and except duration_sec and views on sessions and views and events on identities"`
-	SeriesLimit int      `json:"series_limit,omitempty" jsonschema:"trend only: how many series, 1 to 50, the top ones by the metric over the range (default 5)"`
+	Fill        string   `json:"fill,omitempty" jsonschema:"trend only: zero gives every day of the range a row, for every kept series or metric: a counted metric (count, actors, users, groups, bounces, weight, daily_sum, daily_max, daily_avg, days) reads 0 where it is empty, the others stay empty"`
+	SeriesLimit int      `json:"series_limit,omitempty" jsonschema:"a trend with a series only: how many series, 1 to 50, the top ones by the metric over the range (default 5)"`
 	Compare     string   `json:"compare,omitempty" jsonschema:"stat only: previous adds each metric over as many days ending the day before from"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown and attributes only: how many groups, 1 to 1000 (default 20; an attributes' values all of them, its keys 50)"`
-	Other       bool     `json:"other,omitempty" jsonschema:"breakdown only: fold the groups past limit into one row whose dimensions read Other"`
+	Other       bool     `json:"other,omitempty" jsonschema:"breakdown only: fold the groups past limit into one row whose dimensions read Other, when there are two or more: a single one is listed under its own name (limit 4 gives at most 5 rows)"`
 	Order       string   `json:"order,omitempty" jsonschema:"breakdown and attributes values only: a metric name to rank groups by, descending, or one of its dimensions (an attributes' attribute and value among them) to sort them by, ascending, ties by the other dimensions ascending (default: the first metric; an attributes with day by day, the first metric descending, event_name, attribute and value, else by event_name, attribute, the first metric descending and value); limit keeps the first groups in that order"`
 	// The retention kind's fields.
 	Output       string `json:"output,omitempty" jsonschema:"retention and attributes only, required. An attributes: values (a row per dimensions, attribute and value) or keys (attribute, events, values, keys_total: a row per attribute, its events and distinct values, keys_total the number of attributes; the limit busiest, by events, then those keep names). A retention: grid (cohort, identified_by, offset, size, returned, retention: a row per cohort, identity kind and day back, offset the days since the cohort day), curve (offset, retention: one identity kind's cohorts pooled per day back) or milestones (one row, a d<n> column per milestone: the curve's retention that day back)"`
@@ -75,13 +77,15 @@ func (q Query) milestones() []int {
 
 // Metric is one aggregate.
 type Metric struct {
-	Op     string   `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows. measures alone takes percentile (the q quantile of value, a sample weighing 1 / sample_rate, read from its log-scale bucket: within about 2%), mean (value weighted so) and weight (the samples' 1 / sample_rate summed). share (trend and breakdown only): the group's of (count, or on measures weight) over its partition's: in a breakdown the groups of the same first dimension (all with one dimension; an Other row's is all of them), in a trend the day's; empty over none. sessions takes count (sessions), actors, share, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, share, sum, avg, min and max. attributes takes count, actors, users and groups (group_id's empty value left out) and its own actors_or_null (distinct actor_id, NULL counting as one)"`
+	Op     string   `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows; days: the distinct days with rows (0 over none; with a where, of the rows passing it), as the active days of the built-in top users and groups. measures alone takes percentile (the q quantile of value, a sample weighing 1 / sample_rate, read from its log-scale bucket: within about 2%), mean (value weighted so) and weight (the samples' 1 / sample_rate summed). ratio: num over den, two metrics of the table each with its own where, as a DOUBLE; empty when den is 0 or empty or num is empty, but a counted num (count, actors, users, groups, bounces, weight, daily_*, days) over no rows reads 0 when den is above 0; an Other row's both sides over its folded groups; approximate when either side is. share (trend and breakdown only): the group's of (count, or on measures weight) over its partition's: in a breakdown the groups of the same first dimension (all with one dimension; an Other row's is all of them), in a trend the day's; empty over none. sessions takes count (sessions), actors, share, ratio, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, share, ratio, sum, avg, min and max. attributes takes count, actors, users and groups (group_id's empty value left out) and its own actors_or_null (distinct actor_id, NULL counting as one)"`
 	Q      float64  `json:"q,omitempty" jsonschema:"percentile only, above 0 and below 1: the quantile (0.75 for p75)"`
-	Column string   `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views; on identities views or events"`
+	Column string   `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views; on identities views or events. min and max also take day (a YYYY-MM-DD day) and ts or received_at (a UTC time, as 2026-09-01T08:00:05Z), on sessions day, started_at or ended_at; not on identities, nor in a ratio's side"`
 	Of     string   `json:"of,omitempty" jsonschema:"daily_sum, daily_max and daily_avg take actors, users or groups (what is counted distinct per day); share takes count or, on measures, weight"`
 	As     string   `json:"as,omitempty" jsonschema:"the output column's name (default: op, or op_column, or op_of, as share_weight; a percentile's p and 100 q, as p75 or p99.9)"`
 	Round  *int     `json:"round,omitempty" jsonschema:"optional, 0 to 6: decimal places to round the value to, half away from zero (an integer stays as it is)"`
 	Where  []Filter `json:"where,omitempty" jsonschema:"optional: filters, as the query's where, that a row must also satisfy to count toward this metric only; a group still exists from the query's where, so its metric may be 0 (count, distinct counts, bounces) or empty (the others)"`
+	Num    *Metric  `json:"num,omitempty" jsonschema:"ratio only, required: the numerator, a metric of the table with its own optional where, without as, round, share or ratio"`
+	Den    *Metric  `json:"den,omitempty" jsonschema:"ratio only, required: the denominator, as num"`
 }
 
 // maxRound bounds a metric's round.
@@ -89,8 +93,8 @@ const maxRound = 6
 
 // Filter keeps the rows whose Column satisfies Op against Values.
 type Filter struct {
-	Column string   `json:"column" jsonschema:"one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent), user_status and group_status (new on the day the user_id or group_id was first seen, as identities has it, returning on a later day, NULL without one), these five on events, views and product only; on measures only, vital (LCP, INP, CLS, FCP or TTFB for the event_name $lcp, $inp, $cls, $fcp or $ttfb, else NULL) and vital_rating (good, needs improvement or poor: the sample's bucket value against the vital's thresholds, LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800; NULL for the other measures). On sessions instead: project_id, day, kind, actor_id, actor_kind, session_id, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign, and the numbers duration_sec and views. On identities instead: kind (user or group), id, name, day (first_seen's day), and the numbers views and events"`
-	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, not_prefix (text that does not start with the value), gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none (not NULL, and text not empty). gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, and only on numeric columns. NULL fails every op, ne and not_in included"`
+	Column string   `json:"column" jsonschema:"one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent), user_status and group_status (new on the day the user_id or group_id was first seen, as identities has it, returning on a later day, NULL without one), user_label and group_label (the identity's name, as identities has it, else the id; NULL without one), these seven on events, views and product only; computed, a day: user_first_seen and group_first_seen (the identity's first-seen day, as identities has it; NULL without one or when identities lacks it), on events, views and product only; on measures only, vital (LCP, INP, CLS, FCP or TTFB for the event_name $lcp, $inp, $cls, $fcp or $ttfb, else NULL) and vital_rating (good, needs improvement or poor: the sample's bucket value against the vital's thresholds, LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800; NULL for the other measures). On sessions instead: project_id, day, kind, actor_id, actor_kind, session_id, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign, and the numbers duration_sec and views. On identities instead: kind (user or group), id, name, day (first_seen's day), and the numbers views and events"`
+	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, not_prefix (text that does not start with the value), gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none (not NULL, and text not empty). gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, user_first_seen and group_first_seen, and only on numeric columns and those days. NULL fails every op, ne and not_in included"`
 	Values []string `json:"values,omitempty" jsonschema:"the values compared against, as text"`
 }
 
@@ -133,11 +137,12 @@ func percent(q float64) string {
 // Columns are the result's column names, in order, as Answer returns
 // them for q, read from q alone: a stat's metrics, then with compare
 // previous a previous_<name> each; a trend's day, series when split, and
-// its metric; a breakdown's dimensions, then its metrics; a retention
-// grid's cohort, identified_by, offset, size, returned and retention, a
-// curve's offset and retention, milestones' d<n> each; an attributes'
-// dimensions, attribute and value, then its metrics (its keys'
-// attribute, events, values and keys_total). It does not validate q.
+// its metric, or with several metrics day, series and value; a
+// breakdown's dimensions, then its metrics; a retention grid's cohort,
+// identified_by, offset, size, returned and retention, a curve's offset
+// and retention, milestones' d<n> each; an attributes' dimensions,
+// attribute and value, then its metrics (its keys' attribute, events,
+// values and keys_total). It does not validate q.
 func (q Query) Columns() []string {
 	var cols []string
 	switch q.Kind {
@@ -154,8 +159,11 @@ func (q Query) Columns() []string {
 		return cols
 	case "trend":
 		cols = append(cols, "day")
-		if q.Series != "" {
+		if q.Series != "" || q.long() {
 			cols = append(cols, "series")
+		}
+		if q.long() {
+			return append(cols, "value")
 		}
 	case "breakdown":
 		cols = append(cols, q.Dimensions...)
@@ -180,13 +188,14 @@ func (q Query) Columns() []string {
 // ColumnTypes are the types of Columns' columns, in the same order, read
 // from q alone: number, day or text, the type every value of the column
 // has (an empty value, NULL, aside). Metrics, a stat's previous_<name>
-// and the numeric columns (project_id, display_width, display_height,
-// consent, bucket) are number; day is day; a trend's series and every
-// other column, attr_<key> included, text. A breakdown with other has
-// its dimensions text, its Other row reading "Other" in each. A
-// retention's cohort is day, identified_by text, the others number. An
-// attributes' attribute and value are text (its keys' attribute text,
-// the others number). It does not validate q.
+// (a min or max of day day, of a time text), a trend's value and the
+// numeric columns (project_id, display_width, display_height, consent,
+// bucket) are number; day, user_first_seen and group_first_seen are day;
+// a trend's series and every other column, attr_<key> included, text. A
+// breakdown with other has its dimensions text, its Other row reading
+// "Other" in each. A retention's cohort is day, identified_by text, the
+// others number. An attributes' attribute and value are text (its keys'
+// attribute text, the others number). It does not validate q.
 func (q Query) ColumnTypes() []string {
 	var types []string
 	switch q.Kind {
@@ -204,8 +213,11 @@ func (q Query) ColumnTypes() []string {
 		return types
 	case "trend":
 		types = append(types, "day")
-		if q.Series != "" {
+		if q.Series != "" || q.long() {
 			types = append(types, "text")
+		}
+		if q.long() {
+			return append(types, "number")
 		}
 	case "attributes":
 		if q.Output == "keys" {
@@ -224,21 +236,37 @@ func (q Query) ColumnTypes() []string {
 			}
 		}
 	}
-	for range q.Metrics {
-		types = append(types, "number")
+	for _, m := range q.Metrics {
+		types = append(types, m.valueType())
 	}
 	if q.Kind == "stat" && q.Compare == "previous" {
-		for range q.Metrics {
-			types = append(types, "number")
+		for _, m := range q.Metrics {
+			types = append(types, m.valueType())
 		}
 	}
 	return types
 }
 
+// long says whether q is a trend of several metrics, whose answer is
+// long: day, series (the metric's name) and value.
+func (q Query) long() bool { return q.Kind == "trend" && len(q.Metrics) > 1 }
+
+// valueType is the type of m's values, as ColumnTypes names it: a min
+// or max of day is day, of a time text, every other metric number.
+func (m Metric) valueType() string {
+	switch boundForms[m.Column] {
+	case formDay:
+		return "day"
+	case formTime:
+		return "text"
+	}
+	return "number"
+}
+
 // columnType is a dimension column's type, as ColumnTypes names it.
 func columnType(column string) string {
 	switch {
-	case column == "day":
+	case column == "day", isFirstSeen(column):
 		return "day"
 	case column == "bucket", plainColumns[column]:
 		return "number"
@@ -246,10 +274,12 @@ func columnType(column string) string {
 	return "text"
 }
 
-// maxLimit bounds a breakdown's limit, maxSeries a trend's series_limit.
+// maxLimit bounds a breakdown's limit, maxSeries a trend's series_limit,
+// maxTrendMetrics an unsplit trend's metrics.
 const (
-	maxLimit  = 1000
-	maxSeries = 50
+	maxLimit        = 1000
+	maxSeries       = 50
+	maxTrendMetrics = 5
 )
 
 // Columns are the non-attribute columns a dimension, series or filter on
@@ -263,7 +293,8 @@ var Columns = []string{
 	"browser_locale", "app_version", "app_locale", "device", "device_model",
 	"display_width", "display_height", "country", "consent", "measure",
 	"resolution", "device_label", "platform_version", "consent_state",
-	"user_status", "group_status", "vital", "vital_rating",
+	"user_status", "group_status", "user_label", "group_label",
+	"user_first_seen", "group_first_seen", "vital", "vital_rating",
 }
 
 // computedTables are the tables each computed column (computedColumns)
@@ -275,6 +306,10 @@ var computedTables = map[string][]string{
 	"consent_state":    {"events", "views", "product"},
 	"user_status":      {"events", "views", "product"},
 	"group_status":     {"events", "views", "product"},
+	"user_label":       {"events", "views", "product"},
+	"group_label":      {"events", "views", "product"},
+	"user_first_seen":  {"events", "views", "product"},
+	"group_first_seen": {"events", "views", "product"},
 	"vital":            {"measures"},
 	"vital_rating":     {"measures"},
 }
@@ -308,9 +343,9 @@ var (
 	identityFilterOnly = setOf([]string{"views", "events"})
 )
 
-// plainColumns are Columns, SessionColumns and IdentityColumns, each with whether it is
-// numeric (BIGINT, or the DATE day, which takes gt/lt against
-// YYYY-MM-DD); the computed ones are text.
+// plainColumns are Columns, SessionColumns and IdentityColumns, each with
+// whether it is numeric (BIGINT, or the DATE day, which takes gt/lt
+// against YYYY-MM-DD); the computed ones are text.
 var plainColumns = func() map[string]bool {
 	numeric := setOf([]string{"project_id", "day", "display_width", "display_height", "consent", "duration_sec", "views", "events"})
 	m := make(map[string]bool, len(Columns)+len(SessionColumns)+len(IdentityColumns))
@@ -334,7 +369,7 @@ func columnInfo(table, column string) (orderable, ok bool) {
 		return true, table == "measures"
 	}
 	if tables, found := computedTables[column]; found {
-		return false, slices.Contains(tables, table)
+		return isFirstSeen(column), slices.Contains(tables, table)
 	}
 	if rest, found := strings.CutPrefix(column, "attr_"); found {
 		return false, rest != ""
@@ -367,7 +402,7 @@ var (
 	AttributeDimensions = []string{"day", "event_name"}
 	AttributeOps        = []string{"count", "actors", "users", "groups", "actors_or_null"}
 	Tables              = []string{"events", "views", "product", "measures", "sessions", "identities"}
-	MetricOps           = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "bounces", "bounce_rate", "percentile", "mean", "weight", "share", "actors_or_null"}
+	MetricOps           = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "days", "bounces", "bounce_rate", "percentile", "mean", "weight", "share", "ratio", "actors_or_null"}
 	ValueColumns        = []string{"value", "sample_rate", "display_width", "display_height"}
 	// SessionValueColumns are the columns sum, avg, min and max take on
 	// sessions (ValueColumns on the other tables).
@@ -375,7 +410,12 @@ var (
 	// IdentityValueColumns are the columns sum, avg, min and max take on
 	// identities.
 	IdentityValueColumns = []string{"views", "events"}
-	OfColumns            = []string{"actors", "users", "groups"}
+	// BoundColumns are the columns min and max alone take beside
+	// ValueColumns on the event tables, SessionBoundColumns beside
+	// SessionValueColumns on sessions: a day, or a time.
+	BoundColumns        = []string{"day", "ts", "received_at"}
+	SessionBoundColumns = []string{"day", "started_at", "ended_at"}
+	OfColumns           = []string{"actors", "users", "groups"}
 	// ShareOfColumns are what share takes as of (weight on measures only).
 	ShareOfColumns = []string{"count", "weight"}
 	FilterOps      = []string{"eq", "ne", "in", "not_in", "contains", "prefix", "not_prefix", "gt", "gte", "lt", "lte", "is_set"}
@@ -386,14 +426,29 @@ var (
 	valueCols  = setOf(ValueColumns)
 	sessValue  = setOf(SessionValueColumns)
 	idValue    = setOf(IdentityValueColumns)
-	idOps      = setOf([]string{"count", "share", "sum", "avg", "min", "max"})
+	boundCols  = setOf(BoundColumns)
+	sessBound  = setOf(SessionBoundColumns)
+	idOps      = setOf([]string{"count", "share", "ratio", "sum", "avg", "min", "max"})
 	ofCols     = setOf(OfColumns)
 	filterOps  = setOf(FilterOps)
-	sessionOps = setOf([]string{"count", "actors", "share", "sum", "avg", "min", "max", "bounces", "bounce_rate"})
+	sessionOps = setOf([]string{"count", "actors", "share", "ratio", "sum", "avg", "min", "max", "bounces", "bounce_rate"})
 	bounceOps  = setOf([]string{"bounces", "bounce_rate"})
 	measureOps = setOf([]string{"percentile", "mean", "weight"})
 	orderedOps = map[string]bool{"gt": true, "gte": true, "lt": true, "lte": true}
 )
+
+// A value's form: a number, a day (days since 1970-01-01) or a time
+// (unix microseconds, UTC).
+const (
+	formNumber = iota
+	formDay
+	formTime
+)
+
+// boundForms are the forms of the bound columns' values (BoundColumns,
+// SessionBoundColumns), which min and max keep; every other column's is
+// a number.
+var boundForms = map[string]int{"day": formDay, "ts": formTime, "received_at": formTime, "started_at": formTime, "ended_at": formTime}
 
 func setOf(xs []string) map[string]bool {
 	m := make(map[string]bool, len(xs))
@@ -418,6 +473,12 @@ func (q Query) Validate() error {
 	}
 	if len(q.Keep) > 0 && (q.Kind != "attributes" || q.Output != "keys") {
 		return invalid("keep", "only an attributes' keys takes keep")
+	}
+	switch {
+	case q.Fill != "" && q.Kind != "trend":
+		return invalid("fill", "only a trend fills its days")
+	case q.Fill != "" && q.Fill != "zero":
+		return invalid("fill", "%q is not zero", q.Fill)
 	}
 	switch q.Kind {
 	case "retention":
@@ -462,8 +523,10 @@ func (q Query) Validate() error {
 	}
 
 	switch {
-	case q.Kind == "trend" && len(q.Metrics) != 1:
-		return invalid("metrics", "a trend takes exactly 1, got %d", len(q.Metrics))
+	case q.Kind == "trend" && q.Series != "" && len(q.Metrics) != 1:
+		return invalid("metrics", "a trend split by series takes exactly 1, got %d", len(q.Metrics))
+	case q.Kind == "trend" && len(q.Metrics) > maxTrendMetrics:
+		return invalid("metrics", "a trend takes 1 to %d, got %d", maxTrendMetrics, len(q.Metrics))
 	case len(q.Metrics) < 1:
 		return invalid("metrics", "at least 1 is required")
 	}
@@ -472,6 +535,10 @@ func (q Query) Validate() error {
 	for i, m := range q.Metrics {
 		if err := m.validate(q.Kind, q.Table, i); err != nil {
 			return err
+		}
+		// A trend of several metrics has one value column, a number.
+		if q.long() && m.valueType() != "number" {
+			return invalid(fmt.Sprintf("metrics[%d].column", i), "%s of %s is not a number, which a trend of several metrics' value is", m.Op, m.Column)
 		}
 		// An unsplit trend's partition is the day's only group: its share
 		// would always be 1.
@@ -504,6 +571,9 @@ func (q Query) Validate() error {
 	}
 	if q.SeriesLimit < 0 || q.SeriesLimit > maxSeries || (q.SeriesLimit > 0 && q.Kind != "trend") {
 		return invalid("series_limit", "%d is not between 1 and %d for a trend", q.SeriesLimit, maxSeries)
+	}
+	if q.SeriesLimit > 0 && q.Series == "" {
+		return invalid("series_limit", "a trend without a series takes none")
 	}
 	switch q.Compare {
 	case "":
@@ -740,18 +810,34 @@ func (q Query) validateAttributeKeys() error {
 }
 
 func (m Metric) validate(kind, table string, i int) error {
-	p := fmt.Sprintf("metrics[%d]", i)
+	return m.validateAt(kind, table, fmt.Sprintf("metrics[%d]", i), false)
+}
+
+// validateAt is validate of the metric at path p (metrics[0], or a
+// ratio's side, metrics[0].num, when side).
+func (m Metric) validateAt(kind, table, p string, side bool) error {
 	if !metricOps[m.Op] {
 		return invalid(p+".op", "%q is not a metric", m.Op)
+	}
+	if m.Op == "ratio" {
+		if err := m.validateRatio(kind, table, p); err != nil {
+			return err
+		}
+	} else if m.Num != nil || m.Den != nil {
+		side := ".num"
+		if m.Num == nil {
+			side = ".den"
+		}
+		return invalid(p+side, "only a ratio takes num and den")
 	}
 	if m.Op == "actors_or_null" && kind != "attributes" {
 		return invalid(p+".op", "actors_or_null is a metric of attributes only")
 	}
 	if table == "sessions" && !sessionOps[m.Op] {
-		return invalid(p+".op", "%s is not a metric of sessions, which takes count, actors, share, bounces, bounce_rate, sum, avg, min and max", m.Op)
+		return invalid(p+".op", "%s is not a metric of sessions, which takes count, actors, share, ratio, bounces, bounce_rate, sum, avg, min and max", m.Op)
 	}
 	if table == "identities" && !idOps[m.Op] {
-		return invalid(p+".op", "%s is not a metric of identities, which takes count, share, sum, avg, min and max", m.Op)
+		return invalid(p+".op", "%s is not a metric of identities, which takes count, share, ratio, sum, avg, min and max", m.Op)
 	}
 	if table != "sessions" && bounceOps[m.Op] {
 		return invalid(p+".op", "%s is a metric of sessions only", m.Op)
@@ -778,13 +864,18 @@ func (m Metric) validate(kind, table string, i int) error {
 		if m.Column == "" {
 			return invalid(p+".column", "%s needs a column", m.Op)
 		}
+		bound := (m.Op == "min" || m.Op == "max") && ((table == "sessions" && sessBound[m.Column]) ||
+			(table != "sessions" && table != "identities" && boundCols[m.Column]))
 		switch {
+		case bound && side:
+			return invalid(p+".column", "%s of %s is not a number, which a ratio's side is", m.Op, m.Column)
+		case bound:
 		case table == "sessions" && !sessValue[m.Column]:
-			return invalid(p+".column", "%q is not duration_sec or views, the numbers of sessions", m.Column)
+			return invalid(p+".column", "%q is not duration_sec or views, the numbers of sessions (min and max also take day, started_at and ended_at)", m.Column)
 		case table == "identities" && !idValue[m.Column]:
 			return invalid(p+".column", "%q is not views or events, the numbers of identities", m.Column)
 		case table != "sessions" && table != "identities" && !valueCols[m.Column]:
-			return invalid(p+".column", "%q is not value, sample_rate, display_width or display_height", m.Column)
+			return invalid(p+".column", "%q is not value, sample_rate, display_width or display_height (min and max also take day, ts and received_at)", m.Column)
 		}
 		if m.Of != "" {
 			return invalid(p+".of", "%s takes no of", m.Op)
@@ -824,6 +915,35 @@ func (m Metric) validate(kind, table string, i int) error {
 	return nil
 }
 
+// validateRatio refuses a malformed ratio at path p: num and den are
+// metrics of the table, each with its own where, but no as, round,
+// share or ratio; the ratio itself takes no where.
+func (m Metric) validateRatio(kind, table, p string) error {
+	if len(m.Where) > 0 {
+		return invalid(p+".where", "a ratio takes none; give num and den each its own")
+	}
+	for _, side := range []struct {
+		name string
+		m    *Metric
+	}{{"num", m.Num}, {"den", m.Den}} {
+		sp := p + "." + side.name
+		switch {
+		case side.m == nil:
+			return invalid(sp, "a ratio needs %s, a metric", side.name)
+		case side.m.Op == "ratio" || side.m.Op == "share":
+			return invalid(sp+".op", "%s is not a side of a ratio", side.m.Op)
+		case side.m.As != "":
+			return invalid(sp+".as", "a ratio's side has no name; give the ratio as")
+		case side.m.Round != nil:
+			return invalid(sp+".round", "a ratio's side is not rounded; give the ratio round")
+		}
+		if err := side.m.validateAt(kind, table, sp, true); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // validate refuses a malformed filter; p is its path (where[0],
 // metrics[1].where[0]).
 func (f Filter) validate(table, p string) error {
@@ -854,7 +974,7 @@ func (f Filter) validate(table, p string) error {
 			return invalid(p+".op", "%s is not allowed on %s", f.Op, f.Column)
 		}
 		v := f.Values[0]
-		if f.Column == "day" {
+		if typeOf(f.Column) == typeDay {
 			if _, err := time.Parse(time.DateOnly, v); err != nil {
 				return invalid(p+".values", "%q is not a YYYY-MM-DD date", v)
 			}

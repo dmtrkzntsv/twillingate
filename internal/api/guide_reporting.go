@@ -42,7 +42,7 @@ func (h *host) reportingGuide(ctx context.Context, _ struct{}) (guideOut, error)
 	writeVersion(&b, version.Version)
 
 	b.WriteString("## Components\n\n")
-	fmt.Fprintf(&b, "Source types: %s. A widget's source is {\"type\": …, \"content\": …}; its SQL returns the columns the component reads, by name (alias them: day AS x). A query source's content is {\"query\": …, \"rename\": …}: a structured query (docs://twillingate, Structured queries), its output columns renamed to the inputs ({\"day\": \"x\"}); it follows the project and the range.\n\n",
+	fmt.Fprintf(&b, "Source types: %s. A widget's source is {\"type\": …, \"content\": …}; its SQL returns the columns the component reads, by name (alias them: day AS x). A query source's content is {\"query\": …, \"rename\": …, \"labels\": …}: a structured query (docs://twillingate, Structured queries), its output columns renamed to the inputs ({\"day\": \"x\"}), and text columns' values relabelled ({\"label\": {\"new\": \"New users\"}}); it follows the project and the range.\n\n",
 		strings.Join(h.rep.SourceTypes(), ", "))
 	for _, c := range comps {
 		fmt.Fprintf(&b, "### %s\n\n%s\n\n", c.Name, c.Description)

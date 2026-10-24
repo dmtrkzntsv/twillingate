@@ -316,9 +316,12 @@ func viewOf(b *Batch, name string, typ colType, sel []int32) (dimView, error) {
 func formatDay(d int64) string { return time.Unix(d*86400, 0).UTC().Format(time.DateOnly) }
 
 // value is one metric's result: NULL, an integer or a float, and whether
-// a sketch estimated it.
+// a sketch estimated it. form says how an integer reads: a number, a day
+// (YYYY-MM-DD) or a time (RFC 3339 in UTC, as the engine's child prints
+// a TIMESTAMP: its fraction only when it has one, trailing zeros cut).
 type value struct {
 	null, isInt, approx bool
+	form                int
 	i                   int64
 	f                   float64
 }
@@ -329,6 +332,10 @@ func (v value) String() string {
 	switch {
 	case v.null:
 		return ""
+	case v.form == formDay:
+		return formatDay(v.i)
+	case v.form == formTime:
+		return time.UnixMicro(v.i).UTC().Format(time.RFC3339Nano)
 	case v.isInt:
 		return strconv.FormatInt(v.i, 10)
 	}
@@ -393,7 +400,15 @@ type metricSpec struct {
 	num      int      // index into agg.nums, for sum/avg/min/max
 	distinct int      // index into agg.distinct, for actors/users/groups and daily_*
 	msr      int      // index into agg.msrs, for percentile, mean and weight
+	// ratioNum and ratioDen are a ratio's sides, resolved as hidden
+	// metrics: they share the masks and partials the others use.
+	ratioNum, ratioDen *metricSpec
 }
+
+// countedOps are the metrics that count rows, ids or weights: over no
+// rows each is 0, or the daily_* and weight NULL, which a ratio's
+// numerator reads as 0.
+var countedOps = setOf([]string{"count", "actors", "users", "groups", "bounces", "weight", "daily_sum", "daily_max", "daily_avg", "days"})
 
 // distinctOf is the id column a distinct op counts: the metrics' own, and
 // the attributes keys' count of an attribute's values (opValues, which
@@ -402,6 +417,10 @@ var distinctOf = map[string]string{"actors": "actor_id", "users": "user_id", "gr
 
 // opValues is the distinct count of the unpivoted values.
 const opValues = "attr_values"
+
+// daysCol is the column the days metric counts per day: none, so only
+// the keys marking a day with rows are kept.
+const daysCol = ""
 
 // distinctCol is one id column counted distinct over the rows of a mask:
 // set says whole-range sets per group are kept, day that per-day keys are.
@@ -412,11 +431,12 @@ type distinctCol struct {
 }
 
 // numCol is one numeric column summed, averaged or bounded over the rows
-// of a mask.
+// of a mask; a day or time (form) only bounded, read as an integer.
 type numCol struct {
 	name  string
 	mask  int
 	float bool
+	form  int
 }
 
 // msrCol is the measures' partials over the rows of a mask: per cell the
@@ -547,9 +567,14 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 		}
 		return i
 	}
-	out := make([]metricSpec, len(metrics))
-	for k, m := range metrics {
+	var resolve func(m metricSpec) metricSpec
+	resolve = func(m metricSpec) metricSpec {
 		m.num, m.distinct, m.msr = -1, -1, -1
+		if m.Op == "ratio" {
+			num, den := resolve(*m.ratioNum), resolve(*m.ratioDen)
+			m.ratioNum, m.ratioDen = &num, &den
+			return m
+		}
 		key := filtersKey(m.Where)
 		mask, ok := maskIdx[key]
 		if !ok {
@@ -564,7 +589,7 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 			if !ok {
 				i = len(a.nums)
 				numIdx[colMask{m.Column, mask}] = i
-				a.nums = append(a.nums, numCol{name: m.Column, mask: mask, float: m.Column == "value" || m.Column == "sample_rate"})
+				a.nums = append(a.nums, numCol{name: m.Column, mask: mask, float: m.Column == "value" || m.Column == "sample_rate", form: boundForms[m.Column]})
 			}
 			m.num = i
 		case "actors", "users", "groups", opValues:
@@ -577,6 +602,10 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 			}
 		case "daily_sum", "daily_max", "daily_avg":
 			m.distinct = dist(distinctOf[m.Of], mask)
+			a.distinct[m.distinct].day = true
+		case "days":
+			// No id: each (group, day) with rows has its one NULL key.
+			m.distinct = dist(daysCol, mask)
 			a.distinct[m.distinct].day = true
 		case "bounces", "bounce_rate":
 			a.bounces = true
@@ -594,7 +623,11 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 			}
 			m.msr = i
 		}
-		out[k] = m
+		return m
+	}
+	out := make([]metricSpec, len(metrics))
+	for k, m := range metrics {
+		out[k] = resolve(m)
 	}
 	return a, out
 }
@@ -638,7 +671,9 @@ func (a *agg) columns() []string {
 		add(n.name)
 	}
 	for _, d := range a.distinct {
-		add(d.name)
+		if d.name != daysCol {
+			add(d.name)
+		}
 	}
 	if a.bounces {
 		add("views")
@@ -846,9 +881,18 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 				if first || v > np.fmax[x] {
 					np.fmax[x] = v
 				}
-			case !n.float && c.Ints != nil:
-				v := c.Ints[i]
-				np.isum[x] += v
+			case !n.float && (c.Ints != nil || c.Times != nil):
+				var v int64
+				if c.Ints != nil {
+					v = c.Ints[i]
+				} else {
+					v = c.Times[i]
+				}
+				// A day or time is only bounded (no sum or avg takes one),
+				// and a sum of microsecond times can overflow: skip it.
+				if n.form == formNumber {
+					np.isum[x] += v
+				}
 				if first || v < np.imin[x] {
 					np.imin[x] = v
 				}
@@ -1347,6 +1391,15 @@ func (m *merged) cellsOf(g int32, day int, f func(x int)) {
 // rows is how many rows group g holds (on day, unless it is < 0).
 func (m *merged) rows(g int32, day int) int64 { return m.maskRows(0, g, day) }
 
+// metricRows is how many rows of group g on day pass mt's where: a
+// ratio's, those of either side.
+func (m *merged) metricRows(mt metricSpec, g int32, day int) int64 {
+	if mt.Op == "ratio" {
+		return m.metricRows(*mt.ratioNum, g, day) + m.metricRows(*mt.ratioDen, g, day)
+	}
+	return m.maskRows(mt.mask, g, day)
+}
+
 // maskRows is how many rows of mask group g holds (on day, unless it is
 // < 0).
 func (m *merged) maskRows(mask int, g int32, day int) int64 {
@@ -1370,6 +1423,20 @@ func (m *merged) computeOther(mt metricSpec, gs []int32) value {
 
 func (m *merged) computeRaw(mt metricSpec, gs []int32, day int, whole bool) value {
 	switch mt.Op {
+	case "ratio":
+		// num / den as a DOUBLE, both over the same groups and day (an
+		// Other row's both folded first): NULL when den is 0 or NULL, or
+		// num NULL; a counted num over no rows is 0 when den is above 0,
+		// as the widgets' COALESCE(num, 0) reads it.
+		num := m.computeRaw(*mt.ratioNum, gs, day, whole)
+		den := m.computeRaw(*mt.ratioDen, gs, day, whole)
+		if num.null && countedOps[mt.ratioNum.Op] && !den.null && den.num() > 0 {
+			num = intValue(0)
+		}
+		if num.null || den.null || den.num() == 0 {
+			return value{null: true}
+		}
+		return value{f: num.num() / den.num(), approx: num.approx || den.approx}
 	case "share":
 		part := -1
 		if m.partOf != nil && !whole && len(gs) > 0 {
@@ -1445,7 +1512,7 @@ func (m *merged) computeRaw(mt metricSpec, gs []int32, day int, whole bool) valu
 		n, approx := u.count()
 		return value{isInt: true, i: n, approx: approx}
 	}
-	// daily_*: the per-day distinct counts of the days with rows.
+	// daily_* and days: the per-day distinct counts of the days with rows.
 	var days []int64
 	switch {
 	case day >= 0:
@@ -1454,6 +1521,12 @@ func (m *merged) computeRaw(mt metricSpec, gs []int32, day int, whole bool) valu
 		days = m.groupDays(mt.distinct, gs[0])
 	default:
 		days = m.unionDays(mt.distinct, gs)
+	}
+	if mt.Op == "days" {
+		if day >= 0 {
+			return intValue(int64(boolInt(m.hasDay(mt.distinct, gs[0], day))))
+		}
+		return intValue(int64(len(days)))
 	}
 	if len(days) == 0 {
 		return value{null: true}
@@ -1522,9 +1595,9 @@ func (m *merged) evalNum(mt metricSpec, gs []int32, day int) value {
 	case mt.Op == "sum":
 		return intValue(isum)
 	case mt.Op == "min":
-		return intValue(imin)
+		return value{isInt: true, i: imin, form: m.a.nums[mt.num].form}
 	}
-	return intValue(imax)
+	return value{isInt: true, i: imax, form: m.a.nums[mt.num].form}
 }
 
 // shareOf is what share mt is taken of over the groups gs (on day, unless
@@ -1642,6 +1715,14 @@ func (m *merged) dayCount(j int, g int32, day int) int64 {
 		return 0
 	}
 	return runs[i].n
+}
+
+// hasDay says whether group g has rows on day, of the mask column j
+// counts.
+func (m *merged) hasDay(j int, g int32, day int) bool {
+	cell := uint64(g)*uint64(m.a.ndays) + uint64(day)
+	_, ok := slices.BinarySearchFunc(m.runs[j], cell, func(r run, c uint64) int { return cmp.Compare(r.cell, c) })
+	return ok
 }
 
 // groupDays is group g's distinct ids per day with rows.

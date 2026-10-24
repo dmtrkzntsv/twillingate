@@ -212,6 +212,9 @@ func TestQuerySchemaDescribesStructured(t *testing.T) {
 	if e := r.specs[i].in.Properties["query"].Properties["compare"].Enum; !slices.Equal(e, []any{"", "previous"}) {
 		t.Errorf("compare's enum = %v, want \"\" and previous", e)
 	}
+	if e := r.specs[i].in.Properties["query"].Properties["fill"].Enum; !slices.Equal(e, []any{"", "zero"}) {
+		t.Errorf("fill's enum = %v, want \"\" and zero", e)
+	}
 	// A retention's and an attributes' own fields.
 	rq := r.specs[i].in.Properties["query"]
 	if e := rq.Properties["output"].Enum; !slices.Equal(e, []any{"grid", "curve", "milestones", "values", "keys"}) {
@@ -304,5 +307,97 @@ func TestQueryStructuredCompareEmpty(t *testing.T) {
 	q := map[string]any{"kind": "stat", "table": "views", "compare": "", "metrics": []any{map[string]any{"op": "count"}}}
 	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "query": q}); res.IsError {
 		t.Errorf("compare \"\" over MCP: %s", textOf(res))
+	}
+}
+
+// A ratio's num and den, each a metric with its own where, pass MCP's
+// schema; a side with as, or a ratio inside, is refused.
+func TestQueryStructuredRatio(t *testing.T) {
+	_, cs := newTestHost(t)
+	ratio := func(num, den map[string]any) map[string]any {
+		return map[string]any{"kind": "stat", "table": "events", "metrics": []any{
+			map[string]any{"op": "ratio", "as": "value", "round": 1, "num": num, "den": den}}}
+	}
+	product := []any{map[string]any{"column": "family", "op": "eq", "values": []any{"product"}}}
+	q := ratio(map[string]any{"op": "count", "where": product}, map[string]any{"op": "users", "where": product})
+	res := callTool(t, cs, "query", map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "query": q})
+	if res.IsError {
+		t.Errorf("a ratio over MCP: %s", textOf(res))
+	}
+	for name, q := range map[string]map[string]any{
+		"as in a side": ratio(map[string]any{"op": "count", "as": "n"}, map[string]any{"op": "users"}),
+		"nested ratio": ratio(map[string]any{"op": "ratio", "num": map[string]any{"op": "count"}, "den": map[string]any{"op": "users"}},
+			map[string]any{"op": "users"}),
+	} {
+		if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "query": q}); !res.IsError {
+			t.Errorf("%s over MCP: accepted", name)
+		}
+	}
+}
+
+// min and max of a day or a time pass MCP's schema, whose column enum
+// lists them; sum of day passes it and Validate refuses it.
+func TestQueryStructuredBounds(t *testing.T) {
+	h, cs := newTestHost(t)
+	q := map[string]any{"kind": "breakdown", "table": "events", "dimensions": []any{"user_id"}, "metrics": []any{
+		map[string]any{"op": "max", "column": "day"}, map[string]any{"op": "max", "column": "received_at"}, map[string]any{"op": "min", "column": "ts"}}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "query": q}); res.IsError {
+		t.Errorf("min and max of a day or time over MCP: %s", textOf(res))
+	}
+	s := map[string]any{"kind": "stat", "table": "sessions", "metrics": []any{map[string]any{"op": "min", "column": "started_at"}}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "query": s}); res.IsError {
+		t.Errorf("min started_at over MCP: %s", textOf(res))
+	}
+	q["metrics"] = []any{map[string]any{"op": "sum", "column": "day"}}
+	if res := callTool(t, cs, "query", map[string]any{"project_id": 1, "query": q}); !res.IsError || !strings.Contains(textOf(res), "metrics[0].column") {
+		t.Errorf("sum of day over MCP: %s", textOf(res))
+	}
+	r := newTestRegistrar(t, h)
+	i := slices.IndexFunc(r.specs, func(s spec) bool { return s.Name == "query" })
+	col := r.specs[i].in.Properties["query"].Properties["metrics"].Items.Properties["column"].Enum
+	for _, c := range slices.Concat(native.BoundColumns, native.SessionBoundColumns) {
+		if !slices.Contains(col, any(c)) {
+			t.Errorf("a metric's column enum %v lacks %s", col, c)
+		}
+	}
+}
+
+// A ratio's num and den are described as a metric but closed: no other
+// field, no as, round or num and den of their own, an op that is neither
+// ratio nor share, and a column that is a number.
+func TestQuerySchemaRatioSides(t *testing.T) {
+	h, _ := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	i := slices.IndexFunc(r.specs, func(s spec) bool { return s.Name == "query" })
+	if i < 0 {
+		t.Fatal("no query tool")
+	}
+	m := r.specs[i].in.Properties["query"].Properties["metrics"].Items
+	for _, side := range []string{"num", "den"} {
+		s := m.Properties[side]
+		if s == nil {
+			t.Fatalf("a metric has no %s", side)
+		}
+		if b, _ := json.Marshal(s.AdditionalProperties); string(b) != "false" {
+			t.Errorf("%s's additionalProperties = %s, want false", side, b)
+		}
+		for _, p := range []string{"as", "round", "num", "den"} {
+			if _, ok := s.Properties[p]; ok {
+				t.Errorf("%s has a %s property", side, p)
+			}
+		}
+		for _, p := range []string{"op", "q", "column", "of", "where"} {
+			if _, ok := s.Properties[p]; !ok {
+				t.Errorf("%s lacks a %s property", side, p)
+			}
+		}
+		ops := s.Properties["op"].Enum
+		if slices.Contains(ops, any("ratio")) || slices.Contains(ops, any("share")) || !slices.Contains(ops, any("daily_sum")) {
+			t.Errorf("%s's op enum = %v, want the metric ops but ratio and share", side, ops)
+		}
+		cols := s.Properties["column"].Enum
+		if slices.Contains(cols, any("day")) || slices.Contains(cols, any("received_at")) || !slices.Contains(cols, any("value")) {
+			t.Errorf("%s's column enum = %v, want the number columns", side, cols)
+		}
 	}
 }
