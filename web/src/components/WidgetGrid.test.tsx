@@ -502,7 +502,7 @@ describe('WidgetGrid', () => {
 
     // Another project: only the card that follows it asks again.
     rerender(wrap(grid(8)))
-    expect(spy).toHaveBeenCalledWith(2, { project_id: 8 })
+    await waitFor(() => expect(spy).toHaveBeenCalledWith(2, { project_id: 8 }))
     await waitFor(() => expect(statRenders.get('twillingate.widget.1.2')).toBeGreaterThan(before.get('twillingate.widget.1.2')!))
     expect(statRenders.get('twillingate.widget.1.1')).toBe(before.get('twillingate.widget.1.1'))
   })

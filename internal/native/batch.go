@@ -152,12 +152,7 @@ type dictBuilder struct {
 }
 
 func (d *dictBuilder) id(b []byte) int32 {
-	if d.ids == nil {
-		d.ids = make(map[string]int32, len(d.dict))
-		for i, s := range d.dict {
-			d.ids[s] = int32(i)
-		}
-	}
+	d.index()
 	if id, ok := d.ids[string(b)]; ok {
 		return id
 	}
@@ -168,13 +163,42 @@ func (d *dictBuilder) id(b []byte) int32 {
 	return id
 }
 
+// index builds the lookup from each value to its index, unless built.
+func (d *dictBuilder) index() {
+	if d.ids == nil {
+		d.ids = make(map[string]int32, len(d.dict))
+		for i, s := range d.dict {
+			d.ids[s] = int32(i)
+		}
+	}
+}
+
 // addDict adds a dictionary page's values (BYTE_ARRAY data and offsets)
-// and returns each one's index in the batch's dictionary; same when that
-// is the value's own index (the first dictionary of a batch, no value
-// repeated), so the page's indexes stand as they are.
+// and returns each one's index in the batch's dictionary, or same (and no
+// remap) when that is the value's own index. The batch's first dictionary
+// is taken as the batch's dictionary as it is, without building the
+// lookup (built only should a plain page or a second dictionary follow):
+// a dictionary page holds each value once, as the files' writers (DuckDB,
+// parquet-go) write it. Should one repeat a value anyway, the batch has two
+// entries of one value: its readers resolve entries by value (group keys,
+// id hashes, retention's map, the identities' lookups), so that costs
+// double work, not a wrong answer. Its values are copied out of the page
+// into one string, which the dictionary's entries share: a reader that
+// keeps a value past the batch copies it (strings.Clone).
 func (d *dictBuilder) addDict(vals []byte, offs []uint32) (remap []int32, same bool) {
-	same = len(d.dict) == 0
-	remap = make([]int32, max(0, len(offs)-1))
+	n := max(0, len(offs)-1)
+	if len(d.dict) == 0 {
+		d.dict, d.ids = make([]string, n), nil
+		if n > 0 {
+			all := string(vals[offs[0]:offs[n]])
+			for j := range n {
+				d.dict[j] = all[offs[j]-offs[0] : offs[j+1]-offs[0]]
+			}
+		}
+		return nil, true
+	}
+	same = true
+	remap = make([]int32, n)
 	for j := range remap {
 		remap[j] = d.id(vals[offs[j]:offs[j+1]])
 		same = same && remap[j] == int32(j)

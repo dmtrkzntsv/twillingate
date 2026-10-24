@@ -424,10 +424,12 @@ func (n slowNative) Answer(ctx context.Context, q native.Query, p native.Params,
 	return n.Native.Answer(ctx, q, p, rules)
 }
 
-// retention, usage, views_overview and product_events run their queries
-// under one CONSOLE_QUERY_TIMEOUT: two queries that each fit it but not
+// retention, views_overview and product_events run their queries under
+// one CONSOLE_QUERY_TIMEOUT: two queries that each fit it but not
 // together are refused with the timeout's words. (list_attributes asks
 // twice only past native.MaxKeep named keys, so it is left out here.)
+// usage gives each query its own: two that each fit it answer, one that
+// does not is refused with the timeout's words.
 func TestAnalyticsToolsShareOneDeadline(t *testing.T) {
 	h, _ := newTestHost(t)
 	h.queryTimeout = 400 * time.Millisecond
@@ -438,10 +440,15 @@ func TestAnalyticsToolsShareOneDeadline(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Errorf("retention: %v, want %q", err, want)
 	}
-	_, err = h.usage(ctx, usageIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-01", To: "2026-08-31"}})
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Errorf("usage: %v, want %q", err, want)
+	usage := usageIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-01", To: "2026-08-31"}}
+	if _, err = h.usage(ctx, usage); err != nil {
+		t.Errorf("usage, each query within the timeout: %v", err)
 	}
+	h.native = slowNative{Native: h.native.(slowNative).Native, delay: 500 * time.Millisecond}
+	if _, err = h.usage(ctx, usage); err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("usage, a query past the timeout: %v, want %q", err, want)
+	}
+	h.native = slowNative{Native: h.native.(slowNative).Native, delay: 250 * time.Millisecond}
 	month := rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}
 	_, err = h.viewsOverview(ctx, overviewIn{rangeIn: month})
 	if err == nil || !strings.Contains(err.Error(), want) {

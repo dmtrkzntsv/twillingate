@@ -118,15 +118,19 @@ func (h *host) countEvents(ctx context.Context) (int64, error) {
 	from := civil.Today(time.Now()).AddDays(-29)
 	// No upper bound, as the day filter had none.
 	to, _ := civil.Parse("9999-12-31")
-	var n int64
+	var reqs []native.Request
 	for _, id := range slices.Sorted(maps.Keys(all)) {
-		res, err := h.answer(ctx, native.Query{Kind: "stat", Table: "events", Metrics: []native.Metric{{Op: "count"}}},
-			native.Params{Project: id, From: from, To: to})
-		if err != nil {
-			return 0, err
+		reqs = append(reqs, native.Request{Query: native.Query{Kind: "stat", Table: "events", Metrics: []native.Metric{{Op: "count"}}},
+			Params: native.Params{Project: id, From: from, To: to}})
+	}
+	// One call: a scan per project, side by side.
+	var n int64
+	for _, a := range h.answerAll(ctx, reqs) {
+		if a.Err != nil {
+			return 0, a.Err
 		}
-		if len(res.Rows) == 1 {
-			n += cellInt(res.Rows[0][0])
+		if len(a.Result.Rows) == 1 {
+			n += cellInt(a.Result.Rows[0][0])
 		}
 	}
 	return n, nil

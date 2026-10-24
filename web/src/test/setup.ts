@@ -69,3 +69,9 @@ Object.defineProperty(window, 'matchMedia', {
       dispatchEvent: () => false,
     }) as MediaQueryList,
 })
+
+// No server answers the widget stream under jsdom: every test that does
+// not open one itself (widget-stream.test.ts does) sees it fail at once,
+// so each widget falls back to the GET the test mocks.
+import { endpoints } from '@/lib/api'
+endpoints.widgetStream = () => Promise.reject(new TypeError('no widget stream in tests'))

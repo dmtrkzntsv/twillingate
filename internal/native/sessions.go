@@ -42,11 +42,21 @@ const gapIndex = -2
 // day is done.
 func (e *Engine) scanSessions(ctx context.Context, project int64, r Range, cols []string,
 	charge func(int64) error, add func(w int, b *Batch) error) error {
-	return e.scanSessionsWith(ctx, project, r, cols, readLog, charge, add)
+	return e.scanSessionsWith(ctx, project, r, cols, e.readLog, charge, add)
 }
 
-// logReader reads a log's rows as readLog does.
-type logReader func(path string, cols []string, family string, r Range) (*Batch, error)
+// logReader reads a log's rows as readLog does, in one batch or several
+// (each read-only: their columns may be shared with other queries),
+// giving up when ctx is done.
+//
+// The rows need not come in the log's line order: the engine's cache
+// hands a batch per family, a family's rows in line order. A reader
+// that breaks ties by the order it meets rows (identities' latest name
+// at equal timestamps, seeName and fold, keep the first met) may then
+// break one differently than line order would; it already differs from
+// any fixed order across files, which the workers read in parallel, and
+// within one log it is the same for the same log.
+type logReader func(ctx context.Context, path string, cols []string, family string, r Range) ([]*Batch, error)
 
 // scanSessionsWith is scanSessions, a gap day's logs read through logs.
 func (e *Engine) scanSessionsWith(ctx context.Context, project int64, r Range, cols []string, logs logReader,
@@ -71,7 +81,7 @@ func (e *Engine) scanSessionsWith(ctx context.Context, project int64, r Range, c
 		var b *Batch
 		var err error
 		if g.index == gapIndex {
-			b, err = deriveSessions(project, g.day, events, &readers[w], logs, charge)
+			b, err = deriveSessions(ctx, project, g.day, events, &readers[w], logs, charge)
 		} else {
 			b, err = readers[w].read(g, cols, "", r)
 		}
@@ -106,7 +116,7 @@ func batchBytes(b *Batch) int64 {
 //
 // gr reads the Parquet row groups (the worker's reader), readLogs the
 // logs (readLog); charge as scanSessions describes.
-func deriveSessions(project, day int64, events archive.Files, gr *groupReader, readLogs logReader, charge func(int64) error) (*Batch, error) {
+func deriveSessions(ctx context.Context, project, day int64, events archive.Files, gr *groupReader, readLogs logReader, charge func(int64) error) (*Batch, error) {
 	d := civil.DateOf(time.Unix(day*86400, 0).UTC())
 	dr := Range{From: d, To: d}
 	var held int64
@@ -133,12 +143,14 @@ func deriveSessions(project, day int64, events archive.Files, gr *groupReader, r
 		return hold(batchBytes(b))
 	}
 	for _, path := range logs {
-		b, err := readLogs(path, viewColumns, "views", dr)
+		bs, err := readLogs(ctx, path, viewColumns, "views", dr)
 		if err != nil {
 			return nil, err
 		}
-		if err := keep(b); err != nil {
-			return nil, err
+		for _, b := range bs {
+			if err := keep(b); err != nil {
+				return nil, err
+			}
 		}
 	}
 	for _, g := range groups {

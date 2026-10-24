@@ -163,7 +163,12 @@ reuses one only up to `REPORTING_REFRESH_MAX_AGE` old (default `1m`), and
 `refresh_after` says when a fresh load would run the query again. A viewer
 can turn on auto-refresh from a dashboard's top-right "…" menu: the page
 then reloads it every `auto_refresh_seconds` (the longer of the two, so
-each reload runs the queries again), only while its window has focus. Changing a
+each reload runs the queries again), only while its window has focus. The
+console loads a dashboard's widgets, and refreshes them, through one
+[stream](#streaming-a-dashboards-widgets) per 64 widgets; Refresh all sends
+`fresh`, while auto-refresh is an ordinary reload through the same stream. A
+card loaded on its own, such as a new widget, a retry or its refresh button,
+or a remote table's own page, uses the GET route. Changing a
 widget's source starts it on new entries. Widget queries run on the event files
 under the same guards as `query`: one read-only
 `SELECT`, `CONSOLE_QUERY_TIMEOUT` and `CONSOLE_QUERY_ROWS_MAX`.
@@ -408,9 +413,11 @@ snapshots built on each read by the same code as their list tool:
 
 Every tool above except `reporting_guide`, which is MCP-only, is also a REST
 route under `/api/`, with the same bearer token, JSON and error shape as the
-routes in [twillingate.md](twillingate.md#http-api). Four routes have no
-tool, `view`, `preview_widget`, `create_widget_share` and
-`widget_share_image`. The console's widget editor runs an unsaved SQL or
+routes in [twillingate.md](twillingate.md#http-api). Five routes have no
+tool, `view`, `preview_widget`, `widget_stream`, `create_widget_share` and
+`widget_share_image`. A dashboard page loads its widgets with one
+`POST /api/widgets/stream` ([Streaming a dashboard's widgets](#streaming-a-dashboards-widgets)).
+The console's widget editor runs an unsaved SQL or
 `query` source with `POST /api/widgets/preview`, which binds the project and
 range given and returns the rows with the first way they do not fit the
 component; agents call `add_widget`, which validates. The page stores the
@@ -444,6 +451,7 @@ public `/share/<id>.png` stops at archiving
 | `POST` | `/api/widgets/{widget_id}/archive` | `archive_widget` | — |
 | `POST` | `/api/widgets/{widget_id}/restore` | `restore_widget` | — |
 | `PUT` | `/api/dashboards/{dashboard_id}/view` | `view`, REST only: no MCP tool | body: `project_id`, `range`, and `from`/`to` for `custom` → `{"status":"saved"}` |
+| `POST` | `/api/widgets/stream` | `widget_stream`, REST only: no MCP tool | body: `{"widgets":[{"widget_id","project_id","from","to","fresh"}]}`, at most 64 → `text/event-stream`: one `widget` event per widget, `{"widget_id","data"}` or `{"widget_id","error":{"code","message"}}`, then `done` |
 | `POST` | `/api/widgets/preview` | `preview_widget`, REST only: no MCP tool | body: `component`, `props`, `source`, `project_id`, `from`, `to` → `{columns, rows, truncated, approximate, problem, elapsed_ms}` |
 | `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id`, `from`, `to`, `archive_after`, `caption_project`, `caption_range`, `image`, `image_2x` → 201 |
 | `GET` | `/api/widget-shares` | `list_widget_shares` | query: `widget_id`, `state` |
@@ -451,6 +459,47 @@ public `/share/<id>.png` stops at archiving
 | `POST` | `/api/widget-shares/{id}/archive` | `archive_widget_share` | — |
 | `POST` | `/api/widget-shares/{id}/restore` | `restore_widget_share` | body: `archive_after` (optional) |
 | `GET` | `/api/widget-shares/{id}/image` | `widget_share_image`, REST only: no MCP tool | — (image/png, any state) |
+
+### Streaming a dashboard's widgets
+
+`POST /api/widgets/stream` loads up to 64 widgets in one request, with the
+same bearer token. Each widget takes what `GET /api/widgets/{widget_id}/data`
+takes, except a remote table's `filters`, `sort`, `distinct`, `offset` and
+`limit`, which stay on the GET route. A bad body or more than 64 widgets is a
+plain JSON error before anything streams. The answer is Server-Sent Events
+(`Content-Type: text/event-stream`, `Cache-Control: no-cache`,
+`X-Accel-Buffering: no`), each event flushed as it is written:
+
+```
+event: widget
+data: {"widget_id":12,"data":{"widget_id":12,"source_type":"query",…}}
+
+event: widget
+data: {"widget_id":13,"error":{"code":"not_found","message":"widget 13 is archived"}}
+
+: keepalive
+
+event: done
+data: {}
+```
+
+- **One `widget` event per widget**, in the order they are ready: `data` is
+  the GET route's body for that widget, byte for byte, and `error` carries
+  the code and message the GET route would answer: the GET route's codes
+  (`invalid`, `not_found`, `conflict`, `internal`). One widget's refusal never fails the others.
+- **Order.** Cached widgets come first. The query widgets the cache misses
+  are answered together, those reading the same project's files in one
+  scan, so a scan's widgets arrive when that scan finishes; sql and md
+  widgets load beside them.
+- **The cache is the GET route's**: the same entries and ages (`fresh` asks
+  for `REPORTING_REFRESH_MAX_AGE`), each widget stored under its own entry,
+  and a load already running for the same widget, a GET's or another
+  stream's, is shared.
+- **Closing the request** stops every query of it still running; a widget
+  it had not finished is not cached.
+- **`: keepalive`** goes out every 15 seconds, so a quiet stream is not
+  taken for a dead one, and **`done`** ends the stream.
+
 
 The view route takes `project_id` exactly when the dashboard has a project
 switcher and `range` exactly when it has a range switcher, and refuses either

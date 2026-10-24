@@ -112,6 +112,10 @@ func operation(s spec) (map[string]any, error) {
 	if s.CSV {
 		success["content"] = map[string]any{"text/csv": map[string]any{"schema": map[string]string{"type": "string"}}}
 	}
+	if s.Stream {
+		// Server-Sent Events; each event's data is shaped as s.out.
+		success["content"] = map[string]any{"text/event-stream": map[string]any{"schema": map[string]string{"type": "string"}}}
+	}
 	op := map[string]any{
 		"operationId": s.Name,
 		"tags":        []string{tagOf(s.Path)},

@@ -212,6 +212,16 @@ describe('WidgetCard', () => {
     await waitFor(() => expect(spy).toHaveBeenCalledWith(42, { ...params, fresh: true }))
   })
 
+  it('refreshes a query widget as it does a sql one', async () => {
+    const spy = vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer({ source_type: 'query' }))
+    renderCard(statWidget({ source: { type: 'query', content: '{"kind":"stat"}' } }))
+    await screen.findByText('12.3K')
+    const button = screen.getByRole('button', { name: 'Refresh Visitors' })
+    expect(button).not.toHaveAttribute('aria-disabled', 'true')
+    await userEvent.click(button)
+    await waitFor(() => expect(spy).toHaveBeenCalledWith(42, { ...params, fresh: true }))
+  })
+
   it('has no refresh icon on a markdown card', async () => {
     vi.spyOn(endpoints, 'widgetData').mockResolvedValue({
       widget_id: 43,

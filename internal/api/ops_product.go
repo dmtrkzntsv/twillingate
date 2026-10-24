@@ -49,11 +49,22 @@ func (h *host) productEvents(ctx context.Context, in productEventsIn) (productEv
 	if in.Event != "" {
 		where = []native.Filter{{Column: "event_name", Op: "eq", Values: []string{in.Event}}}
 	}
-	events, err := h.byDay(ctx, p, []string{"day", "event_name"}, where,
-		[]native.Metric{{Op: "count", As: "count"}, {Op: "actors", As: "unique_users"}})
-	if err != nil {
-		return productEventsOut{}, err
+	// Both breakdowns read the product events: one call, one scan.
+	eventsQ, cutEvents := h.capQuery(productByDay([]string{"day", "event_name"}, where,
+		[]native.Metric{{Op: "count", As: "count"}, {Op: "actors", As: "unique_users"}}), 0)
+	reqs := []native.Request{{Query: eventsQ, Params: p}}
+	totalsQ, cutTotals := h.capQuery(productByDay([]string{"day"}, nil,
+		[]native.Metric{{Op: "count", As: "total_events"}, {Op: "actors", As: "active_users"}}), 0)
+	if in.Event == "" {
+		reqs = append(reqs, native.Request{Query: totalsQ, Params: p})
 	}
+	ans := h.answerAll(ctx, reqs)
+	for _, a := range ans {
+		if a.Err != nil {
+			return productEventsOut{}, a.Err
+		}
+	}
+	events := cutEvents(ans[0].Result)
 	slices.SortStableFunc(events.Rows, func(a, b []string) int {
 		if c := cmp.Compare(a[0], b[0]); c != 0 {
 			return c
@@ -64,22 +75,18 @@ func (h *host) productEvents(ctx context.Context, in productEventsIn) (productEv
 		return cmp.Compare(a[1], b[1])
 	})
 	out.Events = events
-	if in.Event != "" {
-		return out, nil
-	}
-	if out.Totals, err = h.byDay(ctx, p, []string{"day"}, nil,
-		[]native.Metric{{Op: "count", As: "total_events"}, {Op: "actors", As: "active_users"}}); err != nil {
-		return productEventsOut{}, err
+	if in.Event == "" {
+		out.Totals = cutTotals(ans[1].Result)
 	}
 	return out, nil
 }
 
-// byDay answers a native breakdown of the product events by dims, day
-// first, over p, by day: at most CONSOLE_QUERY_ROWS_MAX rows (and the
-// engine's 1,000), the earliest days', the rest noted as left out.
-func (h *host) byDay(ctx context.Context, p native.Params, dims []string, where []native.Filter, metrics []native.Metric) (tableOut, error) {
-	return h.capped(ctx, native.Query{Kind: "breakdown", Table: "product", Dimensions: dims, Order: "day",
-		Where: where, Metrics: metrics}, p, 0)
+// productByDay is a native breakdown of the product events by dims, day first,
+// by day; capped (capQuery) to at most CONSOLE_QUERY_ROWS_MAX rows (and
+// the engine's 1,000), the earliest days', the rest noted as left out.
+func productByDay(dims []string, where []native.Filter, metrics []native.Metric) native.Query {
+	return native.Query{Kind: "breakdown", Table: "product", Dimensions: dims, Order: "day",
+		Where: where, Metrics: metrics}
 }
 
 // capped answers q with its first rows in q's order: at most limit (all
@@ -89,6 +96,18 @@ func (h *host) byDay(ctx context.Context, p native.Params, dims []string, where 
 // for one more, so 1,000 rows past a limit of the tool's own are marked
 // too.
 func (h *host) capped(ctx context.Context, q native.Query, p native.Params, limit int) (tableOut, error) {
+	q, cut := h.capQuery(q, limit)
+	res, err := h.answer(ctx, q, p)
+	if err != nil {
+		return tableOut{}, err
+	}
+	return cut(res), nil
+}
+
+// capQuery is capped in two halves, for a query answered with others
+// (answerAll): q with the limit capped asks, and how capped cuts and
+// marks its answer.
+func (h *host) capQuery(q native.Query, limit int) (native.Query, func(native.Result) tableOut) {
 	n := h.rowCap()
 	own := limit > 0 && limit <= n
 	if own {
@@ -96,20 +115,18 @@ func (h *host) capped(ctx context.Context, q native.Query, p native.Params, limi
 	} else {
 		q.Limit = min(n+1, maxBreakdownLimit)
 	}
-	res, err := h.answer(ctx, q, p)
-	if err != nil {
-		return tableOut{}, err
+	return q, func(res native.Result) tableOut {
+		out := tableOut{Columns: res.Columns, Rows: res.Rows}
+		if out.Rows == nil {
+			out.Rows = [][]string{}
+		}
+		cut := len(out.Rows) > n
+		if cut {
+			out.Rows = out.Rows[:n]
+		}
+		h.markPartial(&out, res.Truncated || cut || !own && len(out.Rows) == maxBreakdownLimit, res.Approximate)
+		return out
 	}
-	out := tableOut{Columns: res.Columns, Rows: res.Rows}
-	if out.Rows == nil {
-		out.Rows = [][]string{}
-	}
-	cut := len(out.Rows) > n
-	if cut {
-		out.Rows = out.Rows[:n]
-	}
-	h.markPartial(&out, res.Truncated || cut || !own && len(out.Rows) == maxBreakdownLimit, res.Approximate)
-	return out, nil
 }
 
 // productAttributes answers a native attributes query of the product
@@ -187,14 +204,29 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
 	out := retentionOut{tableOut: tableOut{Columns: retentionColumns, Rows: [][]string{}}}
-	if params, ok := rangeParams(in.rangeIn); ok {
-		res, err := h.answer(ctx, native.Query{Kind: "retention", Output: "grid", IdentifiedBy: in.Actor, Offsets: retentionOffsets}, params)
-		if err != nil {
-			return retentionOut{}, err
+	if h.native == nil {
+		return retentionOut{}, invalidf("the event files cannot be queried by this process")
+	}
+	// The grid and how far it reaches, in one call.
+	var reqs []native.Request
+	params, grid := rangeParams(in.rangeIn)
+	if grid {
+		reqs = append(reqs, native.Request{Query: native.Query{Kind: "retention", Output: "grid", IdentifiedBy: in.Actor, Offsets: retentionOffsets}, Params: params})
+	}
+	throughReq, reach := h.aggregatedThrough(in.ProjectID)
+	if reach {
+		reqs = append(reqs, throughReq)
+	}
+	ans := h.answerAll(ctx, reqs)
+	for _, a := range ans {
+		if a.Err != nil {
+			return retentionOut{}, a.Err
 		}
+	}
+	if grid {
 		// cohort, identified_by, offset, size, returned, retention, by
 		// cohort descending: the tool's columns, by cohort, then offset.
-		for _, r := range res.Rows {
+		for _, r := range ans[0].Result.Rows {
 			out.Rows = append(out.Rows, []string{r[0], r[2], r[4], r[3]})
 		}
 		slices.SortStableFunc(out.Rows, func(a, b []string) int {
@@ -208,38 +240,32 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 			h.markPartial(&out.tableOut, true, nil)
 		}
 	}
-	through, err := h.aggregatedThrough(ctx, in.ProjectID)
-	if err != nil {
-		return retentionOut{}, err
+	if reach {
+		if res := ans[len(ans)-1].Result; len(res.Rows) == 1 {
+			out.AggregatedThrough = res.Rows[0][0]
+		}
 	}
-	out.AggregatedThrough = through
 	if out.Note == "" {
 		out.Note = retentionNote
 	}
 	return out, nil
 }
 
-// aggregatedThrough is how far a project's cohorts reach: the newest day
-// before today (UTC) with a view or product event in its files, rules
-// applied, "" with none; so recent cohorts read as "not counted yet",
-// never as zero.
-func (h *host) aggregatedThrough(ctx context.Context, project int64) (string, error) {
-	if h.native == nil {
-		return "", invalidf("the event files cannot be queried by this process")
-	}
+// aggregatedThrough is the query of how far a project's cohorts reach:
+// the newest day before today (UTC) with a view or product event in its
+// files, rules applied, "" with none; so recent cohorts read as "not
+// counted yet", never as zero. ok is false when there is no day before
+// today to read, which reads as "".
+func (h *host) aggregatedThrough(project int64) (req native.Request, ok bool) {
 	first, _ := civil.Parse("1970-01-01")
 	last := h.native.Today().AddDays(-1) // the retention's today
 	if last.Before(first) {
-		return "", nil
+		return native.Request{}, false
 	}
-	res, err := h.answer(ctx, native.Query{Kind: "stat", Table: "events",
+	return native.Request{Query: native.Query{Kind: "stat", Table: "events",
 		Metrics: []native.Metric{{Op: "max", Column: "day"}},
 		Where:   []native.Filter{{Column: "family", Op: "in", Values: []string{"views", "product"}}}},
-		native.Params{Project: project, From: first, To: last})
-	if err != nil || len(res.Rows) != 1 {
-		return "", err
-	}
-	return res.Rows[0][0], nil
+		Params: native.Params{Project: project, From: first, To: last}}, true
 }
 
 type identitiesIn struct {

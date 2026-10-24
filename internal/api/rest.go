@@ -175,16 +175,21 @@ type apiError struct {
 // names a method and path rather than just an error string) and answered
 // generically: their text may carry internals.
 func writeError(w http.ResponseWriter, logger *slog.Logger, req *http.Request, err error) {
-	status, code, msg := http.StatusInternalServerError, "internal", "internal error"
+	status, e := refusalOf(logger, req, err)
+	writeJSON(w, status, map[string]apiError{"error": e})
+}
+
+// refusalOf is err's status and error body, as writeError sends them;
+// an untyped error is logged and answered generically.
+func refusalOf(logger *slog.Logger, req *http.Request, err error) (int, apiError) {
 	switch {
 	case errors.Is(err, manage.ErrInvalid):
-		status, code, msg = http.StatusBadRequest, "invalid", err.Error()
+		return http.StatusBadRequest, apiError{Code: "invalid", Message: err.Error()}
 	case errors.Is(err, manage.ErrNotFound):
-		status, code, msg = http.StatusNotFound, "not_found", err.Error()
+		return http.StatusNotFound, apiError{Code: "not_found", Message: err.Error()}
 	case errors.Is(err, manage.ErrConflict):
-		status, code, msg = http.StatusConflict, "conflict", err.Error()
-	default:
-		logger.Error("api request failed", "method", req.Method, "path", req.URL.Path, "error", err)
+		return http.StatusConflict, apiError{Code: "conflict", Message: err.Error()}
 	}
-	writeJSON(w, status, map[string]apiError{"error": {Code: code, Message: msg}})
+	logger.Error("api request failed", "method", req.Method, "path", req.URL.Path, "error", err)
+	return http.StatusInternalServerError, apiError{Code: "internal", Message: "internal error"}
 }

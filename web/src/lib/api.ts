@@ -182,6 +182,15 @@ export interface WidgetDataQuery {
   limit?: number
 }
 
+/** One widget of a stream request: what the GET route takes, without a remote table's view. */
+export interface WidgetStreamItem {
+  widget_id: number
+  project_id?: number
+  from?: string
+  to?: string
+  fresh?: boolean
+}
+
 export interface SaveViewBody {
   project_id?: number
   range?: string
@@ -569,6 +578,12 @@ export const endpoints = {
   dashboards: () => api<DashboardsResponse>('/api/dashboards'),
   dashboard: (id: number) => api<DashboardDetail>(`/api/dashboards/${id}`),
   widgetData: (id: number, q: WidgetDataQuery) => api<WidgetData>(`/api/widgets/${id}/data${toQuery(q)}`),
+  /**
+   * Opens the stream of several widgets' answers (`POST /api/widgets/stream`):
+   * the response, whose body is read as Server-Sent Events (widget-stream.ts).
+   */
+  widgetStream: (widgets: WidgetStreamItem[], signal?: AbortSignal) =>
+    send('/api/widgets/stream', { ...json('POST', { widgets }), signal }),
   components: () => api<ComponentsResponse>('/api/components'),
   /** Moves, resizes or edits a widget of the user's own dashboard. */
   updateWidget: (id: number, body: WidgetLayoutBody | WidgetContentBody) => api<Widget>(`/api/widgets/${id}`, json('PATCH', body)),

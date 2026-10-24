@@ -56,6 +56,9 @@ type host struct {
 	// CONSOLE_QUERY_ROWS_MAX, which every query on the files runs under.
 	queryTimeout time.Duration
 	queryRows    int
+	// keepalive is how often POST /api/widgets/stream sends a keepalive
+	// comment; 0 is sseKeepalive. Tests shorten it.
+	keepalive time.Duration
 }
 
 var dayRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
@@ -164,18 +167,21 @@ func (h *host) viewsOverview(ctx context.Context, in overviewIn) (tableOut, erro
 		where = []native.Filter{{Column: "kind", Op: "eq", Values: []string{in.Kind}}}
 	}
 	limit := h.rowCap()
-	views, err := h.answer(ctx, native.Query{Kind: "breakdown", Table: "views", Dimensions: []string{"day"}, Order: "day",
-		Limit: min(limit+1, maxBreakdownLimit), Where: where, Metrics: []native.Metric{
-			{Op: "daily_sum", Of: "actors", As: "visitors"}, {Op: "count", As: "views"}}}, p)
-	if err != nil {
-		return tableOut{}, err
+	// One call: the views and the sessions are two scans, side by side.
+	ans := h.answerAll(ctx, []native.Request{
+		{Query: native.Query{Kind: "breakdown", Table: "views", Dimensions: []string{"day"}, Order: "day",
+			Limit: min(limit+1, maxBreakdownLimit), Where: where, Metrics: []native.Metric{
+				{Op: "daily_sum", Of: "actors", As: "visitors"}, {Op: "count", As: "views"}}}, Params: p},
+		{Query: native.Query{Kind: "breakdown", Table: "sessions", Dimensions: []string{"day"}, Order: "day",
+			Limit: limit, Where: where, Metrics: []native.Metric{
+				{Op: "count", As: "sessions"}, {Op: "bounces"}, {Op: "sum", Column: "duration_sec", As: "duration_sec"}}}, Params: p},
+	})
+	for _, a := range ans {
+		if a.Err != nil {
+			return tableOut{}, a.Err
+		}
 	}
-	sessions, err := h.answer(ctx, native.Query{Kind: "breakdown", Table: "sessions", Dimensions: []string{"day"}, Order: "day",
-		Limit: limit, Where: where, Metrics: []native.Metric{
-			{Op: "count", As: "sessions"}, {Op: "bounces"}, {Op: "sum", Column: "duration_sec", As: "duration_sec"}}}, p)
-	if err != nil {
-		return tableOut{}, err
-	}
+	views, sessions := ans[0].Result, ans[1].Result
 	cut := len(views.Rows) > limit
 	if cut {
 		views.Rows = views.Rows[:limit]

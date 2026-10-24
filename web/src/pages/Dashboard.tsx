@@ -16,6 +16,7 @@ import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import { useDashboardSelection } from '@/hooks/use-dashboard-selection'
 import { useDevReload } from '@/hooks/use-dev-reload'
 import { useFreshness } from '@/hooks/use-freshness'
+import { useSelectionSignal } from '@/hooks/use-selection-signal'
 import { useStoredState } from '@/hooks/use-stored-state'
 import { useWidgetActions } from '@/hooks/use-widget-actions'
 import type { DashboardDetail, DashboardInfo, DashboardsResponse, DashboardTab } from '@/lib/api'
@@ -23,7 +24,7 @@ import { moveTabBody } from '@/lib/arrange'
 import { rememberDashboard } from '@/lib/last-dashboard'
 import { dashboardQuery, dashboardsQuery, projectsQuery } from '@/lib/queries'
 import type { ShareContext } from '@/lib/share'
-import { refreshWidget, shownViews } from '@/lib/widget-query'
+import { refreshDashboard } from '@/lib/widget-query'
 
 /** `/dashboards/:id`: one dashboard in the app shell, as a report tab or a page of its own (D36). */
 export default function Dashboard() {
@@ -133,19 +134,20 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
     return body ? move(id, body) : false
   }
 
+  // Refresh all reloads through one stream, with `fresh` (widget-stream.ts);
+  // leaving the selection stops what is still loading.
+  const selectionSignal = useSelectionSignal(paramsFor)
   const refreshAll = () => {
     setRefreshing(true)
     // Each widget refreshes what its card shows, a remote table its current page.
-    const refreshes = freshness.refreshable.flatMap((w) =>
-      shownViews(client, w, paramsFor(w)).map((view) => refreshWidget(client, w, paramsFor(w), view))
-    )
-    void Promise.allSettled(refreshes).finally(() => setRefreshing(false))
+    void refreshDashboard(client, freshness.refreshable, paramsFor, selectionSignal()).finally(() => setRefreshing(false))
   }
 
   // Auto-refresh is the viewer's own choice per dashboard, kept in this
-  // browser and off until turned on. Each reload is an ordinary one: the
-  // interval is at least REPORTING_CACHE_MAX_AGE, so it runs the queries
-  // again rather than being served the answers already on screen.
+  // browser and off until turned on. Each reload is an ordinary one, without
+  // `fresh`: the interval is at least REPORTING_CACHE_MAX_AGE, so it runs the
+  // queries again rather than being served the answers already on screen.
+  // The cards' refetches start together, so they go out as one stream.
   const autoSeconds = list.auto_refresh_seconds ?? 0
   const [autoOn, setAutoOn] = useStoredState(`twillingate.auto_refresh.${dashboard.group_id}`, (v) => (v === true ? true : null))
   useAutoRefresh(autoOn === true && showGrid && !frozen, autoSeconds, () => {

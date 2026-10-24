@@ -11,7 +11,7 @@
 //	native-bench query -src arrow|pqgo -q countries|dau|attrvalues|attrvalues-approx -from YYYY-MM-DD -to YYYY-MM-DD <files...>
 //	native-bench matrix [-out RESULTS.md] <root>
 //	native-bench matrix1b [-out RESULTS.md] [-volumes 100k,1m] <root>
-//	native-bench dashboards -bin app.test -pkg <checkout>/internal/app [-out RESULTS.md] [-volumes 100k,1m] [-engines native,duckdb] [-from <root>] [-before dashboards.json] <root>
+//	native-bench dashboards -bin app.test -pkg <checkout>/internal/app [-out RESULTS.md] [-volumes 100k,1m] [-engines native,duckdb] [-from <root>] [-before dashboards.json] [-cells dir] [-openlog vol=log,...] [-stream-md] <root>
 //	native-bench pass -bin archive.test -pkg <checkout>/internal/archive -src <3f root> [-out RESULTS.md] [-volumes 100k,1m] <root>
 package main
 

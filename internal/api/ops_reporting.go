@@ -371,5 +371,6 @@ func (h *host) registerReporting(r *registrar) {
 	restOnly(r, spec{Name: "preview_widget", Method: "POST", Path: "/api/widgets/preview",
 		Description: "The console editor's Run query: run an unsaved widget's sql with the given project and range, uncached and saving nothing. Answers the rows and, in problem, the first way they do not fit the component; agents call add_widget, which validates."},
 		h.previewWidget)
+	h.registerWidgetStream(r)
 	h.registerWidgetShares(r)
 }

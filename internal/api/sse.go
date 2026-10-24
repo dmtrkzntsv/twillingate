@@ -1,0 +1,151 @@
+package api
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+)
+
+// sseKeepalive is how often a Server-Sent Events stream sends a keepalive
+// comment, so a proxy or a browser does not take a quiet stream for a dead
+// connection.
+const sseKeepalive = 15 * time.Second
+
+// sseWriteTimeout is how long one write (with its flush) may take: a
+// client that stops reading fails the write then, which ends the stream,
+// rather than holding its handler forever.
+const sseWriteTimeout = 30 * time.Second
+
+// errSSEClosed is what a write answers once the stream is over: the client
+// went away, or an earlier write failed.
+var errSSEClosed = errors.New("api: event stream closed")
+
+// sseWriter writes one Server-Sent Events response: named events with JSON
+// data, each flushed as it is written, and keepalive comments. Writes are
+// serialised, so the keepalive loop and the handler may both write. It
+// knows nothing of what the events carry.
+type sseWriter struct {
+	w      http.ResponseWriter
+	rc     *http.ResponseController
+	ctx    context.Context
+	cancel context.CancelFunc
+
+	mu      sync.Mutex
+	closed  bool
+	timeout time.Duration // each write's deadline (sseWriteTimeout)
+}
+
+// newSSE starts an event stream on w: the headers (text/event-stream, no
+// caching, no proxy buffering) and a 200 flushed at once. The server's
+// write timeout, which would cut a long stream, is replaced by a deadline
+// of sseWriteTimeout for each write: the stream lasts as long as its
+// handler wants, while its client reads. It fails when the response
+// cannot be flushed.
+func newSSE(w http.ResponseWriter, r *http.Request) (*sseWriter, error) {
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Now().Add(sseWriteTimeout))
+	hd := w.Header()
+	hd.Set("Content-Type", "text/event-stream")
+	hd.Set("Cache-Control", "no-cache")
+	hd.Set("X-Accel-Buffering", "no") // nginx: do not buffer this response
+	w.WriteHeader(http.StatusOK)
+	if err := rc.Flush(); err != nil {
+		return nil, fmt.Errorf("api: event stream: %w", err)
+	}
+	_ = rc.SetWriteDeadline(time.Time{})
+	ctx, cancel := context.WithCancel(r.Context())
+	return &sseWriter{w: w, rc: rc, ctx: ctx, cancel: cancel, timeout: sseWriteTimeout}, nil
+}
+
+// Done is closed once the stream is over: the client went away, a write
+// failed, or Close was called.
+func (s *sseWriter) Done() <-chan struct{} { return s.ctx.Done() }
+
+// Close ends the stream's keepalive loop; nothing more is written.
+func (s *sseWriter) Close() {
+	s.mu.Lock()
+	s.closed = true
+	s.mu.Unlock()
+	s.cancel()
+}
+
+// Event writes one event, `event: name` and `data: ` data as JSON, and
+// flushes it. A value that does not marshal is refused before anything is
+// written, so the stream stays whole, as is a name with a line break in
+// it, which would end the event early; a failed write answers errSSEClosed
+// and ends the stream.
+func (s *sseWriter) Event(name string, data any) error {
+	if strings.ContainsAny(name, "\r\n") {
+		return fmt.Errorf("api: event name %q has a line break", name)
+	}
+	b, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	msg := make([]byte, 0, len("event: \ndata: \n\n")+len(name)+len(b))
+	msg = append(msg, "event: "...)
+	msg = append(msg, name...)
+	msg = append(msg, "\ndata: "...)
+	msg = append(msg, b...)
+	msg = append(msg, '\n', '\n')
+	return s.write(msg)
+}
+
+// Comment writes `: text`, which a client skips.
+func (s *sseWriter) Comment(text string) error {
+	return s.write([]byte(": " + text + "\n\n"))
+}
+
+func (s *sseWriter) write(b []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.ctx.Err() != nil {
+		return errSSEClosed
+	}
+	// A deadline for this write alone (not supported: none), cleared
+	// after it, so a quiet stream between writes is not cut.
+	_ = s.rc.SetWriteDeadline(time.Now().Add(s.timeout))
+	if _, err := s.w.Write(b); err != nil {
+		s.fail()
+		return errSSEClosed
+	}
+	if err := s.rc.Flush(); err != nil {
+		s.fail()
+		return errSSEClosed
+	}
+	_ = s.rc.SetWriteDeadline(time.Time{})
+	return nil
+}
+
+func (s *sseWriter) fail() {
+	s.closed = true
+	s.cancel()
+}
+
+// Keepalive writes `: keepalive` every interval (sseKeepalive when it is
+// not positive) until the stream is over. It returns at once; the loop
+// runs until Done.
+func (s *sseWriter) Keepalive(every time.Duration) {
+	if every <= 0 {
+		every = sseKeepalive
+	}
+	go func() {
+		tick := time.NewTicker(every)
+		defer tick.Stop()
+		for {
+			select {
+			case <-s.ctx.Done():
+				return
+			case <-tick.C:
+				if s.Comment("keepalive") != nil {
+					return
+				}
+			}
+		}
+	}()
+}
