@@ -19,6 +19,18 @@ const contract: Contract = {
 }
 
 describe('toRecords', () => {
+  it('keeps a column that may be a number or a day as strings', () => {
+    const mixed: Contract = {
+      ...contract,
+      inputs: { open: false, columns: [{ name: 'x', types: ['day', 'text', 'number'] }, { name: 'y', types: ['number'] }] },
+    }
+    const data: SqlData = { columns: ['x', 'y'], rows: [['2026-01-01', '1'], ['3', '2']], truncated: false }
+    expect(toRecords(data, mixed)).toEqual([
+      { x: '2026-01-01', y: 1 },
+      { x: '3', y: 2 },
+    ])
+  })
+
   it('parses declared number columns and nulls out empty strings', () => {
     const data: SqlData = {
       columns: ['x', 'y'],

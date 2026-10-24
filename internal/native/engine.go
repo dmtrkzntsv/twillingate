@@ -43,8 +43,12 @@ type Options struct {
 	// admitted add then (their sets and per-day keys) may take it to twice
 	// MaxBytes, past which it is refused with ErrTooLarge too. Merging the
 	// workers' partials holds the per-day keys and the histograms twice
-	// for a moment, uncounted.
+	// for a moment, uncounted. A retention query charges its per-actor
+	// state and is refused with ErrTooLarge past MaxBytes.
 	MaxBytes int64
+	// Now is the clock (default time.Now): its UTC day is today, which a
+	// retention query counts up to, leaving it out.
+	Now func() time.Time
 }
 
 // Engine answers structured queries over the event files of Dir.
@@ -59,6 +63,9 @@ type Engine struct {
 	colFiles map[string]fileCols // each Parquet file's columns, by path
 
 	idCache identityCache // each project's identities, up to MaxBytes of them
+	retMemo retentionMemo // recent retention tallies, so a dashboard's widgets scan once
+
+	now func() time.Time
 }
 
 // New returns an engine over o.Dir.
@@ -75,8 +82,28 @@ func New(o Options) *Engine {
 	if o.MaxBytes <= 0 {
 		o.MaxBytes = 128 << 20
 	}
+	if o.Now == nil {
+		o.Now = time.Now
+	}
 	return &Engine{dir: o.Dir, workers: o.Workers, maxGroups: o.MaxGroups, maxBytes: o.MaxBytes, sem: make(chan struct{}, o.MaxScans),
-		logKeys: archive.NewKeyScanner(), idCache: identityCache{max: o.MaxBytes}}
+		logKeys: archive.NewKeyScanner(), idCache: identityCache{max: o.MaxBytes}, now: o.Now}
+}
+
+// today is the clock's UTC day.
+func (e *Engine) today() civil.Date { return civil.DateOf(e.now()) }
+
+// charge is a fresh budget of MaxBytes: each call adds n bytes (n < 0
+// gives them back) and, once past MaxBytes, refuses with ErrTooLarge. It
+// is safe from several goroutines at once.
+func (e *Engine) charge() func(n int64) error {
+	m := &memory{max: e.maxBytes}
+	return func(n int64) error {
+		m.add(n)
+		if n > 0 && m.over() {
+			return fmt.Errorf("%w (about %d MiB counted, %d MiB allowed)", ErrTooLarge, m.n.Load()>>20, m.max>>20)
+		}
+		return nil
+	}
 }
 
 // Params are what a query runs on: one project, the days From to To.
@@ -140,6 +167,8 @@ var (
 //     dimensions, or with order naming a dimension sorted by it ascending,
 //     ties by the other dimensions; then with other an "Other" row (every
 //     dimension "Other") of the rest, when there is any.
+//   - retention: its output's rows (scan.retention), over the cohorts of
+//     From to To, the days back up to the day before the clock's today.
 //
 // A truncated result (MaxGroups, MaxBytes) leaves the untracked groups
 // out of a breakdown's Other row too, and ranks a trend's tracked series
@@ -227,6 +256,8 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 		return s.stat(ctx, p.From, p.To)
 	case "trend":
 		return s.trend(ctx, p.From, p.To)
+	case "retention":
+		return s.retention(ctx, p.From, p.To)
 	}
 	return s.breakdown(ctx, p.From, p.To)
 }

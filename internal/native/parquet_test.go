@@ -555,3 +555,43 @@ func byteArray(vals ...string) ([]byte, []uint32) {
 	}
 	return data, offs
 }
+
+// parquetGroupsOf leaves out a row group none of whose families is asked
+// for (the measures a retention does not count), and keeps every row of
+// the families asked for.
+func TestParquetGroupsOfFamilies(t *testing.T) {
+	f := seed(t, 1500)
+	month := filepath.Join(f.Dir, "1", "2026-08.parquet")
+	rewrite(t, f, month, 2048) // by family: some groups hold measures alone
+	r := rng(t, "2026-08-01", "2026-08-31")
+	all, err := parquetGroups([]string{month}, "", r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	kept, err := parquetGroupsOf([]string{month}, retentionFamilies, r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(kept) == 0 || len(kept) >= len(all) {
+		t.Fatalf("kept %d of %d groups, want the measures-only ones left out", len(kept), len(all))
+	}
+	count := func(groups []group) map[string]int {
+		n := map[string]int{}
+		for _, b := range readAll(t, groups, 3, []string{"family"}, "", r) {
+			_, fam := b.col("family")
+			for i := range b.N {
+				n[fam.Dict[fam.Idx[i]]]++
+			}
+		}
+		return n
+	}
+	want, got := count(all), count(kept)
+	for _, fam := range retentionFamilies {
+		if got[fam] != want[fam] || want[fam] == 0 {
+			t.Errorf("%s: %d rows kept of %d", fam, got[fam], want[fam])
+		}
+	}
+	if got["measures"] >= want["measures"] {
+		t.Errorf("measures: %d rows kept of %d, want fewer", got["measures"], want["measures"])
+	}
+}

@@ -133,6 +133,20 @@ func (s groupStats) decide(family string, from, to int64) (keep, all bool) {
 	return true, famAll && s.dayOK && s.dayNulls == 0 && s.dayMin >= from && s.dayMax <= to
 }
 
+// mayHold says whether a row group may hold rows of any of families: its
+// family bounds, when it has them, take one of them in.
+func (s groupStats) mayHold(families []string) bool {
+	if !s.famOK {
+		return true
+	}
+	for _, f := range families {
+		if f >= s.famMin && f <= s.famMax {
+			return true
+		}
+	}
+	return false
+}
+
 // filterBatch keeps the rows whose family is family (any, when "") and
 // whose day is in [from, to]; b itself when every row stays.
 func filterBatch(b *Batch, family string, from, to int64) *Batch {

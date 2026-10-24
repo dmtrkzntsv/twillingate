@@ -54,6 +54,39 @@ describe('line', () => {
     )
   })
 
+  it('plots a numeric x to scale, in order', () => {
+    // A retention curve renamed {offset: x, retention: y}, rows out of order.
+    const { container } = renderLine({
+      columns: ['x', 'y'],
+      rows: [
+        ['30', '0.2'],
+        ['0', '1'],
+        ['1', '0.6'],
+        ['7', '0.4'],
+      ],
+      truncated: false,
+    })
+    const ticks = [...container.querySelectorAll('.recharts-xAxis-tick-labels tspan')].map((t) => t.textContent)
+    expect(ticks.length).toBeGreaterThan(1)
+    expect(ticks[0]).toBe('0')
+    expect(ticks[ticks.length - 1]).toBe('30')
+    const values = ticks.map(Number)
+    expect(values.every((v, i) => Number.isInteger(v) && (i === 0 || v > values[i - 1]))).toBe(true)
+  })
+
+  it('keeps days on a category axis when x mixes days and numbers', () => {
+    const { container } = renderLine({
+      columns: ['x', 'y'],
+      rows: [
+        ['2026-01-02', '1'],
+        ['3', '2'],
+      ],
+      truncated: false,
+    })
+    const ticks = [...container.querySelectorAll('.recharts-xAxis-tick-labels tspan')].map((t) => t.textContent)
+    expect(ticks).toEqual(['Jan 2', '3'])
+  })
+
   it('renders nothing broken for an empty result', () => {
     const { container } = renderLine({ columns: ['x', 'y'], rows: [], truncated: false })
     expect(container.firstChild).toBeEmptyDOMElement()
