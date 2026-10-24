@@ -81,13 +81,17 @@ marks a breaking change. Scopes match the tree: `store`, `server`, `jobs`,
 
 Releases are cut by hand with `gh workflow run release.yml` (optional `version`
 input; blank means next patch). Pushing to `main` publishes nothing. Pre-1.0:
-breaking changes bump the minor. The workflow has four jobs: `build` settles
-the version and builds both architectures' static tarballs on one runner
-(`make dist`), then smoke-tests the amd64 binary; `test` (`make check`, then
-the race suite `make test`) and `build docker image` (pushed untagged, by
-digest) run side by side; `build and publish release` waits for all three,
-tags, hands the tarballs to `npx changelogithub`, then tags the image with the
-version and `latest`. A failure anywhere publishes nothing. Several commits
+breaking changes bump the minor. The workflow has five jobs: `version`
+settles the tag (the input, or the next patch) and refuses a malformed or
+existing one; then three run side by side: `build` cross-compiles both
+architectures' static tarballs on one runner (`make dist`), checks them
+static and smoke-tests the amd64 binary, `test` runs `make check`, then the
+race suite `make test`, and `image` (`build docker image`) pushes the
+multi-arch image untagged, by digest; `release` (`build and publish
+release`) waits for all four, tags, hands the tarballs and their checksums
+to `npx changelogithub`, then tags the image with the version and `latest`.
+A failure anywhere publishes nothing, and a `dry_run` dispatch stops before
+`release`. Several commits
 can ship under one version; notes are not hand-edited.
 
 ## Checks

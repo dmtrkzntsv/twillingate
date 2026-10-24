@@ -17,7 +17,7 @@ widgets at `/share/`) — and its whole state is one SQLite file.
 
 Linux on amd64 or arm64, or Docker on amd64 or arm64. The binary is
 static (pure Go, no cgo), so any Linux distribution runs it, whatever its C
-library. 32-bit ARM is not built. Plan on 1 GB
+library; `install.sh` sets it up as a systemd service, so it needs systemd. 32-bit ARM is not built. Plan on 1 GB
 of memory: the server stays small, near its soft memory target
 (`GOMEMLIMIT`, which the unit and compose files set to 256MiB). SQL runs
 on an [external SQL engine](#external-sql-engine), a process of its own
