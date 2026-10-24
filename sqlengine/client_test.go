@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
@@ -268,5 +269,21 @@ func TestTimeoutWithoutJSONBody(t *testing.T) {
 	var e *Error
 	if !errors.As(err, &e) || e.Status != 504 || e.Kind != KindTimeout || e.Message != "gateway timeout" {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// TestResponseTooLarge: an answer past the cap is not read to its end and
+// fails with ErrTooLarge, not as an unreachable engine.
+func TestResponseTooLarge(t *testing.T) {
+	c := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"columns":["v"],"rows":[["` + strings.Repeat("x", 2048) + `"]],"truncated":false}`))
+	}))
+	c.maxBody = 1024
+	if _, err := c.Query(context.Background(), Request{SQL: "x"}); !errors.Is(err, ErrTooLarge) || errors.Is(err, ErrUnavailable) {
+		t.Errorf("err = %v, want ErrTooLarge", err)
+	}
+	c.maxBody = 4096
+	if res, err := c.Query(context.Background(), Request{SQL: "x"}); err != nil || len(res.Rows) != 1 {
+		t.Errorf("under the cap: %+v, %v", res, err)
 	}
 }

@@ -394,8 +394,8 @@ var sqliteTable = regexp.MustCompile(`(?i)Table with name (v_|raw_|agg_)\w* does
 
 // sqlError turns a failed query on the engine into a message a model can
 // act on (raw-first D21), by the engine's kind: the timeout (the engine's
-// or ctx's), memory, a busy engine, a lost worker and files stale on
-// every attempt with what to change,
+// or ctx's), memory, a busy engine, a lost worker, files stale on every
+// attempt and an answer past the client's cap with what to change,
 // a refusal with what the SQL read, the engine's own message on the SQL
 // as it is. An engine that failed or could not be reached reads as such,
 // its cause logged; a caller that went away keeps its own error.
@@ -430,6 +430,8 @@ func (h *host) sqlError(ctx context.Context, err error) error {
 		return invalidf("%s", enginesql.Busy)
 	case isKind(sqlengine.KindStale):
 		return invalidf("%s", enginesql.Stale)
+	case errors.Is(err, sqlengine.ErrTooLarge):
+		return invalidf("%s", enginesql.TooLarge)
 	case errors.As(err, &se), errors.Is(err, sqlengine.ErrUnavailable):
 		h.logger.Warn("the SQL engine failed", "error", err.Error())
 		return invalidf("%s", enginesql.EngineFailed)

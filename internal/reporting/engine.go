@@ -128,11 +128,12 @@ func (e *sqlEngine) sampleProject(ctx context.Context) (int64, error) {
 // the engine refused (it read past the seven tables) says what it read,
 // the timeout names its environment variable, running out of memory says
 // what to change, and the engine's own message on the SQL passes
-// through, with the hint when it names SQLite's. The timeout (the
-// engine's or ctx's), running out of memory, a busy engine, a worker that
-// died, files that went stale on every attempt and an engine that failed
-// or could not be reached are a resourceErr: refused all the same, but no
-// verdict on the SQL. A caller
+// through, with the hint when it names SQLite's; an answer past the
+// client's cap says to return less. The timeout (the engine's or ctx's),
+// running out of memory, a busy engine, a worker that died, files that
+// went stale on every attempt and an engine that failed or could not be
+// reached are a resourceErr: refused all the same, but no verdict on the
+// SQL. A caller
 // that went away keeps its own error. api's sqlError is the query tool's
 // own wording of the same.
 func (e *sqlEngine) err(ctx context.Context, err error) error {
@@ -163,6 +164,8 @@ func (e *sqlEngine) err(ctx context.Context, err error) error {
 		return resource(enginesql.Busy, err)
 	case isKind(sqlengine.KindStale):
 		return resource(enginesql.Stale, err)
+	case errors.Is(err, sqlengine.ErrTooLarge):
+		return store.Refuse(store.ErrInvalid, "%s", enginesql.TooLarge)
 	case errors.As(err, &se), errors.Is(err, sqlengine.ErrUnavailable):
 		return resource(enginesql.EngineFailed, err)
 	}

@@ -25,6 +25,8 @@ const (
 	// Stale follows an engine that found a file of the table spec gone on
 	// every attempt: the daily pass was moving the files under the query.
 	Stale = "the event files changed under the query on every attempt (the daily pass dumps and merges them); retry in a moment"
+	// TooLarge follows an answer past the SQL engine client's 256 MiB cap.
+	TooLarge = "the SQL engine's answer is larger than 256 MiB; return fewer rows or columns, or aggregate"
 	// EngineFailed follows an engine that could not be reached or failed
 	// with no word on the SQL: down, restarting, or broken.
 	EngineFailed = "the SQL engine failed (SQL_ENGINE_SOCKET); retry, and if it goes on, check the engine"

@@ -114,6 +114,7 @@ func TestQueryFilesSourceErrors(t *testing.T) {
 		{"child died", kind(sqlengine.KindExited, "engine: child exited"), []string{"stopped", "ENGINE_MEMORY_LIMIT"}},
 		{"busy", kind(sqlengine.KindBusy, "no free slot; retry later"), []string{"busy", "retry"}},
 		{"stale", kind(sqlengine.KindStale, "a file in the table spec is gone"), []string{"changed under the query", "retry"}},
+		{"too large", sqlengine.ErrTooLarge, []string{"larger than 256 MiB", "fewer rows"}},
 		{"internal", kind(sqlengine.KindInternal, "spawn failed"), []string{"SQL engine failed", "SQL_ENGINE_SOCKET"}},
 		{"unavailable", fmt.Errorf("%w: dial unix: connection refused", sqlengine.ErrUnavailable), []string{"SQL engine failed"}},
 		{"sql", kind(sqlengine.KindSQL, `Binder Error: Referenced column "nope" not found`), []string{"DuckDB", `"nope"`}},

@@ -22,6 +22,15 @@ const TimeoutHeader = "X-Timeout-Ms"
 // with errors.Is.
 var ErrUnavailable = errors.New("sqlengine: engine unavailable")
 
+// MaxResponse is the largest answer a Client reads, in bytes: far past
+// any page or capped result, so only a runaway answer (a mode rows query
+// with max_rows 0 over a whole table) reaches it.
+const MaxResponse = 256 << 20
+
+// ErrTooLarge marks an answer longer than MaxResponse, which the Client
+// stops reading. Match it with errors.Is.
+var ErrTooLarge = errors.New("sqlengine: the engine's answer is larger than 256 MiB")
+
 // Error is a non-2xx answer from the engine.
 type Error struct {
 	Status     int
@@ -36,7 +45,8 @@ func (e *Error) Error() string {
 
 // Client talks to one engine over its Unix socket.
 type Client struct {
-	hc *http.Client
+	hc      *http.Client
+	maxBody int64 // MaxResponse; a test lowers it
 }
 
 // Dial returns a Client for the engine listening on socket. It does not
@@ -48,7 +58,7 @@ func Dial(socket string) *Client {
 			return d.DialContext(ctx, "unix", socket)
 		},
 	}
-	return &Client{hc: &http.Client{Transport: tr}}
+	return &Client{hc: &http.Client{Transport: tr}, maxBody: MaxResponse}
 }
 
 // Close drops the idle connections.
@@ -112,9 +122,12 @@ func (c *Client) do(ctx context.Context, method, path string, payload []byte) ([
 		return nil, transportErr(ctx, err)
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	data, err := io.ReadAll(io.LimitReader(resp.Body, c.maxBody+1))
 	if err != nil {
 		return nil, transportErr(ctx, err)
+	}
+	if int64(len(data)) > c.maxBody {
+		return nil, ErrTooLarge
 	}
 	if resp.StatusCode/100 == 2 {
 		return data, nil
