@@ -66,8 +66,10 @@ type boundSQL struct {
 
 // ask answers q in mode on the engine, at most maxRows rows (0: all), page
 // being the page of modes page and count. The table spec names the files
-// of q's project (every project's when unscoped) with its rules. An error
-// is classified by e.err.
+// of q's project (every project's when unscoped) with its rules; an
+// engine that finds one of them gone (the daily pass moved it) gets a
+// fresh spec, within the timeout (sqlengine.QueryFresh). An error is
+// classified by e.err.
 func (e *sqlEngine) ask(ctx context.Context, q boundSQL, mode sqlengine.Mode, maxRows int, page *sqlengine.Page) (sqlengine.Result, error) {
 	if e == nil {
 		return sqlengine.Result{}, ErrSQLEngine
@@ -82,17 +84,21 @@ func (e *sqlEngine) ask(ctx context.Context, q boundSQL, mode sqlengine.Mode, ma
 	if e.rules != nil {
 		rules = e.rules(ctx, project)
 	}
-	tables, err := archive.TableSpec(e.dir, projects, rules)
-	if err != nil {
-		return sqlengine.Result{}, err
-	}
 	if e.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, e.timeout)
 		defer cancel()
 	}
-	res, err := e.client.Query(ctx, sqlengine.Request{SQL: q.sql, Args: q.args, MaxRows: maxRows, Mode: mode,
-		Page: page, Scope: q.scope, Confine: q.confine, Tables: tables})
+	var specErr error
+	res, err := sqlengine.QueryFresh(ctx, e.client, sqlengine.Request{SQL: q.sql, Args: q.args, MaxRows: maxRows, Mode: mode,
+		Page: page, Scope: q.scope, Confine: q.confine}, func() (sqlengine.Tables, error) {
+		t, err := archive.TableSpec(e.dir, projects, rules)
+		specErr = err
+		return t, err
+	})
+	if specErr != nil {
+		return sqlengine.Result{}, specErr
+	}
 	if err != nil {
 		return sqlengine.Result{}, e.err(ctx, err)
 	}
@@ -124,8 +130,9 @@ func (e *sqlEngine) sampleProject(ctx context.Context) (int64, error) {
 // what to change, and the engine's own message on the SQL passes
 // through, with the hint when it names SQLite's. The timeout (the
 // engine's or ctx's), running out of memory, a busy engine, a worker that
-// died and an engine that failed or could not be reached are a
-// resourceErr: refused all the same, but no verdict on the SQL. A caller
+// died, files that went stale on every attempt and an engine that failed
+// or could not be reached are a resourceErr: refused all the same, but no
+// verdict on the SQL. A caller
 // that went away keeps its own error. api's sqlError is the query tool's
 // own wording of the same.
 func (e *sqlEngine) err(ctx context.Context, err error) error {
@@ -154,6 +161,8 @@ func (e *sqlEngine) err(ctx context.Context, err error) error {
 		return resource(enginesql.ChildExited, err)
 	case isKind(sqlengine.KindBusy):
 		return resource(enginesql.Busy, err)
+	case isKind(sqlengine.KindStale):
+		return resource(enginesql.Stale, err)
 	case errors.As(err, &se), errors.Is(err, sqlengine.ErrUnavailable):
 		return resource(enginesql.EngineFailed, err)
 	}

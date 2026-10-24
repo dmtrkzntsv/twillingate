@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
@@ -193,5 +194,64 @@ func TestStreamCancelReachesTheEngine(t *testing.T) {
 	}
 	if eng.Cancelled() == 0 {
 		t.Error("the engine never saw the query cancelled")
+	}
+}
+
+// vanishing deletes the first log or Parquet file of the spec it is sent,
+// before it passes the first query on (the daily pass removing a file
+// between the spec and the engine's read), and with always, answers
+// stale every time without passing any on.
+type vanishing struct {
+	SQL
+	dir     string
+	always  bool
+	specs   []sqlengine.Tables
+	deleted string
+}
+
+func (v *vanishing) Query(ctx context.Context, req sqlengine.Request) (sqlengine.Result, error) {
+	v.specs = append(v.specs, req.Tables)
+	if v.always {
+		return sqlengine.Result{}, &sqlengine.Error{Status: 409, Kind: sqlengine.KindStale, Message: "a file in the table spec is gone"}
+	}
+	if v.deleted == "" {
+		for _, p := range req.Tables.Projects {
+			if files := append(slices.Clone(p.Logs), p.Parquet...); len(files) > 0 {
+				v.deleted = files[0]
+				if err := os.Remove(filepath.Join(v.dir, filepath.FromSlash(v.deleted))); err != nil {
+					return sqlengine.Result{}, err
+				}
+				break
+			}
+		}
+	}
+	return v.SQL.Query(ctx, req)
+}
+
+// TestStaleSpecRetried: a file removed between the table spec and the
+// engine's read answers stale, and the widget's query goes again with a
+// fresh spec, without that file; a spec stale on every attempt is given
+// up after sqlengine.StaleAttempts, with advice and no verdict on the SQL.
+func TestStaleSpecRetried(t *testing.T) {
+	f := newTestFiles(t)
+	f.Write(t, event(t, "e1", 1, store.FamilyViews, "pageview", "2026-10-01"), event(t, "e2", 1, store.FamilyViews, "pageview", "2026-10-02"))
+	v := &vanishing{SQL: f, dir: f.Dir}
+	s := &sqlSource{eng: newSQLEngine(v, f.options(Options{}))}
+	res, err := s.Load(context.Background(), "SELECT count(*) AS n FROM views WHERE project_id = :project", Params{ProjectID: 1})
+	if rows, ok := res.(readsql.Result); err != nil || !ok || len(rows.Rows) != 1 {
+		t.Fatalf("after a stale spec: %+v, %v; want the retry's answer", res, err)
+	}
+	if v.deleted == "" || len(v.specs) != 2 || slices.ContainsFunc(v.specs[1].Projects, func(p sqlengine.Project) bool {
+		return slices.Contains(p.Logs, v.deleted) || slices.Contains(p.Parquet, v.deleted)
+	}) {
+		t.Errorf("deleted %q, sent %d specs; want a second without it", v.deleted, len(v.specs))
+	}
+
+	always := &vanishing{SQL: f, dir: f.Dir, always: true}
+	s = &sqlSource{eng: newSQLEngine(always, f.options(Options{}))}
+	_, err = s.Load(context.Background(), "SELECT 1 AS n", Params{})
+	wantRefusal(t, err, store.ErrInvalid, enginesql.Stale)
+	if resourceCause(err) == nil || len(always.specs) != sqlengine.StaleAttempts {
+		t.Errorf("always stale: %d attempts, cause %v; want %d and a resource failure", len(always.specs), resourceCause(err), sqlengine.StaleAttempts)
 	}
 }

@@ -107,7 +107,7 @@ func TestQueryErrors(t *testing.T) {
 		kind   Kind
 		status int
 	}{
-		{KindRefused, 400}, {KindSQL, 400},
+		{KindRefused, 400}, {KindSQL, 400}, {KindStale, 409},
 		{KindOutOfMemory, 500}, {KindOutOfMemoryLoadingLog, 500}, {KindInternal, 500},
 		{KindBusy, 503}, {KindTimeout, 504}, {KindExited, 500},
 	}

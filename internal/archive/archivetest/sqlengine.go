@@ -255,6 +255,8 @@ func pageOf(p sqlengine.Page) readsql.Page {
 // tell them apart today:
 //   - the deadline (X-Timeout-Ms) passed: timeout;
 //   - the caller went away: internal (nobody reads the answer);
+//   - a file the spec names that is gone, before or while it is read
+//     (archive.Vanished): stale, so the caller sends a fresh spec;
 //   - running out of memory loading the open logs:
 //     out_of_memory_loading_logs; running out of memory otherwise:
 //     out_of_memory;
@@ -273,6 +275,8 @@ func errorOf(ctx context.Context, err error) (sqlengine.Kind, string) {
 		return sqlengine.KindTimeout, "the query exceeded " + sqlengine.TimeoutHeader
 	case ctx.Err() != nil && errors.Is(err, context.Canceled):
 		return sqlengine.KindInternal, err.Error()
+	case archive.Vanished(err):
+		return sqlengine.KindStale, "a file in the table spec is gone: " + err.Error()
 	case errors.Is(err, archive.ErrLoadingLogs) && errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
 		return sqlengine.KindOutOfMemoryLoadingLog, qe.Msg
 	case errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):

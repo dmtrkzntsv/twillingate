@@ -352,7 +352,9 @@ func nativeError(err error) error {
 // registry's rules. The engine runs one read-only SELECT and reaches no
 // file outside the table spec (raw-first D21); confine keeps it on the
 // seven tables, where the rules apply (D6), and off raw/'s files
-// themselves, as widget SQL is (#192): always set from the tool.
+// themselves, as widget SQL is (#192): always set from the tool. An
+// engine that finds a file of the spec gone (the daily pass moved it)
+// gets a fresh spec, within the timeout (sqlengine.QueryFresh).
 func (h *host) runSQL(ctx context.Context, sql string) (tableOut, error) {
 	h.logger.Debug("mcp query", "source", "files", "sql", sql) // debug only, never info (spec §8)
 	if h.sql == nil {
@@ -361,12 +363,17 @@ func (h *host) runSQL(ctx context.Context, sql string) (tableOut, error) {
 	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
 	events, attrs := h.reg.Snapshot(ctx).RuleLists()
-	tables, err := archive.TableSpec(h.eventsDir, nil, archive.Rules{Events: events, Attributes: attrs})
-	if err != nil {
-		return tableOut{}, err
+	rules := archive.Rules{Events: events, Attributes: attrs}
+	var specErr error
+	res, err := sqlengine.QueryFresh(ctx, h.sql, sqlengine.Request{SQL: sql, Args: map[string]string{}, MaxRows: h.queryRows,
+		Mode: sqlengine.ModeRows, Confine: true}, func() (sqlengine.Tables, error) {
+		t, err := archive.TableSpec(h.eventsDir, nil, rules)
+		specErr = err
+		return t, err
+	})
+	if specErr != nil {
+		return tableOut{}, specErr
 	}
-	res, err := h.sql.Query(ctx, sqlengine.Request{SQL: sql, Args: map[string]string{}, MaxRows: h.queryRows,
-		Mode: sqlengine.ModeRows, Confine: true, Tables: tables})
 	if err != nil {
 		return tableOut{}, h.sqlError(ctx, err)
 	}
@@ -387,7 +394,8 @@ var sqliteTable = regexp.MustCompile(`(?i)Table with name (v_|raw_|agg_)\w* does
 
 // sqlError turns a failed query on the engine into a message a model can
 // act on (raw-first D21), by the engine's kind: the timeout (the engine's
-// or ctx's), memory, a busy engine and a lost worker with what to change,
+// or ctx's), memory, a busy engine, a lost worker and files stale on
+// every attempt with what to change,
 // a refusal with what the SQL read, the engine's own message on the SQL
 // as it is. An engine that failed or could not be reached reads as such,
 // its cause logged; a caller that went away keeps its own error.
@@ -420,6 +428,8 @@ func (h *host) sqlError(ctx context.Context, err error) error {
 		return invalidf("%s", enginesql.ChildExited)
 	case isKind(sqlengine.KindBusy):
 		return invalidf("%s", enginesql.Busy)
+	case isKind(sqlengine.KindStale):
+		return invalidf("%s", enginesql.Stale)
 	case errors.As(err, &se), errors.Is(err, sqlengine.ErrUnavailable):
 		h.logger.Warn("the SQL engine failed", "error", err.Error())
 		return invalidf("%s", enginesql.EngineFailed)

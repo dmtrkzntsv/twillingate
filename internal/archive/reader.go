@@ -147,8 +147,8 @@ func (r *Reader) QueryScoped(ctx context.Context, q Scoped, rules Rules) (engine
 // engine's request, whose table spec (ResolveTables) names the files. The
 // tables are rebuilt whenever files or rules differ from what they were
 // built from, as QueryScoped rebuilds them. A file that vanished fails the
-// query at once: the list is the caller's, so a retry would read the same
-// one. A child replaced in between is retried as QueryScoped retries it.
+// query at once (Vanished): the list is the caller's, so a retry would
+// read the same one. A child replaced in between is retried as QueryScoped retries it.
 func (r *Reader) QueryFiles(ctx context.Context, q Scoped, files map[int64]Files, rules Rules) (engine.Result, error) {
 	return r.query(ctx, q, rules, func() (map[int64]Files, error) { return files, nil }, false)
 }
@@ -159,7 +159,7 @@ func (r *Reader) query(ctx context.Context, q Scoped, rules Rules, list func() (
 	backoff := retryBackoff
 	for attempt := 1; ; attempt++ {
 		res, err := r.queryScoped(ctx, q, rules, list)
-		if err == nil || !(relist && vanished(err) || lostTables(err)) || attempt == maxAttempts {
+		if err == nil || !(relist && Vanished(err) || lostTables(err)) || attempt == maxAttempts {
 			return res, err
 		}
 		select {
@@ -253,8 +253,11 @@ func lostTables(err error) bool {
 	return errors.As(err, &qe) && missingTable.MatchString(qe.Msg)
 }
 
-// vanished reports an error naming a file that is gone.
-func vanished(err error) bool {
+// Vanished reports an error naming a file that is gone: one QueryFiles
+// met because a file its caller listed was removed before the engine read
+// it. An engine answers it stale (sqlengine.KindStale), so its caller
+// lists the files afresh.
+func Vanished(err error) bool {
 	if errors.Is(err, os.ErrNotExist) {
 		return true
 	}

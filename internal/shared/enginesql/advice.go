@@ -22,6 +22,9 @@ const (
 	// Busy follows an engine that answered busy: every slot it runs
 	// queries in was taken.
 	Busy = "the SQL engine is busy: all of its slots are running other queries; retry in a moment"
+	// Stale follows an engine that found a file of the table spec gone on
+	// every attempt: the daily pass was moving the files under the query.
+	Stale = "the event files changed under the query on every attempt (the daily pass dumps and merges them); retry in a moment"
 	// EngineFailed follows an engine that could not be reached or failed
 	// with no word on the SQL: down, restarting, or broken.
 	EngineFailed = "the SQL engine failed (SQL_ENGINE_SOCKET); retry, and if it goes on, check the engine"

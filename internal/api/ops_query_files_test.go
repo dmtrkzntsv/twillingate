@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -111,6 +113,7 @@ func TestQueryFilesSourceErrors(t *testing.T) {
 			[]string{"open logs", "ENGINE_MEMORY_LIMIT", "raise"}},
 		{"child died", kind(sqlengine.KindExited, "engine: child exited"), []string{"stopped", "ENGINE_MEMORY_LIMIT"}},
 		{"busy", kind(sqlengine.KindBusy, "no free slot; retry later"), []string{"busy", "retry"}},
+		{"stale", kind(sqlengine.KindStale, "a file in the table spec is gone"), []string{"changed under the query", "retry"}},
 		{"internal", kind(sqlengine.KindInternal, "spawn failed"), []string{"SQL engine failed", "SQL_ENGINE_SOCKET"}},
 		{"unavailable", fmt.Errorf("%w: dial unix: connection refused", sqlengine.ErrUnavailable), []string{"SQL engine failed"}},
 		{"sql", kind(sqlengine.KindSQL, `Binder Error: Referenced column "nope" not found`), []string{"DuckDB", `"nope"`}},
@@ -178,5 +181,49 @@ func TestQueryReadsTheFiles(t *testing.T) {
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"code":"invalid"`) ||
 		!strings.Contains(rec.Body.String(), "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)") {
 		t.Errorf("REST without an engine = %d %s, want 400 invalid", rec.Code, rec.Body)
+	}
+}
+
+// vanishing deletes the first Parquet file of the spec it is sent, once,
+// before it passes the query on: the daily pass removing a file between
+// the spec and the engine's read.
+type vanishing struct {
+	SQL
+	dir     string
+	specs   []sqlengine.Tables
+	deleted string
+}
+
+func (v *vanishing) Query(ctx context.Context, req sqlengine.Request) (sqlengine.Result, error) {
+	v.specs = append(v.specs, req.Tables)
+	if v.deleted == "" {
+		for _, p := range req.Tables.Projects {
+			if len(p.Parquet) > 0 {
+				v.deleted = p.Parquet[0]
+				if err := os.Remove(filepath.Join(v.dir, filepath.FromSlash(v.deleted))); err != nil {
+					return sqlengine.Result{}, err
+				}
+				break
+			}
+		}
+	}
+	return v.SQL.Query(ctx, req)
+}
+
+// TestQueryRetriesAStaleSpec: a file the daily pass removed between the
+// table spec and the engine's read answers stale, and query sends a
+// fresh spec, without that file, which the engine answers.
+func TestQueryRetriesAStaleSpec(t *testing.T) {
+	h, cs := newTestHost(t)
+	v := &vanishing{SQL: h.sql, dir: h.eventsDir}
+	h.sql = v
+	res := callTool(t, cs, "query", map[string]any{"sql": "SELECT count(*) AS n FROM events"})
+	if res.IsError {
+		t.Fatalf("error: %s", textOf(res))
+	}
+	if v.deleted == "" || len(v.specs) != 2 || slices.ContainsFunc(v.specs[1].Projects, func(p sqlengine.Project) bool {
+		return slices.Contains(p.Parquet, v.deleted)
+	}) {
+		t.Errorf("deleted %q, sent %d specs; want a second without it", v.deleted, len(v.specs))
 	}
 }

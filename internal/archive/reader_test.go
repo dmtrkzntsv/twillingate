@@ -149,7 +149,7 @@ type cancelling struct {
 
 func (e *cancelling) Query(ctx context.Context, sql string, maxRows int, args ...engine.Arg) (engine.Result, error) {
 	res, err := e.vanishing.Query(ctx, sql, maxRows, args...)
-	if vanished(err) {
+	if Vanished(err) {
 		e.cancel()
 	}
 	return res, err

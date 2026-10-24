@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -262,16 +263,17 @@ func TestSQLEngineRefusesAsTheReader(t *testing.T) {
 		}
 	}
 
-	// A file the spec names that is not there fails at once: the list is
-	// the caller's, so the reader does not retry it.
+	// A file the spec names that is not there fails at once, stale: the
+	// list is the caller's, so the reader does not retry it, and the
+	// caller sends a fresh spec.
 	missing := spec
 	missing.Projects = slices.Clone(spec.Projects)
 	missing.Projects[0].Parquet = append(slices.Clone(spec.Projects[0].Parquet), "1/2020-01.parquet")
 	start := time.Now()
 	_, err = c.Query(ctx, sqlengine.Request{Mode: sqlengine.ModeRows, SQL: "SELECT 1", Tables: missing})
 	var e *sqlengine.Error
-	if !errors.As(err, &e) || e.Status != http.StatusInternalServerError || e.Kind != sqlengine.KindInternal || !strings.Contains(e.Message, "2020-01.parquet") {
-		t.Errorf("a missing file: error = %v, want 500 internal naming it", err)
+	if !errors.As(err, &e) || e.Status != http.StatusConflict || e.Kind != sqlengine.KindStale || !strings.Contains(e.Message, "2020-01.parquet") {
+		t.Errorf("a missing file: error = %v, want 409 stale naming it", err)
 	}
 	if took := time.Since(start); took > 2*time.Second {
 		t.Errorf("a missing file took %s: retried", took)
@@ -397,6 +399,10 @@ func TestErrorKinds(t *testing.T) {
 		{"spawn", bg, engine.ErrSpawn, 500, sqlengine.KindInternal, engine.ErrSpawn.Error()},
 		{"deadline", expired, fmt.Errorf("engine: %w", context.DeadlineExceeded), 504, sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms"},
 		{"caller gone", gone, context.Canceled, 500, sqlengine.KindInternal, "context canceled"},
+		{"file gone", bg, fmt.Errorf("archive: stat: %w", os.ErrNotExist), 409, sqlengine.KindStale,
+			"a file in the table spec is gone: archive: stat: file does not exist"},
+		{"file gone mid-query", bg, &engine.QueryError{Msg: `IO Error: No files found that match the pattern "1/2026-10-12.log"`}, 409, sqlengine.KindStale,
+			`a file in the table spec is gone: IO Error: No files found that match the pattern "1/2026-10-12.log"`},
 	} {
 		kind, msg := errorOf(tc.ctx, tc.err)
 		if kind.Status() != tc.status || kind != tc.kind || msg != tc.msg {

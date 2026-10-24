@@ -45,7 +45,7 @@ func TestFixturesRoundTrip(t *testing.T) {
 	roundTrip(t, "response.json", &Result{})
 	roundTrip(t, "response_page.json", &Result{})
 	roundTrip(t, "response_count.json", &Result{})
-	for _, k := range []Kind{KindRefused, KindSQL, KindOutOfMemory, KindOutOfMemoryLoadingLog, KindBusy, KindTimeout, KindExited, KindInternal} {
+	for _, k := range []Kind{KindRefused, KindSQL, KindOutOfMemory, KindOutOfMemoryLoadingLog, KindStale, KindBusy, KindTimeout, KindExited, KindInternal} {
 		var eb ErrorBody
 		roundTrip(t, "error_"+string(k)+".json", &eb)
 		if eb.Error.Kind != k {
@@ -113,7 +113,7 @@ func TestModeResponseFixtures(t *testing.T) {
 }
 
 func TestKindStatus(t *testing.T) {
-	for k, want := range map[Kind]int{KindRefused: 400, KindSQL: 400, KindBusy: 503, KindTimeout: 504,
+	for k, want := range map[Kind]int{KindRefused: 400, KindSQL: 400, KindStale: 409, KindBusy: 503, KindTimeout: 504,
 		KindOutOfMemory: 500, KindOutOfMemoryLoadingLog: 500, KindExited: 500, KindInternal: 500} {
 		if got := k.Status(); got != want {
 			t.Errorf("%s.Status() = %d, want %d", k, got, want)

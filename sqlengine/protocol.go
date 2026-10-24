@@ -15,8 +15,10 @@
 //     back with no row to carry its counts; matched is 0, not run, when
 //     the offset is 0; testdata/response_count.json.
 //
-// An error is a status and a kind (Kind.Status): 400 refused or sql, 503
-// busy, 504 timeout (X-Timeout-Ms passed), 500 out_of_memory,
+// An error is a status and a kind (Kind.Status): 400 refused or sql, 409
+// stale (a file the table spec names is gone: build the spec afresh and
+// send it again, QueryFresh), 503 busy, 504 timeout (X-Timeout-Ms
+// passed), 500 out_of_memory,
 // out_of_memory_loading_logs, exited (the worker died mid-query) or
 // internal.
 package sqlengine
@@ -165,6 +167,7 @@ const (
 	KindSQL                   Kind = "sql"                        // the SQL failed to parse or run
 	KindOutOfMemory           Kind = "out_of_memory"              // the query exceeded the memory limit
 	KindOutOfMemoryLoadingLog Kind = "out_of_memory_loading_logs" // reading the logs exceeded it
+	KindStale                 Kind = "stale"                      // a file in the table spec is gone; send a fresh spec
 	KindBusy                  Kind = "busy"                       // no free slot; retry later
 	KindTimeout               Kind = "timeout"                    // the X-Timeout-Ms deadline passed
 	KindExited                Kind = "exited"                     // the worker running the query died mid-query
@@ -172,11 +175,14 @@ const (
 )
 
 // Status is the HTTP status an engine answers k with: 400 for refused and
-// sql, 503 (with Retry-After) for busy, 504 for timeout, 500 for the rest.
+// sql, 409 for stale, 503 (with Retry-After) for busy, 504 for timeout,
+// 500 for the rest.
 func (k Kind) Status() int {
 	switch k {
 	case KindRefused, KindSQL:
 		return 400
+	case KindStale:
+		return 409
 	case KindBusy:
 		return 503
 	case KindTimeout:
