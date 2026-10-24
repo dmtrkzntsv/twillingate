@@ -2,7 +2,7 @@ import { QueryClient, QueryObserver } from '@tanstack/react-query'
 import { afterEach, beforeEach, describe, expect, it, vi, type MockInstance } from 'vitest'
 import { ApiError, endpoints, type Widget, type WidgetData, type WidgetDataQuery, type WidgetStreamItem } from './api'
 import { loadDashboard, refreshDashboard, widgetQuery } from './widget-query'
-import { STREAM_MAX } from './widget-stream'
+import { FALLBACK_GETS, STREAM_MAX } from './widget-stream'
 
 function widget(id: number, extra: Partial<Widget> = {}): Widget {
   return {
@@ -142,6 +142,42 @@ describe('loadDashboard', () => {
     await loadDashboard(c, ws.map((w) => ({ widget: w, params })))
     expect(getSpy).toHaveBeenCalledTimes(2)
     expect(c.getQueryData(keyOf(ws[0]))).toEqual(answer(1, { source_type: 'sql' }))
+  })
+
+  it.each([401, 403])('fails every widget with the stream\'s %i, and asks no GET', async (status) => {
+    const refused = new ApiError(status, 'not allowed', 'unauthorized')
+    vi.mocked(endpoints.widgetStream).mockRejectedValueOnce(refused)
+    const c = client()
+    const ws = [widget(1), widget(2)]
+    await loadDashboard(c, ws.map((w) => ({ widget: w, params })))
+    expect(getSpy).not.toHaveBeenCalled()
+    for (const w of ws) expect(c.getQueryState(keyOf(w))?.error).toBe(refused)
+  })
+
+  it(`loads a failed stream's widgets at most ${FALLBACK_GETS} GETs at a time`, async () => {
+    vi.mocked(endpoints.widgetStream).mockRejectedValueOnce(new ApiError(502, 'bad gateway'))
+    let running = 0
+    let most = 0
+    const releases: (() => void)[] = []
+    getSpy.mockImplementation(async (id) => {
+      running++
+      most = Math.max(most, running)
+      await new Promise<void>((r) => releases.push(r))
+      running--
+      return answer(id, { source_type: 'sql' })
+    })
+    const c = client()
+    const ws = Array.from({ length: 20 }, (_, i) => widget(i + 1))
+    const loading = loadDashboard(c, ws.map((w) => ({ widget: w, params })))
+    while (getSpy.mock.calls.length < ws.length) {
+      await vi.waitFor(() => expect(releases.length).toBeGreaterThan(0))
+      expect(running).toBeLessThanOrEqual(FALLBACK_GETS)
+      releases.shift()!()
+    }
+    while (releases.length) releases.shift()!()
+    await loading
+    expect(most).toBe(FALLBACK_GETS)
+    for (const w of ws) expect(c.getQueryData(keyOf(w))).toEqual(answer(w.widget_id, { source_type: 'sql' }))
   })
 
   it('stops on abort: the stream closes, nothing falls back, and a late event lands nowhere', async () => {

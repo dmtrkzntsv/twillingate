@@ -19,6 +19,9 @@ import { readSSE } from './sse'
 /** The most widgets one stream request may carry (the route refuses more). */
 export const STREAM_MAX = 64
 
+/** The most GETs a failed stream's widgets load with at once. */
+export const FALLBACK_GETS = 6
+
 /** One widget's event on the stream: its GET body, or the refusal the GET route would answer. */
 export type StreamAnswer =
   | { widget_id: number; data: WidgetData }
@@ -136,6 +139,7 @@ async function stream(pending: Pending[]): Promise<void> {
   }
   const leaves = pending.map((p) => () => leave(p))
   pending.forEach((p, i) => p.signal?.addEventListener('abort', leaves[i], { once: true }))
+  let failed: unknown
   try {
     await readStream(
       pending.map((p) => p.item),
@@ -147,14 +151,32 @@ async function stream(pending: Pending[]): Promise<void> {
         else settle(p, () => p.reject(streamError(answer.error)))
       }
     )
-  } catch {
+  } catch (error) {
     // The stream failed: what it left unanswered loads on its own, below.
+    failed = error
   } finally {
     // The stream is over; a widget left to its own GET below is cancelled by its query.
     pending.forEach((p, i) => p.signal?.removeEventListener('abort', leaves[i]))
   }
   if (controller.signal.aborted) return
-  for (const p of pending) if (!p.settled) void get(p)
+  const left = pending.filter((p) => !p.settled)
+  // Signed out or not allowed: each GET would be refused the same way, so
+  // the widgets fail with the stream's error, for the app's sign-in
+  // handling to take over.
+  if (failed instanceof ApiError && (failed.status === 401 || failed.status === 403)) {
+    for (const p of left) settle(p, () => p.reject(failed))
+    return
+  }
+  await getAll(left, FALLBACK_GETS)
+}
+
+/** Loads each of pending on its own GET, at most `limit` at once. */
+async function getAll(pending: Pending[], limit: number): Promise<void> {
+  let next = 0
+  const worker = async () => {
+    while (next < pending.length) await get(pending[next++])
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, pending.length) }, worker))
 }
 
 /** The part of a widget's query a stream takes: its selection, never a remote table's view. */
