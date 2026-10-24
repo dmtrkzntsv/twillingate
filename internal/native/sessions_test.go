@@ -134,12 +134,12 @@ func sessionsFixture(t testing.TB) *archivetest.Files {
 	return f
 }
 
-// sessionColumnList is the sessions table's columns, comma-separated, for
-// the DuckDB side.
+// sessionColumnList is the sessions table's columns, comma-separated, as
+// the goldens' SQL keys name them.
 var sessionColumnList = `"` + strings.Join(sessionColumns, `", "`) + `"`
 
 // sessionRows reads project's sessions of [from, to] with every column,
-// formatted as DuckDB's rows come back (a timestamp in RFC 3339), sorted.
+// formatted as the goldens hold them (a timestamp in RFC 3339), sorted.
 func sessionRows(t *testing.T, e *Engine, project int64, from, to string) [][]string {
 	t.Helper()
 	var mu sync.Mutex
@@ -193,7 +193,7 @@ func sortRows(rows [][]string) {
 	slices.SortFunc(rows, func(a, b []string) int { return slices.Compare(a, b) })
 }
 
-func TestSessionsRowsMatchDuckDB(t *testing.T) {
+func TestSessionsRowsMatchGolden(t *testing.T) {
 	f := sessionsFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	for _, c := range []struct{ name, from, to string }{
@@ -236,10 +236,10 @@ func TestSessionsRowsMatchDuckDB(t *testing.T) {
 	}
 }
 
-// TestSessionsStaleMonthMatchesDuckDB: a month's session file older than
+// TestSessionsStaleMonthMatchesGolden: a month's session file older than
 // its events file (the month merged again after it was derived) is stale,
 // so the month is derived from its events, alone or beside the next one.
-func TestSessionsStaleMonthMatchesDuckDB(t *testing.T) {
+func TestSessionsStaleMonthMatchesGolden(t *testing.T) {
 	f := sessionsFixture(t)
 	pdir := filepath.Join(f.Dir, strconv.Itoa(sessionsProject))
 	later := time.Now().Add(time.Hour)
@@ -273,7 +273,7 @@ func TestSessionsStaleMonthMatchesDuckDB(t *testing.T) {
 	}
 }
 
-func TestSessionsQueriesMatchDuckDB(t *testing.T) {
+func TestSessionsQueriesMatchGolden(t *testing.T) {
 	f := sessionsFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 2})
 	const from, to = "2026-08-29", today

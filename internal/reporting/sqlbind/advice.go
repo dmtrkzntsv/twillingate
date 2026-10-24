@@ -1,8 +1,7 @@
-package enginesql
+package sqlbind
 
 import (
 	"fmt"
-	"strings"
 	"time"
 )
 
@@ -10,7 +9,7 @@ import (
 // the callers that run a person's SQL on it: the query tool, the
 // analytics tools and widgets.
 const (
-	// OutOfMemory follows DuckDB's own out-of-memory error on a query.
+	// OutOfMemory follows the engine's out-of-memory error on a query.
 	OutOfMemory = "the query ran out of the SQL engine's memory limit. A COUNT(DISTINCT …) over a large group is the usual cause: " +
 		"select the distinct values with a GROUP BY in a subquery, then count its rows; or narrow the range"
 	// LogsOutOfMemory follows the same error while the open logs load,
@@ -36,7 +35,3 @@ const (
 func Timeout(d time.Duration) string {
 	return fmt.Sprintf("query exceeded CONSOLE_QUERY_TIMEOUT (%s); narrow the date range, or aggregate", d)
 }
-
-// IsOutOfMemory reports whether msg, an engine.QueryError's, is DuckDB's
-// out-of-memory error.
-func IsOutOfMemory(msg string) bool { return strings.HasPrefix(msg, "Out of Memory Error") }

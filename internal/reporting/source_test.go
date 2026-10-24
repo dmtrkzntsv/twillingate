@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
@@ -230,15 +230,15 @@ func TestFilesErrors(t *testing.T) {
 		want     string // the whole message, or "" for a pass-through
 		resource bool   // no verdict on the SQL
 	}{
-		"timeout":        {context.DeadlineExceeded, enginesql.Timeout(5 * time.Second), true},
-		"engine timeout": {kind(sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms"), enginesql.Timeout(5 * time.Second), true},
-		"out of memory":  {kind(sqlengine.KindOutOfMemory, "Out of Memory Error: failed to allocate"), enginesql.OutOfMemory, true},
+		"timeout":        {context.DeadlineExceeded, sqlbind.Timeout(5 * time.Second), true},
+		"engine timeout": {kind(sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms"), sqlbind.Timeout(5 * time.Second), true},
+		"out of memory":  {kind(sqlengine.KindOutOfMemory, "Out of Memory Error: failed to allocate"), sqlbind.OutOfMemory, true},
 		"logs out of memory": {kind(sqlengine.KindOutOfMemoryLoadingLog, "Out of Memory Error: x"),
-			enginesql.LogsOutOfMemory, true},
-		"child exited": {kind(sqlengine.KindExited, "engine: child exited"), enginesql.ChildExited, true},
-		"busy":         {kind(sqlengine.KindBusy, "no free slot; retry later"), enginesql.Busy, true},
-		"internal":     {kind(sqlengine.KindInternal, "engine: spawn: no such file"), enginesql.EngineFailed, true},
-		"unavailable":  {fmt.Errorf("%w: dial unix /x.sock: connect: connection refused", sqlengine.ErrUnavailable), enginesql.EngineFailed, true},
+			sqlbind.LogsOutOfMemory, true},
+		"child exited": {kind(sqlengine.KindExited, "engine: child exited"), sqlbind.ChildExited, true},
+		"busy":         {kind(sqlengine.KindBusy, "no free slot; retry later"), sqlbind.Busy, true},
+		"internal":     {kind(sqlengine.KindInternal, "engine: spawn: no such file"), sqlbind.EngineFailed, true},
+		"unavailable":  {fmt.Errorf("%w: dial unix /x.sock: connect: connection refused", sqlengine.ErrUnavailable), sqlbind.EngineFailed, true},
 		"duckdb": {kind(sqlengine.KindSQL, "Binder Error: Referenced column \"nope\" not found in FROM clause!\nCandidate bindings: \"day\"\n\nLINE 8: SELECT * FROM (select nope\n                     ^"),
 			"Binder Error: Referenced column \"nope\" not found in FROM clause! Candidate bindings: \"day\"", false},
 		"sqlite view": {kind(sqlengine.KindSQL, "Catalog Error: Table with name v_views_daily does not exist!"),
@@ -402,7 +402,7 @@ func TestSQLValidateTimesOut(t *testing.T) {
 	f.timeout = 50 * time.Millisecond
 	s := &sqlSource{eng: f.eng(), sampleRows: true}
 	err := s.Validate(context.Background(), "SELECT sum(hash(i)) AS value FROM range(100000000000) t(i)", stat)
-	wantRefusal(t, err, store.ErrInvalid, enginesql.Timeout(50*time.Millisecond))
+	wantRefusal(t, err, store.ErrInvalid, sqlbind.Timeout(50*time.Millisecond))
 }
 
 func TestSQLValidateChecksColumnsViaLimitZero(t *testing.T) {

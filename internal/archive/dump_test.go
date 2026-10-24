@@ -1,15 +1,9 @@
 package archive
 
-// logKeys, the old dump's key scan, stays for the tests of the SQL the
-// Reader runs (derive_test.go's logRel).
-
 import (
-	"bufio"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"maps"
 	"math"
 	"os"
@@ -25,33 +19,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/golden"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
-
-// logKeys returns every key of a log's lines, for logSelect (dumpLog
-// collects them as it reads). A line that is not a JSON object fails it,
-// as DuckDB would.
-func logKeys(path string) (map[string]bool, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, fmt.Errorf("archive: %w", err)
-	}
-	defer f.Close()
-	keys := map[string]bool{}
-	dec := json.NewDecoder(bufio.NewReader(f))
-	for {
-		var m map[string]json.RawMessage
-		if err := dec.Decode(&m); errors.Is(err, io.EOF) {
-			return keys, nil
-		} else if err != nil {
-			return nil, fmt.Errorf("archive: %s: %w", filepath.Base(path), err)
-		}
-		if m == nil {
-			return nil, fmt.Errorf("archive: %s: a line is not an object", filepath.Base(path))
-		}
-		for k := range m {
-			keys[k] = true
-		}
-	}
-}
 
 // logOf is evs as a log's content, one line each.
 func logOf(t *testing.T, evs ...store.Event) string {
@@ -97,7 +64,7 @@ type dumpCase struct {
 
 // dumpCases are the logs of every dump test in maintain_test.go, and
 // lines the ingest never writes that the decoder must still read as
-// DuckDB did.
+// the old dump did.
 func dumpCases(t *testing.T) []dumpCase {
 	view := dumpView("v", "2026-10-11T09:00:00Z")
 	torn := logOf(t, evOf(1, "a", "2026-10-11T10:00:00Z"), evOf(1, "b", "2026-10-11T11:00:00Z")) + `{"v":1,"id":"torn","project_id":1,"fam`
@@ -163,7 +130,7 @@ func bigDumpLog(t *testing.T) string {
 	return b.String()
 }
 
-// TestGoDumpMatchesDuckDB: for every log of the dump tests, and lines the
+// TestGoDumpMatchesGolden: for every log of the dump tests, and lines the
 // ingest never writes, the Go dump's file, read back, is its golden (the
 // file the old query engine's COPY of the dump's SELECT wrote): the same
 // columns of the same types in the same order, and the same rows. The old
@@ -171,7 +138,7 @@ func bigDumpLog(t *testing.T) string {
 // rows are compared as a multiset and the Go file's own order is checked:
 // (family, ts) non-decreasing, NULLs last. The one allowed difference is
 // dumpCase's: a JSON number in a VARCHAR column keeps its text.
-func TestGoDumpMatchesDuckDB(t *testing.T) {
+func TestGoDumpMatchesGolden(t *testing.T) {
 	f := newFixture(t)
 	cases := append(dumpCases(t), dumpCase{name: "45 MB of repeated ids", log: bigDumpLog(t)})
 	for i, c := range cases {
@@ -250,10 +217,10 @@ func orderedByFamilyAndTS(t *testing.T, p pqTable) {
 	}
 }
 
-// TestDumpFailsWhereDuckDBDid: a line that is not a JSON object, or a value
+// TestDumpFailuresMatchGolden: a line that is not a JSON object, or a value
 // its column cannot hold, fails the Go dump as it failed the old one (the
 // golden), leaving no file and no .tmp.
-func TestDumpFailsWhereDuckDBDid(t *testing.T) {
+func TestDumpFailuresMatchGolden(t *testing.T) {
 	f := newFixture(t)
 	for i, log := range []string{
 		"[1]\n",

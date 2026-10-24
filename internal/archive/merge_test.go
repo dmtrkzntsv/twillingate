@@ -179,13 +179,13 @@ func mergeCases(t *testing.T, f fixture) []mergeCase {
 	}
 }
 
-// TestGoMergeMatchesDuckDB: for each month's inputs, the Go merge's file,
+// TestGoMergeMatchesGolden: for each month's inputs, the Go merge's file,
 // read back, is its golden (the file the old query engine's COPY of
 // mergeQuery wrote): its columns, of the same types in the same order,
 // then every fixed column no input had, all NULL in every row; and the
 // same rows, compared as a multiset. The Go file's own order is (family,
 // ts) non-decreasing, NULLs last.
-func TestGoMergeMatchesDuckDB(t *testing.T) {
+func TestGoMergeMatchesGolden(t *testing.T) {
 	f := newFixture(t)
 	for i, c := range mergeCases(t, f) {
 		t.Run(c.name, func(t *testing.T) {

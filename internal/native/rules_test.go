@@ -106,7 +106,7 @@ func rulesFixture(t *testing.T) *archivetest.Files {
 	return f
 }
 
-func TestEventRenameAndBlockMatchDuckDB(t *testing.T) {
+func TestEventRenameAndBlockMatchGolden(t *testing.T) {
 	f := rulesFixture(t)
 	// Lines without an event name or a family: a block whose condition
 	// they leave unknown drops them, as SQL's NOT (NULL) does.
@@ -175,7 +175,7 @@ func TestEventRenameAndBlockMatchDuckDB(t *testing.T) {
 	}
 }
 
-func TestAttributeRenameAndBlockMatchDuckDB(t *testing.T) {
+func TestAttributeRenameAndBlockMatchGolden(t *testing.T) {
 	f := rulesFixture(t)
 	rules := archive.Rules{Attributes: []store.AttributeRule{
 		attrRule(1, "size", store.EventRuleRename, "plan"),   // a merge: plan's own value first
@@ -213,7 +213,7 @@ func TestAttributeRenameAndBlockMatchDuckDB(t *testing.T) {
 
 // A rename chain: b is both a target and renamed itself, so it reads
 // NULL, and c takes b's own value.
-func TestAttributeRenameChainMatchesDuckDB(t *testing.T) {
+func TestAttributeRenameChainMatchesGolden(t *testing.T) {
 	f := rulesFixture(t)
 	rules := archive.Rules{Attributes: []store.AttributeRule{
 		attrRule(1, "size", store.EventRuleRename, "shade"),

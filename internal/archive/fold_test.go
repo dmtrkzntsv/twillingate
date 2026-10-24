@@ -37,14 +37,14 @@ func orNull(p *string) any {
 	return *p
 }
 
-// TestSessionizeMatchesDuckDB: the sessions Sessionize splits a day's
+// TestSessionizeMatchesGolden: the sessions Sessionize splits a day's
 // views into are the golden's, sessionsSelect's as the old query engine
 // ran it: a gap over 30 minutes in whole seconds
 // (1800.2 seconds is 1800), declared session ids (one of them "2", one
 // "") among undeclared views, an actor under two kinds, views without a
 // kind or an actor, two views in one second ordered by id, a repeated id
 // and a NULL one, a product event no session counts.
-func TestSessionizeMatchesDuckDB(t *testing.T) {
+func TestSessionizeMatchesGolden(t *testing.T) {
 	f := newFixture(t)
 	n := 0
 	view := func(kind, actor, sid, at, path string, more ...any) map[string]any {
@@ -203,10 +203,10 @@ func identityRows(m IdentityMap) []string {
 	return out
 }
 
-// TestIdentitiesFoldMatchesDuckDB: the identities See folds a log's
+// TestIdentitiesFoldMatchesGolden: the identities See folds a log's
 // events into are the golden's (identitiesSelect's as the old query
 // engine ran it), and so are two parts' put together with Fold.
-func TestIdentitiesFoldMatchesDuckDB(t *testing.T) {
+func TestIdentitiesFoldMatchesGolden(t *testing.T) {
 	f := newFixture(t)
 	path := f.writeLines(t, identityLines()...)
 	lines := readLogLines(t, path)
@@ -230,13 +230,13 @@ func TestIdentitiesFoldMatchesDuckDB(t *testing.T) {
 	}
 }
 
-// TestAliasesFoldMatchesDuckDB: the aliases See folds a log's events into
+// TestAliasesFoldMatchesGolden: the aliases See folds a log's events into
 // are the golden's (aliasesSelect's as the old query engine ran it), in
 // its order: any family, a pair only when both
 // ids are non-empty, an event without a ts counted but dating nothing
 // (a pair seen only so has no first or last seen); and so are two parts'
 // put together with Fold.
-func TestAliasesFoldMatchesDuckDB(t *testing.T) {
+func TestAliasesFoldMatchesGolden(t *testing.T) {
 	f := newFixture(t)
 	ev := func(id, family, at, user, install string) map[string]any {
 		l := map[string]any{"id": id, "family": family}

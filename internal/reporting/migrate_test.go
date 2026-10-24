@@ -421,8 +421,8 @@ func TestMigrateFromResourceFailureSyncsAndChecksAgain(t *testing.T) {
 
 // TestMigrateFromWithoutFilesRunsNoQuery: with no event files (nil Files,
 // a fresh install) there is nothing to check the system widgets on, so
-// Migrate syncs the release without a query, which would spawn an engine
-// child for nothing, and records the sync unchecked, quietly: the first
+// Migrate syncs the release without a query, which would ask the SQL
+// engine for nothing, and records the sync unchecked, quietly: the first
 // start with files checks every widget. SQL the scanner refuses still
 // fails it.
 func TestMigrateFromWithoutFilesRunsNoQuery(t *testing.T) {

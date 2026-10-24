@@ -181,7 +181,7 @@ func retentionRows(t *testing.T, e *Engine, where []Filter, from, to string, off
 	return rows, nil
 }
 
-func TestRetentionStateMatchesDuckDB(t *testing.T) {
+func TestRetentionStateMatchesGolden(t *testing.T) {
 	f := retentionFixture(t)
 	for _, c := range []struct {
 		name     string
@@ -189,7 +189,7 @@ func TestRetentionStateMatchesDuckDB(t *testing.T) {
 		offsets  int
 		today    string
 		where    []Filter
-		sql      string // the where's conditions, for DuckDB
+		sql      string // the where's conditions, in the golden's SQL key
 	}{
 		{name: "every day", from: retentionFrom, to: "2026-09-09", offsets: 45},
 		{name: "first seen before the range", from: "2026-07-15", to: "2026-07-31", offsets: 30},

@@ -12,11 +12,11 @@ import (
 	"testing"
 )
 
-// TestCastsMatchDuckDB: each JSON value of a log line reads as the golden
+// TestCastsMatchGolden: each JSON value of a log line reads as the golden
 // says the dump's logSelect read it in the old query engine
 // (json_extract_string, then CAST to the column's type): the same value
 // at each type, or an error where the CAST failed the query.
-func TestCastsMatchDuckDB(t *testing.T) {
+func TestCastsMatchGolden(t *testing.T) {
 	values := []string{`"abc"`, `""`, `5`, `-7`, `"12"`, `"1280.6"`, `"1280.5"`, `"-2.5"`, `1.50`, `1e3`, `true`,
 		`{"k":1}`, `[1,2]`, `"é\u2028"`, `"x"`, `"1e300"`, `1e300`, `"0.25"`,
 		`"2026-09-10T12:00:00Z"`, `"2026-09-10T12:00:01.123456Z"`, `"2026-09-10"`, `"1969-12-31"`, `"10.09.2026"`, `"nope"`,

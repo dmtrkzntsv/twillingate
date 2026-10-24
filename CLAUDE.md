@@ -14,15 +14,15 @@ internal/jobs/       daily pass: salt rotation, aggregation, prune, view rebuild
 internal/pipeline/   write buffer between ingest and the store
 internal/manage/     project registry snapshot and its audited operations
 internal/reporting/  dashboards, widgets and components: validation, operations, system dashboards, cache; embeds the web app
+internal/reporting/sqlbind/ the :name parameters of SQL sent to the external SQL engine, and the advice that follows its failures
 internal/store/      Store interface and row types; store/sqlite owns every migration (no events: they live in the event files)
 internal/config/     environment loading
 internal/identity/   actor hashing and salt rotation
 internal/enrich/     User-Agent and URL parsing for web hits
 internal/geo/        MaxMind lookup
-internal/native/     structured queries (stat, trend, breakdown) answered in Go over the event files, no DuckDB
-internal/engine/     DuckDB in a child process of the binary (`twillingate engine`): the pipe's two ends, the slot semaphore
-internal/archive/    raw events as files under raw/: the per-day NDJSON log, the dump to Parquet, the month merge, retention by file, the derived sessions, identities and aliases, and the tables the dashboards and the query tool read
-internal/shared/     small generic leaf packages: civil (calendar dates), enginesql (DuckDB SQL checks), golden (tests' expected answers under testdata/), readsql, sortkey, version
+internal/native/     structured queries (stat, trend, breakdown) answered in Go over the event files
+internal/archive/    raw events as files under raw/: the per-day NDJSON log, the dump to Parquet, the month merge, retention by file, the derived sessions, identities and aliases, and the table spec the external SQL engine reads
+internal/shared/     small generic leaf packages: civil (calendar dates), golden (tests' expected answers under testdata/), readsql, sortkey, version
 internal/shared/hll/ distinct counts, exact up to 1,024 ids then a HyperLogLog sketch (about ±2%), for internal/native
 sqlengine/           public protocol and client for an external SQL engine over a Unix socket; stdlib only, importable by other modules
 docs/                the three contract pages, embedded and served over MCP
@@ -76,7 +76,7 @@ entry. Only `feat`, `fix` and `perf` appear in the notes; `docs`, `refactor`,
 appear in the notes, so anything a user should read about needs one of the
 three published types. `!` before the colon (or a `BREAKING CHANGE:` footer)
 marks a breaking change. Scopes match the tree: `store`, `server`, `jobs`,
-`config`, `api`, `manage`, `pipeline`, `engine`, `archive`, `geo`, `reporting`,
+`config`, `api`, `manage`, `pipeline`, `archive`, `geo`, `reporting`,
 `shared`, `sdk`, `web`, `cmd`, `deploy`, `ci`; omit for repo-wide changes.
 
 Releases are cut by hand with `gh workflow run release.yml` (optional `version`

@@ -19,7 +19,7 @@ import (
 // widgets themselves are a breakdown by the id, its label and first day,
 // with the days metric as their active days. Each is checked over a
 // current identities file with logs beside it, a stale file and none.
-func TestIdentityLabelsMatchDuckDB(t *testing.T) {
+func TestIdentityLabelsMatchGolden(t *testing.T) {
 	f := identitiesFixture(t)
 	// A user and a group never named: their label is their id.
 	f.Write(t, store.Event{ID: "i-nameless", ProjectID: identitiesProject, Family: store.FamilyViews, EventName: "pageview",
@@ -201,7 +201,7 @@ func TestIdentityLabelsCharged(t *testing.T) {
 // days is the number of distinct days with rows, as count(DISTINCT day)
 // counts them: with a metric where, of the rows that pass it; in a
 // trend 1 or 0 per day; in an Other row over its folded groups.
-func TestDaysMatchesDuckDB(t *testing.T) {
+func TestDaysMatchesGolden(t *testing.T) {
 	f := engineFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	landing := []Filter{{Column: "event_name", Op: "eq", Values: []string{"landing"}}}

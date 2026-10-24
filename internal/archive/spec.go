@@ -6,22 +6,19 @@ import (
 	"path/filepath"
 	"slices"
 
-	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
-	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
-// ErrTables marks a table spec an engine refuses to read: a path that is
-// absolute or leaves the events directory, a project listed twice, or a
-// version it does not know.
+// ErrTables marks a table spec TableSpec refuses to write: a path that
+// leaves the events directory.
 var ErrTables = errors.New("archive: bad table spec")
 
 // TableSpec is the table spec of the files under dir (raw/) for an
 // external SQL engine: what ListFiles lists, each path relative to dir,
 // and rules. With projects, only those projects' files and rules are in
 // it (a project with no files is left out, as ListFiles leaves it out);
-// nil means every project. Projects are in id order, the rules sorted as
-// the Reader sorts them, and every list is empty rather than null.
+// nil means every project. Projects are in id order, the rules sorted
+// (sortRules), and every list is empty rather than null.
 func TableSpec(dir string, projects []int64, rules Rules) (sqlengine.Tables, error) {
 	keep := func(int64) bool { return true }
 	if projects != nil {
@@ -99,83 +96,4 @@ func relPath(dir, path string) (string, error) {
 		return "", fmt.Errorf("%w: %s is not inside %s", ErrTables, path, dir)
 	}
 	return filepath.ToSlash(r), nil
-}
-
-// ResolveTables is the engine's side of TableSpec: t's files under dir,
-// each path checked to be relative and inside dir, and its rules. A path
-// that is not, a project listed twice, a session gap that is not two dates and a version other than
-// sqlengine.TablesVersion are ErrTables.
-func ResolveTables(dir string, t sqlengine.Tables) (map[int64]Files, Rules, error) {
-	if t.Version != sqlengine.TablesVersion {
-		return nil, Rules{}, fmt.Errorf("%w: version %d, want %d", ErrTables, t.Version, sqlengine.TablesVersion)
-	}
-	abs, err := filepath.Abs(dir)
-	if err != nil {
-		return nil, Rules{}, fmt.Errorf("archive: %w", err)
-	}
-	resolve := func(rel string) (string, error) {
-		local := filepath.FromSlash(rel)
-		if !filepath.IsLocal(local) || filepath.Clean(local) == "." {
-			return "", fmt.Errorf("%w: %q is not a path inside the events directory", ErrTables, rel)
-		}
-		return filepath.Join(abs, local), nil
-	}
-	resolveAll := func(rels []string) ([]string, error) {
-		var out []string
-		for _, r := range rels {
-			p, err := resolve(r)
-			if err != nil {
-				return nil, err
-			}
-			out = append(out, p)
-		}
-		return out, nil
-	}
-	files := map[int64]Files{}
-	for _, p := range t.Projects {
-		if _, dup := files[p.ID]; dup {
-			return nil, Rules{}, fmt.Errorf("%w: project %d is listed twice", ErrTables, p.ID)
-		}
-		var f Files
-		if f.Parquet, err = resolveAll(p.Parquet); err != nil {
-			return nil, Rules{}, err
-		}
-		if f.Logs, err = resolveAll(p.Logs); err != nil {
-			return nil, Rules{}, err
-		}
-		if f.Sessions, err = resolveAll(p.Sessions); err != nil {
-			return nil, Rules{}, err
-		}
-		for _, x := range []struct {
-			rel string
-			to  *string
-		}{{p.Identities, &f.Identities}, {p.Aliases, &f.Aliases}} {
-			if x.rel == "" {
-				continue
-			}
-			if *x.to, err = resolve(x.rel); err != nil {
-				return nil, Rules{}, err
-			}
-		}
-		for _, g := range p.SessionGaps {
-			if _, err := civil.Parse(g.From); err != nil {
-				return nil, Rules{}, fmt.Errorf("%w: project %d: session gap from %q", ErrTables, p.ID, g.From)
-			}
-			if _, err := civil.Parse(g.To); err != nil {
-				return nil, Rules{}, fmt.Errorf("%w: project %d: session gap to %q", ErrTables, p.ID, g.To)
-			}
-			f.SessionGaps = append(f.SessionGaps, Span{From: g.From, To: g.To})
-		}
-		files[p.ID] = f
-	}
-	var rules Rules
-	for _, r := range t.Rules.Events {
-		rules.Events = append(rules.Events, store.EventRule{ProjectID: r.ProjectID, Family: store.Family(r.Family),
-			Name: r.Name, Action: r.Action, To: r.To})
-	}
-	for _, r := range t.Rules.Attributes {
-		rules.Attributes = append(rules.Attributes, store.AttributeRule{ProjectID: r.ProjectID, Key: r.Key,
-			Action: r.Action, To: r.To})
-	}
-	return files, rules, nil
 }

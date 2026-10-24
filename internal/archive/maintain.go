@@ -20,7 +20,7 @@ import (
 
 // Archive maintains the files the Log fills and derives the sessions,
 // identities and aliases from them. It runs in the calling process, in Go:
-// it holds no engine, so the daily pass starts no child.
+// the daily pass needs no SQL engine.
 type Archive struct {
 	log    *Log
 	logger *slog.Logger
@@ -331,11 +331,11 @@ func columnsOf(keys map[string]bool) []column {
 // into.
 type LogColumn struct{ Key, Name string }
 
-// LogColumns is columnsOf for a reader of the logs outside DuckDB, so its
-// columns are named as this log's select names them (logSelect): fields,
-// then every other key, a key equal to an earlier one but for case
-// suffixed _<n>. The events view unions them with other files' by name,
-// ignoring case, so a suffixed name holds only within the log.
+// LogColumns is columnsOf for a reader of the logs (internal/native), so
+// its columns are named as the dump names them: fields, then every other
+// key, a key equal to an earlier one but for case suffixed _<n>. A reader
+// unions them with other files' by name, ignoring case, so a suffixed
+// name holds only within the log.
 func LogColumns(keys map[string]bool) []LogColumn {
 	cols := columnsOf(keys)
 	out := make([]LogColumn, len(cols))
@@ -345,27 +345,11 @@ func LogColumns(keys map[string]bool) []LogColumn {
 	return out
 }
 
-// visible is key as a column name: NUL, which SQL text cannot hold (DuckDB
-// reads it as a C string, cut at the first NUL), becomes the text \u0000.
-// Every other character, control ones included, is kept as stored.
+// visible is key as a column name: NUL, which SQL text cannot hold (an
+// engine reads it as a C string, cut at the first NUL), becomes the text
+// \u0000. Every other character, control ones included, is kept as
+// stored.
 func visible(key string) string { return strings.ReplaceAll(key, "\x00", `\u0000`) }
-
-// pointer is the column's key as a JSON pointer, in SQL: a string
-// literal, with each NUL spelled chr(0).
-func (c column) pointer() string {
-	parts := strings.Split("/"+jsonPointer.Replace(c.key), "\x00")
-	for i, p := range parts {
-		parts[i] = quote(p)
-	}
-	return strings.Join(parts, " || chr(0) || ")
-}
-
-var jsonPointer = strings.NewReplacer("~", "~0", "/", "~1")
-
-// ident is name as a quoted SQL identifier.
-func ident(name string) string { return `"` + strings.ReplaceAll(name, `"`, `""`) + `"` }
-
-func (c column) ident() string { return ident(c.name) }
 
 // merge writes every day file and segment of month, with the month file
 // if a crashed merge left one, as the month file, then deletes the days.
@@ -498,6 +482,3 @@ func syncFile(path string) error {
 	}
 	return nil
 }
-
-// quote is path as a SQL string literal.
-func quote(path string) string { return "'" + strings.ReplaceAll(path, "'", "''") + "'" }

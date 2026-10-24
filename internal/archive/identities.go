@@ -6,7 +6,7 @@ import (
 )
 
 // One project's identities and aliases, folded from its events one at a
-// time as identitiesSelect and aliasesSelect aggregate them. A map is one
+// time as derive.go defines them. A map is one
 // part (one worker's events, one file's); Fold adds another part to it.
 
 // IdentityKey is one identity: a user's id, or a group's.
@@ -33,8 +33,8 @@ const IdentityBytes = 112
 // IdentityMap is a set of identities by key.
 type IdentityMap map[IdentityKey]Identity
 
-// See adds one event of identity k to m, as identitiesSelect aggregates
-// one part: the name of the latest event that carried one
+// See adds one event of identity k to m, as the identities aggregate
+// one part (derive.go): the name of the latest event that carried one
 // (arg_max(name, ts) FILTER (WHERE name IS NOT NULL)), the first and last
 // event, the views and product events counted. The caller passes only the
 // views and product events with a non-empty id and a ts. It returns the
@@ -108,8 +108,8 @@ const AliasBytes = 96
 // AliasMap is a set of aliases by pair.
 type AliasMap map[AliasKey]Alias
 
-// See adds one event, of any family, to m, as aliasesSelect aggregates
-// it: an event whose user_id and install_id are both non-empty (NULL is
+// See adds one event, of any family, to m, as the aliases aggregate it
+// (derive.go): an event whose user_id and install_id are both non-empty (NULL is
 // "") counts for that pair, its ts (tsOK false for NULL) widening the
 // pair's first and last seen. It returns the bytes m grew by. The ids are
 // kept, not copied.
@@ -156,7 +156,7 @@ func (m AliasMap) Fold(o AliasMap) {
 	}
 }
 
-// Keys is m's pairs in aliasesSelect's order: by user_id, then
+// Keys is m's pairs in the aliases' order (derive.go): by user_id, then
 // install_id.
 func (m AliasMap) Keys() []AliasKey {
 	keys := make([]AliasKey, 0, len(m))

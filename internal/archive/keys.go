@@ -19,9 +19,9 @@ var keyChunk = 1 << 20
 // KeyScanner remembers, per log, the keys of the lines read so far and
 // where the first unread line starts, so a reader's rebuild reads only
 // what was appended since: a log only grows until it is rotated, and a
-// rotated log is a new path. It is the one reader of a log's keys outside
-// DuckDB (the Reader's views, the native engine's attribute rules), safe
-// for concurrent use; its lock is held while it reads.
+// rotated log is a new path. It is the one reader of a log's keys (the
+// native engine's attribute rules), safe for concurrent use; its lock is
+// held while it reads.
 type KeyScanner struct {
 	mu   sync.Mutex
 	logs map[string]*scannedLog

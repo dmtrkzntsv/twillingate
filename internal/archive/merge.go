@@ -470,7 +470,7 @@ func (m *monthMerge) writeRows(ctx context.Context, w *rowWriter) error {
 	// counted it) would be dropped without a word. The check catches a
 	// drift in the count of rows; it cannot tell a bitset misaligned with
 	// the rows it marks, which drops as many rows as it keeps: the parity
-	// suite (TestGoMergeMatchesDuckDB) guards that.
+	// suite (TestGoMergeMatchesGolden) guards that.
 	if written != m.kept {
 		return fmt.Errorf("archive: merge wrote %d rows, want %d", written, m.kept)
 	}

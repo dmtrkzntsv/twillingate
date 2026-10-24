@@ -170,7 +170,7 @@ GROUP BY day, event_name, col, attr_value
 ORDER BY day, "count" DESC, event_name, attr_key, attr_value`
 }
 
-func TestAttributesMatchDuckDB(t *testing.T) {
+func TestAttributesMatchGolden(t *testing.T) {
 	f := attrFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	widget := Query{Kind: "attributes", Table: "product", Output: "values",
@@ -340,7 +340,7 @@ QUALIFY ` + q + `
 ORDER BY events DESC, attr_key`
 }
 
-func TestAttributeKeysMatchDuckDB(t *testing.T) {
+func TestAttributeKeysMatchGolden(t *testing.T) {
 	f := attrFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	keys := func(table string, limit int, keep ...string) Query {

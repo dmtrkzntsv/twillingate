@@ -32,7 +32,7 @@ func filled(sql string, series []string, counted []bool) string {
 // metric's rows following its own days unless filled. They match the
 // built-in widgets' SQL: daily active users (new and returning) and
 // visitors and views.
-func TestTrendMatchesDuckDB(t *testing.T) {
+func TestTrendMatchesGolden(t *testing.T) {
 	ids := identitiesFixture(t)
 	f := engineFixture(t)
 	idEngine := New(Options{Dir: ids.Dir, Workers: 3})

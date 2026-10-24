@@ -238,7 +238,7 @@ func sameTable(t *testing.T, got, want [][]string) {
 // The where clause of project 1 over a range, for goldenTable's SQL.
 const inRange = `"project_id" = 1 AND "day" BETWEEN DATE '%[1]s' AND DATE '%[2]s'`
 
-func TestKindsMatchDuckDB(t *testing.T) {
+func TestKindsMatchGolden(t *testing.T) {
 	f := engineFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	type tc struct {
@@ -958,7 +958,7 @@ func TestRunRetriesVanishedFiles(t *testing.T) {
 
 // A metric's round prints as the golden says the old query engine printed
 // ROUND of a DOUBLE: half away from zero, round 0 as an integer.
-func TestRoundMatchesDuckDB(t *testing.T) {
+func TestRoundMatchesGolden(t *testing.T) {
 	xs := []float64{2.5, -2.5, 0.125, 1.005, 2, 1234.5678, -0.004, 0.0001234}
 	for _, places := range []int{0, 1, 2, 3, 6} {
 		var sel []string

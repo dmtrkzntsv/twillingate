@@ -3,9 +3,8 @@
 // project and UTC day, dumped to Parquet when the day closes, day files
 // merged into a month file once final, month files deleted at retention.
 // SQLite holds no events; the daily pass also derives the
-// sessions, identities and aliases tables from the files; Reader answers
-// SQL over the files and open logs, and the tables derived from them, for
-// the query tool.
+// sessions, identities and aliases tables from the files. TableSpec lists
+// the files for the external SQL engine; internal/native reads them in Go.
 //
 // Under raw/<project_id>/:
 //

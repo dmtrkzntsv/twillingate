@@ -15,7 +15,7 @@ import (
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/golden"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/parquet-go/parquet-go"
@@ -70,7 +70,7 @@ type oldAnswer struct {
 // before it compares (an allowance): with -update-golden, a golden that
 // adjusted equals got (numbers within 1e-9) is kept as it was, else got
 // is kept.
-func oldTable(t *testing.T, h *host, in rangeIn, q string, vals map[string]enginesql.Value, got tableOut, adjust func(tableOut) tableOut) tableOut {
+func oldTable(t *testing.T, h *host, in rangeIn, q string, vals map[string]sqlbind.Value, got tableOut, adjust func(tableOut) tableOut) tableOut {
 	t.Helper()
 	v := ""
 	if len(vals) > 0 {

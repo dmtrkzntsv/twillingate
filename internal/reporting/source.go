@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
@@ -140,7 +140,7 @@ func (s *sqlSource) Follows(content string) (project, rng bool) { return sqlFoll
 // sqlFollows is which of Params a widget's SQL reads, from its text
 // alone: a stored sql widget's, engine or none.
 func sqlFollows(content string) (project, rng bool) {
-	params, err := enginesql.Params(content)
+	params, err := sqlbind.Params(content)
 	if err != nil {
 		return false, false
 	}
@@ -155,16 +155,16 @@ func sqlFollows(content string) (project, rng bool) {
 	return
 }
 
-// checkSQLParams refuses content enginesql's scanner refuses, empty
+// checkSQLParams refuses content sqlbind's scanner refuses, empty
 // content, and any named parameter outside allowedParams, returning the
 // ones it uses. Shared by a widget's Validate, Load and Preview, so they
 // refuse the same SQL the same way.
 func checkSQLParams(content string) ([]string, error) {
-	params, err := enginesql.Params(content)
+	params, err := sqlbind.Params(content)
 	if err != nil {
 		return nil, refuseText(err)
 	}
-	if strings.TrimSpace(enginesql.Trim(content)) == "" {
+	if strings.TrimSpace(sqlbind.Trim(content)) == "" {
 		return nil, store.Refuse(store.ErrInvalid, "sql must not be empty")
 	}
 	for _, p := range params {
@@ -184,7 +184,7 @@ func checkSQLParams(content string) ([]string, error) {
 // the seven tables (confine): the save, the preview and every run of a
 // widget refuse the same SQL.
 func bindSQL(content string, params []string, p Params) (boundSQL, error) {
-	bound, args, err := enginesql.Bind(content, map[string]enginesql.Value{
+	bound, args, err := sqlbind.Bind(content, map[string]sqlbind.Value{
 		":project": {Type: "BIGINT", Text: strconv.FormatInt(p.ProjectID, 10)},
 		":from":    {Type: "DATE", Text: p.From},
 		":to":      {Type: "DATE", Text: p.To},
@@ -192,10 +192,7 @@ func bindSQL(content string, params []string, p Params) (boundSQL, error) {
 	if err != nil {
 		return boundSQL{}, refuseText(err)
 	}
-	q := boundSQL{sql: bound, args: make(map[string]string, len(args)), confine: true}
-	for _, a := range args {
-		q.args[a.Name] = a.Value
-	}
+	q := boundSQL{sql: bound, args: args, confine: true}
 	for _, name := range params {
 		if name == ":project" {
 			project := p.ProjectID

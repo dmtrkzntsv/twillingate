@@ -1,11 +1,9 @@
-package enginesql
+package sqlbind
 
 import (
 	"errors"
 	"reflect"
 	"testing"
-
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 )
 
 func TestParams(t *testing.T) {
@@ -86,7 +84,7 @@ func TestBind(t *testing.T) {
 	if want := `SELECT day FROM t WHERE day BETWEEN CAST($tw_from AS DATE) AND CAST($tw_to AS DATE)`; q != want {
 		t.Errorf("q = %q, want %q", q, want)
 	}
-	if want := []engine.Arg{{Name: "tw_from", Value: "2026-01-01"}, {Name: "tw_to", Value: "2026-01-31"}}; !reflect.DeepEqual(args, want) {
+	if want := map[string]string{"tw_from": "2026-01-01", "tw_to": "2026-01-31"}; !reflect.DeepEqual(args, want) {
 		t.Errorf("args = %v, want %v", args, want)
 	}
 }
@@ -102,7 +100,7 @@ func TestBindReplacesOnlyParameters(t *testing.T) {
 	if q != want {
 		t.Errorf("q = %q, want %q", q, want)
 	}
-	if !reflect.DeepEqual(args, []engine.Arg{{Name: "tw_to", Value: "5"}}) {
+	if !reflect.DeepEqual(args, map[string]string{"tw_to": "5"}) {
 		t.Errorf("args = %v", args)
 	}
 }
@@ -119,5 +117,11 @@ func TestBindRefusals(t *testing.T) {
 		if _, _, err := Bind(c.q, c.vals); !errors.Is(err, ErrRefused) {
 			t.Errorf("%s: err = %v, want ErrRefused", name, err)
 		}
+	}
+}
+
+func TestTrim(t *testing.T) {
+	if got, want := Trim("SELECT 1 AS a -- one\n;; \t\n"), "SELECT 1 AS a -- one"; got != want {
+		t.Errorf("Trim = %q, want %q", got, want)
 	}
 }

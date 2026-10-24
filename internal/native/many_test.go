@@ -243,20 +243,20 @@ func TestAnswerManyEqualsAnswer(t *testing.T) {
 			name, test string // test: the parity test's name, whose goldens it reads
 			run        func(*testing.T)
 		}{
-			{"kinds", "TestKindsMatchDuckDB", TestKindsMatchDuckDB},
-			{"share", "TestShareMatchesDuckDB", TestShareMatchesDuckDB},
+			{"kinds", "TestKindsMatchGolden", TestKindsMatchGolden},
+			{"share", "TestShareMatchesGolden", TestShareMatchesGolden},
 			{"ratings", "TestRatingsMatchWidget", TestRatingsMatchWidget},
-			{"ratio", "TestRatioMatchesDuckDB", TestRatioMatchesDuckDB},
+			{"ratio", "TestRatioMatchesGolden", TestRatioMatchesGolden},
 			{"ratio trends", "TestRatioTrends", TestRatioTrends},
-			{"trend", "TestTrendMatchesDuckDB", TestTrendMatchesDuckDB},
-			{"days", "TestDaysMatchesDuckDB", TestDaysMatchesDuckDB},
-			{"labels", "TestIdentityLabelsMatchDuckDB", TestIdentityLabelsMatchDuckDB},
+			{"trend", "TestTrendMatchesGolden", TestTrendMatchesGolden},
+			{"days", "TestDaysMatchesGolden", TestDaysMatchesGolden},
+			{"labels", "TestIdentityLabelsMatchGolden", TestIdentityLabelsMatchGolden},
 			{"percentiles", "TestPercentilesMatchWidgets", TestPercentilesMatchWidgets},
-			{"sessions", "TestSessionsQueriesMatchDuckDB", TestSessionsQueriesMatchDuckDB},
+			{"sessions", "TestSessionsQueriesMatchGolden", TestSessionsQueriesMatchGolden},
 			{"retention", "TestRetentionMatchesSQL", TestRetentionMatchesSQL},
-			{"attributes", "TestAttributesMatchDuckDB", TestAttributesMatchDuckDB},
-			{"attribute keys", "TestAttributeKeysMatchDuckDB", TestAttributeKeysMatchDuckDB},
-			{"identities", "TestIdentitiesQueriesMatchDuckDB", TestIdentitiesQueriesMatchDuckDB},
+			{"attributes", "TestAttributesMatchGolden", TestAttributesMatchGolden},
+			{"attribute keys", "TestAttributeKeysMatchGolden", TestAttributeKeysMatchGolden},
+			{"identities", "TestIdentitiesQueriesMatchGolden", TestIdentitiesQueriesMatchGolden},
 		}
 		for _, p := range parity {
 			t.Run(p.name, func(t *testing.T) {

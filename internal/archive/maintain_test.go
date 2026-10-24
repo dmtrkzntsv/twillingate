@@ -13,32 +13,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-const childEnv = "ARCHIVE_TEST_ENGINE_CHILD"
-
-func TestMain(m *testing.M) {
-	// archivetest.ChildEnv is spelled out: archivetest imports this package.
-	if os.Getenv(childEnv) == "1" || os.Getenv("ARCHIVETEST_ENGINE_CHILD") == "1" {
-		if err := engine.ServeChild(os.Args[1:], os.Stdin, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
-		os.Exit(0)
-	}
-	os.Exit(m.Run())
-}
-
-// fixture is a Log and the Archive over it. eng is set only by
-// newSQLFixture, for the tests of the SQL the Reader runs (reader.go,
-// derive.go's SELECTs, logSelect): every other test reads the files back
+// fixture is a Log and the Archive over it. The tests read the files back
 // in Go (pqread_test.go).
 type fixture struct {
 	log *Log
-	eng *engine.Engine
 	a   *Archive
 }
 
@@ -50,24 +32,6 @@ func newFixture(t *testing.T) fixture {
 	}
 	t.Cleanup(func() { l.Close() })
 	return fixture{log: l, a: New(l, slog.Default())}
-}
-
-// newSQLFixture is newFixture with a query engine child over the log's
-// directory.
-func newSQLFixture(t *testing.T) fixture {
-	t.Helper()
-	f := newFixture(t)
-	data := filepath.Dir(f.log.Dir())
-	self, _ := os.Executable()
-	eng, err := engine.New(engine.Options{Path: self, Env: []string{childEnv + "=1"},
-		AllowedDirs: []string{f.log.Dir()}, SpillRoot: filepath.Join(data, "spill"), SlotDir: filepath.Join(data, "slots"),
-		MaxChildren: 1, MemoryLimit: "256MB", Threads: 1})
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { eng.Close() })
-	f.eng = eng
-	return f
 }
 
 // evOf is log_test.go's ev with the project first and ReceivedAt set.
@@ -435,7 +399,7 @@ func TestPendingDumpIsDumpedIntoItsTarget(t *testing.T) {
 	}
 }
 
-// TestOneFailingDumpStopsNothingElse: a log DuckDB cannot read stays pending
+// TestOneFailingDumpStopsNothingElse: a log the dump cannot read stays pending
 // and holds its month back; the project's other dumps and its retention
 // still run, and the error is returned.
 func TestOneFailingDumpStopsNothingElse(t *testing.T) {
@@ -450,21 +414,6 @@ func TestOneFailingDumpStopsNothingElse(t *testing.T) {
 	if got := f.files(t); !eq(got, want) {
 		t.Fatalf("files = %v, want %v: the good days dumped, August 2025 deleted, August 2026 not merged", got, want)
 	}
-}
-
-// values reads sql's rows from the engine (newSQLFixture), each row
-// printed as fmt.Sprint.
-func (f fixture) values(t *testing.T, sql string) []string {
-	t.Helper()
-	res, err := f.eng.Query(context.Background(), sql, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var out []string
-	for _, r := range res.Rows {
-		out = append(out, fmt.Sprint(r))
-	}
-	return out
 }
 
 func withAttrs(e store.Event, user string, attrs map[string]string) store.Event {
@@ -553,7 +502,7 @@ func TestDumpReadsAnyKey(t *testing.T) {
 
 // TestDumpKeepsAnIDsFirstLine: of a repeated id the dump keeps the line
 // appended first, as SQLite keeps the first row, at any thread count. The
-// log is about 45 MB, so DuckDB reads it in more than one piece.
+// log is about 45 MB, so it is read in more than one piece.
 func TestDumpKeepsAnIDsFirstLine(t *testing.T) {
 	f := newFixture(t)
 	const ids = 6000
@@ -593,30 +542,5 @@ func TestMergeKeepsAnIDsFirstRow(t *testing.T) {
 	got := texts(readTable(t, f.project1("2026-09.parquet"), "id", "attr_copy").pick(t, "id", "attr_copy"))
 	if want := []string{"[a 1]"}; !eq(got, want) {
 		t.Fatalf("rows = %v, want %v", got, want)
-	}
-}
-
-// TestLogSelectSkipsATornLineWhenTolerant is Review Focus 3 at the select:
-// a reader's select of an open log skips a torn last line, the dump's
-// select still fails on one (a dump never reads an unfinished log).
-func TestLogSelectSkipsATornLineWhenTolerant(t *testing.T) {
-	f := newSQLFixture(t)
-	f.write(t, evOf(1, "a", "2026-10-12T10:00:00Z"), evOf(1, "b", "2026-10-12T11:00:00Z"))
-	path := filepath.Join(f.log.Dir(), "1", "2026-10-12.log")
-	appendTo(t, path, `{"v":1,"id":"torn","fam`)
-	keys, err := NewKeyScanner().Keys(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx := context.Background()
-	res, err := f.eng.Query(ctx, "SELECT id FROM ("+logSelect(path, columnsOf(keys), true)+") ORDER BY id", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fmt.Sprint(res.Rows) != "[[a] [b]]" {
-		t.Fatalf("rows = %v, want a and b", res.Rows)
-	}
-	if _, err := f.eng.Query(ctx, logSelect(path, columnsOf(keys), false), 0); err == nil || !strings.Contains(err.Error(), "Malformed JSON") {
-		t.Fatalf("strict select of a torn log: err = %v, want DuckDB's malformed JSON error", err)
 	}
 }

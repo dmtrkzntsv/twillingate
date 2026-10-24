@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
@@ -144,30 +144,30 @@ func (e *sqlEngine) err(ctx context.Context, err error) error {
 	isKind := func(k sqlengine.Kind) bool { return errors.As(err, &se) && se.Kind == k }
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
-		return resource(enginesql.Timeout(e.timeout), err)
+		return resource(sqlbind.Timeout(e.timeout), err)
 	case ctx.Err() != nil: // the caller went away: whatever the engine said last
 		return err
 	case isKind(sqlengine.KindTimeout):
 		// A timeout's cause says so (stopsCheck, Migrate's reason), as ctx's.
-		return resource(enginesql.Timeout(e.timeout), fmt.Errorf("%w: %w", context.DeadlineExceeded, err))
+		return resource(sqlbind.Timeout(e.timeout), fmt.Errorf("%w: %w", context.DeadlineExceeded, err))
 	case isKind(sqlengine.KindOutOfMemoryLoadingLog):
-		return resource(enginesql.LogsOutOfMemory, err)
+		return resource(sqlbind.LogsOutOfMemory, err)
 	case isKind(sqlengine.KindOutOfMemory):
-		return resource(enginesql.OutOfMemory, err)
+		return resource(sqlbind.OutOfMemory, err)
 	case isKind(sqlengine.KindRefused):
 		return engineRefused{store.Refuse(store.ErrInvalid, "%s", withHint(se.Message))}
 	case isKind(sqlengine.KindSQL):
 		return store.Refuse(store.ErrInvalid, "%s", withHint(oneLine(se.Message)))
 	case isKind(sqlengine.KindExited):
-		return resource(enginesql.ChildExited, err)
+		return resource(sqlbind.ChildExited, err)
 	case isKind(sqlengine.KindBusy):
-		return resource(enginesql.Busy, err)
+		return resource(sqlbind.Busy, err)
 	case isKind(sqlengine.KindStale):
-		return resource(enginesql.Stale, err)
+		return resource(sqlbind.Stale, err)
 	case errors.Is(err, sqlengine.ErrTooLarge):
-		return store.Refuse(store.ErrInvalid, "%s", enginesql.TooLarge)
+		return store.Refuse(store.ErrInvalid, "%s", sqlbind.TooLarge)
 	case errors.As(err, &se), errors.Is(err, sqlengine.ErrUnavailable):
-		return resource(enginesql.EngineFailed, err)
+		return resource(sqlbind.EngineFailed, err)
 	}
 	return err
 }
@@ -251,10 +251,10 @@ func oneLine(msg string) string {
 	return strings.Join(parts, " ")
 }
 
-// refuseText is a refusal of the widget's text by enginesql, without the
+// refuseText is a refusal of the widget's text by sqlbind, without the
 // sentinel's own "refused: " (the kind says that).
 func refuseText(err error) error {
-	return store.Refuse(store.ErrInvalid, "%s", strings.TrimPrefix(err.Error(), enginesql.ErrRefused.Error()+": "))
+	return store.Refuse(store.ErrInvalid, "%s", strings.TrimPrefix(err.Error(), sqlbind.ErrRefused.Error()+": "))
 }
 
 // textResult is res as a widget's rows: Text and the page wrap make every

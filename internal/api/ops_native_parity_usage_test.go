@@ -18,8 +18,8 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -259,7 +259,7 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 				}
 				asOld := got.tableOut
 				asOld.Note = "" // the old SQL gave no note under the cap; the note is checked below
-				want := upTo90(oldTable(t, h, r, oldRetentionSQL, map[string]enginesql.Value{":actor": {Type: "VARCHAR", Text: actor}}, asOld, upTo90))
+				want := upTo90(oldTable(t, h, r, oldRetentionSQL, map[string]sqlbind.Value{":actor": {Type: "VARCHAR", Text: actor}}, asOld, upTo90))
 				if actor == "install" && r.From == "2026-05-01" {
 					var s1 []string // cohort 2026-05-10 holds s1 alone
 					for _, row := range want.Rows {
@@ -297,7 +297,7 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want := oldTable(t, h, r, oldRetentionSQL, map[string]enginesql.Value{":actor": {Type: "VARCHAR", Text: "user"}}, got.tableOut, nil)
+		want := oldTable(t, h, r, oldRetentionSQL, map[string]sqlbind.Value{":actor": {Type: "VARCHAR", Text: "user"}}, got.tableOut, nil)
 		sameNumbers(t, "cut", got.tableOut, want, 0)
 		if !got.Truncated || got.Note != want.Note || !want.Truncated {
 			t.Errorf("cut: truncated %v note %q, want %v %q", got.Truncated, got.Note, want.Truncated, want.Note)
@@ -400,7 +400,7 @@ func TestAnalyticsToolsShareOneDeadline(t *testing.T) {
 	h, _ := newTestHost(t)
 	h.queryTimeout = 400 * time.Millisecond
 	h.native = slowNative{Native: h.native, delay: 250 * time.Millisecond}
-	want := enginesql.Timeout(h.queryTimeout)
+	want := sqlbind.Timeout(h.queryTimeout)
 	ctx := context.Background()
 	_, err := h.retention(ctx, retentionIn{rangeIn: rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}, Actor: "user"})
 	if err == nil || !strings.Contains(err.Error(), want) {

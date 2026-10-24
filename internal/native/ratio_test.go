@@ -16,7 +16,7 @@ import (
 // system widgets' SQL divides them: users/actions-per-user.sql,
 // groups/actions-per-group.sql and views/consent-share.sql, and the
 // breakdowns, trends and comparisons the same division makes.
-func TestRatioMatchesDuckDB(t *testing.T) {
+func TestRatioMatchesGolden(t *testing.T) {
 	f := engineFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	actions := []Filter{{Column: "family", Op: "in", Values: []string{"views", "product"}}}

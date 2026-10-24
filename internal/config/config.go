@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -60,25 +59,9 @@ type ReportingConfig struct {
 	CacheAge, RefreshAge time.Duration
 }
 
-// EngineConfig sizes the DuckDB children (raw-first spec D8, D23).
-type EngineConfig struct {
-	// MemoryLimit (ENGINE_MEMORY_LIMIT) is each child's DuckDB
-	// memory_limit, in DuckDB's units (MB is 10^6 bytes, MiB 2^20).
-	MemoryLimit string
-	// MaxChildren (ENGINE_MAX_CHILDREN) bounds the children running at
-	// once across every process on the data directory.
-	MaxChildren int
-}
-
-// The engine defaults: 512 MB is the least a COUNT(DISTINCT) over three
-// years at the cap runs in, and two children are for a split install's two processes.
-const (
-	DefaultEngineMemoryLimit = "512MB"
-	DefaultEngineMaxChildren = 2
-)
-
-// engineMemory is the memory_limit forms DuckDB takes, a unit required.
-var engineMemory = regexp.MustCompile(`(?i)^[0-9]+(\.[0-9]+)?\s*(KB|MB|GB|TB|KiB|MiB|GiB|TiB)$`)
+// retired are settings twillingate no longer reads. One still set is
+// ignored, and the start says so once (IgnoredWarning).
+var retired = []string{"ENGINE_MEMORY_LIMIT", "ENGINE_MAX_CHILDREN"}
 
 // ConsoleConfig carries the console surface settings (serve -console). Authentication comes from
 // the single CONSOLE_AUTH_DSN; parsing fans it out into the mode-specific
@@ -173,8 +156,10 @@ type Config struct {
 	Retention       Retention
 	Forms           FormsConfig
 	Reporting       ReportingConfig
-	Engine          EngineConfig
 	Console         ConsoleConfig
+	// Ignored lists the retired settings the environment still sets, in
+	// the order of retired.
+	Ignored []string
 }
 
 // Load builds the configuration from the process environment.
@@ -283,10 +268,6 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			CacheAge:   e.dur("REPORTING_CACHE_MAX_AGE", 15*time.Minute),
 			RefreshAge: e.dur("REPORTING_REFRESH_MAX_AGE", time.Minute),
 		},
-		Engine: EngineConfig{
-			MemoryLimit: e.str("ENGINE_MEMORY_LIMIT", DefaultEngineMemoryLimit),
-			MaxChildren: e.num("ENGINE_MAX_CHILDREN", DefaultEngineMaxChildren),
-		},
 	}
 	c.Console = ConsoleConfig{
 		Addr: e.str("CONSOLE_ADDR", c.IngestAddr),
@@ -302,6 +283,11 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 	}
 	c.Console.DBPath = strings.TrimPrefix(c.Console.Database, "sqlite://")
 	c.SQLEngineSocket = e.str("SQL_ENGINE_SOCKET", "")
+	for _, k := range retired {
+		if v, ok := e.lookup(k); ok && v != "" {
+			c.Ignored = append(c.Ignored, k)
+		}
+	}
 	c.EventsDir = e.str("EVENTS_DIR", filepath.Join(filepath.Dir(strings.TrimPrefix(c.Database, "sqlite://")), "raw"))
 	if abs, err := filepath.Abs(c.EventsDir); err == nil {
 		c.EventsDir = abs
@@ -363,8 +349,8 @@ func (c *Config) validate() error {
 	if !strings.HasPrefix(c.Console.Database, "sqlite://") {
 		return fmt.Errorf("config: CONSOLE_DATABASE_DSN must be sqlite://<path>: %q", c.Console.Database)
 	}
-	// The engine child may write where it may read: a database file inside
-	// EVENTS_DIR would be within reach of widget and query SQL.
+	// The SQL engine reads EVENTS_DIR whole: a database file inside it
+	// would be within reach of widget and query SQL.
 	for _, db := range []string{c.Database, c.Console.Database} {
 		path, err := filepath.Abs(strings.TrimPrefix(db, "sqlite://"))
 		if err != nil {
@@ -403,12 +389,6 @@ func (c *Config) validate() error {
 	if c.Reporting.CacheAge > 0 && c.Reporting.RefreshAge > c.Reporting.CacheAge {
 		return fmt.Errorf("config: REPORTING_REFRESH_MAX_AGE (%s) exceeds REPORTING_CACHE_MAX_AGE (%s)",
 			c.Reporting.RefreshAge, c.Reporting.CacheAge)
-	}
-	if !engineMemory.MatchString(c.Engine.MemoryLimit) {
-		return fmt.Errorf("config: ENGINE_MEMORY_LIMIT must be a size with a unit, like 512MB or 1GiB: %q", c.Engine.MemoryLimit)
-	}
-	if c.Engine.MaxChildren < 1 {
-		return fmt.Errorf("config: ENGINE_MAX_CHILDREN must be at least 1: %d", c.Engine.MaxChildren)
 	}
 	return nil
 }
@@ -619,4 +599,17 @@ func (c *Config) ValidateConsole() error {
 		return fmt.Errorf("config: -console requires CONSOLE_AUTH_DSN (token://<token> or oauth://<issuer-host>)")
 	}
 	return m.authErr
+}
+
+// IgnoredWarning is the start's one warning about the retired settings the
+// environment still sets (Ignored), or "" when it sets none.
+func (c *Config) IgnoredWarning() string {
+	switch len(c.Ignored) {
+	case 0:
+		return ""
+	case 1:
+		return c.Ignored[0] + " is ignored: SQL runs in an external SQL engine"
+	}
+	return strings.Join(c.Ignored[:len(c.Ignored)-1], ", ") + " and " + c.Ignored[len(c.Ignored)-1] +
+		" are ignored: SQL runs in an external SQL engine"
 }

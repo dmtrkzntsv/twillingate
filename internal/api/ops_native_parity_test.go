@@ -18,7 +18,7 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
@@ -133,8 +133,8 @@ const oldEventNamesSQL = `SELECT family, event_name, count(*) FROM events WHERE 
 // filesTable runs SQL on the event files through the host's SQL engine
 // (runFiles), scoped to in's project, in mode text: q's :project, :from
 // and :to are bound as BIGINT and DATEs, any other :name from vals.
-func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[string]enginesql.Value) (tableOut, error) {
-	all := map[string]enginesql.Value{
+func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[string]sqlbind.Value) (tableOut, error) {
+	all := map[string]sqlbind.Value{
 		":project": {Type: "BIGINT", Text: strconv.FormatInt(in.ProjectID, 10)},
 		":from":    {Type: "DATE", Text: in.From},
 		":to":      {Type: "DATE", Text: in.To},
@@ -142,15 +142,11 @@ func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[st
 	for k, v := range vals {
 		all[k] = v
 	}
-	bound, args, err := enginesql.Bind(q, all)
+	bound, args, err := sqlbind.Bind(q, all)
 	if err != nil {
 		return tableOut{}, err
 	}
-	named := map[string]string{}
-	for _, a := range args {
-		named[a.Name] = a.Value
-	}
-	res, err := h.runFiles(ctx, sqlengine.Request{SQL: bound, Args: named, MaxRows: h.queryRows, Mode: sqlengine.ModeText, Scope: &in.ProjectID})
+	res, err := h.runFiles(ctx, sqlengine.Request{SQL: bound, Args: args, MaxRows: h.queryRows, Mode: sqlengine.ModeText, Scope: &in.ProjectID})
 	if err != nil {
 		return tableOut{}, err
 	}
@@ -305,7 +301,7 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 	h, _ := newTestHost(t)
 	writeParityEdges(t, h)
 	ctx := context.Background()
-	old := func(in rangeIn, q string, vals map[string]enginesql.Value, got tableOut) tableOut {
+	old := func(in rangeIn, q string, vals map[string]sqlbind.Value, got tableOut) tableOut {
 		t.Helper()
 		return oldTable(t, h, in, q, vals, got, nil)
 	}
@@ -340,8 +336,8 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 		{ProjectID: 1, From: "2026-07-01", To: "2026-07-31"}, // no data
 		{ProjectID: 1, From: "2026-08-21", To: "2026-08-20"}, // to before from
 	}
-	kind := func(k string) map[string]enginesql.Value {
-		return map[string]enginesql.Value{":kind": {Type: "VARCHAR", Text: k}}
+	kind := func(k string) map[string]sqlbind.Value {
+		return map[string]sqlbind.Value{":kind": {Type: "VARCHAR", Text: k}}
 	}
 
 	t.Run("views_overview", func(t *testing.T) {
@@ -384,7 +380,7 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			cond, vals := "", map[string]enginesql.Value(nil)
+			cond, vals := "", map[string]sqlbind.Value(nil)
 			if k != "" {
 				cond, vals = ` AND kind = :kind`, kind(k)
 			}
@@ -410,7 +406,7 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					want := old(r, oldViewsBreakdownSQL(dim), map[string]enginesql.Value{":limit": {Type: "BIGINT", Text: strconv.Itoa(limit)}}, toolTable(t, got))
+					want := old(r, oldViewsBreakdownSQL(dim), map[string]sqlbind.Value{":limit": {Type: "BIGINT", Text: strconv.Itoa(limit)}}, toolTable(t, got))
 					sameNumbers(t, fmt.Sprintf("%s %s..%s limit %d", name, r.From, r.To, limit), toolTable(t, got), want, 0)
 				}
 			}
@@ -431,7 +427,7 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 					continue
 				}
 				sameNumbers(t, name+" events", got.Events, old(r, oldProductEventsSQL(` AND event_name = :event`, `day`),
-					map[string]enginesql.Value{":event": {Type: "VARCHAR", Text: event}}, got.Events), 0)
+					map[string]sqlbind.Value{":event": {Type: "VARCHAR", Text: event}}, got.Events), 0)
 				if got.Totals.Columns != nil || got.Totals.Rows != nil {
 					t.Errorf("%s: totals %v, want none with an event", name, got.Totals)
 				}

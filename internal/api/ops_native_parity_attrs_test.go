@@ -17,7 +17,7 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -97,7 +97,7 @@ func oldMeasureAttr(t *testing.T, h *host, key string) string {
 		return "nullif(" + col + ", '')"
 	}
 	cols := frozen(t, "measures' columns", measuresColumns(t, h))
-	if col, ok := enginesql.AttrColumn(cols, key); ok {
+	if col, ok := attrColumn(cols, key); ok {
 		return col
 	}
 	return "CAST(NULL AS VARCHAR)"
@@ -235,7 +235,7 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 	h, _ := newTestHost(t)
 	writeAttributeEdges(t, h)
 	ctx := context.Background()
-	old := func(in rangeIn, q string, vals map[string]enginesql.Value, got tableOut) tableOut {
+	old := func(in rangeIn, q string, vals map[string]sqlbind.Value, got tableOut) tableOut {
 		t.Helper()
 		return oldTable(t, h, in, q, vals, got, nil)
 	}
@@ -246,7 +246,7 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 		{ProjectID: 1, From: "2026-07-01", To: "2026-07-31"}, // no data
 		{ProjectID: 1, From: "2026-08-21", To: "2026-08-20"}, // to before from
 	}
-	text := func(s string) enginesql.Value { return enginesql.Value{Type: "VARCHAR", Text: s} }
+	text := func(s string) sqlbind.Value { return sqlbind.Value{Type: "VARCHAR", Text: s} }
 
 	t.Run("product_attributes", func(t *testing.T) {
 		sawFresh, sawRenamed := false, false
@@ -260,7 +260,7 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 				if event == "" {
 					want = old(r, oldProductAttributesSQL(""), nil, toolTable(t, got))
 				} else {
-					want = old(r, oldProductAttributesSQL(` AND event_name = :event`), map[string]enginesql.Value{":event": text(event)}, toolTable(t, got))
+					want = old(r, oldProductAttributesSQL(` AND event_name = :event`), map[string]sqlbind.Value{":event": text(event)}, toolTable(t, got))
 				}
 				for _, row := range want.Rows {
 					sawFresh = sawFresh || row[2] == "fresh"
@@ -285,9 +285,9 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					cond, vals := "", map[string]enginesql.Value(nil)
+					cond, vals := "", map[string]sqlbind.Value(nil)
 					if name != "" {
-						cond, vals = ` AND event_name = :event`, map[string]enginesql.Value{":event": text(name)}
+						cond, vals = ` AND event_name = :event`, map[string]sqlbind.Value{":event": text(name)}
 					}
 					value := ""
 					if key != "" {
@@ -329,7 +329,7 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 				}
 				// The rules name new_key and noisy (blocked).
 				want := old(r, oldListAttributesSQL(`row_number() OVER (ORDER BY events DESC, attr_key) <= :limit OR attr_key IN (:k0, :k1)`),
-					map[string]enginesql.Value{":limit": {Type: "BIGINT", Text: strconv.Itoa(limit)}, ":k0": text("new_key"), ":k1": text("noisy")}, table)
+					map[string]sqlbind.Value{":limit": {Type: "BIGINT", Text: strconv.Itoa(limit)}, ":k0": text("new_key"), ":k1": text("noisy")}, table)
 				var wantRows [][]string
 				for _, row := range want.Rows {
 					wantRows = append(wantRows, row[:3])
@@ -371,7 +371,7 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 						}
 						return o
 					}
-					want := nameIsID(oldTable(t, h, r, oldIdentitiesSQL(kind), map[string]enginesql.Value{":kind": text(kind), ":limit": {Type: "BIGINT", Text: strconv.Itoa(n)}},
+					want := nameIsID(oldTable(t, h, r, oldIdentitiesSQL(kind), map[string]sqlbind.Value{":kind": text(kind), ":limit": {Type: "BIGINT", Text: strconv.Itoa(n)}},
 						toolTable(t, got), nameIsID))
 					sameNumbers(t, fmt.Sprintf("%s..%s %s limit %d", r.From, r.To, kind, limit), toolTable(t, got), want, 0)
 				}
@@ -420,4 +420,22 @@ func TestAttributeToolsUnderTheRowCap(t *testing.T) {
 			t.Errorf("%s answered without an engine", name)
 		}
 	}
+}
+
+// attrColumn is the column of cols (an event file's columns) that holds
+// the attribute key, quoted for the SQL engine: attr_<key> as the files
+// name it, a NUL in the key written as the six characters \u0000, matched
+// without regard to case as the engine's column names are (attr_Plan is
+// attr_plan). ok is false when no column holds the key.
+func attrColumn(cols []string, key string) (col string, ok bool) {
+	if key == "" {
+		return "", false
+	}
+	name := "attr_" + strings.ReplaceAll(key, "\x00", `\u0000`)
+	for _, c := range cols {
+		if strings.EqualFold(c, name) {
+			return `"` + strings.ReplaceAll(c, `"`, `""`) + `"`, true
+		}
+	}
+	return "", false
 }

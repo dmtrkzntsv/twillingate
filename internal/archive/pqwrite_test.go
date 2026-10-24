@@ -66,7 +66,7 @@ func openMeta(t *testing.T, path string) *parquet.File {
 	return pf
 }
 
-// leafFacts is what DuckDB reads from a leaf: its physical and logical
+// leafFacts is what a reader reads from a leaf: its physical and logical
 // type, repetition, and the chunks' codec and encodings.
 func leafFacts(pf *parquet.File) []string {
 	var out []string
@@ -91,12 +91,12 @@ func leafFacts(pf *parquet.File) []string {
 	return out
 }
 
-// TestWriterTypesMatchDuckDB: a file of every type reads back with the
+// TestWriterTypesMatchGolden: a file of every type reads back with the
 // types and values of its golden, which holds what the old query engine
 // read from the file it COPYed from the same values, and
 // its leaves are typed as that file's are (native's reader goes by those:
 // pqwrite_native_test.go reads the values back through it).
-func TestWriterTypesMatchDuckDB(t *testing.T) {
+func TestWriterTypesMatchGolden(t *testing.T) {
 	dir := t.TempDir()
 	goFile := filepath.Join(dir, "go.parquet")
 	writeRows(t, goFile, allTypes, nil, allTypesRows...)
@@ -399,7 +399,7 @@ func TestWriterFileIsAtomicAnd0640(t *testing.T) {
 }
 
 // TestWriterFallsBackToPlain: a VARCHAR column whose dictionary outgrows
-// dictMaxBytes goes on in PLAIN pages, DuckDB reads both kinds back, and
+// dictMaxBytes goes on in PLAIN pages, both kinds read back, and
 // the chunk's statistics stay exact across them: the minimum is in the
 // first (dictionary) page, a long maximum and NULLs in PLAIN pages after
 // the switch.
@@ -608,7 +608,7 @@ func writeWide(t testing.TB, path string, attrs, rows, every int) (peak uint64, 
 }
 
 // TestWideFileMatchesNarrow: the same rows written by row and by column
-// (byColumnCols lowered) read back the same through DuckDB, with the same
+// (byColumnCols lowered) read back the same, with the same
 // types, row groups and statistics: every type, NULLs, a long string, an
 // all-NULL group, a dictionary that falls back to PLAIN, groups cut by
 // the cut rule and by byColumnBytes; and an empty file.
@@ -855,7 +855,7 @@ func TestWideFileRefusesTooManyRowGroups(t *testing.T) {
 
 // TestWriterBoundsWideFiles: a day of 2,000 columns, nearly all sparse
 // attributes, is written by column in under 150 MB of heap (about 310 MB
-// by row), in 1 group and in 100, and DuckDB reads it back whole, with
+// by row), in 1 group and in 100, and reads back whole, with
 // exact statistics.
 func TestWriterBoundsWideFiles(t *testing.T) {
 	f := newFixture(t)

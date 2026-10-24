@@ -248,7 +248,7 @@ func derivedCases(t *testing.T, f fixture) []derivedCase {
 	}
 }
 
-// TestGoDerivedFilesMatchDuckDB: over every case's events files, the Go
+// TestGoDerivedFilesMatchGolden: over every case's events files, the Go
 // sessions, identities and aliases files, read back, are their goldens
 // (the files the old query engine's COPY of sessionsSelect,
 // identitiesSelect and aliasesSelect wrote over the files as one
@@ -257,7 +257,7 @@ func derivedCases(t *testing.T, f fixture) []derivedCase {
 // rows are compared in order; sessions tie on their ORDER BY (an actor
 // under two kinds), so they are compared as a multiset and the Go file's
 // order is checked.
-func TestGoDerivedFilesMatchDuckDB(t *testing.T) {
+func TestGoDerivedFilesMatchGolden(t *testing.T) {
 	f := newFixture(t)
 	for i, c := range derivedCases(t, f) {
 		t.Run(c.name, func(t *testing.T) {

@@ -218,10 +218,10 @@ func sortByFirst(rows [][]string) {
 	slices.SortFunc(rows, func(a, b []string) int { return strings.Compare(a[0], b[0]) })
 }
 
-// matchDuckDB reads every row of project 1 in its Parquet files (two,
+// matchGolden reads every row of project 1 in its Parquet files (two,
 // and no log) in every column of events, and compares them with the
 // golden. It returns the files.
-func matchDuckDB(t *testing.T, f *archivetest.Files) []string {
+func matchGolden(t *testing.T, f *archivetest.Files) []string {
 	t.Helper()
 	const q = "SELECT * FROM events WHERE project_id = 1 ORDER BY id"
 	cols := eventsColumns(t, f.Dir, 1, archive.Rules{})
@@ -259,9 +259,9 @@ func matchDuckDB(t *testing.T, f *archivetest.Files) []string {
 	return pq
 }
 
-func TestParquetRowsMatchDuckDB(t *testing.T) {
+func TestParquetRowsMatchGolden(t *testing.T) {
 	f := seed(t, 40)
-	pq := matchDuckDB(t, f)
+	pq := matchGolden(t, f)
 
 	// One family and one day, the attributes by pattern: the rows SQL
 	// filters the same way, and every attr_ column a file holds.
@@ -344,7 +344,7 @@ func TestParquetPrunesByDay(t *testing.T) {
 	f := seed(t, 1500) // 9000 rows in August
 	month := filepath.Join(f.Dir, "1", "2026-08.parquet")
 	rewrite(t, month, 2048) // small row groups, as the old engine's smallest
-	matchDuckDB(t, f)       // every column over many groups and pages
+	matchGolden(t, f)       // every column over many groups and pages
 	all, err := parquetGroups([]string{month}, "", rng(t, "2026-08-01", "2026-08-31"))
 	if err != nil {
 		t.Fatal(err)
@@ -430,7 +430,7 @@ func TestParquetGroupSpanningDays(t *testing.T) {
 			t.Errorf("%s to %s: %d rows, want 100", c.from, c.to, n)
 		}
 	}
-	matchDuckDB(t, f)
+	matchGolden(t, f)
 }
 
 func TestParquetMissingColumns(t *testing.T) {

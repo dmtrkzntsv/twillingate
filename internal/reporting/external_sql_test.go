@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
@@ -151,7 +151,7 @@ func TestEngineDownMidFlight(t *testing.T) {
 		s := &sqlSource{eng: newSQLEngine(c, Options{EventsDir: t.TempDir(), QueryTimeout: 5 * time.Second, QueryMaxRows: 10})}
 		for range 5 {
 			_, err := s.Load(context.Background(), "SELECT 1", Params{})
-			wantRefusal(t, err, store.ErrInvalid, enginesql.EngineFailed)
+			wantRefusal(t, err, store.ErrInvalid, sqlbind.EngineFailed)
 			if cause := resourceCause(err); !errors.Is(cause, sqlengine.ErrUnavailable) {
 				t.Errorf("%s: cause = %v, want ErrUnavailable", name, cause)
 			}
@@ -258,7 +258,7 @@ func TestStaleSpecRetried(t *testing.T) {
 	always := &vanishing{SQL: f, dir: f.Dir, always: true}
 	s = &sqlSource{eng: newSQLEngine(always, f.options(Options{}))}
 	_, err = s.Load(context.Background(), "SELECT 1 AS n", Params{})
-	wantRefusal(t, err, store.ErrInvalid, enginesql.Stale)
+	wantRefusal(t, err, store.ErrInvalid, sqlbind.Stale)
 	if resourceCause(err) == nil || len(always.specs) != sqlengine.StaleAttempts {
 		t.Errorf("always stale: %d attempts, cause %v; want %d and a resource failure", len(always.specs), resourceCause(err), sqlengine.StaleAttempts)
 	}

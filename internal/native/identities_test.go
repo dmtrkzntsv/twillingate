@@ -116,7 +116,8 @@ func identitiesFixture(t testing.TB) *archivetest.Files {
 	return f
 }
 
-// identityColumnList is the identities table's columns, for DuckDB.
+// identityColumnList is the identities table's columns, as the goldens'
+// SQL keys name them.
 var identityColumnList = `"` + strings.Join(identityColumns, `", "`) + `"`
 
 // identityRows is project's identities first seen in r (every one, r nil)
@@ -154,7 +155,7 @@ func listFiles(t *testing.T, e *Engine) map[int64]archive.Files {
 	return all
 }
 
-func TestIdentitiesRowsMatchDuckDB(t *testing.T) {
+func TestIdentitiesRowsMatchGolden(t *testing.T) {
 	f := identitiesFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	pdir := filepath.Join(f.Dir, strconv.Itoa(identitiesProject))
@@ -250,7 +251,7 @@ const statusSQL = `WITH s AS (SELECT e.*,
 	LEFT JOIN identities g ON g.project_id = 4 AND g.kind = 'group' AND g.id = e.group_id
 	WHERE e."project_id" = 4 AND e."day" BETWEEN DATE '%[1]s' AND DATE '%[2]s') `
 
-func TestIdentitiesQueriesMatchDuckDB(t *testing.T) {
+func TestIdentitiesQueriesMatchGolden(t *testing.T) {
 	f := identitiesFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 2})
 	const from, to = "2026-09-01", today

@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
@@ -52,13 +52,13 @@ func TestFilesTableTruncatesErrorsAndTimesOut(t *testing.T) {
 			"Catalog Error: Table with name v_events does not exist!; the v_*, raw_* and agg_* tables went with the database's events. The event files hold"},
 		{"refused", archivetest.Fail(sqlengine.KindRefused, `"agg_views" is not a table here`),
 			`"agg_views" is not a table here; the v_*, raw_* and agg_* tables went with the database's events (docs://twillingate)`},
-		{"timeout", archivetest.Fail(sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms"), enginesql.Timeout(h.queryTimeout)},
-		{"out of memory", archivetest.Fail(sqlengine.KindOutOfMemory, "Out of Memory Error"), enginesql.OutOfMemory},
-		{"logs out of memory", archivetest.Fail(sqlengine.KindOutOfMemoryLoadingLog, "Out of Memory Error"), enginesql.LogsOutOfMemory},
-		{"exited", archivetest.Fail(sqlengine.KindExited, "the worker exited"), enginesql.ChildExited},
-		{"busy", archivetest.Fail(sqlengine.KindBusy, "no free slot"), enginesql.Busy},
-		{"stale", archivetest.Fail(sqlengine.KindStale, "a file in the table spec is gone"), enginesql.Stale},
-		{"internal", archivetest.Fail(sqlengine.KindInternal, "engine failed"), enginesql.EngineFailed},
+		{"timeout", archivetest.Fail(sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms"), sqlbind.Timeout(h.queryTimeout)},
+		{"out of memory", archivetest.Fail(sqlengine.KindOutOfMemory, "Out of Memory Error"), sqlbind.OutOfMemory},
+		{"logs out of memory", archivetest.Fail(sqlengine.KindOutOfMemoryLoadingLog, "Out of Memory Error"), sqlbind.LogsOutOfMemory},
+		{"exited", archivetest.Fail(sqlengine.KindExited, "the worker exited"), sqlbind.ChildExited},
+		{"busy", archivetest.Fail(sqlengine.KindBusy, "no free slot"), sqlbind.Busy},
+		{"stale", archivetest.Fail(sqlengine.KindStale, "a file in the table spec is gone"), sqlbind.Stale},
+		{"internal", archivetest.Fail(sqlengine.KindInternal, "engine failed"), sqlbind.EngineFailed},
 	} {
 		eng.On(archivetest.SQLHas("no_such_column"), c.answer)
 		_, err = h.filesTable(ctx, blog, `SELECT no_such_column FROM views WHERE project_id = :project`, nil)

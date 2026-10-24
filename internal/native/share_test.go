@@ -48,7 +48,7 @@ func TestRatingsMatchWidget(t *testing.T) {
 
 // share's partitions, as SQL's window SUM(x) OVER (PARTITION BY the first
 // dimension) reads them before LIMIT: an Other row's is every group's.
-func TestShareMatchesDuckDB(t *testing.T) {
+func TestShareMatchesGolden(t *testing.T) {
 	f := engineFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	type tc struct {

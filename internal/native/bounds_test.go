@@ -11,7 +11,7 @@ import (
 // them: users/top-users.sql's and groups/top-groups.sql's "Last seen",
 // and the newest arrival usage reads; a day reads as YYYY-MM-DD, a time
 // as DuckDB prints a TIMESTAMP.
-func TestBoundsMatchDuckDB(t *testing.T) {
+func TestBoundsMatchGolden(t *testing.T) {
 	f := engineFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	actions := []Filter{{Column: "family", Op: "in", Values: []string{"views", "product"}}}

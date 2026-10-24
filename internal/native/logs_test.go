@@ -53,7 +53,7 @@ func logOf(t *testing.T, f *archivetest.Files, project int64) string {
 	return logs[0]
 }
 
-func TestLogRowsMatchDuckDB(t *testing.T) {
+func TestLogRowsMatchGolden(t *testing.T) {
 	f := archivetest.New(t)
 	f.Write(t, events(t, 1, today, 30)...)
 	f.Write(t, odd("odd-1"))
@@ -190,7 +190,7 @@ func fold(b *Batch, cols []string) *Batch {
 	return out
 }
 
-func TestLogAndParquetMatchDuckDB(t *testing.T) {
+func TestLogAndParquetMatchGolden(t *testing.T) {
 	f := seed(t, 20)
 	f.Write(t, events(t, 1, today, 20)...)
 	f.Write(t, odd("odd-1"))
