@@ -222,12 +222,70 @@ func (h *host) answer(ctx context.Context, q native.Query, p native.Params) (nat
 	events, attrs := h.reg.Snapshot(ctx).RuleLists()
 	res, err := h.native.Answer(ctx, q, p, archive.Rules{Events: events, Attributes: attrs})
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) {
-			return native.Result{}, invalidf("%s", enginesql.Timeout(h.queryTimeout))
-		}
-		return native.Result{}, nativeError(err)
+		return native.Result{}, h.answerErr(err)
 	}
 	return res, nil
+}
+
+// answerErr words an engine's refusal as answer does: a timeout with
+// CONSOLE_QUERY_TIMEOUT's words, a refusal as invalid (nativeError).
+func (h *host) answerErr(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return invalidf("%s", enginesql.Timeout(h.queryTimeout))
+	}
+	return nativeError(err)
+}
+
+// manyNative is a Native that answers several queries from shared scans
+// (native.Engine.AnswerMany).
+type manyNative interface {
+	AnswerMany(ctx context.Context, reqs []native.Request, done func(i int, a native.Answered))
+}
+
+// answerAll answers a tool's queries as answer answers one, under one
+// CONSOLE_QUERY_TIMEOUT for them all and the registry's rules (each
+// request's own Rules and Ctx are ignored): from shared scans when the
+// engine has them (manyNative), else one by one in order, stopping at the
+// first failure, whose error the answers after it repeat. Errors read as
+// answer's. A caller reads the answers in order and stops at the first
+// error, so a tool fails with the error it failed with one by one.
+func (h *host) answerAll(ctx context.Context, reqs []native.Request) []native.Answered {
+	out := make([]native.Answered, len(reqs))
+	if h.native == nil {
+		err := invalidf("the event files cannot be queried by this process")
+		for i := range out {
+			out[i].Err = err
+		}
+		return out
+	}
+	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
+	defer cancel()
+	events, attrs := h.reg.Snapshot(ctx).RuleLists()
+	rules := archive.Rules{Events: events, Attributes: attrs}
+	if m, ok := h.native.(manyNative); ok {
+		all := make([]native.Request, len(reqs))
+		for i, r := range reqs {
+			all[i] = native.Request{Query: r.Query, Params: r.Params, Rules: rules}
+		}
+		m.AnswerMany(ctx, all, func(i int, a native.Answered) {
+			if a.Err != nil {
+				a.Err = h.answerErr(a.Err)
+			}
+			out[i] = a
+		})
+		return out
+	}
+	var err error
+	for i, r := range reqs {
+		if err == nil {
+			out[i].Result, err = h.native.Answer(ctx, r.Query, r.Params, rules)
+			if err != nil {
+				err = h.answerErr(err)
+			}
+		}
+		out[i].Err = err
+	}
+	return out
 }
 
 // parseDay reads a YYYY-MM-DD day for the field name.

@@ -153,81 +153,98 @@ const usageChunkDays = maxBreakdownLimit / 3
 // applied: a breakdown by day and family per project, one per 333 days of
 // the range. It also reads when each project's newest row arrived
 // (newestArrival), for every project when asked, else for the live ones
-// only: an archived project's files only wait for the purge.
+// only: an archived project's files only wait for the purge. Every
+// project's queries go in one call (answerAll), a project's sharing one
+// scan.
 func (h *host) usageCounts(ctx context.Context, projects []*manage.Project, asked bool, fromD, toD civil.Date) (fileCounts, error) {
 	latest, err := archive.LatestDays(h.eventsDir)
 	if err != nil {
 		return fileCounts{}, err
 	}
-	out := fileCounts{days: map[int64]map[string]*usageTotals{}, received: map[int64]string{}}
+	// asks is each request's project and whether it reads the newest
+	// arrival (else it is a chunk's breakdown), in the order the answers
+	// are read.
+	type ask struct {
+		project int64
+		arrival bool
+	}
+	var reqs []native.Request
+	var asks []ask
 	for _, p := range projects {
-		days := map[string]*usageTotals{}
 		for lo := fromD; !toD.Before(lo); lo = lo.AddDays(usageChunkDays) {
 			hi := lo.AddDays(usageChunkDays - 1)
 			if toD.Before(hi) {
 				hi = toD
 			}
-			res, err := h.answer(ctx, native.Query{Kind: "breakdown", Table: "events", Dimensions: []string{"day", "family"},
+			reqs = append(reqs, native.Request{Query: native.Query{Kind: "breakdown", Table: "events", Dimensions: []string{"day", "family"},
 				Metrics: []native.Metric{{Op: "count"}}, Order: "day", Limit: maxBreakdownLimit},
-				native.Params{Project: p.ID, From: lo, To: hi})
-			if err != nil {
-				return fileCounts{}, err
-			}
-			if res.Truncated {
-				return fileCounts{}, invalidf("usage: too many rows; narrow the date range")
-			}
-			for _, row := range res.Rows {
-				c := days[row[0]]
-				if c == nil {
-					c = &usageTotals{}
-					days[row[0]] = c
-				}
-				n := cellInt(row[2])
-				switch store.Family(row[1]) {
-				case store.FamilyViews:
-					c.Views = n
-				case store.FamilyProduct:
-					c.Events = n
-				case store.FamilyMeasures:
-					c.Measures = n
-				}
-			}
+				Params: native.Params{Project: p.ID, From: lo, To: hi}})
+			asks = append(asks, ask{project: p.ID})
 		}
-		out.days[p.ID] = days
 		if !asked && p.Archived {
 			continue
 		}
-		r, err := h.newestArrival(ctx, p.ID, latest[p.ID])
-		if err != nil {
-			return fileCounts{}, err
+		if r, ok := newestArrival(p.ID, latest[p.ID]); ok {
+			reqs = append(reqs, r)
+			asks = append(asks, ask{project: p.ID, arrival: true})
 		}
-		if r != "" {
-			out.received[p.ID] = r
+	}
+	out := fileCounts{days: map[int64]map[string]*usageTotals{}, received: map[int64]string{}}
+	for _, p := range projects {
+		out.days[p.ID] = map[string]*usageTotals{}
+	}
+	for i, a := range h.answerAll(ctx, reqs) {
+		if a.Err != nil {
+			return fileCounts{}, a.Err
+		}
+		res, project := a.Result, asks[i].project
+		if asks[i].arrival {
+			if len(res.Rows) == 1 && res.Rows[0][0] != "" {
+				out.received[project] = res.Rows[0][0]
+			}
+			continue
+		}
+		if res.Truncated {
+			return fileCounts{}, invalidf("usage: too many rows; narrow the date range")
+		}
+		days := out.days[project]
+		for _, row := range res.Rows {
+			c := days[row[0]]
+			if c == nil {
+				c = &usageTotals{}
+				days[row[0]] = c
+			}
+			n := cellInt(row[2])
+			switch store.Family(row[1]) {
+			case store.FamilyViews:
+				c.Views = n
+			case store.FamilyProduct:
+				c.Events = n
+			case store.FamilyMeasures:
+				c.Measures = n
+			}
 		}
 	}
 	return out, nil
 }
 
-// newestArrival is when the newest row of a project arrived, "" when it
-// has none: the newest received_at from the first day of the month of its
-// newest file name (latest, archive.LatestDays: a month's file counts as
-// its last day, its rows may end earlier) to that day, so it is found
-// whatever the range and scans at most a month.
-func (h *host) newestArrival(ctx context.Context, project int64, latest string) (string, error) {
+// newestArrival is the query of when the newest row of a project
+// arrived, ok false when it has no files: the newest received_at from the
+// first day of the month of its newest file name (latest,
+// archive.LatestDays: a month's file counts as its last day, its rows may
+// end earlier) to that day, so it is found whatever the range and scans
+// at most a month. It answers "" when the project has no row there.
+func newestArrival(project int64, latest string) (req native.Request, ok bool) {
 	last, err := civil.Parse(latest)
 	if err != nil {
-		return "", nil // no files
+		return native.Request{}, false // no files
 	}
 	first, err := civil.Parse(latest[:8] + "01")
 	if err != nil {
-		return "", nil
+		return native.Request{}, false
 	}
-	res, err := h.answer(ctx, native.Query{Kind: "stat", Table: "events", Metrics: []native.Metric{{Op: "max", Column: "received_at"}}},
-		native.Params{Project: project, From: first, To: last})
-	if err != nil || len(res.Rows) != 1 {
-		return "", err
-	}
-	return res.Rows[0][0], nil
+	return native.Request{Query: native.Query{Kind: "stat", Table: "events", Metrics: []native.Metric{{Op: "max", Column: "received_at"}}},
+		Params: native.Params{Project: project, From: first, To: last}}, true
 }
 
 // readSizes answers every project's latest size, by project id: its
