@@ -395,10 +395,12 @@ func (h *host) sqlError(ctx context.Context, err error) error {
 	var se *sqlengine.Error
 	isKind := func(k sqlengine.Kind) bool { return errors.As(err, &se) && se.Kind == k }
 	switch {
-	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded), isKind(sqlengine.KindTimeout):
+	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
 		return invalidf("%s", enginesql.Timeout(h.queryTimeout))
-	case ctx.Err() != nil:
+	case ctx.Err() != nil: // the caller went away: whatever the engine said last
 		return err
+	case isKind(sqlengine.KindTimeout):
+		return invalidf("%s", enginesql.Timeout(h.queryTimeout))
 	case isKind(sqlengine.KindOutOfMemoryLoadingLog):
 		return invalidf("%s", enginesql.LogsOutOfMemory)
 	case isKind(sqlengine.KindOutOfMemory):

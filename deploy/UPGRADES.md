@@ -1447,9 +1447,19 @@ analytics tools need no engine and are unaffected.
   refused with the same message (`invalid`, `400` over REST). The
   component list leaves `sql` out. Rewrite such widgets as `query` widgets,
   or set up an engine.
-- **With an engine**: set `SQL_ENGINE_SOCKET` to its socket. A start whose
-  engine speaks another protocol version fails, naming both; one whose
-  engine does not answer logs a warning and goes on, and SQL is refused
-  with "the SQL engine failed" until it answers.
+- **With an engine**: set `SQL_ENGINE_SOCKET` to its socket. A console
+  whose engine speaks another protocol version fails to start, naming
+  both; one whose engine does not answer logs a warning and goes on, and
+  SQL is refused with "the SQL engine failed" until it answers. An
+  ingest-only process and the CLI commands call the engine only to check
+  a system widget that reads SQL (none today).
+- On the first start after the upgrade, the console checks the users' SQL
+  widgets through the engine in the background; on an engine still
+  loading the event files a check may time out, widget by widget, and is
+  logged as unchecked, not failing. The next start checks them again.
+- A SQL widget that reads `:project` now sees only that project's
+  `attr_<key>` columns: naming a key the project never sent is an error
+  ("Referenced column … not found") where it read NULL. Rewrite such a
+  widget to name only the project's keys.
 
 Rollback: install the previous release; nothing on disk changed.

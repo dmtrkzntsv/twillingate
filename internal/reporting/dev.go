@@ -366,7 +366,7 @@ func devComponents(svc *Service, comps []Component) http.HandlerFunc {
 	out := struct {
 		SourceTypes []string    `json:"source_types"`
 		Components  []Component `json:"components"`
-	}{SourceTypes: svc.SourceTypes(), Components: comps}
+	}{SourceTypes: svc.SourceTypes(), Components: WithSourceTypes(comps, svc.SourceTypes())}
 	return func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, out)
 	}

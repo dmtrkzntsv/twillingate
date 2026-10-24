@@ -3,6 +3,7 @@ package reporting
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -113,6 +114,35 @@ func (s *Service) Components(ctx context.Context) ([]Component, error) {
 		out = append(out, c)
 	}
 	return out, nil
+}
+
+// ListedComponents is Components as a client sees them: each one's
+// accepts holds only the source types this process registers, so without
+// an engine nothing advertises sql (list_components, the reporting
+// guide).
+func (s *Service) ListedComponents(ctx context.Context) ([]Component, error) {
+	cs, err := s.Components(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return WithSourceTypes(cs, s.SourceTypes()), nil
+}
+
+// WithSourceTypes is comps with each one's accepts cut to sourceTypes, in
+// copies: the stored components keep theirs.
+func WithSourceTypes(comps []Component, sourceTypes []string) []Component {
+	out := make([]Component, len(comps))
+	for i, c := range comps {
+		accepts := make([]string, 0, len(c.Accepts))
+		for _, a := range c.Accepts {
+			if slices.Contains(sourceTypes, a) {
+				accepts = append(accepts, a)
+			}
+		}
+		c.Accepts = accepts
+		out[i] = c
+	}
+	return out
 }
 
 // components is Components keyed by name: what one operation loads once

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
@@ -44,4 +45,41 @@ func openSQL(ctx context.Context, socket string, logger *slog.Logger) (*sqlengin
 		logger.Info("SQL engine", "socket", socket, "engine", h.Engine, "protocol", h.Protocol)
 	}
 	return c, nil
+}
+
+// lazySQL is the engine at socket opened (openSQL, health included) on
+// its first query rather than at start: a command whose migrator finds no
+// sql system widget to check (`twillingate project …`, an ingest-only
+// serve) never calls the engine. A protocol mismatch fails that query and
+// every one after; an engine that does not answer is logged and tried
+// again by each query, as openSQL's client is.
+type lazySQL struct {
+	socket string
+	logger *slog.Logger
+	once   sync.Once
+	client *sqlengine.Client
+	err    error
+}
+
+// newLazySQL is lazySQL at socket, nil when socket is "" (no engine).
+func newLazySQL(socket string, logger *slog.Logger) *lazySQL {
+	if socket == "" {
+		return nil
+	}
+	return &lazySQL{socket: socket, logger: logger}
+}
+
+func (l *lazySQL) Query(ctx context.Context, req sqlengine.Request) (sqlengine.Result, error) {
+	l.once.Do(func() { l.client, l.err = openSQL(ctx, l.socket, l.logger) })
+	if l.err != nil {
+		return sqlengine.Result{}, l.err
+	}
+	return l.client.Query(ctx, req)
+}
+
+// Close drops the client's idle connections, if it was opened.
+func (l *lazySQL) Close() {
+	if l.client != nil {
+		l.client.Close()
+	}
 }

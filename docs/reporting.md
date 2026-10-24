@@ -302,6 +302,10 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
   (`main.events`, which would read every project's rows past `:project`)
   and any other table. A `WITH` name of the widget's own reads as usual,
   where it is in scope; a path inside a string compared as text is fine.
+- A widget whose SQL reads `:project` sees only that project's
+  `attr_<key>` columns: a key no event of the project carried is an error
+  ("Referenced column "attr_plan" not found"), not a column of NULLs. Name
+  only keys the project sends, or read them with `COLUMNS('^attr_')`.
 - The only parameters are `:project`, a BIGINT, and `:from` and `:to`,
   DATEs in UTC like `day`: `day BETWEEN :from AND :to`, and `:to - :from + 1`
   is the range's length in days. `?`, `$1` and `$name` are refused.

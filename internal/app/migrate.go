@@ -27,9 +27,12 @@ var _ reporting.Store = store.Store(nil)
 //
 // The reporting migrator validates every system widget on the event
 // files, through the external SQL engine at SQL_ENGINE_SOCKET when one is
-// set (openSQL: a protocol mismatch fails, an engine that does not answer
-// is logged). While no system widget reads SQL (they are structured
-// queries, answered without an engine), that check sends no query.
+// set. The engine is reached lazily (lazySQL): only a sql system widget's
+// check calls it, health first, so a command that finds none (while no
+// system widget reads SQL, every one) never does, and an engine that is
+// down or of another version does not stop `twillingate project …`.
+// Should one be checked, another protocol version fails the command and
+// an engine that does not answer is logged.
 //
 // That check is part of the boot, not a viewer's query: each of its
 // queries runs under migrateQueryTimeout rather than
@@ -38,16 +41,12 @@ var _ reporting.Store = store.Store(nil)
 // the start goes on, so the daily pass runs and the next start checks
 // again. A refusal of a system widget's SQL still fails the start.
 func Migrate(ctx context.Context, cfg *config.Config, st store.Store) error {
-	logger := NewLogger(cfg.Log)
-	sql, err := openSQL(ctx, cfg.SQLEngineSocket, logger)
-	if err != nil {
-		return err
+	sql := newLazySQL(cfg.SQLEngineSocket, NewLogger(cfg.Log))
+	if sql == nil {
+		return migrate(ctx, cfg, st, nil)
 	}
-	if sql != nil {
-		defer sql.Close()
-		return migrate(ctx, cfg, st, sql)
-	}
-	return migrate(ctx, cfg, st, nil)
+	defer sql.Close()
+	return migrate(ctx, cfg, st, sql)
 }
 
 // migrate is Migrate on the caller's engine client (nil: none): serve's,

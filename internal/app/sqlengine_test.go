@@ -12,11 +12,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
@@ -32,15 +34,25 @@ func socketDir(t *testing.T) string {
 	return dir
 }
 
-// fakeHealth serves GET /v1/health on a socket with protocol, until t ends.
-func fakeHealth(t *testing.T, protocol int) string {
+// fakeHealth serves GET /v1/health on a socket with protocol, until t ends,
+// counting the calls in calls when it is not nil; every other request
+// answers 500 internal.
+func fakeHealth(t *testing.T, protocol int, calls ...*atomic.Int64) string {
 	t.Helper()
 	sock := filepath.Join(socketDir(t), "e.sock")
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
 		t.Fatal(err)
 	}
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/health" {
+			w.WriteHeader(500)
+			json.NewEncoder(w).Encode(sqlengine.ErrorBody{Error: sqlengine.ErrorDetail{Kind: sqlengine.KindInternal, Message: "fake"}})
+			return
+		}
+		for _, c := range calls {
+			c.Add(1)
+		}
 		json.NewEncoder(w).Encode(sqlengine.Health{Protocol: protocol, Engine: "fake 9"})
 	})}
 	go srv.Serve(ln)
@@ -85,19 +97,81 @@ func TestOpenSQL(t *testing.T) {
 	}
 }
 
-// TestServeRefusesAnotherProtocol: a start whose engine speaks another
-// protocol stops before anything listens.
+// TestServeRefusesAnotherProtocol: a console whose engine speaks another
+// protocol stops before anything listens. An ingest-only process and a
+// CLI command, whose migrator finds no sql system widget, never call the
+// engine and start as usual.
 func TestServeRefusesAnotherProtocol(t *testing.T) {
-	addr := freePort(t)
-	cfg := testConfig(t, addr, filepath.Join(t.TempDir(), "proto.db"))
-	cfg.SQLEngineSocket = fakeHealth(t, sqlengine.Protocol+1)
-	err := Serve(context.Background(), cfg, slog.New(slog.DiscardHandler), true, false)
+	var calls atomic.Int64
+	sock := fakeHealth(t, sqlengine.Protocol+1, &calls)
+
+	cfg := apiTestConfig(t, freePort(t), filepath.Join(t.TempDir(), "proto.db"), "")
+	cfg.SQLEngineSocket = sock
+	err := Serve(context.Background(), cfg, slog.New(slog.DiscardHandler), true, true)
 	if !errors.Is(err, errSQLEngineProtocol) {
-		t.Fatalf("serve = %v, want the protocol mismatch", err)
+		t.Fatalf("serve with the console = %v, want the protocol mismatch", err)
 	}
-	if err := Migrate(context.Background(), cfg, nil); !errors.Is(err, errSQLEngineProtocol) {
-		t.Errorf("migrate = %v, want the protocol mismatch", err)
+
+	calls.Store(0)
+	addr := freePort(t)
+	cfg = testConfig(t, addr, filepath.Join(t.TempDir(), "ingest.db"))
+	cfg.SQLEngineSocket = sock
+	writeEvent(t, cfg.EventsDir)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- Serve(ctx, cfg, slog.New(slog.DiscardHandler), true, false) }()
+	waitHealthy(t, "http://"+addr)
+	cancel()
+	if err := <-done; err != nil {
+		t.Errorf("ingest-only serve = %v, want it to start and stop", err)
 	}
+	if err := Migrate(context.Background(), cfg, mustOpenStore(t, cfg)); err != nil {
+		t.Errorf("migrate = %v, want it to run without the engine", err)
+	}
+	if n := calls.Load(); n != 0 {
+		t.Errorf("the engine's health was called %d times, want none without the console or a sql system widget", n)
+	}
+}
+
+// TestLazySQLCallsTheEngineOnItsFirstQuery: the migrator's client says
+// nothing until it is asked a query; then it checks the engine's health
+// once, and a protocol mismatch fails that query and every one after.
+func TestLazySQLCallsTheEngineOnItsFirstQuery(t *testing.T) {
+	if newLazySQL("", slog.New(slog.DiscardHandler)) != nil {
+		t.Error("no socket: want no client")
+	}
+	var calls atomic.Int64
+	l := newLazySQL(fakeHealth(t, sqlengine.Protocol+1, &calls), slog.New(slog.DiscardHandler))
+	defer l.Close()
+	if n := calls.Load(); n != 0 {
+		t.Fatalf("health called %d times before any query", n)
+	}
+	for range 2 {
+		if _, err := l.Query(context.Background(), sqlengine.Request{}); !errors.Is(err, errSQLEngineProtocol) {
+			t.Errorf("query = %v, want the protocol mismatch", err)
+		}
+	}
+	if n := calls.Load(); n != 1 {
+		t.Errorf("health called %d times, want once", n)
+	}
+
+	ok := newLazySQL(fakeHealth(t, sqlengine.Protocol), slog.New(slog.DiscardHandler))
+	defer ok.Close()
+	var se *sqlengine.Error
+	if _, err := ok.Query(context.Background(), sqlengine.Request{}); !errors.As(err, &se) || se.Kind != sqlengine.KindInternal {
+		t.Errorf("query on a matching engine = %v, want the engine's own answer", err)
+	}
+}
+
+// mustOpenStore opens cfg's database, closed with t.
+func mustOpenStore(t *testing.T, cfg *config.Config) store.Store {
+	t.Helper()
+	st, err := store.Open(cfg.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	return st
 }
 
 // TestServeAnswersSQLThroughTheEngine: the console's query tool answers

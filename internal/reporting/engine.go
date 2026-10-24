@@ -137,11 +137,11 @@ func (e *sqlEngine) err(ctx context.Context, err error) error {
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
 		return resource(enginesql.Timeout(e.timeout), err)
+	case ctx.Err() != nil: // the caller went away: whatever the engine said last
+		return err
 	case isKind(sqlengine.KindTimeout):
 		// A timeout's cause says so (stopsCheck, Migrate's reason), as ctx's.
 		return resource(enginesql.Timeout(e.timeout), fmt.Errorf("%w: %w", context.DeadlineExceeded, err))
-	case ctx.Err() != nil:
-		return err
 	case isKind(sqlengine.KindOutOfMemoryLoadingLog):
 		return resource(enginesql.LogsOutOfMemory, err)
 	case isKind(sqlengine.KindOutOfMemory):

@@ -14,7 +14,7 @@ import (
 // component is one of comps' names, source.type one of sourceTypes,
 // width and height 1–12, and one allOf rule per component that, when
 // component names it, holds props to its props schema and source.type to
-// the types it accepts. Without component (update_widget keeping the
+// the types it accepts among sourceTypes. Without component (update_widget keeping the
 // stored one) props stays any object, and the server checks it as
 // before. Props schemas are inlined rather than put in $defs: the OpenAPI
 // document copies this schema into a request body, where a "#/$defs/..."
@@ -52,7 +52,7 @@ func ConstrainWidget(widget *jsonschema.Schema, comps []Component, sourceTypes [
 		props[name].Minimum, props[name].Maximum = &one, &twelve
 	}
 
-	for _, c := range comps {
+	for _, c := range WithSourceTypes(comps, sourceTypes) {
 		var ps jsonschema.Schema
 		if err := json.Unmarshal(c.Props, &ps); err != nil {
 			return fmt.Errorf("reporting: component %s: props: %w", c.Name, err)

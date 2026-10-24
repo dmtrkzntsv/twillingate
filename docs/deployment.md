@@ -315,9 +315,11 @@ archived) and its card shows that refusal while the rest loads, and the
 start-up check skips SQL widgets. Structured queries, the analytics tools
 and the built-in dashboards need no engine.
 
-At start, `serve` and every command that opens the database call the
-engine's `GET /v1/health`. An engine that speaks another protocol version
-stops the start, naming both; one that does not answer is logged as a
+At start, a `serve` with the console calls the engine's
+`GET /v1/health`; an ingest-only `serve` and the other commands that open
+the database call it only to check a system widget that reads SQL (none
+today), so they run whatever the engine's state. An engine that speaks
+another protocol version stops the start, naming both; one that does not answer is logged as a
 warning and the start goes on, each query trying it again, so the engine
 may start or restart after twillingate. A query the engine cannot answer
 then is refused with "the SQL engine failed (SQL_ENGINE_SOCKET)", and the
@@ -332,7 +334,9 @@ client and fixtures: [sqlengine/protocol.go](https://github.com/dmtrkzntsv/twill
   names (strings). `mode` is `rows` (the statement's rows), `text` (every
   cell as text), `shape` (the columns only), `page` (a filtered, sorted
   page of a remote table, with `__tw_matched` and `__tw_total` appended) or
-  `count` (`["total","matched"]` for a page with no row). `scope` is a
+  `count` (`["total","matched"]` for a page with no row). In mode `page`,
+  `max_rows` caps the page size: a `page.limit` of 0 means `max_rows`, and
+  a page whose limit exceeds it is refused. `scope` is a
   project id or `null` for every project; `confine` keeps the SQL on the
   seven tables. `tables` names the files to read: per project its Parquet
   files, logs, session files and the days they do not cover yet,

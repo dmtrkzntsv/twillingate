@@ -91,14 +91,23 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	// mode run on it. Without one, that SQL is refused. Closed after the
 	// HTTP surfaces and the widget check return (Serve waits for both),
 	// its last users.
-	client, err := openSQL(ctx, cfg.SQLEngineSocket, logger)
-	if err != nil {
-		return err
-	}
+	// Only the console calls it at start (openSQL: another protocol
+	// version fails the start, an engine that does not answer is logged);
+	// an ingest-only process needs no engine, and its migrator reaches it
+	// lazily, only for a sql system widget to check.
 	var sql api.SQL
-	if client != nil {
-		defer client.Close()
-		sql = client
+	if runConsole {
+		client, err := openSQL(ctx, cfg.SQLEngineSocket, logger)
+		if err != nil {
+			return err
+		}
+		if client != nil {
+			defer client.Close()
+			sql = client
+		}
+	} else if lazy := newLazySQL(cfg.SQLEngineSocket, logger); lazy != nil {
+		defer lazy.Close()
+		sql = lazy
 	}
 	if err := migrate(ctx, cfg, st, sql); err != nil {
 		return err

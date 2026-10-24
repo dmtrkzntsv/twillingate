@@ -28,8 +28,11 @@ type updateShape struct {
 
 // constrained infers T's schema, tightens it with testdata's components
 // and resolves it.
-func constrained[T any](t *testing.T) *jsonschema.Resolved {
+func constrained[T any](t *testing.T, sourceTypes ...string) *jsonschema.Resolved {
 	t.Helper()
+	if sourceTypes == nil {
+		sourceTypes = []string{"md", "query", "sql"}
+	}
 	b, err := os.ReadFile("testdata/components.json")
 	if err != nil {
 		t.Fatal(err)
@@ -42,7 +45,7 @@ func constrained[T any](t *testing.T) *jsonschema.Resolved {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ConstrainWidget(s, comps, []string{"md", "query", "sql"}); err != nil {
+	if err := ConstrainWidget(s, comps, sourceTypes); err != nil {
 		t.Fatal(err)
 	}
 	r, err := s.Resolve(nil)
@@ -95,6 +98,23 @@ func TestConstrainWidgetSpec(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Errorf("%s: err = %v, want one naming %q", c.in, err, c.want)
 		}
+	}
+}
+
+// TestConstrainWidgetWithoutSQL: without an engine sql is no source type,
+// and no component's rule names it either.
+func TestConstrainWidgetWithoutSQL(t *testing.T) {
+	r := constrained[WidgetSpec](t, "md", "query")
+	if err := validate(t, r, `{"component":"stat","source":{"type":"sql","content":"SELECT 1 AS value"}}`); err == nil ||
+		!strings.Contains(err.Error(), "sql") {
+		t.Errorf("sql without an engine: err = %v, want refused", err)
+	}
+	if err := validate(t, r, `{"component":"markdown","source":{"type":"md","content":"# Hi"}}`); err != nil {
+		t.Errorf("markdown: %v", err)
+	}
+	b, _ := json.Marshal(r.Schema())
+	if strings.Contains(string(b), `"sql"`) {
+		t.Errorf("the schema still names sql: %s", b)
 	}
 }
 

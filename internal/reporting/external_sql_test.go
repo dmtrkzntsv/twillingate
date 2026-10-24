@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -76,10 +77,35 @@ func TestNoEngineRefusesSQL(t *testing.T) {
 	if got := strings.Join(none.SourceTypes(), ","); got != "md,query" {
 		t.Errorf("source types = %s, want md,query", got)
 	}
+	listed, err := none.ListedComponents(ctx)
+	if err != nil || len(listed) == 0 {
+		t.Fatalf("listed components = %v, %v", listed, err)
+	}
+	for _, c := range listed {
+		if slices.Contains(c.Accepts, "sql") {
+			t.Errorf("%s still accepts sql without an engine: %v", c.Name, c.Accepts)
+		}
+	}
+	if all, _ := with.ListedComponents(ctx); !slices.ContainsFunc(all, func(c Component) bool { return slices.Contains(c.Accepts, "sql") }) {
+		t.Error("with an engine, no component accepts sql")
+	}
 
 	failed, err := CheckUserWidgets(ctx, with.st, nil, Options{})
 	if err != nil || len(failed) != 0 {
 		t.Errorf("CheckUserWidgets without an engine = %v, %v; want none checked", failed, err)
+	}
+}
+
+// TestCallerGoneBeforeTheEngineTimeout: a request whose caller went away
+// keeps the caller's error even when the engine answered timeout.
+func TestCallerGoneBeforeTheEngineTimeout(t *testing.T) {
+	gone := failing(&sqlengine.Error{Status: 504, Kind: sqlengine.KindTimeout, Message: "the query exceeded X-Timeout-Ms"})
+	s := &sqlSource{eng: gone.eng(t)}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, err := s.Load(ctx, "SELECT 1", Params{})
+	if errors.Is(err, store.ErrInvalid) || resourceCause(err) != nil {
+		t.Errorf("err = %v, want the engine's answer passed through, no timeout advice", err)
 	}
 }
 
