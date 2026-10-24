@@ -328,12 +328,17 @@ func TestSQLEngineCancels(t *testing.T) {
 	}
 	waitCancelled(1)
 
+	// The caller's deadline: the engine's own (X-Timeout-Ms, the same
+	// time) is held back, so the caller always gives up first and the
+	// engine sees it go, not its own 504 racing the caller's.
+	s.SetTimeoutSlack(time.Minute)
 	ctx, cancel = context.WithTimeout(context.Background(), 300*time.Millisecond)
 	defer cancel()
 	if _, err := c.Query(ctx, req); !errors.Is(err, context.DeadlineExceeded) {
 		t.Errorf("deadline: error = %v, want context.DeadlineExceeded", err)
 	}
 	waitCancelled(2)
+	s.SetTimeoutSlack(0)
 
 	// The header alone, from a caller with no deadline of its own.
 	hc := &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {

@@ -42,6 +42,7 @@ type SQLEngine struct {
 	srv    *http.Server
 
 	busy      atomic.Bool
+	slack     atomic.Int64 // added to X-Timeout-Ms, in nanoseconds
 	cancelled atomic.Int64
 	mu        sync.Mutex
 	requests  []sqlengine.Request
@@ -94,6 +95,11 @@ func (s *SQLEngine) Client(t testing.TB) *sqlengine.Client {
 // SetBusy makes every query answer 503 busy (no free slot) while on.
 func (s *SQLEngine) SetBusy(on bool) { s.busy.Store(on) }
 
+// SetTimeoutSlack adds d to each request's X-Timeout-Ms from now on, so
+// a test can have the caller's own deadline pass first, every time: the
+// engine then sees the caller go away rather than answering 504 itself.
+func (s *SQLEngine) SetTimeoutSlack(d time.Duration) { s.slack.Store(int64(d)) }
+
 // Cancelled is the number of queries that ended before their answer
 // because the caller went away (closed the connection) or the deadline
 // (X-Timeout-Ms) passed.
@@ -129,7 +135,7 @@ func (s *SQLEngine) query(w http.ResponseWriter, hr *http.Request) {
 			return
 		}
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, time.Duration(ms)*time.Millisecond)
+		ctx, cancel = context.WithTimeout(ctx, time.Duration(ms)*time.Millisecond+time.Duration(s.slack.Load()))
 		defer cancel()
 	}
 	if s.busy.Load() {
