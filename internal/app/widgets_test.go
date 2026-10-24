@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -359,5 +360,52 @@ func TestMigrateStartsWhenTheSystemCheckCannotRun(t *testing.T) {
 	reportingMigrate = func(context.Context, reporting.Store, reporting.SQL, reporting.Options) error { return refused }
 	if err := migrateReporting(ctx, f.st, nil, reporting.Options{}, slog.New(slog.DiscardHandler)); !errors.Is(err, refused) {
 		t.Errorf("DuckDB's refusal: err = %v, want the start stopped", err)
+	}
+}
+
+// TestCheckUserWidgetsStopsAfterThreeSkips: a timeout, or files that went
+// stale on every attempt, skips only that widget, but the third widget in
+// a row to end that way stops the check, logged once as such: an engine
+// that is struggling is not sent the rest.
+func TestCheckUserWidgetsStopsAfterThreeSkips(t *testing.T) {
+	f := newWidgetsFixture(t)
+	ctx := context.Background()
+	f.write(t, "e1", 1, store.FamilyViews, "2026-08-20")
+	var ws []store.Widget
+	for i, n := range []string{"one", "two", "three", "four", "five"} {
+		ws = append(ws, store.Widget{Component: "stat", SortKey: string(rune('a' + i)), Width: 3, Height: 4, Name: n, Title: n,
+			Props: "{}", SourceType: "sql", Source: "SELECT count(*) AS value FROM views WHERE project_id = :project"})
+	}
+	if _, err := f.st.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "Mine", SortKey: "z", Sidebar: true},
+		ws, store.AuditEntry{Actor: "test", Action: "dashboard.create"}); err != nil {
+		t.Fatal(err)
+	}
+	sql := f.sql(t)
+	for name, tc := range map[string]struct {
+		err     error
+		queries int
+	}{
+		"timeouts": {err: engineErr(sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms"), queries: 3},
+		"stale":    {err: engineErr(sqlengine.KindStale, "a file in the table spec is gone"), queries: 3 * sqlengine.StaleAttempts},
+	} {
+		t.Run(name, func(t *testing.T) {
+			files := &failingFiles{SQL: sql, err: tc.err}
+			var out bytes.Buffer
+			checkUserWidgets(ctx, f.st, files, f.options(), slog.New(slog.NewJSONHandler(&out, nil)))
+			var msgs, titles []string
+			for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+				var m map[string]any
+				if err := json.Unmarshal([]byte(l), &m); err != nil {
+					t.Fatalf("log line %q: %v", l, err)
+				}
+				msgs = append(msgs, fmt.Sprint(m["msg"]))
+				titles = append(titles, fmt.Sprint(m["title"]))
+			}
+			const skipped = "could not check widget on the event files"
+			want := []string{skipped, skipped, skipped + "; the widgets after it go unchecked until the next start"}
+			if !slices.Equal(msgs, want) || !slices.Equal(titles, []string{"one", "two", "three"}) || files.queries != tc.queries {
+				t.Errorf("%d queries, logged %q for %q; want %d, %q for one, two, three", files.queries, msgs, titles, tc.queries, want)
+			}
+		})
 	}
 }

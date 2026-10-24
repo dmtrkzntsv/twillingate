@@ -305,23 +305,32 @@ type WidgetFailure struct {
 	Title                 string
 	Err                   error
 	// Unchecked: the check ran out of time or memory, or the engine was
-	// busy, failed or lost its worker under it (resourceErr), which says
-	// nothing of the SQL. A timeout is that widget's own: its SQL may just
-	// be slow on the sample week, so the check goes on to the next.
-	// Anything else says the engine itself is short or down, and the next
-	// query would fare no better: the check stops there, and that failure
-	// is the last returned (Stopped).
+	// busy, failed or lost its worker under it, or the files went stale
+	// on every attempt (resourceErr), which says nothing of the SQL. A
+	// timeout or stale files are that widget's own: its SQL may just be
+	// slow on the sample week, or the daily pass was moving the files, so
+	// the check goes on to the next, unless the widgets before it ended
+	// the same way (maxSkips in a row). Anything else says the engine
+	// itself is short or down, and the next query would fare no better:
+	// the check stops there, and that failure is the last returned
+	// (Stopped).
 	Unchecked bool
 	// Stopped: this Unchecked failure ended the check, and the widgets
 	// after it went unchecked.
 	Stopped bool
 }
 
-// stopsCheck reports whether cause, a resourceErr's, says the engine
-// itself is short (WidgetFailure.Unchecked) rather than that one widget's
-// query ran past the timeout.
-func stopsCheck(cause error) bool {
-	return !errors.Is(cause, context.DeadlineExceeded)
+// maxSkips is how many widgets in a row CheckUserWidgets skips (a
+// timeout, stale files) before it stops: past that, the engine is
+// struggling rather than one widget being slow, and is spared the rest.
+const maxSkips = 3
+
+// skipsWidget reports whether cause, a resourceErr's, is that one
+// widget's (its query ran past the timeout, or the files went stale under
+// it) rather than the engine itself being short or down.
+func skipsWidget(cause error) bool {
+	var se *sqlengine.Error
+	return errors.Is(cause, context.DeadlineExceeded) || errors.As(cause, &se) && se.Kind == sqlengine.KindStale
 }
 
 // CheckUserWidgets runs the check Migrate runs on the system widgets (the
@@ -330,11 +339,12 @@ func stopsCheck(cause error) bool {
 // returns those refused, in dashboard and widget order: most often SQL
 // written for SQLite before the switch. A widget whose component was
 // removed is left out; its dashboard says so already. A check that could
-// not run is returned as WidgetFailure.Unchecked: a plain timeout skips
-// that widget, and one the engine was short for (Stopped) ends the list
-// and the check. An error that is no refusal of a widget (the engine did
-// not start, ctx ended) stops the check and is returned with the failures
-// found so far. Without an engine (sql nil) there is nothing to check
+// not run is returned as WidgetFailure.Unchecked: a plain timeout or
+// stale files skip that widget, while the third such widget in a row and
+// one the engine was short for (Stopped) end the list and the check, so
+// an engine that is struggling is not sent the rest. An error that is no
+// refusal of a widget (the engine did not start, ctx ended) stops the
+// check and is returned with the failures found so far. Without an engine (sql nil) there is nothing to check
 // them on, and it checks none.
 func CheckUserWidgets(ctx context.Context, st Store, sql SQL, opt Options) ([]WidgetFailure, error) {
 	if sql == nil {
@@ -358,18 +368,24 @@ func CheckUserWidgets(ctx context.Context, st Store, sql SQL, opt Options) ([]Wi
 		return nil, err
 	}
 	var out []WidgetFailure
+	skips := 0 // widgets skipped in a row
 	for _, w := range ws {
 		comp, ok := comps[w.Component]
 		if !live[w.DashboardID] || w.ArchivedAt != "" || w.SourceType != "sql" || !ok {
 			continue
 		}
 		err := svc.sources["sql"].Validate(ctx, w.Source, comp)
+		if cause := resourceCause(err); cause != nil && skipsWidget(cause) {
+			skips++
+		} else {
+			skips = 0
+		}
 		switch {
 		case err == nil:
 		case ctx.Err() != nil:
 			return out, ctx.Err()
 		case resourceCause(err) != nil:
-			stop := stopsCheck(resourceCause(err))
+			stop := skips == 0 || skips >= maxSkips
 			out = append(out, WidgetFailure{WidgetID: w.ID, DashboardID: w.DashboardID, Title: w.Title, Err: err, Unchecked: true, Stopped: stop})
 			if stop {
 				return out, nil

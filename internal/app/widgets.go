@@ -25,8 +25,10 @@ func hasEventFiles(dir string) (bool, error) {
 // external SQL engine sql, and the console does not wait for them. A
 // check that ran out of time or memory, or that the engine was busy or
 // down for, is no verdict on the widget: it is logged under its own
-// message and the next start checks it again. A timeout skips only that
-// widget; anything else leaves the rest unchecked too. Without an engine
+// message and the next start checks it again. A timeout, or files the
+// daily pass kept moving under the query, skips only that widget, until
+// three widgets in a row end that way; anything else, and the third,
+// leaves the rest unchecked too, logged once as such. Without an engine
 // (sql nil) there is nothing to check them on, and with no event file
 // under opt.EventsDir every widget would run on nothing: either way it
 // checks none.
