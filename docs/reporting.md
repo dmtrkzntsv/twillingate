@@ -6,7 +6,9 @@ reads. Agents are its only authors, through the tools and routes below. The MCP
 endpoint serves this file verbatim as `docs://reporting`; `reporting_guide`
 returns its live parts (components, views, projects, dashboards) with its
 [Workflow](#workflow) and [Rules](#rules) in one call. Widget SQL is DuckDB
-SQL over the event files: [Tables](#tables) lists what it reads.
+SQL over the event files: [Tables](#tables) lists what it reads. It runs on
+an external SQL engine (`SQL_ENGINE_SOCKET`, [deployment.md](deployment.md#external-sql-engine));
+without one, `sql` is no source type and the other widgets are unaffected.
 
 Collecting data and querying it with `query` are in
 [twillingate.md](twillingate.md); running the collector and enabling the console
@@ -286,6 +288,13 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 - Widget SQL is DuckDB SQL, one `SELECT`, over the seven tables in
   [Tables](#tables) and nothing else. The database's `v_*` views and
   `agg_*` tables went with its events (migration 042).
+- SQL needs an external SQL engine (`SQL_ENGINE_SOCKET`). Without one,
+  `list_components`' `source_types` leaves out `sql`; adding, copying,
+  updating the content of or previewing a `sql` widget is refused as
+  `invalid` with "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)";
+  a stored one stays on its dashboard, unarchived, and its card answers the
+  same refusal while the dashboard's other widgets load. Use `query`
+  widgets instead, which need no engine.
 - Saving, previewing and running a widget refuse SQL that reads past the
   seven tables: a table function other than `range`, `generate_series`
   and `unnest` (`read_parquet`, `read_csv`, `glob` and the others read
@@ -315,7 +324,8 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 
 ## Tables
 
-Widget SQL is DuckDB SQL ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction))
+Widget SQL is DuckDB SQL ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction)),
+the dialect the reference engine speaks, run by the external SQL engine
 over the raw events twillingate keeps as files beside its database: the
 seven tables `query` reads. Their columns, and how
 rules apply to them, are in [twillingate.md](twillingate.md#writing-sql-against-the-event-files).
@@ -1470,9 +1480,10 @@ Open `http://127.0.0.1:3100/`, which redirects to the dashboards at `/app/`.
   and never written: the view route answers but stores nothing, and the page
   offers no writes (no "…" menus, dragging or Restore buttons).
 - Widget SQL runs on the event files in `EVENTS_DIR` (default `raw/` beside
-  the database), through an engine child of the binary as in the console,
-  but without the projects' event and attribute rules: a renamed event
-  reads under the name it was stored with.
+  the database), on the external SQL engine at `SQL_ENGINE_SOCKET` as in
+  the console (without it, a SQL widget's card shows the refusal), but
+  without the projects' event and attribute rules: a renamed event reads
+  under the name it was stored with.
 - `-addr` is refused unless it is a loopback address, and a request naming
   any other host (`Host:`) gets `403`, so a page elsewhere cannot reach it
   by pointing its own name at `127.0.0.1`. There is no login: the page finds

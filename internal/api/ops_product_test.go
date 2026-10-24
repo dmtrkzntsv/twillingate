@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -263,9 +264,7 @@ func TestProductAttributesWithoutAnyAttribute(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { eng.Close() })
-	if h.files, err = archive.NewReader(raw, eng); err != nil {
-		t.Fatal(err)
-	}
+	h.sql = archivetest.ServeSQL(t, raw, eng).Client(t)
 	h.native = native.New(native.Options{Dir: raw})
 	args := map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-20"}
 	res := callTool(t, cs, "product_attributes", args)

@@ -4,40 +4,36 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 
-	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
-// fakeFiles stands in for archive.Reader: what query hands the files and
-// what they answer.
+// fakeFiles stands in for the external SQL engine: what query sends it
+// and what it answers.
 type fakeFiles struct {
-	sql      string
-	maxRows  int
-	project  int64
-	confine  bool
-	rules    archive.Rules
+	req      sqlengine.Request
 	deadline bool
-	res      engine.Result
+	res      sqlengine.Result
 	err      error
 }
 
-func (f *fakeFiles) QueryScoped(ctx context.Context, q archive.Scoped, rules archive.Rules) (engine.Result, error) {
+func (f *fakeFiles) Query(ctx context.Context, req sqlengine.Request) (sqlengine.Result, error) {
 	_, f.deadline = ctx.Deadline()
-	f.sql, f.maxRows, f.project, f.confine, f.rules = q.SQL, q.MaxRows, q.Project, q.Confine, rules
+	f.req = req
 	return f.res, f.err
 }
 
 func TestQueryFilesSourceRunsOnTheFiles(t *testing.T) {
 	h, cs := newTestHost(t)
-	files := &fakeFiles{res: engine.Result{
+	files := &fakeFiles{res: sqlengine.Result{
 		Columns: []string{"n", "plan", "ok", "ts", "list"},
 		Rows:    [][]any{{json.Number("3"), nil, true, "2026-10-12T10:00:00Z", []any{"a", json.Number("1")}}},
 	}}
-	h.files = files
+	h.sql = files
 	res := callTool(t, cs, "query", map[string]any{"sql": "SELECT count(*) FROM events"})
 	if res.IsError {
 		t.Fatalf("error: %s", textOf(res))
@@ -49,9 +45,15 @@ func TestQueryFilesSourceRunsOnTheFiles(t *testing.T) {
 	if want := `[["3","","true","2026-10-12T10:00:00Z","[\"a\",1]"]]`; mustJSON(t, out.Rows) != want {
 		t.Fatalf("rows = %s, want %s", mustJSON(t, out.Rows), want)
 	}
-	if files.sql != "SELECT count(*) FROM events" || files.maxRows != h.queryRows || !files.deadline || files.project != 0 || !files.confine {
-		t.Fatalf("files got sql %q, maxRows %d, deadline %v, project %d, confine %v; want the SQL, CONSOLE_QUERY_ROWS_MAX, a deadline, every project and the seven tables only",
-			files.sql, files.maxRows, files.deadline, files.project, files.confine)
+	if r := files.req; r.SQL != "SELECT count(*) FROM events" || r.Mode != sqlengine.ModeRows || r.MaxRows != h.queryRows || !files.deadline ||
+		r.Scope != nil || !r.Confine || len(r.Args) != 0 {
+		t.Fatalf("the engine got %+v, deadline %v; want the SQL as rows, CONSOLE_QUERY_ROWS_MAX, a deadline, every project and the seven tables only",
+			r, files.deadline)
+	}
+	// Every project's files (blog's: docs has none), by paths relative to
+	// EVENTS_DIR.
+	if ps := files.req.Tables.Projects; len(ps) != 1 || ps[0].ID != 1 || len(ps[0].Parquet) == 0 || filepath.IsAbs(ps[0].Parquet[0]) {
+		t.Errorf("tables = %+v, want blog's files, relative", files.req.Tables)
 	}
 }
 
@@ -69,7 +71,7 @@ func mustJSON(t *testing.T, v any) string {
 func TestQueryFilesSourcePassesTheRules(t *testing.T) {
 	h, cs := newTestHost(t)
 	files := &fakeFiles{}
-	h.files = files
+	h.sql = files
 	ctx := context.Background()
 	if _, err := h.ops.BlockEvent(ctx, "t", 1, "product", "x"); err != nil {
 		t.Fatal(err)
@@ -80,34 +82,42 @@ func TestQueryFilesSourcePassesTheRules(t *testing.T) {
 	if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1"}); res.IsError {
 		t.Fatalf("error: %s", textOf(res))
 	}
-	if len(files.rules.Events) != 1 || files.rules.Events[0].Name != "x" ||
-		len(files.rules.Attributes) != 1 || files.rules.Attributes[0].Key != "k" {
-		t.Fatalf("rules = %+v, want the block on x and on k", files.rules)
+	rules := files.req.Tables.Rules
+	if len(rules.Events) != 1 || rules.Events[0].Name != "x" ||
+		len(rules.Attributes) != 1 || rules.Attributes[0].Key != "k" {
+		t.Fatalf("rules = %+v, want the block on x and on k", rules)
 	}
 }
 
 func TestQueryFilesSourceErrors(t *testing.T) {
 	h, cs := newTestHost(t)
+	kind := func(k sqlengine.Kind, msg string) error {
+		return &sqlengine.Error{Status: k.Status(), Kind: k, Message: msg}
+	}
 	for _, c := range []struct {
 		name string
 		err  error
 		want []string
 	}{
 		{"timeout", context.DeadlineExceeded, []string{"exceeded", "CONSOLE_QUERY_TIMEOUT"}},
-		{"memory", &engine.QueryError{Msg: "Out of Memory Error: failed to allocate data of size 16.0 MiB (242.3 MiB/244.1 MiB used)"},
+		{"engine timeout", kind(sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms"), []string{"exceeded", "CONSOLE_QUERY_TIMEOUT"}},
+		{"memory", kind(sqlengine.KindOutOfMemory, "Out of Memory Error: failed to allocate data of size 16.0 MiB (242.3 MiB/244.1 MiB used)"),
 			[]string{"ENGINE_MEMORY_LIMIT", "GROUP BY"}},
-		{"sqlite table", &engine.QueryError{Msg: "Catalog Error: Table with name v_views_daily does not exist!\nDid you mean \"pg_views\"?"},
+		{"sqlite table", kind(sqlengine.KindSQL, "Catalog Error: Table with name v_views_daily does not exist!\nDid you mean \"pg_views\"?"),
 			[]string{"v_views_daily", "docs://twillingate"}},
-		{"sqlite table upper case", &engine.QueryError{Msg: "Catalog Error: Table with name V_VIEWS_DAILY does not exist!"},
+		{"sqlite table upper case", kind(sqlengine.KindSQL, "Catalog Error: Table with name V_VIEWS_DAILY does not exist!"),
 			[]string{"V_VIEWS_DAILY", "docs://twillingate"}},
-		{"memory loading the logs", fmt.Errorf("%w: %w", archive.ErrLoadingLogs, &engine.QueryError{Msg: "Out of Memory Error: failed to allocate data of size 16.0 MiB"}),
+		{"memory loading the logs", kind(sqlengine.KindOutOfMemoryLoadingLog, "Out of Memory Error: failed to allocate data of size 16.0 MiB"),
 			[]string{"open logs", "ENGINE_MEMORY_LIMIT", "raise"}},
-		{"child died", engine.ErrChildExited, []string{"stopped", "ENGINE_MEMORY_LIMIT"}},
-		{"sql", &engine.QueryError{Msg: `Binder Error: Referenced column "nope" not found`}, []string{"DuckDB", `"nope"`}},
-		{"confined", fmt.Errorf("%w: main.events names a schema; SQL here reads only …", enginesql.ErrRefused), []string{"main.events names a schema"}},
-		{"confined sqlite table", fmt.Errorf(`%w: "v_views_daily" is not a table here; SQL here reads only …`, enginesql.ErrRefused), []string{"v_views_daily", "docs://twillingate"}},
+		{"child died", kind(sqlengine.KindExited, "engine: child exited"), []string{"stopped", "ENGINE_MEMORY_LIMIT"}},
+		{"busy", kind(sqlengine.KindBusy, "no free slot; retry later"), []string{"busy", "retry"}},
+		{"internal", kind(sqlengine.KindInternal, "spawn failed"), []string{"SQL engine failed", "SQL_ENGINE_SOCKET"}},
+		{"unavailable", fmt.Errorf("%w: dial unix: connection refused", sqlengine.ErrUnavailable), []string{"SQL engine failed"}},
+		{"sql", kind(sqlengine.KindSQL, `Binder Error: Referenced column "nope" not found`), []string{"DuckDB", `"nope"`}},
+		{"confined", kind(sqlengine.KindRefused, "main.events names a schema; SQL here reads only …"), []string{"main.events names a schema"}},
+		{"confined sqlite table", kind(sqlengine.KindRefused, `"v_views_daily" is not a table here; SQL here reads only …`), []string{"v_views_daily", "docs://twillingate"}},
 	} {
-		h.files = &fakeFiles{err: c.err}
+		h.sql = &fakeFiles{err: c.err}
 		res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1"})
 		msg := textOf(res)
 		if !res.IsError {
@@ -159,8 +169,14 @@ func TestQueryReadsTheFiles(t *testing.T) {
 	if res.IsError || !strings.Contains(textOf(res), `[["45"]]`) {
 		t.Errorf("query: %s", textOf(res))
 	}
-	h.files = nil
-	if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1"}); !res.IsError || !strings.Contains(textOf(res), "cannot be queried") {
-		t.Errorf("without a reader: %s", textOf(res))
+	h.sql = nil
+	if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1"}); !res.IsError ||
+		textOf(res) != "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)" {
+		t.Errorf("without an engine: %s", textOf(res))
+	}
+	rec := serveREST(t, newTestRegistrar(t, h), "POST", "/api/query", `{"sql":"SELECT 1"}`)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"code":"invalid"`) ||
+		!strings.Contains(rec.Body.String(), "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)") {
+		t.Errorf("REST without an engine = %d %s, want 400 invalid", rec.Code, rec.Body)
 	}
 }

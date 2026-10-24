@@ -12,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/api"
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/config/configtest"
 	"github.com/dmtrkzntsv/twillingate/internal/engine"
@@ -20,6 +22,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/internal/store/storetest"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
 // widgetsFixture is a migrated store with projects 1 and 2, raw/ beside
@@ -89,56 +92,61 @@ func (f *widgetsFixture) write(t *testing.T, id string, project int64, family st
 	}
 }
 
-// files is the console's Files over the fixture's raw/, its engine closed
-// with t.
-func (f *widgetsFixture) files(t *testing.T) *widgetFiles {
+// openFiles builds an engine on this binary (EngineOptions) and a reader
+// over EVENTS_DIR, the caller closing the engine: the SQL reference the
+// tests check against, and what a test SQL engine runs on.
+func openFiles(cfg *config.Config) (*engine.Engine, *archive.Reader, error) {
+	opts, err := EngineOptions(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	eng, err := engine.New(opts)
+	if err != nil {
+		return nil, nil, err
+	}
+	reader, err := archive.NewReader(cfg.EventsDir, eng)
+	if err != nil {
+		eng.Close()
+		return nil, nil, err
+	}
+	return eng, reader, nil
+}
+
+// sql is a client of a test SQL engine over the fixture's raw/
+// (archivetest.ServeSQL), on an engine of its own, closed with t.
+func (f *widgetsFixture) sql(t *testing.T) *sqlengine.Client {
 	t.Helper()
-	eng, reader, err := openFiles(f.cfg)
+	eng, _, err := openFiles(f.cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { eng.Close() })
-	return newWidgetFiles(f.cfg, reader, f.reg)
+	return archivetest.ServeSQL(t, f.cfg.EventsDir, eng).Client(t)
 }
 
-// TestSampleProjectIsTheLiveProjectWithTheNewestFile: the newest day wins
-// among live projects; an archived project's files do not count, and
-// with no files there is none.
-func TestSampleProjectIsTheLiveProjectWithTheNewestFile(t *testing.T) {
-	f := newWidgetsFixture(t)
-	ctx := context.Background()
-	files := f.files(t)
-	if id, err := files.SampleProject(ctx); err != nil || id != 0 {
-		t.Fatalf("no files: %d, %v; want 0", id, err)
-	}
-	f.write(t, "e1", 1, store.FamilyViews, "2026-08-20")
-	f.write(t, "e2", 2, store.FamilyViews, "2026-08-21")
-	if id, err := files.SampleProject(ctx); err != nil || id != 2 {
-		t.Fatalf("newest: %d, %v; want 2", id, err)
-	}
-	if err := f.ops.ArchiveProject(ctx, "test", 2); err != nil {
-		t.Fatal(err)
-	}
-	if id, err := files.SampleProject(ctx); err != nil || id != 1 {
-		t.Fatalf("2 archived: %d, %v; want 1", id, err)
-	}
+// options is what serve gives the widgets and their check: the
+// registry's rules and live projects, raw/ and the guards.
+func (f *widgetsFixture) options() reporting.Options {
+	return api.WidgetOptions(f.cfg, f.reg, reporting.Options{})
 }
 
-// TestWidgetFilesApplyTheRules: a widget's query reads the files through
-// the registry's rules, as the query tool does, scoped to its project.
-func TestWidgetFilesApplyTheRules(t *testing.T) {
+// TestWidgetSQLAppliesTheRules: a widget's query reads the files through
+// the registry's rules, as the query tool does, scoped to its project,
+// and samples the live project with the newest file.
+func TestWidgetSQLAppliesTheRules(t *testing.T) {
 	f := newWidgetsFixture(t)
 	ctx := context.Background()
 	f.write(t, "e1", 1, store.FamilyProduct, "2026-08-20")
 	f.write(t, "e2", 2, store.FamilyProduct, "2026-08-20")
-	files := f.files(t)
+	svc := reporting.New(f.st, f.sql(t), f.options())
 	count := func() string {
 		t.Helper()
-		res, err := files.Query(ctx, archive.Scoped{SQL: "SELECT count(*) AS n FROM product WHERE event_name = 'signup'", Scope: true, Project: 1})
+		got, err := svc.Preview(ctx, reporting.PreviewIn{Component: "stat", ProjectID: 1,
+			Source: reporting.Source{Type: "sql", Content: "SELECT count(*) AS value FROM product WHERE event_name = 'signup' AND :project > 0"}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		return res.Rows[0][0].(json.Number).String()
+		return got.Rows[0][0]
 	}
 	if n := count(); n != "1" {
 		t.Fatalf("project 1 counts %s signups; want 1 (its own)", n)
@@ -182,7 +190,7 @@ func TestCheckUserWidgetsLogsWhatFailsOnTheFiles(t *testing.T) {
 	}
 
 	var out bytes.Buffer
-	checkUserWidgets(ctx, f.st, f.files(t), f.cfg.EventsDir, slog.New(slog.NewJSONHandler(&out, nil)))
+	checkUserWidgets(ctx, f.st, f.sql(t), f.options(), slog.New(slog.NewJSONHandler(&out, nil)))
 	var lines []map[string]any
 	for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
 		var m map[string]any
@@ -205,8 +213,9 @@ func TestCheckUserWidgetsLogsWhatFailsOnTheFiles(t *testing.T) {
 }
 
 // TestCheckUserWidgetsWithoutEventFilesRunsNoQuery: with no event file
-// under EVENTS_DIR every widget would run on nothing, so the boot's check
-// of the users' widgets runs no query and spawns no child.
+// under EVENTS_DIR every widget would run on nothing, and with no engine
+// there is nothing to run them on, so the boot's check of the users'
+// widgets sends no query and logs nothing.
 func TestCheckUserWidgetsWithoutEventFilesRunsNoQuery(t *testing.T) {
 	f := newWidgetsFixture(t)
 	ctx := context.Background()
@@ -216,38 +225,49 @@ func TestCheckUserWidgetsWithoutEventFilesRunsNoQuery(t *testing.T) {
 		store.AuditEntry{Actor: "test", Action: "dashboard.create"}); err != nil {
 		t.Fatal(err)
 	}
-	files := &failingFiles{Files: f.files(t), err: errors.New("no query expected")}
+	files := &failingFiles{SQL: f.sql(t), err: errors.New("no query expected")}
 	var out bytes.Buffer
-	checkUserWidgets(ctx, f.st, files, f.cfg.EventsDir, slog.New(slog.NewJSONHandler(&out, nil)))
+	checkUserWidgets(ctx, f.st, files, f.options(), slog.New(slog.NewJSONHandler(&out, nil)))
 	if files.queries != 0 || out.Len() != 0 {
 		t.Fatalf("%d queries, logged %q; want none without event files", files.queries, out.String())
 	}
+
+	f.write(t, "e1", 1, store.FamilyViews, "2026-08-20")
+	checkUserWidgets(ctx, f.st, nil, f.options(), slog.New(slog.NewJSONHandler(&out, nil)))
+	if out.Len() != 0 {
+		t.Fatalf("logged %q; want nothing without an engine", out.String())
+	}
 }
 
-// failingFiles is the console's Files whose every query fails with err,
-// or with only set, the first only queries, the rest running on Files.
+// failingFiles is an engine whose every query fails with err, or with
+// only set, the first only queries, the rest running on SQL.
 type failingFiles struct {
-	reporting.Files
+	reporting.SQL
 	err     error
 	only    int
 	queries int
 }
 
-func (f *failingFiles) Query(ctx context.Context, q archive.Scoped) (engine.Result, error) {
+func (f *failingFiles) Query(ctx context.Context, req sqlengine.Request) (sqlengine.Result, error) {
 	f.queries++
 	if f.only > 0 && f.queries > f.only {
-		return f.Files.Query(ctx, q)
+		return f.SQL.Query(ctx, req)
 	}
-	return engine.Result{}, f.err
+	return sqlengine.Result{}, f.err
+}
+
+// engineErr is the engine's answer of kind k.
+func engineErr(k sqlengine.Kind, msg string) error {
+	return &sqlengine.Error{Status: k.Status(), Kind: k, Message: msg}
 }
 
 // TestCheckUserWidgetsTellsResourceFailures: a check that runs out of time
-// or memory, or whose child dies, says nothing of the widget's SQL. It is
-// logged as a widget that could not be checked, never as one that fails.
-// A plain timeout is that widget's own, and the check goes on: the next
-// widget's SQL, written for SQLite, is still logged as failing. Running
-// out of memory, a dead child, or a timeout loading the open logs say the
-// engine is short, and the check stops there rather than load it further.
+// or memory, whose worker dies, or that the engine is busy or down for,
+// says nothing of the widget's SQL. It is logged as a widget that could
+// not be checked, never as one that fails. A timeout is that widget's
+// own, and the check goes on: the next widget's SQL, written for SQLite,
+// is still logged as failing. Anything else says the engine is short or
+// down, and the check stops there rather than load it further.
 func TestCheckUserWidgetsTellsResourceFailures(t *testing.T) {
 	f := newWidgetsFixture(t)
 	ctx := context.Background()
@@ -261,6 +281,7 @@ func TestCheckUserWidgetsTellsResourceFailures(t *testing.T) {
 		}, store.AuditEntry{Actor: "test", Action: "dashboard.create"}); err != nil {
 		t.Fatal(err)
 	}
+	sql := f.sql(t)
 	const (
 		skipped = "could not check widget on the event files"
 		stopped = skipped + "; the widgets after it go unchecked until the next start"
@@ -270,15 +291,18 @@ func TestCheckUserWidgetsTellsResourceFailures(t *testing.T) {
 		stop bool
 	}{
 		"timeout":            {err: context.DeadlineExceeded},
-		"logs timeout":       {err: fmt.Errorf("%w: %w", archive.ErrLoadingLogs, context.DeadlineExceeded), stop: true},
-		"out of memory":      {err: &engine.QueryError{Msg: "Out of Memory Error: failed to allocate data of size 64.0 MiB (476.8 MiB/476.8 MiB used)"}, stop: true},
-		"logs out of memory": {err: fmt.Errorf("%w: %w", archive.ErrLoadingLogs, &engine.QueryError{Msg: "Out of Memory Error: x"}), stop: true},
-		"child exited":       {err: fmt.Errorf("engine: query: %w", engine.ErrChildExited), stop: true},
+		"engine timeout":     {err: engineErr(sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms")},
+		"out of memory":      {err: engineErr(sqlengine.KindOutOfMemory, "Out of Memory Error: failed to allocate data of size 64.0 MiB (476.8 MiB/476.8 MiB used)"), stop: true},
+		"logs out of memory": {err: engineErr(sqlengine.KindOutOfMemoryLoadingLog, "Out of Memory Error: x"), stop: true},
+		"child exited":       {err: engineErr(sqlengine.KindExited, "engine: query: child exited"), stop: true},
+		"busy":               {err: engineErr(sqlengine.KindBusy, "no free slot; retry later"), stop: true},
+		"internal":           {err: engineErr(sqlengine.KindInternal, "boom"), stop: true},
+		"down":               {err: fmt.Errorf("%w: dial unix: connection refused", sqlengine.ErrUnavailable), stop: true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			files := &failingFiles{Files: f.files(t), err: tc.err, only: 1}
+			files := &failingFiles{SQL: sql, err: tc.err, only: 1}
 			var out bytes.Buffer
-			checkUserWidgets(ctx, f.st, files, f.cfg.EventsDir, slog.New(slog.NewJSONHandler(&out, nil)))
+			checkUserWidgets(ctx, f.st, files, f.options(), slog.New(slog.NewJSONHandler(&out, nil)))
 			var lines []map[string]any
 			for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
 				var m map[string]any
@@ -322,18 +346,18 @@ func TestMigrateStartsWhenTheSystemCheckCannotRun(t *testing.T) {
 	was := reportingMigrate
 	t.Cleanup(func() { reportingMigrate = was })
 	var out bytes.Buffer
-	reportingMigrate = func(context.Context, reporting.Store, reporting.Files) error {
+	reportingMigrate = func(context.Context, reporting.Store, reporting.SQL, reporting.Options) error {
 		return fmt.Errorf("%w: system dashboard 6 widget lcp: Out of Memory Error: x; the next start checks them again", reporting.ErrUnchecked)
 	}
-	if err := migrateReporting(ctx, f.st, nil, slog.New(slog.NewTextHandler(&out, nil))); err != nil {
+	if err := migrateReporting(ctx, f.st, nil, reporting.Options{}, slog.New(slog.NewTextHandler(&out, nil))); err != nil {
 		t.Fatalf("err = %v, want the start to go on", err)
 	}
 	if !strings.Contains(out.String(), "level=ERROR") || !strings.Contains(out.String(), "could not check the system dashboards") || !strings.Contains(out.String(), "Out of Memory") {
 		t.Errorf("logged %q, want the error", out.String())
 	}
 	refused := errors.New(`reporting: system dashboard 6 widget lcp: Binder Error: Referenced column "nope" not found`)
-	reportingMigrate = func(context.Context, reporting.Store, reporting.Files) error { return refused }
-	if err := migrateReporting(ctx, f.st, nil, slog.New(slog.DiscardHandler)); !errors.Is(err, refused) {
+	reportingMigrate = func(context.Context, reporting.Store, reporting.SQL, reporting.Options) error { return refused }
+	if err := migrateReporting(ctx, f.st, nil, reporting.Options{}, slog.New(slog.DiscardHandler)); !errors.Is(err, refused) {
 		t.Errorf("DuckDB's refusal: err = %v, want the start stopped", err)
 	}
 }

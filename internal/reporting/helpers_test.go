@@ -9,12 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/internal/store/storetest"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
 // testComponents parses testdata/components.json and returns its five
@@ -101,44 +100,63 @@ func svcDB(t *testing.T, svc *Service) *readsql.DB {
 	return storeDB(t, filesOf(t, svc).st)
 }
 
-// testFiles is Files over an archivetest directory, as app's adapter is
-// over the console's raw/: each query under the timeout, scoped to its
-// project, with no rules (no test here makes one). The sample project is
-// the store's live project with the newest file.
+// testFiles is an archivetest directory served by a test SQL engine
+// (archivetest.ServeSQL), as app's client reaches the console's raw/: it
+// is the SQL a Service runs widgets on (its Query is the engine's
+// client's), and options gives a Service its files, guards and the
+// store's live projects. No test here makes a rule.
 type testFiles struct {
 	*archivetest.Files
 	st      store.Store
 	timeout time.Duration
 	maxRows int
+	sqle    *archivetest.SQLEngine
+	client  *sqlengine.Client
 }
 
-func (f *testFiles) Query(ctx context.Context, q archive.Scoped) (engine.Result, error) {
-	ctx, cancel := context.WithTimeout(ctx, f.timeout)
-	defer cancel()
-	return f.Reader.QueryScoped(ctx, q, archive.Rules{})
+// serveTestFiles serves af through a test SQL engine for st, until t ends.
+func serveTestFiles(t testing.TB, af *archivetest.Files, st store.Store, timeout time.Duration, maxRows int) *testFiles {
+	t.Helper()
+	eng := af.ServeSQL(t)
+	return &testFiles{Files: af, st: st, timeout: timeout, maxRows: maxRows, sqle: eng, client: eng.Client(t)}
 }
 
-func (f *testFiles) SampleProject(ctx context.Context) (int64, error) {
+func (f *testFiles) Query(ctx context.Context, req sqlengine.Request) (sqlengine.Result, error) {
+	return f.client.Query(ctx, req)
+}
+
+// options is opt with f's events directory, timeout, row cap and, with a
+// store, its live projects.
+func (f *testFiles) options(opt Options) Options {
+	opt.EventsDir, opt.QueryTimeout, opt.QueryMaxRows = f.Dir, f.timeout, f.maxRows
+	if f.st != nil {
+		opt.Live = f.live
+	}
+	return opt
+}
+
+// live reports whether project is in the store's registry, not archived.
+func (f *testFiles) live(ctx context.Context, project int64) bool {
 	ps, _, err := f.st.LoadRegistry(ctx)
 	if err != nil {
-		return 0, err
+		return false
 	}
-	days, err := archive.LatestDays(f.Dir)
-	if err != nil {
-		return 0, err
-	}
-	var id int64
-	var newest string
-	for _, p := range ps { // a tie goes to the lowest id
-		if day, ok := days[p.ID]; ok && p.ArchivedAt == "" && (day > newest || day == newest && p.ID < id) {
-			id, newest = p.ID, day
+	for _, p := range ps {
+		if p.ID == project {
+			return p.ArchivedAt == ""
 		}
 	}
-	return id, nil
+	return false
 }
 
-func (f *testFiles) Timeout() time.Duration { return f.timeout }
-func (f *testFiles) MaxRows() int           { return f.maxRows }
+// eng is the engine a sqlSource runs on over f, with its options as they
+// stand.
+func (f *testFiles) eng() *sqlEngine { return newSQLEngine(f, f.options(Options{})) }
+
+// newFilesService is New over f's engine, with f's options.
+func newFilesService(st Store, f *testFiles, opt Options) *Service {
+	return New(st, f, f.options(opt))
+}
 
 // newTestStoreAndFiles opens a migrated store and an empty raw/ directory
 // with an engine over it, both closed with the test; maxRows is
@@ -146,7 +164,7 @@ func (f *testFiles) MaxRows() int           { return f.maxRows }
 func newTestStoreAndFiles(t *testing.T, maxRows int) (store.Store, *testFiles) {
 	t.Helper()
 	st, _ := newTestStore(t)
-	return st, &testFiles{Files: archivetest.New(t), st: st, timeout: 10 * time.Second, maxRows: maxRows}
+	return st, serveTestFiles(t, archivetest.New(t), st, 10*time.Second, maxRows)
 }
 
 // newTestFiles is newTestStoreAndFiles for a test that needs no store of
@@ -160,9 +178,12 @@ func newTestFiles(t *testing.T) *testFiles {
 // filesOf is svc's test files, to write events a widget then reads.
 func filesOf(t *testing.T, svc *Service) *testFiles {
 	t.Helper()
-	f, ok := svc.files.(*testFiles)
+	if svc.sql == nil {
+		t.Fatal("svc has no SQL engine")
+	}
+	f, ok := svc.sql.client.(*testFiles)
 	if !ok {
-		t.Fatalf("svc.files is %T, not the test's", svc.files)
+		t.Fatalf("svc's SQL is %T, not the test's", svc.sql.client)
 	}
 	return f
 }

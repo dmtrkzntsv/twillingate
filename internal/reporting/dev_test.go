@@ -58,7 +58,7 @@ func devDir(t *testing.T, widgets ...struct{ name, component, ext, content strin
 func newDevHandler(t *testing.T, dirs []string) http.Handler {
 	t.Helper()
 	st, files := newTestStoreAndFiles(t, 1000)
-	return DevHandler(dirs, files, nil, storeDB(t, st))
+	return DevHandler(dirs, files, nil, storeDB(t, st), files.options(Options{}))
 }
 
 // devRequest is a request as a browser on this machine sends it: to a
@@ -419,7 +419,7 @@ func TestDevHandlerListsArchivedProjects(t *testing.T) {
 		store.AuditEntry{Actor: "test", Action: "project.archive"}); err != nil {
 		t.Fatal(err)
 	}
-	h := DevHandler([]string{devDir(t)}, files, nil, storeDB(t, st))
+	h := DevHandler([]string{devDir(t)}, files, nil, storeDB(t, st), files.options(Options{}))
 
 	var out devProjectsOut
 	getJSON(t, h, "/api/projects", &out)

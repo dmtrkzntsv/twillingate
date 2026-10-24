@@ -17,10 +17,10 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
 // The analytics tools' SQL before the native engine answered them, kept
@@ -159,20 +159,34 @@ func (h *host) filesTable(ctx context.Context, in rangeIn, q string, vals map[st
 	return out, nil
 }
 
-// runFiles runs q on the event files under CONSOLE_QUERY_TIMEOUT, with the
-// registry's rules, for the tools' old SQL the parity tests keep: a
-// failure reads as filesError words it.
-func (h *host) runFiles(ctx context.Context, q archive.Scoped) (engine.Result, error) {
-	if h.files == nil {
-		return engine.Result{}, invalidf("the event files cannot be queried by this process")
+// runFiles runs q on the external SQL engine (the test engine over the
+// host's files) under CONSOLE_QUERY_TIMEOUT, with the registry's rules,
+// for the tools' old SQL the parity tests keep: a failure reads as the
+// query tool's sqlError words it.
+func (h *host) runFiles(ctx context.Context, q archive.Scoped) (sqlengine.Result, error) {
+	if h.sql == nil {
+		return sqlengine.Result{}, invalidf("the event files cannot be queried by this process")
 	}
-	timeout := h.queryTimeout
-	ctx, cancel := context.WithTimeout(ctx, timeout)
+	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
 	events, attrs := h.reg.Snapshot(ctx).RuleLists()
-	res, err := h.files.QueryScoped(ctx, q, archive.Rules{Events: events, Attributes: attrs})
+	var projects []int64
+	var scope *int64
+	if q.Scope {
+		projects, scope = []int64{q.Project}, &q.Project
+	}
+	tables, err := archive.TableSpec(h.eventsDir, projects, archive.Rules{Events: events, Attributes: attrs})
 	if err != nil {
-		return engine.Result{}, filesError(err, timeout)
+		return sqlengine.Result{}, err
+	}
+	args := map[string]string{}
+	for _, a := range q.Args {
+		args[a.Name] = a.Value
+	}
+	res, err := h.sql.Query(ctx, sqlengine.Request{SQL: q.SQL, Args: args, MaxRows: q.MaxRows, Mode: sqlengine.ModeRows,
+		Scope: scope, Confine: q.Confine, Tables: tables})
+	if err != nil {
+		return sqlengine.Result{}, h.sqlError(ctx, err)
 	}
 	return res, nil
 }

@@ -48,6 +48,9 @@ func (s *Service) Preview(ctx context.Context, in PreviewIn) (Preview, error) {
 	if in.Source.Type != "sql" && in.Source.Type != "query" {
 		return Preview{}, store.Refuse(store.ErrInvalid, "preview runs sql and query only; markdown is drawn as it is typed")
 	}
+	if in.Source.Type == "sql" && s.sql == nil {
+		return Preview{}, ErrSQLEngine
+	}
 	if !accepts(comp, in.Source.Type) {
 		return Preview{}, store.Refuse(store.ErrInvalid,
 			"%s does not accept %s; it accepts %s", comp.Name, in.Source.Type, joinAnd(comp.Accepts))
@@ -100,7 +103,7 @@ func (s *Service) previewRows(ctx context.Context, in PreviewIn) (readsql.Result
 	if err != nil {
 		return readsql.Result{}, err
 	}
-	return loadRows(ctx, s.files, in.Source.Content, params, p)
+	return loadRows(ctx, s.sql, in.Source.Content, params, p)
 }
 
 // previewQueryParams is previewParams for a query, which follows both

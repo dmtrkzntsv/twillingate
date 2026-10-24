@@ -249,5 +249,8 @@ func (s *Service) follows(w store.Widget) (project, rng bool) {
 	if st, ok := s.sources[w.SourceType]; ok {
 		return st.Follows(w.Source)
 	}
+	if w.SourceType == "sql" { // no engine: what it would follow, from its text
+		return sqlFollows(w.Source)
+	}
 	return false, false
 }

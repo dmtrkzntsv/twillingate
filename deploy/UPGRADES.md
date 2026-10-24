@@ -1428,3 +1428,28 @@ peaks near 150 MB of resident memory on the day the month is merged.
   - A `day` given as a timestamp (`"2026-09-10T12:00:00Z"`) fails the dump, where it was read as that date. The log stays pending (`<day>.parquet.dumping`) and holds its month back from the merge until it is corrected.
 
 Rollback: install the previous release; it reads the files this one wrote.
+
+### Upgrading to SQL on an external engine (no migration)
+
+SQL (SQL widgets, `query`'s `sql` and the start-up check of the users'
+SQL widgets) runs on an external SQL engine at `SQL_ENGINE_SOCKET` (see
+`docs/deployment.md`, "External SQL engine"); `serve` no longer starts an
+engine child for it. The built-in dashboards, structured queries and the
+analytics tools need no engine and are unaffected.
+
+- **Before the upgrade**, list your SQL widgets: `list_dashboards`, then
+  each user dashboard's widgets with `source.type` `sql`. With none, and
+  no script that sends `query` SQL, nothing else needs doing.
+- **On the day, without an engine** (`SQL_ENGINE_SOCKET` unset): a SQL
+  widget stays on its dashboard, not archived, and its card says "SQL
+  needs an external SQL engine (SQL_ENGINE_SOCKET)" while the rest of the
+  dashboard loads; adding or previewing one, and `query` with `sql`, are
+  refused with the same message (`invalid`, `400` over REST). The
+  component list leaves `sql` out. Rewrite such widgets as `query` widgets,
+  or set up an engine.
+- **With an engine**: set `SQL_ENGINE_SOCKET` to its socket. A start whose
+  engine speaks another protocol version fails, naming both; one whose
+  engine does not answer logs a warning and goes on, and SQL is refused
+  with "the SQL engine failed" until it answers.
+
+Rollback: install the previous release; nothing on disk changed.

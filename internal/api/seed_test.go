@@ -90,13 +90,11 @@ func hostTemplate(t *testing.T) string {
 		if err := writeHostFiles(ctx, raw); err != nil {
 			t.Fatal(err)
 		}
-		files, closeFiles, err := templateFiles(ctx, filepath.Join(dir, "engine"), raw, st)
+		files, err := templateFiles(ctx, t, filepath.Join(dir, "engine"), raw, st)
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = reporting.Migrate(ctx, st, files)
-		closeFiles()
-		if err != nil {
+		if err := reporting.Migrate(ctx, st, files.client, files.options(reporting.Options{})); err != nil {
 			t.Fatal(err)
 		}
 		hostTemplateRaw = raw
@@ -152,11 +150,11 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	}
 	files := newHostFiles(t, reg)
 	nat := native.New(native.Options{Dir: files.dir})
-	h := &host{db: db, subs: subs, reg: reg, ops: manage.NewOps(reg, st), files: files.reader,
+	h := &host{db: db, subs: subs, reg: reg, ops: manage.NewOps(reg, st), sql: files.client,
 		native:    nat,
 		eventsDir: files.dir, queryTimeout: 5 * time.Second, queryRows: 1000,
-		rep: reporting.New(st, files, reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second, ShareBaseURL: "https://c.example",
-			Native: nat, Rules: registryRules(reg)}),
+		rep: reporting.New(st, files.client, files.options(reporting.Options{CacheAge: time.Minute, RefreshAge: time.Second,
+			ShareBaseURL: "https://c.example", Native: nat})),
 		ingestURL: "https://collector.test", logger: logger, limits: limitsFrom(&config.Config{})}
 	// host itself carries no path (production has no need for one once
 	// opened); setGuards needs it to reopen with different guards, so the

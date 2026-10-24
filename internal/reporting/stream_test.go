@@ -66,7 +66,7 @@ func TestWidgetDataStreamEqualsWidgetData(t *testing.T) {
 	ctx := context.Background()
 	f := newSystemFixture(t)
 	now := time.Now()
-	svc := New(f.st, f.files, Options{Native: native.New(native.Options{Dir: f.files.Dir}), Now: func() time.Time { return now }})
+	svc := newFilesService(f.st, f.files, Options{Native: native.New(native.Options{Dir: f.files.Dir}), Now: func() time.Time { return now }})
 	ds, err := svc.Dashboards(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -130,7 +130,7 @@ func TestWidgetDataStreamHitsFirst(t *testing.T) {
 	ctx := context.Background()
 	f := newSystemFixture(t)
 	gate := newGate(native.New(native.Options{Dir: f.files.Dir}))
-	svc := New(f.st, f.files, Options{Native: gate, CacheAge: time.Minute, RefreshAge: time.Second})
+	svc := newFilesService(f.st, f.files, Options{Native: gate, CacheAge: time.Minute, RefreshAge: time.Second})
 	from, to := presetDates("7d", f.today)
 	visitors := systemWidgetOf(t, svc, 1, "visitors")
 	views := systemWidgetOf(t, svc, 1, "views")
@@ -173,7 +173,7 @@ func TestWidgetDataStreamErrors(t *testing.T) {
 	ctx := context.Background()
 	f := newSystemFixture(t)
 	now := time.Now()
-	svc := New(f.st, f.files, Options{Native: native.New(native.Options{Dir: f.files.Dir}), Now: func() time.Time { return now }})
+	svc := newFilesService(f.st, f.files, Options{Native: native.New(native.Options{Dir: f.files.Dir}), Now: func() time.Time { return now }})
 	from, to := presetDates("7d", f.today)
 	d, err := svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "Mine"})
 	if err != nil {
@@ -245,7 +245,7 @@ func (b *blockNative) AnswerMany(ctx context.Context, reqs []native.Request, don
 func TestWidgetDataStreamCancels(t *testing.T) {
 	f := newSystemFixture(t)
 	nat := &blockNative{Engine: native.New(native.Options{Dir: f.files.Dir}), started: make(chan struct{})}
-	svc := New(f.st, f.files, Options{Native: nat, CacheAge: time.Minute, RefreshAge: time.Second})
+	svc := newFilesService(f.st, f.files, Options{Native: nat, CacheAge: time.Minute, RefreshAge: time.Second})
 	from, to := presetDates("7d", f.today)
 	d, err := svc.Dashboard(context.Background(), 1)
 	if err != nil {
@@ -327,7 +327,7 @@ func TestWidgetDataStreamIdenticalWidgets(t *testing.T) {
 	ctx := context.Background()
 	f := newSystemFixture(t)
 	now := time.Now()
-	svc := New(f.st, f.files, Options{Native: native.New(native.Options{Dir: f.files.Dir}),
+	svc := newFilesService(f.st, f.files, Options{Native: native.New(native.Options{Dir: f.files.Dir}),
 		CacheAge: time.Minute, RefreshAge: time.Second, Now: func() time.Time { return now }})
 	d, err := svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "Twins"})
 	if err != nil {
@@ -423,7 +423,7 @@ func TestWidgetDataStreamPanics(t *testing.T) {
 		"Answer":     panicNative{},
 	} {
 		t.Run(name, func(t *testing.T) {
-			svc := New(f.st, f.files, Options{Native: nat, CacheAge: time.Minute, RefreshAge: time.Second})
+			svc := newFilesService(f.st, f.files, Options{Native: nat, CacheAge: time.Minute, RefreshAge: time.Second})
 			d, err := svc.Dashboard(context.Background(), 1)
 			if err != nil {
 				t.Fatal(err)

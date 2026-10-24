@@ -201,15 +201,15 @@ func newSystemFixture(t *testing.T) systemFixture {
 	ctx := context.Background()
 	st, _ := newTestStore(t)
 	// A generous timeout: this runs under -race in make test.
-	files := &testFiles{Files: archivetest.New(t), st: st, timeout: 60 * time.Second, maxRows: 1000}
-	if err := Migrate(ctx, st, files); err != nil {
+	files := serveTestFiles(t, archivetest.New(t), st, 60*time.Second, 1000)
+	if err := Migrate(ctx, st, files, files.options(Options{})); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	today := civil.Today(time.Now().UTC())
 	pid := mustCreateProject(t, st, "demo")
 	other := mustCreateProject(t, st, "neighbour")
 	archivetest.CopyDir(t, systemTemplate(t, pid, other, today), files.Dir)
-	return systemFixture{svc: New(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})}), st: st, files: files, project: pid, neighbour: other, today: today}
+	return systemFixture{svc: newFilesService(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})}), st: st, files: files, project: pid, neighbour: other, today: today}
 }
 
 // systemFiles is the raw/ directory every system fixture starts from,
@@ -361,7 +361,7 @@ func TestRetentionMilestonesMatchCurve(t *testing.T) {
 func TestRetentionKindIsSticky(t *testing.T) {
 	ctx := context.Background()
 	st, files := newTestStoreAndFiles(t, 1000)
-	if err := Migrate(ctx, st, files); err != nil {
+	if err := Migrate(ctx, st, files, files.options(Options{})); err != nil {
 		t.Fatal(err)
 	}
 	pid := mustCreateProject(t, st, "sticky")
@@ -384,7 +384,7 @@ func TestRetentionKindIsSticky(t *testing.T) {
 	view("i", "install", 0)
 	view("i", "install", 5)
 	files.Write(t, evs...)
-	svc := New(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})})
+	svc := newFilesService(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})})
 	got, err := svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, svc, 5, "cohorts"), ProjectID: pid,
 		From: cohort.AddDays(-3).String(), To: cohort.String()})
 	if err != nil {
@@ -559,13 +559,13 @@ func TestAttributeValuesCountEachValueOnce(t *testing.T) {
 func TestAttributeValuesWithoutAttributes(t *testing.T) {
 	ctx := context.Background()
 	st, files := newTestStoreAndFiles(t, 1000)
-	if err := Migrate(ctx, st, files); err != nil {
+	if err := Migrate(ctx, st, files, files.options(Options{})); err != nil {
 		t.Fatal(err)
 	}
 	pid := mustCreateProject(t, st, "plain")
 	today := civil.Today(time.Now().UTC())
 	files.Write(t, event(t, "p1", pid, store.FamilyProduct, "signup", today.AddDays(-1).String()))
-	svc := New(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})})
+	svc := newFilesService(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})})
 	from, to := presetDates("7d", today)
 
 	d, err := svc.Dashboard(ctx, 2)

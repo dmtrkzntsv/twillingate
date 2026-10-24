@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
@@ -23,7 +22,8 @@ const (
 )
 
 // ReportingDev runs `twillingate reporting dev`: a read-only handle on
-// dbPath, for the project switcher, an engine on this binary over the
+// dbPath, for the project switcher, the external SQL engine at socket
+// (SQL_ENGINE_SOCKET; "" for none, where sql widgets are refused) over the
 // event files in eventsDir, where its sql widgets run, the native engine
 // over them for its query widgets, and
 // reporting.DevHandler, serving addr until ctx is cancelled. There is no
@@ -31,7 +31,7 @@ const (
 // already refused a non-loopback addr before this is called. Without a
 // registry the widgets read the files without the projects' event and
 // attribute rules.
-func ReportingDev(ctx context.Context, dirs []string, dbPath, eventsDir, addr string, logger *slog.Logger) error {
+func ReportingDev(ctx context.Context, dirs []string, dbPath, eventsDir, socket, addr string, logger *slog.Logger) error {
 	// The handle serves devListProjects' own query only: widget SQL runs
 	// on the event files.
 	db, err := readsql.Open(dbPath, devQueryTimeout, devQueryMaxRows)
@@ -39,18 +39,19 @@ func ReportingDev(ctx context.Context, dirs []string, dbPath, eventsDir, addr st
 		return err
 	}
 	defer db.Close()
-	cfg := &config.Config{Database: "sqlite://" + dbPath, EventsDir: eventsDir,
-		Engine:  config.EngineConfig{MemoryLimit: config.DefaultEngineMemoryLimit, MaxChildren: config.DefaultEngineMaxChildren},
-		Console: config.ConsoleConfig{QueryTimeout: devQueryTimeout, QueryMaxRows: devQueryMaxRows}}
-	eng, reader, err := openFiles(cfg)
+	client, err := openSQL(ctx, socket, logger)
 	if err != nil {
 		return err
 	}
-	defer eng.Close()
-	files := newWidgetFiles(cfg, reader, nil)
+	var sql reporting.SQL
+	if client != nil {
+		defer client.Close()
+		sql = client
+	}
 	nat := native.New(native.Options{Dir: eventsDir})
+	opt := reporting.Options{EventsDir: eventsDir, QueryTimeout: devQueryTimeout, QueryMaxRows: devQueryMaxRows}
 
-	srv := &http.Server{Addr: addr, Handler: reporting.DevHandler(dirs, files, nat, db), ReadHeaderTimeout: 5 * time.Second}
+	srv := &http.Server{Addr: addr, Handler: reporting.DevHandler(dirs, sql, nat, db, opt), ReadHeaderTimeout: 5 * time.Second}
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.ListenAndServe() }()
 	logger.Info("reporting dev serving", "addr", addr, "dirs", dirs)

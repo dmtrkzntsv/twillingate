@@ -165,7 +165,7 @@ func runParity(t *testing.T, cfg parityConfig, fixture func(*testing.T) systemFi
 	}
 	f := fixture(t)
 	ctx := context.Background()
-	if err := migrateFrom(ctx, f.st, f.files, cfg.system, Manifest()); err != nil {
+	if err := migrateFrom(ctx, f.st, f.files, f.files.options(Options{}), cfg.system, Manifest()); err != nil {
 		t.Fatalf("sync %v", err)
 	}
 	for _, w := range ws {
@@ -786,11 +786,11 @@ func TestVitalsByDeviceAndBrowserSplitTheOldTable(t *testing.T) {
 func TestSystemStatsOverNoEvents(t *testing.T) {
 	ctx := context.Background()
 	st, files := newTestStoreAndFiles(t, 1000)
-	if err := Migrate(ctx, st, files); err != nil {
+	if err := Migrate(ctx, st, files, files.options(Options{})); err != nil {
 		t.Fatalf("Migrate: %v", err)
 	}
 	pid := mustCreateProject(t, st, "empty")
-	svc := New(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})})
+	svc := newFilesService(st, files, Options{Native: native.New(native.Options{Dir: files.Dir})})
 	from, to := "2026-10-01", "2026-10-07"
 	cases := []struct {
 		name   string   // <dashboard dir>/<widget>

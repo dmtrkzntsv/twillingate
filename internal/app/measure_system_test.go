@@ -75,6 +75,7 @@ import (
 
 	"github.com/parquet-go/parquet-go"
 
+	"github.com/dmtrkzntsv/twillingate/internal/api"
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
 	"github.com/dmtrkzntsv/twillingate/internal/config/configtest"
@@ -418,12 +419,12 @@ func TestMeasureSystemDashboard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	files := newWidgetFiles(cfg, reader, reg)
-	if err := reporting.Migrate(ctx, st, files); err != nil {
+	files := archivetest.ServeSQL(t, cfg.EventsDir, duck).Client(t)
+	if err := reporting.Migrate(ctx, st, files, api.WidgetOptions(cfg, reg, reporting.Options{})); err != nil {
 		t.Fatal(err)
 	}
 	nat := native.New(native.Options{Dir: raw, Now: now})
-	svc := reporting.New(st, files, reporting.Options{Native: nat})
+	svc := reporting.New(st, files, api.WidgetOptions(cfg, reg, reporting.Options{Native: nat}))
 
 	// 3. The requests: one function per widget.
 	type request struct {

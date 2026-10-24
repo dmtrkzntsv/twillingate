@@ -22,7 +22,7 @@ import (
 // included.
 func TestQuerySourceIsRefused(t *testing.T) {
 	h, cs := newTestHost(t)
-	h.files = &fakeFiles{err: errors.New("must not be called")}
+	h.sql = &fakeFiles{err: errors.New("must not be called")}
 	for _, source := range []string{"files", "sqlite"} {
 		if res := callTool(t, cs, "query", map[string]any{"sql": "SELECT 1", "source": source}); !res.IsError ||
 			strings.Contains(textOf(res), "must not be called") {

@@ -19,45 +19,37 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
-// hostFiles is reporting.Files over a test host's event files, as app's
-// adapter is over the console's raw/: each query under the timeout, with
-// the registry's rules, scoped to its project; the sample project is the
-// live project with the newest file.
+// hostFiles is a test host's event files: a reader over them, for the
+// presence checks, and a test SQL engine serving them
+// (archivetest.ServeSQL), where the query tool's sql and the sql widgets
+// run, as app's client reaches the console's raw/.
 type hostFiles struct {
-	reader  *archive.Reader
-	dir     string
-	reg     *manage.Registry
-	timeout time.Duration
-	maxRows int
+	reader *archive.Reader
+	dir    string
+	reg    *manage.Registry
+	sqle   *archivetest.SQLEngine
+	client *sqlengine.Client
 }
 
-func (f *hostFiles) Query(ctx context.Context, q archive.Scoped) (engine.Result, error) {
-	ctx, cancel := context.WithTimeout(ctx, f.timeout)
+// query runs q over the files with the registry's rules, for the presence
+// checks: the engine's own question, no person's SQL.
+func (f *hostFiles) query(ctx context.Context, q archive.Scoped) (engine.Result, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	events, attrs := f.reg.Snapshot(ctx).RuleLists()
 	return f.reader.QueryScoped(ctx, q, archive.Rules{Events: events, Attributes: attrs})
 }
 
-func (f *hostFiles) SampleProject(ctx context.Context) (int64, error) {
-	days, err := archive.LatestDays(f.dir)
-	if err != nil {
-		return 0, err
-	}
-	snap := f.reg.Snapshot(ctx)
-	var id int64
-	var newest string
-	for pid, day := range days { // a tie goes to the lowest id
-		if p := snap.Project(pid); p != nil && !p.Archived && (day > newest || day == newest && pid < id) {
-			id, newest = pid, day
-		}
-	}
-	return id, nil
+// options is opt with what a host's widgets read with: the registry's
+// rules and live projects, the files and the guards.
+func (f *hostFiles) options(opt reporting.Options) reporting.Options {
+	opt.Rules, opt.Live = registryRules(f.reg), registryLive(f.reg)
+	opt.EventsDir, opt.QueryTimeout, opt.QueryMaxRows = f.dir, 30*time.Second, 1000
+	return opt
 }
-
-func (f *hostFiles) Timeout() time.Duration { return f.timeout }
-func (f *hostFiles) MaxRows() int           { return f.maxRows }
 
 // hostPresence is manage.Presence over a test host's event files, as
 // app's filePresence is over the console's: the target in the project's
@@ -65,13 +57,13 @@ func (f *hostFiles) MaxRows() int           { return f.maxRows }
 type hostPresence struct{ files *hostFiles }
 
 func (p hostPresence) HasEvents(ctx context.Context, projectID int64, family store.Family, name string) (bool, error) {
-	res, err := p.files.Query(ctx, archive.Scoped{SQL: `SELECT 1 FROM events WHERE project_id = CAST($p AS BIGINT) AND family = $f AND event_name = $n LIMIT 1`,
+	res, err := p.files.query(ctx, archive.Scoped{SQL: `SELECT 1 FROM events WHERE project_id = CAST($p AS BIGINT) AND family = $f AND event_name = $n LIMIT 1`,
 		Args: []engine.Arg{{Name: "p", Value: strconv.FormatInt(projectID, 10)}, {Name: "f", Value: string(family)}, {Name: "n", Value: name}}})
 	return len(res.Rows) > 0, err
 }
 
 func (p hostPresence) HasAttribute(ctx context.Context, projectID int64, key string) (bool, error) {
-	res, err := p.files.Query(ctx, archive.Scoped{SQL: "SELECT column_name FROM (DESCRIBE SELECT * FROM events)"})
+	res, err := p.files.query(ctx, archive.Scoped{SQL: "SELECT column_name FROM (DESCRIBE SELECT * FROM events)"})
 	if err != nil {
 		return false, err
 	}
@@ -85,7 +77,7 @@ func (p hostPresence) HasAttribute(ctx context.Context, projectID int64, key str
 	if !ok {
 		return false, nil
 	}
-	res, err = p.files.Query(ctx, archive.Scoped{SQL: "SELECT 1 FROM events WHERE project_id = CAST($p AS BIGINT) AND " + col + " IS NOT NULL LIMIT 1",
+	res, err = p.files.query(ctx, archive.Scoped{SQL: "SELECT 1 FROM events WHERE project_id = CAST($p AS BIGINT) AND " + col + " IS NOT NULL LIMIT 1",
 		Args: []engine.Arg{{Name: "p", Value: strconv.FormatInt(projectID, 10)}}})
 	return len(res.Rows) > 0, err
 }
@@ -104,14 +96,23 @@ func hostEngine(dir, raw string) (*engine.Engine, error) {
 }
 
 // newHostFiles copies the template's event files (hostTemplateRaw) into a
-// directory of t's and returns Files over the copy for reg, its engine
-// closed with t: each host may add events of its own.
+// directory of t's and returns them for reg, with a reader and a test SQL
+// engine over the copy, closed with t: each host may add events of its
+// own.
 func newHostFiles(t *testing.T, reg *manage.Registry) *hostFiles {
 	t.Helper()
 	dir := t.TempDir()
 	raw := filepath.Join(dir, "raw")
 	archivetest.CopyDir(t, hostTemplateRaw, raw) // keeps the times the derived files' freshness reads
-	eng, err := hostEngine(dir, raw)
+	return serveHostFiles(t, dir, raw, reg)
+}
+
+// serveHostFiles is the files in raw for reg: a reader on an engine of
+// its own and a test SQL engine on another, their spill and slots under
+// dir, all closed with t.
+func serveHostFiles(t testing.TB, dir, raw string, reg *manage.Registry) *hostFiles {
+	t.Helper()
+	eng, err := hostEngine(filepath.Join(dir, "reader"), raw)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +121,13 @@ func newHostFiles(t *testing.T, reg *manage.Registry) *hostFiles {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &hostFiles{reader: reader, dir: raw, reg: reg, timeout: 30 * time.Second, maxRows: 1000}
+	served, err := hostEngine(filepath.Join(dir, "sql"), raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { served.Close() })
+	sqle := archivetest.ServeSQL(t, raw, served)
+	return &hostFiles{reader: reader, dir: raw, reg: reg, sqle: sqle, client: sqle.Client(t)}
 }
 
 // writeHostFiles writes hostEvents into raw and runs the daily pass as of
@@ -287,27 +294,15 @@ func hostEvents() []store.Event {
 	return evs
 }
 
-// templateFiles is Files over the template's own event files while
-// hostTemplate builds it, for reporting.Migrate.
-func templateFiles(ctx context.Context, dir, raw string, st store.Store) (*hostFiles, func(), error) {
-	eng, err := hostEngine(dir, raw)
-	if err != nil {
-		return nil, nil, err
-	}
-	reader, err := archive.NewReader(raw, eng)
-	if err != nil {
-		eng.Close()
-		return nil, nil, err
-	}
+// templateFiles is the template's own event files while hostTemplate
+// builds it, served for reporting.Migrate, until t ends.
+func templateFiles(ctx context.Context, t testing.TB, dir, raw string, st store.Store) (*hostFiles, error) {
 	reg := manage.New(st, slog.New(slog.DiscardHandler))
 	if err := reg.Reload(ctx); err != nil {
-		eng.Close()
-		return nil, nil, err
+		return nil, err
 	}
-	return &hostFiles{reader: reader, dir: raw, reg: reg, timeout: time.Minute, maxRows: 1000}, func() { eng.Close() }, nil
+	return serveHostFiles(t, dir, raw, reg), nil
 }
-
-var _ reporting.Files = (*hostFiles)(nil)
 
 // hostEventN numbers the events writeHostEvents writes, so no two share an id.
 var hostEventN atomic.Int64

@@ -162,15 +162,19 @@ type Config struct {
 	// absolute, beside the database's file as raw/ unless set. The engine
 	// child may read and write all of it, so it never holds the database.
 	EventsDir string
-	Geo       string
-	IngestURL string
-	Log       LogConfig
-	Buffer    BufferConfig
-	Retention Retention
-	Forms     FormsConfig
-	Reporting ReportingConfig
-	Engine    EngineConfig
-	Console   ConsoleConfig
+	// SQLEngineSocket (SQL_ENGINE_SOCKET) is the Unix socket of the
+	// external SQL engine that answers widget SQL and the query tool's
+	// sql (package sqlengine); "" means none, and SQL is refused.
+	SQLEngineSocket string
+	Geo             string
+	IngestURL       string
+	Log             LogConfig
+	Buffer          BufferConfig
+	Retention       Retention
+	Forms           FormsConfig
+	Reporting       ReportingConfig
+	Engine          EngineConfig
+	Console         ConsoleConfig
 }
 
 // Load builds the configuration from the process environment.
@@ -297,6 +301,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		QueryMaxRows: e.num("CONSOLE_QUERY_ROWS_MAX", 1000),
 	}
 	c.Console.DBPath = strings.TrimPrefix(c.Console.Database, "sqlite://")
+	c.SQLEngineSocket = e.str("SQL_ENGINE_SOCKET", "")
 	c.EventsDir = e.str("EVENTS_DIR", filepath.Join(filepath.Dir(strings.TrimPrefix(c.Database, "sqlite://")), "raw"))
 	if abs, err := filepath.Abs(c.EventsDir); err == nil {
 		c.EventsDir = abs

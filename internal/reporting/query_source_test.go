@@ -37,7 +37,7 @@ func querySources(t *testing.T, files *testFiles, asked *[]int64) map[string]Sou
 		}
 		return archive.Rules{}
 	}
-	return newSources(files, false, time.Now, native.New(native.Options{Dir: files.Dir}), rules)
+	return newSources(files.eng(), false, time.Now, native.New(native.Options{Dir: files.Dir}), rules, files.timeout, files.maxRows)
 }
 
 // countryEvent is one view of project 1 on day by actor in country.
@@ -90,6 +90,7 @@ func TestQuerySourceLoads(t *testing.T) {
 
 	// Capped at Files.MaxRows, the rest cut and said so.
 	files.maxRows = 1
+	src = querySources(t, files, &asked)["query"]
 	got, err = src.Load(context.Background(), countryBars, countryParams)
 	if err != nil {
 		t.Fatalf("Load capped: %v", err)
@@ -125,7 +126,7 @@ func TestQuerySourceStatPrevious(t *testing.T) {
 
 func TestQuerySourceValidate(t *testing.T) {
 	_, files := newTestStoreAndFiles(t, 1000)
-	svc := &Service{files: files, sources: querySources(t, files, nil), now: time.Now}
+	svc := &Service{sql: files.eng(), queryRows: files.maxRows, sources: querySources(t, files, nil), now: time.Now}
 	comps := map[string]Component{}
 	for _, c := range []string{queryBarList, queryStat, queryTable} {
 		comp := oneComponent(t, c)
@@ -217,7 +218,7 @@ func TestQuerySourceEmptyProject(t *testing.T) {
 
 func TestQuerySourceWithoutNative(t *testing.T) {
 	_, files := newTestStoreAndFiles(t, 1000)
-	src := newSources(files, false, time.Now, nil, nil)["query"]
+	src := newSources(files.eng(), false, time.Now, nil, nil, files.timeout, files.maxRows)["query"]
 	// Validating needs no engine: the columns come from the query.
 	if err := src.Validate(context.Background(), countryBars, oneComponent(t, queryBarList)); err != nil {
 		t.Fatalf("Validate: %v", err)
@@ -232,7 +233,7 @@ func TestQuerySourceRefusesTooLarge(t *testing.T) {
 	_, files := newTestStoreAndFiles(t, 1000)
 	writeCountries(t, files)
 	nat := native.New(native.Options{Dir: files.Dir, MaxBytes: 1})
-	src := newSources(files, false, time.Now, nat, nil)["query"]
+	src := newSources(files.eng(), false, time.Now, nat, nil, files.timeout, files.maxRows)["query"]
 	content := `{"query":{"kind":"stat","table":"views","metrics":[{"op":"actors","as":"value"}]}}`
 	_, err := src.Load(context.Background(), content, countryParams)
 	if !errors.Is(err, store.ErrInvalid) || !strings.Contains(err.Error(), "more memory than allowed") {

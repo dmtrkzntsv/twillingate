@@ -19,6 +19,12 @@ const (
 	// ChildExited follows a child that died with the query in flight,
 	// which the kernel's out-of-memory killer is the usual cause of.
 	ChildExited = "the query engine stopped while running the query, most likely out of memory (ENGINE_MEMORY_LIMIT); narrow the query"
+	// Busy follows an engine that answered busy: every slot it runs
+	// queries in was taken.
+	Busy = "the SQL engine is busy: all of its slots are running other queries; retry in a moment"
+	// EngineFailed follows an engine that could not be reached or failed
+	// with no word on the SQL: down, restarting, or broken.
+	EngineFailed = "the SQL engine failed (SQL_ENGINE_SOCKET); retry, and if it goes on, check the engine"
 )
 
 // Timeout follows a query that ran past CONSOLE_QUERY_TIMEOUT, d.

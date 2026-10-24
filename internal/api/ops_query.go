@@ -13,10 +13,11 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 	"github.com/google/jsonschema-go/jsonschema"
 )
 
@@ -134,10 +135,11 @@ func queryEnums(in *jsonschema.Schema) {
 // maxQueryDays bounds a structured query's range, from and to included.
 const maxQueryDays = 1100
 
-// Files runs SQL over the raw event files (archive.Reader): query's SQL
-// over every project, the analytics tools' own SQL scoped to one.
-type Files interface {
-	QueryScoped(ctx context.Context, q archive.Scoped, rules archive.Rules) (engine.Result, error)
+// SQL is the external SQL engine query's sql runs on, over a Unix socket
+// (SQL_ENGINE_SOCKET); *sqlengine.Client is one. nil means none is
+// configured, and sql is refused (reporting.ErrSQLEngine).
+type SQL interface {
+	Query(ctx context.Context, req sqlengine.Request) (sqlengine.Result, error)
 }
 
 // runQuery runs in.SQL on the event files, or in.Query natively: exactly
@@ -154,14 +156,14 @@ func (h *host) runQuery(ctx context.Context, in queryIn) (queryOut, error) {
 	case in.ProjectID != 0 || in.From != "" || in.To != "":
 		return queryOut{}, invalidf("project_id, from and to go with query; sql filters project_id and day itself")
 	}
-	out, err := h.runFilesQuery(ctx, in.SQL)
+	out, err := h.runSQL(ctx, in.SQL)
 	return queryOut{tableOut: out}, err
 }
 
 // runStructured answers in.Query over in.ProjectID's days in.From to
 // in.To (default: the 30 days ending today, UTC) with the native engine,
 // under CONSOLE_QUERY_TIMEOUT and CONSOLE_QUERY_ROWS_MAX, with the
-// registry's rules as runFilesQuery applies them.
+// registry's rules as runSQL applies them.
 func (h *host) runStructured(ctx context.Context, in queryIn) (queryOut, error) {
 	if in.ProjectID == 0 {
 		return queryOut{}, invalidf("query needs project_id; call list_projects first")
@@ -210,7 +212,7 @@ func (h *host) runStructured(ctx context.Context, in queryIn) (queryOut, error) 
 }
 
 // answer answers q natively under CONSOLE_QUERY_TIMEOUT, with the
-// registry's rules as runFilesQuery applies them: the query tool's
+// registry's rules as runSQL applies them: the query tool's
 // structured queries and the analytics tools' own. A refusal or a timeout
 // reads as invalid (nativeError).
 func (h *host) answer(ctx context.Context, q native.Query, p native.Params) (native.Result, error) {
@@ -345,25 +347,33 @@ func nativeError(err error) error {
 	return err
 }
 
-// runFilesQuery runs sql over the event files in the engine's child,
-// under CONSOLE_QUERY_ROWS_MAX and CONSOLE_QUERY_TIMEOUT, over every
-// project. The child accepts one SELECT and reaches no file outside raw/
-// (raw-first D21); Confine keeps it on the seven tables, where the rules
-// apply (D6), and off raw/'s files themselves, as widget SQL is (#192).
-func (h *host) runFilesQuery(ctx context.Context, sql string) (tableOut, error) {
+// runSQL runs sql on the external SQL engine over every project's event
+// files, under CONSOLE_QUERY_ROWS_MAX and CONSOLE_QUERY_TIMEOUT, with the
+// registry's rules. The engine runs one read-only SELECT and reaches no
+// file outside the table spec (raw-first D21); confine keeps it on the
+// seven tables, where the rules apply (D6), and off raw/'s files
+// themselves, as widget SQL is (#192): always set from the tool.
+func (h *host) runSQL(ctx context.Context, sql string) (tableOut, error) {
 	h.logger.Debug("mcp query", "source", "files", "sql", sql) // debug only, never info (spec §8)
-	if h.files == nil {
-		return tableOut{}, invalidf("the event files cannot be queried by this process")
+	if h.sql == nil {
+		return tableOut{}, reporting.ErrSQLEngine
 	}
 	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
 	events, attrs := h.reg.Snapshot(ctx).RuleLists()
-	res, err := h.files.QueryScoped(ctx, archive.Scoped{SQL: sql, MaxRows: h.queryRows, Confine: true},
-		archive.Rules{Events: events, Attributes: attrs})
+	tables, err := archive.TableSpec(h.eventsDir, nil, archive.Rules{Events: events, Attributes: attrs})
 	if err != nil {
-		return tableOut{}, filesError(err, h.queryTimeout)
+		return tableOut{}, err
+	}
+	res, err := h.sql.Query(ctx, sqlengine.Request{SQL: sql, Args: map[string]string{}, MaxRows: h.queryRows,
+		Mode: sqlengine.ModeRows, Confine: true, Tables: tables})
+	if err != nil {
+		return tableOut{}, h.sqlError(ctx, err)
 	}
 	out := tableOut{Columns: res.Columns, Rows: cellRows(res.Rows)}
+	if out.Columns == nil {
+		out.Columns = []string{}
+	}
 	if res.Truncated {
 		out.Truncated = true
 		out.Note = fmt.Sprintf("truncated to %d rows; results are PARTIAL — add a WHERE or aggregate", h.queryRows)
@@ -375,31 +385,42 @@ func (h *host) runFilesQuery(ctx context.Context, sql string) (tableOut, error) 
 // SQLite's: the files have none of these.
 var sqliteTable = regexp.MustCompile(`(?i)Table with name (v_|raw_|agg_)\w* does not exist|"(v_|raw_|agg_)\w*" is not a table here`)
 
-// filesError turns a failed files query into a message a model can act
-// on (raw-first D21); anything else (the child could not start) passes
-// through as an internal error.
-func filesError(err error, timeout time.Duration) error {
-	var qe *engine.QueryError
+// sqlError turns a failed query on the engine into a message a model can
+// act on (raw-first D21), by the engine's kind: the timeout (the engine's
+// or ctx's), memory, a busy engine and a lost worker with what to change,
+// a refusal with what the SQL read, the engine's own message on the SQL
+// as it is. An engine that failed or could not be reached reads as such,
+// its cause logged; a caller that went away keeps its own error.
+func (h *host) sqlError(ctx context.Context, err error) error {
+	var se *sqlengine.Error
+	isKind := func(k sqlengine.Kind) bool { return errors.As(err, &se) && se.Kind == k }
 	switch {
-	case errors.Is(err, context.DeadlineExceeded):
-		return invalidf("%s", enginesql.Timeout(timeout))
-	case errors.Is(err, archive.ErrLoadingLogs) && errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
+	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded), isKind(sqlengine.KindTimeout):
+		return invalidf("%s", enginesql.Timeout(h.queryTimeout))
+	case ctx.Err() != nil:
+		return err
+	case isKind(sqlengine.KindOutOfMemoryLoadingLog):
 		return invalidf("%s", enginesql.LogsOutOfMemory)
-	case errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
+	case isKind(sqlengine.KindOutOfMemory):
 		return invalidf("%s", enginesql.OutOfMemory)
-	case errors.Is(err, enginesql.ErrRefused):
-		msg := strings.TrimPrefix(err.Error(), enginesql.ErrRefused.Error()+": ")
+	case isKind(sqlengine.KindRefused):
+		msg := se.Message
 		if sqliteTable.MatchString(msg) {
 			msg += "; the v_*, raw_* and agg_* tables went with the database's events (docs://twillingate)"
 		}
 		return invalidf("%s", msg)
-	case errors.As(err, &qe) && sqliteTable.MatchString(qe.Msg):
+	case isKind(sqlengine.KindSQL) && sqliteTable.MatchString(se.Message):
 		return invalidf(`%s; the v_*, raw_* and agg_* tables went with the database's events. The event files hold events, views, product, measures, sessions, identities and aliases (docs://twillingate)`,
-			strings.SplitN(qe.Msg, "\n", 2)[0])
-	case errors.As(err, &qe):
-		return invalidf("SQL error (DuckDB): %s", qe.Msg)
-	case errors.Is(err, engine.ErrChildExited):
+			strings.SplitN(se.Message, "\n", 2)[0])
+	case isKind(sqlengine.KindSQL):
+		return invalidf("SQL error (DuckDB): %s", se.Message)
+	case isKind(sqlengine.KindExited):
 		return invalidf("%s", enginesql.ChildExited)
+	case isKind(sqlengine.KindBusy):
+		return invalidf("%s", enginesql.Busy)
+	case errors.As(err, &se), errors.Is(err, sqlengine.ErrUnavailable):
+		h.logger.Warn("the SQL engine failed", "error", err.Error())
+		return invalidf("%s", enginesql.EngineFailed)
 	}
 	return err
 }

@@ -55,7 +55,7 @@ func TestSystemDashboardTiming(t *testing.T) {
 	}
 	// The read timeout sits well above timingLimit, so a slow widget is
 	// measured and reported rather than cut off.
-	files := &testFiles{Files: &archivetest.Files{Dir: dir, Eng: eng, Reader: reader}, timeout: 10 * timingLimit, maxRows: 1000}
+	files := serveTestFiles(t, &archivetest.Files{Dir: dir, Eng: eng, Reader: reader}, nil, 10*timingLimit, 1000)
 
 	system, err := fs.Sub(systemFS, "system")
 	if err != nil {
@@ -80,7 +80,7 @@ func TestSystemDashboardTiming(t *testing.T) {
 	}
 	t.Logf("project %d", projectID)
 
-	src := newSources(files, false, time.Now, nil, nil)["sql"]
+	src := newSources(files.eng(), false, time.Now, nil, nil, files.timeout, files.maxRows)["sql"]
 	today := civil.Today(time.Now().UTC())
 	type timing struct {
 		widget, preset string

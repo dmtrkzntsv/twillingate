@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
@@ -46,9 +47,10 @@ type queryContent struct {
 // engine answers over the project and range the dashboard has chosen,
 // its columns renamed to the component's inputs.
 type querySource struct {
-	files  Files // the timeout and row cap; nil: neither
-	native Native
-	rules  RulesFunc
+	native  Native
+	rules   RulesFunc
+	timeout time.Duration // CONSOLE_QUERY_TIMEOUT; 0: none
+	maxRows int           // CONSOLE_QUERY_ROWS_MAX; 0: none
 }
 
 func (*querySource) Name() string    { return "query" }
@@ -238,14 +240,14 @@ func (s *querySource) Load(ctx context.Context, content string, p Params) (any, 
 }
 
 // load answers content over p's project and range: at most
-// Files.MaxRows rows, under Files.Timeout, its columns renamed, its
+// CONSOLE_QUERY_ROWS_MAX rows, under CONSOLE_QUERY_TIMEOUT, its columns renamed, its
 // values relabelled and its columns picked.
 func (s *querySource) load(ctx context.Context, content string, p Params) (readsql.Result, error) {
 	pl, err := s.plan(ctx, content, p)
 	if err != nil {
 		return readsql.Result{}, err
 	}
-	ctx, cancel := s.timeout(ctx)
+	ctx, cancel := s.withTimeout(ctx)
 	defer cancel()
 	res, err := s.native.Answer(ctx, pl.q, pl.p, pl.rules)
 	return s.answered(pl, res, err)
@@ -291,29 +293,26 @@ func (s *querySource) plan(ctx context.Context, content string, p Params) (query
 	return queryPlan{qc: qc, cols: cols, q: qc.Query, p: native.Params{Project: p.ProjectID, From: from, To: to}, rules: rules}, nil
 }
 
-// timeout is ctx under Files.Timeout (CONSOLE_QUERY_TIMEOUT); without
-// files, ctx itself.
-func (s *querySource) timeout(ctx context.Context) (context.Context, context.CancelFunc) {
-	if s.files == nil {
+// withTimeout is ctx under CONSOLE_QUERY_TIMEOUT; without one, ctx
+// itself.
+func (s *querySource) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
+	if s.timeout <= 0 {
 		return ctx, func() {}
 	}
-	return context.WithTimeout(ctx, s.files.Timeout())
+	return context.WithTimeout(ctx, s.timeout)
 }
 
 // answered is pl's result from the engine's answer: an error as
-// reporting's, or at most Files.MaxRows rows, its columns renamed, its
+// reporting's, or at most CONSOLE_QUERY_ROWS_MAX rows, its columns renamed, its
 // values relabelled and its columns picked.
 func (s *querySource) answered(pl queryPlan, res native.Result, err error) (readsql.Result, error) {
 	if err != nil {
-		if errors.Is(err, context.DeadlineExceeded) && s.files != nil {
-			return readsql.Result{}, &resourceErr{store.Refuse(store.ErrInvalid, "%s", enginesql.Timeout(s.files.Timeout())), err}
+		if errors.Is(err, context.DeadlineExceeded) && s.timeout > 0 {
+			return readsql.Result{}, &resourceErr{store.Refuse(store.ErrInvalid, "%s", enginesql.Timeout(s.timeout)), err}
 		}
 		return readsql.Result{}, queryErr(err)
 	}
-	maxRows := 0
-	if s.files != nil {
-		maxRows = s.files.MaxRows()
-	}
+	maxRows := s.maxRows
 	// The engine names the columns as Columns does; renamed by name, so a
 	// column it returned and Columns did not name keeps its own.
 	names := make(map[string]string, len(pl.cols))
@@ -365,7 +364,7 @@ type queryLoad struct {
 // calls done once per load (i its index), never two at once, as it is
 // answered: a load refused before the engine runs at once, then the
 // engine's answers as AnswerMany hands them over, a shared scan's when
-// that scan finishes. Each load runs under its own Files.Timeout, in ctx:
+// that scan finishes. Each load runs under its own CONSOLE_QUERY_TIMEOUT, in ctx:
 // once ctx is done every load still running stops. A Native that cannot
 // answer several at once answers each alone, concurrently. It returns
 // after the last call to done.
@@ -408,7 +407,7 @@ func (s *querySource) loadMany(ctx context.Context, loads []queryLoad, done func
 			continue
 		}
 		// The timeout starts here, before the engine's turn, as load's does.
-		rctx, cancel := s.timeout(ctx)
+		rctx, cancel := s.withTimeout(ctx)
 		reqs = append(reqs, native.Request{Query: pl.q, Params: pl.p, Rules: pl.rules, Ctx: rctx})
 		plans, idx, cancels = append(plans, pl), append(idx, i), append(cancels, cancel)
 	}

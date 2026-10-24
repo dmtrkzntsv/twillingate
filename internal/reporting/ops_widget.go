@@ -290,6 +290,9 @@ func refuseNameTaken(name string) error {
 
 // inWidget prefixes a refusal of one widget in a batch with its name.
 func inWidget(name string, err error) error {
+	if errors.Is(err, ErrSQLEngine) { // kept matchable
+		return fmt.Errorf("widget %s: %w", name, err)
+	}
 	var r *store.Refusal
 	if errors.As(err, &r) {
 		return store.Refuse(r.Kind, "widget %s: %s", name, r.Msg)

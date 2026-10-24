@@ -18,9 +18,9 @@ widgets at `/share/`) — and its whole state is one SQLite file.
 Linux on amd64 or arm64 with glibc 2.35 or newer (Debian 12, Ubuntu 22.04 or
 later), or Docker on amd64 or arm64. 32-bit ARM is not built. Plan on 1 GB
 of memory: the server stays small, near its soft memory target
-(`GOMEMLIMIT`, which the unit and compose files set to 256MiB), and each engine
-child, the process that answers SQL, may take up to
-`ENGINE_MEMORY_LIMIT` (512 MB by default) for a few seconds. The daily pass
+(`GOMEMLIMIT`, which the unit and compose files set to 256MiB). SQL runs
+on an [external SQL engine](#external-sql-engine), a process of its own
+whose memory is not counted here. The daily pass
 writes the event files in the server process, in Go, and starts no child;
 on a month of a million events it peaks near 150 MB of resident memory
 (measured in a process of 25 MB at rest), on the day a month is merged.
@@ -34,16 +34,12 @@ streamed request), and 387 to 405 MB when its widgets are asked for one
 by one. The built-in widgets' reader, in the console process, holds at
 most about 128 MiB of identities, 128 MiB of today's logs decoded
 (dropped after five idle minutes) and 256 MiB of aggregations (two scans
-at once, 128 MiB each), counted approximately. Only SQL starts a child: a widget's SQL, `query`'s and the
-console's check of the users' SQL widgets at start. An ingest process never
-starts one, since the form-attribution lookup, like the daily pass, the
-built-in widgets and the check before a rename or merge rule is saved,
-reads the files in Go. One `serve` process with the console runs one child
-at a time; `ENGINE_MAX_CHILDREN` bounds the children across every process on
-one data directory, which the console, `twillingate reporting dev` and
-`twillingate engine -check` share, so the default 2 leaves a slot for a
-preview or a check beside a running console. `GOMEMLIMIT` does not
-cover the children.
+at once, 128 MiB each), counted approximately. `serve` starts no engine
+child: SQL (a widget's, `query`'s and the console's check of the users' SQL
+widgets at start) goes to the external SQL engine when `SQL_ENGINE_SOCKET`
+is set, and is refused when it is not, while the form-attribution lookup,
+the daily pass, the built-in widgets and the check before a rename or merge
+rule is saved read the files in Go.
 
 ### docker compose
 
@@ -154,8 +150,9 @@ The stream sends a keepalive every 15 seconds, well inside Cloudflare's
 | `CONSOLE_DATABASE_DSN` | Database the console reads for queries, as `sqlite://<path>` (a copy or replica of the store, say). Defaults to `DATABASE_DSN`. |
 | `CONSOLE_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `30s`. |
 | `CONSOLE_QUERY_ROWS_MAX` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
-| `ENGINE_MEMORY_LIMIT` | DuckDB's memory limit for each engine child, the process that answers SQL: a widget's SQL and `query`'s. The daily pass, the form-attribution lookup and the check before a rename or merge rule is saved do not use the engine: they read and write the event files in the server process. Outside GOMEMLIMIT, the server's own soft memory target. `512MB`, `1GB`, `2GiB` (DuckDB's MB is 10^6 bytes). Default `512MB`. |
-| `ENGINE_MAX_CHILDREN` | Engine children running at once (each takes one of these slots), across every process on one data directory; only SQL takes one, never the daily pass, the form-attribution lookup or a rule check, so an ingest process takes none. A `serve` process with the console runs one child at a time, and shares the slots with `reporting dev` and `engine -check`; a process waits for a free slot, and gets one within about a second from another process whose child is idle (an idle child yields its slot). Default 2. |
+| `SQL_ENGINE_SOCKET` | Path of the Unix socket of the [external SQL engine](#external-sql-engine) that answers SQL: a widget's and `query`'s. Unset or empty, there is none: SQL widgets and `query`'s `sql` are refused, `sql` leaves the component list, and everything else works. Give the console's process the same value as `reporting dev`. Default empty. |
+| `ENGINE_MEMORY_LIMIT` | DuckDB's memory limit for the child `twillingate engine -check` starts; no other command starts one, since SQL runs on the external SQL engine. `512MB`, `1GB`, `2GiB` (DuckDB's MB is 10^6 bytes). Default `512MB`. |
+| `ENGINE_MAX_CHILDREN` | Engine children running at once across every process on one data directory: `twillingate engine -check`'s, the only one left. Default 2. |
 | `REPORTING_CACHE_MAX_AGE` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default `15m`. |
 | `REPORTING_REFRESH_MAX_AGE` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_MAX_AGE`; must not exceed it when that is non-zero. Default `1m`. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_MAX_AGE`, `REPORTING_REFRESH_MAX_AGE`) while its window has focus; both 0 removes the option. |
 
@@ -172,10 +169,10 @@ leftover one is ignored, so rename any still in `twillingate.env`.
 
 ### Raspberry Pi and low-resource hosts
 
-- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. Only the console's process runs an engine child, one at a time (for every load of a widget that reads SQL and for `query`'s SQL); an ingest process runs none, so a split install needs no more slots. On a small host, lower `ENGINE_MEMORY_LIMIT` rather than raise `ENGINE_MAX_CHILDREN`, whose slots the console shares with `reporting dev` and `engine -check`.
+- A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. No twillingate process runs an engine child: SQL goes to the external SQL engine, if you run one, and the built-in dashboards need none.
 - Raise `BUFFER_FLUSH_INTERVAL` (say `30s`): fewer, larger writes.
 - Keep `GOMEMLIMIT` (unit and compose files ship `256MiB`) and keep `GEO_DSN` off `maxmind://`, which holds a database in memory. `GOMEMLIMIT` is a soft target, not a bound: the garbage collector works harder near it, and the process may go past it. The daily pass peaks near 150 MB on a month of a million events, and at about 230 to 400 MB on one with 2,000 distinct attribute keys (lower under a lower target, at more CPU).
-- Plan on 1 GB of memory, as in [Install](#install): `GOMEMLIMIT` is the server's own target (the daily pass included: it runs in the server), and the engine child may take up to `ENGINE_MEMORY_LIMIT` on top of it. On less, lower `ENGINE_MEMORY_LIMIT` (`256MB`) before anything else; queries then spill to disk and run slower.
+- Plan on 1 GB of memory, as in [Install](#install): `GOMEMLIMIT` is the server's own target (the daily pass included: it runs in the server). An external SQL engine on the same host needs memory of its own on top.
 - Lower `RETENTION_DAYS` if the event files outgrow the card: a month file is deleted once its last day is older, and nothing else holds events.
 
 ## The console
@@ -304,6 +301,58 @@ running instances and leaves the bare unit disabled; reverse to go back.
 > the database, a console-only unit writes to that copy on every pass — or
 > accept that a two-process topology runs the idempotent daily pass twice.
 
+### External SQL engine
+
+twillingate answers SQL (SQL widgets, `query`'s `sql` and the console's
+start-up check of the users' SQL widgets) on an external SQL engine: a
+separate process that serves a small HTTP and JSON protocol on a Unix
+socket and reads the event files from its own read-only mount of
+`EVENTS_DIR`. Set `SQL_ENGINE_SOCKET` to its socket. Without one, SQL is
+refused as `invalid` with "SQL needs an external SQL engine
+(SQL_ENGINE_SOCKET)": `/api/components` and `list_components` leave `sql`
+out of `source_types`, a stored SQL widget stays on its dashboard (not
+archived) and its card shows that refusal while the rest loads, and the
+start-up check skips SQL widgets. Structured queries, the analytics tools
+and the built-in dashboards need no engine.
+
+At start, `serve` and every command that opens the database call the
+engine's `GET /v1/health`. An engine that speaks another protocol version
+stops the start, naming both; one that does not answer is logged as a
+warning and the start goes on, each query trying it again, so the engine
+may start or restart after twillingate. A query the engine cannot answer
+then is refused with "the SQL engine failed (SQL_ENGINE_SOCKET)", and the
+cause is logged.
+
+The protocol, version 1 (the `sqlengine` package holds its types, a
+client and fixtures: [sqlengine/protocol.go](https://github.com/dmtrkzntsv/twillingate/blob/main/sqlengine/protocol.go)):
+
+- `GET /v1/health` answers `{"protocol": 1, "engine": "<name> <version>"}`.
+- `POST /v1/query` takes `{"sql", "args", "max_rows", "mode", "page",
+  "scope", "confine", "tables"}`. `args` binds the statement's `$tw_*`
+  names (strings). `mode` is `rows` (the statement's rows), `text` (every
+  cell as text), `shape` (the columns only), `page` (a filtered, sorted
+  page of a remote table, with `__tw_matched` and `__tw_total` appended) or
+  `count` (`["total","matched"]` for a page with no row). `scope` is a
+  project id or `null` for every project; `confine` keeps the SQL on the
+  seven tables. `tables` names the files to read: per project its Parquet
+  files, logs, session files and the days they do not cover yet,
+  identities and aliases, every path relative to `EVENTS_DIR` (the engine
+  refuses one that is absolute or climbs out), with the event and
+  attribute rules to apply. The deadline travels as `X-Timeout-Ms`, a
+  cancelled request as the connection closing.
+- A success is `{"columns", "rows", "truncated"}`: numbers as JSON
+  numbers; dates, times, UUIDs, NaN and the infinities as strings.
+- An error is `{"error": {"kind", "message"}}` with status 400 (`refused`,
+  `sql`), 503 with `Retry-After` (`busy`), 504 (`timeout`) or 500
+  (`out_of_memory`, `out_of_memory_loading_logs`, `exited`, `internal`).
+  twillingate words each kind for whoever asked: the engine's own message
+  for `sql` and `refused`, `CONSOLE_QUERY_TIMEOUT` for a timeout, what to
+  narrow for memory, retry for `busy`. A busy engine is not retried within
+  the request.
+
+The dialect the reference engine speaks, and the docs describe, is
+DuckDB's.
+
 ### Other auth modes
 
 ```bash
@@ -419,10 +468,9 @@ address, so behind a further proxy or CDN use `client_ip` with
 
 `twillingate reporting dev` previews dashboard files against a database on
 a loopback address, without a login; its usage is in
-[reporting.md](reporting.md#local-development). It runs its own engine
-child with the default `ENGINE_MEMORY_LIMIT` and `ENGINE_MAX_CHILDREN`,
-taking a slot in the `engine/slots` directory beside `-db`, which it shares
-with a server on the same data directory.
+[reporting.md](reporting.md#local-development). Its SQL widgets run on the
+external SQL engine at `SQL_ENGINE_SOCKET` in its environment, the
+server's; without it they are refused, and its other widgets load.
 
 ## Operate and recover
 
@@ -454,7 +502,7 @@ rotates at 00:00 UTC; a catch-up pass at startup means downtime
 across those times skips no day. With `LOG_FILE` set, install
 `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.
 
-The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began were copied in once, on the upgrade to v0.21, by that release's `twillingate events import`. The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass, in Go in the ingest process, without an engine child (`ENGINE_*` do not apply to it): the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (the built-in widgets answered without the engine, a widget's SQL through its child), `query`, the analytics tools (`views_overview` through `identities`), the count of events in `limits`, `list_attributes`, `usage` and the console's event names and newest days read them and the tables derived from them.
+The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began were copied in once, on the upgrade to v0.21, by that release's `twillingate events import`. The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass, in Go in the ingest process, without an engine child (`ENGINE_*` do not apply to it): the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (the built-in widgets answered without the engine, a widget's SQL on the external SQL engine), `query`, the analytics tools (`views_overview` through `identities`), the count of events in `limits`, `list_attributes`, `usage` and the console's event names and newest days read them and the tables derived from them.
 
 ### Back up and restore
 
