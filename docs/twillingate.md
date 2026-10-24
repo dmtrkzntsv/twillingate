@@ -1503,7 +1503,8 @@ Every tool above except `integration_guide` is also a REST route under `/api/`,
 guarded by the same bearer token (`Authorization: Bearer …`) as MCP. Send and
 receive JSON. `integration_guide`, `reporting_guide` and the `docs://`
 resources are MCP-only. The dashboard routes, a project's tabs
-(`/api/projects/{project_id}/tabs`) among them, are listed in
+(`/api/projects/{project_id}/tabs`) and the console's widget stream
+(`POST /api/widgets/stream`, Server-Sent Events) among them, are listed in
 [reporting.md](reporting.md#http-api).
 
 Every route is also described by an OpenAPI 3.1 document at

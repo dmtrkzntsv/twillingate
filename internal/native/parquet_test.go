@@ -575,9 +575,11 @@ func TestDecideCountsNulls(t *testing.T) {
 
 func TestDictDedupes(t *testing.T) {
 	var db dictBuilder
-	remap, same := db.addDict(byteArray("a", "b"))
-	if !same || !slices.Equal(remap, []int32{0, 1}) {
-		t.Errorf("first: %v %v", remap, same)
+	vals, offs := byteArray("a", "b")
+	remap, same := db.addDict(vals, offs)
+	clear(vals) // the page's buffer, reused: the dictionary keeps its own copy
+	if !same || remap != nil || !slices.Equal(db.dict, []string{"a", "b"}) || db.ids != nil {
+		t.Errorf("first: %v %v %v, lookup %v", remap, same, db.dict, db.ids)
 	}
 	if id := db.id([]byte("c")); id != 2 { // a plain page's value
 		t.Errorf("c: %d", id)

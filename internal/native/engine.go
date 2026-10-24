@@ -21,7 +21,7 @@ type Options struct {
 	Dir string
 	// Workers is how many goroutines one query scans with (default 2).
 	Workers int
-	// MaxScans is how many queries scan at once (default 2); the others
+	// MaxScans is how many queries scan at once (DefaultMaxScans); the others
 	// wait for a turn, or give up when their context is done.
 	MaxScans int
 	// MaxGroups is how many distinct groups a breakdown tracks (default
@@ -46,6 +46,11 @@ type Options struct {
 	// workers' partials holds the per-day keys and the histograms twice
 	// for a moment, uncounted. A retention query charges its per-actor
 	// state and is refused with ErrTooLarge past MaxBytes.
+	//
+	// The engine as a whole holds at most about MaxBytes of identities
+	// (its cache), MaxBytes of open logs' decoded rows (its log cache,
+	// emptied after five idle minutes) and MaxScans × MaxBytes of
+	// aggregations (AnswerMany).
 	MaxBytes int64
 	// Now is the clock (default time.Now): its UTC day is today, which a
 	// retention query counts up to, leaving it out.
@@ -57,17 +62,23 @@ type Engine struct {
 	dir                string
 	workers, maxGroups int
 	maxBytes           int64
-	sem                chan struct{}
+	// slots are the MaxScans turns, taken several at once by a shared
+	// scan with more than one heavy aggregation (turnFor).
+	slots *weighted
 
 	logKeys  *archive.KeyScanner // each open log's keys, read as far as it grew
 	colMu    sync.Mutex          // guards colFiles, never held over a read
 	colFiles map[string]fileCols // each Parquet file's columns, by path
 
 	idCache identityCache // each project's identities, up to MaxBytes of them
+	logs    *logCache     // each open log's decoded rows, up to MaxBytes of them
 	retMemo retentionMemo // recent retention tallies, so a dashboard's widgets scan once
 
 	now func() time.Time
 }
+
+// DefaultMaxScans is Options.MaxScans when it is not set.
+const DefaultMaxScans = 2
 
 // New returns an engine over o.Dir.
 func New(o Options) *Engine {
@@ -75,7 +86,7 @@ func New(o Options) *Engine {
 		o.Workers = 2
 	}
 	if o.MaxScans <= 0 {
-		o.MaxScans = 2
+		o.MaxScans = DefaultMaxScans
 	}
 	if o.MaxGroups <= 0 {
 		o.MaxGroups = 100_000
@@ -86,8 +97,14 @@ func New(o Options) *Engine {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	return &Engine{dir: o.Dir, workers: o.Workers, maxGroups: o.MaxGroups, maxBytes: o.MaxBytes, sem: make(chan struct{}, o.MaxScans),
-		logKeys: archive.NewKeyScanner(), idCache: identityCache{max: o.MaxBytes}, now: o.Now}
+	return &Engine{dir: o.Dir, workers: o.Workers, maxGroups: o.MaxGroups, maxBytes: o.MaxBytes, slots: newWeighted(o.MaxScans),
+		logKeys: archive.NewKeyScanner(), idCache: identityCache{max: o.MaxBytes}, logs: newLogCache(o.MaxBytes), now: o.Now}
+}
+
+// readLog is readLog's rows, from the engine's log cache: a batch per
+// family, each read-only.
+func (e *Engine) readLog(ctx context.Context, path string, cols []string, family string, r Range) ([]*Batch, error) {
+	return e.logs.read(ctx, path, cols, family, r)
 }
 
 // today is the clock's UTC day.
@@ -146,7 +163,9 @@ var (
 // each row's id up in their first-seen days alone (firstSeen), with the
 // names for a label, over the whole history. Identities are cached
 // between queries (at most MaxBytes of them), their stored and live
-// parts apart, so a log's flush derives only the logs' part again; while
+// parts apart, so a log's flush derives only the logs' part again; so
+// are the open logs' decoded rows (at most MaxBytes of them, logCache),
+// so a log is decoded once while it grows rather than once a query; while
 // the derived identities file is missing or stale (older than an events
 // file), the next query that needs them derives them again from every
 // event the project's files hold. A malformed query, or a filter value
@@ -228,21 +247,9 @@ var (
 // group. It is NULL when the partition's total is 0, and never
 // approximate.
 func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Rules) (Result, error) {
-	if err := q.Validate(); err != nil {
-		return Result{}, err
-	}
-	if p.To.Before(p.From) {
-		return Result{}, invalid("to", "%s is before from %s", p.To, p.From)
-	}
-	filters, err := compileFilters(q.Where, "where")
+	filters, metrics, err := compileQuery(q, p)
 	if err != nil {
 		return Result{}, err
-	}
-	metrics := make([]metricSpec, len(q.Metrics))
-	for i, m := range q.Metrics {
-		if metrics[i], err = compileMetric(m, fmt.Sprintf("metrics[%d]", i)); err != nil {
-			return Result{}, err
-		}
 	}
 	var res Result
 	err = e.turn(ctx, func() error {
@@ -250,23 +257,58 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 		res, err = e.answerOnce(ctx, q, filters, metrics, p, rules)
 		return err
 	})
+	if answered != nil {
+		answered(e, q, p, rules, res, err)
+	}
 	return res, err
+}
+
+// answered, when set, is told each Answer's query and answer (after the
+// checks compileQuery makes); nil in production, set only by a test's
+// recorder.
+var answered func(e *Engine, q Query, p Params, rules archive.Rules, res Result, err error)
+
+// compileQuery checks q over p and compiles its filters and metrics'.
+func compileQuery(q Query, p Params) ([]filter, []metricSpec, error) {
+	if err := q.Validate(); err != nil {
+		return nil, nil, err
+	}
+	if p.To.Before(p.From) {
+		return nil, nil, invalid("to", "%s is before from %s", p.To, p.From)
+	}
+	filters, err := compileFilters(q.Where, "where")
+	if err != nil {
+		return nil, nil, err
+	}
+	metrics := make([]metricSpec, len(q.Metrics))
+	for i, m := range q.Metrics {
+		if metrics[i], err = compileMetric(m, fmt.Sprintf("metrics[%d]", i)); err != nil {
+			return nil, nil, err
+		}
+	}
+	return filters, metrics, nil
 }
 
 // turn runs once in one of MaxScans turns, waiting for it first and
 // giving up when ctx is done. A file the daily pass removes while once
 // reads (an error wrapping fs.ErrNotExist) fails the attempt; once runs
 // again, on the files as they are then, up to maxAttempts times.
-func (e *Engine) turn(ctx context.Context, once func() error) error {
+func (e *Engine) turn(ctx context.Context, once func() error) error { return e.turnFor(ctx, 1, once) }
+
+// turnFor is turn taking weight of the MaxScans slots at once (at most
+// all of them): a shared scan takes one per heavy aggregation it feeds,
+// so the engine never holds more of them than MaxScans queries would.
+func (e *Engine) turnFor(ctx context.Context, weight int, once func() error) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	select {
-	case e.sem <- struct{}{}:
-	case <-ctx.Done():
-		return ctx.Err()
+	weight = min(max(1, weight), e.slots.size)
+	if err := e.slots.acquire(ctx, weight); err != nil {
+		return err
 	}
-	defer func() { <-e.sem }()
+	defer e.slots.release(weight)
+	onTurn(weight)
+	defer onTurn(-weight)
 	backoff := retryBackoff
 	for attempt := 1; ; attempt++ {
 		err := once()
@@ -281,6 +323,11 @@ func (e *Engine) turn(ctx context.Context, once func() error) error {
 		backoff = min(backoff*2, retryBackoffMax)
 	}
 }
+
+// onTurn is called with a turn's weight as a scan takes it, and with
+// minus that as it ends; a no-op in production, a variable only so a test
+// can count them.
+var onTurn = func(weight int) {}
 
 // compileMetric is m with its filters compiled, and a ratio's sides
 // with theirs; p is its path (metrics[0]).
@@ -314,16 +361,74 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 	}
 	s := scan{e: e, q: q, filters: filters, metrics: metrics, project: p.Project, rules: rs}
 	switch q.Kind {
-	case "stat":
-		return s.stat(ctx, p.From, p.To)
-	case "trend":
-		return s.trend(ctx, p.From, p.To)
 	case "retention":
 		return s.retention(ctx, p.From, p.To)
 	case "attributes":
 		return s.attributes(ctx, p.From, p.To)
 	}
-	return s.breakdown(ctx, p.From, p.To)
+	specs := s.aggSpecs(p.From, p.To)
+	as := make([]aggregated, len(specs))
+	for i, sp := range specs {
+		m, ms, err := s.aggregate(ctx, sp.from, sp.to, sp.dims, sp.perDay, sp.sets)
+		if err != nil {
+			return Result{}, err
+		}
+		as[i] = aggregated{m: m, ms: ms}
+	}
+	return s.result(as), nil
+}
+
+// aggSpec is one aggregation a stat, trend or breakdown is answered from:
+// the query's metrics grouped by dims over [from, to], by day when
+// perDay; sets keeps whole-range distinct sets beside a trend's per-day
+// keys (scan.aggregate).
+type aggSpec struct {
+	from, to     civil.Date
+	dims         []string
+	perDay, sets bool
+}
+
+// aggregated is one aggSpec's aggregation merged, with its metrics
+// resolved.
+type aggregated struct {
+	m  *merged
+	ms []metricSpec
+}
+
+// aggSpecs are the aggregations s's stat, trend or breakdown of [from,
+// to] is answered from, in result's order: a stat's range, then with
+// compare "previous" as many days ending the day before from; a trend's
+// range by day, split by its series; a breakdown's range by its
+// dimensions.
+func (s scan) aggSpecs(from, to civil.Date) []aggSpec {
+	switch s.q.Kind {
+	case "stat":
+		specs := []aggSpec{{from: from, to: to}}
+		if s.q.Compare == "previous" {
+			days := int(epochDay(to)-epochDay(from)) + 1
+			specs = append(specs, aggSpec{from: from.AddDays(-days), to: from.AddDays(-1)})
+		}
+		return specs
+	case "trend":
+		var dims []string
+		if s.q.Series != "" {
+			dims = []string{s.q.Series}
+		}
+		return []aggSpec{{from: from, to: to, dims: dims, perDay: true, sets: len(dims) > 0}}
+	}
+	return []aggSpec{{from: from, to: to, dims: s.q.Dimensions}}
+}
+
+// result is s's stat, trend or breakdown answered from its aggregations,
+// as aggSpecs lists them.
+func (s scan) result(as []aggregated) Result {
+	switch s.q.Kind {
+	case "stat":
+		return s.stat(as)
+	case "trend":
+		return s.trend(as[0])
+	}
+	return s.breakdown(as[0])
 }
 
 // ruleSet is project's rules compiled. The files' columns, which only
@@ -404,7 +509,7 @@ type scan struct {
 	metrics []metricSpec // the query's metrics, their filters compiled (not resolved: newAgg resolves them)
 	project int64
 	rules   ruleSet
-	logs    logReader // reads the logs; nil: readLog
+	logs    logReader // reads the logs; nil: the engine's readLog
 }
 
 // family is the family the query's table holds ("" for events: all).
@@ -420,16 +525,8 @@ func (s scan) family() string {
 // whole-range distinct sets beside a trend's per-day keys.
 func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string, perDay, sets bool) (*merged, []metricSpec, error) {
 	r := Range{From: from, To: to}
-	lo, hi := r.days()
-	a, ms := newAgg(aggOptions{metrics: s.metrics, filters: s.filters, dims: dims, perDay: perDay, sets: sets,
-		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
-	charge := func(n int64) error {
-		a.mem.add(n)
-		if n > 0 {
-			return a.checkMemory()
-		}
-		return nil
-	}
+	a, ms := s.newAgg(aggSpec{from: from, to: to, dims: dims, perDay: perDay, sets: sets})
+	charge := a.charge
 	if s.q.Table == "sessions" {
 		if err := s.e.scanSessions(ctx, s.project, r, a.columns(), charge, a.add); err != nil {
 			return nil, nil, err
@@ -466,6 +563,13 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 	return a.merge(), ms, nil
 }
 
+// newAgg is the aggregation of sp, with the query's metrics resolved.
+func (s scan) newAgg(sp aggSpec) (*agg, []metricSpec) {
+	lo, hi := epochDay(sp.from), epochDay(sp.to)
+	return newAgg(aggOptions{metrics: s.metrics, filters: s.filters, dims: sp.dims, perDay: sp.perDay, sets: sp.sets,
+		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
+}
+
 // scanEvents reads cols of the project's rows of the query's table in r
 // from files, with the rules applied and the identity columns the query's
 // filters or dims name added, and hands each batch to add, from the
@@ -494,25 +598,33 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 	work = append(work, groups...)
 	readers := make([]groupReader, s.e.workers)
 	err = scanParallel(ctx, work, s.e.workers, func(w int, g group) error {
-		var b *Batch
-		var err error
+		var bs []*Batch
 		if g.index < 0 {
 			logs := s.logs
 			if logs == nil {
-				logs = readLog
+				logs = s.e.readLog
 			}
-			b, err = logs(g.file, read, fam, r)
+			var err error
+			if bs, err = logs(ctx, g.file, read, fam, r); err != nil {
+				return err
+			}
 		} else {
-			b, err = readers[w].read(g, read, fam, r)
+			b, err := readers[w].read(g, read, fam, r)
+			if err != nil {
+				return err
+			}
+			bs = []*Batch{b}
 		}
-		if err != nil {
-			return err
+		for _, b := range bs {
+			b = s.rules.apply(b, fam)
+			if ids != nil {
+				addIdentityColumns(b, idCols, ids)
+			}
+			if err := add(w, b); err != nil {
+				return err
+			}
 		}
-		b = s.rules.apply(b, fam)
-		if ids != nil {
-			addIdentityColumns(b, idCols, ids)
-		}
-		return add(w, b)
+		return nil
 	})
 	for i := range readers {
 		if cerr := readers[i].close(); err == nil {
@@ -587,33 +699,23 @@ func (c *columnsOut) result(rows [][]string, truncated bool) Result {
 	return res
 }
 
-func (s scan) stat(ctx context.Context, from, to civil.Date) (Result, error) {
+func (s scan) stat(as []aggregated) Result {
 	var cols columnsOut
 	var row []string
 	one := []int32{0}
-	values := func(from, to civil.Date, prefix string) error {
-		m, ms, err := s.aggregate(ctx, from, to, nil, false, false)
-		if err != nil {
-			return err
+	for k, x := range as {
+		prefix := ""
+		if k > 0 {
+			prefix = "previous_"
 		}
-		for _, mt := range ms {
+		for _, mt := range x.ms {
 			i := cols.add(prefix + mt.Name())
-			v := m.compute(mt, one, -1)
+			v := x.m.compute(mt, one, -1)
 			cols.approx[i] = v.approx
 			row = append(row, v.String())
 		}
-		return nil
 	}
-	if err := values(from, to, ""); err != nil {
-		return Result{}, err
-	}
-	if s.q.Compare == "previous" {
-		days := int(epochDay(to)-epochDay(from)) + 1
-		if err := values(from.AddDays(-days), from.AddDays(-1), "previous_"); err != nil {
-			return Result{}, err
-		}
-	}
-	return cols.result([][]string{row}, false), nil
+	return cols.result([][]string{row}, false)
 }
 
 func label(v dimVal) string {
@@ -623,15 +725,8 @@ func label(v dimVal) string {
 	return v.s
 }
 
-func (s scan) trend(ctx context.Context, from, to civil.Date) (Result, error) {
-	var dims []string
-	if s.q.Series != "" {
-		dims = []string{s.q.Series}
-	}
-	m, ms, err := s.aggregate(ctx, from, to, dims, true, len(dims) > 0)
-	if err != nil {
-		return Result{}, err
-	}
+func (s scan) trend(x aggregated) Result {
+	m, ms, dims := x.m, x.ms, x.m.a.dims
 	mt := ms[0]
 	var cols columnsOut
 	cols.add("day")
@@ -697,14 +792,11 @@ func (s scan) trend(ctx context.Context, from, to civil.Date) (Result, error) {
 			rows = append(rows, append(row, value(mt, g, d)))
 		}
 	}
-	return cols.result(rows, truncated), nil
+	return cols.result(rows, truncated)
 }
 
-func (s scan) breakdown(ctx context.Context, from, to civil.Date) (Result, error) {
-	m, ms, err := s.aggregate(ctx, from, to, s.q.Dimensions, false, false)
-	if err != nil {
-		return Result{}, err
-	}
+func (s scan) breakdown(x aggregated) Result {
+	m, ms := x.m, x.ms
 	var cols columnsOut
 	for _, d := range s.q.Dimensions {
 		cols.add(d)
@@ -790,5 +882,5 @@ func (s scan) breakdown(ctx context.Context, from, to civil.Date) (Result, error
 		}
 		rows = append(rows, metrics(row, rest, true))
 	}
-	return cols.result(rows, m.a.groups.dropped), nil
+	return cols.result(rows, m.a.groups.dropped)
 }

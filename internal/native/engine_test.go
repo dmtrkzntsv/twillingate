@@ -15,6 +15,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"unsafe"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
@@ -686,7 +687,9 @@ func TestMaxScansWaits(t *testing.T) {
 	e := New(Options{Dir: t.TempDir(), MaxScans: 1})
 	q := Query{Kind: "stat", Table: "views", Metrics: count()}
 	p := Params{Project: 1, From: date(t, today), To: date(t, today)}
-	e.sem <- struct{}{} // a scan running
+	if err := e.slots.acquire(context.Background(), 1); err != nil { // a scan running
+		t.Fatal(err)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 	if _, err := e.Answer(ctx, q, p, archive.Rules{}); !errors.Is(err, context.DeadlineExceeded) {
@@ -702,7 +705,7 @@ func TestMaxScansWaits(t *testing.T) {
 		t.Fatalf("ran beside a running scan: %v", err)
 	case <-time.After(50 * time.Millisecond):
 	}
-	<-e.sem // the running scan ends
+	e.slots.release(1) // the running scan ends
 	select {
 	case err := <-done:
 		if err != nil {
@@ -855,7 +858,11 @@ func TestDistinctKeysTrackedRowsOnly(t *testing.T) {
 	if err := a.add(0, b); err != nil {
 		t.Fatal(err)
 	}
-	if keys := a.parts[0].days[ms[0].distinct].keys; len(keys) != 1 || keys[0].null() {
+	var keys []uint64
+	for _, s := range a.parts[0].days[ms[0].distinct] {
+		s.each(func(_ uint32, h uint64) { keys = append(keys, h) })
+	}
+	if len(keys) != 1 || keys[0] == nullKey {
 		t.Errorf("per-day keys %v, want 1 (only the filtered rows' actor)", keys)
 	}
 	if h := a.parts[0].hashes; h[1] != 0 || h[2] != 0 || h[3] != 0 {
@@ -863,6 +870,116 @@ func TestDistinctKeysTrackedRowsOnly(t *testing.T) {
 	}
 	if a.mem.n.Load() <= 0 {
 		t.Error("no memory counted")
+	}
+}
+
+// A group's values are its own: a batch's dictionary, taken from a
+// chunk's dictionary page, shares one string, which a kept group must not
+// hold on to.
+func TestGroupsDoNotKeepTheBatchDictionary(t *testing.T) {
+	var db dictBuilder
+	db.addDict(byteArray("/a", "/b", "/c"))
+	lo := uintptr(unsafe.Pointer(unsafe.StringData(db.dict[0])))
+	hi := uintptr(unsafe.Pointer(unsafe.StringData(db.dict[2]))) + uintptr(len(db.dict[2]))
+	a, _ := newAgg(aggOptions{metrics: []metricSpec{{Metric: Metric{Op: "count"}}}, dims: []string{"path"},
+		ndays: 1, workers: 1, maxGroups: 10, maxBytes: 1 << 20})
+	b := &Batch{N: 3, Cols: map[string]*Column{
+		"day":  {Ints: []int64{0, 0, 0}},
+		"path": {Dict: db.dict, Idx: []int32{0, 2, 0}},
+	}}
+	if err := a.add(0, b); err != nil {
+		t.Fatal(err)
+	}
+	if len(a.groups.vals) != 2 {
+		t.Fatalf("groups %v, want 2", a.groups.vals)
+	}
+	for _, g := range a.groups.vals {
+		if p := uintptr(unsafe.Pointer(unsafe.StringData(g[0].s))); p >= lo && p < hi {
+			t.Errorf("group %q points into the batch's dictionary", g[0].s)
+		}
+	}
+	if got := []string{a.groups.vals[0][0].s, a.groups.vals[1][0].s}; !slices.Equal(got, []string{"/a", "/c"}) {
+		t.Errorf("groups %v", got)
+	}
+}
+
+// A daySet holds each key once, through its growths and a merge, with
+// groups (wide) and without, and counts its table's bytes exactly.
+func TestDaySet(t *testing.T) {
+	type key struct {
+		g uint32
+		h uint64
+	}
+	for _, wide := range []bool{false, true} {
+		want := map[key]bool{}
+		var sets [3]daySet
+		var grew [3]int64
+		for w := range sets {
+			sets[w].wide = wide
+		}
+		for i := range 20000 {
+			// Few groups and ids, so most adds repeat a key.
+			k := key{h: idKey(uint64(i*13%997) * 0x9E3779B97F4A7C15)}
+			if wide {
+				k.g = uint32(i * 7 % 61)
+			}
+			if i%10 == 0 {
+				k.h = nullKey
+			}
+			want[k] = true
+			w := i % 3
+			grew[w] += sets[w].add(k.g, k.h)
+		}
+		for w := range sets {
+			if grew[w] != int64(len(sets[w].hs))*sets[w].slotBytes() {
+				t.Errorf("wide %v, set %d: grew %d bytes, has %d slots", wide, w, grew[w], len(sets[w].hs))
+			}
+			if full(sets[w].n, len(sets[w].hs)) {
+				t.Errorf("wide %v, set %d: %d keys in %d slots", wide, w, sets[w].n, len(sets[w].hs))
+			}
+		}
+		merged := mergeSets([]*daySet{&sets[0], &sets[1], &sets[2]})
+		seen := map[key]bool{}
+		merged.each(func(g uint32, h uint64) {
+			k := key{g, h}
+			if seen[k] || !want[k] {
+				t.Fatalf("wide %v: key %v twice or never added", wide, k)
+			}
+			seen[k] = true
+		})
+		if len(seen) != len(want) {
+			t.Errorf("wide %v: %d keys merged, want %d", wide, len(seen), len(want))
+		}
+		for _, s := range sets {
+			if s.hs != nil {
+				t.Error("a merged set kept its table")
+			}
+		}
+	}
+}
+
+// A day's keys take at most 14 bytes each (21 with groups) once past the
+// first table, against the 16 they took in sorted arrays.
+func TestDaySetBytesPerKey(t *testing.T) {
+	for _, wide := range []bool{false, true} {
+		worst, sum, cases := 0.0, 0.0, 0
+		for n := 1000; n <= 200000; n = n*11/10 + 1 {
+			s := daySet{wide: wide}
+			var grew int64
+			for i := range n {
+				grew += s.add(uint32(i%7), idKey(uint64(i+1)*0x9E3779B97F4A7C15))
+			}
+			per := float64(grew) / float64(n)
+			worst, sum, cases = max(worst, per), sum+per, cases+1
+		}
+		limit := 14.2
+		if wide {
+			limit = 21.3
+		}
+		if worst > limit {
+			t.Errorf("wide %v: up to %.1f bytes a key, want at most %.1f", wide, worst, limit)
+		}
+		t.Logf("wide %v: %.1f bytes a key on average, %.1f at most", wide, sum/float64(cases), worst)
 	}
 }
 

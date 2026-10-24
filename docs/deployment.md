@@ -28,8 +28,13 @@ Its memory follows rows, not bytes: the dump holds about 45 bytes a line
 of the day's log (a day of a million lines, about 900 MB of log, peaks
 near 110 MB), and the merge about 40 bytes a row of the month. At volume
 the console's reads, not the pass, set the server's peak: a year-long
-Views or Product dashboard at a million events a month peaks at 520 to
-670 MB in the console process. Only SQL starts a child: a widget's SQL, `query`'s and the
+Views or Product dashboard at a million events a month peaks at about
+283 to 365 MB in the console process when the page loads it (one
+streamed request), and 387 to 405 MB when its widgets are asked for one
+by one. The built-in widgets' reader, in the console process, holds at
+most about 128 MiB of identities, 128 MiB of today's logs decoded
+(dropped after five idle minutes) and 256 MiB of aggregations (two scans
+at once, 128 MiB each), counted approximately. Only SQL starts a child: a widget's SQL, `query`'s and the
 console's check of the users' SQL widgets at start. An ingest process never
 starts one, since the form-attribution lookup, like the daily pass, the
 built-in widgets and the check before a rename or merge rule is saved,
@@ -109,6 +114,18 @@ a plain hostname (optional port aside) leaves the file originless and the
 SDK dormant with a console warning. Snippets use `INGEST_URL`; change the
 `src` per hostname, and keep the console on one — OAuth and `cloudflare://` bind
 to it.
+
+A dashboard page loads its widgets over one streamed response
+(`POST /api/widgets/stream`, `text/event-stream`), so a proxy in front of the
+console must not buffer it, or the cards appear only once the last one is
+ready. Caddy's `reverse_proxy` and cloudflared flush `text/event-stream` as it
+comes. With Caddy's `encode` in front of the console, check that a
+dashboard's cards appear one by one, or leave `text/event-stream` out of what
+it compresses. nginx honours the `X-Accel-Buffering: no` header the console
+sends; if your configuration ignores it (`proxy_ignore_headers
+X-Accel-Buffering`), add `proxy_buffering off;` to the console's `location`.
+The stream sends a keepalive every 15 seconds, well inside Cloudflare's
+100-second proxy timeout; a proxy read timeout under 15 seconds cuts it.
 
 ## Configure the collector
 

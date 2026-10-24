@@ -161,17 +161,10 @@ func (g *groupReader) close() error {
 // with that prefix, so batches differ in which of those they hold; a plain
 // name the file lacks reads all null.
 func (g *groupReader) read(gr group, cols []string, family string, r Range) (*Batch, error) {
-	if g.f == nil || g.f.path != gr.file {
-		if err := g.close(); err != nil {
-			return nil, err
-		}
-		f, err := openFile(gr.file)
-		if err != nil {
-			return nil, err
-		}
-		g.f = f
+	p, err := g.open(gr.file)
+	if err != nil {
+		return nil, err
 	}
-	p := g.f
 	requested := expandCols(p.cols, cols)
 	read := requested
 	if !gr.all {
@@ -181,6 +174,33 @@ func (g *groupReader) read(gr group, cols []string, family string, r Range) (*Ba
 		}
 		read = expandCols(nil, append(append([]string{}, requested...), extra...))
 	}
+	b, err := p.readGroup(gr, read)
+	if err != nil {
+		return nil, err
+	}
+	from, to := r.days()
+	return finish(b, requested, gr.all, family, from, to), nil
+}
+
+// open is file, open: the one the reader holds when it is that one, else
+// opened in its place.
+func (g *groupReader) open(file string) (*pqFile, error) {
+	if g.f == nil || g.f.path != file {
+		if err := g.close(); err != nil {
+			return nil, err
+		}
+		f, err := openFile(file)
+		if err != nil {
+			return nil, err
+		}
+		g.f = f
+	}
+	return g.f, nil
+}
+
+// readGroup reads every row of row group gr into a batch of the columns
+// read, named as they are (a name the file lacks reads all null).
+func (p *pqFile) readGroup(gr group, read []string) (*Batch, error) {
 	n := int(gr.rows)
 	b := &Batch{N: n, Cols: make(map[string]*Column, len(read))}
 	chunks := p.pf.RowGroups()[gr.index].ColumnChunks()
@@ -196,8 +216,7 @@ func (g *groupReader) read(gr group, cols []string, family string, r Range) (*Ba
 		}
 		b.Cols[name] = c
 	}
-	from, to := r.days()
-	return finish(b, requested, gr.all, family, from, to), nil
+	return b, nil
 }
 
 // timeScale is how column cc's INT64 values become unix microseconds:
@@ -228,8 +247,9 @@ func timeScale(cc parquet.ColumnChunk, name string) (mul, div int64, ok bool) {
 // numbers into the column's own slices, strings into Go strings. A
 // dictionary-encoded string page's dictionary joins the batch's, its
 // indexes kept as they are when that is the dictionary's first (no values
-// before it, none repeated); a plain page's strings join it one by one, so
-// the batch's dictionary holds each value once.
+// before it: it is then the batch's dictionary, with no lookup built); a
+// plain page's strings join it one by one, so the batch's dictionary holds
+// each value once.
 func readChunk(cc parquet.ColumnChunk, name string, n int) (*Column, error) {
 	kind := cc.Type().Kind()
 	c := &Column{}
@@ -253,8 +273,8 @@ func readChunk(cc parquet.ColumnChunk, name string, n int) (*Column, error) {
 	var (
 		db       dictBuilder
 		lastDict parquet.Dictionary
-		remap    []int32 // lastDict's entries' indexes in db.dict
-		same     bool    // remap is the identity
+		remap    []int32 // lastDict's entries' indexes in db.dict, unless same
+		same     bool    // they are their own indexes
 	)
 	pages := cc.Pages()
 	defer pages.Close()
@@ -285,9 +305,13 @@ func readChunk(cc parquet.ColumnChunk, name string, n int) (*Column, error) {
 				} else {
 					k := 0
 					for r := range rows {
-						if def != nil && def[r] == 0 {
+						switch {
+						case def != nil && def[r] == 0:
 							c.Idx = append(c.Idx, -1)
-						} else {
+						case same:
+							c.Idx = append(c.Idx, idx[k])
+							k++
+						default:
 							c.Idx = append(c.Idx, remap[idx[k]])
 							k++
 						}

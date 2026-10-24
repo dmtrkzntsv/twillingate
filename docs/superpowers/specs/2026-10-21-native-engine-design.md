@@ -360,6 +360,16 @@ file layout and table names are part of the versioned contract.
    raw-first switch did).
 4. The daily pass in Go (DuckDB still in the tree for SQL widgets and the
    parity check).
+4c. **The shared scan** (owner, 2026-10-23, after step 4's measurements
+   left Views and Product at about 2x DuckDB from 30 days at 1M). One
+   pass over a project's files answers every compatible query of a
+   request. The engine gains `AnswerMany`, which plans one scan per
+   (project, table, rules), fans each batch out to every query's
+   aggregation, and gives each query exactly the rows its own scan would
+   have seen, so every answer is identical to `Answer`'s. The console
+   asks for a dashboard's widgets in one request. It is generic: nothing
+   in it knows a dashboard. A CPU profile of a dashboard load comes
+   first, so the work goes where the time is.
 5. The cache, only if it shows great results (owner, 2026-10-21): the
    default is no cache. It is built only when the measurements show the
    1-year target missed without it and the cache bringing that dashboard
@@ -899,6 +909,207 @@ DuckDB best (Retention: first) for reference; peak is the native process's:
 - A wide month's footer shrinks with its groups (columns times groups):
   26 groups against 90, so the 2,000-key month's about 150 MB becomes
   about 45 MB (arithmetic, not measured).
+
+### Profile (step 4c)
+
+A CPU, block and heap profile of Views and Product over 30 days at 1M
+(T = 32,768), behind the gate (load 0.69 to 0.98), with and without an
+open log of today's 32,304 events in range, which no earlier benchmark
+had. Method, tables and read counts: `scripts/native-bench/RESULTS.md`,
+"Step 4c".
+
+- **The open log dominates.** It makes the load 4.8x slower for Views
+  (1.91 to 9.12 s) and 3.4x for Product (1.43 to 4.96 s): 69 to 75% of
+  the CPU is `encoding/json` decoding the log, about 575 ms a decode,
+  once per events scan and once more per gap-day derivation (20 decodes
+  a Views load, 11 a Product load).
+- **Without a log**, per Views load (3.2 s of CPU): chunk reads and their
+  dictionary maps 36% (664 reads of 266 chunks: `day` and `actor_id`
+  8 to 9 times each), the per-day key sort of a per-day distinct 33%,
+  merge 10%, id hashing 6%, footers 3% (65 decodes of 3 files), computed
+  columns 3%. Product (2.4 s): chunk reads 39%, id hashing 18%, per-day
+  sort 10%, unpivot 9%, `groupsOf` 7%, merge 6%.
+- **Waiting on `turn`** is queueing, not lost work: the two Ps are busy
+  98% of a load, so the wall is the CPU over two.
+- **The harness's child poll** (/proc every 20 ms) took 14 to 16% of
+  every native cell's wall since step 3f; without it Views 30 d at 1M is
+  1.61 s, about 1.5x DuckDB rather than 1.8x.
+
+So the shared scan must share the log's decode (one per load, for the
+events and the gap-day derivation) before anything else, then the chunk
+reads and footers (about 24% of a no-log load). The per-query
+aggregation (per-day sort, hashing, `groupsOf`, merge: about half of a
+no-log Views load) stays, and needs its own work.
+
+### The profile's cheap fixes (step 4d)
+
+Each measured as step 4c's cells (`scripts/native-bench/RESULTS.md`,
+"Step 4d"), best of 3 warm loads.
+
+- **2a, the harness.** Only a DuckDB cell polls for engine children now.
+  The fair native numbers: Views 1.61 s without the log, 7.68 s with it;
+  Product 1.19 s and 4.20 s (step 4b's 1.93 s and 1.36 s carried the
+  poll). Views at 30 days and 1M is 1.48x DuckDB, Product 0.70x.
+- **2b, the decoded open log is kept** (`logCache`): raw rows of every
+  family, the union of the columns asked for, keyed by path, inode and
+  size; a grown log decodes only its new complete lines, a torn tail is
+  decoded per query and never kept, a new column decodes the log again
+  with the union, LRU within `MaxBytes`. With today in range a warm load
+  drops from 7.68 to 1.73 s (Views) and 4.20 to 1.20 s (Product), about
+  a no-log load; the first load decodes the log once per new column set
+  (11 and 4 times, from 20 and 11). The 33k-line log's entry takes
+  11.3 MB with Views' columns, 7.0 MB with Product's, 15.8 MB with all.
+  The peak rose by 42 to 54 MB with the log in range.
+- **2b, fix round 1:** the first miss decodes every column the log has
+  (15.8 MB for the 33k-line log), never again for a column. The first
+  load with the log drops to 2.29 s (Views, from 7.22) and 1.91 s
+  (Product, from 3.14); warm loads stay 1.73 and 1.20 s. The peak with
+  the log in range stays about 60 MB above 2a's (177 against 115 MB,
+  238 against 177): the live entry and each query's copy of its rows.
+- **2b, fix round 2:**
+  - The entry keeps a part per family. A query whose family's rows all fall in its range gets the part's columns uncopied, read-only.
+  - The lookup maps are dropped between growths, and the id columns serve as the seen set.
+  - The 33k-line log's entry is now 7.7 MB on the heap.
+  - Warm loads with the log: Views 1.67 s, Product 1.20 s.
+  - The peak with the log is 154 MB (Views, 2a 115) and 210 MB (Product, 2a 177). It is set in the first load by the one decode's transient (its builders and lookup maps), which the GC doubles. A heap profile shows the per-query copies were about 1% of the bytes allocated, not the cause.
+- **2b, fix round 3 (review):**
+  - A query sizes the log only once it holds the log's flight.
+  - A decode stops as soon as the entry would pass the bound, and the log is then read per query.
+  - Growth re-decodes from 0 if the byte before the decoded end is no longer a newline.
+  - A file is told apart by device, inode and birth time (statx).
+  - Entries of logs gone from their path are pruned.
+- **Ruling: rows need not come in line order.** An all-families query gets a batch per family, each in line order. A reader that breaks ties by the order it meets rows (identities' name at equal timestamps keeps the first met) may break one differently than line order would. This is accepted: the order across files already varies with the parallel workers, and within one log it is the same for the same log.
+- **2c, per-day distinct without a sort:**
+  - The per-day keys go into an open-addressing hash set per worker, distinct column and day (`daySet`), its table charged to `MaxBytes`.
+  - An array by dictionary entry skips an id's repeated rows in a cell before any probe.
+  - The keys, and so every count, are the same as before.
+  - Warm loads: Views 1.08 s without the log (from 1.62; DuckDB 1.09) and 1.13 s with it (from 1.67). Product 1.07 s both ways (from 1.18 and 1.19).
+  - Peaks unchanged within the spread.
+  - **Regression fix:** at a year and 1M the sets took about 40 bytes a key (power-of-two tables at a 0.4 load) and refused Product's three daily-active-users widgets at 129 of 128 MiB. A day's key is now the id's hash alone, 8 bytes (12 with a group beside it), in a table grown by half past 85% full: 11.5 bytes a key on average, 14 at most (17 and 21 with groups), against the sorted arrays' 16. All ten answer again (9.64 s, 405 MB per widget; `1ca918b` 12.91 s, 632 MB, measured in the same session). Views 1 y peaks at 387 MB (`1ca918b` 564 MB). The 30-day loads stay about 0.83 s (Views) and 0.95 s (Product).
+- **2d, a chunk's first dictionary without a map:**
+  - A batch column's first dictionary page is taken as the batch's dictionary: its values are copied once into one shared string, and the indexes stand as they are.
+  - The lookup map is built only when a plain page or a second dictionary follows. In the bench's files, 5% of text chunks fall back to plain pages after their dictionary, and none has a second dictionary.
+  - The open log's dictionaries come from JSON values, so this does not apply to them.
+  - Warm loads: Views 0.80 s without the log and 0.86 s with it (DuckDB 1.09 s); Product 0.96 and 1.01 s (DuckDB 1.71 s). A Views cell allocates 3.6 GB, from 5.1 GB.
+- **After 2a to 2d,** native beats DuckDB's step 3f on both dashboards at 30 days and 1M: Views 0.73x, Product 0.56x. With today's log in range a warm load costs about what one without it does.
+- **3, AnswerMany:**
+  - `Engine.AnswerMany` answers several queries, each answer Answer's: the stats, trends and breakdowns of one project, table class (the events files' tables, or sessions) and rule set read one scan in one turn, each footer and row group once with the union of their columns, each gap day's sessions derived once. Each query keeps its own aggregation (a stat with compare previous two), fed only the rows of its family and range. Retention, attributes and identities go alone through Answer.
+  - Memory: a scan holds at most MaxBytes over its aggregations for each turn it holds (past it, the largest query is answered alone afterwards; twice MaxBytes whatever it held until the final review), and a call holds no more aggregations that keep distinct ids or histograms at once than MaxScans queries would.
+  - **The engine's total bound:** the identities cache holds at most MaxBytes, the log cache at most MaxBytes (each decode under way counted against it as it grows, so concurrent decodes cannot pass it; an entry unused for five minutes, or whose log rotated, is dropped by a sweep, so an idle server holds none), and the aggregations at most MaxScans × MaxBytes (a turn's worth each, as MaxScans queries answered one by one would hold). At the defaults: 128 + 128 + 2 × 128 MiB, about 512 MiB, counted approximately and checked after each batch. Unbounded, one scan per class made Views 0.54 s but peaked at 360 MB (today 121 MB).
+  - Warm loads as one call: Views 0.72 s (from 0.80) and 0.75 s with the log (0.86); Product 0.86 s (0.93) and 0.85 s (0.95). Every peak at or under today's (Views 107 against 121 MB, Product 136 against 187 MB).
+  - The turns are weighted and the engine's own (Answer, Attribute, presence and the shared scans), a scan taking one per heavy aggregation, so the bound holds across concurrent calls.
+  - Trade-off, not the default: four heavy aggregations a scan (2×MaxScans) takes Views to 0.64 s at 137 MB and Product to 0.81 s at 170 MB, against 0.72 s at 111 MB and 0.86 s at 134 MB with two.
+
+## Measurements (step 4c)
+
+Every built-in dashboard loaded as the console loads it since the stream
+route: one `WidgetDataStream` of its query widgets, the cache's misses
+answered together by `AnswerMany`. Same files as step 4b (T = 32,768),
+GOMAXPROCS=2, behind the quiet-host gate (86 cells, started at a 1-minute
+load of 0.60 to 1.00), a first load then 3 warm loads, best of those.
+Beside each stream cell, the same binary's per-widget load and the old SQL
+on DuckDB were run on the same files. "Before" is step 4b's native best,
+taken with the harness's child poll (14 to 16% of the wall); for Views and
+Product at 30 days and 1M it is step 4d's 2a cells instead, without the
+poll (†). Retention compares first loads, since its warm loads reuse the
+identities the engine keeps. "+ log" adds today's open log (32,304 lines)
+to a range ending today. Method, the 100k table, CPU and the per-widget
+column: `scripts/native-bench/RESULTS.md`, "Step 4c: the dashboards loaded
+through one stream".
+
+At 1M (stream: time to the first widget / to the last, best warm load;
+peak is VmHWM, DuckDB's the Go process plus its child):
+
+| Dashboard | Range | Before | Per widget now | Stream first / last | DuckDB | Peak before / stream | DuckDB peak |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Views (20) | 7 d | 540 ms | 270 ms | 10 / 230 ms | 637 ms | 96 / 88 MB | 177 MB |
+| Views (20) | 30 d | 1.61 s † | 791 ms | 20 / 728 ms | 1.27 s | 128 / 110 MB | 244 MB |
+| Views (20) | 30 d + log | 7.68 s † | 845 ms | 31 / 743 ms | – | 115 / 131 MB | – |
+| Views (20) | 90 d | 5.66 s | 2.38 s | 47 ms / 2.13 s | 3.16 s | 188 / 195 MB | 458 MB |
+| Views (20) | 1 y ‡ | 21.89 s | 8.87 s | 152 ms / 8.05 s | 13.26 s | 522 / 365 MB | 1,065 MB |
+| Product (10) | 7 d | 449 ms | 316 ms | 38 / 304 ms | 555 ms | 148 / 114 MB | 287 MB |
+| Product (10) | 30 d | 1.19 s † | 981 ms | 95 / 862 ms | 1.84 s | 186 / 147 MB | 821 MB |
+| Product (10) | 30 d + log | 4.20 s † | 933 ms | 100 / 855 ms | – | 177 / 180 MB | – |
+| Product (10) | 90 d | 3.82 s | 2.59 s | 272 ms / 2.25 s | 2.75 s | 255 / 248 MB | 843 MB |
+| Product (10) | 1 y ‡ | 14.77 s | 9.64 s | 1.08 / 8.12 s | 6.80 s | 670 / 283 MB | 1,174 MB |
+| Users (6) | 30 d | 568 ms | 361 ms | 262 / 303 ms | 479 ms | 198 / 178 MB | 226 MB |
+| Groups (6) | 30 d | 308 ms | 197 ms | 77 / 159 ms | 327 ms | 130 / 122 MB | 186 MB |
+| Retention (5), first load | 30 d | 1.78 s | 1.05 s | 1.09 / 1.09 s | 1.52 s | 84 / 90 MB | 236 MB |
+| Web Vitals (11) | 30 d | 140 ms | 119 ms | 22 / 96 ms | 324 ms | 70 / 61 MB | 172 MB |
+| Measures (2) | 30 d | 29 ms | 28 ms | 22 / 22 ms | 71 ms | 61 / 57 MB | 153 MB |
+
+‡ Re-measured after the regression fix. Product over the year first
+refused its three daily-active-users widgets in every load ("about 129 MiB counted, 128 MiB allowed"): 2c's
+per-day sets (`0934b22`) took about 40 bytes a key against the sorted
+arrays' 16. The regression fix (step 4d, "2c regression fix") makes a
+key 8 bytes (12 with groups) in tables grown by half past 85% full, and
+all ten answer again; the row is re-measured after it: 9.64 s per
+widget, 8.12 s through the stream, at 283 MB (`1ca918b`, before 2c, per
+widget: 12.91 s at 632 MB). Views over the year, re-measured with it, is
+8.87 s per widget at 387 MB and 8.05 s through the stream at 365 MB
+(the step 4c run: 8.46 s per widget, 8.11 s through the stream, at
+572 MB).
+
+At 100k the stream takes Views from 52 ms (7 d) to 865 ms (1 y), Product
+from 73 ms to 933 ms, and the 30-day small dashboards 5.5 to 37 ms
+(Retention's first load 106 ms); every peak is at most 129 MB.
+
+What the stream adds over per-widget loads of the same binary: the last
+widget 4 to 21% sooner at 1M (Views 30 d 728 against 791 ms, Product
+862 against 981 ms), 13 to 37% less CPU per load, and a first card in
+10 to 50 ms on Views at every range but the year. Most of the gain since
+step 4b came from step 4d's fixes (2a to 2d), not from the stream: the
+heavy bound (MaxScans 2) leaves Views' 19 per-day widgets in about ten
+scans. At 100k the stream is a few ms slower than per widget on Views
+at 7 and 30 days (52 against 44 ms, 111 against 99 ms).
+
+Against the targets and DuckDB:
+
+- **Peak under ~150 MB: met at 100k everywhere, and at 1M up to 30
+  days but for Users (178 MB) and Product with the open log (180 MB);
+  missed from 90 days at 1M** (Views 195 MB, Product 248 MB, the year
+  283 MB on Product and 365 MB on Views through the stream, after the
+  regression fix; 405 and 387 MB per widget). Every stream cell is below
+  DuckDB's Go-plus-child peak, mostly by half or more (closest: Users,
+  178 against 226 MB). Against the plan's constraint, no peak above step
+  4b's: the year is now well under it (Views 365 against 522 MB, Product
+  283 against 670 MB), and four cells are a few MB above it: at 1M
+  Views 90 d (+7 MB) and Retention (+6 MB), at 100k Views 1 y (+5 MB)
+  and Retention (+2 MB). **Ruling (final review): these are within
+  run-to-run noise and accepted.**
+- **30-day dashboard under 0.5 s at 1M: met for Users (303 ms), Groups
+  (159 ms), Web Vitals (96 ms) and Measures (22 ms); missed for Views
+  (728 ms), Product (862 ms) and Retention's first load (1.09 s; warm
+  1 ms).** With today's log in range a warm load costs what one without
+  it does (743 and 855 ms); the first load is 1.35 and 1.91 s, its first
+  card waiting on the log's decode (about 0.7 s).
+- **Tens of ms at 100k, 30 days: met for Users, Groups, Web Vitals and
+  Measures (5.5 to 37 ms); missed for Views (111 ms), Product (159 ms)
+  and Retention's first load (106 ms).**
+- **1-year dashboard at 1M, under ~3 s cold and 1 s with a warm cache:
+  missed.** Through the stream, after the regression fix, Views takes
+  8.05 s and Product 8.12 s with all ten widgets answered, about 2.7x
+  the cold target and 8x the warm one.
+- **Against DuckDB on the same files, native through the stream is
+  faster in every cell but Product over the year** (8.12 against 6.80 s
+  at 1M with all ten widgets answered, 933 against 657 ms at 100k):
+  Views 0.57x at 30 days and 0.61x over the year at 1M (8.05 against
+  13.26 s), Product 0.47x at 30 days. Against step 3f's DuckDB (its own files),
+  Views at 30 days is 0.67x and Product 0.50x.
+
+**Step 5, the cache.** Without a cache the 1-year Views load at 1M is
+8.05 s of wall through the stream, bound by its two Ps (14.7 s of CPU
+before the regression fix); Product is 8.12 s, all ten widgets
+answered. A cache cannot help the cold target (a first load reads every
+day), so "under ~3 s cold" needs the scan itself to get 2.7x cheaper and
+stays missed whatever step 5 does. The warm target is what a cache is
+for: it must take a 1-year load from about 8 s to under 1 s, a gain of
+**at least 8x** on both Views and Product, with today and the days not
+yet merged still read live. That is under step 1b's 37x upper bound, so
+a cache is still the only lever in view for the 1-year warm target and
+step 5 proceeds as the plan says: measure the real gain first, on Views
+and Product over a year at 1M, and drop the cache if it is under about
+8x.
 
 ## Left to the builder
 

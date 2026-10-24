@@ -31,7 +31,7 @@ func nativeRows(t *testing.T, f *archivetest.Files, rs ruleSet, cols []string, f
 	read := rs.columns(cols)
 	batches := readAll(t, groups, 2, read, family, full)
 	for _, path := range logs {
-		b, err := readLog(path, read, family, full)
+		b, err := readCached(t, path, read, family, full)
 		if err != nil {
 			t.Fatal(err)
 		}

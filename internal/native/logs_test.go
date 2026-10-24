@@ -81,7 +81,7 @@ func TestLogRowsMatchDuckDB(t *testing.T) {
 		}
 	}
 	path := logOf(t, f, 1)
-	b, err := readLog(path, cols, "", rng(t, today, today))
+	b, err := readCached(t, path, cols, "", rng(t, today, today))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +95,7 @@ func TestLogRowsMatchDuckDB(t *testing.T) {
 	sameRows(t, formatBatch(t, b, cols, nil), want, cols)
 
 	// The attributes by pattern, one family: what DuckDB filters the same way.
-	b, err = readLog(path, []string{"id", AttrCols}, "product", rng(t, today, today))
+	b, err = readCached(t, path, []string{"id", AttrCols}, "product", rng(t, today, today))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +112,7 @@ func TestLogRowsMatchDuckDB(t *testing.T) {
 		family string
 		r      Range
 	}{{"", rng(t, "2026-09-09", "2026-09-09")}, {"zzz", rng(t, today, today)}} {
-		b, err = readLog(path, []string{"id", "ts"}, c.family, c.r)
+		b, err = readCached(t, path, []string{"id", "ts"}, c.family, c.r)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -120,7 +120,7 @@ func TestLogRowsMatchDuckDB(t *testing.T) {
 			t.Errorf("%v: %d rows, %v", c, b.N, keys(b.Cols))
 		}
 	}
-	if _, err := readLog(filepath.Join(f.Dir, "nope.log"), cols, "", rng(t, today, today)); err == nil {
+	if _, err := readCached(t, filepath.Join(f.Dir, "nope.log"), cols, "", rng(t, today, today)); err == nil {
 		t.Error("a missing log: no error")
 	}
 }
@@ -139,14 +139,14 @@ func TestLogKeepsFirstLinePerID(t *testing.T) {
 	if len(want) != 3 {
 		t.Fatalf("DuckDB: %d rows", len(want))
 	}
-	b, err := readLog(logOf(t, f, 1), cols, "", rng(t, today, today))
+	b, err := readCached(t, logOf(t, f, 1), cols, "", rng(t, today, today))
 	if err != nil {
 		t.Fatal(err)
 	}
 	sameRows(t, formatBatch(t, b, cols, nil), want, cols)
 	// The kept line is the first even when the family asked for is the
 	// repeat's: it is not read.
-	b, err = readLog(logOf(t, f, 1), []string{"id", "event_name"}, "views", rng(t, today, today))
+	b, err = readCached(t, logOf(t, f, 1), []string{"id", "event_name"}, "views", rng(t, today, today))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestLogSkipsBadLines(t *testing.T) {
 	if len(want) != len(evs) || slices.Contains(cols, "attr_torn") {
 		t.Fatalf("DuckDB: %d rows, %v", len(want), cols)
 	}
-	b, err := readLog(path, cols, "", rng(t, today, today))
+	b, err := readCached(t, path, cols, "", rng(t, today, today))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +218,7 @@ func TestLogAndParquetMatchDuckDB(t *testing.T) {
 	for _, b := range readAll(t, groups, 2, []string{"*"}, "", full) {
 		got = formatBatch(t, fold(b, cols), cols, got)
 	}
-	b, err := readLog(logs[0], []string{"*"}, "", full)
+	b, err := readCached(t, logs[0], []string{"*"}, "", full)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +243,7 @@ func TestLogCasts(t *testing.T) {
 		`"received_at":"2026-09-10T12:00:01.5+01:00","value":"2","attr_n":5,"attr_o":{"k":1},"attr_z":null}`,
 		`{"id":"b","family":"product"}`,                                          // no day: in no range
 		`{"day":"2026-09-10","attr_n":"x"}`, `{"day":"2026-09-10","attr_n":"y"}`) // no id: the first kept
-	b, err := readLog(path, []string{"id", "display_width", "ts", "received_at", "value", "attr_*"}, "", rng(t, today, today))
+	b, err := readCached(t, path, []string{"id", "display_width", "ts", "received_at", "value", "attr_*"}, "", rng(t, today, today))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,14 +259,14 @@ func TestLogCasts(t *testing.T) {
 		`{"id":"a","day":"2026-09-10","value":"x"}`, `{"id":"a","day":"2026-09-10","consent":"yes"}`,
 		`{"id":"a","day":"2026-09-10","consent":1e300}`} {
 		write(bad)
-		if _, err := readLog(path, []string{"*"}, "", rng(t, today, today)); err == nil {
+		if _, err := readCached(t, path, []string{"*"}, "", rng(t, today, today)); err == nil {
 			t.Errorf("%s: no error", bad)
 		}
 	}
 	// A line longer than the read buffer is read whole.
 	long := strings.Repeat("x", 3<<20)
 	write(`{"id":"a","day":"2026-09-10","path":"` + long + `"}`)
-	b, err = readLog(path, []string{"path"}, "", rng(t, today, today))
+	b, err = readCached(t, path, []string{"path"}, "", rng(t, today, today))
 	if err != nil || b.N != 1 || b.Cols["path"].Dict[0] != long {
 		t.Errorf("long line: %v", err)
 	}

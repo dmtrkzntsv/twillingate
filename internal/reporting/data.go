@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -66,46 +67,13 @@ type WidgetData struct {
 // not only when the widget was saved — since a release may have changed
 // the view or query underneath it.
 func (s *Service) WidgetData(ctx context.Context, in DataRequest) (WidgetData, error) {
-	w, err := s.st.GetWidget(ctx, in.WidgetID)
-	if err != nil {
-		return WidgetData{}, err
-	}
-	if w.ArchivedAt != "" {
-		return WidgetData{}, store.Refuse(store.ErrNotFound, "widget %d is archived", w.ID)
-	}
-	out := WidgetData{WidgetID: w.ID, SourceType: w.SourceType}
-	if w.Component == "" { // removed (D14): nothing left to check rows against
-		out.Removed = true
-		return out, nil
-	}
-
-	followsProject, followsRange := s.follows(w)
-	params, echo, err := s.widgetParams(followsProject, followsRange, w.ID, in)
-	if err != nil {
-		return WidgetData{}, err
-	}
-	projectID, from, to := params.ProjectID, params.From, params.To
-	out.ProjectID, out.From, out.To = echo.ProjectID, echo.From, echo.To
-
-	comps, err := s.components(ctx)
-	if err != nil {
-		return WidgetData{}, err
-	}
-	comp, ok := comps[w.Component]
-	if !ok {
-		return WidgetData{}, fmt.Errorf("reporting: widget %d: component %s not found", w.ID, w.Component)
-	}
-	src, ok := s.sources[w.SourceType]
-	if !ok {
-		return WidgetData{}, fmt.Errorf("reporting: widget %d: source type %s not registered", w.ID, w.SourceType)
-	}
-	v, load, err := s.loader(w, src, params, in)
-	if err != nil {
-		return WidgetData{}, err
+	p, err := s.prepare(ctx, in)
+	if err != nil || p.final {
+		return p.out, err
 	}
 
 	// context.WithoutCancel: this call may run on behalf of every request
-	// currently sharing it through the cache's singleflight (below), not
+	// currently sharing it through the cache's flights (below), not
 	// only the one goroutine that happens to run it, so it must not carry
 	// any one caller's cancellation — a client disconnecting partway
 	// through must not turn into a false CONSOLE_QUERY_TIMEOUT for every
@@ -113,31 +81,103 @@ func (s *Service) WidgetData(ctx context.Context, in DataRequest) (WidgetData, e
 	// deadline (CONSOLE_QUERY_TIMEOUT) regardless.
 	loadCtx := context.WithoutCancel(ctx)
 
-	var value any
+	if p.key == "" {
+		value, err := p.load(loadCtx)
+		if err != nil {
+			return WidgetData{}, wrapLoadErr(err)
+		}
+		return p.finish(value, time.Time{})
+	}
+	value, cachedAt, err := s.cache.get(p.key, in.Fresh, func() (any, error) { return p.load(loadCtx) })
+	if err != nil {
+		return WidgetData{}, wrapLoadErr(err)
+	}
+	return p.finish(value, cachedAt)
+}
+
+// prepared is one widget load checked and ready to run: what WidgetData
+// and WidgetDataStream share up to the load itself. final means out is
+// the whole answer already (a removed widget).
+type prepared struct {
+	out        WidgetData
+	final      bool
+	w          store.Widget
+	comp       Component
+	src        SourceType
+	params     Params
+	v          view
+	load       func(context.Context) (any, error)
+	key        string        // the cache key; "" when the source is not cacheable
+	refreshAge time.Duration // how long after it was cached a value may be refreshed
+}
+
+// prepare runs every check WidgetData makes before loading: the widget
+// is live, its switchers' inputs are given and valid, its component and
+// source type exist and its paging arguments fit it.
+func (s *Service) prepare(ctx context.Context, in DataRequest) (prepared, error) {
+	w, err := s.st.GetWidget(ctx, in.WidgetID)
+	if err != nil {
+		return prepared{}, err
+	}
+	if w.ArchivedAt != "" {
+		return prepared{}, store.Refuse(store.ErrNotFound, "widget %d is archived", w.ID)
+	}
+	p := prepared{w: w, out: WidgetData{WidgetID: w.ID, SourceType: w.SourceType}}
+	if w.Component == "" { // removed (D14): nothing left to check rows against
+		p.out.Removed, p.final = true, true
+		return p, nil
+	}
+
+	followsProject, followsRange := s.follows(w)
+	params, echo, err := s.widgetParams(followsProject, followsRange, w.ID, in)
+	if err != nil {
+		return prepared{}, err
+	}
+	p.params = params
+	p.out.ProjectID, p.out.From, p.out.To = echo.ProjectID, echo.From, echo.To
+
+	comps, err := s.components(ctx)
+	if err != nil {
+		return prepared{}, err
+	}
+	comp, ok := comps[w.Component]
+	if !ok {
+		return prepared{}, fmt.Errorf("reporting: widget %d: component %s not found", w.ID, w.Component)
+	}
+	src, ok := s.sources[w.SourceType]
+	if !ok {
+		return prepared{}, fmt.Errorf("reporting: widget %d: source type %s not registered", w.ID, w.SourceType)
+	}
+	p.comp, p.src = comp, src
+	if p.v, p.load, err = s.loader(w, src, params, in); err != nil {
+		return prepared{}, err
+	}
 	if src.Cacheable() {
 		var suffix string
 		if remoteTable(w) {
-			suffix = v.cacheSuffix()
+			suffix = p.v.cacheSuffix()
 		}
-		key := cacheKey(w.ID, w.SourceType, w.Source, followsProject, followsRange, projectID, from, to, suffix)
-		var cachedAt time.Time
-		if value, cachedAt, err = s.cache.get(key, in.Fresh, func() (any, error) { return load(loadCtx) }); err != nil {
-			return WidgetData{}, wrapLoadErr(err)
-		}
-		ca, ra := cachedAt, cachedAt.Add(s.cache.refreshAge)
-		out.CachedAt, out.RefreshAfter = &ca, &ra
-	} else {
-		if value, err = load(loadCtx); err != nil {
-			return WidgetData{}, wrapLoadErr(err)
-		}
+		p.key = cacheKey(w.ID, w.SourceType, w.Source, followsProject, followsRange, params.ProjectID, params.From, params.To, suffix)
+		p.refreshAge = s.cache.refreshAge
 	}
+	return p, nil
+}
 
+// finish is p's answer from its loaded value: stamped with cachedAt when
+// the source is cacheable, and its rows checked against the widget's
+// component.
+func (p prepared) finish(value any, cachedAt time.Time) (WidgetData, error) {
+	out := p.out
+	if p.key != "" {
+		ca, ra := cachedAt, cachedAt.Add(p.refreshAge)
+		out.CachedAt, out.RefreshAfter = &ca, &ra
+	}
 	// Checked here, after the cache (hit or miss), against the requesting
 	// widget's own current component — not baked into the cached load —
 	// so a value shared from the cache is still checked against whichever
 	// widget is asking for it now, and a component swapped on the widget
 	// since the value was cached is still caught.
-	if err := setData(&out, comp, v, value); err != nil {
+	if err := setData(&out, p.comp, p.v, value); err != nil {
 		return WidgetData{}, err
 	}
 	return out, nil
@@ -268,6 +308,11 @@ func wrapLoadErr(err error) error {
 	var vr viewRefusal
 	if errors.As(err, &vr) {
 		return vr.error
+	}
+	// A bug, not the widget: stays untyped, which the API answers as
+	// "internal" and logs.
+	if errors.Is(err, errInternal) || errors.Is(err, native.ErrInternal) {
+		return err
 	}
 	return store.Refuse(store.ErrInvalid,
 		"%s; if this started after an update, see the release notes at %s", err, ReleasesURL)

@@ -713,6 +713,16 @@ func (e *Engine) deriveIdentities(ctx context.Context, parquet, logs []string, c
 	err := e.scanIdentityEvents(ctx, parquet, logs, identityEventColumns, func(w int, b *Batch) error {
 		var grew int64
 		eachIdentity(b, func(k identityKey, name string, named bool, ts int64, view bool) {
+			// See keeps k's id and the name it takes as they are: they are
+			// a batch dictionary's, which may share one chunk-sized
+			// string, so a new id and a name taken are copied first.
+			cur, ok := parts[w][k]
+			if !ok {
+				k.ID = strings.Clone(k.ID)
+			}
+			if named && (!ok || !cur.Named || ts > cur.NameAt) {
+				name = strings.Clone(name)
+			}
 			grew += parts[w].See(k, name, named, ts, view)
 		})
 		return charge(grew)
@@ -774,13 +784,19 @@ func (e *Engine) scanIdentityEvents(ctx context.Context, parquet, logs, cols []s
 	work = append(work, groups...)
 	readers := make([]groupReader, e.workers)
 	err = scanParallel(ctx, work, e.workers, func(w int, g group) error {
-		var b *Batch
-		var err error
 		if g.index < 0 {
-			b, err = readLog(g.file, cols, "", everything)
-		} else {
-			b, err = readers[w].read(g, cols, "", everything)
+			bs, err := e.readLog(ctx, g.file, cols, "", everything)
+			if err != nil {
+				return err
+			}
+			for _, b := range bs {
+				if err := each(w, b); err != nil {
+					return err
+				}
+			}
+			return nil
 		}
+		b, err := readers[w].read(g, cols, "", everything)
 		if err != nil {
 			return err
 		}

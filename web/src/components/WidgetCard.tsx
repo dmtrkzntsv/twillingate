@@ -39,7 +39,7 @@ import { captureCard, downloadBlob } from '@/lib/capture'
 import { shareCaption, type ShareContext } from '@/lib/share'
 import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
 import { formatDuration } from '@/lib/time'
-import { canRefresh, componentOf, isRemoteTable, refreshWidget, viewQuery, widgetQuery } from '@/lib/widget-query'
+import { canRefresh, componentOf, isRemoteTable, refreshableSource, refreshWidget, viewQuery, widgetQuery } from '@/lib/widget-query'
 import WidgetErrorBoundary from './WidgetErrorBoundary'
 import WidgetFrame from './WidgetFrame'
 import WidgetTitleField from './WidgetTitleField'
@@ -108,7 +108,7 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
 
   const removed = !Component || answer?.removed === true
   const truncated = (answer?.data as SqlData | null | undefined)?.truncated === true
-  const refreshable = widget.source.type === 'sql' && !removed
+  const refreshable = refreshableSource(widget.source.type) && !removed
   const label = widget.title ?? widget.name
   const columns = (answer?.data as SqlData | null | undefined)?.columns ?? []
   // Only the server's filters can empty a remote answer; a local table's empty
