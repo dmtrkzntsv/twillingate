@@ -344,27 +344,147 @@ client and fixtures: [sqlengine/protocol.go](https://github.com/dmtrkzntsv/twill
   refuses one that is absolute or climbs out), with the event and
   attribute rules to apply. The deadline travels as `X-Timeout-Ms`, a
   cancelled request as the connection closing.
-- A success is `{"columns", "rows", "truncated"}`: numbers as JSON
-  numbers; dates, times, UUIDs, NaN and the infinities as strings.
+- A success is `{"columns", "rows", "truncated"}`: each cell JSON null, a
+  boolean, a number (a JSON number) or a string (dates, times, timestamps,
+  UUIDs, NaN and the infinities). twillingate reads at most 256 MiB of an
+  answer and refuses a longer one.
 - An error is `{"error": {"kind", "message"}}` with status 400 (`refused`,
-  `sql`), 503 with `Retry-After` (`busy`), 504 (`timeout`) or 500
-  (`out_of_memory`, `out_of_memory_loading_logs`, `exited`, `internal`).
-  twillingate words each kind for whoever asked: the engine's own message
-  for `sql` and `refused`, `CONSOLE_QUERY_TIMEOUT` for a timeout, what to
-  narrow for memory, retry for `busy`. A busy engine is not retried within
-  the request.
+  `sql`), 409 (`stale`: a file the table spec names is gone), 503 with
+  `Retry-After` (`busy`), 504 (`timeout`) or 500 (`out_of_memory`,
+  `out_of_memory_loading_logs`, `exited`, `internal`). twillingate words
+  each kind for whoever asked: the engine's own message for `sql` and
+  `refused`, `CONSOLE_QUERY_TIMEOUT` for a timeout, what to narrow for
+  memory, retry for `busy`. A busy engine is not retried within the
+  request. A `stale` one is: the daily pass deletes a day's log once it is
+  dumped and a month's day files once they merge, so a spec built just
+  before can name a file that is gone when the engine reads it.
+  twillingate then builds the spec afresh and sends the query again, after
+  50 ms and then 100 ms, three attempts in all within the request's
+  timeout.
 
-The dialect the reference engine speaks, and the docs describe, is
-DuckDB's.
+The SQL is in DuckDB's dialect, which the docs and the built-in examples
+assume.
+
+#### Engine requirements
+
+What an engine must do to answer twillingate as it expects. Where a page
+already defines a behaviour, it is linked rather than repeated.
+
+- **Unknown fields.** Ignore any field of a request (top level or nested)
+  that version 1 does not define: version 1 grows by adding fields, and
+  an engine that refuses one breaks on the next release. twillingate
+  ignores unknown fields of an answer the same way.
+- **The seven tables.** `events`, `views`, `product`, `measures`,
+  `sessions`, `identities` and `aliases`, with the columns, types and
+  meanings in [Writing SQL against the event files](twillingate.md#writing-sql-against-the-event-files)
+  and `schema://views`. `events` is the union, by column name, of the
+  spec's Parquet files and open logs, with one `attr_<key>` VARCHAR column
+  per attribute key any of them carries; `views`, `product` and
+  `measures` are its rows of one `family`, `measures` with `bucket` added
+  as defined there. A file's columns may differ from another's: a column
+  a file lacks reads NULL. The `v` key of a log line (its format version)
+  is no column.
+- **Rules on read.** Apply `tables.rules` to `events` and the three
+  family tables, never to `sessions`, `identities` or `aliases`, which
+  describe the events as stored. Their meaning is in
+  [Event rules](twillingate.md#event-rules) and
+  [Attribute rules](twillingate.md#attribute-rules); on the wire, a merge
+  is a `rename` (both read the same), and these details are written down
+  only here:
+  - an event rule matches the project, the family and the exact name,
+    case-sensitively; a `rename` reads the event under `to`, a `block`
+    leaves it out, and so does a `rename` whose `to` is itself blocked in
+    the same project and family;
+  - an attribute rule covers the project's `product` and `measures` rows
+    only, and matches its key's column as DuckDB matches column names,
+    case-insensitively, so it also covers keys that differ only in case.
+    The renamed key's column reads NULL on those rows, as a blocked key's
+    does; the target's column reads the target's own value, else the
+    values of the keys renamed into it, in key order (a `coalesce`). A
+    target no file has yet is added as a column. A rename whose key and
+    target are the same column changes nothing, and a rename onto a
+    blocked key only blanks the renamed key.
+- **The open logs.** Each `.log` is NDJSON, one event per line, shaped
+  like its Parquet row: the column names above, attributes flat as
+  `attr_<key>` with the key as sent, empty fields left out. Keep the first
+  line per `id`, in file order: a resend appends the same `id` again. Read
+  the fixed keys at the types the column table gives (`ts` and
+  `received_at` as TIMESTAMP, `day` as DATE, `project_id`,
+  `display_width`, `display_height` and `consent` as BIGINT, `value` and
+  `sample_rate` as DOUBLE) and every other key as text, never inferring a
+  type from the values (a value that looks like a UUID or a time stays as
+  sent). Skip a line that does not parse: ingest may be writing the last
+  one. Of keys equal but for case, the first in byte order keeps its name
+  and each next one is named `<key>_<n>`, the first `n` free
+  (`attr_Plan`, `attr_plan_1`).
+- **Sessions.** `sessions` is the union of the spec's session files and,
+  for each project's `session_gaps` (days the files do not cover yet,
+  both ends inclusive), the sessions derived from that project's views of
+  those days, before the rules, as
+  [the sessions table](twillingate.md#writing-sql-against-the-event-files)
+  defines them: a view with a `session_id` belongs to that declared
+  session; any other starts a new one when it is the actor's first view of
+  the day or comes more than 30 minutes (1,800 seconds) after the
+  actor's previous view; the day is part of the session's key, so midnight
+  UTC cuts a session. Views at the same second are ordered by `id`;
+  `duration_sec` is the whole seconds between the first and the last
+  view. The built-in dashboards count sessions the same way, natively
+  (`internal/native`), and the session files are written to the same rule
+  (`internal/archive/derive.go`).
+- **Identities and aliases.** When the spec names a project's file, use it
+  and fold in what the project's open logs add; when it names none (`""`),
+  derive the table from every event of the project. Folding keeps one row
+  per key: the earliest `first_seen`, the latest `last_seen`, the counts
+  added up and the `name` sent with the latest event that carried one.
+- **`scope`.** With a project id, each of the seven tables reads only that
+  project's rows, as if the SQL had filtered `project_id` itself; `null`
+  reads every project the spec names. Scope keeps SQL on one project, but
+  only `confine` stops SQL written to leave it.
+- **`confine`.** Refuse, as `refused` and before anything runs, SQL that
+  reads anything but the seven tables and its own `WITH` names: a table
+  function other than `range`, `generate_series` and `unnest`, a file
+  named in `FROM`, a name with a schema or catalog (`main.events`), any
+  other table or view, and `SHOW`; the list is in
+  [Writing SQL against the event files](twillingate.md#writing-sql-against-the-event-files).
+  A path inside a string compared as text is just text. Whatever
+  `confine` says, run one read-only statement, never write, and read no
+  file the spec does not name.
+- **Arguments.** `args` binds `$tw_<name>` parameters, always as strings;
+  the SQL casts them (`CAST($tw_project AS BIGINT)`). A `$tw_p<n>` name is
+  the page's own.
+- **`text` and `page` cells.** Every cell as text, with column names and
+  order and row order kept: NULL as `""`, a DOUBLE, FLOAT or DECIMAL as
+  its DOUBLE's shortest text without a trailing `.0` (`100`, `3.5`), any
+  other value as DuckDB casts it to VARCHAR.
+- **`page` and `count`.** Filters and sort compare those cells, with the
+  semantics in [Filtering and paging a table](reporting.md#filtering-and-paging-a-table):
+  equality on the exact text, `<` and `>` as numbers when the value is a
+  decimal number and as code-point text otherwise, empty cells matching
+  only `!=` and `not in`, non-empty before empty, numbers before text,
+  ties broken by every column in order; without `sort`, the query's own
+  order. A `distinct` page answers the columns `value` (the cell),
+  `rows` (its row count, as text), then the two counts, one row per value
+  among the rows that pass the filters on the other columns (a filter on
+  the distinct column itself is ignored), the most rows first and then
+  by value in sort order; its `__tw_matched` counts values.
+- **Status and deadline.** Answer each kind with its status
+  (`Kind.Status`), `stale` whenever a spec file is missing or vanishes
+  mid-read. Stop a query when `X-Timeout-Ms` passes (504 `timeout`) or the
+  connection closes.
 
 **Running an external SQL engine next to twillingate.** Put the socket in a
 directory both processes can reach (a shared directory, or a volume mounted
 in both containers) and give twillingate its path as `SQL_ENGINE_SOCKET`.
-Mount `EVENTS_DIR` (`raw/`) into the engine read-only: it only reads, and
-twillingate alone writes the files. The engine may start before or after
-twillingate; at start twillingate checks the protocol version against
-`GET /v1/health` and refuses to start on a mismatch, while an engine that is
-down at that moment is only logged and retried by each query.
+The socket is unauthenticated: anyone who can connect to it reads every
+project's events. Put it in a directory only the twillingate service user
+(or a group the two services share) can traverse, mode `0750`, with the
+socket itself at `0660`, and never on a path other users or containers
+reach. Mount `EVENTS_DIR` (`raw/`) into the engine read-only: it only
+reads, and twillingate alone writes the files. The engine may start
+before or after twillingate; at start twillingate checks the protocol
+version against `GET /v1/health` and refuses to start on a mismatch,
+while an engine that is down at that moment is only logged and retried by
+each query.
 
 ### Other auth modes
 

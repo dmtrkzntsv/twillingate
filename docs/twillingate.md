@@ -1585,8 +1585,8 @@ given twice are all 400: a filter is never dropped silently.
 
 ### Writing SQL against the event files
 
-Writing SQL needs an external SQL engine (`SQL_ENGINE_SOCKET`), and the
-dialect the reference engine speaks is DuckDB's.
+Writing SQL needs an external SQL engine (`SQL_ENGINE_SOCKET`). The SQL
+is in DuckDB's dialect, which the docs and the built-in examples assume.
 
 `query` runs one read-only `SELECT` over the raw events twillingate keeps
 as files beside its database, on an external SQL engine at
@@ -1611,7 +1611,7 @@ it runs. `range`, `generate_series` and `unnest` are the table functions
 it may call, and its own `WITH` names read as usual; a path inside a string
 compared as text is just text. `query` reads every project's rows: filter
 `project_id`. `schema://views` lists the tables' columns. The dialect is
-DuckDB's, the one the reference engine speaks ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction)),
+DuckDB's, which the docs and the built-in examples assume ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction)),
 close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
 `day BETWEEN DATE '2026-01-01' AND DATE '2026-01-31'`, `GROUP BY ALL`,
 `DESCRIBE events` for the columns.

@@ -5,7 +5,10 @@
 // an engine written in Go can import it too. A value in a Result is JSON
 // null, a boolean, a JSON number or a string: numbers are JSON numbers
 // (decode with json.Decoder.UseNumber to keep them exact), while dates,
-// times, timestamps, UUIDs, NaN and the infinities are strings.
+// times, timestamps, UUIDs, NaN and the infinities are strings. An engine
+// ignores any request field it does not know, so version 1 can grow by
+// adding fields; what else it must do is in docs/deployment.md, "Engine
+// requirements".
 //
 // Two modes answer a shape of their own (Request.Mode):
 //   - page: the page's rows as text, its columns the query's with the two

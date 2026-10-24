@@ -330,8 +330,9 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 ## Tables
 
 Widget SQL is DuckDB SQL ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/sql/introduction)),
-the dialect the reference engine speaks, run by the external SQL engine
-over the raw events twillingate keeps as files beside its database: the
+the dialect the docs and the built-in examples assume, run by the
+external SQL engine over the raw events twillingate keeps as files beside
+its database: the
 seven tables `query` reads. Their columns, and how
 rules apply to them, are in [twillingate.md](twillingate.md#writing-sql-against-the-event-files).
 The files hold the events since the upgrade that began writing them, and
