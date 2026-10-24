@@ -188,7 +188,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     data: {
       title: 'Phone shares',
       range: '7d',
-      widgets: [{ component: 'stat', title: 'short', source: { type: 'sql', content: 'SELECT 42 AS value' }, width: 6, height: 4 }],
+      widgets: [{ component: 'stat', title: 'short', source: { type: 'query', content: JSON.stringify({ query: { kind: 'stat', table: 'views', metrics: [{ op: 'count' }] }, rename: { count: 'value' } }) }, width: 6, height: 4 }],
     },
   })
   expect(dashboard.ok(), await dashboard.text()).toBeTruthy()
@@ -347,11 +347,28 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await page.keyboard.press('Escape')
   await expect(shareDialog).toHaveCount(0)
 
-  // A user dashboard whose one widget reads :project and :from/:to: its
+  // A user dashboard whose one widget follows the project and the range: its
   // header holds Add widget beside both switchers, and they fit the phone.
-  // Its table answers 20 columns of long text: in the editor, after a run,
-  // that table scrolls inside its own box and nothing else scrolls sideways.
-  const wide = Array.from({ length: 20 }, (_, i) => `'a long text value that does not fit a phone, column ${i + 1}' AS column_${i + 1}_with_a_long_name`)
+  // Its table answers five columns with names far longer than a phone is
+  // wide, over the seeded project's views: in the editor, after a run, that
+  // table scrolls inside its own box and nothing else scrolls sideways.
+  const longName = (name: string) => `${name}_with_a_name_longer_than_a_phone_is_wide_on_one_line`
+  const wide = {
+    query: {
+      kind: 'breakdown',
+      table: 'views',
+      metrics: [
+        { op: 'count', as: longName('views') },
+        { op: 'actors', as: longName('actors') },
+      ],
+      dimensions: ['path', 'referrer_source', 'browser'],
+      limit: 3,
+    },
+    rename: { path: longName('path'), referrer_source: longName('referrer_source'), browser: longName('browser') },
+  }
+  const projects = await request.get('/api/projects', { headers: authHeaders() })
+  const dev = ((await projects.json()) as { projects: { project_id: number; name: string }[] }).projects.find((x) => x.name === 'dev')
+  expect(dev, 'no seeded dev project').toBeDefined()
   const editable = await request.post('/api/dashboards', {
     headers: authHeaders(),
     data: {
@@ -360,8 +377,8 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
       widgets: [
         {
           component: 'table',
-          title: 'Twenty long columns',
-          source: { type: 'sql', content: `SELECT ${wide.join(', ')} FROM (SELECT :project AS p, :from AS f, :to AS t)` },
+          title: 'Five long columns',
+          source: { type: 'query', content: JSON.stringify(wide) },
           width: 12,
           height: 8,
         },
@@ -370,11 +387,11 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   })
   expect(editable.ok(), await editable.text()).toBeTruthy()
   const { dashboard_id: editableId } = (await editable.json()) as { dashboard_id: number }
-  await check(page, `/app/dashboards/${editableId}`)
+  await check(page, `/app/dashboards/${editableId}?project=${dev!.project_id}`)
   await expect(page.getByRole('button', { name: 'Add widget' })).toBeVisible()
   await expect(page.getByRole('button', { name: /^Project: / })).toBeVisible()
   await expect(page.getByRole('button', { name: /^Range: / })).toBeVisible()
-  const wideCard = page.locator('[data-slot="widget-card"]', { hasText: 'Twenty long columns' })
+  const wideCard = page.locator('[data-slot="widget-card"]', { hasText: 'Five long columns' })
   await wideCard.hover()
   await wideCard.getByRole('button', { name: 'Widget actions' }).click()
   await page.getByRole('menuitem', { name: 'Edit…' }).click()
@@ -382,8 +399,8 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await expect(editor.getByRole('combobox', { name: 'Project' })).toBeVisible()
   await expect(editor.getByRole('button', { name: /^Range: / })).toBeVisible()
   // The edit runs its query as it opens.
-  await expect(editor.getByText(/^1 row · \d+ ms/)).toBeVisible()
-  // The preview draws the table in a widget card; the rows below the SQL are drawn bare.
+  await expect(editor.getByText(/^\d+ rows? · \d+ ms/)).toBeVisible()
+  // The preview draws the table in a widget card; the rows below the query are drawn bare.
   for (const part of ['Preview', 'Rows']) {
     const results = editor.getByRole('region', { name: part }).locator('[data-slot="table-container"]')
     await expect(results).toBeVisible()
