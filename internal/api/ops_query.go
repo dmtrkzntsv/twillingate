@@ -425,7 +425,7 @@ func (h *host) sqlError(ctx context.Context, err error) error {
 	case isKind(sqlengine.KindSQL):
 		return invalidf("SQL error (DuckDB): %s", se.Message)
 	case isKind(sqlengine.KindExited):
-		return invalidf("%s", sqlbind.ChildExited)
+		return invalidf("%s", sqlbind.EngineExited)
 	case isKind(sqlengine.KindBusy):
 		return invalidf("%s", sqlbind.Busy)
 	case isKind(sqlengine.KindStale):

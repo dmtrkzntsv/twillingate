@@ -159,7 +159,7 @@ func (e *sqlEngine) err(ctx context.Context, err error) error {
 	case isKind(sqlengine.KindSQL):
 		return store.Refuse(store.ErrInvalid, "%s", withHint(oneLine(se.Message)))
 	case isKind(sqlengine.KindExited):
-		return resource(sqlbind.ChildExited, err)
+		return resource(sqlbind.EngineExited, err)
 	case isKind(sqlengine.KindBusy):
 		return resource(sqlbind.Busy, err)
 	case isKind(sqlengine.KindStale):

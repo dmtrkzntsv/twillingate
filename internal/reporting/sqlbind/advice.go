@@ -15,9 +15,10 @@ const (
 	// LogsOutOfMemory follows the same error while the open logs load,
 	// which happens before any query and whatever the query is.
 	LogsOutOfMemory = "the open logs do not fit the SQL engine's memory limit while they are loaded for a query, whatever the query is: raise the SQL engine's memory limit"
-	// ChildExited follows a child that died with the query in flight,
-	// which the kernel's out-of-memory killer is the usual cause of.
-	ChildExited = "the SQL engine stopped while running the query, most likely past the SQL engine's memory limit; narrow the query"
+	// EngineExited follows an SQL engine whose worker stopped with the
+	// query in flight, which the kernel's out-of-memory killer is the
+	// usual cause of.
+	EngineExited = "the SQL engine stopped while running the query, most likely past the SQL engine's memory limit; narrow the query"
 	// Busy follows an engine that answered busy: every slot it runs
 	// queries in was taken.
 	Busy = "the SQL engine is busy: all of its slots are running other queries; retry in a moment"

@@ -55,7 +55,7 @@ func TestFilesTableTruncatesErrorsAndTimesOut(t *testing.T) {
 		{"timeout", archivetest.Fail(sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms"), sqlbind.Timeout(h.queryTimeout)},
 		{"out of memory", archivetest.Fail(sqlengine.KindOutOfMemory, "Out of Memory Error"), sqlbind.OutOfMemory},
 		{"logs out of memory", archivetest.Fail(sqlengine.KindOutOfMemoryLoadingLog, "Out of Memory Error"), sqlbind.LogsOutOfMemory},
-		{"exited", archivetest.Fail(sqlengine.KindExited, "the worker exited"), sqlbind.ChildExited},
+		{"exited", archivetest.Fail(sqlengine.KindExited, "the worker exited"), sqlbind.EngineExited},
 		{"busy", archivetest.Fail(sqlengine.KindBusy, "no free slot"), sqlbind.Busy},
 		{"stale", archivetest.Fail(sqlengine.KindStale, "a file in the table spec is gone"), sqlbind.Stale},
 		{"internal", archivetest.Fail(sqlengine.KindInternal, "engine failed"), sqlbind.EngineFailed},

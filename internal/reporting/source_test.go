@@ -235,7 +235,7 @@ func TestFilesErrors(t *testing.T) {
 		"out of memory":  {kind(sqlengine.KindOutOfMemory, "Out of Memory Error: failed to allocate"), sqlbind.OutOfMemory, true},
 		"logs out of memory": {kind(sqlengine.KindOutOfMemoryLoadingLog, "Out of Memory Error: x"),
 			sqlbind.LogsOutOfMemory, true},
-		"child exited": {kind(sqlengine.KindExited, "engine: child exited"), sqlbind.ChildExited, true},
+		"child exited": {kind(sqlengine.KindExited, "engine: child exited"), sqlbind.EngineExited, true},
 		"busy":         {kind(sqlengine.KindBusy, "no free slot; retry later"), sqlbind.Busy, true},
 		"internal":     {kind(sqlengine.KindInternal, "engine: spawn: no such file"), sqlbind.EngineFailed, true},
 		"unavailable":  {fmt.Errorf("%w: dial unix /x.sock: connect: connection refused", sqlengine.ErrUnavailable), sqlbind.EngineFailed, true},

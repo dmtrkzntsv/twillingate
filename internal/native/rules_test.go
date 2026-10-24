@@ -66,7 +66,7 @@ func matchRules(t *testing.T, f *archivetest.Files, rules archive.Rules, q, fami
 }
 
 // compile compiles project p's rules against the columns of every file
-// under f.Dir, as the reader's events view sees them.
+// under f.Dir, as the events table sees them.
 func compile(t *testing.T, f *archivetest.Files, p int64, rules archive.Rules) ruleSet {
 	t.Helper()
 	have, err := unionColumns(f.Dir)

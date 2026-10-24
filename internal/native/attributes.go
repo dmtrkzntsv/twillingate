@@ -66,7 +66,7 @@ type attrMetric struct {
 // one (as product/attribute-values.sql's GROUPING SETS has it), users the
 // distinct user_id and groups the distinct group_id (NULL and empty left
 // out). An attribute's name is its
-// column's without attr_, spelled as the reader's events view spells it
+// column's without attr_, spelled as the events table spells it
 // (the first spelling of the files' columns, unionColumns), so keys equal
 // but for case in different files are one. The rows are ordered by order
 // (a metric descending, a dimension ascending, ties by the dimensions in

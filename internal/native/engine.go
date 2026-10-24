@@ -155,7 +155,7 @@ var (
 
 // Answer answers q over project p.Project's rows of p.From to p.To, with
 // rules (every project's; the project's own apply) applied as the
-// reader's events view applies them; the sessions and identities tables,
+// events table applies them; the sessions and identities tables,
 // derived from the events as stored, take none (scanSessions, identities).
 // identities holds the project's users and groups first seen in the
 // range, its day their first_seen's day; the computed identity columns
