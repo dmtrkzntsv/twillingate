@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"regexp"
 	"slices"
@@ -639,15 +640,36 @@ func TestStructuredQueryDocument(t *testing.T) {
 			t.Errorf("example is refused: %v\n%s", err, b[1])
 		}
 		kinds[in.Query.Kind] = true
+		if in.Query.Kind == "attributes" {
+			kinds["attributes "+in.Query.Output] = true
+		}
 	}
 	for _, k := range native.Kinds {
 		if !kinds[k] {
 			t.Errorf("no example of a %s", k)
 		}
 	}
+	for _, o := range native.AttributeOutputs {
+		if !kinds["attributes "+o] {
+			t.Errorf("no example of an attributes' %s", o)
+		}
+	}
+	// The attributes kind's reserved keys, listed between "under its own
+	// name:" and "Those are grouped": exactly the engine's.
+	_, rest, _ := strings.Cut(body, "under its own name:")
+	listed, _, _ := strings.Cut(rest, "Those are grouped")
+	var named []string
+	for _, m := range regexp.MustCompile("`(\\$[a-z_]+)`").FindAllStringSubmatch(listed, -1) {
+		named = append(named, m[1])
+	}
+	slices.Sort(named)
+	if want := slices.Sorted(maps.Keys(native.ReservedKeyColumns)); !slices.Equal(named, want) {
+		t.Errorf("the attributes' reserved keys are %v, want %v", named, want)
+	}
 	for _, list := range [][]string{native.Kinds, native.Tables, native.Columns, native.SessionColumns, native.MetricOps,
 		native.ValueColumns, native.SessionValueColumns, native.IdentityColumns, native.IdentityValueColumns,
-		native.OfColumns, native.ShareOfColumns, native.FilterOps, native.RetentionOutputs, native.IdentifiedBy} {
+		native.OfColumns, native.ShareOfColumns, native.FilterOps, native.RetentionOutputs, native.IdentifiedBy,
+		native.AttributeOutputs, native.AttributeTables, native.AttributeDimensions, native.AttributeOps} {
 		for _, name := range list {
 			if !strings.Contains(body, "`"+name+"`") {
 				t.Errorf("the Structured queries section does not name `%s`", name)

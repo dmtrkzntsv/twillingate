@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/enginesql"
 )
 
@@ -11,19 +12,6 @@ type measuresIn struct {
 	rangeIn
 	Name    string `json:"name,omitempty" jsonschema:"filter to one metric name"`
 	AttrKey string `json:"attr_key,omitempty" jsonschema:"break each metric down by this attribute key: a reserved key such as $browser or $path, or any key the measures carried; no declaration needed"`
-}
-
-// keyColumns are the reserved keys a breakdown reads from a typed column
-// of the event files: the nine v_product_attrs and v_measures_attrs always
-// had, and the nine a project could declare there (migration 040's
-// mapping). On the files every one breaks down, declared or not; any
-// other key reads its attr_<key> column.
-var keyColumns = map[string]string{
-	"$platform": "platform", "$os": "os", "$app_version": "app_version", "$app_locale": "app_locale",
-	"$kind": "kind", "$browser": "browser", "$device": "device", "$browser_locale": "browser_locale",
-	"$country": "country", "$host": "host", "$path": "path", "$referrer": "referrer_source",
-	"$utm_source": "utm_source", "$utm_medium": "utm_medium", "$utm_campaign": "utm_campaign",
-	"$os_version": "os_version", "$browser_version": "browser_version", "$device_model": "device_model",
 }
 
 // measures answers percentiles from the log-scale buckets of the measures
@@ -81,7 +69,7 @@ ORDER BY event_name, measure` + partition
 // column, quoted. A key no file carries reads NULL, so its breakdown is
 // empty rather than an error.
 func (h *host) measureAttr(ctx context.Context, key string) (string, error) {
-	if col, ok := keyColumns[key]; ok {
+	if col, ok := native.ReservedKeyColumns[key]; ok {
 		return "nullif(" + col + ", '')", nil
 	}
 	res, err := h.runFiles(ctx, archive.Scoped{SQL: "SELECT column_name FROM (DESCRIBE SELECT * FROM measures)"})

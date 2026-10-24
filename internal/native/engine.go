@@ -168,7 +168,11 @@ var (
 //     ties by the other dimensions; then with other an "Other" row (every
 //     dimension "Other") of the rest, when there is any.
 //   - retention: its output's rows (scan.retention), over the cohorts of
-//     From to To, the days back up to the day before the clock's today.
+//     From to To, the days back up to the day before the clock's today;
+//   - attributes: its dimensions, attribute and value, then its metrics,
+//     a row per attribute value of the rows unpivoted (scan.attributes);
+//     output keys attribute, events, values and keys_total, a row per
+//     attribute (scan.attributeKeys).
 //
 // A truncated result (MaxGroups, MaxBytes) leaves the untracked groups
 // out of a breakdown's Other row too, and ranks a trend's tracked series
@@ -258,6 +262,8 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 		return s.trend(ctx, p.From, p.To)
 	case "retention":
 		return s.retention(ctx, p.From, p.To)
+	case "attributes":
+		return s.attributes(ctx, p.From, p.To)
 	}
 	return s.breakdown(ctx, p.From, p.To)
 }
@@ -399,19 +405,31 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 		}
 		return a.merge(), ms, nil
 	}
+	if err := s.scanEvents(ctx, files, r, a.columns(), dims, charge, a.add); err != nil {
+		return nil, nil, err
+	}
+	return a.merge(), ms, nil
+}
+
+// scanEvents reads cols of the project's rows of the query's table in r
+// from files, with the rules applied and the status columns the query's
+// filters or dims name added, and hands each batch to add, from the
+// workers (w the worker's index).
+func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols, dims []string, charge func(int64) error, add func(w int, b *Batch) error) error {
 	fam := s.family()
-	read := s.rules.columns(a.columns())
+	read := s.rules.columns(cols)
 	status := s.statusColumns(dims)
 	var ids *firstSet
+	var err error
 	if len(status) > 0 {
 		if ids, err = s.e.firstSeen(ctx, s.project, files, charge); err != nil {
-			return nil, nil, err
+			return err
 		}
 	}
 	pq, logs := filesIn(files, r)
 	groups, err := parquetGroups(pq, fam, r)
 	if err != nil {
-		return nil, nil, err
+		return err
 	}
 	// The logs, read whole, go first, so the row groups fill in beside them.
 	work := make([]group, 0, len(logs)+len(groups))
@@ -435,17 +453,14 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 		if ids != nil {
 			addStatus(b, status, ids)
 		}
-		return a.add(w, b)
+		return add(w, b)
 	})
 	for i := range readers {
 		if cerr := readers[i].close(); err == nil {
 			err = cerr
 		}
 	}
-	if err != nil {
-		return nil, nil, err
-	}
-	return a.merge(), ms, nil
+	return err
 }
 
 // statusColumns are the status columns (user_status, group_status) the

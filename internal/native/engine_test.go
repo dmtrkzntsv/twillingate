@@ -206,8 +206,14 @@ func engineFixture(t testing.TB) *archivetest.Files {
 // and returns its rows as the engine formats them: NULL as "".
 func duckTable(t *testing.T, f *archivetest.Files, sql, from, to string) [][]string {
 	t.Helper()
+	return duckTableWith(t, f, engineRules, sql, from, to)
+}
+
+// duckTableWith is duckTable under rules.
+func duckTableWith(t *testing.T, f *archivetest.Files, rules archive.Rules, sql, from, to string) [][]string {
+	t.Helper()
 	q := fmt.Sprintf(sql, from, to)
-	res, err := f.Reader.Query(context.Background(), q, 0, engineRules)
+	res, err := f.Reader.Query(context.Background(), q, 0, rules)
 	if err != nil {
 		t.Fatalf("%v\n%s", err, q)
 	}

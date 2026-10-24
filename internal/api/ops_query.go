@@ -24,7 +24,7 @@ type queryIn struct {
 	ProjectID int64         `json:"project_id,omitempty" jsonschema:"with query: the project it reads (required); call list_projects first"`
 	From      string        `json:"from,omitempty" jsonschema:"with query: start day inclusive, YYYY-MM-DD (default: 29 days before to)"`
 	To        string        `json:"to,omitempty" jsonschema:"with query: end day inclusive, YYYY-MM-DD (default: today, UTC); at most 1100 days from from"`
-	Query     *native.Query `json:"query,omitempty" jsonschema:"a structured query (stat, trend, breakdown or retention) over one project's events, answered natively; give this or sql, not both"`
+	Query     *native.Query `json:"query,omitempty" jsonschema:"a structured query (stat, trend, breakdown, retention or attributes) over one project's events, answered natively; give this or sql, not both"`
 }
 
 // queryOut is query's answer: a table, and with a structured query the
@@ -53,7 +53,7 @@ func queryEnums(in *jsonschema.Schema) {
 	q.Properties["kind"].Enum = enum(native.Kinds)
 	q.Properties["table"].Enum = enum(native.Tables)
 	q.Properties["compare"].Enum = enum([]string{"", "previous"})
-	q.Properties["output"].Enum = enum(native.RetentionOutputs)
+	q.Properties["output"].Enum = enum(slices.Concat(native.RetentionOutputs, native.AttributeOutputs))
 	q.Properties["identified_by"].Enum = enum(native.IdentifiedBy)
 	minOffsets, maxOffsets := 1.0, 90.0
 	q.Properties["offsets"].Minimum, q.Properties["offsets"].Maximum = &minOffsets, &maxOffsets
@@ -61,6 +61,8 @@ func queryEnums(in *jsonschema.Schema) {
 	q.Properties["milestones"].Items.Minimum, q.Properties["milestones"].Items.Maximum = &minMilestone, &maxOffsets
 	maxMilestones := 6
 	q.Properties["milestones"].MaxItems = &maxMilestones
+	maxKeep := 100
+	q.Properties["keep"].MaxItems = &maxKeep
 	m := q.Properties["metrics"].Items
 	m.Properties["op"].Enum = enum(native.MetricOps)
 	var columns []string // each table's, in order, each once
