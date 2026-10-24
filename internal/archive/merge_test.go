@@ -230,7 +230,13 @@ func TestGoMergeMatchesDuckDB(t *testing.T) {
 			if err := mergeFiles(context.Background(), inputs, goFile); err != nil {
 				t.Fatal(err)
 			}
-			golden := frozen(t, c.name, f.answerOf(t, duck, "*", false))
+			digest := skipDigest(t, c.name)
+			var golden fileAnswer
+			if !digest {
+				golden = frozen(t, c.name, f.answerOf(t, duck, "*", false))
+			} else {
+				golden.Columns = f.describe(t, duck)
+			}
 			got, want := f.describe(t, goFile), golden.Columns
 			if len(got) < len(want) || !eq(got[:len(want)], want) {
 				t.Fatalf("Go file's columns\n%v\nwant DuckDB's first\n%v", got, want)
@@ -256,9 +262,11 @@ func TestGoMergeMatchesDuckDB(t *testing.T) {
 			if len(added) > 0 {
 				goSel = "* EXCLUDE (" + strings.Join(added, ", ") + ")"
 			}
-			goAnswer := f.answerOf(t, goFile, goSel, false)
-			goAnswer.Columns = goAnswer.Columns[:len(want)]
-			sameAnswer(t, "Go merge", goAnswer, golden)
+			if !digest {
+				goAnswer := f.answerOf(t, goFile, goSel, false)
+				goAnswer.Columns = goAnswer.Columns[:len(want)]
+				sameAnswer(t, "Go merge", goAnswer, golden)
+			}
 			goRel := "read_parquet(" + quote(goFile) + ")"
 			if len(added) > 0 {
 				goRel = "(SELECT " + goSel + " FROM " + goRel + ")"

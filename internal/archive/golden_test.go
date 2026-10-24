@@ -113,3 +113,16 @@ func sameAnswer(t *testing.T, name string, got, want fileAnswer) {
 		}
 	}
 }
+
+// skipDigest says whether the race suite skips key's golden: one kept as
+// a digest stands for a file read whole through DuckDB, too slow under
+// the race detector with the package near go test's 10 minutes. The
+// DuckDB comparison still runs there, and make check compares the golden.
+func skipDigest(t testing.TB, key string) bool {
+	t.Helper()
+	if !raceEnabled || *updateGolden {
+		return false
+	}
+	raw := golden.Get(t, golden.For(t, false), key, json.RawMessage(nil))
+	return strings.Contains(string(raw), `"rows_sha256"`)
+}

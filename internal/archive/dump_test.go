@@ -223,18 +223,20 @@ func TestGoDumpMatchesDuckDB(t *testing.T) {
 				File    fileAnswer        `json:"file"`
 				Allowed map[string]string `json:"allowed_attr_n,omitempty"`
 			}
-			duckAnswer := dumpAnswer{File: f.answerOf(t, duck, sel, false)}
-			for id := range c.allowed {
-				if duckAnswer.Allowed == nil {
-					duckAnswer.Allowed = map[string]string{}
+			if !skipDigest(t, c.name) {
+				duckAnswer := dumpAnswer{File: f.answerOf(t, duck, sel, false)}
+				for id := range c.allowed {
+					if duckAnswer.Allowed == nil {
+						duckAnswer.Allowed = map[string]string{}
+					}
+					duckAnswer.Allowed[id] = strings.Join(f.values(t, "SELECT attr_n FROM "+rel(duck)+" WHERE id = "+quote(id)), " ")
 				}
-				duckAnswer.Allowed[id] = strings.Join(f.values(t, "SELECT attr_n FROM "+rel(duck)+" WHERE id = "+quote(id)), " ")
-			}
-			want := frozen(t, c.name, duckAnswer)
-			sameAnswer(t, "Go dump", f.answerOf(t, goFile, sel, false), want.File)
-			for id, text := range c.allowed {
-				if got := f.values(t, "SELECT attr_n FROM "+rel(goFile)+" WHERE id = "+quote(id)); !eq(got, []string{"[" + text + "]"}) || eq(got, []string{want.Allowed[id]}) {
-					t.Errorf("%s: attr_n = %v, want the JSON text %s, not DuckDB's golden %s", id, got, text, want.Allowed[id])
+				want := frozen(t, c.name, duckAnswer)
+				sameAnswer(t, "Go dump", f.answerOf(t, goFile, sel, false), want.File)
+				for id, text := range c.allowed {
+					if got := f.values(t, "SELECT attr_n FROM "+rel(goFile)+" WHERE id = "+quote(id)); !eq(got, []string{"[" + text + "]"}) || eq(got, []string{want.Allowed[id]}) {
+						t.Errorf("%s: attr_n = %v, want the JSON text %s, not DuckDB's golden %s", id, got, text, want.Allowed[id])
+					}
 				}
 			}
 			if len(allowed) == 0 {
