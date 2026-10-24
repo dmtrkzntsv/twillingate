@@ -1700,12 +1700,12 @@ A person's events across devices, before and after signing in:
 
 The database's `v_*` views and `agg_*` tables went with its events
 (migration 042): name one here and the error says so and lists the tables
-the files hold. A query that runs out of the
-engine's memory (`ENGINE_MEMORY_LIMIT`) is refused with that cause: a
+the files hold. A query that runs past the
+SQL engine's memory limit is refused with that cause: a
 `COUNT(DISTINCT …)` over a large group is the usual one, rewritten as a
 `GROUP BY` in a subquery whose rows are then counted.
 When the open logs themselves do not fit that limit, whatever the query,
-the error says so: raise `ENGINE_MEMORY_LIMIT`.
+the error says so: raise the SQL engine's memory limit.
 
 ### Structured queries
 

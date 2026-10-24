@@ -380,7 +380,7 @@ is older than `REPORTING_CACHE_MAX_AGE`:
 - Group in SQL and return what is drawn: rows past `CONSOLE_QUERY_ROWS_MAX`
   are cut.
 - `count(DISTINCT …)` over a long range keeps every value in memory, and
-  a query past `ENGINE_MEMORY_LIMIT` is refused. Count the rows of a
+  a query past the SQL engine's memory limit is refused. Count the rows of a
   `GROUP BY` subquery instead, which spills to disk, or narrow the
   range.
 - Today comes from the open logs, loaded again whenever they have grown;
@@ -1374,7 +1374,9 @@ widget's name (`widget visitors: …`), and nothing is created.
 | ? is not a parameter here; use :name | Use `:project`, `:from` or `:to`, or write the value into the SQL. `$1` and `$name` are refused the same way. |
 | sql must be a single statement; remove what follows the ';' | One `SELECT` (or `WITH … SELECT`). An unterminated string or comment and an unmatched `(` or `)` are refused too. |
 | query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the date range, or aggregate | Filter on `day`, group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |
-| the query ran out of the engine's memory (ENGINE_MEMORY_LIMIT) … | Count the rows of a `GROUP BY` subquery rather than `count(DISTINCT …)` over a large group, or narrow the range. |
+| the query ran out of the SQL engine's memory limit … | Count the rows of a `GROUP BY` subquery rather than `count(DISTINCT …)` over a large group, or narrow the range. |
+| the event files changed under the query on every attempt … | The daily pass was dumping or merging the files the query read; retry in a moment. |
+| the SQL engine's answer is larger than 256 MiB … | Return fewer rows or columns, or aggregate in SQL. |
 | DuckDB's own error, such as a column that does not exist (`Binder Error: Referenced column "visitors" not found …`) | Fix the query; try it with `query` first. |
 | markdown text is empty | Give the Markdown text. |
 | stat: … (a props schema error) | Match the props schema `list_components` returns; unknown props are refused. |
@@ -1457,10 +1459,10 @@ time or memory, or that the SQL engine was busy for or could not be
 reached for, is logged as `could not check widget on the event files`
 instead, and checked again at the next start. A timeout skips only that
 widget, as do event files the daily pass kept moving under the query,
-until three widgets in a row end that way; that third one, running out
-of memory, a SQL engine whose worker died, a busy SQL engine and one
-that cannot be reached each end the check there, logged once as such,
-and the widgets after it wait for the next start. Rewrite it by the
+until three widgets in a row end that way; that third one, running past
+the SQL engine's memory limit, a SQL engine whose worker died, a busy
+SQL engine and one that cannot be reached each end the check there,
+logged once as such, and the widgets after it wait for the next start. Rewrite it by the
 [Tables](#tables) section and the [Examples](#examples): `v_views_daily`
 becomes `views` grouped by day, `v_product_daily` `product` grouped by
 day and `event_name`, `v_measures_daily` `measures` with `bucket`,

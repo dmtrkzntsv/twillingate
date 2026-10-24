@@ -11,14 +11,14 @@ import (
 // analytics tools and widgets.
 const (
 	// OutOfMemory follows DuckDB's own out-of-memory error on a query.
-	OutOfMemory = "the query ran out of the engine's memory (ENGINE_MEMORY_LIMIT). A COUNT(DISTINCT …) over a large group is the usual cause: " +
+	OutOfMemory = "the query ran out of the SQL engine's memory limit. A COUNT(DISTINCT …) over a large group is the usual cause: " +
 		"select the distinct values with a GROUP BY in a subquery, then count its rows; or narrow the range"
 	// LogsOutOfMemory follows the same error while the open logs load,
 	// which happens before any query and whatever the query is.
-	LogsOutOfMemory = "the open logs do not fit the engine's memory (ENGINE_MEMORY_LIMIT) while they are loaded for a query, whatever the query is: raise ENGINE_MEMORY_LIMIT"
+	LogsOutOfMemory = "the open logs do not fit the SQL engine's memory limit while they are loaded for a query, whatever the query is: raise the SQL engine's memory limit"
 	// ChildExited follows a child that died with the query in flight,
 	// which the kernel's out-of-memory killer is the usual cause of.
-	ChildExited = "the query engine stopped while running the query, most likely out of memory (ENGINE_MEMORY_LIMIT); narrow the query"
+	ChildExited = "the SQL engine stopped while running the query, most likely past the SQL engine's memory limit; narrow the query"
 	// Busy follows an engine that answered busy: every slot it runs
 	// queries in was taken.
 	Busy = "the SQL engine is busy: all of its slots are running other queries; retry in a moment"
