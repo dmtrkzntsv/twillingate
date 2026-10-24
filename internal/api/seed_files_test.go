@@ -64,19 +64,19 @@ func (p hostPresence) HasAttribute(ctx context.Context, projectID int64, key str
 
 // newHostFiles copies the template's event files (hostTemplateRaw) into a
 // directory of t's and returns them for reg, with a scripted SQL engine
-// for t, closed with t: each host may add events of its own.
+// for t that answers from t's own recordings, closed with t: each host
+// may add events of its own.
 func newHostFiles(t *testing.T, reg *manage.Registry) *hostFiles {
 	t.Helper()
 	raw := filepath.Join(t.TempDir(), "raw")
 	archivetest.CopyDir(t, hostTemplateRaw, raw) // keeps the times the derived files' freshness reads
-	return serveHostFiles(t, raw, reg)
+	return serveHostFiles(t, raw, reg, archivetest.NewFakeSQL(t).LoadTest(t, "testdata/sqlengine"))
 }
 
-// serveHostFiles is the files in raw for reg, with a scripted SQL engine
-// for t, closed with t.
-func serveHostFiles(t testing.TB, raw string, reg *manage.Registry) *hostFiles {
+// serveHostFiles is the files in raw for reg, with sqle as their SQL
+// engine.
+func serveHostFiles(t testing.TB, raw string, reg *manage.Registry, sqle *archivetest.FakeSQL) *hostFiles {
 	t.Helper()
-	sqle := archivetest.NewFakeSQL(t).LoadTest(t, "testdata/sqlengine")
 	return &hostFiles{dir: raw, reg: reg, sqle: sqle, client: sqle.Client(t)}
 }
 
@@ -250,13 +250,15 @@ func hostEvents() []store.Event {
 }
 
 // templateFiles is the template's own event files while hostTemplate
-// builds it, served for reporting.Migrate, until t ends.
+// builds it, served for reporting.Migrate, until t ends. Its SQL engine
+// has no script: t is whichever test builds the template first, and its
+// recordings belong to the engine of its own host, not this one.
 func templateFiles(ctx context.Context, t testing.TB, raw string, st store.Store) (*hostFiles, error) {
 	reg := manage.New(st, slog.New(slog.DiscardHandler))
 	if err := reg.Reload(ctx); err != nil {
 		return nil, err
 	}
-	return serveHostFiles(t, raw, reg), nil
+	return serveHostFiles(t, raw, reg, archivetest.NewFakeSQL(t)), nil
 }
 
 // hostEventN numbers the events writeHostEvents writes, so no two share an id.
