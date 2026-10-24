@@ -20,7 +20,7 @@ permissions:
 # Serialize runs so releases are published in commit order.
 concurrency:
   group: release
-# Four stages. version settles the tag; build cross-compiles and checks the
+# Five jobs. version settles the tag; build cross-compiles and checks the
 # tarballs of both architectures, while test and the multi-arch image run
 # side by side with it; release publishes only once all of them have
 # passed, so a failure anywhere leaves no tag, no release and no tagged image,
