@@ -1,7 +1,8 @@
 // The parity harness for the analytics tools: each tool's native answer
-// checked against the SQL it ran before, over the same files. When DuckDB
-// leaves (step 6 of the native engine plan), these tests go with it, and
-// the native kinds' own tests (internal/native) remain the reference.
+// checked against the SQL it ran before, over the same files, and against
+// that SQL's answer frozen in testdata/<Test>.golden.json (oldTable).
+// When DuckDB leaves (step 6 of the native engine plan), the SQL goes and
+// the goldens remain the reference.
 
 package api
 
@@ -307,11 +308,7 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 	ctx := context.Background()
 	old := func(in rangeIn, q string, vals map[string]enginesql.Value) tableOut {
 		t.Helper()
-		out, err := h.filesTable(ctx, in, q, vals)
-		if err != nil {
-			t.Fatalf("%v\n%s", err, q)
-		}
-		return out
+		return oldTable(t, h, in, q, vals)
 	}
 	ranges := []rangeIn{
 		{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"},

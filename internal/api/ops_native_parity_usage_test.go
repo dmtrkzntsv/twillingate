@@ -1,7 +1,8 @@
 // The parity harness for the analytics tools: each tool's native answer
-// checked against the SQL it ran before, over the same files. When DuckDB
-// leaves (step 6 of the native engine plan), these tests go with it, and
-// the native kinds' own tests (internal/native) remain the reference.
+// checked against the SQL it ran before, over the same files, and against
+// that SQL's answer frozen in testdata/<Test>.golden.json (oldTable).
+// When DuckDB leaves (step 6 of the native engine plan), the SQL goes and
+// the goldens remain the reference.
 
 package api
 
@@ -89,12 +90,19 @@ func oldUsageCounts(t *testing.T, h *host, project int64, newestOf []int64, from
 	if err != nil {
 		t.Fatalf("%v\n%s", err, q)
 	}
-	out := fileCounts{days: map[int64]map[string]*usageTotals{}, received: map[int64]string{}}
-	for _, row := range res.Rows {
-		cells := make([]string, len(row))
-		for i, v := range row {
-			cells[i] = cellText(v)
+	// DuckDB's rows, frozen in their text, sorted (UNION ALL and GROUP
+	// BY ALL leave the order open).
+	duck := make([][]string, len(res.Rows))
+	for i, row := range res.Rows {
+		duck[i] = make([]string, len(row))
+		for j, v := range row {
+			duck[i][j] = cellText(v)
 		}
+	}
+	slices.SortFunc(duck, func(a, b []string) int { return slices.Compare(a, b) })
+	key := fmt.Sprintf("usage of project %d, newest of %v, %s..%s", project, newestOf, fromD, toD)
+	out := fileCounts{days: map[int64]map[string]*usageTotals{}, received: map[int64]string{}}
+	for _, cells := range frozen(t, key, duck) {
 		id, err := strconv.ParseInt(cells[0], 10, 64)
 		if err != nil {
 			t.Fatal(err)
@@ -277,10 +285,7 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 				if err != nil {
 					t.Fatalf("%s: %v", name, err)
 				}
-				want, err := h.filesTable(ctx, r, oldRetentionSQL, map[string]enginesql.Value{":actor": {Type: "VARCHAR", Text: actor}})
-				if err != nil {
-					t.Fatal(err)
-				}
+				want := oldTable(t, h, r, oldRetentionSQL, map[string]enginesql.Value{":actor": {Type: "VARCHAR", Text: actor}})
 				// The allowed difference: no offset past 90.
 				want.Rows = slices.DeleteFunc(want.Rows, func(row []string) bool {
 					if cellInt(row[1]) > retentionOffsets {
@@ -299,10 +304,7 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 					sawLateSignIn = slices.Equal(s1, []string{"0", "1"})
 				}
 				sameNumbers(t, name, got.tableOut, want, 0)
-				through, err := h.filesTable(ctx, r, oldAggregatedThroughSQL, nil)
-				if err != nil {
-					t.Fatal(err)
-				}
+				through := oldTable(t, h, r, oldAggregatedThroughSQL, nil)
 				if len(through.Rows) != 1 || got.AggregatedThrough != through.Rows[0][0] {
 					t.Errorf("%s: aggregated_through %q, want %q", name, got.AggregatedThrough, through.Rows)
 				}
@@ -328,10 +330,7 @@ func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		want, err := h.filesTable(ctx, r, oldRetentionSQL, map[string]enginesql.Value{":actor": {Type: "VARCHAR", Text: "user"}})
-		if err != nil {
-			t.Fatal(err)
-		}
+		want := oldTable(t, h, r, oldRetentionSQL, map[string]enginesql.Value{":actor": {Type: "VARCHAR", Text: "user"}})
 		sameNumbers(t, "cut", got.tableOut, want, 0)
 		if !got.Truncated || got.Note != want.Note || !want.Truncated {
 			t.Errorf("cut: truncated %v note %q, want %v %q", got.Truncated, got.Note, want.Truncated, want.Note)
@@ -500,7 +499,9 @@ func TestCountEventsMatchesItsOldSQL(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := cellInt(cellText(res.Rows[0][0]))
+	// The fixture's days are relative to today, and so the golden: the
+	// count over them, whatever today is.
+	want := frozen(t, "events_30d", cellInt(cellText(res.Rows[0][0])))
 	// today, 1 and 29 days back: blog's view, renamed event and measure,
 	// and docs' view, each day.
 	if got != want || want != 12 {

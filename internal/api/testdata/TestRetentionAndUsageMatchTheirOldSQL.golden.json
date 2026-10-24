@@ -1,0 +1,376 @@
+{
+  "1 2025-09-01..2026-10-31 5ae65e37748e rows 1000": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "rows": [
+        ["2025-10-01","0","1","1"],
+        ["2025-10-01","106","1","1"],
+        ["2026-04-01","0","1","1"],
+        ["2026-04-01","41","1","1"],
+        ["2026-04-01","43","1","1"],
+        ["2026-05-10","0","1","1"],
+        ["2026-05-10","1","1","1"],
+        ["2026-05-12","0","1","1"],
+        ["2026-05-16","0","1","1"],
+        ["2026-08-20","0","16","16"],
+        ["2026-08-21","0","12","12"],
+        ["2026-08-22","0","1","1"],
+        ["2026-08-25","0","1","1"]
+      ]
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR install}]"
+  },
+  "1 2025-09-01..2026-10-31 df5f9b496b3a rows 1000": {
+    "out": {
+      "columns": ["max(\"day\")"],
+      "rows": [
+        ["2026-08-26"]
+      ]
+    },
+    "sql": "SELECT max(day) FROM events\nWHERE project_id = :project AND family IN ('views', 'product') AND day < current_date"
+  },
+  "1 2025-09-01..2026-10-31 ea66c7af3f5d rows 1000": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "rows": [
+        ["2026-05-12","0","1","1"],
+        ["2026-05-12","1","1","1"],
+        ["2026-05-12","3","1","1"],
+        ["2026-05-12","103","1","1"],
+        ["2026-05-12","104","1","1"],
+        ["2026-08-01","0","10","10"],
+        ["2026-08-01","7","4","10"],
+        ["2026-08-20","0","4","4"],
+        ["2026-08-20","1","2","4"],
+        ["2026-08-26","0","1","1"]
+      ]
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR user}]"
+  },
+  "1 2026-05-01..2026-05-31 5ae65e37748e rows 1000": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "rows": [
+        ["2026-05-10","0","1","1"],
+        ["2026-05-10","1","1","1"],
+        ["2026-05-12","0","1","1"],
+        ["2026-05-16","0","1","1"]
+      ]
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR install}]"
+  },
+  "1 2026-05-01..2026-05-31 df5f9b496b3a rows 1000": {
+    "out": {
+      "columns": ["max(\"day\")"],
+      "rows": [
+        ["2026-08-26"]
+      ]
+    },
+    "sql": "SELECT max(day) FROM events\nWHERE project_id = :project AND family IN ('views', 'product') AND day < current_date"
+  },
+  "1 2026-05-01..2026-05-31 ea66c7af3f5d rows 1000": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "rows": [
+        ["2026-05-12","0","1","1"],
+        ["2026-05-12","1","1","1"],
+        ["2026-05-12","3","1","1"],
+        ["2026-05-12","103","1","1"],
+        ["2026-05-12","104","1","1"]
+      ]
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR user}]"
+  },
+  "1 2026-05-12..2026-05-12 5ae65e37748e rows 1000": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "rows": [
+        ["2026-05-12","0","1","1"]
+      ]
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR install}]"
+  },
+  "1 2026-05-12..2026-05-12 df5f9b496b3a rows 1000": {
+    "out": {
+      "columns": ["max(\"day\")"],
+      "rows": [
+        ["2026-08-26"]
+      ]
+    },
+    "sql": "SELECT max(day) FROM events\nWHERE project_id = :project AND family IN ('views', 'product') AND day < current_date"
+  },
+  "1 2026-05-12..2026-05-12 ea66c7af3f5d rows 1000": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "rows": [
+        ["2026-05-12","0","1","1"],
+        ["2026-05-12","1","1","1"],
+        ["2026-05-12","3","1","1"],
+        ["2026-05-12","103","1","1"],
+        ["2026-05-12","104","1","1"]
+      ]
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR user}]"
+  },
+  "1 2026-05-21..2026-05-20 5ae65e37748e rows 1000": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "rows": []
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR install}]"
+  },
+  "1 2026-05-21..2026-05-20 df5f9b496b3a rows 1000": {
+    "out": {
+      "columns": ["max(\"day\")"],
+      "rows": [
+        ["2026-08-26"]
+      ]
+    },
+    "sql": "SELECT max(day) FROM events\nWHERE project_id = :project AND family IN ('views', 'product') AND day < current_date"
+  },
+  "1 2026-05-21..2026-05-20 ea66c7af3f5d rows 1000": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "rows": []
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR user}]"
+  },
+  "1 2026-08-01..2026-08-31 5ae65e37748e rows 1000": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "rows": [
+        ["2026-08-20","0","16","16"],
+        ["2026-08-21","0","12","12"],
+        ["2026-08-22","0","1","1"],
+        ["2026-08-25","0","1","1"]
+      ]
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR install}]"
+  },
+  "1 2026-08-01..2026-08-31 df5f9b496b3a rows 1000": {
+    "out": {
+      "columns": ["max(\"day\")"],
+      "rows": [
+        ["2026-08-26"]
+      ]
+    },
+    "sql": "SELECT max(day) FROM events\nWHERE project_id = :project AND family IN ('views', 'product') AND day < current_date"
+  },
+  "1 2026-08-01..2026-08-31 ea66c7af3f5d rows 1000": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "rows": [
+        ["2026-08-01","0","10","10"],
+        ["2026-08-01","7","4","10"],
+        ["2026-08-20","0","4","4"],
+        ["2026-08-20","1","2","4"],
+        ["2026-08-26","0","1","1"]
+      ]
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR user}]"
+  },
+  "1 2026-08-01..2026-08-31 ea66c7af3f5d rows 3": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "note": "truncated to 3 rows; results are PARTIAL — narrow the range or raise the limit",
+      "rows": [
+        ["2026-08-01","0","10","10"],
+        ["2026-08-01","7","4","10"],
+        ["2026-08-20","0","4","4"]
+      ],
+      "truncated": true
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR user}]"
+  },
+  "2 2026-08-01..2026-08-31 5ae65e37748e rows 1000": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "rows": [
+        ["2026-08-21","0","1","1"]
+      ]
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR install}]"
+  },
+  "2 2026-08-01..2026-08-31 df5f9b496b3a rows 1000": {
+    "out": {
+      "columns": ["max(\"day\")"],
+      "rows": [
+        ["2026-08-21"]
+      ]
+    },
+    "sql": "SELECT max(day) FROM events\nWHERE project_id = :project AND family IN ('views', 'product') AND day < current_date"
+  },
+  "2 2026-08-01..2026-08-31 ea66c7af3f5d rows 1000": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "rows": []
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR user}]"
+  },
+  "3 2026-08-01..2026-08-31 5ae65e37748e rows 1000": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "rows": []
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR install}]"
+  },
+  "3 2026-08-01..2026-08-31 df5f9b496b3a rows 1000": {
+    "out": {
+      "columns": ["max(\"day\")"],
+      "rows": [
+        [""]
+      ]
+    },
+    "sql": "SELECT max(day) FROM events\nWHERE project_id = :project AND family IN ('views', 'product') AND day < current_date"
+  },
+  "3 2026-08-01..2026-08-31 ea66c7af3f5d rows 1000": {
+    "out": {
+      "columns": ["cohort_day","day_offset","actors","cohort_size"],
+      "rows": []
+    },
+    "sql": "WITH acts AS (\n  SELECT DISTINCT actor_id, actor_kind, day\n  FROM events\n  WHERE project_id = :project AND family IN ('views', 'product') AND actor_id <> ''\n    AND day < current_date\n),\nfirsts AS (\n  SELECT actor_id, MIN(day) AS cohort_day, MIN(day) FILTER (WHERE actor_kind = 'user') AS user_day\n  FROM acts\n  WHERE actor_kind IN ('user', 'install')\n  GROUP BY actor_id\n),\nreturned AS (\n  SELECT CASE WHEN f.user_day <= a.day THEN 'user' ELSE 'install' END AS actor_kind,\n         f.cohort_day, a.day - f.cohort_day AS day_offset, count(DISTINCT a.actor_id) AS actors\n  FROM (SELECT DISTINCT actor_id, day FROM acts) a\n  JOIN firsts f ON f.actor_id = a.actor_id AND a.day >= f.cohort_day\n  WHERE f.cohort_day BETWEEN :from AND :to\n  GROUP BY 1, f.cohort_day, 3\n)\nSELECT r.cohort_day, r.day_offset, r.actors, c.actors AS cohort_size\nFROM returned r\nJOIN returned c ON c.actor_kind = r.actor_kind AND c.cohort_day = r.cohort_day AND c.day_offset = 0\nWHERE r.actor_kind = :actor\nORDER BY r.cohort_day, r.day_offset",
+    "vals": "map[:actor:{VARCHAR user}]"
+  },
+  "usage of project 0, newest of [1 3], 2025-09-25..2026-10-20": [
+    ["1","","","","2026-08-27T09:00:00Z"],
+    ["1","2025-10-01","views","1",""],
+    ["1","2026-01-15","views","1",""],
+    ["1","2026-04-01","views","1",""],
+    ["1","2026-05-10","measures","1",""],
+    ["1","2026-05-10","views","1",""],
+    ["1","2026-05-11","views","1",""],
+    ["1","2026-05-12","views","3",""],
+    ["1","2026-05-13","views","2",""],
+    ["1","2026-05-14","product","1",""],
+    ["1","2026-05-14","views","1",""],
+    ["1","2026-05-15","views","1",""],
+    ["1","2026-05-16","views","1",""],
+    ["1","2026-05-20","views","1",""],
+    ["1","2026-08-01","views","10",""],
+    ["1","2026-08-08","views","4",""],
+    ["1","2026-08-20","measures","5",""],
+    ["1","2026-08-20","product","5",""],
+    ["1","2026-08-20","views","45",""],
+    ["1","2026-08-21","measures","2",""],
+    ["1","2026-08-21","product","2",""],
+    ["1","2026-08-21","views","30",""],
+    ["1","2026-08-22","views","1",""],
+    ["1","2026-08-23","views","1",""],
+    ["1","2026-08-24","views","1",""],
+    ["1","2026-08-25","views","3",""],
+    ["1","2026-08-26","views","2",""],
+    ["1","2026-08-27","measures","1",""],
+    ["2","2026-08-21","views","1",""]
+  ],
+  "usage of project 0, newest of [1 3], 2026-06-01..2026-06-30": [
+    ["1","","","","2026-08-27T09:00:00Z"]
+  ],
+  "usage of project 0, newest of [1 3], 2026-08-01..2026-08-31": [
+    ["1","","","","2026-08-27T09:00:00Z"],
+    ["1","2026-08-01","views","10",""],
+    ["1","2026-08-08","views","4",""],
+    ["1","2026-08-20","measures","5",""],
+    ["1","2026-08-20","product","5",""],
+    ["1","2026-08-20","views","45",""],
+    ["1","2026-08-21","measures","2",""],
+    ["1","2026-08-21","product","2",""],
+    ["1","2026-08-21","views","30",""],
+    ["1","2026-08-22","views","1",""],
+    ["1","2026-08-23","views","1",""],
+    ["1","2026-08-24","views","1",""],
+    ["1","2026-08-25","views","3",""],
+    ["1","2026-08-26","views","2",""],
+    ["1","2026-08-27","measures","1",""],
+    ["2","2026-08-21","views","1",""]
+  ],
+  "usage of project 0, newest of [1 3], 2026-08-26..2026-08-26": [
+    ["1","","","","2026-08-27T09:00:00Z"],
+    ["1","2026-08-26","views","2",""]
+  ],
+  "usage of project 1, newest of [1], 2025-09-25..2026-10-20": [
+    ["1","","","","2026-08-27T09:00:00Z"],
+    ["1","2025-10-01","views","1",""],
+    ["1","2026-01-15","views","1",""],
+    ["1","2026-04-01","views","1",""],
+    ["1","2026-05-10","measures","1",""],
+    ["1","2026-05-10","views","1",""],
+    ["1","2026-05-11","views","1",""],
+    ["1","2026-05-12","views","3",""],
+    ["1","2026-05-13","views","2",""],
+    ["1","2026-05-14","product","1",""],
+    ["1","2026-05-14","views","1",""],
+    ["1","2026-05-15","views","1",""],
+    ["1","2026-05-16","views","1",""],
+    ["1","2026-05-20","views","1",""],
+    ["1","2026-08-01","views","10",""],
+    ["1","2026-08-08","views","4",""],
+    ["1","2026-08-20","measures","5",""],
+    ["1","2026-08-20","product","5",""],
+    ["1","2026-08-20","views","45",""],
+    ["1","2026-08-21","measures","2",""],
+    ["1","2026-08-21","product","2",""],
+    ["1","2026-08-21","views","30",""],
+    ["1","2026-08-22","views","1",""],
+    ["1","2026-08-23","views","1",""],
+    ["1","2026-08-24","views","1",""],
+    ["1","2026-08-25","views","3",""],
+    ["1","2026-08-26","views","2",""],
+    ["1","2026-08-27","measures","1",""]
+  ],
+  "usage of project 1, newest of [1], 2026-06-01..2026-06-30": [
+    ["1","","","","2026-08-27T09:00:00Z"]
+  ],
+  "usage of project 1, newest of [1], 2026-08-01..2026-08-31": [
+    ["1","","","","2026-08-27T09:00:00Z"],
+    ["1","2026-08-01","views","10",""],
+    ["1","2026-08-08","views","4",""],
+    ["1","2026-08-20","measures","5",""],
+    ["1","2026-08-20","product","5",""],
+    ["1","2026-08-20","views","45",""],
+    ["1","2026-08-21","measures","2",""],
+    ["1","2026-08-21","product","2",""],
+    ["1","2026-08-21","views","30",""],
+    ["1","2026-08-22","views","1",""],
+    ["1","2026-08-23","views","1",""],
+    ["1","2026-08-24","views","1",""],
+    ["1","2026-08-25","views","3",""],
+    ["1","2026-08-26","views","2",""],
+    ["1","2026-08-27","measures","1",""]
+  ],
+  "usage of project 1, newest of [1], 2026-08-26..2026-08-26": [
+    ["1","","","","2026-08-27T09:00:00Z"],
+    ["1","2026-08-26","views","2",""]
+  ],
+  "usage of project 2, newest of [2], 2025-09-25..2026-10-20": [
+    ["2","","","","2026-08-21T09:00:00Z"],
+    ["2","2026-08-21","views","1",""]
+  ],
+  "usage of project 2, newest of [2], 2026-06-01..2026-06-30": [
+    ["2","","","","2026-08-21T09:00:00Z"]
+  ],
+  "usage of project 2, newest of [2], 2026-08-01..2026-08-31": [
+    ["2","","","","2026-08-21T09:00:00Z"],
+    ["2","2026-08-21","views","1",""]
+  ],
+  "usage of project 2, newest of [2], 2026-08-26..2026-08-26": [
+    ["2","","","","2026-08-21T09:00:00Z"]
+  ],
+  "usage of project 3, newest of [3], 2025-09-25..2026-10-20": [],
+  "usage of project 3, newest of [3], 2026-06-01..2026-06-30": [],
+  "usage of project 3, newest of [3], 2026-08-01..2026-08-31": [],
+  "usage of project 3, newest of [3], 2026-08-26..2026-08-26": []
+}
