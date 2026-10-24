@@ -430,6 +430,9 @@ func (sh *sharedScan) attempt(ctx context.Context) error {
 			return err
 		}
 	}
+	for _, r := range sh.reqs {
+		sh.gone(r)
+	}
 	var cons []*consumer
 	sh.mu.Lock()
 	for _, r := range sh.reqs {
@@ -463,6 +466,9 @@ func (sh *sharedScan) attempt(ctx context.Context) error {
 		return err
 	}
 	for _, r := range sh.reqs {
+		if sh.gone(r) {
+			continue
+		}
 		sh.mu.Lock()
 		if r.state != reqLive {
 			sh.mu.Unlock()
@@ -552,7 +558,7 @@ func (sh *sharedScan) scanEvents(ctx context.Context, cons []*consumer) error {
 	}
 	files := all[sh.project]
 	for _, c := range cons {
-		if a, _, _ := c.attached(); a == nil || len(c.idCols) == 0 {
+		if a, _, _ := sh.attached(c); a == nil || len(c.idCols) == 0 {
 			continue
 		}
 		ids, err := e.firstSeen(ctx, sh.project, files, needsNames(c.idCols), sh.charge(c))
@@ -650,11 +656,25 @@ func sharedGroups(files []string, cons []*consumer) ([]manyItem, error) {
 }
 
 // attached is c's aggregation and what it reads, under RLock; a nil when
-// c left the scan.
-func (c *consumer) attached() (a *agg, read []string, ids *firstSet) {
+// c left the scan. A request whose context is done leaves here, at once,
+// rather than only when its context's AfterFunc runs (beside the scan).
+func (sh *sharedScan) attached(c *consumer) (a *agg, read []string, ids *firstSet) {
+	if sh.gone(c.r) {
+		return nil, nil, nil
+	}
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	return c.a, c.read, c.ids
+}
+
+// gone says whether r's context is done, taking r out of the scan,
+// answered with its context's error, when it is.
+func (sh *sharedScan) gone(r *manyReq) bool {
+	if err := r.ctx.Err(); err != nil {
+		sh.leave(r, reqDone, Answered{Err: err})
+		return true
+	}
+	return false
 }
 
 // feedLog reads the log of it for each of its consumers, as Answer reads
@@ -662,7 +682,7 @@ func (c *consumer) attached() (a *agg, read []string, ids *firstSet) {
 func (sh *sharedScan) feedLog(ctx context.Context, w int, it manyItem) error {
 	for _, u := range it.uses {
 		c := u.c
-		a, read, ids := c.attached()
+		a, read, ids := sh.attached(c)
 		if a == nil {
 			continue
 		}
@@ -703,7 +723,7 @@ func (sh *sharedScan) feedGroup(w int, gr *groupReader, it manyItem) error {
 		day, famly bool
 	)
 	for _, u := range it.uses {
-		a, read, ids := u.c.attached()
+		a, read, ids := sh.attached(u.c)
 		if a == nil {
 			continue
 		}
@@ -772,6 +792,9 @@ func pickCols(b *Batch, names []string) *Batch {
 // feed adds b to c's aggregation from worker w, failing c's request on an
 // error, then checks the scan's budget; false once c is out of the scan.
 func (sh *sharedScan) feed(w int, c *consumer, b *Batch) bool {
+	if sh.gone(c.r) {
+		return false
+	}
 	c.mu.RLock()
 	a := c.a
 	var err error
@@ -798,14 +821,14 @@ func (c *consumer) add(a *agg, w int, b *Batch) (err error) {
 			err = panicked(p)
 		}
 	}()
-	onAdd(c.r.req.Query)
+	onAdd(c.r.req)
 	return a.add(w, b)
 }
 
-// onAdd is called as a shared scan feeds a batch to a query's
+// onAdd is called as a shared scan feeds a batch to a request's
 // aggregation; a no-op in production, a variable only so a test can make
-// one panic.
-var onAdd = func(Query) {}
+// one panic, or cancel one while it is live.
+var onAdd = func(Request) {}
 
 // ErrInternal is a panic (a bug) turned into a query's error; its
 // message names no internals, the log has them.

@@ -343,17 +343,20 @@ func TestAnswerManyCancelsOne(t *testing.T) {
 	}
 	want := answersOf(e, reqs)
 	defer func(f func()) { onScanItem = f }(onScanItem)
+	defer func(f func(Request)) { onAdd = f }(onAdd)
 
+	// Cancelled as its aggregation takes a batch: it is live then, so it
+	// leaves before its scan finishes, however the goroutines run.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	reqs[0].Ctx = ctx
-	var items atomic.Int64
-	onScanItem = func() {
-		if items.Add(1) == 3 {
+	onAdd = func(r Request) {
+		if r.Ctx == ctx {
 			cancel()
 		}
 	}
 	got := e.AnswerAll(context.Background(), reqs)
+	onAdd = func(Request) {}
 	if !errors.Is(got[0].Err, context.Canceled) {
 		t.Errorf("the cancelled query: %v, want context.Canceled", got[0].Err)
 	}
@@ -362,18 +365,12 @@ func TestAnswerManyCancelsOne(t *testing.T) {
 			t.Errorf("%+v: %s", reqs[i].Query, d)
 		}
 	}
-	total := items.Load()
 
-	// Every one cancelled at the first item: each scan stops at its first
-	// items (a worker may have taken one more), and no later one starts.
-	items.Store(0)
-	var scans atomic.Int64
-	defer func(f func(int)) { onTurn = f }(onTurn)
-	onTurn = func(w int) {
-		if w > 0 {
-			scans.Add(1)
-		}
-	}
+	// Every one cancelled at the first item, one scan at a time on one
+	// worker: the scan reading it stops there (its worker may take one
+	// more item), and no later scan reads any.
+	e = New(Options{Dir: f.Dir, Workers: 1, MaxScans: 1})
+	var items atomic.Int64
 	ctxs := make([]context.CancelFunc, len(reqs))
 	for i := range reqs {
 		reqs[i].Ctx, ctxs[i] = context.WithCancel(context.Background())
@@ -391,11 +388,8 @@ func TestAnswerManyCancelsOne(t *testing.T) {
 			t.Errorf("query %d: %v, want context.Canceled", i, a.Err)
 		}
 	}
-	// The bound is structural, not per scan: a request leaves through
-	// its context's AfterFunc, which runs beside the worker, so a worker
-	// may read a few more items before the scan sees none is live.
-	if n := items.Load(); n >= total/2 {
-		t.Errorf("%d items read in %d scans after every query left, of %d", n, scans.Load(), total)
+	if n := items.Load() - 1; n > 1 {
+		t.Errorf("%d items read after every query left, want at most 1", n)
 	}
 }
 
@@ -736,9 +730,9 @@ func TestAnswerManyPanics(t *testing.T) {
 	if target.Kind == "" || aloneQ.Kind == "" {
 		t.Fatal("no shared or alone query to break")
 	}
-	defer func(f func(Query)) { onAdd = f }(onAdd)
-	onAdd = func(q Query) {
-		if reflect.DeepEqual(q, target) {
+	defer func(f func(Request)) { onAdd = f }(onAdd)
+	onAdd = func(r Request) {
+		if reflect.DeepEqual(r.Query, target) {
 			panic("boom in a consumer")
 		}
 	}
