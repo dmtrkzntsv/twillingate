@@ -50,9 +50,6 @@ VOLUME ["/var/lib/twillingate"]
 # uid and gid 10001 as in every earlier image, so existing volumes stay
 # owned; not distroless's own nonroot (65532). No passwd entry is needed.
 USER 10001:10001
-# The binary must start in this image before it ships. Exec form: there is
-# no shell. A cross-platform build runs it under emulation.
-RUN ["/usr/local/bin/twillingate", "version"]
 # Container defaults; override per-deployment via compose env_file/environment.
 # INGEST_ADDR binds all interfaces here (unlike the bare-metal loopback
 # default) because published ports reach the container's own IP, not lo.

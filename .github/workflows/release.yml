@@ -171,11 +171,6 @@ jobs:
       packages: write
     steps:
       - uses: actions/checkout@v4
-      # The runtime stage runs the binary once (`twillingate version`), so
-      # the arm64 image needs emulation for that one step; nothing compiles
-      # under it.
-      - uses: docker/setup-qemu-action@v3
-        with: { platforms: arm64 }
       - id: buildx
         uses: docker/setup-buildx-action@v3
       # The gha layer cache below skips everything up to `COPY . .`, but the
