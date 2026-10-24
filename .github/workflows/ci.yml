@@ -39,9 +39,10 @@ jobs:
           grep -qv '^docs/superpowers/' "$RUNNER_TEMP/files" && go=true
           has '^web/' && web=true
           # What the browser suite drives: the app, the API it calls, the
-          # views, daily pass and seed script behind the system dashboards,
-          # and the served SDK and ingest the Web Vitals test goes through.
-          has '^(web/|sdk/|internal/(reporting|api|store|jobs|app|server)/|cmd/|scripts/seed-demo\.py$|go\.(mod|sum)$|Makefile$)' && e2e=true
+          # native engine, event files, daily pass and seed script behind
+          # every built-in widget, and the served SDK and ingest the Web
+          # Vitals test goes through.
+          has '^(web/|sdk/|internal/(reporting|api|store|jobs|app|server|native|archive|shared)/|cmd/|scripts/seed-demo\.py$|go\.(mod|sum)$|Makefile$)' && e2e=true
           has '^(sdk/|internal/server/twillingate(-vitals)?\.js$)' && sdk=true
           if has '^\.github/workflows/'; then
             go=true; web=true; e2e=true; sdk=true
