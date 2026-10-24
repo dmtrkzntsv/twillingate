@@ -1,0 +1,5 @@
+[
+{"mode":"shape","sql":"SELECT event_name AS value FROM product","scope":null,"confine":true,"max_rows":0,"answers":[{"columns":["value"],"rows":[]}]},
+{"mode":"text","sql":"SELECT event_name AS value FROM product","scope":null,"confine":true,"max_rows":5,"answers":[{"columns":["value"],"rows":[["1"]]}]},
+{"mode":"text","sql":"SELECT event_name AS value FROM product","scope":null,"confine":true,"max_rows":1001,"answers":[{"columns":["value"],"rows":[["1"],["not-a-number"]]}]}
+]

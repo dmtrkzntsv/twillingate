@@ -1429,39 +1429,69 @@ peaks near 150 MB of resident memory on the day the month is merged.
 
 Rollback: install the previous release; it reads the files this one wrote.
 
-### Upgrading to SQL on an external engine (no migration)
+### Upgrading to twillingate without DuckDB (no migration)
 
-SQL (SQL widgets, `query`'s `sql` and the start-up check of the users'
-SQL widgets) runs on an external SQL engine at `SQL_ENGINE_SOCKET` (see
-`docs/deployment.md`, "External SQL engine"); `serve` no longer starts an
-engine child for it. The built-in dashboards, structured queries and the
-analytics tools need no engine and are unaffected.
+twillingate no longer carries a SQL engine. SQL (SQL widgets, `query`'s
+`sql` and the start-up check of the users' SQL widgets) runs on an external
+SQL engine at `SQL_ENGINE_SOCKET` (see `docs/deployment.md`, "External SQL
+engine"); everything else, the built-in dashboards, structured queries,
+the analytics tools and the daily pass, runs in Go in the server and needs
+no engine.
 
-- **What breaks:** SQL without an engine. With `SQL_ENGINE_SOCKET` unset, a
-  stored SQL widget stays on its dashboard, not archived, and its card
-  says "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)" while the
-  rest of the dashboard loads. Adding or previewing a SQL widget, and
-  `query` with `sql`, are refused with the same message (`invalid`, `400`
-  over REST), and the component list leaves `sql` out.
-- **Before the upgrade**, list your SQL widgets: `list_dashboards`, then
-  each user dashboard's widgets with `source.type` `sql`. With none, and
-  no script that sends `query` SQL, nothing else needs doing.
-- **What to do**, either: set `SQL_ENGINE_SOCKET` to the socket of a
-  running engine, which brings every SQL path back as it was; or convert
-  the SQL widgets to structured `query` widgets in the console's editor
-  (a remote table has no `query` form and needs the engine).
-- **Scoped columns:** a SQL widget that reads `:project` now sees only that
-  project's `attr_<key>` columns. Naming a key the project never sent is
-  an error ("Referenced column … not found") where it read NULL. Rewrite
-  such a widget to name only the project's keys.
-- **Start-up check:** a console whose engine speaks another protocol
-  version fails to start, naming both; one whose engine does not answer
-  logs a warning and goes on, and SQL is refused with "the SQL engine
-  failed" until it answers. An ingest-only process and the CLI commands
-  call the engine only to check a system widget that reads SQL (none
-  today). The first start after the upgrade also checks the users' SQL
-  widgets through the engine in the background; on an engine still loading
-  the event files a check may time out, widget by widget, and is logged as
-  unchecked, not failing. The next start checks them again.
+- **What changes:**
+  - SQL needs the external engine. With `SQL_ENGINE_SOCKET` unset, a stored
+    SQL widget stays on its dashboard, not archived, and its card says "SQL
+    needs an external SQL engine (SQL_ENGINE_SOCKET)" while the rest of the
+    dashboard loads. Adding or previewing a SQL widget, and `query` with
+    `sql`, are refused with the same message (`invalid`, `400` over REST),
+    and the component list leaves `sql` out.
+  - `twillingate engine` and `twillingate engine -check` are gone: an
+    unknown command. Drop them from scripts and health checks; `twillingate
+    version` shows the binary starts.
+  - `ENGINE_MEMORY_LIMIT` and `ENGINE_MAX_CHILDREN` are ignored. An install
+    that still sets them starts normally and logs one warning at start
+    naming them; delete them from `twillingate.env` or `.env` at leisure.
+    The `engine/` directory beside the database is no longer used and may
+    be deleted.
+  - One static binary (no cgo), about 33 MB where it was 83: no glibc
+    floor, so any 64-bit Linux on amd64 or arm64 runs it. 32-bit ARM is
+    still not built.
+  - The image is distroless (`gcr.io/distroless/static-debian12`): the
+    binary, CA certificates and time zone data, about 52 MB on disk where
+    it was 230. No shell, no package manager: `docker compose exec
+    twillingate sh` fails, while `docker compose exec twillingate
+    twillingate …` works as before. It still runs as uid and gid 10001,
+    with the same `/var/lib/twillingate` volume and environment, so an
+    existing volume needs nothing.
+  - **Scoped columns:** a SQL widget that reads `:project` now sees only
+    that project's `attr_<key>` columns. Naming a key the project never sent
+    is an error ("Referenced column … not found") where it read NULL.
+    Rewrite such a widget to name only the project's keys.
+- **Before the upgrade**, decide on your SQL widgets. List them:
+  `list_dashboards`, then each user dashboard's widgets with `source.type`
+  `sql`. With none, and no script that sends `query` SQL, nothing needs
+  doing. Otherwise, either set `SQL_ENGINE_SOCKET` to the socket of a
+  running engine that speaks the DuckDB dialect, which brings every SQL
+  path back as it was; or convert the SQL widgets to structured `query`
+  widgets in the console's editor (a remote table has no `query` form and
+  needs the engine). Under compose, move anything that ran a shell in the
+  twillingate container to a throwaway container (`docker run --rm
+  --volumes-from …`), as `docs/deployment.md` does for listing `raw/`.
+- **After the upgrade:**
+  - Check the log at start (`journalctl -u twillingate`, `docker compose
+    logs twillingate`) for the warning naming `ENGINE_*` settings as
+    ignored; delete the ones it names.
+  - With no engine set, open a dashboard that holds a SQL widget: its card
+    shows "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)" and the
+    other cards load.
+  - With an engine set, a console whose engine speaks another protocol
+    version fails to start, naming both; one whose engine does not answer
+    logs a warning and goes on, and SQL is refused with "the SQL engine
+    failed" until it answers. The first start also checks the users' SQL
+    widgets through the engine in the background; on an engine still
+    loading the event files a check may time out, widget by widget, and is
+    logged as unchecked, not failing. The next start checks them again.
 
-Rollback: install the previous release; nothing on disk changed.
+Rollback: install the previous release (the installer with `--version`, or
+`TWILLINGATE_VERSION` in `.env`); nothing on disk changed. It needs glibc
+2.35 or newer, and starts an engine child for SQL as before.

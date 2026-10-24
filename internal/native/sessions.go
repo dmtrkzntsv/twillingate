@@ -28,8 +28,8 @@ var viewColumns = []string{
 // in group.day) rather than reading a row group.
 const gapIndex = -2
 
-// scanSessions reads project's sessions of r, as the reader's sessions
-// view holds them (rules never apply): the rows of the current session
+// scanSessions reads project's sessions of r, as the sessions table holds
+// them (rules never apply): the rows of the current session
 // files (archive.Files.Sessions) whose day is in r, with the columns cols
 // (a session file lacking one reads it all null); and, for each day of r
 // no current file covers (SessionGaps), the sessions derived from that

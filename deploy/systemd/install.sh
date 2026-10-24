@@ -43,21 +43,12 @@ arch() {
 }
 
 # Refuse a host the binary cannot run on in every mode: a hand-unpacked
-# tarball on musl or an old glibc fails here with its reason, not later with
-# a loader error.
+# tarball on another architecture fails here with its reason, not later with
+# an exec format error. The binary is static, so any libc will do.
 a="$(arch)" || case "$(uname -m)" in
   armv7l|armv6l) die "32-bit ARM is no longer built; install a 64-bit OS (Raspberry Pi 3, 4, 5 and Zero 2 W run one)" ;;
   *) die "unsupported architecture: $(uname -m)" ;;
 esac
-# The binary links glibc 2.35 or newer (DuckDB, cgo): Debian 12, Ubuntu
-# 22.04 or later. Alpine (musl) has none.
-# getconf exits non-zero on musl; set -e must not end the run before the
-# message below.
-glibc="$(getconf GNU_LIBC_VERSION 2>/dev/null || true)"
-glibc="${glibc#glibc }"
-[ -n "$glibc" ] || die "needs glibc 2.35 or newer; this system has none (Alpine? use the Docker image)"
-[ "$(printf '%s\n2.35\n' "$glibc" | sort -V | head -n1)" = 2.35 ] ||
-  die "needs glibc 2.35 or newer, found $glibc (Debian 12, Ubuntu 22.04 or later)"
 
 # The script lives at deploy/systemd/install.sh, so the checkout (or the
 # unpacked tarball) root is two directories up. Under `curl | bash` there is

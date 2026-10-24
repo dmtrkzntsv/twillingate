@@ -2,7 +2,6 @@ package native
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -209,41 +208,6 @@ func engineFixture(t testing.TB) *archivetest.Files {
 	return f
 }
 
-// duckTable runs sql (its ranges spelled as %[1]s and %[2]s, from and to)
-// and returns its rows as the engine formats them: NULL as "".
-func duckTable(t *testing.T, f *archivetest.Files, sql, from, to string) [][]string {
-	t.Helper()
-	return duckTableWith(t, f, engineRules, sql, from, to)
-}
-
-// duckTableWith is duckTable under rules.
-func duckTableWith(t *testing.T, f *archivetest.Files, rules archive.Rules, sql, from, to string) [][]string {
-	t.Helper()
-	q := fmt.Sprintf(sql, from, to)
-	res, err := f.Reader.Query(context.Background(), q, 0, rules)
-	if err != nil {
-		t.Fatalf("%v\n%s", err, q)
-	}
-	out := make([][]string, 0, len(res.Rows))
-	for _, row := range res.Rows {
-		r := make([]string, len(row))
-		for j, v := range row {
-			switch x := v.(type) {
-			case nil:
-				r[j] = ""
-			case json.Number:
-				r[j] = string(x)
-			case string:
-				r[j] = x
-			default:
-				r[j] = fmt.Sprint(x)
-			}
-		}
-		out = append(out, r)
-	}
-	return frozenTable(t, q, rules, out)
-}
-
 // sameCell says whether two cells are equal: as strings, or as numbers
 // within a rounding error (sums of doubles depend on their order).
 func sameCell(a, b string) bool {
@@ -271,10 +235,10 @@ func sameTable(t *testing.T, got, want [][]string) {
 	}
 }
 
-// The where clause of project 1 over a range, for duckTable's SQL.
+// The where clause of project 1 over a range, for goldenTable's SQL.
 const inRange = `"project_id" = 1 AND "day" BETWEEN DATE '%[1]s' AND DATE '%[2]s'`
 
-func TestKindsMatchDuckDB(t *testing.T) {
+func TestKindsMatchGolden(t *testing.T) {
 	f := engineFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	type tc struct {
@@ -521,17 +485,7 @@ func TestKindsMatchDuckDB(t *testing.T) {
 			if !slices.Equal(res.Columns, c.cols) {
 				t.Fatalf("columns %q, want %q", res.Columns, c.cols)
 			}
-			var want [][]string
-			for _, sql := range c.sql {
-				want = append(want, duckTable(t, f, sql, c.from, c.to)...)
-			}
-			if c.prev {
-				from, to := date(t, c.from), date(t, c.to)
-				days := int(to.Time().Sub(from.Time()).Hours()/24) + 1
-				pf := from.Time().AddDate(0, 0, -days).Format(time.DateOnly)
-				pt := from.Time().AddDate(0, 0, -1).Format(time.DateOnly)
-				want[0] = append(want[0], duckTable(t, f, c.sql[0], pf, pt)[0]...)
-			}
+			want := goldenTables(t, c.sql, c.from, c.to, c.prev, res.Rows)
 			if len(want) == 0 {
 				t.Fatal("the SQL returns no rows: a weak case")
 			}
@@ -1002,10 +956,9 @@ func TestRunRetriesVanishedFiles(t *testing.T) {
 	}
 }
 
-// A metric's round prints as DuckDB prints ROUND of a DOUBLE: half away
-// from zero, round 0 as an integer.
-func TestRoundMatchesDuckDB(t *testing.T) {
-	f := archivetest.New(t)
+// A metric's round prints as the golden says the old query engine printed
+// ROUND of a DOUBLE: half away from zero, round 0 as an integer.
+func TestRoundMatchesGolden(t *testing.T) {
 	xs := []float64{2.5, -2.5, 0.125, 1.005, 2, 1234.5678, -0.004, 0.0001234}
 	for _, places := range []int{0, 1, 2, 3, 6} {
 		var sel []string
@@ -1019,9 +972,9 @@ func TestRoundMatchesDuckDB(t *testing.T) {
 			}
 			got = append(got, value{f: x}.round(&places).String())
 		}
-		want := duckTable(t, f, "SELECT "+strings.Join(sel, ", ")+" WHERE '%[1]s' = '%[2]s'", "", "")
+		want := goldenTable(t, "SELECT "+strings.Join(sel, ", ")+" WHERE '%[1]s' = '%[2]s'", "", "", [][]string{got})
 		if !slices.Equal(got, want[0]) {
-			t.Errorf("round %d: %q, want DuckDB's %q", places, got, want[0])
+			t.Errorf("round %d: %q, want the golden's %q", places, got, want[0])
 		}
 	}
 	if got := intValue(7).round(ptr(2)).String(); got != "7" {

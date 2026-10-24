@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # End-to-end smoke test: boot the real binary on a scratch database, send a
 # pageview, an app screen view and a custom event through the single ingest
-# endpoint, and verify all three rows land.
+# endpoint, and verify all three rows land. SMOKE_BIN names another binary
+# (a release tarball's), ./twillingate by default.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+bin="${SMOKE_BIN:-./twillingate}"
 port="${SMOKE_PORT:-18080}"
 base="http://127.0.0.1:$port"
 dir="$(mktemp -d)"
@@ -19,24 +21,24 @@ fail() { echo "SMOKE FAIL: $*" >&2; sed 's/^/  server: /' "$dir/log" >&2 || true
 
 export DATABASE_DSN="sqlite://$dir/smoke.db"
 
-# The engine child (DuckDB, cgo) starts from this binary and answers.
-./twillingate engine -check | grep -q '^engine ok: 42 ' || fail "engine -check failed"
+# The binary starts and reports its version.
+"$bin" version > /dev/null || fail "version failed"
 
 # Project configuration is registry-first now: create the project and issue
 # an ingest key via the CLI (against the same DATABASE_DSN) before the
 # server ever boots, instead of writing a local projects.json. A fresh
 # database's first project is id 1.
-./twillingate project create -name "Smoke" \
+"$bin" project create -name "Smoke" \
     -origin "http://localhost" \
   || fail "project create failed"
-key=$(./twillingate key issue -project-id 1 -label smoke | grep -o 'ak_[0-9a-f]*' | head -1)
+key=$("$bin" key issue -project-id 1 -label smoke | grep -o 'ak_[0-9a-f]*' | head -1)
 [ -n "$key" ] || fail "key issue failed"
 
 env INGEST_ADDR="127.0.0.1:$port" \
     GEO_DSN="none://" \
     LOG_LEVEL=debug LOG_FORMAT=text \
     BUFFER_FLUSH_INTERVAL=200ms \
-    ./twillingate serve > "$dir/log" 2>&1 &
+    "$bin" serve > "$dir/log" 2>&1 &
 pid=$!
 
 for _ in $(seq 1 50); do

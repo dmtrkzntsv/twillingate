@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -242,8 +241,7 @@ func TestIdentities(t *testing.T) {
 // break down and measures' attr_key finds no column, without an error.
 func TestProductAttributesWithoutAnyAttribute(t *testing.T) {
 	h, cs := newTestHost(t)
-	dir := t.TempDir()
-	raw := filepath.Join(dir, "raw")
+	raw := filepath.Join(t.TempDir(), "raw")
 	log, err := archive.OpenLog(raw)
 	if err != nil {
 		t.Fatal(err)
@@ -259,12 +257,6 @@ func TestProductAttributesWithoutAnyAttribute(t *testing.T) {
 		t.Fatal(err)
 	}
 	log.Close()
-	eng, err := hostEngine(dir, raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { eng.Close() })
-	h.sql = archivetest.ServeSQL(t, raw, eng).Client(t)
 	h.native = native.New(native.Options{Dir: raw})
 	args := map[string]any{"project_id": 1, "from": "2026-08-20", "to": "2026-08-20"}
 	res := callTool(t, cs, "product_attributes", args)

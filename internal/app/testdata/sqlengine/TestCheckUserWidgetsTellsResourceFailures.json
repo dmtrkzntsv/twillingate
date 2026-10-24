@@ -1,0 +1,3 @@
+[
+{"mode":"shape","sql":"SELECT SUM(visitors) AS value FROM v_views_daily WHERE project_id = CAST($tw_project AS BIGINT)","scope":1,"confine":true,"max_rows":0,"answers":[{"kind":"refused","message":"\"v_views_daily\" is not a table here; SQL here reads only the tables events, views, product, measures, sessions, identities and aliases, by their plain names, and its own WITH names"}]}
+]

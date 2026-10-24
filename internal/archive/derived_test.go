@@ -1,8 +1,5 @@
 package archive
 
-// The DuckDB COPYs of sessionsSelect, identitiesSelect and aliasesSelect
-// these tests compare with leave with DuckDB in step 6.
-
 import (
 	"context"
 	"encoding/json"
@@ -15,15 +12,8 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/parquet-go/parquet-go"
 )
-
-// eventsOf is files read as one relation with every fixed column at its
-// type: a column a file lacks (written before it existed) reads NULL. It
-// is the relation the pass derived its files from through DuckDB before
-// the derivers moved to Go (derived.go), kept as their oracle.
-func eventsOf(files []string) string {
-	return "(" + emptyRow() + " UNION ALL BY NAME SELECT * FROM read_parquet(" + sqlList(files) + ", union_by_name=true))"
-}
 
 // derivedCase is the events files one parity case derives from. untimed
 // says some view has no ts, which the Go sessions read at the epoch
@@ -220,13 +210,11 @@ func derivedCases(t *testing.T, f fixture) []derivedCase {
 			return []string{month}
 		}},
 		{name: "a DuckDB-written month", build: func(t *testing.T, dir string) []string {
-			days := []string{
-				f.duckDay(t, dir, "2026-09-01.parquet", manyEvents(t, "2026-09-01", 3000, 4)),
-				f.duckDay(t, dir, "2026-09-02.parquet", manyEvents(t, "2026-09-02", 3000, 5)),
-				f.duckDay(t, dir, "2026-09-03.parquet", handWritten(t)),
-			}
-			// One row group spanning the days, every family.
-			return []string{f.duckCopy(t, filepath.Join(dir, "2026-09.parquet"), mergeQuery(days))}
+			// The old dump of manyEvents(t, "2026-09-01", 3000, 4),
+			// manyEvents(t, "2026-09-02", 3000, 5) and handWritten(t), each
+			// a day, merged by the old merge: one row group spanning the
+			// days, every family.
+			return []string{oldFile(t, dir, "derived-month", "2026-09.parquet")}
 		}},
 		{name: "many rows over every file", build: func(t *testing.T, dir string) []string {
 			var in []string
@@ -237,9 +225,8 @@ func derivedCases(t *testing.T, f fixture) []derivedCase {
 			return in
 		}},
 		{name: "files written before the new columns", build: func(t *testing.T, dir string) []string {
-			old := f.goDay(t, dir, "2026-10-10.parquet", logOf(t, derive...))
-			older := f.duckCopy(t, filepath.Join(dir, "2026-10-10.old.parquet"),
-				"SELECT * EXCLUDE (install_id, user_name, group_name) FROM read_parquet("+quote(old)+")")
+			// The old dump of derive's log, without install_id, user_name and group_name.
+			older := oldFile(t, dir, "derived-before-new-columns", "2026-10-10.old.parquet")
 			return []string{older, f.goDay(t, dir, "2026-10-12.parquet", logOf(t, next...))}
 		}},
 		{name: "hand-written", build: func(t *testing.T, dir string) []string {
@@ -261,16 +248,17 @@ func derivedCases(t *testing.T, f fixture) []derivedCase {
 	}
 }
 
-// TestGoDerivedFilesMatchDuckDB: over every case's events files, the Go
-// sessions, identities and aliases files equal DuckDB's COPY of
-// sessionsSelect, identitiesSelect and aliasesSelect over eventsOf, read
-// through DuckDB: the same columns of the same types, the same rows, in
-// the SELECTs' order. Identities and aliases have one row per key, so
-// their rows are compared in order; sessions tie on their ORDER BY (an
-// actor under two kinds), so they are compared as a multiset and the Go
-// file's order is checked.
-func TestGoDerivedFilesMatchDuckDB(t *testing.T) {
-	f := newFixtureWith(t, 4, "512MB")
+// TestGoDerivedFilesMatchGolden: over every case's events files, the Go
+// sessions, identities and aliases files, read back, are their goldens
+// (the files the old query engine's COPY of sessionsSelect,
+// identitiesSelect and aliasesSelect wrote over the files as one
+// relation): the same columns of the same types, the same rows, in the
+// SELECTs' order. Identities and aliases have one row per key, so their
+// rows are compared in order; sessions tie on their ORDER BY (an actor
+// under two kinds), so they are compared as a multiset and the Go file's
+// order is checked.
+func TestGoDerivedFilesMatchGolden(t *testing.T) {
+	f := newFixture(t)
 	for i, c := range derivedCases(t, f) {
 		t.Run(c.name, func(t *testing.T) {
 			dir := filepath.Join(f.log.Dir(), fmt.Sprintf("case-%d", i))
@@ -279,77 +267,31 @@ func TestGoDerivedFilesMatchDuckDB(t *testing.T) {
 			if err := os.MkdirAll(out(""), 0o750); err != nil {
 				t.Fatal(err)
 			}
-			src := eventsOf(inputs)
 			if !c.untimed {
-				f.duckCopy(t, out("duck-sessions.parquet"), sessionsSelect(src))
 				if err := deriveSessions(context.Background(), inputs, out("go-sessions.parquet")); err != nil {
 					t.Fatal(err)
 				}
-				f.sameDerived(t, out("go-sessions.parquet"), out("duck-sessions.parquet"), "project_id, day, started_at, actor_id")
-				if key := c.name + " sessions"; !skipDigest(t, key) {
-					want := frozen(t, key, f.answerOf(t, out("duck-sessions.parquet"), "*", false))
-					sameAnswer(t, "Go sessions", f.answerOf(t, out("go-sessions.parquet"), "*", false), want)
-				}
+				p := readTable(t, out("go-sessions.parquet"))
+				inOrder(t, p, "project_id", "day", "started_at", "actor_id")
+				fileFrozen(t, c.name+" sessions", "Go sessions", p, false)
 			}
 			fold, err := foldIdentities(context.Background(), inputs)
 			if err != nil {
 				t.Fatal(err)
 			}
-			f.duckCopy(t, out("duck-identities.parquet"), identitiesSelect(src))
 			if err := fold.writeIdentities(out("go-identities.parquet")); err != nil {
 				t.Fatal(err)
 			}
-			f.sameDerived(t, out("go-identities.parquet"), out("duck-identities.parquet"), "")
-			if key := c.name + " identities"; !skipDigest(t, key) {
-				want := frozen(t, key, f.answerOf(t, out("duck-identities.parquet"), "*", true))
-				sameAnswer(t, "Go identities", f.answerOf(t, out("go-identities.parquet"), "*", true), want)
-			}
-			f.duckCopy(t, out("duck-aliases.parquet"), aliasesSelect(src))
+			ids := readTable(t, out("go-identities.parquet"))
+			fileFrozen(t, c.name+" identities", "Go identities", ids, true)
 			if err := fold.writeAliases(out("go-aliases.parquet")); err != nil {
 				t.Fatal(err)
 			}
-			f.sameDerived(t, out("go-aliases.parquet"), out("duck-aliases.parquet"), "")
-			if key := c.name + " aliases"; !skipDigest(t, key) {
-				want := frozen(t, key, f.answerOf(t, out("duck-aliases.parquet"), "*", true))
-				sameAnswer(t, "Go aliases", f.answerOf(t, out("go-aliases.parquet"), "*", true), want)
-			}
-			if n := f.values(t, "SELECT count(*) FROM read_parquet("+quote(out("duck-identities.parquet"))+")"); c.name != "no views and no identities" && eq(n, []string{"[0]"}) {
+			fileFrozen(t, c.name+" aliases", "Go aliases", readTable(t, out("go-aliases.parquet")), true)
+			if c.name != "no views and no identities" && len(ids.rows) == 0 {
 				t.Errorf("case %s has no identities to compare", c.name)
 			}
 		})
-	}
-}
-
-// sameDerived fails unless the Go file goFile equals DuckDB's duck: the
-// same DESCRIBE and rows. With orderBy empty the rows are compared in file
-// order; otherwise as a multiset, and goFile's rows must be in orderBy's
-// order (NULLs last).
-func (f fixture) sameDerived(t *testing.T, goFile, duck, orderBy string) {
-	t.Helper()
-	if got, want := f.describe(t, goFile), f.describe(t, duck); !eq(got, want) {
-		t.Fatalf("%s columns\n%v\nwant DuckDB's\n%v", filepath.Base(goFile), got, want)
-	}
-	rel := func(p string) string { return "read_parquet(" + quote(p) + ", file_row_number=true)" }
-	if orderBy == "" {
-		q := func(p string) []string {
-			return f.values(t, "SELECT * EXCLUDE (file_row_number) FROM "+rel(p)+" ORDER BY file_row_number")
-		}
-		if got, want := q(goFile), q(duck); !eq(got, want) {
-			for i := range max(len(got), len(want)) {
-				if i >= len(got) || i >= len(want) || got[i] != want[i] {
-					t.Fatalf("%s: %d rows, DuckDB's %d; first difference at row %d:\n%v\nwant\n%v",
-						filepath.Base(goFile), len(got), len(want), i, got[min(i, len(got)-1)], want[min(i, len(want)-1)])
-				}
-			}
-		}
-		return
-	}
-	f.sameRows(t, "read_parquet("+quote(goFile)+")", "read_parquet("+quote(duck)+")")
-	keys := func(order string) []string {
-		return f.values(t, "SELECT "+orderBy+" FROM "+rel(goFile)+" ORDER BY "+order)
-	}
-	if got, want := keys("file_row_number"), keys(orderBy); !eq(got, want) {
-		t.Fatalf("%s is not in %s order", filepath.Base(goFile), orderBy)
 	}
 }
 
@@ -367,7 +309,10 @@ func TestGoSessionsOfAViewWithoutATS(t *testing.T) {
 	if err := deriveSessions(context.Background(), []string{in}, out); err != nil {
 		t.Fatal(err)
 	}
-	got := f.values(t, "SELECT CAST(started_at AS VARCHAR), views, entry_path FROM read_parquet("+quote(out)+")")
+	var got []string
+	for _, r := range readTable(t, out, "started_at", "views", "entry_path").pick(t, "started_at", "views", "entry_path") {
+		got = append(got, fmt.Sprint([]any{tsText(t, r[0]), r[1], r[2]}))
+	}
 	if want := []string{"[1970-01-01 00:00:00 1 /x]", "[2026-10-11 10:00:00 1 /y]"}; !eq(got, want) {
 		t.Fatalf("sessions = %v, want %v", got, want)
 	}
@@ -382,7 +327,9 @@ func TestDerivedFilesRefuseAColumnOfAnotherType(t *testing.T) {
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		t.Fatal(err)
 	}
-	bad := f.duckCopy(t, filepath.Join(dir, "2026-10-11.parquet"), "SELECT 'views' AS family, CAST(1 AS INTEGER) AS ts")
+	bad := filepath.Join(dir, "2026-10-11.parquet")
+	writeOdd(t, bad, parquet.NewSchema("bad", parquet.Group{"family": parquet.Optional(parquet.String()), "ts": parquet.Optional(parquet.Int(32))}),
+		map[string]parquet.Value{"family": parquet.ByteArrayValue([]byte("views")), "ts": parquet.Int32Value(1)})
 	out := f.project1("sessions.parquet")
 	err := deriveSessions(context.Background(), []string{bad}, out)
 	if err == nil || !strings.Contains(err.Error(), "2026-10-11.parquet") || !strings.Contains(err.Error(), "column ts") {

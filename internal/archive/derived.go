@@ -13,11 +13,10 @@ import (
 	"github.com/parquet-go/parquet-go"
 )
 
-// The derived files written in Go, without the engine: each reads the
-// events files it comes from row group by row group, only the columns it
-// needs, as eventsOf read them through DuckDB (a column a file lacks reads
-// NULL, a repeated id counts each time), and writes exactly the rows of
-// sessionsSelect, identitiesSelect or aliasesSelect, in their order.
+// The derived files written in Go: each reads the events files it comes
+// from row group by row group, only the columns it needs, unioned by name
+// (a column a file lacks reads NULL, a repeated id counts each time), and
+// writes exactly the rows derive.go defines, in their order.
 
 var (
 	sessionsColumns = []pqColumn{
@@ -176,14 +175,14 @@ type viewPart struct {
 	file, group, lo, hi int
 }
 
-// viewCols is the columns of a view sessionsSelect takes from its entry or
+// viewCols is the columns of a view a session takes from its entry or
 // exit view, beside what Sessionize reads.
 type viewCols struct {
 	actorKind, host, path, referrer, utmSource, utmMedium, utmCampaign value
 }
 
 // sessionsKey is the project and day a session belongs to, the first two
-// keys of sessionsSelect's partition and of its order.
+// keys of the sessions' partition and of their order.
 type sessionsKey struct{ project, day value }
 
 func cmpSessionsKey(a, b sessionsKey) int {
@@ -193,16 +192,16 @@ func cmpSessionsKey(a, b sessionsKey) int {
 	return cmpNullsLast(a.day, b.day)
 }
 
-// deriveSessions writes the sessions of inputs' views as out:
-// sessionsSelect over eventsOf(inputs). It works one project's day at a
+// deriveSessions writes the sessions of inputs' views as out, as derive.go
+// defines them. It works one project's day at a
 // time: it reads each row group's family, project_id and day to find the
 // days its views are in, then, for each (project, day) in order (NULL
 // last), the groups holding it, keeping only those views. A group that
-// spans days, an older DuckDB file's or a Go-written one cut at a day only
+// spans days, an older file the old query engine wrote or a Go-written one cut at a day only
 // past dayCutRows rows (eventsCut), is read once per day it holds.
 //
 // A view without a ts is sessionized at the epoch, as native's
-// deriveSessions does; sessionsSelect would read it otherwise. Ingest
+// deriveSessions does; the old SQL read it otherwise. Ingest
 // never writes one.
 func deriveSessions(ctx context.Context, inputs []string, out string) error {
 	files, err := openAll(inputs, sessionsReads)
@@ -290,7 +289,7 @@ func viewsOf(files []*eventsFile, parts []viewPart, k sessionsKey) ([]SessionVie
 	return views, extra, nil
 }
 
-// writeSessions writes the sessions of k's views, in sessionsSelect's
+// writeSessions writes the sessions of k's views, in the sessions'
 // order: by started_at, then actor_id (NULL last).
 func writeSessions(write func(row) error, buf row, k sessionsKey, views []SessionView, extra []viewCols) error {
 	sessions := Sessionize(views)
@@ -327,7 +326,7 @@ func writeSessions(write func(row) error, buf row, k sessionsKey, views []Sessio
 var identitiesReads = []string{"family", "project_id", "ts", "user_id", "user_name", "group_id", "group_name", "install_id"}
 
 // identityFold is the identities and aliases of a project's events files,
-// by project_id: identitiesSelect's and aliasesSelect's groups, folded
+// by project_id: the identities' and aliases' groups (derive.go), folded
 // one event at a time. An identity's events without a ts count in its
 // views and events but name it and date it no more than in the SQL
 // (arg_max, min and max skip them), so they are kept apart.
@@ -407,7 +406,7 @@ func (fo *identityFold) see(fam, project, ts, user, userName, group, groupName, 
 	}
 }
 
-// writeIdentities writes the identities as out, in identitiesSelect's
+// writeIdentities writes the identities as out, in the identities'
 // order: project_id, kind ('group' before 'user'), id.
 func (fo *identityFold) writeIdentities(out string) error {
 	projects := map[value]bool{}
@@ -458,7 +457,7 @@ func (fo *identityFold) writeIdentities(out string) error {
 	})
 }
 
-// writeAliases writes the aliases as out, in aliasesSelect's order:
+// writeAliases writes the aliases as out, in the aliases' order:
 // project_id, user_id, install_id.
 func (fo *identityFold) writeAliases(out string) error {
 	return writeDerived(out, aliasesColumns, func(write func(row) error) error {

@@ -1,9 +1,10 @@
 // Package golden keeps a test's expected answers in a file beside it:
 // testdata/<test>.golden.json, one JSON object of answers by key, the
 // keys sorted and the values indented, so a change to an answer reads as
-// a diff. A test asks for each answer by key, handing in the reference's
-// own (an oracle's); with update the reference's answer is written, and
-// without it the file's is returned for the test to compare both with.
+// a diff. A test asks for each answer by key, handing in the answer of
+// the code under test; with update that answer is written (or the file's
+// own, when the test finds it equivalent: Previous), and without it the
+// file's is returned for the test to compare the two.
 package golden
 
 import (
@@ -29,8 +30,9 @@ type Set struct {
 
 	mu     sync.Mutex
 	values map[string]json.RawMessage
-	asked  map[string]bool // the keys this run asked for
-	kept   map[string]bool // the keys this run kept, with update
+	prev   map[string]json.RawMessage // the file as this run found it
+	asked  map[string]bool            // the keys this run asked for
+	kept   map[string]bool            // the keys this run kept, with update
 }
 
 // sets holds each file's Set, so the subtests of a test share one.
@@ -58,19 +60,22 @@ func Open(t testing.TB, path string, update bool) *Set {
 	if s := sets.m[path]; s != nil {
 		return s
 	}
-	s := &Set{path: path, update: update, values: map[string]json.RawMessage{}, asked: map[string]bool{}, kept: map[string]bool{}}
+	s := &Set{path: path, update: update, values: map[string]json.RawMessage{}, prev: map[string]json.RawMessage{},
+		asked: map[string]bool{}, kept: map[string]bool{}}
 	b, err := os.ReadFile(path)
 	switch {
-	case update && !filtered():
-		// Every case runs: the file is written anew, so an answer no case
-		// asks for any more goes.
 	case errors.Is(err, fs.ErrNotExist):
 	case err != nil:
 		t.Fatalf("golden: %v", err)
 	default:
-		if err := json.Unmarshal(b, &s.values); err != nil {
+		if err := json.Unmarshal(b, &s.prev); err != nil {
 			t.Fatalf("golden: %s: %v", path, err)
 		}
+	}
+	if !update || filtered() {
+		// With update and every case running, the file is written anew,
+		// so an answer no case asks for any more goes.
+		maps.Copy(s.values, s.prev)
 	}
 	if sets.m == nil {
 		sets.m = map[string]*Set{}
@@ -112,16 +117,16 @@ func filtered() bool {
 }
 
 // Get returns the answer kept under key, decoded into a T. With the Set's
-// update on, it first keeps oracle's answer there and writes the file
-// (asking for a key twice must give the same answer), so it returns oracle
-// as read back from JSON.
-func Get[T any](t testing.TB, s *Set, key string, oracle T) T {
+// update on, it first keeps got (the code under test's answer) there and
+// writes the file (asking for a key twice must give the same answer), so
+// it returns got as read back from JSON.
+func Get[T any](t testing.TB, s *Set, key string, got T) T {
 	t.Helper()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.asked[key] = true
 	if s.update {
-		b, err := Compact(oracle)
+		b, err := Compact(got)
 		if err != nil {
 			t.Fatalf("golden: %s: %v", key, err)
 		}
@@ -135,13 +140,33 @@ func Get[T any](t testing.TB, s *Set, key string, oracle T) T {
 	}
 	raw, ok := s.values[key]
 	if !ok {
-		t.Fatalf("golden: %s has no answer %q; run the test with -update-golden to keep the reference's", s.path, key)
+		t.Fatalf("golden: %s has no answer %q; run the test with -update-golden to keep the code's", s.path, key)
 	}
 	var out T
 	if err := json.Unmarshal(raw, &out); err != nil {
 		t.Fatalf("golden: %s: %q: %v", s.path, key, err)
 	}
 	return out
+}
+
+// Previous returns the answer the file held under key when the run began,
+// decoded into a T, and whether it held one. With update, a test that
+// finds it equivalent to its own answer (equal but for an order or a
+// rounding the comparison allows) hands it to Get instead, so the file
+// changes only where an answer does.
+func Previous[T any](t testing.TB, s *Set, key string) (T, bool) {
+	t.Helper()
+	s.mu.Lock()
+	raw, ok := s.prev[key]
+	s.mu.Unlock()
+	var out T
+	if !ok {
+		return out, false
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("golden: %s: %q: %v", s.path, key, err)
+	}
+	return out, true
 }
 
 // write writes every answer, keys sorted, each value indented but for an

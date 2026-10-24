@@ -51,13 +51,9 @@ func oneComponent(t *testing.T, entryJSON string) Component {
 	return cs[0]
 }
 
-// TestMain lets the test binary serve as the engine child archivetest's
-// files spawn (os.Executable), before it runs any test, and removes the
-// system fixtures' template (systemTemplate) after the last.
+// TestMain removes the system fixtures' template (systemTemplate) after
+// the last test.
 func TestMain(m *testing.M) {
-	if archivetest.Child() {
-		return
-	}
 	code := m.Run()
 	removeSystemTemplate()
 	os.Exit(code)
@@ -100,24 +96,28 @@ func svcDB(t *testing.T, svc *Service) *readsql.DB {
 	return storeDB(t, filesOf(t, svc).st)
 }
 
-// testFiles is an archivetest directory served by a test SQL engine
-// (archivetest.ServeSQL), as app's client reaches the console's raw/: it
-// is the SQL a Service runs widgets on (its Query is the engine's
-// client's), and options gives a Service its files, guards and the
-// store's live projects. No test here makes a rule.
+// testFiles is an archivetest directory and a scripted SQL engine
+// (archivetest.FakeSQL) answering for it, as app's client reaches the
+// console's raw/: it is the SQL a Service runs widgets on (its Query is
+// the engine's client's), and options gives a Service its files, guards
+// and the store's live projects. The engine answers from the test's file
+// under testdata/sqlengine (FakeSQL.LoadTest), recorded from a real
+// engine over the events the test writes, and from the test's own
+// scripts. No test here makes a rule.
 type testFiles struct {
 	*archivetest.Files
 	st      store.Store
 	timeout time.Duration
 	maxRows int
-	sqle    *archivetest.SQLEngine
+	sqle    *archivetest.FakeSQL
 	client  *sqlengine.Client
 }
 
-// serveTestFiles serves af through a test SQL engine for st, until t ends.
+// serveTestFiles serves af through a scripted SQL engine for st, until t
+// ends.
 func serveTestFiles(t testing.TB, af *archivetest.Files, st store.Store, timeout time.Duration, maxRows int) *testFiles {
 	t.Helper()
-	eng := af.ServeSQL(t)
+	eng := archivetest.NewFakeSQL(t).LoadTest(t, "testdata/sqlengine")
 	return &testFiles{Files: af, st: st, timeout: timeout, maxRows: maxRows, sqle: eng, client: eng.Client(t)}
 }
 

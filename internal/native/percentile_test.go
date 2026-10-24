@@ -79,7 +79,7 @@ func vitalsFixture(t testing.TB) *archivetest.Files {
 	return f
 }
 
-// widgetSQL is a system widget's SQL for duckTable: project 1, its range
+// widgetSQL is a system widget's SQL for goldenTable: project 1, its range
 // %[1]s to %[2]s.
 func widgetSQL(t *testing.T, name string) string {
 	t.Helper()
@@ -196,9 +196,14 @@ func TestPercentilesMatchWidgets(t *testing.T) {
 			if !slices.Equal(res.Columns, c.cols) {
 				t.Fatalf("columns %q, want %q", res.Columns, c.cols)
 			}
-			want := duckTable(t, f, c.sql, from, today)
+			base, before := res.Rows, [][]string(nil)
+			if c.q.Compare != "" && len(base) > 0 { // the range's cells, then the range before's
+				w := len(base[0]) / 2
+				base, before = append([][]string{base[0][:w]}, base[1:]...), [][]string{base[0][w:]}
+			}
+			want := goldenTable(t, c.sql, from, today, base)
 			if c.q.Compare != "" {
-				want[0] = append(want[0], duckTable(t, f, c.sql, "2026-08-31", "2026-09-05")[0]...)
+				want[0] = append(slices.Clone(want[0]), goldenTable(t, c.sql, "2026-08-31", "2026-09-05", before)[0]...)
 			}
 			if len(want) < 2 && c.q.Kind != "stat" {
 				t.Fatalf("the SQL returns %d rows: a weak case", len(want))
@@ -236,7 +241,7 @@ func TestPercentileBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := duckTable(t, f, `SELECT event_name, p50, p75, w, m FROM (`+pctSQL(`"event_name"`, "true", "0.5", "0.75")+`) t(event_name, n, w, m, p50, p75) ORDER BY event_name`, today, today)
+	want := goldenTable(t, `SELECT event_name, p50, p75, w, m FROM (`+pctSQL(`"event_name"`, "true", "0.5", "0.75")+`) t(event_name, n, w, m, p50, p75) ORDER BY event_name`, today, today, res.Rows)
 	sameTable(t, res.Rows, want)
 	approx := func(b int64) string { return value{f: 2 * math.Pow(1.04, float64(b)) / 2.04}.String() }
 	if got, w := res.Rows[0][1], approx(bucketOf(20, false)); !sameCell(got, w) {

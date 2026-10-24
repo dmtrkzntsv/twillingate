@@ -13,7 +13,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
@@ -25,14 +24,9 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// TestMain serves as the engine child when the test hosts' engines spawn
-// it (archivetest.Child), and otherwise runs the package's tests, then
-// removes the seeded template's temp dir (see hostTemplate) once every
-// test has finished with it.
+// TestMain runs the package's tests, then removes the seeded template's
+// temp dir (see hostTemplate) once every test has finished with it.
 func TestMain(m *testing.M) {
-	if archivetest.Child() {
-		return
-	}
 	code := m.Run()
 	if hostTemplateDir != "" {
 		os.RemoveAll(hostTemplateDir)
@@ -90,7 +84,7 @@ func hostTemplate(t *testing.T) string {
 		if err := writeHostFiles(ctx, raw); err != nil {
 			t.Fatal(err)
 		}
-		files, err := templateFiles(ctx, t, filepath.Join(dir, "engine"), raw, st)
+		files, err := templateFiles(ctx, t, raw, st)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -161,7 +155,7 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	// test side remembers it here, keyed by the host it belongs to.
 	testDBPaths[h] = path
 	h.events = h.newHostEventCount()
-	h.ops.Presence = hostPresence{files}
+	h.ops.Presence = hostPresence{files, nat}
 
 	srv := mcp.NewServer(&mcp.Implementation{Name: "analytics", Version: "test"},
 		&mcp.ServerOptions{Instructions: serverInstructions})

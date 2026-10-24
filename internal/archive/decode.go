@@ -14,10 +14,10 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
-// A log's lines (line), read back one value at a time as DuckDB reads
-// them in logSelect: each value as json_extract_string gives it, then
-// CAST to its column's type. The native engine reads the logs with these,
-// and so does the dump.
+// A log's lines (line), read back one value at a time as the old query
+// engine read them: each value as json_extract_string gives it, then CAST
+// to its column's type. The native engine reads the logs with these, and
+// so does the dump.
 
 // ReadLine reads one line, its newline included, reusing *buf for a line
 // longer than br's buffer. The line is valid until the next call. At the
@@ -38,10 +38,10 @@ func ReadLine(br *bufio.Reader, buf *[]byte) ([]byte, error) {
 
 // DecodeLine decodes one line into its keys' raw values; object says
 // whether it is a JSON object. When it is not, a tolerant reader (the
-// reader's events view) goes on as DuckDB does: m is nil for a line it
-// skips (JSON null, or no JSON at all: the torn last line of a log ingest
-// is still writing, garbage), and empty for any other JSON (an array, a
-// number), which DuckDB reads as a line without keys, its id null.
+// native engine's) goes on as the old query engine did: m is nil for a
+// line it skips (JSON null, or no JSON at all: the torn last line of a log
+// ingest is still writing, garbage), and empty for any other JSON (an
+// array, a number), which reads as a line without keys, its id null.
 func DecodeLine(line []byte) (m map[string]json.RawMessage, object bool) {
 	if json.Unmarshal(line, &m) == nil && m != nil {
 		return m, true

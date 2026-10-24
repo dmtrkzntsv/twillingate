@@ -116,11 +116,12 @@ func identitiesFixture(t testing.TB) *archivetest.Files {
 	return f
 }
 
-// identityColumnList is the identities table's columns, for DuckDB.
+// identityColumnList is the identities table's columns, as the goldens'
+// SQL keys name them.
 var identityColumnList = `"` + strings.Join(identityColumns, `", "`) + `"`
 
 // identityRows is project's identities first seen in r (every one, r nil)
-// as the engine loads them, formatted as duckTable formats DuckDB's rows,
+// as the engine loads them, formatted as the goldens keep the rows,
 // sorted.
 func identityRows(t *testing.T, e *Engine, project int64, r *Range) [][]string {
 	t.Helper()
@@ -154,7 +155,7 @@ func listFiles(t *testing.T, e *Engine) map[int64]archive.Files {
 	return all
 }
 
-func TestIdentitiesRowsMatchDuckDB(t *testing.T) {
+func TestIdentitiesRowsMatchGolden(t *testing.T) {
 	f := identitiesFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	pdir := filepath.Join(f.Dir, strconv.Itoa(identitiesProject))
@@ -163,21 +164,21 @@ func TestIdentitiesRowsMatchDuckDB(t *testing.T) {
 		identityRows(t, e, identitiesProject, nil) // through the cache too
 
 		got := identityRows(t, e, identitiesProject, nil)
-		want := duckTable(t, f, `SELECT `+identityColumnList+` FROM identities WHERE "project_id" = 4 AND '%[1]s' = '%[2]s'`, "", "")
+		want := goldenTable(t, `SELECT `+identityColumnList+` FROM identities WHERE "project_id" = 4 AND '%[1]s' = '%[2]s'`, "", "", got)
 		sortRows(want)
 		if len(want) < 10 {
-			t.Fatalf("DuckDB has %d identities: a weak case", len(want))
+			t.Fatalf("the golden has %d identities: a weak case", len(want))
 		}
 		sameTable(t, got, want)
 
 		// Those first seen in a range, put together alone.
 		r := rng(t, "2026-09-01", today)
 		inRange := identityRows(t, e, identitiesProject, &r)
-		want = duckTable(t, f, `SELECT `+identityColumnList+` FROM identities WHERE "project_id" = 4
-			AND first_seen::DATE BETWEEN DATE '%[1]s' AND DATE '%[2]s'`, "2026-09-01", today)
+		want = goldenTable(t, `SELECT `+identityColumnList+` FROM identities WHERE "project_id" = 4
+			AND first_seen::DATE BETWEEN DATE '%[1]s' AND DATE '%[2]s'`, "2026-09-01", today, inRange)
 		sortRows(want)
 		if len(want) == 0 || len(want) == len(got) {
-			t.Fatalf("DuckDB has %d of %d identities first seen in range: a weak case", len(want), len(got))
+			t.Fatalf("the golden has %d of %d identities first seen in range: a weak case", len(want), len(got))
 		}
 		sameTable(t, inRange, want)
 
@@ -250,7 +251,7 @@ const statusSQL = `WITH s AS (SELECT e.*,
 	LEFT JOIN identities g ON g.project_id = 4 AND g.kind = 'group' AND g.id = e.group_id
 	WHERE e."project_id" = 4 AND e."day" BETWEEN DATE '%[1]s' AND DATE '%[2]s') `
 
-func TestIdentitiesQueriesMatchDuckDB(t *testing.T) {
+func TestIdentitiesQueriesMatchGolden(t *testing.T) {
 	f := identitiesFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 2})
 	const from, to = "2026-09-01", today
@@ -331,7 +332,7 @@ func TestIdentitiesQueriesMatchDuckDB(t *testing.T) {
 			if !slices.Equal(res.Columns, c.cols) {
 				t.Fatalf("columns %q, want %q", res.Columns, c.cols)
 			}
-			want := duckTable(t, f, c.sql, from, to)
+			want := goldenTable(t, c.sql, from, to, res.Rows)
 			if len(want) == 0 {
 				t.Fatal("the SQL returns no rows: a weak case")
 			}
@@ -340,9 +341,14 @@ func TestIdentitiesQueriesMatchDuckDB(t *testing.T) {
 	}
 	// The fixture is built for this: users first seen before the range,
 	// and some within it.
-	rows := duckTable(t, f, statusSQL+`SELECT us, count(DISTINCT "user_id") FROM s WHERE us IS NOT NULL GROUP BY ALL ORDER BY 1`, from, to)
+	byStatus := Query{Kind: "breakdown", Table: "events", Metrics: []Metric{{Op: "users"}}, Dimensions: []string{"user_status"},
+		Where: []Filter{{Column: "user_status", Op: "is_set"}}}
+	got := answerRows(t, e, identitiesProject, byStatus, from, to, engineRules)
+	sortRows(got) // ORDER BY 1
+	rows := goldenTable(t, statusSQL+`SELECT us, count(DISTINCT "user_id") FROM s WHERE us IS NOT NULL GROUP BY ALL ORDER BY 1`, from, to, got)
+	sameTable(t, got, rows)
 	if len(rows) != 2 || rows[0][0] != "new" || rows[1][0] != "returning" || rows[0][1] == "0" {
-		t.Errorf("DuckDB's users by status in range: %q, want both new and returning", rows)
+		t.Errorf("users by status in range: %q, want both new and returning", rows)
 	}
 }
 

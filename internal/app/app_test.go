@@ -449,6 +449,24 @@ func TestServeRejectsBadDatabaseDSN(t *testing.T) {
 	}
 }
 
+// TestServeWarnsOnceAboutTheEngineSettings: an install that still sets
+// ENGINE_MEMORY_LIMIT and ENGINE_MAX_CHILDREN gets one warning naming
+// them, before anything else can stop the start.
+func TestServeWarnsOnceAboutTheEngineSettings(t *testing.T) {
+	cfg := configtest.Load(t, map[string]string{"DATABASE_DSN": "sqlite://" + filepath.Join(t.TempDir(), "x.db"),
+		"ENGINE_MEMORY_LIMIT": "512MB", "ENGINE_MAX_CHILDREN": "2"})
+	cfg.Database = "bogus://nope"
+	var out bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&out, nil))
+	if err := Serve(context.Background(), cfg, logger, true, false); err == nil {
+		t.Fatal("want an error for an unknown DSN scheme")
+	}
+	want := "ENGINE_MEMORY_LIMIT and ENGINE_MAX_CHILDREN are ignored: SQL runs in an external SQL engine"
+	if n := strings.Count(out.String(), "level=WARN"); n != 1 || !strings.Contains(out.String(), want) {
+		t.Errorf("log =\n%s\nwant one warning: %s", out.String(), want)
+	}
+}
+
 func TestNewLogger(t *testing.T) {
 	for _, level := range []string{"debug", "info", "warn", "error", ""} {
 		if NewLogger(config.LogConfig{Level: level}) == nil {

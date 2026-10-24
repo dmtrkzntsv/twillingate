@@ -30,7 +30,7 @@ type Session struct {
 }
 
 // sessionKey is a session's key within its partition: a declared session
-// id ('id:' in sessionsSelect), or the run of undeclared views ('gap:').
+// id ('id:'), or the run of undeclared views ('gap:').
 type sessionKey struct {
 	declared bool
 	sid      string
@@ -38,10 +38,10 @@ type sessionKey struct {
 }
 
 // Sessionize sorts one day's views of one project and splits them into
-// sessions as sessionsSelect does:
+// sessions as derive.go defines them:
 //   - views are partitioned by (kind, actor_id), NULL one value and last,
 //     and ordered by whole second, then ts and id (NULL ids last, as
-//     DuckDB sorts them ascending);
+//     an ascending SQL sort puts them);
 //   - a view with a session id belongs to that id's session; any other
 //     starts a session when it is the partition's first view or comes more
 //     than sessionGapSeconds after the view before it, whichever session

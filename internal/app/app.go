@@ -80,6 +80,10 @@ type httpSurface struct {
 // only then is the pipeline cancelled — its cancellation is what triggers
 // the final flush, so it must come last or buffered events would be lost.
 func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runIngest, runConsole bool) error {
+	// Retired settings still set start nothing: say so once.
+	if w := cfg.IgnoredWarning(); w != "" {
+		logger.Warn(w)
+	}
 	st, err := store.Open(cfg.Database)
 	if err != nil {
 		return err
@@ -170,7 +174,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		runner.WithArchive(archive.New(archiveLog, logger))
 		// Form attribution (raw-first PR 5b): the process that ingests
 		// looks each submission's source up in the files a minute after
-		// it arrives (natively, no engine child) and writes its event to
+		// it arrives (natively) and writes its event to
 		// the log.
 		runner.WithAttribution(nat, archiveLog)
 	}

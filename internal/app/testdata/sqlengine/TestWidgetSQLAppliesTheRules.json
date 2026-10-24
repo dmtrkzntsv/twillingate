@@ -1,0 +1,3 @@
+[
+{"mode":"text","sql":"SELECT count(*) AS value FROM product WHERE event_name = 'signup' AND CAST($tw_project AS BIGINT) > 0","scope":1,"confine":true,"max_rows":1001,"answers":[{"columns":["value"],"rows":[["1"]]},{"columns":["value"],"rows":[["0"]]}]}
+]

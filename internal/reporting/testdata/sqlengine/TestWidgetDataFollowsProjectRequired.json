@@ -1,0 +1,5 @@
+[
+{"mode":"shape","sql":"SELECT count(*) AS value FROM views WHERE project_id = CAST($tw_project AS BIGINT)","scope":1,"confine":true,"max_rows":0,"answers":[{"columns":["value"],"rows":[]}]},
+{"mode":"text","sql":"SELECT count(*) AS value FROM views WHERE project_id = CAST($tw_project AS BIGINT)","scope":1,"confine":true,"max_rows":5,"answers":[{"columns":["value"],"rows":[["1"]]}]},
+{"mode":"text","sql":"SELECT count(*) AS value FROM views WHERE project_id = CAST($tw_project AS BIGINT)","scope":1,"confine":true,"max_rows":1001,"answers":[{"columns":["value"],"rows":[["1"]]}]}
+]

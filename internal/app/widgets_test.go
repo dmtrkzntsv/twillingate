@@ -18,7 +18,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/config/configtest"
-	"github.com/dmtrkzntsv/twillingate/internal/engine"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -93,36 +92,13 @@ func (f *widgetsFixture) write(t *testing.T, id string, project int64, family st
 	}
 }
 
-// openFiles builds an engine on this binary (EngineOptions) and a reader
-// over EVENTS_DIR, the caller closing the engine: the SQL reference the
-// tests check against, and what a test SQL engine runs on.
-func openFiles(cfg *config.Config) (*engine.Engine, *archive.Reader, error) {
-	opts, err := EngineOptions(cfg)
-	if err != nil {
-		return nil, nil, err
-	}
-	eng, err := engine.New(opts)
-	if err != nil {
-		return nil, nil, err
-	}
-	reader, err := archive.NewReader(cfg.EventsDir, eng)
-	if err != nil {
-		eng.Close()
-		return nil, nil, err
-	}
-	return eng, reader, nil
-}
-
-// sql is a client of a test SQL engine over the fixture's raw/
-// (archivetest.ServeSQL), on an engine of its own, closed with t.
+// sql is a client of a scripted SQL engine (archivetest.FakeSQL) for the
+// fixture's raw/, answering from the test's file under
+// testdata/sqlengine, recorded from a real engine over the events the
+// test writes; closed with t.
 func (f *widgetsFixture) sql(t *testing.T) *sqlengine.Client {
 	t.Helper()
-	eng, _, err := openFiles(f.cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { eng.Close() })
-	return archivetest.ServeSQL(t, f.cfg.EventsDir, eng).Client(t)
+	return archivetest.NewFakeSQL(t).LoadTest(t, "testdata/sqlengine").Client(t)
 }
 
 // options is what serve gives the widgets and their check: the

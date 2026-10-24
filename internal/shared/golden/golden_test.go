@@ -50,7 +50,7 @@ type answer struct {
 	N    float64    `json:"n"`
 }
 
-// TestGetKeepsAndReads: with update the oracle's answers are written,
+// TestGetKeepsAndReads: with update the code's answers are written,
 // keys sorted and indented; without, they are read back as given; a key
 // never kept fails, and so does a file holding a key nobody asks for.
 func TestGetKeepsAndReads(t *testing.T) {
@@ -128,6 +128,38 @@ func TestGetKeepsAndReads(t *testing.T) {
 	}
 	if Diff([]int{1}, []int{1}) != "" || Diff([]int{1}, []int{1, 2}) == "" || Diff(func() {}, 1) == "" {
 		t.Error("Diff")
+	}
+}
+
+// TestPreviousReadsTheFileAsFound: with update, the answers the file held
+// when the run began stay readable (Previous) though the file is written
+// anew, and a key the file never held reads as none.
+func TestPreviousReadsTheFileAsFound(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "testdata", "TestP.golden.json")
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(`{"k": [1, 2], "old": "x"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w := &fakeT{name: "TestP"}
+	s := Open(w, path, true)
+	if got, ok := Previous[[]int](w, s, "k"); !ok || !Same(got, []int{1, 2}) {
+		t.Errorf("Previous = %v, %v", got, ok)
+	}
+	Get(w, s, "k", []int{2, 1})
+	if got, ok := Previous[[]int](w, s, "k"); !ok || !Same(got, []int{1, 2}) {
+		t.Errorf("Previous after Get = %v, %v", got, ok)
+	}
+	if _, ok := Previous[string](w, s, "none"); ok {
+		t.Error("a key never held read")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "{\n  \"k\": [2,1]\n}\n"; string(b) != want {
+		t.Errorf("file %q, want %q", b, want)
 	}
 }
 

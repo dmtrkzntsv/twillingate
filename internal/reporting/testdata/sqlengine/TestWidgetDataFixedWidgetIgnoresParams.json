@@ -1,0 +1,5 @@
+[
+{"mode":"shape","sql":"SELECT 1 AS n","scope":null,"confine":true,"max_rows":0,"answers":[{"columns":["n"],"rows":[]}]},
+{"mode":"text","sql":"SELECT 1 AS n","scope":null,"confine":true,"max_rows":5,"answers":[{"columns":["n"],"rows":[["1"]]}]},
+{"mode":"text","sql":"SELECT 1 AS n","scope":null,"confine":true,"max_rows":1001,"answers":[{"columns":["n"],"rows":[["1"]]}]}
+]

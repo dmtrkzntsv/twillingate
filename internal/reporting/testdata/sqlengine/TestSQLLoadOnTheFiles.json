@@ -1,0 +1,4 @@
+[
+{"mode":"text","sql":"SELECT CAST($tw_project AS BIGINT) AS p, count(*) / 1 AS n, NULL AS z, min(day) AS d FROM views","scope":1,"confine":true,"max_rows":1001,"answers":[{"columns":["p","n","z","d"],"rows":[["1","2","","2026-08-20"]]}]},
+{"mode":"text","sql":"SELECT count(*) AS n FROM views","scope":null,"confine":true,"max_rows":1001,"answers":[{"columns":["n"],"rows":[["3"]]}]}
+]

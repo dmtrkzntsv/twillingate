@@ -14,15 +14,15 @@ internal/jobs/       daily pass: salt rotation, aggregation, prune, view rebuild
 internal/pipeline/   write buffer between ingest and the store
 internal/manage/     project registry snapshot and its audited operations
 internal/reporting/  dashboards, widgets and components: validation, operations, system dashboards, cache; embeds the web app
+internal/reporting/sqlbind/ the :name parameters of SQL sent to the external SQL engine, and the advice that follows its failures
 internal/store/      Store interface and row types; store/sqlite owns every migration (no events: they live in the event files)
 internal/config/     environment loading
 internal/identity/   actor hashing and salt rotation
 internal/enrich/     User-Agent and URL parsing for web hits
 internal/geo/        MaxMind lookup
-internal/native/     structured queries (stat, trend, breakdown) answered in Go over the event files, no DuckDB
-internal/engine/     DuckDB in a child process of the binary (`twillingate engine`): the pipe's two ends, the slot semaphore
-internal/archive/    raw events as files under raw/: the per-day NDJSON log, the dump to Parquet, the month merge, retention by file, the derived sessions, identities and aliases, and the tables the dashboards and the query tool read
-internal/shared/     small generic leaf packages: civil (calendar dates), enginesql (DuckDB SQL checks), golden (tests' expected answers under testdata/), readsql, sortkey, version
+internal/native/     structured queries (stat, trend, breakdown) answered in Go over the event files
+internal/archive/    raw events as files under raw/: the per-day NDJSON log, the dump to Parquet, the month merge, retention by file, the derived sessions, identities and aliases, and the table spec the external SQL engine reads
+internal/shared/     small generic leaf packages: civil (calendar dates), golden (tests' expected answers under testdata/), readsql, sortkey, version
 internal/shared/hll/ distinct counts, exact up to 1,024 ids then a HyperLogLog sketch (about ±2%), for internal/native
 sqlengine/           public protocol and client for an external SQL engine over a Unix socket; stdlib only, importable by other modules
 docs/                the three contract pages, embedded and served over MCP
@@ -76,25 +76,30 @@ entry. Only `feat`, `fix` and `perf` appear in the notes; `docs`, `refactor`,
 appear in the notes, so anything a user should read about needs one of the
 three published types. `!` before the colon (or a `BREAKING CHANGE:` footer)
 marks a breaking change. Scopes match the tree: `store`, `server`, `jobs`,
-`config`, `api`, `manage`, `pipeline`, `engine`, `archive`, `geo`, `reporting`,
+`config`, `api`, `manage`, `pipeline`, `archive`, `geo`, `reporting`,
 `shared`, `sdk`, `web`, `cmd`, `deploy`, `ci`; omit for repo-wide changes.
 
 Releases are cut by hand with `gh workflow run release.yml` (optional `version`
 input; blank means next patch). Pushing to `main` publishes nothing. Pre-1.0:
-breaking changes bump the minor. The workflow has four jobs: `build` settles
-the version and builds the tarballs (`make dist`); `test` (`make check`, then
-the race suite `make test`) and `build docker image` (pushed untagged, by
-digest) run side by side; `build and publish release` waits for all three,
-tags, hands the tarballs to `npx changelogithub`, then tags the image with the
-version and `latest`. A failure anywhere publishes nothing. Several commits
+breaking changes bump the minor. The workflow has five jobs: `version`
+settles the tag (the input, or the next patch) and refuses a malformed or
+existing one; then three run side by side: `build` cross-compiles both
+architectures' static tarballs on one runner (`make dist`), checks them
+static and smoke-tests the amd64 binary, `test` runs `make check`, then the
+race suite `make test`, and `image` (`build docker image`) pushes the
+multi-arch image untagged, by digest; `release` (`build and publish
+release`) waits for all four, tags, hands the tarballs and their checksums
+to `npx changelogithub`, then tags the image with the version and `latest`.
+A failure anywhere publishes nothing, and a `dry_run` dispatch stops before
+`release`. Several commits
 can ship under one version; notes are not hand-edited.
 
 ## Checks
 
 `make check` (vet, the coverage gate without `-race`, the SQLite-free packages
 with it) is what pull request CI runs; run it before pushing.
-`make build` compiles, with cgo (DuckDB, `internal/engine`), so it needs a C
-toolchain; `make test` runs the whole suite under `-race`, about
+`make build` compiles one static binary without cgo (`CGO_ENABLED=0`; no C
+toolchain, and `internal/archtest` refuses a cgo or DuckDB import); `make test` runs the whole suite under `-race`, about
 ten times slower because modernc SQLite is instrumented too, so CI runs it only
 in the release workflow. Each package must stay under go test's 10-minute
 default there: a test that needs a migrated database copies one from

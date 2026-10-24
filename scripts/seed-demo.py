@@ -23,9 +23,10 @@ user and group names on every event of an identified user or group, which is
 what makes the users, groups and retention pages meaningful, the others get a
 per-day connection hash, as a site with an anonymous tag would.
 
-    python3 scripts/seed-demo.py local/twillingate.db [--events-dir DIR]
+    python3 scripts/seed-demo.py local/twillingate.db [--events-dir DIR] [--days N]
 
-DIR defaults to raw/ beside the database.
+DIR defaults to raw/ beside the database; N (180 by default) is how many
+days back the traffic reaches, fewer for a quicker seed.
 
 Projects are read from the projects table; each needs a traffic profile in
 PROFILES, keyed by project name.
@@ -370,14 +371,19 @@ def seed_app(sink, name, profile, today, sends_ids):
 
 
 def main():
+    global DAYS
     args = sys.argv[1:]
     events_dir = None
     if "--events-dir" in args:
         i = args.index("--events-dir")
         events_dir = args[i + 1]
         del args[i:i + 2]
-    if len(args) != 1:
-        sys.exit("usage: seed-demo.py <db> [--events-dir DIR]")
+    if "--days" in args:
+        i = args.index("--days")
+        DAYS = int(args[i + 1])
+        del args[i:i + 2]
+    if len(args) != 1 or DAYS < 1:
+        sys.exit("usage: seed-demo.py <db> [--events-dir DIR] [--days N]")
     db = args[0]
     if events_dir is None:
         events_dir = os.path.join(os.path.dirname(os.path.abspath(db)), "raw")

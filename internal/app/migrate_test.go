@@ -3,7 +3,6 @@ package app
 import (
 	"context"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -42,13 +41,12 @@ func TestMigrateSyncsComponents(t *testing.T) {
 	}
 }
 
-// TestMigrateWithoutEventFilesSpawnsNoChild: on a fresh install, with no
+// TestMigrateWithoutEventFilesIsChecked: on a fresh install, with no
 // event file under EVENTS_DIR, or with no SQL engine, the reporting
 // migrator has nothing to check the system widgets' SQL on. No system
 // widget reads SQL any more, so there is nothing left unchecked either:
-// the sync is recorded as checked, and no start spawns a child (a spawn
-// creates engine/).
-func TestMigrateWithoutEventFilesSpawnsNoChild(t *testing.T) {
+// the sync is recorded as checked.
+func TestMigrateWithoutEventFilesIsChecked(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
 	cfg := testConfig(t, freePort(t), filepath.Join(dir, "migrate.db"))
@@ -60,9 +58,6 @@ func TestMigrateWithoutEventFilesSpawnsNoChild(t *testing.T) {
 	if err := Migrate(ctx, cfg, st); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "engine")); !os.IsNotExist(err) {
-		t.Errorf("stat engine/: %v, want it not to exist: no files, yet a child was spawned", err)
-	}
 	if hash, err := st.ReportingHash(ctx); err != nil || hash == "" || strings.HasPrefix(hash, "unchecked:") {
 		t.Fatalf("ReportingHash = %q, %v; want the sync recorded, checked: no system widget reads SQL", hash, err)
 	}
@@ -70,9 +65,6 @@ func TestMigrateWithoutEventFilesSpawnsNoChild(t *testing.T) {
 	writeEvent(t, cfg.EventsDir)
 	if err := Migrate(ctx, cfg, st); err != nil {
 		t.Fatal(err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "engine")); !os.IsNotExist(err) {
-		t.Errorf("stat engine/: %v, want it not to exist: no system widget reads SQL, yet a child was spawned", err)
 	}
 	if hash, _ := st.ReportingHash(ctx); strings.HasPrefix(hash, "unchecked:") {
 		t.Errorf("ReportingHash = %q after a start with files, still unchecked", hash)
@@ -115,11 +107,5 @@ func TestServeBootsWithReportingMigration(t *testing.T) {
 		}
 	case <-time.After(10 * time.Second):
 		t.Fatal("serve did not shut down")
-	}
-	// Neither the migrator nor the boot pass has anything to do on an
-	// empty install, so neither spawns an engine child (a spawn creates
-	// engine/).
-	if _, err := os.Stat(filepath.Join(filepath.Dir(dbPath), "engine")); !os.IsNotExist(err) {
-		t.Errorf("stat engine/: %v, want it not to exist: a fresh install spawned a child", err)
 	}
 }

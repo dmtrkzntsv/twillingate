@@ -1,0 +1,4 @@
+[
+{"mode":"shape","sql":"SELECT CAST($tw_project AS BIGINT) AS p","scope":0,"confine":true,"max_rows":0,"answers":[{"columns":["p"],"rows":[]}]},
+{"mode":"text","sql":"SELECT CAST($tw_project AS BIGINT) AS p","scope":0,"confine":true,"max_rows":5,"answers":[{"columns":["p"],"rows":[["0"]]}]}
+]

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -96,7 +96,7 @@ func TestSchemaViewsMatchesTheFiles(t *testing.T) {
 		t.Errorf("schemaFiles lists %d tables, want the files' %d: %v", len(listed), len(tables), listed)
 	}
 	for _, table := range tables {
-		res, err := h.runFiles(context.Background(), archive.Scoped{SQL: "SELECT column_name FROM (DESCRIBE SELECT * FROM " + table + ")"})
+		res, err := h.runFiles(context.Background(), sqlengine.Request{SQL: "SELECT column_name FROM (DESCRIBE SELECT * FROM " + table + ")"})
 		if err != nil {
 			t.Fatal(err)
 		}

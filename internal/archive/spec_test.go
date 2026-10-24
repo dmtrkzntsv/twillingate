@@ -58,8 +58,7 @@ func specRules() Rules {
 }
 
 // TestTableSpecListsWhatListFilesLists: the spec is ListFiles' listing with
-// paths relative to raw/, projects and rules in order, and resolving it
-// gives the listing back.
+// paths relative to raw/, projects and rules in order.
 func TestTableSpecListsWhatListFilesLists(t *testing.T) {
 	dir := specTree(t)
 	got, err := TableSpec(dir, nil, specRules())
@@ -91,38 +90,6 @@ func TestTableSpecListsWhatListFilesLists(t *testing.T) {
 		w, _ := json.MarshalIndent(want, "", " ")
 		t.Fatalf("spec =\n%s\nwant\n%s", g, w)
 	}
-
-	files, rules, err := ResolveTables(dir, got)
-	if err != nil {
-		t.Fatal(err)
-	}
-	listed, err := ListFiles(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(norm(files), norm(listed)) {
-		t.Errorf("resolved = %+v, want ListFiles' %+v", files, listed)
-	}
-	if want := sortRules(specRules()); len(rules.Events) != 2 || rules.Events[0].Name != want.Events[0].Name || rules.Attributes[1].To != "K" {
-		t.Errorf("resolved rules = %+v", rules)
-	}
-}
-
-// norm is files with empty lists as nil, for a comparison.
-func norm(files map[int64]Files) map[int64]Files {
-	out := map[int64]Files{}
-	for id, f := range files {
-		for _, l := range []*[]string{&f.Parquet, &f.Logs, &f.Sessions} {
-			if len(*l) == 0 {
-				*l = nil
-			}
-		}
-		if len(f.SessionGaps) == 0 {
-			f.SessionGaps = nil
-		}
-		out[id] = f
-	}
-	return out
 }
 
 // TestTableSpecScopesToProjects: with projects, only theirs are listed,
@@ -149,9 +116,7 @@ func TestTableSpecScopesToProjects(t *testing.T) {
 	}
 }
 
-// TestTablePathsStayInside: TableSpec refuses a path outside raw/, and
-// ResolveTables a path that is absolute or climbs out, a project listed
-// twice, a gap that is no date and another version.
+// TestTablePathsStayInside: TableSpec refuses a path outside raw/.
 func TestTablePathsStayInside(t *testing.T) {
 	dir := t.TempDir()
 	for _, p := range []string{filepath.Join(filepath.Dir(dir), "x.parquet"), dir, "/etc/passwd"} {
@@ -161,26 +126,5 @@ func TestTablePathsStayInside(t *testing.T) {
 	}
 	if r, err := relPath(dir, filepath.Join(dir, "1", "sessions", "2026-10.parquet")); err != nil || r != "1/sessions/2026-10.parquet" {
 		t.Errorf("relPath inside = %q, %v", r, err)
-	}
-
-	ok := sqlengine.Project{ID: 1, Parquet: []string{"1/2026-09.parquet"}}
-	for name, tables := range map[string]sqlengine.Tables{
-		"absolute":        {Version: 1, Projects: []sqlengine.Project{{ID: 1, Parquet: []string{"/etc/passwd"}}}},
-		"climbs out":      {Version: 1, Projects: []sqlengine.Project{{ID: 1, Logs: []string{"1/../../x.log"}}}},
-		"session climbs":  {Version: 1, Projects: []sqlengine.Project{{ID: 1, Sessions: []string{"../s.parquet"}}}},
-		"identities":      {Version: 1, Projects: []sqlengine.Project{{ID: 1, Identities: "/x/identities.parquet"}}},
-		"aliases":         {Version: 1, Projects: []sqlengine.Project{{ID: 1, Aliases: ".."}}},
-		"twice":           {Version: 1, Projects: []sqlengine.Project{ok, ok}},
-		"gap is no date":  {Version: 1, Projects: []sqlengine.Project{{ID: 1, SessionGaps: []sqlengine.Gap{{From: "2026-10-01'", To: "2026-10-02"}}}}},
-		"gap end no date": {Version: 1, Projects: []sqlengine.Project{{ID: 1, SessionGaps: []sqlengine.Gap{{From: "2026-10-01", To: "x"}}}}},
-		"version":         {Version: 2, Projects: []sqlengine.Project{ok}},
-	} {
-		if _, _, err := ResolveTables(dir, tables); !errors.Is(err, ErrTables) {
-			t.Errorf("%s: ResolveTables = %v, want ErrTables", name, err)
-		}
-	}
-	files, _, err := ResolveTables(dir, sqlengine.Tables{Version: 1, Projects: []sqlengine.Project{ok}})
-	if err != nil || files[1].Parquet[0] != filepath.Join(dir, "1", "2026-09.parquet") {
-		t.Errorf("ResolveTables = %+v, %v", files, err)
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"slices"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
@@ -17,7 +16,7 @@ import (
 // system widgets' SQL divides them: users/actions-per-user.sql,
 // groups/actions-per-group.sql and views/consent-share.sql, and the
 // breakdowns, trends and comparisons the same division makes.
-func TestRatioMatchesDuckDB(t *testing.T) {
+func TestRatioMatchesGolden(t *testing.T) {
 	f := engineFixture(t)
 	e := New(Options{Dir: f.Dir, Workers: 3})
 	actions := []Filter{{Column: "family", Op: "in", Values: []string{"views", "product"}}}
@@ -86,17 +85,7 @@ func TestRatioMatchesDuckDB(t *testing.T) {
 			if !slices.Equal(res.Columns, c.cols) {
 				t.Fatalf("columns %q, want %q", res.Columns, c.cols)
 			}
-			var want [][]string
-			for _, sql := range c.sql {
-				want = append(want, duckTable(t, f, sql, c.from, c.to)...)
-			}
-			if c.prev {
-				from, to := date(t, c.from), date(t, c.to)
-				days := int(to.Time().Sub(from.Time()).Hours()/24) + 1
-				pf := from.Time().AddDate(0, 0, -days).Format(time.DateOnly)
-				pt := from.Time().AddDate(0, 0, -1).Format(time.DateOnly)
-				want[0] = append(want[0], duckTable(t, f, c.sql[0], pf, pt)[0]...)
-			}
+			want := goldenTables(t, c.sql, c.from, c.to, c.prev, res.Rows)
 			if len(want) == 0 || slices.ContainsFunc(want, func(r []string) bool { return r[len(r)-1] == "" }) {
 				t.Fatalf("the SQL returns %q: a weak case", want)
 			}
@@ -203,7 +192,7 @@ func TestRatioAllDeclined(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := duckTableWith(t, f, archive.Rules{}, widgetSQL(t, "views/consent-share.sql"), "2026-09-07", "2026-09-08")
+	want := goldenTableWith(t, archive.Rules{}, widgetSQL(t, "views/consent-share.sql"), "2026-09-07", "2026-09-08", res.Rows)
 	if len(want) != 1 || want[0][0] == "" {
 		t.Fatalf("the SQL returns %q: a weak case", want)
 	}
@@ -278,7 +267,7 @@ func TestRatioTrends(t *testing.T) {
 			if !slices.Equal(res.Columns, c.q.Columns()) {
 				t.Fatalf("columns %q, want %q", res.Columns, c.q.Columns())
 			}
-			want := duckTable(t, f, c.sql, c.from, today)
+			want := goldenTable(t, c.sql, c.from, today, res.Rows)
 			if len(want) == 0 {
 				t.Fatal("the SQL returns no rows: a weak case")
 			}

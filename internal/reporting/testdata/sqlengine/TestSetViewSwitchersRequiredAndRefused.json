@@ -1,0 +1,6 @@
+[
+{"mode":"shape","sql":"SELECT CAST($tw_project AS BIGINT) AS p","scope":0,"confine":true,"max_rows":0,"answers":[{"columns":["p"],"rows":[]}]},
+{"mode":"text","sql":"SELECT CAST($tw_project AS BIGINT) AS p","scope":0,"confine":true,"max_rows":5,"answers":[{"columns":["p"],"rows":[["0"]]}]},
+{"mode":"shape","sql":"SELECT CAST($tw_from AS DATE) AS f, CAST($tw_to AS DATE) AS t","scope":null,"confine":true,"max_rows":0,"answers":[{"columns":["f","t"],"rows":[]}]},
+{"mode":"text","sql":"SELECT CAST($tw_from AS DATE) AS f, CAST($tw_to AS DATE) AS t","scope":null,"confine":true,"max_rows":5,"answers":[{"columns":["f","t"],"rows":[["2026-10-18","2026-10-24"]]}]}
+]
