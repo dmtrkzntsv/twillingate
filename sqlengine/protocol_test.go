@@ -43,7 +43,9 @@ func TestFixturesRoundTrip(t *testing.T) {
 	roundTrip(t, "request.json", &Request{})
 	roundTrip(t, "request_all_projects.json", &Request{})
 	roundTrip(t, "response.json", &Result{})
-	for _, k := range []Kind{KindRefused, KindSQL, KindOutOfMemory, KindOutOfMemoryLoadingLog, KindBusy, KindInternal} {
+	roundTrip(t, "response_page.json", &Result{})
+	roundTrip(t, "response_count.json", &Result{})
+	for _, k := range []Kind{KindRefused, KindSQL, KindOutOfMemory, KindOutOfMemoryLoadingLog, KindBusy, KindTimeout, KindExited, KindInternal} {
 		var eb ErrorBody
 		roundTrip(t, "error_"+string(k)+".json", &eb)
 		if eb.Error.Kind != k {
@@ -81,6 +83,40 @@ func TestStdlibOnly(t *testing.T) {
 	for _, imp := range strings.Fields(string(out)) {
 		if first, _, _ := strings.Cut(imp, "/"); strings.Contains(first, ".") {
 			t.Errorf("imports %s, which is not the standard library", imp)
+		}
+	}
+}
+
+// TestModeResponseFixtures: the page fixture ends in the two counts on
+// every row, the count fixture is total and matched in one row.
+func TestModeResponseFixtures(t *testing.T) {
+	var page Result
+	if err := json.Unmarshal(fixture(t, "response_page.json"), &page); err != nil {
+		t.Fatal(err)
+	}
+	n := len(page.Columns)
+	if n < 3 || page.Columns[n-2] != "__tw_matched" || page.Columns[n-1] != "__tw_total" || len(page.Rows) == 0 {
+		t.Errorf("page fixture columns = %v", page.Columns)
+	}
+	for _, row := range page.Rows {
+		if len(row) != n {
+			t.Errorf("page fixture row %v has %d cells, want %d", row, len(row), n)
+		}
+	}
+	var count Result
+	if err := json.Unmarshal(fixture(t, "response_count.json"), &count); err != nil {
+		t.Fatal(err)
+	}
+	if len(count.Columns) != 2 || count.Columns[0] != "total" || count.Columns[1] != "matched" || len(count.Rows) != 1 || len(count.Rows[0]) != 2 {
+		t.Errorf("count fixture = %+v", count)
+	}
+}
+
+func TestKindStatus(t *testing.T) {
+	for k, want := range map[Kind]int{KindRefused: 400, KindSQL: 400, KindBusy: 503, KindTimeout: 504,
+		KindOutOfMemory: 500, KindOutOfMemoryLoadingLog: 500, KindExited: 500, KindInternal: 500} {
+		if got := k.Status(); got != want {
+			t.Errorf("%s.Status() = %d, want %d", k, got, want)
 		}
 	}
 }

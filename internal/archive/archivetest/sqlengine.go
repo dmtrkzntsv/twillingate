@@ -116,7 +116,7 @@ func (s *SQLEngine) query(w http.ResponseWriter, hr *http.Request) {
 	dec := json.NewDecoder(hr.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, sqlengine.KindRefused, "the request body: "+err.Error())
+		writeError(w, sqlengine.KindRefused, "the request body: "+err.Error())
 		return
 	}
 	s.mu.Lock()
@@ -125,7 +125,7 @@ func (s *SQLEngine) query(w http.ResponseWriter, hr *http.Request) {
 	if v := hr.Header.Get(sqlengine.TimeoutHeader); v != "" {
 		ms, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || ms < 1 {
-			writeError(w, http.StatusBadRequest, sqlengine.KindRefused, sqlengine.TimeoutHeader+" must be a positive number of milliseconds")
+			writeError(w, sqlengine.KindRefused, sqlengine.TimeoutHeader+" must be a positive number of milliseconds")
 			return
 		}
 		var cancel context.CancelFunc
@@ -134,7 +134,7 @@ func (s *SQLEngine) query(w http.ResponseWriter, hr *http.Request) {
 	}
 	if s.busy.Load() {
 		w.Header().Set("Retry-After", "1")
-		writeError(w, http.StatusServiceUnavailable, sqlengine.KindBusy, "no free slot; retry later")
+		writeError(w, sqlengine.KindBusy, "no free slot; retry later")
 		return
 	}
 	res, err := s.answer(ctx, req)
@@ -142,8 +142,8 @@ func (s *SQLEngine) query(w http.ResponseWriter, hr *http.Request) {
 		s.cancelled.Add(1)
 	}
 	if err != nil {
-		status, kind, msg := errorOf(ctx, err)
-		writeError(w, status, kind, msg)
+		kind, msg := errorOf(ctx, err)
+		writeError(w, kind, msg)
 		return
 	}
 	out := sqlengine.Result{Columns: res.Columns, Rows: res.Rows, Truncated: res.Truncated}
@@ -244,42 +244,47 @@ func pageOf(p sqlengine.Page) readsql.Page {
 	return out
 }
 
-// errorOf is the status, kind and message an error answers, in the order
-// reporting's filesErr and api's filesError tell them apart today:
-//   - a deadline (X-Timeout-Ms) or a caller gone: 500 internal; the
-//     caller's own context ends at the same moment and wins there;
-//   - running out of memory loading the open logs: 500
-//     out_of_memory_loading_logs; running out of memory otherwise: 500
+// errorOf is the kind and message an error answers (its status is
+// Kind.Status), in the order reporting's filesErr and api's filesError
+// tell them apart today:
+//   - the deadline (X-Timeout-Ms) passed: timeout;
+//   - the caller went away: internal (nobody reads the answer);
+//   - running out of memory loading the open logs:
+//     out_of_memory_loading_logs; running out of memory otherwise:
 //     out_of_memory;
 //   - a refusal (enginesql.ErrRefused: the parameter scanner, Confine, a
 //     page twillingate cannot build), a table spec ResolveTables refuses
-//     and a request the engine cannot run: 400 refused, the message
-//     without the sentinel's "refused: ";
-//   - SQL DuckDB refused (engine.QueryError): 400 sql, DuckDB's message as
-//     it is;
-//   - anything else, a child that exited or did not start among it: 500
-//     internal.
-func errorOf(ctx context.Context, err error) (int, sqlengine.Kind, string) {
+//     and a request the engine cannot run: refused, the message without
+//     the sentinel's "refused: ";
+//   - SQL DuckDB refused (engine.QueryError): sql, DuckDB's message as it
+//     is;
+//   - a child that died with the query in flight: exited;
+//   - anything else, a child that did not start among it: internal.
+func errorOf(ctx context.Context, err error) (sqlengine.Kind, string) {
 	var qe *engine.QueryError
 	switch {
-	case ctx.Err() != nil && (errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)):
-		return http.StatusInternalServerError, sqlengine.KindInternal, err.Error()
+	case errors.Is(ctx.Err(), context.DeadlineExceeded) && errors.Is(err, context.DeadlineExceeded):
+		return sqlengine.KindTimeout, "the query exceeded " + sqlengine.TimeoutHeader
+	case ctx.Err() != nil && errors.Is(err, context.Canceled):
+		return sqlengine.KindInternal, err.Error()
 	case errors.Is(err, archive.ErrLoadingLogs) && errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
-		return http.StatusInternalServerError, sqlengine.KindOutOfMemoryLoadingLog, qe.Msg
+		return sqlengine.KindOutOfMemoryLoadingLog, qe.Msg
 	case errors.As(err, &qe) && enginesql.IsOutOfMemory(qe.Msg):
-		return http.StatusInternalServerError, sqlengine.KindOutOfMemory, qe.Msg
+		return sqlengine.KindOutOfMemory, qe.Msg
 	case errors.Is(err, enginesql.ErrRefused):
-		return http.StatusBadRequest, sqlengine.KindRefused, strings.TrimPrefix(err.Error(), enginesql.ErrRefused.Error()+": ")
+		return sqlengine.KindRefused, strings.TrimPrefix(err.Error(), enginesql.ErrRefused.Error()+": ")
 	case errors.Is(err, archive.ErrTables), errors.Is(err, errRequest):
-		return http.StatusBadRequest, sqlengine.KindRefused, err.Error()
+		return sqlengine.KindRefused, err.Error()
 	case errors.As(err, &qe):
-		return http.StatusBadRequest, sqlengine.KindSQL, qe.Msg
+		return sqlengine.KindSQL, qe.Msg
+	case errors.Is(err, engine.ErrChildExited):
+		return sqlengine.KindExited, err.Error()
 	}
-	return http.StatusInternalServerError, sqlengine.KindInternal, err.Error()
+	return sqlengine.KindInternal, err.Error()
 }
 
-func writeError(w http.ResponseWriter, status int, kind sqlengine.Kind, msg string) {
-	writeJSON(w, status, sqlengine.ErrorBody{Error: sqlengine.ErrorDetail{Kind: kind, Message: msg}})
+func writeError(w http.ResponseWriter, kind sqlengine.Kind, msg string) {
+	writeJSON(w, kind.Status(), sqlengine.ErrorBody{Error: sqlengine.ErrorDetail{Kind: kind, Message: msg}})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -351,8 +351,8 @@ func TestSQLEngineCancels(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	var eb sqlengine.ErrorBody
-	if err := json.NewDecoder(resp.Body).Decode(&eb); err != nil || resp.StatusCode != http.StatusInternalServerError || eb.Error.Kind != sqlengine.KindInternal {
-		t.Errorf("X-Timeout-Ms: %d %+v, %v; want 500 internal", resp.StatusCode, eb, err)
+	if err := json.NewDecoder(resp.Body).Decode(&eb); err != nil || resp.StatusCode != http.StatusGatewayTimeout || eb.Error.Kind != sqlengine.KindTimeout {
+		t.Errorf("X-Timeout-Ms: %d %+v, %v; want 504 timeout", resp.StatusCode, eb, err)
 	}
 	waitCancelled(3)
 	if took := time.Since(start); took > 20*time.Second {
@@ -372,6 +372,8 @@ func TestErrorKinds(t *testing.T) {
 	oom := &engine.QueryError{Msg: "Out of Memory Error: failed to allocate"}
 	gone, cancel := context.WithCancel(bg)
 	cancel()
+	expired, cancel2 := context.WithDeadline(bg, time.Now().Add(-time.Second))
+	defer cancel2()
 	for _, tc := range []struct {
 		name   string
 		ctx    context.Context
@@ -386,13 +388,14 @@ func TestErrorKinds(t *testing.T) {
 		{"out of memory", bg, oom, 500, sqlengine.KindOutOfMemory, oom.Msg},
 		{"out of memory loading logs", bg, fmt.Errorf("%w: %w", archive.ErrLoadingLogs, oom), 500, sqlengine.KindOutOfMemoryLoadingLog, oom.Msg},
 		{"loading logs, no memory issue", bg, fmt.Errorf("%w: %w", archive.ErrLoadingLogs, &engine.QueryError{Msg: "IO Error"}), 400, sqlengine.KindSQL, "IO Error"},
-		{"child exited", bg, fmt.Errorf("%w: killed", engine.ErrChildExited), 500, sqlengine.KindInternal, "engine: the child exited: killed"},
+		{"child exited", bg, fmt.Errorf("%w: killed", engine.ErrChildExited), 500, sqlengine.KindExited, "engine: the child exited: killed"},
 		{"spawn", bg, engine.ErrSpawn, 500, sqlengine.KindInternal, engine.ErrSpawn.Error()},
+		{"deadline", expired, fmt.Errorf("engine: %w", context.DeadlineExceeded), 504, sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms"},
 		{"caller gone", gone, context.Canceled, 500, sqlengine.KindInternal, "context canceled"},
 	} {
-		status, kind, msg := errorOf(tc.ctx, tc.err)
-		if status != tc.status || kind != tc.kind || msg != tc.msg {
-			t.Errorf("%s: %d %s %q, want %d %s %q", tc.name, status, kind, msg, tc.status, tc.kind, tc.msg)
+		kind, msg := errorOf(tc.ctx, tc.err)
+		if kind.Status() != tc.status || kind != tc.kind || msg != tc.msg {
+			t.Errorf("%s: %d %s %q, want %d %s %q", tc.name, kind.Status(), kind, msg, tc.status, tc.kind, tc.msg)
 		}
 	}
 }

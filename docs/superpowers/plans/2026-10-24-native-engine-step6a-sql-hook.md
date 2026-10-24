@@ -32,7 +32,7 @@
     - `confine` replaces `enginesql.Confine`.
     - The deadline travels as the `X-Timeout-Ms` header, and cancellation as connection close.
   - A success returns `{"columns": [...], "rows": [[...]], "truncated": bool}`. Values are as today's `engine.Result`: numbers as JSON numbers, while dates, times, UUIDs, NaN and ±Inf are strings.
-  - Errors: the status is 400, 503 (with `Retry-After`) or 500. The body is `{"error": {"kind": "refused" | "sql" | "out_of_memory" | "out_of_memory_loading_logs" | "busy" | "internal", "message": "..."}}`.
+  - Errors: the status is 400, 503 (with `Retry-After`), 504 (timeout) or 500. The body is `{"error": {"kind": "refused" | "sql" | "out_of_memory" | "out_of_memory_loading_logs" | "busy" | "timeout" | "exited" | "internal", "message": "..."}}`. `timeout` (504) is the engine's own X-Timeout-Ms passing; `exited` (500) a worker that died mid-query; `internal` (500) anything else. Page mode returns the statement's columns with `__tw_matched` and `__tw_total` appended; count mode returns `["total","matched"]` and one row, `matched` 0 at offset 0.
     - twillingate maps each kind to today's refusals and advice.
     - A 503 fails at once with the busy advice. It is not retried inside the request.
 - **The table spec.**

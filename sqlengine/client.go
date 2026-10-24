@@ -119,7 +119,12 @@ func (c *Client) do(ctx context.Context, method, path string, payload []byte) ([
 	if resp.StatusCode/100 == 2 {
 		return data, nil
 	}
+	// A body that names no kind (a proxy's, a crash's) still tells a
+	// timeout by its status.
 	e := &Error{Status: resp.StatusCode, Kind: KindInternal}
+	if resp.StatusCode == KindTimeout.Status() {
+		e.Kind = KindTimeout
+	}
 	var eb ErrorBody
 	if json.Unmarshal(data, &eb) == nil && eb.Error.Kind != "" {
 		e.Kind, e.Message = eb.Error.Kind, eb.Error.Message

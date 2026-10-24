@@ -6,6 +6,19 @@
 // the pipe to the in-tree engine encodes them: numbers are JSON numbers
 // (decode with json.Decoder.UseNumber to keep them exact), while dates,
 // times, UUIDs, NaN and the infinities are strings.
+//
+// Two modes answer a shape of their own (Request.Mode):
+//   - page: the page's rows as text, its columns the query's with the two
+//     counts appended, __tw_matched (the rows past the filters) and
+//     __tw_total (the query's rows), on every row; testdata/response_page.json;
+//   - count: columns ["total","matched"] and one row, for a page that came
+//     back with no row to carry its counts; matched is 0, not run, when
+//     the offset is 0; testdata/response_count.json.
+//
+// An error is a status and a kind (Kind.Status): 400 refused or sql, 503
+// busy, 504 timeout (X-Timeout-Ms passed), 500 out_of_memory,
+// out_of_memory_loading_logs, exited (the worker died mid-query) or
+// internal.
 package sqlengine
 
 // Protocol is the version GET /v1/health reports and this package speaks.
@@ -34,14 +47,30 @@ const (
 // Request is the body of POST /v1/query. The deadline travels in the
 // X-Timeout-Ms header and cancellation as connection close, not here.
 type Request struct {
-	SQL     string            `json:"sql"`
-	Args    map[string]string `json:"args"` // the $tw_* names, without the dollar sign
-	MaxRows int               `json:"max_rows"`
-	Mode    Mode              `json:"mode"`
-	Page    *Page             `json:"page,omitempty"` // Mode page and count
-	Scope   *int64            `json:"scope"`          // a project id, or null for every project
-	Confine bool              `json:"confine"`
-	Tables  Tables            `json:"tables"`
+	SQL  string            `json:"sql"`
+	Args map[string]string `json:"args"` // the $tw_* names, without the dollar sign
+	// MaxRows caps the rows of modes rows and text (0: all); in mode page
+	// it is the largest page (a Page.Limit of 0 means MaxRows).
+	MaxRows int `json:"max_rows"`
+	// Mode is how the SQL is wrapped and what the result holds:
+	//   - rows: the query's own rows;
+	//   - text: the same, every cell as text (NULL as "");
+	//   - shape: the query's columns and no rows;
+	//   - page: the page's rows as text, its columns the query's with
+	//     __tw_matched and __tw_total appended (each with the first free
+	//     suffix _1, _2, … when the query has a column of that name; a
+	//     distinct page: value,
+	//     rows, __tw_matched, __tw_total), both counts on every row; a page
+	//     with no row carries no counts;
+	//   - count: columns ["total","matched"] and one row, the counts a page
+	//     with no row would carry; matched is 0 without running when
+	//     Page.Offset is 0, where an empty page means nothing matched.
+	Mode Mode `json:"mode"`
+	// Page is the page of modes page and count.
+	Page    *Page  `json:"page,omitempty"`
+	Scope   *int64 `json:"scope"` // a project id, or null for every project
+	Confine bool   `json:"confine"`
+	Tables  Tables `json:"tables"`
 }
 
 // Page is a table's view of its rows: filters combine with AND, Sort is
@@ -137,8 +166,24 @@ const (
 	KindOutOfMemory           Kind = "out_of_memory"              // the query exceeded the memory limit
 	KindOutOfMemoryLoadingLog Kind = "out_of_memory_loading_logs" // reading the logs exceeded it
 	KindBusy                  Kind = "busy"                       // no free slot; retry later
-	KindInternal              Kind = "internal"                   // the engine failed
+	KindTimeout               Kind = "timeout"                    // the X-Timeout-Ms deadline passed
+	KindExited                Kind = "exited"                     // the worker running the query died mid-query
+	KindInternal              Kind = "internal"                   // the engine failed otherwise
 )
+
+// Status is the HTTP status an engine answers k with: 400 for refused and
+// sql, 503 (with Retry-After) for busy, 504 for timeout, 500 for the rest.
+func (k Kind) Status() int {
+	switch k {
+	case KindRefused, KindSQL:
+		return 400
+	case KindBusy:
+		return 503
+	case KindTimeout:
+		return 504
+	}
+	return 500
+}
 
 // ErrorBody is the body of every non-2xx response.
 type ErrorBody struct {

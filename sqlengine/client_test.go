@@ -109,7 +109,7 @@ func TestQueryErrors(t *testing.T) {
 	}{
 		{KindRefused, 400}, {KindSQL, 400},
 		{KindOutOfMemory, 500}, {KindOutOfMemoryLoadingLog, 500}, {KindInternal, 500},
-		{KindBusy, 503},
+		{KindBusy, 503}, {KindTimeout, 504}, {KindExited, 500},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.kind), func(t *testing.T) {
@@ -126,7 +126,7 @@ func TestQueryErrors(t *testing.T) {
 			if !errors.As(err, &e) {
 				t.Fatalf("err = %v", err)
 			}
-			if e.Status != tc.status || e.Kind != tc.kind || e.Message == "" {
+			if e.Status != tc.status || e.Kind != tc.kind || e.Message == "" || tc.kind.Status() != tc.status {
 				t.Errorf("error = %+v", e)
 			}
 			wantRetry := time.Duration(0)
@@ -255,6 +255,18 @@ func TestConnectionDroppedMidFlight(t *testing.T) {
 		panic(http.ErrAbortHandler)
 	}))
 	if _, err := c.Query(context.Background(), Request{}); !errors.Is(err, ErrUnavailable) {
+		t.Errorf("err = %v", err)
+	}
+}
+
+// TestTimeoutWithoutJSONBody: a 504 whose body names no kind is a timeout.
+func TestTimeoutWithoutJSONBody(t *testing.T) {
+	c := serve(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "gateway timeout", http.StatusGatewayTimeout)
+	}))
+	_, err := c.Query(context.Background(), Request{})
+	var e *Error
+	if !errors.As(err, &e) || e.Status != 504 || e.Kind != KindTimeout || e.Message != "gateway timeout" {
 		t.Errorf("err = %v", err)
 	}
 }
