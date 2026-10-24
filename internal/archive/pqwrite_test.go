@@ -855,13 +855,20 @@ func TestWideFileRefusesTooManyRowGroups(t *testing.T) {
 
 // TestWriterBoundsWideFiles: a day of 2,000 columns, nearly all sparse
 // attributes, is written by column in under 150 MB of heap (about 310 MB
-// by row), in 1 group and in 100, and reads back whole, with
-// exact statistics.
+// by row), in 1 group and in 100 (only 100 under race), and reads back
+// whole, with exact statistics.
 func TestWriterBoundsWideFiles(t *testing.T) {
 	f := newFixture(t)
 	dir := filepath.Join(f.log.Dir(), "w")
 	os.MkdirAll(dir, 0o750)
-	for _, every := range []int{0, 200} {
+	everys := []int{0, 200}
+	if raceEnabled {
+		// One case under race: the cut groups, as the dump and the merge
+		// write the wide event files; the single group differs only in
+		// where its group ends.
+		everys = []int{200}
+	}
+	for _, every := range everys {
 		t.Run(fmt.Sprint("every ", every), func(t *testing.T) { checkWide(t, filepath.Join(dir, fmt.Sprint("wide", every, ".parquet")), every) })
 	}
 }

@@ -20,7 +20,8 @@ import (
 
 // TestSeedDemoLinesDumpLikeIngestLines: the closed logs scripts/seed-demo.py
 // writes are lines the pass dumps, every family and the names of users and
-// groups included: read back from the Parquet files the pass writes.
+// groups included: read back from the Parquet files the pass writes. Under
+// race it seeds 35 days rather than 180.
 func TestSeedDemoLinesDumpLikeIngestLines(t *testing.T) {
 	py, err := exec.LookPath("python3")
 	if err != nil {
@@ -47,7 +48,13 @@ func TestSeedDemoLinesDumpLikeIngestLines(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := exec.Command(py, script, db, "--events-dir", dir).CombinedOutput(); err != nil {
+	args := []string{script, db, "--events-dir", dir}
+	if raceEnabled {
+		// 35 days still reach back into a closed month and carry every
+		// family and the named identities, at a fifth of the work.
+		args = append(args, "--days", "35")
+	}
+	if out, err := exec.Command(py, args...).CombinedOutput(); err != nil {
 		t.Fatalf("seed: %v\n%s", err, out)
 	}
 	if _, err := os.Stat(filepath.Join(dir, "1")); err != nil {
