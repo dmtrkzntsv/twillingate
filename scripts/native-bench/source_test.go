@@ -220,7 +220,7 @@ func TestRangeEdgeRowsFiltered(t *testing.T) {
 			t.Fatalf("%s: DAU over one day: %v", src.Name(), got)
 		}
 		n := 0
-		err := src.Scan([]string{f}, []string{"day"}, "product", d, d, func(b *Batch) error {
+		err := Scan(src, []string{f}, []string{"day"}, "product", d, d, func(b *Batch) error {
 			for i := 0; i < b.N; i++ {
 				if b.Cols["day"].Ints[i] != d {
 					t.Fatalf("%s: day %d outside the range", src.Name(), b.Cols["day"].Ints[i])
@@ -255,7 +255,7 @@ func TestMissingColumnReadsNull(t *testing.T) {
 		}
 		// Named explicitly, a column the file lacks reads all null.
 		rowsSeen := 0
-		err := src.Scan(files[1:], []string{"attr_variant", "day"}, "product", from, to, func(b *Batch) error {
+		err := Scan(src, files[1:], []string{"attr_variant", "day"}, "product", from, to, func(b *Batch) error {
 			c := b.Cols["attr_variant"]
 			if c == nil || len(c.Idx) != b.N {
 				t.Fatalf("%s: attr_variant missing from the batch: %+v", src.Name(), c)

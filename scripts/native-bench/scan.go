@@ -1,9 +1,85 @@
 package main
 
 import (
+	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 )
+
+// Scan is ScanParallel with one worker: fn sees every matching batch, in
+// file and row-group order.
+func Scan(src Source, files, cols []string, family string, from, to int64, fn func(*Batch) error) error {
+	return ScanParallel(src, files, cols, family, from, to, 1, func(_ int, b *Batch) error { return fn(b) })
+}
+
+// ScanParallel reads the row groups that survive pruning with `workers`
+// goroutines. Workers pull groups from a channel in file order, so
+// neighbouring groups of one file tend to land on one worker and reuse its
+// open file. Each worker has its own GroupReader and calls fn(worker, b)
+// from its own goroutine only, so fn may keep per-worker state indexed by
+// worker without locks; a batch is never seen by two workers. The first
+// error stops every worker and is returned.
+func ScanParallel(src Source, files, cols []string, family string, from, to int64, workers int,
+	fn func(worker int, b *Batch) error) error {
+	groups, err := src.Groups(files, family, from, to)
+	if err != nil {
+		return err
+	}
+	workers = max(1, min(workers, len(groups)))
+	work := make(chan Group)
+	done := make(chan struct{})
+	var (
+		once     sync.Once
+		firstErr error
+		wg       sync.WaitGroup
+	)
+	fail := func(err error) {
+		once.Do(func() {
+			firstErr = err
+			close(done)
+		})
+	}
+	for w := 0; w < workers; w++ {
+		wg.Add(1)
+		go func(w int) {
+			defer wg.Done()
+			r := src.NewGroupReader()
+			defer func() {
+				if err := r.Close(); err != nil {
+					fail(err)
+				}
+			}()
+			for g := range work {
+				select {
+				case <-done:
+					return
+				default:
+				}
+				b, err := src.ReadGroup(r, g, cols, family, from, to)
+				if err != nil {
+					fail(fmt.Errorf("%s row group %d: %w", g.File, g.Index, err))
+					return
+				}
+				if err := fn(w, b); err != nil {
+					fail(err)
+					return
+				}
+			}
+		}(w)
+	}
+feed:
+	for _, g := range groups {
+		select {
+		case work <- g:
+		case <-done:
+			break feed
+		}
+	}
+	close(work)
+	wg.Wait()
+	return firstErr
+}
 
 // What the two Parquet sources share: the row-group counter, the column
 // list a file answers, the pruning decision and the row filter.
