@@ -120,7 +120,10 @@ when at least one of its live widgets follows it. `get_dashboard` reports
 **Every write validates the whole result** and refuses with a message that says
 what to change: the component exists and accepts the source type; the SQL uses
 only the three parameters, runs, and returns the columns the component reads
-(checked on a sample project and range); a structured query is valid and, after
+(checked on the last seven days and, when it uses `:project`, on each live
+project with event files in turn, the one with the newest day first: it passes
+on the first it runs on, and is refused with that first project's error only
+when it fails on every one); a structured query is valid and, after
 `rename` and `columns`, returns those columns, of the types they take (checked without
 reading data); Markdown is not
 empty; props match the schema; the size is in range. Refusals come back as tool
@@ -307,6 +310,12 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
   `attr_<key>` columns: a key no event of the project carried is an error
   ("Referenced column "attr_plan" not found"), not a column of NULLs. Name
   only keys the project sends, or read them with `COLUMNS('^attr_')`.
+  Saving such a widget, and the console's check of every SQL widget at
+  start, try each live project with event files until one runs it, so
+  a widget written for one project's keys is accepted, and logged as
+  failing (`widget SQL fails on the event files`) only when no project
+  runs it. A preview runs on the project it is given, and a dashboard
+  on its selected one.
 - The only parameters are `:project`, a BIGINT, and `:from` and `:to`,
   DATEs in UTC like `day`: `day BETWEEN :from AND :to`, and `:to - :from + 1`
   is the range's length in days. `?`, `$1` and `$name` are refused.

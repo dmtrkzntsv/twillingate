@@ -82,11 +82,11 @@ type Options struct {
 	// with; nil applies none.
 	Rules RulesFunc
 	// EventsDir is EVENTS_DIR: the table spec a sql widget's query sends
-	// names its files relative to it, and the sample project is read from
-	// their names.
+	// names its files relative to it, and the projects a sql widget is
+	// checked on are read from their names.
 	EventsDir string
-	// Live reports whether a project is live, for the sample project a
-	// sql widget is checked on; nil counts every project with files.
+	// Live reports whether a project is live, for the projects a sql
+	// widget is checked on; nil counts every project with files.
 	Live LiveFunc
 	// QueryTimeout is CONSOLE_QUERY_TIMEOUT, each sql query's and query
 	// widget load's deadline; 0 sets none.

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -508,5 +509,128 @@ func TestSQLWithoutAnEngine(t *testing.T) {
 	}
 	if err := s.Validate(context.Background(), "SELECT 1 AS value", testComponents(t)["stat"]); !errors.Is(err, ErrSQLEngine) {
 		t.Errorf("Validate: err = %v, want ErrSQLEngine", err)
+	}
+}
+
+// projectsEngine is an engine over a FakeSQL and an events directory
+// where each project in days has one empty log of its day.
+func projectsEngine(t *testing.T, days map[int64]string) (*sqlEngine, *archivetest.FakeSQL) {
+	t.Helper()
+	dir := t.TempDir()
+	for id, day := range days {
+		pdir := filepath.Join(dir, strconv.FormatInt(id, 10))
+		if err := os.MkdirAll(pdir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(pdir, day+".log"), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	fake := archivetest.NewFakeSQL(t)
+	return newSQLEngine(fake.Client(t), Options{EventsDir: dir, QueryTimeout: 5 * time.Second, QueryMaxRows: 10}), fake
+}
+
+// scopeIs takes the requests scoped to project.
+func scopeIs(project int64) archivetest.Match {
+	return func(r sqlengine.Request) bool { return r.Scope != nil && *r.Scope == project }
+}
+
+// scopes are the projects fake's requests were scoped to, in order.
+func scopes(fake *archivetest.FakeSQL) []int64 {
+	var out []int64
+	for _, r := range fake.Requests() {
+		if r.Scope != nil {
+			out = append(out, *r.Scope)
+		}
+	}
+	return out
+}
+
+// TestSQLValidateTriesEveryProject: SQL that reads :project, with no
+// project given (a save, a copy, the check at start), passes on the
+// first live project with files it runs on, the sample project (the
+// newest day) first and the others by id; it is refused only when every
+// one refuses it, with the sample project's refusal. A refusal no other
+// project would change (the engine refusing the request, a timeout) ends
+// the check on the first.
+func TestSQLValidateTriesEveryProject(t *testing.T) {
+	const content = "SELECT count(*) AS value FROM product WHERE project_id = :project AND COALESCE(attr_position, '') <> ''"
+	notFound := archivetest.Fail(sqlengine.KindSQL, `Binder Error: Referenced column "attr_position" not found`)
+	stat := testComponents(t)["stat"]
+	days := map[int64]string{1: "2026-10-15", 2: "2026-10-14", 3: "2026-10-15"} // 1 is the sample: newest, lowest id
+
+	t.Run("passes on the project that has the column", func(t *testing.T) {
+		eng, fake := projectsEngine(t, days)
+		fake.On(archivetest.Any, notFound)
+		fake.On(scopeIs(2), archivetest.Shape("value"))
+		s := &sqlSource{eng: eng}
+		if err := s.Validate(context.Background(), content, stat); err != nil {
+			t.Fatalf("err = %v, want it to pass on project 2", err)
+		}
+		if got := scopes(fake); !reflect.DeepEqual(got, []int64{1, 2}) {
+			t.Errorf("scopes = %v, want [1 2]: the sample, then by id up to the first that runs", got)
+		}
+	})
+	t.Run("fails everywhere", func(t *testing.T) {
+		eng, fake := projectsEngine(t, days)
+		fake.On(archivetest.Any, archivetest.Fail(sqlengine.KindSQL, "Binder Error: elsewhere"))
+		fake.On(scopeIs(1), notFound)
+		s := &sqlSource{eng: eng}
+		err := s.Validate(context.Background(), content, stat)
+		wantRefusal(t, err, store.ErrInvalid, `Binder Error: Referenced column "attr_position" not found`)
+		if got := scopes(fake); !reflect.DeepEqual(got, []int64{1, 2, 3}) {
+			t.Errorf("scopes = %v, want every project, [1 2 3]", got)
+		}
+	})
+	t.Run("the component's columns", func(t *testing.T) {
+		eng, fake := projectsEngine(t, days)
+		fake.On(archivetest.Any, archivetest.Shape("nope"))
+		fake.On(scopeIs(3), archivetest.Shape("value"))
+		s := &sqlSource{eng: eng}
+		if err := s.Validate(context.Background(), content, stat); err != nil {
+			t.Fatalf("err = %v, want it to pass on project 3", err)
+		}
+	})
+	for name, answer := range map[string]archivetest.Answer{
+		"refused": archivetest.Fail(sqlengine.KindRefused, `"read_csv" reads files`),
+		"timeout": archivetest.Fail(sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms"),
+	} {
+		t.Run(name+" stops at once", func(t *testing.T) {
+			eng, fake := projectsEngine(t, days)
+			fake.On(archivetest.Any, answer)
+			s := &sqlSource{eng: eng}
+			if err := s.Validate(context.Background(), content, stat); err == nil {
+				t.Fatal("err = nil, want the first project's")
+			}
+			if got := scopes(fake); !reflect.DeepEqual(got, []int64{1}) {
+				t.Errorf("scopes = %v, want the sample project alone", got)
+			}
+		})
+	}
+	t.Run("without :project, one unscoped check", func(t *testing.T) {
+		eng, fake := projectsEngine(t, days)
+		fake.On(archivetest.Any, archivetest.Fail(sqlengine.KindSQL, "Binder Error: x"))
+		s := &sqlSource{eng: eng}
+		if err := s.Validate(context.Background(), "SELECT attr_position AS value FROM product", stat); err == nil {
+			t.Fatal("err = nil, want the refusal")
+		}
+		if n, got := len(fake.Requests()), scopes(fake); n != 1 || got != nil {
+			t.Errorf("%d requests scoped to %v, want one unscoped", n, got)
+		}
+	})
+}
+
+// TestSQLExplicitProjectIsTheOnlyOne: a load with its project (a
+// dashboard's selection, widget_data's project_id) runs on that project
+// alone, and fails when it fails there, whatever another project has.
+func TestSQLExplicitProjectIsTheOnlyOne(t *testing.T) {
+	eng, fake := projectsEngine(t, map[int64]string{1: "2026-10-15", 2: "2026-10-14"})
+	fake.On(archivetest.Any, archivetest.Text([]string{"value"}, []string{"1"}))
+	fake.On(scopeIs(1), archivetest.Fail(sqlengine.KindSQL, `Binder Error: Referenced column "attr_position" not found`))
+	s := &sqlSource{eng: eng}
+	_, err := s.Load(context.Background(), "SELECT count(attr_position) AS value FROM product WHERE project_id = :project", Params{ProjectID: 1})
+	wantRefusal(t, err, store.ErrInvalid, `Binder Error: Referenced column "attr_position" not found`)
+	if got := scopes(fake); !reflect.DeepEqual(got, []int64{1}) {
+		t.Errorf("scopes = %v, want project 1 alone", got)
 	}
 }
