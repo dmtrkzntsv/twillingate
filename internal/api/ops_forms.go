@@ -74,6 +74,7 @@ type updateFormIn struct {
 	ReturnURL      *string      `json:"return_url,omitempty" jsonschema:"where a plain HTML form sends the visitor back when it sets no $redirect: an absolute http(s) URL whose origin is in the project's allowed_origins; empty clears it; omit to keep"`
 	ClosesAt       optionalTime `json:"closes_at,omitempty" jsonschema:"RFC 3339 time from which submissions are refused; null reopens; omit to keep"`
 	ExpectedFields *[]string    `json:"expected_fields,omitempty" jsonschema:"approved forms only: replaces the fields kept, one or more; omit to keep"`
+	AddFields      []string     `json:"add_fields,omitempty" jsonschema:"field names to add before any submission sends them: they join fields, and an approved form keeps them (appended to expected_fields, after any expected_fields given)"`
 }
 
 // optionalTime is a JSON field that tells absent (set false), null (set,
@@ -237,7 +238,7 @@ func (h *host) approveForm(ctx context.Context, in approveFormIn) (okOut, error)
 }
 
 func (h *host) updateForm(ctx context.Context, in updateFormIn) (okOut, error) {
-	spec := manage.FormSpec{Purpose: in.Purpose, ReturnURL: in.ReturnURL, ExpectedFields: in.ExpectedFields}
+	spec := manage.FormSpec{Purpose: in.Purpose, ReturnURL: in.ReturnURL, ExpectedFields: in.ExpectedFields, AddFields: in.AddFields}
 	if in.ClosesAt.set {
 		spec.ClosesAt = &in.ClosesAt.at
 	}
@@ -444,7 +445,7 @@ func (h *host) registerForms(r *registrar) {
 		Description: "Approve a draft form with expected_fields (one or more, from list_forms' fields): from now on its submissions keep only those fields, and each writes a $form_submit product event (attribute form = the name), its conversion, about a minute after it arrives. Submissions taken while it was a draft never count as conversions. Approving an approved form is refused (conflict; change its fields with update_form), and approval does not reopen a closed form."},
 		h.approveForm)
 	expose(r, spec{Name: "update_form", Annotations: write, Method: "PATCH", Path: f,
-		Description: "Change a form: purpose; return_url (where a plain HTML form sends the visitor back without $redirect: an absolute http(s) URL whose origin is in the project's allowed_origins; empty clears it); closes_at (RFC 3339; submissions from then on are refused; null reopens); and, on an approved form, expected_fields (never empty). Fields you omit are kept. expected_fields on a draft is refused: approve it instead."},
+		Description: "Change a form: purpose; return_url (where a plain HTML form sends the visitor back without $redirect: an absolute http(s) URL whose origin is in the project's allowed_origins; empty clears it); closes_at (RFC 3339; submissions from then on are refused; null reopens); on an approved form, expected_fields (never empty); and add_fields, field names to add before any submission sends them (a field the page added later): they join fields, and an approved form keeps them from now on. A field that arrives on its own already joins fields, not kept until it is in expected_fields. Fields you omit are kept. expected_fields on a draft is refused: approve it instead."},
 		h.updateForm)
 	expose(r, spec{Name: "archive_form", Annotations: idem, Method: "POST", Path: f + "/archive",
 		Description: "Archive a form: it refuses submissions, and it and its submissions leave every list, table and export (find_submissions still finds them, marked archived, for an erasure request). Reversible with restore_form; purged with its submissions RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored; their $form_submit conversions stay in the event files."},

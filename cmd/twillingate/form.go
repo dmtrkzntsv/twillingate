@@ -80,7 +80,7 @@ func cmdForm(args []string, stdout io.Writer) int {
 	sf := flag.NewFlagSet("form "+sub, flag.ContinueOnError)
 	sf.SetOutput(stdout)
 	project := sf.Int64("project-id", 0, "project id (required)")
-	var name, fields, purpose, returnURL, closesAt, search *string
+	var name, fields, addFields, purpose, returnURL, closesAt, search *string
 	var archived *bool
 	var ids multiFlag
 	switch sub {
@@ -100,6 +100,7 @@ func cmdForm(args []string, stdout io.Writer) int {
 		returnURL = sf.String("return-url", "", "where a plain HTML form sends the visitor back; empty clears it")
 		closesAt = sf.String("closes-at", "", "RFC 3339 time after which submissions are refused, now, or never (reopen)")
 		fields = sf.String("fields", "", "comma-separated fields an approved form keeps")
+		addFields = sf.String("add-fields", "", "comma-separated fields to add before any submission sends them; an approved form keeps them")
 	}
 	if err := sf.Parse(subArgs); err != nil {
 		return 2
@@ -109,7 +110,7 @@ func cmdForm(args []string, stdout io.Writer) int {
 	case "approve":
 		usageLine += " -name <name> -fields a,b"
 	case "update":
-		usageLine += " -name <name> [-purpose ...] [-return-url ...] [-closes-at RFC3339|now|never] [-fields a,b]"
+		usageLine += " -name <name> [-purpose ...] [-return-url ...] [-closes-at RFC3339|now|never] [-fields a,b] [-add-fields a,b]"
 	case "list":
 		usageLine += " [-archived]"
 	case "erase":
@@ -152,7 +153,10 @@ func cmdForm(args []string, stdout io.Writer) int {
 			f := splitFields(*fields)
 			spec.ExpectedFields = &f
 		}
-		if spec == (manage.FormSpec{}) {
+		if given["add-fields"] {
+			spec.AddFields = splitFields(*addFields)
+		}
+		if spec.Purpose == nil && spec.ReturnURL == nil && spec.ClosesAt == nil && spec.ExpectedFields == nil && len(spec.AddFields) == 0 {
 			fmt.Fprintf(stdout, "nothing to update\n%s\n", usageLine)
 			return 2
 		}

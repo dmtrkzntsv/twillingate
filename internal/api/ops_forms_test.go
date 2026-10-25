@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -160,6 +161,13 @@ func TestFormToolsRoundTrip(t *testing.T) {
 	}
 	refused(t, cs, "update_form", map[string]any{"project_id": 1, "name": "contact", "closes_at": "tomorrow"})
 	refused(t, cs, "update_form", map[string]any{"project_id": 1, "name": "contact", "expected_fields": []string{}})
+	refused(t, cs, "update_form", map[string]any{"project_id": 1, "name": "contact", "add_fields": []string{"$x"}})
+	// add_fields records a field nothing sent yet, and the approved form keeps it.
+	callAs[okOut](t, cs, "update_form", map[string]any{"project_id": 1, "name": "contact", "add_fields": []string{"company"}})
+	f = listForms(t, cs, false)["contact"]
+	if !slices.Contains(f.Fields, "company") || !reflect.DeepEqual(f.ExpectedFields, []string{"email", "note", "company"}) {
+		t.Fatalf("added = %+v", f)
+	}
 	// A return URL must be an allowed target: project 1 lists no origins.
 	refused(t, cs, "update_form", map[string]any{"project_id": 1, "name": "contact", "return_url": "https://evil.example/"})
 

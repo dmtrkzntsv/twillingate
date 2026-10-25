@@ -395,7 +395,8 @@ func (d *DB) GetForm(ctx context.Context, projectID int64, name string) (store.F
 }
 
 // ApproveForm makes a draft approved: expected_fields and approved_at
-// set, draft_until cleared.
+// set, draft_until cleared, and an expected name nothing sent yet joins
+// fields.
 func (d *DB) ApproveForm(ctx context.Context, projectID int64, name string, expected []string, now time.Time, a store.AuditEntry) error {
 	if expected == nil {
 		expected = []string{}
@@ -423,6 +424,9 @@ func (d *DB) ApproveForm(ctx context.Context, projectID int64, name string, expe
 			}
 			return fmt.Errorf("form %d/%s is already approved: %w", projectID, name, store.ErrConflict)
 		}
+		if err := addFormFields(ctx, tx, projectID, name, expected); err != nil {
+			return err
+		}
 		return audit(ctx, tx, a)
 	})
 }
@@ -430,8 +434,10 @@ func (d *DB) ApproveForm(ctx context.Context, projectID int64, name string, expe
 // UpdateForm writes the form's purpose, return URL and closing time as
 // given, and its expected fields when f.ExpectedFields is non-nil; nil
 // leaves the stored list alone, so a caller that read the form before an
-// approval cannot wipe the list the approval set.
-func (d *DB) UpdateForm(ctx context.Context, f store.Form, a store.AuditEntry) error {
+// approval cannot wipe the list the approval set. Every expected name and
+// every name in add joins fields, and add joins an approved form's
+// expected fields, in the same transaction.
+func (d *DB) UpdateForm(ctx context.Context, f store.Form, add []string, a store.AuditEntry) error {
 	var expected any
 	if f.ExpectedFields != nil {
 		b, err := json.Marshal(f.ExpectedFields)
@@ -452,8 +458,50 @@ func (d *DB) UpdateForm(ctx context.Context, f store.Form, a store.AuditEntry) e
 		} else if n == 0 {
 			return unknownForm(f.ProjectID, f.Name)
 		}
+		if names := append(slices.Clone(f.ExpectedFields), add...); len(names) > 0 {
+			if err := addFormFields(ctx, tx, f.ProjectID, f.Name, names); err != nil {
+				return err
+			}
+		}
 		return audit(ctx, tx, a)
 	})
+}
+
+// addFormFields records names as sent to the form (fields stays sorted)
+// and appends the ones an approved form does not keep yet to its expected
+// fields, in the order given. fields thus always holds every expected
+// name, also one no submission has sent.
+func addFormFields(ctx context.Context, tx *sql.Tx, projectID int64, name string, add []string) error {
+	form, err := scanForm(tx.QueryRowContext(ctx, `SELECT `+formColumns+` FROM forms WHERE project_id=? AND name=?`,
+		projectID, name))
+	if err != nil {
+		return err
+	}
+	names, expected := slices.Clone(form.Fields), form.ExpectedFields
+	for _, n := range add {
+		if !slices.Contains(names, n) {
+			names = append(names, n)
+		}
+		if form.Status == store.FormApproved && !slices.Contains(expected, n) {
+			expected = append(expected, n)
+		}
+	}
+	sort.Strings(names)
+	nb, err := json.Marshal(names)
+	if err != nil {
+		return err
+	}
+	var eb any // NULL while draft
+	if form.Status == store.FormApproved {
+		b, err := json.Marshal(expected)
+		if err != nil {
+			return err
+		}
+		eb = string(b)
+	}
+	_, err = tx.ExecContext(ctx, `UPDATE forms SET fields=?, expected_fields=? WHERE project_id=? AND name=?`,
+		string(nb), eb, projectID, name)
+	return err
 }
 
 // SetFormArchived archives or restores a form. A call that changes

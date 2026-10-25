@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ type formCalls struct {
 	audits   []store.AuditEntry
 	approved []time.Time
 	expected [][]string
+	added    [][]string
 	updated  []store.Form
 	draftArg time.Time
 	archArg  []bool
@@ -80,9 +82,10 @@ func (f *formCalls) ApproveForm(_ context.Context, pid int64, name string, expec
 	return nil
 }
 
-func (f *formCalls) UpdateForm(_ context.Context, fm store.Form, a store.AuditEntry) error {
+func (f *formCalls) UpdateForm(_ context.Context, fm store.Form, add []string, a store.AuditEntry) error {
 	f.updated = append(f.updated, fm) // as passed
-	if fm.ExpectedFields == nil {     // as the store: nil keeps the stored list
+	f.added = append(f.added, add)
+	if fm.ExpectedFields == nil { // as the store: nil keeps the stored list
 		fm.ExpectedFields = f.forms[fm.Name].ExpectedFields
 	}
 	f.forms[fm.Name] = fm
@@ -237,6 +240,7 @@ func TestUpdateFormMergesAndValidates(t *testing.T) {
 		"expected on draft":   {"draft", FormSpec{ExpectedFields: &good}, ErrInvalid},
 		"empty on approved":   {"live", FormSpec{ExpectedFields: &empty}, ErrInvalid},
 		"bad expected":        {"live", FormSpec{ExpectedFields: &bad}, ErrInvalid},
+		"bad add":             {"live", FormSpec{AddFields: []string{"phone", ""}}, ErrInvalid},
 		"return url foreign":  {"live", FormSpec{ReturnURL: str("https://evil.example.org/x")}, ErrInvalid},
 		"return url relative": {"live", FormSpec{ReturnURL: str("/thanks")}, ErrInvalid},
 		"unknown form":        {"nope", FormSpec{Purpose: str("x")}, ErrNotFound},
@@ -292,6 +296,18 @@ func TestUpdateFormMergesAndValidates(t *testing.T) {
 	// A draft can still take purpose, return url and closes_at.
 	if err := ops.UpdateForm(ctx, "cli", pid, "draft", FormSpec{Purpose: str("p")}); err != nil {
 		t.Fatal(err)
+	}
+
+	// Added fields reach the store deduplicated, on a draft as on an
+	// approved form, and the audit names them.
+	if err := ops.UpdateForm(ctx, "api", pid, "draft", FormSpec{AddFields: []string{"phone", "company", "phone"}}); err != nil {
+		t.Fatal(err)
+	}
+	if add := fc.added[len(fc.added)-1]; !slices.Equal(add, []string{"phone", "company"}) {
+		t.Fatalf("added = %v", add)
+	}
+	if d := fc.audits[len(fc.audits)-1].Detail; d != "added: phone, company" {
+		t.Fatalf("audit detail = %q", d)
 	}
 }
 

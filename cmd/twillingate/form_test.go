@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/csv"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -146,6 +147,10 @@ func TestFormUpdate(t *testing.T) {
 	runForm(t, 0, "update", "-project-id", "1", "-name", "contact", "-fields", "email,message")
 	if f = getForm(t); strings.Join(f.ExpectedFields, ",") != "email,message" {
 		t.Fatalf("expected fields: %v", f.ExpectedFields)
+	}
+	runForm(t, 0, "update", "-project-id", "1", "-name", "contact", "-add-fields", "company")
+	if f = getForm(t); strings.Join(f.ExpectedFields, ",") != "email,message,company" || !slices.Contains(f.Fields, "company") {
+		t.Fatalf("after -add-fields: fields %v, expected %v", f.Fields, f.ExpectedFields)
 	}
 }
 
