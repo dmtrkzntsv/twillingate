@@ -107,6 +107,18 @@ describe('FormPage', () => {
     await waitFor(() => expect(update).toHaveBeenCalledWith(4, 'contact', { expected_fields: ['email', 'message', 'phone'] }))
   })
 
+  it('adds a field by name and keeps it with the others', async () => {
+    const user = userEvent.setup()
+    const update = vi.spyOn(endpoints, 'updateForm').mockResolvedValue({ status: 'updated' })
+    renderPage()
+    const picker = await screen.findByRole('group', { name: 'Expected fields' })
+    await user.type(within(picker).getByRole('textbox', { name: 'New field' }), 'company')
+    await user.click(within(picker).getByRole('button', { name: 'Add field' }))
+    expect(within(picker).getByRole('checkbox', { name: 'company' })).toBeChecked()
+    await user.click(within(picker).getByRole('button', { name: 'Save fields' }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith(4, 'contact', { expected_fields: ['email', 'message', 'company'] }))
+  })
+
   it('saves the purpose and return URL', async () => {
     const user = userEvent.setup()
     const update = vi.spyOn(endpoints, 'updateForm').mockResolvedValue({ status: 'updated' })

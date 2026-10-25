@@ -29,6 +29,9 @@ type FormSpec struct {
 	ReturnURL      *string
 	ClosesAt       **time.Time
 	ExpectedFields *[]string
+	// AddFields are field names to record before any submission sends
+	// them; an approved form also keeps them, after ExpectedFields.
+	AddFields []string
 }
 
 func formSubject(projectID int64, name string) string {
@@ -145,7 +148,14 @@ func (o *Ops) UpdateForm(ctx context.Context, actor string, projectID int64, nam
 		f.ExpectedFields = exp
 		changed = append(changed, "expected_fields")
 	}
-	return o.St.UpdateForm(ctx, f, store.AuditEntry{
+	var add []string
+	if len(spec.AddFields) > 0 {
+		if add, err = checkExpected(spec.AddFields); err != nil {
+			return err
+		}
+		changed = append(changed, "added: "+strings.Join(add, ", "))
+	}
+	return o.St.UpdateForm(ctx, f, add, store.AuditEntry{
 		Actor: actor, Action: "form.update", Subject: formSubject(projectID, name),
 		Detail: strings.Join(changed, ", ")})
 }

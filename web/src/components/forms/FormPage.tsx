@@ -272,7 +272,10 @@ function ExpectedFields({ projectId, form, actions }: { projectId: number; form:
       <h3 id={`${id}-title`} className="text-sm font-medium">
         Expected fields
       </h3>
-      <p className="text-xs text-muted-foreground">New submissions keep only these, as the table's columns in this order.</p>
+      <p className="text-xs text-muted-foreground">
+        New submissions keep only these, as the table's columns in this order. A field the form starts sending appears here unchecked;
+        add one by name to keep it from its first submission.
+      </p>
       <FieldPicker fields={form.fields} kept={expected} checked={checked} onChange={setChecked} disabled={actions.pending} />
       <Button
         type="button"

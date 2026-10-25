@@ -28,6 +28,16 @@ describe('ApproveDialog', () => {
     expect(screen.getByRole('button', { name: 'Approve' })).toBeEnabled()
   })
 
+  it('approves a draft nothing has sent fields to with fields added by name', async () => {
+    const user = userEvent.setup()
+    const onApprove = vi.fn().mockResolvedValue(true)
+    render(<ApproveDialog open name="contact" fields={[]} onOpenChange={() => {}} onApprove={onApprove} />)
+    await user.type(screen.getByRole('textbox', { name: 'New field' }), 'email')
+    await user.click(screen.getByRole('button', { name: 'Add field' }))
+    await user.click(screen.getByRole('button', { name: 'Approve' }))
+    expect(onApprove).toHaveBeenCalledWith(['email'])
+  })
+
   it('stays open when the approval is refused', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
@@ -54,5 +64,26 @@ describe('FieldPicker', () => {
     expect(onChange).toHaveBeenLastCalledWith(['message', 'email', 'phone'])
     await user.click(screen.getByRole('checkbox', { name: 'message' }))
     expect(onChange).toHaveBeenLastCalledWith(['email'])
+  })
+
+  it('adds a field nothing sent yet, checked, and lists it as new', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+    const { rerender } = render(<FieldPicker fields={['email']} kept={['email']} checked={['email']} onChange={onChange} />)
+    expect(screen.getByRole('button', { name: 'Add field' })).toBeDisabled()
+    await user.type(screen.getByRole('textbox', { name: 'New field' }), ' company {Enter}')
+    expect(onChange).toHaveBeenLastCalledWith(['email', 'company'])
+    expect(screen.getByRole('textbox', { name: 'New field' })).toHaveValue('')
+    rerender(<FieldPicker fields={['email']} kept={['email']} checked={['email', 'company']} onChange={onChange} />)
+    expect(screen.getByRole('checkbox', { name: 'company' })).toBeChecked()
+    expect(screen.getByText('new')).toBeInTheDocument()
+  })
+
+  it('refuses a field name the server would', async () => {
+    const user = userEvent.setup()
+    render(<FieldPicker fields={['email']} checked={['email']} onChange={() => {}} />)
+    await user.type(screen.getByRole('textbox', { name: 'New field' }), '$path')
+    expect(screen.getByText(/reserved for context keys/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Add field' })).toBeDisabled()
   })
 })

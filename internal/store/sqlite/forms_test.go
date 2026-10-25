@@ -825,7 +825,7 @@ func TestUpdateFormWritesAsGiven(t *testing.T) {
 	}
 	closes := formsNow.Add(48 * time.Hour)
 	f.Purpose, f.ReturnURL, f.ClosesAt, f.ExpectedFields = "leads", "https://example.com/thanks", &closes, []string{"email", "name"}
-	if err := db.UpdateForm(ctx, f, store.AuditEntry{Actor: "agent", Action: "form.update", Subject: "form/1/contact"}); err != nil {
+	if err := db.UpdateForm(ctx, f, nil, store.AuditEntry{Actor: "agent", Action: "form.update", Subject: "form/1/contact"}); err != nil {
 		t.Fatal(err)
 	}
 	g, err := db.GetForm(ctx, 1, "contact")
@@ -833,7 +833,8 @@ func TestUpdateFormWritesAsGiven(t *testing.T) {
 		t.Fatal(err)
 	}
 	if g.Purpose != "leads" || g.ReturnURL != "https://example.com/thanks" ||
-		g.ClosesAt == nil || !g.ClosesAt.Equal(closes) || !reflect.DeepEqual(g.ExpectedFields, []string{"email", "name"}) {
+		g.ClosesAt == nil || !g.ClosesAt.Equal(closes) || !reflect.DeepEqual(g.ExpectedFields, []string{"email", "name"}) ||
+		!reflect.DeepEqual(g.Fields, []string{"email", "name"}) {
 		t.Fatalf("form = %+v", g)
 	}
 	if g.Status != store.FormApproved || g.ApprovedAt == nil {
@@ -841,7 +842,7 @@ func TestUpdateFormWritesAsGiven(t *testing.T) {
 	}
 	// nil clears closes_at.
 	g.ClosesAt = nil
-	if err := db.UpdateForm(ctx, g, formAudit); err != nil {
+	if err := db.UpdateForm(ctx, g, nil, formAudit); err != nil {
 		t.Fatal(err)
 	}
 	if h, _ := db.GetForm(ctx, 1, "contact"); h.ClosesAt != nil {
@@ -851,7 +852,7 @@ func TestUpdateFormWritesAsGiven(t *testing.T) {
 		t.Fatalf("%d update audit rows", n)
 	}
 	g.Name = "nope"
-	if err := db.UpdateForm(ctx, g, formAudit); !errors.Is(err, store.ErrNotFound) {
+	if err := db.UpdateForm(ctx, g, nil, formAudit); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("unknown update = %v", err)
 	}
 }
@@ -865,7 +866,7 @@ func TestUpdateFormNilExpectedKeepsList(t *testing.T) {
 	}
 	// A caller holding a stale draft read: no expected list.
 	stale := store.Form{ProjectID: 1, Name: "contact", Purpose: "leads"}
-	if err := db.UpdateForm(ctx, stale, formAudit); err != nil {
+	if err := db.UpdateForm(ctx, stale, nil, formAudit); err != nil {
 		t.Fatal(err)
 	}
 	g, err := db.GetForm(ctx, 1, "contact")
@@ -874,6 +875,53 @@ func TestUpdateFormNilExpectedKeepsList(t *testing.T) {
 	}
 	if g.Purpose != "leads" || !reflect.DeepEqual(g.ExpectedFields, []string{"email"}) {
 		t.Fatalf("form = %+v, want purpose set and expected_fields kept", g)
+	}
+}
+
+func TestUpdateFormAddsFields(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, newSub("s1", map[string]string{"email": "a@x.io"}))
+	draft, err := db.GetForm(ctx, 1, "contact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A draft records the names; it keeps everything anyway.
+	if err := db.UpdateForm(ctx, draft, []string{"name", "email"}, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if g, _ := db.GetForm(ctx, 1, "contact"); !reflect.DeepEqual(g.Fields, []string{"email", "name"}) || g.ExpectedFields != nil {
+		t.Fatalf("draft = %+v", g)
+	}
+	// An expected name nothing sent joins fields on approval.
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email", "tel"}, formsNow, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if got := formFieldNames(t, db); !reflect.DeepEqual(got, []string{"email", "name", "tel"}) {
+		t.Fatalf("fields after approve = %v", got)
+	}
+	// An approved form keeps added names too, after the expected list
+	// written, and every expected name stays in fields.
+	f, err := db.GetForm(ctx, 1, "contact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.ExpectedFields = []string{"name"}
+	if err := db.UpdateForm(ctx, f, []string{"phone", "name", "company"}, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	g, err := db.GetForm(ctx, 1, "contact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(g.Fields, []string{"company", "email", "name", "phone", "tel"}) ||
+		!reflect.DeepEqual(g.ExpectedFields, []string{"name", "phone", "company"}) {
+		t.Fatalf("fields = %v, expected = %v", g.Fields, g.ExpectedFields)
+	}
+	// The next submission stores an added field.
+	mustWrite(t, db, newSub("s2", map[string]string{"phone": "555", "email": "b@x.io"}))
+	if got := storedFields(t, db, "s2"); !reflect.DeepEqual(got, map[string]string{"phone": "555"}) {
+		t.Fatalf("stored = %v", got)
 	}
 }
 

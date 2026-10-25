@@ -793,7 +793,9 @@ tools below do.
    plain form sends the visitor back without `$redirect`, an allowed target
    as for the redirect); `closes_at`, after which submissions are refused
    (`null` reopens; approving never reopens); and the approved form's
-   `expected_fields`.
+   `expected_fields`. A field the page starts sending later joins `fields`
+   but is dropped until it is in `expected_fields`; `add_fields` records a
+   field before anything sends it, and an approved form keeps it.
 5. **Read the submissions** as a table with `list_submissions`, one in full
    with `get_submission`, or as CSV from the export route.
 6. **Erase a person** on request: `find_submissions` with their email (or any
@@ -805,7 +807,7 @@ tools below do.
 | --- | --- | --- | --- |
 | List forms | `twillingate form list` | `list_forms` | `{project_id, archived}`; drafts first; each with `status` (`draft` or `approved`), `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, `submissions` (count), `last_submitted_at`, `new_submissions` (received after `seen_at`), `seen_at` (how far the console has read the form; reading over MCP never moves it), `archived`. `archived: true` lists the archived forms instead. Beside `forms`, `action_base` is `INGEST_URL` + `/ingest/forms` (empty without `INGEST_URL`), so a plain form's action is `<action_base>/{name}?key=…` |
 | Approve a draft | `twillingate form approve` | `approve_form` | `{project_id, name, expected_fields}`; one or more fields; an approved form is a `conflict` |
-| Change one | `twillingate form update` | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty |
+| Change one | `twillingate form update` | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields, add_fields}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty; `add_fields` join `fields`, and an approved form keeps them, after `expected_fields` |
 | Archive / restore | `twillingate form archive` / `restore` | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions from every list, table and export (a search still finds them); a restored draft gets another `RETENTION_FORMS_DRAFT_DAYS` |
 | Read a form's table | `twillingate form export` (CSV) | `list_submissions` | `{project_id, name, filters, sort, distinct, offset, limit}`; returns `columns`, `rows`, `ids`, `matched`, `total`, `offset`, `limit` |
 | Read one submission | — | `get_submission` | `{project_id, name, id}`; every stored field (ones no longer expected too), `received_at`, `attribution` (`referrer`, `utm_source`, `utm_medium`, `utm_campaign`, each left out when empty; the last non-direct visit within `ATTRIBUTION_DAYS`, or what the submission sent; `{}` until the job has run, about a minute after arrival, and when the visit was direct) |

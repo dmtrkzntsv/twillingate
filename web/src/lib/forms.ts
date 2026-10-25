@@ -56,10 +56,27 @@ export function formStatus(form: Form, now = Date.now()): string {
 
 /**
  * The fields a picker offers, in order: the kept ones in their order (the
- * table's column order), then every other field seen.
+ * table's column order), then every other field seen, then the ones
+ * checked that nothing sent yet (added by name, not saved yet).
  */
-export function pickerFields(fields: string[], kept: string[] = []): string[] {
-  return [...kept, ...fields.filter((f) => !kept.includes(f))]
+export function pickerFields(fields: string[], kept: string[] = [], checked: string[] = []): string[] {
+  const listed = [...kept, ...fields.filter((f) => !kept.includes(f))]
+  return [...listed, ...checked.filter((f) => !listed.includes(f))]
+}
+
+const MAX_FIELD_NAME = 64
+
+/**
+ * Why `name` cannot be a field added by name, as the server would refuse
+ * it: a `$` prefix (the context keys), more than 64 characters, or a
+ * control character. `''` when it can.
+ */
+export function fieldNameProblem(name: string): string {
+  if (name.startsWith('$')) return 'Names starting with $ are reserved for context keys.'
+  if ([...name].length > MAX_FIELD_NAME) return `At most ${MAX_FIELD_NAME} characters.`
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001f\u007f]/.test(name)) return 'No control characters.'
+  return ''
 }
 
 /**
