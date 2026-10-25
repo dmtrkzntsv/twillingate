@@ -385,3 +385,96 @@ func TestCheckUserWidgetsStopsAfterThreeSkips(t *testing.T) {
 		})
 	}
 }
+
+// scopeIs takes the engine requests scoped to project.
+func scopeIs(project int64) archivetest.Match {
+	return func(r sqlengine.Request) bool { return r.Scope != nil && *r.Scope == project }
+}
+
+// TestCheckUserWidgetsTriesEveryProject: a widget written for one
+// project's attribute fails on a project that never sent it (its scoped
+// tables have no such column), so the check at start tries each live
+// project with files, the sample first, and logs nothing when one runs
+// it. A widget that fails on every project is still logged, with the
+// sample project's error. A widget tried on several projects counts as
+// one skip: three such widgets in a row timing out on the second project
+// stop the check after six queries.
+func TestCheckUserWidgetsTriesEveryProject(t *testing.T) {
+	f := newWidgetsFixture(t)
+	ctx := context.Background()
+	f.write(t, "e1", 1, store.FamilyProduct, "2026-08-21") // the sample: the newest day
+	f.write(t, "e2", 2, store.FamilyProduct, "2026-08-20")
+	const notFound = `Binder Error: Referenced column "attr_position" not found`
+	insert := func(key string, sources ...string) {
+		t.Helper()
+		var ws []store.Widget
+		for i, src := range sources {
+			n := fmt.Sprint("w", i)
+			ws = append(ws, store.Widget{Component: "stat", SortKey: string(rune('a' + i)), Width: 3, Height: 4, Name: n, Title: n,
+				Props: "{}", SourceType: "sql", Source: src})
+		}
+		if _, err := f.st.InsertDashboard(ctx, store.Dashboard{Owner: store.OwnerUser, Title: "Mine " + key, SortKey: key, Sidebar: true},
+			ws, store.AuditEntry{Actor: "test", Action: "dashboard.create"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	logged := func(fake *archivetest.FakeSQL) []map[string]any {
+		t.Helper()
+		var out bytes.Buffer
+		checkUserWidgets(ctx, f.st, fake.Client(t), f.options(), slog.New(slog.NewJSONHandler(&out, nil)))
+		var lines []map[string]any
+		for _, l := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+			if l == "" {
+				continue
+			}
+			var m map[string]any
+			if err := json.Unmarshal([]byte(l), &m); err != nil {
+				t.Fatalf("log line %q: %v", l, err)
+			}
+			lines = append(lines, m)
+		}
+		return lines
+	}
+
+	insert("m", "SELECT count(*) AS value FROM product WHERE project_id = :project AND COALESCE(attr_position, '') <> ''",
+		"SELECT count(attr_nowhere) AS value FROM product WHERE project_id = :project")
+	fake := archivetest.NewFakeSQL(t)
+	fake.On(archivetest.Any, archivetest.Fail(sqlengine.KindSQL, `Binder Error: Referenced column "attr_nowhere" not found`))
+	fake.On(scopeIs(1), archivetest.Fail(sqlengine.KindSQL, notFound))
+	fake.On(archivetest.And(scopeIs(2), archivetest.SQLHas("attr_position")), archivetest.Shape("value"))
+	lines := logged(fake)
+	if len(lines) != 1 || lines[0]["msg"] != "widget SQL fails on the event files" || lines[0]["title"] != "w1" ||
+		lines[0]["error"] != notFound {
+		t.Fatalf("logged %v; want w1 alone failing, with project 1's error (w0 runs on project 2)", lines)
+	}
+	if n := len(fake.Requests()); n != 4 {
+		t.Errorf("%d queries, want 4: w0 on 1 and 2, w1 on 1 and 2", n)
+	}
+
+	// Three widgets more, each refused on project 1 and timing out on 2.
+	ds, err := f.st.ListDashboards(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range ds {
+		if err := f.st.SetDashboardArchived(ctx, d.ID, true, store.AuditEntry{Actor: "test", Action: "dashboard.archive"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const slow = "SELECT count(attr_position) AS value FROM product WHERE project_id = :project"
+	insert("n", slow, slow, slow, slow)
+	fake = archivetest.NewFakeSQL(t)
+	fake.On(scopeIs(1), archivetest.Fail(sqlengine.KindSQL, notFound))
+	fake.On(scopeIs(2), archivetest.Fail(sqlengine.KindTimeout, "the query exceeded X-Timeout-Ms"))
+	const skipped = "could not check widget on the event files"
+	var msgs []string
+	for _, l := range logged(fake) {
+		msgs = append(msgs, fmt.Sprint(l["msg"]))
+	}
+	if want := []string{skipped, skipped, skipped + "; the widgets after it go unchecked until the next start"}; !slices.Equal(msgs, want) {
+		t.Errorf("logged %q, want %q", msgs, want)
+	}
+	if n := len(fake.Requests()); n != 6 {
+		t.Errorf("%d queries, want 6: three widgets on two projects each", n)
+	}
+}

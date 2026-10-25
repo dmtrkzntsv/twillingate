@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -105,22 +106,34 @@ func (e *sqlEngine) ask(ctx context.Context, q boundSQL, mode sqlengine.Mode, ma
 	return res, nil
 }
 
-// sampleProject is the live project whose files hold the newest day (a
-// tie goes to the lowest id), from the file names alone, so it costs no
-// query; 0 when no live project has any.
-func (e *sqlEngine) sampleProject(ctx context.Context) (int64, error) {
+// sampleProjects are the live projects with event files, from the file
+// names alone, so it costs no query: the sample project first, the one
+// whose files hold the newest day (a tie goes to the lowest id), then
+// the others by id. With none, it is project 0 alone, which reads no
+// rows.
+func (e *sqlEngine) sampleProjects(ctx context.Context) ([]int64, error) {
 	days, err := archive.LatestDays(e.dir)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	var id int64
-	var newest string
-	for pid, day := range days {
-		if (e.live == nil || e.live(ctx, pid)) && (day > newest || day == newest && pid < id) {
-			id, newest = pid, day
+	var ids []int64
+	for pid := range days {
+		if e.live == nil || e.live(ctx, pid) {
+			ids = append(ids, pid)
 		}
 	}
-	return id, nil
+	if len(ids) == 0 {
+		return []int64{0}, nil
+	}
+	slices.Sort(ids)
+	sample := 0
+	for i, pid := range ids {
+		if days[pid] > days[ids[sample]] {
+			sample = i
+		}
+	}
+	first := ids[sample]
+	return append([]int64{first}, slices.Delete(ids, sample, sample+1)...), nil
 }
 
 // err classifies an error from running a widget's own SQL, by the
@@ -334,10 +347,14 @@ func skipsWidget(cause error) bool {
 }
 
 // CheckUserWidgets runs the check Migrate runs on the system widgets (the
-// sample project and week bound, no rows, the columns the component
-// needs) on every live sql widget of every live user dashboard, and
-// returns those refused, in dashboard and widget order: most often SQL
-// written for SQLite before the switch. A widget whose component was
+// sample week bound, no rows, the columns the component needs) on every
+// live sql widget of every live user dashboard, and returns those
+// refused, in dashboard and widget order: most often SQL written for
+// SQLite before the switch. A widget that reads :project is tried on
+// each live project with files, the sample project first, and is refused
+// only when it fails on all of them (sqlSource.Validate), so one written
+// for another project's attributes is no failure. The skips below count
+// widgets, not queries: a widget tried on several projects is one. A widget whose component was
 // removed is left out; its dashboard says so already. A check that could
 // not run is returned as WidgetFailure.Unchecked: a plain timeout or
 // stale files skip that widget, while the third such widget in a row and

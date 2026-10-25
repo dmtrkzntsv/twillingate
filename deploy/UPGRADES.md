@@ -1466,7 +1466,11 @@ no engine.
   - **Scoped columns:** a SQL widget that reads `:project` now sees only
     that project's `attr_<key>` columns. Naming a key the project never sent
     is an error ("Referenced column … not found") where it read NULL.
-    Rewrite such a widget to name only the project's keys.
+    Rewrite such a widget to name only the project's keys. Saving a SQL
+    widget and the check at start try each live project with event files
+    in turn (from the release after 0.23.0: 0.23.0 tried one sample
+    project, and logged a widget written for another project's keys as
+    `widget SQL fails on the event files` at every start).
 - **Before the upgrade**, decide on your SQL widgets. List them:
   `list_dashboards`, then each user dashboard's widgets with `source.type`
   `sql`. With none, and no script that sends `query` SQL, nothing needs

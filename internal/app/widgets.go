@@ -20,7 +20,9 @@ func hasEventFiles(dir string) (bool, error) {
 // checkUserWidgets logs every user's sql widget whose SQL fails on the
 // event files (Decision 10): a widget written in SQLite's dialect before
 // the switch fails its shape check here, once at start, rather than only
-// on the dashboard of whoever opens it next. Nothing is rewritten or
+// on the dashboard of whoever opens it next. A widget that reads :project
+// is logged only when it fails on every live project with event files,
+// not on the sample one alone. Nothing is rewritten or
 // archived. It runs in the background: each check is a query on the
 // external SQL engine sql, and the console does not wait for them. A
 // check that ran out of time or memory, or that the engine was busy or

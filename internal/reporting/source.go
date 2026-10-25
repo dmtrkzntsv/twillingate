@@ -202,6 +202,17 @@ func bindSQL(content string, params []string, p Params) (boundSQL, error) {
 	return q, nil
 }
 
+// Validate checks content on the sample week. SQL that reads :project
+// is tried on each live project with event files in turn
+// (sampleProjects), the sample project first, and passes on the first
+// it runs on: a scoped query sees only that project's attr_<key>
+// columns, so SQL written for one project's attributes fails on another
+// that never sent them. Only a refusal of the SQL by the engine or the
+// component (otherProject) moves on to the next project; one that ran
+// out of time or memory, a request the engine refused outright and any
+// other error end the check there, so one widget costs at most one
+// query run per live project, and a timeout ends it as one skip. When
+// every project refuses it, the sample project's refusal is returned.
 func (s *sqlSource) Validate(ctx context.Context, content string, c Component) error {
 	params, err := checkSQLParams(content)
 	if err != nil {
@@ -216,16 +227,50 @@ func (s *sqlSource) Validate(ctx context.Context, content string, c Component) e
 	// :from or :to, not only the sampleRows run below.
 	needsProject, needsRange := s.Follows(content)
 	var p Params
-	if needsProject {
-		if p.ProjectID, err = s.eng.sampleProject(ctx); err != nil {
-			return err // an infrastructure error, not a refusal of content
-		}
-	}
 	if needsRange {
 		now := s.clock().UTC()
 		p.From = now.AddDate(0, 0, -6).Format("2006-01-02")
 		p.To = now.Format("2006-01-02")
 	}
+	if !needsProject {
+		return s.validateOn(ctx, content, params, p, c)
+	}
+	projects, err := s.eng.sampleProjects(ctx)
+	if err != nil {
+		return err // an infrastructure error, not a refusal of content
+	}
+	var first error
+	for _, id := range projects {
+		p.ProjectID = id
+		err := s.validateOn(ctx, content, params, p, c)
+		if err == nil || !otherProject(err) {
+			return err
+		}
+		if first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+// otherProject reports whether err, a check's on one project, may not
+// hold on another: a refusal of the SQL (the engine's sql kind, the
+// component's columns or rows), which a column only some projects have
+// can cause. The engine's sql kind covers a syntax error too, and only
+// the message would tell the two apart, so any such refusal moves on;
+// the cost is bounded by the live projects. A request the engine
+// refused (engineRefused: it reads past the seven tables) and a check
+// that could not run (resourceErr) are no verdict another project
+// would change.
+func otherProject(err error) bool {
+	var refused engineRefused
+	return errors.Is(err, store.ErrInvalid) && resourceCause(err) == nil && !errors.As(err, &refused)
+}
+
+// validateOn is Validate's check of content with p bound: the shape,
+// the columns the component reads, and, with sampleRows, up to five
+// rows against the component.
+func (s *sqlSource) validateOn(ctx context.Context, content string, params []string, p Params, c Component) error {
 	q, err := bindSQL(content, params, p)
 	if err != nil {
 		return err
