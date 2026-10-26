@@ -21,10 +21,13 @@ var (
 	// engine's queue is full or the request waited out its turn); the
 	// same request may succeed later.
 	ErrBusy = errors.New("busy")
+	// ErrTimeout: the request ran past its time limit
+	// (CONSOLE_QUERY_TIMEOUT); a narrower one may finish in time.
+	ErrTimeout = errors.New("timeout")
 )
 
 // Refusal is an error an edge classifies with errors.Is (against ErrInvalid,
-// ErrNotFound, ErrConflict or ErrBusy) while its text stays the sentence written for
+// ErrNotFound, ErrConflict, ErrBusy or ErrTimeout) while its text stays the sentence written for
 // the caller: fmt.Errorf("%w: …") would prepend the sentinel's own words
 // ("invalid: …") instead of reading as one sentence.
 type Refusal struct {

@@ -14,7 +14,6 @@ import (
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
-	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -308,7 +307,7 @@ func (s *querySource) withTimeout(ctx context.Context) (context.Context, context
 func (s *querySource) answered(pl queryPlan, res native.Result, err error) (readsql.Result, error) {
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) && s.timeout > 0 {
-			return readsql.Result{}, &resourceErr{store.Refuse(store.ErrInvalid, "%s", sqlbind.Timeout(s.timeout)), err}
+			return readsql.Result{}, timedOut(s.timeout, err)
 		}
 		return readsql.Result{}, queryErr(err)
 	}

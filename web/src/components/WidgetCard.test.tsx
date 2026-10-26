@@ -179,6 +179,20 @@ describe('WidgetCard', () => {
     expect(spy).toHaveBeenCalledTimes(2)
   })
 
+  it('says "Took too long" on a 504, with the message folded, and retries on request', async () => {
+    const spy = vi
+      .spyOn(endpoints, 'widgetData')
+      .mockRejectedValueOnce(new ApiError(504, 'query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the date range, or aggregate', 'timeout'))
+      .mockResolvedValue(sqlAnswer())
+    renderCard()
+    expect(await screen.findByText('Took too long')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /details/i }))
+    expect(screen.getByText(/narrow the date range/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('12.3K')).toBeInTheDocument()
+    expect(spy).toHaveBeenCalledTimes(2)
+  })
+
   it('says "Busy, try again later" on a 429 and retries on request', async () => {
     const spy = vi
       .spyOn(endpoints, 'widgetData')

@@ -157,12 +157,12 @@ func (e *sqlEngine) err(ctx context.Context, err error) error {
 	isKind := func(k sqlengine.Kind) bool { return errors.As(err, &se) && se.Kind == k }
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
-		return resource(sqlbind.Timeout(e.timeout), err)
+		return timedOut(e.timeout, err)
 	case ctx.Err() != nil: // the caller went away: whatever the engine said last
 		return err
 	case isKind(sqlengine.KindTimeout):
 		// A timeout's cause says so (stopsCheck, Migrate's reason), as ctx's.
-		return resource(sqlbind.Timeout(e.timeout), fmt.Errorf("%w: %w", context.DeadlineExceeded, err))
+		return timedOut(e.timeout, fmt.Errorf("%w: %w", context.DeadlineExceeded, err))
 	case isKind(sqlengine.KindOutOfMemoryLoadingLog):
 		return resource(sqlbind.LogsOutOfMemory, err)
 	case isKind(sqlengine.KindOutOfMemory):
@@ -183,6 +183,13 @@ func (e *sqlEngine) err(ctx context.Context, err error) error {
 		return resource(sqlbind.EngineFailed, err)
 	}
 	return err
+}
+
+// timedOut is the refusal of a query that ran past CONSOLE_QUERY_TIMEOUT
+// (d): a timeout of its own (store.ErrTimeout), and no verdict on the
+// query (resourceErr, cause its cause).
+func timedOut(d time.Duration, cause error) error {
+	return &resourceErr{store.Refuse(store.ErrTimeout, "%s", sqlbind.Timeout(d)), cause}
 }
 
 // engineRefused is the engine's refusal of a request (KindRefused): the

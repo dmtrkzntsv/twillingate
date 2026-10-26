@@ -103,8 +103,10 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
   useEffect(() => {
     if (remote && refused && !last && sentView) setBlindFor(selection)
   }, [remote, refused, last, sentView, selection])
-  // A remote refusal with rows to keep is the view's fault: it shows under the filter bar.
-  const viewError = remote && refused && answer ? refused.message : undefined
+  // A remote refusal with rows to keep is the view's fault: it shows under the
+  // filter bar, as does a filter that ran past the timeout (504).
+  const timedOut = query.error instanceof ApiError && query.error.status === 504 ? query.error : undefined
+  const viewError = remote && answer ? (refused ?? timedOut)?.message : undefined
 
   const removed = !Component || answer?.removed === true
   const truncated = (answer?.data as SqlData | null | undefined)?.truncated === true
@@ -343,19 +345,19 @@ function FailedState({ error, onRetry }: { error: Error; onRetry: () => void }) 
   if (error instanceof ApiError && error.status === 400) {
     return (
       <CardState icon={<TriangleAlertIcon />} title="Query no longer runs">
-        <Collapsible className="flex w-full flex-col items-center">
-          <CollapsibleTrigger asChild>
-            <Button variant="link" size="sm" className="group h-6 text-muted-foreground">
-              Details
-              <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="w-full">
-            <pre className="rounded-md bg-muted p-2 text-left font-mono text-xs break-words whitespace-pre-wrap text-foreground">
-              {error.message}
-            </pre>
-          </CollapsibleContent>
-        </Collapsible>
+        <Details message={error.message} />
+      </CardState>
+    )
+  }
+  // A 504 is the query running past CONSOLE_QUERY_TIMEOUT: a retry may
+  // finish in time, and the message says what to narrow if it does not.
+  if (error instanceof ApiError && error.status === 504) {
+    return (
+      <CardState icon={<TriangleAlertIcon />} title="Took too long">
+        <Details message={error.message} />
+        <Button variant="outline" size="sm" className="mt-1 h-7" onClick={onRetry}>
+          Retry
+        </Button>
       </CardState>
     )
   }
@@ -367,6 +369,25 @@ function FailedState({ error, onRetry }: { error: Error; onRetry: () => void }) 
         Retry
       </Button>
     </CardState>
+  )
+}
+
+/** A refusal's message, folded under Details. */
+function Details({ message }: { message: string }) {
+  return (
+    <Collapsible className="flex w-full flex-col items-center">
+      <CollapsibleTrigger asChild>
+        <Button variant="link" size="sm" className="group h-6 text-muted-foreground">
+          Details
+          <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="w-full">
+        <pre className="rounded-md bg-muted p-2 text-left font-mono text-xs break-words whitespace-pre-wrap text-foreground">
+          {message}
+        </pre>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 

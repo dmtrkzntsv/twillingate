@@ -202,6 +202,8 @@ func refusalOf(logger *slog.Logger, req *http.Request, err error) (int, apiError
 		return http.StatusConflict, apiError{Code: "conflict", Message: err.Error()}
 	case errors.Is(err, manage.ErrBusy):
 		return http.StatusTooManyRequests, apiError{Code: "busy", Message: err.Error()}
+	case errors.Is(err, manage.ErrTimeout):
+		return http.StatusGatewayTimeout, apiError{Code: "timeout", Message: err.Error()}
 	}
 	logger.Error("api request failed", "method", req.Method, "path", req.URL.Path, "error", err)
 	return http.StatusInternalServerError, apiError{Code: "internal", Message: "internal error"}

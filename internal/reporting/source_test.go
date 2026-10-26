@@ -259,8 +259,11 @@ func TestFilesErrors(t *testing.T) {
 			continue
 		}
 		kind := store.ErrInvalid
-		if name == "busy" { // the same query may run later
+		switch name {
+		case "busy": // the same query may run later
 			kind = store.ErrBusy
+		case "timeout", "engine timeout": // a narrower one may finish in time
+			kind = store.ErrTimeout
 		}
 		wantRefusal(t, err, kind, c.want)
 		if strings.Contains(err.Error(), notes) {
@@ -407,7 +410,7 @@ func TestSQLValidateTimesOut(t *testing.T) {
 	f.timeout = 50 * time.Millisecond
 	s := &sqlSource{eng: f.eng(), sampleRows: true}
 	err := s.Validate(context.Background(), "SELECT sum(hash(i)) AS value FROM range(100000000000) t(i)", stat)
-	wantRefusal(t, err, store.ErrInvalid, sqlbind.Timeout(50*time.Millisecond))
+	wantRefusal(t, err, store.ErrTimeout, sqlbind.Timeout(50*time.Millisecond))
 }
 
 func TestSQLValidateChecksColumnsViaLimitZero(t *testing.T) {

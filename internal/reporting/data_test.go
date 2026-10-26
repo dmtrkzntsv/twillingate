@@ -433,12 +433,15 @@ func TestWidgetDataSourceUpdateMisses(t *testing.T) {
 	}
 }
 
-// TestWrapLoadErrKeepsBusy: a busy engine's refusal reaches the caller as
-// busy, without the release notes pointer: the same load may run later.
-func TestWrapLoadErrKeepsBusy(t *testing.T) {
-	busy := (&sqlEngine{}).err(context.Background(), &sqlengine.Error{Status: 503, Kind: sqlengine.KindBusy, Message: "no free slot"})
-	err := wrapLoadErr(busy)
-	if !errors.Is(err, store.ErrBusy) || errors.Is(err, store.ErrInvalid) || strings.Contains(err.Error(), ReleasesURL) {
-		t.Errorf("err = %v, want the busy refusal as it is", err)
+// TestWrapLoadErrKeepsBusyAndTimeout: a busy engine's refusal and a
+// timeout reach the caller as such, without the release notes pointer:
+// the same load may run later, or a narrower one in time.
+func TestWrapLoadErrKeepsBusyAndTimeout(t *testing.T) {
+	e := &sqlEngine{timeout: time.Second}
+	for kind, want := range map[sqlengine.Kind]error{sqlengine.KindBusy: store.ErrBusy, sqlengine.KindTimeout: store.ErrTimeout} {
+		err := wrapLoadErr(e.err(context.Background(), &sqlengine.Error{Status: kind.Status(), Kind: kind, Message: "x"}))
+		if !errors.Is(err, want) || errors.Is(err, store.ErrInvalid) || strings.Contains(err.Error(), ReleasesURL) {
+			t.Errorf("%s: err = %v, want the %v refusal as it is", kind, err, want)
+		}
 	}
 }

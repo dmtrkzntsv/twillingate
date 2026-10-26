@@ -320,9 +320,9 @@ func wrapLoadErr(err error) error {
 	if errors.Is(err, errInternal) || errors.Is(err, native.ErrInternal) {
 		return err
 	}
-	// A busy engine is no fault of the widget nor of an update: the same
-	// load may run later.
-	if errors.Is(err, store.ErrBusy) {
+	// A busy engine or a timeout is no fault of an update: the same load
+	// may run later, or narrower.
+	if errors.Is(err, store.ErrBusy) || errors.Is(err, store.ErrTimeout) {
 		return err
 	}
 	return store.Refuse(store.ErrInvalid,

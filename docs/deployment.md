@@ -358,9 +358,10 @@ client and fixtures: [sqlengine/protocol.go](https://github.com/dmtrkzntsv/twill
   `Retry-After` (`busy`), 504 (`timeout`) or 500 (`out_of_memory`,
   `out_of_memory_loading_logs`, `exited`, `internal`). twillingate words
   each kind for whoever asked: the engine's own message for `sql` and
-  `refused`, `CONSOLE_QUERY_TIMEOUT` for a timeout, what to narrow for
-  memory, and `busy` as its own `busy` refusal, 429 over REST with
-  `Retry-After`: try again later. A busy engine is not retried within the
+  `refused`, a timeout as its own `timeout` refusal naming
+  `CONSOLE_QUERY_TIMEOUT` (504 over REST), what to narrow for memory, and
+  `busy` as its own `busy` refusal, 429 over REST with `Retry-After`: try
+  again later. A busy engine is not retried within the
   request. twillingate sends each query as it comes (a dashboard's SQL
   widgets together) and waits for the answer, up to
   `CONSOLE_QUERY_TIMEOUT`; an engine that runs fewer at once queues the

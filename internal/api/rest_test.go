@@ -124,6 +124,7 @@ func TestWriteErrorMapping(t *testing.T) {
 		{notFoundf("gone"), 404, "not_found"},
 		{fmt.Errorf("wrapped: %w", manage.ErrConflict), 409, "conflict"},
 		{store.Refuse(manage.ErrBusy, "the SQL engine is busy; try again later"), 429, "busy"},
+		{timeoutf("query exceeded CONSOLE_QUERY_TIMEOUT (30s)"), 504, "timeout"},
 		{errors.New("disk on fire"), 500, "internal"},
 	} {
 		rec := httptest.NewRecorder()

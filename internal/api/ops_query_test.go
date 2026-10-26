@@ -177,8 +177,9 @@ func TestQueryStructuredDefaultsAndCaps(t *testing.T) {
 	fake.err = context.DeadlineExceeded
 	rec = serveREST(t, newTestRegistrar(t, h), "POST", "/api/query",
 		`{"project_id":1,"query":{"kind":"stat","table":"views","metrics":[{"op":"count"}]}}`)
-	if want := sqlbind.Timeout(h.queryTimeout); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), want) {
-		t.Errorf("deadline = %d %s, want 400 with %q", rec.Code, rec.Body, want)
+	if want := sqlbind.Timeout(h.queryTimeout); rec.Code != http.StatusGatewayTimeout || !strings.Contains(rec.Body.String(), `"code":"timeout"`) ||
+		!strings.Contains(rec.Body.String(), want) {
+		t.Errorf("deadline = %d %s, want 504 timeout with %q", rec.Code, rec.Body, want)
 	}
 	fake.err = fmt.Errorf("%w: where[0].values: bad", native.ErrInvalid)
 	rec = serveREST(t, newTestRegistrar(t, h), "POST", "/api/query",

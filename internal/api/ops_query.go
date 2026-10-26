@@ -231,11 +231,11 @@ func (h *host) answer(ctx context.Context, q native.Query, p native.Params) (nat
 	return res, nil
 }
 
-// answerErr words an engine's refusal as answer does: a timeout with
-// CONSOLE_QUERY_TIMEOUT's words, a refusal as invalid (nativeError).
+// answerErr words an engine's refusal as answer does: a timeout as one,
+// in CONSOLE_QUERY_TIMEOUT's words, a refusal as invalid (nativeError).
 func (h *host) answerErr(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return invalidf("%s", sqlbind.Timeout(h.queryTimeout))
+		return timeoutf("%s", sqlbind.Timeout(h.queryTimeout))
 	}
 	return nativeError(err)
 }
@@ -406,11 +406,11 @@ func (h *host) sqlError(ctx context.Context, err error) error {
 	isKind := func(k sqlengine.Kind) bool { return errors.As(err, &se) && se.Kind == k }
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
-		return invalidf("%s", sqlbind.Timeout(h.queryTimeout))
+		return timeoutf("%s", sqlbind.Timeout(h.queryTimeout))
 	case ctx.Err() != nil: // the caller went away: whatever the engine said last
 		return err
 	case isKind(sqlengine.KindTimeout):
-		return invalidf("%s", sqlbind.Timeout(h.queryTimeout))
+		return timeoutf("%s", sqlbind.Timeout(h.queryTimeout))
 	case isKind(sqlengine.KindOutOfMemoryLoadingLog):
 		return invalidf("%s", sqlbind.LogsOutOfMemory)
 	case isKind(sqlengine.KindOutOfMemory):
