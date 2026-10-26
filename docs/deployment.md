@@ -337,7 +337,8 @@ client and fixtures: [sqlengine/protocol.go](https://github.com/dmtrkzntsv/twill
   "slots": <n>}`, `slots` being how many queries the engine runs at once
   (absent counts as 1). twillingate sends no more than that at once: the
   rest (a dashboard's SQL widgets loading together, the query tool's sql)
-  wait their turn, first come first served, and the wait is no part of
+  wait their turn, first come first served, for at most 30 seconds (then
+  the query is answered `busy`), and the wait is no part of
   `CONSOLE_QUERY_TIMEOUT`. It learns `slots` at start, or before the next
   query while the engine has not answered, and keeps it until it restarts.
 - `POST /v1/query` takes `{"sql", "args", "max_rows", "mode", "page",

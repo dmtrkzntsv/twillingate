@@ -51,19 +51,21 @@ func openSQL(ctx context.Context, socket string, logger *slog.Logger) (*engineSQ
 // slots (sqlengine.Health.Slots): the engine answers a query past them
 // busy, so the queries twillingate sends together, a dashboard's sql
 // widgets loading at once, wait their turn here instead
-// (reporting.Queued). The width is learnt from the engine's health, at
-// start or, while the engine has not answered it, before the next query;
-// until then, or when the engine does not say, it is 1. An engine whose
-// slots change is learnt again on twillingate's restart.
+// (reporting.Queued), at most queueWait. The width is learnt from the
+// engine's health, at start or, while the engine has not answered it,
+// before the next query; until then, or when the engine does not say, it
+// is 1. An engine whose slots change is learnt again on twillingate's
+// restart.
 type engineSQL struct {
 	*sqlengine.Client
 	slots atomic.Int64 // the engine's Health.Slots; 0 until known
 	known atomic.Bool  // the engine's health answered
 	queue *queue.Queue
+	wait  time.Duration // queueWait; a test shortens it
 }
 
 func newEngineSQL(c *sqlengine.Client, logger *slog.Logger) *engineSQL {
-	e := &engineSQL{Client: c}
+	e := &engineSQL{Client: c, wait: queueWait}
 	e.queue = queue.New(func() int { return int(e.slots.Load()) })
 	return e
 }
@@ -77,12 +79,31 @@ func (e *engineSQL) health(ctx context.Context) (sqlengine.Health, error) {
 	if err == nil && h.Protocol == sqlengine.Protocol {
 		e.slots.Store(int64(max(h.Slots, 1)))
 		e.known.Store(true)
+		e.queue.Wake() // the queries already waiting may fit now
 	}
 	return h, err
 }
 
-// Acquire waits for a turn on the engine (reporting.Queued).
-func (e *engineSQL) Acquire(ctx context.Context) (func(), error) { return e.queue.Acquire(ctx) }
+// queueWait bounds the wait for a turn on the engine: past it, the query
+// is answered busy, as the engine would, rather than waiting on.
+const queueWait = 30 * time.Second
+
+// errQueueWait is the engine's busy answer to a query that waited
+// queueWait without a turn.
+var errQueueWait = &sqlengine.Error{Status: sqlengine.KindBusy.Status(), Kind: sqlengine.KindBusy,
+	Message: "no turn on the SQL engine within " + queueWait.String()}
+
+// Acquire waits for a turn on the engine (reporting.Queued), at most
+// queueWait.
+func (e *engineSQL) Acquire(ctx context.Context) (func(), error) {
+	wctx, cancel := context.WithTimeout(ctx, e.wait)
+	defer cancel()
+	release, err := e.queue.Acquire(wctx)
+	if err != nil && ctx.Err() == nil {
+		return nil, errQueueWait
+	}
+	return release, err
+}
 
 // Query asks the engine's health first while it has not answered, then
 // sends req.

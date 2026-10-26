@@ -334,9 +334,14 @@ func TestEngineSQLLearnsItsSlotsLate(t *testing.T) {
 		t.Errorf("%d queries ran at once before the engine's health answered, want 1", p)
 	}
 
+	// The first query to learn the slots lets in the ones waiting behind it.
 	eng.down.Store(false)
 	eng.peak.Store(0)
-	queryAll(t, c, 1)
+	queryAll(t, c, 3)
+	if p := eng.peak.Load(); p < 2 {
+		t.Errorf("%d queries ran at once as the slots were learnt, want the waiting ones let in", p)
+	}
+	eng.peak.Store(0)
 	calls := eng.healthCall.Load()
 	queryAll(t, c, 9)
 	if p := eng.peak.Load(); p != 3 {
@@ -344,5 +349,32 @@ func TestEngineSQLLearnsItsSlotsLate(t *testing.T) {
 	}
 	if n := eng.healthCall.Load(); n != calls {
 		t.Errorf("health asked %d more times once known, want none", n-calls)
+	}
+}
+
+// TestEngineSQLWaitsAtMostQueueWait: a query with no turn within the
+// wait is answered busy, as the engine would; one whose caller went away
+// gets its context's error.
+func TestEngineSQLWaitsAtMostQueueWait(t *testing.T) {
+	eng := newSlotEngine(t, 1)
+	c, err := openSQL(context.Background(), eng.sock, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.wait = 20 * time.Millisecond
+	release, err := c.Acquire(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	var se *sqlengine.Error
+	if _, err := c.Acquire(context.Background()); !errors.As(err, &se) || se.Kind != sqlengine.KindBusy {
+		t.Errorf("a query with no turn = %v, want busy", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := c.Acquire(ctx); !errors.Is(err, context.Canceled) {
+		t.Errorf("a query whose caller went away = %v, want context.Canceled", err)
 	}
 }

@@ -60,6 +60,14 @@ func (q *Queue) Acquire(ctx context.Context) (release func(), err error) {
 	return nil, ctx.Err()
 }
 
+// Wake gives turns to waiters the size now has room for: call it after
+// the size grows, since a turn is otherwise only handed on at a release.
+func (q *Queue) Wake() {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.grant()
+}
+
 // releaser is a turn's release, which acts once however often it is called.
 func (q *Queue) releaser() func() {
 	var once sync.Once

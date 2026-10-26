@@ -130,6 +130,30 @@ func TestQueueGrow(t *testing.T) {
 	}
 }
 
+// TestQueueWake hands a grown queue's room to the waiters already in it.
+func TestQueueWake(t *testing.T) {
+	var size atomic.Int32
+	size.Store(1)
+	q := New(func() int { return int(size.Load()) })
+	if _, err := q.Acquire(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := make(chan struct{})
+	go func() {
+		if _, err := q.Acquire(context.Background()); err == nil {
+			close(got)
+		}
+	}()
+	waitFor(t, func() bool { return q.queued() == 1 })
+	size.Store(2)
+	q.Wake()
+	select {
+	case <-got:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the waiter never got the grown queue's room")
+	}
+}
+
 // TestQueueZeroSize counts a size below 1 as 1.
 func TestQueueZeroSize(t *testing.T) {
 	q := New(func() int { return 0 })
