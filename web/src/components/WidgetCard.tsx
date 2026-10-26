@@ -90,7 +90,13 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
   const [blindFor, setBlindFor] = useState<string>()
   const lastColumns = (last?.data as SqlData | null | undefined)?.columns
   const viewArgs = viewQuery(widget, view, lastColumns ?? (blindFor === selection ? [] : undefined))
-  const query = useQuery(widgetQuery(widget, params, idle, viewArgs))
+  // The view that ran past the timeout under this selection: not run again
+  // by itself (only a changed view, or the refresh, asks again), so a slow
+  // stored filter costs one timeout, not one per answer that comes back.
+  const [slowView, setSlowView] = useState<{ selection: string; args: string }>()
+  const held = slowView?.selection === selection && slowView.args === JSON.stringify(viewArgs)
+  const options = widgetQuery(widget, params, idle, viewArgs)
+  const query = useQuery({ ...options, enabled: options.enabled !== false && !held })
   const settled = remote && !query.isPlaceholderData ? query.data : undefined
   useEffect(() => {
     if (settled) setKept({ selection, answer: settled })
@@ -107,6 +113,10 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
   useEffect(() => {
     if (remote && (refused || timedOut) && !last && sentView) setBlindFor(selection)
   }, [remote, refused, timedOut, last, sentView, selection])
+  const viewKey = JSON.stringify(viewArgs)
+  useEffect(() => {
+    if (remote && timedOut && sentView) setSlowView({ selection, args: viewKey })
+  }, [remote, timedOut, sentView, selection, viewKey])
   // A remote refusal with rows to keep is the view's fault: it shows under the
   // filter bar, as does a filter that ran past the timeout.
   const viewError = remote && answer ? (refused ?? timedOut)?.message : undefined

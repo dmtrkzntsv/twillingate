@@ -455,7 +455,7 @@ describe('WidgetCard with a remote table', () => {
   it('comes up without a stored filter that times out, so the viewer can change it', async () => {
     storeView([PLAN])
     const slow = 'query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the date range, or aggregate'
-    vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => {
+    const spy = vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => {
       if (q.filters) throw new ApiError(504, slow, 'timeout')
       return remoteAnswer(q)
     })
@@ -464,6 +464,10 @@ describe('WidgetCard with a remote table', () => {
     expect(screen.queryByText('Took too long')).not.toBeInTheDocument()
     expect(await screen.findByText(slow)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Attribute in plan' })).toBeInTheDocument()
+    // The slow view ran once: the answer that came back without it does
+    // not send it again.
+    await new Promise((r) => setTimeout(r, 200))
+    expect(spy.mock.calls.filter(([, q]) => q.filters).length).toBe(1)
   })
 
   it('reads a 504 without the timeout code as any failure', async () => {
