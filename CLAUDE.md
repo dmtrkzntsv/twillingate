@@ -47,7 +47,7 @@ Go dependency; only a very reputable vendor justifies one. Domain leaves
 Refusals are typed (`manage.ErrNotFound`, `manage.ErrConflict`,
 `manage.ErrInvalid`, `manage.ErrBusy`; all the store's own values) and
 matched with `errors.Is`; message text is for humans, never for matching.
-REST answers them 400, 404, 409 and 429.
+REST answers them 404, 409, 400 and 429, in that order.
 
 ## Web UI
 
