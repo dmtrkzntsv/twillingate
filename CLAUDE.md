@@ -45,8 +45,9 @@ Go dependency; only a very reputable vendor justifies one. Domain leaves
 (`enrich`, `identity`, `geo`, `config`) stay at the top of `internal/`.
 
 Refusals are typed (`manage.ErrNotFound`, `manage.ErrConflict`,
-`manage.ErrInvalid`; the first two are the store's own values) and matched
-with `errors.Is`; message text is for humans, never for matching.
+`manage.ErrInvalid`, `manage.ErrBusy`; all the store's own values) and
+matched with `errors.Is`; message text is for humans, never for matching.
+REST answers them 400, 404, 409 and 429.
 
 ## Web UI
 
