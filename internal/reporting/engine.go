@@ -26,6 +26,25 @@ type SQL interface {
 	Query(ctx context.Context, req sqlengine.Request) (sqlengine.Result, error)
 }
 
+// Queued is an SQL that queues its queries for the engine's slots
+// (sqlengine.Health.Slots): Acquire waits for a turn, behind every query
+// that asked before, and returns its release. The engine answers a query
+// past its slots busy, so a dashboard of sql widgets, loading together,
+// would see most of its cards fail; queued, they load in turn.
+type Queued interface {
+	Acquire(ctx context.Context) (release func(), err error)
+}
+
+// AcquireSQL waits for a turn on sql when it is Queued, before the
+// query's timeout starts, so waiting is no part of it. Without a queue it
+// returns at once.
+func AcquireSQL(ctx context.Context, sql SQL) (release func(), err error) {
+	if q, ok := sql.(Queued); ok {
+		return q.Acquire(ctx)
+	}
+	return func() {}, nil
+}
+
 // ErrSQLEngine refuses SQL in a process with no external SQL engine
 // configured: saving or previewing a sql widget, loading a stored one,
 // and the query tool's sql mode. It is a refusal (store.ErrInvalid), so a
@@ -85,6 +104,11 @@ func (e *sqlEngine) ask(ctx context.Context, q boundSQL, mode sqlengine.Mode, ma
 	if e.rules != nil {
 		rules = e.rules(ctx, project)
 	}
+	release, err := AcquireSQL(ctx, e.client)
+	if err != nil {
+		return sqlengine.Result{}, e.err(ctx, err)
+	}
+	defer release()
 	if e.timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, e.timeout)

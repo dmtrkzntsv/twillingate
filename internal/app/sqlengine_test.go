@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -239,4 +240,109 @@ func TestServeAnswersSQLThroughTheEngine(t *testing.T) {
 			t.Errorf("query = %d %s, want 400 naming the failed engine", code, body)
 		}
 	})
+}
+
+// slotEngine serves an engine of slots on a socket until t ends: its
+// health says slots (or fails while down is set), and each query takes
+// 50 ms, peak counting the most that ran at once.
+type slotEngine struct {
+	sock       string
+	slots      int
+	down       atomic.Bool
+	now, peak  atomic.Int64
+	healthCall atomic.Int64
+}
+
+func newSlotEngine(t *testing.T, slots int) *slotEngine {
+	t.Helper()
+	e := &slotEngine{sock: filepath.Join(socketDir(t), "e.sock"), slots: slots}
+	ln, err := net.Listen("unix", e.sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/health" {
+			e.healthCall.Add(1)
+			if e.down.Load() {
+				w.WriteHeader(500)
+				return
+			}
+			json.NewEncoder(w).Encode(sqlengine.Health{Protocol: sqlengine.Protocol, Engine: "fake 9", Slots: e.slots})
+			return
+		}
+		n := e.now.Add(1)
+		defer e.now.Add(-1)
+		for p := e.peak.Load(); n > p && !e.peak.CompareAndSwap(p, n); p = e.peak.Load() {
+		}
+		time.Sleep(50 * time.Millisecond)
+		json.NewEncoder(w).Encode(sqlengine.Result{Columns: []string{"n"}, Rows: [][]any{{1}}})
+	})}
+	go srv.Serve(ln)
+	t.Cleanup(func() { srv.Close() })
+	return e
+}
+
+// queryAll sends n queries through c at once, each after its turn.
+func queryAll(t *testing.T, c *engineSQL, n int) {
+	t.Helper()
+	var wg sync.WaitGroup
+	for range n {
+		wg.Go(func() {
+			release, err := c.Acquire(context.Background())
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			defer release()
+			if _, err := c.Query(context.Background(), sqlengine.Request{}); err != nil {
+				t.Error(err)
+			}
+		})
+	}
+	wg.Wait()
+}
+
+// TestEngineSQLQueuesToItsSlots: queries sent together run on the engine
+// as many at once as its health says it has slots, the rest waiting
+// their turn in twillingate rather than being answered busy.
+func TestEngineSQLQueuesToItsSlots(t *testing.T) {
+	eng := newSlotEngine(t, 2)
+	c, err := openSQL(context.Background(), eng.sock, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	queryAll(t, c, 6)
+	if p := eng.peak.Load(); p != 2 {
+		t.Errorf("%d queries ran at once, want the engine's 2 slots", p)
+	}
+}
+
+// TestEngineSQLLearnsItsSlotsLate: an engine down at start runs one query
+// at a time until its health answers, asked again before each query
+// until then and never after.
+func TestEngineSQLLearnsItsSlotsLate(t *testing.T) {
+	eng := newSlotEngine(t, 3)
+	eng.down.Store(true)
+	c, err := openSQL(context.Background(), eng.sock, slog.New(slog.DiscardHandler))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	queryAll(t, c, 3)
+	if p := eng.peak.Load(); p != 1 {
+		t.Errorf("%d queries ran at once before the engine's health answered, want 1", p)
+	}
+
+	eng.down.Store(false)
+	eng.peak.Store(0)
+	queryAll(t, c, 1)
+	calls := eng.healthCall.Load()
+	queryAll(t, c, 9)
+	if p := eng.peak.Load(); p != 3 {
+		t.Errorf("%d queries ran at once once the health answered, want its 3 slots", p)
+	}
+	if n := eng.healthCall.Load(); n != calls {
+		t.Errorf("health asked %d more times once known, want none", n-calls)
+	}
 }

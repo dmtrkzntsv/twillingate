@@ -333,7 +333,13 @@ cause is logged.
 The protocol, version 1 (the `sqlengine` package holds its types, a
 client and fixtures: [sqlengine/protocol.go](https://github.com/dmtrkzntsv/twillingate/blob/main/sqlengine/protocol.go)):
 
-- `GET /v1/health` answers `{"protocol": 1, "engine": "<name> <version>"}`.
+- `GET /v1/health` answers `{"protocol": 1, "engine": "<name> <version>",
+  "slots": <n>}`, `slots` being how many queries the engine runs at once
+  (absent counts as 1). twillingate sends no more than that at once: the
+  rest (a dashboard's SQL widgets loading together, the query tool's sql)
+  wait their turn, first come first served, and the wait is no part of
+  `CONSOLE_QUERY_TIMEOUT`. It learns `slots` at start, or before the next
+  query while the engine has not answered, and keeps it until it restarts.
 - `POST /v1/query` takes `{"sql", "args", "max_rows", "mode", "page",
   "scope", "confine", "tables"}`. `args` binds the statement's `$tw_*`
   names (strings). `mode` is `rows` (the statement's rows), `text` (every
@@ -359,8 +365,9 @@ client and fixtures: [sqlengine/protocol.go](https://github.com/dmtrkzntsv/twill
   `out_of_memory_loading_logs`, `exited`, `internal`). twillingate words
   each kind for whoever asked: the engine's own message for `sql` and
   `refused`, `CONSOLE_QUERY_TIMEOUT` for a timeout, what to narrow for
-  memory, retry for `busy`. A busy engine is not retried within the
-  request. A `stale` one is: the daily pass deletes a day's log once it is
+  memory, retry for `busy`. A busy engine (another process holding
+  its slots, or `slots` reporting more than it runs) is not retried
+  within the request. A `stale` one is: the daily pass deletes a day's log once it is
   dumped and a month's day files once they merge, so a spec built just
   before can name a file that is gone when the engine reads it.
   twillingate then builds the spec afresh and sends the query again, after

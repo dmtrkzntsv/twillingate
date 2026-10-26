@@ -360,6 +360,12 @@ func (h *host) runSQL(ctx context.Context, sql string) (tableOut, error) {
 	if h.sql == nil {
 		return tableOut{}, reporting.ErrSQLEngine
 	}
+	// The turn on the engine is waited for before the timeout starts.
+	release, err := reporting.AcquireSQL(ctx, h.sql)
+	if err != nil {
+		return tableOut{}, h.sqlError(ctx, err)
+	}
+	defer release()
 	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
 	events, attrs := h.reg.Snapshot(ctx).RuleLists()

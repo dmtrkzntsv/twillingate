@@ -36,6 +36,10 @@ const TablesVersion = 1
 type Health struct {
 	Protocol int    `json:"protocol"`
 	Engine   string `json:"engine"` // "<name> <version>"
+	// Slots is how many queries the engine runs at once; it answers the
+	// next one busy. 0 (an engine that does not say) counts as 1. A
+	// client sends no more at once and queues the rest.
+	Slots int `json:"slots,omitempty"`
 }
 
 // Mode says how the engine wraps and answers the SQL.

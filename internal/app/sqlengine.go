@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/queue"
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
@@ -25,26 +27,70 @@ var errSQLEngineProtocol = errors.New("app: the SQL engine speaks another protoc
 // does not answer is logged, and each query tries it again, so an engine
 // started after twillingate, or restarted, needs no restart of ours. The
 // caller closes the client.
-func openSQL(ctx context.Context, socket string, logger *slog.Logger) (*sqlengine.Client, error) {
+func openSQL(ctx context.Context, socket string, logger *slog.Logger) (*engineSQL, error) {
 	if socket == "" {
 		logger.Info("no SQL engine configured (SQL_ENGINE_SOCKET): SQL widgets and the query tool's sql are refused")
 		return nil, nil
 	}
-	c := sqlengine.Dial(socket)
-	hctx, cancel := context.WithTimeout(ctx, healthTimeout)
-	defer cancel()
-	h, err := c.Health(hctx)
+	e := newEngineSQL(sqlengine.Dial(socket), logger)
+	h, err := e.health(ctx)
 	switch {
 	case err != nil:
 		logger.Warn("the SQL engine does not answer; SQL fails until it does", "socket", socket, "error", err.Error())
 	case h.Protocol != sqlengine.Protocol:
-		c.Close()
+		e.Close()
 		return nil, fmt.Errorf("%w: %s at %s speaks protocol %d, this release %d (SQL_ENGINE_SOCKET)",
 			errSQLEngineProtocol, h.Engine, socket, h.Protocol, sqlengine.Protocol)
 	default:
-		logger.Info("SQL engine", "socket", socket, "engine", h.Engine, "protocol", h.Protocol)
+		logger.Info("SQL engine", "socket", socket, "engine", h.Engine, "protocol", h.Protocol, "slots", e.slots.Load())
 	}
-	return c, nil
+	return e, nil
+}
+
+// engineSQL is the engine's client behind a queue as wide as the engine's
+// slots (sqlengine.Health.Slots): the engine answers a query past them
+// busy, so the queries twillingate sends together, a dashboard's sql
+// widgets loading at once, wait their turn here instead
+// (reporting.Queued). The width is learnt from the engine's health, at
+// start or, while the engine has not answered it, before the next query;
+// until then, or when the engine does not say, it is 1. An engine whose
+// slots change is learnt again on twillingate's restart.
+type engineSQL struct {
+	*sqlengine.Client
+	slots atomic.Int64 // the engine's Health.Slots; 0 until known
+	known atomic.Bool  // the engine's health answered
+	queue *queue.Queue
+}
+
+func newEngineSQL(c *sqlengine.Client, logger *slog.Logger) *engineSQL {
+	e := &engineSQL{Client: c}
+	e.queue = queue.New(func() int { return int(e.slots.Load()) })
+	return e
+}
+
+// health asks the engine's health under healthTimeout and, when it
+// answers with this protocol, keeps its slots.
+func (e *engineSQL) health(ctx context.Context) (sqlengine.Health, error) {
+	hctx, cancel := context.WithTimeout(ctx, healthTimeout)
+	defer cancel()
+	h, err := e.Health(hctx)
+	if err == nil && h.Protocol == sqlengine.Protocol {
+		e.slots.Store(int64(max(h.Slots, 1)))
+		e.known.Store(true)
+	}
+	return h, err
+}
+
+// Acquire waits for a turn on the engine (reporting.Queued).
+func (e *engineSQL) Acquire(ctx context.Context) (func(), error) { return e.queue.Acquire(ctx) }
+
+// Query asks the engine's health first while it has not answered, then
+// sends req.
+func (e *engineSQL) Query(ctx context.Context, req sqlengine.Request) (sqlengine.Result, error) {
+	if !e.known.Load() {
+		_, _ = e.health(ctx) // a failure is the query's to report
+	}
+	return e.Client.Query(ctx, req)
 }
 
 // lazySQL is the engine at socket opened (openSQL, health included) on
@@ -57,7 +103,7 @@ type lazySQL struct {
 	socket string
 	logger *slog.Logger
 	once   sync.Once
-	client *sqlengine.Client
+	client *engineSQL
 	err    error
 }
 
@@ -69,8 +115,23 @@ func newLazySQL(socket string, logger *slog.Logger) *lazySQL {
 	return &lazySQL{socket: socket, logger: logger}
 }
 
-func (l *lazySQL) Query(ctx context.Context, req sqlengine.Request) (sqlengine.Result, error) {
+func (l *lazySQL) open(ctx context.Context) {
 	l.once.Do(func() { l.client, l.err = openSQL(ctx, l.socket, l.logger) })
+}
+
+// Acquire opens the engine and waits for a turn on it
+// (reporting.Queued); an engine that fails to open leaves the error to
+// Query.
+func (l *lazySQL) Acquire(ctx context.Context) (func(), error) {
+	l.open(ctx)
+	if l.err != nil {
+		return func() {}, nil
+	}
+	return l.client.Acquire(ctx)
+}
+
+func (l *lazySQL) Query(ctx context.Context, req sqlengine.Request) (sqlengine.Result, error) {
+	l.open(ctx)
 	if l.err != nil {
 		return sqlengine.Result{}, l.err
 	}
