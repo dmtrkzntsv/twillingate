@@ -77,7 +77,7 @@ func openAPI(specs []spec) ([]byte, error) {
 					"type":     "object",
 					"required": []string{"code", "message"},
 					"properties": map[string]any{
-						"code":    map[string]any{"type": "string", "enum": []string{"invalid", "not_found", "conflict", "internal"}},
+						"code":    map[string]any{"type": "string", "enum": errorCodes},
 						"message": map[string]any{"type": "string"},
 					},
 				}},
@@ -87,9 +87,13 @@ func openAPI(specs []spec) ([]byte, error) {
 	}, "", "  ")
 }
 
+// errorCodes are every code writeError answers with, as the Error
+// schema lists them.
+var errorCodes = []string{"invalid", "not_found", "conflict", "busy", "timeout", "internal"}
+
 var (
 	errorResponse = map[string]any{
-		"description": "Refused: invalid is 400, not_found 404, conflict 409, internal 500.",
+		"description": "Refused: invalid is 400, not_found 404, conflict 409, busy 429 (with Retry-After), timeout 504, internal 500.",
 		"content":     map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Error"}}},
 	}
 	unauthorized = map[string]any{"description": "Missing or bad bearer token."}

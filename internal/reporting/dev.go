@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -511,6 +512,7 @@ func writeAPIErr(w http.ResponseWriter, err error) {
 		status, code = http.StatusConflict, "conflict"
 	case errors.Is(err, store.ErrBusy):
 		status, code = http.StatusTooManyRequests, "busy"
+		w.Header().Set("Retry-After", strconv.Itoa(sqlbind.BusyRetryAfter))
 	case errors.Is(err, store.ErrTimeout):
 		status, code = http.StatusGatewayTimeout, "timeout"
 	}

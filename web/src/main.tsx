@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import App from './App.tsx'
-import { ApiError } from './lib/api.ts'
+import { shouldRetry } from './lib/retry.ts'
 import { followSystemTheme } from './lib/theme.ts'
 import { trackWindowFocus } from './lib/window-focus.ts'
 
@@ -13,11 +13,9 @@ trackWindowFocus()
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      // A 4xx is the API rejecting the request itself (bad params, not
-      // found, unauthorized) — retrying it verbatim just repeats the same
-      // failure. 5xx and network errors still get the default backoff.
-      retry: (failureCount, error) =>
-        error instanceof ApiError && error.status >= 400 && error.status < 500 ? false : failureCount < 3,
+      // No retry for a refusal, a busy engine or a timeout; other 5xx and
+      // network errors get the default backoff (lib/retry.ts).
+      retry: shouldRetry,
     },
   },
 })

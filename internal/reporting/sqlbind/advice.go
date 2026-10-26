@@ -19,6 +19,9 @@ const (
 	// query in flight, which the kernel's out-of-memory killer is the
 	// usual cause of.
 	EngineExited = "the SQL engine stopped while running the query, most likely past the SQL engine's memory limit; narrow the query"
+	// BusyRetryAfter is the Retry-After, in seconds, a busy refusal is
+	// answered with over REST (429).
+	BusyRetryAfter = 5
 	// Busy follows an engine that answered busy: its queue was full, or
 	// the query waited out its turn. The same query may run later.
 	Busy = "the SQL engine is busy; try again later"

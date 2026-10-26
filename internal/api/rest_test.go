@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -134,6 +135,9 @@ func TestWriteErrorMapping(t *testing.T) {
 		writeError(rec, logger, req, c.err)
 		if rec.Code != c.status || errorCode(t, rec) != c.code {
 			t.Errorf("%v → %d %s, want %d %s", c.err, rec.Code, rec.Body.String(), c.status, c.code)
+		}
+		if !slices.Contains(errorCodes, c.code) {
+			t.Errorf("code %s is not in the OpenAPI Error schema", c.code)
 		}
 		if ra := rec.Header().Get("Retry-After"); (ra != "") != (c.status == 429) || c.status == 429 && ra != "5" {
 			t.Errorf("%v → Retry-After %q, want 5 on a 429 only", c.err, ra)

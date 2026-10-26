@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 )
 
 // maxAPIBody caps a REST request body; larger bodies are refused as invalid.
@@ -179,13 +180,10 @@ type apiError struct {
 func writeError(w http.ResponseWriter, logger *slog.Logger, req *http.Request, err error) {
 	status, e := refusalOf(logger, req, err)
 	if status == http.StatusTooManyRequests {
-		w.Header().Set("Retry-After", strconv.Itoa(busyRetryAfter))
+		w.Header().Set("Retry-After", strconv.Itoa(sqlbind.BusyRetryAfter))
 	}
 	writeJSON(w, status, map[string]apiError{"error": e})
 }
-
-// busyRetryAfter is the Retry-After of a busy refusal (429), in seconds.
-const busyRetryAfter = 5
 
 // refusalOf is err's status and error body, as writeError sends them;
 // an untyped error is logged and answered generically.
