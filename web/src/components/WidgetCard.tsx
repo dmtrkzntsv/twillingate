@@ -99,13 +99,16 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
   const Component = componentOf(widget)?.default
   const answer = query.data ?? (remote ? last : undefined)
   const refused = query.error instanceof ApiError && query.error.status === 400 ? query.error : undefined
+  // A query that ran past CONSOLE_QUERY_TIMEOUT (code timeout, not just any 504).
+  const timedOut = query.error instanceof ApiError && query.error.code === 'timeout' ? query.error : undefined
   const sentView = Object.keys(viewArgs).length > 0
+  // A stored view that is refused, or too slow, before any answer: ask once
+  // without it, so the filter bar comes up and the viewer can change it.
   useEffect(() => {
-    if (remote && refused && !last && sentView) setBlindFor(selection)
-  }, [remote, refused, last, sentView, selection])
+    if (remote && (refused || timedOut) && !last && sentView) setBlindFor(selection)
+  }, [remote, refused, timedOut, last, sentView, selection])
   // A remote refusal with rows to keep is the view's fault: it shows under the
-  // filter bar, as does a filter that ran past the timeout (504).
-  const timedOut = query.error instanceof ApiError && query.error.status === 504 ? query.error : undefined
+  // filter bar, as does a filter that ran past the timeout.
   const viewError = remote && answer ? (refused ?? timedOut)?.message : undefined
 
   const removed = !Component || answer?.removed === true
@@ -349,9 +352,10 @@ function FailedState({ error, onRetry }: { error: Error; onRetry: () => void }) 
       </CardState>
     )
   }
-  // A 504 is the query running past CONSOLE_QUERY_TIMEOUT: a retry may
-  // finish in time, and the message says what to narrow if it does not.
-  if (error instanceof ApiError && error.status === 504) {
+  // A timeout is the query running past CONSOLE_QUERY_TIMEOUT: a retry may
+  // finish in time, and the message says what to narrow if it does not. A
+  // proxy's own 504 carries no such code and reads as any failure.
+  if (error instanceof ApiError && error.code === 'timeout') {
     return (
       <CardState icon={<TriangleAlertIcon />} title="Took too long">
         <Details message={error.message} />

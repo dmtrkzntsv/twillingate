@@ -452,6 +452,26 @@ describe('WidgetCard with a remote table', () => {
     expect(JSON.parse(localStorage.getItem(VIEW_KEY)!).filters).toEqual([gone, PLAN])
   })
 
+  it('comes up without a stored filter that times out, so the viewer can change it', async () => {
+    storeView([PLAN])
+    const slow = 'query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the date range, or aggregate'
+    vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => {
+      if (q.filters) throw new ApiError(504, slow, 'timeout')
+      return remoteAnswer(q)
+    })
+    renderCard(remoteWidget())
+    expect(await screen.findByText('iOS')).toBeInTheDocument()
+    expect(screen.queryByText('Took too long')).not.toBeInTheDocument()
+    expect(await screen.findByText(slow)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Attribute in plan' })).toBeInTheDocument()
+  })
+
+  it('reads a 504 without the timeout code as any failure', async () => {
+    vi.spyOn(endpoints, 'widgetData').mockRejectedValue(new ApiError(504, 'Gateway Timeout'))
+    renderCard()
+    expect(await screen.findByText("Couldn't load")).toBeInTheDocument()
+  })
+
   it('takes the sort a viewer stored before filters existed, once', async () => {
     localStorage.setItem('twillingate.widget.1.42.sort', JSON.stringify({ column: 'Count', dir: 'desc' }))
     const spy = vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => remoteAnswer(q))

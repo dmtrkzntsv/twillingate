@@ -16,7 +16,8 @@ describe('shouldRetry', () => {
   })
 
   it('retries other server and network errors up to three times', () => {
-    for (const error of [new ApiError(500, 'boom', 'internal'), new ApiError(503, 'down'), new TypeError('Failed to fetch')]) {
+    // A proxy's own 504 carries no timeout code: it may pass.
+    for (const error of [new ApiError(500, 'boom', 'internal'), new ApiError(503, 'down'), new ApiError(504, 'Gateway Timeout'), new TypeError('Failed to fetch')]) {
       expect(shouldRetry(0, error)).toBe(true)
       expect(shouldRetry(2, error)).toBe(true)
       expect(shouldRetry(3, error)).toBe(false)
