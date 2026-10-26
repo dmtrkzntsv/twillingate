@@ -61,7 +61,7 @@ export async function readStream(
 }
 
 /** The HTTP status the GET route answers with each refusal code. */
-const statusOf: Record<string, number> = { invalid: 400, not_found: 404, conflict: 409, internal: 500 }
+const statusOf: Record<string, number> = { invalid: 400, not_found: 404, conflict: 409, busy: 429, internal: 500 }
 
 /** A streamed refusal as the error its GET would have thrown, so a card shows it the same way. */
 export function streamError(error: { code: string; message: string }): ApiError {

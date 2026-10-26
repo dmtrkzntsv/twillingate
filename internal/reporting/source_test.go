@@ -258,7 +258,11 @@ func TestFilesErrors(t *testing.T) {
 			}
 			continue
 		}
-		wantRefusal(t, err, store.ErrInvalid, c.want)
+		kind := store.ErrInvalid
+		if name == "busy" { // the same query may run later
+			kind = store.ErrBusy
+		}
+		wantRefusal(t, err, kind, c.want)
 		if strings.Contains(err.Error(), notes) {
 			t.Errorf("%s: the source adds the release notes pointer; WidgetData does", name)
 		}

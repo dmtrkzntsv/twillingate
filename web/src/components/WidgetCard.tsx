@@ -359,8 +359,10 @@ function FailedState({ error, onRetry }: { error: Error; onRetry: () => void }) 
       </CardState>
     )
   }
+  // A 429 is the SQL engine at capacity: the same query may run later.
+  const busy = error instanceof ApiError && error.status === 429
   return (
-    <CardState icon={<CloudOffIcon />} title="Couldn't load">
+    <CardState icon={<CloudOffIcon />} title={busy ? 'Busy, try again later' : "Couldn't load"}>
       <Button variant="outline" size="sm" className="mt-1 h-7" onClick={onRetry}>
         Retry
       </Button>

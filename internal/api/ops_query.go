@@ -13,10 +13,12 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -427,7 +429,7 @@ func (h *host) sqlError(ctx context.Context, err error) error {
 	case isKind(sqlengine.KindExited):
 		return invalidf("%s", sqlbind.EngineExited)
 	case isKind(sqlengine.KindBusy):
-		return invalidf("%s", sqlbind.Busy)
+		return store.Refuse(manage.ErrBusy, "%s", sqlbind.Busy)
 	case isKind(sqlengine.KindStale):
 		return invalidf("%s", sqlbind.Stale)
 	case errors.Is(err, sqlengine.ErrTooLarge):

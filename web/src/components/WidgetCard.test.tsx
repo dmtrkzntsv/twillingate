@@ -179,6 +179,18 @@ describe('WidgetCard', () => {
     expect(spy).toHaveBeenCalledTimes(2)
   })
 
+  it('says "Busy, try again later" on a 429 and retries on request', async () => {
+    const spy = vi
+      .spyOn(endpoints, 'widgetData')
+      .mockRejectedValueOnce(new ApiError(429, 'the SQL engine is busy; try again later', 'busy'))
+      .mockResolvedValue(sqlAnswer())
+    renderCard()
+    expect(await screen.findByText('Busy, try again later')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('12.3K')).toBeInTheDocument()
+    expect(spy).toHaveBeenCalledTimes(2)
+  })
+
   it('says "Couldn\'t load" on a network failure', async () => {
     vi.spyOn(endpoints, 'widgetData').mockRejectedValue(new TypeError('Failed to fetch'))
     renderCard()

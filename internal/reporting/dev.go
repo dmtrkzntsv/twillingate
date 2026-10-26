@@ -509,6 +509,8 @@ func writeAPIErr(w http.ResponseWriter, err error) {
 		status, code = http.StatusNotFound, "not_found"
 	case errors.Is(err, store.ErrConflict):
 		status, code = http.StatusConflict, "conflict"
+	case errors.Is(err, store.ErrBusy):
+		status, code = http.StatusTooManyRequests, "busy"
 	}
 	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": err.Error()}})
 }

@@ -174,7 +174,7 @@ func (e *sqlEngine) err(ctx context.Context, err error) error {
 	case isKind(sqlengine.KindExited):
 		return resource(sqlbind.EngineExited, err)
 	case isKind(sqlengine.KindBusy):
-		return resource(sqlbind.Busy, err)
+		return &resourceErr{store.Refuse(store.ErrBusy, "%s", sqlbind.Busy), err}
 	case isKind(sqlengine.KindStale):
 		return resource(sqlbind.Stale, err)
 	case errors.Is(err, sqlengine.ErrTooLarge):

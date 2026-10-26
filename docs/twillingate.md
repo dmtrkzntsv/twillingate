@@ -1580,8 +1580,11 @@ curl -H "Authorization: Bearer $TOKEN" \
 
 Success is the tool's output as JSON, at 200 (201 where noted). Errors are
 `{"error":{"code":"…","message":"…"}}`: `invalid` is 400, `not_found` is 404,
-`conflict` is 409, anything else is `internal` at 500, and a missing or bad
-token is 401. An unknown query parameter, an unknown field in a JSON body, a
+`conflict` is 409, `busy` is 429 with `Retry-After` (the SQL engine is at
+capacity: try the same request again later), anything else is `internal`
+at 500, and a missing or bad token is 401. Over MCP the same refusals are
+tool errors with the same message; the widget stream's `widget` events
+carry the code. An unknown query parameter, an unknown field in a JSON body, a
 query string that does not parse (a bad `%` escape, a bare `;`) and a parameter
 given twice are all 400: a filter is never dropped silently.
 

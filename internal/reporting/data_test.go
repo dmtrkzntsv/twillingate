@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 	"strconv"
 	"strings"
 	"sync"
@@ -429,5 +430,15 @@ func TestWidgetDataSourceUpdateMisses(t *testing.T) {
 	}
 	if res2 := got2.Data.(readsql.Result); res2.Rows[0][0] != "2" {
 		t.Errorf("after updating the source: rows = %v, want [[2]] (a miss, not the stale cached [[1]])", res2.Rows)
+	}
+}
+
+// TestWrapLoadErrKeepsBusy: a busy engine's refusal reaches the caller as
+// busy, without the release notes pointer: the same load may run later.
+func TestWrapLoadErrKeepsBusy(t *testing.T) {
+	busy := (&sqlEngine{}).err(context.Background(), &sqlengine.Error{Status: 503, Kind: sqlengine.KindBusy, Message: "no free slot"})
+	err := wrapLoadErr(busy)
+	if !errors.Is(err, store.ErrBusy) || errors.Is(err, store.ErrInvalid) || strings.Contains(err.Error(), ReleasesURL) {
+		t.Errorf("err = %v, want the busy refusal as it is", err)
 	}
 }
