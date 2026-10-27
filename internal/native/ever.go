@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strings"
 	"sync"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
-	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
 // ever and never keep a row by what else its actor (user, group) did:
@@ -137,7 +137,7 @@ func (e *Engine) collectEver(ctx context.Context, fs []*filter, p Params, rs rul
 	files := all[p.Project]
 	charge := e.charge()
 	for _, f := range fs {
-		r := Range{From: civil.Date{Year: 1970, Month: 1, Day: 1}, To: p.To}
+		r := Range{From: everything.From, To: p.To}
 		if f.over == "range" {
 			r.From = p.From
 		}
@@ -174,7 +174,7 @@ func (e *Engine) collectEver(ctx context.Context, fs []*filter, p Params, rs rul
 						if err := charge(int64(len(id)) + 48); err != nil {
 							return err
 						}
-						f.ids.ids[id] = struct{}{}
+						f.ids.ids[strings.Clone(id)] = struct{}{} // id may share a file dictionary's backing string
 					}
 				}
 			}
