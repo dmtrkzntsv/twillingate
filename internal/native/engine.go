@@ -362,7 +362,16 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 			return Result{}, err
 		}
 	}
-	if err := e.collectEver(ctx, everFilters(filters, metrics), p, rs); err != nil {
+	// ever and never read the events with the rules, whatever table the
+	// query's own scan reads.
+	everRules := rs
+	if fs := everFilters(filters, metrics); len(fs) > 0 && (q.Table == "sessions" || q.Table == "identities") {
+		var err error
+		if everRules, err = e.ruleSet(p.Project, rules); err != nil {
+			return Result{}, err
+		}
+	}
+	if err := e.collectEver(ctx, everFilters(filters, metrics), p, everRules); err != nil {
 		return Result{}, err
 	}
 	s := scan{e: e, q: q, filters: filters, metrics: metrics, project: p.Project, rules: rs}
@@ -380,7 +389,7 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 		s := s
 		if i > 0 && hasEver(q) { // a stat's previous period: its own ids, over its days
 			s.filters, s.metrics = cloneEver(s.filters, s.metrics)
-			if err := e.collectEver(ctx, everFilters(s.filters, s.metrics), Params{Project: p.Project, From: sp.from, To: sp.to}, rs); err != nil {
+			if err := e.collectEver(ctx, everFilters(s.filters, s.metrics), Params{Project: p.Project, From: sp.from, To: sp.to}, everRules); err != nil {
 				return Result{}, err
 			}
 		}

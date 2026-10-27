@@ -99,6 +99,9 @@ func (q Query) validateDefines() error {
 	}
 	var metric func(m Metric, p string) error
 	metric = func(m Metric, p string) error {
+		if err := used(m.Column, p+".column"); err != nil {
+			return err
+		}
 		if err := usedIn(m.Where, p+".where", used); err != nil {
 			return err
 		}
