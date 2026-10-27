@@ -51,7 +51,7 @@ type host struct {
 	// analytics tools over the event files; nil in a process that cannot
 	// read them, where those refuse.
 	native Native
-	// eventsDir is EVENTS_DIR, whose file names say each project's days.
+	// eventsDir is DATA_DIR, whose file names say each project's days.
 	eventsDir string
 	// queryTimeout and queryRows are CONSOLE_QUERY_TIMEOUT and
 	// CONSOLE_QUERY_ROWS_MAX, which every query on the files runs under.

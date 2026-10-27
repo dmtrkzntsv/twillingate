@@ -13,7 +13,7 @@ and litestream 0.5; any S3-compatible store works.
 
 Litestream copies the database only, so a host lost between two copies of
 `data/` loses the events since the last. The event files under `data/` (from the
-release that added `RETENTION_DAYS`; `EVENTS_DIR` when set) are not part of it;
+release that added `RETENTION_DAYS`; `DATA_DIR` when set) are not part of it;
 copy them on a schedule of your own (`docs/deployment.md`, "Back up and
 restore").
 

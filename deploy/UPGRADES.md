@@ -1502,23 +1502,28 @@ Rollback: install the previous release (the installer with `--version`, or
 
 ### Upgrading to the event files in `data/` (no migration)
 
-The default `EVENTS_DIR` is now `data/` beside the
-database (`/var/lib/twillingate/data`) instead of `raw/`.
+The event files' default directory is now `data/` beside the database
+(`/var/lib/twillingate/data`) instead of `raw/`, and its variable is
+`DATA_DIR`, no longer `EVENTS_DIR`.
 
-- **Before the upgrade**, nothing to check. With `EVENTS_DIR` set, nothing
-  moves and nothing changes. Stop any backup job that copies `raw/` while
-  the service restarts.
-- **On the day:** with `EVENTS_DIR` unset, the first start of the ingest
+- **Before the upgrade**, if your environment sets `EVENTS_DIR`, rename the
+  line to `DATA_DIR` with the same value. `EVENTS_DIR` is now ignored, with
+  a warning at start (`EVENTS_DIR is ignored: the event files' directory is
+  DATA_DIR`): a process that still sets it reads and writes the default
+  `data/` instead, and its dashboards show nothing until you rename it.
+  Nothing in the old directory is touched. Stop any backup job that copies
+  `raw/` while the service restarts.
+- **On the day:** with neither variable set, the first start of the ingest
   process renames `raw/` to `data/` before anything reads it, and logs
   `moved the event files` with both paths. It is a rename in the same
   directory, so it takes no time and copies nothing. On a split install,
   restart the console-only process after the ingest one: until then it
   reads `raw/`, which is gone.
-- **After the upgrade:** point anything that reads the files at `data/`:
-  backups (`docs/deployment.md`, "Back up and restore"), a Litestream
-  check (`docs/litestream.md`), and an external SQL engine's read-only
-  mount of `EVENTS_DIR`.
+- **After the upgrade:** check the log at start for the `EVENTS_DIR`
+  warning. Point anything that reads the files at `data/`: backups
+  (`docs/deployment.md`, "Back up and restore"), a Litestream check
+  (`docs/litestream.md`), and an external SQL engine's read-only mount.
 
-Rollback: an older release looks for `raw/` and would start on an empty
-one. Before going back, stop the service and rename `data/` to `raw/`, or
-set `EVENTS_DIR` to the `data/` path.
+Rollback: an older release reads `EVENTS_DIR`, defaulting to `raw/`, and
+would start on an empty one. Before going back, stop the service and
+rename `data/` to `raw/`, or set `EVENTS_DIR` to the `data/` path.

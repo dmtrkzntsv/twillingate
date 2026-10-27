@@ -42,7 +42,7 @@ func TestMigrateSyncsComponents(t *testing.T) {
 }
 
 // TestMigrateWithoutEventFilesIsChecked: on a fresh install, with no
-// event file under EVENTS_DIR, or with no SQL engine, the reporting
+// event file under DATA_DIR, or with no SQL engine, the reporting
 // migrator has nothing to check the system widgets' SQL on. No system
 // widget reads SQL any more, so there is nothing left unchecked either:
 // the sync is recorded as checked.

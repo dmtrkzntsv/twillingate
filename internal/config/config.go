@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -59,9 +60,13 @@ type ReportingConfig struct {
 	CacheAge, RefreshAge time.Duration
 }
 
-// retired are settings twillingate no longer reads. One still set is
-// ignored, and the start says so once (IgnoredWarning).
-var retired = []string{"ENGINE_MEMORY_LIMIT", "ENGINE_MAX_CHILDREN"}
+// retired are settings twillingate no longer reads, each with why. One
+// still set is ignored, and the start says so once (IgnoredWarning).
+var retired = []struct{ key, why string }{
+	{"ENGINE_MEMORY_LIMIT", "SQL runs in an external SQL engine"},
+	{"ENGINE_MAX_CHILDREN", "SQL runs in an external SQL engine"},
+	{"EVENTS_DIR", "the event files' directory is DATA_DIR"},
+}
 
 // ConsoleConfig carries the console surface settings (serve -console). Authentication comes from
 // the single CONSOLE_AUTH_DSN; parsing fans it out into the mode-specific
@@ -141,11 +146,11 @@ type Config struct {
 	// been deleted.
 	IngestLateDays int
 	Database       string
-	// EventsDir (EVENTS_DIR) holds the event files (internal/archive):
+	// EventsDir (DATA_DIR) holds the event files (internal/archive):
 	// absolute, beside the database's file as data/ unless set. It never
 	// holds the database: the external SQL engine reads it whole.
 	EventsDir string
-	// EventsDirMoveTo is set when EVENTS_DIR is unset and only the raw/
+	// EventsDirMoveTo is set when DATA_DIR is unset and only the raw/
 	// that older releases kept beside the database exists: EventsDir is
 	// that raw/, and the ingest process moves it here (data/) at start.
 	EventsDirMoveTo string
@@ -287,12 +292,12 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 	}
 	c.Console.DBPath = strings.TrimPrefix(c.Console.Database, "sqlite://")
 	c.SQLEngineSocket = e.str("SQL_ENGINE_SOCKET", "")
-	for _, k := range retired {
-		if v, ok := e.lookup(k); ok && v != "" {
-			c.Ignored = append(c.Ignored, k)
+	for _, r := range retired {
+		if v, ok := e.lookup(r.key); ok && v != "" {
+			c.Ignored = append(c.Ignored, r.key)
 		}
 	}
-	if c.EventsDir = e.str("EVENTS_DIR", ""); c.EventsDir == "" {
+	if c.EventsDir = e.str("DATA_DIR", ""); c.EventsDir == "" {
 		c.EventsDir, c.EventsDirMoveTo = DefaultEventsDir(filepath.Dir(strings.TrimPrefix(c.Database, "sqlite://")))
 	}
 	if abs, err := filepath.Abs(c.EventsDir); err == nil {
@@ -358,7 +363,7 @@ func (c *Config) validate() error {
 	if !strings.HasPrefix(c.Console.Database, "sqlite://") {
 		return fmt.Errorf("config: CONSOLE_DATABASE_DSN must be sqlite://<path>: %q", c.Console.Database)
 	}
-	// The SQL engine reads EVENTS_DIR whole: a database file inside it
+	// The SQL engine reads DATA_DIR whole: a database file inside it
 	// would be within reach of widget and query SQL.
 	for _, db := range []string{c.Database, c.Console.Database} {
 		path, err := filepath.Abs(strings.TrimPrefix(db, "sqlite://"))
@@ -366,7 +371,7 @@ func (c *Config) validate() error {
 			continue
 		}
 		if rel, err := filepath.Rel(c.EventsDir, path); err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("config: EVENTS_DIR (%s) must not hold the database (%s): the SQL engine reads everything in it", c.EventsDir, path)
+			return fmt.Errorf("config: DATA_DIR (%s) must not hold the database (%s): the SQL engine reads everything in it", c.EventsDir, path)
 		}
 	}
 	if c.IngestLateDays < 1 {
@@ -610,9 +615,7 @@ func (c *Config) ValidateConsole() error {
 	return m.authErr
 }
 
-// IgnoredWarning is the start's one warning about the retired settings the
-// environment still sets (Ignored), or "" when it sets none.
-// DefaultEventsDir is where the event files live when EVENTS_DIR is unset:
+// DefaultEventsDir is where the event files live when DATA_DIR is unset:
 // data/ in dbDir. Where data/ is missing and the raw/ of an older release
 // is there, dir is raw/ and moveTo is data/, for the ingest process to move
 // it to; moveTo is "" otherwise.
@@ -628,13 +631,28 @@ func DefaultEventsDir(dbDir string) (dir, moveTo string) {
 	return dir, ""
 }
 
+// IgnoredWarning is the start's one warning about the retired settings the
+// environment still sets (Ignored), or "" when it sets none: those retired
+// for the same reason in one clause, the clauses joined by "; ".
 func (c *Config) IgnoredWarning() string {
-	switch len(c.Ignored) {
-	case 0:
-		return ""
-	case 1:
-		return c.Ignored[0] + " is ignored: SQL runs in an external SQL engine"
+	var clauses []string
+	for i, r := range retired {
+		if i > 0 && retired[i-1].why == r.why {
+			continue
+		}
+		var keys []string
+		for _, o := range retired[i:] {
+			if o.why == r.why && slices.Contains(c.Ignored, o.key) {
+				keys = append(keys, o.key)
+			}
+		}
+		switch len(keys) {
+		case 0:
+		case 1:
+			clauses = append(clauses, keys[0]+" is ignored: "+r.why)
+		default:
+			clauses = append(clauses, strings.Join(keys[:len(keys)-1], ", ")+" and "+keys[len(keys)-1]+" are ignored: "+r.why)
+		}
 	}
-	return strings.Join(c.Ignored[:len(c.Ignored)-1], ", ") + " and " + c.Ignored[len(c.Ignored)-1] +
-		" are ignored: SQL runs in an external SQL engine"
+	return strings.Join(clauses, "; ")
 }
