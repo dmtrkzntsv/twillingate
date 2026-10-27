@@ -3,8 +3,14 @@ package native
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // TestPaths: on one day of the sessions fixture, the flows of its
@@ -60,5 +66,28 @@ func TestPaths(t *testing.T) {
 		if err := tc.q.Validate(); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), tc.path) {
 			t.Errorf("%+v: %v, want a refusal at %s", tc.q, err, tc.path)
 		}
+	}
+}
+
+// TestPathsCutOverEveryView: a view where leaves out still cuts, and
+// joins, sessions: /a, a /b 25 minutes on, a /c 25 minutes after that
+// are one session, so without /b the path is /a then /c.
+func TestPathsCutOverEveryView(t *testing.T) {
+	f := archivetest.New(t)
+	base := date(t, "2026-08-30").Time().Add(10 * time.Hour)
+	var evs []store.Event
+	for i, path := range []string{"/a", "/b", "/c"} {
+		evs = append(evs, store.Event{ID: fmt.Sprintf("v%d", i), ProjectID: 5, Family: store.FamilyViews, EventName: "pageview",
+			TS: base.Add(time.Duration(i) * 25 * time.Minute), Kind: "web", ActorID: "y", ActorKind: "install", Host: "example.com", Path: path})
+	}
+	f.Write(t, evs...)
+	e := New(Options{Dir: f.Dir, Workers: 2})
+	res, err := e.Answer(context.Background(), Query{Kind: "paths", Where: []Filter{{Column: "path", Op: "ne", Values: []string{"/b"}}}},
+		Params{Project: 5, From: date(t, "2026-08-30"), To: date(t, "2026-08-30")}, archive.Rules{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Rows) != 1 || res.Rows[0][0] != "1 /a" || res.Rows[0][1] != "2 /c" || res.Rows[0][2] != "1" {
+		t.Errorf("paths without /b = %v, want one flow 1 /a > 2 /c", res.Rows)
 	}
 }

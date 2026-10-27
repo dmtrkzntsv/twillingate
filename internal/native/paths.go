@@ -72,7 +72,8 @@ func (q Query) pathsColumn() string {
 
 // paths answers a paths query over [from, to]: each session's rows (as
 // the sessions table cuts them: a declared id, else 30 minutes of the
-// actor's silence, and midnight UTC) in time order, a run of one value its one step, its first depth steps;
+// actor's silence, and midnight UTC, over every row, where and an empty
+// value aside; rows without an actor are no one's) in time order, a run of one value its one step, its first depth steps;
 // a row per flow from a step to the next, source and target the step's
 // number and value ("1 /pricing"), value the sessions that took it, the
 // limit busiest, by sessions, then source and target.
@@ -104,6 +105,7 @@ func (s scan) paths(ctx context.Context, from, to civil.Date) (Result, error) {
 		ts         int64
 		v, sid, id string
 		idNull     bool
+		skip       bool // cuts sessions, takes no step: where refused it, or its value is empty
 	}
 	var mu sync.Mutex
 	days := map[string][]hit{} // per kind, actor and day: its rows
@@ -112,7 +114,7 @@ func (s scan) paths(ctx context.Context, from, to civil.Date) (Result, error) {
 		actor, kind, sid, vc, evID := batchColumn(b, "actor_id"), batchColumn(b, "kind"), batchColumn(b, "session_id"), batchColumn(b, col), batchColumn(b, "id")
 		_, ts := b.col("ts")
 		_, day := b.col("day")
-		if actor == nil || ts == nil || ts.Times == nil || day == nil || day.Ints == nil || vc == nil {
+		if actor == nil || ts == nil || ts.Times == nil || day == nil || day.Ints == nil {
 			return nil
 		}
 		keep, err := passRows(b, s.filters, nil)
@@ -124,12 +126,17 @@ func (s scan) paths(ctx context.Context, from, to civil.Date) (Result, error) {
 		defer mu.Unlock()
 		for i := range b.N {
 			a, ok := textAt(actor, i)
-			if !ok || a == "" || !keep[i] || (ts.Null != nil && ts.Null[i]) {
-				continue
+			if !ok || a == "" {
+				continue // an actorless view starts and ends nobody's path
+			}
+			var t int64 // a NULL ts reads 0, as the sessions table reads it
+			if ts.Null == nil || !ts.Null[i] {
+				t = ts.Times[i]
 			}
 			v, ok := latestText(vc, i, typ)
-			if !ok || v == "" {
-				continue
+			skip := !ok || v == "" || !keep[i]
+			if skip {
+				v = ""
 			}
 			id, _ := textAt(sid, i)
 			eid, hasID := textAt(evID, i)
@@ -138,7 +145,7 @@ func (s scan) paths(ctx context.Context, from, to civil.Date) (Result, error) {
 			if err := charge(int64(64 + len(v) + len(id) + len(eid) + len(key)*boolInt(days[key] == nil))); err != nil {
 				return err
 			}
-			days[key] = append(days[key], hit{ts.Times[i], strings.Clone(v), strings.Clone(id), strings.Clone(eid), !hasID})
+			days[key] = append(days[key], hit{t, strings.Clone(v), strings.Clone(id), strings.Clone(eid), !hasID, skip})
 		}
 		return nil
 	})
@@ -184,6 +191,9 @@ func (s scan) paths(ctx context.Context, from, to civil.Date) (Result, error) {
 	for _, hs := range sessions {
 		var steps []string
 		for _, h := range hs {
+			if h.skip {
+				continue // it cut the session; it is no step of it
+			}
 			if len(steps) > 0 && steps[len(steps)-1] == h.v {
 				continue // a run of one value is one step
 			}
