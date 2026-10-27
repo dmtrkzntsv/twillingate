@@ -375,6 +375,13 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 	specs := s.aggSpecs(p.From, p.To)
 	as := make([]aggregated, len(specs))
 	for i, sp := range specs {
+		s := s
+		if i > 0 && hasEver(q) { // a stat's previous period: its own ids, over its days
+			s.filters, s.metrics = cloneEver(s.filters, s.metrics)
+			if err := e.collectEver(ctx, everFilters(s.filters, s.metrics), Params{Project: p.Project, From: sp.from, To: sp.to}, rs); err != nil {
+				return Result{}, err
+			}
+		}
 		m, ms, err := s.aggregate(ctx, sp.from, sp.to, sp.dims, sp.perDay, sp.sets)
 		if err != nil {
 			return Result{}, err

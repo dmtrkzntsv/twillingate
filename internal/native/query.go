@@ -636,9 +636,6 @@ func (q Query) Validate() error {
 	if q.SeriesLimit > 0 && q.Series == "" {
 		return invalid("series_limit", "a trend without a series takes none")
 	}
-	if q.Compare != "" && hasEver(q) {
-		return invalid("compare", "a stat with ever or never compares no previous period: their ids are the range's; ask for each period on its own")
-	}
 	switch q.Compare {
 	case "":
 	case "previous":

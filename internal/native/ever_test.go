@@ -99,13 +99,33 @@ func TestValidateEver(t *testing.T) {
 		{"nested", st("views", Filter{Op: "ever", Where: []Filter{{Op: "never", Where: de}}}), "where[0].where[0].op"},
 		{"in an any_of", st("views", Filter{Op: "any_of", Any: []Filter{de[0], {Op: "ever", Where: de}}}), "where[0].any[1].op"},
 		{"bad inner", st("views", Filter{Op: "ever", Where: []Filter{{Column: "nope", Op: "is_set"}}}), "where[0].where[0].column"},
-		{"compare previous", Query{Kind: "stat", Table: "views", Compare: "previous", Metrics: []Metric{{Op: "count"}},
-			Where: []Filter{{Op: "ever", Where: de}}}, "compare"},
 		{"where without ever", st("views", Filter{Column: "path", Op: "is_set", Where: de}), "where[0].where"},
 	} {
 		err := tc.q.Validate()
 		if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), tc.path+":") {
 			t.Errorf("%s: %v, want a refusal at %s", tc.name, err, tc.path)
 		}
+	}
+}
+
+// TestEverComparesItsOwnPeriod: a stat's previous period collects its own
+// ids over its days, so its previous_ value is the stat of that period.
+func TestEverComparesItsOwnPeriod(t *testing.T) {
+	f := engineFixture(t)
+	e := New(Options{Dir: f.Dir, Workers: 3})
+	ever := []Filter{{Op: "ever", Over: "range", Where: []Filter{{Column: "country", Op: "eq", Values: []string{"DE"}}}}}
+	q := Query{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "count"}}, Where: ever}
+	cmp := q
+	cmp.Compare = "previous"
+	got, err := e.Answer(context.Background(), cmp, Params{Project: 1, From: date(t, "2026-08-22"), To: date(t, "2026-08-31")}, engineRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prev, err := e.Answer(context.Background(), q, Params{Project: 1, From: date(t, "2026-08-12"), To: date(t, "2026-08-21")}, engineRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Rows[0][1] != prev.Rows[0][0] || got.Rows[0][1] == "0" {
+		t.Errorf("previous_count = %s, want the previous period's own %s", got.Rows[0][1], prev.Rows[0][0])
 	}
 }

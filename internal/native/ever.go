@@ -186,3 +186,28 @@ func (e *Engine) collectEver(ctx context.Context, fs []*filter, p Params, rs rul
 	}
 	return nil
 }
+
+// cloneEver is filters and metrics with each ever and never filter's
+// ids a set of its own, for another range; the rest shared.
+func cloneEver(filters []filter, metrics []metricSpec) ([]filter, []metricSpec) {
+	fs := slices.Clone(filters)
+	for i := range fs {
+		if fs[i].ids != nil {
+			fs[i].ids = &idSet{}
+		}
+	}
+	var metric func(mt metricSpec) metricSpec
+	metric = func(mt metricSpec) metricSpec {
+		mt.where, _ = cloneEver(mt.where, nil)
+		if mt.ratioNum != nil {
+			num, den := metric(*mt.ratioNum), metric(*mt.ratioDen)
+			mt.ratioNum, mt.ratioDen = &num, &den
+		}
+		return mt
+	}
+	ms := make([]metricSpec, len(metrics))
+	for i, mt := range metrics {
+		ms[i] = metric(mt)
+	}
+	return fs, ms
+}
