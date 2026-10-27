@@ -115,6 +115,27 @@ func filterSchema() *jsonschema.Schema {
 	return s
 }
 
+// filterEnums lists a structured query filter's closed vocabularies in
+// its schema f: its op, an ever's by and over, and the ops of the filters
+// an any_of or an ever holds.
+func filterEnums(f *jsonschema.Schema) {
+	enum := func(xs []string) []any {
+		out := make([]any, len(xs))
+		for i, x := range xs {
+			out[i] = x
+		}
+		return out
+	}
+	f.Properties["op"].Enum = enum(native.FilterOps)
+	f.Properties["by"].Enum = enum(append([]string{""}, native.EverBy...))
+	f.Properties["over"].Enum = enum(append([]string{""}, native.EverOver...))
+	plain := slices.DeleteFunc(slices.Clone(native.FilterOps), func(op string) bool { return op == "any_of" || op == "ever" || op == "never" })
+	f.Properties["any"].Items.Properties["op"].Enum = enum(plain)
+	w := f.Properties["where"].Items
+	w.Properties["op"].Enum = enum(append(plain, "any_of"))
+	w.Properties["any"].Items.Properties["op"].Enum = enum(plain)
+}
+
 // queryEnums lists the structured query's closed vocabularies in query's
 // input schema, which a Go type cannot say.
 func queryEnums(in *jsonschema.Schema) {
@@ -165,23 +186,13 @@ func queryEnums(in *jsonschema.Schema) {
 	m.Properties["round"].Minimum, m.Properties["round"].Maximum = &minRound, &maxRound
 	minQ, maxQ := 0.0, 1.0
 	m.Properties["q"].ExclusiveMinimum, m.Properties["q"].ExclusiveMaximum = &minQ, &maxQ
-	filterEnums := func(f *jsonschema.Schema) {
-		f.Properties["op"].Enum = enum(native.FilterOps)
-		f.Properties["by"].Enum = enum(append([]string{""}, native.EverBy...))
-		f.Properties["over"].Enum = enum(append([]string{""}, native.EverOver...))
-		plain := slices.DeleteFunc(slices.Clone(native.FilterOps), func(op string) bool { return op == "any_of" || op == "ever" || op == "never" })
-		f.Properties["any"].Items.Properties["op"].Enum = enum(plain)
-		w := f.Properties["where"].Items
-		w.Properties["op"].Enum = enum(append(plain, "any_of"))
-		w.Properties["any"].Items.Properties["op"].Enum = enum(plain)
-	}
 	filterEnums(m.Properties["where"].Items)
 	filterEnums(q.Properties["where"].Items)
 	filterEnums(q.Properties["define"].Items.Properties["cases"].Items.Properties["where"].Items)
 	filterEnums(q.Properties["steps"].Items.Properties["where"].Items)
 	q.Properties["by"].Enum = enum(append([]string{""}, native.EverBy...))
 	q.Properties["shape"].Enum = enum(append([]string{""}, native.Shapes...))
-	sideOps := slices.DeleteFunc(slices.Clone(native.MetricOps), func(op string) bool { return op == "ratio" || op == "share" })
+	sideOps := slices.DeleteFunc(slices.Clone(native.MetricOps), func(op string) bool { return op == "ratio" || op == "share" || op == "latest" })
 	for _, side := range []string{"num", "den"} {
 		s := m.Properties[side]
 		s.Properties["op"].Enum = enum(sideOps)
