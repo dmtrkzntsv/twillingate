@@ -464,6 +464,16 @@ func TestKindsMatchGolden(t *testing.T) {
 			`SELECT "country", count(*), count(*) FILTER (WHERE "device_model" <> '' OR ("display_width" > 0 AND "display_height" > 0))
 				FROM views WHERE `+inRange+` AND ("path" <> '' OR "device_model" <> '')
 				GROUP BY "country" ORDER BY "country" ASC NULLS LAST`),
+		// any_of: an OR of whole filters, an any_set among them.
+		all("breakdown any_of", Query{Kind: "breakdown", Table: "views", Dimensions: []string{"country"}, Order: "country",
+			Where: []Filter{{Op: "any_of", Any: []Filter{{Column: "path", Op: "prefix", Values: []string{"/q"}},
+				{Column: "device_model", Op: "is_set"}}}},
+			Metrics: []Metric{{Op: "count"}, {Op: "actors", As: "shown", Where: []Filter{{Op: "any_of", Any: []Filter{
+				{Column: "display_width", Op: "gt", Values: []string{"1000"}}, {Op: "any_set", Columns: []string{"utm_source", "utm_medium"}}}}}}}},
+			[]string{"country", "count", "shown"},
+			`SELECT "country", count(*), count(DISTINCT "actor_id") FILTER (WHERE "display_width" > 1000 OR "utm_source" <> '' OR "utm_medium" <> '')
+				FROM views WHERE `+inRange+` AND (starts_with("path", '/q') OR "device_model" <> '')
+				GROUP BY "country" ORDER BY "country" ASC NULLS LAST`),
 		all("trend metric filter", Query{Kind: "trend", Table: "views", Metrics: []Metric{{Op: "count", As: "landings",
 			Where: []Filter{{Column: "event_name", Op: "eq", Values: []string{"landing"}}}}}}, []string{"day", "landings"},
 			`SELECT "day", count(*) FILTER (WHERE "event_name" = 'landing') FROM views WHERE `+inRange+` GROUP BY "day" ORDER BY "day"`),

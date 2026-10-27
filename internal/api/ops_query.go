@@ -71,9 +71,40 @@ func metricSchema() *jsonschema.Schema {
 		}
 		return out
 	}
-	s, err := jsonschema.ForType(reflect.StructOf(fields(reflect.StructOf(fields(nil)))), nil)
+	s, err := jsonschema.ForType(reflect.StructOf(fields(reflect.StructOf(fields(nil)))), filterOptions)
 	if err != nil {
 		panic(fmt.Sprintf("api: schema for native.Metric: %v", err))
+	}
+	return s
+}
+
+// filterOptions describes native.Filter, for the schemas that hold one.
+var filterOptions = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+	reflect.TypeFor[native.Filter](): filterSchema(),
+}}
+
+// filterSchema is native.Filter's schema: an any_of's filters are
+// filters without one (Validate refuses an any_of in an any_of), a
+// cycle the inference would refuse otherwise.
+func filterSchema() *jsonschema.Schema {
+	ft := reflect.TypeFor[native.Filter]()
+	fields := func(inner reflect.Type) []reflect.StructField {
+		var out []reflect.StructField
+		for i := range ft.NumField() {
+			f := ft.Field(i)
+			if f.Name == "Any" {
+				if inner == nil {
+					continue
+				}
+				f.Type = reflect.SliceOf(inner)
+			}
+			out = append(out, f)
+		}
+		return out
+	}
+	s, err := jsonschema.ForType(reflect.StructOf(fields(reflect.StructOf(fields(nil)))), nil)
+	if err != nil {
+		panic(fmt.Sprintf("api: schema for native.Filter: %v", err))
 	}
 	return s
 }
@@ -121,8 +152,12 @@ func queryEnums(in *jsonschema.Schema) {
 	m.Properties["round"].Minimum, m.Properties["round"].Maximum = &minRound, &maxRound
 	minQ, maxQ := 0.0, 1.0
 	m.Properties["q"].ExclusiveMinimum, m.Properties["q"].ExclusiveMaximum = &minQ, &maxQ
-	m.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
-	q.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
+	filterEnums := func(f *jsonschema.Schema) {
+		f.Properties["op"].Enum = enum(native.FilterOps)
+		f.Properties["any"].Items.Properties["op"].Enum = enum(slices.DeleteFunc(slices.Clone(native.FilterOps), func(op string) bool { return op == "any_of" }))
+	}
+	filterEnums(m.Properties["where"].Items)
+	filterEnums(q.Properties["where"].Items)
 	sideOps := slices.DeleteFunc(slices.Clone(native.MetricOps), func(op string) bool { return op == "ratio" || op == "share" })
 	for _, side := range []string{"num", "den"} {
 		s := m.Properties[side]
@@ -130,7 +165,7 @@ func queryEnums(in *jsonschema.Schema) {
 		s.Properties["column"].Enum = enum(numbers) // a side is a number: no day or time
 		s.Properties["of"].Enum = enum(native.OfColumns)
 		s.Properties["q"].ExclusiveMinimum, s.Properties["q"].ExclusiveMaximum = &minQ, &maxQ
-		s.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
+		filterEnums(s.Properties["where"].Items)
 	}
 }
 

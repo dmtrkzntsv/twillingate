@@ -3,6 +3,7 @@ package native
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -311,6 +312,14 @@ type filter struct {
 func compileFilters(where []Filter, path string) ([]filter, error) {
 	out := make([]filter, len(where))
 	for i, f := range where {
+		if f.Op == "any_of" {
+			anyOf, err := compileFilters(f.Any, fmt.Sprintf("%s[%d].any", path, i))
+			if err != nil {
+				return nil, err
+			}
+			out[i] = filter{op: f.Op, anyOf: anyOf}
+			continue
+		}
 		if f.Op == "any_set" {
 			each := make([]Filter, len(f.Columns))
 			for j, col := range f.Columns {
@@ -415,14 +424,19 @@ func (f *filter) matchInt(n int64) bool {
 	return false
 }
 
-// columns are the filter's columns: any_set's, else its one.
+// columns are the filter's columns: any_set's or any_of's, each once,
+// else its one.
 func (f *filter) columns() []string {
 	if f.anyOf == nil {
 		return []string{f.column}
 	}
-	out := make([]string, len(f.anyOf))
+	var out []string
 	for i := range f.anyOf {
-		out[i] = f.anyOf[i].column
+		for _, c := range f.anyOf[i].columns() {
+			if !slices.Contains(out, c) {
+				out = append(out, c)
+			}
+		}
 	}
 	return out
 }
@@ -474,7 +488,7 @@ func (f *filter) apply(b *Batch, keep []bool) error {
 }
 
 // applyAny clears keep[i] for the rows of b where none of any_set's
-// columns is set.
+// columns is set, or none of any_of's filters passes.
 func (f *filter) applyAny(b *Batch, keep []bool) error {
 	set := make([]bool, b.N)
 	one := make([]bool, b.N)
