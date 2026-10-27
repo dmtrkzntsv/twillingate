@@ -83,26 +83,32 @@ var filterOptions = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonsc
 	reflect.TypeFor[native.Filter](): filterSchema(),
 }}
 
-// filterSchema is native.Filter's schema: an any_of's and an ever's
-// filters are filters without either (Validate refuses an any_of or an
-// ever in them), a cycle the inference would refuse otherwise.
+// filterSchema is native.Filter's schema, three levels deep where the
+// type would recurse, a cycle the inference refuses: an any_of's
+// filters hold neither any nor where (Validate refuses an any_of or an
+// ever in one), and an ever's where holds filters with an any_of's any
+// but no where (no ever in an ever).
 func filterSchema() *jsonschema.Schema {
 	ft := reflect.TypeFor[native.Filter]()
-	fields := func(inner reflect.Type) []reflect.StructField {
+	fields := func(anyOf, where reflect.Type) []reflect.StructField {
 		var out []reflect.StructField
 		for i := range ft.NumField() {
 			f := ft.Field(i)
-			if f.Name == "Any" || f.Name == "Where" {
-				if inner == nil {
-					continue
-				}
-				f.Type = reflect.SliceOf(inner)
+			switch {
+			case f.Name == "Any" && anyOf == nil, f.Name == "Where" && where == nil:
+				continue
+			case f.Name == "Any":
+				f.Type = reflect.SliceOf(anyOf)
+			case f.Name == "Where":
+				f.Type = reflect.SliceOf(where)
 			}
 			out = append(out, f)
 		}
 		return out
 	}
-	s, err := jsonschema.ForType(reflect.StructOf(fields(reflect.StructOf(fields(nil)))), nil)
+	plain := reflect.StructOf(fields(nil, nil))
+	inEver := reflect.StructOf(fields(plain, nil))
+	s, err := jsonschema.ForType(reflect.StructOf(fields(plain, inEver)), nil)
 	if err != nil {
 		panic(fmt.Sprintf("api: schema for native.Filter: %v", err))
 	}
@@ -159,7 +165,9 @@ func queryEnums(in *jsonschema.Schema) {
 		f.Properties["over"].Enum = enum(append([]string{""}, native.EverOver...))
 		plain := slices.DeleteFunc(slices.Clone(native.FilterOps), func(op string) bool { return op == "any_of" || op == "ever" || op == "never" })
 		f.Properties["any"].Items.Properties["op"].Enum = enum(plain)
-		f.Properties["where"].Items.Properties["op"].Enum = enum(append(plain, "any_of"))
+		w := f.Properties["where"].Items
+		w.Properties["op"].Enum = enum(append(plain, "any_of"))
+		w.Properties["any"].Items.Properties["op"].Enum = enum(plain)
 	}
 	filterEnums(m.Properties["where"].Items)
 	filterEnums(q.Properties["where"].Items)

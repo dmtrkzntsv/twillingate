@@ -303,12 +303,12 @@ type filter struct {
 	inner []filter
 	over  string
 	ids   *idSet
-	typ    colType
-	op     string
-	strs   map[string]bool
-	str    string
-	ints   map[int64]bool
-	num    int64
+	typ   colType
+	op    string
+	strs  map[string]bool
+	str   string
+	ints  map[int64]bool
+	num   int64
 }
 
 // compileFilters parses the filters' values for their columns' types; a

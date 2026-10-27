@@ -99,6 +99,8 @@ func TestValidateEver(t *testing.T) {
 		{"nested", st("views", Filter{Op: "ever", Where: []Filter{{Op: "never", Where: de}}}), "where[0].where[0].op"},
 		{"in an any_of", st("views", Filter{Op: "any_of", Any: []Filter{de[0], {Op: "ever", Where: de}}}), "where[0].any[1].op"},
 		{"bad inner", st("views", Filter{Op: "ever", Where: []Filter{{Column: "nope", Op: "is_set"}}}), "where[0].where[0].column"},
+		{"compare previous", Query{Kind: "stat", Table: "views", Compare: "previous", Metrics: []Metric{{Op: "count"}},
+			Where: []Filter{{Op: "ever", Where: de}}}, "compare"},
 		{"where without ever", st("views", Filter{Column: "path", Op: "is_set", Where: de}), "where[0].where"},
 	} {
 		err := tc.q.Validate()

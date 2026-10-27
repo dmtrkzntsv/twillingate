@@ -437,3 +437,19 @@ func TestQuerySchemaRatioSides(t *testing.T) {
 		}
 	}
 }
+
+// TestQuerySchemaTakesAnyOfInEver: the input schema lets an ever's or a
+// never's where hold an any_of, as Validate does and the docs show.
+func TestQuerySchemaTakesAnyOfInEver(t *testing.T) {
+	_, cs := newTestHost(t)
+	res := callTool(t, cs, "query", map[string]any{"project_id": 1, "query": map[string]any{
+		"kind": "stat", "table": "views", "metrics": []any{map[string]any{"op": "count"}},
+		"where": []any{map[string]any{"op": "never", "where": []any{map[string]any{"op": "any_of", "any": []any{
+			map[string]any{"column": "host", "op": "eq", "values": []any{"beta.example.com"}},
+			map[string]any{"column": "app_version", "op": "eq", "values": []any{"dev"}},
+		}}}}},
+	}})
+	if res.IsError {
+		t.Fatalf("never holding an any_of = %s", textOf(res))
+	}
+}
