@@ -303,10 +303,10 @@ func (h *host) registerReporting(r *registrar) {
 	items := func(in *jsonschema.Schema) *jsonschema.Schema { return in.Properties["widgets"].Items }
 
 	expose(r, spec{Name: "reporting_guide", Annotations: ro, // MCP only
-		Description: "Call before building or changing a dashboard. One read returns what you author against: the running version and its release notes, the source types and every component (when to use it, the columns its query returns, its props and default size), the queryable views, the active projects, the existing dashboards, and the workflow and rules to follow. docs://reporting is the full reference."},
+		Description: "Call before building or changing a dashboard. One read returns what you author against: the running version and its release notes, the source types and every component (when to use it, the columns its query returns, its props and default size), the built-in widgets to copy before writing one, the queryable views, the active projects, the existing dashboards, and the workflow and rules to follow. docs://reporting is the full reference."},
 		h.reportingGuide)
 	expose(r, spec{Name: "list_components", Annotations: ro, Method: "GET", Path: "/api/components",
-		Description: "The source types (sql, md) and the components a widget can use: each one's description, the source types it accepts, the columns its query must return (inputs), its props schema and its default width and height."},
+		Description: "The source types (query, sql, md) and the components a widget can use: each one's description, the source types it accepts, the columns its query must return (inputs), its props schema and its default width and height."},
 		h.listComponents)
 	expose(r, spec{Name: "list_dashboards", Annotations: ro, Method: "GET", Path: "/api/dashboards",
 		Description: "Every dashboard in sidebar order (system first, then user), archived ones included: id, title, owner (system or user), group_id (the group it is a tab of; it changes when the dashboard whose id it is leaves the group, so read it here before using it), stored project and range, live widget count, archived_at, sidebar (its group is in the sidebar; only a built-in group is ever out of it) and project_tab (a built-in that projects created from now on get as a tab; always false for your own); plus the timezone days are grouped in, purge_after_days, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and auto_refresh_seconds, how often the page reloads a dashboard whose viewer turned auto-refresh on (absent: never)."},
@@ -322,7 +322,7 @@ func (h *host) registerReporting(r *registrar) {
 		h.widgetData)
 
 	expose(r, spec{Name: "create_dashboard", Annotations: write, Method: "POST", Path: "/api/dashboards", Status: http.StatusCreated, constrain: widget(items),
-		Description: "Call reporting_guide first. Create a user dashboard: title (at least 2 characters), optional starting range (default 7d), optional group_id to add it as a tab of that group, optional after (a dashboard id; 0 first), and optional widgets in order. All or nothing: one invalid widget creates nothing."},
+		Description: "Call reporting_guide first. Create a user dashboard: title (at least 2 characters), optional starting range (default 7d), optional group_id to add it as a tab of that group, optional after (a dashboard id; 0 first), and optional widgets in order, each as add_widget takes it (prefer query sources over sql). All or nothing: one invalid widget creates nothing."},
 		h.createDashboard)
 	expose(r, spec{Name: "update_dashboard", Annotations: write, Method: "PATCH", Path: d,
 		Description: "Rename a user dashboard (title, at least 2 characters) and/or move it with group_id (join a group as a tab, or 0 to leave one) and/or after (a dashboard id; 0 first). whole_group with title renames its group instead: the sidebar name, which otherwise is the first tab's title; a group name can be replaced, never cleared. sidebar, in a call of its own and for built-in dashboards only, puts the whole group in or out of the sidebar; your own dashboards are always in the sidebar, so it is refused on one (archive_dashboard takes one away). Your own dashboards are added to projects one at a time with add_project_tab. Otherwise system dashboards are read-only."},
@@ -350,7 +350,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Move any tab of a project's page, built-in or your own, after another tab of it (`after`; 0 first)."},
 		h.moveProjectTab)
 	expose(r, spec{Name: "add_widget", Annotations: write, Method: "POST", Path: d + "/widgets", Status: http.StatusCreated, constrain: widget(self),
-		Description: "Call reporting_guide first. Add a widget to a user dashboard: a component, a source ({type: sql|md, content}), optional title, props, width and height (default from the component), name (derived from the title when omitted) and after (a widget id; 0 first; omitted, last). The SQL is run once to check its columns against the component's inputs."},
+		Description: "Call reporting_guide first. Add a widget to a user dashboard: a component, a source ({type: query|sql|md, content}; prefer a copy_widget of a built-in widget, then query, a structured query, and sql only for what neither can show), optional title, props, width and height (default from the component), name (derived from the title when omitted) and after (a widget id; 0 first; omitted, last). Its columns are checked against the component's inputs: a query source's from the query alone, a sql source's by running it once."},
 		h.addWidget)
 	expose(r, spec{Name: "update_widget", Annotations: write, Method: "PATCH", Path: w, constrain: widget(self),
 		Description: "Call reporting_guide first. Change a widget on a user dashboard: name, component, title, props, source, width or height, or move it with after (a widget id there; 0 first). Fields you omit are kept; the result is validated whole, but a change of only width, height, after, title or name runs no query."},

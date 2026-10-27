@@ -21,7 +21,7 @@ import (
 
 // serverInstructions are sent on connect (MCP's initialize result): the
 // two guides are where an agent starts, whatever it came to do.
-const serverInstructions = "To integrate a site or app, call integration_guide. To build or change dashboards, call reporting_guide. To customize a system dashboard, duplicate it with whole_group, then take the original out of the sidebar with update_dashboard {sidebar: false}; add your copy to projects with add_project_tab. If widgets broke after an update, read the release notes at https://github.com/dmtrkzntsv/twillingate/releases."
+const serverInstructions = "To integrate a site or app, call integration_guide. To build or change dashboards, call reporting_guide; reuse a built-in widget with copy_widget when one shows what is asked, else write a structured query source, and SQL only for what neither can show. To customize a system dashboard, duplicate it with whole_group, then take the original out of the sidebar with update_dashboard {sidebar: false}; add your copy to projects with add_project_tab. If widgets broke after an update, read the release notes at https://github.com/dmtrkzntsv/twillingate/releases."
 
 // guideSections are the parts of docs/reporting.md the guide carries.
 var guideSections = []string{"## Workflow", "## Rules"}
@@ -38,11 +38,11 @@ func (h *host) reportingGuide(ctx context.Context, _ struct{}) (guideOut, error)
 
 	var b strings.Builder
 	b.WriteString("# Building dashboards on this instance\n\n")
-	b.WriteString("The page at /app/ shows the dashboards below; agents build them with create_dashboard, add_widget and update_widget. docs://reporting is the whole reference.\n\n")
+	b.WriteString("The page at /app/ shows the dashboards below; agents build them with create_dashboard, copy_widget, add_widget and update_widget. docs://reporting is the whole reference.\n\n")
 	writeVersion(&b, version.Version)
 
 	b.WriteString("## Components\n\n")
-	fmt.Fprintf(&b, "Source types: %s. A widget's source is {\"type\": …, \"content\": …}; its SQL returns the columns the component reads, by name (alias them: day AS x). A query source's content is {\"query\": …, \"rename\": …, \"labels\": …}: a structured query (docs://twillingate, Structured queries), its output columns renamed to the inputs ({\"day\": \"x\"}), and text columns' values relabelled ({\"label\": {\"new\": \"New users\"}}); it follows the project and the range.\n\n",
+	fmt.Fprintf(&b, "Source types: %s. A widget's source is {\"type\": …, \"content\": …}. Prefer, in order: a copy of a built-in widget (copy_widget; Built-in widgets below), a query source, and sql only for what neither can show (the Workflow, step 4). A query source's content is {\"query\": …, \"rename\": …, \"labels\": …}: a structured query, the same object as the query tool's query argument (its schema is the grammar; docs://twillingate, Structured queries), its output columns renamed to the inputs ({\"day\": \"x\"}), and text columns' values relabelled ({\"label\": {\"new\": \"New users\"}}); it follows the project and the range. A sql source's SQL returns the columns the component reads, by name (alias them: day AS x).\n\n",
 		strings.Join(h.rep.SourceTypes(), ", "))
 	for _, c := range comps {
 		fmt.Fprintf(&b, "### %s\n\n%s\n\n", c.Name, c.Description)
@@ -79,6 +79,10 @@ func (h *host) reportingGuide(ctx context.Context, _ struct{}) (guideOut, error)
 		fmt.Fprintf(&b, "| %d | %s | %s | %d | %s | %s |\n", d.ID, tableCell(d.Title), d.Owner, d.GroupID, sidebar, archived)
 	}
 	fmt.Fprintf(&b, "\nDays are grouped in %s.\n", dashboards.Timezone)
+
+	if err := h.writeBuiltinWidgets(ctx, &b, dashboards.Dashboards); err != nil {
+		return guideOut{}, err
+	}
 
 	for _, heading := range guideSections {
 		body, ok := section(docs.Reporting, heading)
@@ -156,4 +160,85 @@ func section(doc, heading string) (string, bool) {
 		rest = rest[:j]
 	}
 	return rest, true
+}
+
+// writeBuiltinWidgets lists the system dashboards' live widgets with what
+// each one reads, so an agent finds one to copy_widget before writing
+// its own: the catalog reuse starts from.
+func (h *host) writeBuiltinWidgets(ctx context.Context, b *strings.Builder, ds []reporting.DashboardInfo) error {
+	titles := map[int64]string{}
+	for _, d := range ds {
+		if d.Owner == "system" {
+			titles[d.ID] = d.Title
+		}
+	}
+	ws, err := h.rep.Widgets(ctx, 0, "")
+	if err != nil {
+		return err
+	}
+	b.WriteString("\n## Built-in widgets\n\nThe system dashboards' widgets, each ready for copy_widget {widget_id, dashboard_id}: it lands on your dashboard as it is, following the project and range switchers. Prefer one of these to writing a widget of your own.\n\n| widget_id | dashboard | title | component | reads |\n| --- | --- | --- | --- | --- |\n")
+	for _, w := range ws {
+		dash, ok := titles[w.DashboardID]
+		if !ok || w.ArchivedAt != "" || w.Component == nil || w.Source.Type == "md" {
+			continue
+		}
+		fmt.Fprintf(b, "| %d | %s | %s | %s | %s |\n", w.ID, tableCell(dash), tableCell(w.Title), *w.Component, tableCell(describeSource(w.Source)))
+	}
+	return nil
+}
+
+// describeSource says in a few words what a widget's source reads: a
+// structured query's kind, table, split and metrics (with the names
+// they are given); sql as such.
+func describeSource(s reporting.Source) string {
+	if s.Type != "query" {
+		return s.Type
+	}
+	var c struct {
+		Query struct {
+			Kind       string   `json:"kind"`
+			Table      string   `json:"table"`
+			Dimensions []string `json:"dimensions"`
+			Series     string   `json:"series"`
+			Output     string   `json:"output"`
+			Metrics    []struct {
+				Op     string `json:"op"`
+				Of     string `json:"of"`
+				Column string `json:"column"`
+				As     string `json:"as"`
+			} `json:"metrics"`
+		} `json:"query"`
+	}
+	if err := json.Unmarshal([]byte(s.Content), &c); err != nil {
+		return "query"
+	}
+	q := c.Query
+	parts := []string{q.Kind}
+	if q.Table != "" {
+		parts = append(parts, "of "+q.Table)
+	}
+	if len(q.Dimensions) > 0 {
+		parts = append(parts, "by "+strings.Join(q.Dimensions, ", "))
+	}
+	if q.Series != "" {
+		parts = append(parts, "per "+q.Series)
+	}
+	if q.Output != "" {
+		parts = append(parts, "as "+q.Output)
+	}
+	ms := make([]string, 0, len(q.Metrics))
+	for _, m := range q.Metrics {
+		name := m.Op
+		if arg := m.Of + m.Column; arg != "" {
+			name += "(" + arg + ")"
+		}
+		if m.As != "" {
+			name += " as " + m.As
+		}
+		ms = append(ms, name)
+	}
+	if len(ms) > 0 {
+		parts = append(parts, ": "+strings.Join(ms, ", "))
+	}
+	return strings.Replace(strings.Join(parts, " "), " :", ":", 1)
 }

@@ -11,8 +11,8 @@ import (
 // carries in and out — the type name a widget declares, paired with the
 // text a person or an agent wrote.
 type Source struct {
-	Type    string `json:"type" jsonschema:"sql, query or md"`
-	Content string `json:"content" jsonschema:"the SQL query, the structured query as JSON ({query, rename}), or the Markdown text"`
+	Type    string `json:"type" jsonschema:"query (a structured query; prefer it), sql (the escape hatch) or md"`
+	Content string `json:"content" jsonschema:"the structured query as JSON ({query, rename, labels, columns}; query is the query tool's query argument), the SQL query, or the Markdown text"`
 }
 
 // Column is one column a component's input accepts: a name, the types a

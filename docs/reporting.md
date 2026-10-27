@@ -4,8 +4,9 @@ How an AI agent builds and changes the dashboards twillingate serves at `/app/`.
 The page is read-only: a person opens it, picks a project and a date range, and
 reads. Agents are its only authors, through the tools and routes below. The MCP
 endpoint serves this file verbatim as `docs://reporting`; `reporting_guide`
-returns its live parts (components, views, projects, dashboards) with its
-[Workflow](#workflow) and [Rules](#rules) in one call. Widget SQL is DuckDB
+returns its live parts (components, built-in widgets, views, projects,
+dashboards) with its [Workflow](#workflow) and [Rules](#rules) in one call.
+Most widgets need no SQL: a built-in one copied, or a structured query. Widget SQL is DuckDB
 SQL over the event files: [Tables](#tables) lists what it reads. It runs on
 an external SQL engine (`SQL_ENGINE_SOCKET`, [deployment.md](deployment.md#external-sql-engine));
 without one, `sql` is no source type and the other widgets are unaffected.
@@ -67,11 +68,12 @@ Retention · Web Vitals · Measures.
 
 - the **component** is how it is drawn (`line`, `stat`, `table`, …; see
   [Components](#components));
-- the **source** is `{"type": "md" | "query" | "sql", "content": "…"}`: a
+- the **source** is `{"type": "query" | "sql" | "md", "content": "…"}`: a
+  structured query as JSON (`query`, see below; the one to reach for), a
   read-only query in DuckDB SQL over the event files' tables (`sql`, see
-  [Tables](#tables)), a structured query as JSON (`query`, see below), or
-  Markdown text (`md`). The component says which source types it accepts and
-  which columns its query must return.
+  [Tables](#tables); the escape hatch), or Markdown text (`md`). The
+  component says which source types it accepts and which columns its query
+  must return.
 
 A `query` source's content is `{"query": {…}, "rename": {…}, "labels": {…}, "columns": […]}`:
 `query` is a [structured query](twillingate.md#structured-queries) (a stat, a
@@ -250,19 +252,34 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 
 ## Workflow
 
+Reuse before you write, and write a structured query before SQL: a copy or
+a `query` source needs no SQL engine, follows both switchers, and keeps
+working when the event files' columns change. SQL is the escape hatch for
+what a structured query cannot say.
+
 1. **Call `reporting_guide`.** It names the running version, the components
-   and the columns each one reads, the tables, the active projects and the
-   dashboards there are.
-2. **Explore with `query`** over the event files'
-   tables ([Tables](#tables)), for one project and a few days, until the
-   numbers are the ones the widget should show.
-3. **Pick a component** and alias the query's columns to its inputs:
-   `SELECT day AS x, count(*) AS y …` for `line`. [Examples](#examples) has
-   one query per component.
-4. **Choose what the widget follows:** `WHERE project_id = :project` follows
-   the project switcher, `day BETWEEN :from AND :to` the range switcher;
-   without them the widget is fixed, and its title says to what ("Signups,
-   all time").
+   and the columns each one reads, the built-in widgets, the tables, the
+   active projects and the dashboards there are.
+2. **Reuse a built-in widget when one shows it.** The guide's Built-in
+   widgets lists every system widget with what it reads: `copy_widget` puts
+   one on your dashboard, unchanged and independent of the original. For a
+   whole page, `duplicate_dashboard` a system dashboard (or its group, with
+   `whole_group`) and work on the copy.
+3. **Otherwise write a structured query** (`{"type": "query"}`): a stat, a
+   trend, a breakdown or a retention, the grammar of `query`'s `query`
+   argument ([twillingate.md](twillingate.md#structured-queries)). Try it
+   with `query`'s `query` form for one project and a few days until the
+   numbers are the ones the widget should show, then save the same object
+   as the source's `query`, with `rename` mapping its columns to the
+   component's inputs (`{"day": "x", "count": "y"}` for `line`).
+   [Examples](#examples) has one per component.
+4. **Write SQL only for what a structured query cannot say**: joining two
+   tables, an expression over a column (a `CASE`, a date bucket other than
+   the day), a per-actor condition over the actor's other rows, a remote
+   `table` (`mode: remote`). Name in the widget's title or a Markdown note
+   what made it SQL. `WHERE project_id = :project` follows the project
+   switcher, `day BETWEEN :from AND :to` the range switcher; without them
+   the widget is fixed, and its title says to what ("Signups, all time").
 5. **Write it.** `create_dashboard` with its widgets in order, or `add_widget`
    on an existing user dashboard with `after`, `width` and `height`.
    `create_dashboard` with `group_id` adds the dashboard as a tab of that
@@ -286,6 +303,8 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
   user dashboard (the console's Duplicate and Copy to dashboard… call it).
 - Your own dashboards are always in the sidebar: `update_dashboard` refuses
   `sidebar` on one. `archive_dashboard` takes one away.
+- Prefer a copy of a built-in widget, then a `query` source; a `sql` source
+  is for what neither can show (see [Workflow](#workflow), step 4).
 - A query returns exactly the columns the component reads, named by alias; a
   column marked optional may be left out, and only `table` takes any columns.
 - Widget SQL is DuckDB SQL, one `SELECT`, over the seven tables in
@@ -400,7 +419,7 @@ is older than `REPORTING_CACHE_MAX_AGE`:
 
 | Tool | Input | Returns |
 | --- | --- | --- |
-| `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the event files' tables, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
+| `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the built-in widgets (each one's id, dashboard, title, component and what it reads), the event files' tables, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
 | `list_components` | none | `source_types` and `components`: each one's `description`, `accepts`, `inputs`, `props` schema, `default_width` and `default_height` |
 | `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, `group_title` (the group's name; absent when it has none, and the first live tab's title stands in), stored `project_id` and `range`, live `widgets` count, `archived_at`, `sidebar` (its group is in the sidebar; only a system group is ever out of it) and `project_tab` (a system dashboard that projects created from now on get as a tab; always false on your own); plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and `auto_refresh_seconds`, how often the page reloads a dashboard with auto-refresh on (absent: never) |
 | `get_dashboard` | `dashboard_id` | the dashboard, its `group_id` and `group_title` (the group's name; absent when it has none), its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), and its live `widgets` in order |
