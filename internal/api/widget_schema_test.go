@@ -169,3 +169,45 @@ func TestOpenAPICarriesTheWidgetContract(t *testing.T) {
 		"requestBody", "content", "application/json", "schema")
 	widgetSchemaOK(t, "POST widgets", body)
 }
+
+// TestQueryContentAsAnObject: a query source's content goes in as the
+// JSON object itself, checked by the structured query's own schema, and
+// is kept and returned as its text; an object for a sql source is
+// refused, and the text form still works.
+func TestQueryContentAsAnObject(t *testing.T) {
+	_, cs := newTestHost(t)
+	var d struct {
+		ID      int64 `json:"dashboard_id"`
+		Widgets []struct {
+			Source struct{ Type, Content string } `json:"source"`
+		} `json:"widgets"`
+	}
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Typed"}, &d)
+	content := map[string]any{
+		"query":  map[string]any{"kind": "stat", "table": "views", "metrics": []any{map[string]any{"op": "count", "as": "value"}}},
+		"rename": map[string]any{},
+	}
+	toolJSON(t, cs, "add_widget", map[string]any{"dashboard_id": d.ID, "component": "stat",
+		"source": map[string]any{"type": "query", "content": content}}, nil)
+	toolJSON(t, cs, "add_widget", map[string]any{"dashboard_id": d.ID, "component": "stat",
+		"source": map[string]any{"type": "query", "content": `{"query":{"kind":"stat","table":"views","metrics":[{"op":"count","as":"value"}]}}`}}, nil)
+	toolJSON(t, cs, "get_dashboard", map[string]any{"dashboard_id": d.ID}, &d)
+	if len(d.Widgets) != 2 {
+		t.Fatalf("%d widgets, want 2", len(d.Widgets))
+	}
+	if got, want := d.Widgets[0].Source.Content, `{"query":{"kind":"stat","metrics":[{"as":"value","op":"count"}],"table":"views"},"rename":{}}`; got != want {
+		t.Errorf("stored content = %s, want %s", got, want)
+	}
+
+	bad := map[string]any{"query": map[string]any{"kind": "histogram"}}
+	res := callTool(t, cs, "add_widget", map[string]any{"dashboard_id": d.ID, "component": "stat",
+		"source": map[string]any{"type": "query", "content": bad}})
+	if !res.IsError || !strings.Contains(textOf(res), `validating "arguments"`) {
+		t.Errorf("an unknown kind in the object = %s; want the input schema's refusal", textOf(res))
+	}
+	res = callTool(t, cs, "add_widget", map[string]any{"dashboard_id": d.ID, "component": "stat",
+		"source": map[string]any{"type": "sql", "content": content}})
+	if !res.IsError || !strings.Contains(textOf(res), "an object is a query source's content") {
+		t.Errorf("an object for a sql source = %s", textOf(res))
+	}
+}
