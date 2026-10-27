@@ -574,6 +574,9 @@ func (q Query) Validate() error {
 	if err := q.validateShape(); err != nil {
 		return err
 	}
+	if q.Depth != 0 && q.Kind != "paths" {
+		return invalid("depth", "only paths takes depth")
+	}
 	if q.Kind != "funnel" {
 		switch {
 		case len(q.Steps) > 0:
@@ -593,9 +596,6 @@ func (q Query) Validate() error {
 		return q.validateFunnel()
 	case "paths":
 		return q.validatePaths()
-	}
-	if q.Depth != 0 {
-		return invalid("depth", "only paths takes depth")
 	}
 	switch {
 	case q.Output != "":

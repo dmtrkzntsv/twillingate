@@ -62,6 +62,8 @@ func TestPaths(t *testing.T) {
 		{Query{Kind: "paths", Dimensions: []string{"path", "host"}}, "dimensions"},
 		{Query{Kind: "paths", Metrics: []Metric{{Op: "count"}}}, "metrics"},
 		{Query{Kind: "stat", Table: "views", Depth: 3, Metrics: []Metric{{Op: "count"}}}, "depth"},
+		{Query{Kind: "funnel", Depth: 3, Steps: []Step{{Label: "a", Where: []Filter{{Column: "path", Op: "is_set"}}}, {Label: "b", Where: []Filter{{Column: "host", Op: "is_set"}}}}}, "depth"},
+		{Query{Kind: "retention", Output: "grid", Depth: 3}, "depth"},
 	} {
 		if err := tc.q.Validate(); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), tc.path) {
 			t.Errorf("%+v: %v, want a refusal at %s", tc.q, err, tc.path)
