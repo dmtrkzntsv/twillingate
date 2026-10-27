@@ -469,6 +469,11 @@ func cmpDesc(a, b value) int {
 		return cmp.Compare(boolInt(a.null), boolInt(b.null))
 	case a.isInt && b.isInt:
 		return cmp.Compare(b.i, a.i)
+	case a.text || b.text: // latest's text values, after the numbers
+		if c := cmp.Compare(boolInt(a.text), boolInt(b.text)); c != 0 {
+			return c
+		}
+		return cmp.Compare(b.s, a.s)
 	}
 	return cmp.Compare(b.num(), a.num())
 }
@@ -905,6 +910,7 @@ func (p *part) grow(a *agg, groups int) {
 	}
 	for j := range p.latest {
 		p.latest[j].grow(cells)
+		p.latest[j].num = a.latests[j].numeric()
 	}
 	for j, n := range a.nums {
 		np := &p.nums[j]
@@ -1459,6 +1465,7 @@ func (a *agg) merge() *merged {
 	m.latest = make([]latestPart, len(a.latests))
 	for j := range m.latest {
 		m.latest[j].grow(cells)
+		m.latest[j].num = a.latests[j].numeric()
 	}
 	m.nums = make([]numPart, len(a.nums))
 	for j, n := range a.nums {

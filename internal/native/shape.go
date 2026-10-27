@@ -19,8 +19,8 @@ func (q Query) validateShape() error {
 		return nil
 	case !slices.Contains(Shapes, q.Shape):
 		return invalid("shape", "%q is not wide or long", q.Shape)
-	case q.Shape == "long" && q.Kind != "stat" && q.Kind != "breakdown":
-		return invalid("shape", "only a stat or a breakdown answers long (a trend of several metrics is long already)")
+	case q.Kind != "stat" && q.Kind != "breakdown":
+		return invalid("shape", "only a stat or a breakdown takes a shape (a trend of several metrics is long already)")
 	}
 	if q.longShape() {
 		for i, m := range q.Metrics {
@@ -66,7 +66,7 @@ func toLong(q Query, res Result) Result {
 	}
 	for _, c := range res.Approximate {
 		v := "value"
-		if rest, ok := strings.CutPrefix(c, "previous_"); ok && slices.Contains(names, rest) {
+		if rest, ok := strings.CutPrefix(c, "previous_"); ok && q.Compare == "previous" && slices.Contains(names, rest) && !slices.Contains(names, c) {
 			v = "previous_value"
 		}
 		if !slices.Contains(out.Approximate, v) && (v == "previous_value" || slices.Contains(names, c)) {

@@ -63,11 +63,27 @@ func TestLongShape(t *testing.T) {
 		path string
 	}{
 		{Query{Kind: "trend", Table: "views", Shape: "long", Metrics: ms}, "shape"},
+		{Query{Kind: "trend", Table: "views", Shape: "wide", Metrics: ms}, "shape"},
 		{Query{Kind: "stat", Table: "views", Shape: "tall", Metrics: ms}, "shape"},
 		{Query{Kind: "stat", Table: "views", Shape: "long", Metrics: []Metric{{Op: "max", Column: "day"}}}, "metrics[0]"},
 	} {
 		if err := tc.q.Validate(); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), tc.path) {
 			t.Errorf("%+v: %v, want a refusal at %s", tc.q, err, tc.path)
 		}
+	}
+}
+
+// TestLongApproximate: a metric named previous_<another> without compare
+// marks value, not a previous_value the answer lacks.
+func TestLongApproximate(t *testing.T) {
+	q := Query{Kind: "stat", Shape: "long", Metrics: []Metric{{Op: "count", As: "total"}, {Op: "actors", As: "previous_total"}}}
+	got := toLong(q, Result{Columns: []string{"total", "previous_total"}, Rows: [][]string{{"5", "3"}}, Approximate: []string{"previous_total"}})
+	if len(got.Approximate) != 1 || got.Approximate[0] != "value" {
+		t.Errorf("Approximate = %v, want [value]", got.Approximate)
+	}
+	q.Compare, q.Metrics = "previous", q.Metrics[:1]
+	got = toLong(q, Result{Columns: []string{"total", "previous_total"}, Rows: [][]string{{"5", "3"}}, Approximate: []string{"previous_total"}})
+	if len(got.Approximate) != 1 || got.Approximate[0] != "previous_value" {
+		t.Errorf("with compare, Approximate = %v, want [previous_value]", got.Approximate)
 	}
 }
