@@ -552,6 +552,16 @@ func (q Query) Validate() error {
 	if err := q.validateDefines(); err != nil {
 		return err
 	}
+	if q.Kind != "funnel" {
+		switch {
+		case len(q.Steps) > 0:
+			return invalid("steps", "only a funnel takes steps")
+		case q.By != "":
+			return invalid("by", "only a funnel takes by")
+		case q.Sequence:
+			return invalid("sequence", "only a funnel takes sequence")
+		}
+	}
 	switch q.Kind {
 	case "retention":
 		return q.validateRetention()
@@ -559,14 +569,6 @@ func (q Query) Validate() error {
 		return q.validateAttributes()
 	case "funnel":
 		return q.validateFunnel()
-	}
-	switch {
-	case len(q.Steps) > 0:
-		return invalid("steps", "only a funnel takes steps")
-	case q.By != "":
-		return invalid("by", "only a funnel takes by")
-	case q.Sequence:
-		return invalid("sequence", "only a funnel takes sequence")
 	}
 	switch {
 	case q.Output != "":

@@ -126,7 +126,13 @@ func (s scan) funnel(ctx context.Context, from, to civil.Date) (Result, error) {
 	masks := map[string]uint16{} // any order: the steps each id took
 	hits := map[string][]hit{}   // sequence: each id's events taking a step
 	pass := make([][]bool, len(steps))
-	err = fs.scanEvents(ctx, all[s.project], Range{From: from, To: to}, cols, nil, charge, func(_ int, b *Batch) error {
+	var stepCols []string // passed as dimensions, so the identity columns they name are added
+	for _, st := range steps {
+		for _, f := range st {
+			stepCols = append(stepCols, f.columns()...)
+		}
+	}
+	err = fs.scanEvents(ctx, all[s.project], Range{From: from, To: to}, cols, stepCols, charge, func(_ int, b *Batch) error {
 		id := batchColumn(b, idCol)
 		if id == nil {
 			return nil
@@ -169,7 +175,7 @@ func (s scan) funnel(ctx context.Context, from, to civil.Date) (Result, error) {
 			if ts == nil || ts.Times == nil || (ts.Null != nil && ts.Null[i]) {
 				continue
 			}
-			if err := charge(24 + int64(len(v)*boolInt(hits[v] == nil))); err != nil {
+			if err := charge(24 + int64((64+len(v))*boolInt(hits[v] == nil))); err != nil {
 				return err
 			}
 			hits[v] = append(hits[v], hit{ts.Times[i], mask})
@@ -189,10 +195,18 @@ func (s scan) funnel(ctx context.Context, from, to civil.Date) (Result, error) {
 		for _, hs := range hits {
 			slices.SortFunc(hs, func(a, b hit) int { return cmp.Compare(a.ts, b.ts) })
 			n := 0
-			for _, h := range hs {
-				for n < len(steps) && h.mask&(1<<n) != 0 {
-					n++ // one event may take the next steps too
+			for i := 0; i < len(hs); {
+				// The events at one ts are one moment: together they may
+				// take the next steps, in whatever order they were read.
+				var mask uint16
+				j := i
+				for ; j < len(hs) && hs[j].ts == hs[i].ts; j++ {
+					mask |= hs[j].mask
 				}
+				for n < len(steps) && mask&(1<<n) != 0 {
+					n++
+				}
+				i = j
 			}
 			count(n)
 		}
