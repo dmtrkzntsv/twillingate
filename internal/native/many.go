@@ -509,7 +509,11 @@ func (r *manyReq) finish() (res Result, err error) {
 		c.a, c.ids = nil, nil
 		c.mu.Unlock()
 	}
-	return r.s.result(as), nil
+	res = r.s.result(as)
+	if r.s.q.longShape() {
+		res = toLong(r.s.q, res)
+	}
+	return res, nil
 }
 
 // use is a consumer of one work item; all says every row of the item is
