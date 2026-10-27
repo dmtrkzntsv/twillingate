@@ -272,6 +272,17 @@ func TestQuerySourcePreview(t *testing.T) {
 	in.From, in.To = "", ""
 	_, err = svc.Preview(context.Background(), in)
 	wantRefusal(t, err, store.ErrInvalid, "a query follows the date range; pass from and to")
+
+	// A query fixed to a project previews without one.
+	fixed := PreviewIn{Component: "bar_list", Source: Source{Type: "query", Content: `{"project_id":1,` + countryBars[1:]},
+		From: "2026-10-20", To: "2026-10-21"}
+	got, err = svc.Preview(context.Background(), fixed)
+	if err != nil {
+		t.Fatalf("Preview fixed: %v", err)
+	}
+	if !reflect.DeepEqual(got.Rows, [][]string{{"DE", "2"}, {"FR", "1"}}) {
+		t.Errorf("Preview fixed = %+v", got)
+	}
 }
 
 // TestQuerySourceApproximate: a stat over more distinct actors than a

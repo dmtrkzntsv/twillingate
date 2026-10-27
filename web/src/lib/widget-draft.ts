@@ -200,10 +200,22 @@ export function usesParams(sql: string): { project: boolean; range: boolean } {
   return { project: /:project\b/.test(code), range: /:(?:from|to)\b/.test(code) }
 }
 
-/** Which switcher parameters the draft's source reads: a query always follows both, markdown neither. */
+/** Whether a query source's content fixes its project (a positive project_id beside query). */
+export function fixesProject(query: string): boolean {
+  try {
+    const c: unknown = JSON.parse(query)
+    if (c === null || typeof c !== 'object') return false
+    const id = (c as { project_id?: unknown }).project_id
+    return typeof id === 'number' && id > 0
+  } catch {
+    return false
+  }
+}
+
+/** Which switcher parameters the draft's source reads: a query follows the range, and the project unless it fixes one; markdown neither. */
 export function paramsOf(d: Draft, sql = true): { project: boolean; range: boolean } {
   const type = sourceTypeOf(d, sql)
-  if (type === 'query') return { project: true, range: true }
+  if (type === 'query') return { project: !fixesProject(d.query), range: true }
   if (type === 'sql') return usesParams(d.sql)
   return { project: false, range: false }
 }
