@@ -129,3 +129,23 @@ func TestEverComparesItsOwnPeriod(t *testing.T) {
 		t.Errorf("previous_count = %s, want the previous period's own %s", got.Rows[0][1], prev.Rows[0][0])
 	}
 }
+
+// TestEverOnSessionsReadsTheRules: a sessions query's ever reads the
+// events with the rules, as every ever does, though the sessions
+// themselves are read as stored: a renamed event matches by its new name.
+func TestEverOnSessionsReadsTheRules(t *testing.T) {
+	f := engineFixture(t)
+	e := New(Options{Dir: f.Dir, Workers: 3})
+	p := Params{Project: 1, From: date(t, engineFrom), To: date(t, today)}
+	count := func(name string) string {
+		res, err := e.Answer(context.Background(), Query{Kind: "stat", Table: "sessions", Metrics: []Metric{{Op: "count"}},
+			Where: []Filter{{Op: "ever", Where: []Filter{{Column: "event_name", Op: "eq", Values: []string{name}}}}}}, p, engineRules)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res.Rows[0][0]
+	}
+	if renamed, old := count("landing"), count("ev_old"); renamed == "0" || old != "0" {
+		t.Errorf("sessions of actors ever on landing %s, on ev_old %s; want some, and none", renamed, old)
+	}
+}
