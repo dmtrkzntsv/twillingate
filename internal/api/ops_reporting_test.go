@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 
@@ -885,5 +886,19 @@ func TestDuplicateNarrowed(t *testing.T) {
 	toolJSON(t, cs, "copy_widget", map[string]any{"widget_id": 9, "dashboard_id": d.ID, "where": []any{ever}}, &w)
 	if !strings.Contains(w.Source.Content, `"op":"ever"`) {
 		t.Errorf("copy_widget narrowed = %s", w.Source.Content)
+	}
+}
+
+// TestNarrowSchemaListsTheFilterOps: duplicate_dashboard's and
+// copy_widget's where carry the filter vocabulary, as query's does.
+func TestNarrowSchemaListsTheFilterOps(t *testing.T) {
+	h, _ := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	for _, name := range []string{"duplicate_dashboard", "copy_widget"} {
+		i := slices.IndexFunc(r.specs, func(s spec) bool { return s.Name == name })
+		ops := r.specs[i].in.Properties["where"].Items.Properties["op"].Enum
+		if !slices.Contains(ops, any("ever")) || !slices.Contains(ops, any("any_of")) {
+			t.Errorf("%s: where's op enum = %v", name, ops)
+		}
 	}
 }
