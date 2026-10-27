@@ -139,6 +139,28 @@ describe('Project', () => {
     expect(actions.update).toHaveBeenCalledWith(4, { name: 'econumo' })
   })
 
+  it('drops a rename draft when switching to another project of the same name', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [
+      { project_id: 4, name: 'shop', allowed_origins: [] },
+      { project_id: 7, name: 'shop', allowed_origins: [] },
+    ] })
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/projects/4/settings']}>
+        <Routes>
+          <Route path="/projects/:id" element={<Project landing />} />
+          <Route path="/projects/:id/settings" element={<Project />} />
+        </Routes>
+        <Link to="/projects/7/settings">other</Link>
+      </MemoryRouter>,
+      testClient()
+    )
+    await user.click(await screen.findByRole('button', { name: 'Rename' }))
+    await user.type(screen.getByRole('textbox', { name: 'Project name' }), '-draft')
+    await user.click(screen.getByRole('link', { name: 'other' }))
+    expect(screen.queryByRole('textbox', { name: 'Project name' })).not.toBeInTheDocument()
+  })
+
   it('shows the allowed origins and adds one through PATCH, never the name or attributes', async () => {
     const user = userEvent.setup()
     actions.update.mockResolvedValue(true)

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { LayoutGridIcon } from 'lucide-react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
@@ -105,7 +105,9 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
             </NotFound>
           )
         ) : (
-          <>
+          // Keyed by project: the page stays mounted across a project switch,
+          // and no draft or open editor may carry over to the next project.
+          <Fragment key={id}>
             <header className="flex min-w-0 items-center gap-2">
               <ProjectName key={project.name} name={project.name} pending={actions.pending} onRename={(name) => actions.update(id, { name })} />
               {project.archived && <Badge variant="outline">Archived</Badge>}
@@ -159,7 +161,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
             ) : (
               <ProjectDashboardTab project={project} dashId={dashId} tabs={tabsQ.data?.tabs} list={dash} actions={tabActions} />
             )}
-          </>
+          </Fragment>
         )}
       </div>
     </AppShell>
