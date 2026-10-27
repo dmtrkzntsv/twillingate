@@ -15,7 +15,7 @@ import Home from '@/pages/Home'
 import Landing from '@/pages/Landing'
 import Login from '@/pages/Login'
 import NoSuchPage from '@/pages/NoSuchPage'
-import Project, { ProjectIndex } from '@/pages/Project'
+import Project from '@/pages/Project'
 import Projects from '@/pages/Projects'
 import Shares from '@/pages/Shares'
 
@@ -96,7 +96,7 @@ function App() {
             path="/projects/:id"
             element={
               <OnlineOnly>
-                <ProjectIndex />
+                <Project landing />
               </OnlineOnly>
             }
           />

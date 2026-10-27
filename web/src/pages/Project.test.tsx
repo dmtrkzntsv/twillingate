@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { ApiError, endpoints, type DashboardDetail, type ProjectTab } from '@/lib/api'
 import { answerFor, dashboardsList, details, launchWeek, widgetsById } from '@/test/fixtures'
 import { contactPage, form } from '@/test/forms'
 import { renderWithProviders, testClient } from '@/test/render'
-import Project, { ProjectIndex } from './Project'
+import Project from './Project'
 import { readLastTab, writeLastTab } from '@/lib/last-tab'
 
 const actions = {
@@ -78,7 +78,7 @@ function renderAt(path: string, client = testClient()) {
   return renderWithProviders(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/projects/:id" element={<ProjectIndex />} />
+        <Route path="/projects/:id" element={<Project landing />} />
         <Route path="/projects/:id/settings" element={<Project />} />
         <Route path="/projects/:id/dashboards/:dashId" element={<Project />} />
         <Route path="/projects/:id/forms" element={<Project tab="forms" />} />
@@ -98,6 +98,36 @@ describe('Project', () => {
     expect(await within(nav).findByText('econumo.com')).toHaveAttribute('aria-current', 'page')
   })
 
+  it('draws the page while it decides which tab to land on', async () => {
+    vi.spyOn(endpoints, 'projectTabs').mockReturnValue(new Promise(() => {}))
+    renderAt('/projects/4')
+    const nav = await screen.findByRole('navigation', { name: 'breadcrumb' })
+    expect(await within(nav).findByText('econumo.com')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'econumo.com' })).toBeInTheDocument()
+    expect(location()).toBe('/projects/4')
+  })
+
+  it('lands from a fresh tab list when reopening the project already open', async () => {
+    const user = userEvent.setup()
+    writeLastTab(4, 20)
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/projects/4/dashboards/20']}>
+        <Routes>
+          <Route path="/projects/:id" element={<Project landing />} />
+          <Route path="/projects/:id/dashboards/:dashId" element={<Project />} />
+        </Routes>
+        <Link to="/projects/4">reopen</Link>
+        <LocationProbe />
+      </MemoryRouter>,
+      testClient()
+    )
+    await screen.findByRole('heading', { name: 'Mine', level: 1 })
+    // Mine is removed elsewhere while this page shows it.
+    vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs: tabs.filter((t) => t.dashboard_id !== 20) })
+    await user.click(screen.getByRole('link', { name: 'reopen' }))
+    await vi.waitFor(() => expect(location()).toBe('/projects/4/dashboards/1'))
+  })
+
   it('renames the project in place through PATCH, the name alone', async () => {
     const user = userEvent.setup()
     actions.update.mockResolvedValue(true)
@@ -107,6 +137,28 @@ describe('Project', () => {
     await user.clear(field)
     await user.type(field, 'econumo{Enter}')
     expect(actions.update).toHaveBeenCalledWith(4, { name: 'econumo' })
+  })
+
+  it('drops a rename draft when switching to another project of the same name', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [
+      { project_id: 4, name: 'shop', allowed_origins: [] },
+      { project_id: 7, name: 'shop', allowed_origins: [] },
+    ] })
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/projects/4/settings']}>
+        <Routes>
+          <Route path="/projects/:id" element={<Project landing />} />
+          <Route path="/projects/:id/settings" element={<Project />} />
+        </Routes>
+        <Link to="/projects/7/settings">other</Link>
+      </MemoryRouter>,
+      testClient()
+    )
+    await user.click(await screen.findByRole('button', { name: 'Rename' }))
+    await user.type(screen.getByRole('textbox', { name: 'Project name' }), '-draft')
+    await user.click(screen.getByRole('link', { name: 'other' }))
+    expect(screen.queryByRole('textbox', { name: 'Project name' })).not.toBeInTheDocument()
   })
 
   it('shows the allowed origins and adds one through PATCH, never the name or attributes', async () => {
