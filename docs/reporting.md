@@ -630,8 +630,9 @@ At least one widget per component, each ready for `add_widget`: the
 component, the source (the block below, as `{"type": "sql", "content": "…"}`;
 `md` for the Markdown one; `query` for a JSON block, its text or the object
 the content) and the props shown. Each component that takes a `query`
-source shows it first, as a structured query; the SQL after it is the
-same widget for when a structured query cannot say what you need. Unless the title says otherwise, each
+source shows it first, as a structured query; the SQL after it is another
+example of the component, often a different widget, for when a
+structured query cannot say what you need. Unless the title says otherwise, each
 follows both switchers. [Percentiles from measures](#percentiles-from-measures)
 closes the section with the one query pattern measures need.
 
