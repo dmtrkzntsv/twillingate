@@ -75,7 +75,7 @@ Retention · Web Vitals · Measures.
   component says which source types it accepts and which columns its query
   must return.
 
-A `query` source's content is `{"query": {…}, "rename": {…}, "labels": {…}, "columns": […]}`:
+A `query` source's content is `{"query": {…}, "rename": {…}, "labels": {…}, "columns": […], "project_id": …}`:
 `query` is a [structured query](twillingate.md#structured-queries) (a stat, a
 trend or a breakdown), the same object as `query`'s `query` argument. The
 content goes in as that JSON object itself or as its text, over MCP and HTTP
@@ -94,7 +94,8 @@ refused), and a labelled column keeps its type and its `approximate` mark.
 `rename`, in its order (`["user_label", "days", "user_first_seen"]` drops
 `user_id` and shows first seen last); the component checks the columns kept, and
 an empty list, a name that is no column and a name given twice are refused.
-Without it every column is kept, in the order below. A stat returns
+Without it every column is kept, in the order below. `project_id`, optional,
+is the project the widget always reads (see below); omitted, the switcher's. A stat returns
 its metrics, then `previous_<name>` each with `compare: previous`; a trend
 `day`, `series` when split, and its metric, or with several metrics `day`,
 `series` (each metric's name, its `as`) and `value`; a breakdown its
@@ -119,7 +120,9 @@ checked against its props schema), and a `width` and `height` (see
 **A widget's SQL decides what it follows.** A query that uses `:project`
 follows the page's project switcher; one that uses `:from` or `:to` follows the
 range switcher; one that uses neither is fixed, and shows whatever its SQL
-names. A `query` source always follows both. A dashboard shows a switcher only
+names. A `query` source follows the range, and the project unless its content
+names one: `"project_id": 9` beside `query` fixes it to that project whatever
+the switcher shows (a project with no event files shows no rows). A dashboard shows a switcher only
 when at least one of its live widgets follows it. `get_dashboard` reports
 `follows_project` and `follows_range` for the dashboard and for each widget.
 

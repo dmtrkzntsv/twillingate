@@ -473,3 +473,38 @@ func TestPickColumnsApproximate(t *testing.T) {
 		t.Error("pickColumns of a missing column: no error")
 	}
 }
+
+// TestQuerySourceFixedProject: a query naming project_id reads that
+// project whatever the switcher says, follows the range only, and a
+// negative id is refused.
+func TestQuerySourceFixedProject(t *testing.T) {
+	_, files := newTestStoreAndFiles(t, 1000)
+	writeCountries(t, files)
+	var asked []int64
+	src := querySources(t, files, &asked)["query"]
+	fixed := `{"project_id":1,` + countryBars[1:]
+	if err := src.Validate(context.Background(), fixed, oneComponent(t, queryBarList)); err != nil {
+		t.Fatalf("Validate: %v", err)
+	}
+	if p, r := src.Follows(fixed); p || !r {
+		t.Errorf("Follows = %v, %v; want false, true", p, r)
+	}
+	got, err := src.Load(context.Background(), fixed, Params{ProjectID: 7, From: countryParams.From, To: countryParams.To})
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	want := readsql.Result{Columns: []string{"label", "value"}, Rows: [][]string{{"DE", "2"}, {"FR", "1"}}}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("Load = %+v, want %+v", got, want)
+	}
+	if !reflect.DeepEqual(asked, []int64{1}) {
+		t.Errorf("rules asked for %v, want [1]", asked)
+	}
+	err = src.Validate(context.Background(), `{"project_id":-1,`+countryBars[1:], oneComponent(t, queryBarList))
+	if !errors.Is(err, store.ErrInvalid) || !strings.Contains(err.Error(), "project_id") {
+		t.Errorf("Validate project_id -1 = %v", err)
+	}
+	if p, _ := src.Follows("not json"); !p {
+		t.Error("content that does not parse should follow the project")
+	}
+}
