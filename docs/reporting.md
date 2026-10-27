@@ -283,7 +283,7 @@ what a structured query cannot say.
    [Examples](#examples) has one per component.
 4. **Write SQL only for what a structured query cannot say**: joining two
    tables, an expression over a column (a `CASE`, a date bucket other than
-   the day), a per-actor condition over the actor's other rows, a remote
+   a day, a week or a month), a per-actor condition over the actor's other rows, a remote
    `table` (`mode: remote`). Name in the widget's title or a Markdown note
    what made it SQL. `WHERE project_id = :project` follows the project
    switcher, `day BETWEEN :from AND :to` the range switcher; without them

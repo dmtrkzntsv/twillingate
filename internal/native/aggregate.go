@@ -582,6 +582,9 @@ type agg struct {
 	from     int64       // the range's first day, days since 1970-01-01
 	ndays    int
 	nd       int // cells per group: ndays in a trend, else 1
+	// buckets and starts, for a trend by week or month: aggOptions'.
+	buckets []int
+	starts  []int64
 	nums     []numCol
 	distinct []*distinctCol
 	bounces  bool // count sessions of one view per cell and mask (bounces, bounce_rate)
@@ -628,12 +631,41 @@ type aggOptions struct {
 	ndays, workers int
 	maxGroups      int
 	maxBytes       int64
+	// buckets, for a trend by week or month: each day's bucket, by its
+	// offset from from, and each bucket's first day; ndays is then the
+	// buckets' count. nil: one cell per day.
+	buckets []int
+	starts  []int64
+}
+
+// cellDay is the day cell of a row of epoch day d: its offset from
+// a.from, or its bucket's index; out of range (-1 or ndays and past)
+// for a day outside the aggregation's.
+func (a *agg) cellDay(d int64) int {
+	off := int(d - a.from)
+	if a.buckets == nil {
+		return off
+	}
+	if off < 0 || off >= len(a.buckets) {
+		return -1
+	}
+	return a.buckets[off]
+}
+
+// dayOf is the epoch day cell d stands for: the day, or its bucket's
+// first.
+func (a *agg) dayOf(d int) int64 {
+	if a.starts != nil {
+		return a.starts[d]
+	}
+	return a.from + int64(d)
 }
 
 // newAgg sets up an aggregation and returns its metrics resolved.
 func newAgg(o aggOptions) (*agg, []metricSpec) {
 	metrics, filters, dims, perDay, from, ndays, maxGroups, distinctSets := o.metrics, o.filters, o.dims, o.perDay, o.from, o.ndays, o.maxGroups, o.sets
-	a := &agg{filters: filters, masks: [][]filter{nil}, dims: dims, from: from, ndays: ndays, nd: 1, parts: make([]part, o.workers)}
+	a := &agg{filters: filters, masks: [][]filter{nil}, dims: dims, from: from, ndays: ndays, nd: 1, parts: make([]part, o.workers),
+		buckets: o.buckets, starts: o.starts}
 	a.mem.max = o.maxBytes
 	if perDay {
 		a.nd = ndays
@@ -942,7 +974,7 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 	if dayCol == nil || dayCol.Ints == nil {
 		return fmt.Errorf("native: a batch without day")
 	}
-	off := func(i int32) int { return int(dayCol.Ints[i] - a.from) }
+	off := func(i int32) int { return a.cellDay(dayCol.Ints[i]) }
 	cell := func(k int, i int32) int {
 		if a.nd == 1 {
 			return int(gids[k])

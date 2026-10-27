@@ -566,8 +566,33 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 // newAgg is the aggregation of sp, with the query's metrics resolved.
 func (s scan) newAgg(sp aggSpec) (*agg, []metricSpec) {
 	lo, hi := epochDay(sp.from), epochDay(sp.to)
-	return newAgg(aggOptions{metrics: s.metrics, filters: s.filters, dims: sp.dims, perDay: sp.perDay, sets: sp.sets,
-		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
+	o := aggOptions{metrics: s.metrics, filters: s.filters, dims: sp.dims, perDay: sp.perDay, sets: sp.sets,
+		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes}
+	if sp.perDay && s.q.bucketed() {
+		o.buckets, o.starts = buckets(sp.from, sp.to, s.q.Interval)
+		o.ndays = len(o.starts)
+	}
+	return newAgg(o)
+}
+
+// buckets maps each day of [from, to], by its offset from from, to the
+// index of its week (from Monday) or month, and lists each bucket's
+// first day (epoch days), which may precede from.
+func buckets(from, to civil.Date, interval string) (index []int, starts []int64) {
+	for d := from; !to.Before(d); d = d.AddDays(1) {
+		start := d
+		if interval == "month" {
+			start = civil.Date{Year: d.Year, Month: d.Month, Day: 1}
+		} else {
+			start = d.AddDays(-((int(d.Time().Weekday()) + 6) % 7)) // Monday
+		}
+		e := epochDay(start)
+		if len(starts) == 0 || starts[len(starts)-1] != e {
+			starts = append(starts, e)
+		}
+		index = append(index, len(starts)-1)
+	}
+	return index, starts
 }
 
 // scanEvents reads cols of the project's rows of the query's table in r
@@ -772,7 +797,7 @@ func (s scan) trend(x aggregated) Result {
 	}
 	var rows [][]string
 	for d := range m.a.ndays {
-		day := formatDay(m.a.from + int64(d))
+		day := formatDay(m.a.dayOf(d))
 		if long {
 			for _, mt := range ms {
 				if fill || m.metricRows(mt, 0, d) > 0 {

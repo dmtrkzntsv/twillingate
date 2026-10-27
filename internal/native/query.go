@@ -32,6 +32,7 @@ type Query struct {
 	Dimensions  []string `json:"dimensions,omitempty" jsonschema:"breakdown only, 1 to 3: columns to group by, each one a filter's column may name on the table (path, country, event_name, attr_<key>, …; resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), but duration_sec and views on sessions and views and events on identities; attributes only: day, event_name or both, in that order, before its attribute and value"`
 	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by, one a filter's column may name on the table except day (resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), and except duration_sec and views on sessions and views and events on identities"`
 	Fill        string   `json:"fill,omitempty" jsonschema:"trend only: zero gives every day of the range a row, for every kept series or metric: a counted metric (count, actors, users, groups, bounces, weight, daily_sum, daily_max, daily_avg, days) reads 0 where it is empty, the others stay empty"`
+	Interval    string   `json:"interval,omitempty" jsonschema:"trend only: day (the default), week or month: one row per week (from Monday) or calendar month instead of per day, day reading the bucket's first day (the first and last buckets may hold only part of theirs, the range's); a distinct count counts over the bucket, and daily_sum, daily_max, daily_avg and days, which need the days, are refused"`
 	SeriesLimit int      `json:"series_limit,omitempty" jsonschema:"a trend with a series only: how many series, 1 to 50, the top ones by the metric over the range (default 5)"`
 	Compare     string   `json:"compare,omitempty" jsonschema:"stat only: previous adds each metric over as many days ending the day before from"`
 	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown and attributes only: how many groups, 1 to 1000 (default 20; an attributes' values all of them, its keys 50)"`
@@ -261,6 +262,34 @@ func (q Query) ColumnTypes() []string {
 // long: day, series (the metric's name) and value.
 func (q Query) long() bool { return q.Kind == "trend" && len(q.Metrics) > 1 }
 
+// Intervals are a trend's buckets.
+var Intervals = []string{"day", "week", "month"}
+
+// bucketed says whether q is a trend by week or month.
+func (q Query) bucketed() bool {
+	return q.Kind == "trend" && (q.Interval == "week" || q.Interval == "month")
+}
+
+// dailyOps are the metrics read per day, which a trend by week or month
+// has no days for.
+var dailyOps = map[string]bool{"daily_sum": true, "daily_max": true, "daily_avg": true, "days": true}
+
+// notDaily refuses a metric (or a ratio's side) read per day, under p.
+func (m Metric) notDaily(p, interval string) error {
+	if dailyOps[m.Op] {
+		return invalid(p+".op", "%s needs days; a trend by %s has none (count actors, users or groups over the %s instead)", m.Op, interval, interval)
+	}
+	if m.Num != nil {
+		if err := m.Num.notDaily(p+".num", interval); err != nil {
+			return err
+		}
+	}
+	if m.Den != nil {
+		return m.Den.notDaily(p+".den", interval)
+	}
+	return nil
+}
+
 // valueType is the type of m's values, as ColumnTypes names it: a min
 // or max of day is day, of a time text, every other metric number.
 func (m Metric) valueType() string {
@@ -489,6 +518,17 @@ func (q Query) Validate() error {
 		return invalid("fill", "only a trend fills its days")
 	case q.Fill != "" && q.Fill != "zero":
 		return invalid("fill", "%q is not zero", q.Fill)
+	case q.Interval != "" && q.Kind != "trend":
+		return invalid("interval", "only a trend takes an interval")
+	case q.Interval != "" && !slices.Contains(Intervals, q.Interval):
+		return invalid("interval", "%q is not day, week or month", q.Interval)
+	}
+	if q.bucketed() {
+		for i, m := range q.Metrics {
+			if err := m.notDaily(fmt.Sprintf("metrics[%d]", i), q.Interval); err != nil {
+				return err
+			}
+		}
 	}
 	switch q.Kind {
 	case "retention":
