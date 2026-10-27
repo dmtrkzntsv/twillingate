@@ -6,7 +6,7 @@ import { ApiError, endpoints, type DashboardDetail, type ProjectTab } from '@/li
 import { answerFor, dashboardsList, details, launchWeek, widgetsById } from '@/test/fixtures'
 import { contactPage, form } from '@/test/forms'
 import { renderWithProviders, testClient } from '@/test/render'
-import Project, { ProjectIndex } from './Project'
+import Project from './Project'
 import { readLastTab, writeLastTab } from '@/lib/last-tab'
 
 const actions = {
@@ -78,7 +78,7 @@ function renderAt(path: string, client = testClient()) {
   return renderWithProviders(
     <MemoryRouter initialEntries={[path]}>
       <Routes>
-        <Route path="/projects/:id" element={<ProjectIndex />} />
+        <Route path="/projects/:id" element={<Project landing />} />
         <Route path="/projects/:id/settings" element={<Project />} />
         <Route path="/projects/:id/dashboards/:dashId" element={<Project />} />
         <Route path="/projects/:id/forms" element={<Project tab="forms" />} />
@@ -96,6 +96,15 @@ describe('Project', () => {
     const nav = await screen.findByRole('navigation', { name: 'breadcrumb' })
     expect(within(nav).getByRole('link', { name: 'Projects' })).toHaveAttribute('href', '/projects')
     expect(await within(nav).findByText('econumo.com')).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('draws the page while it decides which tab to land on', async () => {
+    vi.spyOn(endpoints, 'projectTabs').mockReturnValue(new Promise(() => {}))
+    renderAt('/projects/4')
+    const nav = await screen.findByRole('navigation', { name: 'breadcrumb' })
+    expect(await within(nav).findByText('econumo.com')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'econumo.com' })).toBeInTheDocument()
+    expect(location()).toBe('/projects/4')
   })
 
   it('renames the project in place through PATCH, the name alone', async () => {

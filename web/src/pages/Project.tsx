@@ -5,7 +5,7 @@ import { Link, Navigate, useLocation, useParams, useSearchParams } from 'react-r
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
 import NotFound from '@/components/NotFound'
-import { Notice, PageError } from '@/components/PageStates'
+import { GridSkeleton, Notice, PageError } from '@/components/PageStates'
 import ProjectDashboardTab from '@/components/projects/ProjectDashboardTab'
 import ProjectName from '@/components/projects/ProjectName'
 import ProjectTabBar from '@/components/projects/ProjectTabBar'
@@ -25,41 +25,36 @@ import { cn } from '@/lib/utils'
 /** The top bar's height (h-12), where the tab row pins. */
 const TOP_BAR = 48
 
-/** `/projects/:id`: the last tab used here, else the first, else Settings (project landing D3). */
-export function ProjectIndex() {
-  const { search } = useLocation()
-  const id = Number(useParams().id)
-  const valid = Number.isInteger(id) && id > 0
-  const { data: dash, error: dashError } = useQuery(dashboardsQuery)
-  const dev = dash?.dev === true
-  // Fresh data decides where to land: a tab removed elsewhere since the
-  // cache was filled would otherwise land on the "isn't a tab" notice.
-  const tabsQ = useQuery({ ...projectTabsQuery(id), enabled: valid && dash !== undefined && !dev, refetchOnMount: 'always' })
-  const range = rangeParams(new URLSearchParams(search)).toString()
-  if (!valid || dev || dashError || tabsQ.error) return <Navigate to={`settings${search}`} replace />
-  if (!tabsQ.data || !tabsQ.isFetchedAfterMount) return null
-  return <Navigate to={landingPath(id, tabsQ.data.tabs, readLastTab(id), range)} replace />
-}
+/** The tab id while `/projects/:id` decides where to land: matches no tab. */
+const LANDING = -2
 
 /**
- * `/projects/:id/settings`, `/projects/:id/forms` (with `tab="forms"`, and
+ * `/projects/:id` (with `landing`), `/projects/:id/settings`, `/projects/:id/forms` (with `tab="forms"`, and
  * `/forms/:name` for one form) and `/projects/:id/dashboards/:dashId`: one
  * project, renamed in place, with its dashboards as tabs (project tabs D1,
  * D8) and Forms and Settings as buttons beside them (project landing D4).
+ *
+ * With `landing`, the page goes to the last tab used here, else the first,
+ * else Settings (project landing D3). It draws the page around a skeleton
+ * meanwhile, and stays mounted across the redirect, so switching projects
+ * does not blank the screen.
  */
-export default function Project({ tab }: { tab?: 'forms' } = {}) {
+export default function Project({ tab, landing = false }: { tab?: 'forms'; landing?: boolean } = {}) {
   const params = useParams()
   const [url] = useSearchParams()
+  const { search } = useLocation()
   const param = params.id
   const id = Number(param)
   const valid = Number.isInteger(id) && id > 0
-  const dashId = tab === 'forms' ? FORMS_ID : params.dashId === undefined ? SETTINGS_ID : Number(params.dashId)
-  const { data: dash } = useQuery(dashboardsQuery)
+  const dashId = landing ? LANDING : tab === 'forms' ? FORMS_ID : params.dashId === undefined ? SETTINGS_ID : Number(params.dashId)
+  const { data: dash, error: dashError } = useQuery(dashboardsQuery)
   const { data: projectsData, isLoading } = useQuery(projectsQuery)
   // Reporting dev serves no project tabs and takes no writes: the page asks
   // for none once the list says it is dev, and shows Settings alone.
   const dev = dash?.dev === true
-  const tabsQ = useQuery({ ...projectTabsQuery(id), enabled: valid && dash !== undefined && !dev })
+  // Fresh data decides where to land: a tab removed elsewhere since the
+  // cache was filled would otherwise land on the "isn't a tab" notice.
+  const tabsQ = useQuery({ ...projectTabsQuery(id), enabled: valid && dash !== undefined && !dev, ...(landing && { refetchOnMount: 'always' as const }) })
   const activity = useQuery({ ...projectActivityQuery, enabled: valid && dash !== undefined && !dev })
   const mine = activity.data?.projects.find((p) => p.project_id === id)
   const actions = useProjectActions()
@@ -68,6 +63,14 @@ export default function Project({ tab }: { tab?: 'forms' } = {}) {
   // The tab row's backdrop shows only while it is pinned, so at rest the sky wash shows through.
   const [tabBar, setTabBar] = useState<HTMLDivElement | null>(null)
   const stuck = useStuck(tabBar, TOP_BAR)
+
+  if (landing) {
+    if (!valid || dev || dashError || tabsQ.error) return <Navigate to={`settings${search}`} replace />
+    if (tabsQ.data && tabsQ.isFetchedAfterMount) {
+      const range = rangeParams(new URLSearchParams(search)).toString()
+      return <Navigate to={landingPath(id, tabsQ.data.tabs, readLastTab(id), range)} replace />
+    }
+  }
 
   return (
     <AppShell dashboards={dash?.dashboards ?? []} currentId={0} readOnly={dev}>
@@ -116,7 +119,7 @@ export default function Project({ tab }: { tab?: 'forms' } = {}) {
                 readOnly={dev}
               />
             </div>
-            {mine && mine.last_event_day === null && dashId !== SETTINGS_ID && dashId !== FORMS_ID && (
+            {mine && mine.last_event_day === null && dashId !== SETTINGS_ID && dashId !== FORMS_ID && dashId !== LANDING && (
               <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed p-3 text-sm">
                 <span>No events received yet</span>
                 <Link to={tabPath(id, SETTINGS_ID, rangeParams(url).toString())} className="font-medium underline-offset-2 hover:underline">
@@ -124,7 +127,9 @@ export default function Project({ tab }: { tab?: 'forms' } = {}) {
                 </Link>
               </div>
             )}
-            {dashId === SETTINGS_ID ? (
+            {dashId === LANDING ? (
+              <GridSkeleton />
+            ) : dashId === SETTINGS_ID ? (
               <SetupTab project={project} dash={dash} actions={actions} />
             ) : dev ? (
               <Notice icon={<LayoutGridIcon />} title="No project tabs in reporting dev">
