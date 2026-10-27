@@ -131,7 +131,8 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
                 actions={tabActions}
                 newSubmissions={mine?.new_submissions ?? 0}
                 draftForms={mine?.draft_forms ?? 0}
-                readOnly={dev}
+                // A tab write while landing would cancel its fresh fetch.
+                readOnly={dev || landing}
               />
             </div>
             {mine && mine.last_event_day === null && dashId !== SETTINGS_ID && dashId !== FORMS_ID && dashId !== LANDING && (
