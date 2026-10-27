@@ -477,6 +477,18 @@ func TestKindsMatchGolden(t *testing.T) {
 			`WITH e AS (SELECT date_trunc('month', "day")::DATE AS m, * FROM events WHERE `+inRange+`)
 			SELECT m, 'count', count(*) FROM e GROUP BY m UNION ALL SELECT m, 'users', count(DISTINCT "user_id") FROM e GROUP BY m
 			ORDER BY 1, 2`),
+		// define: a column of labels, the first case each row passes.
+		all("breakdown defined", Query{Kind: "breakdown", Table: "views", Dimensions: []string{"def_seg", "kind"}, Order: "def_seg",
+			Define: []Define{{Name: "def_seg", Else: "rest", Cases: []Case{
+				{Label: "german", Where: []Filter{{Column: "country", Op: "eq", Values: []string{"DE"}}}},
+				{Label: "q", Where: []Filter{{Op: "any_of", Any: []Filter{{Column: "path", Op: "prefix", Values: []string{"/q"}},
+					{Column: "device_model", Op: "is_set"}}}}}}}},
+			Metrics: []Metric{{Op: "count"}, {Op: "actors", Where: []Filter{{Column: "def_seg", Op: "ne", Values: []string{"rest"}}}}}},
+			[]string{"def_seg", "kind", "count", "actors"},
+			`WITH v AS (SELECT CASE WHEN "country" = 'DE' THEN 'german' WHEN starts_with("path", '/q') OR "device_model" <> '' THEN 'q'
+				ELSE 'rest' END AS seg, * FROM views WHERE `+inRange+`)
+			SELECT seg, "kind", count(*), count(DISTINCT "actor_id") FILTER (WHERE seg <> 'rest') FROM v
+				GROUP BY ALL ORDER BY seg, "kind" ASC NULLS LAST`),
 		// any_of: an OR of whole filters, an any_set among them.
 		all("breakdown any_of", Query{Kind: "breakdown", Table: "views", Dimensions: []string{"country"}, Order: "country",
 			Where: []Filter{{Op: "any_of", Any: []Filter{{Column: "path", Op: "prefix", Values: []string{"/q"}},

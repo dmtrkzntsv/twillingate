@@ -583,8 +583,9 @@ type agg struct {
 	ndays    int
 	nd       int // cells per group: ndays in a trend, else 1
 	// buckets and starts, for a trend by week or month: aggOptions'.
-	buckets []int
-	starts  []int64
+	buckets  []int
+	starts   []int64
+	defs     []defined // the query's defined columns, added to each batch
 	nums     []numCol
 	distinct []*distinctCol
 	bounces  bool // count sessions of one view per cell and mask (bounces, bounce_rate)
@@ -636,6 +637,8 @@ type aggOptions struct {
 	// buckets' count. nil: one cell per day.
 	buckets []int
 	starts  []int64
+	// defs are the query's defined columns, added to each batch.
+	defs []defined
 }
 
 // cellDay is the day cell of a row of epoch day d: its offset from
@@ -665,7 +668,7 @@ func (a *agg) dayOf(d int) int64 {
 func newAgg(o aggOptions) (*agg, []metricSpec) {
 	metrics, filters, dims, perDay, from, ndays, maxGroups, distinctSets := o.metrics, o.filters, o.dims, o.perDay, o.from, o.ndays, o.maxGroups, o.sets
 	a := &agg{filters: filters, masks: [][]filter{nil}, dims: dims, from: from, ndays: ndays, nd: 1, parts: make([]part, o.workers),
-		buckets: o.buckets, starts: o.starts}
+		buckets: o.buckets, starts: o.starts, defs: o.defs}
 	a.mem.max = o.maxBytes
 	if perDay {
 		a.nd = ndays
@@ -792,6 +795,9 @@ func (a *agg) columns() []string {
 	for _, fs := range append([][]filter{a.filters}, a.masks...) {
 		for _, f := range fs {
 			for _, col := range f.columns() {
+				if isDefined(col) {
+					continue // added to each batch
+				}
 				for _, c := range readColumns(col) {
 					add(c)
 				}
@@ -799,7 +805,15 @@ func (a *agg) columns() []string {
 		}
 	}
 	for _, d := range a.dims {
+		if isDefined(d) {
+			continue // added to each batch, from the columns below
+		}
 		for _, c := range readColumns(d) {
+			add(c)
+		}
+	}
+	for _, col := range definedColumns(a.defs) {
+		for _, c := range readColumns(col) {
 			add(c)
 		}
 	}
@@ -909,6 +923,12 @@ func growTo[T any](s []T, n int) []T {
 // add aggregates batch b into worker w's partials, then counts what they
 // grew by and checks the memory bounds.
 func (a *agg) add(w int, b *Batch) error {
+	if len(a.defs) > 0 {
+		var err error
+		if b, err = withDefined(b, a.defs); err != nil {
+			return err
+		}
+	}
 	p := &a.parts[w]
 	p.grew = 0
 	err := a.addBatch(p, b)

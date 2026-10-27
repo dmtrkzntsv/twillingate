@@ -280,6 +280,9 @@ func compileQuery(q Query, p Params) ([]filter, []metricSpec, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	if _, err := compileDefines(q.Define); err != nil { // newAgg compiles them again, unable to fail then
+		return nil, nil, err
+	}
 	metrics := make([]metricSpec, len(q.Metrics))
 	for i, m := range q.Metrics {
 		if metrics[i], err = compileMetric(m, fmt.Sprintf("metrics[%d]", i)); err != nil {
@@ -568,6 +571,11 @@ func (s scan) newAgg(sp aggSpec) (*agg, []metricSpec) {
 	lo, hi := epochDay(sp.from), epochDay(sp.to)
 	o := aggOptions{metrics: s.metrics, filters: s.filters, dims: sp.dims, perDay: sp.perDay, sets: sp.sets,
 		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes}
+	defs, err := compileDefines(s.q.Define)
+	if err != nil {
+		panic("native: defined columns compileQuery passed: " + err.Error())
+	}
+	o.defs = defs
 	if sp.perDay && s.q.bucketed() {
 		o.buckets, o.starts = buckets(sp.from, sp.to, s.q.Interval)
 		o.ndays = len(o.starts)
@@ -688,6 +696,12 @@ func (s scan) identityColumnsOf(dims []string) []string {
 	for _, d := range dims {
 		if _, ok := idColumns[d]; ok && !slices.Contains(out, d) {
 			out = append(out, d)
+		}
+	}
+	defs, _ := compileDefines(s.q.Define) // compileQuery has compiled them
+	for _, col := range definedColumns(defs) {
+		if _, ok := idColumns[col]; ok && !slices.Contains(out, col) {
+			out = append(out, col)
 		}
 	}
 	return out

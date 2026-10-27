@@ -1737,6 +1737,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `other` | breakdown | `true` adds an `Other` row (every dimension `Other`) summing the groups past `limit`, when there are two or more; a single one past it is listed under its own name, so `"limit": 4` gives at most five rows |
 | `series` | trend | a column to split each day by |
 | `series_limit` | trend | how many series, 1 to 50, those ranking first by the metric over the range (default 5); only with `series` (a trend without one is refused) |
+| `define` | stat, trend, breakdown | up to 5 text columns the query defines for itself: `{name, cases, else}`, `name` `def_` and a lower-case name, `cases` 1 to 20 `{label, where}` in order. Each row reads the `label` of the first case whose `where` (1 or more filters, as the query's, an `any_of` among them for an OR; none naming a `def_` column) it passes, else `else`, or NULL without one. A dimension, a series and a filter, the query's or a metric's, name it as any text column: an event group as a breakdown's rows, a segment by host as a trend's series |
 | `interval` | trend | `day` (the default), `week` or `month`: a row per week (from Monday) or calendar month instead of per day, `day` reading the bucket's first day, which may precede `from` (the first and last buckets hold only the range's days). A distinct count (`actors`, `users`, `groups`) counts over the bucket; `daily_sum`, `daily_max`, `daily_avg` and `days` need the days and are refused. `fill` fills every bucket |
 | `fill` | trend | `zero` gives every day of the range its row, for every kept series or metric: a counted metric (`count`, `actors`, `users`, `groups`, `bounces`, `weight`, `daily_*`, `days`) reads `0` where it is empty, the others stay empty; `""` or absent, only the days with rows |
 | `compare` | stat | `previous` adds a `previous_<name>` column per metric, over as many days ending the day before `from`; `""` or absent, none |
@@ -2108,6 +2109,26 @@ places.
     {"op": "count", "as": "events", "where": [{"column": "family", "op": "eq", "values": ["product"]}]},
     {"op": "avg", "column": "value", "as": "mean", "round": 2,
      "where": [{"column": "family", "op": "eq", "values": ["measures"]}]}]}}
+```
+
+A breakdown by columns the query defines: users per feature, Cloud
+against self-hosted, a feature being a group of events and a deployment
+the host. A row reads the first case it passes; `else` labels the rest.
+
+```json
+{"project_id": 9, "query": {
+  "kind": "breakdown", "table": "product", "dimensions": ["def_feature", "def_deployment"],
+  "define": [
+    {"name": "def_feature", "cases": [
+      {"label": "Apple Pay setup", "where": [{"op": "any_of", "any": [
+        {"column": "event_name", "op": "prefix", "values": ["import_shortcut_"]},
+        {"column": "event_name", "op": "prefix", "values": ["import_setup_"]}]}]},
+      {"label": "Import rules", "where": [{"column": "event_name", "op": "prefix", "values": ["import_rule_"]}]}]},
+    {"name": "def_deployment", "cases": [
+      {"label": "Cloud", "where": [{"column": "host", "op": "eq", "values": ["app.econumo.com"]}]},
+      {"label": "Self-hosted", "where": [{"column": "host", "op": "prefix", "values": ["selfhosted_"]}]}]}],
+  "where": [{"column": "def_feature", "op": "is_set"}, {"column": "def_deployment", "op": "is_set"}],
+  "metrics": [{"op": "actors", "as": "users"}]}}
 ```
 
 A stat of the share of consenting visitors: visitors counted per day
