@@ -670,6 +670,27 @@ func TestIngestMovesAnOlderEventsDir(t *testing.T) {
 	}
 }
 
+// TestConsoleReadsTheMovedEventsDir: a process without ingest leaves an
+// older release's raw/ for the ingest process to move and reads data/
+// from its start, so a split install's console started first still sees
+// the files once they are moved.
+func TestConsoleReadsTheMovedEventsDir(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "raw"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	cfg := configtest.Load(t, map[string]string{"DATABASE_DSN": "sqlite://" + filepath.Join(dir, "c.db")})
+	if err := moveEventsDir(cfg, slog.Default(), false); err != nil {
+		t.Fatal(err)
+	}
+	if cfg.EventsDir != filepath.Join(dir, "data") || cfg.EventsDirMoveTo != "" {
+		t.Fatalf("EventsDir, EventsDirMoveTo = %s, %s; want data/, nothing to move", cfg.EventsDir, cfg.EventsDirMoveTo)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "raw")); err != nil {
+		t.Fatalf("raw/ moved by a process without ingest: %v", err)
+	}
+}
+
 // runServeAndCollectLogs boots Serve, waits for /healthz, then shuts it
 // down and returns everything logged in between.
 func runServeAndCollectLogs(t *testing.T, cfg *config.Config) string {

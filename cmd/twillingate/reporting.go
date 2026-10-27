@@ -73,6 +73,9 @@ func cmdReportingDev(args []string, stdout io.Writer) int {
 	// Where the console reads the event files: DATA_DIR, or data/ beside
 	// the database (an older release's raw/ until ingest moves it), as
 	// config's default.
+	if os.Getenv("EVENTS_DIR") != "" {
+		fmt.Fprintln(stdout, "EVENTS_DIR is ignored: the event files' directory is DATA_DIR")
+	}
 	eventsDir := os.Getenv("DATA_DIR")
 	if eventsDir == "" {
 		eventsDir, _ = config.DefaultEventsDir(filepath.Dir(dbPath))

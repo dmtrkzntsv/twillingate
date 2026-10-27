@@ -1516,9 +1516,11 @@ The event files' default directory is now `data/` beside the database
 - **On the day:** with neither variable set, the first start of the ingest
   process renames `raw/` to `data/` before anything reads it, and logs
   `moved the event files` with both paths. It is a rename in the same
-  directory, so it takes no time and copies nothing. On a split install,
-  restart the console-only process after the ingest one: until then it
-  reads `raw/`, which is gone.
+  directory, so it takes no time and copies nothing. A console-only process
+  reads `data/` from its start and sees the files once the ingest process
+  has moved them, whichever starts first. Where `raw/` is a mount point,
+  it cannot be renamed and the start refuses, naming the line to add:
+  `DATA_DIR=<the raw/ path>` keeps the files where they are.
 - **After the upgrade:** check the log at start for the `EVENTS_DIR`
   warning. Point anything that reads the files at `data/`: backups
   (`docs/deployment.md`, "Back up and restore"), a Litestream check
