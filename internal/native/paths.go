@@ -140,8 +140,9 @@ func (s scan) paths(ctx context.Context, from, to civil.Date) (Result, error) {
 			}
 			id, _ := textAt(sid, i)
 			eid, hasID := textAt(evID, i)
-			k, _ := textAt(kind, i)
-			key := k + "\x00" + a + "\x00" + strconv.FormatInt(day.Ints[i], 10)
+			k, hasKind := textAt(kind, i)
+			// NULL kind and empty kind are two partitions, as Sessionize keeps them.
+			key := strconv.FormatBool(hasKind) + k + "\x00" + a + "\x00" + strconv.FormatInt(day.Ints[i], 10)
 			if err := charge(int64(64 + len(v) + len(id) + len(eid) + len(key)*boolInt(days[key] == nil))); err != nil {
 				return err
 			}
