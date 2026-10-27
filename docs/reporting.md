@@ -266,8 +266,9 @@ what a structured query cannot say.
    whole page, `duplicate_dashboard` a system dashboard (or its group, with
    `whole_group`) and work on the copy.
 3. **Otherwise write a structured query** (`{"type": "query"}`): a stat, a
-   trend, a breakdown or a retention, the grammar of `query`'s `query`
-   argument ([twillingate.md](twillingate.md#structured-queries)). Try it
+   trend, a breakdown, a retention or an attributes, the grammar of
+   `query`'s `query` argument
+   ([twillingate.md](twillingate.md#structured-queries)). Try it
    with `query`'s `query` form for one project and a few days until the
    numbers are the ones the widget should show, then save the same object
    as the source's `query`, with `rename` mapping its columns to the
