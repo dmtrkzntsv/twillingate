@@ -70,11 +70,12 @@ func cmdReportingDev(args []string, stdout io.Writer) int {
 		return 2
 	}
 
-	// Where the console reads the event files: EVENTS_DIR, or raw/ beside
-	// the database, as config's default.
+	// Where the console reads the event files: EVENTS_DIR, or data/ beside
+	// the database (an older release's raw/ until ingest moves it), as
+	// config's default.
 	eventsDir := os.Getenv("EVENTS_DIR")
 	if eventsDir == "" {
-		eventsDir = filepath.Join(filepath.Dir(dbPath), "raw")
+		eventsDir, _ = config.DefaultEventsDir(filepath.Dir(dbPath))
 	}
 
 	logger := app.NewLogger(config.LogConfig{})

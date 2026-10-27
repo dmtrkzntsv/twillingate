@@ -641,6 +641,35 @@ func TestIngestWritesTheLogOnly(t *testing.T) {
 	}
 }
 
+// TestIngestMovesAnOlderEventsDir: the raw/ an older release kept beside
+// the database is moved to data/ at the ingest process's start, files and
+// all, and the events served after it land there.
+func TestIngestMovesAnOlderEventsDir(t *testing.T) {
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "moved.db")
+	old := filepath.Join(dir, "raw", "kept.txt")
+	if err := os.MkdirAll(filepath.Dir(old), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(old, []byte("kept"), 0o640); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig(t, freePort(t), dbPath)
+	if cfg.EventsDir != filepath.Join(dir, "raw") {
+		t.Fatalf("EventsDir before the start = %s; want raw/", cfg.EventsDir)
+	}
+	logs := runServeAndCollectLogs(t, cfg)
+	if cfg.EventsDir != filepath.Join(dir, "data") || !strings.Contains(logs, "moved the event files") {
+		t.Fatalf("EventsDir = %s; logs:\n%s", cfg.EventsDir, logs)
+	}
+	if b, err := os.ReadFile(filepath.Join(dir, "data", "kept.txt")); err != nil || string(b) != "kept" {
+		t.Fatalf("moved file = %q, %v", b, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "raw")); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("raw/ still there: %v", err)
+	}
+}
+
 // runServeAndCollectLogs boots Serve, waits for /healthz, then shuts it
 // down and returns everything logged in between.
 func runServeAndCollectLogs(t *testing.T, cfg *config.Config) string {

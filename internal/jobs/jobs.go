@@ -67,7 +67,7 @@ type Store interface {
 // Archive is the file side of the pass (internal/archive): it runs only in
 // a process that ingests, which owns the log.
 type Archive interface {
-	// Projects lists the projects with a directory under raw/.
+	// Projects lists the projects with a directory under data/.
 	Projects() ([]int64, error)
 	Maintain(ctx context.Context, today civil.Date, lateDays, retentionDays int) error
 	// Sizes is each project's file bytes, by project id.
@@ -210,7 +210,7 @@ func (r *Runner) RunDailyPass(ctx context.Context) {
 	}
 }
 
-// removeOrphanedArchives removes the raw/ directory of every project the
+// removeOrphanedArchives removes the data/ directory of every project the
 // store no longer has. The purge above runs in every process's pass but the
 // files belong to the ingest process, so a purge made by another process
 // (the console's) is found here by what is left on disk. Archived projects

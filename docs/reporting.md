@@ -1511,7 +1511,7 @@ Open `http://127.0.0.1:3100/`, which redirects to the dashboards at `/app/`.
 - `-db` defaults to `DATABASE_DSN`'s path. The database is opened read-only
   and never written: the view route answers but stores nothing, and the page
   offers no writes (no "…" menus, dragging or Restore buttons).
-- Widget SQL runs on the event files in `EVENTS_DIR` (default `raw/` beside
+- Widget SQL runs on the event files in `EVENTS_DIR` (default `data/` beside
   the database), on the external SQL engine at `SQL_ENGINE_SOCKET`, which
   `reporting dev` reads from its environment as the console does (without
   it, a SQL widget's card shows the refusal), but

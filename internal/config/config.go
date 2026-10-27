@@ -28,7 +28,7 @@ type BufferConfig struct {
 }
 
 type Retention struct {
-	// Days (RETENTION_DAYS) is how long the event files under raw/ are kept:
+	// Days (RETENTION_DAYS) is how long the event files under data/ are kept:
 	// a month file is deleted once its last day is older (raw-first D5).
 	Days int `json:"days"`
 	// ArchivedDays is how long an archived project, dashboard or widget
@@ -142,9 +142,13 @@ type Config struct {
 	IngestLateDays int
 	Database       string
 	// EventsDir (EVENTS_DIR) holds the event files (internal/archive):
-	// absolute, beside the database's file as raw/ unless set. It never
+	// absolute, beside the database's file as data/ unless set. It never
 	// holds the database: the external SQL engine reads it whole.
 	EventsDir string
+	// EventsDirMoveTo is set when EVENTS_DIR is unset and only the raw/
+	// that older releases kept beside the database exists: EventsDir is
+	// that raw/, and the ingest process moves it here (data/) at start.
+	EventsDirMoveTo string
 	// SQLEngineSocket (SQL_ENGINE_SOCKET) is the Unix socket of the
 	// external SQL engine that answers widget SQL and the query tool's
 	// sql (package sqlengine); "" means none, and SQL is refused.
@@ -288,9 +292,14 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			c.Ignored = append(c.Ignored, k)
 		}
 	}
-	c.EventsDir = e.str("EVENTS_DIR", filepath.Join(filepath.Dir(strings.TrimPrefix(c.Database, "sqlite://")), "raw"))
+	if c.EventsDir = e.str("EVENTS_DIR", ""); c.EventsDir == "" {
+		c.EventsDir, c.EventsDirMoveTo = DefaultEventsDir(filepath.Dir(strings.TrimPrefix(c.Database, "sqlite://")))
+	}
 	if abs, err := filepath.Abs(c.EventsDir); err == nil {
 		c.EventsDir = abs
+	}
+	if abs, err := filepath.Abs(c.EventsDirMoveTo); err == nil && c.EventsDirMoveTo != "" {
+		c.EventsDirMoveTo = abs
 	}
 	if c.Console.AuthDSN != "" {
 		c.Console.authErr = c.parseConsoleAuthDSN()
@@ -603,6 +612,22 @@ func (c *Config) ValidateConsole() error {
 
 // IgnoredWarning is the start's one warning about the retired settings the
 // environment still sets (Ignored), or "" when it sets none.
+// DefaultEventsDir is where the event files live when EVENTS_DIR is unset:
+// data/ in dbDir. Where data/ is missing and the raw/ of an older release
+// is there, dir is raw/ and moveTo is data/, for the ingest process to move
+// it to; moveTo is "" otherwise.
+func DefaultEventsDir(dbDir string) (dir, moveTo string) {
+	dir = filepath.Join(dbDir, "data")
+	if _, err := os.Stat(dir); err == nil {
+		return dir, ""
+	}
+	legacy := filepath.Join(dbDir, "raw")
+	if fi, err := os.Stat(legacy); err == nil && fi.IsDir() {
+		return legacy, dir
+	}
+	return dir, ""
+}
+
 func (c *Config) IgnoredWarning() string {
 	switch len(c.Ignored) {
 	case 0:

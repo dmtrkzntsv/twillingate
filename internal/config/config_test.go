@@ -157,13 +157,14 @@ func TestValidationErrors(t *testing.T) {
 	}
 }
 
-// TestEventsDir: the event files sit beside the database unless
+// TestEventsDir: the event files sit in data/ beside the database unless
 // EVENTS_DIR moves them; a relative path is made absolute, so it names
 // the same directory whatever the working directory.
 func TestEventsDir(t *testing.T) {
-	c, err := load(t, nil)
-	if err != nil || c.EventsDir != "/tmp/raw" {
-		t.Fatalf("default EventsDir = %v, %v; want /tmp/raw, beside /tmp/a.db", c, err)
+	db := t.TempDir()
+	c, err := load(t, map[string]string{"DATABASE_DSN": "sqlite://" + db + "/a.db"})
+	if err != nil || c.EventsDir != filepath.Join(db, "data") || c.EventsDirMoveTo != "" {
+		t.Fatalf("default EventsDir = %v, %v; want data/ beside a.db, nothing to move", c, err)
 	}
 	c, err = load(t, map[string]string{"EVENTS_DIR": "/srv/events"})
 	if err != nil || c.EventsDir != "/srv/events" {
@@ -173,6 +174,33 @@ func TestEventsDir(t *testing.T) {
 	c, err = load(t, map[string]string{"EVENTS_DIR": "events"})
 	if err != nil || c.EventsDir != filepath.Join(wd, "events") {
 		t.Fatalf("relative EventsDir = %v, %v; want %s", c, err, filepath.Join(wd, "events"))
+	}
+}
+
+// TestEventsDirOfAnOlderRelease: where only the raw/ an older release
+// wrote beside the database exists, the event files are read there and
+// moved to data/ by the ingest process; once data/ exists, or EVENTS_DIR
+// is set, raw/ is left alone.
+func TestEventsDirOfAnOlderRelease(t *testing.T) {
+	db := t.TempDir()
+	if err := os.Mkdir(filepath.Join(db, "raw"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	dsn := map[string]string{"DATABASE_DSN": "sqlite://" + db + "/a.db"}
+	c, err := load(t, dsn)
+	if err != nil || c.EventsDir != filepath.Join(db, "raw") || c.EventsDirMoveTo != filepath.Join(db, "data") {
+		t.Fatalf("EventsDir, EventsDirMoveTo = %v, %v; want raw/, to move to data/", c, err)
+	}
+	c, err = load(t, map[string]string{"DATABASE_DSN": dsn["DATABASE_DSN"], "EVENTS_DIR": filepath.Join(db, "raw")})
+	if err != nil || c.EventsDirMoveTo != "" {
+		t.Fatalf("with EVENTS_DIR set: %v, %v; want nothing to move", c, err)
+	}
+	if err := os.Mkdir(filepath.Join(db, "data"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	c, err = load(t, dsn)
+	if err != nil || c.EventsDir != filepath.Join(db, "data") || c.EventsDirMoveTo != "" {
+		t.Fatalf("with data/ there: %v, %v; want data/, nothing to move", c, err)
 	}
 }
 

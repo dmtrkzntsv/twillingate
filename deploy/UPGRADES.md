@@ -1499,3 +1499,26 @@ no engine.
 Rollback: install the previous release (the installer with `--version`, or
 `TWILLINGATE_VERSION` in `.env`); nothing on disk changed. It needs glibc
 2.35 or newer, and starts an engine child for SQL as before.
+
+### Upgrading to the event files in `data/` (no migration)
+
+The default `EVENTS_DIR` is now `data/` beside the
+database (`/var/lib/twillingate/data`) instead of `raw/`.
+
+- **Before the upgrade**, nothing to check. With `EVENTS_DIR` set, nothing
+  moves and nothing changes. Stop any backup job that copies `raw/` while
+  the service restarts.
+- **On the day:** with `EVENTS_DIR` unset, the first start of the ingest
+  process renames `raw/` to `data/` before anything reads it, and logs
+  `moved the event files` with both paths. It is a rename in the same
+  directory, so it takes no time and copies nothing. On a split install,
+  restart the console-only process after the ingest one: until then it
+  reads `raw/`, which is gone.
+- **After the upgrade:** point anything that reads the files at `data/`:
+  backups (`docs/deployment.md`, "Back up and restore"), a Litestream
+  check (`docs/litestream.md`), and an external SQL engine's read-only
+  mount of `EVENTS_DIR`.
+
+Rollback: an older release looks for `raw/` and would start on an empty
+one. Before going back, stop the service and rename `data/` to `raw/`, or
+set `EVENTS_DIR` to the `data/` path.

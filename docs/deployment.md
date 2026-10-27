@@ -138,7 +138,7 @@ The stream sends a keepalive every 15 seconds, well inside Cloudflare's
 | `INGEST_DISABLED` | `true` (or `1`) stops ingest completely while the console keeps running: `POST /ingest/events`, the legacy `POST /api/events` and `POST /ingest/forms/{name}` refuse every request with `429`, `ingest is disabled` and `Retry-After: 3600`, before the body is read or the key looked up, so nothing is written. The SDK drops a batch refused with a 4xx rather than queueing it. Preflights, the SDK scripts and `/healthz` answer as usual; `limits` reports `ingest_disabled` and the console's Projects page says so. For a migration, a restore or an abuse incident. When the ingest and console surfaces run as separate processes, set it for both: the refusal is the ingest process's setting, while the console's banner and `limits` read the console process's own. Takes `true`/`false`, `1`/`0`; anything else refuses the boot. Default `false`. |
 | `INGEST_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets and MCP integration guidance are built from it; unset, they carry a placeholder. Also the default for `CONSOLE_URL`. With [several hostnames](#one-collector-several-hostnames), the default one. |
 | `DATABASE_DSN` | Store DSN. Only `sqlite://<path>` today. Required. |
-| `EVENTS_DIR` | Directory of the event files: a log per project and day, then Parquet day and month files. Default `raw/` beside the database's file (`/var/lib/twillingate/raw`). The engine reads and writes everything in it, so it may not hold the database. On a split install, give both processes the same value. It must be on a filesystem that supports `flock` (most local filesystems; not some FUSE or SMB mounts): the ingest process holds `.lock` in it, and refuses to start where it cannot. A second ingest process refuses while one runs. To move it, stop the service, move the directory, set the variable, start. |
+| `EVENTS_DIR` | Directory of the event files: a log per project and day, then Parquet day and month files. Default `data/` beside the database's file (`/var/lib/twillingate/data`); where only the `raw/` of an older release is there, the ingest process moves it to `data/` at start, and a process without ingest reads `raw/` until its next start. The engine reads and writes everything in it, so it may not hold the database. On a split install, give both processes the same value. It must be on a filesystem that supports `flock` (most local filesystems; not some FUSE or SMB mounts): the ingest process holds `.lock` in it, and refuses to start where it cannot. A second ingest process refuses while one runs. To move it, stop the service, move the directory, set the variable, start. |
 | `GEO_DSN` | Country lookup: `cloudflare://` (header), `maxmind://<license-key>`, or `none://`. |
 | `LOG_LEVEL` | `debug`, `info`, `warn`, `error`. Default `info`. |
 | `LOG_FORMAT` | `json` or `text`. Default `json`. |
@@ -489,7 +489,7 @@ The socket is unauthenticated: anyone who can connect to it reads every
 project's events. Put it in a directory only the twillingate service user
 (or a group the two services share) can traverse, mode `0750`, with the
 socket itself at `0660`, and never on a path other users or containers
-reach. Mount `EVENTS_DIR` (`raw/`) into the engine read-only: it only
+reach. Mount `EVENTS_DIR` (`data/`) into the engine read-only: it only
 reads, and twillingate alone writes the files. The engine may start
 before or after twillingate; at start twillingate checks the protocol
 version against `GET /v1/health` and refuses to start on a mismatch,
@@ -644,7 +644,7 @@ rotates at 00:00 UTC; a catch-up pass at startup means downtime
 across those times skips no day. With `LOG_FILE` set, install
 `deploy/logrotate/twillingate` into `/etc/logrotate.d/`.
 
-The ingest process also keeps every event as files under `EVENTS_DIR` (`raw/` in the data directory unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began were copied in once, on the upgrade to v0.21, by that release's `twillingate events import`. The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass, in Go in the ingest process: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (the built-in widgets answered without the engine, a widget's SQL on the external SQL engine), `query`, the analytics tools (`views_overview` through `identities`), the count of events in `limits`, `list_attributes`, `usage` and the console's event names and newest days read them and the tables derived from them.
+The ingest process also keeps every event as files under `EVENTS_DIR` (`data/` beside the database unless set): a log per project and day, written as events arrive, turned into a Parquet day file after the day ends and into a month file once the month is final. Events from before the files began were copied in once, on the upgrade to v0.21, by that release's `twillingate events import`. The same pass derives three small tables from them in each project's directory, `sessions/`, `identities.parquet` and `aliases.parquet`, rewritten when the events under them change. A month file is deleted once the month's last day is `RETENTION_DAYS` old. That file work runs in the daily pass, in Go in the ingest process: the scheduled 03:00 UTC pass waits a random delay of up to 30 minutes first, the pass at start does not. Each run logs one line at `info`, `archive: pass` with what it did (`projects`, `dumped`, `merged`, `expired_months`, `derived`, `failed_projects`, `took`); a project whose step failed logs `archive: maintenance` with the error, and the next pass retries it. The files are written `0640`, like the logs. The dashboards (the built-in widgets answered without the engine, a widget's SQL on the external SQL engine), `query`, the analytics tools (`views_overview` through `identities`), the count of events in `limits`, `list_attributes`, `usage` and the console's event names and newest days read them and the tables derived from them.
 
 ### Back up and restore
 
@@ -659,7 +659,7 @@ off-host copy instead, seconds behind, run litestream beside the collector:
 sets it up for systemd and docker compose, with the restore drill and
 disaster recovery (not served over MCP; open it in the repository).
 
-From this release the data directory also holds `raw/`, the event files (or `EVENTS_DIR` holds them, when set; read `raw/` below as that directory). Back them up with the database: copy the SQLite file first (`.backup`, as below), then `raw/` with any tool (`cp -a`, `rsync`, `restic`). The derived files (`sessions/`, `identities.parquet`, `aliases.parquet` in each project's directory) may be left out: the next pass rebuilds what is missing. The daily pass rewrites `raw/` (it renames closed logs, writes day files, merges a month's day files into the month file and deletes them), and a tool that lists the files before copying them can miss a month while it runs. Copy `raw/` outside the pass: not between 03:00 and 03:45 UTC, and not right after a start. Or run the copy again until it changes nothing. Between passes nothing changes there but the logs, which only grow, so a copy taken while the service runs is correct; a log's last line may be cut, and the next start drops it. Restore both before starting the service, and restore them from the same backup: the daily pass deletes the `raw/` directory of any project the database does not know, so a database older than a project's creation would delete that project's files.
+The data directory also holds `data/`, the event files (or `EVENTS_DIR` holds them, when set; read `data/` below as that directory). Back them up with the database: copy the SQLite file first (`.backup`, as below), then `data/` with any tool (`cp -a`, `rsync`, `restic`). The derived files (`sessions/`, `identities.parquet`, `aliases.parquet` in each project's directory) may be left out: the next pass rebuilds what is missing. The daily pass rewrites `data/` (it renames closed logs, writes day files, merges a month's day files into the month file and deletes them), and a tool that lists the files before copying them can miss a month while it runs. Copy `data/` outside the pass: not between 03:00 and 03:45 UTC, and not right after a start. Or run the copy again until it changes nothing. Between passes nothing changes there but the logs, which only grow, so a copy taken while the service runs is correct; a log's last line may be cut, and the next start drops it. Restore both before starting the service, and restore them from the same backup: the daily pass deletes the `data/` directory of any project the database does not know, so a database older than a project's creation would delete that project's files.
 
 ```bash
 sudo -u twillingate sqlite3 /var/lib/twillingate/twillingate.db \
@@ -671,9 +671,9 @@ sqlite3 /var/lib/twillingate/backup.db "SELECT COUNT(*) FROM projects;"   # expe
 List each project's newest dated file (a day file, or a month file once the month is final); it should be today's or yesterday's. The files are `0640`, so run it as the service user:
 
 ```bash
-sudo -u twillingate sh -c 'for d in /var/lib/twillingate/raw/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done'
+sudo -u twillingate sh -c 'for d in /var/lib/twillingate/data/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done'
 # compose: the image has no shell, so list them from a throwaway container
-docker run --rm --volumes-from "$(docker compose ps -q twillingate)" alpine:3.20 sh -c 'for d in /var/lib/twillingate/raw/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done'
+docker run --rm --volumes-from "$(docker compose ps -q twillingate)" alpine:3.20 sh -c 'for d in /var/lib/twillingate/data/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[0-9]{2}(-[0-9]{2})?\." | sort | tail -1)"; done'
 ```
 
 The image carries no `sqlite3`: under compose, `docker compose stop
@@ -691,7 +691,7 @@ it with v0.21.x, run `twillingate events import -force` there as the service
 user before starting the service, then upgrade. Started on this release, a
 database whose events were never imported is refused by migration 042 and
 left as it was; one imported before the backup was taken migrates, and the
-events it holds that the restored `raw/` lacks are lost. A database past
+events it holds that the restored `data/` lacks are lost. A database past
 042 holds no events.
 
 Any `sqlite3` that opens the file (the backup and check above, a host cron,

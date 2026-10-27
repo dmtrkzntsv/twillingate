@@ -100,7 +100,7 @@ sleep 1
 kill "$pid" && wait "$pid" 2>/dev/null || true
 pid=""
 
-counts="$(go run ./scripts/smokecheck "$dir/raw")" || fail "could not read the event files"
+counts="$(go run ./scripts/smokecheck "$dir/data")" || fail "could not read the event files"
 echo "rows: $counts"
 # views=2: one $page_view (kind=web) plus one $screen_view (kind=app).
 # events=2: the "signup" event plus one surviving copy of the replayed one.

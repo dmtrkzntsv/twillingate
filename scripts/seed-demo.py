@@ -2,7 +2,7 @@
 """Seed a local database with demo traffic for every project in the database.
 
 For dashboard development only -- bypasses the HTTP API. The events go to
-the event files as closed logs (raw/<project id>/<day>.1.closed, one NDJSON
+the event files as closed logs (data/<project id>/<day>.1.closed, one NDJSON
 line per event in the shape of internal/archive's log lines), which the first
 start's pass dumps to Parquet; the database is only read, for the project
 list. Deterministic (fixed seed), with per-project traffic profiles, a
@@ -25,7 +25,7 @@ per-day connection hash, as a site with an anonymous tag would.
 
     python3 scripts/seed-demo.py local/twillingate.db [--events-dir DIR] [--days N]
 
-DIR defaults to raw/ beside the database; N (180 by default) is how many
+DIR defaults to data/ beside the database; N (180 by default) is how many
 days back the traffic reaches, fewer for a quicker seed.
 
 Projects are read from the projects table; each needs a traffic profile in
@@ -386,7 +386,7 @@ def main():
         sys.exit("usage: seed-demo.py <db> [--events-dir DIR] [--days N]")
     db = args[0]
     if events_dir is None:
-        events_dir = os.path.join(os.path.dirname(os.path.abspath(db)), "raw")
+        events_dir = os.path.join(os.path.dirname(os.path.abspath(db)), "data")
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     projects = con.execute("select id, name from projects order by id").fetchall()
     con.close()

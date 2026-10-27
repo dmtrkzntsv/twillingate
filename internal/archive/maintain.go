@@ -73,7 +73,7 @@ func (a *Archive) Maintain(ctx context.Context, today civil.Date, lateDays, rete
 type passStats struct{ dumped, merged, expired, derived, failed int }
 
 // Projects lists, in ascending order, the ids of the projects with a
-// directory under raw/.
+// directory under data/.
 func (a *Archive) Projects() ([]int64, error) {
 	entries, err := os.ReadDir(a.log.Dir())
 	if err != nil {

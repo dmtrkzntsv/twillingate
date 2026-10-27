@@ -1,4 +1,4 @@
-// Package native reads the event files under raw/ in Go, without an SQL
+// Package native reads the event files under data/ in Go, without an SQL
 // engine: the Parquet files by row group, pruned on their
 // statistics, into column batches.
 package native

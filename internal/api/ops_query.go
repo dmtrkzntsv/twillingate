@@ -353,7 +353,7 @@ func nativeError(err error) error {
 // files, under CONSOLE_QUERY_ROWS_MAX and CONSOLE_QUERY_TIMEOUT, with the
 // registry's rules. The engine runs one read-only SELECT and reaches no
 // file outside the table spec (raw-first D21); confine keeps it on the
-// seven tables, where the rules apply (D6), and off raw/'s files
+// seven tables, where the rules apply (D6), and off data/'s files
 // themselves, as widget SQL is (#192): always set from the tool. An
 // engine that finds a file of the spec gone (the daily pass moved it)
 // gets a fresh spec, within the timeout (sqlengine.QueryFresh).
