@@ -390,7 +390,7 @@ func TestQueryStructuredBounds(t *testing.T) {
 	}
 	r := newTestRegistrar(t, h)
 	i := slices.IndexFunc(r.specs, func(s spec) bool { return s.Name == "query" })
-	col := r.specs[i].in.Properties["query"].Properties["metrics"].Items.Properties["column"].Enum
+	col := r.specs[i].in.Properties["query"].Properties["metrics"].Items.Properties["column"].AnyOf[0].Enum
 	for _, c := range slices.Concat(native.BoundColumns, native.SessionBoundColumns) {
 		if !slices.Contains(col, any(c)) {
 			t.Errorf("a metric's column enum %v lacks %s", col, c)

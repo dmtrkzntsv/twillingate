@@ -153,7 +153,13 @@ func queryEnums(in *jsonschema.Schema) {
 		return out
 	}
 	numbers := once(native.ValueColumns, native.SessionValueColumns, native.IdentityValueColumns)
-	m.Properties["column"].Enum = enum(once(numbers, native.BoundColumns, native.SessionBoundColumns))
+	// latest reads any column a filter names, attr_<key> and def_ ones
+	// included; the other ops a number or a bound.
+	mc := m.Properties["column"]
+	m.Properties["column"] = &jsonschema.Schema{Description: mc.Description, AnyOf: []*jsonschema.Schema{
+		{Type: "string", Enum: enum(once(numbers, native.BoundColumns, native.SessionBoundColumns, native.LatestColumns))},
+		{Type: "string", Pattern: "^(attr|def)_.+"},
+	}}
 	m.Properties["of"].Enum = enum(slices.Concat(native.OfColumns, native.ShareOfColumns))
 	minRound, maxRound := 0.0, 6.0
 	m.Properties["round"].Minimum, m.Properties["round"].Maximum = &minRound, &maxRound

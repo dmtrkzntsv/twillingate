@@ -419,6 +419,8 @@ type value struct {
 	form                int
 	i                   int64
 	f                   float64
+	text                bool // a latest's value, s
+	s                   string
 }
 
 func intValue(n int64) value { return value{isInt: true, i: n} }
@@ -427,6 +429,8 @@ func (v value) String() string {
 	switch {
 	case v.null:
 		return ""
+	case v.text:
+		return v.s
 	case v.form == formDay:
 		return formatDay(v.i)
 	case v.form == formTime:
@@ -495,6 +499,7 @@ type metricSpec struct {
 	num      int      // index into agg.nums, for sum/avg/min/max
 	distinct int      // index into agg.distinct, for actors/users/groups and daily_*
 	msr      int      // index into agg.msrs, for percentile, mean and weight
+	latest   int      // index into agg.latests, for latest
 	// ratioNum and ratioDen are a ratio's sides, resolved as hidden
 	// metrics: they share the masks and partials the others use.
 	ratioNum, ratioDen *metricSpec
@@ -590,6 +595,7 @@ type agg struct {
 	distinct []*distinctCol
 	bounces  bool // count sessions of one view per cell and mask (bounces, bounce_rate)
 	msrs     []msrCol
+	latests  []latestCol
 	parts    []part
 	mem      memory
 }
@@ -600,6 +606,7 @@ type part struct {
 	bounces [][]int64 // per mask, per cell, rows with views 1 (when agg.bounces)
 	nums    []numPart
 	msrs    []msrPart
+	latest  []latestPart
 	sets    [][]dset   // per distinct column, per group; nil without set
 	days    [][]daySet // per distinct column with day keys, per day of the range
 	// scratch, reused across batches
@@ -699,7 +706,7 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 	}
 	var resolve func(m metricSpec) metricSpec
 	resolve = func(m metricSpec) metricSpec {
-		m.num, m.distinct, m.msr = -1, -1, -1
+		m.num, m.distinct, m.msr, m.latest = -1, -1, -1, -1
 		if m.Op == "ratio" {
 			num, den := resolve(*m.ratioNum), resolve(*m.ratioDen)
 			m.ratioNum, m.ratioDen = &num, &den
@@ -714,6 +721,13 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 		}
 		m.mask = mask
 		switch m.Op {
+		case "latest":
+			i := slices.Index(a.latests, latestCol{m.Column, mask})
+			if i < 0 {
+				i = len(a.latests)
+				a.latests = append(a.latests, latestCol{m.Column, mask})
+			}
+			m.latest = i
 		case "sum", "avg", "min", "max":
 			i, ok := numIdx[colMask{m.Column, mask}]
 			if !ok {
@@ -831,6 +845,17 @@ func (a *agg) columns() []string {
 	if a.bounces {
 		add("views")
 	}
+	if len(a.latests) > 0 {
+		add("ts")
+		for _, l := range a.latests {
+			if isDefined(l.name) {
+				continue // added to each batch
+			}
+			for _, c := range readColumns(l.name) {
+				add(c)
+			}
+		}
+	}
 	if len(a.msrs) > 0 {
 		add("value")
 		add("sample_rate")
@@ -852,7 +877,7 @@ func (p *part) grow(a *agg, groups int) {
 	cells = max(cells, 2*have)
 	// Per cell: the count per mask (and bounces), and per numeric column 4
 	// numbers; per group a set header per distinct column.
-	perCell := int64(8*len(a.masks)*(1+boolInt(a.bounces)) + 32*len(a.nums) + 32*len(a.msrs))
+	perCell := int64(8*len(a.masks)*(1+boolInt(a.bounces)) + 32*len(a.nums) + 32*len(a.msrs) + 48*len(a.latests))
 	perGroup := int64(0)
 	for _, d := range a.distinct {
 		if d.set {
@@ -874,6 +899,12 @@ func (p *part) grow(a *agg, groups int) {
 	}
 	if p.nums == nil {
 		p.nums = make([]numPart, len(a.nums))
+	}
+	if p.latest == nil {
+		p.latest = make([]latestPart, len(a.latests))
+	}
+	for j := range p.latest {
+		p.latest[j].grow(cells)
 	}
 	for j, n := range a.nums {
 		np := &p.nums[j]
@@ -1093,6 +1124,7 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 	if err := a.addMeasures(p, b, sel, gids, pass, cell); err != nil {
 		return err
 	}
+	a.addLatest(p, b, sel, gids, pass, cell)
 	for j, d := range a.distinct {
 		if err := a.addDistinct(p, j, d, b, sel, gids, pass[d.mask], off); err != nil {
 			return err
@@ -1368,6 +1400,7 @@ type merged struct {
 	bounces [][]int64 // per mask
 	nums    []numPart
 	msrs    []msrPart
+	latest  []latestPart
 	hists   [][]histEntry // per measure column with hist: sorted by cell, then bucket
 	sets    [][]dset
 	days    [][]daySet // per distinct column with day keys, per day: all of them
@@ -1423,6 +1456,10 @@ func (a *agg) merge() *merged {
 			m.bounces[k] = make([]int64, cells)
 		}
 	}
+	m.latest = make([]latestPart, len(a.latests))
+	for j := range m.latest {
+		m.latest[j].grow(cells)
+	}
 	m.nums = make([]numPart, len(a.nums))
 	for j, n := range a.nums {
 		np := &m.nums[j]
@@ -1466,6 +1503,9 @@ func (a *agg) merge() *merged {
 		for j := range p.nums {
 			mergeNum(&m.nums[j], &p.nums[j], a.nums[j].float, cells)
 		}
+		for j := range p.latest {
+			mergeLatest(&m.latest[j], &p.latest[j], cells)
+		}
 		for j := range p.msrs {
 			mergeMsr(&m.msrs[j], &p.msrs[j], hists[j], cells)
 		}
@@ -1475,7 +1515,7 @@ func (a *agg) merge() *merged {
 			}
 			p.sets[j] = nil
 		}
-		p.count, p.bounces, p.nums, p.msrs = nil, nil, nil, nil
+		p.count, p.bounces, p.nums, p.msrs, p.latest = nil, nil, nil, nil, nil
 	}
 	for j, h := range hists {
 		if h == nil {
@@ -1682,6 +1722,8 @@ func (m *merged) computeRaw(mt metricSpec, gs []int32, day int, whole bool) valu
 		return intValue(n)
 	case "sum", "avg", "min", "max":
 		return m.evalNum(mt, gs, day)
+	case "latest":
+		return m.latestOf(mt, gs, day)
 	case "percentile":
 		return m.percentile(mt, gs, day)
 	case "mean", "weight":
