@@ -628,24 +628,12 @@ that comes back in a later release does not reattach itself.
 
 At least one widget per component, each ready for `add_widget`: the
 component, the source (the block below, as `{"type": "sql", "content": "…"}`;
-`md` for the Markdown one; `query` for a JSON block, its text the content) and
-the props shown. Unless the title says otherwise, each
+`md` for the Markdown one; `query` for a JSON block, its text or the object
+the content) and the props shown. Each component that takes a `query`
+source shows it first, as a structured query; the SQL after it is the
+same widget for when a structured query cannot say what you need. Unless the title says otherwise, each
 follows both switchers. [Percentiles from measures](#percentiles-from-measures)
 closes the section with the one query pattern measures need.
-
-### `stat`
-
-Views in the range, with a sparkline of the days under the number:
-
-```sql
-SELECT day AS x, count(*) AS value
-FROM views
-WHERE project_id = :project AND day BETWEEN :from AND :to
-GROUP BY day
-ORDER BY day
-```
-
-Props: `{"format": "number", "aggregate": "sum"}`
 
 ### `stat` as a structured query
 
@@ -671,24 +659,24 @@ An empty `value` (a metric with nothing to read, as `avg` or `ratio` over no
 rows) shows as "–" rather than 0, and an empty `previous` shows no change; a
 `0` still shows 0.
 
-### `line`
+### `stat`
 
-Visitors per day, one line per kind (`web`, `app`, …):
+Views in the range, with a sparkline of the days under the number:
 
 ```sql
-SELECT day AS x, kind AS series, count(DISTINCT actor_id) AS y
+SELECT day AS x, count(*) AS value
 FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to
-GROUP BY day, kind
+GROUP BY day
 ORDER BY day
 ```
 
-Props: `{"curve": "monotone"}`
+Props: `{"format": "number", "aggregate": "sum"}`
 
 ### `line` as a structured query
 
-The same chart as a `query` source: a trend returns `day`, `series` and
-its metric, renamed to the inputs `line` reads:
+Visitors per day, one line per kind (`web`, `app`, …): a trend returns
+`day`, `series` and its metric, renamed to the inputs `line` reads:
 
 ```json
 {
@@ -724,6 +712,50 @@ cohort day) and `retention`, and a numeric `x` plots to scale:
 
 Props: `{"format": "percent", "curve": "linear"}`
 
+### `line`
+
+Visitors per day, one line per kind (`web`, `app`, …):
+
+```sql
+SELECT day AS x, kind AS series, count(DISTINCT actor_id) AS y
+FROM views
+WHERE project_id = :project AND day BETWEEN :from AND :to
+GROUP BY day, kind
+ORDER BY day
+```
+
+Props: `{"curve": "monotone"}`
+
+### `area` as a structured query
+
+Views per day, stacked by platform, an empty platform labelled:
+
+```json
+{
+  "query": {
+    "kind": "trend",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count"
+      }
+    ],
+    "series": "platform"
+  },
+  "rename": {
+    "day": "x",
+    "count": "y"
+  },
+  "labels": {
+    "series": {
+      "": "(none)"
+    }
+  }
+}
+```
+
+Props: `{"stacked": true}`
+
 ### `area`
 
 Views per day, stacked by platform:
@@ -737,6 +769,34 @@ ORDER BY x
 ```
 
 Props: `{"stacked": true}`
+
+### `bar` as a structured query
+
+The ten most frequent product events, as horizontal bars:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "product",
+    "metrics": [
+      {
+        "op": "count"
+      }
+    ],
+    "dimensions": [
+      "event_name"
+    ],
+    "limit": 10
+  },
+  "rename": {
+    "event_name": "x",
+    "count": "y"
+  }
+}
+```
+
+Props: `{"horizontal": true}`
 
 ### `bar`
 
@@ -753,25 +813,10 @@ LIMIT 10
 
 Props: `{"horizontal": true}`
 
-### `bar_list`
-
-Top pages by views:
-
-```sql
-SELECT path AS label, count(*) AS value
-FROM views
-WHERE project_id = :project AND day BETWEEN :from AND :to AND path IS NOT NULL
-GROUP BY path
-ORDER BY value DESC
-LIMIT 10
-```
-
-Props: `{"format": "number"}`
-
 ### `bar_list` as a structured query
 
-The same list as a `query` source: a breakdown returns its dimension and
-its metric, renamed to `label` and `value`:
+Top pages by views: a breakdown returns its dimension and its metric,
+renamed to `label` and `value`:
 
 ```json
 {
@@ -788,6 +833,56 @@ its metric, renamed to `label` and `value`:
 ```
 
 Props: `{"format": "number"}`
+
+### `bar_list`
+
+Top pages by views:
+
+```sql
+SELECT path AS label, count(*) AS value
+FROM views
+WHERE project_id = :project AND day BETWEEN :from AND :to AND path IS NOT NULL
+GROUP BY path
+ORDER BY value DESC
+LIMIT 10
+```
+
+Props: `{"format": "number"}`
+
+### `pie` as a structured query
+
+Visitors by device, the four largest and the rest as `Other`:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "daily_sum",
+        "of": "actors",
+        "as": "value"
+      }
+    ],
+    "dimensions": [
+      "device_label"
+    ],
+    "limit": 4,
+    "other": true
+  },
+  "rename": {
+    "device_label": "label"
+  },
+  "labels": {
+    "label": {
+      "": "Unknown"
+    }
+  }
+}
+```
+
+Props: `{"format": "number", "donut": true}`
 
 ### `pie`
 
@@ -810,6 +905,45 @@ ORDER BY value DESC
 
 Props: `{"donut": true}`
 
+### `radar` as a structured query
+
+Views per weekday, Monday first, its labels the days' names:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count",
+        "as": "value"
+      }
+    ],
+    "dimensions": [
+      "weekday"
+    ],
+    "order": "weekday"
+  },
+  "rename": {
+    "weekday": "axis"
+  },
+  "labels": {
+    "axis": {
+      "1 Mon": "Mon",
+      "2 Tue": "Tue",
+      "3 Wed": "Wed",
+      "4 Thu": "Thu",
+      "5 Fri": "Fri",
+      "6 Sat": "Sat",
+      "7 Sun": "Sun"
+    }
+  }
+}
+```
+
+Props: `{"format": "number"}`
+
 ### `radar`
 
 Views by day of the week:
@@ -820,6 +954,33 @@ FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to
 GROUP BY axis, dayofweek(day)
 ORDER BY dayofweek(day)
+```
+
+Props: `{"format": "number"}`
+
+### `radial` as a structured query
+
+Visitors by kind (`web`, `app`, …):
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "actors",
+        "as": "value"
+      }
+    ],
+    "dimensions": [
+      "kind"
+    ]
+  },
+  "rename": {
+    "kind": "label"
+  }
+}
 ```
 
 Props: `{"format": "number"}`
@@ -838,6 +999,45 @@ WHERE project_id = :project AND event_name = 'signup'
 
 Props: `{"format": "number"}`
 
+### `scatter` as a structured query
+
+Per page, its views against its visitors:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count",
+        "as": "x"
+      },
+      {
+        "op": "actors",
+        "as": "y"
+      }
+    ],
+    "dimensions": [
+      "path"
+    ],
+    "where": [
+      {
+        "column": "path",
+        "op": "is_set"
+      }
+    ],
+    "limit": 50
+  },
+  "columns": [
+    "x",
+    "y"
+  ]
+}
+```
+
+Props: `{"format": "number"}`
+
 ### `scatter`
 
 Pages, visitors against views:
@@ -847,6 +1047,29 @@ SELECT count(DISTINCT actor_id) AS x, count(*) AS y
 FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to
 GROUP BY path
+```
+
+Props: `{"format": "number"}`
+
+### `funnel` as a structured query
+
+The users who viewed a page, then signed up, then subscribed, each step
+after the one before it: a funnel returns `step` and `value`, the names
+the component reads:
+
+```json
+{
+  "query": {
+    "kind": "funnel",
+    "by": "user",
+    "sequence": true,
+    "steps": [
+      {"label": "Visited", "where": [{"column": "family", "op": "eq", "values": ["views"]}]},
+      {"label": "Signed up", "where": [{"column": "event_name", "op": "eq", "values": ["signup"]}]},
+      {"label": "Subscribed", "where": [{"column": "event_name", "op": "eq", "values": ["subscribed"]}]}
+    ]
+  }
+}
 ```
 
 Props: `{"format": "number"}`
@@ -876,28 +1099,38 @@ ORDER BY n
 
 Props: `{"format": "number"}`
 
-### `funnel` as a structured query
+### `combo` as a structured query
 
-The users who viewed a page, then signed up, then subscribed, each step
-after the one before it: a funnel returns `step` and `value`, the names
-the component reads:
+Views as bars and visitors as a line, per day: a breakdown by day returns both metrics side by side, which `combo` reads:
 
 ```json
 {
   "query": {
-    "kind": "funnel",
-    "by": "user",
-    "sequence": true,
-    "steps": [
-      {"label": "Visited", "where": [{"column": "family", "op": "eq", "values": ["views"]}]},
-      {"label": "Signed up", "where": [{"column": "event_name", "op": "eq", "values": ["signup"]}]},
-      {"label": "Subscribed", "where": [{"column": "event_name", "op": "eq", "values": ["subscribed"]}]}
-    ]
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count",
+        "as": "bar"
+      },
+      {
+        "op": "actors",
+        "as": "line"
+      }
+    ],
+    "dimensions": [
+      "day"
+    ],
+    "order": "day",
+    "limit": 1000
+  },
+  "rename": {
+    "day": "x"
   }
 }
 ```
 
-Props: `{"format": "number"}`
+Props: `{"bar_format": "number", "line_format": "number"}`
 
 ### `combo`
 
@@ -918,6 +1151,48 @@ ORDER BY x
 ```
 
 Props: `{"bar_format": "number", "line_format": "percent"}`
+
+### `heatmap` as a structured query
+
+Views by weekday and hour, the week's heatmap:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count",
+        "as": "value"
+      }
+    ],
+    "dimensions": [
+      "weekday",
+      "hour"
+    ],
+    "order": "weekday",
+    "limit": 1000
+  },
+  "rename": {
+    "hour": "x",
+    "weekday": "y"
+  },
+  "labels": {
+    "y": {
+      "1 Mon": "Mon",
+      "2 Tue": "Tue",
+      "3 Wed": "Wed",
+      "4 Thu": "Thu",
+      "5 Fri": "Fri",
+      "6 Sat": "Sat",
+      "7 Sun": "Sun"
+    }
+  }
+}
+```
+
+Props: `{"format": "number"}`
 
 ### `heatmap`
 
@@ -949,6 +1224,27 @@ ORDER BY x, y
 
 Props: `{"format": "percent", "labels": true}`
 
+### `calendar` as a structured query
+
+Views per day of the range:
+
+```json
+{
+  "query": {
+    "kind": "trend",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count",
+        "as": "value"
+      }
+    ]
+  }
+}
+```
+
+Props: `{"format": "number"}`
+
 ### `calendar`
 
 "Views, last 12 months": follows the project, fixed to the last year:
@@ -959,6 +1255,38 @@ FROM views
 WHERE project_id = :project AND day >= current_date - 364
 GROUP BY day
 ORDER BY day
+```
+
+Props: `{"format": "number"}`
+
+### `map` as a structured query
+
+Visitors by country:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "daily_sum",
+        "of": "actors",
+        "as": "value"
+      }
+    ],
+    "dimensions": [
+      "country"
+    ],
+    "where": [
+      {
+        "column": "country",
+        "op": "is_set"
+      }
+    ],
+    "limit": 250
+  }
+}
 ```
 
 Props: `{"format": "number"}`
@@ -976,6 +1304,47 @@ GROUP BY country
 
 Props: `{"format": "number"}`
 
+### `treemap` as a structured query
+
+Views by browser, then version:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count",
+        "as": "value"
+      }
+    ],
+    "dimensions": [
+      "browser",
+      "browser_version"
+    ],
+    "where": [
+      {
+        "column": "browser",
+        "op": "is_set"
+      }
+    ],
+    "limit": 50
+  },
+  "rename": {
+    "browser": "parent",
+    "browser_version": "label"
+  },
+  "labels": {
+    "label": {
+      "": "Unknown"
+    }
+  }
+}
+```
+
+Props: `{"format": "number"}`
+
 ### `treemap`
 
 Visitors by browser, then version:
@@ -985,6 +1354,19 @@ SELECT browser AS parent, coalesce(browser_version, '?') AS label, count(DISTINC
 FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to AND browser IS NOT NULL
 GROUP BY 1, 2
+```
+
+Props: `{"format": "number"}`
+
+### `sankey` as a structured query
+
+Where the sessions went, three steps deep: paths returns `source`,
+`target` and `value`, each step's pages a stage of their own:
+
+```json
+{
+  "query": {"kind": "paths", "depth": 3, "limit": 30}
+}
 ```
 
 Props: `{"format": "number"}`
@@ -1015,18 +1397,43 @@ SELECT * FROM (
 
 Props: `{"format": "number"}`
 
-### `sankey` as a structured query
+### `table` as a structured query
 
-The same flows from the sessions, without SQL: paths returns `source`,
-`target` and `value`, each step's pages a stage of their own:
+Top pages with views and visitors, filtered and sorted on the page:
 
 ```json
 {
-  "query": {"kind": "paths", "depth": 3, "limit": 30}
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count",
+        "as": "Views"
+      },
+      {
+        "op": "actors",
+        "as": "Visitors"
+      }
+    ],
+    "dimensions": [
+      "path"
+    ],
+    "where": [
+      {
+        "column": "path",
+        "op": "is_set"
+      }
+    ],
+    "limit": 100
+  },
+  "rename": {
+    "path": "Page"
+  }
 }
 ```
 
-Props: `{"format": "number"}`
+Props: `{"formats": {"Views": "number", "Visitors": "number"}}`
 
 ### `table`
 
