@@ -25,7 +25,7 @@ var ErrTooLarge = errors.New("native: the query needs more memory than allowed; 
 // Milestones), an attributes the attribute keys and values its rows carry
 // (Output, Reserved, Keep).
 type Query struct {
-	Kind        string   `json:"kind" jsonschema:"stat: one row of metrics (with compare previous, a previous_<name> column each); trend: one metric per day, optionally split by series, or 2 to 5 metrics per day as its series (day, series, value); breakdown: the metrics grouped by 1 to 3 dimensions; retention: the cohorts of users and installs first active in the range, and their days back (output, identified_by, offsets, milestones; no metrics); attributes: every attribute key and value the product or measures rows carry, with their metrics (output values; dimensions day and event_name, reserved), or every key with its events and distinct values (output keys; limit, keep; no metrics)"`
+	Kind        string   `json:"kind" jsonschema:"funnel: the actors (users, groups) at each of its steps, taken in the range in any order or in sequence (steps, by, sequence; no metrics); stat: one row of metrics (with compare previous, a previous_<name> column each); trend: one metric per day, optionally split by series, or 2 to 5 metrics per day as its series (day, series, value); breakdown: the metrics grouped by 1 to 3 dimensions; retention: the cohorts of users and installs first active in the range, and their days back (output, identified_by, offsets, milestones; no metrics); attributes: every attribute key and value the product or measures rows carry, with their metrics (output values; dimensions day and event_name, reserved), or every key with its events and distinct values (output keys; limit, keep; no metrics)"`
 	Table       string   `json:"table,omitempty" jsonschema:"the rows read: events (every family), views, product or measures; or sessions, one row per session of views; or identities, one row per user or group first seen in the range (rules apply to neither); a retention reads events (absent or events); an attributes product or measures, its keys also events (product and measures both: the default)"`
 	Metrics     []Metric `json:"metrics,omitempty" jsonschema:"the aggregates, each an output column; a trend takes 1 to 5, exactly 1 when split by series; with more than 1 its answer is long, day, series (each metric's name) and value, a number, so none is a min or max of a day or time; a retention and an attributes' keys none; an attributes' values count, actors, users, groups and actors_or_null"`
 	Where       []Filter `json:"where,omitempty" jsonschema:"filters, all of which a row must satisfy"`
@@ -39,6 +39,10 @@ type Query struct {
 	Limit       int      `json:"limit,omitempty" jsonschema:"breakdown and attributes only: how many groups, 1 to 1000 (default 20; an attributes' values all of them, its keys 50)"`
 	Other       bool     `json:"other,omitempty" jsonschema:"breakdown only: fold the groups past limit into one row whose dimensions read Other, when there are two or more: a single one is listed under its own name (limit 4 gives at most 5 rows)"`
 	Order       string   `json:"order,omitempty" jsonschema:"breakdown and attributes values only: a metric name to rank groups by, descending, or one of its dimensions (an attributes' attribute and value among them) to sort them by, ascending, ties by the other dimensions ascending (default: the first metric; an attributes with day by day, the first metric descending, event_name, attribute and value, else by event_name, attribute, the first metric descending and value); limit keeps the first groups in that order"`
+	// The funnel kind's fields.
+	Steps    []Step `json:"steps,omitempty" jsonschema:"funnel only, 2 to 10: the steps in order, each {label, where}; the answer is a row per step, step (its label) and value, the actors (users, groups: by) that took it and every step before it"`
+	By       string `json:"by,omitempty" jsonschema:"funnel only: actor (the default), user or group: whose steps are counted"`
+	Sequence bool   `json:"sequence,omitempty" jsonschema:"funnel only: true counts the steps taken one after another in time (an event may take several at once); false, the default, taken any time in the range, in any order"`
 	// The retention kind's fields.
 	Output       string `json:"output,omitempty" jsonschema:"retention and attributes only, required. An attributes: values (a row per dimensions, attribute and value) or keys (attribute, events, values, keys_total: a row per attribute, its events and distinct values, keys_total the number of attributes; the limit busiest, by events, then those keep names). A retention: grid (cohort, identified_by, offset, size, returned, retention: a row per cohort, identity kind and day back, offset the days since the cohort day), curve (offset, retention: one identity kind's cohorts pooled per day back) or milestones (one row, a d<n> column per milestone: the curve's retention that day back)"`
 	IdentifiedBy string `json:"identified_by,omitempty" jsonschema:"retention only: install or user, the cohorts a curve or milestones pools (required there); on a grid optional, its rows of that kind alone (without it, both)"`
@@ -162,6 +166,8 @@ func percent(q float64) string {
 func (q Query) Columns() []string {
 	var cols []string
 	switch q.Kind {
+	case "funnel":
+		return []string{"step", "value"}
 	case "retention":
 		switch q.Output {
 		case "grid":
@@ -215,6 +221,8 @@ func (q Query) Columns() []string {
 func (q Query) ColumnTypes() []string {
 	var types []string
 	switch q.Kind {
+	case "funnel":
+		return []string{"text", "number"}
 	case "retention":
 		for _, c := range q.Columns() {
 			switch c {
@@ -439,7 +447,7 @@ func dimensionOf(table, column string) bool {
 
 // The closed vocabularies of a Query, which a schema describing it lists.
 var (
-	Kinds = []string{"stat", "trend", "breakdown", "retention", "attributes"}
+	Kinds = []string{"stat", "trend", "breakdown", "retention", "attributes", "funnel"}
 	// RetentionOutputs are a retention's outputs, IdentifiedBy what its
 	// curve and milestones pool.
 	RetentionOutputs = []string{"grid", "curve", "milestones"}
@@ -549,6 +557,16 @@ func (q Query) Validate() error {
 		return q.validateRetention()
 	case "attributes":
 		return q.validateAttributes()
+	case "funnel":
+		return q.validateFunnel()
+	}
+	switch {
+	case len(q.Steps) > 0:
+		return invalid("steps", "only a funnel takes steps")
+	case q.By != "":
+		return invalid("by", "only a funnel takes by")
+	case q.Sequence:
+		return invalid("sequence", "only a funnel takes sequence")
 	}
 	switch {
 	case q.Output != "":

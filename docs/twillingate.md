@@ -1727,7 +1727,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 
 | Field | Kinds | Meaning |
 | --- | --- | --- |
-| `kind` | all | `stat`, `trend`, `breakdown`, `retention` or `attributes` (below) |
+| `kind` | all | `stat`, `trend`, `breakdown`, `retention`, `attributes` or `funnel` (below) |
 | `table` | all | `events` (every family), `views`, `product` or `measures`; or `sessions`, one row per session, or `identities`, one row per user or group (below); a retention reads `events`, and may leave it out; an attributes `product` or `measures`, its `keys` also `events` (product and measures both, the default) |
 | `metrics` | stat, trend, breakdown, attributes | the aggregates, each an output column; a trend takes one to five, exactly one with `series` (several are its series, below); an attributes' `keys` none |
 | `where` | all | filters, `{column, op, values}` (`{op, columns}` for `any_set`, `{op, any}` for `any_of`), every one of which a row must satisfy |
@@ -1738,6 +1738,9 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `series` | trend | a column to split each day by |
 | `series_limit` | trend | how many series, 1 to 50, those ranking first by the metric over the range (default 5); only with `series` (a trend without one is refused) |
 | `define` | stat, trend, breakdown | up to 5 text columns the query defines for itself: `{name, cases, else}`, `name` `def_` and a lower-case name, `cases` 1 to 20 `{label, where}` in order. Each row reads the `label` of the first case whose `where` (1 or more filters, as the query's, an `any_of` among them for an OR; none naming a `def_` column) it passes, else `else`, or NULL without one. A dimension, a series and a filter, the query's or a metric's, name it as any text column: an event group as a breakdown's rows, a segment by host as a trend's series |
+| `steps` | funnel | 2 to 10 steps in order, each `{label, where}`: `label` the step's name, `where` 1 or more filters (as the query's, an `any_of` among them; no `ever`, `never` or `def_` column) an event passes to take it. The answer is a row per step, `step` (its label) and `value`: the actors (`by`) that took it and every step before it, which the `funnel` component draws. The query's `where` narrows every step's events, an `ever` or `never` among its filters; `table` is `events` (the default), `views` or `product` |
+| `by` | funnel | `actor` (the default), `user` or `group`: whose steps are counted; a row without the id takes none |
+| `sequence` | funnel | `true`: the steps taken one after another in time, by `ts` (one event may take several in a row); `false`, the default: each taken any time in the range, in any order |
 | `interval` | trend | `day` (the default), `week` or `month`: a row per week (from Monday) or calendar month instead of per day, `day` reading the bucket's first day, which may precede `from` (the first and last buckets hold only the range's days). A distinct count (`actors`, `users`, `groups`) counts over the bucket; `daily_sum`, `daily_max`, `daily_avg` and `days` need the days and are refused. `fill` fills every bucket |
 | `fill` | trend | `zero` gives every day of the range its row, for every kept series or metric: a counted metric (`count`, `actors`, `users`, `groups`, `bounces`, `weight`, `daily_*`, `days`) reads `0` where it is empty, the others stay empty; `""` or absent, only the days with rows |
 | `compare` | stat | `previous` adds a `previous_<name>` column per metric, over as many days ending the day before `from`; `""` or absent, none |
@@ -2131,6 +2134,21 @@ the host. A row reads the first case it passes; `else` labels the rest.
       {"label": "Self-hosted", "where": [{"column": "host", "op": "prefix", "values": ["selfhosted_"]}]}]}],
   "where": [{"column": "def_feature", "op": "is_set"}, {"column": "def_deployment", "op": "is_set"}],
   "metrics": [{"op": "actors", "as": "users"}]}}
+```
+
+A funnel: of the users who started the Apple Pay setup in the range,
+how many downloaded the shortcut, configured it and finished, each step
+after the one before it in time, test builds left out.
+
+```json
+{"project_id": 9, "query": {
+  "kind": "funnel", "table": "product", "by": "user", "sequence": true,
+  "where": [{"op": "never", "by": "user", "where": [{"column": "app_version", "op": "eq", "values": ["dev"]}]}],
+  "steps": [
+    {"label": "Started setup", "where": [{"column": "event_name", "op": "prefix", "values": ["import_setup_"]}]},
+    {"label": "Shortcut downloaded", "where": [{"column": "event_name", "op": "eq", "values": ["import_shortcut_download"]}]},
+    {"label": "Shortcut configured", "where": [{"column": "event_name", "op": "eq", "values": ["import_shortcut_configure"]}]},
+    {"label": "Setup complete", "where": [{"column": "event_name", "op": "eq", "values": ["import_setup_complete"]}]}]}}
 ```
 
 A stat of the share of consenting visitors: visitors counted per day

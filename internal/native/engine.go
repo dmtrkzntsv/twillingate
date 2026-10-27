@@ -371,6 +371,8 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 		return s.retention(ctx, p.From, p.To)
 	case "attributes":
 		return s.attributes(ctx, p.From, p.To)
+	case "funnel":
+		return s.funnel(ctx, p.From, p.To)
 	}
 	specs := s.aggSpecs(p.From, p.To)
 	as := make([]aggregated, len(specs))
