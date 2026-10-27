@@ -68,6 +68,9 @@ func (q Query) validateDefines() error {
 			}
 			for k, f := range c.Where {
 				fp := fmt.Sprintf("%s.where[%d]", cp, k)
+				if f.Op == "ever" || f.Op == "never" {
+					return invalid(fp+".op", "a case takes no %s; filter the query with it instead", f.Op)
+				}
 				if col, ok := namesDefined(f); ok {
 					return invalid(fp, "%s is a defined column; a case's filters name the table's", col)
 				}

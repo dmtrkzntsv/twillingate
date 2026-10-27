@@ -95,13 +95,17 @@ const maxRound = 6
 
 // Filter keeps the rows whose Column satisfies Op against Values.
 type Filter struct {
-	Column string   `json:"column,omitempty" jsonschema:"required but for any_set and any_of: one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent), user_status and group_status (new on the day the user_id or group_id was first seen, as identities has it, returning on a later day, NULL without one), user_label and group_label (the identity's name, as identities has it, else the id; NULL without one), these seven on events, views and product only; computed, a day: user_first_seen and group_first_seen (the identity's first-seen day, as identities has it; NULL without one or when identities lacks it), on events, views and product only; on measures only, vital (LCP, INP, CLS, FCP or TTFB for the event_name $lcp, $inp, $cls, $fcp or $ttfb, else NULL) and vital_rating (good, needs improvement or poor: the sample's bucket value against the vital's thresholds, LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800; NULL for the other measures). On sessions instead: project_id, day, kind, actor_id, actor_kind, session_id, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign, and the numbers duration_sec and views. On identities instead: kind (user or group), id, name, day (first_seen's day), and the numbers views and events"`
-	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, not_prefix (text that does not start with the value), gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none (not NULL, and text not empty); any_set none, and columns instead of column (at least one of them is set, as is_set says); any_of none, and any instead of column (at least one of its filters passes). gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, user_first_seen and group_first_seen, and only on numeric columns and those days. NULL fails every op, ne and not_in included"`
+	Column string   `json:"column,omitempty" jsonschema:"required but for any_set, any_of, ever and never: one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent), user_status and group_status (new on the day the user_id or group_id was first seen, as identities has it, returning on a later day, NULL without one), user_label and group_label (the identity's name, as identities has it, else the id; NULL without one), these seven on events, views and product only; computed, a day: user_first_seen and group_first_seen (the identity's first-seen day, as identities has it; NULL without one or when identities lacks it), on events, views and product only; on measures only, vital (LCP, INP, CLS, FCP or TTFB for the event_name $lcp, $inp, $cls, $fcp or $ttfb, else NULL) and vital_rating (good, needs improvement or poor: the sample's bucket value against the vital's thresholds, LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800; NULL for the other measures). On sessions instead: project_id, day, kind, actor_id, actor_kind, session_id, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign, and the numbers duration_sec and views. On identities instead: kind (user or group), id, name, day (first_seen's day), and the numbers views and events"`
+	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, not_prefix (text that does not start with the value), gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none (not NULL, and text not empty); any_set none, and columns instead of column (at least one of them is set, as is_set says); any_of none, and any instead of column (at least one of its filters passes); ever and never none, and where (with by and over) instead of column: the rows of the actors (users, groups) with at least one event passing where, or of those with none (a row without the id passes neither). gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, user_first_seen and group_first_seen, and only on numeric columns and those days. NULL fails every op, ne and not_in included"`
 	Values []string `json:"values,omitempty" jsonschema:"the values compared against, as text"`
 	// Columns are any_set's columns, in place of Column.
 	Columns []string `json:"columns,omitempty" jsonschema:"any_set only, in place of column: 2 to 5 columns, of which a row passes when at least one is set (not NULL, and text not empty)"`
 	// Any are any_of's filters, in place of Column.
 	Any []Filter `json:"any,omitempty" jsonschema:"any_of only, in place of column: 2 to 10 filters, none of them an any_of, of which a row passes when at least one does (an OR: event_name prefix import_ or event_name in a list)"`
+	// Where, By and Over are ever's and never's.
+	Where []Filter `json:"where,omitempty" jsonschema:"ever and never only, in place of column: 1 to 10 filters over the project's events (every family), all of which one of the actor's events passes"`
+	By    string   `json:"by,omitempty" jsonschema:"ever and never only: actor (the default), user or group: whose events count, and whose rows pass"`
+	Over  string   `json:"over,omitempty" jsonschema:"ever and never only: all (the default), every day up to the query's to, or range, its days only"`
 }
 
 // maxAnySet bounds any_set's columns, maxAnyOf any_of's filters.
@@ -461,7 +465,7 @@ var (
 	OfColumns           = []string{"actors", "users", "groups"}
 	// ShareOfColumns are what share takes as of (weight on measures only).
 	ShareOfColumns = []string{"count", "weight"}
-	FilterOps      = []string{"eq", "ne", "in", "not_in", "contains", "prefix", "not_prefix", "gt", "gte", "lt", "lte", "is_set", "any_set", "any_of"}
+	FilterOps      = []string{"eq", "ne", "in", "not_in", "contains", "prefix", "not_prefix", "gt", "gte", "lt", "lte", "is_set", "any_set", "any_of", "ever", "never"}
 )
 
 var (
@@ -1004,6 +1008,12 @@ func (m Metric) validateRatio(kind, table, p string) error {
 // validate refuses a malformed filter; p is its path (where[0],
 // metrics[1].where[0]).
 func (f Filter) validate(table, p string) error {
+	if f.Op == "ever" || f.Op == "never" {
+		return f.validateEver(table, p)
+	}
+	if len(f.Where) > 0 || f.By != "" || f.Over != "" {
+		return invalid(p+".where", "only ever and never take where, by and over")
+	}
 	if f.Op == "any_of" {
 		switch n := len(f.Any); {
 		case f.Column != "":
@@ -1017,8 +1027,8 @@ func (f Filter) validate(table, p string) error {
 		}
 		for j, g := range f.Any {
 			q := fmt.Sprintf("%s.any[%d]", p, j)
-			if g.Op == "any_of" {
-				return invalid(q+".op", "an any_of holds no any_of")
+			if g.Op == "any_of" || g.Op == "ever" || g.Op == "never" {
+				return invalid(q+".op", "an any_of holds no %s", g.Op)
 			}
 			if err := g.validate(table, q); err != nil {
 				return err

@@ -83,16 +83,16 @@ var filterOptions = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonsc
 	reflect.TypeFor[native.Filter](): filterSchema(),
 }}
 
-// filterSchema is native.Filter's schema: an any_of's filters are
-// filters without one (Validate refuses an any_of in an any_of), a
-// cycle the inference would refuse otherwise.
+// filterSchema is native.Filter's schema: an any_of's and an ever's
+// filters are filters without either (Validate refuses an any_of or an
+// ever in them), a cycle the inference would refuse otherwise.
 func filterSchema() *jsonschema.Schema {
 	ft := reflect.TypeFor[native.Filter]()
 	fields := func(inner reflect.Type) []reflect.StructField {
 		var out []reflect.StructField
 		for i := range ft.NumField() {
 			f := ft.Field(i)
-			if f.Name == "Any" {
+			if f.Name == "Any" || f.Name == "Where" {
 				if inner == nil {
 					continue
 				}
@@ -155,7 +155,11 @@ func queryEnums(in *jsonschema.Schema) {
 	m.Properties["q"].ExclusiveMinimum, m.Properties["q"].ExclusiveMaximum = &minQ, &maxQ
 	filterEnums := func(f *jsonschema.Schema) {
 		f.Properties["op"].Enum = enum(native.FilterOps)
-		f.Properties["any"].Items.Properties["op"].Enum = enum(slices.DeleteFunc(slices.Clone(native.FilterOps), func(op string) bool { return op == "any_of" }))
+		f.Properties["by"].Enum = enum(append([]string{""}, native.EverBy...))
+		f.Properties["over"].Enum = enum(append([]string{""}, native.EverOver...))
+		plain := slices.DeleteFunc(slices.Clone(native.FilterOps), func(op string) bool { return op == "any_of" || op == "ever" || op == "never" })
+		f.Properties["any"].Items.Properties["op"].Enum = enum(plain)
+		f.Properties["where"].Items.Properties["op"].Enum = enum(append(plain, "any_of"))
 	}
 	filterEnums(m.Properties["where"].Items)
 	filterEnums(q.Properties["where"].Items)

@@ -298,6 +298,11 @@ func bucketOf(v float64, null bool) int64 {
 type filter struct {
 	column string
 	anyOf  []filter
+	// ever and never's: its where, its days and the ids found (filled
+	// by collectEver before the scan).
+	inner []filter
+	over  string
+	ids   *idSet
 	typ    colType
 	op     string
 	strs   map[string]bool
@@ -312,6 +317,14 @@ type filter struct {
 func compileFilters(where []Filter, path string) ([]filter, error) {
 	out := make([]filter, len(where))
 	for i, f := range where {
+		if f.Op == "ever" || f.Op == "never" {
+			inner, err := compileFilters(f.Where, fmt.Sprintf("%s[%d].where", path, i))
+			if err != nil {
+				return nil, err
+			}
+			out[i] = filter{op: f.Op, column: everColumn(f.By), typ: typeString, inner: inner, over: f.Over, ids: &idSet{}}
+			continue
+		}
 		if f.Op == "any_of" {
 			anyOf, err := compileFilters(f.Any, fmt.Sprintf("%s[%d].any", path, i))
 			if err != nil {
@@ -459,6 +472,11 @@ func (f *filter) apply(b *Batch, keep []bool) error {
 		pass := make([]bool, len(c.Dict))
 		for j, s := range c.Dict {
 			pass[j] = f.matchString(s)
+		}
+		if f.ids != nil { // ever: the ids found; never: the others; an empty id neither
+			for j, s := range c.Dict {
+				pass[j] = s != "" && f.ids.has(s) == (f.op == "ever")
+			}
 		}
 		for i, x := range c.Idx {
 			if x < 0 || !pass[x] {

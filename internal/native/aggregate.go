@@ -775,6 +775,9 @@ func filtersKey(where []Filter) string {
 		if len(f.Any) > 0 {
 			b.WriteString("(" + filtersKey(f.Any) + ")")
 		}
+		if len(f.Where) > 0 {
+			b.WriteString(strconv.Quote(f.By) + strconv.Quote(f.Over) + "{" + filtersKey(f.Where) + "}")
+		}
 		b.WriteByte('|')
 		for _, v := range f.Values {
 			b.WriteString(strconv.Quote(v))

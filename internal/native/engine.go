@@ -362,6 +362,9 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 			return Result{}, err
 		}
 	}
+	if err := e.collectEver(ctx, everFilters(filters, metrics), p, rs); err != nil {
+		return Result{}, err
+	}
 	s := scan{e: e, q: q, filters: filters, metrics: metrics, project: p.Project, rules: rs}
 	switch q.Kind {
 	case "retention":
