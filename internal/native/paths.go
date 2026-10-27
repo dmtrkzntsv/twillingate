@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
@@ -77,7 +78,7 @@ func (q Query) pathsColumn() string {
 // limit busiest, by sessions, then source and target.
 func (s scan) paths(ctx context.Context, from, to civil.Date) (Result, error) {
 	col, depth := s.q.pathsColumn(), cmp.Or(s.q.Depth, defaultDepth)
-	cols := []string{"day", "ts", "kind", "actor_id", "session_id"}
+	cols := []string{"day", "ts", "id", "kind", "actor_id", "session_id"}
 	for _, c := range readColumns(col) {
 		if !slices.Contains(cols, c) {
 			cols = append(cols, c)
@@ -100,13 +101,15 @@ func (s scan) paths(ctx context.Context, from, to civil.Date) (Result, error) {
 	ps.q.Table = s.q.pathsTable()
 	charge := s.e.charge()
 	type hit struct {
-		ts     int64
-		v, sid string
+		ts         int64
+		v, sid, id string
+		idNull     bool
 	}
 	var mu sync.Mutex
 	days := map[string][]hit{} // per kind, actor and day: its rows
-	err = ps.scanEvents(ctx, all[s.project], Range{From: from, To: to}, cols, nil, charge, func(_ int, b *Batch) error {
-		actor, kind, sid, vc := batchColumn(b, "actor_id"), batchColumn(b, "kind"), batchColumn(b, "session_id"), batchColumn(b, col)
+	// The step column goes as a dimension, so an identity one is added.
+	err = ps.scanEvents(ctx, all[s.project], Range{From: from, To: to}, cols, []string{col}, charge, func(_ int, b *Batch) error {
+		actor, kind, sid, vc, evID := batchColumn(b, "actor_id"), batchColumn(b, "kind"), batchColumn(b, "session_id"), batchColumn(b, col), batchColumn(b, "id")
 		_, ts := b.col("ts")
 		_, day := b.col("day")
 		if actor == nil || ts == nil || ts.Times == nil || day == nil || day.Ints == nil || vc == nil {
@@ -129,12 +132,13 @@ func (s scan) paths(ctx context.Context, from, to civil.Date) (Result, error) {
 				continue
 			}
 			id, _ := textAt(sid, i)
+			eid, hasID := textAt(evID, i)
 			k, _ := textAt(kind, i)
 			key := k + "\x00" + a + "\x00" + strconv.FormatInt(day.Ints[i], 10)
-			if err := charge(int64(32 + len(v) + len(id) + len(key)*boolInt(days[key] == nil))); err != nil {
+			if err := charge(int64(64 + len(v) + len(id) + len(eid) + len(key)*boolInt(days[key] == nil))); err != nil {
 				return err
 			}
-			days[key] = append(days[key], hit{ts.Times[i], v, id})
+			days[key] = append(days[key], hit{ts.Times[i], strings.Clone(v), strings.Clone(id), strings.Clone(eid), !hasID})
 		}
 		return nil
 	})
@@ -147,8 +151,12 @@ func (s scan) paths(ctx context.Context, from, to civil.Date) (Result, error) {
 	// session that was in.
 	const sessionGap = 1800 // seconds
 	var sessions [][]hit
-	for _, hs := range days {
-		slices.SortStableFunc(hs, func(a, b hit) int { return cmp.Or(cmp.Compare(a.ts, b.ts), cmp.Compare(a.v, b.v)) })
+	for key, hs := range days {
+		delete(days, key) // its hits move into sessions
+		// By ts, then event id (none last), as Sessionize orders a day.
+		slices.SortStableFunc(hs, func(a, b hit) int {
+			return cmp.Or(cmp.Compare(a.ts, b.ts), cmp.Compare(boolInt(a.idNull), boolInt(b.idNull)), cmp.Compare(a.id, b.id))
+		})
 		byKey := map[string]int{}
 		gap := 0
 		for j, h := range hs {
@@ -161,6 +169,9 @@ func (s scan) paths(ctx context.Context, from, to civil.Date) (Result, error) {
 			}
 			k, ok := byKey[key]
 			if !ok {
+				if err := charge(64); err != nil { // the session's slot and key
+					return Result{}, err
+				}
 				k = len(sessions)
 				byKey[key] = k
 				sessions = append(sessions, nil)
@@ -181,7 +192,13 @@ func (s scan) paths(ctx context.Context, from, to civil.Date) (Result, error) {
 			}
 		}
 		for k := 1; k < len(steps); k++ {
-			flows[flow{strconv.Itoa(k) + " " + steps[k-1], strconv.Itoa(k+1) + " " + steps[k]}]++
+			fl := flow{strconv.Itoa(k) + " " + steps[k-1], strconv.Itoa(k+1) + " " + steps[k]}
+			if _, seen := flows[fl]; !seen {
+				if err := charge(int64(96 + len(fl.source) + len(fl.target))); err != nil { // the flow, its key and its row
+					return Result{}, err
+				}
+			}
+			flows[fl]++
 		}
 	}
 	type row struct {
