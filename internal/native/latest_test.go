@@ -76,3 +76,40 @@ func TestValidateLatest(t *testing.T) {
 		}
 	}
 }
+
+// TestLatestRanksAndTies: a breakdown ordered by a latest number ranks
+// by its value, a text one by its text; a tie at one ts takes the
+// greater value as the column's type compares it.
+func TestLatestRanksAndTies(t *testing.T) {
+	f := engineFixture(t)
+	e := New(Options{Dir: f.Dir, Workers: 3})
+	p := Params{Project: 1, From: date(t, engineFrom), To: date(t, today)}
+	for _, col := range []string{"display_width", "path"} {
+		res, err := e.Answer(context.Background(), Query{Kind: "breakdown", Table: "views", Dimensions: []string{"actor_id"},
+			Where: []Filter{{Column: col, Op: "is_set"}}, Order: "w", Limit: 1000,
+			Metrics: []Metric{{Op: "latest", Column: col, As: "w"}}}, p, engineRules)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 1; i < len(res.Rows); i++ {
+			if cmpLatest(res.Rows[i-1][1], res.Rows[i][1], col == "display_width") < 0 {
+				t.Errorf("%s: row %d %v ranks above %v", col, i, res.Rows[i-1], res.Rows[i])
+			}
+		}
+		if len(res.Rows) < 2 {
+			t.Fatalf("%s: %d rows", col, len(res.Rows))
+		}
+	}
+	if !later(5, "1200", 5, "900", true) || later(5, "1200", 5, "900", false) {
+		t.Error("a tie compares numbers as numbers, text as text")
+	}
+	q := Query{Kind: "stat", Table: "views", Metrics: []Metric{{Op: "latest", Column: "def_missing"}}}
+	if err := q.Validate(); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "metrics[0].column") {
+		t.Errorf("latest of an undefined def_ column: %v", err)
+	}
+	for _, c := range LatestColumns {
+		if _, ok := idColumns[c]; ok {
+			t.Errorf("LatestColumns lists %s, an identity column", c)
+		}
+	}
+}

@@ -79,3 +79,28 @@ func TestValidateFunnel(t *testing.T) {
 		}
 	}
 }
+
+// TestFunnelStepsReadIdentities and fields of its own: a step naming an
+// identity column reads it (user_status new counts the new users), and
+// a retention refuses a funnel's fields.
+func TestFunnelStepsReadIdentities(t *testing.T) {
+	f := engineFixture(t)
+	e := New(Options{Dir: f.Dir, Workers: 3})
+	p := Params{Project: 1, From: date(t, engineFrom), To: date(t, today)}
+	set := []Filter{{Column: "user_id", Op: "is_set"}}
+	isNew := []Filter{{Column: "user_status", Op: "eq", Values: []string{"new"}}}
+	res, err := e.Answer(context.Background(), Query{Kind: "funnel", By: "user", Steps: []Step{{Label: "any", Where: set}, {Label: "new", Where: isNew}}}, p, engineRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stat, err := e.Answer(context.Background(), Query{Kind: "stat", Table: "events", Metrics: []Metric{{Op: "users"}}, Where: isNew}, p, engineRules)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Rows[1][1] != stat.Rows[0][0] || res.Rows[1][1] == "0" {
+		t.Errorf("new users through the funnel %s, by a stat %s", res.Rows[1][1], stat.Rows[0][0])
+	}
+	if err := (Query{Kind: "retention", Output: "grid", By: "user"}).Validate(); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "by") {
+		t.Errorf("a retention with by: %v", err)
+	}
+}

@@ -335,7 +335,7 @@ func (h *host) registerReporting(r *registrar) {
 	expose(r, spec{Name: "update_dashboard", Annotations: write, Method: "PATCH", Path: d,
 		Description: "Rename a user dashboard (title, at least 2 characters) and/or move it with group_id (join a group as a tab, or 0 to leave one) and/or after (a dashboard id; 0 first). whole_group with title renames its group instead: the sidebar name, which otherwise is the first tab's title; a group name can be replaced, never cleared. sidebar, in a call of its own and for built-in dashboards only, puts the whole group in or out of the sidebar; your own dashboards are always in the sidebar, so it is refused on one (archive_dashboard takes one away). Your own dashboards are added to projects one at a time with add_project_tab. Otherwise system dashboards are read-only."},
 		h.updateDashboard)
-	expose(r, spec{Name: "duplicate_dashboard", Annotations: write, Method: "POST", Path: d + "/duplicate", Status: http.StatusCreated,
+	expose(r, spec{Name: "duplicate_dashboard", constrain: narrowEnums, Annotations: write, Method: "POST", Path: d + "/duplicate", Status: http.StatusCreated,
 		Description: "Copy any dashboard with copies of its live widgets; the copy is a user dashboard. The copy is a new dashboard last in the sidebar; with group_id it joins that user group as a tab instead (right after the source when that is the source's own group, last otherwise). A system dashboard is copied too, also one out of the sidebar. An archived user dashboard is refused (restore it first). whole_group copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no group_id. The copy is in the sidebar and on no project's tabs. Duplicating never hides the source: to replace a system group, take it out of the sidebar with update_dashboard {sidebar: false}, and add your copy to projects with add_project_tab. where and project_id narrow every copied query widget: its rows must also pass where (a segment: {op: ever, by: group, where: [host eq app.example.com]}; no test traffic: {op: never, where: [...]}), and it reads that project; a sql widget among the copies is refused."},
 		h.duplicateDashboard)
 	expose(r, spec{Name: "archive_dashboard", Annotations: idem, Method: "POST", Path: d + "/archive",
@@ -363,7 +363,7 @@ func (h *host) registerReporting(r *registrar) {
 	expose(r, spec{Name: "update_widget", Annotations: write, Method: "PATCH", Path: w, constrain: widget(self),
 		Description: "Call reporting_guide first. Change a widget on a user dashboard: name, component, title, props, source, width or height, or move it with after (a widget id there; 0 first). Fields you omit are kept; the result is validated whole, but a change of only width, height, after, title or name runs no query."},
 		h.updateWidget)
-	expose(r, spec{Name: "copy_widget", Annotations: write, Method: "POST", Path: w + "/copy", Status: http.StatusCreated,
+	expose(r, spec{Name: "copy_widget", constrain: narrowEnums, Annotations: write, Method: "POST", Path: w + "/copy", Status: http.StatusCreated,
 		Description: "Call reporting_guide first. Copy a widget, a system one included, onto a user dashboard (dashboard_id), keeping its size; optional after (a widget id there; 0 first; omitted, last). The copy is independent of the original. where and project_id narrow a query widget's copy, as duplicate_dashboard's do."},
 		h.copyWidget)
 	expose(r, spec{Name: "archive_widget", Annotations: idem, Method: "POST", Path: w + "/archive",
@@ -382,6 +382,10 @@ func (h *host) registerReporting(r *registrar) {
 	h.registerWidgetStream(r)
 	h.registerWidgetShares(r)
 }
+
+// narrowEnums lists the filter vocabulary in duplicate_dashboard's and
+// copy_widget's where, as the query tool's.
+func narrowEnums(in *jsonschema.Schema) { filterEnums(in.Properties["where"].Items) }
 
 // queryContentIn is a query source's content as its JSON object, for its
 // schema only: Source.UnmarshalJSON keeps it as text.
