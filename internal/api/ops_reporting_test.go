@@ -837,3 +837,53 @@ func TestArchiveBuiltinRefused(t *testing.T) {
 		t.Errorf("dashboard 1 archived_at = %q, want live", archivedAt[1])
 	}
 }
+
+// TestDuplicateNarrowed: a built-in group copied with where and
+// project_id carries them into every query widget, Markdown aside; a
+// filter one of them cannot take refuses the whole copy, and copy_widget
+// narrows the same way.
+func TestDuplicateNarrowed(t *testing.T) {
+	_, cs := newTestHost(t)
+	ever := map[string]any{"op": "ever", "by": "actor", "where": []any{map[string]any{"column": "country", "op": "eq", "values": []any{"DE"}}}}
+	var d struct {
+		ID      int64 `json:"dashboard_id"`
+		Widgets []struct {
+			ID     int64 `json:"widget_id"`
+			Source struct {
+				Type    string `json:"type"`
+				Content string `json:"content"`
+			} `json:"source"`
+			FollowsProject bool `json:"follows_project"`
+		} `json:"widgets"`
+	}
+	toolJSON(t, cs, "duplicate_dashboard", map[string]any{"dashboard_id": 1, "where": []any{ever}, "project_id": 1}, &d)
+	toolJSON(t, cs, "get_dashboard", map[string]any{"dashboard_id": d.ID}, &d)
+	queries := 0
+	for _, w := range d.Widgets {
+		if w.Source.Type != "query" {
+			continue
+		}
+		queries++
+		if !strings.Contains(w.Source.Content, `"project_id":1`) || !strings.Contains(w.Source.Content, `"op":"ever"`) || w.FollowsProject {
+			t.Errorf("copied widget %d: %s (follows project %v)", w.ID, w.Source.Content, w.FollowsProject)
+		}
+	}
+	if queries == 0 {
+		t.Fatal("the copy has no query widgets")
+	}
+
+	// host is no column of sessions, which some of Views' widgets read.
+	res := callTool(t, cs, "duplicate_dashboard", map[string]any{"dashboard_id": 1,
+		"where": []any{map[string]any{"column": "host", "op": "eq", "values": []any{"a"}}}})
+	if !res.IsError || !strings.Contains(textOf(res), "not a column of sessions") {
+		t.Errorf("a filter a widget cannot take = %s", textOf(res))
+	}
+
+	var w struct {
+		Source struct{ Content string } `json:"source"`
+	}
+	toolJSON(t, cs, "copy_widget", map[string]any{"widget_id": 9, "dashboard_id": d.ID, "where": []any{ever}}, &w)
+	if !strings.Contains(w.Source.Content, `"op":"ever"`) {
+		t.Errorf("copy_widget narrowed = %s", w.Source.Content)
+	}
+}

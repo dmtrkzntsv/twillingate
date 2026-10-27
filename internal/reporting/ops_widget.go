@@ -46,6 +46,7 @@ type UpdateWidget struct {
 type CopyWidget struct {
 	ID, DashboardID int64
 	After           *int64
+	Narrow          Narrow // what the copy is narrowed to
 }
 
 // AddWidget adds one widget to a user dashboard.
@@ -205,7 +206,10 @@ func (s *Service) CopyWidget(ctx context.Context, actor string, in CopyWidget) (
 	if err != nil {
 		return WidgetInfo{}, err
 	}
-	w := freshCopy(src)
+	w, err := narrowed(freshCopy(src), in.Narrow)
+	if err != nil {
+		return WidgetInfo{}, err
+	}
 	w.DashboardID = d.ID
 	if taken := takenNames(existing, 0); taken[w.Name] {
 		w.Name = deriveName(w.Name, taken)
