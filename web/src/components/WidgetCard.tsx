@@ -90,7 +90,13 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
   const [blindFor, setBlindFor] = useState<string>()
   const lastColumns = (last?.data as SqlData | null | undefined)?.columns
   const viewArgs = viewQuery(widget, view, lastColumns ?? (blindFor === selection ? [] : undefined))
-  const query = useQuery(widgetQuery(widget, params, idle, viewArgs))
+  // The view that ran past the timeout under this selection: not run again
+  // by itself (only a changed view, or the refresh, asks again), so a slow
+  // stored filter costs one timeout, not one per answer that comes back.
+  const [slowView, setSlowView] = useState<{ selection: string; args: string }>()
+  const held = slowView?.selection === selection && slowView.args === JSON.stringify(viewArgs)
+  const options = widgetQuery(widget, params, idle, viewArgs)
+  const query = useQuery({ ...options, enabled: options.enabled !== false && !held })
   const settled = remote && !query.isPlaceholderData ? query.data : undefined
   useEffect(() => {
     if (settled) setKept({ selection, answer: settled })
@@ -99,12 +105,21 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
   const Component = componentOf(widget)?.default
   const answer = query.data ?? (remote ? last : undefined)
   const refused = query.error instanceof ApiError && query.error.status === 400 ? query.error : undefined
+  // A query that ran past CONSOLE_QUERY_TIMEOUT (code timeout, not just any 504).
+  const timedOut = query.error instanceof ApiError && query.error.code === 'timeout' ? query.error : undefined
   const sentView = Object.keys(viewArgs).length > 0
+  // A stored view that is refused, or too slow, before any answer: ask once
+  // without it, so the filter bar comes up and the viewer can change it.
   useEffect(() => {
-    if (remote && refused && !last && sentView) setBlindFor(selection)
-  }, [remote, refused, last, sentView, selection])
-  // A remote refusal with rows to keep is the view's fault: it shows under the filter bar.
-  const viewError = remote && refused && answer ? refused.message : undefined
+    if (remote && (refused || timedOut) && !last && sentView) setBlindFor(selection)
+  }, [remote, refused, timedOut, last, sentView, selection])
+  const viewKey = JSON.stringify(viewArgs)
+  useEffect(() => {
+    if (remote && timedOut && sentView) setSlowView({ selection, args: viewKey })
+  }, [remote, timedOut, sentView, selection, viewKey])
+  // A remote refusal with rows to keep is the view's fault: it shows under the
+  // filter bar, as does a filter that ran past the timeout.
+  const viewError = remote && answer ? (refused ?? timedOut)?.message : undefined
 
   const removed = !Component || answer?.removed === true
   const truncated = (answer?.data as SqlData | null | undefined)?.truncated === true
@@ -343,28 +358,50 @@ function FailedState({ error, onRetry }: { error: Error; onRetry: () => void }) 
   if (error instanceof ApiError && error.status === 400) {
     return (
       <CardState icon={<TriangleAlertIcon />} title="Query no longer runs">
-        <Collapsible className="flex w-full flex-col items-center">
-          <CollapsibleTrigger asChild>
-            <Button variant="link" size="sm" className="group h-6 text-muted-foreground">
-              Details
-              <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
-            </Button>
-          </CollapsibleTrigger>
-          <CollapsibleContent className="w-full">
-            <pre className="rounded-md bg-muted p-2 text-left font-mono text-xs break-words whitespace-pre-wrap text-foreground">
-              {error.message}
-            </pre>
-          </CollapsibleContent>
-        </Collapsible>
+        <Details message={error.message} />
       </CardState>
     )
   }
+  // A timeout is the query running past CONSOLE_QUERY_TIMEOUT: a retry may
+  // finish in time, and the message says what to narrow if it does not. A
+  // proxy's own 504 carries no such code and reads as any failure.
+  if (error instanceof ApiError && error.code === 'timeout') {
+    return (
+      <CardState icon={<TriangleAlertIcon />} title="Took too long">
+        <Details message={error.message} />
+        <Button variant="outline" size="sm" className="mt-1 h-7" onClick={onRetry}>
+          Retry
+        </Button>
+      </CardState>
+    )
+  }
+  // A 429 is the SQL engine at capacity: the same query may run later.
+  const busy = error instanceof ApiError && error.status === 429
   return (
-    <CardState icon={<CloudOffIcon />} title="Couldn't load">
+    <CardState icon={<CloudOffIcon />} title={busy ? 'Busy, try again later' : "Couldn't load"}>
       <Button variant="outline" size="sm" className="mt-1 h-7" onClick={onRetry}>
         Retry
       </Button>
     </CardState>
+  )
+}
+
+/** A refusal's message, folded under Details. */
+function Details({ message }: { message: string }) {
+  return (
+    <Collapsible className="flex w-full flex-col items-center">
+      <CollapsibleTrigger asChild>
+        <Button variant="link" size="sm" className="group h-6 text-muted-foreground">
+          Details
+          <ChevronDownIcon className="transition-transform group-data-[state=open]:rotate-180" />
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="w-full">
+        <pre className="rounded-md bg-muted p-2 text-left font-mono text-xs break-words whitespace-pre-wrap text-foreground">
+          {message}
+        </pre>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }
 

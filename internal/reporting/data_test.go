@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/dmtrkzntsv/twillingate/sqlengine"
 	"strconv"
 	"strings"
 	"sync"
@@ -429,5 +430,18 @@ func TestWidgetDataSourceUpdateMisses(t *testing.T) {
 	}
 	if res2 := got2.Data.(readsql.Result); res2.Rows[0][0] != "2" {
 		t.Errorf("after updating the source: rows = %v, want [[2]] (a miss, not the stale cached [[1]])", res2.Rows)
+	}
+}
+
+// TestWrapLoadErrKeepsBusyAndTimeout: a busy engine's refusal and a
+// timeout reach the caller as such, without the release notes pointer:
+// the same load may run later, or a narrower one in time.
+func TestWrapLoadErrKeepsBusyAndTimeout(t *testing.T) {
+	e := &sqlEngine{timeout: time.Second}
+	for kind, want := range map[sqlengine.Kind]error{sqlengine.KindBusy: store.ErrBusy, sqlengine.KindTimeout: store.ErrTimeout} {
+		err := wrapLoadErr(e.err(context.Background(), &sqlengine.Error{Status: kind.Status(), Kind: kind, Message: "x"}))
+		if !errors.Is(err, want) || errors.Is(err, store.ErrInvalid) || strings.Contains(err.Error(), ReleasesURL) {
+			t.Errorf("%s: err = %v, want the %v refusal as it is", kind, err, want)
+		}
 	}
 }

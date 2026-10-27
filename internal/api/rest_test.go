@@ -9,10 +9,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 func serveREST(t *testing.T, r *registrar, method, target, body string) *httptest.ResponseRecorder {
@@ -122,6 +124,8 @@ func TestWriteErrorMapping(t *testing.T) {
 		{invalidf("bad"), 400, "invalid"},
 		{notFoundf("gone"), 404, "not_found"},
 		{fmt.Errorf("wrapped: %w", manage.ErrConflict), 409, "conflict"},
+		{store.Refuse(manage.ErrBusy, "the SQL engine is busy; try again later"), 429, "busy"},
+		{timeoutf("query exceeded CONSOLE_QUERY_TIMEOUT (30s)"), 504, "timeout"},
 		{errors.New("disk on fire"), 500, "internal"},
 	} {
 		rec := httptest.NewRecorder()
@@ -131,6 +135,12 @@ func TestWriteErrorMapping(t *testing.T) {
 		writeError(rec, logger, req, c.err)
 		if rec.Code != c.status || errorCode(t, rec) != c.code {
 			t.Errorf("%v → %d %s, want %d %s", c.err, rec.Code, rec.Body.String(), c.status, c.code)
+		}
+		if !slices.Contains(errorCodes, c.code) {
+			t.Errorf("code %s is not in the OpenAPI Error schema", c.code)
+		}
+		if ra := rec.Header().Get("Retry-After"); (ra != "") != (c.status == 429) || c.status == 429 && ra != "5" {
+			t.Errorf("%v → Retry-After %q, want 5 on a 429 only", c.err, ra)
 		}
 		if c.code == "internal" && strings.Contains(rec.Body.String(), "disk on fire") {
 			t.Errorf("internal error text leaked: %s", rec.Body.String())

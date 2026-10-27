@@ -434,3 +434,23 @@ func TestDevHandlerListsArchivedProjects(t *testing.T) {
 		t.Errorf("projects = %+v, want %d live and %d archived", out.Projects, live, gone)
 	}
 }
+
+// TestWriteAPIErrBusyAndTimeout: reporting dev answers a busy engine 429
+// with Retry-After and a timeout 504, as the API does.
+func TestWriteAPIErrBusyAndTimeout(t *testing.T) {
+	for _, c := range []struct {
+		err        error
+		status     int
+		code       string
+		retryAfter string
+	}{
+		{store.Refuse(store.ErrBusy, "busy"), http.StatusTooManyRequests, "busy", "5"},
+		{store.Refuse(store.ErrTimeout, "slow"), http.StatusGatewayTimeout, "timeout", ""},
+	} {
+		rec := httptest.NewRecorder()
+		writeAPIErr(rec, c.err)
+		if rec.Code != c.status || !strings.Contains(rec.Body.String(), `"code":"`+c.code+`"`) || rec.Header().Get("Retry-After") != c.retryAfter {
+			t.Errorf("%v = %d %s Retry-After %q, want %d %s %q", c.err, rec.Code, rec.Body, rec.Header().Get("Retry-After"), c.status, c.code, c.retryAfter)
+		}
+	}
+}

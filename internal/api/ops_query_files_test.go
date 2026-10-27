@@ -113,7 +113,7 @@ func TestQueryFilesSourceErrors(t *testing.T) {
 		{"memory loading the logs", kind(sqlengine.KindOutOfMemoryLoadingLog, "Out of Memory Error: failed to allocate data of size 16.0 MiB"),
 			[]string{"open logs", "memory limit", "raise"}},
 		{"child died", kind(sqlengine.KindExited, "engine: child exited"), []string{"stopped", "memory limit"}},
-		{"busy", kind(sqlengine.KindBusy, "no free slot; retry later"), []string{"busy", "retry"}},
+		{"busy", kind(sqlengine.KindBusy, "no free slot; retry later"), []string{"busy", "try again later"}},
 		{"stale", kind(sqlengine.KindStale, "a file in the table spec is gone"), []string{"changed under the query", "retry"}},
 		{"too large", sqlengine.ErrTooLarge, []string{"larger than 256 MiB", "fewer rows"}},
 		{"internal", kind(sqlengine.KindInternal, "spawn failed"), []string{"SQL engine failed", "SQL_ENGINE_SOCKET"}},
@@ -179,6 +179,12 @@ func TestQueryReadsTheFiles(t *testing.T) {
 		textOf(res) != "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)" {
 		t.Errorf("without an engine: %s", textOf(res))
 	}
+	h.sql = &fakeFiles{err: &sqlengine.Error{Status: sqlengine.KindBusy.Status(), Kind: sqlengine.KindBusy, Message: "no free slot"}}
+	if rec := serveREST(t, newTestRegistrar(t, h), "POST", "/api/query", `{"sql":"SELECT 1"}`); rec.Code != http.StatusTooManyRequests ||
+		!strings.Contains(rec.Body.String(), `"code":"busy"`) || rec.Header().Get("Retry-After") == "" {
+		t.Errorf("REST on a busy engine = %d %s, want 429 busy with Retry-After", rec.Code, rec.Body)
+	}
+	h.sql = nil
 	rec := serveREST(t, newTestRegistrar(t, h), "POST", "/api/query", `{"sql":"SELECT 1"}`)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), `"code":"invalid"`) ||
 		!strings.Contains(rec.Body.String(), "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)") {

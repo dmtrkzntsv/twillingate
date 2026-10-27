@@ -13,10 +13,12 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -229,11 +231,11 @@ func (h *host) answer(ctx context.Context, q native.Query, p native.Params) (nat
 	return res, nil
 }
 
-// answerErr words an engine's refusal as answer does: a timeout with
-// CONSOLE_QUERY_TIMEOUT's words, a refusal as invalid (nativeError).
+// answerErr words an engine's refusal as answer does: a timeout as one,
+// in CONSOLE_QUERY_TIMEOUT's words, a refusal as invalid (nativeError).
 func (h *host) answerErr(err error) error {
 	if errors.Is(err, context.DeadlineExceeded) {
-		return invalidf("%s", sqlbind.Timeout(h.queryTimeout))
+		return timeoutf("%s", sqlbind.Timeout(h.queryTimeout))
 	}
 	return nativeError(err)
 }
@@ -404,11 +406,11 @@ func (h *host) sqlError(ctx context.Context, err error) error {
 	isKind := func(k sqlengine.Kind) bool { return errors.As(err, &se) && se.Kind == k }
 	switch {
 	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
-		return invalidf("%s", sqlbind.Timeout(h.queryTimeout))
+		return timeoutf("%s", sqlbind.Timeout(h.queryTimeout))
 	case ctx.Err() != nil: // the caller went away: whatever the engine said last
 		return err
 	case isKind(sqlengine.KindTimeout):
-		return invalidf("%s", sqlbind.Timeout(h.queryTimeout))
+		return timeoutf("%s", sqlbind.Timeout(h.queryTimeout))
 	case isKind(sqlengine.KindOutOfMemoryLoadingLog):
 		return invalidf("%s", sqlbind.LogsOutOfMemory)
 	case isKind(sqlengine.KindOutOfMemory):
@@ -427,7 +429,7 @@ func (h *host) sqlError(ctx context.Context, err error) error {
 	case isKind(sqlengine.KindExited):
 		return invalidf("%s", sqlbind.EngineExited)
 	case isKind(sqlengine.KindBusy):
-		return invalidf("%s", sqlbind.Busy)
+		return store.Refuse(manage.ErrBusy, "%s", sqlbind.Busy)
 	case isKind(sqlengine.KindStale):
 		return invalidf("%s", sqlbind.Stale)
 	case errors.Is(err, sqlengine.ErrTooLarge):

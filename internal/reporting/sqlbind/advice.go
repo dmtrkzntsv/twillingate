@@ -19,9 +19,12 @@ const (
 	// query in flight, which the kernel's out-of-memory killer is the
 	// usual cause of.
 	EngineExited = "the SQL engine stopped while running the query, most likely past the SQL engine's memory limit; narrow the query"
-	// Busy follows an engine that answered busy: every slot it runs
-	// queries in was taken.
-	Busy = "the SQL engine is busy: all of its slots are running other queries; retry in a moment"
+	// BusyRetryAfter is the Retry-After, in seconds, a busy refusal is
+	// answered with over REST (429).
+	BusyRetryAfter = 5
+	// Busy follows an engine that answered busy: its queue was full, or
+	// the query waited out its turn. The same query may run later.
+	Busy = "the SQL engine is busy; try again later"
 	// Stale follows an engine that found a file of the table spec gone on
 	// every attempt: the daily pass was moving the files under the query.
 	Stale = "the event files changed under the query on every attempt (the daily pass dumps and merges them); retry in a moment"

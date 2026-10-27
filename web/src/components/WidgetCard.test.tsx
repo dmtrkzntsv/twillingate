@@ -179,6 +179,32 @@ describe('WidgetCard', () => {
     expect(spy).toHaveBeenCalledTimes(2)
   })
 
+  it('says "Took too long" on a 504, with the message folded, and retries on request', async () => {
+    const spy = vi
+      .spyOn(endpoints, 'widgetData')
+      .mockRejectedValueOnce(new ApiError(504, 'query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the date range, or aggregate', 'timeout'))
+      .mockResolvedValue(sqlAnswer())
+    renderCard()
+    expect(await screen.findByText('Took too long')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: /details/i }))
+    expect(screen.getByText(/narrow the date range/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('12.3K')).toBeInTheDocument()
+    expect(spy).toHaveBeenCalledTimes(2)
+  })
+
+  it('says "Busy, try again later" on a 429 and retries on request', async () => {
+    const spy = vi
+      .spyOn(endpoints, 'widgetData')
+      .mockRejectedValueOnce(new ApiError(429, 'the SQL engine is busy; try again later', 'busy'))
+      .mockResolvedValue(sqlAnswer())
+    renderCard()
+    expect(await screen.findByText('Busy, try again later')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await screen.findByText('12.3K')).toBeInTheDocument()
+    expect(spy).toHaveBeenCalledTimes(2)
+  })
+
   it('says "Couldn\'t load" on a network failure', async () => {
     vi.spyOn(endpoints, 'widgetData').mockRejectedValue(new TypeError('Failed to fetch'))
     renderCard()
@@ -424,6 +450,30 @@ describe('WidgetCard with a remote table', () => {
     // Kept, greyed, and still stored.
     expect(screen.getByRole('button', { name: 'Platform = web' }).closest('[data-stale]')).not.toBeNull()
     expect(JSON.parse(localStorage.getItem(VIEW_KEY)!).filters).toEqual([gone, PLAN])
+  })
+
+  it('comes up without a stored filter that times out, so the viewer can change it', async () => {
+    storeView([PLAN])
+    const slow = 'query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the date range, or aggregate'
+    const spy = vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => {
+      if (q.filters) throw new ApiError(504, slow, 'timeout')
+      return remoteAnswer(q)
+    })
+    renderCard(remoteWidget())
+    expect(await screen.findByText('iOS')).toBeInTheDocument()
+    expect(screen.queryByText('Took too long')).not.toBeInTheDocument()
+    expect(await screen.findByText(slow)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Attribute in plan' })).toBeInTheDocument()
+    // The slow view ran once: the answer that came back without it does
+    // not send it again.
+    await new Promise((r) => setTimeout(r, 200))
+    expect(spy.mock.calls.filter(([, q]) => q.filters).length).toBe(1)
+  })
+
+  it('reads a 504 without the timeout code as any failure', async () => {
+    vi.spyOn(endpoints, 'widgetData').mockRejectedValue(new ApiError(504, 'Gateway Timeout'))
+    renderCard()
+    expect(await screen.findByText("Couldn't load")).toBeInTheDocument()
   })
 
   it('takes the sort a viewer stored before filters existed, once', async () => {

@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 )
 
 // maxAPIBody caps a REST request body; larger bodies are refused as invalid.
@@ -178,6 +179,9 @@ type apiError struct {
 // request's own cancellation, and nobody reads the answer.
 func writeError(w http.ResponseWriter, logger *slog.Logger, req *http.Request, err error) {
 	status, e := refusalOf(logger, req, err)
+	if status == http.StatusTooManyRequests {
+		w.Header().Set("Retry-After", strconv.Itoa(sqlbind.BusyRetryAfter))
+	}
 	writeJSON(w, status, map[string]apiError{"error": e})
 }
 
@@ -194,6 +198,10 @@ func refusalOf(logger *slog.Logger, req *http.Request, err error) (int, apiError
 		return http.StatusNotFound, apiError{Code: "not_found", Message: err.Error()}
 	case errors.Is(err, manage.ErrConflict):
 		return http.StatusConflict, apiError{Code: "conflict", Message: err.Error()}
+	case errors.Is(err, manage.ErrBusy):
+		return http.StatusTooManyRequests, apiError{Code: "busy", Message: err.Error()}
+	case errors.Is(err, manage.ErrTimeout):
+		return http.StatusGatewayTimeout, apiError{Code: "timeout", Message: err.Error()}
 	}
 	logger.Error("api request failed", "method", req.Method, "path", req.URL.Path, "error", err)
 	return http.StatusInternalServerError, apiError{Code: "internal", Message: "internal error"}

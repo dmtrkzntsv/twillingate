@@ -320,6 +320,11 @@ func wrapLoadErr(err error) error {
 	if errors.Is(err, errInternal) || errors.Is(err, native.ErrInternal) {
 		return err
 	}
+	// A busy engine or a timeout is no fault of an update: the same load
+	// may run later, or narrower.
+	if errors.Is(err, store.ErrBusy) || errors.Is(err, store.ErrTimeout) {
+		return err
+	}
 	return store.Refuse(store.ErrInvalid,
 		"%s; if this started after an update, see the release notes at %s", err, ReleasesURL)
 }
