@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 )
@@ -94,6 +95,8 @@ var computedColumns = map[string]computedColumn{
 	"device_label":     {[]string{"device_model", "device"}, deviceLabelColumn},
 	"platform_version": {[]string{"platform", "app_version"}, platformVersionColumn},
 	"consent_state":    {[]string{"consent"}, consentStateColumn},
+	"hour":             {[]string{"ts"}, hourColumn},
+	"weekday":          {[]string{"ts"}, weekdayColumn},
 }
 
 // textDict builds a computed text column's dictionary.
@@ -209,6 +212,33 @@ func consentStateColumn(b *Batch) *Column {
 			return "none", true
 		}
 		return "unknown", true
+	})
+}
+
+// hourColumn is the UTC hour of ts, 00 to 23, two digits so the hours
+// sort as text; NULL without a ts.
+func hourColumn(b *Batch) *Column {
+	_, c := b.col("ts")
+	return textColumn(b.N, func(i int) (string, bool) {
+		if c == nil || c.Times == nil || (c.Null != nil && c.Null[i]) {
+			return "", false
+		}
+		return fmt.Sprintf("%02d", time.UnixMicro(c.Times[i]).UTC().Hour()), true
+	})
+}
+
+// weekdays are weekday's values, Monday first: the day's number from 1
+// so they sort as text, and its name.
+var weekdays = [7]string{"1 Mon", "2 Tue", "3 Wed", "4 Thu", "5 Fri", "6 Sat", "7 Sun"}
+
+// weekdayColumn is the UTC weekday of ts (weekdays); NULL without a ts.
+func weekdayColumn(b *Batch) *Column {
+	_, c := b.col("ts")
+	return textColumn(b.N, func(i int) (string, bool) {
+		if c == nil || c.Times == nil || (c.Null != nil && c.Null[i]) {
+			return "", false
+		}
+		return weekdays[(int(time.UnixMicro(c.Times[i]).UTC().Weekday())+6)%7], true
 	})
 }
 

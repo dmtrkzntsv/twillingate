@@ -171,7 +171,7 @@ func (e *Engine) AnswerAll(ctx context.Context, reqs []Request) []Answered {
 // retention, an attributes (each with its own scan) or a query of
 // identities (one cached batch, nothing to share).
 func alone(q Query) bool {
-	return q.Kind == "retention" || q.Kind == "attributes" || q.Kind == "funnel" || q.Table == "identities" || hasEver(q)
+	return q.Kind == "retention" || q.Kind == "attributes" || q.Kind == "funnel" || q.Kind == "paths" || q.Table == "identities" || hasEver(q)
 }
 
 // rulesKey is what of rules a project's scan reads with: the project's

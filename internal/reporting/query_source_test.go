@@ -147,7 +147,7 @@ func TestQuerySourceValidate(t *testing.T) {
 		{"unknown query field", widget("stat", "{}", `{"query":{"kind":"stat","table":"events","metrics":[{"op":"count"}],"group":"x"}}`), `query source: json: unknown field "group"`},
 		{"trailing", widget("stat", "{}", `{"query":`+stat+`} {}`), "query source: more than one JSON value"},
 		{"invalid query", widget("stat", "{}", `{"query":{"kind":"pie","table":"events","metrics":[{"op":"count"}]}}`),
-			`query.kind: "pie" is not one of stat, trend, breakdown, retention, attributes, funnel`},
+			`query.kind: "pie" is not one of stat, trend, breakdown, retention, attributes, funnel, paths`},
 		{"rename unknown", widget("stat", "{}", `{"query":`+stat+`,"rename":{"count":"value"}}`),
 			"rename: count is not a column of the query; its columns are value"},
 		{"rename onto one", widget("bar_list", "{}", `{"query":{"kind":"breakdown","table":"events","metrics":[{"op":"actors"}],"dimensions":["country"]},"rename":{"country":"value","actors":"value"}}`),

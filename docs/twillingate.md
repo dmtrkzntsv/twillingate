@@ -1727,7 +1727,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 
 | Field | Kinds | Meaning |
 | --- | --- | --- |
-| `kind` | all | `stat`, `trend`, `breakdown`, `retention`, `attributes` or `funnel` (below) |
+| `kind` | all | `stat`, `trend`, `breakdown`, `retention`, `attributes`, `funnel` or `paths` (below) |
 | `table` | all | `events` (every family), `views`, `product` or `measures`; or `sessions`, one row per session, or `identities`, one row per user or group (below); a retention reads `events`, and may leave it out; an attributes `product` or `measures`, its `keys` also `events` (product and measures both, the default) |
 | `metrics` | stat, trend, breakdown, attributes | the aggregates, each an output column; a trend takes one to five, exactly one with `series` (several are its series, below); an attributes' `keys` none |
 | `where` | all | filters, `{column, op, values}` (`{op, columns}` for `any_set`, `{op, any}` for `any_of`), every one of which a row must satisfy |
@@ -1740,6 +1740,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `define` | stat, trend, breakdown | up to 5 text columns the query defines for itself: `{name, cases, else}`, `name` `def_` and a lower-case name, `cases` 1 to 20 `{label, where}` in order. Each row reads the `label` of the first case whose `where` (1 or more filters, as the query's, an `any_of` among them for an OR; none naming a `def_` column) it passes, else `else`, or NULL without one. A dimension, a series and a filter, the query's or a metric's, name it as any text column: an event group as a breakdown's rows, a segment by host as a trend's series |
 | `shape` | stat, breakdown | `wide` (the default): a column per metric; `long`: a row per metric, the breakdown's dimensions, then `metric` (the metric's name) and `value`, and `previous_value` with `compare` `previous`. Metrics side by side then draw as a bar's `x` or `series`; every metric is a number |
 | `steps` | funnel | 2 to 10 steps in order, each `{label, where}`: `label` the step's name, `where` 1 or more filters (as the query's, an `any_of` among them; no `ever`, `never` or `def_` column) an event passes to take it. The answer is a row per step, `step` (its label) and `value`: the actors (`by`) that took it and every step before it, which the `funnel` component draws. The query's `where` narrows every step's events, an `ever` or `never` among its filters; `table` is `events` (the default), `views` or `product` |
+| `depth` | paths | 2 to 6 (default 3): the steps of each session read. `paths` reads each session's views (`table` `views`, the default) or product events (`product`) in time order, sessions cut as the `sessions` table cuts them (a declared id, else 30 minutes of the actor's silence, one per kind and actor, midnight UTC), a run of one value one step; its one `dimensions` entry is the column a step reads (`path`, or `event_name` on `product`, by default). The answer is a row per flow from a step to the next, `source` and `target` the step's number and value (`1 /pricing`, `2 /signup`, so each step is a stage of its own), `value` the sessions that took it: the `limit` (default 50) busiest, `truncated` past it. It feeds the `sankey` component as it is; `where` narrows the rows read |
 | `by` | funnel | `actor` (the default), `user` or `group`: whose steps are counted; a row without the id takes none |
 | `sequence` | funnel | `true`: the steps taken one after another in time, by `ts` (one event may take several in a row); `false`, the default: each taken any time in the range, in any order |
 | `interval` | trend | `day` (the default), `week` or `month`: a row per week (from Monday) or calendar month instead of per day, `day` reading the bucket's first day, which may precede `from` (the first and last buckets hold only the range's days). A distinct count (`actors`, `users`, `groups`) counts over the bucket; `daily_sum`, `daily_max`, `daily_avg` and `days` need the days and are refused. `fill` fills every bucket |
@@ -1776,6 +1777,8 @@ as `day` does:
 | `device_label` | `events`, `views`, `product` | `device_model` when not empty, else `device` when not empty; else NULL |
 | `platform_version` | `events`, `views`, `product` | `platform`, a space, then `app_version` (`ios 2.4.1`), where `app_version` is not empty; else NULL |
 | `consent_state` | `events`, `views`, `product` | `given` (`consent` 1), `none` (0) or `unknown` (NULL) |
+| `hour` | `events`, `views`, `product`, `measures` | the UTC hour of `ts`, `00` to `23`, two digits so the hours sort as text; NULL without a `ts` |
+| `weekday` | `events`, `views`, `product`, `measures` | the UTC weekday of `ts`, `1 Mon` to `7 Sun`, so the days sort as text (`labels` shows them as `Mon` to `Sun`); NULL without a `ts`. A breakdown by `weekday` and `hour` is the `heatmap` of a week |
 | `user_status` | `events`, `views`, `product` | `new` on the day the row's `user_id` was first seen (its `first_seen` in `identities`, over the whole history the files hold, whatever the range), `returning` on a later day; NULL when `user_id` is empty, or not in `identities` (an id only measures carried), and on a measure sent before it was first seen |
 | `group_status` | `events`, `views`, `product` | the same of `group_id` |
 | `user_label` | `events`, `views`, `product` | the `name` of the row's `user_id` in `identities` (over the whole history, the latest name as `identities` combines it, so every row of a renamed user reads its current name), else the `user_id` itself; NULL when `user_id` is empty |
@@ -2156,6 +2159,14 @@ share, for a bar chart of the two (`metric` as `x`, the deployment as
     {"op": "ratio", "as": "Any budget feature", "round": 3,
      "num": {"op": "actors", "where": [{"column": "event_name", "op": "prefix", "values": ["budget_"]}]},
      "den": {"op": "actors"}}]}}
+```
+
+Paths: where the sessions of the range went from the page they
+entered on, three steps deep, the 30 busiest flows.
+
+```json
+{"project_id": 1, "query": {"kind": "paths", "depth": 3, "limit": 30,
+  "where": [{"column": "kind", "op": "eq", "values": ["web"]}]}}
 ```
 
 A funnel: of the users who started the Apple Pay setup in the range,
