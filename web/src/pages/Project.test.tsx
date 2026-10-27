@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
+import { Link, MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { ApiError, endpoints, type DashboardDetail, type ProjectTab } from '@/lib/api'
 import { answerFor, dashboardsList, details, launchWeek, widgetsById } from '@/test/fixtures'
 import { contactPage, form } from '@/test/forms'
@@ -105,6 +105,27 @@ describe('Project', () => {
     expect(await within(nav).findByText('econumo.com')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'econumo.com' })).toBeInTheDocument()
     expect(location()).toBe('/projects/4')
+  })
+
+  it('lands from a fresh tab list when reopening the project already open', async () => {
+    const user = userEvent.setup()
+    writeLastTab(4, 20)
+    renderWithProviders(
+      <MemoryRouter initialEntries={['/projects/4/dashboards/20']}>
+        <Routes>
+          <Route path="/projects/:id" element={<Project landing />} />
+          <Route path="/projects/:id/dashboards/:dashId" element={<Project />} />
+        </Routes>
+        <Link to="/projects/4">reopen</Link>
+        <LocationProbe />
+      </MemoryRouter>,
+      testClient()
+    )
+    await screen.findByRole('heading', { name: 'Mine', level: 1 })
+    // Mine is removed elsewhere while this page shows it.
+    vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs: tabs.filter((t) => t.dashboard_id !== 20) })
+    await user.click(screen.getByRole('link', { name: 'reopen' }))
+    await vi.waitFor(() => expect(location()).toBe('/projects/4/dashboards/1'))
   })
 
   it('renames the project in place through PATCH, the name alone', async () => {

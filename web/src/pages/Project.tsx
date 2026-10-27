@@ -1,7 +1,7 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { LayoutGridIcon } from 'lucide-react'
-import { Link, Navigate, useLocation, useParams, useSearchParams } from 'react-router'
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
 import NotFound from '@/components/NotFound'
@@ -42,7 +42,9 @@ const LANDING = -2
 export default function Project({ tab, landing = false }: { tab?: 'forms'; landing?: boolean } = {}) {
   const params = useParams()
   const [url] = useSearchParams()
-  const { search } = useLocation()
+  const { search, key: visit } = useLocation()
+  const navigate = useNavigate()
+  const client = useQueryClient()
   const param = params.id
   const id = Number(param)
   const valid = Number.isInteger(id) && id > 0
@@ -52,9 +54,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
   // Reporting dev serves no project tabs and takes no writes: the page asks
   // for none once the list says it is dev, and shows Settings alone.
   const dev = dash?.dev === true
-  // Fresh data decides where to land: a tab removed elsewhere since the
-  // cache was filled would otherwise land on the "isn't a tab" notice.
-  const tabsQ = useQuery({ ...projectTabsQuery(id), enabled: valid && dash !== undefined && !dev, ...(landing && { refetchOnMount: 'always' as const }) })
+  const tabsQ = useQuery({ ...projectTabsQuery(id), enabled: valid && dash !== undefined && !dev })
   const activity = useQuery({ ...projectActivityQuery, enabled: valid && dash !== undefined && !dev })
   const mine = activity.data?.projects.find((p) => p.project_id === id)
   const actions = useProjectActions()
@@ -64,13 +64,26 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
   const [tabBar, setTabBar] = useState<HTMLDivElement | null>(null)
   const stuck = useStuck(tabBar, TOP_BAR)
 
-  if (landing) {
-    if (!valid || dev || dashError || tabsQ.error) return <Navigate to={`settings${search}`} replace />
-    if (tabsQ.data && tabsQ.isFetchedAfterMount) {
-      const range = rangeParams(new URLSearchParams(search)).toString()
-      return <Navigate to={landingPath(id, tabsQ.data.tabs, readLastTab(id), range)} replace />
+  // Landing redirects from an effect, so the page stays drawn throughout.
+  // Each visit fetches the tabs afresh, even with this page already mounted:
+  // a tab removed elsewhere since the cache was filled would otherwise land
+  // on the "isn't a tab" notice.
+  const listed = dash !== undefined
+  useEffect(() => {
+    if (!landing) return
+    const toSettings = () => navigate(`settings${search}`, { replace: true })
+    if (!valid || dev || dashError) return void toSettings()
+    if (!listed) return
+    let live = true
+    const range = rangeParams(new URLSearchParams(search)).toString()
+    client.fetchQuery({ ...projectTabsQuery(id), staleTime: 0 }).then(
+      (data) => live && navigate(landingPath(id, data.tabs, readLastTab(id), range), { replace: true }),
+      () => live && toSettings()
+    )
+    return () => {
+      live = false
     }
-  }
+  }, [landing, visit, valid, dev, dashError, listed, id, search, client, navigate])
 
   return (
     <AppShell dashboards={dash?.dashboards ?? []} currentId={0} readOnly={dev}>
