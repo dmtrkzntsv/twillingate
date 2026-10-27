@@ -369,13 +369,14 @@ func logIngestSummary(ctx context.Context, srv *server.Server, logger *slog.Logg
 // moveEventsDir moves the raw/ beside the database that older releases
 // kept the event files in to data/ (config.EventsDirMoveTo), before
 // anything reads it, and points cfg at it. Only the ingest process moves
-// it, as only it writes there; a console-only process reads raw/ until its
+// it, as only it writes there, and not while another ingest process holds
+// raw/ (archive.ErrLocked); a console-only process reads raw/ until its
 // next start.
 func moveEventsDir(cfg *config.Config, logger *slog.Logger) error {
 	if cfg.EventsDirMoveTo == "" {
 		return nil
 	}
-	if err := os.Rename(cfg.EventsDir, cfg.EventsDirMoveTo); err != nil {
+	if err := archive.MoveDir(cfg.EventsDir, cfg.EventsDirMoveTo); err != nil {
 		return fmt.Errorf("move the event files from %s to %s: %w", cfg.EventsDir, cfg.EventsDirMoveTo, err)
 	}
 	logger.Info("moved the event files", "from", cfg.EventsDir, "to", cfg.EventsDirMoveTo)
