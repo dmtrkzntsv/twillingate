@@ -82,14 +82,16 @@ func (lp *latestPart) put(x int, ts int64, v string) int64 {
 }
 
 // latestText is c's value at row i as the answer prints it: text as is, a
-// number in decimal, a day as YYYY-MM-DD; ok false for NULL.
+// number in decimal, a day as YYYY-MM-DD; ok false for NULL and for
+// empty text, which is_set counts as unset too.
 func latestText(c *Column, i int, typ colType) (string, bool) {
 	if c == nil || (c.Null != nil && c.Null[i]) {
 		return "", false
 	}
 	switch {
 	case c.Idx != nil:
-		return textAt(c, i)
+		s, ok := textAt(c, i)
+		return s, ok && s != ""
 	case c.Ints != nil && typ == typeDay:
 		return formatDay(c.Ints[i]), true
 	case c.Ints != nil:
