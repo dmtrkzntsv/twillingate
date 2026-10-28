@@ -110,6 +110,9 @@ func TestValidateDefines(t *testing.T) {
 			q.Define = []Define{{Name: "def_x", Cases: []Case{{Label: "a", Where: []Filter{{Column: "nope", Op: "is_set"}}}}}}
 		}), "define[0].cases[0].where[0].column"},
 		{"on a retention", Query{Kind: "retention", Output: "grid", Define: ok}, "define"},
+		{"ever in a case", q(func(q *Query) {
+			q.Define = []Define{{Name: "def_x", Cases: []Case{{Label: "a", Where: []Filter{{Op: "ever", Where: []Filter{eq}}}}}}}
+		}), "define[0].cases[0].where[0].op"},
 	} {
 		err := tc.q.Validate()
 		if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), tc.path+":") {

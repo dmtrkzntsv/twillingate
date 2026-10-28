@@ -284,8 +284,10 @@ what a structured query cannot say.
 4. **Write SQL only for what a structured query cannot say**: joining two
    tables, an expression over a column (arithmetic, a string function, a
    date bucket other than a day, a week or a month; a `CASE` of labels is a
-   query's `define`), a per-actor condition over the actor's other rows, a remote
-   `table` (`mode: remote`). Name in the widget's title or a Markdown note
+   query's `define`), a value read from an actor's latest event, a remote
+   `table` (`mode: remote`). A condition on what else an actor did ("users
+   who ever used a test host") is a filter's `ever` or `never`, an OR an
+   `any_of`. Name in the widget's title or a Markdown note
    what made it SQL. `WHERE project_id = :project` follows the project
    switcher, `day BETWEEN :from AND :to` the range switcher; without them
    the widget is fixed, and its title says to what ("Signups, all time").
