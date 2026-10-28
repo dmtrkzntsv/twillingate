@@ -79,9 +79,9 @@ func (q Query) milestones() []int {
 
 // Metric is one aggregate.
 type Metric struct {
-	Op     string   `json:"op" jsonschema:"count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows; days: the distinct days with rows (0 over none; with a where, of the rows passing it), as the active days of the built-in top users and groups. measures alone takes percentile (the q quantile of value, a sample weighing 1 / sample_rate, read from its log-scale bucket: within about 2%), mean (value weighted so) and weight (the samples' 1 / sample_rate summed). ratio: num over den, two metrics of the table each with its own where, as a DOUBLE; empty when den is 0 or empty or num is empty, but a counted num (count, actors, users, groups, bounces, weight, daily_*, days) over no rows reads 0 when den is above 0; an Other row's both sides over its folded groups; approximate when either side is. share (trend and breakdown only): the group's of (count, or on measures weight) over its partition's: in a breakdown the groups of the same first dimension (all with one dimension; an Other row's is all of them), in a trend the day's; empty over none. sessions takes count (sessions), actors, share, ratio, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, share, ratio, sum, avg, min and max. attributes takes count, actors, users and groups (group_id's empty value left out) and its own actors_or_null (distinct actor_id, NULL counting as one)"`
+	Op     string   `json:"op" jsonschema:"latest: the value of column (any column a filter names but bucket, attr_<key> and def_ ones included, identity ones aside) at the latest row by ts, of the group (on the day, in a trend), empty over none, its type the column's: an instance's version as last seen; not on sessions or identities, nor in a ratio's side. count: rows; actors, users, groups: distinct actor_id, user_id, group_id; sum, avg, min, max: of column; daily_sum, daily_max, daily_avg: the per-day distinct count of of, summed, maxed or averaged over the days with rows; days: the distinct days with rows (0 over none; with a where, of the rows passing it), as the active days of the built-in top users and groups. measures alone takes percentile (the q quantile of value, a sample weighing 1 / sample_rate, read from its log-scale bucket: within about 2%), mean (value weighted so) and weight (the samples' 1 / sample_rate summed). ratio: num over den, two metrics of the table each with its own where, as a DOUBLE; empty when den is 0 or empty or num is empty, but a counted num (count, actors, users, groups, bounces, weight, daily_*, days) over no rows reads 0 when den is above 0; an Other row's both sides over its folded groups; approximate when either side is. share (trend and breakdown only): the group's of (count, or on measures weight) over its partition's: in a breakdown the groups of the same first dimension (all with one dimension; an Other row's is all of them), in a trend the day's; empty over none. sessions takes count (sessions), actors, share, ratio, sum, avg, min and max, and its own bounces (sessions of 1 view) and bounce_rate (bounces / sessions, empty over none). identities takes count, share, ratio, sum, avg, min and max. attributes takes count, actors, users and groups (group_id's empty value left out) and its own actors_or_null (distinct actor_id, NULL counting as one)"`
 	Q      float64  `json:"q,omitempty" jsonschema:"percentile only, above 0 and below 1: the quantile (0.75 for p75)"`
-	Column string   `json:"column,omitempty" jsonschema:"sum, avg, min and max only: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views; on identities views or events. min and max also take day (a YYYY-MM-DD day) and ts or received_at (a UTC time, as 2026-09-01T08:00:05Z), on sessions day, started_at or ended_at; not on identities, nor in a ratio's side"`
+	Column string   `json:"column,omitempty" jsonschema:"latest: any column a filter names but bucket, whose value it reads. sum, avg, min and max: the numeric column, value, sample_rate, display_width or display_height; on sessions duration_sec or views; on identities views or events. min and max also take day (a YYYY-MM-DD day) and ts or received_at (a UTC time, as 2026-09-01T08:00:05Z), on sessions day, started_at or ended_at; not on identities, nor in a ratio's side"`
 	Of     string   `json:"of,omitempty" jsonschema:"daily_sum, daily_max and daily_avg take actors, users or groups (what is counted distinct per day); share takes count or, on measures, weight"`
 	As     string   `json:"as,omitempty" jsonschema:"the output column's name (default: op, or op_column, or op_of, as share_weight; a percentile's p and 100 q, as p75 or p99.9)"`
 	Round  *int     `json:"round,omitempty" jsonschema:"optional, 0 to 6: decimal places to round the value to, half away from zero (an integer stays as it is)"`
@@ -298,6 +298,9 @@ func (m Metric) notDaily(p, interval string) error {
 // valueType is the type of m's values, as ColumnTypes names it: a min
 // or max of day is day, of a time text, every other metric number.
 func (m Metric) valueType() string {
+	if m.Op == "latest" {
+		return columnType(m.Column)
+	}
 	switch boundForms[m.Column] {
 	case formDay:
 		return "day"
@@ -449,7 +452,7 @@ var (
 	AttributeDimensions = []string{"day", "event_name"}
 	AttributeOps        = []string{"count", "actors", "users", "groups", "actors_or_null"}
 	Tables              = []string{"events", "views", "product", "measures", "sessions", "identities"}
-	MetricOps           = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "days", "bounces", "bounce_rate", "percentile", "mean", "weight", "share", "ratio", "actors_or_null"}
+	MetricOps           = []string{"count", "actors", "users", "groups", "sum", "avg", "min", "max", "daily_sum", "daily_max", "daily_avg", "days", "bounces", "bounce_rate", "percentile", "mean", "weight", "share", "ratio", "actors_or_null", "latest"}
 	ValueColumns        = []string{"value", "sample_rate", "display_width", "display_height"}
 	// SessionValueColumns are the columns sum, avg, min and max take on
 	// sessions (ValueColumns on the other tables).
@@ -921,6 +924,22 @@ func (m Metric) validateAt(kind, table, p string, side bool) error {
 		}
 	}
 	switch m.Op {
+	case "latest":
+		switch {
+		case side:
+			return invalid(p+".op", "latest is no number, which a ratio's side is")
+		case kind == "attributes":
+			return invalid(p+".op", "latest is not a metric of attributes")
+		case m.Column == "":
+			return invalid(p+".column", "latest needs a column: the one whose value it reads")
+		case m.Of != "":
+			return invalid(p+".of", "latest takes no of")
+		case idColumns[m.Column].id != "":
+			return invalid(p+".column", "%s is read from identities; latest reads a column of the rows", m.Column)
+		}
+		if _, ok := columnInfo(table, m.Column); !ok || m.Column == "bucket" {
+			return invalid(p+".column", "%q is not a column of %s", m.Column, table)
+		}
 	case "sum", "avg", "min", "max":
 		if m.Column == "" {
 			return invalid(p+".column", "%s needs a column", m.Op)
