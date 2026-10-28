@@ -79,17 +79,19 @@ func (s *Service) Preview(ctx context.Context, in PreviewIn) (Preview, error) {
 }
 
 // previewRows runs in's source with the values in gives: sql binding the
-// parameters it uses, a query always over the project and the range.
+// parameters it uses, a query over the range and the project (its own,
+// when its content names one).
 func (s *Service) previewRows(ctx context.Context, in PreviewIn) (readsql.Result, error) {
 	if in.Source.Type == "query" {
 		qs, ok := s.sources["query"].(*querySource)
 		if !ok {
 			return readsql.Result{}, errors.New("reporting: the query source type is not registered")
 		}
-		if _, _, _, err := parseQuery(in.Source.Content); err != nil {
+		qc, _, _, err := parseQuery(in.Source.Content)
+		if err != nil {
 			return readsql.Result{}, err
 		}
-		p, err := s.previewQueryParams(in)
+		p, err := s.previewQueryParams(in, qc.Project > 0)
 		if err != nil {
 			return readsql.Result{}, err
 		}
@@ -106,10 +108,10 @@ func (s *Service) previewRows(ctx context.Context, in PreviewIn) (readsql.Result
 	return loadRows(ctx, s.sql, in.Source.Content, params, p)
 }
 
-// previewQueryParams is previewParams for a query, which follows both
-// the project and the range.
-func (s *Service) previewQueryParams(in PreviewIn) (Params, error) {
-	if in.ProjectID == 0 {
+// previewQueryParams is previewParams for a query, which follows the
+// range, and the project unless its content fixes one (fixed).
+func (s *Service) previewQueryParams(in PreviewIn, fixed bool) (Params, error) {
+	if in.ProjectID == 0 && !fixed {
 		return Params{}, store.Refuse(store.ErrInvalid, "a query follows the project; pass project_id")
 	}
 	if in.From == "" && in.To == "" {

@@ -380,6 +380,7 @@ func (h *host) registerReporting(r *registrar) {
 // queryContentIn is a query source's content as its JSON object, for its
 // schema only: Source.UnmarshalJSON keeps it as text.
 type queryContentIn struct {
+	Project int64                        `json:"project_id,omitempty" jsonschema:"optional: the project the widget always reads, whatever the project switcher shows; omit to follow the switcher"`
 	Query   native.Query                 `json:"query" jsonschema:"the structured query, as the query tool's query argument"`
 	Rename  map[string]string            `json:"rename,omitempty" jsonschema:"output column → the input name the component reads"`
 	Labels  map[string]map[string]string `json:"labels,omitempty" jsonschema:"text column (after rename) → value → the label shown"`
@@ -398,7 +399,7 @@ func typedContent(widget *jsonschema.Schema) {
 	obj.Description = "a query source's content as its JSON object"
 	text.Description = "the SQL query or the Markdown text; a query source's JSON as text"
 	src.Properties["content"] = &jsonschema.Schema{
-		Description: "a query source's {query, rename, labels, columns} as an object (or as its JSON text), the SQL query, or the Markdown text",
+		Description: "a query source's {query, rename, labels, columns, project_id} as an object (or as its JSON text), the SQL query, or the Markdown text",
 		AnyOf:       []*jsonschema.Schema{obj, text},
 	}
 }
