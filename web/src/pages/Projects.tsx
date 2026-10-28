@@ -6,7 +6,6 @@ import { PlusIcon } from 'lucide-react'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
 import IssuedKeyView from '@/components/projects/IssuedKeyView'
-import LimitsPanel from '@/components/projects/LimitsPanel'
 import LoadError from '@/components/projects/LoadError'
 import ProjectCard from '@/components/projects/ProjectCard'
 import ProjectFormDialog from '@/components/projects/ProjectFormDialog'
@@ -21,8 +20,8 @@ import { dashboardsQuery, keysQuery, limitsQuery, projectActivityQuery, projects
 import { formatBytes, formatGrowth } from '@/lib/units'
 
 /**
- * `/projects`: every live project as a card with its last 30 days, the
- * caps, and New project. Cards drag to a new order, the one every project
+ * `/projects`: every live project as a card with its last 30 days, and
+ * New project. Cards drag to a new order, the one every project
  * list shows; archived projects keep their place in it and are listed on
  * the Archive page.
  */
@@ -77,6 +76,7 @@ export default function Projects() {
                 projectsData ? `${active.length} ${active.length === 1 ? 'project' : 'projects'}` : null,
                 statsData ? `${formatBytes(statsData.database_bytes)} on disk` : null,
                 statsData ? formatGrowth(statsData.database_series) : null,
+                limitsData?.events_30d ? `${limitsData.events_30d.count.toLocaleString()} ${limitsData.events_30d.count === 1 ? 'event' : 'events'} in 30 days` : null,
               ]
                 .filter(Boolean)
                 .join(' · ')}
@@ -109,7 +109,6 @@ export default function Projects() {
             </div>
           </SortableContext>
         </DndContext>
-        {limitsData && <LimitsPanel limits={limitsData.limits} events30d={limitsData.events_30d} />}
       </div>
       <ProjectFormDialog
         open={creating}

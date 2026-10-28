@@ -64,7 +64,15 @@ describe('Projects', () => {
     expect(within(card).getByText(/7 events/)).toBeInTheDocument()
     expect(within(card).getByText(/2\.3 MB/)).toBeInTheDocument()
     expect(within(card).getByText(/1 active key/)).toBeInTheDocument()
-    expect(screen.getByText(/2 projects · 2\.1 GB on disk · \+100\.0 MB since Sep 3/)).toBeInTheDocument()
+    expect(await screen.findByText(/2 projects · 2\.1 GB on disk · \+100\.0 MB since Sep 3 · 48,210 events in 30 days/)).toBeInTheDocument()
+  })
+
+  it('leaves the event count out of the header when the server could not count them', async () => {
+    vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [] })
+    renderPage()
+    await screen.findByText(/2 projects · 2\.1 GB on disk/)
+    await waitFor(() => expect(endpoints.limits).toHaveBeenCalled())
+    expect(screen.queryByText(/in 30 days/)).not.toBeInTheDocument()
   })
 
   it("links a project's forms, its drafts and new submissions to its Forms tab", async () => {
@@ -156,26 +164,6 @@ describe('Projects', () => {
       await waitFor(() => expect(endpoints.limits).toHaveBeenCalled())
       expect(screen.queryByText(banner)).not.toBeInTheDocument()
     })
-  })
-
-  it('shows the limits by group, retention first, 0 as what it means', async () => {
-    renderPage()
-    const panel = await screen.findByRole('region', { name: 'Limits' })
-    const groups = within(panel).getAllByRole('region').map((r) => r.getAttribute('aria-label'))
-    expect(groups).toEqual(['Retention', 'Ingest'])
-    const retention = within(panel).getByRole('region', { name: 'Retention' })
-    expect(within(retention).getByText('7 days')).toBeInTheDocument()
-    expect(within(retention).getByText('RETENTION_DAYS')).toBeInTheDocument()
-    expect(within(retention).getByText(/default 400 days/)).toBeInTheDocument()
-    // The variable sits under the value, above the description.
-    const variable = within(retention).getByText('RETENTION_DAYS').closest('dd')!
-    const description = within(retention).getByText('the event files are kept this long')
-    expect(variable.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(within(panel).getByText('kept forever')).toBeInTheDocument()
-    const ingest = within(panel).getByRole('region', { name: 'Ingest' })
-    expect(within(ingest).getByText('256 KiB')).toBeInTheDocument()
-    expect(within(ingest).queryByText(/default/)).not.toBeInTheDocument()
-    expect(within(panel).getByText('Events in the last 30 days: 48,210')).toBeInTheDocument()
   })
 
   it('creates a project and shows its key and snippet once', async () => {
