@@ -25,7 +25,7 @@ var ErrTooLarge = errors.New("native: the query needs more memory than allowed; 
 // Milestones), an attributes the attribute keys and values its rows carry
 // (Output, Reserved, Keep).
 type Query struct {
-	Kind        string   `json:"kind" jsonschema:"funnel: the actors (users, groups) at each of its steps, taken in the range in any order or in sequence (steps, by, sequence; no metrics); stat: one row of metrics (with compare previous, a previous_<name> column each); trend: one metric per day, optionally split by series, or 2 to 5 metrics per day as its series (day, series, value); breakdown: the metrics grouped by 1 to 3 dimensions; retention: the cohorts of users and installs first active in the range, and their days back (output, identified_by, offsets, milestones; no metrics); attributes: every attribute key and value the product or measures rows carry, with their metrics (output values; dimensions day and event_name, reserved), or every key with its events and distinct values (output keys; limit, keep; no metrics)"`
+	Kind        string   `json:"kind" jsonschema:"paths: the flows from step to step of the sessions, each session's views (or product events) in time order, a row per flow, source, target and value the sessions, for a sankey (dimensions: the column a step reads, path or event_name by default; depth; limit, default 50); funnel: the actors (users, groups) at each of its steps, taken in the range in any order or in sequence (steps, by, sequence; no metrics); stat: one row of metrics (with compare previous, a previous_<name> column each); trend: one metric per day, optionally split by series, or 2 to 5 metrics per day as its series (day, series, value); breakdown: the metrics grouped by 1 to 3 dimensions; retention: the cohorts of users and installs first active in the range, and their days back (output, identified_by, offsets, milestones; no metrics); attributes: every attribute key and value the product or measures rows carry, with their metrics (output values; dimensions day and event_name, reserved), or every key with its events and distinct values (output keys; limit, keep; no metrics)"`
 	Table       string   `json:"table,omitempty" jsonschema:"the rows read: events (every family), views, product or measures; or sessions, one row per session of views; or identities, one row per user or group first seen in the range (rules apply to neither); a retention reads events (absent or events); an attributes product or measures, its keys also events (product and measures both: the default)"`
 	Metrics     []Metric `json:"metrics,omitempty" jsonschema:"the aggregates, each an output column; a trend takes 1 to 5, exactly 1 when split by series; with more than 1 its answer is long, day, series (each metric's name) and value, a number, so none is a min or max of a day or time; a retention and an attributes' keys none; an attributes' values count, actors, users, groups and actors_or_null"`
 	Where       []Filter `json:"where,omitempty" jsonschema:"filters, all of which a row must satisfy"`
@@ -44,6 +44,8 @@ type Query struct {
 	Steps    []Step `json:"steps,omitempty" jsonschema:"funnel only, 2 to 10: the steps in order, each {label, where}; the answer is a row per step, step (its label) and value, the actors (users, groups: by) that took it and every step before it"`
 	By       string `json:"by,omitempty" jsonschema:"funnel only: actor (the default), user or group: whose steps are counted"`
 	Sequence bool   `json:"sequence,omitempty" jsonschema:"funnel only: true counts the steps taken one after another in time (an event may take several at once); false, the default, taken any time in the range, in any order"`
+	// The paths kind's.
+	Depth int `json:"depth,omitempty" jsonschema:"paths only, 2 to 6 (default 3): the steps of each session read, a run of one value one step"`
 	// The retention kind's fields.
 	Output       string `json:"output,omitempty" jsonschema:"retention and attributes only, required. An attributes: values (a row per dimensions, attribute and value) or keys (attribute, events, values, keys_total: a row per attribute, its events and distinct values, keys_total the number of attributes; the limit busiest, by events, then those keep names). A retention: grid (cohort, identified_by, offset, size, returned, retention: a row per cohort, identity kind and day back, offset the days since the cohort day), curve (offset, retention: one identity kind's cohorts pooled per day back) or milestones (one row, a d<n> column per milestone: the curve's retention that day back)"`
 	IdentifiedBy string `json:"identified_by,omitempty" jsonschema:"retention only: install or user, the cohorts a curve or milestones pools (required there); on a grid optional, its rows of that kind alone (without it, both)"`
@@ -100,7 +102,7 @@ const maxRound = 6
 
 // Filter keeps the rows whose Column satisfies Op against Values.
 type Filter struct {
-	Column string   `json:"column,omitempty" jsonschema:"required but for any_set, any_of, ever and never: one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent), user_status and group_status (new on the day the user_id or group_id was first seen, as identities has it, returning on a later day, NULL without one), user_label and group_label (the identity's name, as identities has it, else the id; NULL without one), these seven on events, views and product only; computed, a day: user_first_seen and group_first_seen (the identity's first-seen day, as identities has it; NULL without one or when identities lacks it), on events, views and product only; on measures only, vital (LCP, INP, CLS, FCP or TTFB for the event_name $lcp, $inp, $cls, $fcp or $ttfb, else NULL) and vital_rating (good, needs improvement or poor: the sample's bucket value against the vital's thresholds, LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800; NULL for the other measures). On sessions instead: project_id, day, kind, actor_id, actor_kind, session_id, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign, and the numbers duration_sec and views. On identities instead: kind (user or group), id, name, day (first_seen's day), and the numbers views and events"`
+	Column string   `json:"column,omitempty" jsonschema:"required but for any_set, any_of, ever and never: one of project_id, family, event_name, day, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, measure, bucket (measures only), or attr_<key> for an attribute; or computed, text: resolution (display_width x display_height, as 1920x1080, where both are above 0; events and views only), device_label (device_model, else device, where either is not empty), platform_version (platform, a space, app_version, where app_version is not empty), consent_state (given, none or unknown, from consent), hour (the UTC hour of ts, 00 to 23) and weekday (its UTC weekday, 1 Mon to 7 Sun; labels shows them as Mon to Sun) on events, views, product and measures, user_status and group_status (new on the day the user_id or group_id was first seen, as identities has it, returning on a later day, NULL without one), user_label and group_label (the identity's name, as identities has it, else the id; NULL without one), these seven on events, views and product only; computed, a day: user_first_seen and group_first_seen (the identity's first-seen day, as identities has it; NULL without one or when identities lacks it), on events, views and product only; on measures only, vital (LCP, INP, CLS, FCP or TTFB for the event_name $lcp, $inp, $cls, $fcp or $ttfb, else NULL) and vital_rating (good, needs improvement or poor: the sample's bucket value against the vital's thresholds, LCP 2500 and 4000, INP 200 and 500, CLS 0.1 and 0.25, FCP 1800 and 3000, TTFB 800 and 1800; NULL for the other measures). On sessions instead: project_id, day, kind, actor_id, actor_kind, session_id, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign, and the numbers duration_sec and views. On identities instead: kind (user or group), id, name, day (first_seen's day), and the numbers views and events"`
 	Op     string   `json:"op" jsonschema:"eq, ne, contains, prefix, not_prefix (text that does not start with the value), gt, gte, lt, lte take 1 value; in, not_in 1 or more; is_set none (not NULL, and text not empty); any_set none, and columns instead of column (at least one of them is set, as is_set says); any_of none, and any instead of column (at least one of its filters passes); ever and never none, and where (with by and over) instead of column: the rows of the actors (users, groups) with at least one event passing where, or of those with none (a row without the id passes neither). gt/gte/lt/lte take an integer, or YYYY-MM-DD on day, user_first_seen and group_first_seen, and only on numeric columns and those days. NULL fails every op, ne and not_in included"`
 	Values []string `json:"values,omitempty" jsonschema:"the values compared against, as text"`
 	// Columns are any_set's columns, in place of Column.
@@ -167,6 +169,8 @@ func percent(q float64) string {
 func (q Query) Columns() []string {
 	var cols []string
 	switch q.Kind {
+	case "paths":
+		return []string{"source", "target", "value"}
 	case "funnel":
 		return []string{"step", "value"}
 	case "retention":
@@ -225,6 +229,8 @@ func (q Query) Columns() []string {
 func (q Query) ColumnTypes() []string {
 	var types []string
 	switch q.Kind {
+	case "paths":
+		return []string{"text", "text", "number"}
 	case "funnel":
 		return []string{"text", "number"}
 	case "retention":
@@ -370,6 +376,8 @@ var computedTables = map[string][]string{
 	"device_label":     {"events", "views", "product"},
 	"platform_version": {"events", "views", "product"},
 	"consent_state":    {"events", "views", "product"},
+	"hour":             {"events", "views", "product", "measures"},
+	"weekday":          {"events", "views", "product", "measures"},
 	"user_status":      {"events", "views", "product"},
 	"group_status":     {"events", "views", "product"},
 	"user_label":       {"events", "views", "product"},
@@ -458,7 +466,7 @@ func dimensionOf(table, column string) bool {
 
 // The closed vocabularies of a Query, which a schema describing it lists.
 var (
-	Kinds = []string{"stat", "trend", "breakdown", "retention", "attributes", "funnel"}
+	Kinds = []string{"stat", "trend", "breakdown", "retention", "attributes", "funnel", "paths"}
 	// RetentionOutputs are a retention's outputs, IdentifiedBy what its
 	// curve and milestones pool.
 	RetentionOutputs = []string{"grid", "curve", "milestones"}
@@ -566,6 +574,9 @@ func (q Query) Validate() error {
 	if err := q.validateShape(); err != nil {
 		return err
 	}
+	if q.Depth != 0 && q.Kind != "paths" {
+		return invalid("depth", "only paths takes depth")
+	}
 	if q.Kind != "funnel" {
 		switch {
 		case len(q.Steps) > 0:
@@ -583,6 +594,8 @@ func (q Query) Validate() error {
 		return q.validateAttributes()
 	case "funnel":
 		return q.validateFunnel()
+	case "paths":
+		return q.validatePaths()
 	}
 	switch {
 	case q.Output != "":

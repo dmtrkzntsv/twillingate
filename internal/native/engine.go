@@ -382,6 +382,8 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 		return s.attributes(ctx, p.From, p.To)
 	case "funnel":
 		return s.funnel(ctx, p.From, p.To)
+	case "paths":
+		return s.paths(ctx, p.From, p.To)
 	}
 	specs := s.aggSpecs(p.From, p.To)
 	as := make([]aggregated, len(specs))

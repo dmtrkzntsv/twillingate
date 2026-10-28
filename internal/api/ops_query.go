@@ -154,6 +154,8 @@ func queryEnums(in *jsonschema.Schema) {
 	q.Properties["interval"].Enum = enum(append([]string{""}, native.Intervals...))
 	q.Properties["output"].Enum = enum(slices.Concat(native.RetentionOutputs, native.AttributeOutputs))
 	q.Properties["identified_by"].Enum = enum(native.IdentifiedBy)
+	minDepth, maxDepth := 2.0, 6.0
+	q.Properties["depth"].Minimum, q.Properties["depth"].Maximum = &minDepth, &maxDepth
 	minOffsets, maxOffsets := 1.0, 90.0
 	q.Properties["offsets"].Minimum, q.Properties["offsets"].Maximum = &minOffsets, &maxOffsets
 	minMilestone := 0.0

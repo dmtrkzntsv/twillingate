@@ -1015,6 +1015,19 @@ SELECT * FROM (
 
 Props: `{"format": "number"}`
 
+### `sankey` as a structured query
+
+The same flows from the sessions, without SQL: paths returns `source`,
+`target` and `value`, each step's pages a stage of their own:
+
+```json
+{
+  "query": {"kind": "paths", "depth": 3, "limit": 30}
+}
+```
+
+Props: `{"format": "number"}`
+
 ### `table`
 
 Pages with visitors and views, the views column shaded. Column names are
