@@ -71,9 +71,13 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
     return rows
   }
 
+  const widthOf = (i: number) => Math.max(0, Math.min(1, values[i] / first)) * 100
+  // One hue, fading step by step: the order is the story, not the color.
+  const colorOf = (i: number) => `color-mix(in oklab, var(--chart-1) ${100 - (i / last) * 40}%, transparent)`
+
   return (
     <>
-      <ol className={`flex h-full flex-col justify-center px-1 py-1 ${card ? 'gap-5' : 'gap-3'}`}>
+      <ol className="flex h-full flex-col justify-center px-1 py-1">
         {records.map((r, i) => {
           const value = values[i]
           const share = value / first
@@ -83,31 +87,42 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
               key={i}
               data-funnel-step
               {...bind(i)}
-              className="-mx-1.5 -my-1 flex flex-col gap-1.5 rounded-md px-1.5 py-1 hover:bg-muted/60"
+              className={`-mx-1.5 flex flex-col rounded-md px-1.5 hover:bg-muted/60 ${i > 0 ? 'max-h-24 flex-[1.5]' : 'max-h-14 flex-1'}`}
             >
-              <div className={`flex items-baseline justify-between gap-3 ${card ? 'text-[22px]' : 'text-sm'}`}>
-                <span className="truncate font-medium">{String(r.step)}</span>
-                <span className="flex shrink-0 items-baseline gap-2 tabular-nums">
-                  <span className="text-muted-foreground">{approx(formatValue(value, format), estimated)}</span>
-                  <span className={`text-right font-medium ${card ? 'w-20' : 'w-12'}`}>{formatValue(share, 'percent')}</span>
-                </span>
-              </div>
-              <div className={`overflow-hidden rounded-full bg-muted ${card ? 'h-3' : 'h-2'}`}>
-                <div
-                  data-bar-fill
-                  className="h-full rounded-full"
-                  style={{
-                    width: `${Math.max(0, Math.min(1, share)) * 100}%`,
-                    // One hue, fading step by step: the order is the story, not the color.
-                    backgroundColor: `color-mix(in oklab, var(--chart-1) ${100 - (i / last) * 40}%, transparent)`,
-                  }}
-                />
-              </div>
-              {fromPrevious !== null && (
-                <span className={`text-muted-foreground ${card ? 'text-[length:var(--card-type)]' : 'text-[11px]'}`}>
-                  {`${formatValue(fromPrevious, 'percent')} of the step before`}
-                </span>
+              {i > 0 && (
+                // The neck from the step before: it narrows by what dropped off.
+                <div className={`grid min-h-3 flex-[0.5] grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-3 ${card ? 'min-h-5' : ''}`}>
+                  <span
+                    className={`self-center truncate text-muted-foreground tabular-nums ${card ? 'text-[length:var(--card-type)]' : 'text-[11px]'}`}
+                  >
+                    {fromPrevious !== null && `${formatValue(fromPrevious, 'percent')} converted`}
+                  </span>
+                  <div
+                    data-funnel-neck
+                    style={{
+                      backgroundColor: `color-mix(in oklab, ${colorOf(i)} 22%, transparent)`,
+                      clipPath: `polygon(${50 - widthOf(i - 1) / 2}% 0, ${50 + widthOf(i - 1) / 2}% 0, ${50 + widthOf(i) / 2}% 100%, ${50 - widthOf(i) / 2}% 100%)`,
+                    }}
+                  />
+                </div>
               )}
+              <div className={`grid flex-1 grid-cols-[minmax(0,2fr)_minmax(0,3fr)] items-center gap-3 ${card ? 'min-h-14' : 'min-h-9'}`}>
+                <div className={`flex min-w-0 flex-col leading-tight ${card ? 'text-[22px]' : 'text-sm'}`}>
+                  <span className="truncate font-medium">{String(r.step)}</span>
+                  <span className={`truncate tabular-nums text-muted-foreground ${card ? 'text-[length:var(--card-type)]' : 'text-xs'}`}>
+                    {approx(formatValue(value, format), estimated)}
+                    {' · '}
+                    <span className="font-medium text-foreground">{formatValue(share, 'percent')}</span>
+                  </span>
+                </div>
+                <div className="flex h-full items-stretch justify-center">
+                  <div
+                    data-bar-fill
+                    className="min-w-0.5 rounded-[3px]"
+                    style={{ width: `${widthOf(i)}%`, backgroundColor: colorOf(i) }}
+                  />
+                </div>
+              </div>
             </li>
           )
         })}
