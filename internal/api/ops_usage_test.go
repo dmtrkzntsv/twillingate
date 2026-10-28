@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -273,4 +274,32 @@ func numOf(p *int64) any {
 		return nil
 	}
 	return *p
+}
+
+// TestUsageHistoryPastTheRowCap: the stored sizes are read a page at a
+// time, so months of them outgrow CONSOLE_QUERY_ROWS_MAX without failing.
+func TestUsageHistoryPastTheRowCap(t *testing.T) {
+	h, _ := newTestHost(t)
+	setGuards(t, h, 30*time.Second, 3)
+	days := []string{"2026-08-20", "2026-08-21", "2026-08-22", "2026-08-23"}
+	for i, day := range days {
+		putStat(t, h, store.StatFileBytes, 1, day, int64(100+i))
+		putStat(t, h, store.StatFileBytes, 2, day, int64(200+i))
+		putStat(t, h, store.StatDatabaseBytes, 0, day, int64(5000+i))
+	}
+	from, _ := civil.Parse(days[0])
+	to, _ := civil.Parse(days[len(days)-1])
+	st, err := h.readStored(context.Background(), from, to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, day := range days {
+		if st.files[1][day] != int64(100+i) || st.files[2][day] != int64(200+i) || st.database[day] != int64(5000+i) {
+			t.Errorf("%s: files %d, %d, database %d", day, st.files[1][day], st.files[2][day], st.database[day])
+		}
+	}
+	// The whole answer stands too, past the cap in its days.
+	if _, err := h.usage(context.Background(), usageIn{usageRangeIn: usageRangeIn{From: days[0], To: days[len(days)-1]}}); err != nil {
+		t.Fatal(err)
+	}
 }
