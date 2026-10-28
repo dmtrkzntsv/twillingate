@@ -737,6 +737,9 @@ func filtersKey(where []Filter) string {
 		for _, c := range f.Columns {
 			b.WriteString(strconv.Quote(c))
 		}
+		if len(f.Any) > 0 {
+			b.WriteString("(" + filtersKey(f.Any) + ")")
+		}
 		b.WriteByte('|')
 		for _, v := range f.Values {
 			b.WriteString(strconv.Quote(v))

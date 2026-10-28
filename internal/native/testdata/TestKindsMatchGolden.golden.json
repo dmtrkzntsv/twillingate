@@ -1,4 +1,15 @@
 {
+  "breakdown_any_of 48bed8dd0f90": {
+    "rows": [
+      ["DE","79","3"],
+      ["FR","51","2"],
+      ["GB","49","2"],
+      ["US","50","2"],
+      ["","77","3"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"country\", count(*), count(DISTINCT \"actor_id\") FILTER (WHERE \"display_width\" > 1000 OR \"utm_source\" <> '' OR \"utm_medium\" <> '')\n\t\t\t\tFROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' AND (starts_with(\"path\", '/q') OR \"device_model\" <> '')\n\t\t\t\tGROUP BY \"country\" ORDER BY \"country\" ASC NULLS LAST"
+  },
   "breakdown_any_set 444488a22f14": {
     "rows": [
       ["DE","346","215"],
