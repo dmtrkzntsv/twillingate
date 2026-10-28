@@ -245,6 +245,17 @@ func TestUsageSeriesCarriesTheFileBytes(t *testing.T) {
 	if !strings.Contains(string(body), `"total_bytes":null`) {
 		t.Errorf("an unmeasured day must say null: %s", body)
 	}
+	// The disk on a day is the database and every project's files that day;
+	// now, the database file and every project's latest size.
+	if want := out.DatabaseBytes + 300; out.DiskBytes != want {
+		t.Errorf("disk_bytes = %d, want %d: the database and the latest file bytes", out.DiskBytes, want)
+	}
+	if n := out.DiskSeries[2].Bytes; out.DiskSeries[2].Day != "2026-08-22" || n == nil || *n != 5300 {
+		t.Errorf("disk_series[2] = %+v, want 5,300 on 2026-08-22", out.DiskSeries[2])
+	}
+	if out.DiskSeries[0].Bytes != nil {
+		t.Errorf("disk_series[0] = %d, want null: the database was not measured that day", *out.DiskSeries[0].Bytes)
+	}
 	five := int64(5000)
 	want := []dbDay{{Day: "2026-08-20"}, {Day: "2026-08-21"}, {Day: "2026-08-22", Bytes: &five}}
 	if len(out.DatabaseSeries) != len(want) {
