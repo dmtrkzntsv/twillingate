@@ -271,7 +271,11 @@ what a structured query cannot say.
    widgets lists every system widget with what it reads: `copy_widget` puts
    one on your dashboard, unchanged and independent of the original. For a
    whole page, `duplicate_dashboard` a system dashboard (or its group, with
-   `whole_group`) and work on the copy.
+   `whole_group`) and work on the copy. For one segment, both take `where`
+   and `project_id`: the Users dashboard for the cloud's users only, with
+   test traffic left out, is a `duplicate_dashboard` of it with
+   `where: [{"op": "ever", "where": [{"column": "host", "op": "eq", "values": ["app.example.com"]}]},
+   {"op": "never", "where": [{"column": "app_version", "op": "eq", "values": ["dev"]}]}]`.
 3. **Otherwise write a structured query** (`{"type": "query"}`): a stat, a
    trend, a breakdown, a retention or an attributes, the grammar of
    `query`'s `query` argument
@@ -438,7 +442,7 @@ is older than `REPORTING_CACHE_MAX_AGE`:
 | `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh`; for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` | the envelope above |
 | `create_dashboard` | `title` (at least 2 characters), `range` (default `7d`), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
 | `update_dashboard` | `dashboard_id`, `title`, `whole_group`, `group_id`, `after`; or, in a call of its own, `sidebar` | the dashboard, as `list_dashboards` lists it. `sidebar` (system dashboards only) puts the whole group in or out of the sidebar, and is refused on your own, which are always in it. See [Project tabs and the sidebar](#project-tabs-and-the-sidebar) |
-| `duplicate_dashboard` | `dashboard_id`, `whole_group`, `group_id` | a user copy with copies of its live widgets: a new dashboard last in the sidebar, or with `group_id` a tab of that user group (right after the source when it is the source's own group, last otherwise). A system dashboard is copied too, also one out of the sidebar. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no `group_id`. The copy is in the sidebar, on no project's page, with `project_tab` false. Duplicating never hides the source: to replace a system group, `update_dashboard` it with `sidebar: false` |
+| `duplicate_dashboard` | `dashboard_id`, `whole_group`, `group_id`, `where`, `project_id` | a user copy with copies of its live widgets: a new dashboard last in the sidebar, or with `group_id` a tab of that user group (right after the source when it is the source's own group, last otherwise). A system dashboard is copied too, also one out of the sidebar. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no `group_id`. The copy is in the sidebar, on no project's page, with `project_tab` false. Duplicating never hides the source: to replace a system group, `update_dashboard` it with `sidebar: false`. `where` (filters, as a structured query's) and `project_id` narrow every copied `query` widget: its query's rows must also pass `where`, before its own filters, and it reads `project_id` whatever the switcher shows; Markdown is copied as it is, and a `sql` widget among the copies, or a filter one of the queries cannot take (a column its table lacks), refuses the whole copy |
 | `archive_dashboard` | `dashboard_id`, `whole_group` | archives a user dashboard (`whole_group`: every live member of its group): out of the sidebar and off every project page; see [Archiving and the purge](#archiving-and-the-purge). A system dashboard is refused |
 | `restore_dashboard` | `dashboard_id`, `whole_group` | unhides a user dashboard (`whole_group`: every archived member of its group), in the sidebar and on project pages where it was. A system dashboard is refused |
 | `list_project_tabs` | `project_id` | `tabs`: the project page's tabs, in order, one order per project, built-in and user tabs alike; each `dashboard_id`, `title`, `owner`, `group_id` |
@@ -447,7 +451,7 @@ is older than `REPORTING_CACHE_MAX_AGE`:
 | `move_project_tab` | `project_id`, `dashboard_id`, `after` | `tabs`; moves any tab, system or user, after another tab of the project (`0` first) |
 | `add_widget` | `dashboard_id`, `component`, `source`, `title`, `name`, `props`, `width`, `height`, `after` | the widget |
 | `update_widget` | `widget_id` and any of `name`, `component`, `title`, `props`, `source`, `width`, `height`, `after` | the widget; omitted fields are kept. `after` moves it after that widget of its dashboard (`0` first). A change of only `width`, `height`, `after`, `title` and `name` runs no query |
-| `copy_widget` | `widget_id`, `dashboard_id`, `after` | the independent copy, same size; the original may be on a system dashboard |
+| `copy_widget` | `widget_id`, `dashboard_id`, `after`, `where`, `project_id` | the independent copy, same size; the original may be on a system dashboard. `where` and `project_id` narrow a `query` widget's copy as `duplicate_dashboard`'s do |
 | `archive_widget` | `widget_id` | hides it in place |
 | `restore_widget` | `widget_id` | puts it back where it was |
 | `list_widget_shares` | `widget_id`?, `state`? (`live`/`archived`) | every share, live ones newest first, archived ones most recently archived first, with its URLs and archive date |

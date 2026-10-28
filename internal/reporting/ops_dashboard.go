@@ -54,6 +54,7 @@ type DuplicateDashboard struct {
 	ID         int64
 	WholeGroup bool
 	GroupID    int64
+	Narrow     Narrow // what the copies' query widgets are narrowed to
 }
 
 // View is a viewer's selection on a dashboard: each part only when the
@@ -400,15 +401,15 @@ func (s *Service) DuplicateDashboard(ctx context.Context, actor string, in Dupli
 		if in.GroupID != 0 {
 			return DashboardDetail{}, store.Refuse(store.ErrInvalid, "whole_group copies the group as a new dashboard; drop group_id")
 		}
-		return s.duplicateGroup(ctx, actor, src)
+		return s.duplicateGroup(ctx, actor, src, in.Narrow)
 	}
-	return s.duplicateOne(ctx, actor, src, in.GroupID)
+	return s.duplicateOne(ctx, actor, src, in.GroupID, in.Narrow)
 }
 
 // duplicateOne is DuplicateDashboard for a single tab: a group of its own
 // when group is 0, else a tab of group (a live user group).
-func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dashboard, group int64) (DashboardDetail, error) {
-	ws, err := s.copyLiveWidgets(ctx, src.ID)
+func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dashboard, group int64, n Narrow) (DashboardDetail, error) {
+	ws, err := s.copyLiveWidgets(ctx, src.ID, n)
 	if err != nil {
 		return DashboardDetail{}, err
 	}
@@ -462,7 +463,7 @@ func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dash
 // reusing an outer read. A bare archive or restore takes no placeMu and
 // raises no sort-key conflict, so one racing the copy is not serialised
 // with it: the copy follows the membership as its last attempt read it.
-func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Dashboard) (DashboardDetail, error) {
+func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Dashboard, n Narrow) (DashboardDetail, error) {
 	system := src.Owner == store.OwnerSystem
 	var ids []int64
 	var srcIndex int
@@ -488,7 +489,7 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 			if m.ID == src.ID {
 				srcIndex = i
 			}
-			if wss[i], err = s.copyLiveWidgets(ctx, m.ID); err != nil {
+			if wss[i], err = s.copyLiveWidgets(ctx, m.ID, n); err != nil {
 				return err
 			}
 			title := m.Title
@@ -538,7 +539,7 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 // still copies, faithfully. A sql widget, in a process with no external
 // SQL engine, refuses the copy (ErrSQLEngine), as copy_widget and
 // create_dashboard refuse one.
-func (s *Service) copyLiveWidgets(ctx context.Context, dashboardID int64) ([]store.Widget, error) {
+func (s *Service) copyLiveWidgets(ctx context.Context, dashboardID int64, n Narrow) ([]store.Widget, error) {
 	all, err := s.st.ListWidgets(ctx, dashboardID)
 	if err != nil {
 		return nil, err
@@ -550,7 +551,11 @@ func (s *Service) copyLiveWidgets(ctx context.Context, dashboardID int64) ([]sto
 			return nil, ErrSQLEngine
 		}
 		if w.ArchivedAt == "" {
-			ws = append(ws, freshCopy(w))
+			c, err := narrowed(freshCopy(w), n)
+			if err != nil {
+				return nil, err
+			}
+			ws = append(ws, c)
 		}
 	}
 	keys, err := sortkey.Spread("", "", len(ws))
