@@ -45,6 +45,15 @@
     "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
     "sql": "WITH d AS (SELECT \"path\", \"day\", count(DISTINCT \"actor_id\") AS n FROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' GROUP BY \"path\", \"day\"),\n\t\tg AS (SELECT \"path\", sum(n) AS s FROM d GROUP BY \"path\"),\n\t\ttop AS (SELECT * FROM g ORDER BY s DESC, \"path\" ASC NULLS LAST LIMIT 2) SELECT \"path\", s FROM top ORDER BY s DESC, \"path\" ASC NULLS LAST"
   },
+  "breakdown_defined c13705bc018d": {
+    "rows": [
+      ["german","","346","10"],
+      ["q","","227","9"],
+      ["rest","","275","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH v AS (SELECT CASE WHEN \"country\" = 'DE' THEN 'german' WHEN starts_with(\"path\", '/q') OR \"device_model\" <> '' THEN 'q'\n\t\t\t\tELSE 'rest' END AS seg, * FROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10')\n\t\t\tSELECT seg, \"kind\", count(*), count(DISTINCT \"actor_id\") FILTER (WHERE seg <> 'rest') FROM v\n\t\t\t\tGROUP BY ALL ORDER BY seg, \"kind\" ASC NULLS LAST"
+  },
   "breakdown_device_label b6d524e795d1": {
     "rows": [
       ["","measures","400","30"],

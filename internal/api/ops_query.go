@@ -159,6 +159,7 @@ func queryEnums(in *jsonschema.Schema) {
 	}
 	filterEnums(m.Properties["where"].Items)
 	filterEnums(q.Properties["where"].Items)
+	filterEnums(q.Properties["define"].Items.Properties["cases"].Items.Properties["where"].Items)
 	sideOps := slices.DeleteFunc(slices.Clone(native.MetricOps), func(op string) bool { return op == "ratio" || op == "share" })
 	for _, side := range []string{"num", "den"} {
 		s := m.Properties[side]
