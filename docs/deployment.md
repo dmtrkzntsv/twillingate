@@ -484,7 +484,8 @@ already defines a behaviour, it is linked rather than repeated.
 
 **Running an external SQL engine next to twillingate.** Put the socket in a
 directory both processes can reach (a shared directory, or a volume mounted
-in both containers) and give twillingate its path as `SQL_ENGINE_SOCKET`.
+in both containers) and give twillingate its path as `SQL_ENGINE_SOCKET`,
+for example `/run/twillingate/sql-engine.sock`.
 The socket is unauthenticated: anyone who can connect to it reads every
 project's events. Put it in a directory only the twillingate service user
 (or a group the two services share) can traverse, mode `0750`, with the
