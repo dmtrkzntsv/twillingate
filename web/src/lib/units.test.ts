@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatAgo, formatBytes, formatDay, formatGrowth, formatSpan } from './units'
+import { eventsByMonth, formatAgo, formatBytes, formatDay, formatGrowth, formatSpan, monthStart } from './units'
 
 describe('formatBytes', () => {
   it('uses binary-free decimal units, one decimal past the first', () => {
@@ -58,5 +58,23 @@ describe('formatSpan', () => {
   })
   it('names the years when the range leaves the current year', () => {
     expect(formatSpan('2025-12-30', '2026-01-05', now)).toBe('Dec 30, 2025 – Jan 5, 2026')
+  })
+})
+
+describe('monthStart', () => {
+  it('goes back whole months, across a year', () => {
+    const now = new Date('2026-03-31T23:00:00Z')
+    expect(monthStart(0, now)).toBe('2026-03-01')
+    expect(monthStart(5, now)).toBe('2025-10-01')
+  })
+})
+
+describe('eventsByMonth', () => {
+  it('sums every family of every project by month, oldest first', () => {
+    const day = (d: string, views: number, events = 0, measures = 0) => ({ day: d, views, events, measures })
+    expect(eventsByMonth([
+      { series: [day('2026-10-01', 1, 2, 3), day('2026-09-30', 4)] },
+      { series: [day('2026-09-01', 0), day('2026-10-02', 10)] },
+    ])).toEqual([{ month: '2026-09', count: 4 }, { month: '2026-10', count: 16 }])
   })
 })

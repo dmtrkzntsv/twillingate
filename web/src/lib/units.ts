@@ -55,3 +55,23 @@ export function formatGrowth(series: { day: string; bytes: number | null }[], no
   if (delta === 0) return null
   return `${delta > 0 ? '+' : '−'}${formatBytes(Math.abs(delta))} since ${formatDay(first.day, now)}`
 }
+
+/** The first UTC day of the month `back` months before `now`'s: the start of a range of `back + 1` months. */
+export function monthStart(back: number, now: Date = new Date()): string {
+  return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - back, 1)).toISOString().slice(0, 10)
+}
+
+/**
+ * Every project's views, events and measures summed by UTC month, oldest
+ * first, a month with none included: [{month: '2026-09', count: 47210}].
+ */
+export function eventsByMonth(projects: { series: { day: string; views: number; events: number; measures: number }[] }[]): { month: string; count: number }[] {
+  const counts = new Map<string, number>()
+  for (const p of projects) {
+    for (const d of p.series) {
+      const month = d.day.slice(0, 7)
+      counts.set(month, (counts.get(month) ?? 0) + d.views + d.events + d.measures)
+    }
+  }
+  return [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([month, count]) => ({ month, count }))
+}

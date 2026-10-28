@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { DndContext, closestCenter } from '@dnd-kit/core'
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
 import { useQuery } from '@tanstack/react-query'
@@ -17,11 +17,14 @@ import { useReorder } from '@/hooks/use-reorder'
 import type { CreatedProject } from '@/lib/api'
 import { afterAt } from '@/lib/arrange'
 import { dashboardsQuery, keysQuery, limitsQuery, projectActivityQuery, projectsQuery, usageQuery } from '@/lib/queries'
-import { formatBytes, formatGrowth } from '@/lib/units'
+import { formatExact, formatValue } from '@/lib/format'
+import { eventsByMonth, formatBytes, formatGrowth, monthStart } from '@/lib/units'
+
+const MONTH = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' })
 
 /**
- * `/projects`: every live project as a card with its last 30 days, and
- * New project. Cards drag to a new order, the one every project
+ * `/projects`: every live project as a card with its last 30 days, the
+ * server's events by month, and New project. Cards drag to a new order, the one every project
  * list shows; archived projects keep their place in it and are listed on
  * the Archive page.
  */
@@ -30,6 +33,8 @@ export default function Projects() {
   const projectsQ = useQuery(projectsQuery)
   const statsQ = useQuery(usageQuery({}))
   const keysQ = useQuery(keysQuery())
+  // Six months of files to read: a query of its own, so the cards do not wait for it.
+  const { data: monthsData } = useQuery(usageQuery({ from: monthStart(5) }))
   const { data: projectsData } = projectsQ
   const { data: statsData } = statsQ
   const { data: keysData } = keysQ
@@ -41,6 +46,7 @@ export default function Projects() {
   const [created, setCreated] = useState<CreatedProject | null>(null)
 
   const projects = projectsData?.projects ?? []
+  const months = eventsByMonth(monthsData?.projects ?? [])
   const active = projects.filter((p) => !p.archived)
   const activeIds = active.map((p) => p.project_id)
   const readOnly = dash?.dev === true
@@ -76,11 +82,24 @@ export default function Projects() {
                 projectsData ? `${active.length} ${active.length === 1 ? 'project' : 'projects'}` : null,
                 statsData ? `${formatBytes(statsData.database_bytes)} on disk` : null,
                 statsData ? formatGrowth(statsData.database_series) : null,
-                limitsData?.events_30d ? `${limitsData.events_30d.count.toLocaleString()} ${limitsData.events_30d.count === 1 ? 'event' : 'events'} in 30 days` : null,
               ]
                 .filter(Boolean)
                 .join(' · ')}
             </p>
+            {months.length > 0 && (
+              <p className="text-sm text-muted-foreground">
+                Events by month:{' '}
+                {months.map(({ month, count }, i) => (
+                  <Fragment key={month}>
+                    {i > 0 && ' · '}
+                    <span className="whitespace-nowrap" title={`${formatExact(count)} events`}>
+                      {MONTH.format(new Date(`${month}-01T00:00:00Z`))} {formatValue(count)}
+                      {i === months.length - 1 && ' so far'}
+                    </span>
+                  </Fragment>
+                ))}
+              </p>
+            )}
           </div>
           <Button onClick={() => setCreating(true)}>
             <PlusIcon /> New project

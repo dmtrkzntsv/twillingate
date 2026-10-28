@@ -64,15 +64,16 @@ describe('Projects', () => {
     expect(within(card).getByText(/7 events/)).toBeInTheDocument()
     expect(within(card).getByText(/2\.3 MB/)).toBeInTheDocument()
     expect(within(card).getByText(/1 active key/)).toBeInTheDocument()
-    expect(await screen.findByText(/2 projects · 2\.1 GB on disk · \+100\.0 MB since Sep 3 · 48,210 events in 30 days/)).toBeInTheDocument()
+    expect(await screen.findByText(/2 projects · 2\.1 GB on disk · \+100\.0 MB since Sep 3/)).toBeInTheDocument()
   })
 
-  it('leaves the event count out of the header when the server could not count them', async () => {
-    vi.spyOn(endpoints, 'limits').mockResolvedValue({ limits: [] })
+  it('sums the events of every project by month over six months, the last one so far', async () => {
+    const usage = vi.spyOn(endpoints, 'usage')
     renderPage()
-    await screen.findByText(/2 projects · 2\.1 GB on disk/)
-    await waitFor(() => expect(endpoints.limits).toHaveBeenCalled())
-    expect(screen.queryByText(/in 30 days/)).not.toBeInTheDocument()
+    const line = await screen.findByText(/^Events by month:/)
+    expect(line).toHaveTextContent('Events by month: Oct 21 so far')
+    expect(within(line).getByTitle('21 events')).toBeInTheDocument()
+    expect(usage).toHaveBeenCalledWith(expect.objectContaining({ from: expect.stringMatching(/^\d{4}-\d{2}-01$/) }))
   })
 
   it("links a project's forms, its drafts and new submissions to its Forms tab", async () => {
@@ -199,7 +200,8 @@ describe('Projects', () => {
     expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Retry' }))
     expect(await within(screen.getByRole('article', { name: 'econumo.com' })).findByText(/7 events/)).toBeInTheDocument()
-    expect(stats).toHaveBeenCalledTimes(2)
+    // The cards' 30 days, not the months line's own query.
+    expect(stats.mock.calls.filter(([q]) => q.from === undefined)).toHaveLength(2)
     expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument()
   })
 
