@@ -54,28 +54,6 @@ type logKey struct {
 	day     string
 }
 
-// MoveDir renames the events directory from to to, holding from's lock
-// while it does: ErrLocked, and nothing moved, while a Log holds it, so a
-// start that overlaps a running ingest process never moves its directory
-// away from it. The lock file moves with the directory.
-func MoveDir(from, to string) error {
-	lock, err := os.OpenFile(filepath.Join(from, ".lock"), os.O_CREATE|os.O_RDWR, 0o640)
-	if err != nil {
-		return fmt.Errorf("archive: %w", err)
-	}
-	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
-		if errors.Is(err, syscall.EWOULDBLOCK) {
-			return fmt.Errorf("%w (%s)", ErrLocked, from)
-		}
-		return fmt.Errorf("archive: lock %s: %w", from, err)
-	}
-	if err := os.Rename(from, to); err != nil {
-		return fmt.Errorf("archive: %w", err)
-	}
-	return nil
-}
-
 // OpenLog opens the log under dir, taking its lock (ErrLocked while another
 // Log holds it) and cutting every open log back to its last newline: a line
 // torn by a crash never reaches an append or a dump.

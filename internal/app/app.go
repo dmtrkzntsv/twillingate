@@ -4,14 +4,12 @@ package app
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/api"
@@ -85,9 +83,6 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	// Retired settings still set start nothing: say so once.
 	if w := cfg.IgnoredWarning(); w != "" {
 		logger.Warn(w)
-	}
-	if err := moveEventsDir(cfg, logger, runIngest); err != nil {
-		return err
 	}
 	st, err := store.Open(cfg.Database)
 	if err != nil {
@@ -363,31 +358,4 @@ func logIngestSummary(ctx context.Context, srv *server.Server, logger *slog.Logg
 			}
 		}
 	}
-}
-
-// moveEventsDir points cfg at data/ (config.EventsDirMoveTo) where only
-// the raw/ older releases kept beside the database is there. The ingest
-// process moves raw/ to data/ first, before anything reads it, and not
-// while another ingest process holds it (archive.ErrLocked). A process
-// without ingest only reads data/: on a split install it may start before
-// the ingest process has moved the files, and sees them once it has.
-// raw/ as a mount point cannot be renamed: the start refuses, naming the
-// DATA_DIR that keeps it where it is.
-func moveEventsDir(cfg *config.Config, logger *slog.Logger, ingest bool) error {
-	if cfg.EventsDirMoveTo == "" {
-		return nil
-	}
-	if ingest {
-		err := archive.MoveDir(cfg.EventsDir, cfg.EventsDirMoveTo)
-		if errors.Is(err, syscall.EBUSY) || errors.Is(err, syscall.EXDEV) {
-			return fmt.Errorf("move the event files from %s to %s: %w; %s cannot be renamed (a mount point?): set DATA_DIR=%s to keep them there",
-				cfg.EventsDir, cfg.EventsDirMoveTo, err, cfg.EventsDir, cfg.EventsDir)
-		}
-		if err != nil {
-			return fmt.Errorf("move the event files from %s to %s: %w", cfg.EventsDir, cfg.EventsDirMoveTo, err)
-		}
-		logger.Info("moved the event files", "from", cfg.EventsDir, "to", cfg.EventsDirMoveTo)
-	}
-	cfg.EventsDir, cfg.EventsDirMoveTo = cfg.EventsDirMoveTo, ""
-	return nil
 }

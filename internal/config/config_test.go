@@ -163,8 +163,8 @@ func TestValidationErrors(t *testing.T) {
 func TestEventsDir(t *testing.T) {
 	db := t.TempDir()
 	c, err := load(t, map[string]string{"DATABASE_DSN": "sqlite://" + db + "/a.db"})
-	if err != nil || c.EventsDir != filepath.Join(db, "data") || c.EventsDirMoveTo != "" {
-		t.Fatalf("default EventsDir = %v, %v; want data/ beside a.db, nothing to move", c, err)
+	if err != nil || c.EventsDir != filepath.Join(db, "data") {
+		t.Fatalf("default EventsDir = %v, %v; want data/ beside a.db", c, err)
 	}
 	c, err = load(t, map[string]string{"DATA_DIR": "/srv/events"})
 	if err != nil || c.EventsDir != "/srv/events" {
@@ -178,33 +178,6 @@ func TestEventsDir(t *testing.T) {
 	c, err = load(t, map[string]string{"DATA_DIR": "events"})
 	if err != nil || c.EventsDir != filepath.Join(wd, "events") {
 		t.Fatalf("relative EventsDir = %v, %v; want %s", c, err, filepath.Join(wd, "events"))
-	}
-}
-
-// TestEventsDirOfAnOlderRelease: where only the raw/ an older release
-// wrote beside the database exists, the event files are read there and
-// moved to data/ by the ingest process; once data/ exists, or DATA_DIR
-// is set, raw/ is left alone.
-func TestEventsDirOfAnOlderRelease(t *testing.T) {
-	db := t.TempDir()
-	if err := os.Mkdir(filepath.Join(db, "raw"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	dsn := map[string]string{"DATABASE_DSN": "sqlite://" + db + "/a.db"}
-	c, err := load(t, dsn)
-	if err != nil || c.EventsDir != filepath.Join(db, "raw") || c.EventsDirMoveTo != filepath.Join(db, "data") {
-		t.Fatalf("EventsDir, EventsDirMoveTo = %v, %v; want raw/, to move to data/", c, err)
-	}
-	c, err = load(t, map[string]string{"DATABASE_DSN": dsn["DATABASE_DSN"], "DATA_DIR": filepath.Join(db, "raw")})
-	if err != nil || c.EventsDirMoveTo != "" {
-		t.Fatalf("with DATA_DIR set: %v, %v; want nothing to move", c, err)
-	}
-	if err := os.Mkdir(filepath.Join(db, "data"), 0o750); err != nil {
-		t.Fatal(err)
-	}
-	c, err = load(t, dsn)
-	if err != nil || c.EventsDir != filepath.Join(db, "data") || c.EventsDirMoveTo != "" {
-		t.Fatalf("with data/ there: %v, %v; want data/, nothing to move", c, err)
 	}
 }
 

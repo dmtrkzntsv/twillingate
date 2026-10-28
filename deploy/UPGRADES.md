@@ -1504,28 +1504,28 @@ Rollback: install the previous release (the installer with `--version`, or
 
 The event files' default directory is now `data/` beside the database
 (`/var/lib/twillingate/data`) instead of `raw/`, and its variable is
-`DATA_DIR`, no longer `EVENTS_DIR`.
+`DATA_DIR`, no longer `EVENTS_DIR`. Nothing is moved for you: a release
+that finds no `data/` starts on an empty one, and its dashboards show
+nothing, while the old files stay where they were.
 
-- **Before the upgrade**, if your environment sets `EVENTS_DIR`, rename the
-  line to `DATA_DIR` with the same value. `EVENTS_DIR` is now ignored, with
-  a warning at start (`EVENTS_DIR is ignored: the event files' directory is
-  DATA_DIR`): a process that still sets it reads and writes the default
-  `data/` instead, and its dashboards show nothing until you rename it.
-  Nothing in the old directory is touched. Stop any backup job that copies
-  `raw/` while the service restarts.
-- **On the day:** with neither variable set, the first start of the ingest
-  process renames `raw/` to `data/` before anything reads it, and logs
-  `moved the event files` with both paths. It is a rename in the same
-  directory, so it takes no time and copies nothing. A console-only process
-  reads `data/` from its start and sees the files once the ingest process
-  has moved them, whichever starts first. Where `raw/` is a mount point,
-  it cannot be renamed and the start refuses, naming the line to add:
-  `DATA_DIR=<the raw/ path>` keeps the files where they are.
-- **After the upgrade:** check the log at start for the `EVENTS_DIR`
-  warning. Point anything that reads the files at `data/`: backups
-  (`docs/deployment.md`, "Back up and restore"), a Litestream check
-  (`docs/litestream.md`), and an external SQL engine's read-only mount.
+- **Before the upgrade**, pick one, for every twillingate process:
+  - Set `DATA_DIR` to the directory the files are in now: the value of
+    `EVENTS_DIR` if you set it (then delete that line), or the `raw/`
+    path (`DATA_DIR=/var/lib/twillingate/raw`). Nothing on disk changes.
+  - Or, with `EVENTS_DIR` unset, stop the service, rename `raw/` to
+    `data/` in the data directory, then upgrade: `sudo -u twillingate mv
+    /var/lib/twillingate/raw /var/lib/twillingate/data`, or under compose
+    `docker compose stop twillingate`, then `docker run --rm --volumes-from
+    "$(docker compose ps -aq twillingate)" alpine:3.20 mv
+    /var/lib/twillingate/raw /var/lib/twillingate/data`.
+- **After the upgrade:** a start that still finds `EVENTS_DIR` set logs
+  `EVENTS_DIR is ignored: the event files' directory is DATA_DIR` and
+  uses `data/`; fix the line and restart. Check a dashboard shows the
+  days before the upgrade. Point anything else that reads the files at
+  the directory you chose: backups (`docs/deployment.md`, "Back up and
+  restore"), a Litestream check (`docs/litestream.md`), and an external
+  SQL engine's read-only mount.
 
-Rollback: an older release reads `EVENTS_DIR`, defaulting to `raw/`, and
-would start on an empty one. Before going back, stop the service and
-rename `data/` to `raw/`, or set `EVENTS_DIR` to the `data/` path.
+Rollback: an older release reads `EVENTS_DIR`, defaulting to `raw/`. If
+you renamed `raw/`, stop the service and rename it back, or set
+`EVENTS_DIR` to the `data/` path.

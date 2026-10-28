@@ -153,10 +153,8 @@ fi
 if [ "$upgrade" -eq 1 ]; then
   # Restart only what was running: a stopped service stays stopped. The glob
   # also catches the twillingate@ingest and twillingate@console instances.
-  # Ingest first: on a split install it is the one that moves the event
-  # files when an upgrade relocates them.
   running="$(systemctl list-units --type=service --state=active --no-legend --plain 'twillingate*.service' \
-    | awk '{print $1}' | awk '/@ingest/ {print; next} {rest = rest $0 "\n"} END {printf "%s", rest}')"
+    | awk '{print $1}')"
   if [ "$start_console" -eq 1 ]; then
     running="$running twillingate@console.service"
   fi

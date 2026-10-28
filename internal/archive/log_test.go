@@ -423,32 +423,3 @@ func TestOpenLogLocksTheDirectory(t *testing.T) {
 	}
 	again.Close()
 }
-
-// TestMoveDirRefusesWhileLocked: a directory a Log holds is not moved
-// (ErrLocked, the files where they were); once the Log is closed it is,
-// lock file and all, and a Log opens on the new path.
-func TestMoveDirRefusesWhileLocked(t *testing.T) {
-	from, to := filepath.Join(t.TempDir(), "raw"), filepath.Join(t.TempDir(), "data")
-	l, err := OpenLog(from)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := MoveDir(from, to); !errors.Is(err, ErrLocked) {
-		t.Fatalf("MoveDir while held: %v, want ErrLocked", err)
-	}
-	if _, err := os.Stat(to); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("moved while held: %v", err)
-	}
-	l.Close()
-	if err := MoveDir(from, to); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := os.Stat(from); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("%s still there: %v", from, err)
-	}
-	l, err = OpenLog(to)
-	if err != nil {
-		t.Fatalf("OpenLog after the move: %v", err)
-	}
-	l.Close()
-}
