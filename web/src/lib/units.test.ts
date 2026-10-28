@@ -1,14 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatAgo, formatBytes, formatDay, formatGrowth, formatSpan } from './units'
-
-describe('formatBytes', () => {
-  it('uses binary-free decimal units, one decimal past the first', () => {
-    expect(formatBytes(0)).toBe('0 B')
-    expect(formatBytes(999)).toBe('999 B')
-    expect(formatBytes(2_262_000)).toBe('2.3 MB')
-    expect(formatBytes(2_254_000_000)).toBe('2.3 GB')
-  })
-})
+import { eventsByMonth, formatAgo, formatDay, formatSpan, monthStart } from './units'
 
 describe('formatAgo', () => {
   const now = new Date('2026-10-03T16:05:00Z')
@@ -30,26 +21,6 @@ describe('formatDay', () => {
   })
 })
 
-describe('formatGrowth', () => {
-  const now = new Date('2026-10-03T12:00:00Z')
-  it('says the change between the first and the last measured day', () => {
-    const series = [
-      { day: '2026-09-04', bytes: null },
-      { day: '2026-09-05', bytes: 2_000_000 },
-      { day: '2026-09-06', bytes: null },
-      { day: '2026-10-03', bytes: 14_300_000 },
-    ]
-    expect(formatGrowth(series, now)).toBe('+12.3 MB since Sep 5')
-    expect(formatGrowth([{ day: '2026-10-02', bytes: 5_000 }, { day: '2026-10-03', bytes: 4_000 }], now)).toBe('−1.0 kB since yesterday')
-  })
-
-  it('says nothing with under two measured days or no change', () => {
-    expect(formatGrowth([], now)).toBeNull()
-    expect(formatGrowth([{ day: '2026-10-03', bytes: 5 }, { day: '2026-10-02', bytes: null }], now)).toBeNull()
-    expect(formatGrowth([{ day: '2026-10-02', bytes: 5 }, { day: '2026-10-03', bytes: 5 }], now)).toBeNull()
-  })
-})
-
 describe('formatSpan', () => {
   const now = new Date('2026-10-06T12:00:00Z')
   it('says a range in the current year without years, one day once', () => {
@@ -58,5 +29,23 @@ describe('formatSpan', () => {
   })
   it('names the years when the range leaves the current year', () => {
     expect(formatSpan('2025-12-30', '2026-01-05', now)).toBe('Dec 30, 2025 – Jan 5, 2026')
+  })
+})
+
+describe('monthStart', () => {
+  it('goes back whole months, across a year', () => {
+    const now = new Date('2026-03-31T23:00:00Z')
+    expect(monthStart(0, now)).toBe('2026-03-01')
+    expect(monthStart(5, now)).toBe('2025-10-01')
+  })
+})
+
+describe('eventsByMonth', () => {
+  it('sums every family of every project by month, oldest first', () => {
+    const day = (d: string, views: number, events = 0, measures = 0) => ({ day: d, views, events, measures })
+    expect(eventsByMonth([
+      { series: [day('2026-10-01', 1, 2, 3), day('2026-09-30', 4)] },
+      { series: [day('2026-09-01', 0), day('2026-10-02', 10)] },
+    ])).toEqual([{ month: '2026-09', count: 4 }, { month: '2026-10', count: 16 }])
   })
 })

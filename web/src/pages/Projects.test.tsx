@@ -57,14 +57,23 @@ function renderPage() {
 }
 
 describe('Projects', () => {
-  it('shows a card per active project with its usage, and the database size', async () => {
+  it('shows a card per active project with its usage, and no size anywhere', async () => {
     renderPage()
     const card = await screen.findByRole('article', { name: 'econumo.com' })
     expect(within(card).getByText('2 min ago')).toBeInTheDocument()
     expect(within(card).getByText(/7 events/)).toBeInTheDocument()
-    expect(within(card).getByText(/2\.3 MB/)).toBeInTheDocument()
-    expect(within(card).getByText(/1 active key/)).toBeInTheDocument()
-    expect(screen.getByText(/2 projects · 2\.1 GB on disk · \+100\.0 MB since Sep 3/)).toBeInTheDocument()
+    expect(within(card).getByText('1 active key')).toBeInTheDocument()
+    expect(await screen.findByText('2 projects')).toBeInTheDocument()
+    expect(screen.queryByText(/MB|GB|on disk/)).not.toBeInTheDocument()
+  })
+
+  it('sums the events of every project by month over six months, the last one so far', async () => {
+    const usage = vi.spyOn(endpoints, 'usage')
+    renderPage()
+    const line = await screen.findByText(/^Events by month:/)
+    expect(line).toHaveTextContent('Events by month: Oct 21 so far')
+    expect(within(line).getByTitle('21 events')).toBeInTheDocument()
+    expect(usage).toHaveBeenCalledWith(expect.objectContaining({ from: expect.stringMatching(/^\d{4}-\d{2}-01$/) }))
   })
 
   it("links a project's forms, its drafts and new submissions to its Forms tab", async () => {
@@ -85,7 +94,6 @@ describe('Projects', () => {
     renderPage()
     const card = await screen.findByRole('article', { name: 'quiet.dev' })
     expect(within(card).getByText('Nothing received yet')).toBeInTheDocument()
-    expect(within(card).getByText(/size not measured yet/)).toBeInTheDocument()
   })
 
   it('shows dashes, not zeros, while stats and keys load, and no count before projects', async () => {
@@ -94,9 +102,7 @@ describe('Projects', () => {
     renderPage()
     const card = await screen.findByRole('article', { name: 'econumo.com' })
     expect(within(card).queryByText(/0 events/)).not.toBeInTheDocument()
-    expect(within(card).queryByText(/size not measured yet/)).not.toBeInTheDocument()
     expect(within(card).queryByText(/0 active keys/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/on disk/)).not.toBeInTheDocument()
   })
 
   it('links the whole card to its project, and leaves the origins to the project page', async () => {
@@ -158,26 +164,6 @@ describe('Projects', () => {
     })
   })
 
-  it('shows the limits by group, retention first, 0 as what it means', async () => {
-    renderPage()
-    const panel = await screen.findByRole('region', { name: 'Limits' })
-    const groups = within(panel).getAllByRole('region').map((r) => r.getAttribute('aria-label'))
-    expect(groups).toEqual(['Retention', 'Ingest'])
-    const retention = within(panel).getByRole('region', { name: 'Retention' })
-    expect(within(retention).getByText('7 days')).toBeInTheDocument()
-    expect(within(retention).getByText('RETENTION_DAYS')).toBeInTheDocument()
-    expect(within(retention).getByText(/default 400 days/)).toBeInTheDocument()
-    // The variable sits under the value, above the description.
-    const variable = within(retention).getByText('RETENTION_DAYS').closest('dd')!
-    const description = within(retention).getByText('the event files are kept this long')
-    expect(variable.compareDocumentPosition(description) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
-    expect(within(panel).getByText('kept forever')).toBeInTheDocument()
-    const ingest = within(panel).getByRole('region', { name: 'Ingest' })
-    expect(within(ingest).getByText('256 KiB')).toBeInTheDocument()
-    expect(within(ingest).queryByText(/default/)).not.toBeInTheDocument()
-    expect(within(panel).getByText('Events in the last 30 days: 48,210')).toBeInTheDocument()
-  })
-
   it('creates a project and shows its key and snippet once', async () => {
     const user = userEvent.setup()
     create.mockResolvedValue({ project_id: 9, key: 'ak_new', snippet: '<script src="…"></script>' })
@@ -211,7 +197,8 @@ describe('Projects', () => {
     expect(container.querySelectorAll('[role="alert"]')).toHaveLength(1)
     await user.click(screen.getByRole('button', { name: 'Retry' }))
     expect(await within(screen.getByRole('article', { name: 'econumo.com' })).findByText(/7 events/)).toBeInTheDocument()
-    expect(stats).toHaveBeenCalledTimes(2)
+    // The cards' 30 days, not the months line's own query.
+    expect(stats.mock.calls.filter(([q]) => q.from === undefined)).toHaveLength(2)
     expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument()
   })
 

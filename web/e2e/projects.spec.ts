@@ -18,7 +18,6 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await login(page)
   await page.goto('/app/projects')
   await expect(page.getByRole('article', { name: 'dev' })).toBeVisible()
-  await expect(page.getByRole('region', { name: 'Limits' })).toBeVisible()
 
   const name = `e2e-${Date.now()}`
   await page.getByRole('button', { name: 'New project' }).click()

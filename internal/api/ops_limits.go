@@ -154,13 +154,19 @@ func (h *host) runSubs(ctx context.Context, q string, args ...any) (readsql.Resu
 	return runOn(ctx, h.subs, q, args...)
 }
 
+// runErr says a timeout in terms the caller can act on; any other error
+// passes through.
+func runErr(db *readsql.DB, err error) error {
+	if errors.Is(err, readsql.ErrTimeout) {
+		return invalidf("query exceeded %s; narrow the date range", db.Timeout())
+	}
+	return err
+}
+
 func runOn(ctx context.Context, db *readsql.DB, q string, args ...any) (readsql.Result, error) {
 	res, err := db.Run(ctx, q, args...)
 	if err != nil {
-		if errors.Is(err, readsql.ErrTimeout) {
-			return readsql.Result{}, invalidf("query exceeded %s; narrow the date range", db.Timeout())
-		}
-		return readsql.Result{}, err
+		return readsql.Result{}, runErr(db, err)
 	}
 	if res.Truncated {
 		return readsql.Result{}, invalidf("too many rows; narrow the date range")
