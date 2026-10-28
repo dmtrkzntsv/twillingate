@@ -1,18 +1,5 @@
 import { formatHeading, formatTick } from './chart'
 
-/** Bytes in decimal units: 999 B, 2.3 MB, 2.3 GB. */
-export function formatBytes(n: number): string {
-  if (n < 1000) return `${n} B`
-  const units = ['kB', 'MB', 'GB', 'TB']
-  let v = n
-  let i = -1
-  while (v >= 1000 && i < units.length - 1) {
-    v /= 1000
-    i++
-  }
-  return `${v.toFixed(1)} ${units[i]}`
-}
-
 /** How long ago an ISO time was: just now, 2 min ago, 3 h ago, 3 days ago. */
 export function formatAgo(iso: string, now: Date = new Date()): string {
   const s = Math.max(0, (now.getTime() - new Date(iso).getTime()) / 1000)
@@ -40,20 +27,6 @@ export function formatSpan(from: string, to: string, now: Date = new Date()): st
   const year = now.toISOString().slice(0, 4)
   const fmt = from.slice(0, 4) === year && to.slice(0, 4) === year ? formatTick : formatHeading
   return from === to ? fmt(from) : `${fmt(from)} – ${fmt(to)}`
-}
-
-/**
- * How much the database grew over the measured days of a series:
- * "+12.3 MB since Sep 4", "−1.0 MB since Sep 4". Null with fewer than two
- * measured days, or none of them changed.
- */
-export function formatGrowth(series: { day: string; bytes: number | null }[], now: Date = new Date()): string | null {
-  const measured = series.filter((d): d is { day: string; bytes: number } => d.bytes !== null)
-  if (measured.length < 2) return null
-  const first = measured[0]
-  const delta = measured[measured.length - 1].bytes - first.bytes
-  if (delta === 0) return null
-  return `${delta > 0 ? '+' : '−'}${formatBytes(Math.abs(delta))} since ${formatDay(first.day, now)}`
 }
 
 /** The first UTC day of the month `back` months before `now`'s: the start of a range of `back + 1` months. */

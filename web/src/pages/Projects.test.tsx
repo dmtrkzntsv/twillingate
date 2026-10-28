@@ -57,14 +57,14 @@ function renderPage() {
 }
 
 describe('Projects', () => {
-  it('shows a card per active project with its usage, and the database size', async () => {
+  it('shows a card per active project with its usage, and no size anywhere', async () => {
     renderPage()
     const card = await screen.findByRole('article', { name: 'econumo.com' })
     expect(within(card).getByText('2 min ago')).toBeInTheDocument()
     expect(within(card).getByText(/7 events/)).toBeInTheDocument()
-    expect(within(card).getByText(/2\.3 MB/)).toBeInTheDocument()
-    expect(within(card).getByText(/1 active key/)).toBeInTheDocument()
-    expect(await screen.findByText(/2 projects · 2\.1 GB on disk · \+100\.0 MB since Sep 3/)).toBeInTheDocument()
+    expect(within(card).getByText('1 active key')).toBeInTheDocument()
+    expect(await screen.findByText('2 projects')).toBeInTheDocument()
+    expect(screen.queryByText(/MB|GB|on disk/)).not.toBeInTheDocument()
   })
 
   it('sums the events of every project by month over six months, the last one so far', async () => {
@@ -94,7 +94,6 @@ describe('Projects', () => {
     renderPage()
     const card = await screen.findByRole('article', { name: 'quiet.dev' })
     expect(within(card).getByText('Nothing received yet')).toBeInTheDocument()
-    expect(within(card).getByText(/size not measured yet/)).toBeInTheDocument()
   })
 
   it('shows dashes, not zeros, while stats and keys load, and no count before projects', async () => {
@@ -103,9 +102,7 @@ describe('Projects', () => {
     renderPage()
     const card = await screen.findByRole('article', { name: 'econumo.com' })
     expect(within(card).queryByText(/0 events/)).not.toBeInTheDocument()
-    expect(within(card).queryByText(/size not measured yet/)).not.toBeInTheDocument()
     expect(within(card).queryByText(/0 active keys/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/on disk/)).not.toBeInTheDocument()
   })
 
   it('links the whole card to its project, and leaves the origins to the project page', async () => {

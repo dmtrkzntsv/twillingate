@@ -18,7 +18,7 @@ import type { CreatedProject } from '@/lib/api'
 import { afterAt } from '@/lib/arrange'
 import { dashboardsQuery, keysQuery, limitsQuery, projectActivityQuery, projectsQuery, usageQuery } from '@/lib/queries'
 import { formatExact, formatValue } from '@/lib/format'
-import { eventsByMonth, formatBytes, formatGrowth, monthStart } from '@/lib/units'
+import { eventsByMonth, monthStart } from '@/lib/units'
 
 const MONTH = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' })
 
@@ -78,13 +78,7 @@ export default function Projects() {
           <div className="flex flex-col gap-1">
             <h1 className="text-xl font-semibold tracking-tight">Projects</h1>
             <p className="min-h-5 text-sm text-muted-foreground">
-              {[
-                projectsData ? `${active.length} ${active.length === 1 ? 'project' : 'projects'}` : null,
-                statsData ? `${formatBytes(statsData.database_bytes)} on disk` : null,
-                statsData ? formatGrowth(statsData.database_series) : null,
-              ]
-                .filter(Boolean)
-                .join(' · ')}
+              {projectsData ? `${active.length} ${active.length === 1 ? 'project' : 'projects'}` : null}
             </p>
             {months.length > 0 && (
               <p className="text-sm text-muted-foreground">

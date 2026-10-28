@@ -10,7 +10,7 @@ import UsageSection from './UsageSection'
 beforeEach(() => vi.restoreAllMocks())
 
 describe('UsageSection', () => {
-  it('shows totals, freshness, size and the first day', async () => {
+  it('shows totals, freshness and the first day, and no size', async () => {
     vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: '2026-09-01', to: '2026-09-02', database_bytes: 0, database_series: [], projects: [{
       project_id: 4,
       series: [{ day: '2026-09-01', views: 10, events: 3, measures: 1, total_bytes: null }, { day: '2026-09-02', views: 20, events: 0, measures: 0, total_bytes: 2_262_000 }],
@@ -22,9 +22,7 @@ describe('UsageSection', () => {
     renderWithProviders(<UsageSection projectId={4} range={{ from: '2026-09-01', to: '2026-09-02' }} />)
     expect(await screen.findByText('34')).toBeInTheDocument()
     expect(screen.getByText('3 h ago')).toBeInTheDocument()
-    expect(screen.getByText('2.3 MB')).toBeInTheDocument()
-    expect(screen.getByText('event files, measured yesterday')).toBeInTheDocument()
-    expect(screen.queryByText('No size measured in this range.')).not.toBeInTheDocument()
+    expect(screen.queryByText(/2\.3 MB|Data size/)).not.toBeInTheDocument()
     expect(screen.getByText('First day')).toBeInTheDocument()
     expect(screen.getByText('2026-08-01')).toBeInTheDocument()
     expect(screen.queryByText('Attributes')).not.toBeInTheDocument()
@@ -39,9 +37,7 @@ describe('UsageSection', () => {
     }] })
     renderWithProviders(<UsageSection projectId={5} range={{ from: 'a', to: 'b' }} />)
     expect(await screen.findByText('Nothing received yet')).toBeInTheDocument()
-    expect(screen.getByText('Not measured yet')).toBeInTheDocument()
     expect(screen.getByText('No events in this range.')).toBeInTheDocument()
-    expect(screen.getByText('No size measured in this range.')).toBeInTheDocument()
     expect(screen.getByText('nothing kept yet')).toBeInTheDocument()
   })
 
