@@ -399,7 +399,11 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 		}
 		as[i] = aggregated{m: m, ms: ms}
 	}
-	return s.result(as), nil
+	res := s.result(as)
+	if q.longShape() {
+		res = toLong(q, res)
+	}
+	return res, nil
 }
 
 // aggSpec is one aggregation a stat, trend or breakdown is answered from:

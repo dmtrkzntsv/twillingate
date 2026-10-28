@@ -33,6 +33,7 @@ type Query struct {
 	Series      string   `json:"series,omitempty" jsonschema:"trend only, optional: a column to split each day by, one a filter's column may name on the table except day (resolution on events and views only, vital and vital_rating on measures only, the other computed ones on events, views and product), and except duration_sec and views on sessions and views and events on identities"`
 	Fill        string   `json:"fill,omitempty" jsonschema:"trend only: zero gives every day of the range a row, for every kept series or metric: a counted metric (count, actors, users, groups, bounces, weight, daily_sum, daily_max, daily_avg, days) reads 0 where it is empty, the others stay empty"`
 	Define      []Define `json:"define,omitempty" jsonschema:"stat, trend and breakdown only: up to 5 text columns the query defines, each def_<name>, reading per row the label of its first case whose filters the row passes (else its else, or NULL): an event group (Apple Pay setup = event_name prefix import_shortcut_ or import_setup_), a segment by host or attribute; dimensions, series and filters name it as any text column"`
+	Shape       string   `json:"shape,omitempty" jsonschema:"stat and breakdown only: wide (the default), a column per metric, or long, a row per metric: the dimensions, metric (its name) and value (and previous_value with compare previous), so metrics side by side draw as a bar's x or series; every metric a number"`
 	Interval    string   `json:"interval,omitempty" jsonschema:"trend only: day (the default), week or month: one row per week (from Monday) or calendar month instead of per day, day reading the bucket's first day (the first and last buckets may hold only part of theirs, the range's); a distinct count counts over the bucket, and daily_sum, daily_max, daily_avg and days, which need the days, are refused"`
 	SeriesLimit int      `json:"series_limit,omitempty" jsonschema:"a trend with a series only: how many series, 1 to 50, the top ones by the metric over the range (default 5)"`
 	Compare     string   `json:"compare,omitempty" jsonschema:"stat only: previous adds each metric over as many days ending the day before from"`
@@ -187,7 +188,10 @@ func (q Query) Columns() []string {
 		if q.long() {
 			return append(cols, "value")
 		}
-	case "breakdown":
+	case "breakdown", "stat":
+		if q.longShape() {
+			return q.longColumns()
+		}
 		cols = append(cols, q.Dimensions...)
 	case "attributes":
 		if q.Output == "keys" {
@@ -259,6 +263,13 @@ func (q Query) ColumnTypes() []string {
 				types = append(types, columnType(d))
 			}
 		}
+	}
+	if q.longShape() { // metric, value, previous_value
+		types = append(types, "text", "number")
+		if q.Compare == "previous" {
+			types = append(types, "number")
+		}
+		return types
 	}
 	for _, m := range q.Metrics {
 		types = append(types, m.valueType())
@@ -550,6 +561,9 @@ func (q Query) Validate() error {
 		}
 	}
 	if err := q.validateDefines(); err != nil {
+		return err
+	}
+	if err := q.validateShape(); err != nil {
 		return err
 	}
 	if q.Kind != "funnel" {

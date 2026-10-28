@@ -1738,6 +1738,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | `series` | trend | a column to split each day by |
 | `series_limit` | trend | how many series, 1 to 50, those ranking first by the metric over the range (default 5); only with `series` (a trend without one is refused) |
 | `define` | stat, trend, breakdown | up to 5 text columns the query defines for itself: `{name, cases, else}`, `name` `def_` and a lower-case name, `cases` 1 to 20 `{label, where}` in order. Each row reads the `label` of the first case whose `where` (1 or more filters, as the query's, an `any_of` among them for an OR; none naming a `def_` column) it passes, else `else`, or NULL without one. A dimension, a series and a filter, the query's or a metric's, name it as any text column: an event group as a breakdown's rows, a segment by host as a trend's series |
+| `shape` | stat, breakdown | `wide` (the default): a column per metric; `long`: a row per metric, the breakdown's dimensions, then `metric` (the metric's name) and `value`, and `previous_value` with `compare` `previous`. Metrics side by side then draw as a bar's `x` or `series`; every metric is a number |
 | `steps` | funnel | 2 to 10 steps in order, each `{label, where}`: `label` the step's name, `where` 1 or more filters (as the query's, an `any_of` among them; no `ever`, `never` or `def_` column) an event passes to take it. The answer is a row per step, `step` (its label) and `value`: the actors (`by`) that took it and every step before it, which the `funnel` component draws. The query's `where` narrows every step's events, an `ever` or `never` among its filters; `table` is `events` (the default), `views` or `product` |
 | `by` | funnel | `actor` (the default), `user` or `group`: whose steps are counted; a row without the id takes none |
 | `sequence` | funnel | `true`: the steps taken one after another in time, by `ts` (one event may take several in a row, and the events at one `ts` count as one moment, whatever order they are read in); `false`, the default: each taken any time in the range, in any order |
@@ -2134,6 +2135,27 @@ the host. A row reads the first case it passes; `else` labels the rest.
       {"label": "Self-hosted", "where": [{"column": "host", "op": "prefix", "values": ["selfhosted_"]}]}]}],
   "where": [{"column": "def_feature", "op": "is_set"}, {"column": "def_deployment", "op": "is_set"}],
   "metrics": [{"op": "actors", "as": "users"}]}}
+```
+
+A breakdown in long shape: per deployment, the share of its active
+users who opened the plan and who used any budget feature, a row per
+share, for a bar chart of the two (`metric` as `x`, the deployment as
+`series`).
+
+```json
+{"project_id": 9, "query": {
+  "kind": "breakdown", "table": "product", "shape": "long", "dimensions": ["def_deployment"],
+  "define": [{"name": "def_deployment", "cases": [
+    {"label": "Cloud", "where": [{"column": "host", "op": "eq", "values": ["app.econumo.com"]}]},
+    {"label": "Self-hosted", "where": [{"column": "host", "op": "prefix", "values": ["selfhosted_"]}]}]}],
+  "where": [{"column": "def_deployment", "op": "is_set"}],
+  "metrics": [
+    {"op": "ratio", "as": "Opened Plan", "round": 3,
+     "num": {"op": "actors", "where": [{"column": "event_name", "op": "eq", "values": ["budget_plan_open"]}]},
+     "den": {"op": "actors"}},
+    {"op": "ratio", "as": "Any budget feature", "round": 3,
+     "num": {"op": "actors", "where": [{"column": "event_name", "op": "prefix", "values": ["budget_"]}]},
+     "den": {"op": "actors"}}]}}
 ```
 
 A funnel: of the users who started the Apple Pay setup in the range,
