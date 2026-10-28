@@ -428,7 +428,8 @@ func TestReportingDocumentMatchesComponents(t *testing.T) {
 
 // TestReportingExamplesWork: docs/reporting.md's Examples section has at
 // least one worked example per component in the manifest, and none for a
-// component it does not have. An example is a "### `name`" heading (any
+// component it does not have; a component that takes a query source has a
+// structured one first. An example is a "### `name`" heading (any
 // words may follow the name) with a sql, markdown or json block, the json
 // one a structured query source; each is accepted by add_widget as written
 // and loads, with project 1's seeded rows, through widget_data, with at
@@ -453,6 +454,7 @@ func TestReportingExamplesWork(t *testing.T) {
 	props := regexp.MustCompile("(?m)^Props: `(.*)`$")
 	types := map[string]string{"sql": "sql", "markdown": "md", "json": "query"}
 	examples := map[string]int{}
+	firstType := map[string]string{} // each component's first example's block
 	for i, part := range strings.Split(docSection(t, docs.Reporting, "## Examples"), "\n### `")[1:] {
 		name := part[:strings.Index(part, "`")]
 		examples[name]++
@@ -466,6 +468,9 @@ func TestReportingExamplesWork(t *testing.T) {
 		if b == nil || p == nil {
 			t.Errorf("example %s needs a sql, markdown or json block and a Props: line", label)
 			continue
+		}
+		if firstType[name] == "" {
+			firstType[name] = b[1]
 		}
 		source := map[string]any{"type": types[b[1]], "content": b[2]}
 		var pr map[string]any
@@ -511,9 +516,11 @@ func TestReportingExamplesWork(t *testing.T) {
 			t.Errorf("component %s has no worked example in docs/reporting.md", c.Name)
 		}
 	}
-	for _, name := range []string{"stat", "line", "bar_list"} {
-		if !strings.Contains(docSection(t, docs.Reporting, "## Examples"), "### `"+name+"` as a structured query") {
-			t.Errorf("docs/reporting.md has no structured query example for %s", name)
+	// Query first: every component that takes a query source shows one
+	// before its SQL, so an agent reading down meets it first.
+	for _, c := range comps {
+		if slices.Contains(c.Accepts, "query") && firstType[c.Name] != "json" {
+			t.Errorf("component %s's first example is %s; it takes a query source, which goes first, as a structured query", c.Name, firstType[c.Name])
 		}
 	}
 }
