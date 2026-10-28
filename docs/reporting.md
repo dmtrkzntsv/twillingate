@@ -876,6 +876,29 @@ ORDER BY n
 
 Props: `{"format": "number"}`
 
+### `funnel` as a structured query
+
+The users who viewed a page, then signed up, then subscribed, each step
+after the one before it: a funnel returns `step` and `value`, the names
+the component reads:
+
+```json
+{
+  "query": {
+    "kind": "funnel",
+    "by": "user",
+    "sequence": true,
+    "steps": [
+      {"label": "Visited", "where": [{"column": "family", "op": "eq", "values": ["views"]}]},
+      {"label": "Signed up", "where": [{"column": "event_name", "op": "eq", "values": ["signup"]}]},
+      {"label": "Subscribed", "where": [{"column": "event_name", "op": "eq", "values": ["subscribed"]}]}
+    ]
+  }
+}
+```
+
+Props: `{"format": "number"}`
+
 ### `combo`
 
 Visitors as bars and the bounce rate as a line, on two axes. `percent`
