@@ -1,7 +1,9 @@
 package reporting
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -13,6 +15,40 @@ import (
 type Source struct {
 	Type    string `json:"type" jsonschema:"query (a structured query; prefer it), sql (the escape hatch) or md"`
 	Content string `json:"content" jsonschema:"the structured query as JSON ({query, rename, labels, columns}; query is the query tool's query argument), the SQL query, or the Markdown text"`
+}
+
+// UnmarshalJSON reads content as text or, for a query source, as the
+// JSON object itself, kept as its compact text: an agent writes the
+// structured query as the query tool takes it, not as a string of JSON.
+func (s *Source) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Type    string          `json:"type"`
+		Content json.RawMessage `json:"content"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.DisallowUnknownFields() // as the field-by-field decode of the callers that ask for it
+	if err := dec.Decode(&raw); err != nil {
+		return err
+	}
+	s.Type, s.Content = raw.Type, ""
+	c := bytes.TrimSpace(raw.Content)
+	switch {
+	case len(c) == 0 || bytes.Equal(c, []byte("null")):
+	case c[0] == '{':
+		if raw.Type != "query" {
+			return fmt.Errorf("source.content: an object is a query source's content; a %s source's is text", raw.Type)
+		}
+		var buf bytes.Buffer
+		if err := json.Compact(&buf, c); err != nil {
+			return err
+		}
+		s.Content = buf.String()
+	default:
+		if err := json.Unmarshal(c, &s.Content); err != nil {
+			return fmt.Errorf("source.content: text, or a query source's JSON object: %w", err)
+		}
+	}
+	return nil
 }
 
 // Column is one column a component's input accepts: a name, the types a

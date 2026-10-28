@@ -77,7 +77,11 @@ Retention · Web Vitals · Measures.
 
 A `query` source's content is `{"query": {…}, "rename": {…}, "labels": {…}, "columns": […]}`:
 `query` is a [structured query](twillingate.md#structured-queries) (a stat, a
-trend or a breakdown), `rename`, optional, maps its output columns to the names
+trend or a breakdown), the same object as `query`'s `query` argument. The
+content goes in as that JSON object itself or as its text, over MCP and HTTP
+alike; the widget tools' input schemas describe the object with the
+structured query's own schema, and it is stored and returned as its compact
+text. An object for a `sql` or `md` source is refused. `rename`, optional, maps its output columns to the names
 the component reads (`{"day": "x", "previous_value": "previous"}`), and
 `labels`, optional, shows a column's values as others: keyed by the column's
 name after `rename`, each a map of value to label (`{"label": {"new": "New

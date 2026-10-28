@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -297,6 +298,7 @@ func (h *host) registerReporting(r *registrar) {
 			if err := reporting.ConstrainWidget(pick(in), comps, h.rep.SourceTypes()); err != nil {
 				panic(fmt.Sprintf("api: widget schema: %v", err))
 			}
+			typedContent(pick(in))
 		}
 	}
 	self := func(in *jsonschema.Schema) *jsonschema.Schema { return in }
@@ -350,7 +352,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Move any tab of a project's page, built-in or your own, after another tab of it (`after`; 0 first)."},
 		h.moveProjectTab)
 	expose(r, spec{Name: "add_widget", Annotations: write, Method: "POST", Path: d + "/widgets", Status: http.StatusCreated, constrain: widget(self),
-		Description: "Call reporting_guide first. Add a widget to a user dashboard: a component, a source ({type: query|sql|md, content}; prefer a copy_widget of a built-in widget, then query, a structured query, and sql only for what neither can show), optional title, props, width and height (default from the component), name (derived from the title when omitted) and after (a widget id; 0 first; omitted, last). Its columns are checked against the component's inputs: a query source's from the query alone, a sql source's by running it once."},
+		Description: "Call reporting_guide first. Add a widget to a user dashboard: a component, a source ({type: query|sql|md, content}, a query source's content as its JSON object; prefer a copy_widget of a built-in widget, then query, a structured query, and sql only for what neither can show), optional title, props, width and height (default from the component), name (derived from the title when omitted) and after (a widget id; 0 first; omitted, last). Its columns are checked against the component's inputs: a query source's from the query alone, a sql source's by running it once."},
 		h.addWidget)
 	expose(r, spec{Name: "update_widget", Annotations: write, Method: "PATCH", Path: w, constrain: widget(self),
 		Description: "Call reporting_guide first. Change a widget on a user dashboard: name, component, title, props, source, width or height, or move it with after (a widget id there; 0 first). Fields you omit are kept; the result is validated whole, but a change of only width, height, after, title or name runs no query."},
@@ -373,4 +375,30 @@ func (h *host) registerReporting(r *registrar) {
 		h.previewWidget)
 	h.registerWidgetStream(r)
 	h.registerWidgetShares(r)
+}
+
+// queryContentIn is a query source's content as its JSON object, for its
+// schema only: Source.UnmarshalJSON keeps it as text.
+type queryContentIn struct {
+	Query   native.Query                 `json:"query" jsonschema:"the structured query, as the query tool's query argument"`
+	Rename  map[string]string            `json:"rename,omitempty" jsonschema:"output column → the input name the component reads"`
+	Labels  map[string]map[string]string `json:"labels,omitempty" jsonschema:"text column (after rename) → value → the label shown"`
+	Columns []string                     `json:"columns,omitempty" jsonschema:"the columns kept (after rename), in order; omit to keep every column"`
+}
+
+// typedContent lets a widget's source content be text or a query
+// source's JSON object, the latter described by the structured query's
+// own schema, closed vocabularies included, so an agent writes it as
+// it writes the query tool's.
+func typedContent(widget *jsonschema.Schema) {
+	src := widget.Properties["source"]
+	text := src.Properties["content"]
+	obj := schemaFor[queryContentIn]()
+	queryEnums(obj)
+	obj.Description = "a query source's content as its JSON object"
+	text.Description = "the SQL query or the Markdown text; a query source's JSON as text"
+	src.Properties["content"] = &jsonschema.Schema{
+		Description: "a query source's {query, rename, labels, columns} as an object (or as its JSON text), the SQL query, or the Markdown text",
+		AnyOf:       []*jsonschema.Schema{obj, text},
+	}
 }
