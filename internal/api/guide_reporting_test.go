@@ -189,3 +189,39 @@ func TestReportingGuideEscapesTableCells(t *testing.T) {
 		}
 	}
 }
+
+// TestReportingGuideListsBuiltinWidgets: every live system widget that
+// draws data is in the guide, with its id for copy_widget and what its
+// query reads, so an agent copies one before writing its own.
+func TestReportingGuideListsBuiltinWidgets(t *testing.T) {
+	md := reportingGuide(t, nil)
+	if !strings.Contains(md, "## Built-in widgets") {
+		t.Fatal("the guide has no Built-in widgets section")
+	}
+	for _, want := range []string{
+		"| Views | Referrers | bar_list | breakdown of views by referrer_source: daily_sum(actors) as value |",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("the guide lacks %q", want)
+		}
+	}
+	if strings.Contains(md, "| md |") {
+		t.Error("the guide lists a Markdown widget among the built-in ones")
+	}
+}
+
+func TestDescribeSource(t *testing.T) {
+	for _, tc := range []struct {
+		src  reporting.Source
+		want string
+	}{
+		{reporting.Source{Type: "sql", Content: "SELECT 1"}, "sql"},
+		{reporting.Source{Type: "query", Content: "not json"}, "query"},
+		{reporting.Source{Type: "query", Content: `{"query":{"kind":"trend","table":"views","series":"kind","metrics":[{"op":"actors"}]}}`}, "trend of views per kind: actors"},
+		{reporting.Source{Type: "query", Content: `{"query":{"kind":"retention","output":"curve"}}`}, "retention as curve"},
+	} {
+		if got := describeSource(tc.src); got != tc.want {
+			t.Errorf("describeSource(%s) = %q, want %q", tc.src.Content, got, tc.want)
+		}
+	}
+}
