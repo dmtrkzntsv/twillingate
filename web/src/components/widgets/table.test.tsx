@@ -338,6 +338,7 @@ describe('table', () => {
     const rows = screen.getAllByRole('button', { name: /^\/(b|page10|a|page2)/ })
     expect(rows).toHaveLength(4)
     expect(rows[0]).toHaveAttribute('tabindex', '0')
+    expect(rows[0]).toHaveClass('focus-visible:ring-2')
     await userEvent.click(rows[1])
     expect(onRow).toHaveBeenLastCalledWith(1)
     rows[2].focus()

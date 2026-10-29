@@ -266,10 +266,11 @@ export default function Table({
                           onRow(ri)
                         },
                       }
-                    : {})}
-                  // With checkboxes the row cannot be a button (a button holds no
-                  // controls): its first cell holds one, stretched over the row.
-                  className={selecting ? 'relative' : undefined}
+                    : // With checkboxes the row cannot be a button (a button holds no
+                      // controls): its first cell holds one, stretched over the row.
+                      selecting
+                      ? { className: 'relative' }
+                      : {})}
                   data-state={selecting?.selected.has(ri) ? 'selected' : undefined}
                 >
                   {selecting && (
