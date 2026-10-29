@@ -1,8 +1,10 @@
 import { useId, useState } from 'react'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { formatDayTime, isClosed, rfc3339 } from '@/lib/forms'
+import SettingRow from './SettingRow'
 
 interface Props {
   /** The form's closing time, absent while it is open. */
@@ -32,18 +34,18 @@ export default function ClosingControl({ closesAt, pending, onChange }: Props) {
   }
 
   return (
-    <div role="group" aria-labelledby={`${id}-title`} className="flex flex-col gap-2">
-      <div className="flex flex-wrap items-baseline gap-x-2">
-        <h3 id={`${id}-title`} className="text-sm font-medium">
-          Closing
-        </h3>
-        <span className="text-sm text-muted-foreground">{status}</span>
-      </div>
+    <SettingRow
+      title="Closing"
+      aside={
+        <div className="flex flex-col items-start gap-2">
+          <Badge variant={closed ? 'outline' : 'secondary'}>{status}</Badge>
+          <p>Submissions after the closing time are refused; reopen to take them again.</p>
+        </div>
+      }
+    >
       <div className="flex flex-wrap items-end gap-2">
         <div className="flex min-w-0 flex-col gap-1.5">
-          <Label htmlFor={`${id}-at`} className="text-xs text-muted-foreground">
-            Closes at
-          </Label>
+          <Label htmlFor={`${id}-at`}>Closes at</Label>
           <Input id={`${id}-at`} type="datetime-local" value={at} onChange={(e) => setAt(e.target.value)} className="w-56 max-w-full" />
         </div>
         <Button type="button" variant="outline" disabled={pending || !valid} onClick={() => void set()}>
@@ -60,6 +62,6 @@ export default function ClosingControl({ closesAt, pending, onChange }: Props) {
           </Button>
         )}
       </div>
-    </div>
+    </SettingRow>
   )
 }

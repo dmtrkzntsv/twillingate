@@ -26,6 +26,7 @@ import { formsQuery, submissionsQuery } from '@/lib/queries'
 import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
 import ApproveDialog, { FieldPicker } from './ApproveDialog'
 import ClosingControl from './ClosingControl'
+import SettingRow from './SettingRow'
 import SubmissionDrawer from './SubmissionDrawer'
 
 /**
@@ -233,60 +234,58 @@ function Details({ projectId, form, actions }: { projectId: number; form: Form; 
     void actions.update(projectId, form.name, body)
   }
   return (
-    <form onSubmit={save} className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`${id}-purpose`}>Purpose</Label>
-        <Input id={`${id}-purpose`} value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="What the form is for" />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`${id}-return`}>Return URL</Label>
-        <Input
-          id={`${id}-return`}
-          type="url"
-          value={returnURL}
-          onChange={(e) => setReturnURL(e.target.value)}
-          placeholder="https://example.com/thanks"
-        />
-        <p className="text-xs text-muted-foreground">
-          Where a plain HTML form sends the visitor back when it sets no <code className="font-mono">$redirect</code>; its origin must be
-          one of the project's allowed origins.
-        </p>
-      </div>
-      <Button type="submit" variant="outline" className="self-start" disabled={actions.pending || !changed}>
-        Save
-      </Button>
-    </form>
+    <SettingRow title="Details" aside="What the form is for, and where a plain HTML form sends the visitor once they submit.">
+      <form onSubmit={save} className="flex flex-col gap-3">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${id}-purpose`}>Purpose</Label>
+          <Input id={`${id}-purpose`} value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="What the form is for" />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor={`${id}-return`}>Return URL</Label>
+          <Input
+            id={`${id}-return`}
+            type="url"
+            value={returnURL}
+            onChange={(e) => setReturnURL(e.target.value)}
+            placeholder="https://example.com/thanks"
+          />
+          <p className="text-xs text-muted-foreground">
+            Used when the form sets no <code className="font-mono">$redirect</code>; its origin must be one of the project's allowed
+            origins.
+          </p>
+        </div>
+        <Button type="submit" variant="outline" size="sm" className="self-start" disabled={actions.pending || !changed}>
+          Save
+        </Button>
+      </form>
+    </SettingRow>
   )
 }
 
 /** An approved form's expected fields: change which are kept, never none. */
 function ExpectedFields({ projectId, form, actions }: { projectId: number; form: Form; actions: FormActions }) {
-  const id = useId()
   const expected = form.expected_fields ?? []
   const [checked, setChecked] = useState(expected)
   const saved = JSON.stringify(expected)
   useEffect(() => setChecked(JSON.parse(saved) as string[]), [saved])
   const same = JSON.stringify(checked) === saved
   return (
-    <div role="group" aria-labelledby={`${id}-title`} className="flex flex-col gap-2">
-      <h3 id={`${id}-title`} className="text-sm font-medium">
-        Expected fields
-      </h3>
-      <p className="text-xs text-muted-foreground">
-        New submissions keep only these, as the table's columns in this order. A field the form starts sending appears here unchecked;
-        add one by name to keep it from its first submission.
-      </p>
+    <SettingRow
+      title="Expected fields"
+      aside="New submissions keep only these, as the table's columns in this order. A field the form starts sending appears here unchecked; add one by name to keep it from its first submission."
+    >
       <FieldPicker fields={form.fields} kept={expected} checked={checked} onChange={setChecked} disabled={actions.pending} />
       <Button
         type="button"
         variant="outline"
+        size="sm"
         className="self-start"
         disabled={actions.pending || same || checked.length === 0}
         onClick={() => void actions.update(projectId, form.name, { expected_fields: checked })}
       >
         Save fields
       </Button>
-    </div>
+    </SettingRow>
   )
 }
 
@@ -343,8 +342,9 @@ export default function FormPage({ project, name }: { project: Project; name: st
             </div>
           )}
           <Submissions projectId={id} form={form} />
-          <section aria-label="Settings" className="flex flex-col gap-5 rounded-lg border p-4">
+          <section aria-label="Settings" className="flex flex-col gap-4 rounded-lg border p-4">
             <h3 className="text-base font-semibold">Settings</h3>
+            <div className="flex flex-col divide-y">
             <Details projectId={id} form={form} actions={actions} />
             {form.status === 'approved' && <ExpectedFields projectId={id} form={form} actions={actions} />}
             <ClosingControl
@@ -363,6 +363,7 @@ export default function FormPage({ project, name }: { project: Project; name: st
                 )
               }
             />
+            </div>
           </section>
           <ApproveDialog
             open={approving}
