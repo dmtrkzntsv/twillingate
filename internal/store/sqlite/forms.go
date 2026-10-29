@@ -338,16 +338,19 @@ func formSubject(projectID int64, name string) string {
 }
 
 // ListForms lists the project's active or archived forms, drafts first,
-// then by name, with their submission counts.
+// then by name, with their active, new and archived submission counts.
 func (d *DB) ListForms(ctx context.Context, projectID int64, archived bool) ([]store.Form, error) {
 	where := `f.archived_at IS NULL`
 	if archived {
 		where = `f.archived_at IS NOT NULL`
 	}
 	rows, err := d.db.QueryContext(ctx, `SELECT `+formColumns+`,
-		(SELECT COUNT(*) FROM submissions s WHERE s.project_id=f.project_id AND s.form=f.name),
 		(SELECT COUNT(*) FROM submissions s WHERE s.project_id=f.project_id AND s.form=f.name
-		   AND s.received_at > COALESCE(f.seen_at, ''))
+		   AND s.archived_at IS NULL),
+		(SELECT COUNT(*) FROM submissions s WHERE s.project_id=f.project_id AND s.form=f.name
+		   AND s.archived_at IS NULL AND s.received_at > COALESCE(f.seen_at, '')),
+		(SELECT COUNT(*) FROM submissions s WHERE s.project_id=f.project_id AND s.form=f.name
+		   AND s.archived_at IS NOT NULL)
 		FROM forms f WHERE f.project_id=? AND `+where+`
 		ORDER BY f.status='draft' DESC, f.name`, projectID)
 	if err != nil {
@@ -356,12 +359,12 @@ func (d *DB) ListForms(ctx context.Context, projectID int64, archived bool) ([]s
 	defer rows.Close()
 	var out []store.Form
 	for rows.Next() {
-		var n, fresh int
-		f, err := scanForm(rows, &n, &fresh)
+		var n, fresh, archived int
+		f, err := scanForm(rows, &n, &fresh, &archived)
 		if err != nil {
 			return nil, err
 		}
-		f.Submissions, f.NewSubmissions = n, fresh
+		f.Submissions, f.NewSubmissions, f.ArchivedSubmissions = n, fresh, archived
 		out = append(out, f)
 	}
 	return out, rows.Err()
@@ -587,31 +590,36 @@ func (d *DB) ExpireDrafts(ctx context.Context, now time.Time) (int, error) {
 	return expired, nil
 }
 
-// DeleteSubmissions deletes the submissions with these ids in one
-// transaction (their $form_submit events stay in the event files, which
-// hold no field), and audits it with a.Detail plus the count
-// it deleted, " (<n> deleted)", 0 included.
-func (d *DB) DeleteSubmissions(ctx context.Context, projectID int64, ids []string, a store.AuditEntry) (int, error) {
-	var deleted int
+// SetSubmissionsArchived archives or restores the submissions with these
+// ids in one transaction, and audits it with a.Detail plus the count it
+// changed, " (<n> archived)" or " (<n> restored)", 0 included. Their
+// $form_submit events stay in the event files, which hold no field.
+func (d *DB) SetSubmissionsArchived(ctx context.Context, projectID int64, ids []string, archived bool, a store.AuditEntry) (int, error) {
+	q, verb := `UPDATE submissions SET archived_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
+		WHERE project_id=? AND id=? AND archived_at IS NULL`, "archived"
+	if !archived {
+		q, verb = `UPDATE submissions SET archived_at=NULL WHERE project_id=? AND id=? AND archived_at IS NOT NULL`, "restored"
+	}
+	var changed int
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		for _, id := range ids {
-			res, err := tx.ExecContext(ctx, `DELETE FROM submissions WHERE project_id=? AND id=?`, projectID, id)
+			res, err := tx.ExecContext(ctx, q, projectID, id)
 			if err != nil {
-				return fmt.Errorf("delete submission %s: %w", id, err)
+				return fmt.Errorf("%s submission %s: %w", verb, id, err)
 			}
 			n, err := res.RowsAffected()
 			if err != nil {
 				return err
 			}
-			deleted += int(n)
+			changed += int(n)
 		}
-		a.Detail += fmt.Sprintf(" (%d deleted)", deleted)
+		a.Detail += fmt.Sprintf(" (%d %s)", changed, verb)
 		return audit(ctx, tx, a)
 	})
 	if err != nil {
 		return 0, err
 	}
-	return deleted, nil
+	return changed, nil
 }
 
 // deleteFormData deletes the form's submissions, then the form row,
@@ -630,8 +638,9 @@ func deleteFormData(ctx context.Context, tx *sql.Tx, projectID int64, name strin
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 // matchSubmissions is the FROM/WHERE that selects the project's
-// submissions with a field value containing search, archived forms' too:
-// an erasure request must reach every copy of a person's data.
+// submissions with a field value containing search, archived ones and
+// archived forms' too: an erasure request must reach every copy of a
+// person's data.
 func matchSubmissions(projectID int64, search string) (string, []any, error) {
 	if search == "" {
 		return "", nil, store.Refuse(store.ErrInvalid, "search must not be empty")
@@ -646,21 +655,28 @@ const defaultFindLimit = 100
 
 // submissionColumns is the select list scanSubmission reads, from
 // submissions aliased s.
-const submissionColumns = `s.project_id, s.id, s.form, s.received_at, s.fields, s.attribution`
+const submissionColumns = `s.project_id, s.id, s.form, s.received_at, s.fields, s.attribution, s.archived_at`
 
 // scanSubmission reads one row selected with submissionColumns, then
 // into extra any columns selected after them.
 func scanSubmission(row interface{ Scan(...any) error }, extra ...any) (store.Submission, error) {
 	var s store.Submission
 	var received, fields string
-	var attribution sql.NullString
+	var attribution, archived sql.NullString
 	if err := row.Scan(append([]any{&s.ProjectID, &s.ID, &s.Form, &received, &fields,
-		&attribution}, extra...)...); err != nil {
+		&attribution, &archived}, extra...)...); err != nil {
 		return store.Submission{}, err
 	}
 	var err error
 	if s.ReceivedAt, err = time.Parse(tsFormat, received); err != nil {
 		return store.Submission{}, fmt.Errorf("submission %s received_at: %w", s.ID, err)
+	}
+	if archived.Valid {
+		at, err := time.Parse(tsFormat, archived.String)
+		if err != nil {
+			return store.Submission{}, fmt.Errorf("submission %s archived_at: %w", s.ID, err)
+		}
+		s.ArchivedAt = &at
 	}
 	if err := json.Unmarshal([]byte(fields), &s.Fields); err != nil {
 		return store.Submission{}, fmt.Errorf("submission %s fields: %w", s.ID, err)
@@ -673,7 +689,7 @@ func scanSubmission(row interface{ Scan(...any) error }, extra ...any) (store.Su
 	return s, nil
 }
 
-// GetSubmission reads one submission of an active form.
+// GetSubmission reads one submission of an active form, archived or not.
 func (d *DB) GetSubmission(ctx context.Context, projectID int64, form, id string) (store.Submission, error) {
 	s, err := scanSubmission(d.db.QueryRowContext(ctx, `SELECT `+submissionColumns+`
 		FROM submissions s JOIN forms f ON f.project_id=s.project_id AND f.name=s.form
@@ -686,7 +702,8 @@ func (d *DB) GetSubmission(ctx context.Context, projectID int64, form, id string
 }
 
 // FindSubmissions pages the submissions matching search, newest first,
-// archived forms' included and marked Archived.
+// archived ones and archived forms' included, each with ArchivedAt and
+// FormArchived.
 func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]store.Submission, string, error) {
 	from, args, err := matchSubmissions(projectID, search)
 	if err != nil {
@@ -715,12 +732,12 @@ func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string
 	defer rows.Close()
 	var out []store.Submission
 	for rows.Next() {
-		var archived bool
-		s, err := scanSubmission(rows, &archived)
+		var formArchived bool
+		s, err := scanSubmission(rows, &formArchived)
 		if err != nil {
 			return nil, "", err
 		}
-		s.Archived = archived
+		s.FormArchived = formArchived
 		out = append(out, s)
 	}
 	if err := rows.Err(); err != nil {

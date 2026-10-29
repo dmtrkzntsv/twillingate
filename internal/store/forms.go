@@ -35,8 +35,11 @@ type Form struct {
 	LastSubmittedAt *time.Time
 	ArchivedAt      *time.Time
 	SeenAt          *time.Time // how far the console has read; nil: never
-	Submissions     int        // filled by ListForms only
-	NewSubmissions  int        // received after SeenAt; filled by ListForms only
+	Submissions     int        // active ones; filled by ListForms only
+	NewSubmissions  int        // active, received after SeenAt; filled by ListForms only
+	// ArchivedSubmissions counts the archived ones, purged
+	// RETENTION_ARCHIVED_DAYS after archiving; filled by ListForms only.
+	ArchivedSubmissions int
 }
 
 // Open reports whether the form accepts a submission at now: not archived,
@@ -88,7 +91,11 @@ type Submission struct {
 	ReceivedAt  time.Time
 	Fields      map[string]string // as sent (after flattening); WriteSubmission applies KeepFields
 	Attribution Attribution
-	Archived    bool // its form is archived; set by FindSubmissions only
+	// ArchivedAt is when the submission itself was archived, nil while
+	// active; set by GetSubmission and FindSubmissions.
+	ArchivedAt *time.Time
+	// FormArchived: its form is archived; set by FindSubmissions only.
+	FormArchived bool
 }
 
 // NewSubmission is what ingest hands the store: the submission, the

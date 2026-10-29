@@ -20,6 +20,7 @@ export function form(name: string, over: Partial<Form> = {}): Form {
     approved_at: fromNow(-9),
     submissions: 0,
     new_submissions: 0,
+    archived_submissions: 0,
     archived: false,
     ...over,
   }

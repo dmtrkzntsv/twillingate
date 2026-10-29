@@ -67,7 +67,7 @@ func limitsFrom(cfg *config.Config) []limitOut {
 		setting(groupRetention, "Event files", "RETENTION_DAYS", ret.Days, config.DefaultRetentionDays, "days", "",
 			"the raw event files under the data directory are kept this long, in whole months, then deleted"),
 		setting(groupRetention, "Archived items", "RETENTION_ARCHIVED_DAYS", ret.ArchivedDays, config.DefaultArchivedDays, "days", "kept forever",
-			"an archived project (with its data), dashboard or widget is deleted this long after archiving"),
+			"an archived project (with its data), dashboard, widget, form or form submission is deleted this long after archiving"),
 		setting(groupRetention, "Form drafts", "RETENTION_FORMS_DRAFT_DAYS", cfg.Forms.DraftDays, config.DefaultFormDraftDays, "days", "",
 			"a form created by its first submission accepts submissions as a draft this long, then is archived unless approved"),
 		setting(groupIngest, "Late events", "INGEST_LATE_DAYS", cfg.IngestLateDays, config.DefaultIngestLateDays, "days", "",

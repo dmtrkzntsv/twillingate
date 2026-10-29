@@ -132,6 +132,7 @@ type PurgeResult struct {
 	Projects, Dashboards, Widgets []int64
 	WidgetShares                  []string
 	Forms                         []string
+	Submissions                   int // archived submissions purged on their own
 }
 
 // SystemDashboard is one system dashboard a release migrates in. GroupID

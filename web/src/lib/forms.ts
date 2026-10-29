@@ -1,4 +1,4 @@
-import type { Attribution, Form, ProjectActivity } from './api'
+import type { Attribution, DashboardsResponse, Form, ProjectActivity } from './api'
 
 const DAY = 86_400_000
 
@@ -85,6 +85,24 @@ export function fieldNameProblem(name: string): string {
  */
 export function toggleField(checked: string[], field: string): string[] {
   return checked.includes(field) ? checked.filter((f) => f !== field) : [...checked, field]
+}
+
+/**
+ * RETENTION_ARCHIVED_DAYS as the dashboards list carries it: the days, null
+ * when archived items are never purged, undefined until the list has
+ * loaded (unknown, not off).
+ */
+export type PurgeDays = number | null | undefined
+
+export function purgeDays(dash: DashboardsResponse | undefined): PurgeDays {
+  return dash === undefined ? undefined : (dash.purge_after_days ?? null)
+}
+
+/** When archived submissions are deleted, as one sentence. */
+export function purgeNote(days: PurgeDays): string {
+  if (days === null) return 'Archived submissions are kept until restored: RETENTION_ARCHIVED_DAYS is 0.'
+  if (days === undefined) return 'Archived submissions are deleted for good RETENTION_ARCHIVED_DAYS after archiving unless restored.'
+  return `Archived submissions are deleted for good ${days} ${days === 1 ? 'day' : 'days'} after archiving unless restored.`
 }
 
 /** Where a form lives under a project, as a link from the Forms tab. */

@@ -42,6 +42,7 @@ type formOut struct {
 	Submissions     int      `json:"submissions"`
 	LastSubmittedAt string   `json:"last_submitted_at,omitempty"`
 	NewSubmissions  int      `json:"new_submissions" jsonschema:"submissions received after seen_at (all of them when never seen)"`
+	ArchivedSubs    int      `json:"archived_submissions" jsonschema:"archived submissions, purged RETENTION_ARCHIVED_DAYS after archiving unless restored"`
 	SeenAt          string   `json:"seen_at,omitempty" jsonschema:"how far the console has read this form's submissions; absent when never"`
 	Archived        bool     `json:"archived"`
 	ArchivedAt      string   `json:"archived_at,omitempty"`
@@ -105,6 +106,7 @@ func (o *optionalTime) UnmarshalJSON(b []byte) error {
 type listSubmissionsIn struct {
 	ProjectID int64  `json:"project_id" jsonschema:"project id; call list_projects first"`
 	Name      string `json:"name" jsonschema:"form name"`
+	Archived  bool   `json:"archived,omitempty" jsonschema:"true lists the archived submissions instead of the active ones, with an Archived column"`
 	Filters   string `json:"filters,omitempty" jsonschema:"a JSON list of {column, op, value} on the table's columns; op is =, !=, <, >, in or not in; in/not in take a list. As widget_data's"`
 	Sort      string `json:"sort,omitempty" jsonschema:"<column>:asc or <column>:desc; newest first without one"`
 	Distinct  string `json:"distinct,omitempty" jsonschema:"return [value, rows] for this column among rows matching the other filters, most frequent first, instead of the rows"`
@@ -133,6 +135,7 @@ type submissionOut struct {
 	Form       string            `json:"form"`
 	ReceivedAt string            `json:"received_at"`
 	Fields     map[string]string `json:"fields"`
+	ArchivedAt string            `json:"archived_at,omitempty" jsonschema:"when the submission was archived; absent while active"`
 	// The page, the visitor and the environment are on the $form_submit
 	// event, which has the same id.
 	Attribution store.Attribution `json:"attribution" jsonschema:"where the visit the submission arrived in came from: its last non-direct visit within ATTRIBUTION_DAYS (default 7), or the $referrer/$utm_* it sent: referrer, utm_source, utm_medium, utm_campaign, each left out when empty; {} until the attribution job has run (about a minute after arrival) and when the visit was direct"`
@@ -146,10 +149,10 @@ type findSubmissionsIn struct {
 }
 
 // foundSubmission is a submission find_submissions found, with whether
-// its form is archived: a search reaches archived forms too.
+// it or its form is archived: a search reaches both.
 type foundSubmission struct {
 	submissionOut
-	Archived bool `json:"archived" jsonschema:"its form is archived: hidden from the tables, purged with the form unless restored"`
+	Archived bool `json:"archived" jsonschema:"it or its form is archived: hidden from the active tables, purged RETENTION_ARCHIVED_DAYS after archiving unless restored"`
 }
 
 type findSubmissionsOut struct {
@@ -157,21 +160,28 @@ type findSubmissionsOut struct {
 	NextCursor  string            `json:"next_cursor,omitempty" jsonschema:"pass as cursor for the next page; absent on the last"`
 }
 
-type deleteSubmissionsIn struct {
+// submissionsSelectorIn chooses submissions for archive_submissions and
+// restore_submissions.
+type submissionsSelectorIn struct {
 	ProjectID int64    `json:"project_id" jsonschema:"project id; call list_projects first"`
-	IDs       []string `json:"ids,omitempty" jsonschema:"submission ids to delete"`
-	Form      string   `json:"form,omitempty" jsonschema:"with filters: the form whose table the filters apply to"`
-	Filters   string   `json:"filters,omitempty" jsonschema:"with form: list_submissions' filters, at least one; deletes every row they match"`
-	Search    string   `json:"search,omitempty" jsonschema:"as find_submissions: deletes every submission it finds"`
+	IDs       []string `json:"ids,omitempty" jsonschema:"submission ids"`
+	Form      string   `json:"form,omitempty" jsonschema:"with filters: the form whose table the filters apply to (its active table to archive, its archived one to restore)"`
+	Filters   string   `json:"filters,omitempty" jsonschema:"with form: list_submissions' filters, at least one; every row they match"`
+	Search    string   `json:"search,omitempty" jsonschema:"as find_submissions: every submission it finds"`
 }
 
-type deleteSubmissionsOut struct {
-	Deleted int `json:"deleted"`
+type archiveSubmissionsOut struct {
+	Archived int `json:"archived"`
+}
+
+type restoreSubmissionsOut struct {
+	Restored int `json:"restored"`
 }
 
 type exportSubmissionsIn struct {
 	ProjectID int64  `json:"project_id" jsonschema:"project id"`
 	Name      string `json:"name" jsonschema:"form name"`
+	Archived  bool   `json:"archived,omitempty" jsonschema:"as list_submissions"`
 	Filters   string `json:"filters,omitempty" jsonschema:"as list_submissions"`
 	Sort      string `json:"sort,omitempty" jsonschema:"as list_submissions"`
 }
@@ -193,13 +203,13 @@ func toFormOut(f store.Form) formOut {
 		Fields: f.Fields, ExpectedFields: f.ExpectedFields, CreatedAt: fmtTime(f.CreatedAt),
 		DraftUntil: fmtOptTime(f.DraftUntil), ApprovedAt: fmtOptTime(f.ApprovedAt), ClosesAt: fmtOptTime(f.ClosesAt),
 		Submissions: f.Submissions, LastSubmittedAt: fmtOptTime(f.LastSubmittedAt),
-		NewSubmissions: f.NewSubmissions, SeenAt: fmtOptTime(f.SeenAt),
+		NewSubmissions: f.NewSubmissions, ArchivedSubs: f.ArchivedSubmissions, SeenAt: fmtOptTime(f.SeenAt),
 		Archived: f.ArchivedAt != nil, ArchivedAt: fmtOptTime(f.ArchivedAt)}
 }
 
 func toSubmissionOut(s store.Submission) submissionOut {
 	return submissionOut{ID: s.ID, Form: s.Form, ReceivedAt: fmtTime(s.ReceivedAt), Fields: s.Fields,
-		Attribution: s.Attribution}
+		ArchivedAt: fmtOptTime(s.ArchivedAt), Attribution: s.Attribution}
 }
 
 func (h *host) listForms(ctx context.Context, in listFormsIn) (listFormsOut, error) {
@@ -274,26 +284,28 @@ func (h *host) subsErr(err error) error {
 	return err
 }
 
-// formTable is an active form's submissions table, run by page.
+// formTable is an active form's submissions table, its active or its
+// archived submissions, run by page.
 type formTable struct {
-	h       *host
-	form    store.Form
-	columns []string // the display columns, without id
+	h        *host
+	form     store.Form
+	archived bool
+	columns  []string // the display columns, without id
 }
 
 // submissionsTable reads the form once and builds its query.
-func (h *host) submissionsTable(ctx context.Context, projectID int64, name string) (formTable, error) {
+func (h *host) submissionsTable(ctx context.Context, projectID int64, name string, archived bool) (formTable, error) {
 	f, err := h.ops.ActiveForm(ctx, projectID, name)
 	if err != nil {
 		return formTable{}, err
 	}
-	_, cols := manage.SubmissionsQuery(f)
-	return formTable{h: h, form: f, columns: cols}, nil
+	_, cols := manage.SubmissionsQuery(f, archived)
+	return formTable{h: h, form: f, archived: archived, columns: cols}, nil
 }
 
 // page runs one page of the table; its first column is the id.
 func (t formTable) page(ctx context.Context, pg readsql.Page) (readsql.PageResult, error) {
-	res, err := manage.QuerySubmissions(ctx, t.h.subs, t.form, pg)
+	res, err := manage.QuerySubmissions(ctx, t.h.subs, t.form, t.archived, pg)
 	if err != nil {
 		return readsql.PageResult{}, t.h.subsErr(err)
 	}
@@ -303,7 +315,7 @@ func (t formTable) page(ctx context.Context, pg readsql.Page) (readsql.PageResul
 // all returns the ids and the rows (without them) of every row pg's
 // filters match, newest first unless pg sorts (manage.AllSubmissions).
 func (t formTable) all(ctx context.Context, pg readsql.Page) ([]string, [][]string, error) {
-	ids, _, rows, err := manage.AllSubmissions(ctx, t.h.subs, t.form, pg)
+	ids, _, rows, err := manage.AllSubmissions(ctx, t.h.subs, t.form, t.archived, pg)
 	if err != nil {
 		return nil, nil, t.h.subsErr(err)
 	}
@@ -315,7 +327,7 @@ func (h *host) listSubmissions(ctx context.Context, in listSubmissionsIn) (submi
 	if err != nil {
 		return submissionsOut{}, err
 	}
-	t, err := h.submissionsTable(ctx, in.ProjectID, in.Name)
+	t, err := h.submissionsTable(ctx, in.ProjectID, in.Name, in.Archived)
 	if err != nil {
 		return submissionsOut{}, err
 	}
@@ -352,18 +364,18 @@ func (h *host) findSubmissions(ctx context.Context, in findSubmissionsIn) (findS
 	}
 	out := findSubmissionsOut{Submissions: []foundSubmission{}, NextCursor: next}
 	for _, s := range subs {
-		out.Submissions = append(out.Submissions, foundSubmission{toSubmissionOut(s), s.Archived})
+		out.Submissions = append(out.Submissions, foundSubmission{toSubmissionOut(s), s.FormArchived || s.ArchivedAt != nil})
 	}
 	return out, nil
 }
 
-// deleteSubmissions resolves exactly one selector to ids and deletes
-// them. Filters are a form table's: every row they match, paged through,
-// so the delete removes exactly what the table showed. The audit names
-// the selector's kind ("ids", "search", "filters: <form>"), never the
+// selectSubmissions resolves exactly one selector to ids, and names its
+// kind for the audit ("ids", "search", "filters: <form>"), never the
 // search text or filter values: they are usually the erased person's
-// email.
-func (h *host) deleteSubmissions(ctx context.Context, in deleteSubmissionsIn) (deleteSubmissionsOut, error) {
+// email. Filters are those of a form's table, its archived one when
+// archived: every row they match, paged through, so the action reaches
+// exactly what the table showed.
+func (h *host) selectSubmissions(ctx context.Context, in submissionsSelectorIn, archived bool) ([]string, string, error) {
 	given := 0
 	for _, g := range []bool{len(in.IDs) > 0, in.Form != "" || in.Filters != "", in.Search != ""} {
 		if g {
@@ -371,45 +383,58 @@ func (h *host) deleteSubmissions(ctx context.Context, in deleteSubmissionsIn) (d
 		}
 	}
 	if given != 1 {
-		return deleteSubmissionsOut{}, invalidf("give exactly one of ids, form with filters, or search")
+		return nil, "", invalidf("give exactly one of ids, form with filters, or search")
 	}
-	var ids []string
-	var selector string
-	var err error
 	switch {
 	case len(in.IDs) > 0:
-		ids, selector = in.IDs, "ids"
+		return in.IDs, "ids", nil
 	case in.Search != "":
-		search := strings.TrimSpace(in.Search)
-		if ids, err = h.ops.SubmissionIDsMatching(ctx, in.ProjectID, search); err != nil {
-			return deleteSubmissionsOut{}, err
-		}
-		selector = "search"
-	default:
-		if in.Form == "" || in.Filters == "" {
-			return deleteSubmissionsOut{}, invalidf("form and filters go together: the filters of that form's table")
-		}
-		pg, _, err := reporting.ParsePage(in.Filters, "", "", 0, 0, h.subs.MaxRows())
-		if err != nil {
-			return deleteSubmissionsOut{}, err
-		}
-		if len(pg.Filters) == 0 {
-			return deleteSubmissionsOut{}, invalidf("filters must hold at least one filter; to remove a whole form, archive it (purged after RETENTION_ARCHIVED_DAYS)")
-		}
-		t, err := h.submissionsTable(ctx, in.ProjectID, in.Form)
-		if err != nil {
-			return deleteSubmissionsOut{}, err
-		}
-		if ids, _, err = t.all(ctx, pg); err != nil {
-			return deleteSubmissionsOut{}, err
-		}
-		selector = "filters: " + in.Form
+		ids, err := h.ops.SubmissionIDsMatching(ctx, in.ProjectID, strings.TrimSpace(in.Search))
+		return ids, "search", err
 	}
-	n, err := h.ops.DeleteSubmissions(ctx, actorFrom(ctx), in.ProjectID, ids, selector)
+	if in.Form == "" || in.Filters == "" {
+		return nil, "", invalidf("form and filters go together: the filters of that form's table")
+	}
+	pg, _, err := reporting.ParsePage(in.Filters, "", "", 0, 0, h.subs.MaxRows())
 	if err != nil {
-		return deleteSubmissionsOut{}, err
+		return nil, "", err
 	}
-	return deleteSubmissionsOut{Deleted: n}, nil
+	if len(pg.Filters) == 0 {
+		return nil, "", invalidf("filters must hold at least one filter; to set a whole form aside, archive the form")
+	}
+	t, err := h.submissionsTable(ctx, in.ProjectID, in.Form, archived)
+	if err != nil {
+		return nil, "", err
+	}
+	ids, _, err := t.all(ctx, pg)
+	if err != nil {
+		return nil, "", err
+	}
+	return ids, "filters: " + in.Form, nil
+}
+
+func (h *host) archiveSubmissions(ctx context.Context, in submissionsSelectorIn) (archiveSubmissionsOut, error) {
+	ids, selector, err := h.selectSubmissions(ctx, in, false)
+	if err != nil {
+		return archiveSubmissionsOut{}, err
+	}
+	n, err := h.ops.ArchiveSubmissions(ctx, actorFrom(ctx), in.ProjectID, ids, selector)
+	if err != nil {
+		return archiveSubmissionsOut{}, err
+	}
+	return archiveSubmissionsOut{Archived: n}, nil
+}
+
+func (h *host) restoreSubmissions(ctx context.Context, in submissionsSelectorIn) (restoreSubmissionsOut, error) {
+	ids, selector, err := h.selectSubmissions(ctx, in, true)
+	if err != nil {
+		return restoreSubmissionsOut{}, err
+	}
+	n, err := h.ops.RestoreSubmissions(ctx, actorFrom(ctx), in.ProjectID, ids, selector)
+	if err != nil {
+		return restoreSubmissionsOut{}, err
+	}
+	return restoreSubmissionsOut{Restored: n}, nil
 }
 
 func (h *host) exportSubmissions(ctx context.Context, in exportSubmissionsIn) (csvFile, error) {
@@ -417,7 +442,7 @@ func (h *host) exportSubmissions(ctx context.Context, in exportSubmissionsIn) (c
 	if err != nil {
 		return csvFile{}, err
 	}
-	t, err := h.submissionsTable(ctx, in.ProjectID, in.Name)
+	t, err := h.submissionsTable(ctx, in.ProjectID, in.Name, in.Archived)
 	if err != nil {
 		return csvFile{}, err
 	}
@@ -431,15 +456,14 @@ func (h *host) exportSubmissions(ctx context.Context, in exportSubmissionsIn) (c
 
 func (h *host) registerForms(r *registrar) {
 	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
-	no, yes := false, true
+	no := false
 	write := &mcp.ToolAnnotations{DestructiveHint: &no}
 	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
-	destroy := &mcp.ToolAnnotations{DestructiveHint: &yes}
 	const p = "/api/projects/{project_id}"
 	const f = p + "/forms/{name}"
 
 	expose(r, spec{Name: "list_forms", Annotations: ro, Method: "GET", Path: p + "/forms",
-		Description: "A project's forms, drafts first (archived: true lists the archived ones instead): name, status (draft or approved), purpose, return_url, fields (every field name sent), expected_fields (what an approved form keeps), draft_until, approved_at, closes_at, submissions (count), last_submitted_at, new_submissions (received after seen_at), seen_at (how far the console has read the form; reading over MCP never moves it), archived; and action_base, INGEST_URL + /ingest/forms (empty when INGEST_URL is not configured), so a plain HTML form's action is <action_base>/<name>?key=<key>. A form is created as a draft by its first submission to POST /ingest/forms/{name}; a draft keeps every field for RETENTION_FORMS_DRAFT_DAYS, then is archived unless approved, and its submissions never count as conversions. Approve one with approve_form."},
+		Description: "A project's forms, drafts first (archived: true lists the archived ones instead): name, status (draft or approved), purpose, return_url, fields (every field name sent), expected_fields (what an approved form keeps), draft_until, approved_at, closes_at, submissions (count of active ones), last_submitted_at, new_submissions (active, received after seen_at), archived_submissions (count, purged RETENTION_ARCHIVED_DAYS after archiving), seen_at (how far the console has read the form; reading over MCP never moves it), archived; and action_base, INGEST_URL + /ingest/forms (empty when INGEST_URL is not configured), so a plain HTML form's action is <action_base>/<name>?key=<key>. A form is created as a draft by its first submission to POST /ingest/forms/{name}; a draft keeps every field for RETENTION_FORMS_DRAFT_DAYS, then is archived unless approved, and its submissions never count as conversions. Approve one with approve_form."},
 		h.listForms)
 	expose(r, spec{Name: "approve_form", Annotations: write, Method: "POST", Path: f + "/approve",
 		Description: "Approve a draft form with expected_fields (one or more, from list_forms' fields): from now on its submissions keep only those fields, and each writes a $form_submit product event (attribute form = the name), its conversion, about a minute after it arrives. Submissions taken while it was a draft never count as conversions. Approving an approved form is refused (conflict; change its fields with update_form), and approval does not reopen a closed form."},
@@ -457,18 +481,21 @@ func (h *host) registerForms(r *registrar) {
 		Description: "The console has read this form's submissions up to until (RFC 3339; the form's last_submitted_at as the page loaded it). seen_at only moves forward. Console state: not audited, not an MCP tool."},
 		h.markFormSeen)
 	expose(r, spec{Name: "list_submissions", Annotations: ro, Method: "GET", Path: f + "/submissions",
-		Description: "One active form's submissions as a table. Submissions hold personal data visitors typed. Columns: Received, then one per field (an approved form's expected fields in order, a draft's every field); a field named Received or id is shown as \"<name> (field)\". ids are the rows' submission ids, in order, for get_submission and delete_submissions. Takes widget_data's remote-table arguments (filters, sort, distinct, offset, limit), applied in SQL: matched counts the rows passing the filters, total the form's submissions. Newest first without a sort; every submission regardless of date (filter Received to narrow). A draft's submissions never count as conversions."},
+		Description: "One active form's submissions as a table, its active ones, or its archived ones with archived: true. Submissions hold personal data visitors typed. Columns: Received, Archived (archived: true only, when each was archived), then one per field (an approved form's expected fields in order, a draft's every field); a field named Received, Archived or id is shown as \"<name> (field)\". ids are the rows' submission ids, in order, for get_submission, archive_submissions and restore_submissions. Takes widget_data's remote-table arguments (filters, sort, distinct, offset, limit), applied in SQL: matched counts the rows passing the filters, total the table's submissions. Newest first without a sort; every submission regardless of date (filter Received to narrow). A draft's submissions never count as conversions."},
 		h.listSubmissions)
 	expose(r, spec{Name: "get_submission", Annotations: ro, Method: "GET", Path: f + "/submissions/{id}",
-		Description: "One submission of an active form: every stored field (also ones the form no longer expects), received_at, and attribution (where the visit it arrived in came from: the last non-direct visit of the visitor within ATTRIBUTION_DAYS (default 7), or the $referrer/$utm_* it sent; referrer, utm_source, utm_medium, utm_campaign, each left out when empty; {} until the attribution job has run, about a minute after arrival, and when the visit was direct). The page, the visitor and their environment are on its $form_submit event, which has the submission's id (approved forms only). Personal data."},
+		Description: "One submission of an active form, archived or not: every stored field (also ones the form no longer expects), received_at, archived_at (absent while active), and attribution (where the visit it arrived in came from: the last non-direct visit of the visitor within ATTRIBUTION_DAYS (default 7), or the $referrer/$utm_* it sent; referrer, utm_source, utm_medium, utm_campaign, each left out when empty; {} until the attribution job has run, about a minute after arrival, and when the visit was direct). The page, the visitor and their environment are on its $form_submit event, which has the submission's id (approved forms only). Personal data."},
 		h.getSubmission)
 	expose(r, spec{Name: "find_submissions", Annotations: ro, Method: "GET", Path: p + "/submissions",
-		Description: "Find one person's submissions across every form of a project, archived ones included, for an access or erasure request: each submission with a field value containing search (at least 2 characters; ASCII case-insensitive, so É and é differ), newest first, with its form, fields, attribution and archived (true when its form is archived). Pages of limit (default 100, at most 500); pass next_cursor back as cursor. Personal data. delete_submissions with the same search deletes exactly these."},
+		Description: "Find one person's submissions across every form of a project, archived ones and archived forms' included, for an access or erasure request: each submission with a field value containing search (at least 2 characters; ASCII case-insensitive, so É and é differ), newest first, with its form, fields, attribution, archived_at (when it was archived) and archived (true when it or its form is archived). Pages of limit (default 100, at most 500); pass next_cursor back as cursor. Personal data. archive_submissions with the same search archives exactly these."},
 		h.findSubmissions)
-	expose(r, spec{Name: "delete_submissions", Annotations: destroy, Method: "POST", Path: p + "/submissions/delete",
-		Description: "Permanently delete submissions chosen by exactly one of: ids; form with filters (list_submissions' filters, deleting every row that table shows); or search (as find_submissions, across every form, archived ones included). Irreversible. A deleted submission's $form_submit conversion stays in the event files: it holds no field, and the conversion counts stay. The audit log records the selector's kind (ids, search, or filters with the form's name) and the number actually deleted (0 included), never the search text, the filter values or the submissions' contents. Returns how many were deleted."},
-		h.deleteSubmissions)
+	expose(r, spec{Name: "archive_submissions", Annotations: idem, Method: "POST", Path: p + "/submissions/archive",
+		Description: "Archive submissions chosen by exactly one of: ids; form with filters (list_submissions' filters, archiving every row that active table shows); or search (as find_submissions, across every form, archived ones included). This is how submissions are removed, an erasure request included: an archived submission leaves its form's table, counts and export, is reversible with restore_submissions, and is purged for good RETENTION_ARCHIVED_DAYS (default 30) after archiving. Its $form_submit conversion stays in the event files: it holds no field, and the conversion counts stay. The audit log records the selector's kind (ids, search, or filters with the form's name) and the number actually archived (0 included), never the search text, the filter values or the submissions' contents. Returns how many were archived."},
+		h.archiveSubmissions)
+	expose(r, spec{Name: "restore_submissions", Annotations: idem, Method: "POST", Path: p + "/submissions/restore",
+		Description: "Restore archived submissions into their form's table, chosen as archive_submissions chooses them (form with filters applies to the form's archived table, list_submissions with archived: true), before RETENTION_ARCHIVED_DAYS purges them. Audited as archive_submissions is. Returns how many were restored."},
+		h.restoreSubmissions)
 	restCSV(r, spec{Name: "export_submissions", Method: "GET", Path: f + "/submissions.csv",
-		Description: "One active form's submissions table as CSV: list_submissions' columns without ids, with its filters and sort, every matching row."},
+		Description: "One active form's submissions table as CSV: list_submissions' columns without ids, with its archived, filters and sort, every matching row."},
 		h.exportSubmissions)
 }

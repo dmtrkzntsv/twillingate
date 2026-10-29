@@ -390,20 +390,21 @@ func TestFindSubmissionsAcrossForms(t *testing.T) {
 		t.Fatalf("found = %+v", out)
 	}
 	callAs[okOut](t, cs, "restore_form", map[string]any{"project_id": 1, "name": "old"})
-	callAs[struct{}](t, cs, "delete_submissions", map[string]any{"project_id": 1, "ids": []string{"s5"}})
+	// A submission archived on its own is still found, marked archived.
+	callAs[struct{}](t, cs, "archive_submissions", map[string]any{"project_id": 1, "ids": []string{"s5"}})
 	out = callAs[found](t, cs, "find_submissions", map[string]any{"project_id": 1, "search": "alice", "limit": 1})
-	if len(out.Submissions) != 1 || out.NextCursor != "s2" {
+	if len(out.Submissions) != 1 || out.Submissions[0].ID != "s5" || !*out.Submissions[0].Archived || out.NextCursor != "s5" {
 		t.Fatalf("page 1 = %+v", out)
 	}
-	out = callAs[found](t, cs, "find_submissions", map[string]any{"project_id": 1, "search": "alice", "limit": 1, "cursor": out.NextCursor})
-	if len(out.Submissions) != 1 || out.Submissions[0].ID != "s1" || out.NextCursor != "" {
+	out = callAs[found](t, cs, "find_submissions", map[string]any{"project_id": 1, "search": "alice", "limit": 2, "cursor": out.NextCursor})
+	if len(out.Submissions) != 2 || out.Submissions[0].ID != "s2" || out.Submissions[1].ID != "s1" || out.NextCursor != "" {
 		t.Fatalf("page 2 = %+v", out)
 	}
 	refused(t, cs, "find_submissions", map[string]any{"project_id": 1, "search": "a"})
 	refused(t, cs, "find_submissions", map[string]any{"project_id": 99, "search": "alice"})
 }
 
-func TestDeleteSubmissionsSelectors(t *testing.T) {
+func TestArchiveSubmissionsSelectors(t *testing.T) {
 	h, cs := newTestHost(t)
 	seed := newFormSeeder(t, h)
 	seed.add("contact", "s1", map[string]string{"email": "a@x.io", "plan": "pro"}, nil)
@@ -412,7 +413,7 @@ func TestDeleteSubmissionsSelectors(t *testing.T) {
 	seed.add("contact", "s4", map[string]string{"email": "d@x.io", "plan": "pro"}, nil)
 	seed.add("newsletter", "s5", map[string]string{"email": "alice@x.io"}, nil)
 	seed.add("contact", "s6", map[string]string{"email": "ALICE@x.io", "plan": "free"}, nil)
-	// A small page, so delete by filters pages through the matches.
+	// A small page, so archive by filters pages through the matches.
 	subs, err := readsql.Open(testDBPaths[h], 5*time.Second, 2)
 	if err != nil {
 		t.Fatal(err)
@@ -425,8 +426,11 @@ func TestDeleteSubmissionsSelectors(t *testing.T) {
 		return callAs[submissionsTable](t, cs, "list_submissions", map[string]any{"project_id": 1, "name": "contact", "limit": 2,
 			"filters": `[{"column":"plan","op":"!=","value":"none"}]`}).IDs
 	}
-	type deleted struct {
-		Deleted int `json:"deleted"`
+	type archived struct {
+		Archived int `json:"archived"`
+	}
+	type restored struct {
+		Restored int `json:"restored"`
 	}
 	for _, bad := range []map[string]any{
 		{"project_id": 1},
@@ -440,28 +444,42 @@ func TestDeleteSubmissionsSelectors(t *testing.T) {
 		{"project_id": 1, "form": "gone", "filters": `[{"column":"plan","op":"=","value":"x"}]`},
 		{"project_id": 1, "search": "a"},
 	} {
-		refused(t, cs, "delete_submissions", bad)
+		refused(t, cs, "archive_submissions", bad)
+		refused(t, cs, "restore_submissions", bad)
 	}
 
-	if d := callAs[deleted](t, cs, "delete_submissions", map[string]any{"project_id": 1, "ids": []string{"s2", "nope"}}); d.Deleted != 1 {
-		t.Fatalf("by ids deleted %d", d.Deleted)
+	if d := callAs[archived](t, cs, "archive_submissions", map[string]any{"project_id": 1, "ids": []string{"s2", "nope"}}); d.Archived != 1 {
+		t.Fatalf("by ids archived %d", d.Archived)
 	}
 	// By filters: exactly the rows the table shows, past one page.
-	if d := callAs[deleted](t, cs, "delete_submissions", map[string]any{"project_id": 1, "form": "contact",
-		"filters": `[{"column":"plan","op":"=","value":"pro"}]`}); d.Deleted != 3 {
-		t.Fatalf("by filters deleted %d", d.Deleted)
+	if d := callAs[archived](t, cs, "archive_submissions", map[string]any{"project_id": 1, "form": "contact",
+		"filters": `[{"column":"plan","op":"=","value":"pro"}]`}); d.Archived != 3 {
+		t.Fatalf("by filters archived %d", d.Archived)
 	}
 	if got := ids(); !reflect.DeepEqual(got, []string{"s6"}) {
 		t.Fatalf("left after filters = %v", got)
 	}
-	// By search: across forms, case-insensitive.
-	if d := callAs[deleted](t, cs, "delete_submissions", map[string]any{"project_id": 1, "search": "alice"}); d.Deleted != 2 {
-		t.Fatalf("by search deleted %d", d.Deleted)
+	// The archived table holds them, newest first, with when each was archived.
+	tab := callAs[submissionsTable](t, cs, "list_submissions", map[string]any{"project_id": 1, "name": "contact", "archived": true})
+	if !reflect.DeepEqual(tab.IDs, []string{"s4", "s3"}) || tab.Matched != 4 || tab.Columns[1] != "Archived" || tab.Rows[0][1] == "" {
+		t.Fatalf("archived table = %+v", tab)
 	}
-	if got := ids(); len(got) != 0 {
+	// Restore by filters applies to the archived table.
+	if d := callAs[restored](t, cs, "restore_submissions", map[string]any{"project_id": 1, "form": "contact",
+		"filters": `[{"column":"plan","op":"=","value":"free"}]`}); d.Restored != 1 {
+		t.Fatalf("by filters restored %d", d.Restored)
+	}
+	if got := ids(); !reflect.DeepEqual(got, []string{"s6", "s2"}) {
+		t.Fatalf("active after restore = %v", got)
+	}
+	// By search: across forms, case-insensitive.
+	if d := callAs[archived](t, cs, "archive_submissions", map[string]any{"project_id": 1, "search": "alice"}); d.Archived != 2 {
+		t.Fatalf("by search archived %d", d.Archived)
+	}
+	if got := ids(); !reflect.DeepEqual(got, []string{"s2"}) {
 		t.Fatalf("left after search = %v", got)
 	}
-	res, err := h.db.Run(context.Background(), `SELECT detail FROM audit_log WHERE action='submission.delete' ORDER BY rowid`)
+	res, err := h.db.Run(context.Background(), `SELECT detail FROM audit_log WHERE action='submission.archive' ORDER BY rowid`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -471,8 +489,8 @@ func TestDeleteSubmissionsSelectors(t *testing.T) {
 	}
 	// The selector's kind and the form, never the search text or the
 	// filter values: they are usually the erased person's email.
-	// The count is what was deleted ("nope" matched nothing), not what was asked for.
-	want := []string{"ids (1 deleted)", "filters: contact (3 deleted)", "search (2 deleted)"}
+	// The count is what was archived ("nope" matched nothing), not what was asked for.
+	want := []string{"ids (1 archived)", "filters: contact (3 archived)", "search (2 archived)"}
 	if !reflect.DeepEqual(details, want) {
 		t.Fatalf("audit details = %q", details)
 	}
@@ -636,11 +654,11 @@ func TestSubmissionsFieldsNamedLikeRefusedTables(t *testing.T) {
 	}
 
 	d := callAs[struct {
-		Deleted int `json:"deleted"`
-	}](t, cs, "delete_submissions", map[string]any{"project_id": 1, "form": "odd",
+		Archived int `json:"archived"`
+	}](t, cs, "archive_submissions", map[string]any{"project_id": 1, "form": "odd",
 		"filters": `[{"column":"Meta","op":"=","value":"M2"}]`})
-	if d.Deleted != 1 {
-		t.Fatalf("deleted %d", d.Deleted)
+	if d.Archived != 1 {
+		t.Fatalf("archived %d", d.Archived)
 	}
 	if tab := callAs[submissionsTable](t, cs, "list_submissions", args()); !reflect.DeepEqual(tab.IDs, []string{"s3", "s1"}) {
 		t.Fatalf("left = %v", tab.IDs)

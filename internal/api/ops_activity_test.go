@@ -64,6 +64,11 @@ func TestProjectActivityReadsTheFiles(t *testing.T) {
 	seed := newFormSeeder(t, h)
 	seed.add("contact", "s1", map[string]string{"email": "a@x.io"}, nil)
 	seed.add("contact", "s2", map[string]string{"email": "b@x.io"}, nil)
+	// An archived submission is not new to anyone.
+	seed.add("contact", "s5", map[string]string{"email": "e@x.io"}, nil)
+	if _, err := h.ops.ArchiveSubmissions(ctx, "test", 1, []string{"s5"}, "ids"); err != nil {
+		t.Fatal(err)
+	}
 	// An approved form counts as a form, not a draft.
 	seed.add("signup", "s4", map[string]string{"email": "d@x.io"}, nil)
 	if err := h.ops.ApproveForm(ctx, "test", 1, "signup", []string{"email"}); err != nil {
