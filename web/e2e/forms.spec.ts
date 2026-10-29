@@ -144,7 +144,7 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   // The archived submission waits behind the form's archived link, and comes back.
   await row.getByRole('link').click()
   await page.getByRole('button', { name: '1 archived', exact: true }).click()
-  await page.getByRole('cell', { name: 'bob@example.com' }).click()
+  await page.getByRole('button', { name: /bob@example\.com/ }).click()
   await page.getByRole('dialog', { name: 'Submission' }).getByRole('button', { name: 'Restore' }).click()
   await expect(page.getByText('Restored 1 submission')).toBeVisible()
   await page.keyboard.press('Escape')

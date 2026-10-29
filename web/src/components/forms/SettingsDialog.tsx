@@ -21,23 +21,28 @@ interface Props {
  */
 export default function SettingsDialog({ open, onOpenChange, form, pending, onSave }: Props) {
   const id = useId()
-  const expected = form.expected_fields ?? []
   const approved = form.status === 'approved'
-  const [purpose, setPurpose] = useState(form.purpose)
-  const [returnURL, setReturnURL] = useState(form.return_url)
-  const [checked, setChecked] = useState(expected)
+  // What was saved when the dialog opened: edits are measured against it,
+  // so a change made elsewhere meanwhile is never sent back over.
+  const saved = () => ({ purpose: form.purpose, returnURL: form.return_url, expected: form.expected_fields ?? [] })
+  const [base, setBase] = useState(saved)
+  const [purpose, setPurpose] = useState(base.purpose)
+  const [returnURL, setReturnURL] = useState(base.returnURL)
+  const [checked, setChecked] = useState(base.expected)
   // Each opening starts from what is saved, not a refetch while it is open.
   useEffect(() => {
     if (!open) return
-    setPurpose(form.purpose)
-    setReturnURL(form.return_url)
-    setChecked(expected)
+    const now = saved()
+    setBase(now)
+    setPurpose(now.purpose)
+    setReturnURL(now.returnURL)
+    setChecked(now.expected)
   }, [open])
 
   const body: FormUpdate = {}
-  if (purpose.trim() !== form.purpose) body.purpose = purpose.trim()
-  if (returnURL.trim() !== form.return_url) body.return_url = returnURL.trim()
-  if (approved && JSON.stringify(checked) !== JSON.stringify(expected)) body.expected_fields = checked
+  if (purpose.trim() !== base.purpose) body.purpose = purpose.trim()
+  if (returnURL.trim() !== base.returnURL) body.return_url = returnURL.trim()
+  if (approved && JSON.stringify(checked) !== JSON.stringify(base.expected)) body.expected_fields = checked
   const changed = Object.keys(body).length > 0
   const savable = !pending && changed && (!approved || checked.length > 0)
 
@@ -81,7 +86,7 @@ export default function SettingsDialog({ open, onOpenChange, form, pending, onSa
                 New submissions keep only these, as the table's columns in this order. A field the form starts sending appears here
                 unchecked; add one by name to keep it from its first submission.
               </p>
-              <FieldPicker fields={form.fields} kept={expected} checked={checked} onChange={setChecked} disabled={pending} />
+              <FieldPicker fields={form.fields} kept={base.expected} checked={checked} onChange={setChecked} disabled={pending} />
             </div>
           )}
         </form>

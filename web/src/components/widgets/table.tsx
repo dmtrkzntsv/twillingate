@@ -254,7 +254,7 @@ export default function Table({
               {rows.map((row, ri) => (
                 <TableRow
                   key={ri}
-                  {...(onRow && remote && !card
+                  {...(onRow && remote && !card && !selecting
                     ? {
                         role: 'button',
                         tabIndex: 0,
@@ -267,18 +267,15 @@ export default function Table({
                         },
                       }
                     : {})}
+                  // With checkboxes the row cannot be a button (a button holds no
+                  // controls): its first cell holds one, stretched over the row.
+                  className={selecting ? 'relative' : undefined}
                   data-state={selecting?.selected.has(ri) ? 'selected' : undefined}
                 >
                   {selecting && (
-                    // The cell takes the click, so missing the box by a little never opens the row.
-                    <TableCell
-                      className="w-8 py-1.5 pr-0"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        toggle(ri)
-                      }}
-                      onKeyDown={(e) => e.stopPropagation()}
-                    >
+                    // Above the stretched button; the cell takes the click, so
+                    // missing the box by a little never opens the row.
+                    <TableCell className="relative z-10 w-8 py-1.5 pr-0" onClick={() => toggle(ri)}>
                       <Checkbox
                         aria-label={`Select row ${ri + 1}`}
                         checked={selecting.selected.has(ri)}
@@ -310,7 +307,18 @@ export default function Table({
                         className={`${card ? 'py-1 text-[19px]' : 'py-1.5'} ${numericColumns.has(col) ? 'text-right tabular-nums' : ''}`}
                         style={style}
                       >
-                        {text}
+                        {selecting && ci === 0 ? (
+                          <button
+                            type="button"
+                            aria-label={row.join(' ')}
+                            onClick={() => onRow?.(ri)}
+                            className="text-left outline-none after:absolute after:inset-0 focus-visible:after:ring-2 focus-visible:after:ring-ring focus-visible:after:ring-inset"
+                          >
+                            {text}
+                          </button>
+                        ) : (
+                          text
+                        )}
                       </TableCell>
                     )
                   })}

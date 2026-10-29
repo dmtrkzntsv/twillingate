@@ -376,6 +376,21 @@ describe('table', () => {
     expect(onChange).toHaveBeenLastCalledWith(new Set())
   })
 
+  it('opens a row with checkboxes from a button in its first cell, the row itself no button', async () => {
+    const onRow = vi.fn()
+    const { container } = render(
+      <Table data={pages} props={{ mode: 'remote' }} view={emptyView} onView={() => {}} onRow={onRow} selection={{ selected: new Set(), onChange: vi.fn() }} />
+    )
+    expect(container.querySelector('tbody tr[role="button"]')).toBeNull()
+    const open = screen.getAllByRole('button', { name: /^\/(b|page10|a|page2)/ })
+    expect(open).toHaveLength(4)
+    await userEvent.click(open[1])
+    expect(onRow).toHaveBeenLastCalledWith(1)
+    open[2].focus()
+    await userEvent.keyboard('{Enter}')
+    expect(onRow).toHaveBeenLastCalledWith(2)
+  })
+
   it('shows no checkboxes in local mode, even with selection', () => {
     render(<Table data={pages} props={{}} onRow={vi.fn()} selection={{ selected: new Set(), onChange: vi.fn() }} />)
     expect(screen.queryByRole('checkbox')).toBeNull()
