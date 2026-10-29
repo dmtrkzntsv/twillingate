@@ -465,10 +465,13 @@ export interface Form {
   approved_at?: string
   /** Submissions from this time on are refused. */
   closes_at?: string
+  /** Active submissions; archived ones are counted apart. */
   submissions: number
   last_submitted_at?: string
-  /** Submissions that arrived after `seen_at` (project landing D5). */
+  /** Active submissions that arrived after `seen_at` (project landing D5). */
   new_submissions: number
+  /** Archived submissions, purged RETENTION_ARCHIVED_DAYS after archiving unless restored. */
+  archived_submissions: number
   /** The time up to which the console marked this form read; absent until it has. */
   seen_at?: string
   archived: boolean
@@ -512,8 +515,9 @@ export interface SubmissionsPage {
   limit: number
 }
 
-/** list_submissions' arguments, a remote table's as widget_data takes them. */
+/** list_submissions' arguments, a remote table's as widget_data takes them; `archived` reads the archived submissions. */
 export interface SubmissionsQuery {
+  archived?: boolean
   filters?: string
   sort?: string
   distinct?: string
@@ -541,16 +545,22 @@ export interface Submission {
   form: string
   received_at: string
   fields: Record<string, string>
+  /** When it was archived; absent while active. */
+  archived_at?: string
   attribution: Attribution
 }
 
-/** A submission find_submissions found; the search reaches archived forms too. */
+/** A submission find_submissions found; the search reaches archived submissions and forms too. */
 export interface FoundSubmission extends Submission {
+  /** It or its form is archived. */
   archived: boolean
 }
 
-/** delete_submissions takes exactly one selector: ids, a form's table filters, or a search. */
-export type DeleteSubmissionsBody = { ids: string[] } | { form: string; filters: string } | { search: string }
+/**
+ * archive_submissions and restore_submissions take exactly one selector:
+ * ids, a form's table filters (its archived table to restore), or a search.
+ */
+export type SubmissionsSelector = { ids: string[] } | { form: string; filters: string } | { search: string }
 
 export interface ComponentsResponse {
   source_types: ('md' | 'query' | 'sql')[]
@@ -717,9 +727,11 @@ export const endpoints = {
   /** Every active form's submissions with a field value containing `search`, for an erasure request. */
   findSubmissions: (projectId: number, q: { search: string; limit?: number; cursor?: string }) =>
     api<{ submissions: FoundSubmission[]; next_cursor?: string }>(`/api/projects/${projectId}/submissions${toQuery(q)}`),
-  deleteSubmissions: (projectId: number, body: DeleteSubmissionsBody) =>
-    api<{ deleted: number }>(`/api/projects/${projectId}/submissions/delete`, json('POST', body)),
+  archiveSubmissions: (projectId: number, body: SubmissionsSelector) =>
+    api<{ archived: number }>(`/api/projects/${projectId}/submissions/archive`, json('POST', body)),
+  restoreSubmissions: (projectId: number, body: SubmissionsSelector) =>
+    api<{ restored: number }>(`/api/projects/${projectId}/submissions/restore`, json('POST', body)),
   /** The submissions table as CSV, every row the filters match, read with the console's auth. */
-  exportSubmissions: (projectId: number, name: string, q: { filters?: string; sort?: string }) =>
+  exportSubmissions: (projectId: number, name: string, q: { archived?: boolean; filters?: string; sort?: string }) =>
     apiBlob(`${formPath(projectId, name)}/submissions.csv${toQuery(q)}`),
 }

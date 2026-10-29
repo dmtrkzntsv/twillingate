@@ -171,7 +171,7 @@ func (e *Engine) AnswerAll(ctx context.Context, reqs []Request) []Answered {
 // retention, an attributes (each with its own scan) or a query of
 // identities (one cached batch, nothing to share).
 func alone(q Query) bool {
-	return q.Kind == "retention" || q.Kind == "attributes" || q.Table == "identities"
+	return q.Kind == "retention" || q.Kind == "attributes" || q.Kind == "funnel" || q.Kind == "paths" || q.Table == "identities" || hasEver(q)
 }
 
 // rulesKey is what of rules a project's scan reads with: the project's
@@ -509,7 +509,11 @@ func (r *manyReq) finish() (res Result, err error) {
 		c.a, c.ids = nil, nil
 		c.mu.Unlock()
 	}
-	return r.s.result(as), nil
+	res = r.s.result(as)
+	if r.s.q.longShape() {
+		res = toLong(r.s.q, res)
+	}
+	return res, nil
 }
 
 // use is a consumer of one work item; all says every row of the item is

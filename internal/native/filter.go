@@ -3,8 +3,10 @@ package native
 import (
 	"fmt"
 	"math"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 )
@@ -93,6 +95,8 @@ var computedColumns = map[string]computedColumn{
 	"device_label":     {[]string{"device_model", "device"}, deviceLabelColumn},
 	"platform_version": {[]string{"platform", "app_version"}, platformVersionColumn},
 	"consent_state":    {[]string{"consent"}, consentStateColumn},
+	"hour":             {[]string{"ts"}, hourColumn},
+	"weekday":          {[]string{"ts"}, weekdayColumn},
 }
 
 // textDict builds a computed text column's dictionary.
@@ -211,6 +215,33 @@ func consentStateColumn(b *Batch) *Column {
 	})
 }
 
+// hourColumn is the UTC hour of ts, 00 to 23, two digits so the hours
+// sort as text; NULL without a ts.
+func hourColumn(b *Batch) *Column {
+	_, c := b.col("ts")
+	return textColumn(b.N, func(i int) (string, bool) {
+		if c == nil || c.Times == nil || (c.Null != nil && c.Null[i]) {
+			return "", false
+		}
+		return fmt.Sprintf("%02d", time.UnixMicro(c.Times[i]).UTC().Hour()), true
+	})
+}
+
+// weekdays are weekday's values, Monday first: the day's number from 1
+// so they sort as text, and its name.
+var weekdays = [7]string{"1 Mon", "2 Tue", "3 Wed", "4 Thu", "5 Fri", "6 Sat", "7 Sun"}
+
+// weekdayColumn is the UTC weekday of ts (weekdays); NULL without a ts.
+func weekdayColumn(b *Batch) *Column {
+	_, c := b.col("ts")
+	return textColumn(b.N, func(i int) (string, bool) {
+		if c == nil || c.Times == nil || (c.Null != nil && c.Null[i]) {
+			return "", false
+		}
+		return weekdays[(int(time.UnixMicro(c.Times[i]).UTC().Weekday())+6)%7], true
+	})
+}
+
 // vitalThreshold is a vital's name (vital's value) and the two values a
 // sample's bucket value is rated good and needs improvement up to, as
 // vitals/ratings.sql has them.
@@ -297,12 +328,17 @@ func bucketOf(v float64, null bool) int64 {
 type filter struct {
 	column string
 	anyOf  []filter
-	typ    colType
-	op     string
-	strs   map[string]bool
-	str    string
-	ints   map[int64]bool
-	num    int64
+	// ever and never's: its where, its days and the ids found (filled
+	// by collectEver before the scan).
+	inner []filter
+	over  string
+	ids   *idSet
+	typ   colType
+	op    string
+	strs  map[string]bool
+	str   string
+	ints  map[int64]bool
+	num   int64
 }
 
 // compileFilters parses the filters' values for their columns' types; a
@@ -311,6 +347,22 @@ type filter struct {
 func compileFilters(where []Filter, path string) ([]filter, error) {
 	out := make([]filter, len(where))
 	for i, f := range where {
+		if f.Op == "ever" || f.Op == "never" {
+			inner, err := compileFilters(f.Where, fmt.Sprintf("%s[%d].where", path, i))
+			if err != nil {
+				return nil, err
+			}
+			out[i] = filter{op: f.Op, column: everColumn(f.By), typ: typeString, inner: inner, over: f.Over, ids: &idSet{}}
+			continue
+		}
+		if f.Op == "any_of" {
+			anyOf, err := compileFilters(f.Any, fmt.Sprintf("%s[%d].any", path, i))
+			if err != nil {
+				return nil, err
+			}
+			out[i] = filter{op: f.Op, anyOf: anyOf}
+			continue
+		}
 		if f.Op == "any_set" {
 			each := make([]Filter, len(f.Columns))
 			for j, col := range f.Columns {
@@ -415,14 +467,19 @@ func (f *filter) matchInt(n int64) bool {
 	return false
 }
 
-// columns are the filter's columns: any_set's, else its one.
+// columns are the filter's columns: any_set's or any_of's, each once,
+// else its one.
 func (f *filter) columns() []string {
 	if f.anyOf == nil {
 		return []string{f.column}
 	}
-	out := make([]string, len(f.anyOf))
+	var out []string
 	for i := range f.anyOf {
-		out[i] = f.anyOf[i].column
+		for _, c := range f.anyOf[i].columns() {
+			if !slices.Contains(out, c) {
+				out = append(out, c)
+			}
+		}
 	}
 	return out
 }
@@ -445,6 +502,11 @@ func (f *filter) apply(b *Batch, keep []bool) error {
 		pass := make([]bool, len(c.Dict))
 		for j, s := range c.Dict {
 			pass[j] = f.matchString(s)
+		}
+		if f.ids != nil { // ever: the ids found; never: the others; an empty id neither
+			for j, s := range c.Dict {
+				pass[j] = s != "" && f.ids.has(s) == (f.op == "ever")
+			}
 		}
 		for i, x := range c.Idx {
 			if x < 0 || !pass[x] {
@@ -474,7 +536,7 @@ func (f *filter) apply(b *Batch, keep []bool) error {
 }
 
 // applyAny clears keep[i] for the rows of b where none of any_set's
-// columns is set.
+// columns is set, or none of any_of's filters passes.
 func (f *filter) applyAny(b *Batch, keep []bool) error {
 	set := make([]bool, b.N)
 	one := make([]bool, b.N)

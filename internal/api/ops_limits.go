@@ -67,7 +67,7 @@ func limitsFrom(cfg *config.Config) []limitOut {
 		setting(groupRetention, "Event files", "RETENTION_DAYS", ret.Days, config.DefaultRetentionDays, "days", "",
 			"the event files under DATA_DIR are kept this long, in whole months, then deleted"),
 		setting(groupRetention, "Archived items", "RETENTION_ARCHIVED_DAYS", ret.ArchivedDays, config.DefaultArchivedDays, "days", "kept forever",
-			"an archived project (with its data), dashboard or widget is deleted this long after archiving"),
+			"an archived project (with its data), dashboard, widget, form or form submission is deleted this long after archiving"),
 		setting(groupRetention, "Form drafts", "RETENTION_FORMS_DRAFT_DAYS", cfg.Forms.DraftDays, config.DefaultFormDraftDays, "days", "",
 			"a form created by its first submission accepts submissions as a draft this long, then is archived unless approved"),
 		setting(groupIngest, "Late events", "INGEST_LATE_DAYS", cfg.IngestLateDays, config.DefaultIngestLateDays, "days", "",
@@ -154,13 +154,19 @@ func (h *host) runSubs(ctx context.Context, q string, args ...any) (readsql.Resu
 	return runOn(ctx, h.subs, q, args...)
 }
 
+// runErr says a timeout in terms the caller can act on; any other error
+// passes through.
+func runErr(db *readsql.DB, err error) error {
+	if errors.Is(err, readsql.ErrTimeout) {
+		return invalidf("query exceeded %s; narrow the date range", db.Timeout())
+	}
+	return err
+}
+
 func runOn(ctx context.Context, db *readsql.DB, q string, args ...any) (readsql.Result, error) {
 	res, err := db.Run(ctx, q, args...)
 	if err != nil {
-		if errors.Is(err, readsql.ErrTimeout) {
-			return readsql.Result{}, invalidf("query exceeded %s; narrow the date range", db.Timeout())
-		}
-		return readsql.Result{}, err
+		return readsql.Result{}, runErr(db, err)
 	}
 	if res.Truncated {
 		return readsql.Result{}, invalidf("too many rows; narrow the date range")

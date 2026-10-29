@@ -5,7 +5,7 @@ import type { IngestKey, Project, ProjectActivity, ProjectUsage } from '@/lib/ap
 import { formatValue } from '@/lib/format'
 import { formsNeedAttention } from '@/lib/forms'
 import { FORMS_ID, tabPath } from '@/lib/project-tabs'
-import { formatAgo, formatBytes } from '@/lib/units'
+import { formatAgo } from '@/lib/units'
 import { cn } from '@/lib/utils'
 import Sparkline from './Sparkline'
 
@@ -24,7 +24,7 @@ interface Props {
 }
 
 /**
- * One project at a glance: freshness, 30 days of events, size and keys;
+ * One project at a glance: freshness, 30 days of events and keys;
  * and, when it has forms, how many, the drafts among them and
  * the submissions not read yet, a link to its Forms tab.
  */
@@ -51,10 +51,7 @@ export default function ProjectCard({ project, stats, keys, statsFailed, activit
           <span className="text-muted-foreground"> · 30 days</span>
         </p>
         <p className="text-xs text-muted-foreground">
-          {[
-            stats ? (stats.size ? formatBytes(stats.size.total_bytes) : 'size not measured yet') : '—',
-            active === undefined ? '—' : `${active} active ${active === 1 ? 'key' : 'keys'}`,
-          ].join(' · ')}
+          {active === undefined ? '—' : `${active} active ${active === 1 ? 'key' : 'keys'}`}
         </p>
         {activity && activity.forms > 0 && <FormsLine projectId={project.project_id} activity={activity} />}
       </CardContent>

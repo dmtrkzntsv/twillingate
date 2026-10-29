@@ -464,6 +464,41 @@ func TestKindsMatchGolden(t *testing.T) {
 			`SELECT "country", count(*), count(*) FILTER (WHERE "device_model" <> '' OR ("display_width" > 0 AND "display_height" > 0))
 				FROM views WHERE `+inRange+` AND ("path" <> '' OR "device_model" <> '')
 				GROUP BY "country" ORDER BY "country" ASC NULLS LAST`),
+		// interval: a row per week from Monday, or per month, a distinct
+		// count over the bucket.
+		all("trend by week", Query{Kind: "trend", Table: "views", Interval: "week", Series: "country", SeriesLimit: 2,
+			Metrics: []Metric{{Op: "actors"}}}, []string{"day", "series", "actors"},
+			`WITH top AS (SELECT "country" FROM views WHERE `+inRange+` GROUP BY 1
+				ORDER BY count(DISTINCT "actor_id") DESC, "country" ASC NULLS LAST LIMIT 2)
+			SELECT date_trunc('week', "day")::DATE, "country", count(DISTINCT "actor_id") FROM views WHERE `+inRange+`
+				AND "country" IN (SELECT * FROM top) GROUP BY ALL ORDER BY 1, 2`),
+		all("trend by month", Query{Kind: "trend", Table: "events", Interval: "month", Fill: "zero",
+			Metrics: []Metric{{Op: "count"}, {Op: "users"}}}, []string{"day", "series", "value"},
+			`WITH e AS (SELECT date_trunc('month', "day")::DATE AS m, * FROM events WHERE `+inRange+`)
+			SELECT m, 'count', count(*) FROM e GROUP BY m UNION ALL SELECT m, 'users', count(DISTINCT "user_id") FROM e GROUP BY m
+			ORDER BY 1, 2`),
+		// define: a column of labels, the first case each row passes.
+		all("breakdown defined", Query{Kind: "breakdown", Table: "views", Dimensions: []string{"def_seg", "kind"}, Order: "def_seg",
+			Define: []Define{{Name: "def_seg", Else: "rest", Cases: []Case{
+				{Label: "german", Where: []Filter{{Column: "country", Op: "eq", Values: []string{"DE"}}}},
+				{Label: "q", Where: []Filter{{Op: "any_of", Any: []Filter{{Column: "path", Op: "prefix", Values: []string{"/q"}},
+					{Column: "device_model", Op: "is_set"}}}}}}}},
+			Metrics: []Metric{{Op: "count"}, {Op: "actors", Where: []Filter{{Column: "def_seg", Op: "ne", Values: []string{"rest"}}}}}},
+			[]string{"def_seg", "kind", "count", "actors"},
+			`WITH v AS (SELECT CASE WHEN "country" = 'DE' THEN 'german' WHEN starts_with("path", '/q') OR "device_model" <> '' THEN 'q'
+				ELSE 'rest' END AS seg, * FROM views WHERE `+inRange+`)
+			SELECT seg, "kind", count(*), count(DISTINCT "actor_id") FILTER (WHERE seg <> 'rest') FROM v
+				GROUP BY ALL ORDER BY seg, "kind" ASC NULLS LAST`),
+		// any_of: an OR of whole filters, an any_set among them.
+		all("breakdown any_of", Query{Kind: "breakdown", Table: "views", Dimensions: []string{"country"}, Order: "country",
+			Where: []Filter{{Op: "any_of", Any: []Filter{{Column: "path", Op: "prefix", Values: []string{"/q"}},
+				{Column: "device_model", Op: "is_set"}}}},
+			Metrics: []Metric{{Op: "count"}, {Op: "actors", As: "shown", Where: []Filter{{Op: "any_of", Any: []Filter{
+				{Column: "display_width", Op: "gt", Values: []string{"1000"}}, {Op: "any_set", Columns: []string{"utm_source", "utm_medium"}}}}}}}},
+			[]string{"country", "count", "shown"},
+			`SELECT "country", count(*), count(DISTINCT "actor_id") FILTER (WHERE "display_width" > 1000 OR "utm_source" <> '' OR "utm_medium" <> '')
+				FROM views WHERE `+inRange+` AND (starts_with("path", '/q') OR "device_model" <> '')
+				GROUP BY "country" ORDER BY "country" ASC NULLS LAST`),
 		all("trend metric filter", Query{Kind: "trend", Table: "views", Metrics: []Metric{{Op: "count", As: "landings",
 			Where: []Filter{{Column: "event_name", Op: "eq", Values: []string{"landing"}}}}}}, []string{"day", "landings"},
 			`SELECT "day", count(*) FILTER (WHERE "event_name" = 'landing') FROM views WHERE `+inRange+` GROUP BY "day" ORDER BY "day"`),
@@ -979,5 +1014,56 @@ func TestRoundMatchesGolden(t *testing.T) {
 	}
 	if got := intValue(7).round(ptr(2)).String(); got != "7" {
 		t.Errorf("an integer rounded: %q", got)
+	}
+}
+
+// TestTrendByWeekIsTheStatOfItsDays: each row of a trend by week (or
+// month) is the stat of that bucket's days within the range: a count,
+// and a distinct count over the bucket, not summed per day.
+func TestTrendByWeekIsTheStatOfItsDays(t *testing.T) {
+	f := engineFixture(t)
+	e := New(Options{Dir: f.Dir, Workers: 3})
+	from, to := date(t, engineFrom), date(t, today)
+	ms := []Metric{{Op: "count"}, {Op: "actors"}}
+	for _, interval := range []string{"week", "month"} {
+		trend, err := e.Answer(context.Background(), Query{Kind: "trend", Table: "views", Interval: interval, Metrics: ms},
+			Params{Project: 1, From: from, To: to}, engineRules)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Long: day, series (the metric), value; the buckets in order.
+		got := map[string]map[string]string{}
+		var starts []string
+		for _, r := range trend.Rows {
+			if got[r[0]] == nil {
+				got[r[0]] = map[string]string{}
+				starts = append(starts, r[0])
+			}
+			got[r[0]][r[1]] = r[2]
+		}
+		if len(starts) < 2 {
+			t.Fatalf("%s: %d buckets, want several", interval, len(starts))
+		}
+		for i, start := range starts {
+			lo := date(t, start)
+			if lo.Before(from) {
+				lo = from
+			}
+			hi := to
+			if i+1 < len(starts) {
+				hi = date(t, starts[i+1]).AddDays(-1)
+			}
+			if wd := date(t, start).Time().Weekday(); interval == "week" && wd != time.Monday {
+				t.Errorf("week %s starts on a %s", start, wd)
+			}
+			stat, err := e.Answer(context.Background(), Query{Kind: "stat", Table: "views", Metrics: ms},
+				Params{Project: 1, From: lo, To: hi}, engineRules)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got[start]["count"] != stat.Rows[0][0] || got[start]["actors"] != stat.Rows[0][1] {
+				t.Errorf("%s %s: trend %v, stat of %s..%s %v", interval, start, got[start], lo, hi, stat.Rows[0])
+			}
+		}
 	}
 }

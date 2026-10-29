@@ -390,7 +390,7 @@ func TestQueryStructuredBounds(t *testing.T) {
 	}
 	r := newTestRegistrar(t, h)
 	i := slices.IndexFunc(r.specs, func(s spec) bool { return s.Name == "query" })
-	col := r.specs[i].in.Properties["query"].Properties["metrics"].Items.Properties["column"].Enum
+	col := r.specs[i].in.Properties["query"].Properties["metrics"].Items.Properties["column"].AnyOf[0].Enum
 	for _, c := range slices.Concat(native.BoundColumns, native.SessionBoundColumns) {
 		if !slices.Contains(col, any(c)) {
 			t.Errorf("a metric's column enum %v lacks %s", col, c)
@@ -435,5 +435,21 @@ func TestQuerySchemaRatioSides(t *testing.T) {
 		if slices.Contains(cols, any("day")) || slices.Contains(cols, any("received_at")) || !slices.Contains(cols, any("value")) {
 			t.Errorf("%s's column enum = %v, want the number columns", side, cols)
 		}
+	}
+}
+
+// TestQuerySchemaTakesAnyOfInEver: the input schema lets an ever's or a
+// never's where hold an any_of, as Validate does and the docs show.
+func TestQuerySchemaTakesAnyOfInEver(t *testing.T) {
+	_, cs := newTestHost(t)
+	res := callTool(t, cs, "query", map[string]any{"project_id": 1, "query": map[string]any{
+		"kind": "stat", "table": "views", "metrics": []any{map[string]any{"op": "count"}},
+		"where": []any{map[string]any{"op": "never", "where": []any{map[string]any{"op": "any_of", "any": []any{
+			map[string]any{"column": "host", "op": "eq", "values": []any{"beta.example.com"}},
+			map[string]any{"column": "app_version", "op": "eq", "values": []any{"dev"}},
+		}}}}},
+	}})
+	if res.IsError {
+		t.Fatalf("never holding an any_of = %s", textOf(res))
 	}
 }

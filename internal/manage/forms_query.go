@@ -14,21 +14,27 @@ import (
 // time a submission arrived.
 const ReceivedColumn = "Received"
 
+// ArchivedColumn is the archived submissions table's second display
+// column, the time a submission was archived.
+const ArchivedColumn = "Archived"
+
 // SubmissionsQuery builds the SQL of a form's submissions table (spec
-// D12a). The query takes two arguments, the project id and the form's
-// name, in that order; it selects id first, then the display columns,
-// newest first. columns are the display columns, without id: Received,
-// then one per field (an approved form's expected fields in their order,
-// a draft's every field seen). A field whose name matches Received or
-// id, ignoring ASCII case, is shown as "<name> (field)" (again until the
-// name is free), so every column filters and sorts as itself.
+// D12a): its active submissions, or its archived ones when archived. The
+// query takes two arguments, the project id and the form's name, in that
+// order; it selects id first, then the display columns, newest first.
+// columns are the display columns, without id: Received, Archived in the
+// archived table, then one per field (an approved form's expected fields
+// in their order, a draft's every field seen). A field whose name matches
+// one of those or id, ignoring ASCII case, is shown as "<name> (field)"
+// (again until the name is free), so every column filters and sorts as
+// itself.
 //
 // The query names its columns by position, never by display name: c0 is
 // id and c<i> is columns[i-1]. A field name reaches the SQL only inside a
 // quoted JSON path, so a field called meta, dbstat or sqlite_x (names
 // readsql refuses as identifiers) reads like any other. QuerySubmissions
 // translates between the two.
-func SubmissionsQuery(f store.Form) (query string, columns []string) {
+func SubmissionsQuery(f store.Form, archived bool) (query string, columns []string) {
 	fields := f.Fields
 	if f.Status == store.FormApproved {
 		fields = f.ExpectedFields
@@ -36,6 +42,13 @@ func SubmissionsQuery(f store.Form) (query string, columns []string) {
 	used := map[string]bool{"id": true, strings.ToLower(ReceivedColumn): true}
 	sel := []string{"id AS " + submissionsAlias(0), "received_at AS " + submissionsAlias(1)}
 	columns = []string{ReceivedColumn}
+	where := "archived_at IS NULL"
+	if archived {
+		used[strings.ToLower(ArchivedColumn)] = true
+		sel = append(sel, "archived_at AS "+submissionsAlias(2))
+		columns = append(columns, ArchivedColumn)
+		where = "archived_at IS NOT NULL"
+	}
 	for _, name := range fields {
 		shown := name
 		for used[strings.ToLower(shown)] {
@@ -46,7 +59,7 @@ func SubmissionsQuery(f store.Form) (query string, columns []string) {
 		sel = append(sel, fieldValue(name)+" AS "+submissionsAlias(len(columns)))
 	}
 	query = "SELECT " + strings.Join(sel, ",\n       ") +
-		"\nFROM submissions\nWHERE project_id = ? AND form = ?\nORDER BY received_at DESC, id DESC"
+		"\nFROM submissions\nWHERE project_id = ? AND form = ? AND " + where + "\nORDER BY received_at DESC, id DESC"
 	return query, columns
 }
 
@@ -54,14 +67,15 @@ func SubmissionsQuery(f store.Form) (query string, columns []string) {
 // 0 is id, i the display column columns[i-1].
 func submissionsAlias(i int) string { return "c" + strconv.Itoa(i) }
 
-// QuerySubmissions runs one page of f's submissions table on db. pg names
+// QuerySubmissions runs one page of f's submissions table on db, the
+// archived one when archived. pg names
 // columns as the table shows them (id or a display column); they are
 // translated to the query's positional names and the result's back, so
 // its columns are id and then the display columns (with Distinct, value
 // and rows). An unknown column is refused with ErrInvalid naming the
 // table's columns; other errors are readsql's, unwrapped.
-func QuerySubmissions(ctx context.Context, db *readsql.DB, f store.Form, pg readsql.Page) (readsql.PageResult, error) {
-	q, columns := SubmissionsQuery(f)
+func QuerySubmissions(ctx context.Context, db *readsql.DB, f store.Form, archived bool, pg readsql.Page) (readsql.PageResult, error) {
+	q, columns := SubmissionsQuery(f, archived)
 	names := append([]string{"id"}, columns...)
 	alias := func(name string) (string, error) {
 		for i, n := range names {
@@ -126,21 +140,22 @@ func CSVSafe(cell string) string {
 	return cell
 }
 
-// AllSubmissions pages through every row of f's submissions table that pg's
+// AllSubmissions pages through every row of f's submissions table (the
+// archived one when archived) that pg's
 // filters match, a page of db.MaxRows() at a time, and returns the ids, the
 // display columns and the rows without their ids. db must be a handle that
 // can read submissions (opened without that name refused). Without a sort
 // it sorts by Received, newest first: a sorted page breaks ties by every
 // column, so the pages neither overlap nor skip a row. Errors are
 // QuerySubmissions'.
-func AllSubmissions(ctx context.Context, db *readsql.DB, f store.Form, pg readsql.Page) (ids, columns []string, rows [][]string, err error) {
-	_, columns = SubmissionsQuery(f)
+func AllSubmissions(ctx context.Context, db *readsql.DB, f store.Form, archived bool, pg readsql.Page) (ids, columns []string, rows [][]string, err error) {
+	_, columns = SubmissionsQuery(f, archived)
 	if pg.Sort == nil {
 		pg.Sort = &readsql.Sort{Column: ReceivedColumn, Desc: true}
 	}
 	pg.Limit = db.MaxRows()
 	for pg.Offset = 0; ; pg.Offset += pg.Limit {
-		res, err := QuerySubmissions(ctx, db, f, pg)
+		res, err := QuerySubmissions(ctx, db, f, archived, pg)
 		if err != nil {
 			return nil, nil, nil, err
 		}

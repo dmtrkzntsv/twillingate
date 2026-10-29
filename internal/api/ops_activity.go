@@ -44,7 +44,7 @@ func (h *host) projectActivity(ctx context.Context, _ struct{}) (projectActivity
 		// One seek per live form on (project_id, form, received_at), not a
 		// scan of every submission the project holds.
 		sub, err := h.runSubs(ctx, `SELECT COALESCE(SUM((SELECT COUNT(*) FROM submissions s
-			WHERE s.project_id = f.project_id AND s.form = f.name
+			WHERE s.project_id = f.project_id AND s.form = f.name AND s.archived_at IS NULL
 			  AND s.received_at > COALESCE(f.seen_at, ''))), 0),
 			COUNT(*), COALESCE(SUM(f.status = 'draft'), 0)
 			FROM forms f WHERE f.project_id = ?1 AND f.archived_at IS NULL`, p.ID)

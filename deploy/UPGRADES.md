@@ -1500,6 +1500,26 @@ Rollback: install the previous release (the installer with `--version`, or
 `TWILLINGATE_VERSION` in `.env`); nothing on disk changed. It needs glibc
 2.35 or newer, and starts an engine child for SQL as before.
 
+### Form submissions are archived, not deleted (migration 043)
+
+Nothing to check before the upgrade: the migration adds a column and an
+index to `submissions`.
+
+- **On the day:** the MCP tool `delete_submissions` and its route
+  `POST /api/projects/{project_id}/submissions/delete` are gone.
+  `archive_submissions` (`POST …/submissions/archive`, answering
+  `{"archived": n}`) takes the same selectors, and `restore_submissions`
+  (`POST …/submissions/restore`) undoes it. An agent or script that called
+  the old tool needs the new name. `twillingate form erase` archives too.
+- **After the upgrade:** an archived submission leaves its form's table and
+  counts and is deleted by the daily pass `RETENTION_ARCHIVED_DAYS` (default
+  30) after archiving, so an erasure request is complete once that pass has
+  run. With `RETENTION_ARCHIVED_DAYS=0` archived submissions are never
+  deleted: set it if erasure requests must be honoured.
+
+Rollback: install the previous release; the column it does not know is
+ignored, and archived submissions show in their tables again.
+
 ### Upgrading to the event files in `data/` (no migration)
 
 The event files' default directory is now `data/` beside the database

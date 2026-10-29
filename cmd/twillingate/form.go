@@ -86,8 +86,11 @@ func cmdForm(args []string, stdout io.Writer) int {
 	switch sub {
 	case "list":
 		archived = sf.Bool("archived", false, "list the archived forms instead")
+	case "export":
+		name = sf.String("name", "", "form name (required)")
+		archived = sf.Bool("archived", false, "export the archived submissions instead")
 	case "erase":
-		sf.Var(&ids, "id", "submission id to erase (repeatable)")
+		sf.Var(&ids, "id", "submission id to erase (repeatable); archived, purged after RETENTION_ARCHIVED_DAYS")
 		search = sf.String("search", "", "erase every submission with a field value containing this text (at least 2 characters)")
 	default:
 		name = sf.String("name", "", "form name (required)")
@@ -113,6 +116,8 @@ func cmdForm(args []string, stdout io.Writer) int {
 		usageLine += " -name <name> [-purpose ...] [-return-url ...] [-closes-at RFC3339|now|never] [-fields a,b] [-add-fields a,b]"
 	case "list":
 		usageLine += " [-archived]"
+	case "export":
+		usageLine += " -name <name> [-archived]"
 	case "erase":
 		usageLine += " (-id <id> ... | -search <text>)"
 	default:
@@ -226,7 +231,7 @@ func cmdForm(args []string, stdout io.Writer) int {
 		defer db.Close()
 		// Read everything before writing a byte, so a failure leaves
 		// stdout empty rather than a truncated file.
-		_, header, rows, err := manage.AllSubmissions(ctx, db, f, readsql.Page{})
+		_, header, rows, err := manage.AllSubmissions(ctx, db, f, *archived, readsql.Page{})
 		if err != nil {
 			return fail(err)
 		}
@@ -243,20 +248,25 @@ func cmdForm(args []string, stdout io.Writer) int {
 	case "erase":
 		// Never echo the search text or the ids: they are the erased
 		// person's data and the output ends up in shell history and logs.
+		// Erasing archives: the daily pass purges them.
 		var n int
 		var err error
 		if len(ids) > 0 {
-			n, err = ops.DeleteSubmissions(ctx, "cli", *project, ids, "ids")
+			n, err = ops.ArchiveSubmissions(ctx, "cli", *project, ids, "ids")
 		} else {
 			var matched []string
 			if matched, err = ops.SubmissionIDsMatching(ctx, *project, *search); err == nil {
-				n, err = ops.DeleteSubmissions(ctx, "cli", *project, matched, "search")
+				n, err = ops.ArchiveSubmissions(ctx, "cli", *project, matched, "search")
 			}
 		}
 		if err != nil {
 			return fail(err)
 		}
-		fmt.Fprintf(stdout, "%s erased\n", plural(n, "submission", "submissions"))
+		if days := cfg.Retention.ArchivedDays; days > 0 {
+			fmt.Fprintf(stdout, "%s archived; purged %d days after archiving\n", plural(n, "submission", "submissions"), days)
+		} else {
+			fmt.Fprintf(stdout, "%s archived; never purged while RETENTION_ARCHIVED_DAYS is 0\n", plural(n, "submission", "submissions"))
+		}
 	}
 	return 0
 }

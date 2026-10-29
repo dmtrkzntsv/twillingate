@@ -280,6 +280,9 @@ func compileQuery(q Query, p Params) ([]filter, []metricSpec, error) {
 	if err != nil {
 		return nil, nil, err
 	}
+	if _, err := compileDefines(q.Define); err != nil { // newAgg compiles them again, unable to fail then
+		return nil, nil, err
+	}
 	metrics := make([]metricSpec, len(q.Metrics))
 	for i, m := range q.Metrics {
 		if metrics[i], err = compileMetric(m, fmt.Sprintf("metrics[%d]", i)); err != nil {
@@ -359,23 +362,50 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 			return Result{}, err
 		}
 	}
+	// ever and never read the events with the rules, whatever table the
+	// query's own scan reads.
+	everRules := rs
+	if fs := everFilters(filters, metrics); len(fs) > 0 && (q.Table == "sessions" || q.Table == "identities") {
+		var err error
+		if everRules, err = e.ruleSet(p.Project, rules); err != nil {
+			return Result{}, err
+		}
+	}
+	if err := e.collectEver(ctx, everFilters(filters, metrics), p, everRules); err != nil {
+		return Result{}, err
+	}
 	s := scan{e: e, q: q, filters: filters, metrics: metrics, project: p.Project, rules: rs}
 	switch q.Kind {
 	case "retention":
 		return s.retention(ctx, p.From, p.To)
 	case "attributes":
 		return s.attributes(ctx, p.From, p.To)
+	case "funnel":
+		return s.funnel(ctx, p.From, p.To)
+	case "paths":
+		return s.paths(ctx, p.From, p.To)
 	}
 	specs := s.aggSpecs(p.From, p.To)
 	as := make([]aggregated, len(specs))
 	for i, sp := range specs {
+		s := s
+		if i > 0 && hasEver(q) { // a stat's previous period: its own ids, over its days
+			s.filters, s.metrics = cloneEver(s.filters, s.metrics)
+			if err := e.collectEver(ctx, everFilters(s.filters, s.metrics), Params{Project: p.Project, From: sp.from, To: sp.to}, everRules); err != nil {
+				return Result{}, err
+			}
+		}
 		m, ms, err := s.aggregate(ctx, sp.from, sp.to, sp.dims, sp.perDay, sp.sets)
 		if err != nil {
 			return Result{}, err
 		}
 		as[i] = aggregated{m: m, ms: ms}
 	}
-	return s.result(as), nil
+	res := s.result(as)
+	if q.longShape() {
+		res = toLong(q, res)
+	}
+	return res, nil
 }
 
 // aggSpec is one aggregation a stat, trend or breakdown is answered from:
@@ -566,8 +596,38 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 // newAgg is the aggregation of sp, with the query's metrics resolved.
 func (s scan) newAgg(sp aggSpec) (*agg, []metricSpec) {
 	lo, hi := epochDay(sp.from), epochDay(sp.to)
-	return newAgg(aggOptions{metrics: s.metrics, filters: s.filters, dims: sp.dims, perDay: sp.perDay, sets: sp.sets,
-		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
+	o := aggOptions{metrics: s.metrics, filters: s.filters, dims: sp.dims, perDay: sp.perDay, sets: sp.sets,
+		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes}
+	defs, err := compileDefines(s.q.Define)
+	if err != nil {
+		panic("native: defined columns compileQuery passed: " + err.Error())
+	}
+	o.defs = defs
+	if sp.perDay && s.q.bucketed() {
+		o.buckets, o.starts = buckets(sp.from, sp.to, s.q.Interval)
+		o.ndays = len(o.starts)
+	}
+	return newAgg(o)
+}
+
+// buckets maps each day of [from, to], by its offset from from, to the
+// index of its week (from Monday) or month, and lists each bucket's
+// first day (epoch days), which may precede from.
+func buckets(from, to civil.Date, interval string) (index []int, starts []int64) {
+	for d := from; !to.Before(d); d = d.AddDays(1) {
+		start := d
+		if interval == "month" {
+			start = civil.Date{Year: d.Year, Month: d.Month, Day: 1}
+		} else {
+			start = d.AddDays(-((int(d.Time().Weekday()) + 6) % 7)) // Monday
+		}
+		e := epochDay(start)
+		if len(starts) == 0 || starts[len(starts)-1] != e {
+			starts = append(starts, e)
+		}
+		index = append(index, len(starts)-1)
+	}
+	return index, starts
 }
 
 // scanEvents reads cols of the project's rows of the query's table in r
@@ -663,6 +723,12 @@ func (s scan) identityColumnsOf(dims []string) []string {
 	for _, d := range dims {
 		if _, ok := idColumns[d]; ok && !slices.Contains(out, d) {
 			out = append(out, d)
+		}
+	}
+	defs, _ := compileDefines(s.q.Define) // compileQuery has compiled them
+	for _, col := range definedColumns(defs) {
+		if _, ok := idColumns[col]; ok && !slices.Contains(out, col) {
+			out = append(out, col)
 		}
 	}
 	return out
@@ -772,7 +838,7 @@ func (s scan) trend(x aggregated) Result {
 	}
 	var rows [][]string
 	for d := range m.a.ndays {
-		day := formatDay(m.a.from + int64(d))
+		day := formatDay(m.a.dayOf(d))
 		if long {
 			for _, mt := range ms {
 				if fill || m.metricRows(mt, 0, d) > 0 {

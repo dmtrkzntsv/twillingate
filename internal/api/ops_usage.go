@@ -63,6 +63,8 @@ type usageOut struct {
 	To             string         `json:"to"`
 	DatabaseBytes  int64          `json:"database_bytes"`
 	DatabaseSeries []dbDay        `json:"database_series" jsonschema:"the database file's size per day of the range as the daily pass measured it, null on days not measured"`
+	DiskBytes      int64          `json:"disk_bytes" jsonschema:"what the server keeps on disk: the database file now plus every project's event files as the daily pass last measured them"`
+	DiskSeries     []dbDay        `json:"disk_series" jsonschema:"disk_bytes per day of the range: the database and every project's event files as the daily pass measured them, null on days the database was not measured"`
 	Projects       []projectUsage `json:"projects"`
 }
 
@@ -97,12 +99,23 @@ func (h *host) usage(ctx context.Context, in usageIn) (usageOut, error) {
 	if err != nil {
 		return usageOut{}, err
 	}
+	// The disk is every project's files, whichever were asked for.
+	out.DiskBytes = out.DatabaseBytes
+	for _, sz := range sizes {
+		out.DiskBytes += sz.TotalBytes
+	}
 	for d := fromD; !toD.Before(d); d = d.AddDays(1) {
-		day := dbDay{Day: d.String()}
+		day, disk := dbDay{Day: d.String()}, dbDay{Day: d.String()}
 		if n, ok := st.database[day.Day]; ok {
 			day.Bytes = &n
+			total := n
+			for _, files := range st.files {
+				total += files[day.Day]
+			}
+			disk.Bytes = &total
 		}
 		out.DatabaseSeries = append(out.DatabaseSeries, day)
+		out.DiskSeries = append(out.DiskSeries, disk)
 	}
 	oldest, err := archive.OldestDays(h.eventsDir)
 	if err != nil {
@@ -287,32 +300,42 @@ func (h *host) readSizes(ctx context.Context) (map[int64]*usageSize, error) {
 	return out, nil
 }
 
-// stored is what the daily pass measured over a range, read in one
-// query: each project's file bytes and the database's size, by day.
+// stored is what the daily pass measured over a range: each project's
+// file bytes and the database's size, by day.
 type stored struct {
 	files    map[int64]map[string]int64
 	database map[string]int64
 }
 
+// readStored reads the range a page at a time, in the order of the
+// table's key, each page after the last row of the one before: a row per
+// project and day outgrows CONSOLE_QUERY_ROWS_MAX over a few months.
 func (h *host) readStored(ctx context.Context, fromD, toD civil.Date) (stored, error) {
 	st := stored{files: map[int64]map[string]int64{}, database: map[string]int64{}}
-	res, err := h.run(ctx, `SELECT key, project_id, measured_at, value FROM usage_history
-		WHERE key IN (?1, ?2) AND measured_at BETWEEN ?3 AND ?4`,
-		store.StatFileBytes, store.StatDatabaseBytes, fromD.String(), toD.String())
-	if err != nil {
-		return stored{}, err
-	}
-	for _, r := range res.Rows {
-		id, _ := strconv.ParseInt(r[1], 10, 64)
-		n, _ := strconv.ParseInt(r[3], 10, 64)
-		if r[0] == store.StatDatabaseBytes {
-			st.database[r[2]] = n
-			continue
+	after := []string{"", "-1", ""}
+	for {
+		res, err := h.db.Run(ctx, `SELECT key, project_id, measured_at, value FROM usage_history
+			WHERE key IN (?1, ?2) AND measured_at BETWEEN ?3 AND ?4 AND (key, project_id, measured_at) > (?5, ?6, ?7)
+			ORDER BY key, project_id, measured_at`,
+			store.StatFileBytes, store.StatDatabaseBytes, fromD.String(), toD.String(), after[0], after[1], after[2])
+		if err != nil {
+			return stored{}, runErr(h.db, err)
 		}
-		if st.files[id] == nil {
-			st.files[id] = map[string]int64{}
+		for _, r := range res.Rows {
+			id, _ := strconv.ParseInt(r[1], 10, 64)
+			n, _ := strconv.ParseInt(r[3], 10, 64)
+			if r[0] == store.StatDatabaseBytes {
+				st.database[r[2]] = n
+				continue
+			}
+			if st.files[id] == nil {
+				st.files[id] = map[string]int64{}
+			}
+			st.files[id][r[2]] = n
 		}
-		st.files[id][r[2]] = n
+		if !res.Truncated || len(res.Rows) == 0 {
+			return st, nil
+		}
+		after = res.Rows[len(res.Rows)-1][:3]
 	}
-	return st, nil
 }

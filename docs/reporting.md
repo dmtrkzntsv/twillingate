@@ -4,8 +4,9 @@ How an AI agent builds and changes the dashboards twillingate serves at `/app/`.
 The page is read-only: a person opens it, picks a project and a date range, and
 reads. Agents are its only authors, through the tools and routes below. The MCP
 endpoint serves this file verbatim as `docs://reporting`; `reporting_guide`
-returns its live parts (components, views, projects, dashboards) with its
-[Workflow](#workflow) and [Rules](#rules) in one call. Widget SQL is DuckDB
+returns its live parts (components, built-in widgets, views, projects,
+dashboards) with its [Workflow](#workflow) and [Rules](#rules) in one call.
+Most widgets need no SQL: a built-in one copied, or a structured query. Widget SQL is DuckDB
 SQL over the event files: [Tables](#tables) lists what it reads. It runs on
 an external SQL engine (`SQL_ENGINE_SOCKET`, [deployment.md](deployment.md#external-sql-engine));
 without one, `sql` is no source type and the other widgets are unaffected.
@@ -67,15 +68,20 @@ Retention · Web Vitals · Measures.
 
 - the **component** is how it is drawn (`line`, `stat`, `table`, …; see
   [Components](#components));
-- the **source** is `{"type": "md" | "query" | "sql", "content": "…"}`: a
+- the **source** is `{"type": "query" | "sql" | "md", "content": "…"}`: a
+  structured query as JSON (`query`, see below; the one to reach for), a
   read-only query in DuckDB SQL over the event files' tables (`sql`, see
-  [Tables](#tables)), a structured query as JSON (`query`, see below), or
-  Markdown text (`md`). The component says which source types it accepts and
-  which columns its query must return.
+  [Tables](#tables); the escape hatch), or Markdown text (`md`). The
+  component says which source types it accepts and which columns its query
+  must return.
 
-A `query` source's content is `{"query": {…}, "rename": {…}, "labels": {…}, "columns": […]}`:
+A `query` source's content is `{"query": {…}, "rename": {…}, "labels": {…}, "columns": […], "project_id": …}`:
 `query` is a [structured query](twillingate.md#structured-queries) (a stat, a
-trend or a breakdown), `rename`, optional, maps its output columns to the names
+trend or a breakdown), the same object as `query`'s `query` argument. The
+content goes in as that JSON object itself or as its text, over MCP and HTTP
+alike; the widget tools' input schemas describe the object with the
+structured query's own schema, and it is stored and returned as its compact
+text. An object for a `sql` or `md` source is refused. `rename`, optional, maps its output columns to the names
 the component reads (`{"day": "x", "previous_value": "previous"}`), and
 `labels`, optional, shows a column's values as others: keyed by the column's
 name after `rename`, each a map of value to label (`{"label": {"new": "New
@@ -88,7 +94,8 @@ refused), and a labelled column keeps its type and its `approximate` mark.
 `rename`, in its order (`["user_label", "days", "user_first_seen"]` drops
 `user_id` and shows first seen last); the component checks the columns kept, and
 an empty list, a name that is no column and a name given twice are refused.
-Without it every column is kept, in the order below. A stat returns
+Without it every column is kept, in the order below. `project_id`, optional,
+is the project the widget always reads (see below); omitted, the switcher's. A stat returns
 its metrics, then `previous_<name>` each with `compare: previous`; a trend
 `day`, `series` when split, and its metric, or with several metrics `day`,
 `series` (each metric's name, its `as`) and `value`; a breakdown its
@@ -113,7 +120,9 @@ checked against its props schema), and a `width` and `height` (see
 **A widget's SQL decides what it follows.** A query that uses `:project`
 follows the page's project switcher; one that uses `:from` or `:to` follows the
 range switcher; one that uses neither is fixed, and shows whatever its SQL
-names. A `query` source always follows both. A dashboard shows a switcher only
+names. A `query` source follows the range, and the project unless its content
+names one: `"project_id": 9` beside `query` fixes it to that project whatever
+the switcher shows (a project with no event files shows no rows). A dashboard shows a switcher only
 when at least one of its live widgets follows it. `get_dashboard` reports
 `follows_project` and `follows_range` for the dashboard and for each widget.
 
@@ -250,19 +259,42 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
 
 ## Workflow
 
+Reuse before you write, and write a structured query before SQL: a copy or
+a `query` source needs no SQL engine, follows both switchers, and keeps
+working when the event files' columns change. SQL is the escape hatch for
+what a structured query cannot say.
+
 1. **Call `reporting_guide`.** It names the running version, the components
-   and the columns each one reads, the tables, the active projects and the
-   dashboards there are.
-2. **Explore with `query`** over the event files'
-   tables ([Tables](#tables)), for one project and a few days, until the
-   numbers are the ones the widget should show.
-3. **Pick a component** and alias the query's columns to its inputs:
-   `SELECT day AS x, count(*) AS y …` for `line`. [Examples](#examples) has
-   one query per component.
-4. **Choose what the widget follows:** `WHERE project_id = :project` follows
-   the project switcher, `day BETWEEN :from AND :to` the range switcher;
-   without them the widget is fixed, and its title says to what ("Signups,
-   all time").
+   and the columns each one reads, the built-in widgets, the tables, the
+   active projects and the dashboards there are.
+2. **Reuse a built-in widget when one shows it.** The guide's Built-in
+   widgets lists every system widget with what it reads: `copy_widget` puts
+   one on your dashboard, unchanged and independent of the original. For a
+   whole page, `duplicate_dashboard` a system dashboard (or its group, with
+   `whole_group`) and work on the copy. For one segment, both take `where`
+   and `project_id`: the Users dashboard for the cloud's users only, with
+   test traffic left out, is a `duplicate_dashboard` of it with
+   `where: [{"op": "ever", "where": [{"column": "host", "op": "eq", "values": ["app.example.com"]}]},
+   {"op": "never", "where": [{"column": "app_version", "op": "eq", "values": ["dev"]}]}]`.
+3. **Otherwise write a structured query** (`{"type": "query"}`): a stat, a
+   trend, a breakdown, a retention or an attributes, the grammar of
+   `query`'s `query` argument
+   ([twillingate.md](twillingate.md#structured-queries)). Try it
+   with `query`'s `query` form for one project and a few days until the
+   numbers are the ones the widget should show, then save the same object
+   as the source's `query`, with `rename` mapping its columns to the
+   component's inputs (`{"day": "x", "count": "y"}` for `line`).
+   [Examples](#examples) has one per component.
+4. **Write SQL only for what a structured query cannot say**: joining two
+   tables, an expression over a column (arithmetic, a string function, a
+   date bucket other than a day, a week or a month; a `CASE` of labels is a
+   query's `define`; an actor's latest value is a `latest` metric), a remote
+   `table` (`mode: remote`). A condition on what else an actor did ("users
+   who ever used a test host") is a filter's `ever` or `never`, an OR an
+   `any_of`. Name in the widget's title or a Markdown note
+   what made it SQL. `WHERE project_id = :project` follows the project
+   switcher, `day BETWEEN :from AND :to` the range switcher; without them
+   the widget is fixed, and its title says to what ("Signups, all time").
 5. **Write it.** `create_dashboard` with its widgets in order, or `add_widget`
    on an existing user dashboard with `after`, `width` and `height`.
    `create_dashboard` with `group_id` adds the dashboard as a tab of that
@@ -286,6 +318,8 @@ widget_data {"widget_id": 42, "project_id": 7, "from": "2026-09-01", "to": "2026
   user dashboard (the console's Duplicate and Copy to dashboard… call it).
 - Your own dashboards are always in the sidebar: `update_dashboard` refuses
   `sidebar` on one. `archive_dashboard` takes one away.
+- Prefer a copy of a built-in widget, then a `query` source; a `sql` source
+  is for what neither can show (see [Workflow](#workflow), step 4).
 - A query returns exactly the columns the component reads, named by alias; a
   column marked optional may be left out, and only `table` takes any columns.
 - Widget SQL is DuckDB SQL, one `SELECT`, over the seven tables in
@@ -400,7 +434,7 @@ is older than `REPORTING_CACHE_MAX_AGE`:
 
 | Tool | Input | Returns |
 | --- | --- | --- |
-| `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the event files' tables, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
+| `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the built-in widgets (each one's id, dashboard, title, component and what it reads), the event files' tables, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
 | `list_components` | none | `source_types` and `components`: each one's `description`, `accepts`, `inputs`, `props` schema, `default_width` and `default_height` |
 | `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, `group_title` (the group's name; absent when it has none, and the first live tab's title stands in), stored `project_id` and `range`, live `widgets` count, `archived_at`, `sidebar` (its group is in the sidebar; only a system group is ever out of it) and `project_tab` (a system dashboard that projects created from now on get as a tab; always false on your own); plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and `auto_refresh_seconds`, how often the page reloads a dashboard with auto-refresh on (absent: never) |
 | `get_dashboard` | `dashboard_id` | the dashboard, its `group_id` and `group_title` (the group's name; absent when it has none), its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), and its live `widgets` in order |
@@ -408,7 +442,7 @@ is older than `REPORTING_CACHE_MAX_AGE`:
 | `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh`; for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` | the envelope above |
 | `create_dashboard` | `title` (at least 2 characters), `range` (default `7d`), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
 | `update_dashboard` | `dashboard_id`, `title`, `whole_group`, `group_id`, `after`; or, in a call of its own, `sidebar` | the dashboard, as `list_dashboards` lists it. `sidebar` (system dashboards only) puts the whole group in or out of the sidebar, and is refused on your own, which are always in it. See [Project tabs and the sidebar](#project-tabs-and-the-sidebar) |
-| `duplicate_dashboard` | `dashboard_id`, `whole_group`, `group_id` | a user copy with copies of its live widgets: a new dashboard last in the sidebar, or with `group_id` a tab of that user group (right after the source when it is the source's own group, last otherwise). A system dashboard is copied too, also one out of the sidebar. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no `group_id`. The copy is in the sidebar, on no project's page, with `project_tab` false. Duplicating never hides the source: to replace a system group, `update_dashboard` it with `sidebar: false` |
+| `duplicate_dashboard` | `dashboard_id`, `whole_group`, `group_id`, `where`, `project_id` | a user copy with copies of its live widgets: a new dashboard last in the sidebar, or with `group_id` a tab of that user group (right after the source when it is the source's own group, last otherwise). A system dashboard is copied too, also one out of the sidebar. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no `group_id`. The copy is in the sidebar, on no project's page, with `project_tab` false. Duplicating never hides the source: to replace a system group, `update_dashboard` it with `sidebar: false`. `where` (filters, as a structured query's) and `project_id` narrow every copied `query` widget: its query's rows must also pass `where`, before its own filters, and it reads `project_id` whatever the switcher shows; Markdown is copied as it is, and a `sql` widget among the copies, or a filter one of the queries cannot take (a column its table lacks), refuses the whole copy |
 | `archive_dashboard` | `dashboard_id`, `whole_group` | archives a user dashboard (`whole_group`: every live member of its group): out of the sidebar and off every project page; see [Archiving and the purge](#archiving-and-the-purge). A system dashboard is refused |
 | `restore_dashboard` | `dashboard_id`, `whole_group` | unhides a user dashboard (`whole_group`: every archived member of its group), in the sidebar and on project pages where it was. A system dashboard is refused |
 | `list_project_tabs` | `project_id` | `tabs`: the project page's tabs, in order, one order per project, built-in and user tabs alike; each `dashboard_id`, `title`, `owner`, `group_id` |
@@ -417,7 +451,7 @@ is older than `REPORTING_CACHE_MAX_AGE`:
 | `move_project_tab` | `project_id`, `dashboard_id`, `after` | `tabs`; moves any tab, system or user, after another tab of the project (`0` first) |
 | `add_widget` | `dashboard_id`, `component`, `source`, `title`, `name`, `props`, `width`, `height`, `after` | the widget |
 | `update_widget` | `widget_id` and any of `name`, `component`, `title`, `props`, `source`, `width`, `height`, `after` | the widget; omitted fields are kept. `after` moves it after that widget of its dashboard (`0` first). A change of only `width`, `height`, `after`, `title` and `name` runs no query |
-| `copy_widget` | `widget_id`, `dashboard_id`, `after` | the independent copy, same size; the original may be on a system dashboard |
+| `copy_widget` | `widget_id`, `dashboard_id`, `after`, `where`, `project_id` | the independent copy, same size; the original may be on a system dashboard. `where` and `project_id` narrow a `query` widget's copy as `duplicate_dashboard`'s do |
 | `archive_widget` | `widget_id` | hides it in place |
 | `restore_widget` | `widget_id` | puts it back where it was |
 | `list_widget_shares` | `widget_id`?, `state`? (`live`/`archived`) | every share, live ones newest first, archived ones most recently archived first, with its URLs and archive date |
@@ -594,24 +628,13 @@ that comes back in a later release does not reattach itself.
 
 At least one widget per component, each ready for `add_widget`: the
 component, the source (the block below, as `{"type": "sql", "content": "…"}`;
-`md` for the Markdown one; `query` for a JSON block, its text the content) and
-the props shown. Unless the title says otherwise, each
+`md` for the Markdown one; `query` for a JSON block, its text or the object
+the content) and the props shown. Each component that takes a `query`
+source shows it first, as a structured query; the SQL after it is another
+example of the component, often a different widget, for when a
+structured query cannot say what you need. Unless the title says otherwise, each
 follows both switchers. [Percentiles from measures](#percentiles-from-measures)
 closes the section with the one query pattern measures need.
-
-### `stat`
-
-Views in the range, with a sparkline of the days under the number:
-
-```sql
-SELECT day AS x, count(*) AS value
-FROM views
-WHERE project_id = :project AND day BETWEEN :from AND :to
-GROUP BY day
-ORDER BY day
-```
-
-Props: `{"format": "number", "aggregate": "sum"}`
 
 ### `stat` as a structured query
 
@@ -637,24 +660,24 @@ An empty `value` (a metric with nothing to read, as `avg` or `ratio` over no
 rows) shows as "–" rather than 0, and an empty `previous` shows no change; a
 `0` still shows 0.
 
-### `line`
+### `stat`
 
-Visitors per day, one line per kind (`web`, `app`, …):
+Views in the range, with a sparkline of the days under the number:
 
 ```sql
-SELECT day AS x, kind AS series, count(DISTINCT actor_id) AS y
+SELECT day AS x, count(*) AS value
 FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to
-GROUP BY day, kind
+GROUP BY day
 ORDER BY day
 ```
 
-Props: `{"curve": "monotone"}`
+Props: `{"format": "number", "aggregate": "sum"}`
 
 ### `line` as a structured query
 
-The same chart as a `query` source: a trend returns `day`, `series` and
-its metric, renamed to the inputs `line` reads:
+Visitors per day, one line per kind (`web`, `app`, …): a trend returns
+`day`, `series` and its metric, renamed to the inputs `line` reads:
 
 ```json
 {
@@ -690,6 +713,50 @@ cohort day) and `retention`, and a numeric `x` plots to scale:
 
 Props: `{"format": "percent", "curve": "linear"}`
 
+### `line`
+
+Visitors per day, one line per kind (`web`, `app`, …):
+
+```sql
+SELECT day AS x, kind AS series, count(DISTINCT actor_id) AS y
+FROM views
+WHERE project_id = :project AND day BETWEEN :from AND :to
+GROUP BY day, kind
+ORDER BY day
+```
+
+Props: `{"curve": "monotone"}`
+
+### `area` as a structured query
+
+Views per day, stacked by platform, an empty platform labelled:
+
+```json
+{
+  "query": {
+    "kind": "trend",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count"
+      }
+    ],
+    "series": "platform"
+  },
+  "rename": {
+    "day": "x",
+    "count": "y"
+  },
+  "labels": {
+    "series": {
+      "": "(none)"
+    }
+  }
+}
+```
+
+Props: `{"stacked": true}`
+
 ### `area`
 
 Views per day, stacked by platform:
@@ -703,6 +770,34 @@ ORDER BY x
 ```
 
 Props: `{"stacked": true}`
+
+### `bar` as a structured query
+
+The ten most frequent product events, as horizontal bars:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "product",
+    "metrics": [
+      {
+        "op": "count"
+      }
+    ],
+    "dimensions": [
+      "event_name"
+    ],
+    "limit": 10
+  },
+  "rename": {
+    "event_name": "x",
+    "count": "y"
+  }
+}
+```
+
+Props: `{"horizontal": true}`
 
 ### `bar`
 
@@ -719,25 +814,10 @@ LIMIT 10
 
 Props: `{"horizontal": true}`
 
-### `bar_list`
-
-Top pages by views:
-
-```sql
-SELECT path AS label, count(*) AS value
-FROM views
-WHERE project_id = :project AND day BETWEEN :from AND :to AND path IS NOT NULL
-GROUP BY path
-ORDER BY value DESC
-LIMIT 10
-```
-
-Props: `{"format": "number"}`
-
 ### `bar_list` as a structured query
 
-The same list as a `query` source: a breakdown returns its dimension and
-its metric, renamed to `label` and `value`:
+Top pages by views: a breakdown returns its dimension and its metric,
+renamed to `label` and `value`:
 
 ```json
 {
@@ -754,6 +834,56 @@ its metric, renamed to `label` and `value`:
 ```
 
 Props: `{"format": "number"}`
+
+### `bar_list`
+
+Top pages by views:
+
+```sql
+SELECT path AS label, count(*) AS value
+FROM views
+WHERE project_id = :project AND day BETWEEN :from AND :to AND path IS NOT NULL
+GROUP BY path
+ORDER BY value DESC
+LIMIT 10
+```
+
+Props: `{"format": "number"}`
+
+### `pie` as a structured query
+
+Visitors by device, the four largest and the rest as `Other`:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "daily_sum",
+        "of": "actors",
+        "as": "value"
+      }
+    ],
+    "dimensions": [
+      "device_label"
+    ],
+    "limit": 4,
+    "other": true
+  },
+  "rename": {
+    "device_label": "label"
+  },
+  "labels": {
+    "label": {
+      "": "Unknown"
+    }
+  }
+}
+```
+
+Props: `{"format": "number", "donut": true}`
 
 ### `pie`
 
@@ -776,6 +906,45 @@ ORDER BY value DESC
 
 Props: `{"donut": true}`
 
+### `radar` as a structured query
+
+Views per weekday, Monday first, its labels the days' names:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count",
+        "as": "value"
+      }
+    ],
+    "dimensions": [
+      "weekday"
+    ],
+    "order": "weekday"
+  },
+  "rename": {
+    "weekday": "axis"
+  },
+  "labels": {
+    "axis": {
+      "1 Mon": "Mon",
+      "2 Tue": "Tue",
+      "3 Wed": "Wed",
+      "4 Thu": "Thu",
+      "5 Fri": "Fri",
+      "6 Sat": "Sat",
+      "7 Sun": "Sun"
+    }
+  }
+}
+```
+
+Props: `{"format": "number"}`
+
 ### `radar`
 
 Views by day of the week:
@@ -786,6 +955,33 @@ FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to
 GROUP BY axis, dayofweek(day)
 ORDER BY dayofweek(day)
+```
+
+Props: `{"format": "number"}`
+
+### `radial` as a structured query
+
+Visitors by kind (`web`, `app`, …):
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "actors",
+        "as": "value"
+      }
+    ],
+    "dimensions": [
+      "kind"
+    ]
+  },
+  "rename": {
+    "kind": "label"
+  }
+}
 ```
 
 Props: `{"format": "number"}`
@@ -804,6 +1000,45 @@ WHERE project_id = :project AND event_name = 'signup'
 
 Props: `{"format": "number"}`
 
+### `scatter` as a structured query
+
+Per page, its views against its visitors:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count",
+        "as": "x"
+      },
+      {
+        "op": "actors",
+        "as": "y"
+      }
+    ],
+    "dimensions": [
+      "path"
+    ],
+    "where": [
+      {
+        "column": "path",
+        "op": "is_set"
+      }
+    ],
+    "limit": 50
+  },
+  "columns": [
+    "x",
+    "y"
+  ]
+}
+```
+
+Props: `{"format": "number"}`
+
 ### `scatter`
 
 Pages, visitors against views:
@@ -813,6 +1048,29 @@ SELECT count(DISTINCT actor_id) AS x, count(*) AS y
 FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to
 GROUP BY path
+```
+
+Props: `{"format": "number"}`
+
+### `funnel` as a structured query
+
+The users who viewed a page, then signed up, then subscribed, each step
+after the one before it: a funnel returns `step` and `value`, the names
+the component reads:
+
+```json
+{
+  "query": {
+    "kind": "funnel",
+    "by": "user",
+    "sequence": true,
+    "steps": [
+      {"label": "Visited", "where": [{"column": "family", "op": "eq", "values": ["views"]}]},
+      {"label": "Signed up", "where": [{"column": "event_name", "op": "eq", "values": ["signup"]}]},
+      {"label": "Subscribed", "where": [{"column": "event_name", "op": "eq", "values": ["subscribed"]}]}
+    ]
+  }
+}
 ```
 
 Props: `{"format": "number"}`
@@ -842,6 +1100,39 @@ ORDER BY n
 
 Props: `{"format": "number"}`
 
+### `combo` as a structured query
+
+Views as bars and visitors as a line, per day: a breakdown by day returns both metrics side by side, which `combo` reads:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count",
+        "as": "bar"
+      },
+      {
+        "op": "actors",
+        "as": "line"
+      }
+    ],
+    "dimensions": [
+      "day"
+    ],
+    "order": "day",
+    "limit": 1000
+  },
+  "rename": {
+    "day": "x"
+  }
+}
+```
+
+Props: `{"bar_format": "number", "line_format": "number"}`
+
 ### `combo`
 
 Visitors as bars and the bounce rate as a line, on two axes. `percent`
@@ -861,6 +1152,48 @@ ORDER BY x
 ```
 
 Props: `{"bar_format": "number", "line_format": "percent"}`
+
+### `heatmap` as a structured query
+
+Views by weekday and hour, the week's heatmap:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count",
+        "as": "value"
+      }
+    ],
+    "dimensions": [
+      "weekday",
+      "hour"
+    ],
+    "order": "weekday",
+    "limit": 1000
+  },
+  "rename": {
+    "hour": "x",
+    "weekday": "y"
+  },
+  "labels": {
+    "y": {
+      "1 Mon": "Mon",
+      "2 Tue": "Tue",
+      "3 Wed": "Wed",
+      "4 Thu": "Thu",
+      "5 Fri": "Fri",
+      "6 Sat": "Sat",
+      "7 Sun": "Sun"
+    }
+  }
+}
+```
+
+Props: `{"format": "number"}`
 
 ### `heatmap`
 
@@ -892,6 +1225,27 @@ ORDER BY x, y
 
 Props: `{"format": "percent", "labels": true}`
 
+### `calendar` as a structured query
+
+Views per day of the range:
+
+```json
+{
+  "query": {
+    "kind": "trend",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count",
+        "as": "value"
+      }
+    ]
+  }
+}
+```
+
+Props: `{"format": "number"}`
+
 ### `calendar`
 
 "Views, last 12 months": follows the project, fixed to the last year:
@@ -902,6 +1256,38 @@ FROM views
 WHERE project_id = :project AND day >= current_date - 364
 GROUP BY day
 ORDER BY day
+```
+
+Props: `{"format": "number"}`
+
+### `map` as a structured query
+
+Visitors by country:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "daily_sum",
+        "of": "actors",
+        "as": "value"
+      }
+    ],
+    "dimensions": [
+      "country"
+    ],
+    "where": [
+      {
+        "column": "country",
+        "op": "is_set"
+      }
+    ],
+    "limit": 250
+  }
+}
 ```
 
 Props: `{"format": "number"}`
@@ -919,6 +1305,47 @@ GROUP BY country
 
 Props: `{"format": "number"}`
 
+### `treemap` as a structured query
+
+Views by browser, then version:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count",
+        "as": "value"
+      }
+    ],
+    "dimensions": [
+      "browser",
+      "browser_version"
+    ],
+    "where": [
+      {
+        "column": "browser",
+        "op": "is_set"
+      }
+    ],
+    "limit": 50
+  },
+  "rename": {
+    "browser": "parent",
+    "browser_version": "label"
+  },
+  "labels": {
+    "label": {
+      "": "Unknown"
+    }
+  }
+}
+```
+
+Props: `{"format": "number"}`
+
 ### `treemap`
 
 Visitors by browser, then version:
@@ -928,6 +1355,19 @@ SELECT browser AS parent, coalesce(browser_version, '?') AS label, count(DISTINC
 FROM views
 WHERE project_id = :project AND day BETWEEN :from AND :to AND browser IS NOT NULL
 GROUP BY 1, 2
+```
+
+Props: `{"format": "number"}`
+
+### `sankey` as a structured query
+
+Where the sessions went, three steps deep: paths returns `source`,
+`target` and `value`, each step's pages a stage of their own:
+
+```json
+{
+  "query": {"kind": "paths", "depth": 3, "limit": 30}
+}
 ```
 
 Props: `{"format": "number"}`
@@ -957,6 +1397,44 @@ SELECT * FROM (
 ```
 
 Props: `{"format": "number"}`
+
+### `table` as a structured query
+
+Top pages with views and visitors, filtered and sorted on the page:
+
+```json
+{
+  "query": {
+    "kind": "breakdown",
+    "table": "views",
+    "metrics": [
+      {
+        "op": "count",
+        "as": "Views"
+      },
+      {
+        "op": "actors",
+        "as": "Visitors"
+      }
+    ],
+    "dimensions": [
+      "path"
+    ],
+    "where": [
+      {
+        "column": "path",
+        "op": "is_set"
+      }
+    ],
+    "limit": 100
+  },
+  "rename": {
+    "path": "Page"
+  }
+}
+```
+
+Props: `{"formats": {"Views": "number", "Visitors": "number"}}`
 
 ### `table`
 

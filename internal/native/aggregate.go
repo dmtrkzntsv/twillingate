@@ -419,6 +419,8 @@ type value struct {
 	form                int
 	i                   int64
 	f                   float64
+	text                bool // a latest's value, s
+	s                   string
 }
 
 func intValue(n int64) value { return value{isInt: true, i: n} }
@@ -427,6 +429,8 @@ func (v value) String() string {
 	switch {
 	case v.null:
 		return ""
+	case v.text:
+		return v.s
 	case v.form == formDay:
 		return formatDay(v.i)
 	case v.form == formTime:
@@ -465,6 +469,11 @@ func cmpDesc(a, b value) int {
 		return cmp.Compare(boolInt(a.null), boolInt(b.null))
 	case a.isInt && b.isInt:
 		return cmp.Compare(b.i, a.i)
+	case a.text || b.text: // latest's text values, after the numbers
+		if c := cmp.Compare(boolInt(a.text), boolInt(b.text)); c != 0 {
+			return c
+		}
+		return cmp.Compare(b.s, a.s)
 	}
 	return cmp.Compare(b.num(), a.num())
 }
@@ -495,6 +504,7 @@ type metricSpec struct {
 	num      int      // index into agg.nums, for sum/avg/min/max
 	distinct int      // index into agg.distinct, for actors/users/groups and daily_*
 	msr      int      // index into agg.msrs, for percentile, mean and weight
+	latest   int      // index into agg.latests, for latest
 	// ratioNum and ratioDen are a ratio's sides, resolved as hidden
 	// metrics: they share the masks and partials the others use.
 	ratioNum, ratioDen *metricSpec
@@ -582,10 +592,15 @@ type agg struct {
 	from     int64       // the range's first day, days since 1970-01-01
 	ndays    int
 	nd       int // cells per group: ndays in a trend, else 1
+	// buckets and starts, for a trend by week or month: aggOptions'.
+	buckets  []int
+	starts   []int64
+	defs     []defined // the query's defined columns, added to each batch
 	nums     []numCol
 	distinct []*distinctCol
 	bounces  bool // count sessions of one view per cell and mask (bounces, bounce_rate)
 	msrs     []msrCol
+	latests  []latestCol
 	parts    []part
 	mem      memory
 }
@@ -596,6 +611,7 @@ type part struct {
 	bounces [][]int64 // per mask, per cell, rows with views 1 (when agg.bounces)
 	nums    []numPart
 	msrs    []msrPart
+	latest  []latestPart
 	sets    [][]dset   // per distinct column, per group; nil without set
 	days    [][]daySet // per distinct column with day keys, per day of the range
 	// scratch, reused across batches
@@ -628,12 +644,43 @@ type aggOptions struct {
 	ndays, workers int
 	maxGroups      int
 	maxBytes       int64
+	// buckets, for a trend by week or month: each day's bucket, by its
+	// offset from from, and each bucket's first day; ndays is then the
+	// buckets' count. nil: one cell per day.
+	buckets []int
+	starts  []int64
+	// defs are the query's defined columns, added to each batch.
+	defs []defined
+}
+
+// cellDay is the day cell of a row of epoch day d: its offset from
+// a.from, or its bucket's index; out of range (-1 or ndays and past)
+// for a day outside the aggregation's.
+func (a *agg) cellDay(d int64) int {
+	off := int(d - a.from)
+	if a.buckets == nil {
+		return off
+	}
+	if off < 0 || off >= len(a.buckets) {
+		return -1
+	}
+	return a.buckets[off]
+}
+
+// dayOf is the epoch day cell d stands for: the day, or its bucket's
+// first.
+func (a *agg) dayOf(d int) int64 {
+	if a.starts != nil {
+		return a.starts[d]
+	}
+	return a.from + int64(d)
 }
 
 // newAgg sets up an aggregation and returns its metrics resolved.
 func newAgg(o aggOptions) (*agg, []metricSpec) {
 	metrics, filters, dims, perDay, from, ndays, maxGroups, distinctSets := o.metrics, o.filters, o.dims, o.perDay, o.from, o.ndays, o.maxGroups, o.sets
-	a := &agg{filters: filters, masks: [][]filter{nil}, dims: dims, from: from, ndays: ndays, nd: 1, parts: make([]part, o.workers)}
+	a := &agg{filters: filters, masks: [][]filter{nil}, dims: dims, from: from, ndays: ndays, nd: 1, parts: make([]part, o.workers),
+		buckets: o.buckets, starts: o.starts, defs: o.defs}
 	a.mem.max = o.maxBytes
 	if perDay {
 		a.nd = ndays
@@ -664,7 +711,7 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 	}
 	var resolve func(m metricSpec) metricSpec
 	resolve = func(m metricSpec) metricSpec {
-		m.num, m.distinct, m.msr = -1, -1, -1
+		m.num, m.distinct, m.msr, m.latest = -1, -1, -1, -1
 		if m.Op == "ratio" {
 			num, den := resolve(*m.ratioNum), resolve(*m.ratioDen)
 			m.ratioNum, m.ratioDen = &num, &den
@@ -679,6 +726,13 @@ func newAgg(o aggOptions) (*agg, []metricSpec) {
 		}
 		m.mask = mask
 		switch m.Op {
+		case "latest":
+			i := slices.Index(a.latests, latestCol{m.Column, mask})
+			if i < 0 {
+				i = len(a.latests)
+				a.latests = append(a.latests, latestCol{m.Column, mask})
+			}
+			m.latest = i
 		case "sum", "avg", "min", "max":
 			i, ok := numIdx[colMask{m.Column, mask}]
 			if !ok {
@@ -737,6 +791,12 @@ func filtersKey(where []Filter) string {
 		for _, c := range f.Columns {
 			b.WriteString(strconv.Quote(c))
 		}
+		if len(f.Any) > 0 {
+			b.WriteString("(" + filtersKey(f.Any) + ")")
+		}
+		if len(f.Where) > 0 {
+			b.WriteString(strconv.Quote(f.By) + strconv.Quote(f.Over) + "{" + filtersKey(f.Where) + "}")
+		}
 		b.WriteByte('|')
 		for _, v := range f.Values {
 			b.WriteString(strconv.Quote(v))
@@ -757,6 +817,9 @@ func (a *agg) columns() []string {
 	for _, fs := range append([][]filter{a.filters}, a.masks...) {
 		for _, f := range fs {
 			for _, col := range f.columns() {
+				if isDefined(col) {
+					continue // added to each batch
+				}
 				for _, c := range readColumns(col) {
 					add(c)
 				}
@@ -764,7 +827,15 @@ func (a *agg) columns() []string {
 		}
 	}
 	for _, d := range a.dims {
+		if isDefined(d) {
+			continue // added to each batch, from the columns below
+		}
 		for _, c := range readColumns(d) {
+			add(c)
+		}
+	}
+	for _, col := range definedColumns(a.defs) {
+		for _, c := range readColumns(col) {
 			add(c)
 		}
 	}
@@ -778,6 +849,17 @@ func (a *agg) columns() []string {
 	}
 	if a.bounces {
 		add("views")
+	}
+	if len(a.latests) > 0 {
+		add("ts")
+		for _, l := range a.latests {
+			if isDefined(l.name) {
+				continue // added to each batch
+			}
+			for _, c := range readColumns(l.name) {
+				add(c)
+			}
+		}
 	}
 	if len(a.msrs) > 0 {
 		add("value")
@@ -800,7 +882,7 @@ func (p *part) grow(a *agg, groups int) {
 	cells = max(cells, 2*have)
 	// Per cell: the count per mask (and bounces), and per numeric column 4
 	// numbers; per group a set header per distinct column.
-	perCell := int64(8*len(a.masks)*(1+boolInt(a.bounces)) + 32*len(a.nums) + 32*len(a.msrs))
+	perCell := int64(8*len(a.masks)*(1+boolInt(a.bounces)) + 32*len(a.nums) + 32*len(a.msrs) + 48*len(a.latests))
 	perGroup := int64(0)
 	for _, d := range a.distinct {
 		if d.set {
@@ -822,6 +904,13 @@ func (p *part) grow(a *agg, groups int) {
 	}
 	if p.nums == nil {
 		p.nums = make([]numPart, len(a.nums))
+	}
+	if p.latest == nil {
+		p.latest = make([]latestPart, len(a.latests))
+	}
+	for j := range p.latest {
+		p.latest[j].grow(cells)
+		p.latest[j].num = a.latests[j].numeric()
 	}
 	for j, n := range a.nums {
 		np := &p.nums[j]
@@ -874,6 +963,12 @@ func growTo[T any](s []T, n int) []T {
 // add aggregates batch b into worker w's partials, then counts what they
 // grew by and checks the memory bounds.
 func (a *agg) add(w int, b *Batch) error {
+	if len(a.defs) > 0 {
+		var err error
+		if b, err = withDefined(b, a.defs); err != nil {
+			return err
+		}
+	}
 	p := &a.parts[w]
 	p.grew = 0
 	err := a.addBatch(p, b)
@@ -939,7 +1034,7 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 	if dayCol == nil || dayCol.Ints == nil {
 		return fmt.Errorf("native: a batch without day")
 	}
-	off := func(i int32) int { return int(dayCol.Ints[i] - a.from) }
+	off := func(i int32) int { return a.cellDay(dayCol.Ints[i]) }
 	cell := func(k int, i int32) int {
 		if a.nd == 1 {
 			return int(gids[k])
@@ -1035,6 +1130,7 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 	if err := a.addMeasures(p, b, sel, gids, pass, cell); err != nil {
 		return err
 	}
+	a.addLatest(p, b, sel, gids, pass, cell)
 	for j, d := range a.distinct {
 		if err := a.addDistinct(p, j, d, b, sel, gids, pass[d.mask], off); err != nil {
 			return err
@@ -1310,6 +1406,7 @@ type merged struct {
 	bounces [][]int64 // per mask
 	nums    []numPart
 	msrs    []msrPart
+	latest  []latestPart
 	hists   [][]histEntry // per measure column with hist: sorted by cell, then bucket
 	sets    [][]dset
 	days    [][]daySet // per distinct column with day keys, per day: all of them
@@ -1365,6 +1462,11 @@ func (a *agg) merge() *merged {
 			m.bounces[k] = make([]int64, cells)
 		}
 	}
+	m.latest = make([]latestPart, len(a.latests))
+	for j := range m.latest {
+		m.latest[j].grow(cells)
+		m.latest[j].num = a.latests[j].numeric()
+	}
 	m.nums = make([]numPart, len(a.nums))
 	for j, n := range a.nums {
 		np := &m.nums[j]
@@ -1408,6 +1510,9 @@ func (a *agg) merge() *merged {
 		for j := range p.nums {
 			mergeNum(&m.nums[j], &p.nums[j], a.nums[j].float, cells)
 		}
+		for j := range p.latest {
+			mergeLatest(&m.latest[j], &p.latest[j], cells)
+		}
 		for j := range p.msrs {
 			mergeMsr(&m.msrs[j], &p.msrs[j], hists[j], cells)
 		}
@@ -1417,7 +1522,7 @@ func (a *agg) merge() *merged {
 			}
 			p.sets[j] = nil
 		}
-		p.count, p.bounces, p.nums, p.msrs = nil, nil, nil, nil
+		p.count, p.bounces, p.nums, p.msrs, p.latest = nil, nil, nil, nil, nil
 	}
 	for j, h := range hists {
 		if h == nil {
@@ -1624,6 +1729,8 @@ func (m *merged) computeRaw(mt metricSpec, gs []int32, day int, whole bool) valu
 		return intValue(n)
 	case "sum", "avg", "min", "max":
 		return m.evalNum(mt, gs, day)
+	case "latest":
+		return m.latestOf(mt, gs, day)
 	case "percentile":
 		return m.percentile(mt, gs, day)
 	case "mean", "weight":

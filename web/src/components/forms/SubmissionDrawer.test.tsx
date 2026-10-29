@@ -35,18 +35,31 @@ describe('SubmissionDrawer', () => {
     expect(within(arrival).getByText('—')).toBeInTheDocument()
   })
 
-  it('deletes the submission once confirmed, then closes', async () => {
+  it('archives the submission at once, then closes', async () => {
     const user = userEvent.setup()
     vi.spyOn(endpoints, 'submission').mockResolvedValue(submission('s2'))
-    const del = vi.spyOn(endpoints, 'deleteSubmissions').mockResolvedValue({ deleted: 1 })
+    const archive = vi.spyOn(endpoints, 'archiveSubmissions').mockResolvedValue({ archived: 1 })
     const onClose = vi.fn()
     renderWithProviders(<SubmissionDrawer projectId={4} form="contact" id="s2" onClose={onClose} />)
     const drawer = await screen.findByRole('dialog', { name: 'Submission' })
     await within(drawer).findByText('bob@example.com')
-    await user.click(within(drawer).getByRole('button', { name: 'Delete' }))
-    const confirm = await screen.findByRole('alertdialog', { name: 'Delete this submission?' })
-    await user.click(within(confirm).getByRole('button', { name: 'Delete submission' }))
-    await waitFor(() => expect(del).toHaveBeenCalledWith(4, { ids: ['s2'] }))
+    expect(within(drawer).queryByRole('button', { name: 'Restore' })).toBeNull()
+    await user.click(within(drawer).getByRole('button', { name: 'Archive' }))
+    await waitFor(() => expect(archive).toHaveBeenCalledWith(4, { ids: ['s2'] }))
+    await waitFor(() => expect(onClose).toHaveBeenCalled())
+  })
+
+  it('shows when an archived submission is purged, and restores it', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'submission').mockResolvedValue(submission('s2', { archived_at: '2026-10-05T12:00:00Z' }))
+    const restore = vi.spyOn(endpoints, 'restoreSubmissions').mockResolvedValue({ restored: 1 })
+    const onClose = vi.fn()
+    renderWithProviders(<SubmissionDrawer projectId={4} form="contact" id="s2" purgeDays={30} onClose={onClose} />)
+    const arrival = await screen.findByRole('region', { name: 'Arrival' })
+    expect(within(arrival).getByText(/deleted for good on 4 Nov unless restored/)).toBeInTheDocument()
+    const drawer = screen.getByRole('dialog', { name: 'Submission' })
+    await user.click(within(drawer).getByRole('button', { name: 'Restore' }))
+    await waitFor(() => expect(restore).toHaveBeenCalledWith(4, { ids: ['s2'] }))
     await waitFor(() => expect(onClose).toHaveBeenCalled())
   })
 

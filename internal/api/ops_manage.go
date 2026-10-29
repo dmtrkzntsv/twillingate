@@ -11,7 +11,7 @@ import (
 // same token that reads. The guardrails against prompt injection from
 // attacker-writable analytics data (spec §6): every write is annotated so
 // clients interpose the operator, nothing here is irreversible except an event
-// merge and an event block (DestructiveHint true, like delete_submissions),
+// merge and an event block (DestructiveHint true),
 // and every operation lands in audit_log as actor 'mcp' or 'api', by transport.
 
 type createProjectIn struct {

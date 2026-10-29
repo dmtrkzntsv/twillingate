@@ -128,6 +128,10 @@ describe('query sources', () => {
   })
   it('a query follows the project and the range', () => {
     expect(paramsOf({ ...draftOf(statQuery) })).toEqual({ project: true, range: true })
+    const fixed = { ...draftOf(statQuery), query: '{"project_id":9,"query":{"kind":"stat","table":"views","metrics":[{"op":"count"}]}}' }
+    expect(paramsOf(fixed)).toEqual({ project: false, range: true })
+    expect(paramsOf({ ...fixed, query: '{"project_id":0,"query":{}}' })).toEqual({ project: true, range: true })
+    expect(paramsOf({ ...fixed, query: 'not json' })).toEqual({ project: true, range: true })
     expect(paramsOf({ ...draftOf(line) })).toEqual({ project: false, range: false })
     expect(paramsOf({ ...draftOf(), component: 'markdown', markdown: ':project' })).toEqual({ project: false, range: false })
   })

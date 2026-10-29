@@ -25,7 +25,7 @@ describe('funnel', () => {
     })
     const steps = container.querySelectorAll('[data-funnel-step]')
     expect(steps).toHaveLength(3)
-    expect([...steps].map((s) => s.querySelector('span')?.textContent)).toEqual(['visit', 'signup', 'purchase'])
+    ;['visit', 'signup', 'purchase'].forEach((name, i) => expect(steps[i]).toHaveTextContent(name))
   })
 
   it("labels each step with its share of the first step's value", () => {
@@ -47,7 +47,7 @@ describe('funnel', () => {
     expect(scope.getByText('25%')).toBeInTheDocument()
   })
 
-  it('says how much of the step before each step keeps', () => {
+  it('says how much of the step before each step converts', () => {
     const { container } = renderFunnel({
       columns: ['step', 'value'],
       rows: [
@@ -58,8 +58,8 @@ describe('funnel', () => {
       truncated: false,
     })
     const scope = within(container)
-    expect(scope.getByText('25% of the step before')).toBeInTheDocument()
-    expect(scope.getByText('80% of the step before')).toBeInTheDocument()
+    expect(scope.getByText('25% converted')).toBeInTheDocument()
+    expect(scope.getByText('80% converted')).toBeInTheDocument()
   })
 
   it('renders nothing broken for an empty result', () => {

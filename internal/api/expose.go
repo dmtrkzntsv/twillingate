@@ -187,6 +187,8 @@ var schemaOptions = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonsc
 	// A structured query's metric holds a ratio's sides, metrics too: a
 	// cycle the inference refuses (metricSchema).
 	reflect.TypeFor[native.Metric](): metricSchema(),
+	// An any_of filter holds filters.
+	reflect.TypeFor[native.Filter](): filterSchema(),
 }}
 
 // schemaFor infers T's schema with schemaOptions. A type it cannot

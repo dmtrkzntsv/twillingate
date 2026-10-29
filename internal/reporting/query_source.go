@@ -33,9 +33,11 @@ type RulesFunc func(ctx context.Context, project int64) archive.Rules
 // queryContent is a query source's content: a structured query, the
 // new names of the output columns the component reads under others,
 // labels: per column (its name after rename), values shown as others,
-// and columns: the ones kept (after rename), in their order; nil keeps
-// every column.
+// columns: the ones kept (after rename), in their order (nil keeps
+// every column), and project: the one it always reads, whatever the
+// project switcher says (0: the switcher's).
 type queryContent struct {
+	Project int64                        `json:"project_id,omitempty"`
 	Query   native.Query                 `json:"query"`
 	Rename  map[string]string            `json:"rename,omitempty"`
 	Labels  map[string]map[string]string `json:"labels,omitempty"`
@@ -55,8 +57,18 @@ type querySource struct {
 func (*querySource) Name() string    { return "query" }
 func (*querySource) Cacheable() bool { return true }
 
-// Follows: a query always reads one project's rows over the range.
-func (*querySource) Follows(string) (project, rng bool) { return true, true }
+// Follows: a query reads one project's rows over the range, the
+// switcher's project unless its content names one. Content that does
+// not parse follows both, as before it names any.
+func (*querySource) Follows(content string) (project, rng bool) {
+	var qc struct {
+		Project int64 `json:"project_id"`
+	}
+	if json.Unmarshal([]byte(content), &qc) == nil && qc.Project > 0 {
+		return false, true
+	}
+	return true, true
+}
 
 // parseQuery reads and checks content: one JSON object with no unknown
 // field, a valid query, a rename of its output columns onto distinct
@@ -75,6 +87,9 @@ func parseQuery(content string) (queryContent, []string, []string, error) {
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
 		return queryContent{}, nil, nil, store.Refuse(store.ErrInvalid, "query source: more than one JSON value")
+	}
+	if qc.Project < 0 {
+		return queryContent{}, nil, nil, store.Refuse(store.ErrInvalid, "project_id: a project's id is 1 or more; omit it to follow the project switcher")
 	}
 	if err := qc.Query.Validate(); err != nil {
 		return queryContent{}, nil, nil, queryErr(err)
@@ -285,11 +300,15 @@ func (s *querySource) plan(ctx context.Context, content string, p Params) (query
 	if err != nil {
 		return queryPlan{}, store.Refuse(store.ErrInvalid, "to %q is not a YYYY-MM-DD date", p.To)
 	}
+	project := p.ProjectID
+	if qc.Project > 0 {
+		project = qc.Project
+	}
 	var rules archive.Rules
 	if s.rules != nil {
-		rules = s.rules(ctx, p.ProjectID)
+		rules = s.rules(ctx, project)
 	}
-	return queryPlan{qc: qc, cols: cols, q: qc.Query, p: native.Params{Project: p.ProjectID, From: from, To: to}, rules: rules}, nil
+	return queryPlan{qc: qc, cols: cols, q: qc.Query, p: native.Params{Project: project, From: from, To: to}, rules: rules}, nil
 }
 
 // withTimeout is ctx under CONSOLE_QUERY_TIMEOUT; without one, ctx

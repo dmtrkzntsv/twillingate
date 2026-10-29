@@ -89,10 +89,10 @@ describe('FormPage', () => {
     expect(await within(drawer).findByText('555-0100')).toBeInTheDocument()
   })
 
-  it('keeps Delete all matching off without filters', async () => {
+  it('keeps Archive all matching off without filters', async () => {
     renderPage()
     await screen.findByRole('table')
-    expect(screen.getByRole('button', { name: 'Delete all matching' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Archive all matching' })).toBeDisabled()
   })
 
   it('marks fields arriving outside the expected list as not kept, and saves a new list', async () => {

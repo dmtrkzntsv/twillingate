@@ -1,4 +1,15 @@
 {
+  "breakdown_any_of 48bed8dd0f90": {
+    "rows": [
+      ["DE","79","3"],
+      ["FR","51","2"],
+      ["GB","49","2"],
+      ["US","50","2"],
+      ["","77","3"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "SELECT \"country\", count(*), count(DISTINCT \"actor_id\") FILTER (WHERE \"display_width\" > 1000 OR \"utm_source\" <> '' OR \"utm_medium\" <> '')\n\t\t\t\tFROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' AND (starts_with(\"path\", '/q') OR \"device_model\" <> '')\n\t\t\t\tGROUP BY \"country\" ORDER BY \"country\" ASC NULLS LAST"
+  },
   "breakdown_any_set 444488a22f14": {
     "rows": [
       ["DE","346","215"],
@@ -33,6 +44,15 @@
     ],
     "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
     "sql": "WITH d AS (SELECT \"path\", \"day\", count(DISTINCT \"actor_id\") AS n FROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' GROUP BY \"path\", \"day\"),\n\t\tg AS (SELECT \"path\", sum(n) AS s FROM d GROUP BY \"path\"),\n\t\ttop AS (SELECT * FROM g ORDER BY s DESC, \"path\" ASC NULLS LAST LIMIT 2) SELECT \"path\", s FROM top ORDER BY s DESC, \"path\" ASC NULLS LAST"
+  },
+  "breakdown_defined c13705bc018d": {
+    "rows": [
+      ["german","","346","10"],
+      ["q","","227","9"],
+      ["rest","","275","0"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH v AS (SELECT CASE WHEN \"country\" = 'DE' THEN 'german' WHEN starts_with(\"path\", '/q') OR \"device_model\" <> '' THEN 'q'\n\t\t\t\tELSE 'rest' END AS seg, * FROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10')\n\t\t\tSELECT seg, \"kind\", count(*), count(DISTINCT \"actor_id\") FILTER (WHERE seg <> 'rest') FROM v\n\t\t\t\tGROUP BY ALL ORDER BY seg, \"kind\" ASC NULLS LAST"
   },
   "breakdown_device_label b6d524e795d1": {
     "rows": [
@@ -502,6 +522,36 @@
     ],
     "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
     "sql": "WITH top AS (SELECT \"country\" FROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' GROUP BY \"country\"\n\t\t\t\tORDER BY count(DISTINCT \"actor_id\") DESC, \"country\" ASC NULLS LAST LIMIT 2)\n\t\t\tSELECT \"day\", v.\"country\", count(DISTINCT \"actor_id\") FROM views v JOIN top ON v.\"country\" IS NOT DISTINCT FROM top.\"country\"\n\t\t\tWHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' GROUP BY \"day\", v.\"country\" ORDER BY \"day\", v.\"country\" ASC NULLS LAST"
+  },
+  "trend_by_month d7e7649d5cfd": {
+    "rows": [
+      ["2026-08-01","count","1288"],
+      ["2026-08-01","users","12"],
+      ["2026-09-01","count","440"],
+      ["2026-09-01","users","12"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH e AS (SELECT date_trunc('month', \"day\")::DATE AS m, * FROM events WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10')\n\t\t\tSELECT m, 'count', count(*) FROM e GROUP BY m UNION ALL SELECT m, 'users', count(DISTINCT \"user_id\") FROM e GROUP BY m\n\t\t\tORDER BY 1, 2"
+  },
+  "trend_by_week 7badd8c38e01": {
+    "rows": [
+      ["2026-07-27","DE","6"],
+      ["2026-07-27","FR","4"],
+      ["2026-08-03","DE","10"],
+      ["2026-08-03","FR","6"],
+      ["2026-08-10","DE","10"],
+      ["2026-08-10","FR","6"],
+      ["2026-08-17","DE","10"],
+      ["2026-08-17","FR","6"],
+      ["2026-08-24","DE","10"],
+      ["2026-08-24","FR","6"],
+      ["2026-08-31","DE","10"],
+      ["2026-08-31","FR","6"],
+      ["2026-09-07","DE","10"],
+      ["2026-09-07","FR","6"]
+    ],
+    "rules": "{Events:[{ProjectID:1 Family:views Name:ev_old Action:rename To:landing CreatedAt:} {ProjectID:1 Family:product Name:ev1 Action:rename To:signup CreatedAt:} {ProjectID:1 Family:product Name:ev3 Action:block To: CreatedAt:} {ProjectID:2 Family:views Name:pageview Action:block To: CreatedAt:}] Attributes:[{ProjectID:1 Key:colour Action:rename To:color CreatedAt:}]}",
+    "sql": "WITH top AS (SELECT \"country\" FROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10' GROUP BY 1\n\t\t\t\tORDER BY count(DISTINCT \"actor_id\") DESC, \"country\" ASC NULLS LAST LIMIT 2)\n\t\t\tSELECT date_trunc('week', \"day\")::DATE, \"country\", count(DISTINCT \"actor_id\") FROM views WHERE \"project_id\" = 1 AND \"day\" BETWEEN DATE '2026-08-02' AND DATE '2026-09-10'\n\t\t\t\tAND \"country\" IN (SELECT * FROM top) GROUP BY ALL ORDER BY 1, 2"
   },
   "trend_count 966ebc28d07e": {
     "rows": [

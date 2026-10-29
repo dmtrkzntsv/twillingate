@@ -11,14 +11,14 @@ import (
 
 func TestSubmissionsQueryColumns(t *testing.T) {
 	draft := store.Form{Status: store.FormDraft, Fields: []string{"email", "note"}}
-	_, cols := SubmissionsQuery(draft)
+	_, cols := SubmissionsQuery(draft, false)
 	if want := []string{"Received", "email", "note"}; !reflect.DeepEqual(cols, want) {
 		t.Errorf("draft columns = %q, want %q", cols, want)
 	}
 	// An approved form shows its expected fields, in their order, not every field seen.
 	approved := store.Form{Status: store.FormApproved, Fields: []string{"email", "note", "spam"},
 		ExpectedFields: []string{"note", "email"}}
-	_, cols = SubmissionsQuery(approved)
+	_, cols = SubmissionsQuery(approved, false)
 	if want := []string{"Received", "note", "email"}; !reflect.DeepEqual(cols, want) {
 		t.Errorf("approved columns = %q, want %q", cols, want)
 	}
@@ -27,7 +27,7 @@ func TestSubmissionsQueryColumns(t *testing.T) {
 	// case-insensitive and the two would read one column. Page or a UTM
 	// name is a field like any other.
 	clash := store.Form{Status: store.FormDraft, Fields: []string{"Page", "ID", "utm source", "received"}}
-	q, cols := SubmissionsQuery(clash)
+	q, cols := SubmissionsQuery(clash, false)
 	want := []string{"Received", "Page", "ID (field)", "utm source", "received (field)"}
 	if !reflect.DeepEqual(cols, want) {
 		t.Errorf("clash columns = %q, want %q", cols, want)
@@ -37,7 +37,7 @@ func TestSubmissionsQueryColumns(t *testing.T) {
 		{[]string{"id", "id (field)"}, []string{"id (field)", "id (field) (field)"}},
 		{[]string{"Email", "email"}, []string{"Email", "email (field)"}},
 	} {
-		_, cols := SubmissionsQuery(store.Form{Status: store.FormDraft, Fields: c.fields})
+		_, cols := SubmissionsQuery(store.Form{Status: store.FormDraft, Fields: c.fields}, false)
 		if got := cols[1 : 1+len(c.fields)]; !reflect.DeepEqual(got, c.want) {
 			t.Errorf("%q: columns %q, want %q", c.fields, got, c.want)
 		}
@@ -47,9 +47,30 @@ func TestSubmissionsQueryColumns(t *testing.T) {
 	}
 }
 
+// TestSubmissionsQueryArchived: the archived table holds only archived
+// submissions and shows when each was archived, second; the active one
+// holds only active ones and has no such column, so a field may take it.
+func TestSubmissionsQueryArchived(t *testing.T) {
+	f := store.Form{Status: store.FormDraft, Fields: []string{"archived", "email"}}
+	q, cols := SubmissionsQuery(f, true)
+	if want := []string{"Received", "Archived", "archived (field)", "email"}; !reflect.DeepEqual(cols, want) {
+		t.Errorf("archived columns = %q, want %q", cols, want)
+	}
+	if !strings.Contains(q, "archived_at AS c2") || !strings.Contains(q, "AND archived_at IS NOT NULL") {
+		t.Errorf("archived query: %s", q)
+	}
+	q, cols = SubmissionsQuery(f, false)
+	if want := []string{"Received", "archived", "email"}; !reflect.DeepEqual(cols, want) {
+		t.Errorf("active columns = %q, want %q", cols, want)
+	}
+	if !strings.Contains(q, "AND archived_at IS NULL") {
+		t.Errorf("active query: %s", q)
+	}
+}
+
 func TestSubmissionsQueryQuotesNames(t *testing.T) {
 	f := store.Form{Status: store.FormDraft, Fields: []string{`a"b`, "it's", "x.y"}}
-	q, cols := SubmissionsQuery(f)
+	q, cols := SubmissionsQuery(f, false)
 	for _, want := range []string{`AS c2`, `AS c3`, `'$."x.y"'`, `key = 'a"b'`, `'$."it''s"'`} {
 		if !strings.Contains(q, want) {
 			t.Errorf("query lacks %s:\n%s", want, q)
@@ -85,7 +106,7 @@ func TestCSVSafeTable(t *testing.T) {
 // as names, so a field called that would otherwise break its table.
 func TestSubmissionsQueryNamesColumnsByPosition(t *testing.T) {
 	f := store.Form{Status: store.FormDraft, Fields: []string{"Meta", "dbstat", "meta", "pragma_y", "sqlite_x"}}
-	q, cols := SubmissionsQuery(f)
+	q, cols := SubmissionsQuery(f, false)
 	if want := []string{"Received", "Meta", "dbstat", "meta (field)", "pragma_y", "sqlite_x"}; !reflect.DeepEqual(cols[:6], want) {
 		t.Fatalf("columns = %q", cols)
 	}

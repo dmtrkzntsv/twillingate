@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { Fragment, useState } from 'react'
 import { DndContext, closestCenter } from '@dnd-kit/core'
 import { SortableContext, rectSortingStrategy } from '@dnd-kit/sortable'
 import { useQuery } from '@tanstack/react-query'
@@ -6,7 +6,6 @@ import { PlusIcon } from 'lucide-react'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
 import IssuedKeyView from '@/components/projects/IssuedKeyView'
-import LimitsPanel from '@/components/projects/LimitsPanel'
 import LoadError from '@/components/projects/LoadError'
 import ProjectCard from '@/components/projects/ProjectCard'
 import ProjectFormDialog from '@/components/projects/ProjectFormDialog'
@@ -18,11 +17,14 @@ import { useReorder } from '@/hooks/use-reorder'
 import type { CreatedProject } from '@/lib/api'
 import { afterAt } from '@/lib/arrange'
 import { dashboardsQuery, keysQuery, limitsQuery, projectActivityQuery, projectsQuery, usageQuery } from '@/lib/queries'
-import { formatBytes, formatGrowth } from '@/lib/units'
+import { formatExact, formatValue } from '@/lib/format'
+import { eventsByMonth, monthStart } from '@/lib/units'
+
+const MONTH = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC' })
 
 /**
  * `/projects`: every live project as a card with its last 30 days, the
- * caps, and New project. Cards drag to a new order, the one every project
+ * server's events by month, and New project. Cards drag to a new order, the one every project
  * list shows; archived projects keep their place in it and are listed on
  * the Archive page.
  */
@@ -31,6 +33,8 @@ export default function Projects() {
   const projectsQ = useQuery(projectsQuery)
   const statsQ = useQuery(usageQuery({}))
   const keysQ = useQuery(keysQuery())
+  // Six months of files to read: a query of its own, so the cards do not wait for it.
+  const { data: monthsData } = useQuery(usageQuery({ from: monthStart(5) }))
   const { data: projectsData } = projectsQ
   const { data: statsData } = statsQ
   const { data: keysData } = keysQ
@@ -42,6 +46,7 @@ export default function Projects() {
   const [created, setCreated] = useState<CreatedProject | null>(null)
 
   const projects = projectsData?.projects ?? []
+  const months = eventsByMonth(monthsData?.projects ?? [])
   const active = projects.filter((p) => !p.archived)
   const activeIds = active.map((p) => p.project_id)
   const readOnly = dash?.dev === true
@@ -73,14 +78,22 @@ export default function Projects() {
           <div className="flex flex-col gap-1">
             <h1 className="text-xl font-semibold tracking-tight">Projects</h1>
             <p className="min-h-5 text-sm text-muted-foreground">
-              {[
-                projectsData ? `${active.length} ${active.length === 1 ? 'project' : 'projects'}` : null,
-                statsData ? `${formatBytes(statsData.database_bytes)} on disk` : null,
-                statsData ? formatGrowth(statsData.database_series) : null,
-              ]
-                .filter(Boolean)
-                .join(' · ')}
+              {projectsData ? `${active.length} ${active.length === 1 ? 'project' : 'projects'}` : null}
             </p>
+            {months.length > 0 && (
+              <p className="text-sm text-muted-foreground">
+                Events by month:{' '}
+                {months.map(({ month, count }, i) => (
+                  <Fragment key={month}>
+                    {i > 0 && ' · '}
+                    <span className="whitespace-nowrap" title={`${formatExact(count)} events`}>
+                      {MONTH.format(new Date(`${month}-01T00:00:00Z`))} {formatValue(count)}
+                      {i === months.length - 1 && ' so far'}
+                    </span>
+                  </Fragment>
+                ))}
+              </p>
+            )}
           </div>
           <Button onClick={() => setCreating(true)}>
             <PlusIcon /> New project
@@ -109,7 +122,6 @@ export default function Projects() {
             </div>
           </SortableContext>
         </DndContext>
-        {limitsData && <LimitsPanel limits={limitsData.limits} events30d={limitsData.events_30d} />}
       </div>
       <ProjectFormDialog
         open={creating}

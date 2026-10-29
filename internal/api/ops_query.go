@@ -71,11 +71,69 @@ func metricSchema() *jsonschema.Schema {
 		}
 		return out
 	}
-	s, err := jsonschema.ForType(reflect.StructOf(fields(reflect.StructOf(fields(nil)))), nil)
+	s, err := jsonschema.ForType(reflect.StructOf(fields(reflect.StructOf(fields(nil)))), filterOptions)
 	if err != nil {
 		panic(fmt.Sprintf("api: schema for native.Metric: %v", err))
 	}
 	return s
+}
+
+// filterOptions describes native.Filter, for the schemas that hold one.
+var filterOptions = &jsonschema.ForOptions{TypeSchemas: map[reflect.Type]*jsonschema.Schema{
+	reflect.TypeFor[native.Filter](): filterSchema(),
+}}
+
+// filterSchema is native.Filter's schema, three levels deep where the
+// type would recurse, a cycle the inference refuses: an any_of's
+// filters hold neither any nor where (Validate refuses an any_of or an
+// ever in one), and an ever's where holds filters with an any_of's any
+// but no where (no ever in an ever).
+func filterSchema() *jsonschema.Schema {
+	ft := reflect.TypeFor[native.Filter]()
+	fields := func(anyOf, where reflect.Type) []reflect.StructField {
+		var out []reflect.StructField
+		for i := range ft.NumField() {
+			f := ft.Field(i)
+			switch {
+			case f.Name == "Any" && anyOf == nil, f.Name == "Where" && where == nil:
+				continue
+			case f.Name == "Any":
+				f.Type = reflect.SliceOf(anyOf)
+			case f.Name == "Where":
+				f.Type = reflect.SliceOf(where)
+			}
+			out = append(out, f)
+		}
+		return out
+	}
+	plain := reflect.StructOf(fields(nil, nil))
+	inEver := reflect.StructOf(fields(plain, nil))
+	s, err := jsonschema.ForType(reflect.StructOf(fields(plain, inEver)), nil)
+	if err != nil {
+		panic(fmt.Sprintf("api: schema for native.Filter: %v", err))
+	}
+	return s
+}
+
+// filterEnums lists a structured query filter's closed vocabularies in
+// its schema f: its op, an ever's by and over, and the ops of the filters
+// an any_of or an ever holds.
+func filterEnums(f *jsonschema.Schema) {
+	enum := func(xs []string) []any {
+		out := make([]any, len(xs))
+		for i, x := range xs {
+			out[i] = x
+		}
+		return out
+	}
+	f.Properties["op"].Enum = enum(native.FilterOps)
+	f.Properties["by"].Enum = enum(append([]string{""}, native.EverBy...))
+	f.Properties["over"].Enum = enum(append([]string{""}, native.EverOver...))
+	plain := slices.DeleteFunc(slices.Clone(native.FilterOps), func(op string) bool { return op == "any_of" || op == "ever" || op == "never" })
+	f.Properties["any"].Items.Properties["op"].Enum = enum(plain)
+	w := f.Properties["where"].Items
+	w.Properties["op"].Enum = enum(append(plain, "any_of"))
+	w.Properties["any"].Items.Properties["op"].Enum = enum(plain)
 }
 
 // queryEnums lists the structured query's closed vocabularies in query's
@@ -93,8 +151,11 @@ func queryEnums(in *jsonschema.Schema) {
 	q.Properties["table"].Enum = enum(native.Tables)
 	q.Properties["compare"].Enum = enum([]string{"", "previous"})
 	q.Properties["fill"].Enum = enum([]string{"", "zero"})
+	q.Properties["interval"].Enum = enum(append([]string{""}, native.Intervals...))
 	q.Properties["output"].Enum = enum(slices.Concat(native.RetentionOutputs, native.AttributeOutputs))
 	q.Properties["identified_by"].Enum = enum(native.IdentifiedBy)
+	minDepth, maxDepth := 2.0, 6.0
+	q.Properties["depth"].Minimum, q.Properties["depth"].Maximum = &minDepth, &maxDepth
 	minOffsets, maxOffsets := 1.0, 90.0
 	q.Properties["offsets"].Minimum, q.Properties["offsets"].Maximum = &minOffsets, &maxOffsets
 	minMilestone := 0.0
@@ -115,22 +176,32 @@ func queryEnums(in *jsonschema.Schema) {
 		return out
 	}
 	numbers := once(native.ValueColumns, native.SessionValueColumns, native.IdentityValueColumns)
-	m.Properties["column"].Enum = enum(once(numbers, native.BoundColumns, native.SessionBoundColumns))
+	// latest reads any column a filter names, attr_<key> and def_ ones
+	// included; the other ops a number or a bound.
+	mc := m.Properties["column"]
+	m.Properties["column"] = &jsonschema.Schema{Description: mc.Description, AnyOf: []*jsonschema.Schema{
+		{Type: "string", Enum: enum(once(numbers, native.BoundColumns, native.SessionBoundColumns, native.LatestColumns))},
+		{Type: "string", Pattern: "^(attr|def)_.+"},
+	}}
 	m.Properties["of"].Enum = enum(slices.Concat(native.OfColumns, native.ShareOfColumns))
 	minRound, maxRound := 0.0, 6.0
 	m.Properties["round"].Minimum, m.Properties["round"].Maximum = &minRound, &maxRound
 	minQ, maxQ := 0.0, 1.0
 	m.Properties["q"].ExclusiveMinimum, m.Properties["q"].ExclusiveMaximum = &minQ, &maxQ
-	m.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
-	q.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
-	sideOps := slices.DeleteFunc(slices.Clone(native.MetricOps), func(op string) bool { return op == "ratio" || op == "share" })
+	filterEnums(m.Properties["where"].Items)
+	filterEnums(q.Properties["where"].Items)
+	filterEnums(q.Properties["define"].Items.Properties["cases"].Items.Properties["where"].Items)
+	filterEnums(q.Properties["steps"].Items.Properties["where"].Items)
+	q.Properties["by"].Enum = enum(append([]string{""}, native.EverBy...))
+	q.Properties["shape"].Enum = enum(append([]string{""}, native.Shapes...))
+	sideOps := slices.DeleteFunc(slices.Clone(native.MetricOps), func(op string) bool { return op == "ratio" || op == "share" || op == "latest" })
 	for _, side := range []string{"num", "den"} {
 		s := m.Properties[side]
 		s.Properties["op"].Enum = enum(sideOps)
 		s.Properties["column"].Enum = enum(numbers) // a side is a number: no day or time
 		s.Properties["of"].Enum = enum(native.OfColumns)
 		s.Properties["q"].ExclusiveMinimum, s.Properties["q"].ExclusiveMaximum = &minQ, &maxQ
-		s.Properties["where"].Items.Properties["op"].Enum = enum(native.FilterOps)
+		filterEnums(s.Properties["where"].Items)
 	}
 }
 
