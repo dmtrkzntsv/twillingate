@@ -116,3 +116,17 @@ export function closingDone(name: string, closesAt: string | null, now = Date.no
   if (closesAt === null) return `Reopened ${name}`
   return Date.parse(closesAt) <= now ? `Stopped ${name}` : `${name} stops ${formatDayTime(new Date(closesAt))}`
 }
+
+/**
+ * Rows as CSV, the header first, as the server's export writes them: a
+ * cell that starts with `=`, `+`, `-`, `@`, a tab or a carriage return gets
+ * a `'` in front, so a spreadsheet shows it as text rather than running it
+ * as a formula; a cell with a comma, quote or line break is quoted.
+ */
+export function toCSV(columns: string[], rows: string[][]): string {
+  const cell = (v: string) => {
+    const safe = /^[=+\-@\t\r]/.test(v) ? `'${v}` : v
+    return /[",\r\n]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe
+  }
+  return [columns, ...rows].map((r) => r.map(cell).join(',')).join('\r\n') + '\r\n'
+}

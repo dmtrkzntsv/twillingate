@@ -1,14 +1,10 @@
 import { useEffect, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { ArchiveIcon, ArchiveRestoreIcon, ArrowLeftIcon, DownloadIcon, InboxIcon, SettingsIcon } from 'lucide-react'
+import { ArchiveIcon, ArchiveRestoreIcon, ArrowLeftIcon, DownloadIcon, InboxIcon, XIcon } from 'lucide-react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import WidgetFrame from '@/components/WidgetFrame'
 import LoadError from '@/components/projects/LoadError'
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -19,7 +15,7 @@ import { useMarkFormSeen } from '@/hooks/use-mark-seen'
 import { useStoredState } from '@/hooks/use-stored-state'
 import { ApiError, endpoints, type Form, type Project, type SubmissionsPage, type SubmissionsQuery } from '@/lib/api'
 import { downloadBlob } from '@/lib/capture'
-import { closingDone, formatDay, formStatus, purgeDays as purgeDaysOf, purgeNote as purgeNoteFor, type PurgeDays } from '@/lib/forms'
+import { closingDone, formatDay, formStatus, purgeDays as purgeDaysOf, purgeNote as purgeNoteFor, toCSV, type PurgeDays } from '@/lib/forms'
 import { FORMS_ID, rangeParams, tabPath } from '@/lib/project-tabs'
 import { dashboardsQuery, formsQuery, submissionsQuery } from '@/lib/queries'
 import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
@@ -70,10 +66,6 @@ function useFormView(key: string): [TableView, (next: TableView) => void] {
   return [view, setView]
 }
 
-function plural(n: number, one: string): string {
-  return `${n.toLocaleString('en-US')} ${n === 1 ? one : `${one}s`}`
-}
-
 /** Which submissions the table shows: the active ones, or the archived ones waiting for the purge. */
 type Shown = 'active' | 'archived'
 
@@ -88,11 +80,11 @@ interface SubmissionsProps {
 
 /**
  * A form's submissions (D12a): the dashboards' table in remote mode, its
- * rows from list_submissions, a row opening the drawer, with **CSV** of what
- * the filters match above it and **Archive all matching** (only with filters
- * set) under it.
- * The switch shows the archived submissions instead, with **Restore all
- * matching**; the daily pass purges them `purgeDays` after archiving.
+ * rows from list_submissions, a row opening the drawer, with **Export CSV**
+ * of what the filters match. Checking rows swaps that for **Archive** (or
+ * **Restore**), **Export** and **Clear** on just those. The switch shows the
+ * archived submissions instead; the daily pass purges them `purgeDays`
+ * after archiving.
  */
 function Submissions({ projectId, form, shown, onShown, purgeDays }: SubmissionsProps) {
   const name = form.name
@@ -120,14 +112,15 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
 
   const actions = useFormActions()
   const [opened, setOpened] = useState<string>()
-  const [confirming, setConfirming] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const columns = answer?.columns ?? []
   const live = liveFilters(view, columns)
-  const matched = answer?.matched ?? 0
-  // While a new view loads, the count on screen is the old view's: acting
-  // then would confirm one number and send another view's filters.
-  const actionable = !actions.pending && !q.isPlaceholderData && live.length > 0 && matched > 0
+  // The rows checked, by submission id; only those on the page shown count,
+  // so a row a filter hides is never archived unseen.
+  const [checked, setChecked] = useState<ReadonlySet<string>>(new Set())
+  const pageIds = answer?.ids ?? []
+  const selected = pageIds.filter((sid) => checked.has(sid))
+  const selectedRows = new Set(pageIds.flatMap((sid, i) => (checked.has(sid) ? [i] : [])))
 
   const fetchDistinct = async (column: string, filters: Filter[]) => {
     const others = liveFilters({ ...view, filters }, columns)
@@ -140,9 +133,18 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
     return res.rows.map(([value, n]) => ({ value, rows: Number(n), capped }))
   }
 
-  const actOnMatching = async () => {
-    const body = { form: name, filters: JSON.stringify(live) }
-    await (archived ? actions.restoreSubmissions(projectId, body) : actions.archiveSubmissions(projectId, body))
+  // Archived ones go back, active ones are set aside; either way the toast says how many.
+  const moveSelected = async () => {
+    const body = { ids: selected }
+    const n = await (archived ? actions.restoreSubmissions(projectId, body) : actions.archiveSubmissions(projectId, body))
+    if (n !== undefined) setChecked(new Set())
+  }
+
+  // The checked rows as the table shows them, in its order.
+  const exportSelected = () => {
+    if (!answer) return
+    const rows = answer.rows.filter((_, i) => selectedRows.has(i))
+    downloadBlob(new Blob([toCSV(answer.columns, rows)], { type: 'text/csv' }), `${name}-selected-submissions.csv`)
   }
 
   const csv = async () => {
@@ -188,12 +190,28 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
             <ToggleGroupItem value="archived">Archived {form.archived_submissions.toLocaleString('en-US')}</ToggleGroupItem>
           </ToggleGroup>
         </div>
-        <div className="flex flex-wrap gap-2">
+        {selected.length > 0 ? (
+          <div role="toolbar" aria-label="Selected submissions" className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">{selected.length.toLocaleString('en-US')} selected</span>
+            <Button type="button" variant="outline" size="sm" disabled={actions.pending} onClick={() => void moveSelected()}>
+              {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+              {archived ? 'Restore' : 'Archive'}
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={exportSelected}>
+              <DownloadIcon />
+              Export
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setChecked(new Set())}>
+              <XIcon />
+              Clear
+            </Button>
+          </div>
+        ) : (
           <Button type="button" variant="outline" size="sm" disabled={downloading || !answer} onClick={() => void csv()}>
             <DownloadIcon />
-            CSV
+            Export CSV
           </Button>
-        </div>
+        )}
       </div>
       {archived && <p className="text-xs text-muted-foreground">{purgeNote}</p>}
       {!answer ? (
@@ -220,37 +238,12 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
               viewError={viewError}
               reloading={q.isPlaceholderData || (q.isFetching && q.data !== undefined)}
               onRow={(i) => setOpened(answer.ids[i])}
+              selection={{ selected: selectedRows, onChange: (rows) => setChecked(new Set([...rows].map((i) => answer.ids[i]))) }}
             />
           </WidgetFrame>
         </div>
       )}
-      {answer && answer.total > 0 && (
-        <Button type="button" variant="outline" size="sm" className="self-start" disabled={!actionable} onClick={() => setConfirming(true)}>
-          {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
-          {archived ? 'Restore all matching' : 'Archive all matching'}
-        </Button>
-      )}
       <SubmissionDrawer projectId={projectId} form={name} id={opened} purgeDays={purgeDays} onClose={() => setOpened(undefined)} />
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {archived ? 'Restore' : 'Archive'} {plural(matched, 'matching submission')}?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {archived
-                ? 'Every archived submission these filters match goes back to the table.'
-                : `Every submission these filters match leaves the table and its counts. ${purgeNote}`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction disabled={!actionable} onClick={() => void actOnMatching()}>
-              {archived ? 'Restore submissions' : 'Archive submissions'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </section>
   )
 }
@@ -258,7 +251,7 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
 /**
  * `/projects/:id/forms/:name` (D12), inside the Forms tab: a crumb back to
  * the list, a draft's banner with **Approve**, the submissions table, and
- * **Settings** opening the form's settings dialog beside the form's menu.
+ * the form's menu, whose **Settings…** opens its settings dialog.
  */
 export default function FormPage({ project, name }: { project: Project; name: string }) {
   const id = project.project_id
@@ -303,14 +296,11 @@ export default function FormPage({ project, name }: { project: Project; name: st
           <header className="flex min-w-0 flex-wrap items-center gap-2">
             <h2 className="font-mono text-lg font-semibold break-all">{form.name}</h2>
             <Badge variant={form.status === 'draft' ? 'outline' : 'secondary'}>{formStatus(form)}</Badge>
-            <div className="ml-auto flex items-center gap-1">
-              <Button type="button" variant="outline" size="sm" onClick={() => setSetting(true)}>
-                <SettingsIcon />
-                Settings
-              </Button>
+            <div className="ml-auto">
               <FormMenu
                 form={form}
                 pending={actions.pending}
+                onSettings={() => setSetting(true)}
                 onApprove={() => setApproving(true)}
                 onClosing={(closes_at) => actions.update(id, name, { closes_at }, closingDone(name, closes_at))}
                 onArchive={() => void archive()}

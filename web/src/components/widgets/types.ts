@@ -56,6 +56,12 @@ export interface WidgetProps<P = Record<string, unknown>> {
    * part of any widget's contract: a dashboard never sets it.
    */
   onRow?: (index: number) => void
+  /**
+   * With onRow, the same way: a checkbox before each body row and one in
+   * the header for every row of the page, by index in the page. Not part
+   * of any widget's contract.
+   */
+  selection?: { selected: ReadonlySet<number>; onChange: (next: Set<number>) => void }
 }
 
 /**

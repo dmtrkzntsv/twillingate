@@ -355,6 +355,32 @@ describe('table', () => {
     expect(container.querySelector('tbody tr[tabindex]')).toBeNull()
   })
 
+  it('puts a checkbox before each row with selection, by index in the page, never opening the row', async () => {
+    const onRow = vi.fn()
+    const onChange = vi.fn()
+    const { rerender } = render(
+      <Table data={pages} props={{ mode: 'remote' }} view={emptyView} onView={() => {}} onRow={onRow} selection={{ selected: new Set(), onChange }} />
+    )
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select row 2' }))
+    expect(onChange).toHaveBeenLastCalledWith(new Set([1]))
+    expect(onRow).not.toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select all rows' }))
+    expect(onChange).toHaveBeenLastCalledWith(new Set([0, 1, 2, 3]))
+
+    rerender(
+      <Table data={pages} props={{ mode: 'remote' }} view={emptyView} onView={() => {}} onRow={onRow} selection={{ selected: new Set([1]), onChange }} />
+    )
+    expect(screen.getByRole('checkbox', { name: 'Select all rows' })).toHaveAttribute('data-state', 'indeterminate')
+    expect(screen.getByRole('checkbox', { name: 'Select row 2' })).toBeChecked()
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select row 2' }))
+    expect(onChange).toHaveBeenLastCalledWith(new Set())
+  })
+
+  it('shows no checkboxes in local mode, even with selection', () => {
+    render(<Table data={pages} props={{}} onRow={vi.fn()} selection={{ selected: new Set(), onChange: vi.fn() }} />)
+    expect(screen.queryByRole('checkbox')).toBeNull()
+  })
+
   it('leaves rows plain without onRow', () => {
     const { container } = render(<Table data={pages} props={{}} />)
     expect(container.querySelector('tbody tr[role="button"]')).toBeNull()

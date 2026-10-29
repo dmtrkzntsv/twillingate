@@ -9,6 +9,8 @@ import StopDialog from './StopDialog'
 interface Props {
   form: Form
   pending: boolean
+  /** On the form's page: **Settings…** first. */
+  onSettings?: () => void
   onApprove: () => void
   /** Sends update_form's closes_at: an RFC 3339 time, or null to reopen; resolves true once saved. */
   onClosing: (closesAt: string | null) => Promise<boolean>
@@ -16,11 +18,12 @@ interface Props {
 }
 
 /**
- * A form's menu (D12), on its row and its page: **Approve…** on a draft,
+ * A form's menu (D12), on its row and its page (which adds **Settings…**
+ * first): **Approve…** on a draft,
  * **Stop accepting…** while it takes submissions, **Reopen** once it has a
  * closing time, and **Archive**.
  */
-export default function FormMenu({ form, pending, onApprove, onClosing, onArchive }: Props) {
+export default function FormMenu({ form, pending, onSettings, onApprove, onClosing, onArchive }: Props) {
   const [stopping, setStopping] = useState(false)
   return (
     <>
@@ -31,6 +34,7 @@ export default function FormMenu({ form, pending, onApprove, onClosing, onArchiv
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end">
+          {onSettings && <DropdownMenuItem onClick={onSettings}>Settings…</DropdownMenuItem>}
           {form.status === 'draft' && (
             <DropdownMenuItem disabled={pending} onClick={onApprove}>
               Approve…

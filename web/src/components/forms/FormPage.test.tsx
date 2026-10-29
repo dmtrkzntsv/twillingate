@@ -73,7 +73,8 @@ describe('FormPage', () => {
     renderPage()
     const table = await screen.findByRole('table')
     const headers = within(table).getAllByRole('columnheader').map((h) => h.textContent)
-    expect(headers).toEqual(contactPage.columns)
+    // The first header holds the select-all box.
+    expect(headers).toEqual(['', ...contactPage.columns])
     expect(within(table).getByText('ann@example.com')).toBeInTheDocument()
     expect(within(table).getByText('Hi there')).toBeInTheDocument()
     expect(endpoints.submissions).toHaveBeenCalledWith(4, 'contact', {})
@@ -89,14 +90,23 @@ describe('FormPage', () => {
     expect(await within(drawer).findByText('555-0100')).toBeInTheDocument()
   })
 
-  it('keeps Archive all matching off without filters', async () => {
+  it('checks rows with a box each, and every row of the page from the header', async () => {
+    const user = userEvent.setup()
     renderPage()
-    await screen.findByRole('table')
-    expect(screen.getByRole('button', { name: 'Archive all matching' })).toBeDisabled()
+    const table = await screen.findByRole('table')
+    await user.click(within(table).getByRole('checkbox', { name: 'Select row 2' }))
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    // Checking a row never opens its drawer.
+    expect(screen.queryByRole('dialog', { name: 'Submission' })).toBeNull()
+    await user.click(within(table).getByRole('checkbox', { name: 'Select all rows' }))
+    expect(screen.getByText('2 selected')).toBeInTheDocument()
+    await user.click(within(table).getByRole('checkbox', { name: 'Select all rows' }))
+    expect(screen.queryByText(/selected$/)).toBeNull()
   })
 
   async function openSettings(user: ReturnType<typeof userEvent.setup>) {
-    await user.click(await screen.findByRole('button', { name: 'Settings' }))
+    await user.click(await screen.findByRole('button', { name: 'Actions for contact' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Settings…' }))
     return screen.findByRole('dialog', { name: 'Settings' })
   }
 

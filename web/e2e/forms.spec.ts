@@ -62,7 +62,8 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   await approve.getByRole('button', { name: 'Approve', exact: true }).click()
   await expect(approve).toHaveCount(0)
   await expect(page.getByText(/^Draft: accepting until/)).toHaveCount(0)
-  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await page.getByRole('button', { name: 'Actions for contact' }).click()
+  await page.getByRole('menuitem', { name: 'Settings…' }).click()
   const settings = page.getByRole('dialog', { name: 'Settings' })
   const fields = settings.getByRole('group', { name: 'Expected fields' })
   await expect(fields.getByRole('checkbox', { name: 'email' })).toBeChecked()
@@ -91,12 +92,22 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
 
   // The CSV of what the filter matches downloads.
   const download = page.waitForEvent('download')
-  await table.getByRole('button', { name: 'CSV', exact: true }).click()
+  await table.getByRole('button', { name: 'Export CSV', exact: true }).click()
   const file = await download
   expect(file.suggestedFilename()).toBe('contact-submissions.csv')
   const text = readFileSync((await file.path())!, 'utf8')
   expect(text).toContain('ann@example.com')
   expect(text).not.toContain('bob@example.com')
+
+  // A checked row exports alone, from the page.
+  await table.getByRole('checkbox', { name: 'Select row 1' }).click()
+  const bar = table.getByRole('toolbar', { name: 'Selected submissions' })
+  await expect(bar.getByText('1 selected')).toBeVisible()
+  const picked = page.waitForEvent('download')
+  await bar.getByRole('button', { name: 'Export', exact: true }).click()
+  expect((await picked).suggestedFilename()).toBe('contact-selected-submissions.csv')
+  await bar.getByRole('button', { name: 'Clear', exact: true }).click()
+  await expect(bar).toHaveCount(0)
 
   // Stop accepting, now: the form closes and refuses the next submission.
   await page.getByRole('button', { name: 'Actions for contact' }).click()

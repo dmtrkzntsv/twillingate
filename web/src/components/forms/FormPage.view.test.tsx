@@ -13,8 +13,19 @@ import { renderWithProviders } from '@/test/render'
 import FormPage from './FormPage'
 
 vi.mock('@/components/widgets/table', () => ({
-  default: ({ view, onView }: { view: TableView; onView: (v: TableView) => void }) => (
+  default: ({
+    view,
+    onView,
+    selection,
+  }: {
+    view: TableView
+    onView: (v: TableView) => void
+    selection?: { onChange: (next: Set<number>) => void }
+  }) => (
     <div role="table" aria-label="Stub table">
+      <button type="button" onClick={() => selection?.onChange(new Set([0]))}>
+        Check the first row
+      </button>
       <button type="button" onClick={() => onView({ ...view, filters: [{ column: 'email', op: '=', value: 'bob@example.com' }], offset: 0 })}>
         Filter Bob
       </button>
@@ -72,23 +83,29 @@ describe('FormPage view', () => {
     expect(endpoints.submissions).not.toHaveBeenCalledWith(4, 'contact', expect.objectContaining({ filters: expect.anything() }))
   })
 
-  it('archives what the filters match once confirmed', async () => {
+  it('archives the rows checked, then clears the selection', async () => {
     const user = userEvent.setup()
     const archive = vi.spyOn(endpoints, 'archiveSubmissions').mockResolvedValue({ archived: 1 })
     renderPage()
-    vi.mocked(endpoints.submissions).mockResolvedValue(bobPage)
-    await user.click(await screen.findByRole('button', { name: 'Filter Bob' }))
-    await waitFor(() => expect(endpoints.submissions).toHaveBeenCalledWith(4, 'contact', { filters: JSON.stringify(bob) }))
-    const button = screen.getByRole('button', { name: 'Archive all matching' })
-    await waitFor(() => expect(button).toBeEnabled())
-    await user.click(button)
-    const confirm = await screen.findByRole('alertdialog', { name: 'Archive 1 matching submission?' })
-    expect(within(confirm).getByText(/deleted for good 30 days after archiving/)).toBeInTheDocument()
-    await user.click(within(confirm).getByRole('button', { name: 'Archive submissions' }))
-    await waitFor(() => expect(archive).toHaveBeenCalledWith(4, { form: 'contact', filters: JSON.stringify(bob) }))
+    await user.click(await screen.findByRole('button', { name: 'Check the first row' }))
+    const bar = screen.getByRole('toolbar', { name: 'Selected submissions' })
+    expect(within(bar).getByText('1 selected')).toBeInTheDocument()
+    // The selection's Export takes the place of the whole table's.
+    expect(screen.queryByRole('button', { name: 'Export CSV' })).toBeNull()
+    await user.click(within(bar).getByRole('button', { name: 'Archive' }))
+    await waitFor(() => expect(archive).toHaveBeenCalledWith(4, { ids: ['s1'] }))
+    await waitFor(() => expect(screen.queryByRole('toolbar', { name: 'Selected submissions' })).toBeNull())
   })
 
-  it('switches to the archived submissions, a table of their own with Restore all matching', async () => {
+  it('clears the selection on Clear', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Check the first row' }))
+    await user.click(screen.getByRole('button', { name: 'Clear' }))
+    expect(screen.queryByRole('toolbar', { name: 'Selected submissions' })).toBeNull()
+  })
+
+  it('switches to the archived submissions, a table of their own, and restores the rows checked', async () => {
     const user = userEvent.setup()
     const restore = vi.spyOn(endpoints, 'restoreSubmissions').mockResolvedValue({ restored: 1 })
     renderPage()
@@ -103,31 +120,29 @@ describe('FormPage view', () => {
     await waitFor(() =>
       expect(endpoints.submissions).toHaveBeenCalledWith(4, 'contact', { archived: true, filters: JSON.stringify(bob) })
     )
-    const button = screen.getByRole('button', { name: 'Restore all matching' })
-    await waitFor(() => expect(button).toBeEnabled())
-    await user.click(button)
-    const confirm = await screen.findByRole('alertdialog', { name: 'Restore 1 matching submission?' })
-    await user.click(within(confirm).getByRole('button', { name: 'Restore submissions' }))
-    await waitFor(() => expect(restore).toHaveBeenCalledWith(4, { form: 'contact', filters: JSON.stringify(bob) }))
+    await waitFor(() => expect(screen.queryByText('ann@example.com')).toBeNull())
+    await user.click(screen.getByRole('button', { name: 'Check the first row' }))
+    const bar = screen.getByRole('toolbar', { name: 'Selected submissions' })
+    await user.click(within(bar).getByRole('button', { name: 'Restore' }))
+    await waitFor(() => expect(restore).toHaveBeenCalledWith(4, { ids: ['s2'] }))
   })
 
-  it('keeps Archive all matching off while a new view loads, so the count and the filters sent agree', async () => {
+  it('exports the rows checked from the page, without asking the server', async () => {
     const user = userEvent.setup()
-    let resolve: (p: typeof contactPage) => void = () => {}
+    const csv = vi.spyOn(endpoints, 'exportSubmissions')
+    let blob: Blob | undefined
+    URL.createObjectURL = vi.fn((b: Blob) => {
+      blob = b
+      return 'blob:csv'
+    }) as typeof URL.createObjectURL
+    URL.revokeObjectURL = vi.fn()
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     renderPage()
-    await screen.findByRole('button', { name: 'Filter Bob' })
-    vi.mocked(endpoints.submissions)
-      .mockResolvedValueOnce(bobPage)
-      .mockImplementationOnce(() => new Promise((r) => (resolve = r)))
-    await user.click(screen.getByRole('button', { name: 'Filter Bob' }))
-    const button = screen.getByRole('button', { name: 'Archive all matching' })
-    await waitFor(() => expect(button).toBeEnabled())
-    // A new sort asks again: until it answers, the rows and count on screen are the old view's.
-    await user.click(screen.getByRole('button', { name: 'Oldest first' }))
-    await waitFor(() => expect(endpoints.submissions).toHaveBeenCalledTimes(3))
-    expect(button).toBeDisabled()
-    resolve(bobPage)
-    await waitFor(() => expect(button).toBeEnabled())
+    await user.click(await screen.findByRole('button', { name: 'Check the first row' }))
+    await user.click(within(screen.getByRole('toolbar', { name: 'Selected submissions' })).getByRole('button', { name: 'Export' }))
+    await waitFor(() => expect(blob).toBeDefined())
+    expect(await blob!.text()).toBe('Received,email,message\r\n2026-10-05T10:00:00Z,ann@example.com,Hello\r\n')
+    expect(csv).not.toHaveBeenCalled()
   })
 
   it('downloads the CSV of what the filters match', async () => {
@@ -138,7 +153,7 @@ describe('FormPage view', () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     renderPage()
     await user.click(await screen.findByRole('button', { name: 'Filter Bob' }))
-    await user.click(screen.getByRole('button', { name: 'CSV' }))
+    await user.click(screen.getByRole('button', { name: 'Export CSV' }))
     await waitFor(() => expect(csv).toHaveBeenCalledWith(4, 'contact', { filters: JSON.stringify(bob) }))
     await waitFor(() => expect(click).toHaveBeenCalled())
   })

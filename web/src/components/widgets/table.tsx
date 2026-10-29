@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from
 import { ArrowDownIcon, ArrowUpIcon } from 'lucide-react'
 import { useCardMode } from '@/components/share/card-mode'
 import { FilterBar, PageFooter, type OptionLoader } from '@/components/table-filters'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Table as ShadcnTable, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { approx, approximate, formatValue, type Format } from '@/lib/format'
 import {
@@ -91,6 +92,7 @@ export default function Table({
   viewError,
   reloading,
   onRow,
+  selection,
 }: WidgetProps<TableProps>) {
   const sql = data as SqlData
   const card = useCardMode()
@@ -178,6 +180,19 @@ export default function Table({
     setView({ ...view, sort: next, offset: 0 })
   }
 
+  // Row checkboxes only where rows are server rows: a remote table's page, off a card.
+  const selecting = selection && onRow && remote && !card ? selection : undefined
+  const allSelected = selecting !== undefined && rows.length > 0 && rows.every((_, ri) => selecting.selected.has(ri))
+  const someSelected = selecting !== undefined && rows.some((_, ri) => selecting.selected.has(ri))
+  const toggle = (ri: number) => {
+    if (!selecting) return
+    const next = new Set(selecting.selected)
+    if (next.has(ri)) next.delete(ri)
+    else next.add(ri)
+    selecting.onChange(next)
+  }
+  const span = sql.columns.length + (selecting ? 1 : 0)
+
   return (
     <div className="flex h-full flex-col">
       {!card && (
@@ -198,6 +213,15 @@ export default function Table({
           <ShadcnTable>
             <TableHeader>
               <TableRow>
+                {selecting && (
+                  <TableHead className="h-8 w-8 pr-0">
+                    <Checkbox
+                      aria-label="Select all rows"
+                      checked={allSelected ? true : someSelected ? 'indeterminate' : false}
+                      onCheckedChange={() => selecting.onChange(allSelected ? new Set() : new Set(rows.map((_, ri) => ri)))}
+                    />
+                  </TableHead>
+                )}
                 {sql.columns.map((col) => {
                   const dir = sort?.column === col ? sort.dir : undefined
                   const Arrow = dir === 'asc' ? ArrowUpIcon : ArrowDownIcon
@@ -243,7 +267,26 @@ export default function Table({
                         },
                       }
                     : {})}
+                  data-state={selecting?.selected.has(ri) ? 'selected' : undefined}
                 >
+                  {selecting && (
+                    // The cell takes the click, so missing the box by a little never opens the row.
+                    <TableCell
+                      className="w-8 py-1.5 pr-0"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        toggle(ri)
+                      }}
+                      onKeyDown={(e) => e.stopPropagation()}
+                    >
+                      <Checkbox
+                        aria-label={`Select row ${ri + 1}`}
+                        checked={selecting.selected.has(ri)}
+                        onClick={(e) => e.stopPropagation()}
+                        onCheckedChange={() => toggle(ri)}
+                      />
+                    </TableCell>
+                  )}
                   {sql.columns.map((col, ci) => {
                     const raw = row[ci] ?? ''
                     const format = formats[col]
@@ -275,7 +318,7 @@ export default function Table({
               ))}
               {(more > 0 || moreUnknown) && (
                 <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={sql.columns.length} className="py-1.5 text-[length:var(--card-type)] text-muted-foreground">
+                  <TableCell colSpan={span} className="py-1.5 text-[length:var(--card-type)] text-muted-foreground">
                     {moreText}
                   </TableCell>
                 </TableRow>
