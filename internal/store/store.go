@@ -343,27 +343,31 @@ type Store interface {
 	// "form.expire", subject "form/<project_id>/<name>"), and returns how
 	// many.
 	ExpireDrafts(ctx context.Context, now time.Time) (int, error)
-	// DeleteSubmissions deletes the project's submissions with these ids
-	// and returns how many it deleted; their $form_submit events stay in
-	// the event files. Ids that match nothing are skipped. The audit row's
-	// detail is
-	// a.Detail (how the ids were chosen) followed by " (<n> deleted)", the
-	// count actually deleted, written even when it is 0.
-	DeleteSubmissions(ctx context.Context, projectID int64, ids []string, a AuditEntry) (int, error)
+	// SetSubmissionsArchived archives (archived true) or restores the
+	// project's submissions with these ids and returns how many changed:
+	// ids that match nothing, an archived one being archived and an active
+	// one being restored are skipped. An archived submission leaves its
+	// form's table and counts and is purged RETENTION_ARCHIVED_DAYS after
+	// archiving (PurgeArchived); its $form_submit event stays in the event
+	// files. The audit row's detail is a.Detail (how the ids were chosen)
+	// followed by " (<n> archived)" or " (<n> restored)", written even
+	// when n is 0.
+	SetSubmissionsArchived(ctx context.Context, projectID int64, ids []string, archived bool, a AuditEntry) (int, error)
 	// FindSubmissions returns, newest first, the project's submissions with
-	// a field value containing search, archived forms' included and marked
-	// Archived (an erasure request must reach them) (case-insensitive;
+	// a field value containing search, archived ones and archived forms'
+	// included, with ArchivedAt and FormArchived (an erasure request must
+	// reach them) (case-insensitive;
 	// % _ and \ are literal). after is the cursor a previous page returned
 	// ("" starts); the cursor returned is the last id of a page that has
 	// more after it, "" at the end. limit <= 0 means 100. An empty search
 	// is ErrInvalid; an unknown cursor is ErrNotFound.
 	FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]Submission, string, error)
 	// GetSubmission reads one submission of the project's form, every
-	// stored field and its attribution; ErrNotFound when absent or when
-	// the form is archived.
+	// stored field, its attribution and ArchivedAt, archived or not;
+	// ErrNotFound when absent or when the form is archived.
 	GetSubmission(ctx context.Context, projectID int64, form, id string) (Submission, error)
 	// SubmissionIDsMatching returns every id FindSubmissions would, newest
-	// first, for delete-by-search.
+	// first, for archive-by-search.
 	SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error)
 	// PendingSubmissions lists up to limit submissions received at or
 	// before `before` and not yet attributed, oldest first. A row whose

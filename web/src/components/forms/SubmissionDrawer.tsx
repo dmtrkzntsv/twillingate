@@ -1,9 +1,6 @@
-import { useState, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { ArchiveIcon, ArchiveRestoreIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -12,12 +9,15 @@ import { useFormActions } from '@/hooks/use-form-actions'
 import type { Submission } from '@/lib/api'
 import { formatDayTime, formatSource } from '@/lib/forms'
 import { submissionQuery } from '@/lib/queries'
+import { formatPurgeDate } from '@/lib/time'
 
 interface Props {
   projectId: number
   form: string
   /** The submission shown; undefined keeps the drawer closed. */
   id: string | undefined
+  /** RETENTION_ARCHIVED_DAYS; undefined when archived submissions are never purged. */
+  purgeDays?: number
   onClose: () => void
 }
 
@@ -44,20 +44,34 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   )
 }
 
-function Details({ s }: { s: Submission }) {
+/** When an archived submission was archived, and when the daily pass deletes it. */
+function archivedLine(archivedAt: string, purgeDays?: number): ReactNode {
+  const at = new Date(archivedAt)
+  const purge = purgeDays ? `; deleted for good on ${formatPurgeDate(new Date(at.getTime() + purgeDays * 86_400_000))} unless restored` : ''
+  return (
+    <>
+      <time dateTime={archivedAt} title={archivedAt}>
+        {formatDayTime(at)}
+      </time>
+      {purge}
+    </>
+  )
+}
+
+function Details({ s, purgeDays }: { s: Submission; purgeDays?: number }) {
   const fields = Object.entries(s.fields).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+  const arrival: [string, ReactNode][] = [
+    ['Received', <time dateTime={s.received_at} title={s.received_at}>{formatDayTime(new Date(s.received_at))}</time>],
+    ['Source', formatSource(s.attribution)],
+  ]
+  if (s.archived_at) arrival.push(['Archived', archivedLine(s.archived_at, purgeDays)])
   return (
     <>
       <Section title="Fields">
         {fields.length === 0 ? <p className="text-sm text-muted-foreground">No fields kept.</p> : <Pairs rows={fields} mono />}
       </Section>
       <Section title="Arrival">
-        <Pairs
-          rows={[
-            ['Received', <time dateTime={s.received_at} title={s.received_at}>{formatDayTime(new Date(s.received_at))}</time>],
-            ['Source', formatSource(s.attribution)],
-          ]}
-        />
+        <Pairs rows={arrival} />
       </Section>
     </>
   )
@@ -65,17 +79,20 @@ function Details({ s }: { s: Submission }) {
 
 /**
  * One submission (D12a): every stored field, the ones the form no longer
- * expects too, then when it arrived and where its visit came from, and
- * **Delete** behind a confirm.
+ * expects too, then when it arrived, where its visit came from and, once
+ * archived, when; with **Archive** (reversible, so no confirm), or
+ * **Restore** on an archived one. Either closes the drawer, since the row
+ * leaves the table it was opened from.
  */
-export default function SubmissionDrawer({ projectId, form, id, onClose }: Props) {
+export default function SubmissionDrawer({ projectId, form, id, purgeDays, onClose }: Props) {
   const q = useQuery({ ...submissionQuery(projectId, form, id ?? ''), enabled: id !== undefined })
   const actions = useFormActions()
-  const [confirming, setConfirming] = useState(false)
+  const archived = q.data?.archived_at !== undefined
 
-  const remove = async () => {
+  const toggle = async () => {
     if (!id) return
-    const n = await actions.deleteSubmissions(projectId, { ids: [id] })
+    const body = { ids: [id] }
+    const n = await (archived ? actions.restoreSubmissions(projectId, body) : actions.archiveSubmissions(projectId, body))
     if (n !== undefined) onClose()
   }
 
@@ -90,7 +107,7 @@ export default function SubmissionDrawer({ projectId, form, id, onClose }: Props
         </SheetHeader>
         <div className="flex flex-col gap-5 px-4 pb-4">
           {q.data ? (
-            <Details s={q.data} />
+            <Details s={q.data} purgeDays={purgeDays} />
           ) : q.error ? (
             <LoadError what="the submission" error={q.error} onRetry={() => void q.refetch()} />
           ) : (
@@ -98,22 +115,11 @@ export default function SubmissionDrawer({ projectId, form, id, onClose }: Props
           )}
         </div>
         <SheetFooter className="mt-auto">
-          <Button type="button" variant="destructive" disabled={actions.pending || !q.data} onClick={() => setConfirming(true)}>
-            Delete
+          <Button type="button" variant="outline" disabled={actions.pending || !q.data} onClick={() => void toggle()}>
+            {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+            {archived ? 'Restore' : 'Archive'}
           </Button>
         </SheetFooter>
-        <AlertDialog open={confirming} onOpenChange={setConfirming}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Delete this submission?</AlertDialogTitle>
-              <AlertDialogDescription>It is gone for good, with its conversion while that is still in the raw window.</AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
-              <AlertDialogAction onClick={() => void remove()}>Delete submission</AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
       </SheetContent>
     </Sheet>
   )

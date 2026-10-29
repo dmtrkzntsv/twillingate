@@ -241,7 +241,7 @@ func TestFormEraseByIDAndSearch(t *testing.T) {
 	}
 
 	out := runForm(t, 0, "erase", "-project-id", "1", "-search", "ANN@example")
-	if !strings.Contains(out, "1 submission erased") || strings.Contains(strings.ToLower(out), "ann@") {
+	if !strings.Contains(out, "1 submission archived") || strings.Contains(strings.ToLower(out), "ann@") {
 		t.Fatalf("search erase output: %q", out)
 	}
 	list := runForm(t, 0, "list", "-project-id", "1")
@@ -250,14 +250,19 @@ func TestFormEraseByIDAndSearch(t *testing.T) {
 	}
 
 	out = runForm(t, 0, "erase", "-project-id", "1", "-id", "s2", "-id", "unknown")
-	if !strings.Contains(out, "1 submission erased") {
+	if !strings.Contains(out, "1 submission archived") {
 		t.Fatalf("id erase output: %q", out)
 	}
 	if list := runForm(t, 0, "list", "-project-id", "1"); !strings.HasPrefix(list, "contact\tdraft\t0\t") {
 		t.Fatalf("after id erase: %q", list)
 	}
-	if out := runForm(t, 0, "erase", "-project-id", "1", "-search", "nobody@"); !strings.Contains(out, "0 submissions erased") {
+	if out := runForm(t, 0, "erase", "-project-id", "1", "-search", "nobody@"); !strings.Contains(out, "0 submissions archived") {
 		t.Fatalf("nothing matched: %q", out)
+	}
+	// Erased submissions are archived, until the daily pass purges them.
+	out = runForm(t, 0, "export", "-project-id", "1", "-name", "contact", "-archived")
+	if lines := strings.Split(strings.TrimSpace(out), "\n"); len(lines) != 3 || !strings.HasPrefix(lines[0], "Received,Archived,") {
+		t.Fatalf("archived export: %q", out)
 	}
 }
 

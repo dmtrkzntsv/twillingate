@@ -106,7 +106,7 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   expect(refused.headers()['location']).toBe(`${SITE}/contact#twillingate-form-error-contact`)
   await expect(page.getByRole('group', { name: 'Closing' }).getByRole('button', { name: 'Reopen' })).toBeVisible()
 
-  // Find a person across the forms, and delete everything found.
+  // Find a person across the forms, and archive everything found.
   await page.getByRole('link', { name: /^Forms(, \d+ new)?$/ }).last().click()
   await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms$`))
   await page.getByRole('searchbox', { name: 'Find a person' }).fill('bob@')
@@ -114,10 +114,18 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   const found = page.getByRole('region', { name: 'Found submissions' })
   await expect(found.getByText(/^1 submission contains/)).toBeVisible()
   await expect(found.getByRole('heading', { name: 'contact' })).toBeVisible()
-  await found.getByRole('button', { name: 'Delete all' }).click()
-  await page.getByRole('alertdialog').getByRole('button', { name: 'Delete submissions' }).click()
-  await expect(page.getByText('Deleted 1 submission')).toBeVisible()
+  await found.getByRole('button', { name: 'Archive all' }).click()
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Archive submissions' }).click()
+  await expect(page.getByText('Archived 1 submission')).toBeVisible()
   await expect(row.getByText(/^1 submission\b/)).toBeVisible()
+
+  // The archived submission waits on the form's Archived switch, and comes back.
+  await row.getByRole('link').click()
+  await page.getByRole('radio', { name: 'Archived 1' }).click()
+  await page.getByRole('cell', { name: 'bob@example.com' }).click()
+  await page.getByRole('dialog', { name: 'Submission' }).getByRole('button', { name: 'Restore' }).click()
+  await expect(page.getByText('Restored 1 submission')).toBeVisible()
+  await expect(page.getByRole('radio', { name: 'Active 2' })).toBeVisible()
 })
 
 test('the Forms button counts new submissions until a form is opened, then dots the draft', async ({ page, request }) => {

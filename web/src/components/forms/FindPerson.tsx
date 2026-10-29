@@ -34,9 +34,10 @@ function summary(s: FoundSubmission): string {
 
 /**
  * Find a person (D12): every form's submissions with a field value
- * containing the search, archived forms' too (marked Archived), for an
- * access or erasure request, grouped by form, and **Delete all** behind a
- * confirm, which deletes exactly what the same search finds.
+ * containing the search, archived ones and archived forms' too (marked
+ * Archived), for an access or erasure request, grouped by form, and
+ * **Archive all** behind a confirm, which archives exactly what the same
+ * search finds; the daily pass then purges it.
  */
 export default function FindPerson({ projectId }: { projectId: number }) {
   const id = useId()
@@ -58,7 +59,7 @@ export default function FindPerson({ projectId }: { projectId: number }) {
     setSearch('')
   }
   const remove = async () => {
-    const n = await actions.deleteSubmissions(projectId, { search })
+    const n = await actions.archiveSubmissions(projectId, { search })
     if (n !== undefined) clear()
   }
 
@@ -100,7 +101,7 @@ export default function FindPerson({ projectId }: { projectId: number }) {
                 </p>
                 <div className="flex gap-2">
                   <Button type="button" variant="destructive" size="sm" disabled={actions.pending} onClick={() => setConfirming(true)}>
-                    Delete all
+                    Archive all
                   </Button>
                   <Button type="button" variant="ghost" size="icon" className="size-8" aria-label="Clear search" onClick={clear}>
                     <XIcon />
@@ -109,20 +110,18 @@ export default function FindPerson({ projectId }: { projectId: number }) {
               </div>
               {byForm(found).map(([form, subs]) => (
                 <div key={form} className="flex min-w-0 flex-col gap-1">
-                  <h3 className="flex min-w-0 flex-wrap items-center gap-2 font-mono text-xs font-medium break-all">
-                    {form}
-                    {subs[0].archived && (
-                      <Badge variant="outline" className="font-sans text-muted-foreground">
-                        Archived
-                      </Badge>
-                    )}
-                  </h3>
+                  <h3 className="font-mono text-xs font-medium break-all">{form}</h3>
                   <ul className="flex flex-col gap-1">
                     {subs.map((s) => (
                       <li key={s.id} className="min-w-0 text-sm">
                         <time dateTime={s.received_at} className="mr-2 text-xs text-muted-foreground">
                           {formatDayTime(new Date(s.received_at))}
                         </time>
+                        {s.archived && (
+                          <Badge variant="outline" className="mr-2 text-muted-foreground">
+                            Archived
+                          </Badge>
+                        )}
                         <span className="break-words [overflow-wrap:anywhere]">{summary(s)}</span>
                       </li>
                     ))}
@@ -137,16 +136,16 @@ export default function FindPerson({ projectId }: { projectId: number }) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle className="break-words">
-              Delete {count} containing “{search}”?
+              Archive {count} containing “{search}”?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Every submission of the project's forms, archived ones included, with a field containing it is deleted for good, with its
-              conversion while that is still in the raw window.
+              Every submission of the project's forms with a field containing it is archived: it leaves every table at once, and the daily
+              pass deletes it for good once it has been archived for the retention period. Its conversion stays counted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void remove()}>Delete submissions</AlertDialogAction>
+            <AlertDialogAction onClick={() => void remove()}>Archive submissions</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

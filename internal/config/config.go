@@ -31,8 +31,8 @@ type Retention struct {
 	// Days (RETENTION_DAYS) is how long the event files under raw/ are kept:
 	// a month file is deleted once its last day is older (raw-first D5).
 	Days int `json:"days"`
-	// ArchivedDays is how long an archived project, dashboard or widget
-	// survives before the daily pass deletes it. 0 keeps archived items
+	// ArchivedDays is how long an archived project, dashboard, widget,
+	// widget share, form or submission survives before the daily pass deletes it. 0 keeps archived items
 	// forever.
 	ArchivedDays int `json:"archived_days"`
 }

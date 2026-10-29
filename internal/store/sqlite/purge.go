@@ -1,6 +1,7 @@
-// Purge of archived projects, dashboards, widgets, widget shares and forms
-// past RETENTION_ARCHIVED_DAYS (spec 2026-09-25, migration 021 onward;
-// shares from migration 032, spec 2026-10-05; forms from migration 035). Run by
+// Purge of archived projects, dashboards, widgets, widget shares, forms
+// and submissions past RETENTION_ARCHIVED_DAYS (spec 2026-09-25, migration
+// 021 onward; shares from migration 032, spec 2026-10-05; forms from
+// migration 035; submissions from migration 043). Run by
 // the daily pass (internal/jobs), never by a request handler: there is no
 // tool or route for it.
 package sqlite
@@ -15,12 +16,13 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// PurgeArchived deletes every project, dashboard, widget, widget share and
-// form archived more than days ago, each in its own transaction with an
-// audit row (actor "retention"). days <= 0 purges nothing. A share or form
-// purged with its project (deleteProject) gets no row of its own. A form
-// goes with its submissions (deleteFormData); their $form_submit events
-// stay in the event files.
+// PurgeArchived deletes every project, dashboard, widget, widget share,
+// form and submission archived more than days ago, each in its own
+// transaction with an audit row (actor "retention"). days <= 0 purges
+// nothing. A share or form purged with its project (deleteProject) gets no row of its own. A form
+// goes with its submissions (deleteFormData); submissions archived on
+// their own are deleted per project, one audit row each with the count.
+// Their $form_submit events stay in the event files.
 //
 // A project's archived_at is written with datetime('now') ("YYYY-MM-DD
 // HH:MM:SS"); dashboards', widgets' and shares' with strftime(...,'Z')
@@ -172,6 +174,33 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 			continue
 		}
 		res.Forms = append(res.Forms, fmt.Sprintf("%d/%s", k.project, k.name))
+	}
+
+	// Submissions archived on their own, one transaction and audit row per
+	// project. Those of a form or project purged above went with it.
+	const archivedSubmissions = `archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?`
+	subProjects, err := d.purgeableIDs(ctx,
+		`SELECT DISTINCT project_id FROM submissions WHERE `+archivedSubmissions+` ORDER BY project_id`, days)
+	if err != nil {
+		errs = errors.Join(errs, fmt.Errorf("select archived submissions: %w", err))
+	}
+	for _, id := range subProjects {
+		var n int64
+		if err := d.tx(ctx, func(tx *sql.Tx) error {
+			r, err := tx.ExecContext(ctx, `DELETE FROM submissions WHERE project_id=? AND `+archivedSubmissions, id, days)
+			if err != nil {
+				return fmt.Errorf("delete submissions: %w", err)
+			}
+			if n, err = r.RowsAffected(); err != nil {
+				return err
+			}
+			return audit(ctx, tx, store.AuditEntry{Actor: "retention", Action: "submission.purge",
+				Subject: "project/" + strconv.FormatInt(id, 10), Detail: fmt.Sprintf("%d purged", n)})
+		}); err != nil {
+			errs = errors.Join(errs, fmt.Errorf("purge archived submissions of project %d: %w", id, err))
+			continue
+		}
+		res.Submissions += int(n)
 	}
 
 	return res, errs

@@ -73,21 +73,24 @@ func daysAgoModifier(n int) string {
 	return "-" + strconv.Itoa(n) + " days"
 }
 
-func auditRows(t *testing.T, db *DB, action string) []struct{ Actor, Subject string } {
+// auditRow is one audit_log row as auditRows reads it.
+type auditRow struct{ Actor, Subject, Detail string }
+
+func auditRows(t *testing.T, db *DB, action string) []auditRow {
 	t.Helper()
 	rows, err := db.db.QueryContext(context.Background(),
-		`SELECT actor, subject FROM audit_log WHERE action=?`, action)
+		`SELECT actor, subject, detail FROM audit_log WHERE action=? ORDER BY rowid`, action)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer rows.Close()
-	var out []struct{ Actor, Subject string }
+	var out []auditRow
 	for rows.Next() {
-		var a, s string
-		if err := rows.Scan(&a, &s); err != nil {
+		var r auditRow
+		if err := rows.Scan(&r.Actor, &r.Subject, &r.Detail); err != nil {
 			t.Fatal(err)
 		}
-		out = append(out, struct{ Actor, Subject string }{a, s})
+		out = append(out, r)
 	}
 	return out
 }
@@ -516,6 +519,58 @@ func TestPurgeArchivedDeletesAgedFormsWithSubmissions(t *testing.T) {
 	}
 	// days <= 0 purges nothing, and a second pass finds nothing.
 	if res, err := db.PurgeArchived(ctx, 30); err != nil || len(res.Forms) != 0 {
+		t.Fatalf("second pass: %+v %v", res, err)
+	}
+}
+
+// TestPurgeArchivedDeletesAgedSubmissions: a submission archived on its
+// own is purged RETENTION_ARCHIVED_DAYS after archiving, with one audit
+// row per project counting them; an active or recently archived one
+// stays, and so does the form.
+func TestPurgeArchivedDeletesAgedSubmissions(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	for _, k := range []struct {
+		project int64
+		id      string
+	}{{1, "old1"}, {1, "old2"}, {1, "recent"}, {1, "active"}, {2, "old3"}} {
+		n := newSub(k.id, map[string]string{"email": k.id + "@x.io"})
+		n.Submission.ProjectID, n.Event.ProjectID = k.project, k.project
+		if _, _, err := db.WriteSubmission(ctx, n); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archive := func(id string, days int) {
+		if _, err := db.ExecForTest(
+			`UPDATE submissions SET archived_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?) WHERE id=?`,
+			daysAgoModifier(days), id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	archive("old1", 40)
+	archive("old2", 31)
+	archive("old3", 40)
+	archive("recent", 5)
+
+	res, err := db.PurgeArchived(ctx, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Submissions != 3 || len(res.Forms) != 0 {
+		t.Fatalf("result = %+v, want 3 submissions and no form", res)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions`); c != 2 {
+		t.Fatalf("%d submissions left, want recent and active", c)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM forms`); c != 2 {
+		t.Fatalf("%d forms left, want both", c)
+	}
+	rows := auditRows(t, db, "submission.purge")
+	if len(rows) != 2 || rows[0].Subject != "project/1" || rows[0].Detail != "2 purged" ||
+		rows[1].Subject != "project/2" || rows[1].Detail != "1 purged" || rows[0].Actor != "retention" {
+		t.Fatalf("audit = %+v", rows)
+	}
+	if res, err := db.PurgeArchived(ctx, 30); err != nil || res.Submissions != 0 {
 		t.Fatalf("second pass: %+v %v", res, err)
 	}
 }

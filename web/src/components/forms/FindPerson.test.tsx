@@ -32,7 +32,7 @@ describe('FindPerson', () => {
     expect(within(results).getByText(/Again/)).toBeInTheDocument()
   })
 
-  it('marks an archived form\'s submissions, which Delete all covers too', async () => {
+  it('marks archived submissions, which Archive all covers too', async () => {
     const user = userEvent.setup()
     vi.spyOn(endpoints, 'findSubmissions').mockResolvedValue({
       submissions: [
@@ -44,35 +44,36 @@ describe('FindPerson', () => {
     await user.type(screen.getByRole('searchbox', { name: 'Find a person' }), 'bob{Enter}')
     const results = await screen.findByRole('region', { name: 'Found submissions' })
     const groups = within(results).getAllByRole('heading', { level: 3 })
-    expect(groups.map((h) => h.textContent)).toEqual(['oldArchived', 'contact'])
-    expect(within(groups[0]).getByText('Archived')).toBeInTheDocument()
-    expect(within(groups[1]).queryByText('Archived')).toBeNull()
-    await user.click(within(results).getByRole('button', { name: 'Delete all' }))
-    const confirm = await screen.findByRole('alertdialog', { name: /Delete 2 submissions/ })
-    expect(within(confirm).getByText(/archived ones included/)).toBeInTheDocument()
+    expect(groups.map((h) => h.textContent)).toEqual(['old', 'contact'])
+    const items = within(results).getAllByRole('listitem')
+    expect(within(items[0]).getByText('Archived')).toBeInTheDocument()
+    expect(within(items[1]).queryByText('Archived')).toBeNull()
+    await user.click(within(results).getByRole('button', { name: 'Archive all' }))
+    const confirm = await screen.findByRole('alertdialog', { name: /Archive 2 submissions/ })
+    expect(within(confirm).getByText(/deletes it for good/)).toBeInTheDocument()
   })
 
-  it('deletes every submission found once confirmed', async () => {
+  it('archives every submission found once confirmed', async () => {
     const user = userEvent.setup()
     vi.spyOn(endpoints, 'findSubmissions').mockResolvedValue({ submissions: [found('s1')] })
-    const del = vi.spyOn(endpoints, 'deleteSubmissions').mockResolvedValue({ deleted: 1 })
+    const archive = vi.spyOn(endpoints, 'archiveSubmissions').mockResolvedValue({ archived: 1 })
     renderWithProviders(<FindPerson projectId={4} />)
     await user.type(screen.getByRole('searchbox', { name: 'Find a person' }), 'bob{Enter}')
     const results = await screen.findByRole('region', { name: 'Found submissions' })
-    await user.click(within(results).getByRole('button', { name: 'Delete all' }))
-    const confirm = await screen.findByRole('alertdialog', { name: /Delete 1 submission\b/ })
-    expect(del).not.toHaveBeenCalled()
-    await user.click(within(confirm).getByRole('button', { name: 'Delete submissions' }))
-    await waitFor(() => expect(del).toHaveBeenCalledWith(4, { search: 'bob' }))
+    await user.click(within(results).getByRole('button', { name: 'Archive all' }))
+    const confirm = await screen.findByRole('alertdialog', { name: /Archive 1 submission\b/ })
+    expect(archive).not.toHaveBeenCalled()
+    await user.click(within(confirm).getByRole('button', { name: 'Archive submissions' }))
+    await waitFor(() => expect(archive).toHaveBeenCalledWith(4, { search: 'bob' }))
   })
 
-  it('says when nothing matches, offering no delete', async () => {
+  it('says when nothing matches, offering no archive', async () => {
     const user = userEvent.setup()
     vi.spyOn(endpoints, 'findSubmissions').mockResolvedValue({ submissions: [] })
     renderWithProviders(<FindPerson projectId={4} />)
     await user.type(screen.getByRole('searchbox', { name: 'Find a person' }), 'zed{Enter}')
     expect(await screen.findByText(/No submissions contain “zed”/)).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Delete all' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Archive all' })).toBeNull()
   })
 
   it('counts a first page with more after it as a floor', async () => {
