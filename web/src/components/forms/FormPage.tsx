@@ -1,6 +1,6 @@
-import { useEffect, useId, useState, type FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { ArrowLeftIcon, DownloadIcon, InboxIcon, Trash2Icon } from 'lucide-react'
+import { ArrowLeftIcon, DownloadIcon, InboxIcon, SettingsIcon, Trash2Icon } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import WidgetFrame from '@/components/WidgetFrame'
@@ -11,11 +11,9 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
 import Table from '@/components/widgets/table'
-import { useFormActions, type FormActions } from '@/hooks/use-form-actions'
+import { useFormActions } from '@/hooks/use-form-actions'
 import { useMarkFormSeen } from '@/hooks/use-mark-seen'
 import { useStoredState } from '@/hooks/use-stored-state'
 import { ApiError, endpoints, type Form, type Project, type SubmissionsPage, type SubmissionsQuery } from '@/lib/api'
@@ -24,9 +22,8 @@ import { formatDay, formatDayTime, formStatus } from '@/lib/forms'
 import { FORMS_ID, rangeParams, tabPath } from '@/lib/project-tabs'
 import { formsQuery, submissionsQuery } from '@/lib/queries'
 import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
-import ApproveDialog, { FieldPicker } from './ApproveDialog'
-import ClosingControl from './ClosingControl'
-import SettingRow from './SettingRow'
+import ApproveDialog from './ApproveDialog'
+import SettingsDialog from './SettingsDialog'
 import SubmissionDrawer from './SubmissionDrawer'
 
 /**
@@ -217,83 +214,10 @@ function Submissions({ projectId, form }: { projectId: number; form: Form }) {
   )
 }
 
-/** Purpose and return URL, saved together; only what changed is sent. */
-function Details({ projectId, form, actions }: { projectId: number; form: Form; actions: FormActions }) {
-  const id = useId()
-  const [purpose, setPurpose] = useState(form.purpose)
-  const [returnURL, setReturnURL] = useState(form.return_url)
-  // Follow what is saved, from here or elsewhere.
-  useEffect(() => setPurpose(form.purpose), [form.purpose])
-  useEffect(() => setReturnURL(form.return_url), [form.return_url])
-  const changed = purpose.trim() !== form.purpose || returnURL.trim() !== form.return_url
-  const save = (e: FormEvent) => {
-    e.preventDefault()
-    const body: { purpose?: string; return_url?: string } = {}
-    if (purpose.trim() !== form.purpose) body.purpose = purpose.trim()
-    if (returnURL.trim() !== form.return_url) body.return_url = returnURL.trim()
-    void actions.update(projectId, form.name, body)
-  }
-  return (
-    <SettingRow title="Details" aside="What the form is for, and where a plain HTML form sends the visitor once they submit.">
-      <form onSubmit={save} className="flex flex-col gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor={`${id}-purpose`}>Purpose</Label>
-          <Input id={`${id}-purpose`} value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="What the form is for" />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor={`${id}-return`}>Return URL</Label>
-          <Input
-            id={`${id}-return`}
-            type="url"
-            value={returnURL}
-            onChange={(e) => setReturnURL(e.target.value)}
-            placeholder="https://example.com/thanks"
-          />
-          <p className="text-xs text-muted-foreground">
-            Used when the form sets no <code className="font-mono">$redirect</code>; its origin must be one of the project's allowed
-            origins.
-          </p>
-        </div>
-        <Button type="submit" variant="outline" size="sm" className="self-start" disabled={actions.pending || !changed}>
-          Save
-        </Button>
-      </form>
-    </SettingRow>
-  )
-}
-
-/** An approved form's expected fields: change which are kept, never none. */
-function ExpectedFields({ projectId, form, actions }: { projectId: number; form: Form; actions: FormActions }) {
-  const expected = form.expected_fields ?? []
-  const [checked, setChecked] = useState(expected)
-  const saved = JSON.stringify(expected)
-  useEffect(() => setChecked(JSON.parse(saved) as string[]), [saved])
-  const same = JSON.stringify(checked) === saved
-  return (
-    <SettingRow
-      title="Expected fields"
-      aside="New submissions keep only these, as the table's columns in this order. A field the form starts sending appears here unchecked; add one by name to keep it from its first submission."
-    >
-      <FieldPicker fields={form.fields} kept={expected} checked={checked} onChange={setChecked} disabled={actions.pending} />
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        className="self-start"
-        disabled={actions.pending || same || checked.length === 0}
-        onClick={() => void actions.update(projectId, form.name, { expected_fields: checked })}
-      >
-        Save fields
-      </Button>
-    </SettingRow>
-  )
-}
-
 /**
  * `/projects/:id/forms/:name` (D12), inside the Forms tab: a crumb back to
  * the list, a draft's banner with **Approve**, the submissions table, and
- * the form's settings: purpose and return URL, an approved form's expected
- * fields, and its closing.
+ * **Settings** opening the form's settings dialog.
  */
 export default function FormPage({ project, name }: { project: Project; name: string }) {
   const id = project.project_id
@@ -302,6 +226,7 @@ export default function FormPage({ project, name }: { project: Project; name: st
   const back = tabPath(id, FORMS_ID, rangeParams(url).toString())
   const actions = useFormActions()
   const [approving, setApproving] = useState(false)
+  const [setting, setSetting] = useState(false)
   const form = q.data?.forms.find((f) => f.name === name)
 
   // Opening a form reads it: up to the last submission the list showed, so
@@ -330,6 +255,10 @@ export default function FormPage({ project, name }: { project: Project; name: st
           <header className="flex min-w-0 flex-wrap items-center gap-2">
             <h2 className="font-mono text-lg font-semibold break-all">{form.name}</h2>
             <Badge variant={form.status === 'draft' ? 'outline' : 'secondary'}>{formStatus(form)}</Badge>
+            <Button type="button" variant="outline" size="sm" className="ml-auto" onClick={() => setSetting(true)}>
+              <SettingsIcon />
+              Settings
+            </Button>
           </header>
           {form.status === 'draft' && (
             <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed p-3">
@@ -342,29 +271,25 @@ export default function FormPage({ project, name }: { project: Project; name: st
             </div>
           )}
           <Submissions projectId={id} form={form} />
-          <section aria-label="Settings" className="flex flex-col gap-4 rounded-lg border p-4">
-            <h3 className="text-base font-semibold">Settings</h3>
-            <div className="flex flex-col divide-y">
-            <Details projectId={id} form={form} actions={actions} />
-            {form.status === 'approved' && <ExpectedFields projectId={id} form={form} actions={actions} />}
-            <ClosingControl
-              closesAt={form.closes_at}
-              pending={actions.pending}
-              onChange={(closes_at) =>
-                actions.update(
-                  id,
-                  name,
-                  { closes_at },
-                  closes_at === null
-                    ? `Reopened ${name}`
-                    : Date.parse(closes_at) <= Date.now()
-                      ? `Closed ${name}`
-                      : `${name} closes ${formatDayTime(new Date(closes_at))}`
-                )
-              }
-            />
-            </div>
-          </section>
+          <SettingsDialog
+            open={setting}
+            onOpenChange={setSetting}
+            form={form}
+            pending={actions.pending}
+            onSave={(body) => actions.update(id, name, body)}
+            onClosing={(closes_at) =>
+              actions.update(
+                id,
+                name,
+                { closes_at },
+                closes_at === null
+                  ? `Reopened ${name}`
+                  : Date.parse(closes_at) <= Date.now()
+                    ? `Closed ${name}`
+                    : `${name} closes ${formatDayTime(new Date(closes_at))}`
+              )
+            }
+          />
           <ApproveDialog
             open={approving}
             onOpenChange={setApproving}

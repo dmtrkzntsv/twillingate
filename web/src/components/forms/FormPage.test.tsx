@@ -95,43 +95,70 @@ describe('FormPage', () => {
     expect(screen.getByRole('button', { name: 'Delete all matching' })).toBeDisabled()
   })
 
+  async function openSettings(user: ReturnType<typeof userEvent.setup>) {
+    await user.click(await screen.findByRole('button', { name: 'Settings' }))
+    return screen.findByRole('dialog', { name: 'Settings' })
+  }
+
   it('marks fields arriving outside the expected list as not kept, and saves a new list', async () => {
     const user = userEvent.setup()
     const update = vi.spyOn(endpoints, 'updateForm').mockResolvedValue({ status: 'updated' })
     renderPage()
-    const picker = await screen.findByRole('group', { name: 'Expected fields' })
+    const dialog = await openSettings(user)
+    const picker = within(dialog).getByRole('group', { name: 'Expected fields' })
     expect(within(picker).getByText('not kept')).toBeInTheDocument()
-    expect(within(picker).getByRole('button', { name: 'Save fields' })).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: 'Save' })).toBeDisabled()
     await user.click(within(picker).getByRole('checkbox', { name: 'phone' }))
-    await user.click(within(picker).getByRole('button', { name: 'Save fields' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(update).toHaveBeenCalledWith(4, 'contact', { expected_fields: ['email', 'message', 'phone'] }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
   })
 
   it('adds a field by name and keeps it with the others', async () => {
     const user = userEvent.setup()
     const update = vi.spyOn(endpoints, 'updateForm').mockResolvedValue({ status: 'updated' })
     renderPage()
-    const picker = await screen.findByRole('group', { name: 'Expected fields' })
+    const dialog = await openSettings(user)
+    const picker = within(dialog).getByRole('group', { name: 'Expected fields' })
     await user.type(within(picker).getByRole('textbox', { name: 'New field' }), 'company')
     await user.click(within(picker).getByRole('button', { name: 'Add field' }))
     expect(within(picker).getByRole('checkbox', { name: 'company' })).toBeChecked()
-    await user.click(within(picker).getByRole('button', { name: 'Save fields' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     await waitFor(() => expect(update).toHaveBeenCalledWith(4, 'contact', { expected_fields: ['email', 'message', 'company'] }))
   })
 
-  it('saves the purpose and return URL', async () => {
+  it('saves the purpose, return URL and fields together, only what changed', async () => {
     const user = userEvent.setup()
     const update = vi.spyOn(endpoints, 'updateForm').mockResolvedValue({ status: 'updated' })
     renderPage()
-    const purpose = await screen.findByLabelText('Purpose')
+    const dialog = await openSettings(user)
+    const purpose = within(dialog).getByLabelText('Purpose')
     expect(purpose).toHaveValue('Sales')
     await user.clear(purpose)
     await user.type(purpose, 'Leads')
-    await user.type(screen.getByLabelText('Return URL'), 'https://shop.example/thanks')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await user.type(within(dialog).getByLabelText('Return URL'), 'https://shop.example/thanks')
+    await user.click(within(dialog).getByRole('checkbox', { name: 'phone' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Save' }))
     await waitFor(() =>
-      expect(update).toHaveBeenCalledWith(4, 'contact', { purpose: 'Leads', return_url: 'https://shop.example/thanks' })
+      expect(update).toHaveBeenCalledWith(4, 'contact', {
+        purpose: 'Leads',
+        return_url: 'https://shop.example/thanks',
+        expected_fields: ['email', 'message', 'phone'],
+      })
     )
+  })
+
+  it('drops unsaved edits on Cancel', async () => {
+    const user = userEvent.setup()
+    const update = vi.spyOn(endpoints, 'updateForm')
+    renderPage()
+    let dialog = await openSettings(user)
+    await user.clear(within(dialog).getByLabelText('Purpose'))
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Settings' })).toBeNull())
+    dialog = await openSettings(user)
+    expect(within(dialog).getByLabelText('Purpose')).toHaveValue('Sales')
+    expect(update).not.toHaveBeenCalled()
   })
 
   it('shows a draft banner with Approve', async () => {
@@ -141,7 +168,10 @@ describe('FormPage', () => {
     const approve = vi.spyOn(endpoints, 'approveForm').mockResolvedValue({ status: 'approved' })
     renderPage()
     expect(await screen.findByText(`Draft: accepting until ${formatDay(new Date(until))}, then archived`)).toBeInTheDocument()
-    expect(screen.queryByRole('group', { name: 'Expected fields' })).toBeNull()
+    const settings = await openSettings(user)
+    expect(within(settings).getByLabelText('Purpose')).toBeInTheDocument()
+    expect(within(settings).queryByRole('group', { name: 'Expected fields' })).toBeNull()
+    await user.click(within(settings).getByRole('button', { name: 'Cancel' }))
     await user.click(screen.getByRole('button', { name: 'Approve' }))
     const dialog = await screen.findByRole('dialog', { name: 'Approve contact' })
     await user.click(within(dialog).getByRole('button', { name: 'Approve' }))
@@ -152,7 +182,8 @@ describe('FormPage', () => {
     const user = userEvent.setup()
     const update = vi.spyOn(endpoints, 'updateForm').mockResolvedValue({ status: 'updated' })
     renderPage()
-    await user.click(await screen.findByRole('button', { name: 'Stop now' }))
+    const dialog = await openSettings(user)
+    await user.click(within(dialog).getByRole('button', { name: 'Stop now' }))
     await waitFor(() => expect(update).toHaveBeenCalledWith(4, 'contact', { closes_at: expect.stringMatching(/Z$/) }))
   })
 

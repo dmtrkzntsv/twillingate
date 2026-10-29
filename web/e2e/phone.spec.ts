@@ -269,12 +269,17 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   expect(await sidewaysScroll(page), 'block attribute dialog').toEqual([])
   await page.keyboard.press('Escape')
 
-  // A form's Approve dialog and a submission's drawer fit the phone.
+  // A form's Approve and Settings dialogs and a submission's drawer fit the phone.
   await check(page, `/app/projects/${id}/forms/${formName}`)
   await page.getByRole('button', { name: 'Approve', exact: true }).click()
   await expect(page.getByRole('dialog', { name: `Approve ${formName}` })).toBeVisible()
   // Polled: the dialog zooms in, and its box fits once it has.
   await expect.poll(() => dialogOverflow(page), { message: 'Approve dialog' }).toEqual([])
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible()
+  await expect.poll(() => dialogOverflow(page), { message: 'Settings dialog' }).toEqual([])
+  expect(await sidewaysScroll(page), 'Settings dialog').toEqual([])
   await page.keyboard.press('Escape')
   await page.locator('tbody tr').first().click()
   await expect(page.getByRole('dialog', { name: 'Submission' }).getByText('x', { exact: true })).toBeVisible()

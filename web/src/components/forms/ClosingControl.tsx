@@ -4,7 +4,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { formatDayTime, isClosed, rfc3339 } from '@/lib/forms'
-import SettingRow from './SettingRow'
 
 interface Props {
   /** The form's closing time, absent while it is open. */
@@ -34,15 +33,16 @@ export default function ClosingControl({ closesAt, pending, onChange }: Props) {
   }
 
   return (
-    <SettingRow
-      title="Closing"
-      aside={
-        <div className="flex flex-col items-start gap-2">
+    <div role="group" aria-labelledby={`${id}-title`} className="flex flex-col gap-3">
+      <div className="flex flex-col gap-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 id={`${id}-title`} className="text-sm font-medium">
+            Closing
+          </h3>
           <Badge variant={closed ? 'outline' : 'secondary'}>{status}</Badge>
-          <p>Submissions after the closing time are refused; reopen to take them again.</p>
         </div>
-      }
-    >
+        <p className="text-xs text-muted-foreground">Submissions after the closing time are refused. These buttons apply at once.</p>
+      </div>
       <div className="flex flex-wrap items-end gap-2">
         <div className="flex min-w-0 flex-col gap-1.5">
           <Label htmlFor={`${id}-at`}>Closes at</Label>
@@ -62,6 +62,6 @@ export default function ClosingControl({ closesAt, pending, onChange }: Props) {
           </Button>
         )}
       </div>
-    </SettingRow>
+    </div>
   )
 }

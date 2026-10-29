@@ -62,9 +62,13 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   await approve.getByRole('button', { name: 'Approve', exact: true }).click()
   await expect(approve).toHaveCount(0)
   await expect(page.getByText(/^Draft: accepting until/)).toHaveCount(0)
-  const fields = page.getByRole('group', { name: 'Expected fields' })
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  const fields = settings.getByRole('group', { name: 'Expected fields' })
   await expect(fields.getByRole('checkbox', { name: 'email' })).toBeChecked()
   await expect(fields.getByText('not kept')).toHaveCount(2)
+  await page.keyboard.press('Escape')
+  await expect(settings).toHaveCount(0)
   await expect(table.getByRole('columnheader', { name: 'phone' })).toHaveCount(0)
   await expect(table.locator('tbody tr')).toHaveCount(2)
 
@@ -95,8 +99,9 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   expect(text).not.toContain('bob@example.com')
 
   // Stop now: the form closes and refuses the next submission.
-  await page.getByRole('button', { name: 'Stop now' }).click()
-  await expect(page.getByRole('group', { name: 'Closing' }).getByText(/^Closed /)).toBeVisible()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
+  await settings.getByRole('button', { name: 'Stop now' }).click()
+  await expect(settings.getByRole('group', { name: 'Closing' }).getByText(/^Closed /)).toBeVisible()
   const refused = await request.post(`/ingest/forms/contact?key=${key}`, {
     headers: { Origin: SITE, Referer: `${SITE}/contact` },
     form: { email: 'late@example.com' },
@@ -104,7 +109,8 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   })
   expect(refused.status()).toBe(303)
   expect(refused.headers()['location']).toBe(`${SITE}/contact#twillingate-form-error-contact`)
-  await expect(page.getByRole('group', { name: 'Closing' }).getByRole('button', { name: 'Reopen' })).toBeVisible()
+  await expect(settings.getByRole('group', { name: 'Closing' }).getByRole('button', { name: 'Reopen' })).toBeVisible()
+  await page.keyboard.press('Escape')
 
   // Find a person across the forms, and delete everything found.
   await page.getByRole('link', { name: /^Forms(, \d+ new)?$/ }).last().click()
