@@ -38,7 +38,7 @@ var ErrSQLEngine error = &store.Refusal{Kind: store.ErrInvalid, Msg: "SQL needs 
 // with the rules, scoped to the widget's project when it reads :project.
 type sqlEngine struct {
 	client  SQL
-	dir     string    // EVENTS_DIR, which the table spec's paths are relative to
+	dir     string    // DATA_DIR, which the table spec's paths are relative to
 	rules   RulesFunc // nil applies none
 	live    LiveFunc  // nil counts every project with files as live
 	timeout time.Duration

@@ -81,7 +81,7 @@ type Options struct {
 	// Rules are the event and attribute rules a query or sql widget reads
 	// with; nil applies none.
 	Rules RulesFunc
-	// EventsDir is EVENTS_DIR: the table spec a sql widget's query sends
+	// EventsDir is DATA_DIR: the table spec a sql widget's query sends
 	// names its files relative to it, and the projects a sql widget is
 	// checked on are read from their names.
 	EventsDir string

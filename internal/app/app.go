@@ -140,7 +140,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	defer geoProvider.Close()
 
 	// The archive log (raw-first PR 3): the ingest process appends every
-	// event to EVENTS_DIR beside SQLite; a console-only process writes none.
+	// event to DATA_DIR beside SQLite; a console-only process writes none.
 	// The log is the only sink; only the ingest process enqueues, so a
 	// process without ingest builds no buffer.
 	var archiveLog *archive.Log

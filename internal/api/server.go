@@ -110,7 +110,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 }
 
 // WidgetOptions is opt with what sql and query widgets read with: the
-// registry's rules and live projects, EVENTS_DIR, CONSOLE_QUERY_TIMEOUT and
+// registry's rules and live projects, DATA_DIR, CONSOLE_QUERY_TIMEOUT and
 // CONSOLE_QUERY_ROWS_MAX, as the query tool reads the same files. app
 // gives its start-up check of the users' widgets the same.
 func WidgetOptions(cfg *config.Config, reg *manage.Registry, opt reporting.Options) reporting.Options {

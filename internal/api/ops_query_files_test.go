@@ -54,7 +54,7 @@ func TestQueryFilesSourceRunsOnTheFiles(t *testing.T) {
 			r, files.deadline)
 	}
 	// Every project's files (blog's: docs has none), by paths relative to
-	// EVENTS_DIR.
+	// DATA_DIR.
 	if ps := files.req.Tables.Projects; len(ps) != 1 || ps[0].ID != 1 || len(ps[0].Parquet) == 0 || filepath.IsAbs(ps[0].Parquet[0]) {
 		t.Errorf("tables = %+v, want blog's files, relative", files.req.Tables)
 	}

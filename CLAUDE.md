@@ -21,7 +21,7 @@ internal/identity/   actor hashing and salt rotation
 internal/enrich/     User-Agent and URL parsing for web hits
 internal/geo/        MaxMind lookup
 internal/native/     structured queries (stat, trend, breakdown) answered in Go over the event files
-internal/archive/    raw events as files under raw/: the per-day NDJSON log, the dump to Parquet, the month merge, retention by file, the derived sessions, identities and aliases, and the table spec the external SQL engine reads
+internal/archive/    raw events as files under data/: the per-day NDJSON log, the dump to Parquet, the month merge, retention by file, the derived sessions, identities and aliases, and the table spec the external SQL engine reads
 internal/shared/     small generic leaf packages: civil (calendar dates), golden (tests' expected answers under testdata/), readsql, sortkey, version
 internal/shared/hll/ distinct counts, exact up to 1,024 ids then a HyperLogLog sketch (about ±2%), for internal/native
 sqlengine/           public protocol and client for an external SQL engine over a Unix socket; stdlib only, importable by other modules

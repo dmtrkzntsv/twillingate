@@ -13,7 +13,7 @@ import (
 // leaves the events directory.
 var ErrTables = errors.New("archive: bad table spec")
 
-// TableSpec is the table spec of the files under dir (raw/) for an
+// TableSpec is the table spec of the files under dir (data/) for an
 // external SQL engine: what ListFiles lists, each path relative to dir,
 // and rules. With projects, only those projects' files and rules are in
 // it (a project with no files is left out, as ListFiles leaves it out);

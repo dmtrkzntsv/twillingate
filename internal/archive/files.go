@@ -44,7 +44,7 @@ type projectFiles struct {
 	identitiesDue bool                // identities.parquet or aliases.parquet missing or stale
 }
 
-// ListFiles lists raw/ for a reader, by project id, leaving out what the
+// ListFiles lists data/ for a reader, by project id, leaving out what the
 // daily pass would make it count twice:
 //   - a day file or segment once its month's file exists (a merge that
 //     stopped before deleting its days left both; the month file holds them);
@@ -52,7 +52,7 @@ type projectFiles struct {
 //     stopped before deleting its log).
 //
 // A .tmp file (a write in progress), any other name and a project with
-// neither events file nor log are left out. A missing raw/ lists nothing;
+// neither events file nor log are left out. A missing data/ lists nothing;
 // a project directory that vanishes while listing (a purge) is skipped.
 func ListFiles(dir string) (map[int64]Files, error) {
 	return listFiles(dir, func(int64) bool { return true })

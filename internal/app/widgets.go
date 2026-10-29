@@ -8,7 +8,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 )
 
-// hasEventFiles reports whether any project under dir (EVENTS_DIR) has an
+// hasEventFiles reports whether any project under dir (DATA_DIR) has an
 // events file or log, from the file names alone (archive.LatestDays): a
 // boot check that would only run on nothing asks this first rather than
 // send the engine a query to find out.
