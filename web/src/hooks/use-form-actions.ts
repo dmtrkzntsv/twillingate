@@ -1,32 +1,33 @@
 import { useCallback, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { ApiError, endpoints, type DeleteSubmissionsBody, type FormUpdate } from '@/lib/api'
+import { ApiError, endpoints, type FormUpdate, type SubmissionsSelector } from '@/lib/api'
 
 export interface FormActions {
   approve(projectId: number, name: string, fields: string[]): Promise<boolean>
   update(projectId: number, name: string, body: FormUpdate, done?: string): Promise<boolean>
   archive(projectId: number, name: string): Promise<boolean>
   restore(projectId: number, name: string): Promise<boolean>
-  /** Resolves how many were deleted, undefined on a refusal. */
-  deleteSubmissions(projectId: number, body: DeleteSubmissionsBody): Promise<number | undefined>
+  /** Resolves how many were archived, undefined on a refusal. */
+  archiveSubmissions(projectId: number, body: SubmissionsSelector): Promise<number | undefined>
+  /** Resolves how many were restored, undefined on a refusal. */
+  restoreSubmissions(projectId: number, body: SubmissionsSelector): Promise<number | undefined>
   /** True while an action runs; buttons wait on it. */
   pending: boolean
 }
 
 /**
  * What a form write changes: the lists (and their counts), the tables, Find
- * a person and the Forms badge (project activity). A stored submission
- * never changes, and refetching one just deleted would only fail, so the
- * drawer's query is left alone.
+ * a person, the Forms badge (project activity) and an open submission (its
+ * archived_at).
  */
-const FORM_WRITE = ['forms', 'submissions', 'find-submissions', 'project-activity']
+const FORM_WRITE = ['forms', 'submissions', 'submission', 'find-submissions', 'project-activity']
 
 /**
  * Every form write, each the audited route, as `useProjectActions` does
  * them: a success toasts and refetches the forms, their tables and Find a
  * person; a failure toasts its message and resolves false (undefined for
- * a delete) instead of throwing.
+ * an archive or restore of submissions) instead of throwing.
  */
 export function useFormActions(): FormActions {
   const client = useQueryClient()
@@ -61,12 +62,19 @@ export function useFormActions(): FormActions {
     archive: async (projectId, name) =>
       ok(await run(() => endpoints.archiveForm(projectId, name), () => `Archived ${name}; restore it from the Archive page`)),
     restore: async (projectId, name) => ok(await run(() => endpoints.restoreForm(projectId, name), () => `Restored ${name}`)),
-    deleteSubmissions: async (projectId, body) =>
+    archiveSubmissions: async (projectId, body) =>
       (
         await run(
-          () => endpoints.deleteSubmissions(projectId, body),
-          (out) => `Deleted ${out.deleted} ${out.deleted === 1 ? 'submission' : 'submissions'}`
+          () => endpoints.archiveSubmissions(projectId, body),
+          (out) => `Archived ${out.archived} ${out.archived === 1 ? 'submission' : 'submissions'}`
         )
-      )?.deleted,
+      )?.archived,
+    restoreSubmissions: async (projectId, body) =>
+      (
+        await run(
+          () => endpoints.restoreSubmissions(projectId, body),
+          (out) => `Restored ${out.restored} ${out.restored === 1 ? 'submission' : 'submissions'}`
+        )
+      )?.restored,
   }
 }

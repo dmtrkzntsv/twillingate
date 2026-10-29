@@ -14,10 +14,10 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store/storetest"
 )
 
-// TestDeleteSubmissionsLeavesTheFiles: deleting a submission removes the
-// row and leaves its $form_submit event in the log, which holds no field
-// (raw-first PR 6, Decision 11).
-func TestDeleteSubmissionsLeavesTheFiles(t *testing.T) {
+// TestArchiveSubmissionsLeavesTheFiles: archiving a submission (purged
+// later with its row) leaves its $form_submit event in the log, which
+// holds no field (raw-first PR 6, Decision 11).
+func TestArchiveSubmissionsLeavesTheFiles(t *testing.T) {
 	ctx := context.Background()
 	data := t.TempDir()
 	st := storetest.Open(t, filepath.Join(data, "twillingate.db"))
@@ -48,14 +48,15 @@ func TestDeleteSubmissionsLeavesTheFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	n, err := st.DeleteSubmissions(ctx, 1, []string{ev.ID}, store.AuditEntry{Actor: "test", Action: "submission.delete", Subject: "project/1", Detail: "ids"})
+	audit := store.AuditEntry{Actor: "test", Action: "submission.archive", Subject: "project/1", Detail: "ids"}
+	n, err := st.SetSubmissionsArchived(ctx, 1, []string{ev.ID}, true, audit)
 	if err != nil || n != 1 {
-		t.Fatalf("deleted %d, %v; want 1", n, err)
+		t.Fatalf("archived %d, %v; want 1", n, err)
 	}
-	if got, err := st.DeleteSubmissions(ctx, 1, []string{ev.ID}, store.AuditEntry{Actor: "test", Action: "submission.delete", Subject: "project/1", Detail: "ids"}); err != nil || got != 0 {
-		t.Fatalf("second delete = %d, %v; want 0 (the submission is gone)", got, err)
+	if got, err := st.SetSubmissionsArchived(ctx, 1, []string{ev.ID}, true, audit); err != nil || got != 0 {
+		t.Fatalf("second archive = %d, %v; want 0 (the submission is archived)", got, err)
 	}
 	if names := logEventNames(t, filepath.Join(data, "raw")); !slices.Equal(names, []string{store.FormSubmitEvent}) {
-		t.Fatalf("logged events after the delete = %v, want the $form_submit line", names)
+		t.Fatalf("logged events after the archive = %v, want the $form_submit line", names)
 	}
 }

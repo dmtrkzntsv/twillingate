@@ -24,7 +24,7 @@ type formCalls struct {
 	updated  []store.Form
 	draftArg time.Time
 	archArg  []bool
-	deleted  [][]string
+	archived [][]string
 	found    []string
 	limit    int
 }
@@ -100,16 +100,20 @@ func (f *formCalls) SetFormArchived(_ context.Context, pid int64, name string, a
 	return nil
 }
 
-// DeleteSubmissions deletes every id but "gone", which is already gone.
-func (f *formCalls) DeleteSubmissions(_ context.Context, pid int64, ids []string, a store.AuditEntry) (int, error) {
-	f.deleted = append(f.deleted, ids)
+// SetSubmissionsArchived changes every id but "gone", which is already gone.
+func (f *formCalls) SetSubmissionsArchived(_ context.Context, pid int64, ids []string, archived bool, a store.AuditEntry) (int, error) {
+	f.archived = append(f.archived, ids)
 	n := 0
 	for _, id := range ids {
 		if id != "gone" {
 			n++
 		}
 	}
-	a.Detail += fmt.Sprintf(" (%d deleted)", n)
+	verb := "archived"
+	if !archived {
+		verb = "restored"
+	}
+	a.Detail += fmt.Sprintf(" (%d %s)", n, verb)
 	f.audits = append(f.audits, a)
 	return n, nil
 }
@@ -392,28 +396,34 @@ func TestSubmissionSearchRules(t *testing.T) {
 	}
 }
 
-func TestDeleteSubmissionsAuditsSelectorNotContents(t *testing.T) {
+func TestArchiveSubmissionsAuditsSelectorNotContents(t *testing.T) {
 	ctx := context.Background()
 	ops, fc, pid := newFormOps(t)
-	n, err := ops.DeleteSubmissions(ctx, "mcp", pid, []string{"s1", "s2", "gone"}, "search")
+	n, err := ops.ArchiveSubmissions(ctx, "mcp", pid, []string{"s1", "s2", "gone"}, "search")
 	if err != nil || n != 2 {
-		t.Fatalf("delete = %d, %v", n, err)
+		t.Fatalf("archive = %d, %v", n, err)
 	}
 	a := fc.audits[0]
-	if a.Actor != "mcp" || a.Action != "submission.delete" || a.Subject != "project/1" {
+	if a.Actor != "mcp" || a.Action != "submission.archive" || a.Subject != "project/1" {
 		t.Fatalf("audit = %+v", a)
 	}
-	// The selector alone; the store appends the count it deleted.
-	if a.Detail != "search (2 deleted)" {
-		t.Fatalf("detail = %q, want the selector and the count deleted", a.Detail)
+	// The selector alone; the store appends the count it archived.
+	if a.Detail != "search (2 archived)" {
+		t.Fatalf("detail = %q, want the selector and the count archived", a.Detail)
 	}
-	if _, err := ops.DeleteSubmissions(ctx, "cli", 99, []string{"x"}, "ids"); !errors.Is(err, ErrNotFound) {
+	if _, err := ops.ArchiveSubmissions(ctx, "cli", 99, []string{"x"}, "ids"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("unknown project: %v", err)
 	}
-	// Nothing to delete is still an erasure attempt: audited, with 0.
-	if n, err := ops.DeleteSubmissions(ctx, "cli", pid, nil, "search"); err != nil || n != 0 ||
-		fc.audits[len(fc.audits)-1].Detail != "search (0 deleted)" {
-		t.Fatalf("empty delete = %d, %v, audits %+v", n, err, fc.audits)
+	// Nothing to archive is still an erasure attempt: audited, with 0.
+	if n, err := ops.ArchiveSubmissions(ctx, "cli", pid, nil, "search"); err != nil || n != 0 ||
+		fc.audits[len(fc.audits)-1].Detail != "search (0 archived)" {
+		t.Fatalf("empty archive = %d, %v, audits %+v", n, err, fc.audits)
+	}
+	if n, err := ops.RestoreSubmissions(ctx, "mcp", pid, []string{"s1"}, "ids"); err != nil || n != 1 {
+		t.Fatalf("restore = %d, %v", n, err)
+	}
+	if a := fc.audits[len(fc.audits)-1]; a.Action != "submission.restore" || a.Detail != "ids (1 restored)" {
+		t.Fatalf("restore audit = %+v", a)
 	}
 }
 

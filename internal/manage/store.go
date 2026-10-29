@@ -45,7 +45,7 @@ type Store interface {
 	ApproveForm(ctx context.Context, projectID int64, name string, expected []string, now time.Time, a store.AuditEntry) error
 	UpdateForm(ctx context.Context, f store.Form, add []string, a store.AuditEntry) error
 	SetFormArchived(ctx context.Context, projectID int64, name string, archived bool, draftUntil time.Time, a store.AuditEntry) error
-	DeleteSubmissions(ctx context.Context, projectID int64, ids []string, a store.AuditEntry) (int, error)
+	SetSubmissionsArchived(ctx context.Context, projectID int64, ids []string, archived bool, a store.AuditEntry) (int, error)
 	FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]store.Submission, string, error)
 	SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error)
 	GetSubmission(ctx context.Context, projectID int64, form, id string) (store.Submission, error)

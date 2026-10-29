@@ -76,8 +76,8 @@ but a collector can answer on several hostnames; ask which one this site uses
 and change the snippet's `src`. The SDK posts to the origin it was loaded from.
 There is no rename (`project update -name` is one) and no delete over the API —
 deletion needs the CLI. Archiving is reversible with `restore_project`, but not
-forever: the daily pass deletes an archived project, dashboard or widget (and,
-for a project, all its data) once it has been archived longer than
+forever: the daily pass deletes an archived project, dashboard, widget, form
+or form submission (and, for a project, all its data) once it has been archived longer than
 `RETENTION_ARCHIVED_DAYS` (default 30; 0 keeps archived items forever).
 
 ```bash
@@ -798,21 +798,26 @@ tools below do.
    field before anything sends it, and an approved form keeps it.
 5. **Read the submissions** as a table with `list_submissions`, one in full
    with `get_submission`, or as CSV from the export route.
-6. **Erase a person** on request: `find_submissions` with their email (or any
-   text a field holds) lists what every form has of them, archived forms
-   included, and `delete_submissions` with the same `search` deletes exactly
-   that.
+6. **Set submissions aside** with `archive_submissions`: they leave the
+   table and are purged `RETENTION_ARCHIVED_DAYS` later unless
+   `restore_submissions` brings them back. Nothing deletes a submission
+   at once.
+7. **Erase a person** on request: `find_submissions` with their email (or any
+   text a field holds) lists what every form has of them, archived ones
+   included, and `archive_submissions` with the same `search` archives
+   exactly that; the daily pass purges it `RETENTION_ARCHIVED_DAYS` later.
 
 | Operation | CLI | MCP tool | Tool arguments |
 | --- | --- | --- | --- |
-| List forms | `twillingate form list` | `list_forms` | `{project_id, archived}`; drafts first; each with `status` (`draft` or `approved`), `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, `submissions` (count), `last_submitted_at`, `new_submissions` (received after `seen_at`), `seen_at` (how far the console has read the form; reading over MCP never moves it), `archived`. `archived: true` lists the archived forms instead. Beside `forms`, `action_base` is `INGEST_URL` + `/ingest/forms` (empty without `INGEST_URL`), so a plain form's action is `<action_base>/{name}?key=…` |
+| List forms | `twillingate form list` | `list_forms` | `{project_id, archived}`; drafts first; each with `status` (`draft` or `approved`), `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, `submissions` (count of active ones), `last_submitted_at`, `new_submissions` (active, received after `seen_at`), `archived_submissions` (count), `seen_at` (how far the console has read the form; reading over MCP never moves it), `archived`. `archived: true` lists the archived forms instead. Beside `forms`, `action_base` is `INGEST_URL` + `/ingest/forms` (empty without `INGEST_URL`), so a plain form's action is `<action_base>/{name}?key=…` |
 | Approve a draft | `twillingate form approve` | `approve_form` | `{project_id, name, expected_fields}`; one or more fields; an approved form is a `conflict` |
 | Change one | `twillingate form update` | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields, add_fields}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty; `add_fields` join `fields`, and an approved form keeps them, after `expected_fields` |
 | Archive / restore | `twillingate form archive` / `restore` | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions from every list, table and export (a search still finds them); a restored draft gets another `RETENTION_FORMS_DRAFT_DAYS` |
-| Read a form's table | `twillingate form export` (CSV) | `list_submissions` | `{project_id, name, filters, sort, distinct, offset, limit}`; returns `columns`, `rows`, `ids`, `matched`, `total`, `offset`, `limit` |
-| Read one submission | — | `get_submission` | `{project_id, name, id}`; every stored field (ones no longer expected too), `received_at`, `attribution` (`referrer`, `utm_source`, `utm_medium`, `utm_campaign`, each left out when empty; the last non-direct visit within `ATTRIBUTION_DAYS`, or what the submission sent; `{}` until the job has run, about a minute after arrival, and when the visit was direct) |
-| Find a person | — | `find_submissions` | `{project_id, search, limit, cursor}`; `search` at least 2 characters; returns `submissions` (each as `get_submission` answers it, with its `form` and `archived`, true when that form is archived) and `next_cursor` |
-| Delete submissions | `twillingate form erase` | `delete_submissions` | `{project_id}` with exactly one of `ids`, `form` with `filters`, or `search`; returns `deleted` |
+| Read a form's table | `twillingate form export` (CSV) | `list_submissions` | `{project_id, name, archived, filters, sort, distinct, offset, limit}`; `archived: true` reads the archived submissions instead; returns `columns`, `rows`, `ids`, `matched`, `total`, `offset`, `limit` |
+| Read one submission | — | `get_submission` | `{project_id, name, id}`; archived or not; every stored field (ones no longer expected too), `received_at`, `archived_at` (absent while active), `attribution` (`referrer`, `utm_source`, `utm_medium`, `utm_campaign`, each left out when empty; the last non-direct visit within `ATTRIBUTION_DAYS`, or what the submission sent; `{}` until the job has run, about a minute after arrival, and when the visit was direct) |
+| Find a person | — | `find_submissions` | `{project_id, search, limit, cursor}`; `search` at least 2 characters; returns `submissions` (each as `get_submission` answers it, with its `form` and `archived`, true when it or its form is archived) and `next_cursor` |
+| Archive submissions | `twillingate form erase` | `archive_submissions` | `{project_id}` with exactly one of `ids`, `form` with `filters`, or `search`; returns `archived` |
+| Restore submissions | — | `restore_submissions` | `{project_id}` with exactly one of `ids`, `form` with `filters` (on the archived table), or `search`; returns `restored` |
 
 The CLI works on the database directly, with every flag naming a project by
 `-project-id <id>` and a form by `-name`. `form list -project-id N [-archived]`
@@ -821,15 +826,18 @@ or `-`, fields). `form approve -fields a,b` keeps those fields; `form update`
 takes `-purpose`, `-return-url` (empty clears it), `-closes-at` (an RFC 3339
 time, `now` to close it at once, or `never` to reopen it) and, on an approved
 form, `-fields`; a flag left out keeps the value. `form export` writes the
-form's whole table as CSV to standard output (see below). `form erase -project-id N`
-takes `-id` (repeatable) or `-search`, never both, deletes exactly as
-`delete_submissions` does and prints only a count: it never echoes the search
+form's whole table as CSV to standard output (see below), its archived
+submissions with `-archived`. `form erase -project-id N`
+takes `-id` (repeatable) or `-search`, never both, archives exactly as
+`archive_submissions` does and prints only a count: it never echoes the search
 text or the ids.
 
-**The table.** `list_submissions` answers one form's submissions with the
-columns `Received`, then one per field (an approved form's expected fields
-in their order, a draft's every field). A field named `Received` or `id`,
-ignoring case, is shown as `<name> (field)`, and filters and sorts under
+**The table.** `list_submissions` answers one form's active submissions with
+the columns `Received`, then one per field (an approved form's expected fields
+in their order, a draft's every field). With `archived: true` it answers the
+archived ones instead, with an `Archived` column (when each was archived)
+after `Received`. A field named `Received`, `Archived` (in the archived
+table) or `id`, ignoring case, is shown as `<name> (field)`, and filters and sorts under
 that name. `ids` holds each row's submission id, in row order; it is not
 a column. The table takes the arguments `widget_data` takes for a remote
 table ([Filtering and paging a table](reporting.md#filtering-and-paging-a-table)): `filters`
@@ -839,33 +847,44 @@ are no `ids`), `offset` and `limit`. Without a `sort` it is newest first. It
 lists every submission whatever the date; filter `Received` to narrow it.
 The CSV export (`GET /api/projects/{project_id}/forms/{name}/submissions.csv`
 over REST, `twillingate form export` from the CLI) writes every matching row,
-newest first unless sorted; over REST it takes the same `filters` and `sort`,
-the CLI exports every row. The header is the columns. A cell (header included)
+newest first unless sorted; over REST it takes the same `archived`, `filters`
+and `sort`, the CLI exports every row (`-archived` for the archived ones). The header is the columns. A cell (header included)
 that starts with `=`, `+`, `-`, `@`, a tab or a carriage return is prefixed
 with `'`, so a spreadsheet shows what a visitor typed as text instead of
 running it as a formula.
 
-**Deleting.** `delete_submissions` is the one tool that deletes, and it
-cannot be undone. `ids` deletes those submissions (ids that match nothing are
-skipped); `form` with `filters` deletes every row that form's table shows
-with those filters (at least one; to remove a whole form, archive it); and
-`search` deletes what `find_submissions` finds. Search reaches archived
-forms too, so an erasure request leaves no copy behind; each submission it
-finds says `archived: true` when its form is archived. Search matches a field's
-value anywhere in it, case-insensitively for ASCII letters only (`É` and `é`
-differ). A deleted submission's `$form_submit` event stays in the event files: it
-holds the form's name, the actor and the attribution, never a field, so
-the count of conversions is kept. The audit log records
-the selector's kind (`ids`, `search`, or `filters` with the form's name) and
-the number of submissions actually deleted (a delete that removes nothing is
-recorded too, with 0), never the search text, the filter values or the submissions'
-contents: those are usually the erased person's email.
+**Archiving.** Nothing deletes a submission at once: `archive_submissions`
+sets it aside and the daily pass purges it `RETENTION_ARCHIVED_DAYS`
+(default 30; 0 never purges) after archiving, as it purges an archived form
+(one whose `$form_submit` event the job has not written to the event files
+yet waits for a later pass).
+An archived submission leaves its form's table, counts and export, and still
+reads with `get_submission`, `list_submissions` with `archived: true` and
+`find_submissions`; `restore_submissions` brings it back until it is purged.
+`ids` archives those submissions (ids that match nothing, and ones already
+archived, are skipped); `form` with `filters` archives every row that form's
+table shows with those filters (at least one; to set a whole form aside,
+archive the form); and `search` archives what `find_submissions` finds.
+`restore_submissions` takes the same selectors, `form` with `filters`
+applying to the form's archived table. Search reaches archived submissions
+and archived forms too, so an erasure request leaves no copy behind once the
+purge has run; each submission it finds says `archived: true` when it or its
+form is archived. Search matches a field's value anywhere in it,
+case-insensitively for ASCII letters only (`É` and `é` differ). An archived
+or purged submission's `$form_submit` event stays in the event files: it
+holds the form's name, the actor and the attribution, never a field, so the
+count of conversions is kept. The audit log records the selector's kind
+(`ids`, `search`, or `filters` with the form's name) and the number of
+submissions actually archived or restored (one that changes nothing is
+recorded too, with 0), never the search text, the filter values or the
+submissions' contents: those are usually the erased person's email. The
+purge records one `submission.purge` row per project with the count.
 
 An archived form's submissions are left out of every list, table and
-export (so of a delete by filters too) until it is restored, and are purged
-with it
-`RETENTION_ARCHIVED_DAYS` after archiving, with their events still in the raw
-window. Deleting the project deletes its forms and submissions.
+export (so of an archive or restore by filters too) until it is restored, and
+are purged with it `RETENTION_ARCHIVED_DAYS` after archiving, with their
+events still in the raw window. Deleting the project deletes its forms and
+submissions.
 
 ---
 
@@ -1420,7 +1439,7 @@ form submissions](#collect-form-submissions).
 
 ## Answer questions with the data
 
-A connected session gets sixty-four tools: the thirty-one below, the nine
+A connected session gets sixty-five tools: the thirty-one below, the ten
 in [Collect form submissions](#collect-form-submissions), and twenty-four
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
@@ -1563,11 +1582,12 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `POST` | `/api/projects/{project_id}/forms/{name}/archive` | `archive_form` | — |
 | `POST` | `/api/projects/{project_id}/forms/{name}/restore` | `restore_form` | — |
 | `POST` | `/api/projects/{project_id}/forms/{name}/seen` | `mark_form_seen`, REST only: no MCP tool | body: `until` (RFC 3339, the form's `last_submitted_at` as the page loaded it) → `{"status":"seen"}`; moves `seen_at` forward only |
-| `GET` | `/api/projects/{project_id}/forms/{name}/submissions` | `list_submissions` | query: `filters`, `sort`, `distinct`, `offset`, `limit` |
+| `GET` | `/api/projects/{project_id}/forms/{name}/submissions` | `list_submissions` | query: `archived`, `filters`, `sort`, `distinct`, `offset`, `limit` |
 | `GET` | `/api/projects/{project_id}/forms/{name}/submissions/{id}` | `get_submission` | — |
-| `GET` | `/api/projects/{project_id}/forms/{name}/submissions.csv` | `export_submissions`, REST only: no MCP tool | query: `filters`, `sort` (text/csv, every matching row) |
+| `GET` | `/api/projects/{project_id}/forms/{name}/submissions.csv` | `export_submissions`, REST only: no MCP tool | query: `archived`, `filters`, `sort` (text/csv, every matching row) |
 | `GET` | `/api/projects/{project_id}/submissions` | `find_submissions` | query: `search`, `limit`, `cursor` |
-| `POST` | `/api/projects/{project_id}/submissions/delete` | `delete_submissions` | body: one of `ids`, `form` with `filters`, `search` |
+| `POST` | `/api/projects/{project_id}/submissions/archive` | `archive_submissions` | body: one of `ids`, `form` with `filters`, `search` → `{"archived": n}` |
+| `POST` | `/api/projects/{project_id}/submissions/restore` | `restore_submissions` | body: one of `ids`, `form` with `filters` (archived table), `search` → `{"restored": n}` |
 | `GET` | `/api/projects/{project_id}/views/overview` | `views_overview` | query: `from`, `to`, `kind` |
 | `GET` | `/api/projects/{project_id}/views/breakdown` | `views_breakdown` | query: `from`, `to`, `dimension`, `limit` |
 | `GET` | `/api/projects/{project_id}/product/events` | `product_events` | query: `from`, `to`, `event` |

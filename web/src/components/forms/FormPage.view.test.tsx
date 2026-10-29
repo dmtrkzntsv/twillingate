@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
-import { endpoints, type Project } from '@/lib/api'
+import { endpoints, type DashboardsResponse, type Project } from '@/lib/api'
 import type { TableView } from '@/lib/table-view'
 import { contactPage, form, submission } from '@/test/forms'
 import { renderWithProviders } from '@/test/render'
@@ -33,7 +33,11 @@ const bobPage = { ...contactPage, rows: [contactPage.rows[1]], ids: ['s2'], matc
 beforeEach(() => {
   vi.restoreAllMocks()
   localStorage.clear()
-  vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact', { submissions: 2 })] })
+  vi.spyOn(endpoints, 'forms').mockResolvedValue({
+    action_base: '',
+    forms: [form('contact', { submissions: 2, archived_submissions: 1 })],
+  })
+  vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ dashboards: [], purge_after_days: 30 } as unknown as DashboardsResponse)
   vi.spyOn(endpoints, 'submissions').mockResolvedValue(contactPage)
   vi.spyOn(endpoints, 'submission').mockResolvedValue(submission('s2'))
 })
@@ -68,22 +72,46 @@ describe('FormPage view', () => {
     expect(endpoints.submissions).not.toHaveBeenCalledWith(4, 'contact', expect.objectContaining({ filters: expect.anything() }))
   })
 
-  it('deletes what the filters match once confirmed', async () => {
+  it('archives what the filters match once confirmed', async () => {
     const user = userEvent.setup()
-    const del = vi.spyOn(endpoints, 'deleteSubmissions').mockResolvedValue({ deleted: 1 })
+    const archive = vi.spyOn(endpoints, 'archiveSubmissions').mockResolvedValue({ archived: 1 })
     renderPage()
     vi.mocked(endpoints.submissions).mockResolvedValue(bobPage)
     await user.click(await screen.findByRole('button', { name: 'Filter Bob' }))
     await waitFor(() => expect(endpoints.submissions).toHaveBeenCalledWith(4, 'contact', { filters: JSON.stringify(bob) }))
-    const button = screen.getByRole('button', { name: 'Delete all matching' })
+    const button = screen.getByRole('button', { name: 'Archive all matching' })
     await waitFor(() => expect(button).toBeEnabled())
     await user.click(button)
-    const confirm = await screen.findByRole('alertdialog', { name: 'Delete 1 matching submission?' })
-    await user.click(within(confirm).getByRole('button', { name: 'Delete submissions' }))
-    await waitFor(() => expect(del).toHaveBeenCalledWith(4, { form: 'contact', filters: JSON.stringify(bob) }))
+    const confirm = await screen.findByRole('alertdialog', { name: 'Archive 1 matching submission?' })
+    expect(within(confirm).getByText(/deleted for good 30 days after archiving/)).toBeInTheDocument()
+    await user.click(within(confirm).getByRole('button', { name: 'Archive submissions' }))
+    await waitFor(() => expect(archive).toHaveBeenCalledWith(4, { form: 'contact', filters: JSON.stringify(bob) }))
   })
 
-  it('keeps Delete all matching off while a new view loads, so the count and the filters sent agree', async () => {
+  it('switches to the archived submissions, a table of their own with Restore all matching', async () => {
+    const user = userEvent.setup()
+    const restore = vi.spyOn(endpoints, 'restoreSubmissions').mockResolvedValue({ restored: 1 })
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Filter Bob' }))
+    await waitFor(() => expect(endpoints.submissions).toHaveBeenCalledWith(4, 'contact', { filters: JSON.stringify(bob) }))
+    await user.click(screen.getByRole('radio', { name: 'Archived 1' }))
+    // A fresh view: the active table's filter stays with it.
+    await waitFor(() => expect(endpoints.submissions).toHaveBeenLastCalledWith(4, 'contact', { archived: true }))
+    expect(screen.getByText(/deleted for good 30 days after archiving/)).toBeInTheDocument()
+    vi.mocked(endpoints.submissions).mockResolvedValue(bobPage)
+    await user.click(await screen.findByRole('button', { name: 'Filter Bob' }))
+    await waitFor(() =>
+      expect(endpoints.submissions).toHaveBeenCalledWith(4, 'contact', { archived: true, filters: JSON.stringify(bob) })
+    )
+    const button = screen.getByRole('button', { name: 'Restore all matching' })
+    await waitFor(() => expect(button).toBeEnabled())
+    await user.click(button)
+    const confirm = await screen.findByRole('alertdialog', { name: 'Restore 1 matching submission?' })
+    await user.click(within(confirm).getByRole('button', { name: 'Restore submissions' }))
+    await waitFor(() => expect(restore).toHaveBeenCalledWith(4, { form: 'contact', filters: JSON.stringify(bob) }))
+  })
+
+  it('keeps Archive all matching off while a new view loads, so the count and the filters sent agree', async () => {
     const user = userEvent.setup()
     let resolve: (p: typeof contactPage) => void = () => {}
     renderPage()
@@ -92,7 +120,7 @@ describe('FormPage view', () => {
       .mockResolvedValueOnce(bobPage)
       .mockImplementationOnce(() => new Promise((r) => (resolve = r)))
     await user.click(screen.getByRole('button', { name: 'Filter Bob' }))
-    const button = screen.getByRole('button', { name: 'Delete all matching' })
+    const button = screen.getByRole('button', { name: 'Archive all matching' })
     await waitFor(() => expect(button).toBeEnabled())
     // A new sort asks again: until it answers, the rows and count on screen are the old view's.
     await user.click(screen.getByRole('button', { name: 'Oldest first' }))

@@ -194,17 +194,33 @@ func (o *Ops) RestoreForm(ctx context.Context, actor string, projectID int64, na
 		Actor: actor, Action: "form.restore", Subject: formSubject(projectID, name)})
 }
 
-// DeleteSubmissions erases the submissions with these ids and their raw
-// events. selector says how the caller chose them ("ids", "search",
-// "filters: <form>"), never what it matched on; the store adds the count it
-// deleted to the audit detail. Deleting nothing (no ids, or ids already
-// gone) is audited too, with 0: it is still an erasure request answered.
-func (o *Ops) DeleteSubmissions(ctx context.Context, actor string, projectID int64, ids []string, selector string) (int, error) {
+// ArchiveSubmissions archives the submissions with these ids: they leave
+// their form's table and are purged RETENTION_ARCHIVED_DAYS later, an
+// erasure request included. selector says how the caller chose them
+// ("ids", "search", "filters: <form>"), never what it matched on; the
+// store adds the count it archived to the audit detail. Archiving nothing
+// (no ids, or ids already archived or gone) is audited too, with 0: it is
+// still an erasure request answered.
+func (o *Ops) ArchiveSubmissions(ctx context.Context, actor string, projectID int64, ids []string, selector string) (int, error) {
+	return o.setSubmissionsArchived(ctx, actor, projectID, ids, selector, true)
+}
+
+// RestoreSubmissions brings archived submissions back into their form's
+// table; audited as ArchiveSubmissions is.
+func (o *Ops) RestoreSubmissions(ctx context.Context, actor string, projectID int64, ids []string, selector string) (int, error) {
+	return o.setSubmissionsArchived(ctx, actor, projectID, ids, selector, false)
+}
+
+func (o *Ops) setSubmissionsArchived(ctx context.Context, actor string, projectID int64, ids []string, selector string, archived bool) (int, error) {
 	if err := o.requireProject(ctx, projectID); err != nil {
 		return 0, err
 	}
-	return o.St.DeleteSubmissions(ctx, projectID, ids, store.AuditEntry{
-		Actor: actor, Action: "submission.delete", Subject: "project/" + idSubject(projectID), Detail: selector})
+	action := "submission.archive"
+	if !archived {
+		action = "submission.restore"
+	}
+	return o.St.SetSubmissionsArchived(ctx, projectID, ids, archived, store.AuditEntry{
+		Actor: actor, Action: action, Subject: "project/" + idSubject(projectID), Detail: selector})
 }
 
 // checkSearch trims search and refuses one shorter than two characters;
@@ -218,7 +234,8 @@ func checkSearch(search string) (string, error) {
 }
 
 // FindSubmissions pages the project's submissions whose field values
-// contain search, archived forms' included (marked Archived). limit is clamped to 1..500 (100 when unset).
+// contain search, archived ones and archived forms' included. limit is
+// clamped to 1..500 (100 when unset).
 func (o *Ops) FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]store.Submission, string, error) {
 	if err := o.requireProject(ctx, projectID); err != nil {
 		return nil, "", err
@@ -237,7 +254,7 @@ func (o *Ops) FindSubmissions(ctx context.Context, projectID int64, search strin
 }
 
 // SubmissionIDsMatching is every id FindSubmissions would return, for
-// delete-by-search.
+// archive-by-search.
 func (o *Ops) SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error) {
 	if err := o.requireProject(ctx, projectID); err != nil {
 		return nil, err
@@ -265,8 +282,8 @@ func (o *Ops) ActiveForm(ctx context.Context, projectID int64, name string) (sto
 	return f, nil
 }
 
-// GetSubmission reads one submission of an active form, every stored
-// field included (also ones the form no longer expects).
+// GetSubmission reads one submission of an active form, archived or not,
+// every stored field included (also ones the form no longer expects).
 func (o *Ops) GetSubmission(ctx context.Context, projectID int64, form, id string) (store.Submission, error) {
 	if err := o.requireProject(ctx, projectID); err != nil {
 		return store.Submission{}, err

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { ArrowLeftIcon, DownloadIcon, InboxIcon, SettingsIcon, Trash2Icon } from 'lucide-react'
+import { ArchiveIcon, ArchiveRestoreIcon, ArrowLeftIcon, DownloadIcon, InboxIcon, SettingsIcon } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import WidgetFrame from '@/components/WidgetFrame'
@@ -12,15 +12,16 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import Table from '@/components/widgets/table'
 import { useFormActions } from '@/hooks/use-form-actions'
 import { useMarkFormSeen } from '@/hooks/use-mark-seen'
 import { useStoredState } from '@/hooks/use-stored-state'
 import { ApiError, endpoints, type Form, type Project, type SubmissionsPage, type SubmissionsQuery } from '@/lib/api'
 import { downloadBlob } from '@/lib/capture'
-import { formatDay, formatDayTime, formStatus } from '@/lib/forms'
+import { formatDay, formatDayTime, formStatus, purgeDays as purgeDaysOf, purgeNote as purgeNoteFor, type PurgeDays } from '@/lib/forms'
 import { FORMS_ID, rangeParams, tabPath } from '@/lib/project-tabs'
-import { formsQuery, submissionsQuery } from '@/lib/queries'
+import { dashboardsQuery, formsQuery, submissionsQuery } from '@/lib/queries'
 import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
 import ApproveDialog from './ApproveDialog'
 import SettingsDialog from './SettingsDialog'
@@ -31,10 +32,10 @@ import SubmissionDrawer from './SubmissionDrawer'
  * only the filters and sort on columns it has (the server refuses the
  * rest); before one has, the view whole. Empty parts are left out.
  */
-function viewArgs(view: TableView, columns: string[] | undefined): SubmissionsQuery {
+function viewArgs(view: TableView, columns: string[] | undefined, archived: boolean): SubmissionsQuery {
   const filters = columns ? liveFilters(view, columns) : view.filters
   const sort = view.sort && (!columns || columns.includes(view.sort.column)) ? view.sort : null
-  const q: SubmissionsQuery = {}
+  const q: SubmissionsQuery = archived ? { archived: true } : {}
   if (filters.length > 0) q.filters = JSON.stringify(filters)
   if (sort) q.sort = `${sort.column}:${sort.dir}`
   if (view.offset > 0) q.offset = view.offset
@@ -49,7 +50,8 @@ function parseSort(stored: unknown): Pick<TableView, 'sort'> | null {
 
 /**
  * The submissions table's view. Only the sort is kept in this browser, per
- * form, under `twillingate:forms:<project>:<name>`; the filters and the page
+ * form, under `twillingate:forms:<project>:<name>` (`…:archived` for the
+ * archived table); the filters and the page
  * live in memory only, since a filter value is usually a person's email.
  * A change of filters or sort returns to the first page.
  */
@@ -71,22 +73,37 @@ function plural(n: number, one: string): string {
   return `${n.toLocaleString('en-US')} ${n === 1 ? one : `${one}s`}`
 }
 
+/** Which submissions the table shows: the active ones, or the archived ones waiting for the purge. */
+type Shown = 'active' | 'archived'
+
+interface SubmissionsProps {
+  projectId: number
+  form: Form
+  shown: Shown
+  onShown: (shown: Shown) => void
+  /** RETENTION_ARCHIVED_DAYS: null when never purged, undefined while unknown. */
+  purgeDays: PurgeDays
+}
+
 /**
  * A form's submissions (D12a): the dashboards' table in remote mode, its
  * rows from list_submissions, a row opening the drawer, with **CSV** of what
- * the filters match above it and **Delete all matching** (only with filters
+ * the filters match above it and **Archive all matching** (only with filters
  * set) under it.
+ * The switch shows the archived submissions instead, with **Restore all
+ * matching**; the daily pass purges them `purgeDays` after archiving.
  */
-function Submissions({ projectId, form }: { projectId: number; form: Form }) {
+function Submissions({ projectId, form, shown, onShown, purgeDays }: SubmissionsProps) {
   const name = form.name
-  const [view, setView] = useFormView(`twillingate:forms:${projectId}:${name}`)
+  const archived = shown === 'archived'
+  const [view, setView] = useFormView(`twillingate:forms:${projectId}:${name}${archived ? ':archived' : ''}`)
   // The last answer: its columns decide which filters are sent, and its
   // rows stay on screen while a new view loads or is refused.
   const [last, setLast] = useState<SubmissionsPage>()
   // The stored view was refused before any answer named the columns: ask
   // once without it, to learn them.
   const [blind, setBlind] = useState(false)
-  const args = viewArgs(view, last?.columns ?? (blind ? [] : undefined))
+  const args = viewArgs(view, last?.columns ?? (blind ? [] : undefined), archived)
   const q = useQuery({ ...submissionsQuery(projectId, name, args), placeholderData: keepPreviousData })
   const settled = q.isPlaceholderData ? undefined : q.data
   useEffect(() => {
@@ -94,7 +111,7 @@ function Submissions({ projectId, form }: { projectId: number; form: Form }) {
   }, [settled])
   const answer = q.data ?? last
   const refused = q.error instanceof ApiError && q.error.status === 400 ? q.error : undefined
-  const sentView = Object.keys(args).length > 0
+  const sentView = Object.keys(args).some((k) => k !== 'archived')
   useEffect(() => {
     if (refused && !last && sentView) setBlind(true)
   }, [refused, last, sentView])
@@ -107,13 +124,14 @@ function Submissions({ projectId, form }: { projectId: number; form: Form }) {
   const columns = answer?.columns ?? []
   const live = liveFilters(view, columns)
   const matched = answer?.matched ?? 0
-  // While a new view loads, the count on screen is the old view's: deleting
+  // While a new view loads, the count on screen is the old view's: acting
   // then would confirm one number and send another view's filters.
-  const deletable = !actions.pending && !q.isPlaceholderData && live.length > 0 && matched > 0
+  const actionable = !actions.pending && !q.isPlaceholderData && live.length > 0 && matched > 0
 
   const fetchDistinct = async (column: string, filters: Filter[]) => {
     const others = liveFilters({ ...view, filters }, columns)
     const res = await endpoints.submissions(projectId, name, {
+      ...(archived ? { archived: true } : {}),
       ...(others.length > 0 ? { filters: JSON.stringify(others) } : {}),
       distinct: column,
     })
@@ -121,16 +139,21 @@ function Submissions({ projectId, form }: { projectId: number; form: Form }) {
     return res.rows.map(([value, n]) => ({ value, rows: Number(n), capped }))
   }
 
-  const deleteMatching = async () => {
-    await actions.deleteSubmissions(projectId, { form: name, filters: JSON.stringify(live) })
+  const actOnMatching = async () => {
+    const body = { form: name, filters: JSON.stringify(live) }
+    await (archived ? actions.restoreSubmissions(projectId, body) : actions.archiveSubmissions(projectId, body))
   }
 
   const csv = async () => {
     setDownloading(true)
     try {
-      const { filters, sort } = viewArgs({ ...view, offset: 0 }, answer?.columns)
-      const blob = await endpoints.exportSubmissions(projectId, name, { ...(filters ? { filters } : {}), ...(sort ? { sort } : {}) })
-      downloadBlob(blob, `${name}-submissions.csv`)
+      const { filters, sort } = viewArgs({ ...view, offset: 0 }, answer?.columns, archived)
+      const blob = await endpoints.exportSubmissions(projectId, name, {
+        ...(archived ? { archived: true } : {}),
+        ...(filters ? { filters } : {}),
+        ...(sort ? { sort } : {}),
+      })
+      downloadBlob(blob, `${name}-${archived ? 'archived-' : ''}submissions.csv`)
     } catch (err) {
       toast.error(err instanceof Error ? `Couldn't download the CSV: ${err.message}` : "Couldn't download the CSV")
     } finally {
@@ -138,17 +161,32 @@ function Submissions({ projectId, form }: { projectId: number; form: Form }) {
     }
   }
 
+  const purgeNote = purgeNoteFor(purgeDays)
+
   return (
     <section aria-label="Submissions" className="flex min-w-0 flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <h3 className="text-base font-semibold">
-          Submissions
-          {answer && answer.total > 0 && (
-            <span className="ml-2 text-sm font-normal text-muted-foreground">
-              {live.length > 0 ? `${answer.matched.toLocaleString('en-US')} of ${answer.total.toLocaleString('en-US')}` : answer.total.toLocaleString('en-US')}
-            </span>
-          )}
-        </h3>
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+          <h3 className="text-base font-semibold">
+            Submissions
+            {answer && answer.total > 0 && live.length > 0 && (
+              <span className="ml-2 text-sm font-normal text-muted-foreground">
+                {`${answer.matched.toLocaleString('en-US')} of ${answer.total.toLocaleString('en-US')}`}
+              </span>
+            )}
+          </h3>
+          <ToggleGroup
+            type="single"
+            variant="outline"
+            size="sm"
+            value={shown}
+            onValueChange={(v) => v && onShown(v as Shown)}
+            aria-label="Which submissions"
+          >
+            <ToggleGroupItem value="active">Active {form.submissions.toLocaleString('en-US')}</ToggleGroupItem>
+            <ToggleGroupItem value="archived">Archived {form.archived_submissions.toLocaleString('en-US')}</ToggleGroupItem>
+          </ToggleGroup>
+        </div>
         <div className="flex flex-wrap gap-2">
           <Button type="button" variant="outline" size="sm" disabled={downloading || !answer} onClick={() => void csv()}>
             <DownloadIcon />
@@ -156,6 +194,7 @@ function Submissions({ projectId, form }: { projectId: number; form: Form }) {
           </Button>
         </div>
       </div>
+      {archived && <p className="text-xs text-muted-foreground">{purgeNote}</p>}
       {!answer ? (
         q.error ? (
           <LoadError what="the submissions" error={q.error} onRetry={() => void q.refetch()} />
@@ -164,8 +203,8 @@ function Submissions({ projectId, form }: { projectId: number; form: Form }) {
         )
       ) : answer.total === 0 ? (
         <div className="flex flex-col items-center gap-1.5 rounded-lg border p-6 text-center text-muted-foreground [&>svg]:size-5">
-          <InboxIcon />
-          <p className="text-sm">No submissions yet.</p>
+          {archived ? <ArchiveIcon /> : <InboxIcon />}
+          <p className="text-sm">{archived ? 'No archived submissions.' : 'No submissions yet.'}</p>
         </div>
       ) : (
         <div className="flex max-h-[75vh] min-h-0 flex-col">
@@ -185,24 +224,28 @@ function Submissions({ projectId, form }: { projectId: number; form: Form }) {
         </div>
       )}
       {answer && answer.total > 0 && (
-        <Button type="button" variant="outline" size="sm" className="self-start" disabled={!deletable} onClick={() => setConfirming(true)}>
-          <Trash2Icon />
-          Delete all matching
+        <Button type="button" variant="outline" size="sm" className="self-start" disabled={!actionable} onClick={() => setConfirming(true)}>
+          {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+          {archived ? 'Restore all matching' : 'Archive all matching'}
         </Button>
       )}
-      <SubmissionDrawer projectId={projectId} form={name} id={opened} onClose={() => setOpened(undefined)} />
+      <SubmissionDrawer projectId={projectId} form={name} id={opened} purgeDays={purgeDays} onClose={() => setOpened(undefined)} />
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Delete {plural(matched, 'matching submission')}?</AlertDialogTitle>
+            <AlertDialogTitle>
+              {archived ? 'Restore' : 'Archive'} {plural(matched, 'matching submission')}?
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Every submission these filters match is deleted for good, with its conversion while that is still in the raw window.
+              {archived
+                ? 'Every archived submission these filters match goes back to the table.'
+                : `Every submission these filters match leaves the table and its counts. ${purgeNote}`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction disabled={!deletable} onClick={() => void deleteMatching()}>
-              Delete submissions
+            <AlertDialogAction disabled={!actionable} onClick={() => void actOnMatching()}>
+              {archived ? 'Restore submissions' : 'Archive submissions'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -224,6 +267,8 @@ export default function FormPage({ project, name }: { project: Project; name: st
   const actions = useFormActions()
   const [approving, setApproving] = useState(false)
   const [setting, setSetting] = useState(false)
+  const [shown, setShown] = useState<Shown>('active')
+  const purgeDays = purgeDaysOf(useQuery(dashboardsQuery).data)
   const form = q.data?.forms.find((f) => f.name === name)
 
   // Opening a form reads it: up to the last submission the list showed, so
@@ -267,7 +312,8 @@ export default function FormPage({ project, name }: { project: Project; name: st
               </Button>
             </div>
           )}
-          <Submissions projectId={id} form={form} />
+          {/* Keyed by what it shows: each table keeps its own view and last answer. */}
+          <Submissions key={shown} projectId={id} form={form} shown={shown} onShown={setShown} purgeDays={purgeDays} />
           <SettingsDialog
             open={setting}
             onOpenChange={setSetting}

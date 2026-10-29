@@ -563,8 +563,9 @@ func TestAttributedEventWaitsUnloggedUntilMarked(t *testing.T) {
 	}
 }
 
-// Deleting a submission takes its unlogged event with it.
-func TestDeletedSubmissionLeavesTheOutbox(t *testing.T) {
+// Archiving a submission leaves its unlogged event queued: the conversion
+// happened, and the event holds no field.
+func TestArchivedSubmissionKeepsItsOutbox(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	if _, _, err := db.WriteSubmission(ctx, newSub("s0", nil)); err != nil {
@@ -578,11 +579,11 @@ func TestDeletedSubmissionLeavesTheOutbox(t *testing.T) {
 	if us, _ := db.UnloggedEvents(ctx, 10); len(us) != 1 {
 		t.Fatalf("unlogged = %+v, want s1", us)
 	}
-	if _, err := db.DeleteSubmissions(ctx, 1, []string{"s1"}, store.AuditEntry{Actor: "t", Action: "submission.delete", Subject: "form/1/contact"}); err != nil {
+	if _, err := db.SetSubmissionsArchived(ctx, 1, []string{"s1"}, true, store.AuditEntry{Actor: "t", Action: "submission.archive", Subject: "project/1"}); err != nil {
 		t.Fatal(err)
 	}
-	if us, err := db.UnloggedEvents(ctx, 10); err != nil || len(us) != 0 {
-		t.Fatalf("unlogged after delete = %+v, %v", us, err)
+	if us, err := db.UnloggedEvents(ctx, 10); err != nil || len(us) != 1 {
+		t.Fatalf("unlogged after archive = %+v, %v", us, err)
 	}
 }
 
@@ -1033,7 +1034,7 @@ func TestExpireDrafts(t *testing.T) {
 	}
 }
 
-func TestDeleteSubmissionsRemovesTheRows(t *testing.T) {
+func TestSetSubmissionsArchived(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s0", map[string]string{"email": "draft@x.io"})) // draft: no event
@@ -1063,24 +1064,37 @@ func TestDeleteSubmissionsRemovesTheRows(t *testing.T) {
 		t.Fatalf("setup: %d submissions, want 6", c)
 	}
 
-	n, err := db.DeleteSubmissions(ctx, 1, []string{"s1", "s3", "s0", "missing"},
-		store.AuditEntry{Actor: "agent", Action: "submission.delete", Subject: "project/1", Detail: "ids"})
+	n, err := db.SetSubmissionsArchived(ctx, 1, []string{"s1", "s3", "s0", "missing"}, true,
+		store.AuditEntry{Actor: "agent", Action: "submission.archive", Subject: "project/1", Detail: "ids"})
 	if err != nil || n != 3 {
-		t.Fatalf("deleted %d, err %v", n, err)
+		t.Fatalf("archived %d, err %v", n, err)
 	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE project_id=1`); c != 1 {
-		t.Fatalf("%d submissions left on project 1", c)
+	// Archived, not deleted: the rows stay until the purge.
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions`); c != 6 {
+		t.Fatalf("%d submissions left, want all 6", c)
 	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE project_id=1 AND id='s2'`); c != 1 {
-		t.Fatal("s2 was deleted")
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE archived_at IS NOT NULL`); c != 3 {
+		t.Fatalf("%d archived, want 3", c)
 	}
-	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE project_id=2`); c != 2 {
-		t.Fatal("another project's submission was deleted")
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE project_id=2 AND archived_at IS NOT NULL`); c != 0 {
+		t.Fatal("another project's submission was archived")
 	}
-	// The audit row counts what was deleted, not what was asked for.
-	details := func() []string {
+	// The form's counts leave the archived ones out and count them apart.
+	fs, err := db.ListForms(ctx, 1, false)
+	if err != nil || len(fs) != 1 || fs[0].Submissions != 1 || fs[0].NewSubmissions != 1 || fs[0].ArchivedSubmissions != 3 {
+		t.Fatalf("forms = %+v, %v", fs, err)
+	}
+	// An archived submission still reads, with when it was archived.
+	if sub, err := db.GetSubmission(ctx, 1, "contact", "s1"); err != nil || sub.ArchivedAt == nil {
+		t.Fatalf("get archived = %+v, %v", sub, err)
+	}
+	if sub, err := db.GetSubmission(ctx, 1, "contact", "s2"); err != nil || sub.ArchivedAt != nil {
+		t.Fatalf("get active = %+v, %v", sub, err)
+	}
+	// The audit row counts what changed, not what was asked for.
+	details := func(action string) []string {
 		t.Helper()
-		rows, err := db.db.Query(`SELECT detail FROM audit_log WHERE action='submission.delete' ORDER BY rowid`)
+		rows, err := db.db.Query(`SELECT detail FROM audit_log WHERE action=? ORDER BY rowid`, action)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1095,20 +1109,31 @@ func TestDeleteSubmissionsRemovesTheRows(t *testing.T) {
 		}
 		return out
 	}
-	if got := details(); !reflect.DeepEqual(got, []string{"ids (3 deleted)"}) {
+	if got := details("submission.archive"); !reflect.DeepEqual(got, []string{"ids (3 archived)"}) {
 		t.Fatalf("audit details = %q", got)
 	}
-	// Deleting nothing is still audited, with 0.
-	if n, err := db.DeleteSubmissions(ctx, 1, []string{"s1"}, store.AuditEntry{Actor: "agent", Action: "submission.delete",
+	// Archiving nothing new is still audited, with 0.
+	if n, err := db.SetSubmissionsArchived(ctx, 1, []string{"s1"}, true, store.AuditEntry{Actor: "agent", Action: "submission.archive",
 		Subject: "project/1", Detail: "search"}); err != nil || n != 0 {
-		t.Fatalf("already deleted: %d, %v", n, err)
+		t.Fatalf("already archived: %d, %v", n, err)
 	}
-	if n, err := db.DeleteSubmissions(ctx, 1, nil, store.AuditEntry{Actor: "agent", Action: "submission.delete",
+	if n, err := db.SetSubmissionsArchived(ctx, 1, nil, true, store.AuditEntry{Actor: "agent", Action: "submission.archive",
 		Subject: "project/1", Detail: "filters: contact"}); err != nil || n != 0 {
 		t.Fatalf("empty ids: %d, %v", n, err)
 	}
-	if got := details(); !reflect.DeepEqual(got, []string{"ids (3 deleted)", "search (0 deleted)", "filters: contact (0 deleted)"}) {
+	if got := details("submission.archive"); !reflect.DeepEqual(got, []string{"ids (3 archived)", "search (0 archived)", "filters: contact (0 archived)"}) {
 		t.Fatalf("audit details = %q", got)
+	}
+	// Restoring brings back the archived ones only.
+	if n, err := db.SetSubmissionsArchived(ctx, 1, []string{"s1", "s2"}, false, store.AuditEntry{Actor: "agent", Action: "submission.restore",
+		Subject: "project/1", Detail: "ids"}); err != nil || n != 1 {
+		t.Fatalf("restored %d, %v", n, err)
+	}
+	if got := details("submission.restore"); !reflect.DeepEqual(got, []string{"ids (1 restored)"}) {
+		t.Fatalf("restore audit = %q", got)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE archived_at IS NOT NULL`); c != 2 {
+		t.Fatalf("%d archived after restore, want 2", c)
 	}
 }
 
@@ -1150,11 +1175,19 @@ func TestFindSubmissions(t *testing.T) {
 		t.Fatalf("alice = %v next %q", ids(subs), next)
 	}
 	if subs[2].Form != "contact" || subs[2].Fields["email"] != "Alice@Example.com" || subs[2].ProjectID != 1 ||
-		!subs[2].ReceivedAt.Equal(formsNow.Add(-3*time.Hour)) || subs[2].Archived {
+		!subs[2].ReceivedAt.Equal(formsNow.Add(-3*time.Hour)) || subs[2].FormArchived || subs[2].ArchivedAt != nil {
 		t.Fatalf("submission = %+v", subs[2])
 	}
-	if subs[0].Form != "hidden" || !subs[0].Archived || subs[1].Archived {
+	if subs[0].Form != "hidden" || !subs[0].FormArchived || subs[1].FormArchived {
 		t.Fatalf("archived marks = %+v", subs)
+	}
+	// A submission archived on its own is found too, with when.
+	if _, err := db.SetSubmissionsArchived(ctx, 1, []string{"a"}, true, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if subs, _, err = db.FindSubmissions(ctx, 1, "alice", 10, ""); err != nil || len(subs) != 3 ||
+		subs[2].ArchivedAt == nil || subs[2].FormArchived || subs[1].ArchivedAt != nil {
+		t.Fatalf("after archiving a = %+v, %v", subs, err)
 	}
 	// LIKE wildcards in the search are literal.
 	if subs, _, _ = db.FindSubmissions(ctx, 1, "100%", 10, ""); !reflect.DeepEqual(ids(subs), []string{"c"}) {
