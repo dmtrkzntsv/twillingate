@@ -134,9 +134,10 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
 
   // Archived ones go back, active ones are set aside; either way the toast says how many.
   const moveSelected = async () => {
-    const body = { ids: selected }
-    const n = await (archived ? actions.restoreSubmissions(projectId, body) : actions.archiveSubmissions(projectId, body))
-    if (n !== undefined) setChecked(new Set())
+    const sent = selected
+    const n = await (archived ? actions.restoreSubmissions(projectId, { ids: sent }) : actions.archiveSubmissions(projectId, { ids: sent }))
+    // Only the rows sent: ones checked while it ran stay checked.
+    if (n !== undefined) setChecked((now) => new Set([...now].filter((sid) => !sent.includes(sid))))
   }
 
   // The checked rows as the table shows them, in its order.

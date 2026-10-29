@@ -26,6 +26,9 @@ vi.mock('@/components/widgets/table', () => ({
       <button type="button" onClick={() => selection?.onChange(new Set([0]))}>
         Check the first row
       </button>
+      <button type="button" onClick={() => selection?.onChange(new Set([0, 1]))}>
+        Check both rows
+      </button>
       <button type="button" onClick={() => onView({ ...view, filters: [{ column: 'email', op: '=', value: 'bob@example.com' }], offset: 0 })}>
         Filter Bob
       </button>
@@ -95,6 +98,19 @@ describe('FormPage view', () => {
     await user.click(within(bar).getByRole('button', { name: 'Archive' }))
     await waitFor(() => expect(archive).toHaveBeenCalledWith(4, { ids: ['s1'] }))
     await waitFor(() => expect(screen.queryByRole('toolbar', { name: 'Selected submissions' })).toBeNull())
+  })
+
+  it('keeps a row checked while an archive runs once that archive is done', async () => {
+    const user = userEvent.setup()
+    let done: (v: { archived: number }) => void = () => {}
+    vi.spyOn(endpoints, 'archiveSubmissions').mockImplementation(() => new Promise((r) => (done = r)))
+    renderPage()
+    await user.click(await screen.findByRole('button', { name: 'Check the first row' }))
+    await user.click(screen.getByRole('button', { name: 'Archive' }))
+    await user.click(screen.getByRole('button', { name: 'Check both rows' }))
+    done({ archived: 1 })
+    await waitFor(() => expect(endpoints.archiveSubmissions).toHaveBeenCalledWith(4, { ids: ['s1'] }))
+    expect(await screen.findByText('1 selected')).toBeInTheDocument()
   })
 
   it('clears the selection on Clear', async () => {
