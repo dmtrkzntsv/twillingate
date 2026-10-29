@@ -16,8 +16,8 @@ interface Props {
   form: string
   /** The submission shown; undefined keeps the drawer closed. */
   id: string | undefined
-  /** RETENTION_ARCHIVED_DAYS; undefined when archived submissions are never purged. */
-  purgeDays?: number
+  /** RETENTION_ARCHIVED_DAYS: null when never purged, undefined while unknown (no date shown either way). */
+  purgeDays?: number | null
   onClose: () => void
 }
 
@@ -45,7 +45,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 }
 
 /** When an archived submission was archived, and when the daily pass deletes it. */
-function archivedLine(archivedAt: string, purgeDays?: number): ReactNode {
+function archivedLine(archivedAt: string, purgeDays?: number | null): ReactNode {
   const at = new Date(archivedAt)
   const purge = purgeDays ? `; deleted for good on ${formatPurgeDate(new Date(at.getTime() + purgeDays * 86_400_000))} unless restored` : ''
   return (
@@ -58,7 +58,7 @@ function archivedLine(archivedAt: string, purgeDays?: number): ReactNode {
   )
 }
 
-function Details({ s, purgeDays }: { s: Submission; purgeDays?: number }) {
+function Details({ s, purgeDays }: { s: Submission; purgeDays?: number | null }) {
   const fields = Object.entries(s.fields).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
   const arrival: [string, ReactNode][] = [
     ['Received', <time dateTime={s.received_at} title={s.received_at}>{formatDayTime(new Date(s.received_at))}</time>],

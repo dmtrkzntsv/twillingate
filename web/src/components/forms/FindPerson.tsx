@@ -12,7 +12,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import LoadError from '@/components/projects/LoadError'
 import { useFormActions } from '@/hooks/use-form-actions'
 import type { FoundSubmission } from '@/lib/api'
-import { formatDayTime } from '@/lib/forms'
+import { formatDayTime, purgeDays as purgeDaysOf } from '@/lib/forms'
 import { dashboardsQuery, findSubmissionsQuery } from '@/lib/queries'
 
 /** The shortest search the server takes. */
@@ -46,8 +46,7 @@ export default function FindPerson({ projectId }: { projectId: number }) {
   const [confirming, setConfirming] = useState(false)
   const actions = useFormActions()
   const q = useQuery({ ...findSubmissionsQuery(projectId, search), enabled: search.length >= MIN })
-  // RETENTION_ARCHIVED_DAYS; absent when archived submissions are never purged.
-  const purgeDays = useQuery(dashboardsQuery).data?.purge_after_days
+  const purgeDays = purgeDaysOf(useQuery(dashboardsQuery).data)
   const found = q.data?.submissions ?? []
   const more = q.data?.next_cursor !== undefined
   const count = `${found.length}${more ? '+' : ''} ${found.length === 1 && !more ? 'submission' : 'submissions'}`
@@ -142,9 +141,11 @@ export default function FindPerson({ projectId }: { projectId: number }) {
             </AlertDialogTitle>
             <AlertDialogDescription>
               Every submission of the project's forms with a field containing it is archived: it leaves every table at once,{' '}
-              {purgeDays
-                ? `and the daily pass deletes it for good ${purgeDays} ${purgeDays === 1 ? 'day' : 'days'} after archiving.`
-                : 'but it is never deleted: RETENTION_ARCHIVED_DAYS is 0, so archived submissions are kept until restored.'}{' '}
+              {purgeDays === null
+                ? 'but it is never deleted: RETENTION_ARCHIVED_DAYS is 0, so archived submissions are kept until restored.'
+                : purgeDays === undefined
+                  ? 'and the daily pass deletes it for good RETENTION_ARCHIVED_DAYS after archiving.'
+                  : `and the daily pass deletes it for good ${purgeDays} ${purgeDays === 1 ? 'day' : 'days'} after archiving.`}{' '}
               Its conversion stays counted.
             </AlertDialogDescription>
           </AlertDialogHeader>

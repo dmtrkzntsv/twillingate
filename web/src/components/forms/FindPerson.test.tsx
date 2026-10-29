@@ -85,6 +85,19 @@ describe('FindPerson', () => {
     expect(within(confirm).getByText(/it is never deleted: RETENTION_ARCHIVED_DAYS is 0/)).toBeInTheDocument()
   })
 
+  it('names the setting, not a promise either way, until the retention window has loaded', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(endpoints, 'dashboards').mockReturnValue(new Promise(() => {}))
+    vi.spyOn(endpoints, 'findSubmissions').mockResolvedValue({ submissions: [found('s1')] })
+    renderWithProviders(<FindPerson projectId={4} />)
+    await user.type(screen.getByRole('searchbox', { name: 'Find a person' }), 'bob{Enter}')
+    const results = await screen.findByRole('region', { name: 'Found submissions' })
+    await user.click(within(results).getByRole('button', { name: 'Archive all' }))
+    const confirm = await screen.findByRole('alertdialog', { name: /Archive 1 submission\b/ })
+    expect(within(confirm).getByText(/deletes it for good RETENTION_ARCHIVED_DAYS after archiving/)).toBeInTheDocument()
+    expect(within(confirm).queryByText(/never deleted/)).toBeNull()
+  })
+
   it('says when nothing matches, offering no archive', async () => {
     const user = userEvent.setup()
     vi.spyOn(endpoints, 'findSubmissions').mockResolvedValue({ submissions: [] })

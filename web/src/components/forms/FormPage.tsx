@@ -21,7 +21,7 @@ import { useMarkFormSeen } from '@/hooks/use-mark-seen'
 import { useStoredState } from '@/hooks/use-stored-state'
 import { ApiError, endpoints, type Form, type Project, type SubmissionsPage, type SubmissionsQuery } from '@/lib/api'
 import { downloadBlob } from '@/lib/capture'
-import { formatDay, formatDayTime, formStatus } from '@/lib/forms'
+import { formatDay, formatDayTime, formStatus, purgeDays as purgeDaysOf, purgeNote as purgeNoteFor, type PurgeDays } from '@/lib/forms'
 import { FORMS_ID, rangeParams, tabPath } from '@/lib/project-tabs'
 import { dashboardsQuery, formsQuery, submissionsQuery } from '@/lib/queries'
 import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
@@ -83,8 +83,8 @@ interface SubmissionsProps {
   form: Form
   shown: Shown
   onShown: (shown: Shown) => void
-  /** RETENTION_ARCHIVED_DAYS; undefined when archived submissions are never purged. */
-  purgeDays?: number
+  /** RETENTION_ARCHIVED_DAYS: null when never purged, undefined while unknown. */
+  purgeDays: PurgeDays
 }
 
 /**
@@ -162,9 +162,7 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
     }
   }
 
-  const purgeNote = purgeDays
-    ? `Archived submissions are deleted for good ${plural(purgeDays, 'day')} after archiving unless restored.`
-    : 'Archived submissions are kept until restored.'
+  const purgeNote = purgeNoteFor(purgeDays)
 
   return (
     <section aria-label="Submissions" className="flex min-w-0 flex-col gap-2">
@@ -343,7 +341,7 @@ export default function FormPage({ project, name }: { project: Project; name: st
   const actions = useFormActions()
   const [approving, setApproving] = useState(false)
   const [shown, setShown] = useState<Shown>('active')
-  const purgeDays = useQuery(dashboardsQuery).data?.purge_after_days
+  const purgeDays = purgeDaysOf(useQuery(dashboardsQuery).data)
   const form = q.data?.forms.find((f) => f.name === name)
 
   // Opening a form reads it: up to the last submission the list showed, so
