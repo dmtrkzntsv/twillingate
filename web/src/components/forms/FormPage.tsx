@@ -1,32 +1,26 @@
-import { useEffect, useId, useState, type FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { ArchiveIcon, ArchiveRestoreIcon, ArrowLeftIcon, DownloadIcon, InboxIcon } from 'lucide-react'
-import { Link, useSearchParams } from 'react-router'
+import { ArchiveIcon, ArchiveRestoreIcon, ArrowLeftIcon, DownloadIcon, InboxIcon, XIcon } from 'lucide-react'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import WidgetFrame from '@/components/WidgetFrame'
 import LoadError from '@/components/projects/LoadError'
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import Table from '@/components/widgets/table'
-import { useFormActions, type FormActions } from '@/hooks/use-form-actions'
+import { useFormActions } from '@/hooks/use-form-actions'
 import { useMarkFormSeen } from '@/hooks/use-mark-seen'
 import { useStoredState } from '@/hooks/use-stored-state'
 import { ApiError, endpoints, type Form, type Project, type SubmissionsPage, type SubmissionsQuery } from '@/lib/api'
 import { downloadBlob } from '@/lib/capture'
-import { formatDay, formatDayTime, formStatus, purgeDays as purgeDaysOf, purgeNote as purgeNoteFor, type PurgeDays } from '@/lib/forms'
+import { closingDone, formatDay, formStatus, purgeDays as purgeDaysOf, purgeNote as purgeNoteFor, toCSV, type PurgeDays } from '@/lib/forms'
 import { FORMS_ID, rangeParams, tabPath } from '@/lib/project-tabs'
 import { dashboardsQuery, formsQuery, submissionsQuery } from '@/lib/queries'
 import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
-import ApproveDialog, { FieldPicker } from './ApproveDialog'
-import ClosingControl from './ClosingControl'
+import ApproveDialog from './ApproveDialog'
+import FormMenu from './FormMenu'
+import SettingsDialog from './SettingsDialog'
 import SubmissionDrawer from './SubmissionDrawer'
 
 /**
@@ -71,10 +65,6 @@ function useFormView(key: string): [TableView, (next: TableView) => void] {
   return [view, setView]
 }
 
-function plural(n: number, one: string): string {
-  return `${n.toLocaleString('en-US')} ${n === 1 ? one : `${one}s`}`
-}
-
 /** Which submissions the table shows: the active ones, or the archived ones waiting for the purge. */
 type Shown = 'active' | 'archived'
 
@@ -89,10 +79,11 @@ interface SubmissionsProps {
 
 /**
  * A form's submissions (D12a): the dashboards' table in remote mode, its
- * rows from list_submissions, a row opening the drawer, with **Archive all
- * matching** (only with filters set) and **CSV** of what the filters match.
- * The switch shows the archived submissions instead, with **Restore all
- * matching**; the daily pass purges them `purgeDays` after archiving.
+ * rows from list_submissions, a row opening the drawer, with **Export CSV**
+ * of what the filters match. Checking rows swaps that for **Archive** (or
+ * **Restore**), **Export** and **Clear** on just those. The **N archived**
+ * link beside it shows the archived submissions instead, with a way back;
+ * the daily pass purges them `purgeDays` after archiving.
  */
 function Submissions({ projectId, form, shown, onShown, purgeDays }: SubmissionsProps) {
   const name = form.name
@@ -120,14 +111,15 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
 
   const actions = useFormActions()
   const [opened, setOpened] = useState<string>()
-  const [confirming, setConfirming] = useState(false)
   const [downloading, setDownloading] = useState(false)
   const columns = answer?.columns ?? []
   const live = liveFilters(view, columns)
-  const matched = answer?.matched ?? 0
-  // While a new view loads, the count on screen is the old view's: acting
-  // then would confirm one number and send another view's filters.
-  const actionable = !actions.pending && !q.isPlaceholderData && live.length > 0 && matched > 0
+  // The rows checked, by submission id; only those on the page shown count,
+  // so a row a filter hides is never archived unseen.
+  const [checked, setChecked] = useState<ReadonlySet<string>>(new Set())
+  const pageIds = answer?.ids ?? []
+  const selected = pageIds.filter((sid) => checked.has(sid))
+  const selectedRows = new Set(pageIds.flatMap((sid, i) => (checked.has(sid) ? [i] : [])))
 
   const fetchDistinct = async (column: string, filters: Filter[]) => {
     const others = liveFilters({ ...view, filters }, columns)
@@ -140,9 +132,19 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
     return res.rows.map(([value, n]) => ({ value, rows: Number(n), capped }))
   }
 
-  const actOnMatching = async () => {
-    const body = { form: name, filters: JSON.stringify(live) }
-    await (archived ? actions.restoreSubmissions(projectId, body) : actions.archiveSubmissions(projectId, body))
+  // Archived ones go back, active ones are set aside; either way the toast says how many.
+  const moveSelected = async () => {
+    const sent = selected
+    const n = await (archived ? actions.restoreSubmissions(projectId, { ids: sent }) : actions.archiveSubmissions(projectId, { ids: sent }))
+    // Only the rows sent: ones checked while it ran stay checked.
+    if (n !== undefined) setChecked((now) => new Set([...now].filter((sid) => !sent.includes(sid))))
+  }
+
+  // The checked rows as the table shows them, in its order.
+  const exportSelected = () => {
+    if (!answer) return
+    const rows = answer.rows.filter((_, i) => selectedRows.has(i))
+    downloadBlob(new Blob([toCSV(answer.columns, rows)], { type: 'text/csv' }), `${name}-selected-submissions.csv`)
   }
 
   const csv = async () => {
@@ -167,37 +169,66 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
   return (
     <section aria-label="Submissions" className="flex min-w-0 flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+        {archived ? (
+          <div className="flex min-w-0 items-center gap-1">
+            <Button type="button" variant="ghost" size="sm" className="-ml-2" onClick={() => onShown('active')}>
+              <ArrowLeftIcon />
+              Submissions
+            </Button>
+            <h3 className="text-base font-semibold">
+              Archived
+              {answer && answer.total > 0 && (
+              <span className="ml-1 text-sm font-normal text-muted-foreground">
+                {' '}
+                {live.length > 0
+                  ? `${answer.matched.toLocaleString('en-US')} of ${answer.total.toLocaleString('en-US')}`
+                  : answer.total.toLocaleString('en-US')}
+              </span>
+            )}
+            </h3>
+          </div>
+        ) : (
           <h3 className="text-base font-semibold">
             Submissions
-            {answer && answer.total > 0 && live.length > 0 && (
-              <span className="ml-2 text-sm font-normal text-muted-foreground">
-                {`${answer.matched.toLocaleString('en-US')} of ${answer.total.toLocaleString('en-US')}`}
+            {answer && answer.total > 0 && (
+              <span className="ml-1 text-sm font-normal text-muted-foreground">
+                {' '}
+                {live.length > 0
+                  ? `${answer.matched.toLocaleString('en-US')} of ${answer.total.toLocaleString('en-US')}`
+                  : answer.total.toLocaleString('en-US')}
               </span>
             )}
           </h3>
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            value={shown}
-            onValueChange={(v) => v && onShown(v as Shown)}
-            aria-label="Which submissions"
-          >
-            <ToggleGroupItem value="active">Active {form.submissions.toLocaleString('en-US')}</ToggleGroupItem>
-            <ToggleGroupItem value="archived">Archived {form.archived_submissions.toLocaleString('en-US')}</ToggleGroupItem>
-          </ToggleGroup>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button type="button" variant="outline" size="sm" disabled={!actionable} onClick={() => setConfirming(true)}>
-            {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
-            {archived ? 'Restore all matching' : 'Archive all matching'}
-          </Button>
-          <Button type="button" variant="outline" size="sm" disabled={downloading || !answer} onClick={() => void csv()}>
-            <DownloadIcon />
-            CSV
-          </Button>
-        </div>
+        )}
+        {selected.length > 0 ? (
+          <div role="toolbar" aria-label="Selected submissions" className="flex flex-wrap items-center gap-2">
+            <span className="text-sm text-muted-foreground">{selected.length.toLocaleString('en-US')} selected</span>
+            <Button type="button" variant="outline" size="sm" disabled={actions.pending} onClick={() => void moveSelected()}>
+              {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
+              {archived ? 'Restore' : 'Archive'}
+            </Button>
+            <Button type="button" variant="outline" size="sm" onClick={exportSelected}>
+              <DownloadIcon />
+              Export
+            </Button>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setChecked(new Set())}>
+              <XIcon />
+              <span className="max-sm:sr-only">Clear</span>
+            </Button>
+          </div>
+        ) : (
+          <div className="flex flex-wrap items-center gap-2">
+            {!archived && form.archived_submissions > 0 && (
+              <Button type="button" variant="link" size="sm" className="text-muted-foreground" onClick={() => onShown('archived')}>
+                {form.archived_submissions.toLocaleString('en-US')} archived
+              </Button>
+            )}
+            <Button type="button" variant="outline" size="sm" disabled={downloading || !answer} onClick={() => void csv()}>
+              <DownloadIcon />
+              Export CSV
+            </Button>
+          </div>
+        )}
       </div>
       {archived && <p className="text-xs text-muted-foreground">{purgeNote}</p>}
       {!answer ? (
@@ -224,114 +255,20 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
               viewError={viewError}
               reloading={q.isPlaceholderData || (q.isFetching && q.data !== undefined)}
               onRow={(i) => setOpened(answer.ids[i])}
+              selection={{ selected: selectedRows, onChange: (rows) => setChecked(new Set([...rows].map((i) => answer.ids[i]))) }}
             />
           </WidgetFrame>
         </div>
       )}
       <SubmissionDrawer projectId={projectId} form={name} id={opened} purgeDays={purgeDays} onClose={() => setOpened(undefined)} />
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {archived ? 'Restore' : 'Archive'} {plural(matched, 'matching submission')}?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {archived
-                ? 'Every archived submission these filters match goes back to the table.'
-                : `Every submission these filters match leaves the table and its counts. ${purgeNote}`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction disabled={!actionable} onClick={() => void actOnMatching()}>
-              {archived ? 'Restore submissions' : 'Archive submissions'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </section>
-  )
-}
-
-/** Purpose and return URL, saved together; only what changed is sent. */
-function Details({ projectId, form, actions }: { projectId: number; form: Form; actions: FormActions }) {
-  const id = useId()
-  const [purpose, setPurpose] = useState(form.purpose)
-  const [returnURL, setReturnURL] = useState(form.return_url)
-  // Follow what is saved, from here or elsewhere.
-  useEffect(() => setPurpose(form.purpose), [form.purpose])
-  useEffect(() => setReturnURL(form.return_url), [form.return_url])
-  const changed = purpose.trim() !== form.purpose || returnURL.trim() !== form.return_url
-  const save = (e: FormEvent) => {
-    e.preventDefault()
-    const body: { purpose?: string; return_url?: string } = {}
-    if (purpose.trim() !== form.purpose) body.purpose = purpose.trim()
-    if (returnURL.trim() !== form.return_url) body.return_url = returnURL.trim()
-    void actions.update(projectId, form.name, body)
-  }
-  return (
-    <form onSubmit={save} className="flex flex-col gap-3">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`${id}-purpose`}>Purpose</Label>
-        <Input id={`${id}-purpose`} value={purpose} onChange={(e) => setPurpose(e.target.value)} placeholder="What the form is for" />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`${id}-return`}>Return URL</Label>
-        <Input
-          id={`${id}-return`}
-          type="url"
-          value={returnURL}
-          onChange={(e) => setReturnURL(e.target.value)}
-          placeholder="https://example.com/thanks"
-        />
-        <p className="text-xs text-muted-foreground">
-          Where a plain HTML form sends the visitor back when it sets no <code className="font-mono">$redirect</code>; its origin must be
-          one of the project's allowed origins.
-        </p>
-      </div>
-      <Button type="submit" variant="outline" className="self-start" disabled={actions.pending || !changed}>
-        Save
-      </Button>
-    </form>
-  )
-}
-
-/** An approved form's expected fields: change which are kept, never none. */
-function ExpectedFields({ projectId, form, actions }: { projectId: number; form: Form; actions: FormActions }) {
-  const id = useId()
-  const expected = form.expected_fields ?? []
-  const [checked, setChecked] = useState(expected)
-  const saved = JSON.stringify(expected)
-  useEffect(() => setChecked(JSON.parse(saved) as string[]), [saved])
-  const same = JSON.stringify(checked) === saved
-  return (
-    <div role="group" aria-labelledby={`${id}-title`} className="flex flex-col gap-2">
-      <h3 id={`${id}-title`} className="text-sm font-medium">
-        Expected fields
-      </h3>
-      <p className="text-xs text-muted-foreground">
-        New submissions keep only these, as the table's columns in this order. A field the form starts sending appears here unchecked;
-        add one by name to keep it from its first submission.
-      </p>
-      <FieldPicker fields={form.fields} kept={expected} checked={checked} onChange={setChecked} disabled={actions.pending} />
-      <Button
-        type="button"
-        variant="outline"
-        className="self-start"
-        disabled={actions.pending || same || checked.length === 0}
-        onClick={() => void actions.update(projectId, form.name, { expected_fields: checked })}
-      >
-        Save fields
-      </Button>
-    </div>
   )
 }
 
 /**
  * `/projects/:id/forms/:name` (D12), inside the Forms tab: a crumb back to
  * the list, a draft's banner with **Approve**, the submissions table, and
- * the form's settings: purpose and return URL, an approved form's expected
- * fields, and its closing.
+ * the form's menu, whose **Settings…** opens its settings dialog.
  */
 export default function FormPage({ project, name }: { project: Project; name: string }) {
   const id = project.project_id
@@ -340,6 +277,12 @@ export default function FormPage({ project, name }: { project: Project; name: st
   const back = tabPath(id, FORMS_ID, rangeParams(url).toString())
   const actions = useFormActions()
   const [approving, setApproving] = useState(false)
+  const [setting, setSetting] = useState(false)
+  const navigate = useNavigate()
+  // An archived form leaves this page for the list it left.
+  const archive = async () => {
+    if (await actions.archive(id, name)) void navigate(back)
+  }
   const [shown, setShown] = useState<Shown>('active')
   const purgeDays = purgeDaysOf(useQuery(dashboardsQuery).data)
   const form = q.data?.forms.find((f) => f.name === name)
@@ -370,6 +313,16 @@ export default function FormPage({ project, name }: { project: Project; name: st
           <header className="flex min-w-0 flex-wrap items-center gap-2">
             <h2 className="font-mono text-lg font-semibold break-all">{form.name}</h2>
             <Badge variant={form.status === 'draft' ? 'outline' : 'secondary'}>{formStatus(form)}</Badge>
+            <div className="ml-auto">
+              <FormMenu
+                form={form}
+                pending={actions.pending}
+                onSettings={() => setSetting(true)}
+                onApprove={() => setApproving(true)}
+                onClosing={(closes_at) => actions.update(id, name, { closes_at }, closingDone(name, closes_at))}
+                onArchive={() => void archive()}
+              />
+            </div>
           </header>
           {form.status === 'draft' && (
             <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed p-3">
@@ -383,27 +336,13 @@ export default function FormPage({ project, name }: { project: Project; name: st
           )}
           {/* Keyed by what it shows: each table keeps its own view and last answer. */}
           <Submissions key={shown} projectId={id} form={form} shown={shown} onShown={setShown} purgeDays={purgeDays} />
-          <section aria-label="Settings" className="flex flex-col gap-5 rounded-lg border p-4">
-            <h3 className="text-base font-semibold">Settings</h3>
-            <Details projectId={id} form={form} actions={actions} />
-            {form.status === 'approved' && <ExpectedFields projectId={id} form={form} actions={actions} />}
-            <ClosingControl
-              closesAt={form.closes_at}
-              pending={actions.pending}
-              onChange={(closes_at) =>
-                actions.update(
-                  id,
-                  name,
-                  { closes_at },
-                  closes_at === null
-                    ? `Reopened ${name}`
-                    : Date.parse(closes_at) <= Date.now()
-                      ? `Closed ${name}`
-                      : `${name} closes ${formatDayTime(new Date(closes_at))}`
-                )
-              }
-            />
-          </section>
+          <SettingsDialog
+            open={setting}
+            onOpenChange={setSetting}
+            form={form}
+            pending={actions.pending}
+            onSave={(body) => actions.update(id, name, body)}
+          />
           <ApproveDialog
             open={approving}
             onOpenChange={setApproving}

@@ -1,20 +1,18 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { MoreHorizontalIcon } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
 import CopyButton from '@/components/projects/CopyButton'
 import LoadError from '@/components/projects/LoadError'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useFormActions } from '@/hooks/use-form-actions'
 import type { Form, Project } from '@/lib/api'
-import { formatDay, formPath, formStatus, isClosed, rfc3339 } from '@/lib/forms'
+import { closingDone, formatDay, formPath, formStatus } from '@/lib/forms'
 import { rangeParams } from '@/lib/project-tabs'
 import { formsQuery, keysQuery } from '@/lib/queries'
 import ApproveDialog from './ApproveDialog'
 import FindPerson from './FindPerson'
+import FormMenu from './FormMenu'
 
 const SNIPPET = `<form data-twillingate-form="contact">
   <input name="email" type="email" required>
@@ -66,11 +64,11 @@ interface RowProps {
   search: string
   pending: boolean
   onApprove: () => void
-  onStop: () => void
+  onClosing: (closesAt: string | null) => Promise<boolean>
   onArchive: () => void
 }
 
-function FormRow({ form, projectId, search, pending, onApprove, onStop, onArchive }: RowProps) {
+function FormRow({ form, projectId, search, pending, onApprove, onClosing, onArchive }: RowProps) {
   const count = `${form.submissions.toLocaleString('en-US')} ${form.submissions === 1 ? 'submission' : 'submissions'}`
   const last = form.last_submitted_at ? ` · last ${formatDay(new Date(form.last_submitted_at))}` : ''
   return (
@@ -91,28 +89,7 @@ function FormRow({ form, projectId, search, pending, onApprove, onStop, onArchiv
           )}
         </span>
       </Link>
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon" className="size-8 shrink-0" aria-label={`Actions for ${form.name}`}>
-            <MoreHorizontalIcon />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end">
-          {form.status === 'draft' && (
-            <DropdownMenuItem disabled={pending} onClick={onApprove}>
-              Approve…
-            </DropdownMenuItem>
-          )}
-          {!isClosed(form) && (
-            <DropdownMenuItem disabled={pending} onClick={onStop}>
-              Stop now
-            </DropdownMenuItem>
-          )}
-          <DropdownMenuItem disabled={pending} onClick={onArchive}>
-            Archive
-          </DropdownMenuItem>
-        </DropdownMenuContent>
-      </DropdownMenu>
+      <FormMenu form={form} pending={pending} onApprove={onApprove} onClosing={onClosing} onArchive={onArchive} />
     </li>
   )
 }
@@ -121,7 +98,7 @@ function FormRow({ form, projectId, search, pending, onApprove, onStop, onArchiv
  * A project's Forms tab (D12): Find a person, then one row per form, drafts
  * first as the API orders them, with its status, purpose, submission count
  * and last submission; a row opens the form's page and its menu approves,
- * stops or archives it. With no forms, a hint on adding one.
+ * stops, reopens or archives it. With no forms, a hint on adding one.
  */
 export default function FormsTab({ project }: { project: Project }) {
   const id = project.project_id
@@ -151,7 +128,7 @@ export default function FormsTab({ project }: { project: Project }) {
               search={search}
               pending={actions.pending}
               onApprove={() => setApproving({ form: f, open: true })}
-              onStop={() => void actions.update(id, f.name, { closes_at: rfc3339(new Date()) }, `Stopped ${f.name}`)}
+              onClosing={(closes_at) => actions.update(id, f.name, { closes_at }, closingDone(f.name, closes_at))}
               onArchive={() => void actions.archive(id, f.name)}
             />
           ))}

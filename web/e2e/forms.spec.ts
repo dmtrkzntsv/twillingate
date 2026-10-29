@@ -62,9 +62,14 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   await approve.getByRole('button', { name: 'Approve', exact: true }).click()
   await expect(approve).toHaveCount(0)
   await expect(page.getByText(/^Draft: accepting until/)).toHaveCount(0)
-  const fields = page.getByRole('group', { name: 'Expected fields' })
+  await page.getByRole('button', { name: 'Actions for contact' }).click()
+  await page.getByRole('menuitem', { name: 'Settings…' }).click()
+  const settings = page.getByRole('dialog', { name: 'Settings' })
+  const fields = settings.getByRole('group', { name: 'Expected fields' })
   await expect(fields.getByRole('checkbox', { name: 'email' })).toBeChecked()
   await expect(fields.getByText('not kept')).toHaveCount(2)
+  await page.keyboard.press('Escape')
+  await expect(settings).toHaveCount(0)
   await expect(table.getByRole('columnheader', { name: 'phone' })).toHaveCount(0)
   await expect(table.locator('tbody tr')).toHaveCount(2)
 
@@ -87,16 +92,30 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
 
   // The CSV of what the filter matches downloads.
   const download = page.waitForEvent('download')
-  await table.getByRole('button', { name: 'CSV', exact: true }).click()
+  await table.getByRole('button', { name: 'Export CSV', exact: true }).click()
   const file = await download
   expect(file.suggestedFilename()).toBe('contact-submissions.csv')
   const text = readFileSync((await file.path())!, 'utf8')
   expect(text).toContain('ann@example.com')
   expect(text).not.toContain('bob@example.com')
 
-  // Stop now: the form closes and refuses the next submission.
-  await page.getByRole('button', { name: 'Stop now' }).click()
-  await expect(page.getByRole('group', { name: 'Closing' }).getByText(/^Closed /)).toBeVisible()
+  // A checked row exports alone, from the page.
+  await table.getByRole('checkbox', { name: 'Select row 1' }).click()
+  const bar = table.getByRole('toolbar', { name: 'Selected submissions' })
+  await expect(bar.getByText('1 selected')).toBeVisible()
+  const picked = page.waitForEvent('download')
+  await bar.getByRole('button', { name: 'Export', exact: true }).click()
+  expect((await picked).suggestedFilename()).toBe('contact-selected-submissions.csv')
+  await bar.getByRole('button', { name: 'Clear', exact: true }).click()
+  await expect(bar).toHaveCount(0)
+
+  // Stop accepting, now: the form closes and refuses the next submission.
+  await page.getByRole('button', { name: 'Actions for contact' }).click()
+  await page.getByRole('menuitem', { name: 'Stop accepting…' }).click()
+  const stop = page.getByRole('dialog', { name: 'Stop accepting contact' })
+  await stop.getByRole('button', { name: 'Stop now' }).click()
+  await expect(stop).toHaveCount(0)
+  await expect(page.getByText('Closed', { exact: true })).toBeVisible()
   const refused = await request.post(`/ingest/forms/contact?key=${key}`, {
     headers: { Origin: SITE, Referer: `${SITE}/contact` },
     form: { email: 'late@example.com' },
@@ -104,7 +123,10 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   })
   expect(refused.status()).toBe(303)
   expect(refused.headers()['location']).toBe(`${SITE}/contact#twillingate-form-error-contact`)
-  await expect(page.getByRole('group', { name: 'Closing' }).getByRole('button', { name: 'Reopen' })).toBeVisible()
+  await page.getByRole('button', { name: 'Actions for contact' }).click()
+  await expect(page.getByRole('menuitem', { name: 'Reopen' })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: 'Stop accepting…' })).toHaveCount(0)
+  await page.keyboard.press('Escape')
 
   // Find a person across the forms, and archive everything found.
   await page.getByRole('link', { name: /^Forms(, \d+ new)?$/ }).last().click()
@@ -119,13 +141,15 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   await expect(page.getByText('Archived 1 submission')).toBeVisible()
   await expect(row.getByText(/^1 submission\b/)).toBeVisible()
 
-  // The archived submission waits on the form's Archived switch, and comes back.
+  // The archived submission waits behind the form's archived link, and comes back.
   await row.getByRole('link').click()
-  await page.getByRole('radio', { name: 'Archived 1' }).click()
-  await page.getByRole('cell', { name: 'bob@example.com' }).click()
+  await page.getByRole('button', { name: '1 archived', exact: true }).click()
+  await page.getByRole('button', { name: /bob@example\.com/ }).click()
   await page.getByRole('dialog', { name: 'Submission' }).getByRole('button', { name: 'Restore' }).click()
   await expect(page.getByText('Restored 1 submission')).toBeVisible()
-  await expect(page.getByRole('radio', { name: 'Active 2' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Submissions', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Submissions 2' })).toBeVisible()
 })
 
 test('the Forms button counts new submissions until a form is opened, then dots the draft', async ({ page, request }) => {

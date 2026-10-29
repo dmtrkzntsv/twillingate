@@ -82,7 +82,9 @@ describe('FormsTab', () => {
     renderTab()
     await user.click(await screen.findByRole('button', { name: 'Actions for contact' }))
     const before = Date.now()
-    await user.click(await screen.findByRole('menuitem', { name: 'Stop now' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Stop accepting…' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Stop accepting contact' })
+    await user.click(within(dialog).getByRole('button', { name: 'Stop now' }))
     await waitFor(() => expect(update).toHaveBeenCalled())
     const [pid, name, body] = update.mock.calls[0]
     expect([pid, name]).toEqual([4, 'contact'])
@@ -90,7 +92,7 @@ describe('FormsTab', () => {
     expect(Date.parse(body.closes_at as string)).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000)
 
     await user.click(screen.getByRole('button', { name: 'Actions for contact' }))
-    await user.click(await screen.findByRole('menuitem', { name: 'Archive' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Archive form' }))
     await waitFor(() => expect(archive).toHaveBeenCalledWith(4, 'contact'))
   })
 
@@ -107,14 +109,17 @@ describe('FormsTab', () => {
     await waitFor(() => expect(approve).toHaveBeenCalledWith(4, 'signup', ['email']))
   })
 
-  it('offers no Approve… on an approved form, and no Stop now on a closed one', async () => {
+  it('offers no Approve… on an approved form, and Reopen instead of Stop accepting… on a closed one', async () => {
     const user = userEvent.setup()
     vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('survey', { closes_at: fromNow(-1) })] })
+    const update = vi.spyOn(endpoints, 'updateForm').mockResolvedValue({ status: 'updated' })
     renderTab()
     await user.click(await screen.findByRole('button', { name: 'Actions for survey' }))
-    await screen.findByRole('menuitem', { name: 'Archive' })
+    await screen.findByRole('menuitem', { name: 'Archive form' })
     expect(screen.queryByRole('menuitem', { name: 'Approve…' })).toBeNull()
-    expect(screen.queryByRole('menuitem', { name: 'Stop now' })).toBeNull()
+    expect(screen.queryByRole('menuitem', { name: 'Stop accepting…' })).toBeNull()
+    await user.click(screen.getByRole('menuitem', { name: 'Reopen' }))
+    await waitFor(() => expect(update).toHaveBeenCalledWith(4, 'survey', { closes_at: null }))
   })
 
   it('shows a hint with a copyable form snippet and the action URL on the collector the API names', async () => {
