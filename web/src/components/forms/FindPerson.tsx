@@ -13,7 +13,7 @@ import LoadError from '@/components/projects/LoadError'
 import { useFormActions } from '@/hooks/use-form-actions'
 import type { FoundSubmission } from '@/lib/api'
 import { formatDayTime } from '@/lib/forms'
-import { findSubmissionsQuery } from '@/lib/queries'
+import { dashboardsQuery, findSubmissionsQuery } from '@/lib/queries'
 
 /** The shortest search the server takes. */
 const MIN = 2
@@ -46,6 +46,8 @@ export default function FindPerson({ projectId }: { projectId: number }) {
   const [confirming, setConfirming] = useState(false)
   const actions = useFormActions()
   const q = useQuery({ ...findSubmissionsQuery(projectId, search), enabled: search.length >= MIN })
+  // RETENTION_ARCHIVED_DAYS; absent when archived submissions are never purged.
+  const purgeDays = useQuery(dashboardsQuery).data?.purge_after_days
   const found = q.data?.submissions ?? []
   const more = q.data?.next_cursor !== undefined
   const count = `${found.length}${more ? '+' : ''} ${found.length === 1 && !more ? 'submission' : 'submissions'}`
@@ -139,8 +141,11 @@ export default function FindPerson({ projectId }: { projectId: number }) {
               Archive {count} containing “{search}”?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Every submission of the project's forms with a field containing it is archived: it leaves every table at once, and the daily
-              pass deletes it for good once it has been archived for the retention period. Its conversion stays counted.
+              Every submission of the project's forms with a field containing it is archived: it leaves every table at once,{' '}
+              {purgeDays
+                ? `and the daily pass deletes it for good ${purgeDays} ${purgeDays === 1 ? 'day' : 'days'} after archiving.`
+                : 'but it is never deleted: RETENTION_ARCHIVED_DAYS is 0, so archived submissions are kept until restored.'}{' '}
+              Its conversion stays counted.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

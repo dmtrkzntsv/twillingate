@@ -1,12 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { endpoints } from '@/lib/api'
+import { endpoints, type DashboardsResponse } from '@/lib/api'
 import { found } from '@/test/forms'
 import { renderWithProviders } from '@/test/render'
 import FindPerson from './FindPerson'
 
-beforeEach(() => vi.restoreAllMocks())
+const purgeAfter = (days?: number) =>
+  vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ dashboards: [], purge_after_days: days } as unknown as DashboardsResponse)
+
+beforeEach(() => {
+  vi.restoreAllMocks()
+  purgeAfter(30)
+})
 
 describe('FindPerson', () => {
   it('searches from two characters on and lists what it finds by form', async () => {
@@ -50,7 +56,7 @@ describe('FindPerson', () => {
     expect(within(items[1]).queryByText('Archived')).toBeNull()
     await user.click(within(results).getByRole('button', { name: 'Archive all' }))
     const confirm = await screen.findByRole('alertdialog', { name: /Archive 2 submissions/ })
-    expect(within(confirm).getByText(/deletes it for good/)).toBeInTheDocument()
+    expect(within(confirm).getByText(/deletes it for good 30 days after archiving/)).toBeInTheDocument()
   })
 
   it('archives every submission found once confirmed', async () => {
@@ -65,6 +71,18 @@ describe('FindPerson', () => {
     expect(archive).not.toHaveBeenCalled()
     await user.click(within(confirm).getByRole('button', { name: 'Archive submissions' }))
     await waitFor(() => expect(archive).toHaveBeenCalledWith(4, { search: 'bob' }))
+  })
+
+  it('says an erasure is never purged when RETENTION_ARCHIVED_DAYS is 0', async () => {
+    const user = userEvent.setup()
+    purgeAfter(undefined)
+    vi.spyOn(endpoints, 'findSubmissions').mockResolvedValue({ submissions: [found('s1')] })
+    renderWithProviders(<FindPerson projectId={4} />)
+    await user.type(screen.getByRole('searchbox', { name: 'Find a person' }), 'bob{Enter}')
+    const results = await screen.findByRole('region', { name: 'Found submissions' })
+    await user.click(within(results).getByRole('button', { name: 'Archive all' }))
+    const confirm = await screen.findByRole('alertdialog', { name: /Archive 1 submission\b/ })
+    expect(within(confirm).getByText(/it is never deleted: RETENTION_ARCHIVED_DAYS is 0/)).toBeInTheDocument()
   })
 
   it('says when nothing matches, offering no archive', async () => {
