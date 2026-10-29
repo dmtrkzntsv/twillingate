@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { ArchiveIcon, ArchiveRestoreIcon, ArrowLeftIcon, DownloadIcon, InboxIcon, SettingsIcon } from 'lucide-react'
-import { Link, useSearchParams } from 'react-router'
+import { Link, useNavigate, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import WidgetFrame from '@/components/WidgetFrame'
 import LoadError from '@/components/projects/LoadError'
@@ -19,11 +19,12 @@ import { useMarkFormSeen } from '@/hooks/use-mark-seen'
 import { useStoredState } from '@/hooks/use-stored-state'
 import { ApiError, endpoints, type Form, type Project, type SubmissionsPage, type SubmissionsQuery } from '@/lib/api'
 import { downloadBlob } from '@/lib/capture'
-import { formatDay, formatDayTime, formStatus, purgeDays as purgeDaysOf, purgeNote as purgeNoteFor, type PurgeDays } from '@/lib/forms'
+import { closingDone, formatDay, formStatus, purgeDays as purgeDaysOf, purgeNote as purgeNoteFor, type PurgeDays } from '@/lib/forms'
 import { FORMS_ID, rangeParams, tabPath } from '@/lib/project-tabs'
 import { dashboardsQuery, formsQuery, submissionsQuery } from '@/lib/queries'
 import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
 import ApproveDialog from './ApproveDialog'
+import FormMenu from './FormMenu'
 import SettingsDialog from './SettingsDialog'
 import SubmissionDrawer from './SubmissionDrawer'
 
@@ -257,7 +258,7 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
 /**
  * `/projects/:id/forms/:name` (D12), inside the Forms tab: a crumb back to
  * the list, a draft's banner with **Approve**, the submissions table, and
- * **Settings** opening the form's settings dialog.
+ * **Settings** opening the form's settings dialog beside the form's menu.
  */
 export default function FormPage({ project, name }: { project: Project; name: string }) {
   const id = project.project_id
@@ -267,6 +268,11 @@ export default function FormPage({ project, name }: { project: Project; name: st
   const actions = useFormActions()
   const [approving, setApproving] = useState(false)
   const [setting, setSetting] = useState(false)
+  const navigate = useNavigate()
+  // An archived form leaves this page for the list it left.
+  const archive = async () => {
+    if (await actions.archive(id, name)) void navigate(back)
+  }
   const [shown, setShown] = useState<Shown>('active')
   const purgeDays = purgeDaysOf(useQuery(dashboardsQuery).data)
   const form = q.data?.forms.find((f) => f.name === name)
@@ -297,10 +303,19 @@ export default function FormPage({ project, name }: { project: Project; name: st
           <header className="flex min-w-0 flex-wrap items-center gap-2">
             <h2 className="font-mono text-lg font-semibold break-all">{form.name}</h2>
             <Badge variant={form.status === 'draft' ? 'outline' : 'secondary'}>{formStatus(form)}</Badge>
-            <Button type="button" variant="outline" size="sm" className="ml-auto" onClick={() => setSetting(true)}>
-              <SettingsIcon />
-              Settings
-            </Button>
+            <div className="ml-auto flex items-center gap-1">
+              <Button type="button" variant="outline" size="sm" onClick={() => setSetting(true)}>
+                <SettingsIcon />
+                Settings
+              </Button>
+              <FormMenu
+                form={form}
+                pending={actions.pending}
+                onApprove={() => setApproving(true)}
+                onClosing={(closes_at) => actions.update(id, name, { closes_at }, closingDone(name, closes_at))}
+                onArchive={() => void archive()}
+              />
+            </div>
           </header>
           {form.status === 'draft' && (
             <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed p-3">
@@ -320,18 +335,6 @@ export default function FormPage({ project, name }: { project: Project; name: st
             form={form}
             pending={actions.pending}
             onSave={(body) => actions.update(id, name, body)}
-            onClosing={(closes_at) =>
-              actions.update(
-                id,
-                name,
-                { closes_at },
-                closes_at === null
-                  ? `Reopened ${name}`
-                  : Date.parse(closes_at) <= Date.now()
-                    ? `Closed ${name}`
-                    : `${name} closes ${formatDayTime(new Date(closes_at))}`
-              )
-            }
           />
           <ApproveDialog
             open={approving}

@@ -5,7 +5,6 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import type { Form, FormUpdate } from '@/lib/api'
 import { FieldPicker } from './ApproveDialog'
-import ClosingControl from './ClosingControl'
 
 interface Props {
   open: boolean
@@ -14,16 +13,13 @@ interface Props {
   pending?: boolean
   /** Sends update_form with what changed; resolves true once saved, which closes the dialog. */
   onSave: (body: FormUpdate) => Promise<boolean>
-  /** Sends update_form's closes_at at once, apart from Save. */
-  onClosing: (closesAt: string | null) => Promise<unknown>
 }
 
 /**
  * A form's settings (D12): purpose, return URL and an approved form's
- * expected fields, saved together with only what changed sent; and its
- * closing, whose buttons apply at once.
+ * expected fields, saved together with only what changed sent.
  */
-export default function SettingsDialog({ open, onOpenChange, form, pending, onSave, onClosing }: Props) {
+export default function SettingsDialog({ open, onOpenChange, form, pending, onSave }: Props) {
   const id = useId()
   const expected = form.expected_fields ?? []
   const approved = form.status === 'approved'
@@ -89,10 +85,6 @@ export default function SettingsDialog({ open, onOpenChange, form, pending, onSa
             </div>
           )}
         </form>
-        {/* Outside the form: Enter in its date field must not save the rest. */}
-        <div className="border-t pt-4">
-          <ClosingControl closesAt={form.closes_at} pending={pending} onChange={onClosing} />
-        </div>
         <DialogFooter>
           <DialogClose asChild>
             <Button type="button" variant="outline">

@@ -269,7 +269,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   expect(await sidewaysScroll(page), 'block attribute dialog').toEqual([])
   await page.keyboard.press('Escape')
 
-  // A form's Approve and Settings dialogs and a submission's drawer fit the phone.
+  // A form's Approve, Settings and Stop accepting dialogs and a submission's drawer fit the phone.
   await check(page, `/app/projects/${id}/forms/${formName}`)
   await page.getByRole('button', { name: 'Approve', exact: true }).click()
   await expect(page.getByRole('dialog', { name: `Approve ${formName}` })).toBeVisible()
@@ -280,6 +280,11 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible()
   await expect.poll(() => dialogOverflow(page), { message: 'Settings dialog' }).toEqual([])
   expect(await sidewaysScroll(page), 'Settings dialog').toEqual([])
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: `Actions for ${formName}` }).click()
+  await page.getByRole('menuitem', { name: 'Stop accepting…' }).click()
+  await expect(page.getByRole('dialog', { name: `Stop accepting ${formName}` })).toBeVisible()
+  await expect.poll(() => dialogOverflow(page), { message: 'Stop accepting dialog' }).toEqual([])
   await page.keyboard.press('Escape')
   await page.locator('tbody tr').first().click()
   await expect(page.getByRole('dialog', { name: 'Submission' }).getByText('x', { exact: true })).toBeVisible()

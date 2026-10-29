@@ -178,11 +178,13 @@ describe('FormPage', () => {
     await waitFor(() => expect(approve).toHaveBeenCalledWith(4, 'contact', ['email', 'message']))
   })
 
-  it('closes the form from its settings', async () => {
+  it('stops the form from its menu', async () => {
     const user = userEvent.setup()
     const update = vi.spyOn(endpoints, 'updateForm').mockResolvedValue({ status: 'updated' })
     renderPage()
-    const dialog = await openSettings(user)
+    await user.click(await screen.findByRole('button', { name: 'Actions for contact' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Stop accepting…' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Stop accepting contact' })
     await user.click(within(dialog).getByRole('button', { name: 'Stop now' }))
     await waitFor(() => expect(update).toHaveBeenCalledWith(4, 'contact', { closes_at: expect.stringMatching(/Z$/) }))
   })

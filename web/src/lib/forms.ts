@@ -110,3 +110,9 @@ export function formPath(projectId: number, name: string, search = ''): string {
   const path = `/projects/${projectId}/forms/${encodeURIComponent(name)}`
   return search ? `${path}?${search}` : path
 }
+
+/** The toast after a change of a form's closing: reopened, closed, or when it closes. */
+export function closingDone(name: string, closesAt: string | null, now = Date.now()): string {
+  if (closesAt === null) return `Reopened ${name}`
+  return Date.parse(closesAt) <= now ? `Stopped ${name}` : `${name} stops ${formatDayTime(new Date(closesAt))}`
+}

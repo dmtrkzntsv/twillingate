@@ -98,10 +98,13 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   expect(text).toContain('ann@example.com')
   expect(text).not.toContain('bob@example.com')
 
-  // Stop now: the form closes and refuses the next submission.
-  await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  await settings.getByRole('button', { name: 'Stop now' }).click()
-  await expect(settings.getByRole('group', { name: 'Closing' }).getByText(/^Closed /)).toBeVisible()
+  // Stop accepting, now: the form closes and refuses the next submission.
+  await page.getByRole('button', { name: 'Actions for contact' }).click()
+  await page.getByRole('menuitem', { name: 'Stop accepting…' }).click()
+  const stop = page.getByRole('dialog', { name: 'Stop accepting contact' })
+  await stop.getByRole('button', { name: 'Stop now' }).click()
+  await expect(stop).toHaveCount(0)
+  await expect(page.getByText('Closed', { exact: true })).toBeVisible()
   const refused = await request.post(`/ingest/forms/contact?key=${key}`, {
     headers: { Origin: SITE, Referer: `${SITE}/contact` },
     form: { email: 'late@example.com' },
@@ -109,7 +112,9 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   })
   expect(refused.status()).toBe(303)
   expect(refused.headers()['location']).toBe(`${SITE}/contact#twillingate-form-error-contact`)
-  await expect(settings.getByRole('group', { name: 'Closing' }).getByRole('button', { name: 'Reopen' })).toBeVisible()
+  await page.getByRole('button', { name: 'Actions for contact' }).click()
+  await expect(page.getByRole('menuitem', { name: 'Reopen' })).toBeVisible()
+  await expect(page.getByRole('menuitem', { name: 'Stop accepting…' })).toHaveCount(0)
   await page.keyboard.press('Escape')
 
   // Find a person across the forms, and archive everything found.
