@@ -141,13 +141,15 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   await expect(page.getByText('Archived 1 submission')).toBeVisible()
   await expect(row.getByText(/^1 submission\b/)).toBeVisible()
 
-  // The archived submission waits on the form's Archived switch, and comes back.
+  // The archived submission waits behind the form's archived link, and comes back.
   await row.getByRole('link').click()
-  await page.getByRole('radio', { name: 'Archived 1' }).click()
+  await page.getByRole('button', { name: '1 archived', exact: true }).click()
   await page.getByRole('cell', { name: 'bob@example.com' }).click()
   await page.getByRole('dialog', { name: 'Submission' }).getByRole('button', { name: 'Restore' }).click()
   await expect(page.getByText('Restored 1 submission')).toBeVisible()
-  await expect(page.getByRole('radio', { name: 'Active 2' })).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Submissions', exact: true }).click()
+  await expect(page.getByRole('heading', { name: 'Submissions 2' })).toBeVisible()
 })
 
 test('the Forms button counts new submissions until a form is opened, then dots the draft', async ({ page, request }) => {

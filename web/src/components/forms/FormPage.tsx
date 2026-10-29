@@ -8,7 +8,6 @@ import LoadError from '@/components/projects/LoadError'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import Table from '@/components/widgets/table'
 import { useFormActions } from '@/hooks/use-form-actions'
 import { useMarkFormSeen } from '@/hooks/use-mark-seen'
@@ -82,9 +81,9 @@ interface SubmissionsProps {
  * A form's submissions (D12a): the dashboards' table in remote mode, its
  * rows from list_submissions, a row opening the drawer, with **Export CSV**
  * of what the filters match. Checking rows swaps that for **Archive** (or
- * **Restore**), **Export** and **Clear** on just those. The switch shows the
- * archived submissions instead; the daily pass purges them `purgeDays`
- * after archiving.
+ * **Restore**), **Export** and **Clear** on just those. The **N archived**
+ * link beside it shows the archived submissions instead, with a way back;
+ * the daily pass purges them `purgeDays` after archiving.
  */
 function Submissions({ projectId, form, shown, onShown, purgeDays }: SubmissionsProps) {
   const name = form.name
@@ -169,27 +168,37 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
   return (
     <section aria-label="Submissions" className="flex min-w-0 flex-col gap-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+        {archived ? (
+          <div className="flex min-w-0 items-center gap-1">
+            <Button type="button" variant="ghost" size="sm" className="-ml-2" onClick={() => onShown('active')}>
+              <ArrowLeftIcon />
+              Submissions
+            </Button>
+            <h3 className="text-base font-semibold">
+              Archived
+              {answer && answer.total > 0 && (
+              <span className="ml-1 text-sm font-normal text-muted-foreground">
+                {' '}
+                {live.length > 0
+                  ? `${answer.matched.toLocaleString('en-US')} of ${answer.total.toLocaleString('en-US')}`
+                  : answer.total.toLocaleString('en-US')}
+              </span>
+            )}
+            </h3>
+          </div>
+        ) : (
           <h3 className="text-base font-semibold">
             Submissions
-            {answer && answer.total > 0 && live.length > 0 && (
-              <span className="ml-2 text-sm font-normal text-muted-foreground">
-                {`${answer.matched.toLocaleString('en-US')} of ${answer.total.toLocaleString('en-US')}`}
+            {answer && answer.total > 0 && (
+              <span className="ml-1 text-sm font-normal text-muted-foreground">
+                {' '}
+                {live.length > 0
+                  ? `${answer.matched.toLocaleString('en-US')} of ${answer.total.toLocaleString('en-US')}`
+                  : answer.total.toLocaleString('en-US')}
               </span>
             )}
           </h3>
-          <ToggleGroup
-            type="single"
-            variant="outline"
-            size="sm"
-            value={shown}
-            onValueChange={(v) => v && onShown(v as Shown)}
-            aria-label="Which submissions"
-          >
-            <ToggleGroupItem value="active">Active {form.submissions.toLocaleString('en-US')}</ToggleGroupItem>
-            <ToggleGroupItem value="archived">Archived {form.archived_submissions.toLocaleString('en-US')}</ToggleGroupItem>
-          </ToggleGroup>
-        </div>
+        )}
         {selected.length > 0 ? (
           <div role="toolbar" aria-label="Selected submissions" className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted-foreground">{selected.length.toLocaleString('en-US')} selected</span>
@@ -207,10 +216,17 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
             </Button>
           </div>
         ) : (
-          <Button type="button" variant="outline" size="sm" disabled={downloading || !answer} onClick={() => void csv()}>
-            <DownloadIcon />
-            Export CSV
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            {!archived && form.archived_submissions > 0 && (
+              <Button type="button" variant="link" size="sm" className="text-muted-foreground" onClick={() => onShown('archived')}>
+                {form.archived_submissions.toLocaleString('en-US')} archived
+              </Button>
+            )}
+            <Button type="button" variant="outline" size="sm" disabled={downloading || !answer} onClick={() => void csv()}>
+              <DownloadIcon />
+              Export CSV
+            </Button>
+          </div>
         )}
       </div>
       {archived && <p className="text-xs text-muted-foreground">{purgeNote}</p>}

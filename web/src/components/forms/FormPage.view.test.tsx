@@ -105,13 +105,14 @@ describe('FormPage view', () => {
     expect(screen.queryByRole('toolbar', { name: 'Selected submissions' })).toBeNull()
   })
 
-  it('switches to the archived submissions, a table of their own, and restores the rows checked', async () => {
+  it('switches to the archived submissions, a table of their own behind the archived link, and restores the rows checked', async () => {
     const user = userEvent.setup()
     const restore = vi.spyOn(endpoints, 'restoreSubmissions').mockResolvedValue({ restored: 1 })
     renderPage()
     await user.click(await screen.findByRole('button', { name: 'Filter Bob' }))
     await waitFor(() => expect(endpoints.submissions).toHaveBeenCalledWith(4, 'contact', { filters: JSON.stringify(bob) }))
-    await user.click(screen.getByRole('radio', { name: 'Archived 1' }))
+    await user.click(screen.getByRole('button', { name: '1 archived' }))
+    expect(await screen.findByRole('heading', { name: /^Archived/ })).toBeInTheDocument()
     // A fresh view: the active table's filter stays with it.
     await waitFor(() => expect(endpoints.submissions).toHaveBeenLastCalledWith(4, 'contact', { archived: true }))
     expect(screen.getByText(/deleted for good 30 days after archiving/)).toBeInTheDocument()
@@ -125,6 +126,8 @@ describe('FormPage view', () => {
     const bar = screen.getByRole('toolbar', { name: 'Selected submissions' })
     await user.click(within(bar).getByRole('button', { name: 'Restore' }))
     await waitFor(() => expect(restore).toHaveBeenCalledWith(4, { ids: ['s2'] }))
+    await user.click(screen.getByRole('button', { name: 'Submissions' }))
+    expect(await screen.findByRole('heading', { name: /^Submissions/ })).toBeInTheDocument()
   })
 
   it('exports the rows checked from the page, without asking the server', async () => {
