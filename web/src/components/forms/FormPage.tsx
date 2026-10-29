@@ -73,8 +73,9 @@ function plural(n: number, one: string): string {
 
 /**
  * A form's submissions (D12a): the dashboards' table in remote mode, its
- * rows from list_submissions, a row opening the drawer, with **Delete all
- * matching** (only with filters set) and **CSV** of what the filters match.
+ * rows from list_submissions, a row opening the drawer, with **CSV** of what
+ * the filters match above it and **Delete all matching** (only with filters
+ * set) under it.
  */
 function Submissions({ projectId, form }: { projectId: number; form: Form }) {
   const name = form.name
@@ -149,16 +150,6 @@ function Submissions({ projectId, form }: { projectId: number; form: Form }) {
           )}
         </h3>
         <div className="flex flex-wrap gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            disabled={!deletable}
-            onClick={() => setConfirming(true)}
-          >
-            <Trash2Icon />
-            Delete all matching
-          </Button>
           <Button type="button" variant="outline" size="sm" disabled={downloading || !answer} onClick={() => void csv()}>
             <DownloadIcon />
             CSV
@@ -192,6 +183,12 @@ function Submissions({ projectId, form }: { projectId: number; form: Form }) {
             />
           </WidgetFrame>
         </div>
+      )}
+      {answer && answer.total > 0 && (
+        <Button type="button" variant="outline" size="sm" className="self-start" disabled={!deletable} onClick={() => setConfirming(true)}>
+          <Trash2Icon />
+          Delete all matching
+        </Button>
       )}
       <SubmissionDrawer projectId={projectId} form={name} id={opened} onClose={() => setOpened(undefined)} />
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
