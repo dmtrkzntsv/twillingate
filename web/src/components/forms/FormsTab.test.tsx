@@ -92,7 +92,7 @@ describe('FormsTab', () => {
     expect(Date.parse(body.closes_at as string)).toBeGreaterThanOrEqual(Math.floor(before / 1000) * 1000)
 
     await user.click(screen.getByRole('button', { name: 'Actions for contact' }))
-    await user.click(await screen.findByRole('menuitem', { name: 'Archive' }))
+    await user.click(await screen.findByRole('menuitem', { name: 'Archive form' }))
     await waitFor(() => expect(archive).toHaveBeenCalledWith(4, 'contact'))
   })
 
@@ -115,7 +115,7 @@ describe('FormsTab', () => {
     const update = vi.spyOn(endpoints, 'updateForm').mockResolvedValue({ status: 'updated' })
     renderTab()
     await user.click(await screen.findByRole('button', { name: 'Actions for survey' }))
-    await screen.findByRole('menuitem', { name: 'Archive' })
+    await screen.findByRole('menuitem', { name: 'Archive form' })
     expect(screen.queryByRole('menuitem', { name: 'Approve…' })).toBeNull()
     expect(screen.queryByRole('menuitem', { name: 'Stop accepting…' })).toBeNull()
     await user.click(screen.getByRole('menuitem', { name: 'Reopen' }))

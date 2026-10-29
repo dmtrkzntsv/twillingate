@@ -203,7 +203,7 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
             </Button>
             <Button type="button" variant="ghost" size="sm" onClick={() => setChecked(new Set())}>
               <XIcon />
-              Clear
+              <span className="max-sm:sr-only">Clear</span>
             </Button>
           </div>
         ) : (

@@ -21,7 +21,7 @@ interface Props {
  * A form's menu (D12), on its row and its page (which adds **Settings…**
  * first): **Approve…** on a draft,
  * **Stop accepting…** while it takes submissions, **Reopen** once it has a
- * closing time, and **Archive**.
+ * closing time, and **Archive form**.
  */
 export default function FormMenu({ form, pending, onSettings, onApprove, onClosing, onArchive }: Props) {
   const [stopping, setStopping] = useState(false)
@@ -51,7 +51,7 @@ export default function FormMenu({ form, pending, onSettings, onApprove, onClosi
             </DropdownMenuItem>
           )}
           <DropdownMenuItem disabled={pending} onClick={onArchive}>
-            Archive
+            Archive form
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
