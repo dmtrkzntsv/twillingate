@@ -26,7 +26,7 @@ const timingLimit = 10 * time.Second
 // raw/ directory and REPORTING_TIMING_SQL_ENGINE_SOCKET the socket of an
 // engine reading that directory, e.g.
 //
-//	REPORTING_TIMING_EVENTS_DIR=$PWD/local/raw REPORTING_TIMING_SQL_ENGINE_SOCKET=$PWD/local/sql.sock \
+//	REPORTING_TIMING_EVENTS_DIR=$PWD/local/data REPORTING_TIMING_SQL_ENGINE_SOCKET=$PWD/local/sql.sock \
 //	  go test ./internal/reporting/ -run Timing -v
 //
 // It reads the embedded system definition directly, picks the project

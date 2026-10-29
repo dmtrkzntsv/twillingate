@@ -17,7 +17,7 @@ import (
 
 // Options configure an Engine. Zero fields take their defaults.
 type Options struct {
-	// Dir is the events directory (raw/).
+	// Dir is the events directory (data/).
 	Dir string
 	// Workers is how many goroutines one query scans with (default 2).
 	Workers int

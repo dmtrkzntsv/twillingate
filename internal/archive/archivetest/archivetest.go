@@ -1,4 +1,4 @@
-// Package archivetest is a raw/ directory and its log, for the tests of
+// Package archivetest is a data/ directory and its log, for the tests of
 // the packages that read event files, and a scripted SQL engine (FakeSQL)
 // for the tests of what sends SQL to one.
 package archivetest
@@ -16,7 +16,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// Files is a raw/ directory under a test's temp directory, its log and
+// Files is a data/ directory under a test's temp directory, its log and
 // the archive that runs the daily pass over it.
 type Files struct {
 	Dir     string
@@ -28,7 +28,7 @@ type Files struct {
 func New(t testing.TB) *Files {
 	t.Helper()
 	data := t.TempDir()
-	l, err := archive.OpenLog(filepath.Join(data, "raw"))
+	l, err := archive.OpenLog(filepath.Join(data, "data"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func (f *Files) Maintain(t testing.TB, today string) {
 	}
 }
 
-// CopyDir copies every file under src (a raw/ directory) into dst, made if
+// CopyDir copies every file under src (a data/ directory) into dst, made if
 // missing, but the log's lock, keeping modification times: a derived file
 // is current only while no events file it comes from is newer, so a copy
 // that stamps every file anew would leave the derived files stale.

@@ -29,11 +29,11 @@ const recentIDs = 10 * time.Minute
 const tsFormat = "2006-01-02T15:04:05Z"
 
 // ErrLocked: another Log, in this process or another, holds the directory.
-// One process at a time writes raw/: the ingest server, or the import
+// One process at a time writes data/: the ingest server, or the import
 // command while the server is stopped.
 var ErrLocked = errors.New("archive: the events directory is in use by another process")
 
-// Log appends events to raw/<project>/<day>.log, one descriptor per open
+// Log appends events to data/<project>/<day>.log, one descriptor per open
 // log, fsynced once per WriteEvents (the pipeline's flush).
 type Log struct {
 	dir   string

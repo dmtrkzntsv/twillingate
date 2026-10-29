@@ -2,18 +2,18 @@
 
 Twillingate's settings (projects, keys, rules, forms, dashboards, the audit
 log) are in one SQLite file, `/var/lib/twillingate/twillingate.db`. Its events
-are not: from migration 042 they live only in the files under `raw/`.
+are not: from migration 042 they live only in the files under `data/`.
 [Litestream](https://litestream.io) streams the database's write-ahead log to
 S3-compatible storage as it is written, so that off-host copy is seconds
 behind, but it holds no events; they are only as fresh as your own copy of
-`raw/`. It runs beside the collector, not inside it: twillingate never reads
+`data/`. It runs beside the collector, not inside it: twillingate never reads
 its settings, and neither the installer nor the compose file sets it up. This
 page does, for systemd and for docker compose. The examples use Cloudflare R2
 and litestream 0.5; any S3-compatible store works.
 
 Litestream copies the database only, so a host lost between two copies of
-`raw/` loses the events since the last. The event files under `raw/` (from the
-release that added `RETENTION_DAYS`; `EVENTS_DIR` when set) are not part of it;
+`data/` loses the events since the last. The event files under `data/` (from the
+release that added `RETENTION_DAYS`; `DATA_DIR` when set) are not part of it;
 copy them on a schedule of your own (`docs/deployment.md`, "Back up and
 restore").
 
@@ -140,7 +140,7 @@ docker compose logs -f litestream   # "snapshot complete", then a line per uploa
 
 A backup you have never restored is not a backup. Restore into a scratch
 file and query it: it must hold your projects. The database holds no events,
-so the newest day comes from your copy of `raw/` (below).
+so the newest day comes from your copy of `data/` (below).
 
 ```bash
 # systemd: litestream reads the bucket credentials from the env file
@@ -171,7 +171,7 @@ litestream stopped uploading (`journalctl -u litestream` or `docker compose
 logs litestream`); `no matching backups found` against a bucket you know is
 written means a version mismatch.
 
-Your copy of `raw/` is not in the bucket; check it the same day. List each
+Your copy of `data/` is not in the bucket; check it the same day. List each
 project's newest dated file (a day file, or a month file once the month is final), which should be a day or two old:
 
 ```bash
@@ -185,14 +185,14 @@ for d in /path/to/your/raw-copy/*/; do echo "$d $(ls "$d" | grep -E "^[0-9]{4}-[
 > uploads that empty database beside the good backup.
 
 Litestream brings back the database only. Before the collector starts, put
-`raw/` back too, from your newest copy of it. As with any backup
+`data/` back too, from your newest copy of it. As with any backup
 (`docs/deployment.md`, "Back up and restore"), the database must be no older
 than that copy: the daily pass deletes the files of any project the database
 does not know. A restore to the latest state never is; one to an earlier
-`-timestamp` needs a `raw/` copy taken before that time.
+`-timestamp` needs a `data/` copy taken before that time.
 
 Only a replica written by a release before migration 042 holds events. The
-replica is newer than your copy of `raw/`, so the database holds events the
+replica is newer than your copy of `data/`, so the database holds events the
 files lack, and this release cannot import them: restore such a replica with
 v0.21.x, run `twillingate events import -force` there as the service user
 before the collector starts, then upgrade (`deploy/UPGRADES.md`). A replica

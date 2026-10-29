@@ -62,10 +62,10 @@ con.executemany(
 con.commit()
 PY
 # Widget SQL reads the event files, not SQLite: the seed writes its events as
-# closed logs under EVENTS_DIR (raw/ beside the database by default). Serve
+# closed logs under DATA_DIR (data/ beside the database by default). Serve
 # starts at once, as on upgrade day: its boot pass dumps and merges them while
 # the suite already queries.
-python3 "$root/scripts/seed-demo.py" "$db" --events-dir "${EVENTS_DIR:-$(dirname "$db")/raw}"
+python3 "$root/scripts/seed-demo.py" "$db" --events-dir "${DATA_DIR:-$(dirname "$db")/data}"
 
 "$bin" serve &
 pid=$!
@@ -75,7 +75,7 @@ pid=$!
 # and derives the tables, and until it ends every query over the files is
 # slow (the seed's 180 raw days are far more than an upgrade's ~30). So the
 # suite starts only when this script prints the line playwright.config.ts
-# waits for. Assumes the files sit under EVENTS_DIR, which defaults to raw/
+# waits for. Assumes the files sit under DATA_DIR, which defaults to data/
 # beside the database, one numbered directory per project, and that the
 # pass is done when
 #   - no log (.log), closed log (.closed) or claimed log (.dumping) is left
@@ -83,7 +83,7 @@ pid=$!
 #   - every project directory holds its derived identities.parquet and
 #     aliases.parquet, and
 #   - the listing held still between two polls.
-events_dir="${EVENTS_DIR:-$(dirname "$db")/raw}"
+events_dir="${DATA_DIR:-$(dirname "$db")/data}"
 today="$(date -u +%F)"
 settled() {
   local dir day

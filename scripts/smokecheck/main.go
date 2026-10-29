@@ -1,5 +1,5 @@
 // Command smokecheck prints the number of events of the two raw families in
-// an events directory (raw/<project>/<day>.log and <day>.N.closed), counted
+// an events directory (data/<project>/<day>.log and <day>.N.closed), counted
 // from the lines themselves. Used by scripts/smoke.sh to verify ingestion
 // end-to-end without requiring a sqlite3 CLI on the host.
 package main

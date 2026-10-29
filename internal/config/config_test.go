@@ -157,39 +157,44 @@ func TestValidationErrors(t *testing.T) {
 	}
 }
 
-// TestEventsDir: the event files sit beside the database unless
-// EVENTS_DIR moves them; a relative path is made absolute, so it names
+// TestEventsDir: the event files sit in data/ beside the database unless
+// DATA_DIR moves them; a relative path is made absolute, so it names
 // the same directory whatever the working directory.
 func TestEventsDir(t *testing.T) {
-	c, err := load(t, nil)
-	if err != nil || c.EventsDir != "/tmp/raw" {
-		t.Fatalf("default EventsDir = %v, %v; want /tmp/raw, beside /tmp/a.db", c, err)
+	db := t.TempDir()
+	c, err := load(t, map[string]string{"DATABASE_DSN": "sqlite://" + db + "/a.db"})
+	if err != nil || c.EventsDir != filepath.Join(db, "data") {
+		t.Fatalf("default EventsDir = %v, %v; want data/ beside a.db", c, err)
 	}
-	c, err = load(t, map[string]string{"EVENTS_DIR": "/srv/events"})
+	c, err = load(t, map[string]string{"DATA_DIR": "/srv/events"})
 	if err != nil || c.EventsDir != "/srv/events" {
 		t.Fatalf("EventsDir = %v, %v; want /srv/events", c, err)
 	}
+	c, err = load(t, map[string]string{"DATABASE_DSN": "sqlite://" + db + "/a.db", "EVENTS_DIR": "/srv/events"})
+	if err != nil || c.EventsDir != filepath.Join(db, "data") {
+		t.Fatalf("with the retired EVENTS_DIR = %v, %v; want the default data/", c, err)
+	}
 	wd, _ := os.Getwd()
-	c, err = load(t, map[string]string{"EVENTS_DIR": "events"})
+	c, err = load(t, map[string]string{"DATA_DIR": "events"})
 	if err != nil || c.EventsDir != filepath.Join(wd, "events") {
 		t.Fatalf("relative EventsDir = %v, %v; want %s", c, err, filepath.Join(wd, "events"))
 	}
 }
 
 // TestEventsDirMustNotHoldTheDatabase: the SQL engine reads all of
-// EVENTS_DIR, so a database inside it would be within reach of widget and
+// DATA_DIR, so a database inside it would be within reach of widget and
 // query SQL (raw-first spec D8).
 func TestEventsDirMustNotHoldTheDatabase(t *testing.T) {
 	for name, vars := range map[string]map[string]string{
-		"the database's directory": {"EVENTS_DIR": "/tmp"},
-		"a parent of it":           {"EVENTS_DIR": "/"},
-		"the console's database's": {"EVENTS_DIR": "/srv/x", "CONSOLE_DATABASE_DSN": "sqlite:///srv/x/replica.db"},
+		"the database's directory": {"DATA_DIR": "/tmp"},
+		"a parent of it":           {"DATA_DIR": "/"},
+		"the console's database's": {"DATA_DIR": "/srv/x", "CONSOLE_DATABASE_DSN": "sqlite:///srv/x/replica.db"},
 	} {
-		if _, err := load(t, vars); err == nil || !strings.Contains(err.Error(), "EVENTS_DIR") {
-			t.Errorf("%s: err = %v, want a refusal naming EVENTS_DIR", name, err)
+		if _, err := load(t, vars); err == nil || !strings.Contains(err.Error(), "DATA_DIR") {
+			t.Errorf("%s: err = %v, want a refusal naming DATA_DIR", name, err)
 		}
 	}
-	if _, err := load(t, map[string]string{"EVENTS_DIR": "/tmp/rawer"}); err != nil {
+	if _, err := load(t, map[string]string{"DATA_DIR": "/tmp/rawer"}); err != nil {
 		t.Errorf("a sibling directory: %v", err)
 	}
 }
@@ -818,8 +823,8 @@ func TestRetiredVariablesAreIgnored(t *testing.T) {
 }
 
 // TestRetiredEngineSettingsAreIgnored: an install that still sets
-// ENGINE_MEMORY_LIMIT or ENGINE_MAX_CHILDREN, whatever the value, loads,
-// and the warning names only the ones it sets.
+// ENGINE_MEMORY_LIMIT, ENGINE_MAX_CHILDREN or EVENTS_DIR, whatever the
+// value, loads, and the warning names only the ones it sets, each with why.
 func TestRetiredEngineSettingsAreIgnored(t *testing.T) {
 	for _, c := range []struct {
 		vars map[string]string
@@ -830,6 +835,8 @@ func TestRetiredEngineSettingsAreIgnored(t *testing.T) {
 		{map[string]string{"ENGINE_MEMORY_LIMIT": "512MB"}, "ENGINE_MEMORY_LIMIT is ignored: SQL runs in an external SQL engine"},
 		{map[string]string{"ENGINE_MAX_CHILDREN": "2"}, "ENGINE_MAX_CHILDREN is ignored: SQL runs in an external SQL engine"},
 		{map[string]string{"ENGINE_MAX_CHILDREN": ""}, ""},
+		{map[string]string{"ENGINE_MAX_CHILDREN": "2", "EVENTS_DIR": "/srv/events"},
+			"ENGINE_MAX_CHILDREN is ignored: SQL runs in an external SQL engine; EVENTS_DIR is ignored: the event files' directory is DATA_DIR"},
 	} {
 		cfg, err := load(t, c.vars)
 		if err != nil {

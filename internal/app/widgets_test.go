@@ -190,7 +190,7 @@ func TestCheckUserWidgetsLogsWhatFailsOnTheFiles(t *testing.T) {
 }
 
 // TestCheckUserWidgetsWithoutEventFilesRunsNoQuery: with no event file
-// under EVENTS_DIR every widget would run on nothing, and with no engine
+// under DATA_DIR every widget would run on nothing, and with no engine
 // there is nothing to run them on, so the boot's check of the users'
 // widgets sends no query and logs nothing.
 func TestCheckUserWidgetsWithoutEventFilesRunsNoQuery(t *testing.T) {
