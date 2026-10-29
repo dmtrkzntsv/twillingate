@@ -177,8 +177,12 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 	}
 
 	// Submissions archived on their own, one transaction and audit row per
-	// project. Those of a form or project purged above went with it.
-	const archivedSubmissions = `archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?`
+	// project. Those of a form or project purged above went with it. One
+	// whose $form_submit event still waits (pending_event, unlogged_event)
+	// holds its only copy: it waits for a later pass, once the attribution
+	// job has written it to the event files, so the conversion stays.
+	const archivedSubmissions = `archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?
+		AND pending_event IS NULL AND unlogged_event IS NULL`
 	subProjects, err := d.purgeableIDs(ctx,
 		`SELECT DISTINCT project_id FROM submissions WHERE `+archivedSubmissions+` ORDER BY project_id`, days)
 	if err != nil {

@@ -855,7 +855,9 @@ running it as a formula.
 
 **Archiving.** Nothing deletes a submission at once: `archive_submissions`
 sets it aside and the daily pass purges it `RETENTION_ARCHIVED_DAYS`
-(default 30; 0 never purges) after archiving, as it purges an archived form.
+(default 30; 0 never purges) after archiving, as it purges an archived form
+(one whose `$form_submit` event the job has not written to the event files
+yet waits for a later pass).
 An archived submission leaves its form's table, counts and export, and still
 reads with `get_submission`, `list_submissions` with `archived: true` and
 `find_submissions`; `restore_submissions` brings it back until it is purged.

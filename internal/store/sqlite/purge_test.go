@@ -540,6 +540,7 @@ func TestPurgeArchivedDeletesAgedSubmissions(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	attributeAll(t, db, nil) // a draft's submissions write no event
 	archive := func(id string, days int) {
 		if _, err := db.ExecForTest(
 			`UPDATE submissions SET archived_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?) WHERE id=?`,
@@ -551,7 +552,6 @@ func TestPurgeArchivedDeletesAgedSubmissions(t *testing.T) {
 	archive("old2", 31)
 	archive("old3", 40)
 	archive("recent", 5)
-
 	res, err := db.PurgeArchived(ctx, 30)
 	if err != nil {
 		t.Fatal(err)
@@ -572,6 +572,38 @@ func TestPurgeArchivedDeletesAgedSubmissions(t *testing.T) {
 	}
 	if res, err := db.PurgeArchived(ctx, 30); err != nil || res.Submissions != 0 {
 		t.Fatalf("second pass: %+v %v", res, err)
+	}
+}
+
+// TestPurgeArchivedKeepsAQueuedConversion: an archived submission whose
+// $form_submit event still waits, to be attributed or to be logged, holds
+// its only copy, so the purge leaves it for a pass after the job.
+func TestPurgeArchivedKeepsAQueuedConversion(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, newSub("s0", map[string]string{"email": "a@x.io"}))
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, db, newSub("s1", map[string]string{"email": "b@x.io"}))
+	if _, err := db.ExecForTest(`UPDATE submissions SET archived_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-40 days') WHERE id='s1'`); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := db.PurgeArchived(ctx, 30); err != nil || res.Submissions != 0 {
+		t.Fatalf("pending: %+v, %v; want nothing purged", res, err)
+	}
+	attributeAll(t, db, nil)
+	if us, _ := db.UnloggedEvents(ctx, 10); len(us) != 1 {
+		t.Fatalf("unlogged = %+v, want s1's event", us)
+	}
+	if res, err := db.PurgeArchived(ctx, 30); err != nil || res.Submissions != 0 {
+		t.Fatalf("unlogged: %+v, %v; want nothing purged", res, err)
+	}
+	if err := db.MarkLogged(ctx, []store.UnloggedEvent{{ProjectID: 1, ID: "s1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := db.PurgeArchived(ctx, 30); err != nil || res.Submissions != 1 {
+		t.Fatalf("logged: %+v, %v; want s1 purged", res, err)
 	}
 }
 
