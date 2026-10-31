@@ -28,7 +28,7 @@ sqlengine/           public protocol and client for an external SQL engine over 
 docs/                the three contract pages, embedded and served over MCP
 sdk/                 browser SDK source (TypeScript); the built file is embedded by internal/server
 web/                 dashboard web app source (React, TypeScript); the build is embedded by internal/reporting
-deploy/              installer, systemd unit, compose file, UPGRADES.md
+deploy/              installer, systemd unit, compose file, UPGRADES.md; ship/ holds the unit template and env example ship installs
 ```
 
 `app` imports the surfaces (`server`, `api`, `jobs`, `pipeline`);

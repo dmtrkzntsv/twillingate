@@ -92,7 +92,7 @@ install too.
 | [The event model](docs/twillingate.md#the-event-model) | The three event families, for native apps and backends too |
 | [The wire format](docs/twillingate.md#the-wire-format) | The normative contract for `/ingest/events` |
 | [Answer questions with the data](docs/twillingate.md#answer-questions-with-the-data) | The MCP tools, the HTTP API, the views, and the caveats needed to write correct SQL |
-| [Install](docs/deployment.md#install) | systemd and docker compose, verifying ingestion |
+| [Install](docs/deployment.md#install) | systemd (`install.sh` or [ship](docs/deployment.md#systemd-with-ship)) and docker compose, verifying ingestion |
 | [Configure the collector](docs/deployment.md#configure-the-collector) | Every environment variable, low-resource tuning |
 | [The console](docs/deployment.md#the-console) | The browser login, and pointing claude.ai, Desktop or Claude Code at it |
 | [Dashboards at /app/](docs/deployment.md#dashboards-at-app) | Where the dashboards are served and how they log in |

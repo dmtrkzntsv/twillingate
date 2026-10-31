@@ -94,6 +94,66 @@ curl -i -X POST http://localhost:8080/ingest/events \
   -d '{"key":"ak_…","events":[{"name":"$page_view","attributes":{"$host":"myapp.com","$path":"/"}}]}'
 ```
 
+### systemd with ship
+
+Each release is also published, as plain binaries with a unit template, to
+the R2 bucket that [ship](https://github.com/dmtrkzntsv/ship) installs from
+(the maintainer's hosts; the bucket is not public, so use `install.sh`
+above otherwise). On a host with ship and its read-only R2 key:
+
+```bash
+sudo ship install twillingate --version latest     # service twillingate; not started
+sudo vi /etc/twillingate/twillingate.env           # INGEST_URL, GEO_DSN, CONSOLE_AUTH_DSN …
+sudo ship run twillingate -- project create -name myapp
+sudo ship run twillingate -- key issue -project-id 1 -label web
+sudo ship start twillingate
+# The SQL engine (private, twillingate-sql) joins the same service:
+sudo ship install twillingate-sql --service twillingate --version latest
+sudo ship start twillingate-sql --service twillingate
+```
+
+ship creates the user, `/opt/S/twillingate`, `/etc/S/twillingate.env`
+(from `deploy/ship/twillingate.env.example`, only when absent),
+`/var/lib/S` and `/run/S`, and installs
+[deploy/ship/twillingate.service](https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/ship/twillingate.service)
+as `S.service`, with `S` the service (`--service`, default `twillingate`;
+`twillingate-beta` beside it is another, with its own everything). The
+unit runs in `/var/lib/S`, so the example's `DATABASE_DSN=sqlite://twillingate.db`
+and the default `DATA_DIR` (`data/` beside it) live there, and it sets
+`SQL_ENGINE_SOCKET=/run/S/sql-engine.sock`, where twillingate-sql installed
+into the same service listens as the same user; leave `DATA_DIR` unset,
+since the engine reads `/var/lib/S/data`. Without the engine, set
+`SQL_ENGINE_SOCKET=` (empty) in the env file to refuse SQL rather than
+fail it. `ship update twillingate` upgrades (and rolls back by itself if
+the unit does not stay up), `ship rollback`, `ship logs` and `ship status`
+operate it, and `ship run twillingate -- <command>` runs any CLI command
+with the service's env file and user, in its data directory. ship
+installs one unit per project, so it has no split install
+(`twillingate@.service`), the litestream unit or the logrotate file: set
+those up by hand if you need them, with `/var/lib/S` and `/etc/S/twillingate.env`
+for the paths in [litestream.md](https://github.com/dmtrkzntsv/twillingate/blob/main/docs/litestream.md).
+
+A host installed with `install.sh` moves to ship by hand, keeping its
+data: ship takes over no path it did not create, and `ship adopt` knows
+only another script's layout.
+
+```bash
+sudo systemctl disable --now twillingate twillingate-sql   # and any twillingate@ instance
+sudo rm /etc/systemd/system/twillingate.service /etc/systemd/system/twillingate@.service \
+  /usr/local/bin/twillingate
+sudo mv /etc/twillingate /root/twillingate-etc.bak         # ship refuses an existing /etc/S
+# with twillingate-sql from its own install.sh, also:
+sudo rm /etc/systemd/system/twillingate-sql.service /usr/local/bin/twillingate-sql
+sudo rm -r /etc/twillingate-sql /var/cache/twillingate-sql
+sudo userdel twillingate-sql                               # and its group
+sudo systemctl daemon-reload
+sudo ship install twillingate --version latest             # keeps /var/lib/twillingate, owned by twillingate
+sudo cp /root/twillingate-etc.bak/twillingate.env /etc/twillingate/twillingate.env
+# drop SQL_ENGINE_SOCKET from it: the unit sets it
+sudo ship install twillingate-sql --service twillingate --version latest
+sudo ship start twillingate-sql --service twillingate && sudo ship start twillingate
+```
+
 ### One collector, several hostnames
 
 The service binds to loopback by default, so put TLS in front of
@@ -625,6 +685,7 @@ server's; without it they are refused, and its other widgets load.
 | Logs | `journalctl -u twillingate -f` |
 | Restart | `systemctl restart twillingate` |
 | Upgrade (systemd) | `curl -fsSL …/install.sh \| sudo bash` — restarts the running service and reports the old and new version |
+| Upgrade (ship) | `sudo ship update twillingate` — restarts it, checks it stays up and rolls back when it does not; `ship status` shows the version |
 | Upgrade (compose) | `docker compose pull && docker compose up -d`. Never `down -v`: the database lives in the named volume. Pin with `TWILLINGATE_VERSION=v0.9.2` in `.env`. |
 | Apply migrations only | `twillingate migrate` |
 | Upgrade an install still below migration 042 (a release before v0.21.0) | upgrade to v0.21.x first and run `twillingate events import` there, as [UPGRADES.md](https://github.com/dmtrkzntsv/twillingate/blob/main/deploy/UPGRADES.md) says; this release has no import, and its migration 042 refuses a database still holding events that were never imported |
