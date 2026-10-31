@@ -20,11 +20,12 @@ permissions:
 # Serialize runs so releases are published in commit order.
 concurrency:
   group: release
-# Five jobs. version settles the tag; build cross-compiles and checks the
+# Six jobs. version settles the tag; build cross-compiles and checks the
 # tarballs of both architectures, while test and the multi-arch image run
 # side by side with it; release publishes only once all of them have
 # passed, so a failure anywhere leaves no tag, no release and no tagged image,
-# and only when dry_run is off.
+# and only when dry_run is off. r2 then uploads the same binaries, with
+# ship's unit template, to R2 for `ship install`; it can be re-run alone.
 jobs:
   version:
     name: version
@@ -99,6 +100,14 @@ jobs:
         with:
           name: dist
           path: dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
+      # The r2 job publishes this folder: the same binaries, flat, with
+      # ship's unit template and env example (deploy/ship/).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ship
+          path: dist/ship/
           if-no-files-found: error
           retention-days: 7
 
@@ -261,3 +270,29 @@ jobs:
         run: |
           docker buildx imagetools create -t "$IMAGE:$TAG" -t "$IMAGE:latest" "$IMAGE@$DIGEST"
           docker buildx imagetools inspect "$IMAGE:$TAG"
+
+  # The plain binaries, the unit template and the env example to R2 with
+  # ship (`make publish`, as from a laptop), as the version and `latest`.
+  # After the release, so R2 never holds a version GitHub does not; a
+  # failure here leaves the release as it is, and re-running this job
+  # alone publishes it (ship skips an identical version and still moves
+  # latest). Credentials: an R2 token with Object Read & Write on the lab
+  # bucket, in the repository secrets R2_ENDPOINT, R2_ACCESS_KEY_ID and
+  # R2_SECRET_ACCESS_KEY.
+  r2:
+    name: publish to R2
+    needs: [version, release]
+    if: ${{ !inputs.dry_run }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: ship, path: dist/ship }
+      - uses: dmtrkzntsv/ship@v0
+      - run: make publish VERSION="$TAG" CHANNELS=latest
+        env:
+          TAG: ${{ needs.version.outputs.tag }}
+          SHIP_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+          SHIP_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          SHIP_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          SHIP_R2_BUCKET: lab

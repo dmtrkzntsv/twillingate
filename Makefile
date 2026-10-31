@@ -2,7 +2,7 @@ BIN := twillingate
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=$(VERSION)
 
-.PHONY: build ui test check vet dist docker run smoke test-install test-compose seed-demo clean
+.PHONY: build ui test check vet dist publish docker run smoke test-install test-compose seed-demo clean
 
 # The dashboards app (web/) builds into internal/reporting/ui, which the
 # binary embeds. Only its components.json is committed, so every Go build
@@ -54,18 +54,35 @@ check: vet $(UI)
 
 # The release tarballs, one per architecture, cross-compiled from this host
 # (no cgo): binary + deploy/ (installer, units, configs). release.yml writes
-# the SHA256SUMS the installer verifies over both.
+# the SHA256SUMS the installer verifies over both. The same binaries also go
+# into $(SHIP_DIR), flat, beside ship's unit template and env example: the
+# folder `make publish` uploads to R2 (ship writes its own SHA256SUMS).
 DIST_ARCHES = amd64 arm64
+SHIP_DIR := dist/ship
 dist: $(UI)
-	@set -e; for arch in $(DIST_ARCHES); do \
+	@set -e; rm -rf $(SHIP_DIR); mkdir -p $(SHIP_DIR); \
+	for arch in $(DIST_ARCHES); do \
 	stage=dist/stage-$$arch; rm -rf $$stage; mkdir -p $$stage; \
 	CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags '$(LDFLAGS)' -o $$stage/$(BIN) ./cmd/twillingate; \
+	cp $$stage/$(BIN) $(SHIP_DIR)/$(BIN)-linux-$$arch; \
 	cp -r deploy $$stage/deploy; \
 	cp .env.example LICENSE $$stage/; \
 	tar -czf dist/$(BIN)-linux-$$arch.tar.gz -C $$stage .; \
 	rm -rf $$stage; \
 	echo "packaged dist/$(BIN)-linux-$$arch.tar.gz"; \
-	done
+	done; \
+	cp deploy/ship/$(BIN).service deploy/ship/$(BIN).env.example $(SHIP_DIR)/; \
+	echo "staged $(SHIP_DIR) for make publish"
+
+# Uploads $(SHIP_DIR), as `make dist` left it, to R2 with ship
+# (github.com/dmtrkzntsv/ship) as version $(VERSION), then points the moving
+# CHANNELS (latest, dev) at it. Versions are immutable. Needs the SHIP_R2_*
+# write credentials in the environment or ~/.config/ship/config.toml;
+# release.yml runs it after the GitHub release. Hosts then take it with
+# `ship install twillingate --version latest` (docs/deployment.md).
+CHANNELS ?= latest
+publish:
+	ship publish $(BIN) --path $(SHIP_DIR) --version $(VERSION) --channels $(CHANNELS)
 
 docker:
 	docker build --target runtime -t twillingate:$(VERSION) .
