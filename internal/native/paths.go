@@ -79,21 +79,8 @@ func (q Query) pathsColumn() string {
 // limit busiest, by sessions, then source and target.
 func (s scan) paths(ctx context.Context, from, to civil.Date) (Result, error) {
 	col, depth := s.q.pathsColumn(), cmp.Or(s.q.Depth, defaultDepth)
-	cols := []string{"day", "ts", "id", "kind", "actor_id", "session_id"}
-	for _, c := range readColumns(col) {
-		if !slices.Contains(cols, c) {
-			cols = append(cols, c)
-		}
-	}
-	for _, f := range s.filters {
-		for _, fc := range f.columns() {
-			for _, c := range readColumns(fc) {
-				if !slices.Contains(cols, c) {
-					cols = append(cols, c)
-				}
-			}
-		}
-	}
+	cols := appendNew([]string{"day", "ts", "id", "kind", "actor_id", "session_id"}, readColumns(col)...)
+	cols = appendReadColumns(cols, s.filters)
 	all, err := archive.ListFiles(s.e.dir)
 	if err != nil {
 		return Result{}, err

@@ -201,27 +201,39 @@ func readLogBatches(_ context.Context, path string, cols []string, family string
 // then registers this one's; done ends it.
 func (c *logCache) flight(ctx context.Context, path string) (done func(), err error) {
 	for {
-		c.mu.Lock()
-		ch, busy := c.flights[path]
-		if !busy {
-			ch = make(chan struct{})
-			c.flights[path] = ch
-			c.mu.Unlock()
-			return func() {
-				c.mu.Lock()
-				delete(c.flights, path)
-				c.mu.Unlock()
-				close(ch)
-			}, nil
+		done, wait := takeFlight(&c.mu, &c.flights, path)
+		if done != nil {
+			return done, nil
 		}
-		c.mu.Unlock()
 		onFlightWait(path)
 		select {
-		case <-ch:
+		case <-wait:
 		case <-ctx.Done():
 			return nil, ctx.Err()
 		}
 	}
+}
+
+// takeFlight registers a load of key in flights, guarded by mu, when none
+// is under way, and returns done, which ends it; else wait, closed once
+// the load under way ends.
+func takeFlight[K comparable](mu *sync.Mutex, flights *map[K]chan struct{}, key K) (done func(), wait <-chan struct{}) {
+	mu.Lock()
+	defer mu.Unlock()
+	if ch, busy := (*flights)[key]; busy {
+		return nil, ch
+	}
+	if *flights == nil {
+		*flights = map[K]chan struct{}{}
+	}
+	ch := make(chan struct{})
+	(*flights)[key] = ch
+	return func() {
+		mu.Lock()
+		delete(*flights, key)
+		mu.Unlock()
+		close(ch)
+	}, nil
 }
 
 // onFlightWait is called as a query starts waiting for path's flight; a

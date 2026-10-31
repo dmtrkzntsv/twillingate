@@ -186,6 +186,15 @@ type metricSpec struct {
 	ratioNum, ratioDen *metricSpec
 }
 
+// walk calls f with mt, then with a ratio's sides, each walked in turn.
+func (mt *metricSpec) walk(f func(*metricSpec)) {
+	f(mt)
+	if mt.ratioNum != nil {
+		mt.ratioNum.walk(f)
+		mt.ratioDen.walk(f)
+	}
+}
+
 // countedOps are the metrics that count rows, ids or weights: over no
 // rows each is 0, or the daily_* and weight NULL, which a ratio's
 // numerator reads as 0.
@@ -485,35 +494,23 @@ func filtersKey(where []Filter) string {
 // columns is what a scan must read for the aggregation.
 func (a *agg) columns() []string {
 	cols := []string{"day"}
-	add := func(c string) {
-		if !slices.Contains(cols, c) {
-			cols = append(cols, c)
-		}
-	}
+	add := func(cs ...string) { cols = appendNew(cols, cs...) }
 	for _, fs := range append([][]filter{a.filters}, a.masks...) {
 		for _, f := range fs {
 			for _, col := range f.columns() {
-				if isDefined(col) {
-					continue // added to each batch
-				}
-				for _, c := range readColumns(col) {
-					add(c)
+				if !isDefined(col) { // a defined one is added to each batch
+					add(readColumns(col)...)
 				}
 			}
 		}
 	}
 	for _, d := range a.dims {
-		if isDefined(d) {
-			continue // added to each batch, from the columns below
-		}
-		for _, c := range readColumns(d) {
-			add(c)
+		if !isDefined(d) { // a defined one is added to each batch, from the columns below
+			add(readColumns(d)...)
 		}
 	}
 	for _, col := range definedColumns(a.defs) {
-		for _, c := range readColumns(col) {
-			add(c)
-		}
+		add(readColumns(col)...)
 	}
 	for _, n := range a.nums {
 		add(n.name)
@@ -529,17 +526,13 @@ func (a *agg) columns() []string {
 	if len(a.latests) > 0 {
 		add("ts")
 		for _, l := range a.latests {
-			if isDefined(l.name) {
-				continue // added to each batch
-			}
-			for _, c := range readColumns(l.name) {
-				add(c)
+			if !isDefined(l.name) { // a defined one is added to each batch
+				add(readColumns(l.name)...)
 			}
 		}
 	}
 	if len(a.msrs) > 0 {
-		add("value")
-		add("sample_rate")
+		add("value", "sample_rate")
 	}
 	return cols
 }
@@ -773,13 +766,7 @@ func (a *agg) addBatch(p *part, b *batch) error {
 				} else {
 					v = float64(c.Ints[i])
 				}
-				np.fsum[x] += v
-				if first || v < np.fmin[x] {
-					np.fmin[x] = v
-				}
-				if first || v > np.fmax[x] {
-					np.fmax[x] = v
-				}
+				foldBounds(&np.fsum[x], &np.fmin[x], &np.fmax[x], v, v, v, first)
 			case !n.float && (c.Ints != nil || c.Times != nil):
 				var v int64
 				if c.Ints != nil {
@@ -788,16 +775,12 @@ func (a *agg) addBatch(p *part, b *batch) error {
 					v = c.Times[i]
 				}
 				// A day or time is only bounded (no sum or avg takes one),
-				// and a sum of microsecond times can overflow: skip it.
-				if n.form == formNumber {
-					np.isum[x] += v
+				// and a sum of microsecond times can overflow: it adds 0.
+				sum := v
+				if n.form != formNumber {
+					sum = 0
 				}
-				if first || v < np.imin[x] {
-					np.imin[x] = v
-				}
-				if first || v > np.imax[x] {
-					np.imax[x] = v
-				}
+				foldBounds(&np.isum[x], &np.imin[x], &np.imax[x], sum, v, v, first)
 			default:
 				return fmt.Errorf("native: column %s is not a number", n.name)
 			}

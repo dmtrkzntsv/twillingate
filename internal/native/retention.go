@@ -101,17 +101,7 @@ func (s scan) retentionActors(ctx context.Context, spec retentionSpec, files arc
 	}
 	lo, hi, toDay := epochDay(spec.from), epochDay(hiDate), epochDay(spec.to)
 	words := int((hi - lo + 64) / 64)
-	cols := slices.Clone(retentionColumns)
-	for _, f := range s.filters {
-		for _, col := range f.columns() {
-			for _, c := range readColumns(col) {
-				if !slices.Contains(cols, c) {
-					cols = append(cols, c)
-				}
-			}
-		}
-	}
-	read := s.rules.columns(cols)
+	read := s.rules.columns(appendReadColumns(slices.Clone(retentionColumns), s.filters))
 	idCols := s.identityColumnsOf(nil)
 	var ids *firstSet
 	var err error

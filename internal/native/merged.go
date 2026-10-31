@@ -204,22 +204,23 @@ func mergeNum(dst, src *numPart, float bool, cells int) {
 		first := dst.n[x] == 0
 		dst.n[x] += n
 		if float {
-			dst.fsum[x] += src.fsum[x]
-			if first || src.fmin[x] < dst.fmin[x] {
-				dst.fmin[x] = src.fmin[x]
-			}
-			if first || src.fmax[x] > dst.fmax[x] {
-				dst.fmax[x] = src.fmax[x]
-			}
-			continue
+			foldBounds(&dst.fsum[x], &dst.fmin[x], &dst.fmax[x], src.fsum[x], src.fmin[x], src.fmax[x], first)
+		} else {
+			foldBounds(&dst.isum[x], &dst.imin[x], &dst.imax[x], src.isum[x], src.imin[x], src.imax[x], first)
 		}
-		dst.isum[x] += src.isum[x]
-		if first || src.imin[x] < dst.imin[x] {
-			dst.imin[x] = src.imin[x]
-		}
-		if first || src.imax[x] > dst.imax[x] {
-			dst.imax[x] = src.imax[x]
-		}
+	}
+}
+
+// foldBounds adds sum to *dsum and widens [*dlo, *dhi] to take in [lo,
+// hi]: a cell's partial sum and bounds folded into another's, which holds
+// none yet when first.
+func foldBounds[T int64 | float64](dsum, dlo, dhi *T, sum, lo, hi T, first bool) {
+	*dsum += sum
+	if first || lo < *dlo {
+		*dlo = lo
+	}
+	if first || hi > *dhi {
+		*dhi = hi
 	}
 }
 
@@ -412,21 +413,9 @@ func (m *merged) evalNum(mt metricSpec, gs []int32, day int) value {
 			first := n == 0
 			n += c
 			if float {
-				fsum += np.fsum[x]
-				if first || np.fmin[x] < fmin {
-					fmin = np.fmin[x]
-				}
-				if first || np.fmax[x] > fmax {
-					fmax = np.fmax[x]
-				}
-				return
-			}
-			isum += np.isum[x]
-			if first || np.imin[x] < imin {
-				imin = np.imin[x]
-			}
-			if first || np.imax[x] > imax {
-				imax = np.imax[x]
+				foldBounds(&fsum, &fmin, &fmax, np.fsum[x], np.fmin[x], np.fmax[x], first)
+			} else {
+				foldBounds(&isum, &imin, &imax, np.isum[x], np.imin[x], np.imax[x], first)
 			}
 		})
 	}

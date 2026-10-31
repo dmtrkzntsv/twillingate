@@ -432,30 +432,15 @@ func (c *identityCache) size() int64 {
 // none under way, it registers this one's and returns done, which the
 // caller calls once it has loaded (or failed to).
 func (c *identityCache) flight(ctx context.Context, part idPart) (done func(), err error) {
-	for {
-		c.mu.Lock()
-		ch, busy := c.flights[part]
-		if !busy {
-			if c.flights == nil {
-				c.flights = map[idPart]chan struct{}{}
-			}
-			ch = make(chan struct{})
-			c.flights[part] = ch
-			c.mu.Unlock()
-			return func() {
-				c.mu.Lock()
-				delete(c.flights, part)
-				c.mu.Unlock()
-				close(ch)
-			}, nil
-		}
-		c.mu.Unlock()
-		select {
-		case <-ch:
-			return nil, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
+	done, wait := takeFlight(&c.mu, &c.flights, part)
+	if done != nil {
+		return done, nil
+	}
+	select {
+	case <-wait:
+		return nil, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }
 

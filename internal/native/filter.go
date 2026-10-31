@@ -51,6 +51,27 @@ func readColumns(column string) []string {
 	return []string{column}
 }
 
+// appendReadColumns is cols with the columns a scan reads for fs'
+// columns (readColumns) appended, each that cols lacks once, in order.
+func appendReadColumns(cols []string, fs []filter) []string {
+	for _, f := range fs {
+		for _, col := range f.columns() {
+			cols = appendNew(cols, readColumns(col)...)
+		}
+	}
+	return cols
+}
+
+// appendNew is cols with each of cs that it lacks appended, once.
+func appendNew(cols []string, cs ...string) []string {
+	for _, c := range cs {
+		if !slices.Contains(cols, c) {
+			cols = append(cols, c)
+		}
+	}
+	return cols
+}
+
 // batchColumn is b's column for column: computed from its sources for a
 // computed column, NULL values for a bucket b has no value column for, nil
 // when b lacks it (every row NULL).

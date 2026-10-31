@@ -105,20 +105,14 @@ func everFilters(filters []filter, metrics []metricSpec) []*filter {
 			out = append(out, &filters[i])
 		}
 	}
-	var metric func(mt *metricSpec)
-	metric = func(mt *metricSpec) {
-		for i := range mt.where {
-			if mt.where[i].ids != nil {
-				out = append(out, &mt.where[i])
-			}
-		}
-		if mt.ratioNum != nil {
-			metric(mt.ratioNum)
-			metric(mt.ratioDen)
-		}
-	}
 	for i := range metrics {
-		metric(&metrics[i])
+		metrics[i].walk(func(mt *metricSpec) {
+			for i := range mt.where {
+				if mt.where[i].ids != nil {
+					out = append(out, &mt.where[i])
+				}
+			}
+		})
 	}
 	return out
 }
@@ -142,16 +136,7 @@ func (e *Engine) collectEver(ctx context.Context, fs []*filter, p Params, rs rul
 			r.From = p.From
 		}
 		s := scan{e: e, q: Query{Table: "events"}, filters: f.inner, project: p.Project, rules: rs}
-		cols := []string{"day", f.column}
-		for _, g := range f.inner {
-			for _, col := range g.columns() {
-				for _, c := range readColumns(col) {
-					if !slices.Contains(cols, c) {
-						cols = append(cols, c)
-					}
-				}
-			}
-		}
+		cols := appendReadColumns([]string{"day", f.column}, f.inner)
 		f.ids.ids = map[string]struct{}{}
 		var sel []int32
 		var mu sync.Mutex

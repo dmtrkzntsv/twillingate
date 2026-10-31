@@ -164,50 +164,10 @@ func percent(q float64) string {
 // attribute and value, then its metrics (its keys' attribute, events,
 // values and keys_total). It does not validate q.
 func (q Query) Columns() []string {
-	var cols []string
-	switch q.Kind {
-	case "paths":
-		return []string{"source", "target", "value"}
-	case "funnel":
-		return []string{"step", "value"}
-	case "retention":
-		switch q.Output {
-		case "grid":
-			return []string{"cohort", "identified_by", "offset", "size", "returned", "retention"}
-		case "curve":
-			return []string{"offset", "retention"}
-		}
-		for _, m := range q.milestones() {
-			cols = append(cols, "d"+strconv.Itoa(m))
-		}
-		return cols
-	case "trend":
-		cols = append(cols, "day")
-		if q.Series != "" || q.long() {
-			cols = append(cols, "series")
-		}
-		if q.long() {
-			return append(cols, "value")
-		}
-	case "breakdown", "stat":
-		if q.longShape() {
-			return q.longColumns()
-		}
-		cols = append(cols, q.Dimensions...)
-	case "attributes":
-		if q.Output == "keys" {
-			return []string{"attribute", "events", "values", "keys_total"}
-		}
-		cols = append(cols, q.Dimensions...)
-		cols = append(cols, "attribute", "value")
-	}
-	for _, m := range q.Metrics {
-		cols = append(cols, m.Name())
-	}
-	if q.Kind == "stat" && q.Compare == "previous" {
-		for _, m := range q.Metrics {
-			cols = append(cols, "previous_"+m.Name())
-		}
+	outs := q.outputs()
+	cols := make([]string, len(outs))
+	for i, o := range outs {
+		cols[i] = o.name
 	}
 	return cols
 }
@@ -224,65 +184,94 @@ func (q Query) Columns() []string {
 // others number. An attributes' attribute and value are text (its keys'
 // attribute text, the others number). It does not validate q.
 func (q Query) ColumnTypes() []string {
-	var types []string
+	outs := q.outputs()
+	types := make([]string, len(outs))
+	for i, o := range outs {
+		types[i] = o.typ
+	}
+	return types
+}
+
+// output is one of a query's result columns: its name (Columns') and its
+// type (ColumnTypes').
+type output struct{ name, typ string }
+
+// outputs are q's result columns, which Columns and ColumnTypes read.
+func (q Query) outputs() []output {
+	var out []output
+	add := func(typ string, names ...string) {
+		for _, n := range names {
+			out = append(out, output{n, typ})
+		}
+	}
 	switch q.Kind {
 	case "paths":
-		return []string{"text", "text", "number"}
+		add("text", "source", "target")
+		add("number", "value")
+		return out
 	case "funnel":
-		return []string{"text", "number"}
+		add("text", "step")
+		add("number", "value")
+		return out
 	case "retention":
-		for _, c := range q.Columns() {
-			switch c {
-			case "cohort":
-				types = append(types, "day")
-			case "identified_by":
-				types = append(types, "text")
-			default:
-				types = append(types, "number")
+		switch q.Output {
+		case "grid":
+			add("day", "cohort")
+			add("text", "identified_by")
+			add("number", "offset", "size", "returned", "retention")
+		case "curve":
+			add("number", "offset", "retention")
+		default:
+			for _, m := range q.milestones() {
+				add("number", "d"+strconv.Itoa(m))
 			}
 		}
-		return types
+		return out
 	case "trend":
-		types = append(types, "day")
+		add("day", "day")
 		if q.Series != "" || q.long() {
-			types = append(types, "text")
+			add("text", "series")
 		}
 		if q.long() {
-			return append(types, "number")
+			add("number", "value")
+			return out
 		}
 	case "attributes":
 		if q.Output == "keys" {
-			return []string{"text", "number", "number", "number"}
+			add("text", "attribute")
+			add("number", "events", "values", "keys_total")
+			return out
 		}
 		for _, d := range q.Dimensions {
-			types = append(types, columnType(d))
+			add(columnType(d), d)
 		}
-		types = append(types, "text", "text")
+		add("text", "attribute", "value")
 	case "breakdown":
 		for _, d := range q.Dimensions {
 			if q.Other {
-				types = append(types, "text")
+				add("text", d) // its Other row reads "Other"
 			} else {
-				types = append(types, columnType(d))
+				add(columnType(d), d)
 			}
 		}
 	}
-	if q.longShape() { // metric, value, previous_value
-		types = append(types, "text", "number")
+	if q.longShape() { // longColumns, after the dimensions
+		add("text", "metric")
+		add("number", "value")
 		if q.Compare == "previous" {
-			types = append(types, "number")
+			add("number", "previous_value")
 		}
-		return types
+		return out
 	}
 	for _, m := range q.Metrics {
-		types = append(types, m.valueType())
+		add(m.valueType(), m.Name())
 	}
 	if q.Kind == "stat" && q.Compare == "previous" {
 		for _, m := range q.Metrics {
-			types = append(types, m.valueType())
+			add(m.valueType(), "previous_"+m.Name())
 		}
 	}
-	return types
+	return out
 }
 
 // long says whether q is a trend of several metrics, whose answer is

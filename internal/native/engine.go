@@ -669,37 +669,24 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r dayRange, c
 // filters and dims name.
 func (s scan) identityColumnsOf(dims []string) []string {
 	var out []string
-	fss := [][]filter{s.filters}
-	var add func(mt metricSpec)
-	add = func(mt metricSpec) {
-		fss = append(fss, mt.where)
-		if mt.ratioNum != nil {
-			add(*mt.ratioNum)
-			add(*mt.ratioDen)
-		}
-	}
-	for _, mt := range s.metrics {
-		add(mt)
-	}
-	for _, fs := range fss {
-		for _, f := range fs {
-			for _, col := range f.columns() {
-				if _, ok := idColumns[col]; ok && !slices.Contains(out, col) {
-					out = append(out, col)
-				}
+	add := func(cols ...string) {
+		for _, col := range cols {
+			if _, ok := idColumns[col]; ok && !slices.Contains(out, col) {
+				out = append(out, col)
 			}
 		}
 	}
-	for _, d := range dims {
-		if _, ok := idColumns[d]; ok && !slices.Contains(out, d) {
-			out = append(out, d)
+	fss := [][]filter{s.filters}
+	for i := range s.metrics {
+		s.metrics[i].walk(func(mt *metricSpec) { fss = append(fss, mt.where) })
+	}
+	for _, fs := range fss {
+		for _, f := range fs {
+			add(f.columns()...)
 		}
 	}
-	for _, col := range definedColumns(s.defs) {
-		if _, ok := idColumns[col]; ok && !slices.Contains(out, col) {
-			out = append(out, col)
-		}
-	}
+	add(dims...)
+	add(definedColumns(s.defs)...)
 	return out
 }
 

@@ -188,22 +188,10 @@ func (s scan) unpivoted(ctx context.Context, r dayRange, tables []string, inner 
 	if err != nil {
 		return nil, nil, err
 	}
-	cols := []string{"day", "event_name", "actor_id", "user_id", "group_id", attrCols}
-	more := func(cs ...string) {
-		for _, c := range cs {
-			if !slices.Contains(cols, c) {
-				cols = append(cols, c)
-			}
-		}
-	}
-	for _, f := range s.filters {
-		for _, col := range f.columns() {
-			more(readColumns(col)...)
-		}
-	}
+	cols := appendReadColumns([]string{"day", "event_name", "actor_id", "user_id", "group_id", attrCols}, s.filters)
 	if s.q.Reserved {
 		for _, k := range reservedKeys {
-			more(ReservedKeyColumns[k])
+			cols = appendNew(cols, ReservedKeyColumns[k])
 		}
 	}
 	us := make([]unpivoter, s.e.workers)
