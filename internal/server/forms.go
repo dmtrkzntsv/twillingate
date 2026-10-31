@@ -316,15 +316,8 @@ func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 	// refusals, since without a project nothing can vouch for a target.
 	authorize := func(key string) bool {
 		var ok bool
-		if p, label, ok = snap.ProjectByKey(key); !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return false
-		}
-		if reqOrigin != "" && !s.originAllowed(w, r, p.ID) {
-			http.Error(w, "origin not allowed", http.StatusForbidden)
-			return false
-		}
-		return true
+		p, label, ok = s.authorize(w, r, snap, key)
+		return ok
 	}
 	// refuse answers a refusal after authorize: the error fragment on the
 	// form path when one of candidates is allowed, else the plain status.
@@ -378,10 +371,8 @@ func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	salt, err := s.salt.Current(ctx)
-	if err != nil {
-		s.logger.Error("salt unavailable", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	salt, ok := s.currentSalt(w, r)
+	if !ok {
 		return
 	}
 	received := time.Now().UTC()
