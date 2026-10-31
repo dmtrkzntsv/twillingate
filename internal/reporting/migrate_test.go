@@ -695,19 +695,19 @@ func TestMigrateFromRefusesEmptyRange(t *testing.T) {
 // TestCheckGroupsRefusesSidebarMismatch: the sidebar shows groups, so a
 // group's members agree on sidebar (spec 2026-10-05 D3).
 func TestCheckGroupsRefusesSidebarMismatch(t *testing.T) {
-	founder := FileDashboard{ID: 1, Title: "Views", Sidebar: true}
-	tab := FileDashboard{ID: 2, Title: "Product", Group: 1, Sidebar: true}
-	if err := checkGroups([]FileDashboard{founder, tab}); err != nil {
+	founder := fileDashboard{ID: 1, Title: "Views", Sidebar: true}
+	tab := fileDashboard{ID: 2, Title: "Product", Group: 1, Sidebar: true}
+	if err := checkGroups([]fileDashboard{founder, tab}); err != nil {
 		t.Errorf("agreeing members: err = %v, want nil", err)
 	}
 	tab.Sidebar = false
-	err := checkGroups([]FileDashboard{founder, tab})
+	err := checkGroups([]fileDashboard{founder, tab})
 	if err == nil || err.Error() != "reporting: system dashboard 2: sidebar differs from its group's (1)" {
 		t.Errorf("err = %v, want the sidebar mismatch", err)
 	}
 	// project_tab is each dashboard's own.
 	tab.Sidebar, tab.ProjectTab = true, true
-	if err := checkGroups([]FileDashboard{founder, tab}); err != nil {
+	if err := checkGroups([]fileDashboard{founder, tab}); err != nil {
 		t.Errorf("differing project_tab: err = %v, want nil", err)
 	}
 }
@@ -715,13 +715,13 @@ func TestCheckGroupsRefusesSidebarMismatch(t *testing.T) {
 // TestCheckGroupsRefusesGroupTitleOnATab: only a group's founding
 // dashboard names it (D6).
 func TestCheckGroupsRefusesGroupTitleOnATab(t *testing.T) {
-	founder := FileDashboard{ID: 1, Title: "Views", GroupTitle: "Reports"}
-	tab := FileDashboard{ID: 2, Title: "Product", Group: 1}
-	if err := checkGroups([]FileDashboard{founder, tab}); err != nil {
+	founder := fileDashboard{ID: 1, Title: "Views", GroupTitle: "Reports"}
+	tab := fileDashboard{ID: 2, Title: "Product", Group: 1}
+	if err := checkGroups([]fileDashboard{founder, tab}); err != nil {
 		t.Errorf("group_title on the founder: err = %v, want nil", err)
 	}
 	tab.GroupTitle = "Reports"
-	if err := checkGroups([]FileDashboard{founder, tab}); err == nil {
+	if err := checkGroups([]fileDashboard{founder, tab}); err == nil {
 		t.Error("group_title on a tab: want an error")
 	}
 }

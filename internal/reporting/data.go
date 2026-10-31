@@ -105,7 +105,7 @@ type prepared struct {
 	comp       Component
 	src        SourceType
 	params     Params
-	v          view
+	v          paging
 	load       func(context.Context) (any, error)
 	key        string        // the cache key; "" when the source is not cacheable
 	refreshAge time.Duration // how long after it was cached a value may be refreshed
@@ -122,10 +122,8 @@ func (s *Service) prepare(ctx context.Context, in DataRequest) (prepared, error)
 	if w.ArchivedAt != "" {
 		return prepared{}, store.Refuse(store.ErrNotFound, "widget %d is archived", w.ID)
 	}
-	p := prepared{w: w, out: WidgetData{WidgetID: w.ID, SourceType: w.SourceType}}
 	if w.Component == "" { // removed (D14): nothing left to check rows against
-		p.out.Removed, p.final = true, true
-		return p, nil
+		return prepared{w: w, out: WidgetData{WidgetID: w.ID, SourceType: w.SourceType, Removed: true}, final: true}, nil
 	}
 	if w.SourceType == "sql" && s.sql == nil {
 		// Stored with an engine this process has not got: its card says
@@ -133,7 +131,16 @@ func (s *Service) prepare(ctx context.Context, in DataRequest) (prepared, error)
 		// loads.
 		return prepared{}, ErrSQLEngine
 	}
+	return s.prepareRow(w, in, func() (map[string]Component, error) { return s.components(ctx) })
+}
 
+// prepareRow is prepare's part after the widget is read, shared with
+// reporting dev's data handler, which reads its widget from a file: the
+// switchers' inputs, the component (from comps, read only once those
+// pass) and source type, the paging arguments, and the cache key when
+// s has a cache.
+func (s *Service) prepareRow(w store.Widget, in DataRequest, comps func() (map[string]Component, error)) (prepared, error) {
+	p := prepared{w: w, out: WidgetData{WidgetID: w.ID, SourceType: w.SourceType}}
 	followsProject, followsRange := s.follows(w)
 	params, echo, err := s.widgetParams(followsProject, followsRange, w.ID, in)
 	if err != nil {
@@ -142,11 +149,11 @@ func (s *Service) prepare(ctx context.Context, in DataRequest) (prepared, error)
 	p.params = params
 	p.out.ProjectID, p.out.From, p.out.To = echo.ProjectID, echo.From, echo.To
 
-	comps, err := s.components(ctx)
+	cs, err := comps()
 	if err != nil {
 		return prepared{}, err
 	}
-	comp, ok := comps[w.Component]
+	comp, ok := cs[w.Component]
 	if !ok {
 		return prepared{}, fmt.Errorf("reporting: widget %d: component %s not found", w.ID, w.Component)
 	}
@@ -158,7 +165,7 @@ func (s *Service) prepare(ctx context.Context, in DataRequest) (prepared, error)
 	if p.v, p.load, err = s.loader(w, src, params, in); err != nil {
 		return prepared{}, err
 	}
-	if src.Cacheable() {
+	if src.Cacheable() && s.cache != nil {
 		var suffix string
 		if remoteTable(w) {
 			suffix = p.v.cacheSuffix()
@@ -194,21 +201,21 @@ func (p prepared) finish(value any, cachedAt time.Time) (WidgetData, error) {
 // whole result for any other widget, which is refused any paging
 // argument. Shared by WidgetData and reporting dev's data handler, so
 // the two cannot disagree on which widgets page or how.
-func (s *Service) loader(w store.Widget, src SourceType, p Params, in DataRequest) (view, func(context.Context) (any, error), error) {
-	v, err := parseView(in, s.maxRows())
+func (s *Service) loader(w store.Widget, src SourceType, p Params, in DataRequest) (paging, func(context.Context) (any, error), error) {
+	v, err := parsePaging(in, s.queryRows)
 	if err != nil {
-		return view{}, nil, err
+		return paging{}, nil, err
 	}
 	if !remoteTable(w) {
 		if v.present {
-			return view{}, nil, store.Refuse(store.ErrInvalid,
+			return paging{}, nil, store.Refuse(store.ErrInvalid,
 				"widget %d is not a remote table; filters, sort, distinct, offset and limit need a table with props.mode \"remote\"", w.ID)
 		}
 		return v, func(ctx context.Context) (any, error) { return src.Load(ctx, w.Source, p) }, nil
 	}
 	pl, ok := src.(pageLoader)
 	if !ok { // a table accepts only sql, which pages
-		return view{}, nil, fmt.Errorf("reporting: widget %d: source type %s cannot page", w.ID, w.SourceType)
+		return paging{}, nil, fmt.Errorf("reporting: widget %d: source type %s cannot page", w.ID, w.SourceType)
 	}
 	return v, func(ctx context.Context) (any, error) { return pl.LoadPage(ctx, w.Source, p, v.page) }, nil
 }
@@ -217,7 +224,7 @@ func (s *Service) loader(w store.Widget, src SourceType, p Params, in DataReques
 // a remote table's page as Data, with its page block. A distinct answer
 // is not checked, its columns being value and rows rather than the
 // widget's own.
-func setData(out *WidgetData, comp Component, v view, value any) error {
+func setData(out *WidgetData, comp Component, v paging, value any) error {
 	switch res := value.(type) {
 	case readsql.PageResult:
 		if v.page.Distinct == "" {
@@ -282,19 +289,12 @@ func (s *Service) widgetParams(followsProject, followsRange bool, widgetID int64
 // below the still-future from, coming back from≤to but from>to. It
 // returns the applied values, which the caller echoes in the envelope.
 func checkRange(from, to string, today civil.Date) (string, string, error) {
-	if err := checkDates(from, to); err != nil {
-		return "", "", err
-	}
-	f, err := civil.Parse(from) // checkDates already refused an unparseable from
+	f, t, err := checkDates(from, to)
 	if err != nil {
 		return "", "", err
 	}
 	if today.Before(f) {
 		return "", "", store.Refuse(store.ErrInvalid, "from %s is after today", from)
-	}
-	t, err := civil.Parse(to) // checkDates already refused an unparseable to
-	if err != nil {
-		return "", "", err
 	}
 	if today.Before(t) {
 		to = today.String()
@@ -305,13 +305,13 @@ func checkRange(from, to string, today civil.Date) (string, string, error) {
 // wrapLoadErr appends a pointer to the release notes to a load failure —
 // a query that no longer runs, or rows that no longer fit the component —
 // while keeping it an ErrInvalid a caller can still match with errors.Is.
-// A refusal of a remote table's paging arguments (viewRefusal) passes
+// A refusal of a remote table's paging arguments (pagingRefusal) passes
 // through as it is: the caller's own arguments are what to change.
 func wrapLoadErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	var vr viewRefusal
+	var vr pagingRefusal
 	if errors.As(err, &vr) {
 		return vr.error
 	}
@@ -341,7 +341,7 @@ func wrapLoadErr(err error) error {
 // widget (same content, new id) an empty cache to start from, per D33.
 // The content hash still matters on top of the id: a widget whose source
 // changes gets a fresh key rather than needing an explicit invalidation
-// on update. suffix is a remote table's view (view.cacheSuffix), "" for
+// on update. suffix is a remote table's paging (paging.cacheSuffix), "" for
 // every other widget, so a page is cached per filters, sort and range of
 // rows.
 func cacheKey(widgetID int64, sourceType, content string, followsProject, followsRange bool, projectID int64, from, to, suffix string) string {

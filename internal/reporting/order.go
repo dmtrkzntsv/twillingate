@@ -46,6 +46,22 @@ func (o order) find(id int64) (store.Dashboard, bool) {
 	return store.Dashboard{}, false
 }
 
+// index returns the position of id's row in o, or -1.
+func (o order) index(id int64) int {
+	return slices.IndexFunc(o, func(d store.Dashboard) bool { return d.ID == id })
+}
+
+// groupEnd returns the position of group g's last row in o, or -1 when
+// g has none.
+func (o order) groupEnd(g int64) int {
+	for i := len(o) - 1; i >= 0; i-- {
+		if o[i].GroupID == g {
+			return i
+		}
+	}
+	return -1
+}
+
 // without returns o with the row of id removed, if present.
 func (o order) without(id int64) order {
 	out := make(order, 0, len(o))
@@ -92,7 +108,7 @@ func (o order) keyInGroup(self, g int64, after *int64) (string, error) {
 		if after != nil && *after != 0 && *after != self {
 			return "", store.Refuse(store.ErrInvalid, "after %d is not a member of group %d", *after, g)
 		}
-		i := slices.IndexFunc(o, func(d store.Dashboard) bool { return d.ID == self })
+		i := o.index(self)
 		var prev, next string
 		if i > 0 {
 			prev = o[i-1].SortKey
@@ -106,19 +122,18 @@ func (o order) keyInGroup(self, g int64, after *int64) (string, error) {
 	var prev, next string
 	switch {
 	case after == nil:
-		last := members[len(members)-1]
-		prev = last.SortKey
-		if i := slices.IndexFunc(rest, func(d store.Dashboard) bool { return d.ID == last.ID }); i+1 < len(rest) {
+		prev = members[len(members)-1].SortKey
+		if i := rest.groupEnd(g); i+1 < len(rest) {
 			next = rest[i+1].SortKey
 		}
 	case *after == 0:
 		first := members[0]
 		next = first.SortKey
-		if i := slices.IndexFunc(rest, func(d store.Dashboard) bool { return d.ID == first.ID }); i > 0 {
+		if i := rest.index(first.ID); i > 0 {
 			prev = rest[i-1].SortKey
 		}
 	default:
-		idx := slices.IndexFunc(members, func(d store.Dashboard) bool { return d.ID == *after })
+		idx := order(members).index(*after)
 		if idx < 0 {
 			return "", store.Refuse(store.ErrInvalid, "after %d is not a member of group %d", *after, g)
 		}
@@ -127,7 +142,7 @@ func (o order) keyInGroup(self, g int64, after *int64) (string, error) {
 			return "", err
 		}
 		prev = m.SortKey
-		if i := slices.IndexFunc(rest, func(d store.Dashboard) bool { return d.ID == m.ID }); i+1 < len(rest) {
+		if i := rest.index(m.ID); i+1 < len(rest) {
 			next = rest[i+1].SortKey
 		}
 	}
@@ -165,10 +180,7 @@ func (o order) moveGroup(g int64, after int64) ([]store.DashboardKey, error) {
 		if row.GroupID == g {
 			return nil, nil
 		}
-		afterMembers := rest.group(row.GroupID)
-		last := afterMembers[len(afterMembers)-1]
-		i := slices.IndexFunc(rest, func(d store.Dashboard) bool { return d.ID == last.ID })
-		target = i + 1
+		target = rest.groupEnd(row.GroupID) + 1
 	}
 
 	var prevID, nextID int64
@@ -182,7 +194,7 @@ func (o order) moveGroup(g int64, after int64) ([]store.DashboardKey, error) {
 
 	// Where g's block actually sits in o right now: it is contiguous, so
 	// its end follows straight from its start and its length.
-	idx0 := slices.IndexFunc(o, func(d store.Dashboard) bool { return d.ID == members[0].ID })
+	idx0 := o.index(members[0].ID)
 	idxLast := idx0 + len(members) - 1
 	var actualPrevID, actualNextID int64
 	if idx0 > 0 {
@@ -234,9 +246,7 @@ func (o order) keyAfterGroup(self int64, after *int64) (string, error) {
 		if err := refuseArchivedAfter(row); err != nil {
 			return "", err
 		}
-		members := rest.group(row.GroupID)
-		last := members[len(members)-1]
-		i := slices.IndexFunc(rest, func(d store.Dashboard) bool { return d.ID == last.ID })
+		i := rest.groupEnd(row.GroupID)
 		prev = rest[i].SortKey
 		if i+1 < len(rest) {
 			next = rest[i+1].SortKey

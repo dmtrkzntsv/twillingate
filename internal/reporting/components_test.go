@@ -224,11 +224,11 @@ func TestCheckRowsRefusesNonFiniteNumbers(t *testing.T) {
 func TestComponentsMemoisesByRow(t *testing.T) {
 	ctx := context.Background()
 	svc := newTestService(t)
-	first, err := svc.Components(ctx)
+	first, err := svc.parsedComponents(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := svc.Components(ctx)
+	again, err := svc.parsedComponents(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +246,7 @@ func TestComponentsMemoisesByRow(t *testing.T) {
 	if err := svc.st.SyncReporting(ctx, store.ReportingSync{Hash: "next", Version: "next", Components: rows}); err != nil {
 		t.Fatal(err)
 	}
-	after, err := svc.Components(ctx)
+	after, err := svc.parsedComponents(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

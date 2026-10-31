@@ -49,7 +49,7 @@ func TestSystemDashboardTiming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dashboards, err := LoadDashboards(system)
+	dashboards, err := loadDashboards(system)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -68,7 +68,7 @@ func TestSystemDashboardTiming(t *testing.T) {
 	}
 	t.Logf("project %d", projectID)
 
-	src := newSources(files.eng(), false, time.Now, nil, nil, files.timeout, files.maxRows)["sql"]
+	src := newSources(files.eng(), false, time.Now, Options{QueryTimeout: files.timeout, QueryMaxRows: files.maxRows})["sql"]
 	today := civil.Today(time.Now().UTC())
 	type timing struct {
 		widget, preset string

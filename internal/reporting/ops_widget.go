@@ -346,20 +346,28 @@ func buildWidgets(comps map[string]Component, specs []WidgetSpec, taken map[stri
 			w.Name = deriveName(sp.Title, taken)
 			taken[w.Name] = true
 		}
-		if w.Props == "" {
-			w.Props = "{}"
-		}
-		if c, ok := comps[w.Component]; ok { // an unknown one is refused by validateWidget
-			if w.Width == 0 {
-				w.Width = c.DefaultWidth
-			}
-			if w.Height == 0 {
-				w.Height = c.DefaultHeight
-			}
-		}
-		out = append(out, w)
+		out = append(out, withDefaults(w, comps))
 	}
 	return out, nil
+}
+
+// withDefaults is w with what its spec or file left out filled in: props
+// {}, and a size left at 0 its component's default in comps. A component
+// comps does not hold is left unsized; validateWidget refuses it with a
+// clearer message than an out-of-range size would.
+func withDefaults(w store.Widget, comps map[string]Component) store.Widget {
+	if w.Props == "" {
+		w.Props = "{}"
+	}
+	if c, ok := comps[w.Component]; ok {
+		if w.Width == 0 {
+			w.Width = c.DefaultWidth
+		}
+		if w.Height == 0 {
+			w.Height = c.DefaultHeight
+		}
+	}
+	return w
 }
 
 // freshCopy is w's content as a new row: no id, dashboard, key, times or

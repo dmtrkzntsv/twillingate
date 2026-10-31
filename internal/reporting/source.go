@@ -53,16 +53,16 @@ type Markdown struct {
 }
 
 // newSources builds the registered source types: sql on eng, with clock
-// now, only when there is an engine (eng non-nil); query answered by nat
-// under rules, each load under timeout (0: none) and at most maxRows rows
-// (0: all); and md. sampleRows controls whether sql's Validate also runs
-// a sample query and checks its rows' types (true for a widget actually
-// being saved; false where only the query's shape matters). nat nil
-// fails a query source's Load, not its Validate, which reads no data;
-// rules nil applies none.
-func newSources(eng *sqlEngine, sampleRows bool, now func() time.Time, nat Native, rules RulesFunc, timeout time.Duration, maxRows int) map[string]SourceType {
+// now, only when there is an engine (eng non-nil); query answered by
+// opt.Native under opt.Rules, each load under opt.QueryTimeout (0: none)
+// and at most opt.QueryMaxRows rows (0: all); and md. sampleRows controls
+// whether sql's Validate also runs a sample query and checks its rows'
+// types (true for a widget actually being saved; false where only the
+// query's shape matters). A nil Native fails a query source's Load, not
+// its Validate, which reads no data; nil Rules apply none.
+func newSources(eng *sqlEngine, sampleRows bool, now func() time.Time, opt Options) map[string]SourceType {
 	m := map[string]SourceType{
-		"query": &querySource{native: nat, rules: rules, timeout: timeout, maxRows: maxRows},
+		"query": &querySource{native: opt.Native, rules: opt.Rules, timeout: opt.QueryTimeout, maxRows: opt.QueryMaxRows},
 		"md":    mdSource{},
 	}
 	if eng != nil {
@@ -75,10 +75,6 @@ func newSources(eng *sqlEngine, sampleRows bool, now func() time.Time, nat Nativ
 // among them whether or not an engine is configured: what a component's
 // accepts may name.
 var sourceTypes = map[string]bool{"sql": true, "query": true, "md": true}
-
-// validSourceType reports whether name is a source type this build has
-// (sourceTypes), registered in this process or not.
-func validSourceType(name string) bool { return sourceTypes[name] }
 
 // sortedSourceNames lists m's keys alphabetically, for a refusal that
 // names every registered source type ("there are md, query and sql").
@@ -338,12 +334,12 @@ type pageLoader interface {
 	LoadPage(ctx context.Context, content string, p Params, pg readsql.Page) (readsql.PageResult, error)
 }
 
-// viewRefusal marks a refusal of the paging arguments a caller sent
+// pagingRefusal marks a refusal of the paging arguments a caller sent
 // rather than of the widget itself, so wrapLoadErr leaves out the release
 // notes pointer: what to change is the filter, not the query.
-type viewRefusal struct{ error }
+type pagingRefusal struct{ error }
 
-func (e viewRefusal) Unwrap() error { return e.error }
+func (e pagingRefusal) Unwrap() error { return e.error }
 
 // LoadPage is Load for a remote table: content filtered, sorted and paged
 // by pg in the engine, with the matched and total counts, as readsql's
@@ -402,7 +398,7 @@ func (s *sqlSource) LoadPage(ctx context.Context, content string, p Params, pg r
 func pageErr(err error) error {
 	var er engineRefused
 	if errors.As(err, &er) {
-		return viewRefusal{er.error}
+		return pagingRefusal{er.error}
 	}
 	return err
 }

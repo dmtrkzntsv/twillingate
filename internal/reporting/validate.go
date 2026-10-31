@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -76,14 +77,23 @@ func joinAnd(items []string) string {
 	}
 }
 
-// accepts reports whether c takes source type t.
-func accepts(c Component, t string) bool {
-	for _, a := range c.Accepts {
-		if a == t {
-			return true
-		}
+// componentNamed is comps' component name, refused when there is none.
+func componentNamed(comps map[string]Component, name string) (Component, error) {
+	comp, ok := comps[name]
+	if !ok {
+		return Component{}, store.Refuse(store.ErrInvalid,
+			"component %s does not exist; list_components names the ones there are", name)
 	}
-	return false
+	return comp, nil
+}
+
+// checkAccepts refuses source type t unless c takes it.
+func checkAccepts(c Component, t string) error {
+	if !slices.Contains(c.Accepts, t) {
+		return store.Refuse(store.ErrInvalid,
+			"%s does not accept %s; it accepts %s", c.Name, t, joinAnd(c.Accepts))
+	}
+	return nil
 }
 
 // validateWidget refuses a widget that names a component that does not
@@ -92,10 +102,9 @@ func accepts(c Component, t string) bool {
 // not satisfy the component's schema, or — the most expensive check,
 // last — content its source type rejects.
 func (s *Service) validateWidget(ctx context.Context, comps map[string]Component, w store.Widget) error {
-	comp, ok := comps[w.Component]
-	if !ok {
-		return store.Refuse(store.ErrInvalid,
-			"component %s does not exist; list_components names the ones there are", w.Component)
+	comp, err := componentNamed(comps, w.Component)
+	if err != nil {
+		return err
 	}
 	st, ok := s.sources[w.SourceType]
 	if !ok && w.SourceType == "sql" {
@@ -105,9 +114,8 @@ func (s *Service) validateWidget(ctx context.Context, comps map[string]Component
 		return store.Refuse(store.ErrInvalid,
 			"source type %s does not exist; there are %s", w.SourceType, joinAnd(sortedSourceNames(s.sources)))
 	}
-	if !accepts(comp, w.SourceType) {
-		return store.Refuse(store.ErrInvalid,
-			"%s does not accept %s; it accepts %s", comp.Name, w.SourceType, joinAnd(comp.Accepts))
+	if err := checkAccepts(comp, w.SourceType); err != nil {
+		return err
 	}
 	if err := checkSize(w.Width, w.Height); err != nil {
 		return err

@@ -117,7 +117,7 @@ type Service struct {
 	shares       *shareCache // the public /share/ routes' reads (share_cache.go)
 
 	parsedMu sync.Mutex
-	parsed   map[store.Component]Component // Components' memo
+	parsed   map[store.Component]Component // parsedComponents' memo
 
 	// placeMu serialises dashboard placement (placeDashboards in
 	// place.go). Each one reads the user order, computes keys and group
@@ -157,10 +157,7 @@ func newService(st Store, sql SQL, sampleRows bool, opt Options) *Service {
 		st:        st,
 		sql:       eng,
 		queryRows: opt.QueryMaxRows,
-		sources:   newSources(eng, sampleRows, now, opt.Native, opt.Rules, opt.QueryTimeout, opt.QueryMaxRows),
+		sources:   newSources(eng, sampleRows, now, opt),
 		now:       now,
 	}
 }
-
-// maxRows is CONSOLE_QUERY_ROWS_MAX, a page's size cap.
-func (s *Service) maxRows() int { return s.queryRows }
