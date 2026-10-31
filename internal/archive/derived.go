@@ -146,15 +146,7 @@ func cmpNullsLast(a, b value) int {
 // writeDerived writes rows as out, in their order, its row groups cut at
 // maxGroupRows only; a failure leaves no file and no .tmp.
 func writeDerived(out string, cols []pqColumn, each func(write func(row) error) error) error {
-	w, err := newRowWriter(out, cols, nil)
-	if err != nil {
-		return err
-	}
-	if err := each(w.Write); err != nil {
-		w.Abort()
-		return err
-	}
-	return w.Close()
+	return writeParquet(out, cols, nil, func(w *rowWriter) error { return each(w.Write) })
 }
 
 var sessionsReads = []string{"family", "day", "project_id", "kind", "actor_id", "actor_kind", "session_id", "id", "ts",

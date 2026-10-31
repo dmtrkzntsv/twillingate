@@ -1,7 +1,6 @@
 package archive
 
 import (
-	"cmp"
 	"container/heap"
 	"context"
 	"errors"
@@ -301,7 +300,7 @@ func leafColumn(file string, leaf int, fl parquet.Field, want colType) (inColumn
 var typeNames = map[colType]string{colVarchar: "VARCHAR", colBigint: "BIGINT", colDouble: "DOUBLE", colDate: "DATE", colTimestamp: "TIMESTAMP"}
 
 // fieldOf is the index in fields of the fixed column named lower, -1 for
-// none.
+// none; in a dump, also its column.
 func fieldOf(lower string) int {
 	for i, f := range fields {
 		if f.name == lower {
@@ -434,15 +433,7 @@ func (in *mergeInput) dropped(row int64) bool { return in.drop[row/64]&(1<<(row%
 // write is pass 2: it merges the inputs into out.
 func (m *monthMerge) write(ctx context.Context, out string) error {
 	fam, day := m.column("family"), m.column("day")
-	w, err := newRowWriter(out, m.cols, eventsCut(fam, day))
-	if err != nil {
-		return err
-	}
-	if err := m.writeRows(ctx, w); err != nil {
-		w.Abort()
-		return err
-	}
-	return w.Close()
+	return writeParquet(out, m.cols, eventsCut(fam, day), func(w *rowWriter) error { return m.writeRows(ctx, w) })
 }
 
 // column is the output column named name (a field, so always there).
@@ -693,10 +684,10 @@ func (c *cursor) fill(buf row, set []int) []int {
 
 // compareKeys orders (family, ts) pairs, NULLs last in each.
 func compareKeys(f1, t1, f2, t2 value) int {
-	if c := nullsLast(f1, f2, func(a, b value) int { return strings.Compare(a.s, b.s) }); c != 0 {
+	if c := cmpNullsLast(f1, f2); c != 0 {
 		return c
 	}
-	return nullsLast(t1, t2, func(a, b value) int { return cmp.Compare(a.n, b.n) })
+	return cmpNullsLast(t1, t2)
 }
 
 // cursorHeap orders the cursors by their row's (family, ts), then by

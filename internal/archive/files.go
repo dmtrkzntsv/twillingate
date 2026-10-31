@@ -3,6 +3,7 @@ package archive
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -139,7 +140,7 @@ func (pf *projectFiles) derived(pdir string, have map[string]bool, days map[stri
 		return err
 	}
 	var gaps []Span
-	for _, month := range keysOf(monthFile) {
+	for _, month := range slices.Sorted(maps.Keys(monthFile)) {
 		s := filepath.Join(sdir, month+".parquet")
 		ok, err := current(s, []string{monthFile[month]})
 		if err != nil {
@@ -162,7 +163,7 @@ func (pf *projectFiles) derived(pdir string, have map[string]bool, days map[stri
 			}
 		}
 	}
-	for _, day := range keysOf(days) {
+	for _, day := range slices.Sorted(maps.Keys(days)) {
 		if logDays[day] {
 			gaps = append(gaps, Span{day, day})
 			continue
@@ -263,16 +264,6 @@ func nextDay(day string) string {
 		return day
 	}
 	return d.AddDays(1).String()
-}
-
-// keysOf is m's keys in order.
-func keysOf[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
 }
 
 // LatestDays is each project's newest day with events in dir (YYYY-MM-DD),
