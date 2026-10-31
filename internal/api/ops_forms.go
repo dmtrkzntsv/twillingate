@@ -14,7 +14,7 @@ import (
 )
 
 // Forms and their submissions (spec D8). A submission's table runs SQL
-// the server builds (manage.SubmissionsQuery) on h.subs, the handle that
+// the server builds (manage.QuerySubmissions) on h.subs, the handle that
 // may read submissions; custom SQL never reaches them.
 
 type formIn struct {
@@ -274,7 +274,6 @@ type formTable struct {
 	h        *host
 	form     store.Form
 	archived bool
-	columns  []string // the display columns, without id
 }
 
 // submissionsTable reads the form once and builds its query.
@@ -283,8 +282,7 @@ func (h *host) submissionsTable(ctx context.Context, projectID int64, name strin
 	if err != nil {
 		return formTable{}, err
 	}
-	_, cols := manage.SubmissionsQuery(f, archived)
-	return formTable{h: h, form: f, archived: archived, columns: cols}, nil
+	return formTable{h: h, form: f, archived: archived}, nil
 }
 
 // page runs one page of the table; its first column is the id.
@@ -296,14 +294,14 @@ func (t formTable) page(ctx context.Context, pg readsql.Page) (readsql.PageResul
 	return res, nil
 }
 
-// all returns the ids and the rows (without them) of every row pg's
-// filters match, newest first unless pg sorts (manage.AllSubmissions).
-func (t formTable) all(ctx context.Context, pg readsql.Page) ([]string, [][]string, error) {
-	ids, _, rows, err := manage.AllSubmissions(ctx, t.h.subs, t.form, t.archived, pg)
+// ids returns the ids of every row pg's filters match, newest first
+// unless pg sorts (manage.AllSubmissions).
+func (t formTable) ids(ctx context.Context, pg readsql.Page) ([]string, error) {
+	ids, _, _, err := manage.AllSubmissions(ctx, t.h.subs, t.form, t.archived, pg)
 	if err != nil {
-		return nil, nil, t.h.subsErr(err)
+		return nil, t.h.subsErr(err)
 	}
-	return ids, rows, nil
+	return ids, nil
 }
 
 func (h *host) listSubmissions(ctx context.Context, in listSubmissionsIn) (submissionsOut, error) {
@@ -390,7 +388,7 @@ func (h *host) selectSubmissions(ctx context.Context, in submissionsSelectorIn, 
 	if err != nil {
 		return nil, "", err
 	}
-	ids, _, err := t.all(ctx, pg)
+	ids, err := t.ids(ctx, pg)
 	if err != nil {
 		return nil, "", err
 	}
@@ -426,15 +424,11 @@ func (h *host) exportSubmissions(ctx context.Context, in exportSubmissionsIn) (c
 	if err != nil {
 		return csvFile{}, err
 	}
-	t, err := h.submissionsTable(ctx, in.ProjectID, in.Name, in.Archived)
+	// subsErr leaves ActiveForm's refusals as they are: none is readsql's.
+	header, rows, err := h.ops.ExportSubmissions(ctx, h.subs, in.ProjectID, in.Name, in.Archived, pg)
 	if err != nil {
-		return csvFile{}, err
+		return csvFile{}, h.subsErr(err)
 	}
-	_, rows, err := t.all(ctx, pg)
-	if err != nil {
-		return csvFile{}, err
-	}
-	header, rows := manage.CSVSafeTable(append([]string(nil), t.columns...), rows)
 	return csvFile{Name: in.Name + "-submissions.csv", Header: header, Rows: rows}, nil
 }
 

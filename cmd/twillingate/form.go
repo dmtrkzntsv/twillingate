@@ -220,10 +220,6 @@ func cmdForm(args []string, stdout io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "form %q restored\n", *name)
 	case "export":
-		f, err := ops.ActiveForm(ctx, *project, *name)
-		if err != nil {
-			return fail(err)
-		}
 		db, err := readsql.Open(app.DatabasePath(cfg.Database), cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
 		if err != nil {
 			return fail(err)
@@ -231,11 +227,10 @@ func cmdForm(args []string, stdout io.Writer) int {
 		defer db.Close()
 		// Read everything before writing a byte, so a failure leaves
 		// stdout empty rather than a truncated file.
-		_, header, rows, err := manage.AllSubmissions(ctx, db, f, *archived, readsql.Page{})
+		header, rows, err := ops.ExportSubmissions(ctx, db, *project, *name, *archived, readsql.Page{})
 		if err != nil {
 			return fail(err)
 		}
-		header, rows = manage.CSVSafeTable(header, rows)
 		w := csv.NewWriter(stdout)
 		w.Write(header)
 		for _, r := range rows {
