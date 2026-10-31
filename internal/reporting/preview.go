@@ -85,11 +85,11 @@ func (s *Service) previewRows(ctx context.Context, in PreviewIn) (readsql.Result
 		if !ok {
 			return readsql.Result{}, errors.New("reporting: the query source type is not registered")
 		}
-		qc, _, _, err := parseQuery(in.Source.Content)
+		pq, err := parseQuery(in.Source.Content)
 		if err != nil {
 			return readsql.Result{}, err
 		}
-		p, err := s.previewQueryParams(in, qc.Project > 0)
+		p, err := s.previewQueryParams(in, pq.qc.Project > 0)
 		if err != nil {
 			return readsql.Result{}, err
 		}

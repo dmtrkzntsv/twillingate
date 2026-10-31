@@ -9,8 +9,6 @@ package reporting
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -412,11 +410,7 @@ func devProjects(db DevProjects) http.HandlerFunc {
 // single byte inside a .sql — without needing to know which files
 // matter to which dashboard.
 func hashDirs(dirs []string) (string, error) {
-	type file struct {
-		path    string
-		content []byte
-	}
-	var files []file
+	var files []hashedFile
 	for _, dir := range dirs {
 		err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -429,21 +423,14 @@ func hashDirs(dirs []string) (string, error) {
 			if err != nil {
 				return err
 			}
-			files = append(files, file{p, b})
+			files = append(files, hashedFile{p, b})
 			return nil
 		})
 		if err != nil {
 			return "", fmt.Errorf("reporting: dev: %w", err)
 		}
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
-
-	h := sha256.New()
-	for _, f := range files {
-		writeFramed(h, []byte(f.path))
-		writeFramed(h, f.content)
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return hashFiles(files), nil
 }
 
 func devVersion(dirs []string) http.HandlerFunc {

@@ -149,7 +149,7 @@ func (s *Service) CreateWidgetShare(ctx context.Context, actor string, in NewSha
 // state "", "live" or "archived".
 func (s *Service) ListWidgetShares(ctx context.Context, widgetID int64, state string) ([]WidgetShareOut, error) {
 	rows, err := s.st.ListWidgetShares(ctx, store.WidgetShareFilter{
-		WidgetID: widgetID, State: state, Now: s.now().UTC().Format(shareStamp),
+		WidgetID: widgetID, State: state, Now: stamp(s.now()),
 	})
 	if err != nil {
 		return nil, err
@@ -171,13 +171,9 @@ func (s *Service) UpdateWidgetShare(ctx context.Context, actor, id, archiveAfter
 	if err != nil {
 		return WidgetShareOut{}, err
 	}
-	row, err := s.st.SetWidgetShareArchiveAt(ctx, id, at, s.now().UTC().Format(shareStamp),
+	row, err := s.st.SetWidgetShareArchiveAt(ctx, id, at, stamp(s.now()),
 		store.AuditEntry{Actor: actor, Action: "widget_share.update"})
-	s.shares.invalidate(id)
-	if err != nil {
-		return WidgetShareOut{}, err
-	}
-	return s.shareOut(row), nil
+	return s.shareWritten(id, row, err)
 }
 
 // WidgetShareImage is a share's 1x PNG in any state, live, due or archived,
@@ -191,11 +187,7 @@ func (s *Service) WidgetShareImage(ctx context.Context, id string) ([]byte, erro
 func (s *Service) ArchiveWidgetShare(ctx context.Context, actor, id string) (WidgetShareOut, error) {
 	row, err := s.st.SetWidgetShareArchived(ctx, id, true, "",
 		store.AuditEntry{Actor: actor, Action: "widget_share.archive"})
-	s.shares.invalidate(id)
-	if err != nil {
-		return WidgetShareOut{}, err
-	}
-	return s.shareOut(row), nil
+	return s.shareWritten(id, row, err)
 }
 
 // RestoreWidgetShare makes a share live again and sets when it archives
@@ -210,6 +202,12 @@ func (s *Service) RestoreWidgetShare(ctx context.Context, actor, id, archiveAfte
 	}
 	row, err := s.st.SetWidgetShareArchived(ctx, id, false, at,
 		store.AuditEntry{Actor: actor, Action: "widget_share.restore"})
+	return s.shareWritten(id, row, err)
+}
+
+// shareWritten answers a write to share id that returned row and err:
+// the public routes' cached copy is dropped whether or not it succeeded.
+func (s *Service) shareWritten(id string, row store.WidgetShare, err error) (WidgetShareOut, error) {
 	s.shares.invalidate(id)
 	if err != nil {
 		return WidgetShareOut{}, err
@@ -229,8 +227,17 @@ func (s *Service) LiveWidgetShare(ctx context.Context, id string) (store.WidgetS
 }
 
 func shareLive(r store.WidgetShare, now time.Time) bool {
-	return r.ArchivedAt == "" && (r.ArchiveAt == "" || r.ArchiveAt > now.UTC().Format(shareStamp))
+	return r.ArchivedAt == "" && !shareDue(r, now)
 }
+
+// shareDue reports whether r's archive_at has passed at now, archived by
+// the daily pass yet or not.
+func shareDue(r store.WidgetShare, now time.Time) bool {
+	return r.ArchiveAt != "" && r.ArchiveAt <= stamp(now)
+}
+
+// stamp is t as a share's times are stored and compared.
+func stamp(t time.Time) string { return t.UTC().Format(shareStamp) }
 
 func (s *Service) shareOut(r store.WidgetShare) WidgetShareOut {
 	url := s.shareBase + "/share/" + r.ID
@@ -253,7 +260,7 @@ func (s *Service) shareOut(r store.WidgetShare) WidgetShareOut {
 		out.ArchiveAt = &r.ArchiveAt
 	}
 	archived := r.ArchivedAt
-	if archived == "" && r.ArchiveAt != "" && r.ArchiveAt <= s.now().UTC().Format(shareStamp) {
+	if archived == "" && shareDue(r, s.now()) {
 		archived = r.ArchiveAt
 	}
 	if archived != "" {

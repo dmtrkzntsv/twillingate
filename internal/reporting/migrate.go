@@ -278,11 +278,7 @@ func writeFramed(h hash.Hash, b []byte) {
 // split can collide with a different one, hex-encoded: the same bytes on
 // two runs mean nothing to sync.
 func hashSystem(system fs.FS, manifest []byte) (string, error) {
-	type file struct {
-		path    string
-		content []byte
-	}
-	var files []file
+	var files []hashedFile
 	err := fs.WalkDir(system, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -294,19 +290,32 @@ func hashSystem(system fs.FS, manifest []byte) (string, error) {
 		if err != nil {
 			return err
 		}
-		files = append(files, file{p, b})
+		files = append(files, hashedFile{p, b})
 		return nil
 	})
 	if err != nil {
 		return "", fmt.Errorf("reporting: hash system: %w", err)
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
+	return hashFiles(files, manifest), nil
+}
 
+// hashedFile is one file hashSystem or hashDirs read: its path and bytes.
+type hashedFile struct {
+	path    string
+	content []byte
+}
+
+// hashFiles hashes files sorted by path, each path and content framed,
+// then each of extra framed, hex-encoded.
+func hashFiles(files []hashedFile, extra ...[]byte) string {
+	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 	h := sha256.New()
 	for _, f := range files {
 		writeFramed(h, []byte(f.path))
 		writeFramed(h, f.content)
 	}
-	writeFramed(h, manifest)
-	return hex.EncodeToString(h.Sum(nil)), nil
+	for _, b := range extra {
+		writeFramed(h, b)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }

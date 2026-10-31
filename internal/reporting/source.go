@@ -53,16 +53,16 @@ type Markdown struct {
 }
 
 // newSources builds the registered source types: sql on eng, with clock
-// now, only when there is an engine (eng non-nil); query answered by nat
-// under rules, each load under timeout (0: none) and at most maxRows rows
-// (0: all); and md. sampleRows controls whether sql's Validate also runs
-// a sample query and checks its rows' types (true for a widget actually
-// being saved; false where only the query's shape matters). nat nil
-// fails a query source's Load, not its Validate, which reads no data;
-// rules nil applies none.
-func newSources(eng *sqlEngine, sampleRows bool, now func() time.Time, nat Native, rules RulesFunc, timeout time.Duration, maxRows int) map[string]SourceType {
+// now, only when there is an engine (eng non-nil); query answered by
+// opt.Native under opt.Rules, each load under opt.QueryTimeout (0: none)
+// and at most opt.QueryMaxRows rows (0: all); and md. sampleRows controls
+// whether sql's Validate also runs a sample query and checks its rows'
+// types (true for a widget actually being saved; false where only the
+// query's shape matters). A nil Native fails a query source's Load, not
+// its Validate, which reads no data; nil Rules apply none.
+func newSources(eng *sqlEngine, sampleRows bool, now func() time.Time, opt Options) map[string]SourceType {
 	m := map[string]SourceType{
-		"query": &querySource{native: nat, rules: rules, timeout: timeout, maxRows: maxRows},
+		"query": &querySource{native: opt.Native, rules: opt.Rules, timeout: opt.QueryTimeout, maxRows: opt.QueryMaxRows},
 		"md":    mdSource{},
 	}
 	if eng != nil {

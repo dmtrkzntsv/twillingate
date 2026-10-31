@@ -157,7 +157,7 @@ func newService(st Store, sql SQL, sampleRows bool, opt Options) *Service {
 		st:        st,
 		sql:       eng,
 		queryRows: opt.QueryMaxRows,
-		sources:   newSources(eng, sampleRows, now, opt.Native, opt.Rules, opt.QueryTimeout, opt.QueryMaxRows),
+		sources:   newSources(eng, sampleRows, now, opt),
 		now:       now,
 	}
 }
