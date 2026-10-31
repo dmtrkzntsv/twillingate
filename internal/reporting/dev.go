@@ -103,15 +103,6 @@ func loopbackOnly(h http.Handler) http.Handler {
 	})
 }
 
-// compIndex keys comps by name, for validateWidget and storeWidget.
-func compIndex(comps []Component) map[string]Component {
-	out := make(map[string]Component, len(comps))
-	for _, c := range comps {
-		out[c.Name] = c
-	}
-	return out
-}
-
 // devDashboardDirs resolves dirs (CLI arguments) to the directories that
 // are themselves dashboard directories: an argument that has its own
 // dashboard.json is one; otherwise every immediate subdirectory of it

@@ -21,7 +21,6 @@ import (
 	"embed"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
@@ -97,10 +96,7 @@ func migrateFrom(ctx context.Context, st Store, sql SQL, opt Options, system fs.
 	if err != nil {
 		return err
 	}
-	compsByName := make(map[string]Component, len(comps))
-	for _, c := range comps {
-		compsByName[c.Name] = c
-	}
+	compsByName := compIndex(comps)
 
 	fds, err := loadDashboards(system)
 	if err != nil {
@@ -204,30 +200,14 @@ func (paramsOnly) Validate(_ context.Context, content string, _ Component) error
 	return err
 }
 
-// storeWidget converts fw to the store row Migrate writes, defaulting a
-// size left at 0 (the file gave none) to comps' component's default —
-// the same rule buildWidgets applies for an agent-built widget. A
-// component unknown to comps is left unsized; validateWidget refuses it
-// with a clearer message than an out-of-range size would.
+// storeWidget converts fw to the store row Migrate writes, with the
+// defaults buildWidgets applies for an agent-built widget (withDefaults).
 func storeWidget(fw fileWidget, sortKey string, comps map[string]Component) store.Widget {
-	width, height := fw.Width, fw.Height
-	if c, ok := comps[fw.Component]; ok {
-		if width == 0 {
-			width = c.DefaultWidth
-		}
-		if height == 0 {
-			height = c.DefaultHeight
-		}
-	}
-	props := fw.Props
-	if len(props) == 0 {
-		props = json.RawMessage("{}")
-	}
-	return store.Widget{
-		Component: fw.Component, SortKey: sortKey, Width: width, Height: height,
-		Name: fw.Name, Title: fw.Title, Props: string(props),
+	return withDefaults(store.Widget{
+		Component: fw.Component, SortKey: sortKey, Width: fw.Width, Height: fw.Height,
+		Name: fw.Name, Title: fw.Title, Props: string(fw.Props),
 		SourceType: fw.SourceType, Source: fw.Source,
-	}
+	}, comps)
 }
 
 // checkGroups refuses a release whose "group" fields (D16) don't hold

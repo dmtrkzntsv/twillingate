@@ -152,11 +152,16 @@ func (s *Service) components(ctx context.Context) (map[string]Component, error) 
 	if err != nil {
 		return nil, err
 	}
-	out := make(map[string]Component, len(cs))
-	for _, c := range cs {
+	return compIndex(cs), nil
+}
+
+// compIndex keys comps by name, for validateWidget and storeWidget.
+func compIndex(comps []Component) map[string]Component {
+	out := make(map[string]Component, len(comps))
+	for _, c := range comps {
 		out[c.Name] = c
 	}
-	return out, nil
+	return out
 }
 
 // Dashboards lists every dashboard, archived ones included, in sidebar
