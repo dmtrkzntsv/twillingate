@@ -711,7 +711,7 @@ func (s *passOnlyStore) PurgeArchived(context.Context, int) (store.PurgeResult, 
 	return store.PurgeResult{}, nil
 }
 
-func (s *passOnlyStore) ArchiveDueWidgetShares(context.Context, string) (int, error) {
+func (s *passOnlyStore) ArchiveDueWidgetShares(context.Context, time.Time) (int, error) {
 	s.call("ArchiveDueWidgetShares")
 	return 0, nil
 }

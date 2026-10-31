@@ -20,7 +20,7 @@ const formColumns = `project_id, name, status, purpose, return_url, fields, expe
 
 // scanForm reads one forms row selected with formColumns; extra receives
 // any columns selected after them.
-func scanForm(row interface{ Scan(...any) error }, extra ...any) (store.Form, error) {
+func scanForm(row rowScanner, extra ...any) (store.Form, error) {
 	var f store.Form
 	var fields string
 	var expected, created, draft, approved, closes, last, archived, seen sql.NullString
@@ -99,7 +99,7 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO forms (project_id, name, created_at, draft_until)
 			VALUES (?,?,?,?) ON CONFLICT DO NOTHING`,
-			sub.ProjectID, sub.Form, sub.ReceivedAt.UTC().Format(tsFormat), n.DraftUntil.UTC().Format(tsFormat)); err != nil {
+			sub.ProjectID, sub.Form, fmtTime(sub.ReceivedAt), fmtTime(n.DraftUntil)); err != nil {
 			return err
 		}
 		var err error
@@ -127,7 +127,7 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 			}
 			attribution = string(a)
 		}
-		received := sub.ReceivedAt.UTC().Format(tsFormat)
+		received := fmtTime(sub.ReceivedAt)
 		pending, err := json.Marshal(n.StoredEvent())
 		if err != nil {
 			return fmt.Errorf("submission %s event: %w", sub.ID, err)
@@ -363,7 +363,7 @@ func (d *DB) ListForms(ctx context.Context, projectID int64, archived bool) ([]s
 func (d *DB) MarkFormSeen(ctx context.Context, projectID int64, name string, until time.Time) error {
 	res, err := d.db.ExecContext(ctx,
 		`UPDATE forms SET seen_at = MAX(COALESCE(seen_at, ''), ?) WHERE project_id=? AND name=?`,
-		until.UTC().Format(tsFormat), projectID, name)
+		fmtTime(until), projectID, name)
 	if err != nil {
 		return err
 	}
@@ -648,7 +648,7 @@ const submissionColumns = `s.project_id, s.id, s.form, s.received_at, s.fields, 
 
 // scanSubmission reads one row selected with submissionColumns, then
 // into extra any columns selected after them.
-func scanSubmission(row interface{ Scan(...any) error }, extra ...any) (store.Submission, error) {
+func scanSubmission(row rowScanner, extra ...any) (store.Submission, error) {
 	var s store.Submission
 	var received, fields string
 	var attribution, archived sql.NullString

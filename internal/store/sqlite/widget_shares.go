@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -173,11 +174,11 @@ func (d *DB) SetWidgetShareArchived(ctx context.Context, id string, archived boo
 	return out, err
 }
 
-func (d *DB) ArchiveDueWidgetShares(ctx context.Context, now string) (int, error) {
+func (d *DB) ArchiveDueWidgetShares(ctx context.Context, now time.Time) (int, error) {
 	var n int
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		ids, err := queryColumn[string](ctx, tx, `SELECT id FROM widget_shares
-			WHERE archived_at IS NULL AND archive_at IS NOT NULL AND archive_at <= ?`, now)
+			WHERE archived_at IS NULL AND archive_at IS NOT NULL AND archive_at <= ?`, fmtTime(now))
 		if err != nil {
 			return err
 		}

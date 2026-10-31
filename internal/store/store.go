@@ -300,7 +300,7 @@ type Store interface {
 	// ArchiveDueWidgetShares archives every share whose archive_at is at
 	// or before now, one widget_share.archive audit row each (actor
 	// "retention"), and returns how many.
-	ArchiveDueWidgetShares(ctx context.Context, now string) (int, error)
+	ArchiveDueWidgetShares(ctx context.Context, now time.Time) (int, error)
 	// WriteSubmission records a form submission, creating the form as a
 	// draft on its first one, and on an approved form writes n.Event in
 	// the same transaction. It returns the form as it stands after the
