@@ -49,38 +49,28 @@ type eventsFile struct {
 // column of another type than fields gives it fails, naming it, as the
 // merge fails.
 func openEvents(path string, names []string) (*eventsFile, error) {
-	f, err := os.Open(path)
+	f, pf, err := openParquet(path)
 	if err != nil {
-		return nil, fmt.Errorf("archive: %w", err)
-	}
-	st, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return nil, fmt.Errorf("archive: %w", err)
-	}
-	pf, err := parquet.OpenFile(f, st.Size(), parquet.SkipPageIndex(true), parquet.SkipBloomFilters(true),
-		parquet.ReadBufferSize(256<<10))
-	if err != nil {
-		f.Close()
-		return nil, fmt.Errorf("archive: %s: %w", filepath.Base(path), err)
+		return nil, err
 	}
 	e := &eventsFile{path: path, f: f, pf: pf, cols: map[string]inColumn{}}
+	file := filepath.Base(path)
 	for leaf, fl := range pf.Schema().Fields() {
-		if !fl.Leaf() || fl.Repeated() {
+		if err := checkFlat(file, fl); err != nil {
 			f.Close()
-			return nil, fmt.Errorf("archive: %s: column %s is not a flat column", filepath.Base(path), visible(fl.Name()))
+			return nil, err
 		}
 		lower := strings.ToLower(fl.Name())
 		if _, dup := e.cols[lower]; dup || !slices.Contains(names, lower) {
 			continue
 		}
 		want, _ := colTypeOf(fields[fieldOf(lower)].typ)
-		got, scale, ok := leafType(fl.Type())
-		if !ok || got != want {
+		ic, err := leafColumn(file, leaf, fl, want)
+		if err != nil {
 			f.Close()
-			return nil, fmt.Errorf("archive: %s: column %s is %s, want %s", filepath.Base(path), visible(fl.Name()), fl.Type(), typeNames[want])
+			return nil, err
 		}
-		e.cols[lower] = inColumn{leaf: leaf, typ: want, scale: scale}
+		e.cols[lower] = ic
 	}
 	return e, nil
 }
@@ -156,15 +146,7 @@ func cmpNullsLast(a, b value) int {
 // writeDerived writes rows as out, in their order, its row groups cut at
 // maxGroupRows only; a failure leaves no file and no .tmp.
 func writeDerived(out string, cols []pqColumn, each func(write func(row) error) error) error {
-	w, err := newRowWriter(out, cols, nil)
-	if err != nil {
-		return err
-	}
-	if err := each(w.Write); err != nil {
-		w.Abort()
-		return err
-	}
-	return w.Close()
+	return writeParquet(out, cols, nil, func(w *rowWriter) error { return each(w.Write) })
 }
 
 var sessionsReads = []string{"family", "day", "project_id", "kind", "actor_id", "actor_kind", "session_id", "id", "ts",

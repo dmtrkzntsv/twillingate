@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -108,15 +109,10 @@ func (d *DB) GetDashboard(ctx context.Context, id int64) (store.Dashboard, error
 // included; dashboardID 0 lists every widget, by dashboard_id then
 // sort_key.
 func (d *DB) ListWidgets(ctx context.Context, dashboardID int64) ([]store.Widget, error) {
-	q := `SELECT ` + widgetCols + ` FROM widgets`
-	var args []any
-	if dashboardID != 0 {
-		q += ` WHERE dashboard_id=? ORDER BY sort_key`
-		args = append(args, dashboardID)
-	} else {
-		q += ` ORDER BY dashboard_id, sort_key`
-	}
-	rows, err := d.db.QueryContext(ctx, q, args...)
+	// sort_key is unique within a dashboard (widgets_order), so one
+	// dashboard's widgets come by sort_key alone.
+	rows, err := d.db.QueryContext(ctx, `SELECT `+widgetCols+` FROM widgets
+		WHERE (?1 = 0 OR dashboard_id = ?1) ORDER BY dashboard_id, sort_key`, dashboardID)
 	if err != nil {
 		return nil, err
 	}
@@ -254,9 +250,21 @@ func (d *DB) SetDashboardView(ctx context.Context, dash store.Dashboard) error {
 	})
 }
 
-// SetDashboardArchived is SetDashboardsArchived for a single id.
-func (d *DB) SetDashboardArchived(ctx context.Context, id int64, archived bool, a store.AuditEntry) error {
-	return d.SetDashboardsArchived(ctx, []int64{id}, archived, a)
+// requireDashboards refuses, ErrNotFound naming the first of ids in
+// order, when any of ids is not a dashboard, so a batch write that checks
+// first leaves every row untouched.
+func requireDashboards(ctx context.Context, tx *sql.Tx, ids []int64) error {
+	found, err := queryColumn[int64](ctx, tx,
+		`SELECT id FROM dashboards WHERE id IN (`+placeholders(len(ids))+`)`, toArgs(ids)...)
+	if err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if !slices.Contains(found, id) {
+			return store.Refuse(store.ErrNotFound, "dashboard %d: not found", id)
+		}
+	}
+	return nil
 }
 
 // SetDashboardsArchived archives (only rows currently live) or restores
@@ -271,29 +279,8 @@ func (d *DB) SetDashboardsArchived(ctx context.Context, ids []int64, archived bo
 		return nil
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx,
-			`SELECT id FROM dashboards WHERE id IN (`+placeholders(len(ids))+`)`, toArgs(ids)...)
-		if err != nil {
+		if err := requireDashboards(ctx, tx, ids); err != nil {
 			return err
-		}
-		exists := map[int64]bool{}
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			exists[id] = true
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return err
-		}
-		rows.Close()
-		for _, id := range ids {
-			if !exists[id] {
-				return store.Refuse(store.ErrNotFound, "dashboard %d: not found", id)
-			}
 		}
 
 		q := `UPDATE dashboards SET archived_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),
@@ -513,7 +500,7 @@ func (d *DB) UpdateWidget(ctx context.Context, w store.Widget, cols store.Widget
 	})
 }
 
-// SetWidgetArchived is SetDashboardArchived's twin for widgets.
+// SetWidgetArchived is SetDashboardsArchived's single-row twin for widgets.
 func (d *DB) SetWidgetArchived(ctx context.Context, id int64, archived bool, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		q := `UPDATE widgets SET archived_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),

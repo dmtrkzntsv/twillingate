@@ -243,7 +243,6 @@ type Store interface {
 	// row read from the store keeps its sidebar.
 	UpdateDashboard(ctx context.Context, d Dashboard, a AuditEntry) error
 	SetDashboardView(ctx context.Context, d Dashboard) error
-	SetDashboardArchived(ctx context.Context, id int64, archived bool, a AuditEntry) error
 	// MoveDashboards rewrites group_id and sort_key of every row in ks in
 	// one transaction, with one audit row a (Subject "dashboard/<first
 	// id>"). A non-zero rekey first moves the group-name row from
@@ -301,7 +300,7 @@ type Store interface {
 	// ArchiveDueWidgetShares archives every share whose archive_at is at
 	// or before now, one widget_share.archive audit row each (actor
 	// "retention"), and returns how many.
-	ArchiveDueWidgetShares(ctx context.Context, now string) (int, error)
+	ArchiveDueWidgetShares(ctx context.Context, now time.Time) (int, error)
 	// WriteSubmission records a form submission, creating the form as a
 	// draft on its first one, and on an approved form writes n.Event in
 	// the same transaction. It returns the form as it stands after the
@@ -376,9 +375,9 @@ type Store interface {
 	PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]PendingSubmission, error)
 	// AttributeSubmission stores ev's referrer and UTMs as p's attribution
 	// and, when p.WriteEvent, leaves ev in the outbox (UnloggedEvents),
-	// all in one transaction; wrote reports the outbox filled. A submission no
-	// longer pending (deleted, or attributed already) changes nothing.
-	AttributeSubmission(ctx context.Context, p PendingSubmission, ev Event) (wrote bool, err error)
+	// all in one write. A submission no longer pending (deleted, or
+	// attributed already) changes nothing.
+	AttributeSubmission(ctx context.Context, p PendingSubmission, ev Event) error
 	// UnloggedEvents lists up to limit events AttributeSubmission wrote
 	// and MarkLogged has not cleared yet, oldest first. A row that does
 	// not read is listed with Err set and a zero Event.

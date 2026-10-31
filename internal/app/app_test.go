@@ -190,14 +190,12 @@ func TestServeEndToEnd(t *testing.T) {
 	}
 	// The seeded project must still be there after a full boot/shutdown
 	// cycle: Serve reads it, never rewrites the registry.
-	ids, err := st.(interface {
-		ProjectIDs(context.Context) ([]int64, error)
-	}).ProjectIDs(bg)
+	ps, _, err := st.LoadRegistry(bg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ids) != 1 || ids[0] != 1 {
-		t.Fatalf("ids = %v, want [1]", ids)
+	if len(ps) != 1 || ps[0].ID != 1 {
+		t.Fatalf("projects = %+v, want only id 1", ps)
 	}
 }
 

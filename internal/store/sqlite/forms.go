@@ -20,7 +20,7 @@ const formColumns = `project_id, name, status, purpose, return_url, fields, expe
 
 // scanForm reads one forms row selected with formColumns; extra receives
 // any columns selected after them.
-func scanForm(row interface{ Scan(...any) error }, extra ...any) (store.Form, error) {
+func scanForm(row rowScanner, extra ...any) (store.Form, error) {
 	var f store.Form
 	var fields string
 	var expected, created, draft, approved, closes, last, archived, seen sql.NullString
@@ -99,7 +99,7 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO forms (project_id, name, created_at, draft_until)
 			VALUES (?,?,?,?) ON CONFLICT DO NOTHING`,
-			sub.ProjectID, sub.Form, sub.ReceivedAt.UTC().Format(tsFormat), n.DraftUntil.UTC().Format(tsFormat)); err != nil {
+			sub.ProjectID, sub.Form, fmtTime(sub.ReceivedAt), fmtTime(n.DraftUntil)); err != nil {
 			return err
 		}
 		var err error
@@ -127,7 +127,7 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 			}
 			attribution = string(a)
 		}
-		received := sub.ReceivedAt.UTC().Format(tsFormat)
+		received := fmtTime(sub.ReceivedAt)
 		pending, err := json.Marshal(n.StoredEvent())
 		if err != nil {
 			return fmt.Errorf("submission %s event: %w", sub.ID, err)
@@ -224,16 +224,16 @@ func (d *DB) PendingSubmissions(ctx context.Context, before time.Time, limit int
 
 // AttributeSubmission stores ev's referrer and UTMs as p's attribution
 // and, when p.WriteEvent, leaves ev in the outbox (unlogged_event) for
-// the job to append to the event files, in one transaction; wrote
-// reports the outbox filled. The event is never a row of SQLite's
-// events. A submission no longer pending changes nothing.
-func (d *DB) AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) (bool, error) {
+// the job to append to the event files, in one statement. The event is
+// never a row of SQLite's events. A submission no longer pending changes
+// nothing.
+func (d *DB) AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) error {
 	var attribution any // NULL: nothing found
 	if a := (store.Attribution{Referrer: ev.ReferrerSource, UTMSource: ev.UTMSource,
 		UTMMedium: ev.UTMMedium, UTMCampaign: ev.UTMCampaign}); a != (store.Attribution{}) {
 		b, err := json.Marshal(a)
 		if err != nil {
-			return false, err
+			return err
 		}
 		attribution = string(b)
 	}
@@ -241,28 +241,14 @@ func (d *DB) AttributeSubmission(ctx context.Context, p store.PendingSubmission,
 	if p.WriteEvent {
 		b, err := json.Marshal(ev)
 		if err != nil {
-			return false, fmt.Errorf("submission %s event: %w", p.ID, err)
+			return fmt.Errorf("submission %s event: %w", p.ID, err)
 		}
 		unlogged = string(b)
 	}
-	var wrote bool
-	err := d.tx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE submissions SET attribution=?, unlogged_event=?, pending_event=NULL,
-			pending_write=NULL, pending_connection=NULL WHERE project_id=? AND id=? AND pending_event IS NOT NULL`,
-			attribution, unlogged, p.ProjectID, p.ID)
-		if err != nil {
-			return err
-		}
-		if n, err := res.RowsAffected(); err != nil || n != 1 {
-			return err // deleted or attributed already
-		}
-		wrote = p.WriteEvent
-		return nil
-	})
-	if err != nil {
-		return false, err
-	}
-	return wrote, nil
+	_, err := d.db.ExecContext(ctx, `UPDATE submissions SET attribution=?, unlogged_event=?, pending_event=NULL,
+		pending_write=NULL, pending_connection=NULL WHERE project_id=? AND id=? AND pending_event IS NOT NULL`,
+		attribution, unlogged, p.ProjectID, p.ID)
+	return err
 }
 
 // UnloggedEvents lists up to limit events AttributeSubmission wrote and
@@ -377,7 +363,7 @@ func (d *DB) ListForms(ctx context.Context, projectID int64, archived bool) ([]s
 func (d *DB) MarkFormSeen(ctx context.Context, projectID int64, name string, until time.Time) error {
 	res, err := d.db.ExecContext(ctx,
 		`UPDATE forms SET seen_at = MAX(COALESCE(seen_at, ''), ?) WHERE project_id=? AND name=?`,
-		until.UTC().Format(tsFormat), projectID, name)
+		fmtTime(until), projectID, name)
 	if err != nil {
 		return err
 	}
@@ -637,18 +623,21 @@ func deleteFormData(ctx context.Context, tx *sql.Tx, projectID int64, name strin
 // likeEscaper makes a search string literal inside LIKE ... ESCAPE '\'.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
-// matchSubmissions is the FROM/WHERE that selects the project's
+// matchedSubmissions is the FROM/WHERE that selects the project's
 // submissions with a field value containing search, archived ones and
 // archived forms' too: an erasure request must reach every copy of a
-// person's data.
-func matchSubmissions(projectID int64, search string) (string, []any, error) {
+// person's data. Its parameters are the project and searchPattern's
+// result.
+const matchedSubmissions = `FROM submissions s JOIN forms f ON f.project_id=s.project_id AND f.name=s.form
+	WHERE s.project_id=?
+	  AND EXISTS (SELECT 1 FROM json_each(s.fields) j WHERE j.value LIKE ? ESCAPE '\')`
+
+// searchPattern is the LIKE pattern matchedSubmissions takes for search.
+func searchPattern(search string) (string, error) {
 	if search == "" {
-		return "", nil, store.Refuse(store.ErrInvalid, "search must not be empty")
+		return "", store.Refuse(store.ErrInvalid, "search must not be empty")
 	}
-	return `FROM submissions s JOIN forms f ON f.project_id=s.project_id AND f.name=s.form
-		WHERE s.project_id=?
-		  AND EXISTS (SELECT 1 FROM json_each(s.fields) j WHERE j.value LIKE ? ESCAPE '\')`,
-		[]any{projectID, "%" + likeEscaper.Replace(search) + "%"}, nil
+	return "%" + likeEscaper.Replace(search) + "%", nil
 }
 
 const defaultFindLimit = 100
@@ -659,7 +648,7 @@ const submissionColumns = `s.project_id, s.id, s.form, s.received_at, s.fields, 
 
 // scanSubmission reads one row selected with submissionColumns, then
 // into extra any columns selected after them.
-func scanSubmission(row interface{ Scan(...any) error }, extra ...any) (store.Submission, error) {
+func scanSubmission(row rowScanner, extra ...any) (store.Submission, error) {
 	var s store.Submission
 	var received, fields string
 	var attribution, archived sql.NullString
@@ -705,15 +694,15 @@ func (d *DB) GetSubmission(ctx context.Context, projectID int64, form, id string
 // archived ones and archived forms' included, each with ArchivedAt and
 // FormArchived.
 func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]store.Submission, string, error) {
-	from, args, err := matchSubmissions(projectID, search)
+	pattern, err := searchPattern(search)
 	if err != nil {
 		return nil, "", err
 	}
 	if limit <= 0 {
 		limit = defaultFindLimit
 	}
+	var at string // the cursor's received_at; "" with no cursor
 	if after != "" {
-		var at string
 		switch err := d.db.QueryRowContext(ctx, `SELECT received_at FROM submissions WHERE project_id=? AND id=?`,
 			projectID, after).Scan(&at); {
 		case errors.Is(err, sql.ErrNoRows):
@@ -721,11 +710,10 @@ func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string
 		case err != nil:
 			return nil, "", err
 		}
-		from += ` AND (s.received_at < ? OR (s.received_at = ? AND s.id < ?))`
-		args = append(args, at, at, after)
 	}
-	rows, err := d.db.QueryContext(ctx, `SELECT `+submissionColumns+`, f.archived_at IS NOT NULL `+from+`
-		ORDER BY s.received_at DESC, s.id DESC LIMIT ?`, append(args, limit+1)...)
+	rows, err := d.db.QueryContext(ctx, `SELECT `+submissionColumns+`, f.archived_at IS NOT NULL `+matchedSubmissions+`
+		AND (? = '' OR s.received_at < ? OR (s.received_at = ? AND s.id < ?))
+		ORDER BY s.received_at DESC, s.id DESC LIMIT ?`, projectID, pattern, after, at, at, after, limit+1)
 	if err != nil {
 		return nil, "", err
 	}
@@ -753,22 +741,10 @@ func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string
 
 // SubmissionIDsMatching returns every id FindSubmissions would, newest first.
 func (d *DB) SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error) {
-	from, args, err := matchSubmissions(projectID, search)
+	pattern, err := searchPattern(search)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.db.QueryContext(ctx, `SELECT s.id `+from+` ORDER BY s.received_at DESC, s.id DESC`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+	return queryColumn[string](ctx, d.db, `SELECT s.id `+matchedSubmissions+` ORDER BY s.received_at DESC, s.id DESC`,
+		projectID, pattern)
 }

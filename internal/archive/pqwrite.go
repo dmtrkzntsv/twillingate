@@ -156,6 +156,20 @@ type rowWriter struct {
 	done    bool
 }
 
+// writeParquet writes path with columns cols and cut (newRowWriter), its
+// rows from fill; a failure leaves no file and no .tmp.
+func writeParquet(path string, cols []pqColumn, cut func(prev, next row, rows int) bool, fill func(*rowWriter) error) error {
+	w, err := newRowWriter(path, cols, cut)
+	if err != nil {
+		return err
+	}
+	if err := fill(w); err != nil {
+		w.Abort()
+		return err
+	}
+	return w.Close()
+}
+
 // newRowWriter starts writing path (into path.tmp) with columns cols, every
 // one OPTIONAL, in that order. cut may be nil: groups are then cut by size
 // alone.

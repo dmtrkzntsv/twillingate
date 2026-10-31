@@ -36,9 +36,8 @@ type Store interface {
 	// share archived more than days ago. days <= 0 purges nothing.
 	PurgeArchived(ctx context.Context, days int) (store.PurgeResult, error)
 	// ArchiveDueWidgetShares archives every live share whose archive_at is
-	// at or before now (a "2006-01-02T15:04:05Z" UTC timestamp) and returns
-	// how many.
-	ArchiveDueWidgetShares(ctx context.Context, now string) (int, error)
+	// at or before now and returns how many.
+	ArchiveDueWidgetShares(ctx context.Context, now time.Time) (int, error)
 	// ExpireDrafts archives every active draft form whose draft_until is
 	// at or before now and returns how many.
 	ExpireDrafts(ctx context.Context, now time.Time) (int, error)
@@ -49,9 +48,9 @@ type Store interface {
 	PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]store.PendingSubmission, error)
 	// AttributeSubmission stores ev's referrer and UTMs as p's attribution
 	// and, when p.WriteEvent, leaves ev in the outbox (UnloggedEvents),
-	// all in one transaction; wrote reports the outbox filled. A submission no
-	// longer pending (deleted, or attributed already) changes nothing.
-	AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) (wrote bool, err error)
+	// all in one write. A submission no longer pending (deleted, or
+	// attributed already) changes nothing.
+	AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) error
 	// UnloggedEvents lists up to limit events AttributeSubmission wrote
 	// and MarkLogged has not cleared yet, oldest first. A row that does
 	// not read is listed with Err set and a zero Event.
@@ -137,7 +136,7 @@ func (r *Runner) RunDailyPass(ctx context.Context) {
 
 	// Shares past their date are archived on every pass, whatever
 	// RETENTION_ARCHIVED_DAYS is: that setting only gates the purge below.
-	if n, err := r.store.ArchiveDueWidgetShares(ctx, r.now().UTC().Format("2006-01-02T15:04:05Z")); err != nil {
+	if n, err := r.store.ArchiveDueWidgetShares(ctx, r.now()); err != nil {
 		r.logger.Error("archive due widget shares failed", "error", err)
 	} else if n > 0 {
 		r.logger.Info("archive due widget shares", "shares", n)

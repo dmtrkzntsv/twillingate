@@ -96,7 +96,7 @@ func (s *pendingStore) PendingSubmissions(_ context.Context, before time.Time, l
 	return out, nil
 }
 
-func (s *pendingStore) AttributeSubmission(_ context.Context, p store.PendingSubmission, ev store.Event) (bool, error) {
+func (s *pendingStore) AttributeSubmission(_ context.Context, p store.PendingSubmission, ev store.Event) error {
 	if s.attributed == nil {
 		s.attributed, s.asWritten = map[string]store.Event{}, map[string]bool{}
 	}
@@ -104,7 +104,7 @@ func (s *pendingStore) AttributeSubmission(_ context.Context, p store.PendingSub
 	if p.WriteEvent {
 		s.outbox = append(s.outbox, store.UnloggedEvent{ProjectID: p.ProjectID, ID: p.ID, Event: ev})
 	}
-	return p.WriteEvent, nil
+	return nil
 }
 
 // attributionRunner is a Runner over st (backed by setup's store and
