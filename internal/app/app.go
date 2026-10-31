@@ -286,12 +286,8 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	checkDone := make(chan struct{})
 	checkCtx, stopCheck := context.WithCancel(context.Background())
 	if runConsole {
-		var widgetSQL reporting.SQL
-		if sql != nil {
-			widgetSQL = sql
-		}
 		opt := api.WidgetOptions(cfg, reg, reporting.Options{})
-		go func() { checkUserWidgets(checkCtx, st, widgetSQL, opt, logger); close(checkDone) }()
+		go func() { checkUserWidgets(checkCtx, st, sql, opt, logger); close(checkDone) }()
 	} else {
 		close(checkDone)
 	}

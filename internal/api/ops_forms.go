@@ -389,7 +389,7 @@ func (h *host) selectSubmissions(ctx context.Context, in submissionsSelectorIn, 
 	case len(in.IDs) > 0:
 		return in.IDs, "ids", nil
 	case in.Search != "":
-		ids, err := h.ops.SubmissionIDsMatching(ctx, in.ProjectID, strings.TrimSpace(in.Search))
+		ids, err := h.ops.SubmissionIDsMatching(ctx, in.ProjectID, in.Search)
 		return ids, "search", err
 	}
 	if in.Form == "" || in.Filters == "" {

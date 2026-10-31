@@ -21,6 +21,14 @@ import (
 // maxAPIBody caps a REST request body; larger bodies are refused as invalid.
 const maxAPIBody = 1 << 20
 
+// writeJSON answers v as JSON at status, never cached.
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
 // restHandler adapts one operation to HTTP: decode the request into In,
 // run fn as actor "api", and answer with Out as JSON at s.Status (200 when
 // unset) or with the refusal mapped by writeError.

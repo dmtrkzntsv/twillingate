@@ -51,11 +51,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 		return nil, nil, err
 	}
 	closeAll := func() error { return errors.Join(db.Close(), subs.Close()) }
-	var widgetSQL reporting.SQL
-	if sql != nil {
-		widgetSQL = sql
-	}
-	rep := reporting.New(rst, widgetSQL, WidgetOptions(cfg, reg, reporting.Options{CacheAge: cfg.Reporting.CacheAge,
+	rep := reporting.New(rst, sql, WidgetOptions(cfg, reg, reporting.Options{CacheAge: cfg.Reporting.CacheAge,
 		RefreshAge: cfg.Reporting.RefreshAge, ArchivedDays: cfg.Retention.ArchivedDays, ShareBaseURL: cfg.Console.URL, Native: nat}))
 	h := &host{db: db, subs: subs, reg: reg, ops: ops, rep: rep,
 		ingestURL: cfg.IngestURL, logger: logger, limits: limitsFrom(cfg),
@@ -225,18 +221,18 @@ func wrapAuth(ctx context.Context, m config.ConsoleConfig) (func(metadataURL str
 	case "token":
 		opts.AllowMissingExpiration = true
 		if !m.LoginEnabled() {
-			verify, challenge = StaticVerifier(m.Token), false
+			verify, challenge = staticVerifier(m.Token), false
 			break
 		}
 		// Keys derive from the config alone, so this verifier accepts what
 		// the instance RegisterOn mounts issues; verifying logs nothing.
 		verify = newLoginServer(m, slog.New(slog.DiscardHandler)).verify
 	case "oauth":
-		jwksURL, err := DiscoverJWKSURL(ctx, m.Issuer, nil)
+		jwksURL, err := discoverJWKSURL(ctx, m.Issuer, nil)
 		if err != nil {
 			return nil, fmt.Errorf("api oauth mode: %w (is the CONSOLE_AUTH_DSN issuer correct and reachable?)", err)
 		}
-		verify = OAuthVerifier(m.Issuer, oauthAudiences(m), NewJWKSCache(jwksURL, nil))
+		verify = oauthVerifier(m.Issuer, oauthAudiences(m), newJWKSCache(jwksURL, nil))
 	default:
 		return nil, fmt.Errorf("api: unknown auth mode %q", m.AuthMode)
 	}

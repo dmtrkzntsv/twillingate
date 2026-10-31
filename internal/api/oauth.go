@@ -49,7 +49,7 @@ type loginServer struct {
 func newLoginServer(m config.ConsoleConfig, logger *slog.Logger) *loginServer {
 	return &loginServer{
 		keys:      deriveLoginKeys(m.Token, m.Password),
-		static:    StaticVerifier(m.Token),
+		static:    staticVerifier(m.Token),
 		password:  []byte(m.Password),
 		hosts:     m.RedirectHosts,
 		resource:  m.ResourceURL,
@@ -283,13 +283,6 @@ func matchesAny(allowed []string, candidate string) bool {
 }
 
 func isLoopbackHost(h string) bool { return h == "localhost" || h == "127.0.0.1" || h == "::1" }
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Cache-Control", "no-store")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
-}
 
 // oauthError writes an RFC 6749 §5.2 / RFC 7591 §3.2.2 error body.
 func oauthError(w http.ResponseWriter, code, description string) {

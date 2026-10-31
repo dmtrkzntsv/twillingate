@@ -28,10 +28,10 @@ var allowedAlgs = []string{
 	"PS256", "PS384", "PS512",
 }
 
-// StaticVerifier implements the token:// auth mode: constant-time compare
+// staticVerifier implements the token:// auth mode: constant-time compare
 // against the single static token from CONSOLE_AUTH_DSN. The middleware wrapping it must allow
 // missing expiration (a static token has no exp).
-func StaticVerifier(token string) auth.TokenVerifier {
+func staticVerifier(token string) auth.TokenVerifier {
 	want := []byte(token)
 	return func(_ context.Context, got string, _ *http.Request) (*auth.TokenInfo, error) {
 		if subtle.ConstantTimeCompare(want, []byte(got)) != 1 {
@@ -41,10 +41,10 @@ func StaticVerifier(token string) auth.TokenVerifier {
 	}
 }
 
-// DiscoverJWKSURL resolves the issuer's RFC 8414 metadata to its
+// discoverJWKSURL resolves the issuer's RFC 8414 metadata to its
 // jwks_uri. Called once at startup so a typo'd issuer fails the boot,
 // not the first request.
-func DiscoverJWKSURL(ctx context.Context, issuer string, client *http.Client) (string, error) {
+func discoverJWKSURL(ctx context.Context, issuer string, client *http.Client) (string, error) {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
@@ -73,9 +73,9 @@ func DiscoverJWKSURL(ctx context.Context, issuer string, client *http.Client) (s
 	return meta.JWKSURI, nil
 }
 
-// JWKSCache fetches and caches an issuer's keys, refetching when an
+// jwksCache fetches and caches an issuer's keys, refetching when an
 // unknown kid appears (key rotation) but at most once per minRefetch.
-type JWKSCache struct {
+type jwksCache struct {
 	url    string
 	client *http.Client
 
@@ -85,14 +85,14 @@ type JWKSCache struct {
 	minRefetch time.Duration
 }
 
-func NewJWKSCache(jwksURL string, client *http.Client) *JWKSCache {
+func newJWKSCache(jwksURL string, client *http.Client) *jwksCache {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
-	return &JWKSCache{url: jwksURL, client: client, minRefetch: time.Minute}
+	return &jwksCache{url: jwksURL, client: client, minRefetch: time.Minute}
 }
 
-func (c *JWKSCache) Key(kid string) (any, error) {
+func (c *jwksCache) Key(kid string) (any, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if k, ok := c.keys[kid]; ok {
@@ -110,7 +110,7 @@ func (c *JWKSCache) Key(kid string) (any, error) {
 	return nil, fmt.Errorf("unknown key id %q", kid)
 }
 
-func (c *JWKSCache) fetchLocked() error {
+func (c *jwksCache) fetchLocked() error {
 	resp, err := c.client.Get(c.url)
 	if err != nil {
 		return fmt.Errorf("jwks fetch: %w", err)
@@ -172,13 +172,13 @@ func (c *JWKSCache) fetchLocked() error {
 	return nil
 }
 
-func (c *JWKSCache) keyfunc(t *jwt.Token) (any, error) {
+func (c *jwksCache) keyfunc(t *jwt.Token) (any, error) {
 	kid, _ := t.Header["kid"].(string)
 	return c.Key(kid)
 }
 
 // verifyJWT validates an IdP-issued JWT for the oauth verifier.
-func verifyJWT(raw, issuer string, audiences []string, cache *JWKSCache) (*auth.TokenInfo, error) {
+func verifyJWT(raw, issuer string, audiences []string, cache *jwksCache) (*auth.TokenInfo, error) {
 	if len(audiences) == 0 {
 		// jwt.WithAudience with no values skips the aud check entirely.
 		return nil, fmt.Errorf("%w: no audience configured", auth.ErrInvalidToken)
@@ -205,9 +205,9 @@ func verifyJWT(raw, issuer string, audiences []string, cache *JWKSCache) (*auth.
 	return info, nil
 }
 
-// OAuthVerifier implements the oauth:// auth mode: the bearer token itself
+// oauthVerifier implements the oauth:// auth mode: the bearer token itself
 // is a JWT from the external IdP, whose aud must contain one of audiences.
-func OAuthVerifier(issuer string, audiences []string, cache *JWKSCache) auth.TokenVerifier {
+func oauthVerifier(issuer string, audiences []string, cache *jwksCache) auth.TokenVerifier {
 	return func(_ context.Context, token string, _ *http.Request) (*auth.TokenInfo, error) {
 		return verifyJWT(token, issuer, audiences, cache)
 	}
