@@ -76,22 +76,29 @@ type rangeIn struct {
 	To        string `json:"to" jsonschema:"end day inclusive, YYYY-MM-DD"`
 }
 
-// checkRange validates the shared inputs. Error text is written for a
-// model to recover from (endpoint spec §10): an unknown project lists
-// the valid ids and names instead of just refusing.
-func (h *host) checkRange(ctx context.Context, in rangeIn) error {
+// rangeOf validates the shared inputs and opens them as a native query's
+// project and days. Error text is written for a model to recover from
+// (endpoint spec §10): an unknown project lists the valid ids and names
+// instead of just refusing. ok is false when to is before from: a range
+// of no day, which answers no row.
+func (h *host) rangeOf(ctx context.Context, in rangeIn) (p native.Params, ok bool, err error) {
 	if !isDay(in.From) || !isDay(in.To) {
-		return invalidf("from and to must be YYYY-MM-DD, got %q and %q", in.From, in.To)
+		return native.Params{}, false, invalidf("from and to must be YYYY-MM-DD, got %q and %q", in.From, in.To)
 	}
 	if h.reg.Snapshot(ctx).Project(in.ProjectID) == nil {
-		return h.unknownProjectErr(ctx, in.ProjectID)
+		return native.Params{}, false, h.unknownProjectErr(ctx, in.ProjectID)
 	}
-	return nil
+	from, err1 := civil.Parse(in.From)
+	to, err2 := civil.Parse(in.To)
+	if err1 != nil || err2 != nil || to.Before(from) {
+		return native.Params{}, false, nil
+	}
+	return native.Params{Project: in.ProjectID, From: from, To: to}, true, nil
 }
 
 // unknownProjectErr lists the valid ids with their names so a model can
 // recover (endpoint spec §10) without a second list_projects call. Shared
-// by checkRange and by tools that re-fetch the project after checkRange
+// by rangeOf and by tools that re-fetch the project after rangeOf
 // has already validated it, in case the registry reloaded in between (a
 // nil project would otherwise panic on field access).
 func (h *host) unknownProjectErr(ctx context.Context, id int64) error {
@@ -154,10 +161,10 @@ func (h *host) viewsOverview(ctx context.Context, in overviewIn) (tableOut, erro
 	// One deadline for every query the answer runs.
 	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
-	if err := h.checkRange(ctx, in.rangeIn); err != nil {
+	p, ok, err := h.rangeOf(ctx, in.rangeIn)
+	if err != nil {
 		return tableOut{}, err
 	}
-	p, ok := rangeParams(in.rangeIn)
 	cols := []string{"day", "visitors", "views", "sessions", "bounces", "duration_sec", "bounce_rate", "avg_session_sec"}
 	if !ok {
 		return tableOut{Columns: cols, Rows: [][]string{}}, nil
@@ -216,17 +223,6 @@ func (h *host) rowCap() int {
 		return maxBreakdownLimit
 	}
 	return min(h.queryRows, maxBreakdownLimit)
-}
-
-// rangeParams is in's project and days as a native query's, ok false
-// when to is before from: a range of no day, which answers no row.
-func rangeParams(in rangeIn) (native.Params, bool) {
-	from, err1 := civil.Parse(in.From)
-	to, err2 := civil.Parse(in.To)
-	if err1 != nil || err2 != nil || to.Before(from) {
-		return native.Params{}, false
-	}
-	return native.Params{Project: in.ProjectID, From: from, To: to}, true
 }
 
 // rangeDays is the days of p's range, from and to included.
@@ -325,15 +321,15 @@ type breakdownIn struct {
 // dimension's columns: visitors (distinct per day and value, added up)
 // and views, the busiest by visitors, then views, then the values.
 func (h *host) viewsBreakdown(ctx context.Context, in breakdownIn) (tableOut, error) {
-	if err := h.checkRange(ctx, in.rangeIn); err != nil {
+	p, ok, err := h.rangeOf(ctx, in.rangeIn)
+	if err != nil {
 		return tableOut{}, err
 	}
-	dim, ok := viewsDimensions[in.Dimension]
-	if !ok {
+	dim, known := viewsDimensions[in.Dimension]
+	if !known {
 		return tableOut{}, invalidf("unknown dimension %q; valid: %s", in.Dimension, dimensionNames())
 	}
 	cols := append(slices.Clone(dim.cols), "visitors", "views")
-	p, ok := rangeParams(in.rangeIn)
 	if !ok {
 		return tableOut{Columns: cols, Rows: [][]string{}}, nil
 	}

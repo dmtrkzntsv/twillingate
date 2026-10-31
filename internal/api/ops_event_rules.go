@@ -129,11 +129,11 @@ const eventNamesMax = 200
 // than 1,000 names tie with the 200th, the ones kept are the engine's
 // first 1,000 sorted (topRows), not the first 200 by name over them all.
 func (h *host) eventNames(ctx context.Context, in rangeIn) (eventNamesOut, error) {
-	if err := h.checkRange(ctx, in); err != nil {
+	p, ok, err := h.rangeOf(ctx, in)
+	if err != nil {
 		return eventNamesOut{}, err
 	}
 	out := eventNamesOut{Events: []eventNameOut{}}
-	p, ok := rangeParams(in)
 	if !ok {
 		return out, nil
 	}
