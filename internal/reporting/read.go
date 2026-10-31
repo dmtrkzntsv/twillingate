@@ -194,8 +194,8 @@ func (s *Service) Dashboard(ctx context.Context, id int64) (DashboardDetail, err
 	out := DashboardDetail{DashboardInfo: dashboardInfo(d), Tabs: []Tab{}, Widgets: []WidgetInfo{}}
 	// An archived dashboard is not a tab, but its detail still shows the
 	// tabs of the group it belongs to.
-	for _, x := range ds {
-		if x.GroupID == d.GroupID && x.Owner == d.Owner && x.ArchivedAt == "" {
+	for _, x := range groupOf(ds, d) {
+		if x.ArchivedAt == "" {
 			out.Tabs = append(out.Tabs, Tab{ID: x.ID, Title: x.Title})
 		}
 	}

@@ -50,8 +50,8 @@ func (s *Service) AddProjectTab(ctx context.Context, actor string, in AddProject
 		if !ok {
 			return store.Refuse(store.ErrNotFound, "dashboard %d: not found", in.DashboardID)
 		}
-		if d.ArchivedAt != "" {
-			return store.Refuse(store.ErrInvalid, "dashboard %d is archived; restore_dashboard first", d.ID)
+		if err := refuseArchived(d); err != nil {
+			return err
 		}
 		key, err := s.tabKey(ctx, actor, in.ProjectID, rows, ds, in.After)
 		if err != nil {

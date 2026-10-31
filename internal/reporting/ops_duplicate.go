@@ -50,9 +50,10 @@ func (s *Service) DuplicateDashboard(ctx context.Context, actor string, in Dupli
 	if err != nil {
 		return DashboardDetail{}, err
 	}
-	system := src.Owner == store.OwnerSystem
-	if src.ArchivedAt != "" && !system {
-		return DashboardDetail{}, store.Refuse(store.ErrInvalid, "dashboard %d is archived; restore_dashboard first", id)
+	if src.Owner != store.OwnerSystem {
+		if err := refuseArchived(src); err != nil {
+			return DashboardDetail{}, err
+		}
 	}
 	if in.WholeGroup {
 		if in.GroupID != 0 {
@@ -70,10 +71,7 @@ func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dash
 	if err != nil {
 		return DashboardDetail{}, err
 	}
-	copyOf := store.Dashboard{
-		Owner: store.OwnerUser, Title: src.Title + " (copy)", Sidebar: true,
-		LastProjectID: src.LastProjectID, LastRange: src.LastRange, LastFrom: src.LastFrom, LastTo: src.LastTo,
-	}
+	copyOf := copyRow(src, src.Title+" (copy)")
 	var newID int64
 	err = s.placeDashboards(func() error {
 		o, err := s.readOrder(ctx)
@@ -130,14 +128,10 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 			return err
 		}
 		var members []store.Dashboard
-		for _, d := range all {
-			if d.GroupID != src.GroupID || d.Owner != src.Owner {
-				continue
+		for _, d := range groupOf(all, src) {
+			if system || d.ArchivedAt == "" {
+				members = append(members, d)
 			}
-			if !system && d.ArchivedAt != "" {
-				continue
-			}
-			members = append(members, d)
 		}
 		ds := make([]store.Dashboard, len(members))
 		wss := make([][]store.Widget, len(members))
@@ -153,10 +147,7 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 			if i == 0 {
 				title += " (copy)"
 			}
-			ds[i] = store.Dashboard{
-				Owner: store.OwnerUser, Title: title, Sidebar: true,
-				LastProjectID: m.LastProjectID, LastRange: m.LastRange, LastFrom: m.LastFrom, LastTo: m.LastTo,
-			}
+			ds[i] = copyRow(m, title)
 		}
 		// D7: the name is copied like the first tab's title. Taken from this
 		// attempt's own read (every member row carries the group's name), not
@@ -189,6 +180,15 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 		return DashboardDetail{}, err
 	}
 	return s.Dashboard(ctx, ids[srcIndex])
+}
+
+// copyRow is the user row a copy of d starts from: titled title, in the
+// sidebar, with d's stored selection.
+func copyRow(d store.Dashboard, title string) store.Dashboard {
+	return store.Dashboard{
+		Owner: store.OwnerUser, Title: title, Sidebar: true,
+		LastProjectID: d.LastProjectID, LastRange: d.LastRange, LastFrom: d.LastFrom, LastTo: d.LastTo,
+	}
 }
 
 // copyLiveWidgets returns fresh copies of dashboardID's live widgets, in

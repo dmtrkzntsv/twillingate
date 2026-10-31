@@ -131,15 +131,7 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 		in.Title = t
 	}
 	a := store.AuditEntry{Actor: actor, Action: "dashboard.update"}
-	err = s.placeDashboards(func() error {
-		o, err := s.readOrder(ctx)
-		if err != nil {
-			return err
-		}
-		row, ok := o.find(d.ID)
-		if !ok {
-			return store.Refuse(store.ErrNotFound, "dashboard %d: not found", d.ID)
-		}
+	err = s.placeRow(ctx, d.ID, func(o order, row store.Dashboard) error {
 		if in.Title != "" {
 			row.Title = in.Title
 		}
@@ -148,7 +140,29 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 	if err != nil {
 		return DashboardInfo{}, err
 	}
-	d, err = s.st.GetDashboard(ctx, d.ID)
+	return s.readInfo(ctx, d.ID)
+}
+
+// placeRow runs place under placeDashboards with the user order read for
+// the attempt and id's row in it, refused when the order has no such row.
+func (s *Service) placeRow(ctx context.Context, id int64, place func(o order, row store.Dashboard) error) error {
+	return s.placeDashboards(func() error {
+		o, err := s.readOrder(ctx)
+		if err != nil {
+			return err
+		}
+		row, ok := o.find(id)
+		if !ok {
+			return store.Refuse(store.ErrNotFound, "dashboard %d: not found", id)
+		}
+		return place(o, row)
+	})
+}
+
+// readInfo reads dashboard id back as list_dashboards shows it: what an
+// update answers once it is written.
+func (s *Service) readInfo(ctx context.Context, id int64) (DashboardInfo, error) {
+	d, err := s.st.GetDashboard(ctx, id)
 	return dashboardInfo(d), err
 }
 
@@ -171,18 +185,16 @@ func (s *Service) setPlacement(ctx context.Context, actor string, in UpdateDashb
 		return DashboardInfo{}, store.Refuse(store.ErrInvalid,
 			"dashboard %d is your own: your own dashboards are always in the sidebar; archive_dashboard takes one away", d.ID)
 	}
-	if d.ArchivedAt != "" {
-		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "dashboard %d is archived; restore_dashboard first", d.ID)
+	if err := refuseArchived(d); err != nil {
+		return DashboardInfo{}, err
 	}
 	all, err := s.st.ListDashboards(ctx)
 	if err != nil {
 		return DashboardInfo{}, err
 	}
 	var ids []int64
-	for _, m := range all {
-		if m.Owner == d.Owner && m.GroupID == d.GroupID {
-			ids = append(ids, m.ID)
-		}
+	for _, m := range groupOf(all, d) {
+		ids = append(ids, m.ID)
 	}
 	action := "dashboard.sidebar.show"
 	if !*in.Sidebar {
@@ -191,8 +203,7 @@ func (s *Service) setPlacement(ctx context.Context, actor string, in UpdateDashb
 	if err := s.st.SetDashboardsSidebar(ctx, ids, *in.Sidebar, store.AuditEntry{Actor: actor, Action: action}); err != nil {
 		return DashboardInfo{}, err
 	}
-	d, err = s.st.GetDashboard(ctx, d.ID)
-	return dashboardInfo(d), err
+	return s.readInfo(ctx, d.ID)
 }
 
 // renameGroup names id's group (spec 2026-10-04 D5). The title is
@@ -211,23 +222,14 @@ func (s *Service) renameGroup(ctx context.Context, actor string, in UpdateDashbo
 	if err != nil {
 		return DashboardInfo{}, err
 	}
-	err = s.placeDashboards(func() error {
-		o, err := s.readOrder(ctx)
-		if err != nil {
-			return err
-		}
-		row, ok := o.find(d.ID)
-		if !ok {
-			return store.Refuse(store.ErrNotFound, "dashboard %d: not found", d.ID)
-		}
+	err = s.placeRow(ctx, d.ID, func(_ order, row store.Dashboard) error {
 		return s.st.SetGroupTitle(ctx, row.GroupID, title, store.AuditEntry{
 			Actor: actor, Action: "dashboard.group.rename", Detail: fmt.Sprintf("dashboard/%d", d.ID)})
 	})
 	if err != nil {
 		return DashboardInfo{}, err
 	}
-	d, err = s.st.GetDashboard(ctx, d.ID)
-	return dashboardInfo(d), err
+	return s.readInfo(ctx, d.ID)
 }
 
 func (s *Service) ArchiveDashboard(ctx context.Context, actor string, id int64, wholeGroup bool) error {
@@ -259,8 +261,8 @@ func (s *Service) setDashboardArchived(ctx context.Context, actor string, id int
 			return err
 		}
 		ids = nil
-		for _, m := range all {
-			if m.Owner == d.Owner && m.GroupID == d.GroupID && (m.ArchivedAt == "") == archived {
+		for _, m := range groupOf(all, d) {
+			if (m.ArchivedAt == "") == archived {
 				ids = append(ids, m.ID)
 			}
 		}
@@ -289,10 +291,31 @@ func (s *Service) editableDashboard(ctx context.Context, id int64) (store.Dashbo
 	if err := refuseSystem(d); err != nil {
 		return store.Dashboard{}, err
 	}
-	if d.ArchivedAt != "" {
-		return store.Dashboard{}, store.Refuse(store.ErrInvalid, "dashboard %d is archived; restore_dashboard first", id)
+	if err := refuseArchived(d); err != nil {
+		return store.Dashboard{}, err
 	}
 	return d, nil
+}
+
+// refuseArchived refuses a write that needs d live.
+func refuseArchived(d store.Dashboard) error {
+	if d.ArchivedAt != "" {
+		return store.Refuse(store.ErrInvalid, "dashboard %d is archived; restore_dashboard first", d.ID)
+	}
+	return nil
+}
+
+// groupOf is d's group in all: every dashboard with d's owner and group
+// id, d among them and archived ones included, in all's order. Each
+// caller picks the live or archived members it wants.
+func groupOf(all []store.Dashboard, d store.Dashboard) []store.Dashboard {
+	var out []store.Dashboard
+	for _, x := range all {
+		if x.Owner == d.Owner && x.GroupID == d.GroupID {
+			out = append(out, x)
+		}
+	}
+	return out
 }
 
 func archiveAction(kind string, archived bool) string {
