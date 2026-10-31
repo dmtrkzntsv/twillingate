@@ -12,7 +12,7 @@ import (
 // measures keeps a custom key's empty value with it, as its old SQL's
 // IS NOT NULL did.
 func TestPrefixEmptyIsNotNull(t *testing.T) {
-	b := &Batch{N: 4, Cols: map[string]*Column{"attr_k": {Dict: []string{"", "x"}, Idx: []int32{0, 1, -1, 0}}}}
+	b := &batch{N: 4, Cols: map[string]*column{"attr_k": {Dict: []string{"", "x"}, Idx: []int32{0, 1, -1, 0}}}}
 	for _, c := range []struct {
 		f    Filter
 		want []bool

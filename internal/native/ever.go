@@ -137,7 +137,7 @@ func (e *Engine) collectEver(ctx context.Context, fs []*filter, p Params, rs rul
 	files := all[p.Project]
 	charge := e.charge()
 	for _, f := range fs {
-		r := Range{From: everything.From, To: p.To}
+		r := dayRange{From: everything.From, To: p.To}
 		if f.over == "range" {
 			r.From = p.From
 		}
@@ -155,7 +155,7 @@ func (e *Engine) collectEver(ctx context.Context, fs []*filter, p Params, rs rul
 		f.ids.ids = map[string]struct{}{}
 		var sel []int32
 		var mu sync.Mutex
-		err := s.scanEvents(ctx, files, r, cols, nil, charge, func(_ int, b *Batch) error {
+		err := s.scanEvents(ctx, files, r, cols, nil, charge, func(_ int, b *batch) error {
 			c := batchColumn(b, f.column)
 			if c == nil {
 				return nil

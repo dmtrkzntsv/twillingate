@@ -54,7 +54,7 @@ func readColumns(column string) []string {
 // batchColumn is b's column for column: computed from its sources for a
 // computed column, NULL values for a bucket b has no value column for, nil
 // when b lacks it (every row NULL).
-func batchColumn(b *Batch, column string) *Column {
+func batchColumn(b *batch, column string) *column {
 	if c, ok := computedColumns[column]; ok {
 		return c.compute(b)
 	}
@@ -72,7 +72,7 @@ func batchColumn(b *Batch, column string) *Column {
 // as the system widgets' SQL computes it.
 type computedColumn struct {
 	sources []string
-	compute func(b *Batch) *Column
+	compute func(b *batch) *column
 }
 
 // computedColumns are the computed dimension and filter columns:
@@ -119,7 +119,7 @@ func (d *textDict) id(s string) int32 {
 }
 
 // textAt is c's value at row i; ok false for NULL (c nil: every row).
-func textAt(c *Column, i int) (s string, ok bool) {
+func textAt(c *column, i int) (s string, ok bool) {
 	if c == nil || c.Idx == nil || c.Idx[i] < 0 {
 		return "", false
 	}
@@ -127,7 +127,7 @@ func textAt(c *Column, i int) (s string, ok bool) {
 }
 
 // intAt is c's value at row i; ok false for NULL (c nil: every row).
-func intAt(c *Column, i int) (n int64, ok bool) {
+func intAt(c *column, i int) (n int64, ok bool) {
 	if c == nil || c.Ints == nil || (c.Null != nil && c.Null[i]) {
 		return 0, false
 	}
@@ -135,7 +135,7 @@ func intAt(c *Column, i int) (n int64, ok bool) {
 }
 
 // textColumn is a column of b.N rows, each value(i)'s text or NULL.
-func textColumn(n int, value func(i int) (string, bool)) *Column {
+func textColumn(n int, value func(i int) (string, bool)) *column {
 	var d textDict
 	idx := make([]int32, n)
 	for i := range idx {
@@ -145,10 +145,10 @@ func textColumn(n int, value func(i int) (string, bool)) *Column {
 			idx[i] = -1
 		}
 	}
-	return &Column{Dict: d.dict, Idx: idx}
+	return &column{Dict: d.dict, Idx: idx}
 }
 
-func resolutionColumn(b *Batch) *Column {
+func resolutionColumn(b *batch) *column {
 	_, w := b.col("display_width")
 	_, h := b.col("display_height")
 	type size struct{ w, h int64 }
@@ -168,7 +168,7 @@ func resolutionColumn(b *Batch) *Column {
 	})
 }
 
-func deviceLabelColumn(b *Batch) *Column {
+func deviceLabelColumn(b *batch) *column {
 	_, model := b.col("device_model")
 	_, device := b.col("device")
 	return textColumn(b.N, func(i int) (string, bool) {
@@ -182,7 +182,7 @@ func deviceLabelColumn(b *Batch) *Column {
 	})
 }
 
-func platformVersionColumn(b *Batch) *Column {
+func platformVersionColumn(b *batch) *column {
 	_, platform := b.col("platform")
 	_, version := b.col("app_version")
 	type pair struct{ p, v string }
@@ -202,7 +202,7 @@ func platformVersionColumn(b *Batch) *Column {
 	})
 }
 
-func consentStateColumn(b *Batch) *Column {
+func consentStateColumn(b *batch) *column {
 	_, c := b.col("consent")
 	return textColumn(b.N, func(i int) (string, bool) {
 		switch n, ok := intAt(c, i); {
@@ -217,7 +217,7 @@ func consentStateColumn(b *Batch) *Column {
 
 // hourColumn is the UTC hour of ts, 00 to 23, two digits so the hours
 // sort as text; NULL without a ts.
-func hourColumn(b *Batch) *Column {
+func hourColumn(b *batch) *column {
 	_, c := b.col("ts")
 	return textColumn(b.N, func(i int) (string, bool) {
 		if c == nil || c.Times == nil || (c.Null != nil && c.Null[i]) {
@@ -232,7 +232,7 @@ func hourColumn(b *Batch) *Column {
 var weekdays = [7]string{"1 Mon", "2 Tue", "3 Wed", "4 Thu", "5 Fri", "6 Sat", "7 Sun"}
 
 // weekdayColumn is the UTC weekday of ts (weekdays); NULL without a ts.
-func weekdayColumn(b *Batch) *Column {
+func weekdayColumn(b *batch) *column {
 	_, c := b.col("ts")
 	return textColumn(b.N, func(i int) (string, bool) {
 		if c == nil || c.Times == nil || (c.Null != nil && c.Null[i]) {
@@ -261,7 +261,7 @@ var vitals = map[string]vitalThreshold{
 
 // vitalOf is the vital of b's event_name dictionary entries (nil when b
 // has no event_name): per entry, its threshold, or nil.
-func vitalOf(b *Batch) (*Column, []*vitalThreshold) {
+func vitalOf(b *batch) (*column, []*vitalThreshold) {
 	_, c := b.col("event_name")
 	if c == nil || c.Idx == nil {
 		return nil, nil
@@ -275,7 +275,7 @@ func vitalOf(b *Batch) (*Column, []*vitalThreshold) {
 	return c, ts
 }
 
-func vitalColumn(b *Batch) *Column {
+func vitalColumn(b *batch) *column {
 	names, ts := vitalOf(b)
 	return textColumn(b.N, func(i int) (string, bool) {
 		if names == nil || names.Idx[i] < 0 || ts[names.Idx[i]] == nil {
@@ -285,7 +285,7 @@ func vitalColumn(b *Batch) *Column {
 	})
 }
 
-func vitalRatingColumn(b *Batch) *Column {
+func vitalRatingColumn(b *batch) *column {
 	names, ts := vitalOf(b)
 	_, val := b.col("value")
 	return textColumn(b.N, func(i int) (string, bool) {
@@ -485,7 +485,7 @@ func (f *filter) columns() []string {
 }
 
 // apply clears keep[i] for the rows of b that do not pass.
-func (f *filter) apply(b *Batch, keep []bool) error {
+func (f *filter) apply(b *batch, keep []bool) error {
 	if f.anyOf != nil {
 		return f.applyAny(b, keep)
 	}
@@ -537,7 +537,7 @@ func (f *filter) apply(b *Batch, keep []bool) error {
 
 // applyAny clears keep[i] for the rows of b where none of any_set's
 // columns is set, or none of any_of's filters passes.
-func (f *filter) applyAny(b *Batch, keep []bool) error {
+func (f *filter) applyAny(b *batch, keep []bool) error {
 	set := make([]bool, b.N)
 	one := make([]bool, b.N)
 	for j := range f.anyOf {
@@ -561,7 +561,7 @@ func (f *filter) applyAny(b *Batch, keep []bool) error {
 
 // passRows is, per row of b, whether it passes every filter, in keep
 // (reused when it holds b.N rows).
-func passRows(b *Batch, filters []filter, keep []bool) ([]bool, error) {
+func passRows(b *batch, filters []filter, keep []bool) ([]bool, error) {
 	if cap(keep) < b.N {
 		keep = make([]bool, b.N)
 	}
@@ -578,7 +578,7 @@ func passRows(b *Batch, filters []filter, keep []bool) ([]bool, error) {
 }
 
 // selectRows is the rows of b that pass every filter, appended to sel[:0].
-func selectRows(b *Batch, filters []filter, sel []int32) ([]int32, error) {
+func selectRows(b *batch, filters []filter, sel []int32) ([]int32, error) {
 	sel = sel[:0]
 	if len(filters) == 0 {
 		for i := range b.N {

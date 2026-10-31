@@ -11,7 +11,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 )
 
-// Column is one column of a batch, by the column's type:
+// column is one column of a batch, by the column's type:
 //   - VARCHAR: Dict holds this batch's distinct values, Idx one entry per
 //     row into it (-1 = null);
 //   - BIGINT and DATE (days since 1970-01-01): Ints;
@@ -19,7 +19,7 @@ import (
 //   - TIMESTAMP (unix microseconds, UTC): Times.
 //
 // Null marks the null rows of Ints, Floats and Times; nil when none is.
-type Column struct {
+type column struct {
 	Dict   []string
 	Idx    []int32
 	Ints   []int64
@@ -28,20 +28,20 @@ type Column struct {
 	Null   []bool
 }
 
-// Batch is a run of rows, column by column. Cols is keyed by the column's
+// batch is a run of rows, column by column. Cols is keyed by the column's
 // name as the batch's file spells it: DuckDB's names ignore case (its
 // union by name makes a month file's attr_plan and a log's attr_Plan one
 // column of events), so batches from different files may spell one column
 // differently. Look a column up with col, never by indexing Cols.
-type Batch struct {
+type batch struct {
 	N    int
-	Cols map[string]*Column
+	Cols map[string]*column
 }
 
 // col finds the column name names: the one spelled so, else the one equal
 // to it but for case (the first in name order, should there be several).
 // key is the batch's own name for it; "" and nil when b has none.
-func (b *Batch) col(name string) (key string, c *Column) {
+func (b *batch) col(name string) (key string, c *column) {
 	key, ok := resolveName(name, maps.Keys(b.Cols))
 	if !ok {
 		return "", nil
@@ -65,16 +65,16 @@ func resolveName(name string, names iter.Seq[string]) (string, bool) {
 	return fold, found
 }
 
-// AttrCols is the column pattern that asks for every column whose name
+// attrCols is the column pattern that asks for every column whose name
 // starts with "attr_": a query cannot name them up front, and files differ
 // in which they hold.
-const AttrCols = "attr_*"
+const attrCols = "attr_*"
 
-// Range is a range of days, both ends included.
-type Range struct{ From, To civil.Date }
+// dayRange is a range of days, both ends included.
+type dayRange struct{ From, To civil.Date }
 
 // days is r as days since 1970-01-01.
-func (r Range) days() (from, to int64) { return epochDay(r.From), epochDay(r.To) }
+func (r dayRange) days() (from, to int64) { return epochDay(r.From), epochDay(r.To) }
 
 func epochDay(d civil.Date) int64 { return d.Time().Unix() / 86400 }
 
@@ -104,7 +104,7 @@ var sessionKinds = map[string]colKind{
 
 // nullColumn is a column of n nulls of name's type (in events, or in
 // sessions for a column only it has), for a column a file lacks.
-func nullColumn(name string, n int) *Column {
+func nullColumn(name string, n int) *column {
 	null := make([]bool, n)
 	for i := range null {
 		null[i] = true
@@ -115,22 +115,22 @@ func nullColumn(name string, n int) *Column {
 	}
 	switch kind {
 	case kindInt:
-		return &Column{Ints: make([]int64, n), Null: null}
+		return &column{Ints: make([]int64, n), Null: null}
 	case kindFloat:
-		return &Column{Floats: make([]float64, n), Null: null}
+		return &column{Floats: make([]float64, n), Null: null}
 	case kindTime:
-		return &Column{Times: make([]int64, n), Null: null}
+		return &column{Times: make([]int64, n), Null: null}
 	}
 	idx := make([]int32, n)
 	for i := range idx {
 		idx[i] = -1
 	}
-	return &Column{Idx: idx}
+	return &column{Idx: idx}
 }
 
 // take is a copy of c holding only the rows sel (the dictionary shared).
-func (c *Column) take(sel []int32) *Column {
-	return &Column{Dict: c.Dict, Idx: pick(c.Idx, sel), Ints: pick(c.Ints, sel),
+func (c *column) take(sel []int32) *column {
+	return &column{Dict: c.Dict, Idx: pick(c.Idx, sel), Ints: pick(c.Ints, sel),
 		Floats: pick(c.Floats, sel), Times: pick(c.Times, sel), Null: pick(c.Null, sel)}
 }
 

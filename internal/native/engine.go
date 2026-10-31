@@ -101,18 +101,9 @@ func New(o Options) *Engine {
 		logKeys: archive.NewKeyScanner(), idCache: identityCache{max: o.MaxBytes}, logs: newLogCache(o.MaxBytes), now: o.Now}
 }
 
-// readLog is readLog's rows, from the engine's log cache: a batch per
-// family, each read-only.
-func (e *Engine) readLog(ctx context.Context, path string, cols []string, family string, r Range) ([]*Batch, error) {
-	return e.logs.read(ctx, path, cols, family, r)
-}
-
-// today is the clock's UTC day.
-func (e *Engine) today() civil.Date { return civil.DateOf(e.now()) }
-
 // Today is the UTC day of the engine's clock, the day a retention counts
 // up to, leaving it out.
-func (e *Engine) Today() civil.Date { return e.today() }
+func (e *Engine) Today() civil.Date { return civil.DateOf(e.now()) }
 
 // charge is a fresh budget of MaxBytes: each call adds n bytes (n < 0
 // gives them back) and, once past MaxBytes, refuses with ErrTooLarge. It
@@ -122,10 +113,16 @@ func (e *Engine) charge() func(n int64) error {
 	return func(n int64) error {
 		m.add(n)
 		if n > 0 && m.over() {
-			return fmt.Errorf("%w (about %d MiB counted, %d MiB allowed)", ErrTooLarge, m.n.Load()>>20, m.max>>20)
+			return tooLarge(m.n.Load(), m.max)
 		}
 		return nil
 	}
+}
+
+// tooLarge is the ErrTooLarge refusal of a scan that counted n bytes
+// where limit are allowed.
+func tooLarge(n, limit int64) error {
+	return fmt.Errorf("%w (about %d MiB counted, %d MiB allowed)", ErrTooLarge, n>>20, limit>>20)
 }
 
 // Params are what a query runs on: one project, the days From to To.
@@ -474,7 +471,7 @@ func (e *Engine) ruleSet(project int64, rules archive.Rules) (ruleSet, error) {
 	return compileRules(project, rules, have), nil
 }
 
-// columns is unionColumns(e.dir): an open log's keys are read only as far
+// columns is unionColumnsOf(e.dir, fileColumns): an open log's keys are read only as far
 // as it grew since (archive.KeyScanner, under live ingest the lines
 // appended), a Parquet file's footer only when the file is new or changed
 // in size or time since it was last read. colMu guards the footer cache
@@ -539,7 +536,7 @@ type scan struct {
 	metrics []metricSpec // the query's metrics, their filters compiled (not resolved: newAgg resolves them)
 	project int64
 	rules   ruleSet
-	logs    logReader // reads the logs; nil: the engine's readLog
+	logs    logReader // reads the logs; nil: the engine's log cache
 }
 
 // family is the family the query's table holds ("" for events: all).
@@ -554,7 +551,7 @@ func (s scan) family() string {
 // the query's metrics grouped by dims, by day when perDay; sets keeps
 // whole-range distinct sets beside a trend's per-day keys.
 func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string, perDay, sets bool) (*merged, []metricSpec, error) {
-	r := Range{From: from, To: to}
+	r := dayRange{From: from, To: to}
 	a, ms := s.newAgg(aggSpec{from: from, to: to, dims: dims, perDay: perDay, sets: sets})
 	charge := a.charge
 	if s.q.Table == "sessions" {
@@ -634,7 +631,7 @@ func buckets(from, to civil.Date, interval string) (index []int, starts []int64)
 // from files, with the rules applied and the identity columns the query's
 // filters or dims name added, and hands each batch to add, from the
 // workers (w the worker's index).
-func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols, dims []string, charge func(int64) error, add func(w int, b *Batch) error) error {
+func (s scan) scanEvents(ctx context.Context, files archive.Files, r dayRange, cols, dims []string, charge func(int64) error, add func(w int, b *batch) error) error {
 	fam := s.family()
 	read := s.rules.columns(cols)
 	idCols := s.identityColumnsOf(dims)
@@ -658,11 +655,11 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 	work = append(work, groups...)
 	readers := make([]groupReader, s.e.workers)
 	err = scanParallel(ctx, work, s.e.workers, func(w int, g group) error {
-		var bs []*Batch
+		var bs []*batch
 		if g.index < 0 {
 			logs := s.logs
 			if logs == nil {
-				logs = s.e.readLog
+				logs = s.e.logs.read
 			}
 			var err error
 			if bs, err = logs(ctx, g.file, read, fam, r); err != nil {
@@ -673,7 +670,7 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 			if err != nil {
 				return err
 			}
-			bs = []*Batch{b}
+			bs = []*batch{b}
 		}
 		for _, b := range bs {
 			b = s.rules.apply(b, fam)

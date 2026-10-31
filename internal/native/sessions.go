@@ -40,9 +40,9 @@ const gapIndex = -2
 // charge is told the bytes they take as they are read (and may refuse
 // them with an error), and given them back, as a negative count, once the
 // day is done.
-func (e *Engine) scanSessions(ctx context.Context, project int64, r Range, cols []string,
-	charge func(int64) error, add func(w int, b *Batch) error) error {
-	return e.scanSessionsWith(ctx, project, r, cols, e.readLog, charge, add)
+func (e *Engine) scanSessions(ctx context.Context, project int64, r dayRange, cols []string,
+	charge func(int64) error, add func(w int, b *batch) error) error {
+	return e.scanSessionsWith(ctx, project, r, cols, e.logs.read, charge, add)
 }
 
 // logReader reads a log's rows as readLog does, in one batch or several
@@ -56,11 +56,11 @@ func (e *Engine) scanSessions(ctx context.Context, project int64, r Range, cols 
 // break one differently than line order would; it already differs from
 // any fixed order across files, which the workers read in parallel, and
 // within one log it is the same for the same log.
-type logReader func(ctx context.Context, path string, cols []string, family string, r Range) ([]*Batch, error)
+type logReader func(ctx context.Context, path string, cols []string, family string, r dayRange) ([]*batch, error)
 
 // scanSessionsWith is scanSessions, a gap day's logs read through logs.
-func (e *Engine) scanSessionsWith(ctx context.Context, project int64, r Range, cols []string, logs logReader,
-	charge func(int64) error, add func(w int, b *Batch) error) error {
+func (e *Engine) scanSessionsWith(ctx context.Context, project int64, r dayRange, cols []string, logs logReader,
+	charge func(int64) error, add func(w int, b *batch) error) error {
 	files, gaps, events, err := sessionSources(e.dir, project, r)
 	if err != nil {
 		return err
@@ -78,7 +78,7 @@ func (e *Engine) scanSessionsWith(ctx context.Context, project int64, r Range, c
 	work = append(work, groups...)
 	readers := make([]groupReader, e.workers)
 	err = scanParallel(ctx, work, e.workers, func(w int, g group) error {
-		var b *Batch
+		var b *batch
 		var err error
 		if g.index == gapIndex {
 			b, err = deriveSessions(ctx, project, g.day, events, &readers[w], logs, charge)
@@ -99,7 +99,7 @@ func (e *Engine) scanSessionsWith(ctx context.Context, project int64, r Range, c
 }
 
 // batchBytes is about what b's columns take.
-func batchBytes(b *Batch) int64 {
+func batchBytes(b *batch) int64 {
 	var n int64
 	for _, c := range b.Cols {
 		n += int64(len(c.Idx))*4 + int64(len(c.Ints)+len(c.Floats)+len(c.Times))*8 + int64(len(c.Null))
@@ -116,9 +116,9 @@ func batchBytes(b *Batch) int64 {
 //
 // gr reads the Parquet row groups (the worker's reader), readLogs the
 // logs (readLog); charge as scanSessions describes.
-func deriveSessions(ctx context.Context, project, day int64, events archive.Files, gr *groupReader, readLogs logReader, charge func(int64) error) (*Batch, error) {
+func deriveSessions(ctx context.Context, project, day int64, events archive.Files, gr *groupReader, readLogs logReader, charge func(int64) error) (*batch, error) {
 	d := civil.DateOf(time.Unix(day*86400, 0).UTC())
-	dr := Range{From: d, To: d}
+	dr := dayRange{From: d, To: d}
 	var held int64
 	defer func() {
 		if held > 0 {
@@ -134,8 +134,8 @@ func deriveSessions(ctx context.Context, project, day int64, events archive.File
 	if err != nil {
 		return nil, err
 	}
-	var batches []*Batch
-	keep := func(b *Batch) error {
+	var batches []*batch
+	keep := func(b *batch) error {
 		if b.N == 0 {
 			return nil
 		}
@@ -164,10 +164,10 @@ func deriveSessions(ctx context.Context, project, day int64, events archive.File
 	}
 
 	// The columns of each batch, by viewColumns' index.
-	cols := make([][]*Column, len(batches))
+	cols := make([][]*column, len(batches))
 	n := 0
 	for k, b := range batches {
-		cols[k] = make([]*Column, len(viewColumns))
+		cols[k] = make([]*column, len(viewColumns))
 		for j, name := range viewColumns {
 			_, cols[k][j] = b.col(name)
 		}
@@ -212,7 +212,7 @@ func deriveSessions(ctx context.Context, project, day int64, events archive.File
 	sessions := archive.Sessionize(rows)
 
 	m := len(sessions)
-	text := func(of func(s archive.Session) archive.SessionView, col int) *Column {
+	text := func(of func(s archive.Session) archive.SessionView, col int) *column {
 		return textColumn(m, func(i int) (string, bool) {
 			r := of(sessions[i])
 			return textAt(cols[r.Batch][col], int(r.Row))
@@ -220,9 +220,9 @@ func deriveSessions(ctx context.Context, project, day int64, events archive.File
 	}
 	first := func(s archive.Session) archive.SessionView { return rows[s.First] }
 	last := func(s archive.Session) archive.SessionView { return rows[s.Last] }
-	out := &Batch{N: m, Cols: make(map[string]*Column, len(sessionColumns))}
-	ints := func(v func(s archive.Session) int64) *Column {
-		c := &Column{Ints: make([]int64, m)}
+	out := &batch{N: m, Cols: make(map[string]*column, len(sessionColumns))}
+	ints := func(v func(s archive.Session) int64) *column {
+		c := &column{Ints: make([]int64, m)}
 		for i, s := range sessions {
 			c.Ints[i] = v(s)
 		}
@@ -243,8 +243,8 @@ func deriveSessions(ctx context.Context, project, day int64, events archive.File
 		s := sessions[i]
 		return rows[s.First].SessionID, s.Declared
 	})
-	started := &Column{Times: make([]int64, m)}
-	ended := &Column{Times: make([]int64, m)}
+	started := &column{Times: make([]int64, m)}
+	ended := &column{Times: make([]int64, m)}
 	for i, s := range sessions {
 		started.Times[i], ended.Times[i] = rows[s.First].TS, rows[s.Last].TS
 	}

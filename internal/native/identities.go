@@ -59,10 +59,10 @@ func isFirstSeen(column string) bool {
 }
 
 // everything is a range holding every day an event can have.
-var everything = func() Range {
+var everything = func() dayRange {
 	from, _ := civil.Parse("0001-01-01")
 	to, _ := civil.Parse("9999-12-31")
-	return Range{From: from, To: to}
+	return dayRange{From: from, To: to}
 }()
 
 // An identity, its row and a set of them, as archive folds them.
@@ -203,7 +203,7 @@ type identitySet struct {
 // identitiesCombine folds its rows and the logs' (each part's name
 // dated by its last_seen); else as one part, the files' events and the
 // logs' together (each name dated by its event).
-func (s *identitySet) rowsIn(r *Range) identityMap {
+func (s *identitySet) rowsIn(r *dayRange) identityMap {
 	lo, hi := everything.days()
 	if r != nil {
 		lo, hi = r.days()
@@ -300,27 +300,27 @@ func microsDay(ts int64) int64 {
 
 // identityBatch is rows, project's identities, as a batch of
 // identityColumns, and day: first_seen's day.
-func identityBatch(rows identityMap, project int64) *Batch {
+func identityBatch(rows identityMap, project int64) *batch {
 	keys := make([]identityKey, 0, len(rows))
 	for k := range rows {
 		keys = append(keys, k)
 	}
 	n := len(keys)
-	ints := func(v func(x identity) int64) *Column {
-		c := &Column{Ints: make([]int64, n)}
+	ints := func(v func(x identity) int64) *column {
+		c := &column{Ints: make([]int64, n)}
 		for i, k := range keys {
 			c.Ints[i] = v(rows[k])
 		}
 		return c
 	}
-	times := func(v func(x identity) int64) *Column {
-		c := &Column{Times: make([]int64, n)}
+	times := func(v func(x identity) int64) *column {
+		c := &column{Times: make([]int64, n)}
 		for i, k := range keys {
 			c.Times[i] = v(rows[k])
 		}
 		return c
 	}
-	b := &Batch{N: n, Cols: make(map[string]*Column, len(identityColumns)+1)}
+	b := &batch{N: n, Cols: make(map[string]*column, len(identityColumns)+1)}
 	b.Cols["project_id"] = ints(func(identity) int64 { return project })
 	b.Cols["kind"] = textColumn(n, func(i int) (string, bool) {
 		if keys[i].Group {
@@ -609,7 +609,7 @@ func filesSignature(paths []string) (string, error) {
 // readIdentities reads a derived identities file (one project's).
 func (e *Engine) readIdentities(path string, charge func(int64) error) (identityMap, error) {
 	out := identityMap{}
-	err := readIdentityFile(path, identityColumns, func(b *Batch) error {
+	err := readIdentityFile(path, identityColumns, func(b *batch) error {
 		_, kind := b.col("kind")
 		_, id := b.col("id")
 		_, name := b.col("name")
@@ -647,7 +647,7 @@ func (e *Engine) readFirstSeen(path string, names bool, charge func(int64) error
 	if names {
 		cols = append(cols, "name", "last_seen")
 	}
-	err := readIdentityFile(path, cols, func(b *Batch) error {
+	err := readIdentityFile(path, cols, func(b *batch) error {
 		_, kind := b.col("kind")
 		_, id := b.col("id")
 		_, first := b.col("first_seen")
@@ -672,7 +672,7 @@ func (e *Engine) readFirstSeen(path string, names bool, charge func(int64) error
 
 // readIdentityFile reads cols of a derived identities file, each row
 // group's batch handed to each.
-func readIdentityFile(path string, cols []string, each func(*Batch) error) error {
+func readIdentityFile(path string, cols []string, each func(*batch) error) error {
 	groups, err := parquetGroups([]string{path}, "", everything)
 	if err != nil {
 		return err
@@ -693,7 +693,7 @@ func readIdentityFile(path string, cols []string, each func(*Batch) error) error
 }
 
 // timeAt is c's TIMESTAMP at row i; ok false for NULL.
-func timeAt(c *Column, i int) (int64, bool) {
+func timeAt(c *column, i int) (int64, bool) {
 	if c == nil || c.Times == nil || (c.Null != nil && c.Null[i]) {
 		return 0, false
 	}
@@ -710,7 +710,7 @@ func (e *Engine) deriveIdentities(ctx context.Context, parquet, logs []string, c
 	for i := range parts {
 		parts[i] = identityMap{}
 	}
-	err := e.scanIdentityEvents(ctx, parquet, logs, identityEventColumns, func(w int, b *Batch) error {
+	err := e.scanIdentityEvents(ctx, parquet, logs, identityEventColumns, func(w int, b *batch) error {
 		var grew int64
 		eachIdentity(b, func(k identityKey, name string, named bool, ts int64, view bool) {
 			// See keeps k's id and the name it takes as they are: they are
@@ -749,7 +749,7 @@ func (e *Engine) deriveFirstSeen(ctx context.Context, parquet, logs []string, na
 	if names {
 		cols = identityEventColumns
 	}
-	err := e.scanIdentityEvents(ctx, parquet, logs, cols, func(w int, b *Batch) error {
+	err := e.scanIdentityEvents(ctx, parquet, logs, cols, func(w int, b *batch) error {
 		var grew int64
 		eachIdentity(b, func(k identityKey, name string, named bool, ts int64, _ bool) {
 			grew += parts[w].see(k.Group, k.ID, int32(microsDay(ts)))
@@ -772,7 +772,7 @@ func (e *Engine) deriveFirstSeen(ctx context.Context, parquet, logs []string, na
 // scanIdentityEvents reads cols of every event of the Parquet files
 // parquet and the logs logs, each batch handed to each with its worker.
 // charge, which each may call, is safe from several workers at once.
-func (e *Engine) scanIdentityEvents(ctx context.Context, parquet, logs, cols []string, each func(w int, b *Batch) error) error {
+func (e *Engine) scanIdentityEvents(ctx context.Context, parquet, logs, cols []string, each func(w int, b *batch) error) error {
 	groups, err := parquetGroups(parquet, "", everything)
 	if err != nil {
 		return err
@@ -785,7 +785,7 @@ func (e *Engine) scanIdentityEvents(ctx context.Context, parquet, logs, cols []s
 	readers := make([]groupReader, e.workers)
 	err = scanParallel(ctx, work, e.workers, func(w int, g group) error {
 		if g.index < 0 {
-			bs, err := e.readLog(ctx, g.file, cols, "", everything)
+			bs, err := e.logs.read(ctx, g.file, cols, "", everything)
 			if err != nil {
 				return err
 			}
@@ -813,7 +813,7 @@ func (e *Engine) scanIdentityEvents(ctx context.Context, parquet, logs, cols []s
 // eachIdentity calls fn for each identity on b's views and product
 // events: a user_id that is not empty is a user, a group_id a group, each
 // named by its user_name or group_name (when b has them).
-func eachIdentity(b *Batch, fn func(k identityKey, name string, named bool, ts int64, view bool)) {
+func eachIdentity(b *batch, fn func(k identityKey, name string, named bool, ts int64, view bool)) {
 	_, fam := b.col("family")
 	_, ts := b.col("ts")
 	for _, who := range []struct {
@@ -850,7 +850,7 @@ func eachIdentity(b *Batch, fn func(k identityKey, name string, named bool, ts i
 //   - a label: the identity's name, else its id; NULL when the id is
 //     NULL or empty;
 //   - a first-seen day: NULL when the id is NULL or empty, or ids lack it.
-func addIdentityColumns(b *Batch, cols []string, ids *firstSet) {
+func addIdentityColumns(b *batch, cols []string, ids *firstSet) {
 	for _, name := range cols {
 		c, ok := idColumns[name]
 		if !ok {
@@ -869,9 +869,9 @@ func addIdentityColumns(b *Batch, cols []string, ids *firstSet) {
 
 // labelColumn is the label of each row's id: its identity's name, else
 // the id; NULL for a NULL or empty id.
-func labelColumn(b *Batch, idCol string, group bool, ids *firstSet) *Column {
+func labelColumn(b *batch, idCol string, group bool, ids *firstSet) *column {
 	_, ic := b.col(idCol)
-	out := &Column{Idx: make([]int32, b.N)}
+	out := &column{Idx: make([]int32, b.N)}
 	if ic == nil || ic.Idx == nil {
 		for i := range out.Idx {
 			out.Idx[i] = -1
@@ -903,9 +903,9 @@ func labelColumn(b *Batch, idCol string, group bool, ids *firstSet) *Column {
 
 // firstSeenColumn is the first-seen day of each row's id (days since
 // 1970-01-01); NULL for a NULL or empty id, or one ids lack.
-func firstSeenColumn(b *Batch, idCol string, group bool, ids *firstSet) *Column {
+func firstSeenColumn(b *batch, idCol string, group bool, ids *firstSet) *column {
 	_, ic := b.col(idCol)
-	out := &Column{Ints: make([]int64, b.N), Null: make([]bool, b.N)}
+	out := &column{Ints: make([]int64, b.N), Null: make([]bool, b.N)}
 	var first []int64
 	var known []bool
 	if ic != nil && ic.Idx != nil {
@@ -928,10 +928,10 @@ func firstSeenColumn(b *Batch, idCol string, group bool, ids *firstSet) *Column 
 	return out
 }
 
-func statusColumn(b *Batch, idCol string, group bool, ids *firstSet) *Column {
+func statusColumn(b *batch, idCol string, group bool, ids *firstSet) *column {
 	_, ic := b.col(idCol)
 	_, dc := b.col("day")
-	out := &Column{Dict: []string{"new", "returning"}, Idx: make([]int32, b.N)}
+	out := &column{Dict: []string{"new", "returning"}, Idx: make([]int32, b.N)}
 	var first []int64
 	if ic != nil && ic.Idx != nil {
 		first = make([]int64, len(ic.Dict))

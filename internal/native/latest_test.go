@@ -117,7 +117,7 @@ func TestLatestRanksAndTies(t *testing.T) {
 // TestLatestSkipsEmptyText: empty text is no value, as is_set has it, so
 // a later empty row does not hide the value before it.
 func TestLatestSkipsEmptyText(t *testing.T) {
-	c := &Column{Dict: []string{"v1", ""}, Idx: []int32{0, 1}}
+	c := &column{Dict: []string{"v1", ""}, Idx: []int32{0, 1}}
 	if v, ok := latestText(c, 0, typeString); !ok || v != "v1" {
 		t.Errorf("row 0 = %q, %v", v, ok)
 	}

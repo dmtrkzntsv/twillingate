@@ -364,7 +364,7 @@ type dimView struct {
 }
 
 // viewOf is the dimension column of b for the rows sel.
-func viewOf(b *Batch, name string, typ colType, sel []int32) (dimView, error) {
+func viewOf(b *batch, name string, typ colType, sel []int32) (dimView, error) {
 	c := batchColumn(b, name)
 	if c == nil {
 		return dimView{}, nil
@@ -962,7 +962,7 @@ func growTo[T any](s []T, n int) []T {
 
 // add aggregates batch b into worker w's partials, then counts what they
 // grew by and checks the memory bounds.
-func (a *agg) add(w int, b *Batch) error {
+func (a *agg) add(w int, b *batch) error {
 	if len(a.defs) > 0 {
 		var err error
 		if b, err = withDefined(b, a.defs); err != nil {
@@ -1007,12 +1007,12 @@ func (a *agg) checkMemory() error {
 		limit = 2 * a.mem.max
 	}
 	if n := a.mem.n.Load(); n > limit {
-		return fmt.Errorf("%w (about %d MiB counted, %d MiB allowed)", ErrTooLarge, n>>20, limit>>20)
+		return tooLarge(n, limit)
 	}
 	return nil
 }
 
-func (a *agg) addBatch(p *part, b *Batch) error {
+func (a *agg) addBatch(p *part, b *batch) error {
 	sel, err := selectRows(b, a.filters, p.sel)
 	if err != nil {
 		return err
@@ -1052,7 +1052,7 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 	}
 	pass := p.pass[:len(a.masks)]
 	pass[0] = nil
-	var views *Column
+	var views *column
 	if a.bounces {
 		if _, views = b.col("views"); views == nil || views.Ints == nil {
 			return fmt.Errorf("native: a batch without views")
@@ -1143,7 +1143,7 @@ func (a *agg) addBatch(p *part, b *Batch) error {
 // partials: a row without a sample_rate has no weight and counts toward
 // none; one without a value is in bucket -1000 and adds to the weights,
 // not the weighted values, as SUM(value / sample_rate) leaves it out.
-func (a *agg) addMeasures(p *part, b *Batch, sel, gids []int32, pass [][]bool, cell func(int, int32) int) error {
+func (a *agg) addMeasures(p *part, b *batch, sel, gids []int32, pass [][]bool, cell func(int, int32) int) error {
 	if len(a.msrs) == 0 {
 		return nil
 	}
@@ -1151,7 +1151,7 @@ func (a *agg) addMeasures(p *part, b *Batch, sel, gids []int32, pass [][]bool, c
 	_, rate := b.col("sample_rate")
 	for _, c := range []struct {
 		name string
-		col  *Column
+		col  *column
 	}{{"value", val}, {"sample_rate", rate}} {
 		if c.col != nil && c.col.Floats == nil && c.col.Ints == nil {
 			return fmt.Errorf("native: column %s is not a number", c.name)
@@ -1160,7 +1160,7 @@ func (a *agg) addMeasures(p *part, b *Batch, sel, gids []int32, pass [][]bool, c
 	if rate == nil {
 		return nil
 	}
-	num := func(c *Column, i int32) (float64, bool) {
+	num := func(c *column, i int32) (float64, bool) {
 		switch {
 		case c == nil || (c.Null != nil && c.Null[i]):
 			return 0, false
@@ -1203,7 +1203,7 @@ func (a *agg) addMeasures(p *part, b *Batch, sel, gids []int32, pass [][]bool, c
 
 // addDistinct adds the ids of column d of the rows sel (those keep, when
 // not nil, passes) to their groups' sets and per-day keys.
-func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *Batch, sel, gids []int32, keep []bool, off func(int32) int) error {
+func (a *agg) addDistinct(p *part, j int, d *distinctCol, b *batch, sel, gids []int32, keep []bool, off func(int32) int) error {
 	_, c := b.col(d.name)
 	// hashes is each dictionary entry's hash, of the entries the tracked
 	// rows use only (the others are not hashed); keys the whole-range keys:
@@ -1285,7 +1285,7 @@ var hashSeed = maphash.MakeSeed()
 // largest one (-1 when none is tracked). The batch's distinct tuples are
 // found first, then resolved under the table's lock at once, in the order
 // of their first row.
-func (a *agg) groupsOf(b *Batch, sel []int32, p *part) ([]int32, int32, error) {
+func (a *agg) groupsOf(b *batch, sel []int32, p *part) ([]int32, int32, error) {
 	gids := p.gids[:0]
 	if a.groups == nil {
 		for range sel {

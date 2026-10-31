@@ -17,7 +17,7 @@ var errPresent = errors.New("native: present")
 // none. It waits for a turn and runs again on a vanished file as Answer
 // does, and stops at the first event found.
 func (e *Engine) HasEvents(ctx context.Context, project int64, family, name string, rules archive.Rules) (bool, error) {
-	return e.present(ctx, project, family, []string{"event_name"}, rules, func(b *Batch) bool {
+	return e.present(ctx, project, family, []string{"event_name"}, rules, func(b *batch) bool {
 		_, c := b.col("event_name")
 		for i := range b.N {
 			if s, ok := textAt(c, i); ok && s == name {
@@ -39,7 +39,7 @@ func (e *Engine) HasAttribute(ctx context.Context, project int64, key string, ru
 		return false, nil
 	}
 	col := visible("attr_" + key)
-	return e.present(ctx, project, "", []string{col}, rules, func(b *Batch) bool {
+	return e.present(ctx, project, "", []string{col}, rules, func(b *batch) bool {
 		_, c := b.col(col)
 		if c == nil {
 			return false
@@ -59,7 +59,7 @@ func (e *Engine) HasAttribute(ctx context.Context, project int64, key string, ru
 
 // present scans cols of project's rows of family ("" for every family),
 // the rules applied, until hit says a batch holds the row looked for.
-func (e *Engine) present(ctx context.Context, project int64, family string, cols []string, rules archive.Rules, hit func(*Batch) bool) (bool, error) {
+func (e *Engine) present(ctx context.Context, project int64, family string, cols []string, rules archive.Rules, hit func(*batch) bool) (bool, error) {
 	table := family
 	if table == "" {
 		table = "events"
@@ -76,7 +76,7 @@ func (e *Engine) present(ctx context.Context, project int64, family string, cols
 			return err
 		}
 		s := scan{e: e, q: Query{Table: table}, project: project, rules: rs}
-		err = s.scanEvents(ctx, all[project], everything, cols, nil, e.charge(), func(_ int, b *Batch) error {
+		err = s.scanEvents(ctx, all[project], everything, cols, nil, e.charge(), func(_ int, b *batch) error {
 			if hit(b) {
 				return errPresent
 			}

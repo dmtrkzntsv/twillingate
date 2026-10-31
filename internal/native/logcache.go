@@ -167,7 +167,7 @@ func (x rowErr) error(path string) error {
 // entry. It waits for the log's flight (another query decoding it) until
 // ctx is done, and sizes the file only once it holds the flight, so a
 // waiter never takes a size older than what the entry has decoded.
-func (c *logCache) read(ctx context.Context, path string, cols []string, family string, r Range) ([]*Batch, error) {
+func (c *logCache) read(ctx context.Context, path string, cols []string, family string, r dayRange) ([]*batch, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -189,12 +189,12 @@ func (c *logCache) read(ctx context.Context, path string, cols []string, family 
 }
 
 // readLogBatches is readLog's batch, as a logReader gives it.
-func readLogBatches(_ context.Context, path string, cols []string, family string, r Range) ([]*Batch, error) {
+func readLogBatches(_ context.Context, path string, cols []string, family string, r dayRange) ([]*batch, error) {
 	b, err := readLog(path, cols, family, r)
 	if err != nil {
 		return nil, err
 	}
-	return []*Batch{b}, nil
+	return []*batch{b}, nil
 }
 
 // flight waits while another query decodes path (or until ctx is done),
@@ -678,7 +678,7 @@ type logView struct {
 type partView struct {
 	fam            famKey
 	n              int
-	cols           map[string]*Column // by key: the family, the day and those cols may need that the part has
+	cols           map[string]*column // by key: the family, the day and those cols may need that the part has
 	dayMin, dayMax int64
 	dayNulls       int
 }
@@ -690,7 +690,7 @@ func (x *logEntry) view(cols []string, tail []byte) *logView {
 	}
 	v := &logView{names: x.names, errs: x.errs[:len(x.errs):len(x.errs)], line: x.lines + 1}
 	for _, p := range x.parts {
-		pv := partView{fam: p.fam, n: p.n, cols: map[string]*Column{}, dayMin: p.dayMin, dayMax: p.dayMax, dayNulls: p.dayNulls}
+		pv := partView{fam: p.fam, n: p.n, cols: map[string]*column{}, dayMin: p.dayMin, dayMax: p.dayMax, dayNulls: p.dayNulls}
 		for k, b := range p.builders {
 			if k == "family" || k == "day" || wanted(k, cols) {
 				pv.cols[k] = b.finish(p.n)
@@ -715,7 +715,7 @@ func (x *logEntry) view(cols []string, tail []byte) *logView {
 // batches is readLog's rows of the view, cols of the rows of family (any,
 // when "") with day in r, a batch per part (each of a part's rows, or a
 // copy of those in r) and one for the tail, at least one.
-func (v *logView) batches(path string, cols []string, family string, r Range) ([]*Batch, error) {
+func (v *logView) batches(path string, cols []string, family string, r dayRange) ([]*batch, error) {
 	from, to := r.days()
 	ofFamily := func(p int) bool {
 		return family == "" || v.parts[p].fam == famKey{family, true}
@@ -744,7 +744,7 @@ func (v *logView) batches(path string, cols []string, family string, r Range) ([
 		keyOf[c.Name] = c.Key
 	}
 	requested := expandCols(names, cols)
-	var out []*Batch
+	var out []*batch
 	for pi, p := range v.parts {
 		if !ofFamily(pi) || p.n == p.dayNulls || p.dayMax < from || p.dayMin > to {
 			continue
@@ -762,7 +762,7 @@ func (v *logView) batches(path string, cols []string, family string, r Range) ([
 		if sel != nil {
 			n = len(sel)
 		}
-		b := &Batch{N: n, Cols: make(map[string]*Column, len(requested))}
+		b := &batch{N: n, Cols: make(map[string]*column, len(requested))}
 		for _, name := range requested {
 			k, ok := keyOf[name]
 			c := p.cols[k]
@@ -790,7 +790,7 @@ func (v *logView) batches(path string, cols []string, family string, r Range) ([
 		}
 	}
 	if len(out) == 0 {
-		b := &Batch{Cols: make(map[string]*Column, len(requested))}
+		b := &batch{Cols: make(map[string]*column, len(requested))}
 		for _, name := range requested {
 			b.Cols[name] = nullColumn(name, 0)
 		}
@@ -803,7 +803,7 @@ func (v *logView) batches(path string, cols []string, family string, r Range) ([
 // as readLog reads such a last line: a row when of family with day in
 // [from, to] (nil when not), its keys named as the complete lines name
 // them (a key only it has is not read).
-func (v *logView) tailBatch(path string, cols, requested []string, keyOf map[string]string, family string, from, to int64) (*Batch, error) {
+func (v *logView) tailBatch(path string, cols, requested []string, keyOf map[string]string, family string, from, to int64) (*batch, error) {
 	m := v.tailM
 	if family != "" {
 		if fam, ok, _ := archive.JSONText(m["family"]); !ok || fam != family {
@@ -825,7 +825,7 @@ func (v *logView) tailBatch(path string, cols, requested []string, keyOf map[str
 		return nil, nil
 	}
 	// Every key cols may need is cast, named or not, as readLog casts it.
-	vals := map[string]*Column{}
+	vals := map[string]*column{}
 	for k, raw := range m {
 		if !wanted(k, cols) {
 			continue
@@ -836,7 +836,7 @@ func (v *logView) tailBatch(path string, cols, requested []string, keyOf map[str
 		}
 		vals[k] = b.finish(1)
 	}
-	out := &Batch{N: 1, Cols: make(map[string]*Column, len(requested))}
+	out := &batch{N: 1, Cols: make(map[string]*column, len(requested))}
 	for _, name := range requested {
 		if k, ok := keyOf[name]; ok && vals[k] != nil {
 			out.Cols[name] = vals[k]

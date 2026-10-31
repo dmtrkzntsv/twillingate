@@ -25,7 +25,7 @@ import (
 // cache's read of it: from a cold cache, from the same cache warm, and
 // from a cache a query of other columns filled first. Each must give readLog's batch (its columns,
 // their kinds and values) or its error.
-func readCached(t *testing.T, path string, cols []string, family string, r Range) (*Batch, error) {
+func readCached(t *testing.T, path string, cols []string, family string, r dayRange) (*batch, error) {
 	t.Helper()
 	want, wantErr := readLog(path, cols, family, r)
 	cold := newLogCache(1 << 30)
@@ -45,7 +45,7 @@ func readCached(t *testing.T, path string, cols []string, family string, r Range
 // wantErr): every batch with want's columns, each of its kinds, and
 // together want's rows, in any order (the cache hands a batch per
 // family).
-func sameBatch(t *testing.T, name string, got []*Batch, gotErr error, want *Batch, wantErr error) {
+func sameBatch(t *testing.T, name string, got []*batch, gotErr error, want *batch, wantErr error) {
 	t.Helper()
 	if (gotErr == nil) != (wantErr == nil) || (gotErr != nil && gotErr.Error() != wantErr.Error()) {
 		t.Fatalf("%s: err %v, want %v", name, gotErr, wantErr)
@@ -81,7 +81,7 @@ func sameBatch(t *testing.T, name string, got []*Batch, gotErr error, want *Batc
 
 // colKindOf is c's type, "null" when no row of n has a value (an all-null
 // column's type is any).
-func colKindOf(c *Column, n int) string {
+func colKindOf(c *column, n int) string {
 	for i := range n {
 		switch {
 		case c.Idx != nil:
@@ -155,7 +155,7 @@ func TestLogCacheGrows(t *testing.T) {
 	f.Write(t, evs...)
 	path := logOf(t, f, 1)
 	c := newLogCache(1 << 30)
-	cols := []string{"id", "family", "event_name", "path", "ts", "display_width", AttrCols}
+	cols := []string{"id", "family", "event_name", "path", "ts", "display_width", attrCols}
 	day := rng(t, today, today)
 	check := func(step string, wantDecodes []int64) {
 		t.Helper()
@@ -264,9 +264,9 @@ func TestLogCacheDecodesEveryColumnOnce(t *testing.T) {
 		{[]string{"id"}, []int64{0}},
 		{[]string{"id", "path"}, nil},
 		{[]string{"path"}, nil},
-		{[]string{AttrCols}, nil},
+		{[]string{attrCols}, nil},
 		{[]string{"*"}, nil},
-		{[]string{"id", "path", AttrCols}, nil},
+		{[]string{"id", "path", attrCols}, nil},
 	} {
 		want, wantErr := readLog(path, s.cols, "views", day)
 		got, err := c.read(context.Background(), path, s.cols, "views", day)
@@ -277,7 +277,7 @@ func TestLogCacheDecodesEveryColumnOnce(t *testing.T) {
 	}
 	size := fileSize(t, path)
 	appendFile(t, path, `{"v":1,"id":"new-key","family":"views","day":"`+today+`","attr_late":"l"}`+"\n")
-	for _, cols := range [][]string{{"id", "attr_late"}, {AttrCols}, {"*"}} {
+	for _, cols := range [][]string{{"id", "attr_late"}, {attrCols}, {"*"}} {
 		want, wantErr := readLog(path, cols, "views", day)
 		got, err := c.read(context.Background(), path, cols, "views", day)
 		sameBatch(t, fmt.Sprint("new key ", cols), got, err, want, wantErr)
@@ -298,8 +298,8 @@ func TestLogCacheConcurrent(t *testing.T) {
 	f.Write(t, events(t, 1, today, 40)...)
 	path := logOf(t, f, 1)
 	day := rng(t, today, today)
-	sets := [][]string{{"id", "path"}, {"id", "event_name", AttrCols}, {"ts", "day", "family"}}
-	wants := make([]*Batch, len(sets))
+	sets := [][]string{{"id", "path"}, {"id", "event_name", attrCols}, {"ts", "day", "family"}}
+	wants := make([]*batch, len(sets))
 	for i, cols := range sets {
 		b, err := readLog(path, cols, "", day)
 		if err != nil {
@@ -460,7 +460,7 @@ func TestLogCacheErrorsAsReadLog(t *testing.T) {
 	day := rng(t, today, today)
 	for _, fam := range []string{"", "views", "product", "measures"} {
 		for _, cols := range [][]string{{"id"}, {"id", "display_width"}, {"*"}} {
-			for _, r := range []Range{day, rng(t, "2026-09-01", today)} {
+			for _, r := range []dayRange{day, rng(t, "2026-09-01", today)} {
 				readCached(t, path, cols, fam, r)
 			}
 		}
@@ -663,7 +663,7 @@ func TestLogCacheSizesUnderTheFlight(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := make(chan []*Batch, 1)
+	got := make(chan []*batch, 1)
 	go func() { // a query that sees the log at its first size, then waits
 		bs, err := c.read(context.Background(), path, cols, "", day)
 		if err != nil {

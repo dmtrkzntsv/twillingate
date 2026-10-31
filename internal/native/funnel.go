@@ -132,7 +132,7 @@ func (s scan) funnel(ctx context.Context, from, to civil.Date) (Result, error) {
 			stepCols = append(stepCols, f.columns()...)
 		}
 	}
-	err = fs.scanEvents(ctx, all[s.project], Range{From: from, To: to}, cols, stepCols, charge, func(_ int, b *Batch) error {
+	err = fs.scanEvents(ctx, all[s.project], dayRange{From: from, To: to}, cols, stepCols, charge, func(_ int, b *batch) error {
 		id := batchColumn(b, idCol)
 		if id == nil {
 			return nil

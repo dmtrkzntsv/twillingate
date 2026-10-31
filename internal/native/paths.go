@@ -110,7 +110,7 @@ func (s scan) paths(ctx context.Context, from, to civil.Date) (Result, error) {
 	var mu sync.Mutex
 	days := map[string][]hit{} // per kind, actor and day: its rows
 	// The step column goes as a dimension, so an identity one is added.
-	err = ps.scanEvents(ctx, all[s.project], Range{From: from, To: to}, cols, []string{col}, charge, func(_ int, b *Batch) error {
+	err = ps.scanEvents(ctx, all[s.project], dayRange{From: from, To: to}, cols, []string{col}, charge, func(_ int, b *batch) error {
 		actor, kind, sid, vc, evID := batchColumn(b, "actor_id"), batchColumn(b, "kind"), batchColumn(b, "session_id"), batchColumn(b, col), batchColumn(b, "id")
 		_, ts := b.col("ts")
 		_, day := b.col("day")

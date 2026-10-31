@@ -67,7 +67,7 @@ type attrMetric struct {
 // distinct user_id and groups the distinct group_id (NULL and empty left
 // out). An attribute's name is its
 // column's without attr_, spelled as the events table spells it
-// (the first spelling of the files' columns, unionColumns), so keys equal
+// (the first spelling of the files' columns, unionColumnsOf), so keys equal
 // but for case in different files are one. The rows are ordered by order
 // (a metric descending, a dimension ascending, ties by the dimensions in
 // turn), else by day, the first metric descending, then event_name,
@@ -76,7 +76,7 @@ type attrMetric struct {
 // keeps the first. Past MaxGroups or MaxBytes the groups not tracked are
 // left out and the result is truncated, as a breakdown's.
 func (s scan) attributes(ctx context.Context, from, to civil.Date) (Result, error) {
-	r := Range{From: from, To: to}
+	r := dayRange{From: from, To: to}
 	if s.q.Output == "keys" {
 		return s.attributeKeys(ctx, r)
 	}
@@ -170,17 +170,10 @@ func (s scan) attributes(ctx context.Context, from, to civil.Date) (Result, erro
 
 // unpivoted aggregates the pseudo-rows of tables' rows in r (each table
 // read in turn into the one aggregation) by dims, with the metrics inner.
-func (s scan) unpivoted(ctx context.Context, r Range, tables []string, inner []metricSpec, dims []string) (*merged, []metricSpec, error) {
+func (s scan) unpivoted(ctx context.Context, r dayRange, tables []string, inner []metricSpec, dims []string) (*merged, []metricSpec, error) {
 	lo, hi := r.days()
 	a, ms := newAgg(aggOptions{metrics: inner, dims: dims, from: lo, ndays: int(hi - lo + 1),
 		workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes})
-	charge := func(n int64) error {
-		a.mem.add(n)
-		if n > 0 {
-			return a.checkMemory()
-		}
-		return nil
-	}
 	have, err := s.e.columns()
 	if err != nil {
 		return nil, nil, err
@@ -195,7 +188,7 @@ func (s scan) unpivoted(ctx context.Context, r Range, tables []string, inner []m
 	if err != nil {
 		return nil, nil, err
 	}
-	cols := []string{"day", "event_name", "actor_id", "user_id", "group_id", AttrCols}
+	cols := []string{"day", "event_name", "actor_id", "user_id", "group_id", attrCols}
 	more := func(cs ...string) {
 		for _, c := range cs {
 			if !slices.Contains(cols, c) {
@@ -217,8 +210,8 @@ func (s scan) unpivoted(ctx context.Context, r Range, tables []string, inner []m
 	for _, t := range tables {
 		st := s
 		st.q.Table = t
-		err = st.scanEvents(ctx, all[s.project], r, cols, nil, charge, func(w int, b *Batch) error {
-			return us[w].unpivot(b, s.filters, spell, s.q.Reserved, func(c *Batch) error { return a.add(w, c) })
+		err = st.scanEvents(ctx, all[s.project], r, cols, nil, a.charge, func(w int, b *batch) error {
+			return us[w].unpivot(b, s.filters, spell, s.q.Reserved, func(c *batch) error { return a.add(w, c) })
 		})
 		if err != nil {
 			return nil, nil, err
@@ -234,7 +227,7 @@ func (s scan) unpivoted(ctx context.Context, r Range, tables []string, inner []m
 // exact up to hll.ExactLimit, then estimated), keys_total the number of
 // attributes; the limit first by events descending, then attribute, and
 // those keep names exactly (as SQL's IN) past them; in that order.
-func (s scan) attributeKeys(ctx context.Context, r Range) (Result, error) {
+func (s scan) attributeKeys(ctx context.Context, r dayRange) (Result, error) {
 	tables := []string{s.q.keysTable()}
 	if tables[0] == "events" {
 		tables = []string{"product", "measures"}
@@ -323,7 +316,7 @@ type unpivoter struct {
 // unpivot hands the pseudo-rows of b's rows that pass filters to emit,
 // unpivotChunk at a time. An attribute's name is its column's spelled as
 // spell has it (by lower-case name), else as b spells it.
-func (u *unpivoter) unpivot(b *Batch, filters []filter, spell map[string]string, reserved bool, emit func(*Batch) error) error {
+func (u *unpivoter) unpivot(b *batch, filters []filter, spell map[string]string, reserved bool, emit func(*batch) error) error {
 	sel, err := selectRows(b, filters, u.sel)
 	if err != nil {
 		return err
@@ -336,7 +329,7 @@ func (u *unpivoter) unpivot(b *Batch, filters []filter, spell map[string]string,
 	if day == nil || day.Ints == nil {
 		return fmt.Errorf("native: a batch without day")
 	}
-	text := func(name string) (*Column, error) {
+	text := func(name string) (*column, error) {
 		_, c := b.col(name)
 		if c != nil && c.Idx == nil {
 			return nil, fmt.Errorf("native: column %s is not text", name)
@@ -362,7 +355,7 @@ func (u *unpivoter) unpivot(b *Batch, filters []filter, spell map[string]string,
 	// The sources: each attr_* column, then the reserved keys' columns,
 	// whose empty values are left out.
 	var names []string
-	var srcs []*Column
+	var srcs []*column
 	var reservedFrom int
 	for _, n := range slices.Sorted(maps.Keys(b.Cols)) {
 		if !strings.HasPrefix(n, "attr_") {
@@ -413,7 +406,7 @@ func (u *unpivoter) unpivot(b *Batch, filters []filter, spell map[string]string,
 			noGroup[x] = v == ""
 		}
 	}
-	at := func(c *Column, i int32) int32 {
+	at := func(c *column, i int32) int32 {
 		if c == nil {
 			return -1
 		}
@@ -423,7 +416,7 @@ func (u *unpivoter) unpivot(b *Batch, filters []filter, spell map[string]string,
 		u.day, u.event, u.actor, u.user, u.null, u.group, u.key, u.val = u.day[:0], u.event[:0], u.actor[:0], u.user[:0], u.null[:0], u.group[:0], u.key[:0], u.val[:0]
 	}
 	flush := func() error {
-		c := &Batch{N: len(u.day), Cols: map[string]*Column{
+		c := &batch{N: len(u.day), Cols: map[string]*column{
 			"day":        {Ints: u.day},
 			"actor_id":   {Idx: u.actor},
 			"user_id":    {Idx: u.user},
@@ -442,7 +435,7 @@ func (u *unpivoter) unpivot(b *Batch, filters []filter, spell map[string]string,
 			c.Cols["group_id"].Dict = group.Dict
 		}
 		if event != nil {
-			c.Cols["event_name"] = &Column{Dict: event.Dict, Idx: u.event}
+			c.Cols["event_name"] = &column{Dict: event.Dict, Idx: u.event}
 		}
 		err := emit(c)
 		reset()
