@@ -96,6 +96,15 @@ type okOut struct {
 	Status string `json:"status"`
 }
 
+// ok answers an operation that returns nothing but its refusal: err, or
+// status when there is none.
+func ok(status string, err error) (okOut, error) {
+	if err != nil {
+		return okOut{}, err
+	}
+	return okOut{Status: status}, nil
+}
+
 type moveProjectIn struct {
 	ProjectID int64 `json:"project_id" jsonschema:"project id; call list_projects first"`
 	After     int64 `json:"after" jsonschema:"the project to go right after, archived ones included; 0 first"`
@@ -114,17 +123,13 @@ func (h *host) moveProject(ctx context.Context, in moveProjectIn) (okOut, error)
 }
 
 func (h *host) archiveProject(ctx context.Context, in idIn) (okOut, error) {
-	if err := h.ops.ArchiveProject(ctx, actorFrom(ctx), in.ProjectID); err != nil {
-		return okOut{}, h.projectErr(ctx, in.ProjectID, err)
-	}
-	return okOut{Status: "archived; ingestion rejected, data kept, reversible with restore_project"}, nil
+	err := h.ops.ArchiveProject(ctx, actorFrom(ctx), in.ProjectID)
+	return ok("archived; ingestion rejected, data kept, reversible with restore_project", h.projectErr(ctx, in.ProjectID, err))
 }
 
 func (h *host) restoreProject(ctx context.Context, in idIn) (okOut, error) {
-	if err := h.ops.RestoreProject(ctx, actorFrom(ctx), in.ProjectID); err != nil {
-		return okOut{}, h.projectErr(ctx, in.ProjectID, err)
-	}
-	return okOut{Status: "restored"}, nil
+	err := h.ops.RestoreProject(ctx, actorFrom(ctx), in.ProjectID)
+	return ok("restored", h.projectErr(ctx, in.ProjectID, err))
 }
 
 type keyIn struct {
@@ -157,17 +162,11 @@ func (h *host) issueKey(ctx context.Context, in keyIn) (keyOut, error) {
 }
 
 func (h *host) disableKey(ctx context.Context, in keyIn) (okOut, error) {
-	if err := h.ops.DisableIngestKey(ctx, actorFrom(ctx), in.ProjectID, in.Label); err != nil {
-		return okOut{}, err
-	}
-	return okOut{Status: "disabled; reversible with enable_ingest_key"}, nil
+	return ok("disabled; reversible with enable_ingest_key", h.ops.DisableIngestKey(ctx, actorFrom(ctx), in.ProjectID, in.Label))
 }
 
 func (h *host) enableKey(ctx context.Context, in keyIn) (okOut, error) {
-	if err := h.ops.EnableIngestKey(ctx, actorFrom(ctx), in.ProjectID, in.Label); err != nil {
-		return okOut{}, err
-	}
-	return okOut{Status: "enabled"}, nil
+	return ok("enabled", h.ops.EnableIngestKey(ctx, actorFrom(ctx), in.ProjectID, in.Label))
 }
 
 type listKeysIn struct {

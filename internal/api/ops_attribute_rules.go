@@ -41,43 +41,35 @@ type attributeKeyIn struct {
 	Key       string `json:"key" jsonschema:"the attribute key; not a $ key"`
 }
 
-type renameAttributeOut struct {
+// attributeRuleResultOut answers a rename, a merge or a block: the rule.
+type attributeRuleResultOut struct {
 	Rule attributeRuleOut `json:"rule"`
 }
 
-type blockAttributeOut struct {
-	Rule attributeRuleOut `json:"rule"`
-}
-
-func (h *host) renameAttribute(ctx context.Context, in renameAttributeIn) (renameAttributeOut, error) {
+func (h *host) renameAttribute(ctx context.Context, in renameAttributeIn) (attributeRuleResultOut, error) {
 	rule, err := h.ops.RenameAttribute(ctx, actorFrom(ctx), in.ProjectID, in.From, in.To)
 	return h.movedAttributeOut(ctx, in.ProjectID, rule, err)
 }
 
-func (h *host) mergeAttribute(ctx context.Context, in mergeAttributeIn) (renameAttributeOut, error) {
+func (h *host) mergeAttribute(ctx context.Context, in mergeAttributeIn) (attributeRuleResultOut, error) {
 	rule, err := h.ops.MergeAttribute(ctx, actorFrom(ctx), in.ProjectID, in.From, in.To)
 	return h.movedAttributeOut(ctx, in.ProjectID, rule, err)
 }
 
-// movedAttributeOut answers a rename or a merge: the rule.
-func (h *host) movedAttributeOut(ctx context.Context, id int64, rule store.AttributeRule, err error) (renameAttributeOut, error) {
+// movedAttributeOut answers a rename, a merge or a block: the rule.
+func (h *host) movedAttributeOut(ctx context.Context, id int64, rule store.AttributeRule, err error) (attributeRuleResultOut, error) {
 	if err != nil {
-		return renameAttributeOut{}, h.ruleErr(ctx, id, err)
+		return attributeRuleResultOut{}, h.ruleErr(ctx, id, err)
 	}
-	return renameAttributeOut{Rule: attrRuleOut(rule)}, nil
+	return attributeRuleResultOut{Rule: attrRuleOut(rule)}, nil
 }
 
-func (h *host) blockAttribute(ctx context.Context, in attributeKeyIn) (blockAttributeOut, error) {
+func (h *host) blockAttribute(ctx context.Context, in attributeKeyIn) (attributeRuleResultOut, error) {
 	rule, err := h.ops.BlockAttribute(ctx, actorFrom(ctx), in.ProjectID, in.Key)
-	if err != nil {
-		return blockAttributeOut{}, h.ruleErr(ctx, in.ProjectID, err)
-	}
-	return blockAttributeOut{Rule: attrRuleOut(rule)}, nil
+	return h.movedAttributeOut(ctx, in.ProjectID, rule, err)
 }
 
 func (h *host) removeAttributeRule(ctx context.Context, in attributeKeyIn) (okOut, error) {
-	if err := h.ops.RemoveAttributeRule(ctx, actorFrom(ctx), in.ProjectID, in.Key); err != nil {
-		return okOut{}, h.ruleErr(ctx, in.ProjectID, err)
-	}
-	return okOut{Status: "removed"}, nil
+	err := h.ops.RemoveAttributeRule(ctx, actorFrom(ctx), in.ProjectID, in.Key)
+	return ok("removed", h.ruleErr(ctx, in.ProjectID, err))
 }

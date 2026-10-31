@@ -234,17 +234,11 @@ func (h *host) markFormSeen(ctx context.Context, in markSeenIn) (okOut, error) {
 	}
 	// Not projectErr: an unknown form is as likely as an unknown project,
 	// and the store's refusal names which.
-	if err := h.ops.MarkFormSeen(ctx, in.ProjectID, in.Name, until); err != nil {
-		return okOut{}, err
-	}
-	return okOut{Status: "seen"}, nil
+	return ok("seen", h.ops.MarkFormSeen(ctx, in.ProjectID, in.Name, until))
 }
 
 func (h *host) approveForm(ctx context.Context, in approveFormIn) (okOut, error) {
-	if err := h.ops.ApproveForm(ctx, actorFrom(ctx), in.ProjectID, in.Name, in.ExpectedFields); err != nil {
-		return okOut{}, err
-	}
-	return okOut{Status: "approved; new submissions keep only the expected fields and each writes a $form_submit event about a minute after it arrives"}, nil
+	return ok("approved; new submissions keep only the expected fields and each writes a $form_submit event about a minute after it arrives", h.ops.ApproveForm(ctx, actorFrom(ctx), in.ProjectID, in.Name, in.ExpectedFields))
 }
 
 func (h *host) updateForm(ctx context.Context, in updateFormIn) (okOut, error) {
@@ -252,24 +246,15 @@ func (h *host) updateForm(ctx context.Context, in updateFormIn) (okOut, error) {
 	if in.ClosesAt.set {
 		spec.ClosesAt = &in.ClosesAt.at
 	}
-	if err := h.ops.UpdateForm(ctx, actorFrom(ctx), in.ProjectID, in.Name, spec); err != nil {
-		return okOut{}, err
-	}
-	return okOut{Status: "updated"}, nil
+	return ok("updated", h.ops.UpdateForm(ctx, actorFrom(ctx), in.ProjectID, in.Name, spec))
 }
 
 func (h *host) archiveForm(ctx context.Context, in formIn) (okOut, error) {
-	if err := h.ops.ArchiveForm(ctx, actorFrom(ctx), in.ProjectID, in.Name); err != nil {
-		return okOut{}, err
-	}
-	return okOut{Status: "archived; submissions refused and hidden, reversible with restore_form, purged after RETENTION_ARCHIVED_DAYS"}, nil
+	return ok("archived; submissions refused and hidden, reversible with restore_form, purged after RETENTION_ARCHIVED_DAYS", h.ops.ArchiveForm(ctx, actorFrom(ctx), in.ProjectID, in.Name))
 }
 
 func (h *host) restoreForm(ctx context.Context, in formIn) (okOut, error) {
-	if err := h.ops.RestoreForm(ctx, actorFrom(ctx), in.ProjectID, in.Name); err != nil {
-		return okOut{}, err
-	}
-	return okOut{Status: "restored"}, nil
+	return ok("restored", h.ops.RestoreForm(ctx, actorFrom(ctx), in.ProjectID, in.Name))
 }
 
 // subsErr words a submissions-table failure as the caller's to fix where
