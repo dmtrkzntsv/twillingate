@@ -112,14 +112,16 @@ is published the same way and installed into the same service.
 ### Publish
 
 ```sh
-make ship-dist && make ship-publish VERSION=v1.2.3 CHANNELS=latest
+make ship-dist VERSION=v1.2.3 && make ship-publish VERSION=v1.2.3 CHANNELS=latest
 ```
 
 `ship-dist` stages `dist/ship/`: both static binaries and
 [deploy/ship/](deploy/ship/)'s `twillingate.service` (the unit template)
 and `twillingate.env.example`. `ship-publish` uploads it, with
 `--version` for a `VERSION` other than `dev` and `--channels` for
-`CHANNELS`, one of them required; it needs ship's R2 write credentials.
+`CHANNELS`, one of them required, and builds nothing, so give
+`ship-dist` the same `VERSION` (the binaries report it); it needs ship's
+R2 write credentials.
 The release workflow does both after the GitHub release.
 
 ### Install
@@ -165,8 +167,11 @@ twillingate-sql takes the same commands with `twillingate-sql --service twilling
 
 A host set up by `install.sh` moves over once, keeping its data, with
 ship's recipe [Moving a hand-installed service to
-ship](https://github.com/dmtrkzntsv/ship#moving-a-hand-installed-service-to-ship)
-(service `twillingate`, run once for each project). The values:
+ship](https://github.com/dmtrkzntsv/ship#moving-a-hand-installed-service-to-ship),
+service `twillingate`. Both projects share that service, so do step 1 once
+for both old units (moving `/etc/twillingate` aside only then), and steps
+2 to 4 for twillingate, then for twillingate-sql: a second step 1 would
+move the newly installed collector's files aside. The values:
 
 | | twillingate | twillingate-sql |
 | --- | --- | --- |
