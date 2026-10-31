@@ -126,6 +126,40 @@ export function liveFilters(view: TableView, columns: string[]): Filter[] {
 }
 
 /**
+ * A remote table's view as request arguments, each left out at its default.
+ * Once an answer has named the columns, a filter or sort on a column it
+ * lacks is kept in the view but not sent (the server would refuse it);
+ * before one has, the view is sent whole.
+ */
+export function remoteArgs(view: TableView, columns: string[] | undefined): { filters?: string; sort?: string; offset?: number } {
+  const filters = columns ? liveFilters(view, columns) : view.filters
+  const sort = view.sort && (!columns || columns.includes(view.sort.column)) ? view.sort : null
+  const q: { filters?: string; sort?: string; offset?: number } = {}
+  if (filters.length > 0) q.filters = JSON.stringify(filters)
+  if (sort) q.sort = `${sort.column}:${sort.dir}`
+  if (view.offset > 0) q.offset = view.offset
+  return q
+}
+
+/** Whether `next` changes the filters or the sort, which returns a table to its first page. */
+export function viewChanged(view: TableView, next: TableView): boolean {
+  return JSON.stringify([next.filters, next.sort]) !== JSON.stringify([view.filters, view.sort])
+}
+
+/** One value a column holds, with how many rows hold it; `capped` when the list was cut short. */
+export interface ValueOption {
+  value: string
+  rows: number
+  capped: boolean
+}
+
+/** A remote `distinct` answer's rows (value, count) as options; capped when the page left matched rows out. */
+export function valueOptions(rows: string[][], page: { matched: number; offset: number } | undefined): ValueOption[] {
+  const capped = page !== undefined && page.matched > page.offset + rows.length
+  return rows.map(([value, n]) => ({ value, rows: Number(n), capped }))
+}
+
+/**
  * Filters, sorts and pages the rows. `matched` counts rows after the filters
  * and `total` before them, whatever the page holds.
  */

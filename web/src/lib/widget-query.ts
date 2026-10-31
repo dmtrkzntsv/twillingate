@@ -2,7 +2,7 @@ import { queryOptions, type Query, type QueryClient, type QueryKey } from '@tans
 import { widgets } from '@/components/widgets'
 import type { WidgetModule } from '@/components/widgets/types'
 import { endpoints, type Widget, type WidgetData, type WidgetDataQuery } from './api'
-import { liveFilters, type TableView } from './table-view'
+import { remoteArgs, type TableView } from './table-view'
 import { loadWidget, streamParams } from './widget-stream'
 
 /** The widget's component, if the bundle has it: a null or unknown name means it was removed. */
@@ -15,21 +15,9 @@ export function isRemoteTable(widget: Widget): boolean {
   return widget.component === 'table' && widget.props.mode === 'remote'
 }
 
-/**
- * A remote table's view as request arguments, each left out at its default.
- * Once an answer has named the columns, a filter or sort on a column it
- * lacks is kept in the view but not sent (the server would refuse it);
- * before one has, the view is sent whole.
- */
+/** A remote table's view as request arguments (see `remoteArgs`); nothing for any other widget. */
 export function viewQuery(widget: Widget, view: TableView, columns: string[] | undefined): Partial<WidgetDataQuery> {
-  if (!isRemoteTable(widget)) return {}
-  const filters = columns ? liveFilters(view, columns) : view.filters
-  const sort = view.sort && (!columns || columns.includes(view.sort.column)) ? view.sort : null
-  const q: Partial<WidgetDataQuery> = {}
-  if (filters.length > 0) q.filters = JSON.stringify(filters)
-  if (sort) q.sort = `${sort.column}:${sort.dir}`
-  if (view.offset > 0) q.offset = view.offset
-  return q
+  return isRemoteTable(widget) ? remoteArgs(view, columns) : {}
 }
 
 /**
