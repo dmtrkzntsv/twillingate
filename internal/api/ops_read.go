@@ -20,7 +20,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type host struct {
@@ -394,15 +393,6 @@ func (h *host) topRows(ctx context.Context, q native.Query, p native.Params, n i
 // declared) REST. Read operations carry ReadOnlyHint; management
 // operations (ops_manage.go) do not.
 func (h *host) register(r *registrar) {
-	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
-	// DestructiveHint is *bool in the SDK. Nothing here is destructive but
-	// merge_event and merge_attribute (a merge cannot be split again) and
-	// block_event and block_attribute, which ask the operator.
-	no, yes := false, true
-	write := &mcp.ToolAnnotations{DestructiveHint: &no}
-	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
-	destroy := &mcp.ToolAnnotations{DestructiveHint: &yes}
-	destroyIdem := &mcp.ToolAnnotations{DestructiveHint: &yes, IdempotentHint: true}
 	const p = "/api/projects/{project_id}"
 
 	expose(r, spec{Name: "list_projects", Annotations: ro, Method: "GET", Path: "/api/projects",
@@ -516,10 +506,11 @@ func (h *host) register(r *registrar) {
 // engine its sql mode too, without one only the structured query, so an
 // agent is never offered SQL it would be refused.
 func (h *host) queryDescription() string {
+	const structured = "query is the native structured language over one project (project_id, from, to: default the 30 days ending today): a stat (one row of metrics, optionally against the previous period), a trend (one metric per day, optionally split by a series) or a breakdown (metrics grouped by 1-3 dimensions), over events, views, product or measures, with filters; or a retention (output grid, curve or milestones: the cohorts of users and installs first active in the range and the days they came back, counted over the days before today); distinct counts past 1,024 ids per group are estimated (about ±2%) and named in approximate (docs://twillingate, \"Structured queries\")."
 	if h.sql == nil {
-		return "Ask the event files a question. query is the native structured language over one project (project_id, from, to: default the 30 days ending today): a stat (one row of metrics, optionally against the previous period), a trend (one metric per day, optionally split by a series) or a breakdown (metrics grouped by 1-3 dimensions), over events, views, product or measures, with filters; or a retention (output grid, curve or milestones: the cohorts of users and installs first active in the range and the days they came back, counted over the days before today); distinct counts past 1,024 ids per group are estimated (about ±2%) and named in approximate (docs://twillingate, \"Structured queries\"). Row-capped and time-limited; read-only."
+		return "Ask the event files a question. " + structured + " Row-capped and time-limited; read-only."
 	}
-	return "Ask the event files a question, one of two ways. query is the native structured language over one project (project_id, from, to: default the 30 days ending today): a stat (one row of metrics, optionally against the previous period), a trend (one metric per day, optionally split by a series) or a breakdown (metrics grouped by 1-3 dimensions), over events, views, product or measures, with filters; or a retention (output grid, curve or milestones: the cohorts of users and installs first active in the range and the days they came back, counted over the days before today); distinct counts past 1,024 ids per group are estimated (about ±2%) and named in approximate (docs://twillingate, \"Structured queries\"). sql is the escape hatch, DuckDB SQL answered by the external SQL engine: one read-only SELECT/WITH over the tables events, views, product, measures, sessions, identities and aliases and nothing else (no table function but range, generate_series and unnest, no schema-qualified name such as main.events), one attr_<key> column per attribute key, every project's rows; read schema://views first (\"Writing SQL against the event files\"). Give sql or query, not both. Row-capped and time-limited; read-only."
+	return "Ask the event files a question, one of two ways. " + structured + " sql is the escape hatch, DuckDB SQL answered by the external SQL engine: one read-only SELECT/WITH over the tables events, views, product, measures, sessions, identities and aliases and nothing else (no table function but range, generate_series and unnest, no schema-qualified name such as main.events), one attr_<key> column per attribute key, every project's rows; read schema://views first (\"Writing SQL against the event files\"). Give sql or query, not both. Row-capped and time-limited; read-only."
 }
 
 // constrainQuery is queryEnums, and without an external SQL engine the

@@ -9,7 +9,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Reporting tools (spec 2026-09-25, D28–D30): thin adapters from each
@@ -271,10 +270,6 @@ func (h *host) previewWidget(ctx context.Context, in previewWidgetIn) (reporting
 // refused on system dashboards; each one's description says how to undo
 // it or where to start.
 func (h *host) registerReporting(r *registrar) {
-	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
-	no := false
-	write := &mcp.ToolAnnotations{DestructiveHint: &no}
-	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
 	const d = "/api/dashboards/{dashboard_id}"
 	const w = "/api/widgets/{widget_id}"
 

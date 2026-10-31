@@ -11,7 +11,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Forms and their submissions (spec D8). A submission's table runs SQL
@@ -440,10 +439,6 @@ func (h *host) exportSubmissions(ctx context.Context, in exportSubmissionsIn) (c
 }
 
 func (h *host) registerForms(r *registrar) {
-	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
-	no := false
-	write := &mcp.ToolAnnotations{DestructiveHint: &no}
-	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
 	const p = "/api/projects/{project_id}"
 	const f = p + "/forms/{name}"
 
