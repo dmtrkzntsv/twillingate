@@ -106,13 +106,6 @@ func (m *retentionMemo) drop(k string) {
 	delete(m.entries, k)
 }
 
-// len is how many tallies are kept.
-func (m *retentionMemo) len() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.entries)
-}
-
 // onRetentionScan is called as retentionCounts scans rather than taking a
 // tally from the memo or a scan under way; a variable so a test can count
 // the scans.

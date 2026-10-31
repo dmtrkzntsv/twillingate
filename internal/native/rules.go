@@ -19,7 +19,7 @@ import (
 //     has is added;
 //   - attribute rules cover the product and measures rows only.
 //
-// Columns match case-insensitively (Batch.col), as DuckDB's do.
+// Columns match case-insensitively (batch.col), as DuckDB's do.
 type ruleSet struct {
 	events map[eventKey]eventAction
 	// dropFams and dropNames are the families and the names of the dropped
@@ -41,7 +41,7 @@ type eventAction struct {
 // events view spells it: the first spelling of the files' columns (have),
 // else, for a target no file holds, the first rule's ("attr_" and the key,
 // a NUL as \u0000). apply adds a target a batch lacks under that name,
-// an internal column found case-insensitively (Batch.col) like any other;
+// an internal column found case-insensitively (batch.col) like any other;
 // a batch that has the column keeps its own spelling. The engine's output
 // columns are named as the query wrote them, whatever the spelling.
 type attrCol struct {
@@ -56,7 +56,7 @@ type attrCol struct {
 
 // compileRules compiles the rules of project p, ordered as archive's
 // sortRules orders them (the view's result depends on the order), against
-// have, the columns of every events file (unionColumns): as the events
+// have, the columns of every events file (unionColumnsOf): as the events
 // table does, an attribute rule whose source column no file holds is skipped, so a
 // key that is only a rename target reads its sources even when a rule
 // renames it too.
@@ -202,11 +202,11 @@ func (rs ruleSet) columns(cols []string) []string {
 // left out. b's columns are not changed: a column the rules change is a
 // new one, under b's own name for it (attrCol's name when b has none);
 // either way only the batch's, not the name a result shows.
-func (rs ruleSet) apply(b *Batch, family string) *Batch {
+func (rs ruleSet) apply(b *batch, family string) *batch {
 	if rs.empty() {
 		return b
 	}
-	out := &Batch{N: b.N, Cols: maps.Clone(b.Cols)}
+	out := &batch{N: b.N, Cols: maps.Clone(b.Cols)}
 	if len(rs.attrs) > 0 {
 		rs.foldAttrs(b, out, family)
 	}
@@ -223,7 +223,7 @@ func isAttrFamily(family string) bool {
 }
 
 // scope marks b's rows in an attribute rule's scope.
-func scope(b *Batch, family string) []bool {
+func scope(b *batch, family string) []bool {
 	in := make([]bool, b.N)
 	if family != "" {
 		if isAttrFamily(family) {
@@ -248,11 +248,11 @@ func scope(b *Batch, family string) []bool {
 }
 
 // foldAttrs sets out's attribute columns the rules change, read from b.
-func (rs ruleSet) foldAttrs(b, out *Batch, family string) {
+func (rs ruleSet) foldAttrs(b, out *batch, family string) {
 	in := scope(b, family)
 	for _, a := range rs.attrs {
 		key, own := b.col(a.name)
-		var srcs []*Column
+		var srcs []*column
 		if !a.null {
 			for _, s := range a.from {
 				if _, c := b.col(s); c != nil {
@@ -273,7 +273,7 @@ func (rs ruleSet) foldAttrs(b, out *Batch, family string) {
 					idx[i] = -1
 				}
 			}
-			out.Cols[key] = &Column{Dict: own.Dict, Idx: idx}
+			out.Cols[key] = &column{Dict: own.Dict, Idx: idx}
 			continue
 		}
 		out.Cols[key] = coalesce(own, srcs, in, b.N)
@@ -284,9 +284,9 @@ func (rs ruleSet) foldAttrs(b, out *Batch, family string) {
 // scope, when own's is null, the first source's that is not. own may be
 // nil (all null). Each column's dictionary is mapped into the result's
 // once.
-func coalesce(own *Column, srcs []*Column, in []bool, n int) *Column {
+func coalesce(own *column, srcs []*column, in []bool, n int) *column {
 	var d dictBuilder
-	remap := func(c *Column) []int32 {
+	remap := func(c *column) []int32 {
 		r := make([]int32, len(c.Dict))
 		for j, s := range c.Dict {
 			r[j] = d.id([]byte(s))
@@ -318,13 +318,13 @@ func coalesce(own *Column, srcs []*Column, in []bool, n int) *Column {
 			}
 		}
 	}
-	return &Column{Dict: d.dict, Idx: idx}
+	return &column{Dict: d.dict, Idx: idx}
 }
 
 // applyEvents renames b's events and leaves out the dropped ones, the
 // action looked up once per family and event name of b's dictionaries. b
 // is apply's own batch: its event_name column may be replaced in place.
-func (rs ruleSet) applyEvents(b *Batch, family string) *Batch {
+func (rs ruleSet) applyEvents(b *batch, family string) *batch {
 	nameKey, nc := b.col("event_name")
 	if nc == nil {
 		return b
@@ -412,12 +412,12 @@ func (rs ruleSet) applyEvents(b *Batch, family string) *Batch {
 		idx[len(sel)] = v
 		sel = append(sel, int32(i))
 	}
-	col := &Column{Dict: dict, Idx: idx[:len(sel)]}
+	col := &column{Dict: dict, Idx: idx[:len(sel)]}
 	if len(sel) == b.N {
 		b.Cols[nameKey] = col
 		return b
 	}
-	out := &Batch{N: len(sel), Cols: make(map[string]*Column, len(b.Cols))}
+	out := &batch{N: len(sel), Cols: make(map[string]*column, len(b.Cols))}
 	for name, c := range b.Cols {
 		if name != nameKey {
 			out.Cols[name] = c.take(sel)
@@ -431,21 +431,14 @@ func (rs ruleSet) applyEvents(b *Batch, family string) *Batch {
 // NUL as \u0000.
 func visible(name string) string { return strings.ReplaceAll(name, "\x00", `\u0000`) }
 
-// unionColumns is the column names of every events file under dir, of
-// every project and day: the columns the events table is built over,
-// which its rules are checked against (a rule whose source key no file
-// holds is skipped). They come in the order a union by name first sees
-// them: the open logs, by project, then the Parquet files, so the first
-// spelling of a name equal to another but for case is the table's.
-//
-// It reads every Parquet file's footer and every open log's keys:
-// Engine.columns keeps both, reading only what changed.
-func unionColumns(dir string) ([]string, error) {
-	return unionColumnsOf(dir, fileColumns)
-}
-
-// unionColumnsOf is unionColumns with each file's columns from of (log
-// says the file is an open log).
+// unionColumnsOf is the column names of every events file under dir, of
+// every project and day, each file's from of (log says the file is an
+// open log): the columns the events table is built over, which its rules
+// are checked against (a rule whose source key no file holds is skipped).
+// They come in the order a union by name first sees them: the open logs,
+// by project, then the Parquet files, so the first spelling of a name
+// equal to another but for case is the table's. Engine.columns reads each
+// file's through caches, reading only what changed.
 func unionColumnsOf(dir string, of func(path string, log bool) ([]string, error)) ([]string, error) {
 	all, err := archive.ListFiles(dir)
 	if err != nil {

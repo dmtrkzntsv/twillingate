@@ -63,7 +63,7 @@ var retentionFamilies = []string{"product", "views"}
 // retentionFiles is f's Parquet files and logs that may hold rows on any
 // day up to hi: the cohort day is the first over all history.
 func retentionFiles(f archive.Files, hi civil.Date) (parquet, logs []string) {
-	return filesIn(f, Range{From: everything.From, To: hi})
+	return filesIn(f, dayRange{From: everything.From, To: hi})
 }
 
 // retentionActors gathers the retention state of the project's actors
@@ -90,7 +90,7 @@ func (s scan) retentionActors(ctx context.Context, spec retentionSpec, files arc
 		return nil, err
 	}
 	if spec.today == (civil.Date{}) {
-		spec.today = s.e.today()
+		spec.today = s.e.Today()
 	}
 	hiDate := spec.to.AddDays(spec.offsets)
 	if last := spec.today.AddDays(-1); last.Before(hiDate) {
@@ -101,17 +101,7 @@ func (s scan) retentionActors(ctx context.Context, spec retentionSpec, files arc
 	}
 	lo, hi, toDay := epochDay(spec.from), epochDay(hiDate), epochDay(spec.to)
 	words := int((hi - lo + 64) / 64)
-	cols := slices.Clone(retentionColumns)
-	for _, f := range s.filters {
-		for _, col := range f.columns() {
-			for _, c := range readColumns(col) {
-				if !slices.Contains(cols, c) {
-					cols = append(cols, c)
-				}
-			}
-		}
-	}
-	read := s.rules.columns(cols)
+	read := s.rules.columns(appendReadColumns(slices.Clone(retentionColumns), s.filters))
 	idCols := s.identityColumnsOf(nil)
 	var ids *firstSet
 	var err error
@@ -120,57 +110,28 @@ func (s scan) retentionActors(ctx context.Context, spec retentionSpec, files arc
 			return nil, err
 		}
 	}
-	r := Range{From: everything.From, To: hiDate}
+	r := dayRange{From: everything.From, To: hiDate}
 	pq, logs := retentionFiles(files, hiDate)
 	groups, err := parquetGroupsOf(pq, retentionFamilies, r)
 	if err != nil {
 		return nil, err
 	}
-	work := make([]group, 0, len(logs)+len(groups))
-	for _, path := range logs {
-		work = append(work, group{file: path, index: -1})
-	}
-	work = append(work, groups...)
 	parts := make([]map[string]*retentionState, s.e.workers)
 	for i := range parts {
 		parts[i] = map[string]*retentionState{}
 	}
 	win := retentionWindow{lo: lo, hi: hi, words: words}
-	readers := make([]groupReader, s.e.workers)
-	err = scanParallel(ctx, work, s.e.workers, func(w int, g group) error {
-		var bs []*Batch
-		if g.index < 0 {
-			var err error
-			if bs, err = s.e.readLog(ctx, g.file, read, "", r); err != nil {
-				return err
-			}
-		} else {
-			b, err := readers[w].read(g, read, "", r)
-			if err != nil {
-				return err
-			}
-			bs = []*Batch{b}
+	err = s.e.scanFiles(ctx, logs, groups, s.e.logs.read, read, "", r, func(w int, b *batch) error {
+		b = s.rules.apply(b, "")
+		if ids != nil {
+			addIdentityColumns(b, idCols, ids)
 		}
-		for _, b := range bs {
-			b = s.rules.apply(b, "")
-			if ids != nil {
-				addIdentityColumns(b, idCols, ids)
-			}
-			grew, err := win.add(parts[w], b, s.filters)
-			if err != nil {
-				return err
-			}
-			if err := charge(grew); err != nil {
-				return err
-			}
+		grew, err := win.add(parts[w], b, s.filters)
+		if err != nil {
+			return err
 		}
-		return nil
+		return charge(grew)
 	})
-	for i := range readers {
-		if cerr := readers[i].close(); err == nil {
-			err = cerr
-		}
-	}
 	if err != nil {
 		return nil, err
 	}
@@ -223,7 +184,7 @@ func (w retentionWindow) bytes(id string, st *retentionState) int64 {
 
 // add notes b's rows that pass filters and that the retention acts hold
 // in m, and returns the bytes m grew by (less what it gave back).
-func (w retentionWindow) add(m map[string]*retentionState, b *Batch, filters []filter) (int64, error) {
+func (w retentionWindow) add(m map[string]*retentionState, b *batch, filters []filter) (int64, error) {
 	sel, err := selectRows(b, filters, nil)
 	if err != nil || len(sel) == 0 {
 		return 0, err
@@ -369,7 +330,7 @@ type retentionKey struct {
 //     curve has no row there.
 func (s scan) retention(ctx context.Context, from, to civil.Date) (Result, error) {
 	offsets := s.q.offsets()
-	got, err := s.retentionCounts(ctx, retentionSpec{from: from, to: to, today: s.e.today(), offsets: offsets})
+	got, err := s.retentionCounts(ctx, retentionSpec{from: from, to: to, today: s.e.Today(), offsets: offsets})
 	if err != nil {
 		return Result{}, err
 	}

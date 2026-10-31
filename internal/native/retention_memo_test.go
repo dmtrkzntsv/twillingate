@@ -13,6 +13,13 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
+// len is how many tallies are kept.
+func (m *retentionMemo) len() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.entries)
+}
+
 // countScans counts retentionCounts' scans for the test, running each
 // through hook (when not nil) first.
 func countScans(t *testing.T, hook func(n int64)) *atomic.Int64 {

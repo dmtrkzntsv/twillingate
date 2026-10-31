@@ -123,7 +123,7 @@ var identityColumnList = `"` + strings.Join(identityColumns, `", "`) + `"`
 // identityRows is project's identities first seen in r (every one, r nil)
 // as the engine loads them, formatted as the goldens keep the rows,
 // sorted.
-func identityRows(t *testing.T, e *Engine, project int64, r *Range) [][]string {
+func identityRows(t *testing.T, e *Engine, project int64, r *dayRange) [][]string {
 	t.Helper()
 	ids, err := e.identities(context.Background(), project, listFiles(t, e)[project], func(int64) error { return nil })
 	if err != nil {

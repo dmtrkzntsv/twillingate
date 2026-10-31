@@ -26,14 +26,14 @@ import (
 //   - The columns are named as archive.LogColumns names them for the keys
 //     of the log's complete lines: a key equal to an earlier one but for
 //     case reads as <key>_<n>, so a name in cols matches that column. A
-//     pattern in cols (AttrCols) expands to the log's columns with its
+//     pattern in cols (attrCols) expands to the log's columns with its
 //     prefix; a plain name resolves as expandCols resolves it, to the log's
 //     own spelling when that differs in case (look columns up with
-//     Batch.col), and one the log lacks reads all null.
+//     batch.col), and one the log lacks reads all null.
 //   - A key a line leaves out reads null, at the column's type; a value
 //     that does not cast to the column's type fails the read, as DuckDB's
 //     CAST fails the query.
-func readLog(path string, cols []string, family string, r Range) (*Batch, error) {
+func readLog(path string, cols []string, family string, r dayRange) (*batch, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -126,7 +126,7 @@ func readLog(path string, cols []string, family string, r Range) (*Batch, error)
 		keyOf[c.Name] = c.Key
 	}
 	requested := expandCols(names, cols)
-	out := &Batch{N: n, Cols: make(map[string]*Column, len(requested))}
+	out := &batch{N: n, Cols: make(map[string]*column, len(requested))}
 	for _, name := range requested {
 		if k, ok := keyOf[name]; ok && builders[k] != nil {
 			out.Cols[name] = builders[k].finish(n)
@@ -172,7 +172,7 @@ const kindDate colKind = -1
 type logCol struct {
 	key  string
 	kind colKind
-	c    Column
+	c    column
 	db   dictBuilder
 	n    int // rows filled
 }
@@ -256,7 +256,7 @@ func (b *logCol) add(row int, raw json.RawMessage) error {
 
 // finish fills the rows up to n and returns the column. A builder is
 // made by a kept row's add, so the column has at least one row.
-func (b *logCol) finish(n int) *Column {
+func (b *logCol) finish(n int) *column {
 	b.pad(n)
 	c := b.c
 	c.Dict = b.db.dict
