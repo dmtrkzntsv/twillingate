@@ -49,7 +49,7 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 	}
 	var errs error
 
-	projectIDs, err := d.purgeableIDs(ctx,
+	projectIDs, err := queryColumn[int64](ctx, d.db,
 		`SELECT id FROM projects
 		 WHERE archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?`, days)
 	if err != nil {
@@ -69,7 +69,7 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 		res.Projects = append(res.Projects, id)
 	}
 
-	dashboardIDs, err := d.purgeableIDs(ctx,
+	dashboardIDs, err := queryColumn[int64](ctx, d.db,
 		`SELECT id FROM dashboards
 		 WHERE owner='user' AND archived_at IS NOT NULL
 		   AND julianday(archived_at) < julianday('now') - ?`, days)
@@ -95,7 +95,7 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 	// never archives a widget on a system dashboard either, but a forced
 	// row must still never be selected), and d's own archived state tells
 	// whether that dashboard is being purged in this same pass.
-	widgetIDs, err := d.purgeableIDs(ctx,
+	widgetIDs, err := queryColumn[int64](ctx, d.db,
 		`SELECT w.id FROM widgets w JOIN dashboards d ON d.id = w.dashboard_id
 		 WHERE d.owner='user'
 		   AND w.archived_at IS NOT NULL AND julianday(w.archived_at) < julianday('now') - ?
@@ -118,7 +118,7 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 		res.Widgets = append(res.Widgets, id)
 	}
 
-	shareIDs, err := d.purgeableStrings(ctx,
+	shareIDs, err := queryColumn[string](ctx, d.db,
 		`SELECT id FROM widget_shares
 		 WHERE archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?`, days)
 	if err != nil {
@@ -183,7 +183,7 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 	// job has written it to the event files, so the conversion stays.
 	const archivedSubmissions = `archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?
 		AND pending_event IS NULL AND unlogged_event IS NULL`
-	subProjects, err := d.purgeableIDs(ctx,
+	subProjects, err := queryColumn[int64](ctx, d.db,
 		`SELECT DISTINCT project_id FROM submissions WHERE `+archivedSubmissions+` ORDER BY project_id`, days)
 	if err != nil {
 		errs = errors.Join(errs, fmt.Errorf("select archived submissions: %w", err))
@@ -208,41 +208,4 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 	}
 
 	return res, errs
-}
-
-// purgeableIDs runs a SELECT of a single int64 column outside any
-// transaction: the deletes that follow each open and commit their own.
-func (d *DB) purgeableIDs(ctx context.Context, q string, args ...any) ([]int64, error) {
-	rows, err := d.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
-
-// purgeableStrings is purgeableIDs for a single string column.
-func (d *DB) purgeableStrings(ctx context.Context, q string, args ...any) ([]string, error) {
-	rows, err := d.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
 }

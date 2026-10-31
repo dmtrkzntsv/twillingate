@@ -24,6 +24,32 @@ func (d *DB) SetMeta(ctx context.Context, key, value string) error {
 	return err
 }
 
+// querier is a *sql.DB, or the *sql.Tx of a write.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// queryColumn runs query through q and returns its one column, in order.
+// Only a single-column query belongs here: internal/sqlcheck counts the
+// columns a Scan reads at the call that runs the query, not inside a
+// helper.
+func queryColumn[T any](ctx context.Context, q querier, query string, args ...any) ([]T, error) {
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []T
+	for rows.Next() {
+		var v T
+		if err := rows.Scan(&v); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 // tx runs fn in a transaction with commit/rollback handling; shared by all
 // sqlite write paths.
 func (d *DB) tx(ctx context.Context, fn func(*sql.Tx) error) error {

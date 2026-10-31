@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -258,27 +259,13 @@ func (d *DB) SetDashboardView(ctx context.Context, dash store.Dashboard) error {
 // order, when any of ids is not a dashboard, so a batch write that checks
 // first leaves every row untouched.
 func requireDashboards(ctx context.Context, tx *sql.Tx, ids []int64) error {
-	rows, err := tx.QueryContext(ctx,
+	found, err := queryColumn[int64](ctx, tx,
 		`SELECT id FROM dashboards WHERE id IN (`+placeholders(len(ids))+`)`, toArgs(ids)...)
 	if err != nil {
 		return err
 	}
-	exists := map[int64]bool{}
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return err
-		}
-		exists[id] = true
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
 	for _, id := range ids {
-		if !exists[id] {
+		if !slices.Contains(found, id) {
 			return store.Refuse(store.ErrNotFound, "dashboard %d: not found", id)
 		}
 	}

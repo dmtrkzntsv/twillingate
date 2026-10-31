@@ -743,18 +743,5 @@ func (d *DB) SubmissionIDsMatching(ctx context.Context, projectID int64, search 
 	if err != nil {
 		return nil, err
 	}
-	rows, err := d.db.QueryContext(ctx, `SELECT s.id `+from+` ORDER BY s.received_at DESC, s.id DESC`, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+	return queryColumn[string](ctx, d.db, `SELECT s.id `+from+` ORDER BY s.received_at DESC, s.id DESC`, args...)
 }
