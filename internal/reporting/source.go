@@ -334,12 +334,12 @@ type pageLoader interface {
 	LoadPage(ctx context.Context, content string, p Params, pg readsql.Page) (readsql.PageResult, error)
 }
 
-// viewRefusal marks a refusal of the paging arguments a caller sent
+// pagingRefusal marks a refusal of the paging arguments a caller sent
 // rather than of the widget itself, so wrapLoadErr leaves out the release
 // notes pointer: what to change is the filter, not the query.
-type viewRefusal struct{ error }
+type pagingRefusal struct{ error }
 
-func (e viewRefusal) Unwrap() error { return e.error }
+func (e pagingRefusal) Unwrap() error { return e.error }
 
 // LoadPage is Load for a remote table: content filtered, sorted and paged
 // by pg in the engine, with the matched and total counts, as readsql's
@@ -398,7 +398,7 @@ func (s *sqlSource) LoadPage(ctx context.Context, content string, p Params, pg r
 func pageErr(err error) error {
 	var er engineRefused
 	if errors.As(err, &er) {
-		return viewRefusal{er.error}
+		return pagingRefusal{er.error}
 	}
 	return err
 }
