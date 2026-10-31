@@ -65,6 +65,19 @@ type httpSurface struct {
 	label   string
 }
 
+// NewOps loads the project registry from st and returns the management
+// frontend over it, with the configured form draft period: what Serve and
+// the CLI both manage through.
+func NewOps(ctx context.Context, cfg *config.Config, st store.Store, logger *slog.Logger) (*manage.Ops, error) {
+	reg := manage.New(st, logger)
+	if err := reg.Reload(ctx); err != nil {
+		return nil, err
+	}
+	ops := manage.NewOps(reg, st)
+	ops.FormDraftDays = cfg.Forms.DraftDays
+	return ops, nil
+}
+
 // Serve runs the requested surfaces (ingest: events and the SDK, console:
 // MCP, REST, login and dashboards) until ctx is cancelled or a listener
 // fails. At least one of ingest/console must be true; the caller (cmd/twillingate) enforces that as a
@@ -116,12 +129,11 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	if err := migrate(ctx, cfg, st, sql); err != nil {
 		return err
 	}
-	reg := manage.New(st, logger)
-	if err := reg.Reload(ctx); err != nil {
+	ops, err := NewOps(ctx, cfg, st, logger)
+	if err != nil {
 		return err
 	}
-	ops := manage.NewOps(reg, st)
-	ops.FormDraftDays = cfg.Forms.DraftDays
+	reg := ops.Reg
 	// The native engine answers the console's structured queries, the
 	// rule-save checks and form attribution over the files in Go; the
 	// external SQL engine serves SQL alone (the query tool's sql mode, SQL
@@ -286,12 +298,8 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	checkDone := make(chan struct{})
 	checkCtx, stopCheck := context.WithCancel(context.Background())
 	if runConsole {
-		var widgetSQL reporting.SQL
-		if sql != nil {
-			widgetSQL = sql
-		}
 		opt := api.WidgetOptions(cfg, reg, reporting.Options{})
-		go func() { checkUserWidgets(checkCtx, st, widgetSQL, opt, logger); close(checkDone) }()
+		go func() { checkUserWidgets(checkCtx, st, sql, opt, logger); close(checkDone) }()
 	} else {
 		close(checkDone)
 	}

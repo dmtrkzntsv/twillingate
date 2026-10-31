@@ -63,37 +63,52 @@ func actorFrom(ctx context.Context) string {
 	return "unknown"
 }
 
-// expose registers fn as an MCP tool and, when s.Method is set, as a REST
-// route. One call per operation, so neither transport can drift.
-func expose[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out, error)) {
-	s.in, s.out = schemaFor[In](), schemaFor[Out]()
+// The MCP annotations the operations carry. DestructiveHint is *bool in
+// the SDK. Nothing is destructive but merge_event and merge_attribute (a
+// merge cannot be split again) and block_event and block_attribute, which
+// ask the operator.
+var (
+	hintNo, hintYes = false, true
+
+	ro          = &mcp.ToolAnnotations{ReadOnlyHint: true}
+	write       = &mcp.ToolAnnotations{DestructiveHint: &hintNo}
+	idem        = &mcp.ToolAnnotations{DestructiveHint: &hintNo, IdempotentHint: true}
+	destroy     = &mcp.ToolAnnotations{DestructiveHint: &hintYes}
+	destroyIdem = &mcp.ToolAnnotations{DestructiveHint: &hintYes, IdempotentHint: true}
+)
+
+// add records s with its schemas, the input's tightened by s.constrain,
+// and mounts h on its route when s has one and REST is registered. It
+// returns s as recorded.
+func (r *registrar) add(s spec, in, out *jsonschema.Schema, h http.HandlerFunc) spec {
+	s.in, s.out = in, out
 	if s.constrain != nil {
 		s.constrain(s.in)
 	}
 	r.specs = append(r.specs, s)
+	if s.Method != "" && r.rest != nil {
+		r.rest.HandleFunc(s.Method+" "+s.Path, h)
+	}
+	return s
+}
+
+// expose registers fn as an MCP tool and, when s.Method is set, as a REST
+// route. One call per operation, so neither transport can drift.
+func expose[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out, error)) {
+	s = r.add(s, schemaFor[In](), schemaFor[Out](), restHandler(r, s, fn))
 	mcp.AddTool(r.mcp, &mcp.Tool{Name: s.Name, Description: s.Description, Annotations: s.Annotations,
 		InputSchema: s.in, OutputSchema: s.out},
 		func(ctx context.Context, _ *mcp.CallToolRequest, in In) (*mcp.CallToolResult, Out, error) {
 			out, err := fn(withActor(ctx, "mcp"), in)
 			return nil, out, err
 		})
-	if s.Method != "" && r.rest != nil {
-		r.rest.HandleFunc(s.Method+" "+s.Path, restHandler(r, s, fn))
-	}
 }
 
 // restOnly registers fn as a REST route with no MCP tool: state only the
 // web app writes, such as a dashboard's remembered selection.
 func restOnly[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out, error)) {
 	s.RESTOnly = true
-	s.in, s.out = schemaFor[In](), schemaFor[Out]()
-	if s.constrain != nil {
-		s.constrain(s.in)
-	}
-	r.specs = append(r.specs, s)
-	if r.rest != nil {
-		r.rest.HandleFunc(s.Method+" "+s.Path, restHandler(r, s, fn))
-	}
+	r.add(s, schemaFor[In](), schemaFor[Out](), restHandler(r, s, fn))
 }
 
 // restRaw registers a REST-only route whose handler reads the request
@@ -101,11 +116,7 @@ func restOnly[In, Out any](r *registrar, s spec, fn func(context.Context, In) (O
 // OpenAPI document and the docs tests.
 func restRaw[In, Out any](r *registrar, s spec, h http.HandlerFunc) {
 	s.RESTOnly, s.Multipart = true, true
-	s.in, s.out = schemaFor[In](), schemaFor[Out]()
-	r.specs = append(r.specs, s)
-	if r.rest != nil {
-		r.rest.HandleFunc(s.Method+" "+s.Path, h)
-	}
+	r.add(s, schemaFor[In](), schemaFor[Out](), h)
 }
 
 // restImage registers a REST-only GET route that answers a PNG: `fn` gets
@@ -114,25 +125,11 @@ func restRaw[In, Out any](r *registrar, s spec, h http.HandlerFunc) {
 // an hour. A refusal is the usual JSON error.
 func restImage[In any](r *registrar, s spec, fn func(context.Context, In) ([]byte, error)) {
 	s.RESTOnly, s.Image = true, true
-	s.in = schemaFor[In]()
-	r.specs = append(r.specs, s)
-	if r.rest != nil {
-		r.rest.HandleFunc(s.Method+" "+s.Path, func(w http.ResponseWriter, req *http.Request) {
-			var in In
-			if err := decodeRequest(req, &in); err != nil {
-				writeError(w, r.logger, req, err)
-				return
-			}
-			b, err := fn(withActor(req.Context(), "api"), in)
-			if err != nil {
-				writeError(w, r.logger, req, err)
-				return
-			}
-			w.Header().Set("Content-Type", "image/png")
-			w.Header().Set("Cache-Control", "private, max-age=3600")
-			_, _ = w.Write(b)
-		})
-	}
+	r.add(s, schemaFor[In](), nil, restWith(r, fn, func(w http.ResponseWriter, _ *http.Request, b []byte) {
+		w.Header().Set("Content-Type", "image/png")
+		w.Header().Set("Cache-Control", "private, max-age=3600")
+		_, _ = w.Write(b)
+	}))
 }
 
 // csvFile is a restCSV route's answer: the download's file name, the
@@ -149,31 +146,17 @@ type csvFile struct {
 // the usual JSON error, sent before any byte of the file.
 func restCSV[In any](r *registrar, s spec, fn func(context.Context, In) (csvFile, error)) {
 	s.RESTOnly, s.CSV = true, true
-	s.in = schemaFor[In]()
-	r.specs = append(r.specs, s)
-	if r.rest != nil {
-		r.rest.HandleFunc(s.Method+" "+s.Path, func(w http.ResponseWriter, req *http.Request) {
-			var in In
-			if err := decodeRequest(req, &in); err != nil {
-				writeError(w, r.logger, req, err)
-				return
-			}
-			f, err := fn(withActor(req.Context(), "api"), in)
-			if err != nil {
-				writeError(w, r.logger, req, err)
-				return
-			}
-			w.Header().Set("Content-Type", "text/csv; charset=utf-8")
-			w.Header().Set("Content-Disposition", `attachment; filename="`+f.Name+`"`)
-			cw := csv.NewWriter(w)
-			if err := cw.Write(f.Header); err == nil {
-				err = cw.WriteAll(f.Rows)
-			}
-			if err := cw.Error(); err != nil {
-				r.logger.Warn("csv download cut short", "path", req.URL.Path, "error", err)
-			}
-		})
-	}
+	r.add(s, schemaFor[In](), nil, restWith(r, fn, func(w http.ResponseWriter, req *http.Request, f csvFile) {
+		w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+		w.Header().Set("Content-Disposition", `attachment; filename="`+f.Name+`"`)
+		cw := csv.NewWriter(w)
+		if err := cw.Write(f.Header); err == nil {
+			err = cw.WriteAll(f.Rows)
+		}
+		if err := cw.Error(); err != nil {
+			r.logger.Warn("csv download cut short", "path", req.URL.Path, "error", err)
+		}
+	}))
 }
 
 // schemaOptions describes json.RawMessage as a JSON object: inferred from

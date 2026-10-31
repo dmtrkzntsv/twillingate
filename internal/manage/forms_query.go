@@ -10,15 +10,15 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// ReceivedColumn is the submissions table's first display column, the
+// receivedColumn is the submissions table's first display column, the
 // time a submission arrived.
-const ReceivedColumn = "Received"
+const receivedColumn = "Received"
 
-// ArchivedColumn is the archived submissions table's second display
+// archivedColumn is the archived submissions table's second display
 // column, the time a submission was archived.
-const ArchivedColumn = "Archived"
+const archivedColumn = "Archived"
 
-// SubmissionsQuery builds the SQL of a form's submissions table (spec
+// submissionsQuery builds the SQL of a form's submissions table (spec
 // D12a): its active submissions, or its archived ones when archived. The
 // query takes two arguments, the project id and the form's name, in that
 // order; it selects id first, then the display columns, newest first.
@@ -34,19 +34,19 @@ const ArchivedColumn = "Archived"
 // quoted JSON path, so a field called meta, dbstat or sqlite_x (names
 // readsql refuses as identifiers) reads like any other. QuerySubmissions
 // translates between the two.
-func SubmissionsQuery(f store.Form, archived bool) (query string, columns []string) {
+func submissionsQuery(f store.Form, archived bool) (query string, columns []string) {
 	fields := f.Fields
 	if f.Status == store.FormApproved {
 		fields = f.ExpectedFields
 	}
-	used := map[string]bool{"id": true, strings.ToLower(ReceivedColumn): true}
+	used := map[string]bool{"id": true, strings.ToLower(receivedColumn): true}
 	sel := []string{"id AS " + submissionsAlias(0), "received_at AS " + submissionsAlias(1)}
-	columns = []string{ReceivedColumn}
+	columns = []string{receivedColumn}
 	where := "archived_at IS NULL"
 	if archived {
-		used[strings.ToLower(ArchivedColumn)] = true
+		used[strings.ToLower(archivedColumn)] = true
 		sel = append(sel, "archived_at AS "+submissionsAlias(2))
-		columns = append(columns, ArchivedColumn)
+		columns = append(columns, archivedColumn)
 		where = "archived_at IS NOT NULL"
 	}
 	for _, name := range fields {
@@ -75,7 +75,7 @@ func submissionsAlias(i int) string { return "c" + strconv.Itoa(i) }
 // and rows). An unknown column is refused with ErrInvalid naming the
 // table's columns; other errors are readsql's, unwrapped.
 func QuerySubmissions(ctx context.Context, db *readsql.DB, f store.Form, archived bool, pg readsql.Page) (readsql.PageResult, error) {
-	q, columns := SubmissionsQuery(f, archived)
+	q, columns := submissionsQuery(f, archived)
 	names := append([]string{"id"}, columns...)
 	alias := func(name string) (string, error) {
 		for i, n := range names {
@@ -129,11 +129,11 @@ func fieldValue(name string) string {
 
 func quoteString(s string) string { return "'" + strings.ReplaceAll(s, "'", "''") + "'" }
 
-// CSVSafe makes one cell of a CSV export inert in a spreadsheet: a cell
+// csvSafe makes one cell of a CSV export inert in a spreadsheet: a cell
 // starting with =, +, -, @, a tab or a carriage return is prefixed with
 // ', so what a visitor typed is shown as text rather than run as a
 // formula. Every other cell is returned as it is.
-func CSVSafe(cell string) string {
+func csvSafe(cell string) string {
 	if cell != "" && strings.ContainsRune("=+-@\t\r", rune(cell[0])) {
 		return "'" + cell
 	}
@@ -149,9 +149,9 @@ func CSVSafe(cell string) string {
 // column, so the pages neither overlap nor skip a row. Errors are
 // QuerySubmissions'.
 func AllSubmissions(ctx context.Context, db *readsql.DB, f store.Form, archived bool, pg readsql.Page) (ids, columns []string, rows [][]string, err error) {
-	_, columns = SubmissionsQuery(f, archived)
+	_, columns = submissionsQuery(f, archived)
 	if pg.Sort == nil {
-		pg.Sort = &readsql.Sort{Column: ReceivedColumn, Desc: true}
+		pg.Sort = &readsql.Sort{Column: receivedColumn, Desc: true}
 	}
 	pg.Limit = db.MaxRows()
 	for pg.Offset = 0; ; pg.Offset += pg.Limit {
@@ -169,16 +169,35 @@ func AllSubmissions(ctx context.Context, db *readsql.DB, f store.Form, archived 
 	}
 }
 
-// CSVSafeTable applies CSVSafe to every header cell and every row cell, in
+// ExportSubmissions reads an active form's submissions table for a CSV
+// export: the archived one when archived, every row pg's filters match,
+// sorted as AllSubmissions sorts, its display columns as the header, with
+// every cell made inert (csvSafe). db is AllSubmissions'. An unknown or
+// archived form is ActiveForm's refusal; other errors are
+// AllSubmissions'.
+func (o *Ops) ExportSubmissions(ctx context.Context, db *readsql.DB, projectID int64, name string, archived bool, pg readsql.Page) (header []string, rows [][]string, err error) {
+	f, err := o.ActiveForm(ctx, projectID, name)
+	if err != nil {
+		return nil, nil, err
+	}
+	_, header, rows, err = AllSubmissions(ctx, db, f, archived, pg)
+	if err != nil {
+		return nil, nil, err
+	}
+	header, rows = csvSafeTable(header, rows)
+	return header, rows, nil
+}
+
+// csvSafeTable applies csvSafe to every header cell and every row cell, in
 // place, and returns them: what visitors typed must not run as a
 // spreadsheet formula.
-func CSVSafeTable(header []string, rows [][]string) ([]string, [][]string) {
+func csvSafeTable(header []string, rows [][]string) ([]string, [][]string) {
 	for i, c := range header {
-		header[i] = CSVSafe(c)
+		header[i] = csvSafe(c)
 	}
 	for _, r := range rows {
 		for i, c := range r {
-			r[i] = CSVSafe(c)
+			r[i] = csvSafe(c)
 		}
 	}
 	return header, rows

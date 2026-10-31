@@ -142,13 +142,13 @@ func scalar(v any) (string, bool) {
 
 // keepFields applies the field limits: an empty name, one longer than
 // MaxFormFieldName characters or one holding a control character
-// (hasControl) is dropped, at most MaxFormFields names are kept (the
+// (wire.HasControl) is dropped, at most MaxFormFields names are kept (the
 // first in name order, so which survive never depends on map order), and
 // each value is cut to MaxFormValue bytes.
 func keepFields(names []string, value func(string) string) map[string]string {
 	kept := names[:0]
 	for _, k := range names {
-		if k != "" && utf8.RuneCountInString(k) <= wire.MaxFormFieldName && !hasControl(k) {
+		if k != "" && utf8.RuneCountInString(k) <= wire.MaxFormFieldName && !wire.HasControl(k) {
 			kept = append(kept, k)
 		}
 	}
@@ -161,13 +161,6 @@ func keepFields(names []string, value func(string) string) map[string]string {
 		out[k] = cutValue(value(k))
 	}
 	return out
-}
-
-// hasControl reports a C0 control character or DEL (U+0000 to U+001F,
-// U+007F) in s. No real form control is named with one, and a NUL would
-// end the SQL that reads the field (readsql refuses it) for good.
-func hasControl(s string) bool {
-	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
 }
 
 // cutValue truncates s to MaxFormValue bytes without splitting a rune.
@@ -323,15 +316,8 @@ func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 	// refusals, since without a project nothing can vouch for a target.
 	authorize := func(key string) bool {
 		var ok bool
-		if p, label, ok = snap.ProjectByKey(key); !ok {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
-			return false
-		}
-		if reqOrigin != "" && !s.originAllowed(w, r, p.ID) {
-			http.Error(w, "origin not allowed", http.StatusForbidden)
-			return false
-		}
-		return true
+		p, label, ok = s.authorize(w, r, snap, key)
+		return ok
 	}
 	// refuse answers a refusal after authorize: the error fragment on the
 	// form path when one of candidates is allowed, else the plain status.
@@ -385,10 +371,8 @@ func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	salt, err := s.salt.Current(ctx)
-	if err != nil {
-		s.logger.Error("salt unavailable", "error", err)
-		http.Error(w, "internal error", http.StatusInternalServerError)
+	salt, ok := s.currentSalt(w, r)
+	if !ok {
 		return
 	}
 	received := time.Now().UTC()

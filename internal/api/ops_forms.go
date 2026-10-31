@@ -11,11 +11,10 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Forms and their submissions (spec D8). A submission's table runs SQL
-// the server builds (manage.SubmissionsQuery) on h.subs, the handle that
+// the server builds (manage.QuerySubmissions) on h.subs, the handle that
 // may read submissions; custom SQL never reaches them.
 
 type formIn struct {
@@ -234,17 +233,11 @@ func (h *host) markFormSeen(ctx context.Context, in markSeenIn) (okOut, error) {
 	}
 	// Not projectErr: an unknown form is as likely as an unknown project,
 	// and the store's refusal names which.
-	if err := h.ops.MarkFormSeen(ctx, in.ProjectID, in.Name, until); err != nil {
-		return okOut{}, err
-	}
-	return okOut{Status: "seen"}, nil
+	return ok("seen", h.ops.MarkFormSeen(ctx, in.ProjectID, in.Name, until))
 }
 
 func (h *host) approveForm(ctx context.Context, in approveFormIn) (okOut, error) {
-	if err := h.ops.ApproveForm(ctx, actorFrom(ctx), in.ProjectID, in.Name, in.ExpectedFields); err != nil {
-		return okOut{}, err
-	}
-	return okOut{Status: "approved; new submissions keep only the expected fields and each writes a $form_submit event about a minute after it arrives"}, nil
+	return ok("approved; new submissions keep only the expected fields and each writes a $form_submit event about a minute after it arrives", h.ops.ApproveForm(ctx, actorFrom(ctx), in.ProjectID, in.Name, in.ExpectedFields))
 }
 
 func (h *host) updateForm(ctx context.Context, in updateFormIn) (okOut, error) {
@@ -252,24 +245,15 @@ func (h *host) updateForm(ctx context.Context, in updateFormIn) (okOut, error) {
 	if in.ClosesAt.set {
 		spec.ClosesAt = &in.ClosesAt.at
 	}
-	if err := h.ops.UpdateForm(ctx, actorFrom(ctx), in.ProjectID, in.Name, spec); err != nil {
-		return okOut{}, err
-	}
-	return okOut{Status: "updated"}, nil
+	return ok("updated", h.ops.UpdateForm(ctx, actorFrom(ctx), in.ProjectID, in.Name, spec))
 }
 
 func (h *host) archiveForm(ctx context.Context, in formIn) (okOut, error) {
-	if err := h.ops.ArchiveForm(ctx, actorFrom(ctx), in.ProjectID, in.Name); err != nil {
-		return okOut{}, err
-	}
-	return okOut{Status: "archived; submissions refused and hidden, reversible with restore_form, purged after RETENTION_ARCHIVED_DAYS"}, nil
+	return ok("archived; submissions refused and hidden, reversible with restore_form, purged after RETENTION_ARCHIVED_DAYS", h.ops.ArchiveForm(ctx, actorFrom(ctx), in.ProjectID, in.Name))
 }
 
 func (h *host) restoreForm(ctx context.Context, in formIn) (okOut, error) {
-	if err := h.ops.RestoreForm(ctx, actorFrom(ctx), in.ProjectID, in.Name); err != nil {
-		return okOut{}, err
-	}
-	return okOut{Status: "restored"}, nil
+	return ok("restored", h.ops.RestoreForm(ctx, actorFrom(ctx), in.ProjectID, in.Name))
 }
 
 // subsErr words a submissions-table failure as the caller's to fix where
@@ -290,7 +274,6 @@ type formTable struct {
 	h        *host
 	form     store.Form
 	archived bool
-	columns  []string // the display columns, without id
 }
 
 // submissionsTable reads the form once and builds its query.
@@ -299,8 +282,7 @@ func (h *host) submissionsTable(ctx context.Context, projectID int64, name strin
 	if err != nil {
 		return formTable{}, err
 	}
-	_, cols := manage.SubmissionsQuery(f, archived)
-	return formTable{h: h, form: f, archived: archived, columns: cols}, nil
+	return formTable{h: h, form: f, archived: archived}, nil
 }
 
 // page runs one page of the table; its first column is the id.
@@ -312,14 +294,14 @@ func (t formTable) page(ctx context.Context, pg readsql.Page) (readsql.PageResul
 	return res, nil
 }
 
-// all returns the ids and the rows (without them) of every row pg's
-// filters match, newest first unless pg sorts (manage.AllSubmissions).
-func (t formTable) all(ctx context.Context, pg readsql.Page) ([]string, [][]string, error) {
-	ids, _, rows, err := manage.AllSubmissions(ctx, t.h.subs, t.form, t.archived, pg)
+// ids returns the ids of every row pg's filters match, newest first
+// unless pg sorts (manage.AllSubmissions).
+func (t formTable) ids(ctx context.Context, pg readsql.Page) ([]string, error) {
+	ids, _, _, err := manage.AllSubmissions(ctx, t.h.subs, t.form, t.archived, pg)
 	if err != nil {
-		return nil, nil, t.h.subsErr(err)
+		return nil, t.h.subsErr(err)
 	}
-	return ids, rows, nil
+	return ids, nil
 }
 
 func (h *host) listSubmissions(ctx context.Context, in listSubmissionsIn) (submissionsOut, error) {
@@ -389,7 +371,7 @@ func (h *host) selectSubmissions(ctx context.Context, in submissionsSelectorIn, 
 	case len(in.IDs) > 0:
 		return in.IDs, "ids", nil
 	case in.Search != "":
-		ids, err := h.ops.SubmissionIDsMatching(ctx, in.ProjectID, strings.TrimSpace(in.Search))
+		ids, err := h.ops.SubmissionIDsMatching(ctx, in.ProjectID, in.Search)
 		return ids, "search", err
 	}
 	if in.Form == "" || in.Filters == "" {
@@ -406,7 +388,7 @@ func (h *host) selectSubmissions(ctx context.Context, in submissionsSelectorIn, 
 	if err != nil {
 		return nil, "", err
 	}
-	ids, _, err := t.all(ctx, pg)
+	ids, err := t.ids(ctx, pg)
 	if err != nil {
 		return nil, "", err
 	}
@@ -442,23 +424,15 @@ func (h *host) exportSubmissions(ctx context.Context, in exportSubmissionsIn) (c
 	if err != nil {
 		return csvFile{}, err
 	}
-	t, err := h.submissionsTable(ctx, in.ProjectID, in.Name, in.Archived)
+	// subsErr leaves ActiveForm's refusals as they are: none is readsql's.
+	header, rows, err := h.ops.ExportSubmissions(ctx, h.subs, in.ProjectID, in.Name, in.Archived, pg)
 	if err != nil {
-		return csvFile{}, err
+		return csvFile{}, h.subsErr(err)
 	}
-	_, rows, err := t.all(ctx, pg)
-	if err != nil {
-		return csvFile{}, err
-	}
-	header, rows := manage.CSVSafeTable(append([]string(nil), t.columns...), rows)
 	return csvFile{Name: in.Name + "-submissions.csv", Header: header, Rows: rows}, nil
 }
 
 func (h *host) registerForms(r *registrar) {
-	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
-	no := false
-	write := &mcp.ToolAnnotations{DestructiveHint: &no}
-	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
 	const p = "/api/projects/{project_id}"
 	const f = p + "/forms/{name}"
 

@@ -9,7 +9,6 @@ import (
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 // Widget shares (spec 2026-10-05, D6): a frozen picture of one widget,
@@ -178,9 +177,6 @@ func (h *host) restoreWidgetShare(ctx context.Context, in widgetShareRestoreIn) 
 // multipart upload, the image as a REST-only PNG, the rest on both
 // transports.
 func (h *host) registerWidgetShares(r *registrar) {
-	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
-	no := false
-	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
 	const p = "/api/widget-shares"
 
 	restRaw[createWidgetShareIn, reporting.WidgetShareOut](r, spec{Name: "create_widget_share", Method: "POST", Path: p, Status: http.StatusCreated,

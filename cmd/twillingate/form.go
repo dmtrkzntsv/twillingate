@@ -58,22 +58,9 @@ func plural(n int, one, many string) string {
 }
 
 func cmdForm(args []string, stdout io.Writer) int {
-	fs := flag.NewFlagSet("form", flag.ContinueOnError)
-	fs.SetOutput(stdout)
-	envFile := fs.String("env-file", "", "load environment from this file (real env wins)")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	rest := fs.Args()
-	if len(rest) == 0 {
-		fmt.Fprintln(stdout, formUsage)
-		return 2
-	}
-	sub, subArgs := rest[0], rest[1:]
-	switch sub {
-	case "list", "approve", "update", "archive", "restore", "export", "erase":
-	default:
-		fmt.Fprintf(stdout, "unknown subcommand %q\n%s\n", sub, formUsage)
+	envFile, sub, subArgs, ok := subcommand("form", formUsage,
+		[]string{"list", "approve", "update", "archive", "restore", "export", "erase"}, args, stdout)
+	if !ok {
 		return 2
 	}
 
@@ -172,16 +159,16 @@ func cmdForm(args []string, stdout io.Writer) int {
 		}
 	}
 
-	ops, cfg, closeStore, code := openOps(stdout, *envFile)
-	if code != 0 {
-		return code
-	}
-	defer closeStore()
-	ctx := context.Background()
 	fail := func(err error) int {
 		fmt.Fprintln(stdout, err)
 		return 1
 	}
+	ops, cfg, closeStore, err := openOps(envFile)
+	if err != nil {
+		return fail(err)
+	}
+	defer closeStore()
+	ctx := context.Background()
 
 	switch sub {
 	case "list":
@@ -220,10 +207,6 @@ func cmdForm(args []string, stdout io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "form %q restored\n", *name)
 	case "export":
-		f, err := ops.ActiveForm(ctx, *project, *name)
-		if err != nil {
-			return fail(err)
-		}
 		db, err := readsql.Open(app.DatabasePath(cfg.Database), cfg.Console.QueryTimeout, cfg.Console.QueryMaxRows)
 		if err != nil {
 			return fail(err)
@@ -231,11 +214,10 @@ func cmdForm(args []string, stdout io.Writer) int {
 		defer db.Close()
 		// Read everything before writing a byte, so a failure leaves
 		// stdout empty rather than a truncated file.
-		_, header, rows, err := manage.AllSubmissions(ctx, db, f, *archived, readsql.Page{})
+		header, rows, err := ops.ExportSubmissions(ctx, db, *project, *name, *archived, readsql.Page{})
 		if err != nil {
 			return fail(err)
 		}
-		header, rows = manage.CSVSafeTable(header, rows)
 		w := csv.NewWriter(stdout)
 		w.Write(header)
 		for _, r := range rows {

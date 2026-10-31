@@ -22,12 +22,16 @@ func TestRefusalKeepsMessage(t *testing.T) {
 func TestOperationRefusalsAreTyped(t *testing.T) {
 	h, _ := newTestHost(t)
 	ctx := context.Background()
+	rangeErr := func(in rangeIn) error {
+		_, _, err := h.rangeOf(ctx, in)
+		return err
+	}
 	cases := map[string]struct {
 		err  error
 		kind error
 	}{
-		"bad day":         {h.checkRange(ctx, rangeIn{ProjectID: 1, From: "yesterday", To: "2026-08-21"}), manage.ErrInvalid},
-		"unknown project": {h.checkRange(ctx, rangeIn{ProjectID: 42, From: "2026-08-20", To: "2026-08-21"}), manage.ErrNotFound},
+		"bad day":         {rangeErr(rangeIn{ProjectID: 1, From: "yesterday", To: "2026-08-21"}), manage.ErrInvalid},
+		"unknown project": {rangeErr(rangeIn{ProjectID: 42, From: "2026-08-20", To: "2026-08-21"}), manage.ErrNotFound},
 	}
 	for name, c := range cases {
 		if !errors.Is(c.err, c.kind) {

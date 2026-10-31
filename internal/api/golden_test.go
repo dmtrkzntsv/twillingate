@@ -173,8 +173,7 @@ func measuresColumns(t *testing.T, h *host) []string {
 			f.Close()
 		}
 	}
-	_, attrs := h.reg.Snapshot(context.Background()).RuleLists()
-	attrs = slices.Clone(attrs)
+	attrs := slices.Clone(h.reg.Snapshot(context.Background()).Rules().Attributes)
 	slices.SortFunc(attrs, func(a, b store.AttributeRule) int {
 		return cmp.Or(cmp.Compare(a.ProjectID, b.ProjectID), cmp.Compare(a.Key, b.Key))
 	})

@@ -81,12 +81,12 @@ func (f *jwksFixture) claims(over jwt.MapClaims) jwt.MapClaims {
 
 func TestOAuthVerifier(t *testing.T) {
 	f := newJWKSFixture(t)
-	url, err := DiscoverJWKSURL(context.Background(), f.issuer, f.server.Client())
+	url, err := discoverJWKSURL(context.Background(), f.issuer, f.server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
-	v := OAuthVerifier(f.issuer, []string{"https://twillingate.example.com"},
-		NewJWKSCache(url, f.server.Client()))
+	v := oauthVerifier(f.issuer, []string{"https://twillingate.example.com"},
+		newJWKSCache(url, f.server.Client()))
 
 	info, err := v(context.Background(), f.sign(t, f.claims(nil)), nil)
 	if err != nil {
@@ -113,7 +113,7 @@ func TestOAuthVerifier(t *testing.T) {
 	}
 
 	// No audiences must not mean "any audience".
-	none := OAuthVerifier(f.issuer, nil, NewJWKSCache(url, f.server.Client()))
+	none := oauthVerifier(f.issuer, nil, newJWKSCache(url, f.server.Client()))
 	if _, err := none(context.Background(), f.sign(t, f.claims(nil)), nil); err == nil {
 		t.Error("verifier with no audiences accepted a token")
 	}
@@ -121,9 +121,9 @@ func TestOAuthVerifier(t *testing.T) {
 
 func TestOAuthVerifierRejectsHMACAndNone(t *testing.T) {
 	f := newJWKSFixture(t)
-	url, _ := DiscoverJWKSURL(context.Background(), f.issuer, f.server.Client())
-	v := OAuthVerifier(f.issuer, []string{"https://twillingate.example.com"},
-		NewJWKSCache(url, f.server.Client()))
+	url, _ := discoverJWKSURL(context.Background(), f.issuer, f.server.Client())
+	v := oauthVerifier(f.issuer, []string{"https://twillingate.example.com"},
+		newJWKSCache(url, f.server.Client()))
 	// HMAC token signed with an arbitrary secret; alg allowlist must
 	// reject it before any key lookup happens.
 	hm := jwt.NewWithClaims(jwt.SigningMethodHS256, f.claims(nil))
@@ -147,8 +147,8 @@ func TestOAuthVerifierRejectsHMACAndNone(t *testing.T) {
 
 func TestJWKSCacheRefetchesOnUnknownKid(t *testing.T) {
 	f := newJWKSFixture(t)
-	url, _ := DiscoverJWKSURL(context.Background(), f.issuer, f.server.Client())
-	cache := NewJWKSCache(url, f.server.Client())
+	url, _ := discoverJWKSURL(context.Background(), f.issuer, f.server.Client())
+	cache := newJWKSCache(url, f.server.Client())
 	if _, err := cache.Key("k1"); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +165,7 @@ func TestJWKSCacheRefetchesOnUnknownKid(t *testing.T) {
 }
 
 func TestStaticVerifier(t *testing.T) {
-	v := StaticVerifier("ar_secret")
+	v := staticVerifier("ar_secret")
 	if info, err := v(context.Background(), "ar_secret", nil); err != nil || info.UserID != "mcp" {
 		t.Fatalf("valid: %v %+v", err, info)
 	}
@@ -182,11 +182,11 @@ func TestStaticVerifier(t *testing.T) {
 // must not cause more than one additional fetch to the JWKS endpoint.
 func TestJWKSCacheThrottlesRefetch(t *testing.T) {
 	f := newJWKSFixture(t)
-	url, err := DiscoverJWKSURL(context.Background(), f.issuer, f.server.Client())
+	url, err := discoverJWKSURL(context.Background(), f.issuer, f.server.Client())
 	if err != nil {
 		t.Fatal(err)
 	}
-	cache := NewJWKSCache(url, f.server.Client())
+	cache := newJWKSCache(url, f.server.Client())
 	// warm the cache; leave cache.minRefetch at its default (time.Minute).
 	if _, err := cache.Key("k1"); err != nil {
 		t.Fatal(err)
@@ -234,7 +234,7 @@ func TestJWKSCacheSkipsMalformedKeys(t *testing.T) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
-	cache := NewJWKSCache(server.URL+"/jwks", server.Client())
+	cache := newJWKSCache(server.URL+"/jwks", server.Client())
 
 	got, err := cache.Key("good")
 	if err != nil {
@@ -257,7 +257,7 @@ func TestDiscoverJWKSURLNon200(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	if _, err := DiscoverJWKSURL(context.Background(), server.URL, server.Client()); err == nil {
+	if _, err := discoverJWKSURL(context.Background(), server.URL, server.Client()); err == nil {
 		t.Fatal("non-200 issuer metadata response accepted")
 	}
 }
@@ -268,7 +268,7 @@ func TestDiscoverJWKSURLMissingJWKSURI(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	if _, err := DiscoverJWKSURL(context.Background(), server.URL, server.Client()); err == nil {
+	if _, err := discoverJWKSURL(context.Background(), server.URL, server.Client()); err == nil {
 		t.Fatal("issuer metadata without jwks_uri accepted")
 	}
 }
@@ -302,7 +302,7 @@ func TestJWKSCacheParsesECKeys(t *testing.T) {
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 
-	cache := NewJWKSCache(server.URL+"/jwks", server.Client())
+	cache := newJWKSCache(server.URL+"/jwks", server.Client())
 	got, err := cache.Key("ec-good")
 	if err != nil {
 		t.Fatalf("valid EC key rejected: %v", err)
@@ -319,7 +319,7 @@ func TestJWKSCacheParsesECKeys(t *testing.T) {
 
 func TestJWKSCacheFetchNetworkError(t *testing.T) {
 	// Port 0 is never a live listener; the Get itself fails to connect.
-	cache := NewJWKSCache("http://127.0.0.1:0/jwks", &http.Client{Timeout: time.Second})
+	cache := newJWKSCache("http://127.0.0.1:0/jwks", &http.Client{Timeout: time.Second})
 	if _, err := cache.Key("anything"); err == nil {
 		t.Fatal("fetch against an unreachable JWKS endpoint succeeded")
 	}
@@ -330,7 +330,7 @@ func TestJWKSCacheFetchNon200(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	t.Cleanup(server.Close)
-	cache := NewJWKSCache(server.URL, server.Client())
+	cache := newJWKSCache(server.URL, server.Client())
 	if _, err := cache.Key("k1"); err == nil {
 		t.Fatal("non-200 JWKS response accepted")
 	}
@@ -341,7 +341,7 @@ func TestJWKSCacheFetchMalformedJSON(t *testing.T) {
 		w.Write([]byte("not json"))
 	}))
 	t.Cleanup(server.Close)
-	cache := NewJWKSCache(server.URL, server.Client())
+	cache := newJWKSCache(server.URL, server.Client())
 	if _, err := cache.Key("k1"); err == nil {
 		t.Fatal("malformed JWKS body accepted")
 	}

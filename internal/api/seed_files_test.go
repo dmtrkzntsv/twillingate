@@ -50,8 +50,7 @@ type hostPresence struct {
 }
 
 func (p hostPresence) rules(ctx context.Context) archive.Rules {
-	events, attrs := p.files.reg.Snapshot(ctx).RuleLists()
-	return archive.Rules{Events: events, Attributes: attrs}
+	return p.files.reg.Snapshot(ctx).Rules()
 }
 
 func (p hostPresence) HasEvents(ctx context.Context, projectID int64, family store.Family, name string) (bool, error) {

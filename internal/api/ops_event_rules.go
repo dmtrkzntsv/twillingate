@@ -49,11 +49,8 @@ type eventNameIn struct {
 	Name      string `json:"name" jsonschema:"the event name; not a $ name"`
 }
 
-type renameEventOut struct {
-	Rule eventRuleOut `json:"rule"`
-}
-
-type blockEventOut struct {
+// eventRuleResultOut answers a rename, a merge or a block: the rule.
+type eventRuleResultOut struct {
 	Rule eventRuleOut `json:"rule"`
 }
 
@@ -71,6 +68,9 @@ type eventNamesOut struct {
 // not the project: only an unknown project gets the list of valid ones, a
 // missing rule keeps manage's message, which names it. Both are 404.
 func (h *host) ruleErr(ctx context.Context, id int64, err error) error {
+	if err == nil {
+		return nil
+	}
 	if h.reg.Snapshot(ctx).Project(id) == nil {
 		return h.unknownProjectErr(ctx, id)
 	}
@@ -89,37 +89,32 @@ func (h *host) listEventRules(ctx context.Context, in idIn) (listEventRulesOut, 
 	return out, nil
 }
 
-func (h *host) renameEvent(ctx context.Context, in renameEventIn) (renameEventOut, error) {
+func (h *host) renameEvent(ctx context.Context, in renameEventIn) (eventRuleResultOut, error) {
 	rule, err := h.ops.RenameEvent(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.From, in.To)
 	return h.movedOut(ctx, in.ProjectID, rule, err)
 }
 
-func (h *host) mergeEvent(ctx context.Context, in mergeEventIn) (renameEventOut, error) {
+func (h *host) mergeEvent(ctx context.Context, in mergeEventIn) (eventRuleResultOut, error) {
 	rule, err := h.ops.MergeEvent(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.From, in.To)
 	return h.movedOut(ctx, in.ProjectID, rule, err)
 }
 
-// movedOut answers a rename or a merge: the rule.
-func (h *host) movedOut(ctx context.Context, id int64, rule store.EventRule, err error) (renameEventOut, error) {
+// movedOut answers a rename, a merge or a block: the rule.
+func (h *host) movedOut(ctx context.Context, id int64, rule store.EventRule, err error) (eventRuleResultOut, error) {
 	if err != nil {
-		return renameEventOut{}, h.ruleErr(ctx, id, err)
+		return eventRuleResultOut{}, h.ruleErr(ctx, id, err)
 	}
-	return renameEventOut{Rule: ruleOut(rule)}, nil
+	return eventRuleResultOut{Rule: ruleOut(rule)}, nil
 }
 
-func (h *host) blockEvent(ctx context.Context, in eventNameIn) (blockEventOut, error) {
+func (h *host) blockEvent(ctx context.Context, in eventNameIn) (eventRuleResultOut, error) {
 	rule, err := h.ops.BlockEvent(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.Name)
-	if err != nil {
-		return blockEventOut{}, h.ruleErr(ctx, in.ProjectID, err)
-	}
-	return blockEventOut{Rule: ruleOut(rule)}, nil
+	return h.movedOut(ctx, in.ProjectID, rule, err)
 }
 
 func (h *host) removeEventRule(ctx context.Context, in eventNameIn) (okOut, error) {
-	if err := h.ops.RemoveEventRule(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.Name); err != nil {
-		return okOut{}, h.ruleErr(ctx, in.ProjectID, err)
-	}
-	return okOut{Status: "removed"}, nil
+	err := h.ops.RemoveEventRule(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.Name)
+	return ok("removed", h.ruleErr(ctx, in.ProjectID, err))
 }
 
 // eventNamesMax is how many names event_names lists: a project sending
@@ -134,11 +129,11 @@ const eventNamesMax = 200
 // than 1,000 names tie with the 200th, the ones kept are the engine's
 // first 1,000 sorted (topRows), not the first 200 by name over them all.
 func (h *host) eventNames(ctx context.Context, in rangeIn) (eventNamesOut, error) {
-	if err := h.checkRange(ctx, in); err != nil {
+	p, ok, err := h.rangeOf(ctx, in)
+	if err != nil {
 		return eventNamesOut{}, err
 	}
 	out := eventNamesOut{Events: []eventNameOut{}}
-	p, ok := rangeParams(in)
 	if !ok {
 		return out, nil
 	}

@@ -7,18 +7,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
+	"github.com/dmtrkzntsv/twillingate/internal/wire"
 )
-
-// defaultFormDraftDays is RETENTION_FORMS_DRAFT_DAYS' default, used when the caller
-// left Ops.FormDraftDays unset.
-const defaultFormDraftDays = 7
 
 const (
 	minSearchLen     = 2
 	defaultFindLimit = 100
 	maxFindLimit     = 500
-	maxFieldName     = 64
 )
 
 // FormSpec is the caller's view of a form edit. A nil field keeps the
@@ -54,9 +51,9 @@ func checkExpected(expected []string) ([]string, error) {
 		switch {
 		case n == "":
 			return nil, fmt.Errorf("%w: expected fields must not contain an empty name", ErrInvalid)
-		case len([]rune(n)) > maxFieldName:
-			return nil, fmt.Errorf("%w: expected field %q is longer than %d characters", ErrInvalid, n, maxFieldName)
-		case strings.ContainsFunc(n, func(r rune) bool { return r < 0x20 || r == 0x7f }):
+		case len([]rune(n)) > wire.MaxFormFieldName:
+			return nil, fmt.Errorf("%w: expected field %q is longer than %d characters", ErrInvalid, n, wire.MaxFormFieldName)
+		case wire.HasControl(n):
 			return nil, fmt.Errorf("%w: expected field %q holds a control character; no submitted field does", ErrInvalid, n)
 		case strings.HasPrefix(n, "$"):
 			return nil, fmt.Errorf("%w: expected field %q starts with $, which is reserved for context keys; drop it", ErrInvalid, n)
@@ -65,9 +62,11 @@ func checkExpected(expected []string) ([]string, error) {
 	return dedupe(expected), nil
 }
 
+// draftDays is Ops.FormDraftDays, or RETENTION_FORMS_DRAFT_DAYS' default
+// when the caller left it unset.
 func (o *Ops) draftDays() int {
 	if o.FormDraftDays < 1 {
-		return defaultFormDraftDays
+		return config.DefaultFormDraftDays
 	}
 	return o.FormDraftDays
 }

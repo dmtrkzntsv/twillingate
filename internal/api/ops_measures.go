@@ -20,7 +20,8 @@ type measuresIn struct {
 // log-scale buckets, by name, kind and value: at most
 // CONSOLE_QUERY_ROWS_MAX rows (and the engine's 1,000).
 func (h *host) measures(ctx context.Context, in measuresIn) (tableOut, error) {
-	if err := h.checkRange(ctx, in.rangeIn); err != nil {
+	p, ok, err := h.rangeOf(ctx, in.rangeIn)
+	if err != nil {
 		return tableOut{}, err
 	}
 	dims, cols := []string{"event_name", "measure"}, []string{"event_name", "measure"}
@@ -33,7 +34,6 @@ func (h *host) measures(ctx context.Context, in measuresIn) (tableOut, error) {
 		dims, cols, where = append(dims, col), append(cols, "attr_value"), append(where, set)
 	}
 	cols = append(cols, "samples", "est_count", "mean", "p50", "p75", "p95")
-	p, ok := rangeParams(in.rangeIn)
 	if !ok {
 		return tableOut{Columns: cols, Rows: [][]string{}}, nil
 	}

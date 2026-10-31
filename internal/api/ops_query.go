@@ -294,8 +294,7 @@ func (h *host) answer(ctx context.Context, q native.Query, p native.Params) (nat
 	}
 	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
-	events, attrs := h.reg.Snapshot(ctx).RuleLists()
-	res, err := h.native.Answer(ctx, q, p, archive.Rules{Events: events, Attributes: attrs})
+	res, err := h.native.Answer(ctx, q, p, h.reg.Snapshot(ctx).Rules())
 	if err != nil {
 		return native.Result{}, h.answerErr(err)
 	}
@@ -363,8 +362,7 @@ func (h *host) answerRequests(ctx context.Context, reqs []native.Request, each b
 		}
 		return ctx, func() {}
 	}
-	events, attrs := h.reg.Snapshot(ctx).RuleLists()
-	rules := archive.Rules{Events: events, Attributes: attrs}
+	rules := h.reg.Snapshot(ctx).Rules()
 	if m, ok := h.native.(manyNative); ok {
 		all := make([]native.Request, len(reqs))
 		for i, r := range reqs {
@@ -435,8 +433,7 @@ func (h *host) runSQL(ctx context.Context, sql string) (tableOut, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
-	events, attrs := h.reg.Snapshot(ctx).RuleLists()
-	rules := archive.Rules{Events: events, Attributes: attrs}
+	rules := h.reg.Snapshot(ctx).Rules()
 	var specErr error
 	res, err := sqlengine.QueryFresh(ctx, h.sql, sqlengine.Request{SQL: sql, Args: map[string]string{}, MaxRows: h.queryRows,
 		Mode: sqlengine.ModeRows, Confine: true}, func() (sqlengine.Tables, error) {
