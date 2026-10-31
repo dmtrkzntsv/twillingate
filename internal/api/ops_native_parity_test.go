@@ -167,12 +167,11 @@ func (h *host) runFiles(ctx context.Context, req sqlengine.Request) (sqlengine.R
 	}
 	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
-	events, attrs := h.reg.Snapshot(ctx).RuleLists()
 	var projects []int64
 	if req.Scope != nil {
 		projects = []int64{*req.Scope}
 	}
-	tables, err := archive.TableSpec(h.eventsDir, projects, archive.Rules{Events: events, Attributes: attrs})
+	tables, err := archive.TableSpec(h.eventsDir, projects, h.reg.Snapshot(ctx).Rules())
 	if err != nil {
 		return sqlengine.Result{}, err
 	}

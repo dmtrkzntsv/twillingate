@@ -135,8 +135,7 @@ func registryRules(reg *manage.Registry) reporting.RulesFunc {
 		return nil
 	}
 	return func(ctx context.Context, _ int64) archive.Rules {
-		events, attrs := reg.Snapshot(ctx).RuleLists()
-		return archive.Rules{Events: events, Attributes: attrs}
+		return reg.Snapshot(ctx).Rules()
 	}
 }
 

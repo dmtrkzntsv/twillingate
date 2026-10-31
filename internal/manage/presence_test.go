@@ -122,8 +122,8 @@ func TestRenameStopsWhenPresenceFails(t *testing.T) {
 	if _, err := ops.RenameAttribute(ctx, "t", p, "a", "b"); !errors.Is(err, down) || errors.Is(err, ErrConflict) {
 		t.Errorf("rename attribute: err = %v, want the presence's error", err)
 	}
-	events, attrs := reg.Snapshot(ctx).RuleLists()
-	if len(events) != 0 || len(attrs) != 0 {
+	rules := reg.Snapshot(ctx).Rules()
+	if events, attrs := rules.Events, rules.Attributes; len(events) != 0 || len(attrs) != 0 {
 		t.Errorf("a failed check wrote rules: %v %v", events, attrs)
 	}
 	if _, err := ops.MergeEvent(ctx, "t", p, "product", "a", "b"); err != nil {
@@ -160,7 +160,7 @@ func TestMoveOntoARenamedTargetIsAConflict(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	events, attrs := reg.Snapshot(ctx).RuleLists()
+	before := reg.Snapshot(ctx).Rules()
 	for name, move := range map[string]func() error{
 		"rename event":     func() error { _, err := ops.RenameEvent(ctx, "t", p, "product", "c", "b"); return err },
 		"merge event":      func() error { _, err := ops.MergeEvent(ctx, "t", p, "product", "c", "b"); return err },
@@ -171,7 +171,7 @@ func TestMoveOntoARenamedTargetIsAConflict(t *testing.T) {
 			t.Errorf("%s: err = %v, want ErrConflict", name, err)
 		}
 	}
-	if e, a := reg.Snapshot(ctx).RuleLists(); len(e) != len(events) || len(a) != len(attrs) {
-		t.Errorf("refusals wrote rules: %v %v", e, a)
+	if after := reg.Snapshot(ctx).Rules(); len(after.Events) != len(before.Events) || len(after.Attributes) != len(before.Attributes) {
+		t.Errorf("refusals wrote rules: %v %v", after.Events, after.Attributes)
 	}
 }

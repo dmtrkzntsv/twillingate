@@ -3,7 +3,10 @@
 // settings, so the two cannot drift.
 package wire
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 const (
 	// MaxBody accommodates a full MaxBatchEvents batch; single events are
@@ -31,6 +34,14 @@ const (
 	MaxFormFieldName = 64
 	MaxFormValue     = 8 << 10
 )
+
+// HasControl reports a C0 control character or DEL (U+0000 to U+001F,
+// U+007F) in s: a form field named with one is dropped. No real form
+// control is named with one, and a NUL would end the SQL that reads the
+// field (readsql refuses it) for good.
+func HasControl(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool { return r < 0x20 || r == 0x7f })
+}
 
 // MaxMeasureValue bounds a measure's value: 1e15 is about 31,000 years in
 // milliseconds and 1 PB in bytes, beyond anything a time, size or count can

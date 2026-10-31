@@ -19,6 +19,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -303,10 +304,10 @@ func (s *Snapshot) AttributeRuleList(projectID int64) []store.AttributeRule {
 	return s.attrRuleList[projectID]
 }
 
-// RuleLists is every project's event rules, by project, family and name,
+// Rules is every project's event rules, by project, family and name,
 // and attribute rules, by project and key: what the event files' tables
 // apply on read (raw-first D6). The slices are new; the rules are copies.
-func (s *Snapshot) RuleLists() ([]store.EventRule, []store.AttributeRule) {
+func (s *Snapshot) Rules() archive.Rules {
 	var events []store.EventRule
 	for _, rs := range s.rules {
 		for _, r := range rs {
@@ -323,7 +324,7 @@ func (s *Snapshot) RuleLists() ([]store.EventRule, []store.AttributeRule) {
 	slices.SortFunc(attrs, func(a, b store.AttributeRule) int {
 		return cmp.Or(cmp.Compare(a.ProjectID, b.ProjectID), cmp.Compare(a.Key, b.Key))
 	})
-	return events, attrs
+	return archive.Rules{Events: events, Attributes: attrs}
 }
 
 func (s *Snapshot) Project(id int64) *Project { return s.byID[id] }

@@ -44,6 +44,5 @@ func (p *filePresence) prepare(ctx context.Context) (context.Context, archive.Ru
 	if p.timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, p.timeout)
 	}
-	events, attrs := p.reg.Snapshot(ctx).RuleLists()
-	return ctx, archive.Rules{Events: events, Attributes: attrs}, cancel
+	return ctx, p.reg.Snapshot(ctx).Rules(), cancel
 }
