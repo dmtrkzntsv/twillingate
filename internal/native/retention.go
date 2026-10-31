@@ -126,51 +126,22 @@ func (s scan) retentionActors(ctx context.Context, spec retentionSpec, files arc
 	if err != nil {
 		return nil, err
 	}
-	work := make([]group, 0, len(logs)+len(groups))
-	for _, path := range logs {
-		work = append(work, group{file: path, index: -1})
-	}
-	work = append(work, groups...)
 	parts := make([]map[string]*retentionState, s.e.workers)
 	for i := range parts {
 		parts[i] = map[string]*retentionState{}
 	}
 	win := retentionWindow{lo: lo, hi: hi, words: words}
-	readers := make([]groupReader, s.e.workers)
-	err = scanParallel(ctx, work, s.e.workers, func(w int, g group) error {
-		var bs []*batch
-		if g.index < 0 {
-			var err error
-			if bs, err = s.e.logs.read(ctx, g.file, read, "", r); err != nil {
-				return err
-			}
-		} else {
-			b, err := readers[w].read(g, read, "", r)
-			if err != nil {
-				return err
-			}
-			bs = []*batch{b}
+	err = s.e.scanFiles(ctx, logs, groups, s.e.logs.read, read, "", r, func(w int, b *batch) error {
+		b = s.rules.apply(b, "")
+		if ids != nil {
+			addIdentityColumns(b, idCols, ids)
 		}
-		for _, b := range bs {
-			b = s.rules.apply(b, "")
-			if ids != nil {
-				addIdentityColumns(b, idCols, ids)
-			}
-			grew, err := win.add(parts[w], b, s.filters)
-			if err != nil {
-				return err
-			}
-			if err := charge(grew); err != nil {
-				return err
-			}
+		grew, err := win.add(parts[w], b, s.filters)
+		if err != nil {
+			return err
 		}
-		return nil
+		return charge(grew)
 	})
-	for i := range readers {
-		if cerr := readers[i].close(); err == nil {
-			err = cerr
-		}
-	}
 	if err != nil {
 		return nil, err
 	}

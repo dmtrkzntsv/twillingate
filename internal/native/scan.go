@@ -80,6 +80,52 @@ feed:
 	return firstErr
 }
 
+// withReaders is scanParallel over work, each worker w reading row groups
+// through a groupReader of its own (gr), every one closed once the scan
+// ends: the scan's error is returned, else the first close's.
+func withReaders[T any](ctx context.Context, work []T, workers int, read func(w int, gr *groupReader, item T) error) error {
+	readers := make([]groupReader, workers)
+	err := scanParallel(ctx, work, workers, func(w int, item T) error { return read(w, &readers[w], item) })
+	for i := range readers {
+		if cerr := readers[i].close(); err == nil {
+			err = cerr
+		}
+	}
+	return err
+}
+
+// scanFiles reads cols of the rows of family (any, when "") in r from the
+// logs, through readLog, and the row groups groups, and hands each batch
+// to each from the workers (w the worker's index). The logs, read whole,
+// go first, so the row groups fill in beside them.
+func (e *Engine) scanFiles(ctx context.Context, logs []string, groups []group, readLog logReader, cols []string, family string, r dayRange,
+	each func(w int, b *batch) error) error {
+	work := make([]group, 0, len(logs)+len(groups))
+	for _, path := range logs {
+		work = append(work, group{file: path, index: -1})
+	}
+	work = append(work, groups...)
+	return withReaders(ctx, work, e.workers, func(w int, gr *groupReader, g group) error {
+		if g.index >= 0 {
+			b, err := gr.read(g, cols, family, r)
+			if err != nil {
+				return err
+			}
+			return each(w, b)
+		}
+		bs, err := readLog(ctx, g.file, cols, family, r)
+		if err != nil {
+			return err
+		}
+		for _, b := range bs {
+			if err := each(w, b); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // expandCols resolves the requested names against one file's columns: a
 // "prefix*" pattern becomes every file column with that prefix; a plain
 // name becomes the file's column as batch.col would find it (the file's

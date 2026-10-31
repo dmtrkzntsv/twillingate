@@ -76,26 +76,19 @@ func (e *Engine) scanSessionsWith(ctx context.Context, project int64, r dayRange
 		work = append(work, group{index: gapIndex, day: epochDay(d)})
 	}
 	work = append(work, groups...)
-	readers := make([]groupReader, e.workers)
-	err = scanParallel(ctx, work, e.workers, func(w int, g group) error {
+	return withReaders(ctx, work, e.workers, func(w int, gr *groupReader, g group) error {
 		var b *batch
 		var err error
 		if g.index == gapIndex {
-			b, err = deriveSessions(ctx, project, g.day, events, &readers[w], logs, charge)
+			b, err = deriveSessions(ctx, project, g.day, events, gr, logs, charge)
 		} else {
-			b, err = readers[w].read(g, cols, "", r)
+			b, err = gr.read(g, cols, "", r)
 		}
 		if err != nil {
 			return err
 		}
 		return add(w, b)
 	})
-	for i := range readers {
-		if cerr := readers[i].close(); err == nil {
-			err = cerr
-		}
-	}
-	return err
 }
 
 // batchBytes is about what b's columns take.

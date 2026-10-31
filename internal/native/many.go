@@ -592,20 +592,13 @@ func (sh *sharedScan) scanEvents(ctx context.Context, cons []*consumer) error {
 		return err
 	}
 	work = append(work, groups...)
-	readers := make([]groupReader, e.workers)
-	err = scanParallel(ctx, work, e.workers, func(w int, it manyItem) error {
+	return withReaders(ctx, work, e.workers, func(w int, gr *groupReader, it manyItem) error {
 		onScanItem()
 		if it.g.index < 0 {
 			return sh.feedLog(ctx, w, it)
 		}
-		return sh.feedGroup(w, &readers[w], it)
+		return sh.feedGroup(w, gr, it)
 	})
-	for i := range readers {
-		if cerr := readers[i].close(); err == nil {
-			err = cerr
-		}
-	}
-	return err
 }
 
 // overlapping are the consumers of cons whose range a file named as path
@@ -918,13 +911,12 @@ func (sh *sharedScan) scanSessions(ctx context.Context, cons []*consumer) error 
 		return err
 	}
 	work = append(work, groups...)
-	readers := make([]groupReader, e.workers)
-	err = scanParallel(ctx, work, e.workers, func(w int, it manyItem) error {
+	return withReaders(ctx, work, e.workers, func(w int, gr *groupReader, it manyItem) error {
 		onScanItem()
 		if it.g.index != gapIndex {
-			return sh.feedGroup(w, &readers[w], it)
+			return sh.feedGroup(w, gr, it)
 		}
-		b, err := deriveSessions(ctx, sh.project, it.g.day, events, &readers[w], e.logs.read, sh.chargeAll(it.uses))
+		b, err := deriveSessions(ctx, sh.project, it.g.day, events, gr, e.logs.read, sh.chargeAll(it.uses))
 		if errors.Is(err, errNoConsumer) {
 			return nil
 		}
@@ -936,12 +928,6 @@ func (sh *sharedScan) scanSessions(ctx context.Context, cons []*consumer) error 
 		}
 		return nil
 	})
-	for i := range readers {
-		if cerr := readers[i].close(); err == nil {
-			err = cerr
-		}
-	}
-	return err
 }
 
 // chargeAll charges each of uses' consumers the bytes a gap day's views

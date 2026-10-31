@@ -777,37 +777,7 @@ func (e *Engine) scanIdentityEvents(ctx context.Context, parquet, logs, cols []s
 	if err != nil {
 		return err
 	}
-	work := make([]group, 0, len(logs)+len(groups))
-	for _, path := range logs {
-		work = append(work, group{file: path, index: -1})
-	}
-	work = append(work, groups...)
-	readers := make([]groupReader, e.workers)
-	err = scanParallel(ctx, work, e.workers, func(w int, g group) error {
-		if g.index < 0 {
-			bs, err := e.logs.read(ctx, g.file, cols, "", everything)
-			if err != nil {
-				return err
-			}
-			for _, b := range bs {
-				if err := each(w, b); err != nil {
-					return err
-				}
-			}
-			return nil
-		}
-		b, err := readers[w].read(g, cols, "", everything)
-		if err != nil {
-			return err
-		}
-		return each(w, b)
-	})
-	for i := range readers {
-		if cerr := readers[i].close(); err == nil {
-			err = cerr
-		}
-	}
-	return err
+	return e.scanFiles(ctx, logs, groups, e.logs.read, cols, "", everything, each)
 }
 
 // eachIdentity calls fn for each identity on b's views and product

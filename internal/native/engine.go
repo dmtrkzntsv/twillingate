@@ -651,48 +651,17 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r dayRange, c
 	if err != nil {
 		return err
 	}
-	// The logs, read whole, go first, so the row groups fill in beside them.
-	work := make([]group, 0, len(logs)+len(groups))
-	for _, path := range logs {
-		work = append(work, group{file: path, index: -1})
+	readLog := s.logs
+	if readLog == nil {
+		readLog = s.e.logs.read
 	}
-	work = append(work, groups...)
-	readers := make([]groupReader, s.e.workers)
-	err = scanParallel(ctx, work, s.e.workers, func(w int, g group) error {
-		var bs []*batch
-		if g.index < 0 {
-			logs := s.logs
-			if logs == nil {
-				logs = s.e.logs.read
-			}
-			var err error
-			if bs, err = logs(ctx, g.file, read, fam, r); err != nil {
-				return err
-			}
-		} else {
-			b, err := readers[w].read(g, read, fam, r)
-			if err != nil {
-				return err
-			}
-			bs = []*batch{b}
+	return s.e.scanFiles(ctx, logs, groups, readLog, read, fam, r, func(w int, b *batch) error {
+		b = s.rules.apply(b, fam)
+		if ids != nil {
+			addIdentityColumns(b, idCols, ids)
 		}
-		for _, b := range bs {
-			b = s.rules.apply(b, fam)
-			if ids != nil {
-				addIdentityColumns(b, idCols, ids)
-			}
-			if err := add(w, b); err != nil {
-				return err
-			}
-		}
-		return nil
+		return add(w, b)
 	})
-	for i := range readers {
-		if cerr := readers[i].close(); err == nil {
-			err = cerr
-		}
-	}
-	return err
 }
 
 // identityColumnsOf are the computed identity columns (idColumns: the
