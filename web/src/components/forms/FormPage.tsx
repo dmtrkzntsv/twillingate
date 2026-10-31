@@ -149,6 +149,13 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
   }
 
   const purgeNote = purgeNoteFor(purgeDays)
+  // Beside the heading: the rows the filters match, of all of them.
+  const count = answer && answer.total > 0 && (
+    <span className="ml-1 text-sm font-normal text-muted-foreground">
+      {' '}
+      {live.length > 0 ? `${answer.matched.toLocaleString('en-US')} of ${answer.total.toLocaleString('en-US')}` : answer.total.toLocaleString('en-US')}
+    </span>
+  )
 
   return (
     <section aria-label="Submissions" className="flex min-w-0 flex-col gap-2">
@@ -161,27 +168,13 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
             </Button>
             <h3 className="text-base font-semibold">
               Archived
-              {answer && answer.total > 0 && (
-              <span className="ml-1 text-sm font-normal text-muted-foreground">
-                {' '}
-                {live.length > 0
-                  ? `${answer.matched.toLocaleString('en-US')} of ${answer.total.toLocaleString('en-US')}`
-                  : answer.total.toLocaleString('en-US')}
-              </span>
-            )}
+              {count}
             </h3>
           </div>
         ) : (
           <h3 className="text-base font-semibold">
             Submissions
-            {answer && answer.total > 0 && (
-              <span className="ml-1 text-sm font-normal text-muted-foreground">
-                {' '}
-                {live.length > 0
-                  ? `${answer.matched.toLocaleString('en-US')} of ${answer.total.toLocaleString('en-US')}`
-                  : answer.total.toLocaleString('en-US')}
-              </span>
-            )}
+            {count}
           </h3>
         )}
         {selected.length > 0 ? (

@@ -3,9 +3,9 @@ import {
   ChartContainer,
   ChartTooltip,
 } from '@/components/ui/chart'
-import { axis, formatTick, grid, MAX_BAR, niceTicks, seriesColor, seriesConfig, stackTotals, valueAxis, valuesOf } from '@/lib/chart'
+import { axis, formatTick, grid, MAX_BAR, niceTicks, seriesColor, stackTotals, valueAxis, valuesOf } from '@/lib/chart'
 import { approx, approximate, formatValue, type Format } from '@/lib/format'
-import { pivot, toRecords } from '@/lib/records'
+import { chartSeries, toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
 import { CARD_TICK_GAP, CARD_TYPE, useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
@@ -103,9 +103,7 @@ export default function Bar({ data, props }: WidgetProps<BarProps>) {
   const format = props.format ?? 'number'
   const horizontal = props.horizontal ?? false
   const stacked = props.stacked ?? false
-  const hasSeries = sql.columns.includes('series')
-  const { rows, keys } = hasSeries ? pivot(records, 'x', 'series', 'y') : { rows: records, keys: ['y'] }
-  const config = hasSeries ? seriesConfig(keys) : { y: { label: 'y' } }
+  const { hasSeries, rows, keys, config } = chartSeries(sql.columns, records, 'x', 'y')
   const ticks = niceTicks(stacked ? stackTotals(rows, keys) : valuesOf(rows, keys))
   const labelled = keys.length === 1 && rows.length <= LABELLED
   const show = (v: unknown) => formatValue(Number(v), format)
