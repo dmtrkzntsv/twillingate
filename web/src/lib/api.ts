@@ -14,6 +14,12 @@ export class ApiError extends Error {
   }
 }
 
+/** What a failed call tells the person: the server's refusal, or why none came (a failed `fetch` is a TypeError). */
+export function errorMessage(err: unknown): string {
+  if (err instanceof TypeError) return "Couldn't reach the server"
+  return err instanceof Error ? err.message : String(err)
+}
+
 async function errorFrom(res: Response): Promise<ApiError> {
   try {
     const body = (await res.json()) as { error?: { code?: string; message?: string } }
@@ -612,46 +618,22 @@ export const endpoints = {
   /** The query schema reference as text; parseSchemaViews reads the views out of it. */
   schemaViews: async () => (await apiBlob('/api/schema/views')).text(),
   saveView: (id: number, sel: SaveViewBody) =>
-    api<{ status: string }>(`/api/dashboards/${id}/view`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(sel),
-    }),
+    api<{ status: string }>(`/api/dashboards/${id}/view`, json('PUT', sel)),
   /** Copies a dashboard as one of its own, into group `group_id` as a tab, or its whole group (tabs D10-D11); never archives anything. */
   duplicate: (id: number, body: { whole_group?: boolean; group_id?: number } = {}) =>
-    api<DashboardDetail>(`/api/dashboards/${id}/duplicate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+    api<DashboardDetail>(`/api/dashboards/${id}/duplicate`, json('POST', body)),
   /** Archives a dashboard of the user's, or its whole group (D1); a built-in one is refused (see `setSidebar`). */
   archive: (id: number, wholeGroup = false) =>
-    api<{ status: string }>(`/api/dashboards/${id}/archive`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(wholeGroup ? { whole_group: true } : {}),
-    }),
+    api<{ status: string }>(`/api/dashboards/${id}/archive`, json('POST', wholeGroup ? { whole_group: true } : {})),
   /** Restores a dashboard, or its whole group (D1). */
   restore: (id: number, wholeGroup = false) =>
-    api<{ status: string }>(`/api/dashboards/${id}/restore`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(wholeGroup ? { whole_group: true } : {}),
-    }),
+    api<{ status: string }>(`/api/dashboards/${id}/restore`, json('POST', wholeGroup ? { whole_group: true } : {})),
   /** Moves a tab or a group by naming the dashboard it goes after (tabs D6-D7; D15). */
   move: (id: number, body: MoveBody) =>
-    api<DashboardInfo>(`/api/dashboards/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+    api<DashboardInfo>(`/api/dashboards/${id}`, json('PATCH', body)),
   /** Names the dashboard's group (group names D5); a name is replaced, never cleared, and no dashboard title changes. */
   renameGroup: (id: number, title: string) =>
-    api<DashboardInfo>(`/api/dashboards/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ whole_group: true, title }),
-    }),
+    api<DashboardInfo>(`/api/dashboards/${id}`, json('PATCH', { whole_group: true, title })),
   /** Puts a built-in dashboard's whole group in or out of the sidebar; a built-in is never archived, and your own are always in it (project tabs D5). */
   setSidebar: (id: number, sidebar: boolean) => api<DashboardInfo>(`/api/dashboards/${id}`, json('PATCH', { sidebar })),
   /** A project page's tabs, in order. */

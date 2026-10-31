@@ -1,7 +1,8 @@
 import { useCallback, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { ApiError, endpoints, type FormUpdate, type SubmissionsSelector } from '@/lib/api'
+import { endpoints, type FormUpdate, type SubmissionsSelector } from '@/lib/api'
+import { toastError } from '@/lib/toast-error'
 
 export interface FormActions {
   approve(projectId: number, name: string, fields: string[]): Promise<boolean>
@@ -42,9 +43,7 @@ export function useFormActions(): FormActions {
         await Promise.all(FORM_WRITE.map((key) => client.invalidateQueries({ queryKey: [key] })))
         return out
       } catch (err) {
-        if (err instanceof ApiError) toast.error(err.message)
-        else if (err instanceof TypeError) toast.error("Couldn't reach the server")
-        else toast.error(err instanceof Error ? err.message : String(err))
+        toastError(err)
         return undefined
       } finally {
         setPending(false)

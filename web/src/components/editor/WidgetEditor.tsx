@@ -21,7 +21,7 @@ import { Kbd } from '@/components/ui/kbd'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { widgets } from '@/components/widgets'
-import { ApiError, endpoints, type Widget } from '@/lib/api'
+import { endpoints, errorMessage, type Widget } from '@/lib/api'
 import { rowsPx } from '@/lib/grid'
 import { projectsQuery, schemaViewsQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
@@ -126,12 +126,6 @@ function startDraft(widget: Widget | undefined, sql: boolean): Draft {
   return known(d.component) ? d : { ...d, component: null }
 }
 
-function messageOf(err: unknown): string {
-  if (err instanceof ApiError) return err.message
-  if (err instanceof TypeError) return "Couldn't reach the server"
-  return err instanceof Error ? err.message : String(err)
-}
-
 /** The modal that adds or edits one widget (spec D9–D16); every open starts from the widget as stored. */
 export default function WidgetEditor(p: WidgetEditorProps) {
   const [opened, setOpened] = useState({ open: p.open, n: 0 })
@@ -227,7 +221,7 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
       })
       if (n === latest.current) setRun({ kind: 'done', result, component, props })
     } catch (err) {
-      if (n === latest.current) setRun({ kind: 'failed', message: messageOf(err) })
+      if (n === latest.current) setRun({ kind: 'failed', message: errorMessage(err) })
     }
   }
 
@@ -265,7 +259,7 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
       await onSave(draft)
       onOpenChange(false)
     } catch (err) {
-      setSaveError(messageOf(err))
+      setSaveError(errorMessage(err))
     } finally {
       savingNow.current = false
       setSaving(false)
