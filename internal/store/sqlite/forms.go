@@ -623,18 +623,21 @@ func deleteFormData(ctx context.Context, tx *sql.Tx, projectID int64, name strin
 // likeEscaper makes a search string literal inside LIKE ... ESCAPE '\'.
 var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
-// matchSubmissions is the FROM/WHERE that selects the project's
+// matchedSubmissions is the FROM/WHERE that selects the project's
 // submissions with a field value containing search, archived ones and
 // archived forms' too: an erasure request must reach every copy of a
-// person's data.
-func matchSubmissions(projectID int64, search string) (string, []any, error) {
+// person's data. Its parameters are the project and searchPattern's
+// result.
+const matchedSubmissions = `FROM submissions s JOIN forms f ON f.project_id=s.project_id AND f.name=s.form
+	WHERE s.project_id=?
+	  AND EXISTS (SELECT 1 FROM json_each(s.fields) j WHERE j.value LIKE ? ESCAPE '\')`
+
+// searchPattern is the LIKE pattern matchedSubmissions takes for search.
+func searchPattern(search string) (string, error) {
 	if search == "" {
-		return "", nil, store.Refuse(store.ErrInvalid, "search must not be empty")
+		return "", store.Refuse(store.ErrInvalid, "search must not be empty")
 	}
-	return `FROM submissions s JOIN forms f ON f.project_id=s.project_id AND f.name=s.form
-		WHERE s.project_id=?
-		  AND EXISTS (SELECT 1 FROM json_each(s.fields) j WHERE j.value LIKE ? ESCAPE '\')`,
-		[]any{projectID, "%" + likeEscaper.Replace(search) + "%"}, nil
+	return "%" + likeEscaper.Replace(search) + "%", nil
 }
 
 const defaultFindLimit = 100
@@ -691,15 +694,15 @@ func (d *DB) GetSubmission(ctx context.Context, projectID int64, form, id string
 // archived ones and archived forms' included, each with ArchivedAt and
 // FormArchived.
 func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]store.Submission, string, error) {
-	from, args, err := matchSubmissions(projectID, search)
+	pattern, err := searchPattern(search)
 	if err != nil {
 		return nil, "", err
 	}
 	if limit <= 0 {
 		limit = defaultFindLimit
 	}
+	var at string // the cursor's received_at; "" with no cursor
 	if after != "" {
-		var at string
 		switch err := d.db.QueryRowContext(ctx, `SELECT received_at FROM submissions WHERE project_id=? AND id=?`,
 			projectID, after).Scan(&at); {
 		case errors.Is(err, sql.ErrNoRows):
@@ -707,11 +710,10 @@ func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string
 		case err != nil:
 			return nil, "", err
 		}
-		from += ` AND (s.received_at < ? OR (s.received_at = ? AND s.id < ?))`
-		args = append(args, at, at, after)
 	}
-	rows, err := d.db.QueryContext(ctx, `SELECT `+submissionColumns+`, f.archived_at IS NOT NULL `+from+`
-		ORDER BY s.received_at DESC, s.id DESC LIMIT ?`, append(args, limit+1)...)
+	rows, err := d.db.QueryContext(ctx, `SELECT `+submissionColumns+`, f.archived_at IS NOT NULL `+matchedSubmissions+`
+		AND (? = '' OR s.received_at < ? OR (s.received_at = ? AND s.id < ?))
+		ORDER BY s.received_at DESC, s.id DESC LIMIT ?`, projectID, pattern, after, at, at, after, limit+1)
 	if err != nil {
 		return nil, "", err
 	}
@@ -739,9 +741,10 @@ func (d *DB) FindSubmissions(ctx context.Context, projectID int64, search string
 
 // SubmissionIDsMatching returns every id FindSubmissions would, newest first.
 func (d *DB) SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error) {
-	from, args, err := matchSubmissions(projectID, search)
+	pattern, err := searchPattern(search)
 	if err != nil {
 		return nil, err
 	}
-	return queryColumn[string](ctx, d.db, `SELECT s.id `+from+` ORDER BY s.received_at DESC, s.id DESC`, args...)
+	return queryColumn[string](ctx, d.db, `SELECT s.id `+matchedSubmissions+` ORDER BY s.received_at DESC, s.id DESC`,
+		projectID, pattern)
 }

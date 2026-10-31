@@ -109,15 +109,10 @@ func (d *DB) GetDashboard(ctx context.Context, id int64) (store.Dashboard, error
 // included; dashboardID 0 lists every widget, by dashboard_id then
 // sort_key.
 func (d *DB) ListWidgets(ctx context.Context, dashboardID int64) ([]store.Widget, error) {
-	q := `SELECT ` + widgetCols + ` FROM widgets`
-	var args []any
-	if dashboardID != 0 {
-		q += ` WHERE dashboard_id=? ORDER BY sort_key`
-		args = append(args, dashboardID)
-	} else {
-		q += ` ORDER BY dashboard_id, sort_key`
-	}
-	rows, err := d.db.QueryContext(ctx, q, args...)
+	// sort_key is unique within a dashboard (widgets_order), so one
+	// dashboard's widgets come by sort_key alone.
+	rows, err := d.db.QueryContext(ctx, `SELECT `+widgetCols+` FROM widgets
+		WHERE (?1 = 0 OR dashboard_id = ?1) ORDER BY dashboard_id, sort_key`, dashboardID)
 	if err != nil {
 		return nil, err
 	}
