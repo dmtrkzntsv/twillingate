@@ -15,6 +15,7 @@ import type { DashboardInfo, Form, ListedWidget, Project, WidgetShare } from '@/
 import { groupName, purgeDate } from '@/lib/arrange'
 import { archivedWidgetsQuery, dashboardsQuery, formsQuery, projectsQuery, widgetSharesQuery } from '@/lib/queries'
 import { formatPurgeDate } from '@/lib/time'
+import { plural } from '@/lib/format'
 
 interface Group {
   groupId: number
@@ -178,7 +179,7 @@ export default function Archive() {
   }
 
   /** An archived form's lead-in to its status line: how many submissions go with it. */
-  const submissionCount = (f: Form) => `${f.submissions} ${f.submissions === 1 ? 'submission' : 'submissions'} · `
+  const submissionCount = (f: Form) => `${plural(f.submissions, 'submission')} · `
 
   /** An archived row's status line: archived, and when it goes, the date kept on one line. */
   const archivedStatus = (archived_at: string | null | undefined, prefix = '') => {

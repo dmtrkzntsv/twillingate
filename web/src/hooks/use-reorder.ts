@@ -17,7 +17,7 @@ import {
 import { arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { reorder } from '@/lib/arrange'
 
-export interface Reorder {
+interface Reorder {
   /** The ids in the order to show: the dropped order while its move is in flight, else `ids`. */
   order: number[]
   /** True while a dropped order waits for the server's; dragging is off until then. */

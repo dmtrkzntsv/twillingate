@@ -131,7 +131,7 @@ export function canRefresh(data: WidgetData | undefined, now: number): boolean {
 }
 
 /** What a dashboard reloads: each widget with the query its card shows. */
-export interface DashboardItem {
+interface DashboardItem {
   widget: Widget
   params: WidgetDataQuery
 }

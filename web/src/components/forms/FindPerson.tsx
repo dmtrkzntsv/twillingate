@@ -14,6 +14,7 @@ import { useFormActions } from '@/hooks/use-form-actions'
 import type { FoundSubmission } from '@/lib/api'
 import { formatDayTime, purgeDays as purgeDaysOf } from '@/lib/forms'
 import { dashboardsQuery, findSubmissionsQuery } from '@/lib/queries'
+import { plural } from '@/lib/format'
 
 /** The shortest search the server takes. */
 const MIN = 2
@@ -145,7 +146,7 @@ export default function FindPerson({ projectId }: { projectId: number }) {
                 ? 'but it is never deleted: RETENTION_ARCHIVED_DAYS is 0, so archived submissions are kept until restored.'
                 : purgeDays === undefined
                   ? 'and the daily pass deletes it for good RETENTION_ARCHIVED_DAYS after archiving.'
-                  : `and the daily pass deletes it for good ${purgeDays} ${purgeDays === 1 ? 'day' : 'days'} after archiving.`}{' '}
+                  : `and the daily pass deletes it for good ${plural(purgeDays, 'day')} after archiving.`}{' '}
               Its conversion stays counted.
             </AlertDialogDescription>
           </AlertDialogHeader>

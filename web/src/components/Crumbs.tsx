@@ -2,7 +2,7 @@ import { Fragment } from 'react'
 import { Link } from 'react-router'
 import { Breadcrumb, BreadcrumbItem, BreadcrumbLink, BreadcrumbList, BreadcrumbPage, BreadcrumbSeparator } from '@/components/ui/breadcrumb'
 
-export interface Crumb {
+interface Crumb {
   label: string
   /** Where the crumb goes; the last crumb is the page itself and never links. */
   to?: string

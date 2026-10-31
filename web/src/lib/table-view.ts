@@ -106,7 +106,7 @@ function compareCells(a: string, b: string, dir: 1 | -1): number {
  * Orders two rows by the sort, then by every column ascending so pages never
  * overlap or skip. Without a sort it returns 0: the rows keep their order.
  */
-export function compareRows(a: string[], b: string[], columns: string[], sort: Sort | null): number {
+function compareRows(a: string[], b: string[], columns: string[], sort: Sort | null): number {
   if (!sort) return 0
   const i = columns.indexOf(sort.column)
   if (i >= 0) {

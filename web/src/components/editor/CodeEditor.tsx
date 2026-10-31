@@ -11,7 +11,7 @@ import { EditorView, keymap, lineNumbers, placeholder } from '@codemirror/view'
 import { paramCompletions, sqlNamespace } from '@/lib/sql-completion'
 import type { SchemaTable } from '@/lib/schema-views'
 
-export interface CodeEditorProps {
+interface CodeEditorProps {
   language: 'sql' | 'json' | 'markdown'
   value: string
   onChange(next: string): void

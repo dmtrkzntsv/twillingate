@@ -11,7 +11,7 @@ import type { Format } from '@/lib/format'
 import { isDecimal, OPS, type Filter, type FilterOp, type TableView } from '@/lib/table-view'
 
 /** One value a column holds, with how many rows hold it; `capped` when the list was cut short. */
-export interface ValueOption {
+interface ValueOption {
   value: string
   rows: number
   capped: boolean

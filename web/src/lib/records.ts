@@ -1,6 +1,6 @@
 import type { Contract, SqlData } from '@/components/widgets/types'
 
-export type Record_ = Record<string, string | number | null>
+type Record_ = Record<string, string | number | null>
 
 /**
  * Turns a query's raw string rows into typed records, keyed by the columns

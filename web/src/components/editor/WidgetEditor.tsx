@@ -54,7 +54,7 @@ export interface EditorDefaults {
   timezone: string
 }
 
-export interface WidgetEditorProps {
+interface WidgetEditorProps {
   open: boolean
   onOpenChange(open: boolean): void
   /** Absent: adding a widget. */
@@ -114,7 +114,7 @@ const codeLabel: Record<CodeType, string> = { sql: 'SQL', query: 'Query' }
 const known = (c: string | null): c is string => c !== null && Object.hasOwn(widgets, c)
 
 /** What the editor says of a SQL widget on a server with no external SQL engine. */
-export const SQL_ENGINE_NOTICE =
+const SQL_ENGINE_NOTICE =
   'This widget is SQL, which needs the external SQL engine. Convert it to a structured query to edit it here.'
 
 /** The note beside a table's mode when the server has no external SQL engine. */

@@ -24,7 +24,7 @@ export interface WidgetEditing {
 }
 
 /** What a card of any dashboard, a built-in one included, offers to copy it elsewhere. */
-export interface WidgetCopying {
+interface WidgetCopying {
   /** Opens "Copy to dashboard…" on the widget. */
   copy(widget: Widget): void
 }

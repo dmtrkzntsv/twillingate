@@ -3,8 +3,9 @@ import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { endpoints, type FormUpdate, type SubmissionsSelector } from '@/lib/api'
 import { toastError } from '@/lib/toast-error'
+import { plural } from '@/lib/format'
 
-export interface FormActions {
+interface FormActions {
   approve(projectId: number, name: string, fields: string[]): Promise<boolean>
   update(projectId: number, name: string, body: FormUpdate, done?: string): Promise<boolean>
   archive(projectId: number, name: string): Promise<boolean>
@@ -65,14 +66,14 @@ export function useFormActions(): FormActions {
       (
         await run(
           () => endpoints.archiveSubmissions(projectId, body),
-          (out) => `Archived ${out.archived} ${out.archived === 1 ? 'submission' : 'submissions'}`
+          (out) => `Archived ${plural(out.archived, 'submission')}`
         )
       )?.archived,
     restoreSubmissions: async (projectId, body) =>
       (
         await run(
           () => endpoints.restoreSubmissions(projectId, body),
-          (out) => `Restored ${out.restored} ${out.restored === 1 ? 'submission' : 'submissions'}`
+          (out) => `Restored ${plural(out.restored, 'submission')}`
         )
       )?.restored,
   }

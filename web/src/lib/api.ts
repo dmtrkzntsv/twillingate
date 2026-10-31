@@ -241,7 +241,7 @@ export interface WidgetContentBody {
 }
 
 /** The preview body: an unsaved widget's SQL or structured query run with the project and range the editor holds. */
-export interface PreviewBody {
+interface PreviewBody {
   component: string
   props?: Record<string, unknown>
   source: { type: 'sql' | 'query'; content: string }
@@ -307,7 +307,7 @@ export interface WidgetShare {
 
 
 /** A limit in force: a setting (with its environment variable and default) or one of the wire format's fixed limits. */
-export interface Limit {
+interface Limit {
   group: 'retention' | 'ingest'
   name: string
   /** Absent for a fixed limit. */
@@ -324,7 +324,7 @@ export interface Limit {
 }
 
 /** The events in the event files from `from` through `to` (the 30 days ending today, UTC), of every family and project. */
-export interface Events30d {
+interface Events30d {
   count: number
   from: string
   to: string
@@ -334,7 +334,7 @@ export interface Events30d {
  * The limits answer: the limits in force, the events of the last 30 days (absent when the server could not count
  * them), and whether INGEST_DISABLED refuses every ingest route (absent from a server older than the switch).
  */
-export interface LimitsResponse {
+interface LimitsResponse {
   limits: Limit[]
   events_30d?: Events30d
   ingest_disabled?: boolean
@@ -361,7 +361,7 @@ export interface ProjectUsage {
   size: { total_bytes: number; measured_at: string } | null
 }
 
-export interface UsageResponse {
+interface UsageResponse {
   from: string
   to: string
   database_bytes: number
@@ -444,14 +444,14 @@ export interface ProjectAttributes {
 }
 
 /** An attribute rule: `key` is stored as `to` as it arrives, or (a block, no `to`) stripped from events. */
-export interface AttributeRule {
+interface AttributeRule {
   key: string
   action: 'rename' | 'block'
   to?: string
   created_at?: string
 }
 
-export interface ProjectsResponse {
+interface ProjectsResponse {
   projects: Project[]
 }
 
@@ -496,7 +496,7 @@ export interface ProjectActivity {
 }
 
 /** list_forms' answer: the forms, and where a plain HTML form posts. */
-export interface FormsResponse {
+interface FormsResponse {
   forms: Form[]
   /** INGEST_URL + `/ingest/forms`, so a form's action is `<action_base>/<name>?key=…`; empty without INGEST_URL. */
   action_base: string
@@ -568,7 +568,7 @@ export interface FoundSubmission extends Submission {
  */
 export type SubmissionsSelector = { ids: string[] } | { form: string; filters: string } | { search: string }
 
-export interface ComponentsResponse {
+interface ComponentsResponse {
   source_types: ('md' | 'query' | 'sql')[]
   components: unknown[]
 }
