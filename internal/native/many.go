@@ -106,13 +106,7 @@ func (e *Engine) AnswerMany(ctx context.Context, reqs []Request, done func(i int
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				defer func() {
-					if p := recover(); p != nil {
-						answer(i, Answered{Err: panicked(p)})
-					}
-				}()
-				res, err := e.Answer(rctx, r.Query, r.Params, r.Rules)
-				answer(i, Answered{Result: res, Err: err})
+				e.answerAlone(rctx, i, r, answer)
 			}()
 			continue
 		}
@@ -158,6 +152,18 @@ func (e *Engine) AnswerMany(ctx context.Context, reqs []Request, done func(i int
 		flush()
 	}
 	wg.Wait()
+}
+
+// answerAlone answers r, request i, by Answer under ctx; a panic in it (a
+// bug) answers it with an internal error.
+func (e *Engine) answerAlone(ctx context.Context, i int, r Request, answer func(int, Answered)) {
+	defer func() {
+		if p := recover(); p != nil {
+			answer(i, Answered{Err: panicked(p)})
+		}
+	}()
+	res, err := e.Answer(ctx, r.Query, r.Params, r.Rules)
+	answer(i, Answered{Result: res, Err: err})
 }
 
 // AnswerAll is AnswerMany's answers, by request.
@@ -238,12 +244,12 @@ type consumer struct {
 // prepare checks and compiles r, request i, for a shared scan, with its
 // aggregations.
 func (e *Engine) prepare(ctx context.Context, i int, r Request) (*manyReq, error) {
-	filters, metrics, err := compileQuery(r.Query, r.Params)
+	s, err := compileQuery(r.Query, r.Params)
 	if err != nil {
 		return nil, err
 	}
-	mr := &manyReq{i: i, ctx: ctx, req: r, sessions: r.Query.Table == "sessions",
-		s: scan{e: e, q: r.Query, filters: filters, metrics: metrics, project: r.Params.Project}}
+	s.e = e
+	mr := &manyReq{i: i, ctx: ctx, req: r, sessions: r.Query.Table == "sessions", s: s}
 	for _, sp := range mr.s.aggSpecs(r.Params.From, r.Params.To) {
 		c := &consumer{r: mr, sp: sp, rng: dayRange{From: sp.from, To: sp.to}, lo: epochDay(sp.from), hi: epochDay(sp.to)}
 		if !mr.sessions {
@@ -364,13 +370,7 @@ func (e *Engine) shared(ctx context.Context, project int64, sessions bool, reqs 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			defer func() {
-				if p := recover(); p != nil {
-					answer(r.i, Answered{Err: panicked(p)})
-				}
-			}()
-			res, err := e.Answer(r.ctx, r.req.Query, r.req.Params, r.req.Rules)
-			answer(r.i, Answered{Result: res, Err: err})
+			e.answerAlone(r.ctx, r.i, r.req, answer)
 		}()
 	}
 	wg.Wait()
@@ -509,11 +509,7 @@ func (r *manyReq) finish() (res Result, err error) {
 		c.a, c.ids = nil, nil
 		c.mu.Unlock()
 	}
-	res = r.s.result(as)
-	if r.s.q.longShape() {
-		res = toLong(r.s.q, res)
-	}
-	return res, nil
+	return r.s.result(as), nil
 }
 
 // use is a consumer of one work item; all says every row of the item is

@@ -244,14 +244,15 @@ var (
 // group. It is NULL when the partition's total is 0, and never
 // approximate.
 func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Rules) (Result, error) {
-	filters, metrics, err := compileQuery(q, p)
+	s, err := compileQuery(q, p)
 	if err != nil {
 		return Result{}, err
 	}
+	s.e = e
 	var res Result
 	err = e.turn(ctx, func() error {
 		var err error
-		res, err = e.answerOnce(ctx, q, filters, metrics, p, rules)
+		res, err = e.answerOnce(ctx, s, p, rules)
 		return err
 	})
 	if answered != nil {
@@ -265,28 +266,31 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 // recorder.
 var answered func(e *Engine, q Query, p Params, rules archive.Rules, res Result, err error)
 
-// compileQuery checks q over p and compiles its filters and metrics'.
-func compileQuery(q Query, p Params) ([]filter, []metricSpec, error) {
+// compileQuery checks q over p and compiles it, once, into a scan of p's
+// project: its filters, its metrics' and its defined columns. The scan's
+// engine and rules are the caller's to set.
+func compileQuery(q Query, p Params) (scan, error) {
 	if err := q.Validate(); err != nil {
-		return nil, nil, err
+		return scan{}, err
 	}
 	if p.To.Before(p.From) {
-		return nil, nil, invalid("to", "%s is before from %s", p.To, p.From)
+		return scan{}, invalid("to", "%s is before from %s", p.To, p.From)
 	}
 	filters, err := compileFilters(q.Where, "where")
 	if err != nil {
-		return nil, nil, err
+		return scan{}, err
 	}
-	if _, err := compileDefines(q.Define); err != nil { // newAgg compiles them again, unable to fail then
-		return nil, nil, err
+	defs, err := compileDefines(q.Define)
+	if err != nil {
+		return scan{}, err
 	}
 	metrics := make([]metricSpec, len(q.Metrics))
 	for i, m := range q.Metrics {
 		if metrics[i], err = compileMetric(m, fmt.Sprintf("metrics[%d]", i)); err != nil {
-			return nil, nil, err
+			return scan{}, err
 		}
 	}
-	return filters, metrics, nil
+	return scan{q: q, filters: filters, metrics: metrics, defs: defs, project: p.Project}, nil
 }
 
 // turn runs once in one of MaxScans turns, waiting for it first and
@@ -351,27 +355,30 @@ func compileMetric(m Metric, p string) (metricSpec, error) {
 	return mt, nil
 }
 
-func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metrics []metricSpec, p Params, rules archive.Rules) (Result, error) {
-	var rs ruleSet
-	if q.Table != "sessions" && q.Table != "identities" { // derived from the events as stored
+// answerOnce answers s, compiled by compileQuery, over p with rules: one
+// attempt of Answer's.
+func (e *Engine) answerOnce(ctx context.Context, s scan, p Params, rules archive.Rules) (Result, error) {
+	q := s.q
+	derived := q.Table == "sessions" || q.Table == "identities"
+	if !derived { // the derived tables read the events as stored
 		var err error
-		if rs, err = e.ruleSet(p.Project, rules); err != nil {
+		if s.rules, err = e.ruleSet(p.Project, rules); err != nil {
 			return Result{}, err
 		}
 	}
 	// ever and never read the events with the rules, whatever table the
 	// query's own scan reads.
-	everRules := rs
-	if fs := everFilters(filters, metrics); len(fs) > 0 && (q.Table == "sessions" || q.Table == "identities") {
+	everRules := s.rules
+	ever := everFilters(s.filters, s.metrics)
+	if len(ever) > 0 && derived {
 		var err error
 		if everRules, err = e.ruleSet(p.Project, rules); err != nil {
 			return Result{}, err
 		}
 	}
-	if err := e.collectEver(ctx, everFilters(filters, metrics), p, everRules); err != nil {
+	if err := e.collectEver(ctx, ever, p, everRules); err != nil {
 		return Result{}, err
 	}
-	s := scan{e: e, q: q, filters: filters, metrics: metrics, project: p.Project, rules: rs}
 	switch q.Kind {
 	case "retention":
 		return s.retention(ctx, p.From, p.To)
@@ -392,17 +399,13 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 				return Result{}, err
 			}
 		}
-		m, ms, err := s.aggregate(ctx, sp.from, sp.to, sp.dims, sp.perDay, sp.sets)
+		m, ms, err := s.aggregate(ctx, sp)
 		if err != nil {
 			return Result{}, err
 		}
 		as[i] = aggregated{m: m, ms: ms}
 	}
-	res := s.result(as)
-	if q.longShape() {
-		res = toLong(q, res)
-	}
-	return res, nil
+	return s.result(as), nil
 }
 
 // aggSpec is one aggregation a stat, trend or breakdown is answered from:
@@ -447,15 +450,21 @@ func (s scan) aggSpecs(from, to civil.Date) []aggSpec {
 }
 
 // result is s's stat, trend or breakdown answered from its aggregations,
-// as aggSpecs lists them.
+// as aggSpecs lists them, in the query's shape.
 func (s scan) result(as []aggregated) Result {
+	var res Result
 	switch s.q.Kind {
 	case "stat":
-		return s.stat(as)
+		res = s.stat(as)
 	case "trend":
-		return s.trend(as[0])
+		res = s.trend(as[0])
+	default:
+		res = s.breakdown(as[0])
 	}
-	return s.breakdown(as[0])
+	if s.q.longShape() {
+		res = toLong(s.q, res)
+	}
+	return res
 }
 
 // ruleSet is project's rules compiled. The files' columns, which only
@@ -534,6 +543,7 @@ type scan struct {
 	q       Query
 	filters []filter
 	metrics []metricSpec // the query's metrics, their filters compiled (not resolved: newAgg resolves them)
+	defs    []defined    // the query's defined columns, compiled
 	project int64
 	rules   ruleSet
 	logs    logReader // reads the logs; nil: the engine's log cache
@@ -547,12 +557,11 @@ func (s scan) family() string {
 	return s.q.Table
 }
 
-// aggregate reads the project's rows of [from, to] into an aggregation of
-// the query's metrics grouped by dims, by day when perDay; sets keeps
-// whole-range distinct sets beside a trend's per-day keys.
-func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string, perDay, sets bool) (*merged, []metricSpec, error) {
-	r := dayRange{From: from, To: to}
-	a, ms := s.newAgg(aggSpec{from: from, to: to, dims: dims, perDay: perDay, sets: sets})
+// aggregate reads the project's rows of [sp.from, sp.to] into sp's
+// aggregation of the query's metrics.
+func (s scan) aggregate(ctx context.Context, sp aggSpec) (*merged, []metricSpec, error) {
+	r := dayRange{From: sp.from, To: sp.to}
+	a, ms := s.newAgg(sp)
 	charge := a.charge
 	if s.q.Table == "sessions" {
 		if err := s.e.scanSessions(ctx, s.project, r, a.columns(), charge, a.add); err != nil {
@@ -584,7 +593,7 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 		}
 		return a.merge(), ms, nil
 	}
-	if err := s.scanEvents(ctx, files, r, a.columns(), dims, charge, a.add); err != nil {
+	if err := s.scanEvents(ctx, files, r, a.columns(), sp.dims, charge, a.add); err != nil {
 		return nil, nil, err
 	}
 	return a.merge(), ms, nil
@@ -594,12 +603,7 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 func (s scan) newAgg(sp aggSpec) (*agg, []metricSpec) {
 	lo, hi := epochDay(sp.from), epochDay(sp.to)
 	o := aggOptions{metrics: s.metrics, filters: s.filters, dims: sp.dims, perDay: sp.perDay, sets: sp.sets,
-		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes}
-	defs, err := compileDefines(s.q.Define)
-	if err != nil {
-		panic("native: defined columns compileQuery passed: " + err.Error())
-	}
-	o.defs = defs
+		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes, defs: s.defs}
 	if sp.perDay && s.q.bucketed() {
 		o.buckets, o.starts = buckets(sp.from, sp.to, s.q.Interval)
 		o.ndays = len(o.starts)
@@ -722,8 +726,7 @@ func (s scan) identityColumnsOf(dims []string) []string {
 			out = append(out, d)
 		}
 	}
-	defs, _ := compileDefines(s.q.Define) // compileQuery has compiled them
-	for _, col := range definedColumns(defs) {
+	for _, col := range definedColumns(s.defs) {
 		if _, ok := idColumns[col]; ok && !slices.Contains(out, col) {
 			out = append(out, col)
 		}
