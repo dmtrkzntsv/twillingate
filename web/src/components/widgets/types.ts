@@ -1,9 +1,13 @@
 import type { ComponentType } from 'react'
-import type { Filter, TableView } from '@/lib/table-view'
+import type { OptionLoader } from '@/components/table-filters'
+import type { MarkdownData, PageInfo, SqlData } from '@/lib/api'
+import type { TableView } from '@/lib/table-view'
 
-export type ColumnType = 'number' | 'text' | 'day'
+export type { MarkdownData, SqlData }
 
-export interface InputColumn {
+type ColumnType = 'number' | 'text' | 'day'
+
+interface InputColumn {
   name: string
   types: ColumnType[]
   optional?: boolean
@@ -18,18 +22,6 @@ export interface Contract {
   defaultHeight: number
 }
 
-export interface SqlData {
-  columns: string[]
-  rows: string[][]
-  truncated: boolean
-  /** The columns any value of which is an estimate, shown with "≈"; absent when every value is exact. */
-  approximate?: string[]
-}
-
-export interface MarkdownData {
-  markdown: string
-}
-
 export interface WidgetProps<P = Record<string, unknown>> {
   data: SqlData | MarkdownData
   props: P
@@ -40,9 +32,9 @@ export interface WidgetProps<P = Record<string, unknown>> {
   view?: TableView
   onView?: (next: TableView) => void
   /** Remote mode: the card's loader for distinct values; absent, they come from the loaded rows. */
-  fetchDistinct?: (column: string, filters: Filter[]) => Promise<{ value: string; rows: number; capped: boolean }[]>
+  fetchDistinct?: OptionLoader
   /** Remote mode: what the server answered for this page. */
-  page?: { offset: number; limit: number; matched: number; total: number }
+  page?: Pick<PageInfo, 'offset' | 'limit' | 'matched' | 'total'>
   /** Remote mode: the server refused the last view (shown under the bar). */
   viewError?: string
   /** A later load is in flight: the current rows stay, dimmed. */

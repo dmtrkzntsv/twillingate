@@ -2,6 +2,7 @@ import { useCallback, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { ApiError, endpoints, type CreateProjectBody, type CreatedProject, type EventFamily, type IssuedKey } from '@/lib/api'
+import { toastError } from '@/lib/toast-error'
 
 export interface ProjectActions {
   create(body: CreateProjectBody): Promise<CreatedProject | undefined>
@@ -150,10 +151,4 @@ export function useProjectActions(): ProjectActions {
       (await run(() => endpoints.mergeAttribute(id, { from: alias, to }), `Added alias ${alias} to ${to}`, ATTRIBUTE_WRITE)) !== undefined,
     move,
   }
-}
-
-function toastError(err: unknown) {
-  if (err instanceof ApiError) toast.error(err.message)
-  else if (err instanceof TypeError) toast.error("Couldn't reach the server")
-  else toast.error(err instanceof Error ? err.message : String(err))
 }

@@ -1,19 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { BracesIcon, PlayIcon, TriangleAlertIcon } from 'lucide-react'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import RangeSwitcher, { type RangeValue } from '@/components/RangeSwitcher'
 import WidgetFrame from '@/components/WidgetFrame'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -21,7 +12,7 @@ import { Kbd } from '@/components/ui/kbd'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
 import { widgets } from '@/components/widgets'
-import { ApiError, endpoints, type Widget } from '@/lib/api'
+import { endpoints, errorMessage, type Widget } from '@/lib/api'
 import { rowsPx } from '@/lib/grid'
 import { projectsQuery, schemaViewsQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
@@ -54,7 +45,7 @@ export interface EditorDefaults {
   timezone: string
 }
 
-export interface WidgetEditorProps {
+interface WidgetEditorProps {
   open: boolean
   onOpenChange(open: boolean): void
   /** Absent: adding a widget. */
@@ -114,7 +105,7 @@ const codeLabel: Record<CodeType, string> = { sql: 'SQL', query: 'Query' }
 const known = (c: string | null): c is string => c !== null && Object.hasOwn(widgets, c)
 
 /** What the editor says of a SQL widget on a server with no external SQL engine. */
-export const SQL_ENGINE_NOTICE =
+const SQL_ENGINE_NOTICE =
   'This widget is SQL, which needs the external SQL engine. Convert it to a structured query to edit it here.'
 
 /** The note beside a table's mode when the server has no external SQL engine. */
@@ -124,12 +115,6 @@ const REMOTE_NEEDS_SQL = { mode: { options: ['remote'], note: 'A remote table ne
 function startDraft(widget: Widget | undefined, sql: boolean): Draft {
   const d = draftOf(widget, sql)
   return known(d.component) ? d : { ...d, component: null }
-}
-
-function messageOf(err: unknown): string {
-  if (err instanceof ApiError) return err.message
-  if (err instanceof TypeError) return "Couldn't reach the server"
-  return err instanceof Error ? err.message : String(err)
 }
 
 /** The modal that adds or edits one widget (spec D9–D16); every open starts from the widget as stored. */
@@ -227,7 +212,7 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
       })
       if (n === latest.current) setRun({ kind: 'done', result, component, props })
     } catch (err) {
-      if (n === latest.current) setRun({ kind: 'failed', message: messageOf(err) })
+      if (n === latest.current) setRun({ kind: 'failed', message: errorMessage(err) })
     }
   }
 
@@ -265,7 +250,7 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
       await onSave(draft)
       onOpenChange(false)
     } catch (err) {
-      setSaveError(messageOf(err))
+      setSaveError(errorMessage(err))
     } finally {
       savingNow.current = false
       setSaving(false)
@@ -539,18 +524,15 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
           </div>
         </form>
       </DialogContent>
-      <AlertDialog open={confirmDiscard} onOpenChange={setConfirmDiscard}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Discard changes?</AlertDialogTitle>
-            <AlertDialogDescription>What you changed in this widget is not saved.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep editing</AlertDialogCancel>
-            <AlertDialogAction onClick={() => onOpenChange(false)}>Discard</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={confirmDiscard}
+        onOpenChange={setConfirmDiscard}
+        title="Discard changes?"
+        description="What you changed in this widget is not saved."
+        cancel="Keep editing"
+        action="Discard"
+        onAction={() => onOpenChange(false)}
+      />
     </Dialog>
   )
 }

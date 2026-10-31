@@ -1,6 +1,8 @@
+import type { ChartConfig } from '@/components/ui/chart'
 import type { Contract, SqlData } from '@/components/widgets/types'
+import { seriesConfig } from './chart'
 
-export type Record_ = Record<string, string | number | null>
+type Record_ = Record<string, string | number | null>
 
 /**
  * Turns a query's raw string rows into typed records, keyed by the columns
@@ -56,4 +58,19 @@ export function pivot(
   }
 
   return { rows, keys }
+}
+
+/**
+ * A chart's rows and series: with a `series` column, one key per series
+ * value, the rows pivoted on `x`; without, `y` alone. `config` labels them.
+ */
+export function chartSeries(
+  columns: string[],
+  records: Record<string, unknown>[],
+  x: string,
+  y: string
+): { hasSeries: boolean; rows: Record<string, unknown>[]; keys: string[]; config: ChartConfig } {
+  const hasSeries = columns.includes('series')
+  const { rows, keys } = hasSeries ? pivot(records, x, 'series', y) : { rows: records, keys: [y] }
+  return { hasSeries, rows, keys, config: hasSeries ? seriesConfig(keys) : { [y]: { label: y } } }
 }

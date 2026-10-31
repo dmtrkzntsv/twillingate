@@ -37,7 +37,7 @@ import { useStoredState } from '@/hooks/use-stored-state'
 import { ApiError, endpoints, type SqlData, type Widget, type WidgetData, type WidgetDataQuery } from '@/lib/api'
 import { captureCard, downloadBlob } from '@/lib/capture'
 import { shareCaption, type ShareContext } from '@/lib/share'
-import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
+import { liveFilters, parseView, valueOptions, viewChanged, type Filter, type TableView } from '@/lib/table-view'
 import { formatDuration } from '@/lib/time'
 import { canRefresh, componentOf, isRemoteTable, refreshableSource, refreshWidget, viewQuery, widgetQuery } from '@/lib/widget-query'
 import WidgetErrorBoundary from './WidgetErrorBoundary'
@@ -160,9 +160,7 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
       distinct: column,
       limit: undefined,
     })
-    const rows = (res.data as SqlData | null)?.rows ?? []
-    const capped = res.page !== undefined && res.page.matched > res.page.offset + rows.length
-    return rows.map(([value, n]) => ({ value, rows: Number(n), capped }))
+    return valueOptions((res.data as SqlData | null)?.rows ?? [], res.page)
   }
 
   return (
@@ -303,7 +301,7 @@ function useTableView(stateKey: string, selection: string): [TableView, (next: T
     offset: paging.selection === selection ? paging.offset : 0,
   }
   const setView = (next: TableView) => {
-    const changed = JSON.stringify([next.filters, next.sort]) !== JSON.stringify([view.filters, view.sort])
+    const changed = viewChanged(view, next)
     if (changed) setStored(next.filters.length === 0 && next.sort === null ? null : { ...next, offset: 0 })
     setPaging({ selection, offset: changed ? 0 : next.offset })
   }

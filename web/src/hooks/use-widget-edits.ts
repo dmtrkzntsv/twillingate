@@ -1,7 +1,8 @@
 import { useCallback, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { ApiError, endpoints, type Widget } from '@/lib/api'
+import { endpoints, type Widget } from '@/lib/api'
+import { toastError } from '@/lib/toast-error'
 import { componentsQuery } from '@/lib/queries'
 import { addBody, changedFields, type Draft } from '@/lib/widget-draft'
 
@@ -35,12 +36,6 @@ export interface WidgetEdits {
    * toast (the dashboard stays when only the copy was refused).
    */
   copyToNew(widget: Widget, title: string, groupId?: number): Promise<number | null>
-}
-
-function toastError(err: unknown) {
-  if (err instanceof ApiError) toast.error(err.message)
-  else if (err instanceof TypeError) toast.error("Couldn't reach the server")
-  else toast.error(err instanceof Error ? err.message : String(err))
 }
 
 /**

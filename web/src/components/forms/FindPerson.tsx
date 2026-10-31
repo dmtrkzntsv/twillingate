@@ -1,10 +1,7 @@
 import { useId, useState, type FormEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { SearchIcon, XIcon } from 'lucide-react'
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -12,6 +9,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import LoadError from '@/components/projects/LoadError'
 import { useFormActions } from '@/hooks/use-form-actions'
 import type { FoundSubmission } from '@/lib/api'
+import { plural } from '@/lib/format'
 import { formatDayTime, purgeDays as purgeDaysOf } from '@/lib/forms'
 import { dashboardsQuery, findSubmissionsQuery } from '@/lib/queries'
 
@@ -133,28 +131,25 @@ export default function FindPerson({ projectId }: { projectId: number }) {
           )}
         </section>
       )}
-      <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="break-words">
-              Archive {count} containing “{search}”?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Every submission of the project's forms with a field containing it is archived: it leaves every table at once,{' '}
-              {purgeDays === null
-                ? 'but it is never deleted: RETENTION_ARCHIVED_DAYS is 0, so archived submissions are kept until restored.'
-                : purgeDays === undefined
-                  ? 'and the daily pass deletes it for good RETENTION_ARCHIVED_DAYS after archiving.'
-                  : `and the daily pass deletes it for good ${purgeDays} ${purgeDays === 1 ? 'day' : 'days'} after archiving.`}{' '}
-              Its conversion stays counted.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void remove()}>Archive submissions</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={confirming}
+        onOpenChange={setConfirming}
+        titleClassName="break-words"
+        title={<>Archive {count} containing “{search}”?</>}
+        description={
+          <>
+            Every submission of the project's forms with a field containing it is archived: it leaves every table at once,{' '}
+            {purgeDays === null
+              ? 'but it is never deleted: RETENTION_ARCHIVED_DAYS is 0, so archived submissions are kept until restored.'
+              : purgeDays === undefined
+                ? 'and the daily pass deletes it for good RETENTION_ARCHIVED_DAYS after archiving.'
+                : `and the daily pass deletes it for good ${plural(purgeDays, 'day')} after archiving.`}{' '}
+            Its conversion stays counted.
+          </>
+        }
+        action="Archive submissions"
+        onAction={() => void remove()}
+      />
     </div>
   )
 }

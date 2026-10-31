@@ -7,6 +7,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import LoadError from '@/components/projects/LoadError'
 import { useFormActions } from '@/hooks/use-form-actions'
 import type { Submission } from '@/lib/api'
+import { purgeDate } from '@/lib/arrange'
 import { formatDayTime, formatSource } from '@/lib/forms'
 import { submissionQuery } from '@/lib/queries'
 import { formatPurgeDate } from '@/lib/time'
@@ -47,7 +48,8 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 /** When an archived submission was archived, and when the daily pass deletes it. */
 function archivedLine(archivedAt: string, purgeDays?: number | null): ReactNode {
   const at = new Date(archivedAt)
-  const purge = purgeDays ? `; deleted for good on ${formatPurgeDate(new Date(at.getTime() + purgeDays * 86_400_000))} unless restored` : ''
+  const date = purgeDate(archivedAt, purgeDays ?? undefined)
+  const purge = date ? `; deleted for good on ${formatPurgeDate(date)} unless restored` : ''
   return (
     <>
       <time dateTime={archivedAt} title={archivedAt}>

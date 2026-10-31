@@ -9,6 +9,7 @@ import type { DashboardInfo, ProjectTab } from '@/lib/api'
 import { FORMS_ID, rangeParams, SETTINGS_ID, tabAfter, tabPath } from '@/lib/project-tabs'
 import { cn } from '@/lib/utils'
 import AddTabDialog from './AddTabDialog'
+import { plural } from '@/lib/format'
 
 /** The button for the page on screen reads as an active control. */
 const current = 'aria-[current=page]:bg-accent aria-[current=page]:text-foreground'
@@ -46,7 +47,7 @@ export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, 
   const formsLabel = [
     'Forms',
     newSubmissions > 0 && `${newSubmissions} new`,
-    draftForms > 0 && `${draftForms} ${draftForms === 1 ? 'draft' : 'drafts'}`,
+    draftForms > 0 && `${plural(draftForms, 'draft')}`,
   ]
     .filter(Boolean)
     .join(', ')

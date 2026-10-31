@@ -7,7 +7,7 @@ import { resolve } from '@/lib/ranges'
 import { chooseSelection, type Selection } from '@/lib/selection'
 import { selectionParams, viewBody, widgetParams, withSavedView, type Switchers } from '@/lib/view'
 
-export interface DashboardSelection {
+interface DashboardSelection {
   sel: Selection
   switchers: Switchers
   /**

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useCallback, useEffect, useMemo } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { LayoutGridIcon } from 'lucide-react'
 import { useSearchParams } from 'react-router'
 import DashboardHeader from '@/components/DashboardHeader'
@@ -8,11 +8,9 @@ import { GridSkeleton, Notice, NoWidgets, PageError } from '@/components/PageSta
 import RangeSwitcher from '@/components/RangeSwitcher'
 import { Button } from '@/components/ui/button'
 import WidgetGrid from '@/components/WidgetGrid'
-import { useAutoRefresh } from '@/hooks/use-auto-refresh'
+import { useDashboardRefresh } from '@/hooks/use-dashboard-refresh'
 import { useFreshness } from '@/hooks/use-freshness'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
-import { useSelectionSignal } from '@/hooks/use-selection-signal'
-import { useStoredState } from '@/hooks/use-stored-state'
 import { useWidgetActions } from '@/hooks/use-widget-actions'
 import type { DashboardDetail, DashboardsResponse, Project, ProjectTab, Widget } from '@/lib/api'
 import { writeLastTab } from '@/lib/last-tab'
@@ -22,7 +20,6 @@ import { resolve } from '@/lib/ranges'
 import type { ShareContext } from '@/lib/share'
 import { chooseSelection } from '@/lib/selection'
 import { selectionParams, widgetParams } from '@/lib/view'
-import { refreshDashboard } from '@/lib/widget-query'
 import ProjectTabMenu from './ProjectTabMenu'
 
 interface Props {
@@ -69,7 +66,6 @@ interface ViewProps {
 }
 
 function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
-  const client = useQueryClient()
   const [url, setURL] = useSearchParams()
   const projectId = project.project_id
   // Opening the project later lands here (project landing D3).
@@ -111,22 +107,7 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
 
   const showGrid = dashboard.widgets.length > 0
   const freshness = useFreshness(dashboard.widgets, paramsFor, showGrid)
-  const [refreshing, setRefreshing] = useState(false)
-  // Refresh all reloads through one stream, with `fresh` (widget-stream.ts);
-  // leaving the selection stops what is still loading.
-  const selectionSignal = useSelectionSignal(paramsFor)
-  const refreshAll = () => {
-    setRefreshing(true)
-    // Each widget refreshes what its card shows, a remote table its current page.
-    void refreshDashboard(client, freshness.refreshable, paramsFor, selectionSignal()).finally(() => setRefreshing(false))
-  }
-
-  // The same per-viewer choice as on the dashboard page, kept per group.
-  const autoSeconds = list.auto_refresh_seconds ?? 0
-  const [autoOn, setAutoOn] = useStoredState(`twillingate.auto_refresh.${dashboard.group_id}`, (v) => (v === true ? true : null))
-  useAutoRefresh(autoOn === true && showGrid, autoSeconds, () => {
-    void client.invalidateQueries({ queryKey: ['widget'] })
-  })
+  const { refreshing, refreshAll, autoRefresh } = useDashboardRefresh(freshness.refreshable, paramsFor, dashboard.group_id, list.auto_refresh_seconds ?? 0, showGrid)
 
   return (
     <WidgetEditingProvider
@@ -148,11 +129,7 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
             tabs={tabs}
             actions={actions}
             search={rangeParams(url).toString()}
-            autoRefresh={
-              autoSeconds > 0
-                ? { seconds: autoSeconds, on: autoOn === true, onChange: (on) => setAutoOn(on ? true : null) }
-                : undefined
-            }
+            autoRefresh={autoRefresh}
           />
         }
       >

@@ -14,6 +14,12 @@ export class ApiError extends Error {
   }
 }
 
+/** What a failed call tells the person: the server's refusal, or why none came (a failed `fetch` is a TypeError). */
+export function errorMessage(err: unknown): string {
+  if (err instanceof TypeError) return "Couldn't reach the server"
+  return err instanceof Error ? err.message : String(err)
+}
+
 async function errorFrom(res: Response): Promise<ApiError> {
   try {
     const body = (await res.json()) as { error?: { code?: string; message?: string } }
@@ -235,7 +241,7 @@ export interface WidgetContentBody {
 }
 
 /** The preview body: an unsaved widget's SQL or structured query run with the project and range the editor holds. */
-export interface PreviewBody {
+interface PreviewBody {
   component: string
   props?: Record<string, unknown>
   source: { type: 'sql' | 'query'; content: string }
@@ -301,7 +307,7 @@ export interface WidgetShare {
 
 
 /** A limit in force: a setting (with its environment variable and default) or one of the wire format's fixed limits. */
-export interface Limit {
+interface Limit {
   group: 'retention' | 'ingest'
   name: string
   /** Absent for a fixed limit. */
@@ -318,7 +324,7 @@ export interface Limit {
 }
 
 /** The events in the event files from `from` through `to` (the 30 days ending today, UTC), of every family and project. */
-export interface Events30d {
+interface Events30d {
   count: number
   from: string
   to: string
@@ -328,7 +334,7 @@ export interface Events30d {
  * The limits answer: the limits in force, the events of the last 30 days (absent when the server could not count
  * them), and whether INGEST_DISABLED refuses every ingest route (absent from a server older than the switch).
  */
-export interface LimitsResponse {
+interface LimitsResponse {
   limits: Limit[]
   events_30d?: Events30d
   ingest_disabled?: boolean
@@ -355,7 +361,7 @@ export interface ProjectUsage {
   size: { total_bytes: number; measured_at: string } | null
 }
 
-export interface UsageResponse {
+interface UsageResponse {
   from: string
   to: string
   database_bytes: number
@@ -438,14 +444,14 @@ export interface ProjectAttributes {
 }
 
 /** An attribute rule: `key` is stored as `to` as it arrives, or (a block, no `to`) stripped from events. */
-export interface AttributeRule {
+interface AttributeRule {
   key: string
   action: 'rename' | 'block'
   to?: string
   created_at?: string
 }
 
-export interface ProjectsResponse {
+interface ProjectsResponse {
   projects: Project[]
 }
 
@@ -490,7 +496,7 @@ export interface ProjectActivity {
 }
 
 /** list_forms' answer: the forms, and where a plain HTML form posts. */
-export interface FormsResponse {
+interface FormsResponse {
   forms: Form[]
   /** INGEST_URL + `/ingest/forms`, so a form's action is `<action_base>/<name>?key=…`; empty without INGEST_URL. */
   action_base: string
@@ -562,7 +568,7 @@ export interface FoundSubmission extends Submission {
  */
 export type SubmissionsSelector = { ids: string[] } | { form: string; filters: string } | { search: string }
 
-export interface ComponentsResponse {
+interface ComponentsResponse {
   source_types: ('md' | 'query' | 'sql')[]
   components: unknown[]
 }
@@ -612,46 +618,22 @@ export const endpoints = {
   /** The query schema reference as text; parseSchemaViews reads the views out of it. */
   schemaViews: async () => (await apiBlob('/api/schema/views')).text(),
   saveView: (id: number, sel: SaveViewBody) =>
-    api<{ status: string }>(`/api/dashboards/${id}/view`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(sel),
-    }),
+    api<{ status: string }>(`/api/dashboards/${id}/view`, json('PUT', sel)),
   /** Copies a dashboard as one of its own, into group `group_id` as a tab, or its whole group (tabs D10-D11); never archives anything. */
   duplicate: (id: number, body: { whole_group?: boolean; group_id?: number } = {}) =>
-    api<DashboardDetail>(`/api/dashboards/${id}/duplicate`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+    api<DashboardDetail>(`/api/dashboards/${id}/duplicate`, json('POST', body)),
   /** Archives a dashboard of the user's, or its whole group (D1); a built-in one is refused (see `setSidebar`). */
   archive: (id: number, wholeGroup = false) =>
-    api<{ status: string }>(`/api/dashboards/${id}/archive`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(wholeGroup ? { whole_group: true } : {}),
-    }),
+    api<{ status: string }>(`/api/dashboards/${id}/archive`, json('POST', wholeGroup ? { whole_group: true } : {})),
   /** Restores a dashboard, or its whole group (D1). */
   restore: (id: number, wholeGroup = false) =>
-    api<{ status: string }>(`/api/dashboards/${id}/restore`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(wholeGroup ? { whole_group: true } : {}),
-    }),
+    api<{ status: string }>(`/api/dashboards/${id}/restore`, json('POST', wholeGroup ? { whole_group: true } : {})),
   /** Moves a tab or a group by naming the dashboard it goes after (tabs D6-D7; D15). */
   move: (id: number, body: MoveBody) =>
-    api<DashboardInfo>(`/api/dashboards/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+    api<DashboardInfo>(`/api/dashboards/${id}`, json('PATCH', body)),
   /** Names the dashboard's group (group names D5); a name is replaced, never cleared, and no dashboard title changes. */
   renameGroup: (id: number, title: string) =>
-    api<DashboardInfo>(`/api/dashboards/${id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ whole_group: true, title }),
-    }),
+    api<DashboardInfo>(`/api/dashboards/${id}`, json('PATCH', { whole_group: true, title })),
   /** Puts a built-in dashboard's whole group in or out of the sidebar; a built-in is never archived, and your own are always in it (project tabs D5). */
   setSidebar: (id: number, sidebar: boolean) => api<DashboardInfo>(`/api/dashboards/${id}`, json('PATCH', { sidebar })),
   /** A project page's tabs, in order. */

@@ -1,23 +1,14 @@
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { BanIcon, MoreHorizontalIcon, PlusIcon, XIcon } from 'lucide-react'
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { BanIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import type { Project } from '@/lib/api'
 import { attributesQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
-import AliasDialog from './AliasDialog'
 import { describeKey } from './attributes'
 import LoadError from './LoadError'
-import MergeDialog from './MergeDialog'
-import RenameDialog from './RenameDialog'
-import { ruleCopy } from './rule-copy'
+import { AliasBadges, RuleDialogs, RuleMenu, useRuleDialogs } from './RuleDialogs'
+import type { RuleTarget } from './rule-copy'
 
 interface Props {
   project: Project
@@ -31,8 +22,6 @@ interface Props {
   onRemove: (body: { key: string }) => Promise<boolean>
   onAddAlias: (body: { alias: string; to: string }) => Promise<boolean>
 }
-
-const copy = ruleCopy('attribute')
 
 /** list_attributes covers at most this many days (both ends counted) a call. */
 const MAX_DAYS = 92
@@ -51,12 +40,7 @@ function clampRange(range: { from: string; to: string }): { from: string; to: st
  * key has no menu.
  */
 export default function AttributesSection({ project, range, pending, onRename, onMerge, onBlock, onRemove, onAddAlias }: Props) {
-  // The keys outlive their dialogs' close animations, so a title does not flash "Block undefined?".
-  const [renaming, setRenaming] = useState<{ key: string; open: boolean } | null>(null)
-  const [merging, setMerging] = useState<{ key: string; open: boolean } | null>(null)
-  const [blocking, setBlocking] = useState<{ key: string; open: boolean } | null>(null)
-  const [aliasing, setAliasing] = useState<{ key: string; open: boolean } | null>(null)
-  const [unaliasing, setUnaliasing] = useState<{ key: string; to: string; open: boolean } | null>(null)
+  const dialogs = useRuleDialogs<RuleTarget>()
   const asked = clampRange(range)
   const clamped = asked.from !== range.from
   const { data, error, refetch } = useQuery(attributesQuery(project.project_id, asked))
@@ -66,7 +50,6 @@ export default function AttributesSection({ project, range, pending, onRename, o
   // What a rename or alias must know: the keys with data, and the blocked ones.
   const taken = rows.filter((r) => r.received).map((r) => r.key)
   const blocked = rows.filter((r) => r.blocked).map((r) => r.key)
-  const target = (k: string | undefined) => (k === undefined ? null : { name: k })
   return (
     <section aria-label="Attributes" className="flex flex-col gap-3 rounded-lg border p-4">
       <header>
@@ -98,24 +81,7 @@ export default function AttributesSection({ project, range, pending, onRename, o
                       {r.blocked && <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-destructive"><BanIcon />Blocked</Badge>}
                     </div>
                     <span className="block text-xs text-muted-foreground sm:hidden">{received}</span>
-                    {aliases.length > 0 && (
-                      <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-                        <span>also from</span>
-                        {aliases.map((a) => (
-                          <Badge key={a} variant="outline" className="gap-0.5 border-sky-500/30 bg-background pr-0.5 font-mono whitespace-normal">
-                            <span className="break-all">{a}</span>
-                            <Button variant="ghost" size="icon" className="size-4" aria-label={`Remove alias ${a}`} disabled={pending}
-                              onClick={() => setUnaliasing({ key: a, to: r.key, open: true })}>
-                              <XIcon className="size-3" />
-                            </Button>
-                          </Badge>
-                        ))}
-                        <Button variant="outline" size="icon" className="size-5 rounded-full" aria-label={`Add alias to ${r.key}`} disabled={pending}
-                          onClick={() => setAliasing({ key: r.key, open: true })}>
-                          <PlusIcon className="size-3" />
-                        </Button>
-                      </div>
-                    )}
+                    {aliases.length > 0 && <AliasBadges target={{ name: r.key }} aliases={aliases} pending={pending} dialogs={dialogs} />}
                   </TableCell>
                   <TableCell className="hidden text-xs whitespace-normal text-muted-foreground sm:table-cell">
                     {received}
@@ -123,23 +89,14 @@ export default function AttributesSection({ project, range, pending, onRename, o
                   </TableCell>
                   <TableCell className="text-right">
                     {custom && (
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon" className="size-7" aria-label={`Actions for ${r.key}`}>
-                            <MoreHorizontalIcon />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem disabled={pending} onClick={() => setRenaming({ key: r.key, open: true })}>Rename…</DropdownMenuItem>
-                          <DropdownMenuItem disabled={pending} onClick={() => setMerging({ key: r.key, open: true })}>Merge into…</DropdownMenuItem>
-                          <DropdownMenuItem disabled={pending} onClick={() => setAliasing({ key: r.key, open: true })}>Add alias…</DropdownMenuItem>
-                          {r.blocked ? (
-                            <DropdownMenuItem disabled={pending} onClick={() => void onRemove({ key: r.key })}>Unblock</DropdownMenuItem>
-                          ) : (
-                            <DropdownMenuItem disabled={pending} onClick={() => setBlocking({ key: r.key, open: true })}>Block…</DropdownMenuItem>
-                          )}
-                        </DropdownMenuContent>
-                      </DropdownMenu>
+                      <RuleMenu
+                        label={`Actions for ${r.key}`}
+                        target={{ name: r.key }}
+                        blocked={r.blocked}
+                        pending={pending}
+                        dialogs={dialogs}
+                        onUnblock={() => void onRemove({ key: r.key })}
+                      />
                     )}
                   </TableCell>
                 </TableRow>
@@ -154,61 +111,20 @@ export default function AttributesSection({ project, range, pending, onRename, o
         </p>
       )}
       {error && !data && <LoadError what="attributes" error={error} onRetry={() => void refetch()} />}
-      <RenameDialog
-        open={renaming?.open === true}
-        onOpenChange={(o) => !o && setRenaming((d) => d && { ...d, open: false })}
+      <RuleDialogs
         noun="attribute"
-        target={target(renaming?.key)}
-        taken={taken}
-        blocked={blocked}
+        dialogs={dialogs}
         pending={pending}
-        onRename={(to) => onRename({ from: renaming!.key, to })}
+        taken={() => taken}
+        blocked={() => blocked}
+        into={(t) => rows.filter((r) => r.key !== t?.name && !r.blocked && !r.key.startsWith('$')).map((r) => ({ name: r.key, count: r.events }))}
+        aliases={(t) => rows.find((r) => r.key === t?.name)?.aliases ?? []}
+        onRename={(t, to) => onRename({ from: t.name, to })}
+        onMerge={(t, to) => onMerge({ from: t.name, to })}
+        onAddAlias={(t, alias) => onAddAlias({ alias, to: t.name })}
+        onBlock={(t) => onBlock({ key: t.name })}
+        onRemove={(t) => onRemove({ key: t.name })}
       />
-      <MergeDialog
-        open={merging?.open === true}
-        onOpenChange={(o) => !o && setMerging((d) => d && { ...d, open: false })}
-        noun="attribute"
-        target={target(merging?.key)}
-        into={rows
-          .filter((r) => r.key !== merging?.key && !r.blocked && !r.key.startsWith('$'))
-          .map((r) => ({ name: r.key, count: r.events }))}
-        pending={pending}
-        onMerge={(to) => onMerge({ from: merging!.key, to })}
-      />
-      <AliasDialog
-        open={aliasing?.open === true}
-        onOpenChange={(o) => !o && setAliasing((d) => d && { ...d, open: false })}
-        noun="attribute"
-        target={target(aliasing?.key)}
-        taken={taken}
-        aliases={rows.find((r) => r.key === aliasing?.key)?.aliases ?? []}
-        pending={pending}
-        onAdd={(alias) => onAddAlias({ alias, to: aliasing!.key })}
-      />
-      <AlertDialog open={unaliasing?.open === true} onOpenChange={(o) => !o && setUnaliasing((d) => d && { ...d, open: false })}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="wrap-anywhere">{unaliasing && copy.unalias.title(unaliasing.key)}</AlertDialogTitle>
-            <AlertDialogDescription className="wrap-anywhere">{unaliasing && copy.unalias.description(unaliasing.key, unaliasing.to)}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void onRemove({ key: unaliasing!.key })}>Remove alias</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={blocking?.open === true} onOpenChange={(o) => !o && setBlocking((d) => d && { ...d, open: false })}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="wrap-anywhere">{blocking && copy.block.title({ name: blocking.key })}</AlertDialogTitle>
-            <AlertDialogDescription className="wrap-anywhere">{blocking && copy.block.description({ name: blocking.key })}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { const k = blocking!.key; setBlocking({ key: k, open: false }); void onBlock({ key: k }) }}>{copy.block.action}</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </section>
   )
 }

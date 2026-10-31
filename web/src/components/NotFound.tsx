@@ -35,7 +35,7 @@ export default function NotFound({
 }
 
 /** An iceberg almost all under water, with "404" sounded on a chart's depth contour. */
-export function SunkenIceberg() {
+function SunkenIceberg() {
   const id = useId()
   const sky = `${id}-sky`
   const sea = `${id}-sea`

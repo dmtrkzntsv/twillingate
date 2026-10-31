@@ -5,6 +5,7 @@ import type { DashboardInfo } from '@/lib/api'
 import { groupName } from '@/lib/arrange'
 import { dashboardsQuery } from '@/lib/queries'
 import GalleryLayout from './GalleryLayout'
+import { plural } from '@/lib/format'
 
 const sections = [{ id: 'system', label: 'System' }]
 
@@ -31,7 +32,7 @@ function systemGroups(dashboards: DashboardInfo[]): SystemGroup[] {
 
 const HIDDEN = 'hidden'
 
-const widgets = (d: DashboardInfo) => `${d.widgets} ${d.widgets === 1 ? 'widget' : 'widgets'}`
+const widgets = (d: DashboardInfo) => `${plural(d.widgets, 'widget')}`
 
 /**
  * `/gallery/dashboards`: every system group as a template, shown as on the

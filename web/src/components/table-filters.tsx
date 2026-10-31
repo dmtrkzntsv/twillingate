@@ -8,14 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Format } from '@/lib/format'
-import { isDecimal, OPS, type Filter, type FilterOp, type TableView } from '@/lib/table-view'
-
-/** One value a column holds, with how many rows hold it; `capped` when the list was cut short. */
-export interface ValueOption {
-  value: string
-  rows: number
-  capped: boolean
-}
+import { isDecimal, OPS, type Filter, type FilterOp, type TableView, type ValueOption } from '@/lib/table-view'
 
 export type OptionLoader = (column: string, filters: Filter[]) => Promise<ValueOption[]>
 

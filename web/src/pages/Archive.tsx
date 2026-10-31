@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { useQueries, useQuery } from '@tanstack/react-query'
 import { Link } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
@@ -13,6 +13,7 @@ import { useShareImage } from '@/hooks/use-share-image'
 import { useWidgetEdits } from '@/hooks/use-widget-edits'
 import type { DashboardInfo, Form, ListedWidget, Project, WidgetShare } from '@/lib/api'
 import { groupName, purgeDate } from '@/lib/arrange'
+import { plural } from '@/lib/format'
 import { archivedWidgetsQuery, dashboardsQuery, formsQuery, projectsQuery, widgetSharesQuery } from '@/lib/queries'
 import { formatPurgeDate } from '@/lib/time'
 
@@ -103,6 +104,53 @@ function ShareThumb({ share }: { share: WidgetShare }) {
  * Restore (forms D11, D12); an archived project hides its forms, so its
  * own are not asked for. Reporting dev serves no forms.
  */
+/** One kind of archived thing: a heading over its rows. */
+function ArchiveSection({ id, title, children }: { id: string; title: string; children: ReactNode }) {
+  return (
+    <section aria-labelledby={id} className="flex flex-col gap-3">
+      <h2 id={id} className="text-base font-semibold">
+        {title}
+      </h2>
+      <ul className="flex flex-col gap-2">{children}</ul>
+    </section>
+  )
+}
+
+interface RowProps {
+  /** Drawn before the text, in a column of its own. */
+  thumb?: ReactNode
+  name: ReactNode
+  /** A line under the name: what it belongs to. */
+  under?: string
+  status: ReactNode
+  /** Undefined offers no Restore. */
+  onRestore?: () => void
+  disabled?: boolean
+}
+
+/** An archived project, share or form: its name, its status line, and Restore. */
+function ArchivedRow({ thumb, name, under, status, onRestore, disabled }: RowProps) {
+  return (
+    <li className={`grid ${thumb ? 'grid-cols-[auto_minmax(0,1fr)_auto]' : 'grid-cols-[minmax(0,1fr)_auto]'} items-center gap-3 rounded-lg border p-3`}>
+      {thumb}
+      <div className="min-w-0">
+        {name}
+        {under !== undefined && (
+          <div className="truncate text-xs text-muted-foreground" title={under}>
+            {under}
+          </div>
+        )}
+        <div className="text-xs break-words text-muted-foreground">{status}</div>
+      </div>
+      {onRestore && (
+        <Button variant="outline" size="sm" disabled={disabled} onClick={onRestore}>
+          Restore
+        </Button>
+      )}
+    </li>
+  )
+}
+
 export default function Archive() {
   const { data } = useQuery(dashboardsQuery)
   const dashboards = data?.dashboards ?? []
@@ -178,7 +226,7 @@ export default function Archive() {
   }
 
   /** An archived form's lead-in to its status line: how many submissions go with it. */
-  const submissionCount = (f: Form) => `${f.submissions} ${f.submissions === 1 ? 'submission' : 'submissions'} · `
+  const submissionCount = (f: Form) => `${plural(f.submissions, 'submission')} · `
 
   /** An archived row's status line: archived, and when it goes, the date kept on one line. */
   const archivedStatus = (archived_at: string | null | undefined, prefix = '') => {
@@ -211,124 +259,85 @@ export default function Archive() {
         )}
         {groups.length > 0 && <ul className="flex flex-col gap-2">{groups.map(renderGroup)}</ul>}
         {archivedProjects.length > 0 && (
-          <section aria-labelledby="archived-projects" className="flex flex-col gap-3">
-            <h2 id="archived-projects" className="text-base font-semibold">
-              Projects
-            </h2>
-            <ul className="flex flex-col gap-2">
-              {archivedProjects.map((p) => (
-                <li key={p.project_id} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border p-3">
-                  <div className="min-w-0">
-                    <div className="truncate font-medium" title={p.name}>
-                      <Link to={`/projects/${p.project_id}`} className="underline-offset-2 hover:underline">
-                        {p.name}
-                      </Link>
-                    </div>
-                    <div className="text-xs break-words text-muted-foreground">{archivedStatus(p.archived_at)}</div>
+          <ArchiveSection id="archived-projects" title="Projects">
+            {archivedProjects.map((p) => (
+              <ArchivedRow
+                key={p.project_id}
+                name={
+                  <div className="truncate font-medium" title={p.name}>
+                    <Link to={`/projects/${p.project_id}`} className="underline-offset-2 hover:underline">
+                      {p.name}
+                    </Link>
                   </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={projectActions.pending}
-                    onClick={() => void projectActions.restore(p.project_id)}
-                  >
-                    Restore
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          </section>
+                }
+                status={archivedStatus(p.archived_at)}
+                disabled={projectActions.pending}
+                onRestore={() => void projectActions.restore(p.project_id)}
+              />
+            ))}
+          </ArchiveSection>
         )}
         {widgetGroups.length > 0 && (
-          <section aria-labelledby="archived-widgets" className="flex flex-col gap-3">
-            <h2 id="archived-widgets" className="text-base font-semibold">
-              Archived widgets
-            </h2>
-            <ul className="flex flex-col gap-2">
-              {widgetGroups.map(({ dashboard, widgets }) => (
-                <li key={dashboard.dashboard_id} aria-label={dashboard.title} className="flex flex-col rounded-lg border">
-                  <div className="border-b bg-muted/40 p-3">
-                    <h3 className="truncate font-medium">
-                      <Link to={`/dashboards/${dashboard.dashboard_id}`} className="underline-offset-2 hover:underline">
-                        {dashboard.title}
-                      </Link>
-                    </h3>
-                  </div>
-                  <ul className="flex flex-col divide-y">
-                    {widgets.map((w) => (
-                      <li key={w.widget_id} className="flex items-center justify-between gap-3 px-3 py-2">
-                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                          <span className="truncate text-sm font-medium" title={w.title ?? w.name}>
-                            {w.title ?? w.name}
-                          </span>
-                          <span className="text-xs text-muted-foreground">{archivedStatus(w.archived_at)}</span>
-                        </div>
-                        <Button variant="outline" size="sm" disabled={restoringWidgets.has(w.widget_id)} onClick={() => void restoreWidget(w)}>
-                          Restore
-                        </Button>
-                      </li>
-                    ))}
-                  </ul>
-                </li>
-              ))}
-            </ul>
-          </section>
+          <ArchiveSection id="archived-widgets" title="Archived widgets">
+            {widgetGroups.map(({ dashboard, widgets }) => (
+              <li key={dashboard.dashboard_id} aria-label={dashboard.title} className="flex flex-col rounded-lg border">
+                <div className="border-b bg-muted/40 p-3">
+                  <h3 className="truncate font-medium">
+                    <Link to={`/dashboards/${dashboard.dashboard_id}`} className="underline-offset-2 hover:underline">
+                      {dashboard.title}
+                    </Link>
+                  </h3>
+                </div>
+                <ul className="flex flex-col divide-y">
+                  {widgets.map((w) => (
+                    <li key={w.widget_id} className="flex items-center justify-between gap-3 px-3 py-2">
+                      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <span className="truncate text-sm font-medium" title={w.title ?? w.name}>
+                          {w.title ?? w.name}
+                        </span>
+                        <span className="text-xs text-muted-foreground">{archivedStatus(w.archived_at)}</span>
+                      </div>
+                      <Button variant="outline" size="sm" disabled={restoringWidgets.has(w.widget_id)} onClick={() => void restoreWidget(w)}>
+                        Restore
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ArchiveSection>
         )}
         {shares.length > 0 && (
-          <section aria-labelledby="archived-shares" className="flex flex-col gap-3">
-            <h2 id="archived-shares" className="text-base font-semibold">
-              Shares
-            </h2>
-            <ul className="flex flex-col gap-2">
-              {shares.map((s) => (
-                <li key={s.id} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 rounded-lg border p-3">
-                  <ShareThumb share={s} />
-                  <div className="min-w-0">
-                    <div className="truncate font-medium" title={s.title}>
-                      {s.title}
-                    </div>
-                    <div className="truncate text-xs text-muted-foreground" title={s.project_name}>
-                      {s.project_name}
-                    </div>
-                    <div className="text-xs break-words text-muted-foreground">{archivedStatus(s.archived_at)}</div>
+          <ArchiveSection id="archived-shares" title="Shares">
+            {shares.map((s) => (
+              <ArchivedRow
+                key={s.id}
+                thumb={<ShareThumb share={s} />}
+                name={
+                  <div className="truncate font-medium" title={s.title}>
+                    {s.title}
                   </div>
-                  {writable && (
-                    <Button variant="outline" size="sm" onClick={() => setRestoring(s)}>
-                      Restore
-                    </Button>
-                  )}
-                </li>
-              ))}
-            </ul>
-          </section>
+                }
+                under={s.project_name}
+                status={archivedStatus(s.archived_at)}
+                onRestore={writable ? () => setRestoring(s) : undefined}
+              />
+            ))}
+          </ArchiveSection>
         )}
         {archivedForms.length > 0 && (
-          <section aria-labelledby="archived-forms" className="flex flex-col gap-3">
-            <h2 id="archived-forms" className="text-base font-semibold">
-              Forms
-            </h2>
-            <ul className="flex flex-col gap-2">
-              {archivedForms.map(({ project, form }) => (
-                <li key={`${project.project_id}/${form.name}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 rounded-lg border p-3">
-                  <div className="min-w-0">
-                    <div className="font-mono text-sm font-medium break-all">{form.name}</div>
-                    <div className="truncate text-xs text-muted-foreground" title={project.name}>
-                      {project.name}
-                    </div>
-                    <div className="text-xs break-words text-muted-foreground">{archivedStatus(form.archived_at, submissionCount(form))}</div>
-                  </div>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    disabled={formActions.pending}
-                    onClick={() => void formActions.restore(project.project_id, form.name)}
-                  >
-                    Restore
-                  </Button>
-                </li>
-              ))}
-            </ul>
-          </section>
+          <ArchiveSection id="archived-forms" title="Forms">
+            {archivedForms.map(({ project, form }) => (
+              <ArchivedRow
+                key={`${project.project_id}/${form.name}`}
+                name={<div className="font-mono text-sm font-medium break-all">{form.name}</div>}
+                under={project.name}
+                status={archivedStatus(form.archived_at, submissionCount(form))}
+                disabled={formActions.pending}
+                onRestore={() => void formActions.restore(project.project_id, form.name)}
+              />
+            ))}
+          </ArchiveSection>
         )}
         <RestoreShareDialog share={restoring} onClose={() => setRestoring(undefined)} />
       </div>

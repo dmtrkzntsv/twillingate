@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-export type CopyState = 'idle' | 'copied' | 'failed'
+type CopyState = 'idle' | 'copied' | 'failed'
 
 /** What one copy did: `none` when a text still to come never came (its request failed). */
-export type CopyOutcome = 'copied' | 'failed' | 'none'
+type CopyOutcome = 'copied' | 'failed' | 'none'
 
 /** Thrown into a ClipboardItem's promise when its text never comes. */
 class NoText extends Error {}
