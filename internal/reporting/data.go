@@ -122,10 +122,8 @@ func (s *Service) prepare(ctx context.Context, in DataRequest) (prepared, error)
 	if w.ArchivedAt != "" {
 		return prepared{}, store.Refuse(store.ErrNotFound, "widget %d is archived", w.ID)
 	}
-	p := prepared{w: w, out: WidgetData{WidgetID: w.ID, SourceType: w.SourceType}}
 	if w.Component == "" { // removed (D14): nothing left to check rows against
-		p.out.Removed, p.final = true, true
-		return p, nil
+		return prepared{w: w, out: WidgetData{WidgetID: w.ID, SourceType: w.SourceType, Removed: true}, final: true}, nil
 	}
 	if w.SourceType == "sql" && s.sql == nil {
 		// Stored with an engine this process has not got: its card says
@@ -133,7 +131,16 @@ func (s *Service) prepare(ctx context.Context, in DataRequest) (prepared, error)
 		// loads.
 		return prepared{}, ErrSQLEngine
 	}
+	return s.prepareRow(w, in, func() (map[string]Component, error) { return s.components(ctx) })
+}
 
+// prepareRow is prepare's part after the widget is read, shared with
+// reporting dev's data handler, which reads its widget from a file: the
+// switchers' inputs, the component (from comps, read only once those
+// pass) and source type, the paging arguments, and the cache key when
+// s has a cache.
+func (s *Service) prepareRow(w store.Widget, in DataRequest, comps func() (map[string]Component, error)) (prepared, error) {
+	p := prepared{w: w, out: WidgetData{WidgetID: w.ID, SourceType: w.SourceType}}
 	followsProject, followsRange := s.follows(w)
 	params, echo, err := s.widgetParams(followsProject, followsRange, w.ID, in)
 	if err != nil {
@@ -142,11 +149,11 @@ func (s *Service) prepare(ctx context.Context, in DataRequest) (prepared, error)
 	p.params = params
 	p.out.ProjectID, p.out.From, p.out.To = echo.ProjectID, echo.From, echo.To
 
-	comps, err := s.components(ctx)
+	cs, err := comps()
 	if err != nil {
 		return prepared{}, err
 	}
-	comp, ok := comps[w.Component]
+	comp, ok := cs[w.Component]
 	if !ok {
 		return prepared{}, fmt.Errorf("reporting: widget %d: component %s not found", w.ID, w.Component)
 	}
@@ -158,7 +165,7 @@ func (s *Service) prepare(ctx context.Context, in DataRequest) (prepared, error)
 	if p.v, p.load, err = s.loader(w, src, params, in); err != nil {
 		return prepared{}, err
 	}
-	if src.Cacheable() {
+	if src.Cacheable() && s.cache != nil {
 		var suffix string
 		if remoteTable(w) {
 			suffix = p.v.cacheSuffix()

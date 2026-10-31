@@ -248,32 +248,18 @@ func devGetDashboard(dirs []string, svc *Service, comps map[string]Component) ht
 			writeAPIErr(w, store.Refuse(store.ErrNotFound, "dashboard %d not found", id))
 			return
 		}
+		// Service.Dashboard's answer, over rows built from the files: in
+		// dev mode every loaded file counts as live.
 		titles := devGroupTitles(fds)
-		row := devDashboardRow(fd, titles)
-		// Mirrors Service.Dashboard's rule (read.go): the group's live
-		// members, same owner, in list order. In dev mode every loaded
-		// file counts as live — there is no archived state to skip.
-		tabs := []Tab{}
+		all := make([]store.Dashboard, 0, len(fds))
 		for _, x := range fds {
-			xRow := devDashboardRow(x, titles)
-			if xRow.GroupID == row.GroupID && xRow.Owner == row.Owner {
-				tabs = append(tabs, Tab{ID: xRow.ID, Title: xRow.Title})
-			}
+			all = append(all, devDashboardRow(x, titles))
 		}
-		widgets := make([]WidgetInfo, 0, len(fd.Widgets))
-		var followsProject, followsRange bool
+		ws := make([]store.Widget, 0, len(fd.Widgets))
 		for i := range fd.Widgets {
-			info := svc.widgetInfo(devWidgetRow(fd, i, comps))
-			followsProject = followsProject || info.FollowsProject
-			followsRange = followsRange || info.FollowsRange
-			widgets = append(widgets, info)
+			ws = append(ws, devWidgetRow(fd, i, comps))
 		}
-		out := DashboardDetail{
-			DashboardInfo:  dashboardInfo(row),
-			FollowsProject: followsProject, FollowsRange: followsRange,
-			Tabs: tabs, Widgets: widgets,
-		}
-		writeJSON(w, http.StatusOK, out)
+		writeJSON(w, http.StatusOK, svc.detail(devDashboardRow(fd, titles), all, ws))
 	}
 }
 
@@ -303,7 +289,6 @@ func devWidgetData(dirs []string, svc *Service, comps map[string]Component) http
 			writeAPIErr(w, err)
 			return
 		}
-		comp := comps[row.Component] // present: validateWidget just checked it
 
 		q := r.URL.Query()
 		var projectID int64
@@ -327,26 +312,19 @@ func devWidgetData(dirs []string, svc *Service, comps map[string]Component) http
 				}
 			}
 		}
-		followsProject, followsRange := svc.follows(row)
-		params, echo, err := svc.widgetParams(followsProject, followsRange, id, in)
+		// WidgetData's load, uncached: svc has no cache.
+		p, err := svc.prepareRow(row, in, func() (map[string]Component, error) { return comps, nil })
 		if err != nil {
 			writeAPIErr(w, err)
 			return
 		}
-
-		src := svc.sources[row.SourceType] // present: validateWidget just checked it
-		v, load, err := svc.loader(row, src, params, in)
-		if err != nil {
-			writeAPIErr(w, err)
-			return
-		}
-		value, err := load(ctx)
+		value, err := p.load(ctx)
 		if err != nil {
 			writeAPIErr(w, wrapLoadErr(err))
 			return
 		}
-		out := WidgetData{WidgetID: id, SourceType: row.SourceType, ProjectID: echo.ProjectID, From: echo.From, To: echo.To}
-		if err := setData(&out, comp, v, value); err != nil {
+		out, err := p.finish(value, time.Time{})
+		if err != nil {
 			writeAPIErr(w, err)
 			return
 		}
