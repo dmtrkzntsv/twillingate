@@ -1,20 +1,13 @@
 import { useQuery } from '@tanstack/react-query'
-import { BanIcon, MoreHorizontalIcon, PlusIcon, XIcon } from 'lucide-react'
-import ConfirmDialog from '@/components/ConfirmDialog'
+import { BanIcon } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { useClosingTarget } from '@/hooks/use-closing-target'
 import type { EventFamily, EventName, EventRule, Project } from '@/lib/api'
 import { formatExact } from '@/lib/format'
 import { eventNamesQuery, eventRulesQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import LoadError from './LoadError'
-import AliasDialog from './AliasDialog'
-import MergeDialog from './MergeDialog'
-import RenameDialog from './RenameDialog'
-import { ruleCopy } from './rule-copy'
+import { AliasBadges, RuleDialogs, RuleMenu, useRuleDialogs } from './RuleDialogs'
 
 interface Props {
   project: Project
@@ -29,11 +22,8 @@ interface Props {
   onAddAlias: (body: { family: EventFamily; alias: string; to: string }) => Promise<boolean>
 }
 
-type Target = { family: EventFamily; name: string }
-
-const copy = ruleCopy('event')
 /** A dialog's target: the name, with its family after it. */
-const asRuleTarget = (t: Target | undefined) => (t ? { name: t.name, context: t.family } : null)
+type Target = { name: string; context: EventFamily }
 
 /** A listed event with the rules on it: blocked, and the old names renamed to it. */
 type Row = EventName & { blocked: boolean; aliases: string[] }
@@ -70,11 +60,7 @@ function eventRows(list: EventName[], rules: EventRule[]): Row[] {
 /** A project's event names with what each received and the rules on each: rename, merge and block (both confirmed) and unblock, aliases added and removed. */
 export default function EventsSection({ project, range, pending, onRename, onMerge, onBlock, onRemove, onAddAlias }: Props) {
   const id = project.project_id
-  const renaming = useClosingTarget<Target>()
-  const merging = useClosingTarget<Target>()
-  const blocking = useClosingTarget<Target>()
-  const aliasing = useClosingTarget<Target>()
-  const unaliasing = useClosingTarget<Target & { to: string }>()
+  const dialogs = useRuleDialogs<Target>()
   const names = useQuery(eventNamesQuery(id, range))
   const rules = useQuery(eventRulesQuery(id))
   const list = names.data?.events ?? []
@@ -103,24 +89,7 @@ export default function EventsSection({ project, range, pending, onRename, onMer
                     </code>
                     {e.blocked && <Badge variant="outline" className="border-destructive/30 bg-destructive/10 text-destructive"><BanIcon />Blocked</Badge>}
                   </div>
-                  {e.aliases.length > 0 && (
-                    <div className="mt-1 flex flex-wrap items-center gap-1 text-xs text-muted-foreground">
-                      <span>also from</span>
-                      {e.aliases.map((a) => (
-                        <Badge key={a} variant="outline" className="gap-0.5 border-sky-500/30 bg-background pr-0.5 font-mono whitespace-normal">
-                          <span className="break-all">{a}</span>
-                          <Button variant="ghost" size="icon" className="size-4" aria-label={`Remove alias ${a}`} disabled={pending}
-                            onClick={() => unaliasing.show({ family: e.family, name: a, to: e.name })}>
-                            <XIcon className="size-3" />
-                          </Button>
-                        </Badge>
-                      ))}
-                      <Button variant="outline" size="icon" className="size-5 rounded-full" aria-label={`Add alias to ${e.name}`} disabled={pending}
-                        onClick={() => aliasing.show({ family: e.family, name: e.name })}>
-                        <PlusIcon className="size-3" />
-                      </Button>
-                    </div>
-                  )}
+                  {e.aliases.length > 0 && <AliasBadges target={{ name: e.name, context: e.family }} aliases={e.aliases} pending={pending} dialogs={dialogs} />}
                 </TableCell>
                 <TableCell className="text-sm">
                   {e.blocked ? (
@@ -128,23 +97,14 @@ export default function EventsSection({ project, range, pending, onRename, onMer
                   ) : formatExact(e.events)}
                 </TableCell>
                 <TableCell className="text-right">
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="size-7" aria-label={`Actions for ${e.name} (${e.family})`}>
-                        <MoreHorizontalIcon />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem disabled={pending} onClick={() => renaming.show({ family: e.family, name: e.name })}>Rename…</DropdownMenuItem>
-                      <DropdownMenuItem disabled={pending} onClick={() => merging.show({ family: e.family, name: e.name })}>Merge into…</DropdownMenuItem>
-                      <DropdownMenuItem disabled={pending} onClick={() => aliasing.show({ family: e.family, name: e.name })}>Add alias…</DropdownMenuItem>
-                      {e.blocked ? (
-                        <DropdownMenuItem disabled={pending} onClick={() => void onRemove({ family: e.family, name: e.name })}>Unblock</DropdownMenuItem>
-                      ) : (
-                        <DropdownMenuItem disabled={pending} onClick={() => blocking.show({ family: e.family, name: e.name })}>Block…</DropdownMenuItem>
-                      )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
+                  <RuleMenu
+                    label={`Actions for ${e.name} (${e.family})`}
+                    target={{ name: e.name, context: e.family }}
+                    blocked={e.blocked}
+                    pending={pending}
+                    dialogs={dialogs}
+                    onUnblock={() => void onRemove({ family: e.family, name: e.name })}
+                  />
                 </TableCell>
               </TableRow>
             ))}
@@ -153,56 +113,19 @@ export default function EventsSection({ project, range, pending, onRename, onMer
       )}
       {names.error && !names.data && <LoadError what="event names" error={names.error} onRetry={() => void names.refetch()} />}
       {rules.error && !rules.data && <LoadError what="event rules" error={rules.error} onRetry={() => void rules.refetch()} />}
-      <RenameDialog
-        open={renaming.open}
-        onOpenChange={renaming.onOpenChange}
+      <RuleDialogs
         noun="event"
-        target={asRuleTarget(renaming.target)}
-        taken={takenIn(renaming.target?.family)}
-        blocked={blockedIn(renaming.target?.family)}
+        dialogs={dialogs}
         pending={pending}
-        onRename={(to) => onRename({ family: renaming.target!.family, from: renaming.target!.name, to })}
-      />
-      <MergeDialog
-        open={merging.open}
-        onOpenChange={merging.onOpenChange}
-        noun="event"
-        target={asRuleTarget(merging.target)}
-        into={rows
-          .filter((r) => r.family === merging.target?.family && r.name !== merging.target?.name && !r.blocked)
-          .map((r) => ({ name: r.name, count: r.events }))}
-        pending={pending}
-        onMerge={(to) => onMerge({ family: merging.target!.family, from: merging.target!.name, to })}
-      />
-      <AliasDialog
-        open={aliasing.open}
-        onOpenChange={aliasing.onOpenChange}
-        noun="event"
-        target={asRuleTarget(aliasing.target)}
-        taken={takenIn(aliasing.target?.family)}
-        aliases={rows.find((r) => r.family === aliasing.target?.family && r.name === aliasing.target?.name)?.aliases ?? []}
-        pending={pending}
-        onAdd={(alias) => onAddAlias({ family: aliasing.target!.family, alias, to: aliasing.target!.name })}
-      />
-      <ConfirmDialog
-        open={unaliasing.open}
-        onOpenChange={unaliasing.onOpenChange}
-        titleClassName="wrap-anywhere"
-        descriptionClassName="wrap-anywhere"
-        title={unaliasing.target && copy.unalias.title(unaliasing.target.name)}
-        description={unaliasing.target && copy.unalias.description(unaliasing.target.name, unaliasing.target.to)}
-        action="Remove alias"
-        onAction={() => { const t = unaliasing.target!; void onRemove({ family: t.family, name: t.name }) }}
-      />
-      <ConfirmDialog
-        open={blocking.open}
-        onOpenChange={blocking.onOpenChange}
-        titleClassName="wrap-anywhere"
-        descriptionClassName="wrap-anywhere"
-        title={blocking.target && copy.block.title(blocking.target)}
-        description={blocking.target && copy.block.description(asRuleTarget(blocking.target)!)}
-        action={copy.block.action}
-        onAction={() => void onBlock(blocking.target!)}
+        taken={(t) => takenIn(t?.context)}
+        blocked={(t) => blockedIn(t?.context)}
+        into={(t) => rows.filter((r) => r.family === t?.context && r.name !== t?.name && !r.blocked).map((r) => ({ name: r.name, count: r.events }))}
+        aliases={(t) => rows.find((r) => r.family === t?.context && r.name === t?.name)?.aliases ?? []}
+        onRename={(t, to) => onRename({ family: t.context, from: t.name, to })}
+        onMerge={(t, to) => onMerge({ family: t.context, from: t.name, to })}
+        onAddAlias={(t, alias) => onAddAlias({ family: t.context, alias, to: t.name })}
+        onBlock={(t) => onBlock({ family: t.context, name: t.name })}
+        onRemove={(t) => onRemove({ family: t.context, name: t.name })}
       />
     </section>
   )
