@@ -49,9 +49,9 @@ type Store interface {
 	PendingSubmissions(ctx context.Context, before time.Time, limit int) ([]store.PendingSubmission, error)
 	// AttributeSubmission stores ev's referrer and UTMs as p's attribution
 	// and, when p.WriteEvent, leaves ev in the outbox (UnloggedEvents),
-	// all in one transaction; wrote reports the outbox filled. A submission no
-	// longer pending (deleted, or attributed already) changes nothing.
-	AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) (wrote bool, err error)
+	// all in one write. A submission no longer pending (deleted, or
+	// attributed already) changes nothing.
+	AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) error
 	// UnloggedEvents lists up to limit events AttributeSubmission wrote
 	// and MarkLogged has not cleared yet, oldest first. A row that does
 	// not read is listed with Err set and a zero Event.

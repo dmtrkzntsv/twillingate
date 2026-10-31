@@ -199,7 +199,7 @@ func (r *Runner) attributeBatch(ctx context.Context, now time.Time, givenUp *int
 			continue
 		}
 		ev := attributed(p.Event, f)
-		if _, err := r.store.AttributeSubmission(ctx, p, ev); err != nil {
+		if err := r.store.AttributeSubmission(ctx, p, ev); err != nil {
 			r.logger.Error("form attribution: write", "project", p.ProjectID, "submission", p.ID, "error", err)
 			more = false
 			continue
@@ -220,7 +220,7 @@ func (r *Runner) clearUnreadable(ctx context.Context, p store.PendingSubmission)
 	r.logger.Error("form attribution: unreadable submission event; kept without attribution or event",
 		"project", p.ProjectID, "submission", p.ID, "error", p.Err)
 	p.Event, p.WriteEvent = store.Event{}, false
-	if _, err := r.store.AttributeSubmission(ctx, p, store.Event{}); err != nil {
+	if err := r.store.AttributeSubmission(ctx, p, store.Event{}); err != nil {
 		r.logger.Error("form attribution: write", "project", p.ProjectID, "submission", p.ID, "error", err)
 		return false
 	}

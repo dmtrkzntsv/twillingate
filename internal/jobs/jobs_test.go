@@ -725,8 +725,8 @@ func (s *passOnlyStore) PendingSubmissions(context.Context, time.Time, int) ([]s
 	return nil, nil
 }
 
-func (s *passOnlyStore) AttributeSubmission(context.Context, store.PendingSubmission, store.Event) (bool, error) {
-	return false, nil
+func (s *passOnlyStore) AttributeSubmission(context.Context, store.PendingSubmission, store.Event) error {
+	return nil
 }
 
 func (s *passOnlyStore) UnloggedEvents(context.Context, int) ([]store.UnloggedEvent, error) {

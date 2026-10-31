@@ -254,11 +254,6 @@ func (d *DB) SetDashboardView(ctx context.Context, dash store.Dashboard) error {
 	})
 }
 
-// SetDashboardArchived is SetDashboardsArchived for a single id.
-func (d *DB) SetDashboardArchived(ctx context.Context, id int64, archived bool, a store.AuditEntry) error {
-	return d.SetDashboardsArchived(ctx, []int64{id}, archived, a)
-}
-
 // SetDashboardsArchived archives (only rows currently live) or restores
 // (only rows currently archived, a user one back in the sidebar) every id
 // in ids, in one transaction,
@@ -513,7 +508,7 @@ func (d *DB) UpdateWidget(ctx context.Context, w store.Widget, cols store.Widget
 	})
 }
 
-// SetWidgetArchived is SetDashboardArchived's twin for widgets.
+// SetWidgetArchived is SetDashboardsArchived's single-row twin for widgets.
 func (d *DB) SetWidgetArchived(ctx context.Context, id int64, archived bool, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		q := `UPDATE widgets SET archived_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),

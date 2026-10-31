@@ -224,16 +224,16 @@ func (d *DB) PendingSubmissions(ctx context.Context, before time.Time, limit int
 
 // AttributeSubmission stores ev's referrer and UTMs as p's attribution
 // and, when p.WriteEvent, leaves ev in the outbox (unlogged_event) for
-// the job to append to the event files, in one transaction; wrote
-// reports the outbox filled. The event is never a row of SQLite's
-// events. A submission no longer pending changes nothing.
-func (d *DB) AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) (bool, error) {
+// the job to append to the event files, in one statement. The event is
+// never a row of SQLite's events. A submission no longer pending changes
+// nothing.
+func (d *DB) AttributeSubmission(ctx context.Context, p store.PendingSubmission, ev store.Event) error {
 	var attribution any // NULL: nothing found
 	if a := (store.Attribution{Referrer: ev.ReferrerSource, UTMSource: ev.UTMSource,
 		UTMMedium: ev.UTMMedium, UTMCampaign: ev.UTMCampaign}); a != (store.Attribution{}) {
 		b, err := json.Marshal(a)
 		if err != nil {
-			return false, err
+			return err
 		}
 		attribution = string(b)
 	}
@@ -241,28 +241,14 @@ func (d *DB) AttributeSubmission(ctx context.Context, p store.PendingSubmission,
 	if p.WriteEvent {
 		b, err := json.Marshal(ev)
 		if err != nil {
-			return false, fmt.Errorf("submission %s event: %w", p.ID, err)
+			return fmt.Errorf("submission %s event: %w", p.ID, err)
 		}
 		unlogged = string(b)
 	}
-	var wrote bool
-	err := d.tx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE submissions SET attribution=?, unlogged_event=?, pending_event=NULL,
-			pending_write=NULL, pending_connection=NULL WHERE project_id=? AND id=? AND pending_event IS NOT NULL`,
-			attribution, unlogged, p.ProjectID, p.ID)
-		if err != nil {
-			return err
-		}
-		if n, err := res.RowsAffected(); err != nil || n != 1 {
-			return err // deleted or attributed already
-		}
-		wrote = p.WriteEvent
-		return nil
-	})
-	if err != nil {
-		return false, err
-	}
-	return wrote, nil
+	_, err := d.db.ExecContext(ctx, `UPDATE submissions SET attribution=?, unlogged_event=?, pending_event=NULL,
+		pending_write=NULL, pending_connection=NULL WHERE project_id=? AND id=? AND pending_event IS NOT NULL`,
+		attribution, unlogged, p.ProjectID, p.ID)
+	return err
 }
 
 // UnloggedEvents lists up to limit events AttributeSubmission wrote and
