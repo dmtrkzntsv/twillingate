@@ -1,12 +1,10 @@
 import { useState } from 'react'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { useClosingTarget } from '@/hooks/use-closing-target'
 import type { IngestKey, IssuedKey } from '@/lib/api'
 import CopyButton from './CopyButton'
 import IssueKeyDialog from './IssueKeyDialog'
@@ -27,8 +25,7 @@ interface Props {
 /** A project's ingest keys: copy, issue, disable (confirmed) and enable. */
 export default function KeysSection({ keys, error, onRetry, onIssue, onDisable, onEnable, pending }: Props) {
   const [issuing, setIssuing] = useState(false)
-  // The label outlives the dialog's close animation, so the title does not flash "Disable null?".
-  const [disabling, setDisabling] = useState<{ label: string; open: boolean } | null>(null)
+  const disabling = useClosingTarget<string>()
   return (
     <section aria-label="Ingest keys" className="flex flex-col gap-3 rounded-lg border p-4">
       <header className="flex items-center justify-between">
@@ -64,7 +61,7 @@ export default function KeysSection({ keys, error, onRetry, onIssue, onDisable, 
                 </TableCell>
                 <TableCell className="text-right">
                   {k.state === 'active' ? (
-                    <Button variant="ghost" size="sm" aria-label={`Disable ${k.label}`} disabled={pending} onClick={() => setDisabling({ label: k.label, open: true })}>Disable</Button>
+                    <Button variant="ghost" size="sm" aria-label={`Disable ${k.label}`} disabled={pending} onClick={() => disabling.show(k.label)}>Disable</Button>
                   ) : (
                     <Button variant="ghost" size="sm" aria-label={`Enable ${k.label}`} disabled={pending} onClick={() => void onEnable(k.label)}>Enable</Button>
                   )}
@@ -75,18 +72,14 @@ export default function KeysSection({ keys, error, onRetry, onIssue, onDisable, 
         </Table>
       )}
       <IssueKeyDialog open={issuing} onOpenChange={setIssuing} onIssue={onIssue} pending={pending} />
-      <AlertDialog open={disabling?.open === true} onOpenChange={(o) => !o && setDisabling((d) => d && { ...d, open: false })}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Disable {disabling?.label}?</AlertDialogTitle>
-            <AlertDialogDescription>Events sent with it are rejected within a second, from every site that uses it. You can enable it again.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { const l = disabling!.label; setDisabling({ label: l, open: false }); void onDisable(l) }}>Disable key</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={disabling.open}
+        onOpenChange={disabling.onOpenChange}
+        title={<>Disable {disabling.target}?</>}
+        description="Events sent with it are rejected within a second, from every site that uses it. You can enable it again."
+        action="Disable key"
+        onAction={() => void onDisable(disabling.target!)}
+      />
     </section>
   )
 }

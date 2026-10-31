@@ -1,13 +1,11 @@
 import { useEffect, useId, useState, type FormEvent } from 'react'
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { useClosingTarget } from '@/hooks/use-closing-target'
 import type { Project } from '@/lib/api'
 
 const ANY = '*'
@@ -28,8 +26,7 @@ export default function OriginsSection({ project, pending, onSave }: Props) {
   const origins = project.allowed_origins
   const [adding, setAdding] = useState(false)
   const [allowingAll, setAllowingAll] = useState(false)
-  // The origin outlives the dialog's close animation, so the title does not flash empty.
-  const [removing, setRemoving] = useState<{ origin: string; open: boolean } | null>(null)
+  const removing = useClosingTarget<string>()
   const save = (next: string[]) => onSave({ allowed_origins: next })
   return (
     <section aria-label="Allowed origins" className="flex flex-col gap-3 rounded-lg border p-4">
@@ -57,7 +54,7 @@ export default function OriginsSection({ project, pending, onSave }: Props) {
                   {o === ANY && <span className="text-xs text-muted-foreground"> · any origin</span>}
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button variant="ghost" size="sm" aria-label={`Remove ${o}`} disabled={pending} onClick={() => setRemoving({ origin: o, open: true })}>Remove</Button>
+                  <Button variant="ghost" size="sm" aria-label={`Remove ${o}`} disabled={pending} onClick={() => removing.show(o)}>Remove</Button>
                 </TableCell>
               </TableRow>
             ))}
@@ -65,44 +62,33 @@ export default function OriginsSection({ project, pending, onSave }: Props) {
         </Table>
       )}
       <AddOriginDialog open={adding} onOpenChange={setAdding} existing={origins} pending={pending} onAdd={(o) => save([...origins, o])} />
-      <AlertDialog open={allowingAll} onOpenChange={setAllowingAll}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Allow every origin?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Any website can then send events to {project.name} with its ingest key. The origins listed stay; remove <code>*</code> later to go back to them.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void save([...origins, ANY])}>Allow everything</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={removing?.open === true} onOpenChange={(o) => !o && setRemoving((d) => d && { ...d, open: false })}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Stop accepting events from {removing?.origin === ANY ? 'every origin' : removing?.origin}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {removing?.origin === ANY
-                ? 'Only the origins listed can send from a browser.'
-                : 'Browsers on that origin can no longer send; events already received stay.'}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={() => {
-                const o = removing!.origin
-                setRemoving({ origin: o, open: false })
-                void save(origins.filter((x) => x !== o))
-              }}
-            >
-              Remove origin
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={allowingAll}
+        onOpenChange={setAllowingAll}
+        title="Allow every origin?"
+        description={
+          <>
+            Any website can then send events to {project.name} with its ingest key. The origins listed stay; remove <code>*</code> later to go back to them.
+          </>
+        }
+        action="Allow everything"
+        onAction={() => void save([...origins, ANY])}
+      />
+      <ConfirmDialog
+        open={removing.open}
+        onOpenChange={removing.onOpenChange}
+        title={<>Stop accepting events from {removing.target === ANY ? 'every origin' : removing.target}?</>}
+        description={
+          removing.target === ANY
+            ? 'Only the origins listed can send from a browser.'
+            : 'Browsers on that origin can no longer send; events already received stay.'
+        }
+        action="Remove origin"
+        onAction={() => {
+          const o = removing.target
+          void save(origins.filter((x) => x !== o))
+        }}
+      />
     </section>
   )
 }

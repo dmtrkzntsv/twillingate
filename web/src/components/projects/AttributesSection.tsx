@@ -1,14 +1,11 @@
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { BanIcon, MoreHorizontalIcon, PlusIcon, XIcon } from 'lucide-react'
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { useClosingTarget } from '@/hooks/use-closing-target'
 import type { Project } from '@/lib/api'
 import { attributesQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
@@ -51,12 +48,11 @@ function clampRange(range: { from: string; to: string }): { from: string; to: st
  * key has no menu.
  */
 export default function AttributesSection({ project, range, pending, onRename, onMerge, onBlock, onRemove, onAddAlias }: Props) {
-  // The keys outlive their dialogs' close animations, so a title does not flash "Block undefined?".
-  const [renaming, setRenaming] = useState<{ key: string; open: boolean } | null>(null)
-  const [merging, setMerging] = useState<{ key: string; open: boolean } | null>(null)
-  const [blocking, setBlocking] = useState<{ key: string; open: boolean } | null>(null)
-  const [aliasing, setAliasing] = useState<{ key: string; open: boolean } | null>(null)
-  const [unaliasing, setUnaliasing] = useState<{ key: string; to: string; open: boolean } | null>(null)
+  const renaming = useClosingTarget<string>()
+  const merging = useClosingTarget<string>()
+  const blocking = useClosingTarget<string>()
+  const aliasing = useClosingTarget<string>()
+  const unaliasing = useClosingTarget<{ key: string; to: string }>()
   const asked = clampRange(range)
   const clamped = asked.from !== range.from
   const { data, error, refetch } = useQuery(attributesQuery(project.project_id, asked))
@@ -105,13 +101,13 @@ export default function AttributesSection({ project, range, pending, onRename, o
                           <Badge key={a} variant="outline" className="gap-0.5 border-sky-500/30 bg-background pr-0.5 font-mono whitespace-normal">
                             <span className="break-all">{a}</span>
                             <Button variant="ghost" size="icon" className="size-4" aria-label={`Remove alias ${a}`} disabled={pending}
-                              onClick={() => setUnaliasing({ key: a, to: r.key, open: true })}>
+                              onClick={() => unaliasing.show({ key: a, to: r.key })}>
                               <XIcon className="size-3" />
                             </Button>
                           </Badge>
                         ))}
                         <Button variant="outline" size="icon" className="size-5 rounded-full" aria-label={`Add alias to ${r.key}`} disabled={pending}
-                          onClick={() => setAliasing({ key: r.key, open: true })}>
+                          onClick={() => aliasing.show(r.key)}>
                           <PlusIcon className="size-3" />
                         </Button>
                       </div>
@@ -130,13 +126,13 @@ export default function AttributesSection({ project, range, pending, onRename, o
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem disabled={pending} onClick={() => setRenaming({ key: r.key, open: true })}>Rename…</DropdownMenuItem>
-                          <DropdownMenuItem disabled={pending} onClick={() => setMerging({ key: r.key, open: true })}>Merge into…</DropdownMenuItem>
-                          <DropdownMenuItem disabled={pending} onClick={() => setAliasing({ key: r.key, open: true })}>Add alias…</DropdownMenuItem>
+                          <DropdownMenuItem disabled={pending} onClick={() => renaming.show(r.key)}>Rename…</DropdownMenuItem>
+                          <DropdownMenuItem disabled={pending} onClick={() => merging.show(r.key)}>Merge into…</DropdownMenuItem>
+                          <DropdownMenuItem disabled={pending} onClick={() => aliasing.show(r.key)}>Add alias…</DropdownMenuItem>
                           {r.blocked ? (
                             <DropdownMenuItem disabled={pending} onClick={() => void onRemove({ key: r.key })}>Unblock</DropdownMenuItem>
                           ) : (
-                            <DropdownMenuItem disabled={pending} onClick={() => setBlocking({ key: r.key, open: true })}>Block…</DropdownMenuItem>
+                            <DropdownMenuItem disabled={pending} onClick={() => blocking.show(r.key)}>Block…</DropdownMenuItem>
                           )}
                         </DropdownMenuContent>
                       </DropdownMenu>
@@ -155,60 +151,56 @@ export default function AttributesSection({ project, range, pending, onRename, o
       )}
       {error && !data && <LoadError what="attributes" error={error} onRetry={() => void refetch()} />}
       <RenameDialog
-        open={renaming?.open === true}
-        onOpenChange={(o) => !o && setRenaming((d) => d && { ...d, open: false })}
+        open={renaming.open}
+        onOpenChange={renaming.onOpenChange}
         noun="attribute"
-        target={target(renaming?.key)}
+        target={target(renaming.target)}
         taken={taken}
         blocked={blocked}
         pending={pending}
-        onRename={(to) => onRename({ from: renaming!.key, to })}
+        onRename={(to) => onRename({ from: renaming.target!, to })}
       />
       <MergeDialog
-        open={merging?.open === true}
-        onOpenChange={(o) => !o && setMerging((d) => d && { ...d, open: false })}
+        open={merging.open}
+        onOpenChange={merging.onOpenChange}
         noun="attribute"
-        target={target(merging?.key)}
+        target={target(merging.target)}
         into={rows
-          .filter((r) => r.key !== merging?.key && !r.blocked && !r.key.startsWith('$'))
+          .filter((r) => r.key !== merging.target && !r.blocked && !r.key.startsWith('$'))
           .map((r) => ({ name: r.key, count: r.events }))}
         pending={pending}
-        onMerge={(to) => onMerge({ from: merging!.key, to })}
+        onMerge={(to) => onMerge({ from: merging.target!, to })}
       />
       <AliasDialog
-        open={aliasing?.open === true}
-        onOpenChange={(o) => !o && setAliasing((d) => d && { ...d, open: false })}
+        open={aliasing.open}
+        onOpenChange={aliasing.onOpenChange}
         noun="attribute"
-        target={target(aliasing?.key)}
+        target={target(aliasing.target)}
         taken={taken}
-        aliases={rows.find((r) => r.key === aliasing?.key)?.aliases ?? []}
+        aliases={rows.find((r) => r.key === aliasing.target)?.aliases ?? []}
         pending={pending}
-        onAdd={(alias) => onAddAlias({ alias, to: aliasing!.key })}
+        onAdd={(alias) => onAddAlias({ alias, to: aliasing.target! })}
       />
-      <AlertDialog open={unaliasing?.open === true} onOpenChange={(o) => !o && setUnaliasing((d) => d && { ...d, open: false })}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="wrap-anywhere">{unaliasing && copy.unalias.title(unaliasing.key)}</AlertDialogTitle>
-            <AlertDialogDescription className="wrap-anywhere">{unaliasing && copy.unalias.description(unaliasing.key, unaliasing.to)}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void onRemove({ key: unaliasing!.key })}>Remove alias</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-      <AlertDialog open={blocking?.open === true} onOpenChange={(o) => !o && setBlocking((d) => d && { ...d, open: false })}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle className="wrap-anywhere">{blocking && copy.block.title({ name: blocking.key })}</AlertDialogTitle>
-            <AlertDialogDescription className="wrap-anywhere">{blocking && copy.block.description({ name: blocking.key })}</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => { const k = blocking!.key; setBlocking({ key: k, open: false }); void onBlock({ key: k }) }}>{copy.block.action}</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={unaliasing.open}
+        onOpenChange={unaliasing.onOpenChange}
+        titleClassName="wrap-anywhere"
+        descriptionClassName="wrap-anywhere"
+        title={unaliasing.target && copy.unalias.title(unaliasing.target.key)}
+        description={unaliasing.target && copy.unalias.description(unaliasing.target.key, unaliasing.target.to)}
+        action="Remove alias"
+        onAction={() => void onRemove({ key: unaliasing.target!.key })}
+      />
+      <ConfirmDialog
+        open={blocking.open}
+        onOpenChange={blocking.onOpenChange}
+        titleClassName="wrap-anywhere"
+        descriptionClassName="wrap-anywhere"
+        title={blocking.target !== undefined && copy.block.title({ name: blocking.target })}
+        description={blocking.target !== undefined && copy.block.description({ name: blocking.target })}
+        action={copy.block.action}
+        onAction={() => void onBlock({ key: blocking.target! })}
+      />
     </section>
   )
 }

@@ -1,19 +1,10 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { BracesIcon, PlayIcon, TriangleAlertIcon } from 'lucide-react'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import RangeSwitcher, { type RangeValue } from '@/components/RangeSwitcher'
 import WidgetFrame from '@/components/WidgetFrame'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -533,18 +524,15 @@ function Editor({ open, onOpenChange, widget, defaults, onSave }: WidgetEditorPr
           </div>
         </form>
       </DialogContent>
-      <AlertDialog open={confirmDiscard} onOpenChange={setConfirmDiscard}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Discard changes?</AlertDialogTitle>
-            <AlertDialogDescription>What you changed in this widget is not saved.</AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Keep editing</AlertDialogCancel>
-            <AlertDialogAction onClick={() => onOpenChange(false)}>Discard</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={confirmDiscard}
+        onOpenChange={setConfirmDiscard}
+        title="Discard changes?"
+        description="What you changed in this widget is not saved."
+        cancel="Keep editing"
+        action="Discard"
+        onAction={() => onOpenChange(false)}
+      />
     </Dialog>
   )
 }
