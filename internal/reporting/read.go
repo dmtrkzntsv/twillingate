@@ -87,12 +87,12 @@ type ListedWidget struct {
 // SourceTypes lists the registered source type names, sorted.
 func (s *Service) SourceTypes() []string { return sortedSourceNames(s.sources) }
 
-// Components lists the registered components, by name. Each row's parse
+// parsedComponents lists the registered components, by name. Each row's parse
 // is memoised keyed by the row itself: resolving a props schema is the
 // costly part of every widget_data call, rows change only when a
 // release's migration rewrites them (a changed row is a new key, so a
 // stale parse is never served), and the map holds a handful of rows.
-func (s *Service) Components(ctx context.Context) ([]Component, error) {
+func (s *Service) parsedComponents(ctx context.Context) ([]Component, error) {
 	rows, err := s.st.ListComponents(ctx)
 	if err != nil {
 		return nil, err
@@ -116,21 +116,21 @@ func (s *Service) Components(ctx context.Context) ([]Component, error) {
 	return out, nil
 }
 
-// ListedComponents is Components as a client sees them: each one's
+// ListedComponents is parsedComponents as a client sees them: each one's
 // accepts holds only the source types this process registers, so without
 // an engine nothing advertises sql (list_components, the reporting
 // guide).
 func (s *Service) ListedComponents(ctx context.Context) ([]Component, error) {
-	cs, err := s.Components(ctx)
+	cs, err := s.parsedComponents(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return WithSourceTypes(cs, s.SourceTypes()), nil
+	return withSourceTypes(cs, s.SourceTypes()), nil
 }
 
-// WithSourceTypes is comps with each one's accepts cut to sourceTypes, in
+// withSourceTypes is comps with each one's accepts cut to sourceTypes, in
 // copies: the stored components keep theirs.
-func WithSourceTypes(comps []Component, sourceTypes []string) []Component {
+func withSourceTypes(comps []Component, sourceTypes []string) []Component {
 	out := make([]Component, len(comps))
 	for i, c := range comps {
 		accepts := make([]string, 0, len(c.Accepts))
@@ -145,10 +145,10 @@ func WithSourceTypes(comps []Component, sourceTypes []string) []Component {
 	return out
 }
 
-// components is Components keyed by name: what one operation loads once
+// components is parsedComponents keyed by name: what one operation loads once
 // and checks every widget it writes against.
 func (s *Service) components(ctx context.Context) (map[string]Component, error) {
-	cs, err := s.Components(ctx)
+	cs, err := s.parsedComponents(ctx)
 	if err != nil {
 		return nil, err
 	}

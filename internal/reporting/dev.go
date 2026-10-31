@@ -156,16 +156,16 @@ func hasDashboardJSON(dir string) bool {
 // starting at firstDevDashboardID, in the order its directory was
 // encountered (devDashboardDirs' scan order — alphabetical by directory
 // name, os.ReadDir's own order). The result is then sorted by id, the
-// same rule LoadDashboards uses for the real release: dev has no sort
+// same rule loadDashboards uses for the real release: dev has no sort
 // key to order by, and ordering by id is the only ordering that matches
 // what a group's members will look like once it ships (D17), for both
 // devListDashboards and a group's Tabs.
-func loadDevDashboards(dirs []string) ([]FileDashboard, []DevError) {
+func loadDevDashboards(dirs []string) ([]fileDashboard, []DevError) {
 	paths, errs := devDashboardDirs(dirs)
-	var out []FileDashboard
+	var out []fileDashboard
 	nextID := int64(firstDevDashboardID)
 	for _, p := range paths {
-		fd, err := LoadDashboard(os.DirFS(p), ".")
+		fd, err := loadDashboard(os.DirFS(p), ".")
 		if err != nil {
 			errs = append(errs, DevError{Dir: p, Message: err.Error()})
 			continue
@@ -180,19 +180,19 @@ func loadDevDashboards(dirs []string) ([]FileDashboard, []DevError) {
 	return out, errs
 }
 
-func findDevDashboard(fds []FileDashboard, id int64) (FileDashboard, bool) {
+func findDevDashboard(fds []fileDashboard, id int64) (fileDashboard, bool) {
 	for _, fd := range fds {
 		if fd.ID == id {
 			return fd, true
 		}
 	}
-	return FileDashboard{}, false
+	return fileDashboard{}, false
 }
 
 // devWidgetRow builds the store.Widget row for fd's widget at index i
 // (0-based), with the dashboardID*1000+index(1-based) id the widget data
 // route parses back apart.
-func devWidgetRow(fd FileDashboard, i int, comps map[string]Component) store.Widget {
+func devWidgetRow(fd fileDashboard, i int, comps map[string]Component) store.Widget {
 	w := storeWidget(fd.Widgets[i], "", comps)
 	w.ID = fd.ID*1000 + int64(i+1)
 	w.DashboardID = fd.ID
@@ -207,7 +207,7 @@ func devWidgetRow(fd FileDashboard, i int, comps map[string]Component) store.Wid
 // or fd.ID when the file names none (its own sidebar entry). Sidebar is
 // always true whatever the file says: dev has no project pages, so the
 // sidebar is a preview's only way in.
-func devDashboardRow(fd FileDashboard, groupTitles map[int64]string) store.Dashboard {
+func devDashboardRow(fd fileDashboard, groupTitles map[int64]string) store.Dashboard {
 	owner := store.OwnerUser
 	if fd.ID >= 1 && fd.ID <= 999 {
 		owner = store.OwnerSystem
@@ -222,7 +222,7 @@ func devDashboardRow(fd FileDashboard, groupTitles map[int64]string) store.Dashb
 // it (D6), for the groups that have one. A file that is not its group's
 // founder (`group` set and not its own id) is skipped, as the release
 // refuses its `group_title` (checkGroups).
-func devGroupTitles(fds []FileDashboard) map[int64]string {
+func devGroupTitles(fds []fileDashboard) map[int64]string {
 	m := map[int64]string{}
 	for _, x := range fds {
 		if x.GroupTitle != "" && (x.Group == 0 || x.Group == x.ID) {
@@ -367,7 +367,7 @@ func devComponents(svc *Service, comps []Component) http.HandlerFunc {
 	out := struct {
 		SourceTypes []string    `json:"source_types"`
 		Components  []Component `json:"components"`
-	}{SourceTypes: svc.SourceTypes(), Components: WithSourceTypes(comps, svc.SourceTypes())}
+	}{SourceTypes: svc.SourceTypes(), Components: withSourceTypes(comps, svc.SourceTypes())}
 	return func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, out)
 	}

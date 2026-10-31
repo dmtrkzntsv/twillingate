@@ -76,10 +76,6 @@ func newSources(eng *sqlEngine, sampleRows bool, now func() time.Time, nat Nativ
 // accepts may name.
 var sourceTypes = map[string]bool{"sql": true, "query": true, "md": true}
 
-// validSourceType reports whether name is a source type this build has
-// (sourceTypes), registered in this process or not.
-func validSourceType(name string) bool { return sourceTypes[name] }
-
 // sortedSourceNames lists m's keys alphabetically, for a refusal that
 // names every registered source type ("there are md, query and sql").
 func sortedSourceNames(m map[string]SourceType) []string {

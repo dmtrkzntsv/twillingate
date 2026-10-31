@@ -49,7 +49,7 @@ func TestSystemDashboardTiming(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dashboards, err := LoadDashboards(system)
+	dashboards, err := loadDashboards(system)
 	if err != nil {
 		t.Fatal(err)
 	}

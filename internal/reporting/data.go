@@ -195,7 +195,7 @@ func (p prepared) finish(value any, cachedAt time.Time) (WidgetData, error) {
 // argument. Shared by WidgetData and reporting dev's data handler, so
 // the two cannot disagree on which widgets page or how.
 func (s *Service) loader(w store.Widget, src SourceType, p Params, in DataRequest) (view, func(context.Context) (any, error), error) {
-	v, err := parseView(in, s.maxRows())
+	v, err := parseView(in, s.queryRows)
 	if err != nil {
 		return view{}, nil, err
 	}
@@ -282,19 +282,12 @@ func (s *Service) widgetParams(followsProject, followsRange bool, widgetID int64
 // below the still-future from, coming back from≤to but from>to. It
 // returns the applied values, which the caller echoes in the envelope.
 func checkRange(from, to string, today civil.Date) (string, string, error) {
-	if err := checkDates(from, to); err != nil {
-		return "", "", err
-	}
-	f, err := civil.Parse(from) // checkDates already refused an unparseable from
+	f, t, err := checkDates(from, to)
 	if err != nil {
 		return "", "", err
 	}
 	if today.Before(f) {
 		return "", "", store.Refuse(store.ErrInvalid, "from %s is after today", from)
-	}
-	t, err := civil.Parse(to) // checkDates already refused an unparseable to
-	if err != nil {
-		return "", "", err
 	}
 	if today.Before(t) {
 		to = today.String()

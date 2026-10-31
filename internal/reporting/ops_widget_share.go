@@ -108,7 +108,7 @@ func (s *Service) CreateWidgetShare(ctx context.Context, actor string, in NewSha
 	if w.ArchivedAt != "" {
 		return WidgetShareOut{}, store.Refuse(store.ErrNotFound, "widget %d: not found", in.WidgetID)
 	}
-	if err := checkDates(in.From, in.To); err != nil {
+	if _, _, err := checkDates(in.From, in.To); err != nil {
 		return WidgetShareOut{}, err
 	}
 	if to, err := civil.Parse(in.To); err != nil || civil.DateOf(s.now().UTC()).Before(to) {

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/sortkey"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -648,7 +649,7 @@ func (s *Service) SetView(ctx context.Context, in View) error {
 			return err
 		}
 		if in.Range == "custom" {
-			if err := checkDates(in.From, in.To); err != nil {
+			if _, _, err := checkDates(in.From, in.To); err != nil {
 				return err
 			}
 		} else if in.From != "" || in.To != "" {
@@ -668,20 +669,20 @@ func checkPreset(r string) error {
 }
 
 // checkDates refuses a custom range that is not two days, from ≤ to, at
-// most 365 days apart.
-func checkDates(from, to string) error {
-	f, errFrom := time.Parse(time.DateOnly, from)
-	t, errTo := time.Parse(time.DateOnly, to)
+// most 365 days apart, and returns the two days.
+func checkDates(from, to string) (civil.Date, civil.Date, error) {
+	f, errFrom := civil.Parse(from)
+	t, errTo := civil.Parse(to)
 	if errFrom != nil || errTo != nil {
-		return store.Refuse(store.ErrInvalid, "from and to are days, YYYY-MM-DD")
+		return civil.Date{}, civil.Date{}, store.Refuse(store.ErrInvalid, "from and to are days, YYYY-MM-DD")
 	}
-	if f.After(t) {
-		return store.Refuse(store.ErrInvalid, "from %s is after to %s", from, to)
+	if t.Before(f) {
+		return civil.Date{}, civil.Date{}, store.Refuse(store.ErrInvalid, "from %s is after to %s", from, to)
 	}
-	if t.Sub(f) > 365*24*time.Hour {
-		return store.Refuse(store.ErrInvalid, "from %s to %s spans more than 365 days", from, to)
+	if t.Time().Sub(f.Time()) > 365*24*time.Hour {
+		return civil.Date{}, civil.Date{}, store.Refuse(store.ErrInvalid, "from %s to %s spans more than 365 days", from, to)
 	}
-	return nil
+	return f, t, nil
 }
 
 // refuseSystem refuses a write to a system dashboard: those change only
