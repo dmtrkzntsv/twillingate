@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/app"
@@ -52,65 +53,70 @@ func envFileLookup(path string) (func(string) (string, bool), error) {
 }
 
 // openOps opens the store named by DATABASE_DSN (optionally via
-// -env-file), migrates, and returns the management frontend. The CLI
-// talks to the database directly — break-glass by design (spec §7.1).
-func openOps(stdout io.Writer, envFile string) (*manage.Ops, *config.Config, func(), int) {
+// -env-file), migrates, and returns the management frontend and the
+// store's close. The CLI talks to the database directly — break-glass by
+// design (spec §7.1).
+func openOps(envFile string) (*manage.Ops, *config.Config, func(), error) {
 	lookup, err := envFileLookup(envFile)
 	if err != nil {
-		fmt.Fprintln(stdout, err)
-		return nil, nil, nil, 1
+		return nil, nil, nil, err
 	}
 	cfg, err := config.FromEnv(lookup)
 	if err != nil {
-		fmt.Fprintln(stdout, err)
-		return nil, nil, nil, 1
+		return nil, nil, nil, err
 	}
 	st, err := store.Open(cfg.Database)
 	if err != nil {
-		fmt.Fprintln(stdout, err)
-		return nil, nil, nil, 1
+		return nil, nil, nil, err
 	}
 	ctx := context.Background()
 	if err := app.Migrate(ctx, cfg, st); err != nil {
 		st.Close()
-		fmt.Fprintln(stdout, err)
-		return nil, nil, nil, 1
+		return nil, nil, nil, err
 	}
-	reg := manage.New(st, app.NewLogger(cfg.Log))
-	if err := reg.Reload(ctx); err != nil {
+	ops, err := app.NewOps(ctx, cfg, st, app.NewLogger(cfg.Log))
+	if err != nil {
 		st.Close()
-		fmt.Fprintln(stdout, err)
-		return nil, nil, nil, 1
+		return nil, nil, nil, err
 	}
-	ops := manage.NewOps(reg, st)
-	ops.FormDraftDays = cfg.Forms.DraftDays
-	return ops, cfg, func() { st.Close() }, 0
+	return ops, cfg, func() { st.Close() }, nil
+}
+
+// subcommand parses a command's own flag, -env-file, and splits off its
+// subcommand, which must be one of valid unless valid is nil. ok is false,
+// for exit 2, when the flags do not parse or the subcommand is missing or
+// not valid; what went wrong has been printed then.
+func subcommand(cmd, usage string, valid []string, args []string, stdout io.Writer) (envFile, sub string, subArgs []string, ok bool) {
+	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
+	fs.SetOutput(stdout)
+	env := fs.String("env-file", "", "load environment from this file (real env wins)")
+	if err := fs.Parse(args); err != nil {
+		return "", "", nil, false
+	}
+	rest := fs.Args()
+	if len(rest) == 0 {
+		fmt.Fprintln(stdout, usage)
+		return "", "", nil, false
+	}
+	if valid != nil && !slices.Contains(valid, rest[0]) {
+		fmt.Fprintf(stdout, "unknown subcommand %q\n%s\n", rest[0], usage)
+		return "", "", nil, false
+	}
+	return *env, rest[0], rest[1:], true
 }
 
 const projectUsage = "usage: twillingate project <create|update|list|move|archive|restore|delete> [flags]"
 
 func cmdProject(args []string, stdout io.Writer) int {
-	fs := flag.NewFlagSet("project", flag.ContinueOnError)
-	fs.SetOutput(stdout)
-	envFile := fs.String("env-file", "", "load environment from this file (real env wins)")
-	if err := fs.Parse(args); err != nil {
+	envFile, sub, subArgs, ok := subcommand("project", projectUsage,
+		[]string{"create", "update", "list", "move", "archive", "restore", "delete"}, args, stdout)
+	if !ok {
 		return 2
 	}
-	rest := fs.Args()
-	if len(rest) == 0 {
-		fmt.Fprintln(stdout, projectUsage)
-		return 2
-	}
-	sub, subArgs := rest[0], rest[1:]
-	switch sub {
-	case "create", "update", "list", "move", "archive", "restore", "delete":
-	default:
-		fmt.Fprintf(stdout, "unknown subcommand %q\n%s\n", sub, projectUsage)
-		return 2
-	}
-	ops, _, closeStore, code := openOps(stdout, *envFile)
-	if code != 0 {
-		return code
+	ops, _, closeStore, err := openOps(envFile)
+	if err != nil {
+		fmt.Fprintln(stdout, err)
+		return 1
 	}
 	defer closeStore()
 	ctx := context.Background()

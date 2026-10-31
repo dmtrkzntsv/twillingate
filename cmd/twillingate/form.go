@@ -58,22 +58,9 @@ func plural(n int, one, many string) string {
 }
 
 func cmdForm(args []string, stdout io.Writer) int {
-	fs := flag.NewFlagSet("form", flag.ContinueOnError)
-	fs.SetOutput(stdout)
-	envFile := fs.String("env-file", "", "load environment from this file (real env wins)")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	rest := fs.Args()
-	if len(rest) == 0 {
-		fmt.Fprintln(stdout, formUsage)
-		return 2
-	}
-	sub, subArgs := rest[0], rest[1:]
-	switch sub {
-	case "list", "approve", "update", "archive", "restore", "export", "erase":
-	default:
-		fmt.Fprintf(stdout, "unknown subcommand %q\n%s\n", sub, formUsage)
+	envFile, sub, subArgs, ok := subcommand("form", formUsage,
+		[]string{"list", "approve", "update", "archive", "restore", "export", "erase"}, args, stdout)
+	if !ok {
 		return 2
 	}
 
@@ -172,16 +159,16 @@ func cmdForm(args []string, stdout io.Writer) int {
 		}
 	}
 
-	ops, cfg, closeStore, code := openOps(stdout, *envFile)
-	if code != 0 {
-		return code
-	}
-	defer closeStore()
-	ctx := context.Background()
 	fail := func(err error) int {
 		fmt.Fprintln(stdout, err)
 		return 1
 	}
+	ops, cfg, closeStore, err := openOps(envFile)
+	if err != nil {
+		return fail(err)
+	}
+	defer closeStore()
+	ctx := context.Background()
 
 	switch sub {
 	case "list":

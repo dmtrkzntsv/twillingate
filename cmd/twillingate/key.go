@@ -11,25 +11,22 @@ import (
 
 func init() { commands["key"] = cmdKey }
 
+const keyUsage = "usage: twillingate key <issue|list|disable|enable> [flags]"
+
 func cmdKey(args []string, stdout io.Writer) int {
-	fs := flag.NewFlagSet("key", flag.ContinueOnError)
-	fs.SetOutput(stdout)
-	envFile := fs.String("env-file", "", "load environment from this file (real env wins)")
-	if err := fs.Parse(args); err != nil {
+	// No list of subcommands: an unknown one is refused after the store
+	// is opened and migrated.
+	envFile, sub, subArgs, ok := subcommand("key", keyUsage, nil, args, stdout)
+	if !ok {
 		return 2
 	}
-	rest := fs.Args()
-	if len(rest) == 0 {
-		fmt.Fprintln(stdout, "usage: twillingate key <issue|list|disable|enable> [flags]")
-		return 2
-	}
-	ops, cfg, closeStore, code := openOps(stdout, *envFile)
-	if code != 0 {
-		return code
+	ops, cfg, closeStore, err := openOps(envFile)
+	if err != nil {
+		fmt.Fprintln(stdout, err)
+		return 1
 	}
 	defer closeStore()
 	ctx := context.Background()
-	sub, subArgs := rest[0], rest[1:]
 	sf := flag.NewFlagSet("key "+sub, flag.ContinueOnError)
 	sf.SetOutput(stdout)
 	projectID := sf.Int64("project-id", 0, "project id (required except for list)")
@@ -90,7 +87,7 @@ func cmdKey(args []string, stdout io.Writer) int {
 		fmt.Fprintf(stdout, "key %d/%s %sd\n", *projectID, *label, sub)
 		return 0
 	default:
-		fmt.Fprintf(stdout, "unknown subcommand %q\nusage: twillingate key <issue|list|disable|enable> [flags]\n", sub)
+		fmt.Fprintf(stdout, "unknown subcommand %q\n%s\n", sub, keyUsage)
 		return 2
 	}
 }
