@@ -96,29 +96,8 @@ func (d *DB) SetDashboardsSidebar(ctx context.Context, ids []int64, sidebar bool
 		return nil
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx,
-			`SELECT id FROM dashboards WHERE id IN (`+placeholders(len(ids))+`)`, toArgs(ids)...)
-		if err != nil {
+		if err := requireDashboards(ctx, tx, ids); err != nil {
 			return err
-		}
-		exists := map[int64]bool{}
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			exists[id] = true
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return err
-		}
-		rows.Close()
-		for _, id := range ids {
-			if !exists[id] {
-				return store.Refuse(store.ErrNotFound, "dashboard %d: not found", id)
-			}
 		}
 		for _, id := range ids {
 			if _, err := tx.ExecContext(ctx,

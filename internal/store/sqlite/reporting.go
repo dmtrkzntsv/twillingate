@@ -254,6 +254,37 @@ func (d *DB) SetDashboardView(ctx context.Context, dash store.Dashboard) error {
 	})
 }
 
+// requireDashboards refuses, ErrNotFound naming the first of ids in
+// order, when any of ids is not a dashboard, so a batch write that checks
+// first leaves every row untouched.
+func requireDashboards(ctx context.Context, tx *sql.Tx, ids []int64) error {
+	rows, err := tx.QueryContext(ctx,
+		`SELECT id FROM dashboards WHERE id IN (`+placeholders(len(ids))+`)`, toArgs(ids)...)
+	if err != nil {
+		return err
+	}
+	exists := map[int64]bool{}
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		exists[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	for _, id := range ids {
+		if !exists[id] {
+			return store.Refuse(store.ErrNotFound, "dashboard %d: not found", id)
+		}
+	}
+	return nil
+}
+
 // SetDashboardsArchived archives (only rows currently live) or restores
 // (only rows currently archived, a user one back in the sidebar) every id
 // in ids, in one transaction,
@@ -266,29 +297,8 @@ func (d *DB) SetDashboardsArchived(ctx context.Context, ids []int64, archived bo
 		return nil
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx,
-			`SELECT id FROM dashboards WHERE id IN (`+placeholders(len(ids))+`)`, toArgs(ids)...)
-		if err != nil {
+		if err := requireDashboards(ctx, tx, ids); err != nil {
 			return err
-		}
-		exists := map[int64]bool{}
-		for rows.Next() {
-			var id int64
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			exists[id] = true
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return err
-		}
-		rows.Close()
-		for _, id := range ids {
-			if !exists[id] {
-				return store.Refuse(store.ErrNotFound, "dashboard %d: not found", id)
-			}
 		}
 
 		q := `UPDATE dashboards SET archived_at=strftime('%Y-%m-%dT%H:%M:%SZ','now'),
