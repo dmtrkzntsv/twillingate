@@ -92,10 +92,11 @@ race suite `make test`, and `image` (`build docker image`) pushes the
 multi-arch image untagged, by digest; `release` (`build and publish
 release`) waits for all four, tags, hands the tarballs and their checksums
 to `npx changelogithub`, then tags the image with the version and `latest`;
-`r2` (`publish to R2`) then runs `make publish`, which hands `dist/ship/` (both
-plain binaries, `deploy/ship/`'s unit template and env example, staged by
-`make dist`) to `ship publish` as the version and `latest`; it can be re-run
-alone. A failure before `release` publishes nothing, and a `dry_run` dispatch
+`r2` (`publish to R2`) then runs `make ship-publish`, which hands `dist/ship/`
+(both plain binaries, `deploy/ship/`'s unit template and env example, staged
+by `make ship-dist`, which `make dist` runs first) to `ship publish` as the
+version and `latest`; it can be re-run alone. README "Deploy with ship" is
+the ship install guide. A failure before `release` publishes nothing, and a `dry_run` dispatch
 stops before `release`. Several commits
 can ship under one version; notes are not hand-edited.
 

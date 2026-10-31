@@ -92,13 +92,98 @@ install too.
 | [The event model](docs/twillingate.md#the-event-model) | The three event families, for native apps and backends too |
 | [The wire format](docs/twillingate.md#the-wire-format) | The normative contract for `/ingest/events` |
 | [Answer questions with the data](docs/twillingate.md#answer-questions-with-the-data) | The MCP tools, the HTTP API, the views, and the caveats needed to write correct SQL |
-| [Install](docs/deployment.md#install) | systemd (`install.sh` or [ship](docs/deployment.md#systemd-with-ship)) and docker compose, verifying ingestion |
+| [Install](docs/deployment.md#install) | systemd (`install.sh`; with ship, see [Deploy with ship](#deploy-with-ship)) and docker compose, verifying ingestion |
 | [Configure the collector](docs/deployment.md#configure-the-collector) | Every environment variable, low-resource tuning |
 | [The console](docs/deployment.md#the-console) | The browser login, and pointing claude.ai, Desktop or Claude Code at it |
 | [Dashboards at /app/](docs/deployment.md#dashboards-at-app) | Where the dashboards are served and how they log in |
 | [Operate and recover](docs/deployment.md#operate-and-recover) | Upgrades, backup and restore, schema upgrades in deploy/UPGRADES.md |
 | [docs/litestream.md](docs/litestream.md) | Continuous backups with litestream under systemd or docker compose, drills, disaster recovery |
 | [docs/plausible/](docs/plausible/) | The Plausible class-tagging shim |
+
+## Deploy with ship
+
+Each release is also published, as plain binaries with a unit template, to
+the R2 bucket [ship](https://github.com/dmtrkzntsv/ship) installs from.
+The bucket is the maintainer's and not public: elsewhere use `install.sh`
+or docker compose ([Install](docs/deployment.md#install)). The private SQL
+engine, [twillingate-sql](https://github.com/dmtrkzntsv/twillingate-sql),
+is published the same way and installed into the same service.
+
+### Publish
+
+```sh
+make ship-dist && make ship-publish VERSION=v1.2.3 CHANNELS=latest
+```
+
+`ship-dist` stages `dist/ship/`: both static binaries and
+[deploy/ship/](deploy/ship/)'s `twillingate.service` (the unit template)
+and `twillingate.env.example`. `ship-publish` uploads it, with
+`--version` for a `VERSION` other than `dev` and `--channels` for
+`CHANNELS`, one of them required; it needs ship's R2 write credentials.
+The release workflow does both after the GitHub release.
+
+### Install
+
+On a host with ship and its read-only R2 key:
+
+```sh
+sudo ship install twillingate --version latest
+sudo ship install twillingate-sql --service twillingate --version latest
+sudo vi /etc/twillingate/twillingate.env        # INGEST_URL, GEO_DSN, CONSOLE_AUTH_DSN …
+sudo ship run twillingate -- project create -name myapp
+sudo ship run twillingate -- key issue -project-id 1 -label web
+sudo ship start twillingate                     # first: it creates /var/lib/twillingate/data
+sudo ship start twillingate-sql --service twillingate
+```
+
+Both run as user `twillingate` in service `twillingate` (a
+`--service twillingate-beta` beside it gets its own everything). The unit
+runs in the data dir `/var/lib/twillingate`, which holds the env example's
+`DATABASE_DSN=sqlite://twillingate.db` and, at the default `DATA_DIR`, the
+event files twillingate-sql reads (leave `DATA_DIR` unset). It sets
+`SQL_ENGINE_SOCKET=/run/twillingate/sql-engine.sock`, where twillingate-sql
+listens; without the engine, set `SQL_ENGINE_SOCKET=` (empty) in the env
+file to refuse SQL rather than fail it. ship installs one unit per
+project, so the split install (`twillingate@.service`), the litestream
+unit and the logrotate file are not covered: set them up by hand if you
+need them, with `/var/lib/twillingate` and `/etc/twillingate/twillingate.env`
+for the paths in [docs/litestream.md](docs/litestream.md).
+
+### Operate
+
+```sh
+sudo ship update twillingate                    # restarts; rolls back by itself if it does not stay up
+sudo ship rollback twillingate
+sudo ship logs twillingate
+sudo ship status
+sudo ship run twillingate -- <command>          # the CLI with the env file and user, in the data dir
+```
+
+twillingate-sql takes the same commands with `twillingate-sql --service twillingate`.
+
+### Moving an existing host
+
+A host set up by `install.sh` moves over once, keeping its data, with
+ship's recipe [Moving a hand-installed service to
+ship](https://github.com/dmtrkzntsv/ship#moving-a-hand-installed-service-to-ship)
+(service `twillingate`, run once for each project). The values:
+
+| | twillingate | twillingate-sql |
+| --- | --- | --- |
+| old unit | `twillingate.service` (and any `twillingate@` instance, `litestream.service`) | `twillingate-sql.service` |
+| old binary | `/usr/local/bin/twillingate` | `/usr/local/bin/twillingate-sql` |
+| old env file | `/etc/twillingate/twillingate.env` | `/etc/twillingate-sql/twillingate-sql.env` |
+| user | `twillingate` (kept) | `twillingate-sql` (removed; the engine now runs as `twillingate`) |
+| data dir | `/var/lib/twillingate`, reused as it is | none; `/var/cache/twillingate-sql` is removed |
+| key files | none | none |
+
+Before starting, delete `SQL_ENGINE_SOCKET` from the restored
+`twillingate.env`: the env file overrides the unit, which points it at the
+new socket. Don't restore twillingate-sql's old env file, whose
+`TWSQL_DATA_DIR` the unit sets; its tuning lines (`TWSQL_MEMORY_LIMIT` …)
+can go into `/etc/twillingate/twillingate-sql.env`. Once both run, remove
+the old binaries, units, `/etc/twillingate-sql`, `/var/cache/twillingate-sql`
+and user and group `twillingate-sql`.
 
 ## Development
 

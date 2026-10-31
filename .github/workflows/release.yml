@@ -102,8 +102,9 @@ jobs:
           path: dist/*.tar.gz
           if-no-files-found: error
           retention-days: 7
-      # The r2 job publishes this folder: the same binaries, flat, with
-      # ship's unit template and env example (deploy/ship/).
+      # The r2 job publishes this folder, which make dist staged with
+      # make ship-dist: the same binaries, flat, with ship's unit template
+      # and env example (deploy/ship/).
       - uses: actions/upload-artifact@v4
         with:
           name: ship
@@ -272,7 +273,7 @@ jobs:
           docker buildx imagetools inspect "$IMAGE:$TAG"
 
   # The plain binaries, the unit template and the env example to R2 with
-  # ship (`make publish`, as from a laptop), as the version and `latest`.
+  # ship (`make ship-publish`, as from a laptop), as the version and `latest`.
   # After the release, so R2 never holds a version GitHub does not; a
   # failure here leaves the release as it is, and re-running this job
   # alone publishes it (ship skips an identical version and still moves
@@ -289,10 +290,9 @@ jobs:
       - uses: actions/download-artifact@v4
         with: { name: ship, path: dist/ship }
       - uses: dmtrkzntsv/ship@v0
-      - run: make publish VERSION="$TAG" CHANNELS=latest
+      - run: make ship-publish VERSION="$TAG" CHANNELS=latest
         env:
           TAG: ${{ needs.version.outputs.tag }}
           SHIP_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           SHIP_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
           SHIP_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          SHIP_R2_BUCKET: lab
