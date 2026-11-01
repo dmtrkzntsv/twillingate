@@ -1,8 +1,9 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useId, useState, type FormEvent } from 'react'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import type { DashboardActions } from '@/hooks/use-dashboard-actions'
 import { nameTooShort } from '@/lib/arrange'
 
 interface Props {
@@ -31,11 +32,13 @@ interface Props {
  * D11). Unchanged text closes without a request unless `saveUnchanged`.
  */
 export default function NameDialog({ open, onOpenChange, title, description, label, name, saveUnchanged = false, onSave, pending }: Props) {
+  const id = useId()
   const [draft, setDraft] = useState(name)
-  // Start from the current name each time it opens.
+  // Refill only when it opens: a refetch that changes `name` must not wipe what is being typed.
   useEffect(() => {
     if (open) setDraft(name)
-  }, [open, name])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open])
   const invalid = nameTooShort(draft)
   const submit = async (e: FormEvent) => {
     e.preventDefault()
@@ -53,16 +56,21 @@ export default function NameDialog({ open, onOpenChange, title, description, lab
             <DialogDescription className="wrap-anywhere">{description}</DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2">
-            <Label htmlFor="dashboard-name">{label}</Label>
+            <Label htmlFor={id}>{label}</Label>
             <Input
-              id="dashboard-name"
+              id={id}
               autoComplete="off"
               autoFocus
               aria-invalid={invalid}
+              aria-describedby={invalid ? `${id}-hint` : undefined}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
             />
-            {invalid && <p className="text-xs text-muted-foreground">At least 2 characters.</p>}
+            {invalid && (
+              <p id={`${id}-hint`} className="text-xs text-muted-foreground">
+                At least 2 characters.
+              </p>
+            )}
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
@@ -75,5 +83,37 @@ export default function NameDialog({ open, onOpenChange, title, description, lab
         </form>
       </DialogContent>
     </Dialog>
+  )
+}
+
+/**
+ * Retitles one tab, a user dashboard (`PATCH /api/dashboards/{id}` with a
+ * `title`). A group with no name of its own shows its first tab's title in
+ * the sidebar, so retitling that tab renames the sidebar entry too.
+ */
+export function RenameTabDialog({
+  open,
+  onOpenChange,
+  dashboard,
+  rename,
+  pending,
+}: {
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  dashboard: { dashboard_id: number; title: string }
+  rename: DashboardActions['rename']
+  pending?: boolean
+}) {
+  return (
+    <NameDialog
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Rename tab"
+      description={`The title of '${dashboard.title}' wherever it shows: its tab, its page and the projects it is a tab of.`}
+      label="Tab name"
+      name={dashboard.title}
+      pending={pending}
+      onSave={(title) => rename(dashboard.dashboard_id, title)}
+    />
   )
 }

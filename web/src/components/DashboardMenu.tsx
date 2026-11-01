@@ -23,7 +23,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
-import NameDialog from '@/components/NameDialog'
+import NameDialog, { RenameTabDialog } from '@/components/NameDialog'
 import { useDashboardActions, type DashboardActions } from '@/hooks/use-dashboard-actions'
 import type { DashboardDetail, DashboardInfo } from '@/lib/api'
 import { groupName, liveGroups, moveTabBody, nextAfterArchive } from '@/lib/arrange'
@@ -161,7 +161,7 @@ export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMe
         <NameDialog
           open={renaming}
           onOpenChange={setRenaming}
-          title="Rename dashboard…"
+          title="Rename dashboard"
           description="The name in the sidebar. Each tab keeps its own title."
           label="Dashboard name"
           name={groupTitle}
@@ -253,34 +253,3 @@ export function TabMenu({ dashboard, list }: Props) {
   )
 }
 
-/**
- * Retitles one tab, a user dashboard (`PATCH /api/dashboards/{id}` with a
- * `title`). A group with no name of its own shows its first tab's title in
- * the sidebar, so retitling that tab renames the sidebar entry too.
- */
-export function RenameTabDialog({
-  open,
-  onOpenChange,
-  dashboard,
-  rename,
-  pending,
-}: {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  dashboard: { dashboard_id: number; title: string }
-  rename: DashboardActions['rename']
-  pending?: boolean
-}) {
-  return (
-    <NameDialog
-      open={open}
-      onOpenChange={onOpenChange}
-      title="Rename tab…"
-      description={`The title of '${dashboard.title}' wherever it shows: its tab, its page and the projects it is a tab of.`}
-      label="Tab name"
-      name={dashboard.title}
-      pending={pending}
-      onSave={(title) => rename(dashboard.dashboard_id, title)}
-    />
-  )
-}

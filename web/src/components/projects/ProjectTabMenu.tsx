@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { ArrowLeftIcon, ArrowRightIcon, ExternalLinkIcon, MoreHorizontalIcon, PencilIcon, XIcon } from 'lucide-react'
 import { Link, useNavigate } from 'react-router'
-import { RenameTabDialog } from '@/components/DashboardMenu'
+import { RenameTabDialog } from '@/components/NameDialog'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -42,7 +42,9 @@ interface Props {
  */
 export default function ProjectTabMenu({ projectId, tab, tabs, actions, search, autoRefresh, renamable = false }: Props) {
   const navigate = useNavigate()
-  const { rename, pending } = useDashboardActions()
+  const { rename, pending: renamePending } = useDashboardActions()
+  // Either hook's write in flight holds every write here.
+  const pending = renamePending || actions.pending
   const [renaming, setRenaming] = useState(false)
   const mobile = useIsMobile()
   const id = tab.dashboard_id
@@ -69,7 +71,7 @@ export default function ProjectTabMenu({ projectId, tab, tabs, actions, search, 
               Rename tab…
             </DropdownMenuItem>
           )}
-          <DropdownMenuItem disabled={actions.pending} onClick={() => void remove()}>
+          <DropdownMenuItem disabled={pending} onClick={() => void remove()}>
             <XIcon />
             Remove from this project
           </DropdownMenuItem>
@@ -82,11 +84,11 @@ export default function ProjectTabMenu({ projectId, tab, tabs, actions, search, 
           {mobile && (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuItem disabled={actions.pending || i === 0} onClick={() => moveTo(i - 1)}>
+              <DropdownMenuItem disabled={pending || i === 0} onClick={() => moveTo(i - 1)}>
                 <ArrowLeftIcon />
                 Move left
               </DropdownMenuItem>
-              <DropdownMenuItem disabled={actions.pending || i === tabs.length - 1} onClick={() => moveTo(i + 1)}>
+              <DropdownMenuItem disabled={pending || i === tabs.length - 1} onClick={() => moveTo(i + 1)}>
                 <ArrowRightIcon />
                 Move right
               </DropdownMenuItem>
