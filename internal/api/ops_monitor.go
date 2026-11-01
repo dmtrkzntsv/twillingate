@@ -34,7 +34,7 @@ type monitorCertOut struct {
 
 type monitorCheckOut struct {
 	RequestedAt string `json:"requested_at" jsonschema:"when the last manual check was asked for, RFC 3339 UTC; empty when none"`
-	FinishedAt  string `json:"finished_at" jsonschema:"when it ended; the check is still running while this is before requested_at"`
+	FinishedAt  string `json:"finished_at" jsonschema:"when it ended; empty while the check runs (the result fields then still hold the previous one), and before requested_at only on a row from an older version"`
 	Up          bool   `json:"up"`
 	Status      int    `json:"status" jsonschema:"the final HTTP status; 0 without a response"`
 	Reason      string `json:"reason" jsonschema:"why it was down, the same vocabulary as an uptime row's; empty when up or when it did not run"`
@@ -117,6 +117,6 @@ func (h *host) registerMonitor(r *registrar) {
 		Description: "Change one origin's availability monitor: enabled and contains (text the page must contain). origin is required, one of the project's exact http(s) origins; fields you omit are left unchanged. Returns the same as list_monitors."},
 		h.updateMonitor)
 	expose(r, spec{Name: "check_monitor", Annotations: write, Method: "POST", Path: "/api/projects/{project_id}/monitors/check",
-		Description: "Ask for a check of one enabled monitor now: its origin's availability, certificate and main domain together, outside the schedule. Returns the same as list_monitors right away, before the check ran; call list_monitors until that monitor's check.finished_at is at or past check.requested_at, then read check.up, status, reason, error and ms, and the fresh cert and domain. Refused while one is pending on that monitor and within 60 seconds of its last request."},
+		Description: "Ask for a check of one enabled monitor now: its origin's availability, certificate and main domain together, outside the schedule. Returns the same as list_monitors right away, before the check ran; call list_monitors until that monitor's check.finished_at is not empty and at or past check.requested_at (it is empty while the check runs, and the result fields hold the previous result until then), then read check.up, status, reason, error and ms, and the fresh cert and domain. Refused while one is pending on that monitor and within 60 seconds of its last request."},
 		h.checkMonitor)
 }

@@ -75,7 +75,7 @@ const (
 	// finishTimeout bounds recording a manual check's end, on a context of its
 	// own so that a shutdown does not leave it pending.
 	finishTimeout = 5 * time.Second
-	checkNotRun   = "the check did not run"
+	checkNotRun   = store.MonitorCheckNotRun
 )
 
 // Runner schedules the checks. Each project has a fixed offset within the
@@ -235,7 +235,7 @@ func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 	for _, m := range ms {
 		// A busy monitor's request waits, however old: it may be that request
 		// which is running.
-		if m.CheckRequestedAt > m.CheckFinishedAt && !wasBusy[keyOf(m)] && ctx.Err() == nil {
+		if m.CheckPending() && !wasBusy[keyOf(m)] && ctx.Err() == nil {
 			r.startManual(ctx, m, now)
 		}
 	}

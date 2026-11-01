@@ -57,3 +57,13 @@ type CertState struct {
 
 // DomainState is one domain-expiry reading.
 type DomainState struct{ ExpiresAt, CheckedAt string }
+
+// MonitorCheckNotRun is the error of a manual check that ended without running.
+const MonitorCheckNotRun = "the check did not run"
+
+// CheckPending reports whether a manual check was requested and has not
+// finished: requested, and finished empty (the request clears it) or older than
+// the request.
+func (m Monitor) CheckPending() bool {
+	return m.CheckRequestedAt != "" && (m.CheckFinishedAt == "" || m.CheckFinishedAt < m.CheckRequestedAt)
+}

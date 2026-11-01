@@ -54,6 +54,6 @@ type Store interface {
 	// AuditEntry passed, no config bump (monitors are not in the snapshot).
 	ListMonitors(ctx context.Context, projectID int64) ([]store.Monitor, error)
 	ListMonitorDomains(ctx context.Context, projectID int64) ([]store.MonitorDomain, error)
-	SetMonitor(ctx context.Context, projectID int64, origin string, s store.MonitorSettings, a store.AuditEntry) (store.Monitor, error)
-	RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, a store.AuditEntry) error
+	SetMonitor(ctx context.Context, projectID int64, origin string, s store.MonitorSettings, eligible func(allowedOrigins []string) []string, a store.AuditEntry) (store.Monitor, error)
+	RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, cooldown time.Duration, a store.AuditEntry) error
 }

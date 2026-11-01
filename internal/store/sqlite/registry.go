@@ -200,6 +200,13 @@ func (d *DB) SetProjectArchived(ctx context.Context, id int64, archived bool, a 
 				return fmt.Errorf("unknown project %d: %w", id, store.ErrNotFound)
 			}
 		}
+		if archived {
+			// The runner skips archived projects; a request pending on one
+			// would never finish.
+			if err := finishPendingChecks(ctx, tx, id, ""); err != nil {
+				return err
+			}
+		}
 		return auditAndBump(ctx, tx, a)
 	})
 }

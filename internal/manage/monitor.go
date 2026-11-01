@@ -246,7 +246,7 @@ func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, ori
 		changed = append(changed, "contains")
 	}
 	if len(changed) > 1 {
-		if _, err := o.St.SetMonitor(ctx, projectID, origin, next, store.AuditEntry{
+		if _, err := o.St.SetMonitor(ctx, projectID, origin, next, MonitorOrigins, store.AuditEntry{
 			Actor: actor, Action: "monitor.update", Subject: idSubject(projectID),
 			Detail: strings.Join(changed, " ")}); err != nil {
 			return MonitorList{}, err
@@ -271,7 +271,7 @@ func (o *Ops) CheckMonitor(ctx context.Context, actor string, projectID int64, o
 	if !m.Enabled {
 		return MonitorList{}, fmt.Errorf("%w: turn the monitor on first", ErrInvalid)
 	}
-	if m.CheckRequestedAt > m.CheckFinishedAt {
+	if m.CheckPending() {
 		return MonitorList{}, fmt.Errorf("%w: a check is already running", ErrBusy)
 	}
 	now := o.now().UTC()
@@ -280,7 +280,7 @@ func (o *Ops) CheckMonitor(ctx context.Context, actor string, projectID int64, o
 			return MonitorList{}, fmt.Errorf("%w: checked moments ago; try again in %d s", ErrBusy, int(wait.Round(time.Second)/time.Second))
 		}
 	}
-	if err := o.St.RequestMonitorCheck(ctx, projectID, origin, now.Format(time.RFC3339), store.AuditEntry{
+	if err := o.St.RequestMonitorCheck(ctx, projectID, origin, now.Format(time.RFC3339), monitorCheckCooldown, store.AuditEntry{
 		Actor: actor, Action: "monitor.check", Subject: idSubject(projectID), Detail: origin}); err != nil {
 		return MonitorList{}, err
 	}

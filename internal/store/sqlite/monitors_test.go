@@ -4,19 +4,23 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 func monitorProject(t *testing.T, d *DB, name string) int64 {
 	t.Helper()
-	id, err := d.CreateProject(context.Background(), store.RegistryProject{Name: name, AllowedOrigins: "[]"},
+	id, err := d.CreateProject(context.Background(), store.RegistryProject{Name: name, AllowedOrigins: `["https://a.example.com","https://b.example.com","https://c.other.org"]`},
 		store.AuditEntry{Actor: "test", Action: "project.create"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return id
 }
+
+// monEligible is every listed origin: the tests list only exact origins.
+func monEligible(allowed []string) []string { return allowed }
 
 var monAudit = store.AuditEntry{Actor: "test", Action: "monitor.set", Subject: "monitor"}
 
@@ -29,7 +33,7 @@ const (
 
 func setMon(t *testing.T, d *DB, id int64, origin string, s store.MonitorSettings) store.Monitor {
 	t.Helper()
-	m, err := d.SetMonitor(context.Background(), id, origin, s, monAudit)
+	m, err := d.SetMonitor(context.Background(), id, origin, s, monEligible, monAudit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -370,7 +374,7 @@ func TestMonitorStateWritesStayOnTheirOrigin(t *testing.T) {
 	if err := d.SetMonitorRedirects(ctx, id, monA, 4); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.RequestMonitorCheck(ctx, id, monA, monAt, store.AuditEntry{Actor: "t", Action: "monitor.check"}); err != nil {
+	if err := d.RequestMonitorCheck(ctx, id, monA, monAt, 0, store.AuditEntry{Actor: "t", Action: "monitor.check"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.FinishMonitorCheck(ctx, id, monA, store.MonitorCheckResult{FinishedAt: monAt, Up: true}); err != nil {
@@ -402,7 +406,7 @@ func TestSetMonitorRedirectsKeptByAnEdit(t *testing.T) {
 
 func TestMonitorUnknownProject(t *testing.T) {
 	d := newTestDB(t)
-	if _, err := d.SetMonitor(context.Background(), 999, monA, store.MonitorSettings{}, monAudit); !errors.Is(err, store.ErrNotFound) {
+	if _, err := d.SetMonitor(context.Background(), 999, monA, store.MonitorSettings{}, monEligible, monAudit); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("SetMonitor: %v, want ErrNotFound", err)
 	}
 }
@@ -431,13 +435,13 @@ func TestMonitorCheckRequestAndFinish(t *testing.T) {
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
 	audit := store.AuditEntry{Actor: "test", Action: "monitor.check", Subject: "1"}
-	request := func(origin, at string) error { return d.RequestMonitorCheck(ctx, id, origin, at, audit) }
+	request := func(origin, at string) error { return d.RequestMonitorCheck(ctx, id, origin, at, 0, audit) }
 
 	// No monitor to check: refused, and nothing audited.
 	if err := request(monA, "2026-11-01T10:00:00Z"); !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("request with no monitor: %v, want ErrInvalid", err)
 	}
-	if err := d.RequestMonitorCheck(ctx, 99, monA, "2026-11-01T10:00:00Z", audit); !errors.Is(err, store.ErrNotFound) {
+	if err := d.RequestMonitorCheck(ctx, 99, monA, "2026-11-01T10:00:00Z", 0, audit); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("request on an unknown project: %v, want ErrNotFound", err)
 	}
 	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
@@ -499,5 +503,142 @@ func TestMonitorCheckRequestAndFinish(t *testing.T) {
 	}
 	if err := request(monA, "2026-11-01T10:02:00Z"); !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("request on a disabled monitor: %v, want ErrInvalid", err)
+	}
+}
+
+// An origins edit that commits after manage's check removes the origin; the
+// write must not bring its row back.
+func TestSetMonitorRefusesAnOriginNoLongerListed(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	if err := d.UpdateProject(ctx, store.RegistryProject{ID: id, Name: "a", AllowedOrigins: `["https://b.example.com"]`,
+		MonitorOrigins: []string{monB}}, store.AuditEntry{Actor: "t", Action: "project.update", Subject: "1"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, on := range []bool{true, false} {
+		if _, err := d.SetMonitor(ctx, id, monA, store.MonitorSettings{Enabled: on}, monEligible, monAudit); !errors.Is(err, store.ErrInvalid) {
+			t.Errorf("enabled=%t on a removed origin: %v, want ErrInvalid", on, err)
+		}
+	}
+	if m := getMon(t, d, id, monA); m != (store.Monitor{}) {
+		t.Errorf("the row came back: %+v", m)
+	}
+	// Turning an existing monitor off stays allowed whatever the origins say.
+	setMon(t, d, id, monB, store.MonitorSettings{Enabled: true})
+	none := func([]string) []string { return nil }
+	if m, err := d.SetMonitor(ctx, id, monB, store.MonitorSettings{Enabled: false}, none, monAudit); err != nil || m.Enabled {
+		t.Errorf("turning off: %+v, %v", m, err)
+	}
+	if _, err := d.SetMonitor(ctx, id, monB, store.MonitorSettings{Enabled: true}, none, monAudit); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("enabling when not eligible: %v, want ErrInvalid", err)
+	}
+}
+
+func TestRequestMonitorCheckCooldownIsInTheWrite(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	audit := store.AuditEntry{Actor: "t", Action: "monitor.check", Subject: "1"}
+	cool := 60 * time.Second
+	if err := d.RequestMonitorCheck(ctx, id, monA, "2026-11-01T10:00:00Z", cool, audit); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.FinishMonitorCheck(ctx, id, monA, store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:02Z", Up: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.RequestMonitorCheck(ctx, id, monA, "2026-11-01T10:00:59Z", cool, audit); !errors.Is(err, store.ErrBusy) {
+		t.Fatalf("inside the cooldown: %v, want ErrBusy", err)
+	}
+	if err := d.RequestMonitorCheck(ctx, id, monA, "2026-11-01T10:01:00Z", cool, audit); err != nil {
+		t.Fatalf("after the cooldown: %v", err)
+	}
+	if n := auditCount(t, d, "monitor.check"); n != 2 {
+		t.Errorf("audit rows = %d, want 2", n)
+	}
+}
+
+// A request in the second the last check finished is still pending, and the
+// previous result stays readable while it runs.
+func TestRequestMonitorCheckInTheSecondOfTheLastFinish(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	audit := store.AuditEntry{Actor: "t", Action: "monitor.check", Subject: "1"}
+	if err := d.RequestMonitorCheck(ctx, id, monA, "2026-11-01T10:00:00Z", 0, audit); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.FinishMonitorCheck(ctx, id, monA, store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:05Z", Up: false, Status: 503, Error: "e", MS: 7}); err != nil {
+		t.Fatal(err)
+	}
+	if m := getMon(t, d, id, monA); m.CheckPending() {
+		t.Fatalf("finished but pending: %+v", m)
+	}
+	if err := d.RequestMonitorCheck(ctx, id, monA, "2026-11-01T10:00:05Z", 0, audit); err != nil {
+		t.Fatal(err)
+	}
+	m := getMon(t, d, id, monA)
+	if !m.CheckPending() || m.CheckFinishedAt != "" {
+		t.Fatalf("after the request: %+v, want pending with no finish time", m)
+	}
+	if m.CheckStatus != 503 || m.CheckError != "e" || m.CheckMS != 7 {
+		t.Errorf("the previous result was dropped: %+v", m)
+	}
+	if err := d.RequestMonitorCheck(ctx, id, monA, "2026-11-01T10:00:05Z", 0, audit); !errors.Is(err, store.ErrBusy) {
+		t.Errorf("a second request while pending: %v, want ErrBusy", err)
+	}
+	if err := d.FinishMonitorCheck(ctx, id, monA, store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:05Z", Up: true}); err != nil {
+		t.Fatal(err)
+	}
+	if m := getMon(t, d, id, monA); m.CheckPending() {
+		t.Errorf("finished in the same second, still pending: %+v", m)
+	}
+}
+
+func TestPendingCheckEndsWhenTheMonitorIsTurnedOff(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monB, store.MonitorSettings{Enabled: true})
+	audit := store.AuditEntry{Actor: "t", Action: "monitor.check", Subject: "1"}
+	for _, o := range []string{monA, monB} {
+		if err := d.RequestMonitorCheck(ctx, id, o, "2026-11-01T10:00:00Z", 0, audit); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := setMon(t, d, id, monA, store.MonitorSettings{Enabled: false})
+	if m.CheckPending() || m.CheckFinishedAt < m.CheckRequestedAt || m.CheckError != "the check did not run" || m.CheckUp {
+		t.Errorf("turned off: %+v, want finished with the not-run error", m)
+	}
+	if b := getMon(t, d, id, monB); !b.CheckPending() {
+		t.Errorf("the other monitor: %+v, want still pending", b)
+	}
+}
+
+func TestPendingCheckEndsWhenTheProjectIsArchived(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id, other := monitorProject(t, d, "a"), monitorProject(t, d, "b")
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, other, monA, store.MonitorSettings{Enabled: true})
+	audit := store.AuditEntry{Actor: "t", Action: "monitor.check", Subject: "1"}
+	for _, p := range []int64{id, other} {
+		if err := d.RequestMonitorCheck(ctx, p, monA, "2026-11-01T10:00:00Z", 0, audit); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.SetProjectArchived(ctx, id, true, store.AuditEntry{Actor: "t", Action: "project.archive"}); err != nil {
+		t.Fatal(err)
+	}
+	m := getMon(t, d, id, monA)
+	if m.CheckPending() || m.CheckError != "the check did not run" {
+		t.Errorf("archived: %+v, want finished with the not-run error", m)
+	}
+	if o := getMon(t, d, other, monA); !o.CheckPending() {
+		t.Errorf("the other project: %+v, want still pending", o)
 	}
 }

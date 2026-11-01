@@ -3,8 +3,11 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/maindomain"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -63,7 +66,7 @@ func (d *DB) ListMonitors(ctx context.Context, projectID int64) ([]store.Monitor
 // monitor clears its certificate's check time only, so the certificate is read
 // again and the known date stays until then. It leaves the domain reading alone:
 // other monitors share it. It is not managed-config: no version bump.
-func (d *DB) SetMonitor(ctx context.Context, projectID int64, origin string, s store.MonitorSettings, a store.AuditEntry) (store.Monitor, error) {
+func (d *DB) SetMonitor(ctx context.Context, projectID int64, origin string, s store.MonitorSettings, eligible func([]string) []string, a store.AuditEntry) (store.Monitor, error) {
 	var m store.Monitor
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		ok, err := projectExists(ctx, tx, projectID)
@@ -72,6 +75,28 @@ func (d *DB) SetMonitor(ctx context.Context, projectID int64, origin string, s s
 		}
 		if !ok {
 			return unknownProject(projectID)
+		}
+		// Checked here, in the write, against the origins as they stand: an
+		// origins edit may have committed since the caller looked, and the
+		// upsert would bring back the row it deleted. Turning off a monitor
+		// that has a row stays allowed.
+		var exists int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM monitors WHERE project_id=? AND origin=?`,
+			projectID, origin).Scan(&exists); err != nil {
+			return err
+		}
+		if s.Enabled || exists == 0 {
+			var raw string
+			if err := tx.QueryRowContext(ctx, `SELECT allowed_origins FROM projects WHERE id=?`, projectID).Scan(&raw); err != nil {
+				return err
+			}
+			var allowed []string
+			if err := json.Unmarshal([]byte(raw), &allowed); err != nil {
+				return fmt.Errorf("project %d: allowed_origins: %w", projectID, err)
+			}
+			if !slices.Contains(eligible(allowed), origin) {
+				return store.Refuse(store.ErrInvalid, "%s is not an origin a monitor of project %d may use", origin, projectID)
+			}
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO monitors (project_id, origin, enabled, contains)
 			VALUES (?,?,?,?)
@@ -82,6 +107,11 @@ func (d *DB) SetMonitor(ctx context.Context, projectID int64, origin string, s s
 			projectID, origin, s.Enabled, s.Contains); err != nil {
 			return err
 		}
+		if !s.Enabled {
+			if err := finishPendingChecks(ctx, tx, projectID, origin); err != nil {
+				return err
+			}
+		}
 		if err := audit(ctx, tx, a); err != nil {
 			return err
 		}
@@ -90,6 +120,21 @@ func (d *DB) SetMonitor(ctx context.Context, projectID int64, origin string, s s
 		return err
 	})
 	return m, err
+}
+
+// finishPendingChecks ends the manual check pending on the project's monitor
+// origin (every monitor of the project when origin is empty) as one that did
+// not run: the runner only serves enabled monitors of live projects, so a
+// monitor turned off or a project archived would leave the request pending for
+// good, and a client polling for its end would never stop.
+func finishPendingChecks(ctx context.Context, tx *sql.Tx, projectID int64, origin string) error {
+	_, err := tx.ExecContext(ctx, `UPDATE monitors SET
+		check_finished_at = MAX(strftime('%Y-%m-%dT%H:%M:%SZ','now'), check_requested_at),
+		check_up=0, check_status=0, check_reason='', check_error=?, check_ms=0
+		WHERE project_id=? AND (?='' OR origin=?)
+		AND check_requested_at != '' AND (check_finished_at = '' OR check_finished_at < check_requested_at)`,
+		store.MonitorCheckNotRun, projectID, origin, origin)
+	return err
 }
 
 // ListEnabledMonitors lists the enabled monitors of live (not archived)
@@ -253,12 +298,22 @@ func deleteMonitorsOffOrigins(ctx context.Context, tx *sql.Tx, projectID int64, 
 }
 
 // RequestMonitorCheck records a manual check of one monitor for the runner to
-// serve and audits it. The write itself refuses a monitor not enabled and one
-// with a request pending, so two callers cannot both pass.
-func (d *DB) RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, a store.AuditEntry) error {
+// serve and audits it, clearing the finish time so the request reads as pending
+// even in the second the last check finished (the last result stays until the
+// next one replaces it). The write itself refuses a monitor not enabled, one
+// with a request pending and one requested less than cooldown before at, so
+// two callers cannot both pass.
+func (d *DB) RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, cooldown time.Duration, a store.AuditEntry) error {
+	t, err := time.Parse(time.RFC3339, at)
+	if err != nil {
+		return fmt.Errorf("request monitor check: at %q: %w", at, err)
+	}
+	cutoff := t.Add(-cooldown).UTC().Format(time.RFC3339)
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE monitors SET check_requested_at=?
-			WHERE project_id=? AND origin=? AND enabled=1 AND check_requested_at <= check_finished_at`, at, projectID, origin)
+		res, err := tx.ExecContext(ctx, `UPDATE monitors SET check_requested_at=?, check_finished_at=''
+			WHERE project_id=? AND origin=? AND enabled=1
+			AND (check_requested_at = '' OR (check_finished_at != '' AND check_finished_at >= check_requested_at))
+			AND check_requested_at <= ?`, at, projectID, origin, cutoff)
 		if err != nil {
 			return err
 		}
@@ -276,15 +331,18 @@ func (d *DB) RequestMonitorCheck(ctx context.Context, projectID int64, origin, a
 		if !ok {
 			return unknownProject(projectID)
 		}
-		var on int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM monitors WHERE project_id=? AND origin=? AND enabled=1`,
-			projectID, origin).Scan(&on); err != nil {
-			return err
-		}
-		if on == 0 {
+		m, err := scanMonitor(tx.QueryRowContext(ctx,
+			`SELECT `+monitorCols+` FROM monitors WHERE project_id=? AND origin=?`, projectID, origin))
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && !m.Enabled) {
 			return store.Refuse(store.ErrInvalid, "%s is not monitored in project %d", origin, projectID)
 		}
-		return store.Refuse(store.ErrBusy, "a check of %s is already running", origin)
+		if err != nil {
+			return err
+		}
+		if m.CheckPending() {
+			return store.Refuse(store.ErrBusy, "a check of %s is already running", origin)
+		}
+		return store.Refuse(store.ErrBusy, "%s was checked moments ago; try again later", origin)
 	})
 }
 

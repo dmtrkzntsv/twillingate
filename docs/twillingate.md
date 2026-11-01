@@ -389,13 +389,15 @@ daily readings' age, with the same `MONITOR_TIMEOUT`. The server starts it withi
 about a second and writes the rows as usual; a certificate or RDAP read that fails
 keeps the last date as usual. It neither uses nor moves the project's slot, and
 counts as that monitor's last attempt. The call returns before the check ran: poll
-`list_monitors` until that monitor's `check.finished_at` is at or past
-`check.requested_at`, then read the result in `check` (`up`, `status`, `reason`,
-`error`, `ms`). A monitor that is not on is refused, and so is a request while one
+`list_monitors` until that monitor's `check.finished_at` is not empty and at or
+past `check.requested_at` (it is empty while the check runs, and `up`, `status`,
+`reason`, `error` and `ms` still hold the previous result until then), then read
+the result in `check`. A monitor that is not on is refused, and so is a request while one
 is pending on it or within 60 seconds of its last one, whatever the interval: this
 protects the site and the registries. A request not served within 2 minutes
 (the server was down) finishes with an empty `reason` and `error` `the check did
-not run`; so does one cut short by the server stopping. Only the server's runner
+not run`; so does one cut short by the server stopping, and one still pending when
+its monitor is turned off or its project archived. Only the server's runner
 serves requests, so `monitor check` needs it up. It waits as long as the longest
 check, twice `MONITOR_TIMEOUT` plus 20 seconds, then exits 1, saying the check is
 still running, or, for a request over 2 minutes old, asking whether the server is
