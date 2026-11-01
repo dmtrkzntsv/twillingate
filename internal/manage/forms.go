@@ -99,8 +99,10 @@ func (o *Ops) ApproveForm(ctx context.Context, actor string, projectID int64, na
 
 // UpdateForm merges spec over the stored form and writes the result.
 func (o *Ops) UpdateForm(ctx context.Context, actor string, projectID int64, name string, spec FormSpec) error {
-	if err := o.requireProject(ctx, projectID); err != nil {
-		return err
+	// One snapshot for the project and its redirect origins.
+	snap := o.Reg.Snapshot(ctx)
+	if snap.Project(projectID) == nil {
+		return unknownProject(projectID)
 	}
 	f, err := o.St.GetForm(ctx, projectID, name)
 	if err != nil {
@@ -115,7 +117,7 @@ func (o *Ops) UpdateForm(ctx context.Context, actor string, projectID int64, nam
 		changed = append(changed, "purpose")
 	}
 	if spec.ReturnURL != nil {
-		if u := *spec.ReturnURL; u != "" && !o.Reg.Snapshot(ctx).RedirectAllowed(projectID, u, "") {
+		if u := *spec.ReturnURL; u != "" && !snap.RedirectAllowed(projectID, u, "") {
 			return fmt.Errorf("%w: return_url must be an absolute http(s) URL whose origin is in the project's allowed_origins (a bare * does not count)", ErrInvalid)
 		}
 		f.ReturnURL = *spec.ReturnURL

@@ -183,13 +183,19 @@ func (o *Ops) create(ctx context.Context, actor string, spec ProjectSpec, write 
 	return o.written(ctx, spec, o.afterWrite(ctx, id)), nil
 }
 
-// project is the registry's project id, or ErrNotFound naming it: the one
-// refusal every operation on a project gives when the project is unknown.
+// unknownProject is the refusal an operation gives when the registry does
+// not hold the project it names. (Archive, restore and delete leave the
+// check to the store, which words its own.)
+func unknownProject(id int64) error {
+	return fmt.Errorf("unknown project %d: %w", id, ErrNotFound)
+}
+
+// project is the registry's project id, or unknownProject.
 func (o *Ops) project(ctx context.Context, id int64) (*Project, error) {
 	if p := o.Reg.Snapshot(ctx).Project(id); p != nil {
 		return p, nil
 	}
-	return nil, fmt.Errorf("unknown project %d: %w", id, ErrNotFound)
+	return nil, unknownProject(id)
 }
 
 // requireProject is project for an operation that needs only to know the
@@ -257,7 +263,7 @@ func (o *Ops) MoveProject(ctx context.Context, actor string, id, after int64) er
 	defer o.moveMu.Unlock()
 	snap := o.Reg.Snapshot(ctx)
 	if snap.Project(id) == nil {
-		return store.Refuse(ErrNotFound, "unknown project %d", id)
+		return unknownProject(id)
 	}
 	if after == id {
 		return nil

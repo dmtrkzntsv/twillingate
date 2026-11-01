@@ -66,8 +66,10 @@ func TestOpsRefusalsAreTyped(t *testing.T) {
 		}
 	}
 
-	// Every operation on a project names an unknown one the same way.
+	// Every operation that looks the project up in the registry names an
+	// unknown one the same way.
 	unknown := map[string]error{
+		"move project": ops.MoveProject(ctx, "cli", 404, 0),
 		"update project": func() error {
 			_, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: 404})
 			return err
