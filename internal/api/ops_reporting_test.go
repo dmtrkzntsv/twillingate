@@ -700,8 +700,9 @@ func TestViewRouteRefusals(t *testing.T) {
 }
 
 // TestUpdateDashboardWholeGroup: whole_group with title renames the
-// dashboard's group and answers group_title; it needs a title of at least
-// two characters, and a plain title needs them too.
+// dashboard's group and answers group_title, leaving the titles of a group
+// of two tabs alone; it needs a title of at least two characters, and a
+// plain title needs them too.
 func TestUpdateDashboardWholeGroup(t *testing.T) {
 	h, cs := newTestHost(t)
 	r := newTestRegistrar(t, h)
@@ -710,6 +711,10 @@ func TestUpdateDashboardWholeGroup(t *testing.T) {
 		ID int64 `json:"dashboard_id"`
 	}
 	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Traffic"}, &d)
+	var tab struct {
+		ID int64 `json:"dashboard_id"`
+	}
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Sources", "group_id": d.ID}, &tab)
 	path := fmt.Sprintf("/api/dashboards/%d", d.ID)
 
 	rec := serveREST(t, r, "PATCH", path, `{"whole_group":true,"title":"Ops"}`)

@@ -35,6 +35,19 @@ describe('endpoints.renameGroup', () => {
   })
 })
 
+describe('endpoints.rename', () => {
+  it('PATCHes the dashboard with the title alone, never whole_group', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ dashboard_id: 7, title: 'Audience' }))
+
+    await endpoints.rename(7, 'Audience')
+
+    const [url, init] = vi.mocked(fetch).mock.calls[0]
+    expect(urlOf(url)).toContain('/api/dashboards/7')
+    expect(init?.method).toBe('PATCH')
+    expect(JSON.parse(init?.body as string)).toEqual({ title: 'Audience' })
+  })
+})
+
 describe('endpoints.createWidgetShare', () => {
   it('POSTs the form as it is, with no Content-Type so the browser adds the multipart boundary', async () => {
     vi.spyOn(auth, 'getAuthHeader').mockReturnValue('Bearer token-1')

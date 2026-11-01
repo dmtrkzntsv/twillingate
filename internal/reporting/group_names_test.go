@@ -4,6 +4,8 @@ import (
 	"context"
 	"strconv"
 	"testing"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // groupTitle is dashboard id's group name as the store reads it.
@@ -269,4 +271,207 @@ func TestNoNameOutlivesItsGroup(t *testing.T) {
 	check("sync with a system group")
 	syncReporting(t, svc, nil)
 	check("sync dropping it")
+}
+
+// dashTitle is dashboard id's own title as the store reads it.
+func dashTitle(t *testing.T, svc *Service, id int64) string {
+	t.Helper()
+	d, err := svc.st.GetDashboard(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d.Title
+}
+
+func TestLoneDashboardHasOneName(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+
+	// Naming a group of one tab retitles the tab.
+	a := mustCreate(t, svc, "Solo")
+	if _, err := renameGroup(svc, a.ID, "Launch"); err != nil {
+		t.Fatal(err)
+	}
+	if got, gt := dashTitle(t, svc, a.ID), groupTitle(t, svc, a.ID); got != "Launch" || gt != "Launch" {
+		t.Errorf("after group rename: title %q, group %q, want both \"Launch\"", got, gt)
+	}
+
+	// Retitling it carries the group's name along.
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: a.ID, Title: "Week 1"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, gt := dashTitle(t, svc, a.ID), groupTitle(t, svc, a.ID); got != "Week 1" || gt != "Week 1" {
+		t.Errorf("after retitle: title %q, group %q, want both \"Week 1\"", got, gt)
+	}
+
+	// A named group whose other tabs are archived is a group of one too.
+	f := mustCreate(t, svc, "Overview")
+	tab := mustJoin(t, svc, "Detail", f.ID)
+	if _, err := renameGroup(svc, f.ID, "Ops"); err != nil {
+		t.Fatal(err)
+	}
+	if got := dashTitle(t, svc, f.ID); got != "Overview" {
+		t.Errorf("group of two: first tab title = %q, want it kept", got)
+	}
+	if err := svc.ArchiveDashboard(ctx, "test", tab.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: f.ID, Title: "Ops overview"}); err != nil {
+		t.Fatal(err)
+	}
+	if gt := groupTitle(t, svc, f.ID); gt != "Ops overview" {
+		t.Errorf("lone tab retitled: group %q, want \"Ops overview\"", gt)
+	}
+}
+
+func TestRetitlingATabOfManyKeepsTheGroupName(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	f := mustCreate(t, svc, "Overview")
+	mustJoin(t, svc, "Detail", f.ID)
+	if _, err := renameGroup(svc, f.ID, "Ops"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: f.ID, Title: "Summary"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, gt := dashTitle(t, svc, f.ID), groupTitle(t, svc, f.ID); got != "Summary" || gt != "Ops" {
+		t.Errorf("title %q, group %q, want \"Summary\" and \"Ops\"", got, gt)
+	}
+}
+
+// staleLone makes a named group whose one live tab is titled otherwise,
+// as an archived tab or a database from before the one-name rule leaves
+// it: "Overview" live, group "Ops", "Detail" archived. It returns both.
+func staleLone(t *testing.T, svc *Service) (DashboardDetail, DashboardDetail) {
+	t.Helper()
+	f := mustCreate(t, svc, "Overview")
+	tab := mustJoin(t, svc, "Detail", f.ID)
+	if _, err := renameGroup(svc, f.ID, "Ops"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ArchiveDashboard(context.Background(), "test", tab.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	return f, tab
+}
+
+// A name a group of one kept never comes back when a new tab joins it:
+// the lone tab's title, its one name, becomes the group's first.
+func TestGrowingGroupOfOneKeepsTheNameShown(t *testing.T) {
+	ctx := context.Background()
+	grow := map[string]func(svc *Service, f, tab DashboardDetail) error{
+		"create": func(svc *Service, f, _ DashboardDetail) error {
+			_, err := svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "New", GroupID: f.ID})
+			return err
+		},
+		"duplicate tab": func(svc *Service, f, _ DashboardDetail) error {
+			_, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: f.ID, GroupID: f.ID})
+			return err
+		},
+		"move in": func(svc *Service, f, _ DashboardDetail) error {
+			other := mustCreate(t, svc, "Other")
+			_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: other.ID, GroupID: ptr(f.GroupID)})
+			return err
+		},
+	}
+	for name, fn := range grow {
+		t.Run(name, func(t *testing.T) {
+			svc := newTestService(t)
+			f, tab := staleLone(t, svc)
+			if err := fn(svc, f, tab); err != nil {
+				t.Fatal(err)
+			}
+			if gt := groupTitle(t, svc, f.ID); gt != "Overview" {
+				t.Errorf("group name = %q, want \"Overview\", the name it showed", gt)
+			}
+		})
+	}
+}
+
+// Restoring a tab undoes its archive: the group is named as it was.
+func TestRestoreBringsBackTheGroupsName(t *testing.T) {
+	svc := newTestService(t)
+	f, tab := staleLone(t, svc)
+	if err := svc.RestoreDashboard(context.Background(), "test", tab.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if gt := groupTitle(t, svc, f.ID); gt != "Ops" {
+		t.Errorf("group name = %q after the restore, want \"Ops\"", gt)
+	}
+}
+
+func TestDuplicatingGroupOfOneCopiesNoKeptName(t *testing.T) {
+	svc := newTestService(t)
+	f, _ := staleLone(t, svc)
+	cp, err := svc.DuplicateDashboard(context.Background(), "test", DuplicateDashboard{ID: f.ID, WholeGroup: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gt := groupTitle(t, svc, cp.ID); gt != "" {
+		t.Errorf("copy's group name = %q, want none", gt)
+	}
+}
+
+// A title sent with the group the tab is in already, or with group_id 0
+// on a tab alone, keeps the group: the name follows the title.
+func TestRetitleWithOwnGroupStillRenamesGroupOfOne(t *testing.T) {
+	ctx := context.Background()
+	for name, g := range map[string]func(f DashboardDetail) int64{
+		"own group": func(f DashboardDetail) int64 { return f.GroupID },
+		"group 0":   func(DashboardDetail) int64 { return 0 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := newTestService(t)
+			// A lone tab whose group kept a name of its own, as a database
+			// from before the one-name rule has it.
+			f := mustCreate(t, svc, "Overview")
+			if err := svc.st.SetGroupTitle(ctx, f.GroupID, "Ops", store.AuditEntry{Actor: "test", Action: "dashboard.group.rename"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: f.ID, Title: "Summary", GroupID: ptr(g(f))}); err != nil {
+				t.Fatal(err)
+			}
+			if gt := groupTitle(t, svc, f.ID); gt != "Summary" {
+				t.Errorf("group name = %q, want \"Summary\"", gt)
+			}
+		})
+	}
+}
+
+// group_id 0 on the only live tab of a group that still has an archived
+// tab takes it out as a group of its own: its title is not the old
+// group's name.
+func TestLeavingAGroupWithArchivedTabsLeavesItsName(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	f := mustCreate(t, svc, "Overview")
+	b := mustJoin(t, svc, "Detail", f.ID)
+	if _, err := renameGroup(svc, f.ID, "Ops"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ArchiveDashboard(ctx, "test", f.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: b.ID, Title: "Summary", GroupID: ptr(int64(0)), After: ptr(int64(0))}); err != nil {
+		t.Fatal(err)
+	}
+	if gt := groupTitle(t, svc, f.ID); gt != "Ops" {
+		t.Errorf("archived group's name = %q, want \"Ops\"", gt)
+	}
+}
+
+// A move refused for its after changes nothing, the group it named included.
+func TestRefusedMoveDoesNotSettleTheTargetsName(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	f, _ := staleLone(t, svc)
+	other := mustCreate(t, svc, "Other")
+	stray := mustCreate(t, svc, "Stray")
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: other.ID, GroupID: ptr(f.GroupID), After: ptr(stray.ID)}); err == nil {
+		t.Fatal("move after a dashboard outside the group was taken")
+	}
+	if gt := groupTitle(t, svc, f.ID); gt != "Ops" {
+		t.Errorf("group name = %q after a refused move, want \"Ops\" untouched", gt)
+	}
 }

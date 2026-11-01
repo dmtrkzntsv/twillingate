@@ -631,7 +631,16 @@ export const endpoints = {
   /** Moves a tab or a group by naming the dashboard it goes after (tabs D6-D7; D15). */
   move: (id: number, body: MoveBody) =>
     api<DashboardInfo>(`/api/dashboards/${id}`, json('PATCH', body)),
-  /** Names the dashboard's group (group names D5); a name is replaced, never cleared, and no dashboard title changes. */
+  /**
+   * Retitles a user dashboard: its tab's title everywhere, and, when it is
+   * its group's only live tab, the group's name with it.
+   */
+  rename: (id: number, title: string) => api<DashboardInfo>(`/api/dashboards/${id}`, json('PATCH', { title })),
+  /**
+   * Names the dashboard's group (group names D5); a name is replaced, never
+   * cleared. The tabs keep their titles, except the only live tab of a group
+   * of one, which takes the name.
+   */
   renameGroup: (id: number, title: string) =>
     api<DashboardInfo>(`/api/dashboards/${id}`, json('PATCH', { whole_group: true, title })),
   /** Puts a built-in dashboard's whole group in or out of the sidebar; a built-in is never archived, and your own are always in it (project tabs D5). */

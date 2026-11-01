@@ -19,7 +19,7 @@ import {
 } from '@/components/ui/sidebar'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import { useReorder } from '@/hooks/use-reorder'
-import { groupName, liveGroups, moveGroupBody, type Group } from '@/lib/arrange'
+import { groupName, isLoneGroup, liveGroups, moveGroupBody, type Group } from '@/lib/arrange'
 import type { DashboardInfo } from '@/lib/api'
 import { currentAuthState, logout } from '@/lib/auth'
 import GroupNameField from './GroupNameField'
@@ -160,7 +160,7 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
                         <SidebarMenuItem key={g.groupId}>
                           <GroupNameField
                             name={groupName(g.members)}
-                            named={g.members.some((m) => !!m.group_title)}
+                            named={isLoneGroup(g.members) || g.members.some((m) => !!m.group_title)}
                             pending={pending}
                             onRename={(title) => renameGroup(g.members[0].dashboard_id, title)}
                             onDone={() => setRenaming(null)}

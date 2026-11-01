@@ -23,14 +23,27 @@ export function liveGroups(list: DashboardInfo[]): Group[] {
 }
 
 /**
+ * Whether `members` is a user group of one live tab, which has one name:
+ * that tab's title (the server keeps a stored group name in step with it).
+ * A built-in group's name comes with the release and is kept.
+ */
+export function isLoneGroup(members: DashboardInfo[]): boolean {
+  const live = members.filter((m) => !m.archived_at)
+  return live.length === 1 && live[0].owner === 'user'
+}
+
+/**
  * A group's name (group names D2, D8): its stored `group_title`, which
  * every member carries, or else its first live member's title, as the
- * sidebar named every group before groups had names.
+ * sidebar named every group before groups had names. A user group of one
+ * live tab is named by that tab's title (`isLoneGroup`).
  */
 export function groupName(members: DashboardInfo[]): string {
+  const live = members.filter((m) => !m.archived_at)
+  if (isLoneGroup(members)) return live[0].title
   const named = members.find((m) => m.group_title)
   if (named?.group_title) return named.group_title
-  return (members.find((m) => !m.archived_at) ?? members[0]).title
+  return (live[0] ?? members[0]).title
 }
 
 /** A group of the user's own live dashboards that a widget can be copied to, by its name. */

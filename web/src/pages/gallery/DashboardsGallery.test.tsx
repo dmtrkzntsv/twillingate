@@ -42,6 +42,7 @@ beforeEach(() => {
     restore,
     setSidebar,
     move: vi.fn(),
+    rename: vi.fn(),
     renameGroup: vi.fn(),
     pending: false,
   } satisfies DashboardActions)
@@ -209,6 +210,7 @@ describe('DashboardsGallery, templates', () => {
       restore,
       setSidebar,
       move: vi.fn(),
+      rename: vi.fn(),
       renameGroup: vi.fn(),
       pending: true,
     } satisfies DashboardActions)

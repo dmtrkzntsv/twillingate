@@ -1601,8 +1601,8 @@ The sidebar now shows one entry, "Overview" (the group's first live
 dashboard), with two tabs: "Overview" and "Detail".
 
 A group can have a name of its own. `update_dashboard` with `whole_group`
-and a `title` renames the group of the dashboard it names and leaves every
-dashboard's own title alone; it takes no `after` or `group_id`:
+and a `title` renames the group of the dashboard it names and leaves the
+dashboards' own titles alone; it takes no `after` or `group_id`:
 
 ```
 update_dashboard {"dashboard_id": 1001, "whole_group": true, "title": "Ops"}   → group_title "Ops"
@@ -1610,7 +1610,12 @@ update_dashboard {"dashboard_id": 1001, "whole_group": true, "title": "Ops"}   �
 
 The sidebar now reads "Ops", the tabs still "Overview" and "Detail". Dashboard
 rows carry the name as `group_title`; absent, the group has none and its
-first live tab's title stands in. A name can be replaced, never cleared, and
+first live tab's title stands in. A group of one live tab has one name,
+its tab's title: `whole_group` with a `title` retitles that tab too, a
+`title` on that tab renames a named group with it, and the page names such
+a group by its tab's title. A tab that joins it (created, copied or moved
+in) keeps that name; restoring an archived tab brings back the name the
+group had. A name can be replaced, never cleared, and
 a system or archived dashboard cannot be renamed this way. Duplicating a
 named group with `whole_group` names the copy with the same name and
 " (copy)". A dashboard title and a group name need at least 2 characters
@@ -1803,11 +1808,15 @@ Archiving is how to undo, and the only way to remove anything:
   (`update_dashboard` with `sidebar: true`); every group's "…" menu
   duplicates the whole group, and a tab's copies that tab to a new
   dashboard. On any dashboard, the "…" menu at the top right of the tab
-  bar acts on the whole dashboard ("Duplicate dashboard", `whole_group`),
-  and the one beside the title on that tab: "Duplicate tab" adds its copy
-  as the next tab (`group_id` its own group), "Copy to new dashboard"
-  makes it a dashboard of its own (no `group_id`); a system tab offers
-  only the latter.
+  bar acts on the whole dashboard ("Duplicate dashboard", `whole_group`;
+  on your own, "Rename dashboard…", `whole_group` with `title`, the name
+  the sidebar shows, as the sidebar entry's own "Rename" does; on a
+  dashboard of one tab, also its title), and the
+  one beside the title on that tab: "Rename tab…" retitles it (`title`;
+  your own tabs only, here and on a project page), "Duplicate tab" adds
+  its copy as the next tab (`group_id` its own group), "Copy to new
+  dashboard" makes it a dashboard of its own (no `group_id`); a system
+  tab offers only the latter.
 - `archive_dashboard` and `restore_dashboard` refuse a system dashboard,
   with or without `whole_group`; system widgets cannot be archived.
 - `archive_widget_share` takes a share down at once; `restore_widget_share`

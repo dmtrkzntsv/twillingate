@@ -134,6 +134,17 @@ describe('groupName', () => {
     expect(groupName(members)).toBe('Funnel')
   })
 
+  it('is the one live tab\'s title, whatever group_title it kept from when it had more', () => {
+    const archived = { archived_at: '2026-09-01T00:00:00Z' }
+    const members = [mkInfo(1, 'Overview', 'user', 1, { group_title: 'Ops' }), mkInfo(2, 'Detail', 'user', 1, { group_title: 'Ops', ...archived })]
+    expect(groupName(members)).toBe('Overview')
+    expect(groupName([mkInfo(3, 'Solo', 'user', 3, { group_title: 'Team' })])).toBe('Solo')
+  })
+
+  it('keeps a built-in group of one tab\'s name, which comes with the release', () => {
+    expect(groupName([mkInfo(1, 'Views', 'system', 1, { group_title: 'Reports' })])).toBe('Reports')
+  })
+
   it('is the first member title when every member is archived', () => {
     const archived = { archived_at: '2026-09-01T00:00:00Z' }
     const members = [mkInfo(1, 'Old', 'user', 1, archived), mkInfo(2, 'Older', 'user', 1, archived)]

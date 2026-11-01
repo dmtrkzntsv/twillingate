@@ -90,6 +90,19 @@ test('a project opens on its first dashboard tab; tabs are removed and re-added 
     await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
     await expect(page.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible()
 
+    // Its tab menu renames it, here and everywhere it shows; a built-in tab offers no rename.
+    await page.getByRole('button', { name: 'Tab actions' }).click()
+    await page.getByRole('menuitem', { name: 'Rename tab…' }).click()
+    await page.getByRole('textbox', { name: 'Tab name' }).fill(`${title} renamed`)
+    await page.getByRole('button', { name: 'Save' }).click()
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await expect(tabs.getByRole('tab')).toHaveText([...READDED, `${title} renamed`])
+    await expect(page.getByRole('heading', { level: 1, name: `${title} renamed`, exact: true })).toBeVisible()
+    const back = await request.patch(`/api/dashboards/${mineId}`, { headers, data: { title } })
+    expect(back.ok(), await back.text()).toBeTruthy()
+    await page.reload()
+    await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
+
     // Your own tabs reorder; a phone does it from the tab's menu (a wide
     // screen drags), and the new order is the project's, after a reload too.
     await page.getByRole('button', { name: 'Add tab' }).click()

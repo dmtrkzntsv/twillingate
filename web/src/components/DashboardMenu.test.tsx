@@ -15,6 +15,8 @@ const duplicate = vi.fn()
 const archive = vi.fn()
 const setSidebar = vi.fn()
 const move = vi.fn()
+const rename = vi.fn()
+const renameGroup = vi.fn()
 
 function info(dashboard_id: number, title: string, owner: 'system' | 'user', group_id: number): DashboardInfo {
   return { dashboard_id, title, owner, group_id, widgets: 1, sidebar: true, project_tab: false }
@@ -62,7 +64,8 @@ beforeEach(() => {
     restore: vi.fn(),
     setSidebar,
     move,
-    renameGroup: vi.fn(),
+    rename,
+    renameGroup,
     pending: false,
   } satisfies DashboardActions)
 })
@@ -100,11 +103,11 @@ async function openGroupMenu() {
 const items = () => screen.getAllByRole('menuitem').map((i) => i.textContent)
 
 describe('TabMenu, a user tab among others', () => {
-  it('has Duplicate tab, Copy to new dashboard, Archive tab, Move left (disabled first), Move right and Move to', async () => {
+  it('has Rename tab, Duplicate tab, Copy to new dashboard, Archive tab, Move left (disabled first), Move right and Move to', async () => {
     renderTabMenu(marketing)
     await openTabMenu()
 
-    expect(items()).toEqual(['Duplicate tab', 'Copy to new dashboard', 'Archive tab', 'Move left', 'Move right', 'Move to'])
+    expect(items()).toEqual(['Rename tab…', 'Duplicate tab', 'Copy to new dashboard', 'Archive tab', 'Move left', 'Move right', 'Move to'])
     expect(screen.getByText('Move left').closest('[role="menuitem"]')).toHaveAttribute('data-disabled')
     expect(screen.getByText('Move right').closest('[role="menuitem"]')).not.toHaveAttribute('data-disabled')
   })
@@ -176,15 +179,113 @@ describe('TabMenu, a user tab among others', () => {
   })
 })
 
+describe('TabMenu, Rename tab', () => {
+  async function openRename(d: DashboardDetail) {
+    renderTabMenu(d)
+    await openTabMenu()
+    await userEvent.click(screen.getByText('Rename tab…'))
+    return screen.getByRole('textbox', { name: 'Tab name' })
+  }
+
+  it('retitles the tab with the trimmed name and closes once saved', async () => {
+    rename.mockResolvedValue(true)
+    const field = await openRename(reach)
+    expect(field).toHaveValue('Reach')
+
+    await userEvent.clear(field)
+    await userEvent.type(field, '  Audience  {Enter}')
+
+    expect(rename).toHaveBeenCalledWith(15, 'Audience')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('stays open when the server refuses', async () => {
+    rename.mockResolvedValue(false)
+    const field = await openRename(reach)
+    await userEvent.clear(field)
+    await userEvent.type(field, 'Audience{Enter}')
+
+    expect(rename).toHaveBeenCalledOnce()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+  })
+
+  it('never sends a name under 2 characters, and closes quietly on an unchanged one', async () => {
+    const field = await openRename(reach)
+    await userEvent.clear(field)
+    await userEvent.type(field, 'a')
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled()
+    expect(field).toHaveAttribute('aria-invalid', 'true')
+
+    await userEvent.clear(field)
+    await userEvent.type(field, 'Reach{Enter}')
+    expect(rename).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+})
+
+describe('GroupMenu, Rename dashboard', () => {
+  it('on a dashboard of one tab, starts on its title, whatever name its group kept', async () => {
+    renderGroupMenu({ ...launchWeek, group_title: 'Old name' })
+    await openGroupMenu()
+    await userEvent.click(screen.getByText('Rename dashboard…'))
+    const field = screen.getByRole('textbox', { name: 'Dashboard name' })
+    expect(field).toHaveValue('Launch week')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(renameGroup).not.toHaveBeenCalled()
+  })
+
+  async function openRename(d: DashboardDetail) {
+    renderGroupMenu(d)
+    await openGroupMenu()
+    await userEvent.click(screen.getByText('Rename dashboard…'))
+    return screen.getByRole('textbox', { name: 'Dashboard name' })
+  }
+
+  it('names the group through its first tab, starting on the first tab\'s title', async () => {
+    renameGroup.mockResolvedValue(true)
+    const field = await openRename(reach)
+    expect(field).toHaveValue('Marketing')
+
+    await userEvent.clear(field)
+    await userEvent.type(field, 'Growth{Enter}')
+    expect(renameGroup).toHaveBeenCalledWith(13, 'Growth')
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+
+  it('names an unnamed group even with the text unchanged (D5)', async () => {
+    renameGroup.mockResolvedValue(true)
+    await openRename(reach)
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(renameGroup).toHaveBeenCalledWith(13, 'Marketing')
+  })
+
+  it('starts on the group\'s own name, and leaves it alone when unchanged', async () => {
+    const field = await openRename({ ...reach, group_title: 'Growth' })
+    expect(field).toHaveValue('Growth')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(renameGroup).not.toHaveBeenCalled()
+  })
+})
+
 describe('TabMenu, "Move to" names a group by its group_title', () => {
   it('lists the other group by its stored name, not its first dashboard', async () => {
+    const named = list.map((d) => (d.group_id === 13 ? { ...d, group_title: 'Growth' } : d))
+    renderWithProviders(<TabMenu dashboard={launchWeek} list={named} />)
+    await openTabMenu()
+    await userEvent.click(screen.getByText('Move to'))
+
+    expect(await screen.findByText('Growth')).toBeInTheDocument()
+    expect(screen.queryByText('Marketing')).not.toBeInTheDocument()
+  })
+
+  it('lists a group of one tab by that tab\'s title, whatever name it kept', async () => {
     const named = list.map((d) => (d.group_id === 20 ? { ...d, group_title: 'Launch plans' } : d))
     renderWithProviders(<TabMenu dashboard={marketing} list={named} />)
     await openTabMenu()
     await userEvent.click(screen.getByText('Move to'))
 
-    expect(await screen.findByText('Launch plans')).toBeInTheDocument()
-    expect(screen.queryByText('Launch week')).not.toBeInTheDocument()
+    expect(await screen.findByText('Launch week')).toBeInTheDocument()
+    expect(screen.queryByText('Launch plans')).not.toBeInTheDocument()
   })
 })
 
@@ -193,7 +294,7 @@ describe('TabMenu, the one tab of a lone user dashboard', () => {
     renderTabMenu(launchWeek)
     await openTabMenu()
 
-    expect(items()).toEqual(['Duplicate tab', 'Copy to new dashboard', 'Archive tab', 'Move left', 'Move right', 'Move to'])
+    expect(items()).toEqual(['Rename tab…', 'Duplicate tab', 'Copy to new dashboard', 'Archive tab', 'Move left', 'Move right', 'Move to'])
     expect(screen.getByText('Move left').closest('[role="menuitem"]')).toHaveAttribute('data-disabled')
     expect(screen.getByText('Move right').closest('[role="menuitem"]')).toHaveAttribute('data-disabled')
   })
@@ -240,7 +341,7 @@ describe('GroupMenu', () => {
   it('duplicates and archives the whole group, named by its first tab', async () => {
     renderGroupMenu(reach)
     await openGroupMenu()
-    expect(items()).toEqual(['Refresh', 'Duplicate dashboard', 'Archive dashboard'])
+    expect(items()).toEqual(['Refresh', 'Rename dashboard…', 'Duplicate dashboard', 'Archive dashboard'])
 
     await userEvent.click(screen.getByText('Duplicate dashboard'))
     expect(duplicate).toHaveBeenCalledWith(marketingTabs[0], { wholeGroup: true })
