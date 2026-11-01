@@ -174,13 +174,14 @@ type groupStats struct {
 
 // decide says whether a row group may hold rows of family (any, when "")
 // with day in [from, to] (keep), and whether every row in it does (all),
-// so the row filter can be skipped. The bounds leave nulls out, and a null
-// family or day matches no filter, so all needs none (of family only when
-// filtering by it).
+// so the row filter can be skipped. The bounds leave nulls out. A null day
+// matches no range, and a null family matches no family but passes
+// notChecks: all needs no null day, and no null family when filtering by
+// one; a group of checks only excludes notChecks when it holds no nulls.
 func (s groupStats) decide(family string, from, to int64) (keep, all bool) {
 	if family != "" && s.famOK {
 		if family == notChecks {
-			if c := string(store.FamilyChecks); s.famMin == c && s.famMax == c {
+			if c := string(store.FamilyChecks); s.famNulls == 0 && s.famMin == c && s.famMax == c {
 				return false, false
 			}
 		} else if family < s.famMin || family > s.famMax {
