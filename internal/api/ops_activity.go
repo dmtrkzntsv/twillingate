@@ -88,16 +88,10 @@ type activityDays struct {
 // cached for activityTTL (not an answer with a fallback in it, nor a read
 // whose context ended). Archived projects are not read, and a project
 // whose scan fails reads its newest file's day, the failure logged: the
-// endpoint does not fail with it. A project with none in the window is
+// endpoint does not fail with it. A file name's day stops at today, a month
+// file counting as its last day. A project with none in the window is
 // absent.
 func (h *host) lastEventDays(ctx context.Context, live []*manage.Project) (map[int64]string, error) {
-	latest, err := archive.LatestDays(h.eventsDir)
-	if err != nil {
-		return nil, err
-	}
-	if h.native == nil {
-		return latest, nil
-	}
 	c := &h.activity
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -107,6 +101,17 @@ func (h *host) lastEventDays(ctx context.Context, live []*manage.Project) (map[i
 	}
 	if c.days != nil && now().Sub(c.at) < activityTTL {
 		return c.days, nil
+	}
+	today := now().UTC().Format(time.DateOnly)
+	latest, err := archive.LatestDays(h.eventsDir)
+	if err != nil {
+		return nil, err
+	}
+	if h.native == nil {
+		for id, d := range latest {
+			latest[id] = min(d, today)
+		}
+		return latest, nil
 	}
 	oldest, err := archive.OldestDays(h.eventsDir)
 	if err != nil {
@@ -136,7 +141,7 @@ func (h *host) lastEventDays(ctx context.Context, live []*manage.Project) (map[i
 		}
 		for id, ferr := range failed {
 			h.logger.Error("project_activity: last_event_day read from the file names, the events cannot be scanned", "project_id", id, "error", ferr)
-			days[id] = latest[id]
+			days[id] = min(latest[id], today)
 		}
 	}
 	if !fellBack { // a fallback day is not kept: the next read scans again

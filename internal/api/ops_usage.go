@@ -184,12 +184,16 @@ func (h *host) usageCounts(ctx context.Context, projects []*manage.Project, aske
 	if err != nil {
 		return fileCounts{}, err
 	}
+	oldest, err := archive.OldestDays(h.eventsDir)
+	if err != nil {
+		return fileCounts{}, err
+	}
 	out := fileCounts{days: map[int64]map[string]*usageTotals{}, received: map[int64]string{}}
 	for _, p := range projects {
 		out.days[p.ID] = map[string]*usageTotals{}
 	}
 	for group := range slices.Chunk(projects, usageProjectsPerCall) {
-		if err := h.usageGroup(ctx, group, asked, fromD, toD, latest, out); err != nil {
+		if err := h.usageGroup(ctx, group, asked, fromD, toD, latest, oldest, out); err != nil {
 			return fileCounts{}, err
 		}
 	}
@@ -203,7 +207,7 @@ const usageProjectsPerCall = 4 * native.DefaultMaxScans
 
 // usageGroup is usageCounts over one group of projects, in one call,
 // into out.
-func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked bool, fromD, toD civil.Date, latest map[int64]string, out fileCounts) error {
+func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked bool, fromD, toD civil.Date, latest, oldest map[int64]string, out fileCounts) error {
 	// asks is each request's project and whether it reads the newest
 	// arrival (else it is a chunk's breakdown), in the order the answers
 	// are read.
@@ -229,10 +233,6 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 		if asked || !p.Archived {
 			want = append(want, p.ID)
 		}
-	}
-	oldest, err := archive.OldestDays(h.eventsDir)
-	if err != nil {
-		return err
 	}
 	// The breakdowns and the newest arrivals go in one call.
 	got, _, answers, err := h.newestRow(ctx, want, latest, oldest, "received_at", reqs, newestOpts{})

@@ -5,8 +5,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -256,6 +259,56 @@ func TestProjectActivityScansLiveProjectsOnceInTheTTL(t *testing.T) {
 	asked = len(n.asked)
 	if out, err = h.projectActivity(ctx, struct{}{}); err != nil || len(n.asked) == asked || *out.Projects[0].LastEventDay != "2026-08-26" {
 		t.Errorf("read after a fallback: asked %d -> %d, %+v, %v; want a rescan", asked, len(n.asked), out.Projects, err)
+	}
+}
+
+// TestProjectActivityCacheHitReadsNoFiles: within the TTL an answer costs
+// the mutex, not a walk of the event files' directories.
+func TestProjectActivityCacheHitReadsNoFiles(t *testing.T) {
+	h, _ := newTestHost(t)
+	ctx := t.Context()
+	if _, err := h.projectActivity(ctx, struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	notDir := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notDir, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.eventsDir = notDir // listing it fails
+	if _, err := h.projectActivity(ctx, struct{}{}); err != nil {
+		t.Errorf("a read within the TTL went to the files: %v", err)
+	}
+}
+
+// TestProjectActivityFallbackDayIsNeverFuture: a month file counts as its
+// last day, which can lie ahead; a day read from the file names stops at
+// today, with and without an engine.
+func TestProjectActivityFallbackDayIsNeverFuture(t *testing.T) {
+	h, _ := newTestHost(t)
+	ctx := t.Context()
+	latest, err := archive.LatestDays(h.eventsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	day, err := time.Parse(time.DateOnly, latest[1])
+	if err != nil {
+		t.Fatal(err)
+	}
+	today := day.AddDate(0, 0, -3)
+	h.activity.now = func() time.Time { return today }
+	want := today.Format(time.DateOnly)
+
+	n := &scanNative{Engine: h.native.(*native.Engine), fail: 1}
+	h.native = n
+	h.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	out, err := h.projectActivity(ctx, struct{}{})
+	if err != nil || out.Projects[0].LastEventDay == nil || *out.Projects[0].LastEventDay != want {
+		t.Errorf("failed scan: %+v, %v; want %s, not the file name's %s", out.Projects, err, want, latest[1])
+	}
+	h.native = nil
+	out, err = h.projectActivity(ctx, struct{}{})
+	if err != nil || out.Projects[0].LastEventDay == nil || *out.Projects[0].LastEventDay != want {
+		t.Errorf("no engine: %+v, %v; want %s, not the file name's %s", out.Projects, err, want, latest[1])
 	}
 }
 
