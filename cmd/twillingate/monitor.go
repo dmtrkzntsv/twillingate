@@ -104,6 +104,9 @@ func printMonitor(w io.Writer, m store.Monitor, eligible []string) {
 		}
 		fmt.Fprintln(w)
 	}
+	if m.Redirects > 0 {
+		fmt.Fprintf(w, "redirects\t%d\n", m.Redirects)
+	}
 	if m.DomainCheckedAt != "" {
 		fmt.Fprintf(w, "domain\texpires %s, checked %s\n", orUnknown(m.DomainExpiresAt), m.DomainCheckedAt)
 	}

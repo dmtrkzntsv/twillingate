@@ -23,6 +23,7 @@ const base: Monitor = {
   contains: '',
   eligible_origins: ['https://a.example', 'https://b.example'],
   interval_seconds: 60,
+  redirects: 0,
   cert: { expires_at: '', issuer: '', valid: false, error: '', checked_at: '' },
   domain: { expires_at: '', checked_at: '' },
 }
@@ -170,5 +171,31 @@ describe('MonitoringSection', () => {
     read.mockResolvedValue({ ...base, contains: 'saved' })
     await client.invalidateQueries({ queryKey: ['monitor'] })
     await waitFor(() => expect(input).toHaveValue('saved'))
+  })
+
+  describe('redirect warning', () => {
+    const NOTE = 'Redirects 3 times before answering, which slows every visit'
+
+    it('warns at 3 hops, with the count', async () => {
+      show({ ...base, enabled: true, origin: 'https://a.example', redirects: 3 })
+      expect(await screen.findByText(NOTE)).toBeInTheDocument()
+    })
+
+    it('says the count it has', async () => {
+      show({ ...base, enabled: true, origin: 'https://a.example', redirects: 5 })
+      expect(await screen.findByText('Redirects 5 times before answering, which slows every visit')).toBeInTheDocument()
+    })
+
+    it('says nothing at 2 hops', async () => {
+      show({ ...base, enabled: true, origin: 'https://a.example', redirects: 2 })
+      await screen.findByText(/Checked every/)
+      expect(screen.queryByText(/Redirects \d+ times/)).not.toBeInTheDocument()
+    })
+
+    it('says nothing when the monitor is off', async () => {
+      show({ ...base, enabled: false, origin: 'https://a.example', redirects: 4 })
+      await screen.findByRole('switch', { name: SWITCH })
+      expect(screen.queryByText(/Redirects \d+ times/)).not.toBeInTheDocument()
+    })
   })
 })

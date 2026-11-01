@@ -109,3 +109,20 @@ func TestPrintMonitorCertificate(t *testing.T) {
 		}
 	}
 }
+
+func TestPrintMonitorRedirects(t *testing.T) {
+	for _, c := range []struct {
+		n    int
+		want string
+	}{{0, ""}, {2, "redirects\t2\n"}} {
+		var out bytes.Buffer
+		printMonitor(&out, store.Monitor{Origin: "https://a.example", Redirects: c.n}, nil)
+		got := out.String()
+		if c.want == "" && strings.Contains(got, "redirects") {
+			t.Errorf("%d: printed %q, want no redirects line", c.n, got)
+		}
+		if c.want != "" && !strings.Contains(got, c.want) {
+			t.Errorf("%d: printed %q, want %q", c.n, got, c.want)
+		}
+	}
+}

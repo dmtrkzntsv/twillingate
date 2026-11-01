@@ -20,6 +20,9 @@ interface Props {
   onSave: (body: MonitorBody) => Promise<boolean>
 }
 
+/** Hops from which the chain is worth a warning (the check still passes up to 5). */
+const LONG_CHAIN = 3
+
 /** "73 days", or "expired" once the day has passed. */
 function left(days: number): string {
   return days < 0 ? 'expired' : plural(days, 'day')
@@ -155,6 +158,7 @@ export default function MonitoringSection({ projectId, pending, onSave }: Props)
           <p>{`Checked every ${formatInterval(m.interval_seconds)}`}</p>
           <p className="break-words">{`Certificate: ${certificateText(m.origin, m.cert, now)}`}</p>
           <p>{`Domain: ${domainText}`}</p>
+          {m.redirects >= LONG_CHAIN && <p>{`Redirects ${m.redirects} times before answering, which slows every visit`}</p>}
           {availability && (
             <Link className="w-fit text-foreground underline underline-offset-4" to={tabPath(projectId, availability.dashboard_id, rangeParams(url).toString())}>
               Open the Availability tab

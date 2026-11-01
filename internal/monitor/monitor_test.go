@@ -29,6 +29,25 @@ type fakeStore struct {
 	// certWrites counts every stored reading, certErrs the failures stored apart.
 	certWrites int
 	certErrs   map[int64]string
+	// redirects holds the stored hop counts, redirectWrites every write.
+	redirects      map[int64]int
+	redirectWrites int
+}
+
+func (f *fakeStore) SetMonitorRedirects(_ context.Context, id int64, origin string, n int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.redirects == nil {
+		f.redirects = map[int64]int{}
+	}
+	f.redirects[id] = n
+	f.redirectWrites++
+	for i := range f.monitors {
+		if f.monitors[i].ProjectID == id && f.monitors[i].Origin == origin {
+			f.monitors[i].Redirects = n
+		}
+	}
+	return nil
 }
 
 func (f *fakeStore) ListEnabledMonitors(context.Context) ([]store.Monitor, error) {
@@ -773,5 +792,84 @@ func TestRunnerDomainRow(t *testing.T) {
 	}
 	if c := st.certs[4]; c.CheckedAt == "" || c.ExpiresAt != "" {
 		t.Errorf("stored cert for http origin %+v", c)
+	}
+}
+
+// hopServer redirects n times (/?n=0 .. /?n=n-1) and then answers.
+func hopServer(n int) *httptest.Server {
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var i int
+		fmt.Sscanf(r.URL.Query().Get("n"), "%d", &i)
+		if i < n {
+			http.Redirect(w, r, fmt.Sprintf("/?n=%d", i+1), http.StatusFound)
+			return
+		}
+		fmt.Fprint(w, "ok")
+	}))
+}
+
+func redirectsRunner(st *fakeStore) *Runner {
+	return newRunner(st, allowAll{}, &fakeLog{}, 60*time.Second, quietLogger(), options{allowLoopback: true})
+}
+
+func TestUptimeRowCarriesRedirects(t *testing.T) {
+	srv := hopServer(3)
+	defer srv.Close()
+	st := &fakeStore{}
+	r := redirectsRunner(st)
+	m := store.Monitor{ProjectID: 1, Enabled: true, Origin: srv.URL, CertCheckedAt: "2026-11-01T00:00:00Z", DomainCheckedAt: "2026-11-01T00:00:00Z"}
+	r.now = func() time.Time { return time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC) }
+	evs := r.runMonitor(context.Background(), m)
+	if got := evs[0].Attributes["redirects"]; got != "3" {
+		t.Errorf("redirects %q, want 3", got)
+	}
+	plain := hopServer(0)
+	defer plain.Close()
+	m.Origin = plain.URL
+	if got := r.runMonitor(context.Background(), m)[0].Attributes["redirects"]; got != "0" {
+		t.Errorf("redirects %q, want 0", got)
+	}
+}
+
+func TestRedirectsStoredOnlyOnChange(t *testing.T) {
+	srv := hopServer(3)
+	defer srv.Close()
+	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 1, Enabled: true, Origin: srv.URL}}}
+	r := redirectsRunner(st)
+	now := time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC)
+	r.now = func() time.Time { return now }
+	fresh := now.Format(time.RFC3339)
+	run := func() {
+		m := st.monitors[0]
+		m.CertCheckedAt, m.DomainCheckedAt = fresh, fresh
+		r.runMonitor(context.Background(), m)
+	}
+	run()
+	if st.redirects[1] != 3 || st.redirectWrites != 1 {
+		t.Fatalf("stored %v after %d writes, want 3 after 1", st.redirects, st.redirectWrites)
+	}
+	run()
+	run()
+	if st.redirectWrites != 1 {
+		t.Errorf("%d writes after unchanged checks, want 1", st.redirectWrites)
+	}
+}
+
+func TestRedirectsKeptThroughADialFailure(t *testing.T) {
+	srv := hopServer(0)
+	url := srv.URL
+	srv.Close() // nothing listens: connection refused
+	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 1, Enabled: true, Origin: url, Redirects: 4}}}
+	r := redirectsRunner(st)
+	now := time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC)
+	r.now = func() time.Time { return now }
+	m := st.monitors[0]
+	m.CertCheckedAt, m.DomainCheckedAt = now.Format(time.RFC3339), now.Format(time.RFC3339)
+	evs := r.runMonitor(context.Background(), m)
+	if evs[0].Attributes["up"] != "0" || evs[0].Attributes["redirects"] != "0" {
+		t.Errorf("row %+v, want down with redirects 0", evs[0].Attributes)
+	}
+	if st.redirectWrites != 0 || st.monitors[0].Redirects != 4 {
+		t.Errorf("%d writes, stored %d: a dial failure must leave the count", st.redirectWrites, st.monitors[0].Redirects)
 	}
 }

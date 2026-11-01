@@ -411,7 +411,7 @@ describe('Project tabs', () => {
 
   it('reads no monitor until the dashboards list says this is not reporting dev', async () => {
     const monitor = vi.spyOn(endpoints, 'monitor').mockResolvedValue({
-      project_id: 7, enabled: false, origin: '', contains: '', eligible_origins: [], interval_seconds: 60,
+      project_id: 7, enabled: false, origin: '', contains: '', eligible_origins: [], interval_seconds: 60, redirects: 0,
       cert: { expires_at: '', issuer: '', valid: false, error: '', checked_at: '' }, domain: { expires_at: '', checked_at: '' },
     })
     let list!: (v: Awaited<ReturnType<typeof endpoints.dashboards>>) => void

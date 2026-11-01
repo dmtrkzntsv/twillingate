@@ -37,6 +37,7 @@ type Store interface {
 	SetMonitorCert(ctx context.Context, projectID int64, origin string, c store.CertState) error
 	SetMonitorCertError(ctx context.Context, projectID int64, origin, msg string) error
 	SetMonitorDomain(ctx context.Context, projectID int64, origin string, d store.DomainState) error
+	SetMonitorRedirects(ctx context.Context, projectID int64, origin string, n int) error
 }
 
 // EventLog is where check rows go (archive.Log).
@@ -284,12 +285,19 @@ func (r *Runner) runMonitor(ctx context.Context, m store.Monitor) []store.Event 
 		return r.origins.RedirectAllowed(m.ProjectID, target, m.Origin)
 	})
 	cancel()
+	// Keep the count Settings shows, written only when it moved and only
+	// from a check that got an answer: a blip must not hide the warning.
+	if res.Answered && res.Redirects != m.Redirects && ctx.Err() == nil {
+		if err := r.st.SetMonitorRedirects(ctx, m.ProjectID, m.Origin, res.Redirects); err != nil {
+			r.logger.Warn("monitor: store redirect count", "project_id", m.ProjectID, "error", err)
+		}
+	}
 	evs := []store.Event{uptimeRow(m.ProjectID, start, res)}
 	return append(evs, r.daily(ctx, m)...)
 }
 
 func uptimeRow(projectID int64, at time.Time, res Result) store.Event {
-	attrs := map[string]string{"up": "0"}
+	attrs := map[string]string{"up": "0", "redirects": strconv.Itoa(res.Redirects)}
 	if res.Up {
 		attrs["up"] = "1"
 	} else {

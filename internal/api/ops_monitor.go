@@ -38,6 +38,7 @@ type monitorOut struct {
 	Contains        string           `json:"contains"`
 	EligibleOrigins []string         `json:"eligible_origins" jsonschema:"the project's allowed origins a monitor may use: exact http:// or https:// ones"`
 	IntervalSeconds int              `json:"interval_seconds" jsonschema:"seconds between checks, set by MONITOR_INTERVAL"`
+	Redirects       int              `json:"redirects" jsonschema:"redirect hops the last check that got an answer followed; 0 when none or not checked yet"`
 	Cert            monitorCertOut   `json:"cert"`
 	Domain          monitorDomainOut `json:"domain"`
 }
@@ -48,7 +49,7 @@ func (h *host) monitorOut(ctx context.Context, m store.Monitor) monitorOut {
 		eligible = append(eligible, manage.MonitorOrigins(p.AllowedOrigins)...)
 	}
 	return monitorOut{ProjectID: m.ProjectID, Enabled: m.Enabled, Origin: m.Origin, Contains: m.Contains,
-		EligibleOrigins: eligible, IntervalSeconds: int(h.monitorInterval.Seconds()),
+		EligibleOrigins: eligible, IntervalSeconds: int(h.monitorInterval.Seconds()), Redirects: m.Redirects,
 		Cert: monitorCertOut{ExpiresAt: m.CertExpiresAt, Issuer: m.CertIssuer, Valid: m.CertValid,
 			Error: m.CertError, CheckedAt: m.CertCheckedAt},
 		Domain: monitorDomainOut{ExpiresAt: m.DomainExpiresAt, CheckedAt: m.DomainCheckedAt}}

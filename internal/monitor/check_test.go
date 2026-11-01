@@ -179,6 +179,9 @@ func TestRedirectOffOriginsNotFollowed(t *testing.T) {
 	if res.Status != http.StatusFound {
 		t.Errorf("status %d, want the redirect's %d", res.Status, http.StatusFound)
 	}
+	if res.Redirects != 0 || !res.Answered {
+		t.Errorf("Redirects %d Answered %v, want 0 hops followed and answered", res.Redirects, res.Answered)
+	}
 }
 
 func TestRedirectWithinOriginsFollowed(t *testing.T) {
@@ -205,8 +208,10 @@ func TestRedirectTooMany(t *testing.T) {
 	for _, tc := range []struct {
 		hops int
 		up   bool
-	}{{10, true}, {11, false}} {
+	}{{5, true}, {6, false}} {
+		var requested atomic.Int32
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			requested.Add(1)
 			var n int
 			fmt.Sscanf(r.URL.Query().Get("n"), "%d", &n)
 			if n < tc.hops {
@@ -224,6 +229,46 @@ func TestRedirectTooMany(t *testing.T) {
 		if !tc.up && res.Status != http.StatusFound {
 			t.Errorf("%d hops: status %d, want the last redirect's %d", tc.hops, res.Status, http.StatusFound)
 		}
+		// The original request and the five hops; a sixth hop is never requested.
+		if got := requested.Load(); got != 6 {
+			t.Errorf("%d hops: %d requests, want 6", tc.hops, got)
+		}
+		if res.Redirects != 5 {
+			t.Errorf("%d hops: Redirects %d, want 5", tc.hops, res.Redirects)
+		}
+		if !res.Answered {
+			t.Errorf("%d hops: not Answered", tc.hops)
+		}
+	}
+}
+
+func TestRedirectsCounted(t *testing.T) {
+	plain := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "hi") }))
+	defer plain.Close()
+	res := checkURL(t, loopbackClient(t), plain.URL, "", anyOrigin)
+	if !res.Up || res.Redirects != 0 || !res.Answered {
+		t.Errorf("no redirect: got %+v, want up, 0 redirects, answered", res)
+	}
+	two := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("n") == "2" {
+			fmt.Fprint(w, "hi")
+			return
+		}
+		n := 0
+		fmt.Sscanf(r.URL.Query().Get("n"), "%d", &n)
+		http.Redirect(w, r, fmt.Sprintf("/?n=%d", n+1), http.StatusFound)
+	}))
+	defer two.Close()
+	if res := checkURL(t, loopbackClient(t), two.URL, "", anyOrigin); !res.Up || res.Redirects != 2 {
+		t.Errorf("two hops: got %+v, want up with 2 redirects", res)
+	}
+}
+
+func TestDialFailureIsNotAnswered(t *testing.T) {
+	c := newClient(&guard{resolver: fakeResolver{}}, nil)
+	res := checkURL(t, c, "http://nowhere.example", "", anyOrigin)
+	if res.Up || res.Answered || res.Redirects != 0 {
+		t.Errorf("got %+v, want down, unanswered, 0 redirects", res)
 	}
 }
 

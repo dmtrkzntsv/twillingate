@@ -32,7 +32,7 @@ const (
 )
 
 const (
-	maxHops   = 10      // redirects followed; the 11th fails the check
+	maxHops   = 5       // redirects followed; the 6th fails the check
 	bodyLimit = 1 << 20 // bytes of the page searched for the text
 	errorMax  = 200     // runes of error text kept on a row
 )
@@ -47,6 +47,11 @@ type Result struct {
 	Reason  string
 	Error   string
 	Elapsed time.Duration
+	// Redirects is the hops followed, also on a failed check (the count
+	// reached). Answered is whether any response arrived, a refused
+	// redirect or a bad status included: false for a failure before one.
+	Redirects int
+	Answered  bool
 }
 
 // redirectError stops a redirect without following it.
@@ -62,16 +67,26 @@ func (e *redirectError) Error() string { return e.msg }
 // check.
 func Check(ctx context.Context, c *http.Client, origin, contains string, allowed func(target string) bool) Result {
 	start := time.Now()
-	res := check(ctx, c, origin, contains, allowed)
+	var t tally
+	res := check(ctx, c, origin, contains, allowed, &t)
+	res.Redirects, res.Answered = t.hops, t.answered || res.Status > 0
 	res.Elapsed = time.Since(start)
 	res.Error = truncate(res.Error)
 	return res
 }
 
-func check(ctx context.Context, c *http.Client, origin, contains string, allowed func(string) bool) Result {
+// tally is what a check learned on the way: the hops followed and whether
+// any response came.
+type tally struct {
+	hops     int
+	answered bool
+}
+
+func check(ctx context.Context, c *http.Client, origin, contains string, allowed func(string) bool, t *tally) Result {
 	cc := *c
 	cc.Jar = nil
 	cc.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		t.answered = true // a redirect is a response
 		if len(via) > maxHops {
 			return &redirectError{"too many redirects"}
 		}
@@ -79,6 +94,7 @@ func check(ctx context.Context, c *http.Client, origin, contains string, allowed
 			return &redirectError{"redirected off-site to " + req.URL.Scheme + "://" + req.URL.Host +
 				" — add it to the project's origins if it is yours"}
 		}
+		t.hops = len(via)
 		return nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(origin, "/")+"/", nil)
@@ -96,6 +112,7 @@ func check(ctx context.Context, c *http.Client, origin, contains string, allowed
 		return r
 	}
 	defer resp.Body.Close()
+	t.answered = true
 	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))
 	if err != nil {
 		r := failure(ctx, err)

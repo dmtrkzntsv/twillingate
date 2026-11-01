@@ -10,12 +10,12 @@ import (
 )
 
 const monitorCols = `project_id, enabled, origin, contains, cert_expires_at, cert_issuer,
-	cert_valid, cert_error, cert_checked_at, domain_expires_at, domain_checked_at`
+	cert_valid, cert_error, cert_checked_at, domain_expires_at, domain_checked_at, redirects`
 
 func scanMonitor(s rowScanner) (store.Monitor, error) {
 	var m store.Monitor
 	err := s.Scan(&m.ProjectID, &m.Enabled, &m.Origin, &m.Contains, &m.CertExpiresAt, &m.CertIssuer,
-		&m.CertValid, &m.CertError, &m.CertCheckedAt, &m.DomainExpiresAt, &m.DomainCheckedAt)
+		&m.CertValid, &m.CertError, &m.CertCheckedAt, &m.DomainExpiresAt, &m.DomainCheckedAt, &m.Redirects)
 	return m, err
 }
 
@@ -66,7 +66,7 @@ func (d *DB) GetMonitor(ctx context.Context, projectID int64) (store.Monitor, er
 }
 
 // SetMonitor upserts a project's settings and audits it. A changed origin
-// clears the stored certificate and domain readings, which described
+// clears the stored certificate and domain readings and the redirect count, which described
 // another host. Enabling a disabled monitor clears their check times only,
 // so the next slot reads them again and the known dates stay until then. It
 // is not managed-config: no version bump.
@@ -90,6 +90,7 @@ func (d *DB) SetMonitor(ctx context.Context, projectID int64, s store.MonitorSet
 			  cert_checked_at   = CASE WHEN origin = excluded.origin AND (enabled = 1 OR excluded.enabled = 0) THEN cert_checked_at ELSE '' END,
 			  domain_expires_at = CASE WHEN origin = excluded.origin THEN domain_expires_at ELSE '' END,
 			  domain_checked_at = CASE WHEN origin = excluded.origin AND (enabled = 1 OR excluded.enabled = 0) THEN domain_checked_at ELSE '' END,
+			  redirects         = CASE WHEN origin = excluded.origin THEN redirects ELSE 0 END,
 			  enabled = excluded.enabled, origin = excluded.origin, contains = excluded.contains,
 			  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
 			projectID, s.Enabled, s.Origin, s.Contains); err != nil {
@@ -109,7 +110,7 @@ func (d *DB) SetMonitor(ctx context.Context, projectID int64, s store.MonitorSet
 func (d *DB) ListEnabledMonitors(ctx context.Context) ([]store.Monitor, error) {
 	rows, err := d.db.QueryContext(ctx, `SELECT m.project_id, m.enabled, m.origin, m.contains,
 		m.cert_expires_at, m.cert_issuer, m.cert_valid, m.cert_error, m.cert_checked_at,
-		m.domain_expires_at, m.domain_checked_at
+		m.domain_expires_at, m.domain_checked_at, m.redirects
 		FROM monitors m JOIN projects p ON p.id = m.project_id
 		WHERE m.enabled = 1 AND p.archived_at IS NULL ORDER BY m.project_id`)
 	if err != nil {
@@ -148,5 +149,13 @@ func (d *DB) SetMonitorCertError(ctx context.Context, projectID int64, origin, m
 func (d *DB) SetMonitorDomain(ctx context.Context, projectID int64, origin string, s store.DomainState) error {
 	_, err := d.db.ExecContext(ctx, `UPDATE monitors SET domain_expires_at=?, domain_checked_at=?
 		WHERE project_id=? AND origin=?`, s.ExpiresAt, s.CheckedAt, projectID, origin)
+	return err
+}
+
+// SetMonitorRedirects stores the redirect count of the last check that got
+// an answer, guarded like SetMonitorCert.
+func (d *DB) SetMonitorRedirects(ctx context.Context, projectID int64, origin string, n int) error {
+	_, err := d.db.ExecContext(ctx, `UPDATE monitors SET redirects=? WHERE project_id=? AND origin=?`,
+		n, projectID, origin)
 	return err
 }

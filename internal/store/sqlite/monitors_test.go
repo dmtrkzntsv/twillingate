@@ -257,6 +257,44 @@ func TestMonitorStateWriteWithStaleOriginIsIgnored(t *testing.T) {
 	}
 }
 
+func TestSetMonitorRedirects(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	set := func(s store.MonitorSettings) store.Monitor {
+		t.Helper()
+		m, err := d.SetMonitor(ctx, id, s, monAudit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	set(store.MonitorSettings{Enabled: true, Origin: "https://a.example"})
+	if err := d.SetMonitorRedirects(ctx, id, "https://a.example", 4); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := d.GetMonitor(ctx, id); m.Redirects != 4 {
+		t.Fatalf("Redirects %d, want 4", m.Redirects)
+	}
+	// A write for an origin the row no longer has is ignored.
+	if err := d.SetMonitorRedirects(ctx, id, "https://old.example", 9); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := d.GetMonitor(ctx, id); m.Redirects != 4 {
+		t.Errorf("stale write landed: Redirects %d", m.Redirects)
+	}
+	// The same origin keeps it, listed too; a new origin resets it.
+	if m := set(store.MonitorSettings{Enabled: true, Origin: "https://a.example", Contains: "x"}); m.Redirects != 4 {
+		t.Errorf("same-origin edit: Redirects %d, want 4", m.Redirects)
+	}
+	if ms, err := d.ListEnabledMonitors(ctx); err != nil || len(ms) != 1 || ms[0].Redirects != 4 {
+		t.Errorf("ListEnabledMonitors = %+v, %v, want Redirects 4", ms, err)
+	}
+	if m := set(store.MonitorSettings{Enabled: true, Origin: "https://b.example"}); m.Redirects != 0 {
+		t.Errorf("origin change: Redirects %d, want 0", m.Redirects)
+	}
+}
+
 func TestMonitorUnknownProject(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()

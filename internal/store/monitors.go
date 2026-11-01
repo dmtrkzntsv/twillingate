@@ -14,6 +14,7 @@ type Monitor struct {
 	CertCheckedAt    string
 	DomainExpiresAt  string // YYYY-MM-DD, "" unknown
 	DomainCheckedAt  string
+	Redirects        int // hops the last answered check followed; 0 on an origin change
 }
 
 // MonitorSettings is what an operator edits.

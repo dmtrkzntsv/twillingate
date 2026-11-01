@@ -138,3 +138,36 @@ func TestUsageIgnoresChecks(t *testing.T) {
 		t.Errorf("events_30d %+v -> %+v, want unchanged", limBefore.Events30d, limAfter.Events30d)
 	}
 }
+
+// TestMonitorReportsRedirects: the last check's redirect count is in
+// get_monitor, over REST and MCP.
+func TestMonitorReportsRedirects(t *testing.T) {
+	h, cs := newTestHost(t)
+	ctx := context.Background()
+	if _, err := h.ops.UpdateProject(ctx, "test", manage.ProjectSpec{ID: 1, AllowedOrigins: []string{"https://blog.example.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	r := newTestRegistrar(t, h)
+	if rec := serveREST(t, r, "PATCH", "/api/projects/1/monitor", `{"enabled":true}`); rec.Code != http.StatusOK {
+		t.Fatalf("PATCH = %d %s", rec.Code, rec.Body)
+	}
+	if got := decodeMonitor(t, serveREST(t, r, "GET", "/api/projects/1/monitor", "").Body.Bytes()); got.Redirects != 0 {
+		t.Errorf("fresh monitor: redirects %d, want 0", got.Redirects)
+	}
+	// What the runner does after a check: its own handle on the same file.
+	st, err := store.Open("sqlite://" + testDBPaths[h])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.SetMonitorRedirects(ctx, 1, "https://blog.example.com", 3); err != nil {
+		t.Fatal(err)
+	}
+	rec := serveREST(t, r, "GET", "/api/projects/1/monitor", "")
+	if !strings.Contains(rec.Body.String(), `"redirects":3`) || decodeMonitor(t, rec.Body.Bytes()).Redirects != 3 {
+		t.Errorf("GET = %s, want redirects 3", rec.Body)
+	}
+	if m := decodeMonitor(t, []byte(textOf(callTool(t, cs, "get_monitor", map[string]any{"project_id": 1})))); m.Redirects != 3 {
+		t.Errorf("MCP get = %+v, want redirects 3", m)
+	}
+}

@@ -323,7 +323,10 @@ identifies itself as
   anywhere else is not followed and fails with `reason` `redirect`, the target
   in `error`: a project listing only `https://example.com` whose site redirects
   to `https://www.example.com` reads as down until it adds the `www` origin.
-  More than 10 hops is also `redirect`.
+  Up to 5 hops are followed; a 6th is not requested and fails with `redirect`
+  (`too many redirects`). A chain of 3 or more is only a warning: the check
+  stays up, and Settings → Monitoring says the site redirects that many times
+  before answering, which slows every visit.
 - **Private addresses** are refused on every install: an origin or redirect hop
   that resolves to a loopback, private, link-local, CGNAT, multicast, 6to4 or unspecified address
   fails with `blocked`, checked when the connection is made. A site reachable
@@ -340,7 +343,7 @@ traffic: checks never count against an allowance. They still take disk, about
 
 | Row | Written | `value` | Attributes |
 | --- | --- | --- | --- |
-| `uptime` | every check | response time in milliseconds, to the end of the body or to the failure | `up` (`1` or `0`); `status`, the final HTTP status, absent without a response; `reason` and `error` when down |
+| `uptime` | every check | response time in milliseconds, to the end of the body or to the failure | `up` (`1` or `0`); `status`, the final HTTP status, absent without a response; `reason` and `error` when down; `redirects`, the redirect hops followed (`"0"` when none; on a failed check, the count reached) |
 | `cert` | once a day and when the monitor is enabled or its origin changes, on `https://` origins, when a certificate was read (verified or not) | whole days left | `expires` (`YYYY-MM-DD`), `issuer`, `valid` (`1` or `0`), `error`, why it did not verify |
 | `domain` | as `cert`, for the origin host's registrable domain (public suffix list) | calendar days (UTC) until the registration expires, 0 on the day itself, absent when unknown | `expires` (`YYYY-MM-DD`) |
 
@@ -355,7 +358,11 @@ says why meanwhile. A certificate that was read but does not verify is a
 reading, with `valid` `0`. Enabling a disabled monitor reads both again at its
 next check, the known dates kept until then.
 `get_monitor` returns the last reading of each: `cert` (`expires_at`, `issuer`,
-`valid`, `error`, `checked_at`) and `domain` (`expires_at`, `checked_at`).
+`valid`, `error`, `checked_at`) and `domain` (`expires_at`, `checked_at`), and
+`redirects`, the hops the last check that got an answer followed (a check that
+got no response, such as a refused connection or a timeout before any answer,
+leaves it as it was; changing the origin resets it to 0). `twillingate monitor
+get` prints it when above 0.
 
 `reason` is a closed vocabulary, on every failed `uptime` row:
 
@@ -367,7 +374,7 @@ next check, the known dates kept until then.
 | `tls` | certificate invalid, expired, or for another name |
 | `http_4xx` | final status 400 to 499 |
 | `http_5xx` | final status 500 to 599, and any other non-2xx |
-| `redirect` | a redirect off the project's origins, or more than 10 hops |
+| `redirect` | a redirect off the project's origins, or more than 5 hops |
 | `content` | the `contains` text is missing |
 | `blocked` | resolves to a private address |
 
@@ -1654,7 +1661,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","values","received","blocked","aliases"}],"keys_total"}`; `aliases` is absent when empty |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
-| `GET` | `/api/projects/{project_id}/monitor` | `get_monitor` | — → `{"project_id","enabled","origin","contains","eligible_origins","interval_seconds","cert":{"expires_at","issuer","valid","error","checked_at"},"domain":{"expires_at","checked_at"}}`; empty strings are unknown |
+| `GET` | `/api/projects/{project_id}/monitor` | `get_monitor` | — → `{"project_id","enabled","origin","contains","eligible_origins","interval_seconds","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"domain":{"expires_at","checked_at"}}`; empty strings are unknown |
 | `PATCH` | `/api/projects/{project_id}/monitor` | `update_monitor` | body: `enabled`, `origin`, `contains`, each optional (merge); a foreign origin is `400` → as `get_monitor` |
 | `POST` | `/api/projects/{project_id}/move` | `move_project` | body: `after` |
 | `POST` | `/api/projects/{project_id}/archive` | `archive_project` | — |

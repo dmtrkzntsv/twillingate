@@ -280,6 +280,8 @@ export interface Monitor {
   /** The project's http(s) origins a check can target. */
   eligible_origins: string[]
   interval_seconds: number
+  /** Redirect hops the last answered check followed. */
+  redirects: number
   cert: { expires_at: string; issuer: string; valid: boolean; error: string; checked_at: string }
   domain: { expires_at: string; checked_at: string }
 }

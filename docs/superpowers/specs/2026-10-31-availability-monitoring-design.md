@@ -105,7 +105,7 @@ Every `MONITOR_INTERVAL` seconds, per enabled monitor:
   listing only `https://example.com` whose site redirects to
   `https://www.example.com` shows as down until it adds the `www` origin
   (my call; the user asked that it never redirect outside the added domains).
-  More than 10 hops is also `redirect`.
+  More than 5 hops is also `redirect`.
 - Up means: the final status is 2xx and, when `contains` is set, the text
   appears in the first 1 MB of the body (plain substring, case-sensitive; my
   call).
@@ -132,6 +132,7 @@ checks into hourly rows):
 | attribute `status` | final HTTP status code, absent when there was no response |
 | attribute `reason` | absent when up; otherwise one of the table below |
 | attribute `error` | short human text when down (e.g. `redirected off-site to evil.example`) |
+| attribute `redirects` | redirect hops followed, `"0"` when none; on a failed check, the count reached |
 
 The details are ordinary attributes on the row, so the files' column shape
 does not change (my call). The family must be added wherever the family list
@@ -151,7 +152,7 @@ Event and attribute rules (rename, merge, block) do not apply to it (my call).
 | `tls` | certificate invalid, expired, or for another name |
 | `http_4xx` | final status 400–499 |
 | `http_5xx` | final status 500–599 (and any other non-2xx, my call: 1xx/3xx-without-location count here) |
-| `redirect` | redirect off the project's origins, or more than 10 hops |
+| `redirect` | redirect off the project's origins, or more than 5 hops |
 | `content` | `contains` text missing |
 | `blocked` | resolves to a private address |
 
@@ -232,3 +233,13 @@ changes, so the dates appear immediately.
   is the site's traffic); `checks` is read through its own table. This makes
   `usage`, `limits` and every `events` widget exclude checks without
   per-reader filters.
+- **Redirect hops (user's decision, after planning):** every `uptime` row carries
+  `redirects`, the hops followed as a string, failed checks included. The hard
+  limit drops from 10 to 5 (a 6th hop is `reason=redirect`). A chain of 3 or
+  more is a warning only: the check stays up, and Settings → Monitoring says
+  "Redirects N times before answering, which slows every visit"; no new
+  up/down state or reason. Settings reads the count from a `redirects` column
+  on `monitors` (migration 044 amended, unreleased), written by the runner only
+  when it changed and only from a check that got an answer; an origin change
+  resets it. It is exposed as `redirects` in `get_monitor` and printed by
+  `monitor get` when above 0.

@@ -358,13 +358,16 @@ type Store interface {
 	// ListEnabledMonitors lists the enabled monitors of live projects by
 	// project id. SetMonitorCert and SetMonitorDomain store a reading,
 	// SetMonitorCertError only why a certificate could not be read,
-	// unaudited, and all do nothing when the row's origin is no longer origin.
+	// SetMonitorRedirects stores the hop count of the last check that got an
+	// answer. All are unaudited and do nothing when the row's origin is no
+	// longer origin; an origin change resets the count to 0.
 	GetMonitor(ctx context.Context, projectID int64) (Monitor, error)
 	SetMonitor(ctx context.Context, projectID int64, s MonitorSettings, a AuditEntry) (Monitor, error)
 	ListEnabledMonitors(ctx context.Context) ([]Monitor, error)
 	SetMonitorCert(ctx context.Context, projectID int64, origin string, c CertState) error
 	SetMonitorCertError(ctx context.Context, projectID int64, origin, msg string) error
 	SetMonitorDomain(ctx context.Context, projectID int64, origin string, d DomainState) error
+	SetMonitorRedirects(ctx context.Context, projectID int64, origin string, n int) error
 	// SetSubmissionsArchived archives (archived true) or restores the
 	// project's submissions with these ids and returns how many changed:
 	// ids that match nothing, an archived one being archived and an active
