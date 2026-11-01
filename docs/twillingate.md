@@ -1656,7 +1656,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | Method | Path | Mirrors | Input |
 |---|---|---|---|
 | `GET` | `/api/projects` | `list_projects` | — |
-| `GET` | `/api/project-activity` | `project_activity`, REST only: no MCP tool | — → `{"projects":[{"project_id","last_event_day","new_submissions","forms","draft_forms"}]}` for every live project: the day of the newest event in the event files (availability checks aside), looked for in the month of the newest file and the 3 before it, so null when there is none there. The days are read at most every 5 minutes, the submissions to live forms the console has not read, its live forms, and how many of them are drafts waiting to be approved |
+| `GET` | `/api/project-activity` | `project_activity`, REST only: no MCP tool | — → `{"projects":[{"project_id","last_event_day","new_submissions","forms","draft_forms"}]}` for every live project: the day of the newest event in the event files (availability checks aside), looked for from the month of the newest file back to the oldest, so null only when there is none. The days are read at most every 5 minutes (a project with files but no day yet is looked at again, in its newest month, every 30 seconds), the submissions to live forms the console has not read, its live forms, and how many of them are drafts waiting to be approved |
 | `GET` | `/api/limits` | `limits` | — |
 | `GET` | `/api/usage` | `usage` | query: `project_id`, `from`, `to` |
 | `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","values","received","blocked","aliases"}],"keys_total"}`; `aliases` is absent when empty |

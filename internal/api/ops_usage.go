@@ -271,8 +271,10 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 
 // newestOpts bounds newestRow's search and says how it takes a failure.
 type newestOpts struct {
-	maxBack  int
-	tolerate bool
+	maxBack int
+	// onlyNewest looks at the newest file's month and no further back.
+	onlyNewest bool
+	tolerate   bool
 }
 
 // newestRow is, for each of projects with event files, the newest value
@@ -286,7 +288,7 @@ type newestOpts struct {
 // silent one. A project with no row at all is absent. batch goes in the
 // first call with the first scans, and its answers are returned in order.
 //
-// opt.maxBack bounds the search to that many months before the newest
+// opt.onlyNewest stops after the newest file's month. opt.maxBack bounds the search to that many months before the newest
 // file's (0: down to the oldest file); a project with no row by then is
 // absent. With opt.tolerate a project whose scan fails is left out of the
 // answer and named, with its error, in the third result, where otherwise
@@ -356,7 +358,7 @@ func (h *host) newestRow(ctx context.Context, projects []int64, latest, oldest m
 			}
 			sp := pending[id]
 			prev := sp.first.AddDays(-1)
-			if o, err := civil.Parse(oldest[id]); err != nil || prev.Before(o) || (opt.maxBack > 0 && sp.back >= opt.maxBack) {
+			if o, err := civil.Parse(oldest[id]); err != nil || prev.Before(o) || opt.onlyNewest || (opt.maxBack > 0 && sp.back >= opt.maxBack) {
 				delete(pending, id)
 				continue
 			}

@@ -335,3 +335,55 @@ func TestProjectActivityCancelledReadCachesNothing(t *testing.T) {
 		t.Errorf("read after cancel: asked %d -> %d, %+v, %v; want a scan", asked, len(n.asked), out.Projects, err)
 	}
 }
+
+// A project whose real events are far older than its newest file (a
+// monitored, quiet site) still reads its last real day, not null.
+func TestProjectActivityStepsBackToAnOldEvent(t *testing.T) {
+	h, _ := newTestHost(t)
+	ms := 120.0
+	writeHostEvents(t, h, store.Event{Family: store.FamilyChecks, ProjectID: 1, EventName: "uptime", Value: &ms,
+		Measure: store.MeasureTime, TS: time.Date(2027, 3, 3, 9, 0, 0, 0, time.UTC), Attributes: map[string]string{"up": "1"}})
+	act := getActivity(t, h)
+	if len(act) == 0 || act[0].LastEventDay == nil || *act[0].LastEventDay != "2026-08-26" {
+		t.Errorf("last_event_day = %+v, want 2026-08-26 seven months behind the newest file", act)
+	}
+}
+
+// Within the TTL a project that has files but no day is looked at again,
+// its newest file's month only, at most every 30 s.
+func TestProjectActivityRechecksAProjectWithNoDay(t *testing.T) {
+	h, _ := newTestHost(t)
+	ctx := t.Context()
+	n := &scanNative{Engine: h.native.(*native.Engine)}
+	h.native = n
+	clock := time.Now()
+	h.activity.now = func() time.Time { return clock }
+	if _, err := h.projectActivity(ctx, struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	// The cached answer lost project 1's day, as when it had no event yet.
+	delete(h.activity.days, 1)
+	asked := len(n.asked)
+	clock = clock.Add(10 * time.Second)
+	out, _ := h.projectActivity(ctx, struct{}{})
+	if len(n.asked) != asked || out.Projects[0].LastEventDay != nil {
+		t.Fatalf("rechecked within 30 s: asked %d -> %d, %+v", asked, len(n.asked), out.Projects)
+	}
+	clock = clock.Add(25 * time.Second)
+	out, err := h.projectActivity(ctx, struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(n.asked) != asked+1 || slices.ContainsFunc(n.asked[asked:], func(id int64) bool { return id != 1 }) {
+		t.Errorf("recheck asked %v, want one scan of project 1", n.asked[asked:])
+	}
+	if out.Projects[0].LastEventDay == nil || *out.Projects[0].LastEventDay != "2026-08-26" {
+		t.Errorf("after the recheck: %+v, want 2026-08-26", out.Projects)
+	}
+	// And the day is kept: the next read within the TTL asks nothing.
+	asked = len(n.asked)
+	clock = clock.Add(time.Minute)
+	if _, err := h.projectActivity(ctx, struct{}{}); err != nil || len(n.asked) != asked {
+		t.Errorf("a read after the recheck scanned again: %d -> %d (%v)", asked, len(n.asked), err)
+	}
+}
