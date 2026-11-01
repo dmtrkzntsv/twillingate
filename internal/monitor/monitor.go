@@ -45,8 +45,8 @@ type EventLog interface {
 }
 
 // Origins says whether a redirect target is one of the project's origins
-// (manage's snapshot; a bare "*" counts only for reqOrigin, which is the
-// monitor's own origin).
+// (manage's snapshot, MonitorRedirectAllowed; a bare "*" counts only for
+// reqOrigin, which is the monitor's own origin).
 type Origins interface {
 	RedirectAllowed(projectID int64, target, reqOrigin string) bool
 }

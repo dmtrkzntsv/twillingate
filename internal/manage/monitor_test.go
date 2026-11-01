@@ -12,7 +12,7 @@ import (
 
 func TestMonitorOriginsFilters(t *testing.T) {
 	got := MonitorOrigins([]string{"*", "https://*.x.com", "tauri://localhost", "null",
-		"http://a.com:8080", "https://b.com", "https://b.com/", "https://c.com/path", ""})
+		"http://a.com:8080", "https://b.com", "https://b.com/", "https://c.com/path", "", "https://[fe80::1%25eth0]"})
 	want := []string{"http://a.com:8080", "https://b.com"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("MonitorOrigins = %q, want %q", got, want)
@@ -23,7 +23,7 @@ func boolp(b bool) *bool    { return &b }
 func strp(s string) *string { return &s }
 
 func TestSetMonitorPicksTheOnlyOrigin(t *testing.T) {
-	ops, st, _ := newOps(t)
+	ops, _, _ := newOps(t)
 	ctx := context.Background()
 	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "A",
 		AllowedOrigins: []string{"*", "https://a.example.com"}})
@@ -41,7 +41,6 @@ func TestSetMonitorPicksTheOnlyOrigin(t *testing.T) {
 	if err != nil || got != m {
 		t.Fatalf("Monitor = %+v, %v", got, err)
 	}
-	_ = st
 
 	// two eligible origins and none chosen: refuse
 	q, _ := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "B",
@@ -61,7 +60,8 @@ func TestSetMonitorRefusesWildcardAndForeignOrigin(t *testing.T) {
 	ctx := context.Background()
 	p, _ := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "A",
 		AllowedOrigins: []string{"https://*.x.com", "https://a.example.com"}})
-	for _, o := range []string{"https://*.x.com", "https://other.example.com", "*", ""} {
+	for _, o := range []string{"https://*.x.com", "https://other.example.com", "*", "",
+		"https://a.example.com/status", "https://a.example.com/?q=1", "https://a.example.com/#top"} {
 		_, err := ops.SetMonitor(ctx, "cli", p.ID, MonitorSpec{Origin: strp(o)})
 		if o == "" {
 			if err != nil {
@@ -84,6 +84,68 @@ func TestSetMonitorRefusesWildcardAndForeignOrigin(t *testing.T) {
 	}
 	if _, err := ops.SetMonitor(ctx, "cli", p.ID, MonitorSpec{Origin: strp("https://a.example.com")}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("archived: %v", err)
+	}
+}
+
+func TestSetMonitorNamesTheNeedWithNoEligibleOrigin(t *testing.T) {
+	ops, _, _ := newOps(t)
+	ctx := context.Background()
+	p, _ := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "A", AllowedOrigins: []string{"https://*.x.com"}})
+	_, err := ops.SetMonitor(ctx, "cli", p.ID, MonitorSpec{Enabled: boolp(true)})
+	if !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "needs one exact http(s) origin") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestSnapshotMonitorRedirect(t *testing.T) {
+	ops, _, _ := newOps(t)
+	ctx := context.Background()
+	p, _ := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "A",
+		AllowedOrigins: []string{"https://Shop.example.com", "https://www.example.com:443", "https://*.x.com"}})
+	q, _ := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "B", AllowedOrigins: []string{"*"}})
+	snap := ops.Reg.Snapshot(ctx)
+	for _, c := range []struct {
+		project     int64
+		target, req string
+		want        bool
+	}{
+		{p.ID, "https://shop.example.com/login", "https://shop.example.com", true}, // listed in another spelling
+		{p.ID, "https://www.example.com/", "https://shop.example.com", true},       // the same, by the default port
+		{p.ID, "https://a.x.com/", "https://shop.example.com", true},               // the wildcard still counts
+		{p.ID, "https://other.example.com/", "https://shop.example.com", false},
+		{p.ID, "http://shop.example.com/", "https://shop.example.com", false},
+		{q.ID, "https://elsewhere.example/", "https://site.example", false}, // a bare * is no list
+		{q.ID, "https://site.example/a", "https://site.example", true},
+		{999, "https://shop.example.com/", "", false},
+	} {
+		if got := snap.MonitorRedirectAllowed(c.project, c.target, c.req); got != c.want {
+			t.Errorf("project %d, %s: %v, want %v", c.project, c.target, got, c.want)
+		}
+	}
+}
+
+func TestSetMonitorNoChangeWritesNoAudit(t *testing.T) {
+	ops, _, _, p, path := ruleOps(t)
+	ctx := context.Background()
+	if _, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: p, AllowedOrigins: []string{"https://a.example.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := ops.SetMonitor(ctx, "alice", p, MonitorSpec{Enabled: boolp(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := ops.SetMonitor(ctx, "alice", p, MonitorSpec{Enabled: boolp(true), Origin: strp("https://a.example.com"), Contains: strp("")})
+	if err != nil || again != first {
+		t.Fatalf("no-op = %+v, %v, want %+v", again, err, first)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var n int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action = 'monitor.update'`).Scan(&n); err != nil || n != 1 {
+		t.Errorf("monitor.update rows = %d, %v, want 1", n, err)
 	}
 }
 

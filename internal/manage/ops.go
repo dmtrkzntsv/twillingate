@@ -204,13 +204,9 @@ func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec)
 		return nil, err
 	}
 	// A monitor on an origin the project no longer lists is switched off in
-	// the same transaction as the edit.
-	if spec.AllowedOrigins != nil {
-		mon, err := o.St.GetMonitor(ctx, spec.ID)
-		if err != nil {
-			return nil, err
-		}
-		row.DisableMonitor = mon.Enabled && !contains(MonitorOrigins(spec.AllowedOrigins), mon.Origin)
+	// the same transaction as the edit, which alone knows the monitor's row.
+	if !slices.Equal(spec.AllowedOrigins, cur.AllowedOrigins) {
+		row.MonitorOrigins = append([]string{}, MonitorOrigins(spec.AllowedOrigins)...)
 	}
 	if err := o.St.UpdateProject(ctx, row, store.AuditEntry{
 		Actor: actor, Action: "project.update", Subject: idSubject(spec.ID)}); err != nil {

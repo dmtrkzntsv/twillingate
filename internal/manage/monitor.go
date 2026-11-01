@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -14,8 +15,9 @@ import (
 const maxMonitorContains = 200
 
 // MonitorOrigins is the subset of origins a monitor may use: exact http://
-// or https:// origins (no path, no "*" anywhere), in their normalized form
-// (see urlOrigin), first occurrences in order.
+// or https:// origins (no path, no "*" anywhere, no zone on an IPv6 literal:
+// it names an interface of this machine), in their normalized form (see
+// urlOrigin), first occurrences in order.
 func MonitorOrigins(origins []string) []string {
 	var out []string
 	seen := map[string]bool{}
@@ -24,7 +26,8 @@ func MonitorOrigins(origins []string) []string {
 			continue
 		}
 		u, err := url.Parse(o)
-		if err != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery {
+		if err != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || u.ForceQuery ||
+			strings.Contains(u.Hostname(), "%") {
 			continue
 		}
 		n, ok := urlOrigin(o)
@@ -35,6 +38,23 @@ func MonitorOrigins(origins []string) []string {
 		out = append(out, n)
 	}
 	return out
+}
+
+// MonitorRedirectAllowed reports whether a monitor on reqOrigin may follow a
+// redirect to target: RedirectAllowed, whose exact entries are compared as
+// listed, or target's origin among the project's MonitorOrigins, so an origin
+// listed in another spelling (a capital, the default port) still counts as
+// itself.
+func (s *Snapshot) MonitorRedirectAllowed(projectID int64, target, reqOrigin string) bool {
+	if s.RedirectAllowed(projectID, target, reqOrigin) {
+		return true
+	}
+	p := s.Project(projectID)
+	if p == nil {
+		return false
+	}
+	origin, ok := urlOrigin(target)
+	return ok && slices.Contains(MonitorOrigins(p.AllowedOrigins), origin)
 }
 
 // MonitorSpec is a change to a project's monitor: a nil field keeps the
@@ -78,11 +98,12 @@ func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, spe
 	if spec.Origin != nil {
 		want := strings.TrimSpace(*spec.Origin)
 		if want != "" {
-			n, ok := urlOrigin(want)
-			if !ok || !contains(eligible, n) {
+			// Through MonitorOrigins, so a path is refused, not dropped.
+			n := MonitorOrigins([]string{want})
+			if len(n) != 1 || !slices.Contains(eligible, n[0]) {
 				return store.Monitor{}, fmt.Errorf("%w: %q is not an exact http(s) origin in the project's allowed_origins", ErrInvalid, want)
 			}
-			want = n
+			want = n[0]
 		}
 		if want != cur.Origin {
 			next.Origin = want
@@ -100,25 +121,22 @@ func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, spe
 		}
 	}
 	if next.Enabled && next.Origin == "" {
-		if len(eligible) != 1 {
+		if len(eligible) == 0 {
+			return store.Monitor{}, fmt.Errorf("%w: a monitor needs one exact http(s) origin in the project's allowed_origins", ErrInvalid)
+		}
+		if len(eligible) > 1 {
 			return store.Monitor{}, fmt.Errorf("%w: pick one of the project's origins (%s)", ErrInvalid, strings.Join(eligible, ", "))
 		}
 		next.Origin = eligible[0]
 		changed = append(changed, "origin="+next.Origin)
 	}
-	if next.Enabled && !contains(eligible, next.Origin) {
+	if next.Enabled && !slices.Contains(eligible, next.Origin) {
 		return store.Monitor{}, fmt.Errorf("%w: the monitored origin %q is no longer one of the project's origins; pick one", ErrInvalid, next.Origin)
+	}
+	if len(changed) == 0 {
+		return cur, nil
 	}
 	return o.St.SetMonitor(ctx, projectID, next, store.AuditEntry{
 		Actor: actor, Action: "monitor.update", Subject: idSubject(projectID),
 		Detail: strings.Join(changed, " ")})
-}
-
-func contains(xs []string, x string) bool {
-	for _, v := range xs {
-		if v == x {
-			return true
-		}
-	}
-	return false
 }

@@ -167,10 +167,11 @@ func (d *DB) UpdateProject(ctx context.Context, p store.RegistryProject, a store
 		if n, _ := res.RowsAffected(); n == 0 {
 			return fmt.Errorf("update project: unknown id %d: %w", p.ID, store.ErrNotFound)
 		}
-		if p.DisableMonitor {
+		if p.MonitorOrigins != nil {
 			res, err := tx.ExecContext(ctx, `UPDATE monitors SET enabled=0,
 				updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-				WHERE project_id=? AND enabled=1`, p.ID)
+				WHERE project_id=? AND enabled=1 AND origin NOT IN (`+placeholders(len(p.MonitorOrigins))+`)`,
+				append([]any{p.ID}, toArgs(p.MonitorOrigins)...)...)
 			if err != nil {
 				return err
 			}

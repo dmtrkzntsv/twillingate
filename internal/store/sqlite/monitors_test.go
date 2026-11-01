@@ -158,6 +158,61 @@ func TestSetMonitorCertErrorKeepsTheReading(t *testing.T) {
 	}
 }
 
+func TestUpdateProjectDisablesMonitorInItsTransaction(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	const origin = "https://a.example"
+	audits := func() (n int) {
+		t.Helper()
+		if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='monitor.disable'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	update := func(eligible []string) {
+		t.Helper()
+		if err := d.UpdateProject(ctx, store.RegistryProject{ID: id, Name: "a", AllowedOrigins: "[]", MonitorOrigins: eligible},
+			store.AuditEntry{Actor: "t", Action: "project.update", Subject: "1"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	enabled := func() bool {
+		t.Helper()
+		m, err := d.GetMonitor(ctx, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m.Enabled
+	}
+	if _, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: origin}, monAudit); err != nil {
+		t.Fatal(err)
+	}
+	update(nil) // the origins did not change
+	update([]string{origin, "https://b.example"})
+	if !enabled() || audits() != 0 {
+		t.Fatalf("origin kept: enabled %v, %d audit rows", enabled(), audits())
+	}
+	update([]string{"https://b.example"})
+	if enabled() || audits() != 1 {
+		t.Fatalf("origin dropped: enabled %v, %d audit rows", enabled(), audits())
+	}
+	// Already off: nothing to disable, nothing to audit.
+	update([]string{"https://c.example"})
+	update([]string{})
+	if audits() != 1 {
+		t.Errorf("%d audit rows after updates of a disabled monitor, want 1", audits())
+	}
+	// No eligible origin left: off whatever the row says.
+	if _, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: origin}, monAudit); err != nil {
+		t.Fatal(err)
+	}
+	update([]string{})
+	if enabled() || audits() != 2 {
+		t.Errorf("no eligible origin: enabled %v, %d audit rows", enabled(), audits())
+	}
+}
+
 func TestListEnabledMonitors(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()

@@ -137,10 +137,12 @@ type RegistryProject struct {
 	Archived       bool
 	ArchivedAt     string // RFC 3339 UTC, "" = live
 	SortKey        string // its place in the order (migration 034)
-	// DisableMonitor, on UpdateProject only, also switches the project's
-	// monitor off in the same transaction (audited monitor.disable, "origin
-	// removed"), keeping its origin text. Never read back.
-	DisableMonitor bool
+	// MonitorOrigins, on UpdateProject only, is nil when the origins did not
+	// change, else the origins a monitor may now use (none: empty, not nil).
+	// A monitor enabled on any other is switched off in the same transaction
+	// (audited monitor.disable, "origin removed"), keeping its origin text.
+	// Never read back.
+	MonitorOrigins []string
 }
 
 // EventRule is one event rule (rules with kind 'event', migration 040): a rename (To set)

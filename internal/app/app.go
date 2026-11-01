@@ -358,7 +358,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 type monitorOrigins struct{ reg *manage.Registry }
 
 func (o monitorOrigins) RedirectAllowed(projectID int64, target, reqOrigin string) bool {
-	return o.reg.Snapshot(context.Background()).RedirectAllowed(projectID, target, reqOrigin)
+	return o.reg.Snapshot(context.Background()).MonitorRedirectAllowed(projectID, target, reqOrigin)
 }
 
 // DatabasePath extracts the filesystem path from a sqlite DSN: the data dir

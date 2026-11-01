@@ -297,8 +297,9 @@ The settings are three: `enabled`, `origin` and an optional `contains`.
 `origin` is one of the project's `allowed_origins`, and only an exact `http://`
 or `https://` one is eligible (`eligible_origins` lists them): no wildcard, no
 bare `*`, no `tauri://` or `app://`. A non-default port is allowed as listed.
-Enabling with no origin picks the project's only eligible one, and with several
-the call is refused until one is named. Removing the monitored origin from
+Anything but an origin (`https://myapp.com/status`) is refused rather than cut
+down to one. Enabling with no origin picks the project's only eligible one, and
+with several the call is refused until one is named. Removing the monitored origin from
 `allowed_origins` turns the monitor off. `contains` is a text of at most 200
 characters the page must contain (case-sensitive, in the first 1 MB of the
 body); `""` clears it.
@@ -317,7 +318,8 @@ identifies itself as
 `User-Agent: twillingate-monitor/<version> (+https://github.com/dmtrkzntsv/twillingate)`.
 
 - **Redirects** are followed, but every hop must match the project's
-  `allowed_origins` (wildcard patterns count; a bare `*` does not). A redirect
+  `allowed_origins` (wildcard patterns count, and an exact origin however it is
+  spelled there; a bare `*` does not). A redirect
   anywhere else is not followed and fails with `reason` `redirect`, the target
   in `error`: a project listing only `https://example.com` whose site redirects
   to `https://www.example.com` reads as down until it adds the `www` origin.
