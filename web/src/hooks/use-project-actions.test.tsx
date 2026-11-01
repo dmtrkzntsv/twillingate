@@ -45,6 +45,33 @@ describe('useProjectActions', () => {
     expect(keys.sort()).toEqual(['keys', 'monitor', 'projects', 'usage'])
   })
 
+  it('asks for a monitor check and puts the answer in the cache at once', async () => {
+    const answer = { project_id: 7, check: { requested_at: '2026-11-01T10:00:00Z' } } as never
+    vi.spyOn(endpoints, 'checkMonitor').mockResolvedValue(answer)
+    const { client, wrapper: w } = wrapper()
+    const { result } = renderHook(() => useProjectActions(), { wrapper: w })
+    let ok: unknown
+    await act(async () => {
+      ok = await result.current.checkMonitor(7)
+    })
+    expect(ok).toBe(true)
+    expect(client.getQueryData(['monitor', 7])).toBe(answer)
+    expect(toast.success).toHaveBeenCalled()
+  })
+
+  it('toasts the server\'s message when a monitor check is refused', async () => {
+    vi.spyOn(endpoints, 'checkMonitor').mockRejectedValue(new ApiError(429, 'checked moments ago; try again in 30 s', 'busy'))
+    const { client, wrapper: w } = wrapper()
+    const { result } = renderHook(() => useProjectActions(), { wrapper: w })
+    let ok: unknown
+    await act(async () => {
+      ok = await result.current.checkMonitor(7)
+    })
+    expect(ok).toBe(false)
+    expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('try again in 30 s'))
+    expect(client.getQueryData(['monitor', 7])).toBeUndefined()
+  })
+
   it('stays pending until the project list has refetched, so a next write builds on the saved list', async () => {
     vi.spyOn(endpoints, 'updateProject').mockResolvedValue({ project_id: 7 })
     const { client, wrapper: w } = wrapper()

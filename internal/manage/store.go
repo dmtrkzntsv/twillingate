@@ -54,4 +54,5 @@ type Store interface {
 	// AuditEntry passed, no config bump (monitors are not in the snapshot).
 	GetMonitor(ctx context.Context, projectID int64) (store.Monitor, error)
 	SetMonitor(ctx context.Context, projectID int64, s store.MonitorSettings, a store.AuditEntry) (store.Monitor, error)
+	RequestMonitorCheck(ctx context.Context, projectID int64, at string, a store.AuditEntry) error
 }

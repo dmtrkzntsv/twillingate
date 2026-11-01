@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -32,6 +33,34 @@ type fakeStore struct {
 	// redirects holds the stored hop counts, redirectWrites every write.
 	redirects      map[int64]int
 	redirectWrites int
+	// finished holds each stored manual check's result; finishCtxErr the
+	// context error the last one was stored under.
+	finished     map[int64][]store.MonitorCheckResult
+	finishCtxErr error
+	// onList, when set, runs after the list is read and before it is returned.
+	onList func()
+}
+
+func (f *fakeStore) FinishMonitorCheck(ctx context.Context, id int64, origin string, res store.MonitorCheckResult) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.finished == nil {
+		f.finished = map[int64][]store.MonitorCheckResult{}
+	}
+	f.finished[id] = append(f.finished[id], res)
+	f.finishCtxErr = ctx.Err()
+	for i := range f.monitors {
+		if f.monitors[i].ProjectID == id && f.monitors[i].Origin == origin {
+			f.monitors[i].CheckFinishedAt = res.FinishedAt
+		}
+	}
+	return nil
+}
+
+func (f *fakeStore) results(id int64) []store.MonitorCheckResult {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]store.MonitorCheckResult(nil), f.finished[id]...)
 }
 
 func (f *fakeStore) SetMonitorRedirects(_ context.Context, id int64, origin string, n int) error {
@@ -52,8 +81,13 @@ func (f *fakeStore) SetMonitorRedirects(_ context.Context, id int64, origin stri
 
 func (f *fakeStore) ListEnabledMonitors(context.Context) ([]store.Monitor, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]store.Monitor(nil), f.monitors...), nil
+	out := append([]store.Monitor(nil), f.monitors...)
+	hook := f.onList
+	f.mu.Unlock()
+	if hook != nil {
+		hook()
+	}
+	return out, nil
 }
 
 func (f *fakeStore) SetMonitorCert(_ context.Context, id int64, origin string, c store.CertState) error {
@@ -893,4 +927,270 @@ func TestRedirectsKeptThroughADialFailure(t *testing.T) {
 	if st.redirectWrites != 0 || st.monitors[0].Redirects != 4 {
 		t.Errorf("%d writes, stored %d: a dial failure must leave the count", st.redirectWrites, st.monitors[0].Redirects)
 	}
+}
+
+// tickOnce ticks with no slot due, waits for what started, and flushes.
+func tickOnce(t *testing.T, r *Runner, now time.Time) {
+	t.Helper()
+	r.tick(context.Background(), now, now)
+	waitIdle(t, r, 0)
+	r.tick(context.Background(), now, now)
+}
+
+func namesOf(evs []store.Event) []string {
+	var names []string
+	for _, e := range evs {
+		names = append(names, e.EventName)
+	}
+	slices.Sort(names)
+	return names
+}
+
+// TestManualCheckRunsAllThree: a request runs the availability, certificate
+// and domain checks at once, outside the slot and although the daily readings
+// are fresh, and records the availability result; it runs once.
+func TestManualCheckRunsAllThree(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		fmt.Fprint(w, "ok")
+	}))
+	srv.Config.ErrorLog = discardLog()
+	defer srv.Close()
+	rd, _ := fakeRDAP(t, nil)
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	fresh := now.Add(-time.Hour).Format(time.RFC3339)
+	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 1, Enabled: true, Origin: srv.URL,
+		CertCheckedAt: fresh, DomainCheckedAt: fresh, CheckRequestedAt: now.Add(-time.Second).Format(time.RFC3339)}}}
+	lg := &fakeLog{}
+	r := newRunner(st, allowAll{}, lg, time.Hour, quietLogger(), options{
+		allowLoopback: true, roots: pool, bootstrapURL: rd.URL + "/dns.json", now: func() time.Time { return now },
+	})
+	r.tried[1] = attempt{srv.URL, now} // a daily retry wait does not hold it back either
+	tickOnce(t, r, now)
+	if got := namesOf(lg.all()); !slices.Equal(got, []string{"cert", "domain", "uptime"}) {
+		t.Errorf("rows = %v, want all three", got)
+	}
+	if st.certWrites != 1 || st.domains[1].CheckedAt != now.Format(time.RFC3339) {
+		t.Errorf("readings not stored: %d cert writes, domain %+v", st.certWrites, st.domains[1])
+	}
+	res := st.results(1)
+	if len(res) != 1 {
+		t.Fatalf("%d results, want 1", len(res))
+	}
+	if !res[0].Up || res[0].Status != 200 || res[0].Reason != "" || res[0].Error != "" || res[0].FinishedAt != "2026-11-01T10:00:00Z" {
+		t.Errorf("result = %+v", res[0])
+	}
+	if hits.Load() != 1 {
+		t.Errorf("%d requests to the site, want 1", hits.Load())
+	}
+	// It does not run again.
+	tickOnce(t, r, now.Add(time.Second))
+	if n := len(st.results(1)); n != 1 || hits.Load() != 1 {
+		t.Errorf("ran again: %d results, %d requests", n, hits.Load())
+	}
+}
+
+// TestManualCheckStandsInForTheSlot: a request and a due slot in one tick are
+// one check, not two.
+func TestManualCheckStandsInForTheSlot(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1) }))
+	defer srv.Close()
+	rd, _ := fakeRDAP(t, nil)
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 1, Enabled: true, Origin: srv.URL, CheckRequestedAt: now.Format(time.RFC3339)}}}
+	r := newRunner(st, allowAll{}, &fakeLog{}, 60*time.Second, quietLogger(), options{allowLoopback: true, bootstrapURL: rd.URL + "/dns.json", now: func() time.Time { return now }})
+	r.tick(context.Background(), now.Add(-time.Minute), now) // the slot is due
+	waitIdle(t, r, 0)
+	if hits.Load() != 1 || len(st.results(1)) != 1 {
+		t.Errorf("%d requests, %d results, want one of each", hits.Load(), len(st.results(1)))
+	}
+}
+
+// TestManualCheckWaitsForABusyMonitor: a request made while the monitor is
+// running waits for the next tick, however old it gets meanwhile.
+func TestManualCheckWaitsForABusyMonitor(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 1, Enabled: true, Origin: "https://x.example"}}}
+	r := newRunner(st, allowAll{}, &fakeLog{}, 60*time.Second, quietLogger(), options{now: func() time.Time { return now }})
+	release := make(chan struct{})
+	r.job = func(context.Context, store.Monitor) []store.Event { <-release; return nil }
+	var checks atomic.Int32
+	r.check = func(context.Context, store.Monitor) ([]store.Event, Result) {
+		checks.Add(1)
+		return nil, Result{Up: true, Status: 200}
+	}
+	ctx := context.Background()
+	r.tick(ctx, now.Add(-time.Minute), now) // the slot starts, and blocks
+	st.mu.Lock()
+	st.monitors[0].CheckRequestedAt = now.Format(time.RFC3339)
+	st.mu.Unlock()
+	r.tick(ctx, now, now.Add(time.Second))
+	r.tick(ctx, now, now.Add(3*time.Minute)) // too old by now, but not to be judged while busy
+	if checks.Load() != 0 || len(st.results(1)) != 0 {
+		t.Fatalf("%d checks, results %+v while busy", checks.Load(), st.results(1))
+	}
+	close(release)
+	waitIdle(t, r, 0)
+	r.tick(ctx, now, now.Add(time.Second))
+	waitIdle(t, r, 0)
+	if checks.Load() != 1 || len(st.results(1)) != 1 {
+		t.Fatalf("%d checks, results %+v after it freed up", checks.Load(), st.results(1))
+	}
+}
+
+// TestManualCheckNotRepeatedByAStaleList: a check that finishes while the
+// monitors are being listed still reads as pending in that list.
+func TestManualCheckNotRepeatedByAStaleList(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 1, Enabled: true, Origin: "https://x.example", CheckRequestedAt: now.Format(time.RFC3339)}}}
+	r := newRunner(st, allowAll{}, &fakeLog{}, time.Hour, quietLogger(), options{now: func() time.Time { return now }})
+	release := make(chan struct{})
+	var checks atomic.Int32
+	r.check = func(context.Context, store.Monitor) ([]store.Event, Result) {
+		checks.Add(1)
+		<-release
+		return nil, Result{Up: true}
+	}
+	ctx := context.Background()
+	r.tick(ctx, now, now)
+	for checks.Load() == 0 {
+		time.Sleep(time.Millisecond)
+	}
+	st.onList = func() { // the list above is read; the check finishes now
+		close(release)
+		waitIdle(t, r, 0)
+	}
+	r.tick(ctx, now, now)
+	st.onList = nil
+	waitIdle(t, r, 0)
+	if checks.Load() != 1 {
+		t.Errorf("%d checks, want 1", checks.Load())
+	}
+}
+
+// TestManualCheckFailedReadsKeepTheDates: a certificate or RDAP read that fails
+// keeps the last dates and writes no row, and the check still finishes, with
+// the availability result.
+func TestManualCheckFailedReadsKeepTheDates(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	origin := "https://" + ln.Addr().String()
+	ln.Close()
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	fresh := now.Add(-time.Hour).Format(time.RFC3339)
+	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 1, Enabled: true, Origin: origin,
+		CertExpiresAt: "2027-03-14T00:00:00Z", CertCheckedAt: fresh, DomainExpiresAt: "2027-05-01", DomainCheckedAt: fresh,
+		CheckRequestedAt: now.Format(time.RFC3339)}}}
+	lg := &fakeLog{}
+	r := newRunner(st, allowAll{}, lg, time.Hour, quietLogger(), options{allowLoopback: true, bootstrapURL: "http://127.0.0.1:1/dns.json", now: func() time.Time { return now }})
+	tickOnce(t, r, now)
+	if st.certWrites != 0 || st.certErrs[1] == "" {
+		t.Errorf("cert writes %d, error %q: want none and a reason", st.certWrites, st.certErrs[1])
+	}
+	if got := namesOf(lg.all()); !slices.Contains(got, "uptime") || slices.Contains(got, "cert") {
+		t.Errorf("rows = %v, want uptime and no cert", got)
+	}
+	res := st.results(1)
+	if len(res) != 1 || res[0].Up || res[0].Reason != ReasonConnect || res[0].Error == "" {
+		t.Errorf("results = %+v, want one, down on connect", res)
+	}
+}
+
+// TestManualCheckTooOldIsDropped: a request older than 2 minutes is finished
+// as not run, without checking anything.
+func TestManualCheckTooOldIsDropped(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	st := &fakeStore{monitors: []store.Monitor{
+		{ProjectID: 1, Enabled: true, Origin: "https://x.example", CheckRequestedAt: now.Add(-2*time.Minute - time.Second).Format(time.RFC3339)},
+		{ProjectID: 2, Enabled: true, Origin: "https://x.example", CheckRequestedAt: now.Add(-2 * time.Minute).Format(time.RFC3339)},
+	}}
+	lg := &fakeLog{}
+	r := newRunner(st, allowAll{}, lg, time.Hour, quietLogger(), options{now: func() time.Time { return now }})
+	var checked sync.Map
+	r.check = func(_ context.Context, m store.Monitor) ([]store.Event, Result) {
+		checked.Store(m.ProjectID, true)
+		return nil, Result{Up: true}
+	}
+	tickOnce(t, r, now)
+	if _, ok := checked.Load(int64(1)); ok {
+		t.Error("the old request was checked")
+	}
+	if _, ok := checked.Load(int64(2)); !ok {
+		t.Error("the request of exactly 2 minutes was not checked")
+	}
+	res := st.results(1)
+	want := store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:00Z", Error: "the check did not run"}
+	if len(res) != 1 || res[0] != want {
+		t.Errorf("results = %+v, want %+v", res, want)
+	}
+	if len(lg.all()) != 0 {
+		t.Errorf("rows %v", lg.all())
+	}
+}
+
+// TestManualCheckFinishesPastItsRequest: the page waits for finished_at to
+// reach requested_at, so a clock that stepped back must not leave it pending.
+func TestManualCheckFinishesPastItsRequest(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	req := now.Add(time.Minute).Format(time.RFC3339)
+	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 1, Enabled: true, Origin: "https://x.example", CheckRequestedAt: req}}}
+	r := newRunner(st, allowAll{}, &fakeLog{}, time.Hour, quietLogger(), options{now: func() time.Time { return now }})
+	r.check = func(context.Context, store.Monitor) ([]store.Event, Result) { return nil, Result{Up: true} }
+	tickOnce(t, r, now)
+	if res := st.results(1); len(res) != 1 || res[0].FinishedAt != req {
+		t.Errorf("results = %+v, want finished at %s", res, req)
+	}
+}
+
+// TestManualCheckDuringShutdown: none starts once the runner is stopping, and
+// one cut short says so, under a context of its own, its rows dropped.
+func TestManualCheckDuringShutdown(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	mon := store.Monitor{ProjectID: 1, Enabled: true, Origin: "https://x.example", CheckRequestedAt: now.Format(time.RFC3339)}
+	t.Run("not started", func(t *testing.T) {
+		st := &fakeStore{monitors: []store.Monitor{mon}}
+		r := newRunner(st, allowAll{}, &fakeLog{}, time.Hour, quietLogger(), options{now: func() time.Time { return now }})
+		var checks atomic.Int32
+		r.check = func(context.Context, store.Monitor) ([]store.Event, Result) { checks.Add(1); return nil, Result{} }
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		r.tick(ctx, now, now)
+		waitIdle(t, r, 0)
+		if checks.Load() != 0 {
+			t.Errorf("%d checks started during shutdown", checks.Load())
+		}
+	})
+	t.Run("cut short", func(t *testing.T) {
+		st := &fakeStore{monitors: []store.Monitor{mon}}
+		lg := &fakeLog{}
+		r := newRunner(st, allowAll{}, lg, time.Hour, quietLogger(), options{now: func() time.Time { return now }})
+		entered := make(chan struct{})
+		r.check = func(ctx context.Context, m store.Monitor) ([]store.Event, Result) {
+			close(entered)
+			<-ctx.Done()
+			return []store.Event{uptimeRow(m.ProjectID, now, Result{})}, Result{Reason: ReasonTimeout}
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		r.tick(ctx, now, now)
+		<-entered
+		cancel()
+		waitIdle(t, r, 0)
+		res := st.results(1)
+		if len(res) != 1 || res[0].Error != "the check did not run" || res[0].Reason != "" {
+			t.Errorf("results = %+v", res)
+		}
+		if st.finishCtxErr != nil {
+			t.Errorf("finished under a cancelled context: %v", st.finishCtxErr)
+		}
+		r.flush(context.Background())
+		if len(lg.all()) != 0 {
+			t.Errorf("rows kept: %v", lg.all())
+		}
+	})
 }

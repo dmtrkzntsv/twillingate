@@ -63,6 +63,7 @@ Projects live in a registry table, managed through the CLI or, over the API
 | Disable / enable a key | `twillingate key disable` / `enable` | `disable_ingest_key` / `enable_ingest_key` | `{project_id, label}` |
 | Read a project's monitor | `twillingate monitor get` | `get_monitor` | `{project_id}`; returns the monitor, see [Monitoring](#monitoring) |
 | Change it | `twillingate monitor set` | `update_monitor` | `{project_id, enabled, origin, contains}`, each optional; merges, so an omitted field keeps its value and `contains: ""` clears the text; returns the monitor |
+| Check it now | `twillingate monitor check` | `check_monitor` | `{project_id}`; asks for a check of all three and returns the monitor right away, see [Monitoring](#monitoring). `monitor check` waits up to 30 s for the result and prints it; exit 1 if it did not finish |
 | Rename an event | — | `rename_event` | `{project_id, family, from, to}`; `family` is `product` or `measures`; returns the rule. See [Event rules](#event-rules) |
 | Merge an event into another | — | `merge_event` | `{project_id, family, from, to}`; returns what `rename_event` does |
 | Block an event | — | `block_event` | `{project_id, family, name}` |
@@ -308,6 +309,7 @@ body); `""` clears it.
 twillingate monitor get -project-id 1
 twillingate monitor set -project-id 1 -enable -origin https://myapp.com -contains "Sign in"
 twillingate monitor set -project-id 1 -disable
+twillingate monitor check -project-id 1
 ```
 
 **What is checked.** One `GET` of the origin itself (`https://host/`), nothing
@@ -366,6 +368,23 @@ next check, the known dates kept until then.
 got no response, such as a refused connection or a timeout before any answer,
 leaves it as it was; changing the origin resets it to 0). `twillingate monitor
 get` prints it when above 0.
+
+**Checking now.** `check_monitor` (`twillingate monitor check`, or Check now in
+Settings → Monitoring) asks for one check of all three outside the schedule:
+the availability check, the certificate and the domain, whatever the daily
+readings' age, with the same `MONITOR_TIMEOUT`. The server runs it within about
+a second, or after the check that is running, and writes the rows as usual; a
+certificate or RDAP read that fails keeps the last date as usual. The call
+returns before the check ran: poll `get_monitor` until `check.finished_at` is at
+or past `check.requested_at`, then read the result in `check` (`up`, `status`,
+`reason`, `error`, `ms`). A monitor that is not on is refused, and so is a request
+while one is pending or within 60 seconds of the last one, whatever the interval:
+this protects the site and the registries. A request not served within 2 minutes
+(the server was down) finishes with an empty `reason` and `error` `the check did
+not run`; so does one cut short by the server stopping. Only the server's runner
+serves requests, so `monitor check` needs it up, and exits 1 when nothing finishes
+within 30 seconds. Changing the origin clears `check`. Each request is audited as
+`monitor.check`.
 
 `reason` is a closed vocabulary, on every failed `uptime` row:
 
@@ -1544,7 +1563,7 @@ form submissions](#collect-form-submissions).
 
 ## Answer questions with the data
 
-A connected session gets sixty-seven tools: the thirty-three below, the ten
+A connected session gets sixty-eight tools: the thirty-four below, the ten
 in [Collect form submissions](#collect-form-submissions), and twenty-four
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
@@ -1607,7 +1626,7 @@ from the `views` table:
 | `consent` | `consent` | `given`, `none` (also views sent before the visitor answered a prompt) or `unknown` (sent without `$consent`) |
 | `locales` | `browser_locale`, `app_locale` | the browser's language and the product's; views that sent neither are left out |
 
-**Managing** — `create_project`, `update_project`, `get_monitor`, `update_monitor`, `move_project`,
+**Managing** — `create_project`, `update_project`, `get_monitor`, `update_monitor`, `check_monitor`, `move_project`,
 `archive_project`, `restore_project`, `issue_ingest_key`, `list_ingest_keys`,
 `enable_ingest_key`, `disable_ingest_key`, `rename_event`, `merge_event`, `block_event`,
 `list_event_rules`, `remove_event_rule`, `rename_attribute`, `merge_attribute`,
@@ -1664,8 +1683,9 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","values","received","blocked","aliases"}],"keys_total"}`; `aliases` is absent when empty |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
-| `GET` | `/api/projects/{project_id}/monitor` | `get_monitor` | — → `{"project_id","enabled","origin","contains","eligible_origins","interval_seconds","timeout_seconds","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"domain":{"expires_at","checked_at"}}`; empty strings are unknown |
+| `GET` | `/api/projects/{project_id}/monitor` | `get_monitor` | — → `{"project_id","enabled","origin","contains","eligible_origins","interval_seconds","timeout_seconds","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"domain":{"expires_at","checked_at"},"check":{"requested_at","finished_at","up","status","reason","error","ms"}}`; empty strings are unknown |
 | `PATCH` | `/api/projects/{project_id}/monitor` | `update_monitor` | body: `enabled`, `origin`, `contains`, each optional (merge); a foreign origin is `400` → as `get_monitor` |
+| `POST` | `/api/projects/{project_id}/monitor/check` | `check_monitor` | — → as `get_monitor`, right away, before the check ran; a monitor that is not on is `400`, a check pending or within 60 s of the last request `429` |
 | `POST` | `/api/projects/{project_id}/move` | `move_project` | body: `after` |
 | `POST` | `/api/projects/{project_id}/archive` | `archive_project` | — |
 | `POST` | `/api/projects/{project_id}/restore` | `restore_project` | — |

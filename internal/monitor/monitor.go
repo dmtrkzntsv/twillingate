@@ -7,6 +7,10 @@
 // that fails says nothing about either: the last reading stands, unrecorded,
 // and is tried again after an hour.
 //
+// A manual check is a request on the monitor row, since the API that takes it
+// may be another process: the next tick runs all three outside the slot and
+// records the availability result on the row.
+//
 // Every connection it makes, redirect hops and RDAP lookups included, goes
 // through a dialer that refuses private addresses.
 package monitor
@@ -17,6 +21,7 @@ import (
 	"errors"
 	"hash/fnv"
 	"log/slog"
+	"maps"
 	"math"
 	"net"
 	"net/http"
@@ -38,6 +43,7 @@ type Store interface {
 	SetMonitorCertError(ctx context.Context, projectID int64, origin, msg string) error
 	SetMonitorDomain(ctx context.Context, projectID int64, origin string, d store.DomainState) error
 	SetMonitorRedirects(ctx context.Context, projectID int64, origin string, n int) error
+	FinishMonitorCheck(ctx context.Context, projectID int64, origin string, r store.MonitorCheckResult) error
 }
 
 // EventLog is where check rows go (archive.Log).
@@ -59,6 +65,13 @@ const (
 	dailyEvery     = 24 * time.Hour
 	dailyRetry     = time.Hour // after a daily check whose result did not stick
 	tickStep       = time.Second
+	// checkMaxAge is how long a manual check's request stays worth serving;
+	// past it the page has long stopped waiting.
+	checkMaxAge = 2 * time.Minute
+	// finishTimeout bounds recording a manual check's end, on a context of its
+	// own so that a shutdown does not leave it pending.
+	finishTimeout = 5 * time.Second
+	checkNotRun   = "the check did not run"
 )
 
 // Runner schedules the checks. Each monitor has a fixed offset within the
@@ -81,6 +94,8 @@ type Runner struct {
 
 	// job runs one monitor's slot and returns its rows; a seam for tests.
 	job func(ctx context.Context, m store.Monitor) []store.Event
+	// check runs one manual check and returns its rows and result; likewise.
+	check func(ctx context.Context, m store.Monitor) ([]store.Event, Result)
 
 	sem     chan struct{}
 	wg      sync.WaitGroup
@@ -140,6 +155,7 @@ func newRunner(st Store, origins Origins, log EventLog, interval time.Duration, 
 		tried:   map[int64]attempt{},
 	}
 	r.job = r.runMonitor
+	r.check = r.runCheck
 	return r
 }
 
@@ -167,10 +183,16 @@ func (r *Runner) Run(ctx context.Context) {
 }
 
 // tick writes the rows finished since the last tick in one batch, then
-// reloads the enabled monitors and starts each whose slot falls in
-// (prev, now].
+// reloads the enabled monitors and starts each with a manual check pending,
+// or whose slot falls in (prev, now].
 func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 	r.flush(ctx)
+	// Taken before the list: a check that finishes while the list is read
+	// reads as pending in it, and must not run twice. One that finished before
+	// this has recorded so, which the list shows.
+	r.mu.Lock()
+	wasBusy := maps.Clone(r.running)
+	r.mu.Unlock()
 	ms, err := r.st.ListEnabledMonitors(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
@@ -180,7 +202,14 @@ func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 	}
 	r.forgetDisabled(ms)
 	for _, m := range ms {
-		if !due(prev, now, r.interval, offset(m.ProjectID, r.interval)) {
+		// A busy monitor's request waits, however old: it may be that request
+		// which is running.
+		manual := m.CheckRequestedAt > m.CheckFinishedAt && !wasBusy[m.ProjectID] && ctx.Err() == nil
+		if manual && tooOld(m.CheckRequestedAt, now) {
+			r.finishCheck(ctx, m, Result{Error: checkNotRun})
+			manual = false
+		}
+		if !manual && !due(prev, now, r.interval, offset(m.ProjectID, r.interval)) {
 			continue
 		}
 		r.mu.Lock()
@@ -193,8 +222,15 @@ func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 			continue
 		}
 		r.wg.Add(1)
-		go r.dispatch(ctx, m)
+		go r.dispatch(ctx, m, manual)
 	}
+}
+
+// tooOld reports whether a manual check requested at (RFC 3339) is no longer
+// worth serving; one that cannot be read is not.
+func tooOld(requestedAt string, now time.Time) bool {
+	t, err := time.Parse(time.RFC3339, requestedAt)
+	return err != nil || now.Sub(t) > checkMaxAge
 }
 
 // forgetDisabled drops the attempts of monitors no longer in enabled.
@@ -208,7 +244,10 @@ func (r *Runner) forgetDisabled(enabled []store.Monitor) {
 	}
 }
 
-func (r *Runner) dispatch(ctx context.Context, m store.Monitor) {
+// dispatch runs m's slot, or its manual check, on a worker. A manual check
+// always records how it ended, before the monitor counts as free, whatever
+// shutdown does to it.
+func (r *Runner) dispatch(ctx context.Context, m store.Monitor, manual bool) {
 	defer r.wg.Done()
 	defer func() {
 		r.mu.Lock()
@@ -218,16 +257,49 @@ func (r *Runner) dispatch(ctx context.Context, m store.Monitor) {
 	select {
 	case r.sem <- struct{}{}:
 	case <-ctx.Done():
+		if manual {
+			r.finishCheck(ctx, m, Result{Error: checkNotRun})
+		}
 		return
 	}
-	evs := r.job(ctx, m)
+	var evs []store.Event
+	var res Result
+	switch {
+	case !manual:
+		evs = r.job(ctx, m)
+	case ctx.Err() == nil:
+		evs, res = r.check(ctx, m)
+	}
 	<-r.sem
 	if ctx.Err() != nil {
+		if manual {
+			r.finishCheck(ctx, m, Result{Error: checkNotRun})
+		}
 		return // cut short by shutdown: not a real result
 	}
 	r.mu.Lock()
 	r.pending = append(r.pending, evs...)
 	r.mu.Unlock()
+	if manual {
+		r.finishCheck(ctx, m, res)
+	}
+}
+
+// finishCheck records how m's manual check ended, on a context shutdown does
+// not cancel. Never before its request: the page waits for finished_at to reach
+// requested_at, and a clock that stepped back must not leave it waiting.
+func (r *Runner) finishCheck(ctx context.Context, m store.Monitor, res Result) {
+	at := r.now().UTC().Format(time.RFC3339)
+	if at < m.CheckRequestedAt {
+		at = m.CheckRequestedAt
+	}
+	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
+	defer cancel()
+	if err := r.st.FinishMonitorCheck(fctx, m.ProjectID, m.Origin, store.MonitorCheckResult{
+		FinishedAt: at, Up: res.Up, Status: res.Status, Reason: res.Reason, Error: res.Error, MS: elapsedMS(res),
+	}); err != nil {
+		r.logger.Warn("monitor: store manual check", "project_id", m.ProjectID, "error", err)
+	}
 }
 
 // flush writes the pending rows. A failed write is logged and the rows
@@ -274,6 +346,24 @@ func due(prev, now time.Time, interval, off time.Duration) bool {
 // runMonitor is one slot: the availability check, then the daily checks
 // when due.
 func (r *Runner) runMonitor(ctx context.Context, m store.Monitor) []store.Event {
+	up, _ := r.availability(ctx, m)
+	return append([]store.Event{up}, r.daily(ctx, m)...)
+}
+
+// runCheck is one manual check: the availability check and both daily ones,
+// due or not. It counts as the day's attempt, so a read that failed is not
+// tried again by the next slot.
+func (r *Runner) runCheck(ctx context.Context, m store.Monitor) ([]store.Event, Result) {
+	up, res := r.availability(ctx, m)
+	now := r.now().UTC()
+	r.mu.Lock()
+	r.tried[m.ProjectID] = attempt{m.Origin, now}
+	r.mu.Unlock()
+	return append([]store.Event{up}, r.readings(ctx, m, true, true, now)...), res
+}
+
+// availability GETs m's origin: its row and the result.
+func (r *Runner) availability(ctx context.Context, m store.Monitor) (store.Event, Result) {
 	start := r.now().UTC()
 	cctx, cancel := context.WithTimeout(ctx, r.timeout)
 	res := Check(cctx, r.client, m.Origin, m.Contains, func(target string) bool {
@@ -287,8 +377,12 @@ func (r *Runner) runMonitor(ctx context.Context, m store.Monitor) []store.Event 
 			r.logger.Warn("monitor: store redirect count", "project_id", m.ProjectID, "error", err)
 		}
 	}
-	evs := []store.Event{uptimeRow(m.ProjectID, start, res)}
-	return append(evs, r.daily(ctx, m)...)
+	return uptimeRow(m.ProjectID, start, res), res
+}
+
+// elapsedMS is a check's time in whole milliseconds.
+func elapsedMS(res Result) int {
+	return int(math.Round(float64(res.Elapsed) / float64(time.Millisecond)))
 }
 
 func uptimeRow(projectID int64, at time.Time, res Result) store.Event {
@@ -302,7 +396,7 @@ func uptimeRow(projectID int64, at time.Time, res Result) store.Event {
 	if res.Status > 0 {
 		attrs["status"] = strconv.Itoa(res.Status)
 	}
-	ms := math.Round(float64(res.Elapsed) / float64(time.Millisecond))
+	ms := float64(elapsedMS(res))
 	return row(projectID, "uptime", at, &ms, attrs)
 }
 
@@ -348,7 +442,11 @@ func (r *Runner) daily(ctx context.Context, m store.Monitor) []store.Event {
 	}
 	r.tried[m.ProjectID] = attempt{m.Origin, now}
 	r.mu.Unlock()
+	return r.readings(ctx, m, certDue, domainDue, now)
+}
 
+// readings runs the certificate check and the domain check, each when asked.
+func (r *Runner) readings(ctx context.Context, m store.Monitor, certDue, domainDue bool, now time.Time) []store.Event {
 	u, err := url.Parse(m.Origin)
 	if err != nil {
 		return nil

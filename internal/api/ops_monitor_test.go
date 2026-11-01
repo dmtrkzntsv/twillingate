@@ -172,3 +172,74 @@ func TestMonitorReportsRedirects(t *testing.T) {
 		t.Errorf("MCP get = %+v, want redirects 3", m)
 	}
 }
+
+// TestCheckMonitor: check_monitor answers the same over MCP and REST at once,
+// with the request on the monitor, and refuses over both as the others do.
+func TestCheckMonitor(t *testing.T) {
+	h, cs := newTestHost(t)
+	ctx := context.Background()
+	if _, err := h.ops.UpdateProject(ctx, "test", manage.ProjectSpec{ID: 1, AllowedOrigins: []string{"https://blog.example.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	r := newTestRegistrar(t, h)
+
+	// Not on: 400 and an MCP error.
+	rec := serveREST(t, r, "POST", "/api/projects/1/monitor/check", "")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "turn the monitor on first") {
+		t.Errorf("not on = %d %s, want 400", rec.Code, rec.Body)
+	}
+	if res := callTool(t, cs, "check_monitor", map[string]any{"project_id": 1}); !res.IsError || !strings.Contains(textOf(res), "turn the monitor on first") {
+		t.Errorf("MCP not on = %s", textOf(res))
+	}
+	// Unknown project: 404.
+	if rec := serveREST(t, r, "POST", "/api/projects/99/monitor/check", ""); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown = %d %s, want 404", rec.Code, rec.Body)
+	}
+	if res := callTool(t, cs, "check_monitor", map[string]any{"project_id": 99}); !res.IsError || !strings.Contains(textOf(res), "unknown project 99") {
+		t.Errorf("MCP unknown = %s", textOf(res))
+	}
+
+	on := true
+	if _, err := h.ops.SetMonitor(ctx, "test", 1, manage.MonitorSpec{Enabled: &on}); err != nil {
+		t.Fatal(err)
+	}
+	rec = serveREST(t, r, "POST", "/api/projects/1/monitor/check", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST = %d %s", rec.Code, rec.Body)
+	}
+	got := decodeMonitor(t, rec.Body.Bytes())
+	if got.Check.RequestedAt == "" || got.Check.FinishedAt != "" || !got.Enabled {
+		t.Errorf("POST = %+v, want it requested and not finished", got)
+	}
+	// Pending: 429 over REST, an error over MCP.
+	if rec := serveREST(t, r, "POST", "/api/projects/1/monitor/check", ""); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("pending = %d %s, want 429", rec.Code, rec.Body)
+	}
+	if res := callTool(t, cs, "check_monitor", map[string]any{"project_id": 1}); !res.IsError {
+		t.Errorf("MCP pending = %s", textOf(res))
+	}
+
+	// The result reads back through get_monitor, the same both ways.
+	st, err := store.Open("sqlite://" + testDBPaths[h])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer st.Close()
+	if err := st.FinishMonitorCheck(ctx, 1, "https://blog.example.com", store.MonitorCheckResult{
+		FinishedAt: got.Check.RequestedAt, Status: 500, Reason: "http_5xx", Error: "status 500", MS: 42}); err != nil {
+		t.Fatal(err)
+	}
+	want := monitorCheckOut{RequestedAt: got.Check.RequestedAt, FinishedAt: got.Check.RequestedAt, Status: 500, Reason: "http_5xx", Error: "status 500", MS: 42}
+	rec = serveREST(t, r, "GET", "/api/projects/1/monitor", "")
+	if c := decodeMonitor(t, rec.Body.Bytes()).Check; c != want {
+		t.Errorf("GET check = %+v, want %+v", c, want)
+	}
+	if c := decodeMonitor(t, []byte(textOf(callTool(t, cs, "get_monitor", map[string]any{"project_id": 1})))).Check; c != want {
+		t.Errorf("MCP check = %+v, want %+v", c, want)
+	}
+	// Finished, but within the cooldown: still 429, with the server's message.
+	rec = serveREST(t, r, "POST", "/api/projects/1/monitor/check", "")
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "try again in") {
+		t.Errorf("cooldown = %d %s, want 429", rec.Code, rec.Body)
+	}
+}

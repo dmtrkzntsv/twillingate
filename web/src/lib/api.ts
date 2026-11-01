@@ -284,6 +284,8 @@ export interface Monitor {
   redirects: number
   cert: { expires_at: string; issuer: string; valid: boolean; error: string; checked_at: string }
   domain: { expires_at: string; checked_at: string }
+  /** The last manual check; running while finished_at is before requested_at. */
+  check: { requested_at: string; finished_at: string; up: boolean; status: number; reason: string; error: string; ms: number }
 }
 
 export interface MonitorBody {
@@ -673,6 +675,7 @@ export const endpoints = {
   updateProject: (id: number, body: Partial<CreateProjectBody>) => api<{ project_id: number }>(`/api/projects/${id}`, json('PATCH', body)),
   monitor: (id: number) => api<Monitor>(`/api/projects/${id}/monitor`),
   updateMonitor: (id: number, body: MonitorBody) => api<Monitor>(`/api/projects/${id}/monitor`, json('PATCH', body)),
+  checkMonitor: (id: number) => api<Monitor>(`/api/projects/${id}/monitor/check`, { method: 'POST' }),
   moveProject: (id: number, after: number) => api<{ status: string }>(`/api/projects/${id}/move`, json('POST', { after })),
   archiveProject: (id: number) => api<{ status: string }>(`/api/projects/${id}/archive`, json('POST', {})),
   restoreProject: (id: number) => api<{ status: string }>(`/api/projects/${id}/restore`, json('POST', {})),

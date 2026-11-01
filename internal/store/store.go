@@ -368,6 +368,13 @@ type Store interface {
 	SetMonitorCertError(ctx context.Context, projectID int64, origin, msg string) error
 	SetMonitorDomain(ctx context.Context, projectID int64, origin string, d DomainState) error
 	SetMonitorRedirects(ctx context.Context, projectID int64, origin string, n int) error
+	// RequestMonitorCheck records a manual check for the runner to serve,
+	// audited: ErrNotFound for an unknown project, ErrInvalid for a monitor not
+	// enabled, ErrBusy while one is pending. FinishMonitorCheck records its
+	// result unless the row's origin is no longer origin; not audited. An
+	// origin change in SetMonitor clears both.
+	RequestMonitorCheck(ctx context.Context, projectID int64, at string, a AuditEntry) error
+	FinishMonitorCheck(ctx context.Context, projectID int64, origin string, r MonitorCheckResult) error
 	// SetSubmissionsArchived archives (archived true) or restores the
 	// project's submissions with these ids and returns how many changed:
 	// ids that match nothing, an archived one being archived and an active

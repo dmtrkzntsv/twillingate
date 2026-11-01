@@ -321,3 +321,92 @@ func TestDeleteProjectRemovesMonitor(t *testing.T) {
 		t.Fatalf("monitors rows = %d, %v", n, err)
 	}
 }
+
+func TestMonitorCheckRequestAndFinish(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	const origin = "https://a.example"
+	audit := store.AuditEntry{Actor: "test", Action: "monitor.check", Subject: "1"}
+	request := func(at string) error { return d.RequestMonitorCheck(ctx, id, at, audit) }
+
+	// No monitor to check: refused, and nothing audited.
+	if err := request("2026-11-01T10:00:00Z"); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("request with no monitor: %v, want ErrInvalid", err)
+	}
+	if err := d.RequestMonitorCheck(ctx, 99, "2026-11-01T10:00:00Z", audit); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("request on an unknown project: %v, want ErrNotFound", err)
+	}
+	if _, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: origin}, monAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := request("2026-11-01T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	m, err := d.GetMonitor(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.CheckRequestedAt != "2026-11-01T10:00:00Z" || m.CheckFinishedAt != "" {
+		t.Fatalf("after the request: %+v", m)
+	}
+	var n int
+	if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='monitor.check'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("audit rows = %d, %v", n, err)
+	}
+	// One pending: two callers cannot both pass.
+	if err := request("2026-11-01T10:00:01Z"); !errors.Is(err, store.ErrBusy) {
+		t.Fatalf("second request: %v, want ErrBusy", err)
+	}
+	if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='monitor.check'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("audit rows after the refusal = %d, %v", n, err)
+	}
+
+	// The runner lists it.
+	ms, err := d.ListEnabledMonitors(ctx)
+	if err != nil || len(ms) != 1 || ms[0].CheckRequestedAt != "2026-11-01T10:00:00Z" {
+		t.Fatalf("listed %+v, %v", ms, err)
+	}
+
+	res := store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:03Z", Up: false, Status: 503, Reason: "http_5xx", Error: "status 503", MS: 123}
+	// A check of another origin raced an edit: not recorded.
+	if err := d.FinishMonitorCheck(ctx, id, "https://old.example", res); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := d.GetMonitor(ctx, id); m.CheckFinishedAt != "" {
+		t.Fatalf("a stale origin's result was stored: %+v", m)
+	}
+	if err := d.FinishMonitorCheck(ctx, id, origin, res); err != nil {
+		t.Fatal(err)
+	}
+	m, _ = d.GetMonitor(ctx, id)
+	if m.CheckFinishedAt != res.FinishedAt || m.CheckUp || m.CheckStatus != 503 || m.CheckReason != "http_5xx" || m.CheckError != "status 503" || m.CheckMS != 123 {
+		t.Fatalf("after finish: %+v", m)
+	}
+	// Finishing is not audited; requesting again is allowed by the store.
+	if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='monitor.check'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("audit rows after finish = %d, %v", n, err)
+	}
+	up := store.MonitorCheckResult{FinishedAt: "2026-11-01T10:01:03Z", Up: true, Status: 200, MS: 5}
+	if err := d.FinishMonitorCheck(ctx, id, origin, up); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ = d.GetMonitor(ctx, id); !m.CheckUp || m.CheckReason != "" || m.CheckError != "" {
+		t.Fatalf("second result left the first's fields: %+v", m)
+	}
+
+	// The same origin keeps it, a new one clears every field.
+	if m, err = d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: false, Origin: origin}, monAudit); err != nil || m.CheckFinishedAt == "" {
+		t.Fatalf("same origin: %+v, %v", m, err)
+	}
+	if err := request("2026-11-01T10:02:00Z"); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("request on a disabled monitor: %v, want ErrInvalid", err)
+	}
+	m, err = d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: "https://b.example"}, monAudit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (store.Monitor{ProjectID: id, Enabled: true, Origin: "https://b.example"}); m != want {
+		t.Fatalf("origin change: %+v, want %+v", m, want)
+	}
+}

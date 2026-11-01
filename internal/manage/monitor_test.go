@@ -8,6 +8,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 func TestMonitorOriginsFilters(t *testing.T) {
@@ -254,5 +257,76 @@ func TestMonitorAuditTrail(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("audit = %q, want %q", got, want)
+	}
+}
+
+func TestCheckMonitor(t *testing.T) {
+	ops, st, _, id, path := ruleOps(t)
+	ctx := context.Background()
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	ops.now = func() time.Time { return now }
+	p, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: id, AllowedOrigins: []string{"https://a.example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ops.CheckMonitor(ctx, "cli", p.ID); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "turn the monitor on first") {
+		t.Fatalf("never set up: %v", err)
+	}
+	if _, err := ops.CheckMonitor(ctx, "cli", 999); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unknown project: %v", err)
+	}
+	if _, err := ops.SetMonitor(ctx, "cli", p.ID, MonitorSpec{Enabled: boolp(false), Origin: strp("https://a.example.com")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ops.CheckMonitor(ctx, "cli", p.ID); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("disabled: %v", err)
+	}
+	if _, err := ops.SetMonitor(ctx, "cli", p.ID, MonitorSpec{Enabled: boolp(true)}); err != nil {
+		t.Fatal(err)
+	}
+	m, err := ops.CheckMonitor(ctx, "alice", p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.CheckRequestedAt != "2026-11-01T10:00:00Z" {
+		t.Fatalf("requested at %q", m.CheckRequestedAt)
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	var actor, subject string
+	if err := db.QueryRowContext(ctx, `SELECT actor, subject FROM audit_log WHERE action='monitor.check'`).Scan(&actor, &subject); err != nil {
+		t.Fatal(err)
+	}
+	if actor != "alice" || subject != strconv.FormatInt(id, 10) {
+		t.Fatalf("audit = %s %s", actor, subject)
+	}
+
+	// Pending, even long after the cooldown.
+	now = now.Add(5 * time.Minute)
+	if _, err := ops.CheckMonitor(ctx, "alice", p.ID); !errors.Is(err, ErrBusy) {
+		t.Fatalf("pending: %v, want ErrBusy", err)
+	}
+	// Finished, but the last request was under 60 s ago: the cooldown runs
+	// from the request, for everyone.
+	now = time.Date(2026, 11, 1, 10, 0, 30, 0, time.UTC)
+	if err := st.FinishMonitorCheck(ctx, p.ID, m.Origin, store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:02Z", Up: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ops.CheckMonitor(ctx, "bob", p.ID); !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "30 s") {
+		t.Fatalf("cooldown: %v, want ErrBusy naming the 30 s left", err)
+	}
+	now = time.Date(2026, 11, 1, 10, 1, 0, 0, time.UTC)
+	if _, err := ops.CheckMonitor(ctx, "bob", p.ID); err != nil {
+		t.Fatalf("past the cooldown: %v", err)
+	}
+
+	if err := ops.ArchiveProject(ctx, "cli", p.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ops.CheckMonitor(ctx, "bob", p.ID); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("archived: %v, want ErrInvalid", err)
 	}
 }

@@ -263,3 +263,19 @@ changes, so the dates appear immediately.
   a `cert` row with no value and no attributes, an unknown domain a `domain` row
   with no value as before. A certificate read that failed still writes no row
   and keeps the last reading.
+- **Check now (user's decision, after planning):** a manual check of all three,
+  from `check_monitor` (`POST /api/projects/{project_id}/monitor/check`),
+  `twillingate monitor check` and a Check now button in Settings. The API and
+  the checker can be separate processes, so it is a request on the monitor row
+  (migration 044 amended, unreleased: `check_requested_at`, `check_finished_at`,
+  and the result's `check_up`, `check_status`, `check_reason`, `check_error`,
+  `check_ms`), audited as `monitor.check` and served by the runner's next tick
+  outside the slot, whatever the daily readings' age and retry wait, on the same
+  worker pool and timeout. Rows are written as usual and a failed certificate or
+  RDAP read keeps the last date. A monitor that is not on is refused (400); so is
+  a request while one is pending or within 60 s of the last (429), for everyone,
+  to protect the site and the registries. The result always lands: a request
+  older than 2 minutes, or one cut short by shutdown, finishes with an empty
+  reason and error "the check did not run". An origin change clears all of it.
+  `get_monitor` returns it as `check`; pending while `finished_at` is before
+  `requested_at`. The page polls every 2 s and stops waiting after 45 s.

@@ -265,6 +265,15 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   }
   for (const d of await dashboardIds(request)) await check(page, `/app/dashboards/${d}`)
 
+  // Check now, served by the live runner: the origin does not resolve here, so
+  // its result is a down line, with the long origin's error, that wraps too.
+  await check(page, `/app/projects/${id}/settings?range=today`)
+  const monitoring = page.getByRole('region', { name: 'Monitoring' })
+  await monitoring.getByRole('button', { name: 'Check now' }).click()
+  await expect(monitoring.getByText(/^Last manual check: /)).toBeVisible({ timeout: 40_000 })
+  await expect(monitoring.getByRole('button', { name: 'Check now' })).toBeEnabled()
+  expect(await sidewaysScroll(page), 'monitoring after a check').toEqual([])
+
   // The Attributes section's dialogs, over its long keys, fit the phone.
   await check(page, `/app/projects/${id}/settings?range=today`)
   const attributes = page.getByRole('region', { name: 'Attributes' })

@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"golang.org/x/net/idna"
@@ -13,8 +14,14 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// maxMonitorContains caps the text a monitored page must contain.
-const maxMonitorContains = 200
+const (
+	// maxMonitorContains caps the text a monitored page must contain.
+	maxMonitorContains = 200
+	// monitorCheckCooldown is the least time between manual checks of a
+	// project, whatever its interval: it protects the site and the RDAP
+	// registries, so it applies to everyone.
+	monitorCheckCooldown = 60 * time.Second
+)
 
 // MonitorOrigins is the subset of origins a monitor may use: exact http://
 // or https:// origins (no path, no "*" anywhere, no zone on an IPv6 literal:
@@ -175,4 +182,38 @@ func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, spe
 	return o.St.SetMonitor(ctx, projectID, next, store.AuditEntry{
 		Actor: actor, Action: "monitor.update", Subject: idSubject(projectID),
 		Detail: strings.Join(changed, " ")})
+}
+
+// CheckMonitor asks for a check of all three now, which the monitor's runner
+// serves: it may be another process, sharing only the database. The result
+// comes later, on the monitor (CheckFinishedAt reaches CheckRequestedAt).
+func (o *Ops) CheckMonitor(ctx context.Context, actor string, projectID int64) (store.Monitor, error) {
+	p := o.Reg.Snapshot(ctx).Project(projectID)
+	if p == nil {
+		return store.Monitor{}, fmt.Errorf("unknown project %d: %w", projectID, ErrNotFound)
+	}
+	if p.Archived {
+		return store.Monitor{}, fmt.Errorf("%w: project %d is archived; restore it first", ErrInvalid, projectID)
+	}
+	m, err := o.St.GetMonitor(ctx, projectID)
+	if err != nil {
+		return store.Monitor{}, err
+	}
+	if !m.Enabled {
+		return store.Monitor{}, fmt.Errorf("%w: turn the monitor on first", ErrInvalid)
+	}
+	if m.CheckRequestedAt > m.CheckFinishedAt {
+		return store.Monitor{}, fmt.Errorf("%w: a check is already running", ErrBusy)
+	}
+	now := o.now().UTC()
+	if last, err := time.Parse(time.RFC3339, m.CheckRequestedAt); err == nil {
+		if wait := monitorCheckCooldown - now.Sub(last); wait > 0 {
+			return store.Monitor{}, fmt.Errorf("%w: checked moments ago; try again in %d s", ErrBusy, int(wait.Round(time.Second)/time.Second))
+		}
+	}
+	if err := o.St.RequestMonitorCheck(ctx, projectID, now.Format(time.RFC3339), store.AuditEntry{
+		Actor: actor, Action: "monitor.check", Subject: idSubject(projectID)}); err != nil {
+		return store.Monitor{}, err
+	}
+	return o.St.GetMonitor(ctx, projectID)
 }

@@ -164,7 +164,7 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writers := map[string]bool{"create_project": true, "update_project": true, "update_monitor": true,
+	writers := map[string]bool{"create_project": true, "update_project": true, "update_monitor": true, "check_monitor": true,
 		"archive_project": true, "restore_project": true, "move_project": true, "issue_ingest_key": true,
 		"disable_ingest_key": true, "enable_ingest_key": true,
 		"create_dashboard": true, "update_dashboard": true, "duplicate_dashboard": true,

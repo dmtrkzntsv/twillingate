@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -124,5 +126,107 @@ func TestPrintMonitorRedirects(t *testing.T) {
 		if c.want != "" && !strings.Contains(got, c.want) {
 			t.Errorf("%d: printed %q, want %q", c.n, got, c.want)
 		}
+	}
+}
+
+// serveMonitorCheck plays the server's runner: it waits for the request and
+// finishes it.
+func serveMonitorCheck(t *testing.T, res store.MonitorCheckResult) {
+	t.Helper()
+	st := openStore(t)
+	done := make(chan struct{})
+	t.Cleanup(func() { <-done })
+	go func() {
+		defer close(done)
+		for range 200 {
+			m, err := st.GetMonitor(context.Background(), 1)
+			if err != nil {
+				t.Error(err)
+				return
+			}
+			if m.CheckRequestedAt > m.CheckFinishedAt {
+				res.FinishedAt = m.CheckRequestedAt
+				if err := st.FinishMonitorCheck(context.Background(), 1, m.Origin, res); err != nil {
+					t.Error(err)
+				}
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		t.Error("no request came")
+	}()
+}
+
+func TestMonitorCheckRoundTrip(t *testing.T) {
+	withDB(t)
+	defer func(p time.Duration) { monitorCheckPoll = p }(monitorCheckPoll)
+	monitorCheckPoll = 10 * time.Millisecond
+	var out bytes.Buffer
+	if code := run([]string{"project", "create", "-name", "Shop", "-origin", "https://shop.example.com"}, &out); code != 0 {
+		t.Fatal(out.String())
+	}
+	runMonitor(t, 2, "check") // no project
+	if got := runMonitor(t, 1, "check", "-project-id", "1"); !strings.Contains(got, "turn the monitor on first") {
+		t.Errorf("not on = %q", got)
+	}
+	runMonitor(t, 0, "set", "-project-id", "1", "-enable")
+
+	serveMonitorCheck(t, store.MonitorCheckResult{Up: true, Status: 200, MS: 123})
+	if got := runMonitor(t, 0, "check", "-project-id", "1"); !strings.Contains(got, "up, 200, 123 ms") {
+		t.Errorf("check = %q", got)
+	}
+	st := openStore(t)
+	m, err := st.GetMonitor(context.Background(), 1)
+	if err != nil || m.CheckFinishedAt == "" {
+		t.Fatalf("stored %+v, %v", m, err)
+	}
+	if got := runMonitor(t, 0, "get", "-project-id", "1"); !strings.Contains(got, "last manual check\tup, 200, 123 ms") {
+		t.Errorf("get = %q", got)
+	}
+	// The cooldown is the server's refusal, printed.
+	if got := runMonitor(t, 1, "check", "-project-id", "1"); !strings.Contains(got, "try again in") {
+		t.Errorf("cooldown = %q", got)
+	}
+}
+
+func TestMonitorCheckDownAndNotRun(t *testing.T) {
+	defer func(p time.Duration) { monitorCheckPoll = p }(monitorCheckPoll)
+	monitorCheckPoll = 10 * time.Millisecond
+	for _, c := range []struct {
+		name string
+		res  store.MonitorCheckResult
+		code int
+		want string
+	}{
+		{"down", store.MonitorCheckResult{Reason: "content", Error: "text not found", Status: 200, MS: 9}, 0, "down, content: text not found"},
+		{"not run", store.MonitorCheckResult{Error: "the check did not run"}, 1, "the check did not run"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			withDB(t)
+			var out bytes.Buffer
+			if code := run([]string{"project", "create", "-name", "Shop", "-origin", "https://shop.example.com"}, &out); code != 0 {
+				t.Fatal(out.String())
+			}
+			runMonitor(t, 0, "set", "-project-id", "1", "-enable")
+			serveMonitorCheck(t, c.res)
+			if got := runMonitor(t, c.code, "check", "-project-id", "1"); !strings.Contains(got, c.want) {
+				t.Errorf("check = %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// No server served it: exit 1, saying so.
+func TestMonitorCheckDidNotFinish(t *testing.T) {
+	withDB(t)
+	defer func(p, w time.Duration) { monitorCheckPoll, monitorCheckWait = p, w }(monitorCheckPoll, monitorCheckWait)
+	monitorCheckPoll, monitorCheckWait = 5*time.Millisecond, 30*time.Millisecond
+	var out bytes.Buffer
+	if code := run([]string{"project", "create", "-name", "Shop", "-origin", "https://shop.example.com"}, &out); code != 0 {
+		t.Fatal(out.String())
+	}
+	runMonitor(t, 0, "set", "-project-id", "1", "-enable")
+	if got := runMonitor(t, 1, "check", "-project-id", "1"); !strings.Contains(got, "did not finish") {
+		t.Errorf("check = %q", got)
 	}
 }

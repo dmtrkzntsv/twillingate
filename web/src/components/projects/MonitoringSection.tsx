@@ -11,17 +11,36 @@ import type { Monitor, MonitorBody } from '@/lib/api'
 import { plural } from '@/lib/format'
 import { monitorQuery, projectTabsQuery } from '@/lib/queries'
 import { rangeParams, tabPath } from '@/lib/project-tabs'
-import { daysUntil, daysUntilDate, formatInterval } from '@/lib/time'
+import { daysUntil, daysUntilDate, formatAsOf, formatInterval } from '@/lib/time'
 
 interface Props {
   projectId: number
   pending?: boolean
   /** Saves the monitor; resolves true when saved. */
   onSave: (body: MonitorBody) => Promise<boolean>
+  /** Asks for a manual check; a refusal is the caller's to report. */
+  onCheck: () => Promise<boolean>
 }
 
 /** Hops from which the chain is worth a warning (the check still passes up to 5). */
 const LONG_CHAIN = 3
+
+/** How often a pending manual check is looked at, and when the page stops waiting (the runner serves one within seconds, or never). */
+const CHECK_POLL_MS = 2_000
+const CHECK_GIVE_UP_MS = 45_000
+
+/** The manual check still to finish on an enabled monitor, by when it was asked for. */
+function pendingCheck(m: Monitor | undefined): string | null {
+  return m?.enabled && m.check.requested_at > m.check.finished_at ? m.check.requested_at : null
+}
+
+/** How the last manual check went. */
+function checkText(check: Monitor['check'], now: Date): string {
+  const when = formatAsOf(new Date(check.finished_at), now)
+  if (check.up) return `Last manual check: up, ${check.status}, ${check.ms} ms (${when})`
+  if (!check.reason) return `Last manual check: ${check.error} (${when})`
+  return `Last manual check: down, ${check.reason}: ${check.error} (${when})`
+}
 
 /** "73 days", or "expired" once the day has passed. */
 function left(days: number): string {
@@ -43,8 +62,17 @@ function certificateText(origin: string, cert: Monitor['cert'], now: Date): stri
  * optional text the page must hold. Below, once on, what the checks found
  * (certificate, domain renewal) and a link to the Availability tab.
  */
-export default function MonitoringSection({ projectId, pending, onSave }: Props) {
-  const q = useQuery(monitorQuery(projectId))
+export default function MonitoringSection({ projectId, pending, onSave, onCheck }: Props) {
+  // The check the page stopped waiting for: it polls no more, and offers the
+  // button again, whose press the server answers.
+  const [gaveUp, setGaveUp] = useState<string | null>(null)
+  const q = useQuery({
+    ...monitorQuery(projectId),
+    refetchInterval: (query) => {
+      const waiting = pendingCheck(query.state.data)
+      return waiting && waiting !== gaveUp ? CHECK_POLL_MS : false
+    },
+  })
   const tabs = useQuery(projectTabsQuery(projectId)).data?.tabs
   const [url] = useSearchParams()
   const m = q.data
@@ -67,6 +95,13 @@ export default function MonitoringSection({ projectId, pending, onSave }: Props)
     setOrigin(m.origin || m.eligible_origins[0] || '')
     setContains(m.contains)
   }, [m])
+
+  const waiting = pendingCheck(m)
+  useEffect(() => {
+    if (!waiting) return
+    const timer = setTimeout(() => setGaveUp(waiting), CHECK_GIVE_UP_MS)
+    return () => clearTimeout(timer)
+  }, [waiting])
 
   if (q.isError) {
     return (
@@ -95,6 +130,9 @@ export default function MonitoringSection({ projectId, pending, onSave }: Props)
     })
   }
   const now = new Date()
+  const checking = waiting !== null && waiting !== gaveUp
+  // Against what is saved, so an edit undone offers the check again.
+  const edits = enabled !== m.enabled || chosen !== (m.origin || m.eligible_origins[0]) || contains !== m.contains
   const domainText = m.domain.expires_at ? `renews ${m.domain.expires_at} (${left(daysUntilDate(m.domain.expires_at, now))})` : 'unknown'
 
   return (
@@ -122,6 +160,9 @@ export default function MonitoringSection({ projectId, pending, onSave }: Props)
             value={chosen}
             disabled={pending}
             onValueChange={(o) => {
+              // Inside a form Radix also fires "" when the value is set from
+              // here, as the saved origin is: that is no choice of the user's.
+              if (!o) return
               edit()
               setOrigin(o)
             }}
@@ -149,8 +190,13 @@ export default function MonitoringSection({ projectId, pending, onSave }: Props)
             }}
           />
         </div>
-        <div>
+        <div className="flex flex-wrap gap-2">
           <Button type="submit" size="sm" disabled={pending}>Save</Button>
+          {m.enabled && !edits && (
+            <Button type="button" size="sm" variant="outline" disabled={pending || checking} onClick={() => void onCheck()}>
+              {checking ? 'Checking…' : 'Check now'}
+            </Button>
+          )}
         </div>
       </form>
       {m.enabled && (
@@ -159,6 +205,8 @@ export default function MonitoringSection({ projectId, pending, onSave }: Props)
           <p className="break-words">{`Certificate: ${certificateText(m.origin, m.cert, now)}`}</p>
           <p>{`Domain: ${domainText}`}</p>
           {m.redirects >= LONG_CHAIN && <p>{`Redirects ${m.redirects} times before answering, which slows every visit`}</p>}
+          {m.check.finished_at && <p className="break-words">{checkText(m.check, now)}</p>}
+          {waiting && waiting === gaveUp && <p role="status">The check has not finished yet: its result will show here when the server has run it</p>}
           {availability && (
             <Link className="w-fit text-foreground underline underline-offset-4" to={tabPath(projectId, availability.dashboard_id, rangeParams(url).toString())}>
               Open the Availability tab

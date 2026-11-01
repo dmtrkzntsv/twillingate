@@ -15,10 +15,17 @@ import (
 
 func init() { commands["monitor"] = cmdMonitor }
 
-const monitorUsage = "usage: twillingate monitor <get|set> -project-id <id> [flags]"
+const monitorUsage = "usage: twillingate monitor <get|set|check> -project-id <id> [flags]"
+
+// How long monitor check waits for the server's runner, and how often it
+// looks; variables for the tests.
+var (
+	monitorCheckWait = 30 * time.Second
+	monitorCheckPoll = time.Second
+)
 
 func cmdMonitor(args []string, stdout io.Writer) int {
-	envFile, sub, subArgs, ok := subcommand("monitor", monitorUsage, []string{"get", "set"}, args, stdout)
+	envFile, sub, subArgs, ok := subcommand("monitor", monitorUsage, []string{"get", "set", "check"}, args, stdout)
 	if !ok {
 		return 2
 	}
@@ -38,7 +45,7 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 	}
 	if *project == 0 {
 		fmt.Fprintln(stdout, "usage: twillingate monitor "+sub+" -project-id <id>"+
-			map[string]string{"get": "", "set": " [-enable|-disable] [-origin URL] [-contains TEXT]"}[sub])
+			map[string]string{"get": "", "set": " [-enable|-disable] [-origin URL] [-contains TEXT]", "check": ""}[sub])
 		return 2
 	}
 	var spec manage.MonitorSpec
@@ -71,6 +78,9 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 	}
 	defer closeStore()
 	ctx := context.Background()
+	if sub == "check" {
+		return monitorCheck(ctx, ops, *project, stdout)
+	}
 	var m store.Monitor
 	if sub == "set" {
 		m, err = ops.SetMonitor(ctx, "cli", *project, spec)
@@ -87,6 +97,43 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 	}
 	printMonitor(stdout, m, eligible, cfg.Monitor.Timeout)
 	return 0
+}
+
+// monitorCheck asks for a check and waits for the server's runner to serve it.
+func monitorCheck(ctx context.Context, ops *manage.Ops, project int64, stdout io.Writer) int {
+	m, err := ops.CheckMonitor(ctx, "cli", project)
+	if err != nil {
+		fmt.Fprintln(stdout, err)
+		return 1
+	}
+	deadline := time.Now().Add(monitorCheckWait)
+	for m.CheckRequestedAt > m.CheckFinishedAt {
+		if time.Now().After(deadline) {
+			fmt.Fprintf(stdout, "the check did not finish within %s: the server runs it, is it up?\n", monitorCheckWait)
+			return 1
+		}
+		time.Sleep(monitorCheckPoll)
+		if m, err = ops.Monitor(ctx, project); err != nil {
+			fmt.Fprintln(stdout, err)
+			return 1
+		}
+	}
+	fmt.Fprintln(stdout, monitorCheckText(m))
+	if !m.CheckUp && m.CheckReason == "" {
+		return 1 // finished, but it never ran
+	}
+	return 0
+}
+
+// monitorCheckText is the last manual check's result, as the console words it.
+func monitorCheckText(m store.Monitor) string {
+	switch {
+	case m.CheckUp:
+		return fmt.Sprintf("up, %d, %d ms (%s)", m.CheckStatus, m.CheckMS, m.CheckFinishedAt)
+	case m.CheckReason == "":
+		return fmt.Sprintf("%s (%s)", m.CheckError, m.CheckFinishedAt)
+	}
+	return fmt.Sprintf("down, %s: %s (%s)", m.CheckReason, m.CheckError, m.CheckFinishedAt)
 }
 
 func printMonitor(w io.Writer, m store.Monitor, eligible []string, timeout time.Duration) {
@@ -113,6 +160,9 @@ func printMonitor(w io.Writer, m store.Monitor, eligible []string, timeout time.
 	}
 	if m.DomainCheckedAt != "" {
 		fmt.Fprintf(w, "domain\texpires %s, checked %s\n", orUnknown(m.DomainExpiresAt), m.DomainCheckedAt)
+	}
+	if m.CheckFinishedAt != "" {
+		fmt.Fprintf(w, "last manual check\t%s\n", monitorCheckText(m))
 	}
 }
 
