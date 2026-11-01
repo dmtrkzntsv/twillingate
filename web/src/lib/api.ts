@@ -100,6 +100,8 @@ export interface DashboardsResponse {
   purge_after_days?: number
   /** How often a dashboard with auto-refresh on reloads: max(REPORTING_CACHE_MAX_AGE, REPORTING_REFRESH_MAX_AGE); absent when both are 0. */
   auto_refresh_seconds?: number
+  /** CONSOLE_URL, where /mcp is; absent when it is not set. */
+  console_url?: string
 }
 
 /** A widget's source: SQL or a structured query (JSON) for the chart components, Markdown for the markdown one. */
@@ -276,6 +278,8 @@ export interface IngestKey {
   label: string
   key: string
   state: 'active' | 'disabled'
+  /** The tag that installs the script with this key. */
+  snippet?: string
 }
 
 export type ArchiveAfter = '7d' | '30d' | '90d' | '365d' | 'project'
@@ -656,7 +660,7 @@ export const endpoints = {
   moveProjectTab: (projectId: number, dashboardId: number, after: number) =>
     api<{ tabs: ProjectTab[] }>(`/api/projects/${projectId}/tabs/${dashboardId}/move`, json('POST', { after })),
   projects: () => api<ProjectsResponse>('/api/projects'),
-  keys: (projectId?: number) => api<{ keys: IngestKey[] }>(`/api/keys${toQuery({ project_id: projectId })}`),
+  keys: (projectId?: number) => api<{ keys: IngestKey[]; note?: string }>(`/api/keys${toQuery({ project_id: projectId })}`),
   createProject: (body: CreateProjectBody) => api<CreatedProject>('/api/projects', json('POST', body)),
   updateProject: (id: number, body: Partial<CreateProjectBody>) => api<{ project_id: number }>(`/api/projects/${id}`, json('PATCH', body)),
   moveProject: (id: number, after: number) => api<{ status: string }>(`/api/projects/${id}/move`, json('POST', { after })),

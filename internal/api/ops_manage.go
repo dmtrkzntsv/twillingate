@@ -35,6 +35,15 @@ type projectToolOut struct {
 	Note      string `json:"note,omitempty"`
 }
 
+// snippetNote warns whoever is handed a snippet when it carries the placeholder
+// collector rather than the real one; "" when it does not.
+func (h *host) snippetNote() string {
+	if h.ingestURL != "" {
+		return ""
+	}
+	return "INGEST_URL is not configured; the snippet uses the placeholder " + manage.SnippetPlaceholderBase + " — ask the operator for the collector's public URL"
+}
+
 // createProject issues the first key in the same transaction as the
 // project unless skip_key is set: a refusal leaves nothing behind, so the
 // caller can fix the input and retry without meeting a keyless leftover.
@@ -56,9 +65,7 @@ func (h *host) createProject(ctx context.Context, in createProjectIn) (projectTo
 	out := projectToolOut{ProjectID: p.ID, Key: key}
 	if key != "" {
 		out.Snippet = manage.Snippet(h.ingestURL, key)
-		if h.ingestURL == "" {
-			out.Note = "INGEST_URL is not configured; the snippet uses the placeholder " + manage.SnippetPlaceholderBase + " — ask the operator for the collector's public URL"
-		}
+		out.Note = h.snippetNote()
 	}
 	return out, nil
 }
@@ -154,9 +161,7 @@ func (h *host) issueKey(ctx context.Context, in keyIn) (keyOut, error) {
 	// already-issued key just because enrichment can't find the project.
 	if p := h.reg.Snapshot(ctx).Project(in.ProjectID); p != nil {
 		out.Snippet = manage.Snippet(h.ingestURL, key)
-		if h.ingestURL == "" {
-			out.Note = "INGEST_URL is not configured; the snippet uses the placeholder " + manage.SnippetPlaceholderBase + " — ask the operator for the collector's public URL"
-		}
+		out.Note = h.snippetNote()
 	}
 	return out, nil
 }
@@ -174,12 +179,14 @@ type listKeysIn struct {
 }
 type listKeysOut struct {
 	Keys []keyRow `json:"keys"`
+	Note string   `json:"note,omitempty"`
 }
 type keyRow struct {
 	ProjectID int64  `json:"project_id"`
 	Label     string `json:"label"`
 	Key       string `json:"key"`
 	State     string `json:"state"` // active or disabled
+	Snippet   string `json:"snippet"`
 }
 
 func (h *host) listKeys(ctx context.Context, in listKeysIn) (listKeysOut, error) {
@@ -188,7 +195,7 @@ func (h *host) listKeys(ctx context.Context, in listKeysIn) (listKeysOut, error)
 		return listKeysOut{}, err
 	}
 	// A project with no keys lists as [], never null: the console reads .keys.filter.
-	out := listKeysOut{Keys: []keyRow{}}
+	out := listKeysOut{Keys: []keyRow{}, Note: h.snippetNote()}
 	for _, k := range ks {
 		if in.ProjectID != 0 && k.ProjectID != in.ProjectID {
 			continue
@@ -197,7 +204,7 @@ func (h *host) listKeys(ctx context.Context, in listKeysIn) (listKeysOut, error)
 		if k.Disabled {
 			state = "disabled"
 		}
-		out.Keys = append(out.Keys, keyRow{ProjectID: k.ProjectID, Label: k.Label, Key: k.Key, State: state})
+		out.Keys = append(out.Keys, keyRow{ProjectID: k.ProjectID, Label: k.Label, Key: k.Key, State: state, Snippet: manage.Snippet(h.ingestURL, k.Key)})
 	}
 	return out, nil
 }

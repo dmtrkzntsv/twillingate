@@ -72,6 +72,10 @@ type Options struct {
 	// as purge_after_days so a client can show when an archived user
 	// dashboard will be deleted. 0 means kept forever.
 	ArchivedDays int
+	// ConsoleURL is CONSOLE_URL as set, without falling back to INGEST_URL;
+	// the dashboards list hands it to the page, which falls back to its own
+	// address.
+	ConsoleURL string
 	// ShareBaseURL is CONSOLE_URL without a trailing slash: the origin the
 	// public share links are built on. Empty turns CreateWidgetShare off.
 	ShareBaseURL string
@@ -114,6 +118,7 @@ type Service struct {
 	cache        *cache
 	archivedDays int
 	shareBase    string
+	consoleURL   string
 	shares       *shareCache // the public /share/ routes' reads (share_cache.go)
 
 	parsedMu sync.Mutex
@@ -139,6 +144,7 @@ func New(st Store, sql SQL, opt Options) *Service {
 	s.cache = newCache(opt.CacheAge, opt.RefreshAge, s.now)
 	s.archivedDays = opt.ArchivedDays
 	s.shareBase = strings.TrimRight(opt.ShareBaseURL, "/")
+	s.consoleURL = strings.TrimRight(opt.ConsoleURL, "/")
 	s.shares = newShareCache(s.now, shareImageBytes)
 	return s
 }

@@ -5,6 +5,7 @@ import { useQuery } from '@tanstack/react-query'
 import { PlusIcon } from 'lucide-react'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
+import ConnectAgentGuide from '@/components/projects/ConnectAgentGuide'
 import IssuedKeyView from '@/components/projects/IssuedKeyView'
 import LoadError from '@/components/projects/LoadError'
 import ProjectCard from '@/components/projects/ProjectCard'
@@ -26,10 +27,10 @@ const MONTH = new Intl.DateTimeFormat('en-US', { month: 'short', timeZone: 'UTC'
  * `/projects`: every live project as a card with its last 30 days, the
  * server's events by month, and New project. Cards drag to a new order, the one every project
  * list shows; archived projects keep their place in it and are listed on
- * the Archive page.
+ * the Archive page. With none, how to connect an AI agent.
  */
 export default function Projects() {
-  const { data: dash } = useQuery(dashboardsQuery)
+  const { data: dash, isPending: dashPending } = useQuery(dashboardsQuery)
   const projectsQ = useQuery(projectsQuery)
   const statsQ = useQuery(usageQuery({}))
   const keysQ = useQuery(keysQuery())
@@ -110,7 +111,10 @@ export default function Projects() {
         {(statsFailed || keysFailed) && (
           <LoadError what={statsFailed ? 'usage' : 'keys'} error={(statsFailed ? statsQ.error : keysQ.error)!} onRetry={retryUsage} />
         )}
-        {projectsData && active.length === 0 && <p className="text-sm text-muted-foreground">No projects yet. Create one to get an ingest key.</p>}
+        {projectsData && active.length === 0 && !dashPending && (
+          // Reporting dev has no MCP to connect to.
+          readOnly ? <p className="text-sm text-muted-foreground">No projects yet.</p> : <ConnectAgentGuide consoleURL={dash?.console_url} />
+        )}
         <DndContext collisionDetection={closestCenter} {...context}>
           <SortableContext items={order} strategy={rectSortingStrategy}>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">

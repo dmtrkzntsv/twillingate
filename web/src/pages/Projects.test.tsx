@@ -207,4 +207,50 @@ describe('Projects', () => {
     renderPage()
     expect(await screen.findByText(/Couldn't load keys\. keys exploded/)).toBeInTheDocument()
   })
+
+  describe('with no projects', () => {
+    beforeEach(() => {
+      vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: [] })
+      vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [] })
+      vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: '2026-09-03', to: '2026-10-02', database_bytes: 0, database_series: [], projects: [] })
+      localStorage.clear()
+    })
+
+    it('guides connecting an agent to the MCP address on CONSOLE_URL', async () => {
+      vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList({ console_url: 'https://acme.twillingate.app' }))
+      renderPage()
+      const guide = await screen.findByRole('region', { name: 'Connect your AI agent' })
+      expect(await within(guide).findByText('https://acme.twillingate.app/mcp')).toBeInTheDocument()
+      expect(within(guide).getByText('claude mcp add --transport http twillingate https://acme.twillingate.app/mcp')).toBeInTheDocument()
+      expect(within(guide).getByText(/Add twillingate analytics to my site/)).toBeInTheDocument()
+    })
+
+    it('uses the address of the page when the server has no CONSOLE_URL', async () => {
+      renderPage()
+      const guide = await screen.findByRole('region', { name: 'Connect your AI agent' })
+      expect(within(guide).getByText(`${window.location.origin}/mcp`)).toBeInTheDocument()
+    })
+
+    it('replaces the sign-in steps with a note when this browser pasted a token', async () => {
+      localStorage.setItem('twillingate.token', 'ar_x')
+      renderPage()
+      const guide = await screen.findByRole('region', { name: 'Connect your AI agent' })
+      expect(within(guide).getByText(/signed in here with a token/)).toBeInTheDocument()
+      expect(within(guide).queryByText(/Add custom connector/)).not.toBeInTheDocument()
+      expect(within(guide).getByText(`${window.location.origin}/mcp`)).toBeInTheDocument()
+    })
+
+    it('shows reporting dev, which has no MCP, no guide', async () => {
+      vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList({ dev: true }))
+      renderPage()
+      expect(await screen.findByText(/No projects yet/)).toBeInTheDocument()
+      expect(screen.queryByRole('region', { name: 'Connect your AI agent' })).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows no guide once a project exists', async () => {
+    renderPage()
+    await screen.findByRole('article', { name: 'econumo.com' })
+    expect(screen.queryByRole('region', { name: 'Connect your AI agent' })).not.toBeInTheDocument()
+  })
 })

@@ -431,3 +431,32 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await expect(page.getByRole('region', { name: 'Projects' }).getByRole('link', { name: /^phone-/ })).toBeVisible()
   expect(await sidewaysScroll(page), 'archived projects').toEqual([])
 })
+
+test('the empty Projects guide and the install dialog fit a phone', async ({ page, request }) => {
+  const created = await request.post('/api/projects', {
+    headers: authHeaders(),
+    // One unbroken word: it can only fit by breaking inside it.
+    data: { name: `install${Date.now()}asingleunbrokenwordlongerthanaphoneiswideononeline`, allowed_origins: [] },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { project_id: id } = (await created.json()) as { project_id: number }
+  await page.goto('/app/')
+  await page.waitForURL(/\/oauth\/authorize\?/)
+  await page.getByLabel('Password').fill(PASSWORD)
+  await page.getByRole('button', { name: 'Connect' }).click()
+  await page.waitForURL(/\/app\/projects$/)
+
+  await page.goto(`/app/projects/${id}/settings`)
+  await page.getByRole('button', { name: 'Show install snippet' }).click()
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Copy snippet' })).toBeInViewport({ ratio: 1 })
+  await expect(page.getByRole('dialog').getByText(/No allowed origins/)).toBeVisible()
+  expect(await dialogOverflow(page)).toEqual([])
+  await page.keyboard.press('Escape')
+
+  // The suite's server always has projects: this page sees it without any.
+  await page.route('**/api/projects', (route) => route.fulfill({ json: { projects: [] } }))
+  await page.goto('/app/projects')
+  const guide = page.getByRole('region', { name: 'Connect your AI agent' })
+  await expect(guide.getByText('http://127.0.0.1:18080/mcp', { exact: true })).toBeVisible()
+  expect(await sidewaysScroll(page)).toEqual([])
+})
