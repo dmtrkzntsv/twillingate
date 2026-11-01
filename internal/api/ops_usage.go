@@ -172,6 +172,10 @@ const usageChunkDays = maxBreakdownLimit / 3
 // projects, a project's sharing one scan, read in order: the first error
 // is returned and later calls never run. Each query has a
 // CONSOLE_QUERY_TIMEOUT of its own (answerEach).
+//
+// Every query reads the events table, which leaves the checks family out
+// (the availability monitor's rows are not the site's traffic), so checks
+// are in neither the counts nor last_received_at (TestUsageIgnoresChecks).
 func (h *host) usageCounts(ctx context.Context, projects []*manage.Project, asked bool, fromD, toD civil.Date) (fileCounts, error) {
 	latest, err := archive.LatestDays(h.eventsDir)
 	if err != nil {

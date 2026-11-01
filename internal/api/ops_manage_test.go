@@ -164,7 +164,7 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writers := map[string]bool{"create_project": true, "update_project": true,
+	writers := map[string]bool{"create_project": true, "update_project": true, "update_monitor": true,
 		"archive_project": true, "restore_project": true, "move_project": true, "issue_ingest_key": true,
 		"disable_ingest_key": true, "enable_ingest_key": true,
 		"create_dashboard": true, "update_dashboard": true, "duplicate_dashboard": true,
@@ -177,7 +177,7 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 		"rename_event": true, "merge_event": true, "block_event": true, "remove_event_rule": true,
 		"rename_attribute": true, "merge_attribute": true, "block_attribute": true, "remove_attribute_rule": true}
 	idempotent := map[string]bool{"archive_project": true, "restore_project": true, "move_project": true,
-		"disable_ingest_key": true, "enable_ingest_key": true,
+		"disable_ingest_key": true, "enable_ingest_key": true, "update_monitor": true,
 		"archive_dashboard": true, "restore_dashboard": true, "archive_widget": true, "restore_widget": true,
 		"remove_project_tab":  true,
 		"update_widget_share": true, "archive_widget_share": true, "restore_widget_share": true,

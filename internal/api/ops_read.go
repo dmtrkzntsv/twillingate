@@ -42,6 +42,8 @@ type host struct {
 	events *eventCount
 	// ingestDisabled is INGEST_DISABLED, which limits reports.
 	ingestDisabled bool
+	// monitorInterval is MONITOR_INTERVAL, which get_monitor reports.
+	monitorInterval time.Duration
 	// sql runs the query tool's SQL on the external SQL engine, its only
 	// use; nil in a process without one, where that SQL is refused
 	// (reporting.ErrSQLEngine).
@@ -437,6 +439,7 @@ func (h *host) register(r *registrar) {
 	expose(r, spec{Name: "update_project", Annotations: write, Method: "PATCH", Path: "/api/projects/{project_id}",
 		Description: "Update a project's name and/or allowed origins. Fields you omit are left unchanged; allowed_origins replaces the whole list when given, and an explicit empty allowed_origins clears it."},
 		h.updateProject)
+	h.registerMonitor(r)
 	expose(r, spec{Name: "move_project", Annotations: idem, Method: "POST", Path: "/api/projects/{project_id}/move",
 		Description: "Put a project right after another (after: a project id, archived ones included; 0 first) in the order list_projects, the console and the CLI show. A new project comes last."},
 		h.moveProject)

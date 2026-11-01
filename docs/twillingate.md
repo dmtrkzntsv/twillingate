@@ -61,6 +61,8 @@ Projects live in a registry table, managed through the CLI or, over the API
 | Issue an ingest key | `twillingate key issue` | `issue_ingest_key` | `{project_id, label}`; returns the key **and** a paste-ready snippet |
 | List keys | `twillingate key list` | `list_ingest_keys` | `{project_id}` |
 | Disable / enable a key | `twillingate key disable` / `enable` | `disable_ingest_key` / `enable_ingest_key` | `{project_id, label}` |
+| Read a project's monitor | `twillingate monitor get` | `get_monitor` | `{project_id}`; returns the monitor, see [Monitoring](#monitoring) |
+| Change it | `twillingate monitor set` | `update_monitor` | `{project_id, enabled, origin, contains}`, each optional; merges, so an omitted field keeps its value and `contains: ""` clears the text; returns the monitor |
 | Rename an event | — | `rename_event` | `{project_id, family, from, to}`; `family` is `product` or `measures`; returns the rule. See [Event rules](#event-rules) |
 | Merge an event into another | — | `merge_event` | `{project_id, family, from, to}`; returns what `rename_event` does |
 | Block an event | — | `block_event` | `{project_id, family, name}` |
@@ -281,6 +283,81 @@ events stored while it was blocked stay without it.
 found there: a blocked key is marked `blocked`; the keys renamed or merged into
 a key are its `aliases`, and a key renamed away is listed only there. Both a
 blocked key and a key with aliases are listed even with nothing in the range.
+
+### Monitoring
+
+A project can have one availability monitor: the server itself fetches one of
+the project's origins every `MONITOR_INTERVAL` seconds (a per-install setting,
+default 120; [deployment.md](deployment.md#configure-the-collector)) and records
+whether it answered. The results land in the event files beside the site's own
+events, so a drop in conversions can be lined up with an outage in the same
+queries and dashboards.
+
+The settings are three: `enabled`, `origin` and an optional `contains`.
+`origin` is one of the project's `allowed_origins`, and only an exact `http://`
+or `https://` one is eligible (`eligible_origins` lists them): no wildcard, no
+bare `*`, no `tauri://` or `app://`. A non-default port is allowed as listed.
+Enabling with no origin picks the project's only eligible one, and with several
+the call is refused until one is named. Removing the monitored origin from
+`allowed_origins` turns the monitor off. `contains` is a text of at most 200
+characters the page must contain (case-sensitive, in the first 1 MB of the
+body); `""` clears it.
+
+```bash
+twillingate monitor get -project-id 1
+twillingate monitor set -project-id 1 -enable -origin https://myapp.com -contains "Sign in"
+twillingate monitor set -project-id 1 -disable
+```
+
+**What is checked.** One `GET` of the origin itself (`https://host/`), nothing
+else, with a 10 second limit (less when the interval is shorter) and no
+retries; each check is one row. The site is up when the final status is 2xx and,
+with `contains`, the text is on the page.
+
+- **Redirects** are followed, but every hop must match the project's
+  `allowed_origins` (wildcard patterns count; a bare `*` does not). A redirect
+  anywhere else is not followed and fails with `reason` `redirect`, the target
+  in `error`: a project listing only `https://example.com` whose site redirects
+  to `https://www.example.com` reads as down until it adds the `www` origin.
+  More than 10 hops is also `redirect`.
+- **Private addresses** are refused on every install: an origin or redirect hop
+  that resolves to a loopback, private, link-local, CGNAT or unspecified address
+  fails with `blocked`, checked when the connection is made. A site reachable
+  only on a LAN cannot be monitored.
+- **An `http://` origin** is checked over plain HTTP and has no certificate
+  check; its domain check still runs.
+
+**The `checks` table.** Every check is a row of the `checks` family in the
+project's event files, read with structured queries (`table: "checks"`, see
+[Structured queries](#structured-queries)), and left out of `usage`,
+`limits`' `events_30d`, `events` and everything that counts the site's own
+traffic: checks never count against an allowance. They still take disk, about
+21,600 small rows a month at the default interval.
+
+| Row | Written | `value` | Attributes |
+| --- | --- | --- | --- |
+| `uptime` | every check | response time in milliseconds, to the end of the body or to the failure | `up` (`1` or `0`); `status`, the final HTTP status, absent without a response; `reason` and `error` when down |
+| `cert` | once a day and when the monitor is enabled or its origin changes, on `https://` origins | whole days left, absent when unknown | `expires` (`YYYY-MM-DD`), `issuer`, `valid` (`1` or `0`), `error` |
+| `domain` | as `cert`, for the origin host's registrable domain (public suffix list) | whole days left until the registration expires, absent when unknown | `expires` (`YYYY-MM-DD`) |
+
+The domain's expiry is read over RDAP; a top-level domain with no RDAP service,
+or an answer without an expiration, reads as unknown, which is not a failure.
+`get_monitor` returns the last reading of each: `cert` (`expires_at`, `issuer`,
+`valid`, `error`, `checked_at`) and `domain` (`expires_at`, `checked_at`).
+
+`reason` is a closed vocabulary, on every failed `uptime` row:
+
+| `reason` | When |
+| --- | --- |
+| `dns` | the name does not resolve |
+| `connect` | connection refused or unreachable |
+| `timeout` | no complete answer within the limit |
+| `tls` | certificate invalid, expired, or for another name |
+| `http_4xx` | final status 400 to 499 |
+| `http_5xx` | final status 500 to 599, and any other non-2xx |
+| `redirect` | a redirect off the project's origins, or more than 10 hops |
+| `content` | the `contains` text is missing |
+| `blocked` | resolves to a private address |
 
 ---
 
@@ -1445,7 +1522,7 @@ form submissions](#collect-form-submissions).
 
 ## Answer questions with the data
 
-A connected session gets sixty-five tools: the thirty-one below, the ten
+A connected session gets sixty-seven tools: the thirty-three below, the ten
 in [Collect form submissions](#collect-form-submissions), and twenty-four
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
@@ -1508,7 +1585,7 @@ from the `views` table:
 | `consent` | `consent` | `given`, `none` (also views sent before the visitor answered a prompt) or `unknown` (sent without `$consent`) |
 | `locales` | `browser_locale`, `app_locale` | the browser's language and the product's; views that sent neither are left out |
 
-**Managing** — `create_project`, `update_project`, `move_project`,
+**Managing** — `create_project`, `update_project`, `get_monitor`, `update_monitor`, `move_project`,
 `archive_project`, `restore_project`, `issue_ingest_key`, `list_ingest_keys`,
 `enable_ingest_key`, `disable_ingest_key`, `rename_event`, `merge_event`, `block_event`,
 `list_event_rules`, `remove_event_rule`, `rename_attribute`, `merge_attribute`,
@@ -1565,6 +1642,8 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","values","received","blocked","aliases"}],"keys_total"}`; `aliases` is absent when empty |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
+| `GET` | `/api/projects/{project_id}/monitor` | `get_monitor` | — → `{"project_id","enabled","origin","contains","eligible_origins","interval_seconds","cert":{"expires_at","issuer","valid","error","checked_at"},"domain":{"expires_at","checked_at"}}`; empty strings are unknown |
+| `PATCH` | `/api/projects/{project_id}/monitor` | `update_monitor` | body: `enabled`, `origin`, `contains`, each optional (merge); a foreign origin is `400` → as `get_monitor` |
 | `POST` | `/api/projects/{project_id}/move` | `move_project` | body: `after` |
 | `POST` | `/api/projects/{project_id}/archive` | `archive_project` | — |
 | `POST` | `/api/projects/{project_id}/restore` | `restore_project` | — |
