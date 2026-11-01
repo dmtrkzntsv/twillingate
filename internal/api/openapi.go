@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/version"
 	"github.com/google/jsonschema-go/jsonschema"
 )
@@ -89,26 +88,12 @@ func openAPI(specs []spec) ([]byte, error) {
 }
 
 // errorCodes are every code writeError answers with, as the Error
-// schema lists them, and refusedText says which status each one is.
-var errorCodes, refusedText = func() ([]string, string) {
-	var codes, statuses []string
-	for i, r := range slices.Concat(reporting.HTTPRefusals, []reporting.HTTPRefusal{{Status: http.StatusInternalServerError, Code: "internal"}}) {
-		codes = append(codes, r.Code)
-		s := r.Code + " " + strconv.Itoa(r.Status)
-		if i == 0 {
-			s = r.Code + " is " + strconv.Itoa(r.Status)
-		}
-		if r.Status == http.StatusTooManyRequests {
-			s += " (with Retry-After)"
-		}
-		statuses = append(statuses, s)
-	}
-	return codes, "Refused: " + strings.Join(statuses, ", ") + "."
-}()
+// schema lists them.
+var errorCodes = []string{"invalid", "not_found", "conflict", "busy", "timeout", "internal"}
 
 var (
 	errorResponse = map[string]any{
-		"description": refusedText,
+		"description": "Refused: invalid is 400, not_found 404, conflict 409, busy 429 (with Retry-After), timeout 504, internal 500.",
 		"content":     map[string]any{"application/json": map[string]any{"schema": map[string]string{"$ref": "#/components/schemas/Error"}}},
 	}
 	unauthorized = map[string]any{"description": "Missing or bad bearer token."}
