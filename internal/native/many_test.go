@@ -340,7 +340,7 @@ func TestAnswerManyCancelsOne(t *testing.T) {
 	all := manyRequests(t)
 	var reqs []Request
 	for _, r := range all {
-		if _, _, err := compileQuery(r.Query, r.Params); err == nil && !alone(r.Query) && r.Query.Table != "sessions" {
+		if _, err := compileQuery(r.Query, r.Params); err == nil && !alone(r.Query) && r.Query.Table != "sessions" {
 			reqs = append(reqs, r)
 		}
 	}
@@ -408,7 +408,7 @@ func TestAnswerManyRetriesVanishedFiles(t *testing.T) {
 	e := New(Options{Dir: f.Dir, Workers: 1})
 	var reqs []Request
 	for _, r := range manyRequests(t) {
-		if _, _, err := compileQuery(r.Query, r.Params); err == nil && !alone(r.Query) && r.Params.Project == 1 {
+		if _, err := compileQuery(r.Query, r.Params); err == nil && !alone(r.Query) && r.Params.Project == 1 {
 			reqs = append(reqs, r)
 		}
 	}
@@ -715,7 +715,7 @@ func TestAnswerManyPanics(t *testing.T) {
 	all := manyRequests(t)
 	var reqs []Request
 	for _, r := range all {
-		if _, _, err := compileQuery(r.Query, r.Params); err == nil && r.Query.Table != "sessions" {
+		if _, err := compileQuery(r.Query, r.Params); err == nil && r.Query.Table != "sessions" {
 			reqs = append(reqs, r)
 		}
 	}

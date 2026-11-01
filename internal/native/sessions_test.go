@@ -145,7 +145,7 @@ func sessionRows(t *testing.T, e *Engine, project int64, from, to string) [][]st
 	var mu sync.Mutex
 	var rows [][]string
 	err := e.scanSessions(context.Background(), project, rng(t, from, to), sessionColumns, func(int64) error { return nil },
-		func(_ int, b *Batch) error {
+		func(_ int, b *batch) error {
 			mu.Lock()
 			defer mu.Unlock()
 			for i := range b.N {
@@ -170,7 +170,7 @@ func sessionRows(t *testing.T, e *Engine, project int64, from, to string) [][]st
 }
 
 // cellText is c's row i as text, as the goldens keep the values.
-func cellText(c *Column, i int, day bool) string {
+func cellText(c *column, i int, day bool) string {
 	switch {
 	case c.Idx != nil:
 		if c.Idx[i] < 0 {
@@ -392,7 +392,7 @@ func TestSessionsDerivationCharged(t *testing.T) {
 				peak.Store(v)
 			}
 			return nil
-		}, func(int, *Batch) error { return nil }); err != nil {
+		}, func(int, *batch) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
 	if n := charged.Load(); n != 0 || peak.Load() == 0 {

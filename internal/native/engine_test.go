@@ -839,7 +839,7 @@ func TestDistinctKeysTrackedRowsOnly(t *testing.T) {
 	}
 	a, ms := newAgg(aggOptions{metrics: []metricSpec{{Metric: Metric{Op: "daily_max", Of: "actors"}}}, filters: filters,
 		dims: []string{"path"}, ndays: 1, workers: 1, maxGroups: 10, maxBytes: 1 << 20})
-	b := &Batch{N: 4, Cols: map[string]*Column{
+	b := &batch{N: 4, Cols: map[string]*column{
 		"day":      {Ints: []int64{0, 0, 0, 0}},
 		"path":     {Dict: []string{"/a", "/b"}, Idx: []int32{0, 1, 1, 0}},
 		"actor_id": {Dict: []string{"x", "y", "z", "w"}, Idx: []int32{0, 1, 2, 0}},
@@ -872,7 +872,7 @@ func TestGroupsDoNotKeepTheBatchDictionary(t *testing.T) {
 	hi := uintptr(unsafe.Pointer(unsafe.StringData(db.dict[2]))) + uintptr(len(db.dict[2]))
 	a, _ := newAgg(aggOptions{metrics: []metricSpec{{Metric: Metric{Op: "count"}}}, dims: []string{"path"},
 		ndays: 1, workers: 1, maxGroups: 10, maxBytes: 1 << 20})
-	b := &Batch{N: 3, Cols: map[string]*Column{
+	b := &batch{N: 3, Cols: map[string]*column{
 		"day":  {Ints: []int64{0, 0, 0}},
 		"path": {Dict: db.dict, Idx: []int32{0, 2, 0}},
 	}}

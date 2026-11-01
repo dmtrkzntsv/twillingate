@@ -80,7 +80,7 @@ func TestLogRowsMatchGolden(t *testing.T) {
 	sameRows(t, got, wantRows(t, "SELECT * FROM events WHERE project_id = 1", archive.Rules{}, cols, got), cols)
 
 	// The attributes by pattern, one family: what SQL filters the same way.
-	b, err = readCached(t, path, []string{"id", AttrCols}, "product", rng(t, today, today))
+	b, err = readCached(t, path, []string{"id", attrCols}, "product", rng(t, today, today))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestLogRowsMatchGolden(t *testing.T) {
 	// columns still there.
 	for _, c := range []struct {
 		family string
-		r      Range
+		r      dayRange
 	}{{"", rng(t, "2026-09-09", "2026-09-09")}, {"zzz", rng(t, today, today)}} {
 		b, err = readCached(t, path, []string{"id", "ts"}, c.family, c.r)
 		if err != nil {
@@ -177,11 +177,11 @@ func TestLogSkipsBadLines(t *testing.T) {
 }
 
 // fold names b's columns as a union by name across files does (DuckDB's
-// names ignore case): each name of cols is b's column Batch.col resolves
+// names ignore case): each name of cols is b's column batch.col resolves
 // it to. The month file's attr_plan is the log's attr_Plan (the log's own
 // attr_plan is attr_plan_1).
-func fold(b *Batch, cols []string) *Batch {
-	out := &Batch{N: b.N, Cols: map[string]*Column{}}
+func fold(b *batch, cols []string) *batch {
+	out := &batch{N: b.N, Cols: map[string]*column{}}
 	for _, name := range cols {
 		if _, c := b.col(name); c != nil {
 			out.Cols[name] = c

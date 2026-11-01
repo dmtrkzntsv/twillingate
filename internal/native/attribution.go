@@ -89,7 +89,7 @@ type attribution struct {
 	ls       []archive.Lookup
 	from, to []int64            // each lookup's window, unix microseconds, both ends in
 	who      map[whoKey][]int32 // the lookups following an actor
-	r        Range              // the days of every window
+	r        dayRange           // the days of every window
 }
 
 // attributeProject answers project's lookups ls.
@@ -141,7 +141,7 @@ func (e *Engine) attributeProject(ctx context.Context, project int64, ls []archi
 	}
 	// The open logs are read through the engine's cache, which decodes a
 	// log once for the aliases, the sessions of its day and the views alike.
-	logs := e.readLog
+	logs := e.logs.read
 	if users != nil {
 		installs, err := e.aliasedInstalls(ctx, files, users, logs)
 		if err != nil {
@@ -203,7 +203,7 @@ type aliasedInstall struct {
 func (e *Engine) aliasedInstalls(ctx context.Context, f archive.Files, users map[string][]int32, logs logReader) ([]aliasedInstall, error) {
 	seen := map[archive.AliasKey]bool{}
 	var mu sync.Mutex // the workers' batches arrive at once
-	see := func(b *Batch) {
+	see := func(b *batch) {
 		_, uc := b.col("user_id")
 		_, ic := b.col("install_id")
 		for i := range b.N {
@@ -221,11 +221,11 @@ func (e *Engine) aliasedInstalls(ctx context.Context, f archive.Files, users map
 	parquet := f.Parquet
 	if f.Aliases != "" {
 		parquet = nil
-		if err := readIdentityFile(f.Aliases, cols, func(b *Batch) error { see(b); return nil }); err != nil {
+		if err := readIdentityFile(f.Aliases, cols, func(b *batch) error { see(b); return nil }); err != nil {
 			return nil, err
 		}
 	}
-	if err := e.scanIdentityEvents(ctx, parquet, nil, cols, func(_ int, b *Batch) error { see(b); return nil }); err != nil {
+	if err := e.scanIdentityEvents(ctx, parquet, nil, cols, func(_ int, b *batch) error { see(b); return nil }); err != nil {
 		return nil, err
 	}
 	for _, path := range f.Logs {
@@ -264,11 +264,11 @@ func (e *Engine) attributionSources(ctx context.Context, project int64, a *attri
 	for w := range parts {
 		parts[w] = make([]attributionPick, len(a.ls))
 	}
-	err := e.scanSessionsWith(ctx, project, a.r, cols, logs, charge, func(w int, b *Batch) error {
+	err := e.scanSessionsWith(ctx, project, a.r, cols, logs, charge, func(w int, b *batch) error {
 		_, kc := b.col("actor_kind")
 		_, ic := b.col("actor_id")
 		_, tc := b.col("started_at")
-		src := make([]*Column, len(sourceColumns))
+		src := make([]*column, len(sourceColumns))
 		for j, c := range sourceColumns {
 			_, src[j] = b.col(c)
 		}
@@ -364,12 +364,12 @@ func (e *Engine) attributionViews(ctx context.Context, s scan, files archive.Fil
 	for w := range parts {
 		parts[w] = make([]attributionPick, len(a.ls))
 	}
-	err := s.scanEvents(ctx, files, a.r, cols, nil, charge, func(w int, b *Batch) error {
+	err := s.scanEvents(ctx, files, a.r, cols, nil, charge, func(w int, b *batch) error {
 		_, kc := b.col("actor_kind")
 		_, ac := b.col("actor_id")
 		_, tc := b.col("ts")
 		_, idc := b.col("id")
-		vals := make([]*Column, len(newestColumns))
+		vals := make([]*column, len(newestColumns))
 		for j, c := range newestColumns {
 			_, vals[j] = b.col(c)
 		}
@@ -422,7 +422,7 @@ func (e *Engine) attributionViews(ctx context.Context, s scan, files archive.Fil
 
 // cellString is c's value at row i as CAST(… AS VARCHAR) reads a text or
 // an integer, "" for NULL.
-func cellString(c *Column, i int) string {
+func cellString(c *column, i int) string {
 	if c == nil {
 		return ""
 	}

@@ -20,10 +20,12 @@ internal/config/     environment loading
 internal/identity/   actor hashing and salt rotation
 internal/enrich/     User-Agent and URL parsing for web hits
 internal/geo/        MaxMind lookup
+internal/wire/       the ingest wire format's fixed limits, shared by server and api
 internal/native/     structured queries (stat, trend, breakdown) answered in Go over the event files
 internal/archive/    raw events as files under data/: the per-day NDJSON log, the dump to Parquet, the month merge, retention by file, the derived sessions, identities and aliases, and the table spec the external SQL engine reads
 internal/shared/     small generic leaf packages: civil (calendar dates), golden (tests' expected answers under testdata/), readsql, sortkey, version
 internal/shared/hll/ distinct counts, exact up to 1,024 ids then a HyperLogLog sketch (about ±2%), for internal/native
+internal/sqlcheck/   tests only: prepares every SQL string the code hands database/sql against a migrated database
 sqlengine/           public protocol and client for an external SQL engine over a Unix socket; stdlib only, importable by other modules
 docs/                the three contract pages, embedded and served over MCP
 sdk/                 browser SDK source (TypeScript); the built file is embedded by internal/server

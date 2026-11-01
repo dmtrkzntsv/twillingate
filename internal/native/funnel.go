@@ -95,21 +95,9 @@ func (s scan) funnel(ctx context.Context, from, to civil.Date) (Result, error) {
 		steps[i] = fs
 	}
 	idCol := everColumn(s.q.By)
-	cols := []string{"day", "ts", idCol}
-	add := func(fs []filter) {
-		for _, f := range fs {
-			for _, col := range f.columns() {
-				for _, c := range readColumns(col) {
-					if !slices.Contains(cols, c) {
-						cols = append(cols, c)
-					}
-				}
-			}
-		}
-	}
-	add(s.filters)
+	cols := appendReadColumns([]string{"day", "ts", idCol}, s.filters)
 	for _, fs := range steps {
-		add(fs)
+		cols = appendReadColumns(cols, fs)
 	}
 	all, err := archive.ListFiles(s.e.dir)
 	if err != nil {
@@ -132,7 +120,7 @@ func (s scan) funnel(ctx context.Context, from, to civil.Date) (Result, error) {
 			stepCols = append(stepCols, f.columns()...)
 		}
 	}
-	err = fs.scanEvents(ctx, all[s.project], Range{From: from, To: to}, cols, stepCols, charge, func(_ int, b *Batch) error {
+	err = fs.scanEvents(ctx, all[s.project], dayRange{From: from, To: to}, cols, stepCols, charge, func(_ int, b *batch) error {
 		id := batchColumn(b, idCol)
 		if id == nil {
 			return nil

@@ -16,7 +16,7 @@ import (
 // nativeRows reads project 1's Parquet files and logs over the whole
 // fixture range, as the engine will: the columns rs.columns(cols) asks for,
 // of family (any, when ""), each batch through rs.apply, then cols
-// resolved by name (Batch.col). It returns the rows formatted as cell does.
+// resolved by name (batch.col). It returns the rows formatted as cell does.
 func nativeRows(t *testing.T, f *archivetest.Files, rs ruleSet, cols []string, family string) [][]string {
 	t.Helper()
 	full := rng(t, "2026-08-01", today)
@@ -63,6 +63,12 @@ func matchRules(t *testing.T, f *archivetest.Files, rules archive.Rules, q, fami
 	got := nativeRows(t, f, compile(t, f, 1, rules), cols, family)
 	sameRows(t, got, wantRows(t, q, rules, cols, got), cols)
 	return cols
+}
+
+// unionColumns is unionColumnsOf(dir) reading every Parquet file's footer
+// and every open log's keys, without the engine's caches.
+func unionColumns(dir string) ([]string, error) {
+	return unionColumnsOf(dir, fileColumns)
 }
 
 // compile compiles project p's rules against the columns of every file
@@ -156,7 +162,7 @@ func TestEventRenameAndBlockMatchGolden(t *testing.T) {
 
 	// A merge's target keeps its index: the dictionary holds each name
 	// once, and the input's columns are left as they were.
-	in := &Batch{N: 3, Cols: map[string]*Column{"event_name": {Dict: []string{"ev1", "ev2", "ev0"}, Idx: []int32{0, 1, 2}}}}
+	in := &batch{N: 3, Cols: map[string]*column{"event_name": {Dict: []string{"ev1", "ev2", "ev0"}, Idx: []int32{0, 1, 2}}}}
 	got := rs.apply(in, "product")
 	if c := got.Cols["event_name"]; !slices.Equal(c.Dict, []string{"ev1", "ev2", "ev0", "zero"}) || !slices.Equal(c.Idx, []int32{1, 1, 3}) {
 		t.Errorf("merged %q %v", c.Dict, c.Idx)
@@ -166,7 +172,7 @@ func TestEventRenameAndBlockMatchGolden(t *testing.T) {
 	}
 
 	// No rules: the batch as it is.
-	b := &Batch{N: 1, Cols: map[string]*Column{"event_name": {Dict: []string{"a"}, Idx: []int32{0}}}}
+	b := &batch{N: 1, Cols: map[string]*column{"event_name": {Dict: []string{"a"}, Idx: []int32{0}}}}
 	if got := compile(t, f, 1, archive.Rules{}).apply(b, ""); got != b {
 		t.Error("no rules: a new batch")
 	}
@@ -249,7 +255,7 @@ func TestAttributeRenameThroughAbsentKey(t *testing.T) {
 	}
 	// The added column is named as the view names it: have's spelling.
 	rs := compile(t, f, 1, archive.Rules{Attributes: []store.AttributeRule{attrRule(1, "size", store.EventRuleRename, "ELSEWHERE")}})
-	b := &Batch{N: 1, Cols: map[string]*Column{"attr_size": {Dict: []string{"L"}, Idx: []int32{0}}}}
+	b := &batch{N: 1, Cols: map[string]*column{"attr_size": {Dict: []string{"L"}, Idx: []int32{0}}}}
 	if got := rs.apply(b, "product"); got.Cols["attr_elsewhere"] == nil {
 		t.Errorf("added column named %v", keys(got.Cols))
 	}
@@ -273,7 +279,7 @@ func TestAttributeRenameAcrossFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, b := range readAll(t, groups, 1, []string{"id", "family", AttrCols}, "product", rng(t, "2026-08-01", "2026-08-31")) {
+	for _, b := range readAll(t, groups, 1, []string{"id", "family", attrCols}, "product", rng(t, "2026-08-01", "2026-08-31")) {
 		if _, c := b.col("attr_color"); c != nil {
 			t.Fatalf("the month file holds attr_color: %v", keys(b.Cols))
 		}
@@ -345,9 +351,9 @@ func TestRulesIgnoreViewsForAttributes(t *testing.T) {
 }
 
 func TestBatchColResolvesCase(t *testing.T) {
-	a, b := &Column{}, &Column{}
-	bt := &Batch{Cols: map[string]*Column{"attr_Plan": a, "attr_plan_1": b}}
-	for name, want := range map[string]*Column{"attr_Plan": a, "attr_plan": a, "ATTR_PLAN": a, "attr_plan_1": b, "attr_x": nil} {
+	a, b := &column{}, &column{}
+	bt := &batch{Cols: map[string]*column{"attr_Plan": a, "attr_plan_1": b}}
+	for name, want := range map[string]*column{"attr_Plan": a, "attr_plan": a, "ATTR_PLAN": a, "attr_plan_1": b, "attr_x": nil} {
 		if _, got := bt.col(name); got != want {
 			t.Errorf("%s: %p, want %p", name, got, want)
 		}

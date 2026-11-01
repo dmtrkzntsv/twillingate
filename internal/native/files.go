@@ -17,21 +17,8 @@ var (
 	dayName   = regexp.MustCompile(`^(\d{4}-\d{2}-\d{2})\.`)
 )
 
-// projectFiles returns the Parquet files and the logs of project p that
-// may hold rows in r, from archive.ListFiles(dir)[p] (which leaves out what
-// a reader would count twice) and the files' day or month names, each in
-// name order. A project with no files under dir, or a missing dir, has none.
-func projectFiles(dir string, p int64, r Range) (parquet, logs []string, err error) {
-	all, err := archive.ListFiles(dir)
-	if err != nil {
-		return nil, nil, err
-	}
-	parquet, logs = filesIn(all[p], r)
-	return parquet, logs, nil
-}
-
 // filesIn is f's Parquet files and logs that may hold rows in r.
-func filesIn(f archive.Files, r Range) (parquet, logs []string) {
+func filesIn(f archive.Files, r dayRange) (parquet, logs []string) {
 	for _, path := range f.Parquet {
 		if overlaps(filepath.Base(path), r) {
 			parquet = append(parquet, path)
@@ -50,7 +37,7 @@ func filesIn(f archive.Files, r Range) (parquet, logs []string) {
 // overlaps r, the days of r no current session file covers (its
 // SessionGaps), in order, and the project's events files, which those
 // days' sessions are derived from.
-func sessionSources(dir string, p int64, r Range) (files []string, gaps []civil.Date, events archive.Files, err error) {
+func sessionSources(dir string, p int64, r dayRange) (files []string, gaps []civil.Date, events archive.Files, err error) {
 	all, err := archive.ListFiles(dir)
 	if err != nil {
 		return nil, nil, archive.Files{}, err
@@ -86,7 +73,7 @@ func sessionSources(dir string, p int64, r Range) (files []string, gaps []civil.
 // overlaps says whether the file named name may hold rows in r: a month
 // file when any day of its month is in r, any other when its day is. A
 // name it cannot read is kept, since the rows are filtered by day anyway.
-func overlaps(name string, r Range) bool {
+func overlaps(name string, r dayRange) bool {
 	if m := monthName.FindStringSubmatch(name); m != nil {
 		first, err := civil.Parse(m[1] + "-01")
 		if err != nil {

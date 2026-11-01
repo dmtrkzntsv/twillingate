@@ -70,7 +70,7 @@ func (p *pqFile) close() error { return p.f.Close() }
 // parquetGroups lists, in file order, the row groups of files whose
 // statistics allow rows of family (any, when "") with day in r. It reads
 // the footers only, no pages.
-func parquetGroups(files []string, family string, r Range) ([]group, error) {
+func parquetGroups(files []string, family string, r dayRange) ([]group, error) {
 	from, to := r.days()
 	return listGroups(files, func(st groupStats) (bool, bool) { return st.decide(family, from, to) })
 }
@@ -78,7 +78,7 @@ func parquetGroups(files []string, family string, r Range) ([]group, error) {
 // parquetGroupsOf is parquetGroups for rows of any of families, which the
 // reader does not filter by: a group's all says only that every row's day
 // is in r.
-func parquetGroupsOf(files []string, families []string, r Range) ([]group, error) {
+func parquetGroupsOf(files []string, families []string, r dayRange) ([]group, error) {
 	from, to := r.days()
 	return listGroups(files, func(st groupStats) (bool, bool) {
 		if !st.mayHold(families) {
@@ -157,10 +157,10 @@ func (g *groupReader) close() error {
 
 // read reads row group gr into a batch of the columns cols holding only
 // the rows of family (any, when "") with day in r. A name in cols ending
-// in "*" (AttrCols) is a prefix pattern, expanded to the file's columns
+// in "*" (attrCols) is a prefix pattern, expanded to the file's columns
 // with that prefix, so batches differ in which of those they hold; a plain
 // name the file lacks reads all null.
-func (g *groupReader) read(gr group, cols []string, family string, r Range) (*Batch, error) {
+func (g *groupReader) read(gr group, cols []string, family string, r dayRange) (*batch, error) {
 	p, err := g.open(gr.file)
 	if err != nil {
 		return nil, err
@@ -200,9 +200,9 @@ func (g *groupReader) open(file string) (*pqFile, error) {
 
 // readGroup reads every row of row group gr into a batch of the columns
 // read, named as they are (a name the file lacks reads all null).
-func (p *pqFile) readGroup(gr group, read []string) (*Batch, error) {
+func (p *pqFile) readGroup(gr group, read []string) (*batch, error) {
 	n := int(gr.rows)
-	b := &Batch{N: n, Cols: make(map[string]*Column, len(read))}
+	b := &batch{N: n, Cols: make(map[string]*column, len(read))}
 	chunks := p.pf.RowGroups()[gr.index].ColumnChunks()
 	for _, name := range read {
 		i, ok := p.leaves[name]
@@ -250,9 +250,9 @@ func timeScale(cc parquet.ColumnChunk, name string) (mul, div int64, ok bool) {
 // before it: it is then the batch's dictionary, with no lookup built); a
 // plain page's strings join it one by one, so the batch's dictionary holds
 // each value once.
-func readChunk(cc parquet.ColumnChunk, name string, n int) (*Column, error) {
+func readChunk(cc parquet.ColumnChunk, name string, n int) (*column, error) {
 	kind := cc.Type().Kind()
-	c := &Column{}
+	c := &column{}
 	mul, div, isTime := int64(1), int64(1), false
 	switch kind {
 	case parquet.ByteArray:

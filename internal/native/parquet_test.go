@@ -37,7 +37,9 @@ func date(t testing.TB, s string) civil.Date {
 	return d
 }
 
-func rng(t testing.TB, from, to string) Range { return Range{From: date(t, from), To: date(t, to)} }
+func rng(t testing.TB, from, to string) dayRange {
+	return dayRange{From: date(t, from), To: date(t, to)}
+}
 
 // events is n events of each family for project on day, with fields that
 // are sometimes empty (so null in the files), attributes on product and
@@ -102,11 +104,24 @@ func names(paths []string) []string {
 	return out
 }
 
+// projectFiles returns the Parquet files and the logs of project p that
+// may hold rows in r, from archive.ListFiles(dir)[p] (which leaves out what
+// a reader would count twice) and the files' day or month names, each in
+// name order. A project with no files under dir, or a missing dir, has none.
+func projectFiles(dir string, p int64, r dayRange) (parquet, logs []string, err error) {
+	all, err := archive.ListFiles(dir)
+	if err != nil {
+		return nil, nil, err
+	}
+	parquet, logs = filesIn(all[p], r)
+	return parquet, logs, nil
+}
+
 func TestProjectFilesByRange(t *testing.T) {
 	f := seed(t, 4)
 	f.Write(t, events(t, 1, today, 2)...) // today's log
 	cases := []struct {
-		r        Range
+		r        dayRange
 		pq, logs []string
 	}{
 		{rng(t, "2026-08-15", "2026-08-25"), []string{"2026-08.parquet"}, nil},
@@ -152,7 +167,7 @@ func TestFileOverlaps(t *testing.T) {
 const nullCell = "\x00NULL"
 
 // formatBatch appends b's rows as cells of cols, formatted as cell does.
-func formatBatch(t *testing.T, b *Batch, cols []string, out [][]string) [][]string {
+func formatBatch(t *testing.T, b *batch, cols []string, out [][]string) [][]string {
 	t.Helper()
 	for i := range b.N {
 		row := make([]string, len(cols))
@@ -188,11 +203,11 @@ func formatBatch(t *testing.T, b *Batch, cols []string, out [][]string) [][]stri
 const microFormat = "2006-01-02T15:04:05.000000Z"
 
 // readAll reads every group with one reader per worker.
-func readAll(t *testing.T, groups []group, workers int, cols []string, family string, r Range) []*Batch {
+func readAll(t *testing.T, groups []group, workers int, cols []string, family string, r dayRange) []*batch {
 	t.Helper()
 	readers := make([]groupReader, workers)
 	var mu sync.Mutex
-	var out []*Batch
+	var out []*batch
 	err := scanParallel(context.Background(), groups, workers, func(w int, g group) error {
 		b, err := readers[w].read(g, cols, family, r)
 		if err != nil {
@@ -291,7 +306,7 @@ func TestParquetRowsMatchGolden(t *testing.T) {
 	}
 }
 
-func keys(m map[string]*Column) []string {
+func keys(m map[string]*column) []string {
 	var out []string
 	for k := range m {
 		out = append(out, k)

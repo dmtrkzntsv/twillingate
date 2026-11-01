@@ -106,13 +106,7 @@ func (e *Engine) AnswerMany(ctx context.Context, reqs []Request, done func(i int
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				defer func() {
-					if p := recover(); p != nil {
-						answer(i, Answered{Err: panicked(p)})
-					}
-				}()
-				res, err := e.Answer(rctx, r.Query, r.Params, r.Rules)
-				answer(i, Answered{Result: res, Err: err})
+				e.answerAlone(rctx, i, r, answer)
 			}()
 			continue
 		}
@@ -158,6 +152,18 @@ func (e *Engine) AnswerMany(ctx context.Context, reqs []Request, done func(i int
 		flush()
 	}
 	wg.Wait()
+}
+
+// answerAlone answers r, request i, by Answer under ctx; a panic in it (a
+// bug) answers it with an internal error.
+func (e *Engine) answerAlone(ctx context.Context, i int, r Request, answer func(int, Answered)) {
+	defer func() {
+		if p := recover(); p != nil {
+			answer(i, Answered{Err: panicked(p)})
+		}
+	}()
+	res, err := e.Answer(ctx, r.Query, r.Params, r.Rules)
+	answer(i, Answered{Result: res, Err: err})
 }
 
 // AnswerAll is AnswerMany's answers, by request.
@@ -221,7 +227,7 @@ type manyReq struct {
 type consumer struct {
 	r      *manyReq
 	sp     aggSpec
-	rng    Range
+	rng    dayRange
 	lo, hi int64  // rng's days since 1970-01-01
 	fam    string // the family its rows are of ("" for all)
 	idCols []string
@@ -238,14 +244,14 @@ type consumer struct {
 // prepare checks and compiles r, request i, for a shared scan, with its
 // aggregations.
 func (e *Engine) prepare(ctx context.Context, i int, r Request) (*manyReq, error) {
-	filters, metrics, err := compileQuery(r.Query, r.Params)
+	s, err := compileQuery(r.Query, r.Params)
 	if err != nil {
 		return nil, err
 	}
-	mr := &manyReq{i: i, ctx: ctx, req: r, sessions: r.Query.Table == "sessions",
-		s: scan{e: e, q: r.Query, filters: filters, metrics: metrics, project: r.Params.Project}}
+	s.e = e
+	mr := &manyReq{i: i, ctx: ctx, req: r, sessions: r.Query.Table == "sessions", s: s}
 	for _, sp := range mr.s.aggSpecs(r.Params.From, r.Params.To) {
-		c := &consumer{r: mr, sp: sp, rng: Range{From: sp.from, To: sp.to}, lo: epochDay(sp.from), hi: epochDay(sp.to)}
+		c := &consumer{r: mr, sp: sp, rng: dayRange{From: sp.from, To: sp.to}, lo: epochDay(sp.from), hi: epochDay(sp.to)}
 		if !mr.sessions {
 			c.fam = mr.s.family()
 			c.idCols = mr.s.identityColumnsOf(sp.dims)
@@ -364,13 +370,7 @@ func (e *Engine) shared(ctx context.Context, project int64, sessions bool, reqs 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			defer func() {
-				if p := recover(); p != nil {
-					answer(r.i, Answered{Err: panicked(p)})
-				}
-			}()
-			res, err := e.Answer(r.ctx, r.req.Query, r.req.Params, r.req.Rules)
-			answer(r.i, Answered{Result: res, Err: err})
+			e.answerAlone(r.ctx, r.i, r.req, answer)
 		}()
 	}
 	wg.Wait()
@@ -509,11 +509,7 @@ func (r *manyReq) finish() (res Result, err error) {
 		c.a, c.ids = nil, nil
 		c.mu.Unlock()
 	}
-	res = r.s.result(as)
-	if r.s.q.longShape() {
-		res = toLong(r.s.q, res)
-	}
-	return res, nil
+	return r.s.result(as), nil
 }
 
 // use is a consumer of one work item; all says every row of the item is
@@ -596,20 +592,13 @@ func (sh *sharedScan) scanEvents(ctx context.Context, cons []*consumer) error {
 		return err
 	}
 	work = append(work, groups...)
-	readers := make([]groupReader, e.workers)
-	err = scanParallel(ctx, work, e.workers, func(w int, it manyItem) error {
+	return withReaders(ctx, work, e.workers, func(w int, gr *groupReader, it manyItem) error {
 		onScanItem()
 		if it.g.index < 0 {
 			return sh.feedLog(ctx, w, it)
 		}
-		return sh.feedGroup(w, &readers[w], it)
+		return sh.feedGroup(w, gr, it)
 	})
-	for i := range readers {
-		if cerr := readers[i].close(); err == nil {
-			err = cerr
-		}
-	}
-	return err
 }
 
 // overlapping are the consumers of cons whose range a file named as path
@@ -694,7 +683,7 @@ func (sh *sharedScan) feedLog(ctx context.Context, w int, it manyItem) error {
 		if a == nil {
 			continue
 		}
-		bs, err := sh.e.readLog(ctx, it.g.file, read, c.fam, c.rng)
+		bs, err := sh.e.logs.read(ctx, it.g.file, read, c.fam, c.rng)
 		if err != nil {
 			if failsScan(ctx, err) {
 				return err
@@ -789,8 +778,8 @@ func (sh *sharedScan) feedGroup(w int, gr *groupReader, it manyItem) error {
 }
 
 // pickCols is a batch of b's columns names, in a map of its own.
-func pickCols(b *Batch, names []string) *Batch {
-	out := &Batch{N: b.N, Cols: make(map[string]*Column, len(names)+2)}
+func pickCols(b *batch, names []string) *batch {
+	out := &batch{N: b.N, Cols: make(map[string]*column, len(names)+2)}
 	for _, n := range names {
 		out.Cols[n] = b.Cols[n]
 	}
@@ -799,7 +788,7 @@ func pickCols(b *Batch, names []string) *Batch {
 
 // feed adds b to c's aggregation from worker w, failing c's request on an
 // error, then checks the scan's budget; false once c is out of the scan.
-func (sh *sharedScan) feed(w int, c *consumer, b *Batch) bool {
+func (sh *sharedScan) feed(w int, c *consumer, b *batch) bool {
 	if sh.gone(c.r) {
 		return false
 	}
@@ -823,7 +812,7 @@ func (sh *sharedScan) feed(w int, c *consumer, b *Batch) bool {
 
 // add is a.add(w, b), a panic in it (a bug) an error, which fails c's
 // request alone.
-func (c *consumer) add(a *agg, w int, b *Batch) (err error) {
+func (c *consumer) add(a *agg, w int, b *batch) (err error) {
 	defer func() {
 		if p := recover(); p != nil {
 			err = panicked(p)
@@ -922,13 +911,12 @@ func (sh *sharedScan) scanSessions(ctx context.Context, cons []*consumer) error 
 		return err
 	}
 	work = append(work, groups...)
-	readers := make([]groupReader, e.workers)
-	err = scanParallel(ctx, work, e.workers, func(w int, it manyItem) error {
+	return withReaders(ctx, work, e.workers, func(w int, gr *groupReader, it manyItem) error {
 		onScanItem()
 		if it.g.index != gapIndex {
-			return sh.feedGroup(w, &readers[w], it)
+			return sh.feedGroup(w, gr, it)
 		}
-		b, err := deriveSessions(ctx, sh.project, it.g.day, events, &readers[w], e.readLog, sh.chargeAll(it.uses))
+		b, err := deriveSessions(ctx, sh.project, it.g.day, events, gr, e.logs.read, sh.chargeAll(it.uses))
 		if errors.Is(err, errNoConsumer) {
 			return nil
 		}
@@ -940,12 +928,6 @@ func (sh *sharedScan) scanSessions(ctx context.Context, cons []*consumer) error 
 		}
 		return nil
 	})
-	for i := range readers {
-		if cerr := readers[i].close(); err == nil {
-			err = cerr
-		}
-	}
-	return err
 }
 
 // chargeAll charges each of uses' consumers the bytes a gap day's views

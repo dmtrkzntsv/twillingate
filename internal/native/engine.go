@@ -101,18 +101,9 @@ func New(o Options) *Engine {
 		logKeys: archive.NewKeyScanner(), idCache: identityCache{max: o.MaxBytes}, logs: newLogCache(o.MaxBytes), now: o.Now}
 }
 
-// readLog is readLog's rows, from the engine's log cache: a batch per
-// family, each read-only.
-func (e *Engine) readLog(ctx context.Context, path string, cols []string, family string, r Range) ([]*Batch, error) {
-	return e.logs.read(ctx, path, cols, family, r)
-}
-
-// today is the clock's UTC day.
-func (e *Engine) today() civil.Date { return civil.DateOf(e.now()) }
-
 // Today is the UTC day of the engine's clock, the day a retention counts
 // up to, leaving it out.
-func (e *Engine) Today() civil.Date { return e.today() }
+func (e *Engine) Today() civil.Date { return civil.DateOf(e.now()) }
 
 // charge is a fresh budget of MaxBytes: each call adds n bytes (n < 0
 // gives them back) and, once past MaxBytes, refuses with ErrTooLarge. It
@@ -122,10 +113,16 @@ func (e *Engine) charge() func(n int64) error {
 	return func(n int64) error {
 		m.add(n)
 		if n > 0 && m.over() {
-			return fmt.Errorf("%w (about %d MiB counted, %d MiB allowed)", ErrTooLarge, m.n.Load()>>20, m.max>>20)
+			return tooLarge(m.n.Load(), m.max)
 		}
 		return nil
 	}
+}
+
+// tooLarge is the ErrTooLarge refusal of a scan that counted n bytes
+// where limit are allowed.
+func tooLarge(n, limit int64) error {
+	return fmt.Errorf("%w (about %d MiB counted, %d MiB allowed)", ErrTooLarge, n>>20, limit>>20)
 }
 
 // Params are what a query runs on: one project, the days From to To.
@@ -247,14 +244,15 @@ var (
 // group. It is NULL when the partition's total is 0, and never
 // approximate.
 func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Rules) (Result, error) {
-	filters, metrics, err := compileQuery(q, p)
+	s, err := compileQuery(q, p)
 	if err != nil {
 		return Result{}, err
 	}
+	s.e = e
 	var res Result
 	err = e.turn(ctx, func() error {
 		var err error
-		res, err = e.answerOnce(ctx, q, filters, metrics, p, rules)
+		res, err = e.answerOnce(ctx, s, p, rules)
 		return err
 	})
 	if answered != nil {
@@ -268,28 +266,31 @@ func (e *Engine) Answer(ctx context.Context, q Query, p Params, rules archive.Ru
 // recorder.
 var answered func(e *Engine, q Query, p Params, rules archive.Rules, res Result, err error)
 
-// compileQuery checks q over p and compiles its filters and metrics'.
-func compileQuery(q Query, p Params) ([]filter, []metricSpec, error) {
+// compileQuery checks q over p and compiles it, once, into a scan of p's
+// project: its filters, its metrics' and its defined columns. The scan's
+// engine and rules are the caller's to set.
+func compileQuery(q Query, p Params) (scan, error) {
 	if err := q.Validate(); err != nil {
-		return nil, nil, err
+		return scan{}, err
 	}
 	if p.To.Before(p.From) {
-		return nil, nil, invalid("to", "%s is before from %s", p.To, p.From)
+		return scan{}, invalid("to", "%s is before from %s", p.To, p.From)
 	}
 	filters, err := compileFilters(q.Where, "where")
 	if err != nil {
-		return nil, nil, err
+		return scan{}, err
 	}
-	if _, err := compileDefines(q.Define); err != nil { // newAgg compiles them again, unable to fail then
-		return nil, nil, err
+	defs, err := compileDefines(q.Define)
+	if err != nil {
+		return scan{}, err
 	}
 	metrics := make([]metricSpec, len(q.Metrics))
 	for i, m := range q.Metrics {
 		if metrics[i], err = compileMetric(m, fmt.Sprintf("metrics[%d]", i)); err != nil {
-			return nil, nil, err
+			return scan{}, err
 		}
 	}
-	return filters, metrics, nil
+	return scan{q: q, filters: filters, metrics: metrics, defs: defs, project: p.Project}, nil
 }
 
 // turn runs once in one of MaxScans turns, waiting for it first and
@@ -354,27 +355,30 @@ func compileMetric(m Metric, p string) (metricSpec, error) {
 	return mt, nil
 }
 
-func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metrics []metricSpec, p Params, rules archive.Rules) (Result, error) {
-	var rs ruleSet
-	if q.Table != "sessions" && q.Table != "identities" { // derived from the events as stored
+// answerOnce answers s, compiled by compileQuery, over p with rules: one
+// attempt of Answer's.
+func (e *Engine) answerOnce(ctx context.Context, s scan, p Params, rules archive.Rules) (Result, error) {
+	q := s.q
+	derived := q.Table == "sessions" || q.Table == "identities"
+	if !derived { // the derived tables read the events as stored
 		var err error
-		if rs, err = e.ruleSet(p.Project, rules); err != nil {
+		if s.rules, err = e.ruleSet(p.Project, rules); err != nil {
 			return Result{}, err
 		}
 	}
 	// ever and never read the events with the rules, whatever table the
 	// query's own scan reads.
-	everRules := rs
-	if fs := everFilters(filters, metrics); len(fs) > 0 && (q.Table == "sessions" || q.Table == "identities") {
+	everRules := s.rules
+	ever := everFilters(s.filters, s.metrics)
+	if len(ever) > 0 && derived {
 		var err error
 		if everRules, err = e.ruleSet(p.Project, rules); err != nil {
 			return Result{}, err
 		}
 	}
-	if err := e.collectEver(ctx, everFilters(filters, metrics), p, everRules); err != nil {
+	if err := e.collectEver(ctx, ever, p, everRules); err != nil {
 		return Result{}, err
 	}
-	s := scan{e: e, q: q, filters: filters, metrics: metrics, project: p.Project, rules: rs}
 	switch q.Kind {
 	case "retention":
 		return s.retention(ctx, p.From, p.To)
@@ -395,17 +399,13 @@ func (e *Engine) answerOnce(ctx context.Context, q Query, filters []filter, metr
 				return Result{}, err
 			}
 		}
-		m, ms, err := s.aggregate(ctx, sp.from, sp.to, sp.dims, sp.perDay, sp.sets)
+		m, ms, err := s.aggregate(ctx, sp)
 		if err != nil {
 			return Result{}, err
 		}
 		as[i] = aggregated{m: m, ms: ms}
 	}
-	res := s.result(as)
-	if q.longShape() {
-		res = toLong(q, res)
-	}
-	return res, nil
+	return s.result(as), nil
 }
 
 // aggSpec is one aggregation a stat, trend or breakdown is answered from:
@@ -450,15 +450,21 @@ func (s scan) aggSpecs(from, to civil.Date) []aggSpec {
 }
 
 // result is s's stat, trend or breakdown answered from its aggregations,
-// as aggSpecs lists them.
+// as aggSpecs lists them, in the query's shape.
 func (s scan) result(as []aggregated) Result {
+	var res Result
 	switch s.q.Kind {
 	case "stat":
-		return s.stat(as)
+		res = s.stat(as)
 	case "trend":
-		return s.trend(as[0])
+		res = s.trend(as[0])
+	default:
+		res = s.breakdown(as[0])
 	}
-	return s.breakdown(as[0])
+	if s.q.longShape() {
+		res = toLong(s.q, res)
+	}
+	return res
 }
 
 // ruleSet is project's rules compiled. The files' columns, which only
@@ -474,7 +480,7 @@ func (e *Engine) ruleSet(project int64, rules archive.Rules) (ruleSet, error) {
 	return compileRules(project, rules, have), nil
 }
 
-// columns is unionColumns(e.dir): an open log's keys are read only as far
+// columns is unionColumnsOf(e.dir, fileColumns): an open log's keys are read only as far
 // as it grew since (archive.KeyScanner, under live ingest the lines
 // appended), a Parquet file's footer only when the file is new or changed
 // in size or time since it was last read. colMu guards the footer cache
@@ -537,9 +543,10 @@ type scan struct {
 	q       Query
 	filters []filter
 	metrics []metricSpec // the query's metrics, their filters compiled (not resolved: newAgg resolves them)
+	defs    []defined    // the query's defined columns, compiled
 	project int64
 	rules   ruleSet
-	logs    logReader // reads the logs; nil: the engine's readLog
+	logs    logReader // reads the logs; nil: the engine's log cache
 }
 
 // family is the family the query's table holds ("" for events: all).
@@ -550,12 +557,11 @@ func (s scan) family() string {
 	return s.q.Table
 }
 
-// aggregate reads the project's rows of [from, to] into an aggregation of
-// the query's metrics grouped by dims, by day when perDay; sets keeps
-// whole-range distinct sets beside a trend's per-day keys.
-func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string, perDay, sets bool) (*merged, []metricSpec, error) {
-	r := Range{From: from, To: to}
-	a, ms := s.newAgg(aggSpec{from: from, to: to, dims: dims, perDay: perDay, sets: sets})
+// aggregate reads the project's rows of [sp.from, sp.to] into sp's
+// aggregation of the query's metrics.
+func (s scan) aggregate(ctx context.Context, sp aggSpec) (*merged, []metricSpec, error) {
+	r := dayRange{From: sp.from, To: sp.to}
+	a, ms := s.newAgg(sp)
 	charge := a.charge
 	if s.q.Table == "sessions" {
 		if err := s.e.scanSessions(ctx, s.project, r, a.columns(), charge, a.add); err != nil {
@@ -587,7 +593,7 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 		}
 		return a.merge(), ms, nil
 	}
-	if err := s.scanEvents(ctx, files, r, a.columns(), dims, charge, a.add); err != nil {
+	if err := s.scanEvents(ctx, files, r, a.columns(), sp.dims, charge, a.add); err != nil {
 		return nil, nil, err
 	}
 	return a.merge(), ms, nil
@@ -597,12 +603,7 @@ func (s scan) aggregate(ctx context.Context, from, to civil.Date, dims []string,
 func (s scan) newAgg(sp aggSpec) (*agg, []metricSpec) {
 	lo, hi := epochDay(sp.from), epochDay(sp.to)
 	o := aggOptions{metrics: s.metrics, filters: s.filters, dims: sp.dims, perDay: sp.perDay, sets: sp.sets,
-		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes}
-	defs, err := compileDefines(s.q.Define)
-	if err != nil {
-		panic("native: defined columns compileQuery passed: " + err.Error())
-	}
-	o.defs = defs
+		from: lo, ndays: int(hi - lo + 1), workers: s.e.workers, maxGroups: s.e.maxGroups, maxBytes: s.e.maxBytes, defs: s.defs}
 	if sp.perDay && s.q.bucketed() {
 		o.buckets, o.starts = buckets(sp.from, sp.to, s.q.Interval)
 		o.ndays = len(o.starts)
@@ -634,7 +635,7 @@ func buckets(from, to civil.Date, interval string) (index []int, starts []int64)
 // from files, with the rules applied and the identity columns the query's
 // filters or dims name added, and hands each batch to add, from the
 // workers (w the worker's index).
-func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols, dims []string, charge func(int64) error, add func(w int, b *Batch) error) error {
+func (s scan) scanEvents(ctx context.Context, files archive.Files, r dayRange, cols, dims []string, charge func(int64) error, add func(w int, b *batch) error) error {
 	fam := s.family()
 	read := s.rules.columns(cols)
 	idCols := s.identityColumnsOf(dims)
@@ -650,48 +651,17 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 	if err != nil {
 		return err
 	}
-	// The logs, read whole, go first, so the row groups fill in beside them.
-	work := make([]group, 0, len(logs)+len(groups))
-	for _, path := range logs {
-		work = append(work, group{file: path, index: -1})
+	readLog := s.logs
+	if readLog == nil {
+		readLog = s.e.logs.read
 	}
-	work = append(work, groups...)
-	readers := make([]groupReader, s.e.workers)
-	err = scanParallel(ctx, work, s.e.workers, func(w int, g group) error {
-		var bs []*Batch
-		if g.index < 0 {
-			logs := s.logs
-			if logs == nil {
-				logs = s.e.readLog
-			}
-			var err error
-			if bs, err = logs(ctx, g.file, read, fam, r); err != nil {
-				return err
-			}
-		} else {
-			b, err := readers[w].read(g, read, fam, r)
-			if err != nil {
-				return err
-			}
-			bs = []*Batch{b}
+	return s.e.scanFiles(ctx, logs, groups, readLog, read, fam, r, func(w int, b *batch) error {
+		b = s.rules.apply(b, fam)
+		if ids != nil {
+			addIdentityColumns(b, idCols, ids)
 		}
-		for _, b := range bs {
-			b = s.rules.apply(b, fam)
-			if ids != nil {
-				addIdentityColumns(b, idCols, ids)
-			}
-			if err := add(w, b); err != nil {
-				return err
-			}
-		}
-		return nil
+		return add(w, b)
 	})
-	for i := range readers {
-		if cerr := readers[i].close(); err == nil {
-			err = cerr
-		}
-	}
-	return err
 }
 
 // identityColumnsOf are the computed identity columns (idColumns: the
@@ -699,38 +669,24 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r Range, cols
 // filters and dims name.
 func (s scan) identityColumnsOf(dims []string) []string {
 	var out []string
-	fss := [][]filter{s.filters}
-	var add func(mt metricSpec)
-	add = func(mt metricSpec) {
-		fss = append(fss, mt.where)
-		if mt.ratioNum != nil {
-			add(*mt.ratioNum)
-			add(*mt.ratioDen)
-		}
-	}
-	for _, mt := range s.metrics {
-		add(mt)
-	}
-	for _, fs := range fss {
-		for _, f := range fs {
-			for _, col := range f.columns() {
-				if _, ok := idColumns[col]; ok && !slices.Contains(out, col) {
-					out = append(out, col)
-				}
+	add := func(cols ...string) {
+		for _, col := range cols {
+			if _, ok := idColumns[col]; ok && !slices.Contains(out, col) {
+				out = append(out, col)
 			}
 		}
 	}
-	for _, d := range dims {
-		if _, ok := idColumns[d]; ok && !slices.Contains(out, d) {
-			out = append(out, d)
+	fss := [][]filter{s.filters}
+	for i := range s.metrics {
+		s.metrics[i].walk(func(mt *metricSpec) { fss = append(fss, mt.where) })
+	}
+	for _, fs := range fss {
+		for _, f := range fs {
+			add(f.columns()...)
 		}
 	}
-	defs, _ := compileDefines(s.q.Define) // compileQuery has compiled them
-	for _, col := range definedColumns(defs) {
-		if _, ok := idColumns[col]; ok && !slices.Contains(out, col) {
-			out = append(out, col)
-		}
-	}
+	add(dims...)
+	add(definedColumns(s.defs)...)
 	return out
 }
 

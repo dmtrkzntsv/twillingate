@@ -186,8 +186,8 @@ func compileDefines(defs []Define) ([]defined, error) {
 
 // withDefined is b with the defined columns added: a new batch sharing
 // b's columns, since a shared scan hands b to other queries too.
-func withDefined(b *Batch, defs []defined) (*Batch, error) {
-	out := &Batch{N: b.N, Cols: maps.Clone(b.Cols)}
+func withDefined(b *batch, defs []defined) (*batch, error) {
+	out := &batch{N: b.N, Cols: maps.Clone(b.Cols)}
 	for _, d := range defs {
 		pass := make([][]bool, len(d.cases))
 		for j, fs := range d.cases {

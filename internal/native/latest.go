@@ -84,7 +84,7 @@ func (lp *latestPart) put(x int, ts int64, v string) int64 {
 // latestText is c's value at row i as the answer prints it: text as is, a
 // number in decimal, a day as YYYY-MM-DD; ok false for NULL and for
 // empty text, which is_set counts as unset too.
-func latestText(c *Column, i int, typ colType) (string, bool) {
+func latestText(c *column, i int, typ colType) (string, bool) {
 	if c == nil || (c.Null != nil && c.Null[i]) {
 		return "", false
 	}
@@ -104,7 +104,7 @@ func latestText(c *Column, i int, typ colType) (string, bool) {
 
 // addLatest adds the rows sel of b (each in cell(k, i), gids[k] < 0 past
 // the caps) to p's latest partials.
-func (a *agg) addLatest(p *part, b *Batch, sel, gids []int32, pass [][]bool, cell func(int, int32) int) {
+func (a *agg) addLatest(p *part, b *batch, sel, gids []int32, pass [][]bool, cell func(int, int32) int) {
 	if len(a.latests) == 0 {
 		return
 	}
