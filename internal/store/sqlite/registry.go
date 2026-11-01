@@ -167,6 +167,20 @@ func (d *DB) UpdateProject(ctx context.Context, p store.RegistryProject, a store
 		if n, _ := res.RowsAffected(); n == 0 {
 			return fmt.Errorf("update project: unknown id %d: %w", p.ID, store.ErrNotFound)
 		}
+		if p.DisableMonitor {
+			res, err := tx.ExecContext(ctx, `UPDATE monitors SET enabled=0,
+				updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+				WHERE project_id=? AND enabled=1`, p.ID)
+			if err != nil {
+				return err
+			}
+			if n, _ := res.RowsAffected(); n > 0 {
+				if err := audit(ctx, tx, store.AuditEntry{Actor: a.Actor, Action: "monitor.disable",
+					Subject: a.Subject, Detail: "origin removed"}); err != nil {
+					return err
+				}
+			}
+		}
 		return auditAndBump(ctx, tx, a)
 	})
 }

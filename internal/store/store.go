@@ -137,6 +137,10 @@ type RegistryProject struct {
 	Archived       bool
 	ArchivedAt     string // RFC 3339 UTC, "" = live
 	SortKey        string // its place in the order (migration 034)
+	// DisableMonitor, on UpdateProject only, also switches the project's
+	// monitor off in the same transaction (audited monitor.disable, "origin
+	// removed"), keeping its origin text. Never read back.
+	DisableMonitor bool
 }
 
 // EventRule is one event rule (rules with kind 'event', migration 040): a rename (To set)
