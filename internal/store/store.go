@@ -344,6 +344,18 @@ type Store interface {
 	// "form.expire", subject "form/<project_id>/<name>"), and returns how
 	// many.
 	ExpireDrafts(ctx context.Context, now time.Time) (int, error)
+	// Availability monitors (migration 044). GetMonitor reads one project's
+	// row (none reads as Monitor{ProjectID}, an unknown project is
+	// ErrNotFound). SetMonitor upserts the settings, audited, and clears
+	// the certificate and domain readings when the origin changes.
+	// ListEnabledMonitors lists the enabled monitors of live projects by
+	// project id. SetMonitorCert and SetMonitorDomain store a reading,
+	// unaudited, and do nothing when the row's origin is no longer origin.
+	GetMonitor(ctx context.Context, projectID int64) (Monitor, error)
+	SetMonitor(ctx context.Context, projectID int64, s MonitorSettings, a AuditEntry) (Monitor, error)
+	ListEnabledMonitors(ctx context.Context) ([]Monitor, error)
+	SetMonitorCert(ctx context.Context, projectID int64, origin string, c CertState) error
+	SetMonitorDomain(ctx context.Context, projectID int64, origin string, d DomainState) error
 	// SetSubmissionsArchived archives (archived true) or restores the
 	// project's submissions with these ids and returns how many changed:
 	// ids that match nothing, an archived one being archived and an active

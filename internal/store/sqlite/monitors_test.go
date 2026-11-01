@@ -1,0 +1,161 @@
+package sqlite
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
+)
+
+func monitorProject(t *testing.T, d *DB, name string) int64 {
+	t.Helper()
+	id, err := d.CreateProject(context.Background(), store.RegistryProject{Name: name, AllowedOrigins: "[]"},
+		store.AuditEntry{Actor: "test", Action: "project.create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
+var monAudit = store.AuditEntry{Actor: "test", Action: "monitor.set", Subject: "monitor"}
+
+func TestMonitorRoundTrip(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+
+	m, err := d.GetMonitor(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (store.Monitor{ProjectID: id}); m != want {
+		t.Fatalf("no row: %+v, want %+v", m, want)
+	}
+
+	got, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: "https://a.example", Contains: "ok"}, monAudit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := store.Monitor{ProjectID: id, Enabled: true, Origin: "https://a.example", Contains: "ok"}
+	if got != want {
+		t.Fatalf("SetMonitor = %+v, want %+v", got, want)
+	}
+	if m, _ = d.GetMonitor(ctx, id); m != want {
+		t.Fatalf("GetMonitor = %+v, want %+v", m, want)
+	}
+	var n int
+	if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='monitor.set'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("audit rows = %d, %v", n, err)
+	}
+}
+
+func TestSetMonitorOriginChangeClearsState(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	set := func(s store.MonitorSettings) store.Monitor {
+		t.Helper()
+		m, err := d.SetMonitor(ctx, id, s, monAudit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	set(store.MonitorSettings{Enabled: true, Origin: "https://a.example"})
+	if err := d.SetMonitorCert(ctx, id, "https://a.example", store.CertState{
+		ExpiresAt: "2027-01-01T00:00:00Z", Issuer: "R3", Valid: true, CheckedAt: "2026-11-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMonitorDomain(ctx, id, "https://a.example", store.DomainState{
+		ExpiresAt: "2027-02-02", CheckedAt: "2026-11-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := d.GetMonitor(ctx, id)
+	if m.CertIssuer != "R3" || !m.CertValid || m.CertExpiresAt == "" || m.DomainExpiresAt != "2027-02-02" || m.DomainCheckedAt == "" {
+		t.Fatalf("state not stored: %+v", m)
+	}
+
+	// Same origin keeps the state, whatever else changes.
+	m = set(store.MonitorSettings{Enabled: false, Origin: "https://a.example", Contains: "x"})
+	if m.CertIssuer != "R3" || m.DomainExpiresAt != "2027-02-02" || m.Enabled || m.Contains != "x" {
+		t.Fatalf("same-origin edit changed state: %+v", m)
+	}
+	// A new origin clears it.
+	m = set(store.MonitorSettings{Enabled: true, Origin: "https://b.example"})
+	want := store.Monitor{ProjectID: id, Enabled: true, Origin: "https://b.example"}
+	if m != want {
+		t.Fatalf("origin change: %+v, want %+v", m, want)
+	}
+}
+
+func TestListEnabledMonitors(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	a, b, c, e := monitorProject(t, d, "a"), monitorProject(t, d, "b"), monitorProject(t, d, "c"), monitorProject(t, d, "d")
+	for id, on := range map[int64]bool{a: true, b: false, c: true, e: true} {
+		if _, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: on, Origin: "https://x.example"}, monAudit); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.SetProjectArchived(ctx, c, true, store.AuditEntry{Actor: "t", Action: "project.archive"}); err != nil {
+		t.Fatal(err)
+	}
+	ms, err := d.ListEnabledMonitors(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ms) != 2 || ms[0].ProjectID != a || ms[1].ProjectID != e {
+		t.Fatalf("ListEnabledMonitors = %+v, want projects %d, %d", ms, a, e)
+	}
+}
+
+func TestMonitorStateWriteWithStaleOriginIsIgnored(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	if _, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: "https://new.example"}, monAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMonitorCert(ctx, id, "https://old.example", store.CertState{Issuer: "R3", Valid: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMonitorDomain(ctx, id, "https://old.example", store.DomainState{ExpiresAt: "2027-01-01"}); err != nil {
+		t.Fatal(err)
+	}
+	// A project with no row at all is a no-op too.
+	if err := d.SetMonitorCert(ctx, id+100, "https://old.example", store.CertState{Issuer: "R3"}); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := d.GetMonitor(ctx, id)
+	if want := (store.Monitor{ProjectID: id, Enabled: true, Origin: "https://new.example"}); m != want {
+		t.Fatalf("stale write landed: %+v", m)
+	}
+}
+
+func TestMonitorUnknownProject(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	if _, err := d.GetMonitor(ctx, 999); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetMonitor: %v, want ErrNotFound", err)
+	}
+	if _, err := d.SetMonitor(ctx, 999, store.MonitorSettings{Origin: "https://x.example"}, monAudit); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("SetMonitor: %v, want ErrNotFound", err)
+	}
+}
+
+func TestDeleteProjectRemovesMonitor(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	if _, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: "https://a.example"}, monAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.DeleteProjectData(ctx, id, store.AuditEntry{Actor: "t", Action: "project.delete"}); err != nil {
+		t.Fatal(err)
+	}
+	var n int
+	if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM monitors`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("monitors rows = %d, %v", n, err)
+	}
+}

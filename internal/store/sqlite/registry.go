@@ -264,7 +264,7 @@ func (d *DB) SetIngestKeyDisabled(ctx context.Context, projectID int64, label st
 // both directions, so a forgotten addition or a stale entry fails loudly
 // instead of silently orphaning rows on DeleteProjectData.
 var projectTables = []string{
-	"ingest_keys", "rules", "usage_history", "project_tabs", "widget_shares", "forms", "submissions",
+	"ingest_keys", "rules", "usage_history", "project_tabs", "widget_shares", "forms", "submissions", "monitors",
 }
 
 // DeleteProjectData hard-deletes every row keyed by the project's id, then
