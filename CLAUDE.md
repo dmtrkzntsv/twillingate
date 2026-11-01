@@ -30,7 +30,7 @@ sqlengine/           public protocol and client for an external SQL engine over 
 docs/                the three contract pages, embedded and served over MCP
 sdk/                 browser SDK source (TypeScript); the built file is embedded by internal/server
 web/                 dashboard web app source (React, TypeScript); the build is embedded by internal/reporting
-deploy/              installer, systemd unit, compose file, UPGRADES.md
+deploy/              installer, systemd unit, compose file, UPGRADES.md; ship/ holds the unit template and env example ship installs
 ```
 
 `app` imports the surfaces (`server`, `api`, `jobs`, `pipeline`);
@@ -85,7 +85,7 @@ marks a breaking change. Scopes match the tree: `store`, `server`, `jobs`,
 
 Releases are cut by hand with `gh workflow run release.yml` (optional `version`
 input; blank means next patch). Pushing to `main` publishes nothing. Pre-1.0:
-breaking changes bump the minor. The workflow has five jobs: `version`
+breaking changes bump the minor. The workflow has six jobs: `version`
 settles the tag (the input, or the next patch) and refuses a malformed or
 existing one; then three run side by side: `build` cross-compiles both
 architectures' static tarballs on one runner (`make dist`), checks them
@@ -93,9 +93,12 @@ static and smoke-tests the amd64 binary, `test` runs `make check`, then the
 race suite `make test`, and `image` (`build docker image`) pushes the
 multi-arch image untagged, by digest; `release` (`build and publish
 release`) waits for all four, tags, hands the tarballs and their checksums
-to `npx changelogithub`, then tags the image with the version and `latest`.
-A failure anywhere publishes nothing, and a `dry_run` dispatch stops before
-`release`. Several commits
+to `npx changelogithub`, then tags the image with the version and `latest`;
+`r2` (`publish to R2`) then runs `make ship-publish`, which hands `dist/ship/`
+(both plain binaries, `deploy/ship/`'s unit template and env example, staged
+by `make ship-dist`, which `make dist` runs first) to `ship publish` as the
+version and `latest`; it can be re-run alone. A failure before `release` publishes nothing, and a `dry_run` dispatch
+stops before `release`. Several commits
 can ship under one version; notes are not hand-edited.
 
 ## Checks

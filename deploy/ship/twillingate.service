@@ -1,0 +1,55 @@
+# The unit template `ship` installs (github.com/dmtrkzntsv/ship): `make
+# ship-publish` uploads it beside the binaries, and `ship install
+# twillingate` fills in the placeholders (paths of the service it installs
+# into). ship makes the user, /opt/S, /etc/S, /var/lib/S (the data
+# directory, owned by the user) and /run/S (the runtime directory);
+# install.sh's own unit is deploy/systemd/twillingate.service. See the
+# README, "Deploy with ship".
+[Unit]
+Description=Twillingate analytics collector ({{SERVICE}})
+Documentation=https://github.com/dmtrkzntsv/twillingate#deploy-with-ship
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User={{USER}}
+Group={{USER}}
+ExecStart={{BIN}} serve
+# The data directory is the working directory, as under `ship run`, so the
+# env file's relative DATABASE_DSN (sqlite://twillingate.db) and the event
+# files' default DATA_DIR (data/ beside it) land in it either way.
+WorkingDirectory={{DATA_DIR}}
+Environment=GOMEMLIMIT=256MiB
+# twillingate-sql, installed into the same service (`ship install
+# twillingate-sql --service {{SERVICE}}`), listens here. Without it SQL
+# fails as the engine being down; `SQL_ENGINE_SOCKET=` in the env file
+# turns SQL off instead. The env file overrides every Environment= line.
+Environment=SQL_ENGINE_SOCKET={{RUN_DIR}}/sql-engine.sock
+EnvironmentFile={{ENV_FILE}}
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=30
+
+# Hardening (spec §11)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths={{DATA_DIR}}
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+AmbientCapabilities=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+
+[Install]
+WantedBy=multi-user.target

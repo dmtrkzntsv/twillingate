@@ -7,13 +7,20 @@ import (
 	"testing"
 )
 
-// The shipped .env.example must stay loadable; a typo here breaks every
-// fresh install, since install.sh copies it to /etc/twillingate/. It is
-// parsed the way systemd's EnvironmentFile= reads it: KEY=VALUE lines, with
+// The shipped env examples must stay loadable; a typo here breaks every
+// fresh install, since install.sh copies .env.example to /etc/twillingate/
+// and `ship install` deploy/ship/twillingate.env.example to /etc/<service>/.
+// Each is parsed the way systemd's EnvironmentFile= reads it: KEY=VALUE lines, with
 // commented lines documenting defaults — those are uncommented here so
 // every documented key round-trips through FromEnv.
 func TestExamplesLoad(t *testing.T) {
-	f, err := os.Open("../../.env.example")
+	for _, path := range []string{"../../.env.example", "../../deploy/ship/twillingate.env.example"} {
+		t.Run(path, func(t *testing.T) { exampleLoads(t, path) })
+	}
+}
+
+func exampleLoads(t *testing.T, path string) {
+	f, err := os.Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}

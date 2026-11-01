@@ -2,7 +2,7 @@ BIN := twillingate
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=$(VERSION)
 
-.PHONY: build ui test check vet dist docker run smoke test-install test-compose seed-demo clean
+.PHONY: build ui test check vet dist ship-dist ship-publish docker run smoke test-install test-compose seed-demo clean
 
 # The dashboards app (web/) builds into internal/reporting/ui, which the
 # binary embeds. Only its components.json is committed, so every Go build
@@ -52,20 +52,45 @@ check: vet $(UI)
 	./scripts/coverage.sh
 	go test -race $(RACE_PKGS)
 
-# The release tarballs, one per architecture, cross-compiled from this host
-# (no cgo): binary + deploy/ (installer, units, configs). release.yml writes
-# the SHA256SUMS the installer verifies over both.
+# The release tarballs, one per architecture: binary + deploy/ (installer,
+# units, configs). release.yml writes the SHA256SUMS the installer verifies
+# over both. The binaries are ship-dist's, so the tarballs and the ship
+# release hold the same bytes.
 DIST_ARCHES = amd64 arm64
-dist: $(UI)
+dist: ship-dist
 	@set -e; for arch in $(DIST_ARCHES); do \
 	stage=dist/stage-$$arch; rm -rf $$stage; mkdir -p $$stage; \
-	CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags '$(LDFLAGS)' -o $$stage/$(BIN) ./cmd/twillingate; \
+	cp $(SHIP_DIR)/$(BIN)-linux-$$arch $$stage/$(BIN); \
 	cp -r deploy $$stage/deploy; \
 	cp .env.example LICENSE $$stage/; \
 	tar -czf dist/$(BIN)-linux-$$arch.tar.gz -C $$stage .; \
 	rm -rf $$stage; \
 	echo "packaged dist/$(BIN)-linux-$$arch.tar.gz"; \
 	done
+
+# ---- ship (github.com/dmtrkzntsv/ship) ----
+# ship-dist stages the flat folder ship publishes: both static binaries,
+# cross-compiled from this host (no cgo), and deploy/ship/'s unit template
+# and env example, nothing else (ship writes its own SHA256SUMS).
+SHIP_DIR := dist/ship
+ship-dist: $(UI)
+	@set -e; rm -rf $(SHIP_DIR); mkdir -p $(SHIP_DIR); \
+	for arch in $(DIST_ARCHES); do \
+	CGO_ENABLED=0 GOOS=linux GOARCH=$$arch go build -trimpath -ldflags '$(LDFLAGS)' -o $(SHIP_DIR)/$(BIN)-linux-$$arch ./cmd/twillingate; \
+	done; \
+	cp deploy/ship/$(BIN).service deploy/ship/$(BIN).env.example $(SHIP_DIR)/; \
+	echo "staged $(SHIP_DIR)"
+
+# ship-publish uploads $(SHIP_DIR) as it stands (it builds nothing; CI runs
+# ship-dist first): `make ship-publish VERSION=v1.2.3 CHANNELS=latest`.
+# --version goes only with a VERSION given to make (not the git describe
+# default) other than dev, --channels (latest, dev) only when CHANNELS is
+# set; one of them is required. Needs the SHIP_R2_* write credentials in the
+# environment or ~/.config/ship/config.toml.
+SHIP_VERSION = $(if $(filter command line environment environment override,$(origin VERSION)),$(filter-out dev,$(VERSION)))
+ship-publish:
+	@test -n "$(SHIP_VERSION)$(CHANNELS)" || { echo "ship-publish: give VERSION (not dev) and/or CHANNELS, e.g. make ship-publish VERSION=v1.2.3 CHANNELS=latest" >&2; exit 1; }
+	ship publish $(BIN) --path $(SHIP_DIR)$(if $(SHIP_VERSION), --version $(SHIP_VERSION))$(if $(CHANNELS), --channels $(CHANNELS))
 
 docker:
 	docker build --target runtime -t twillingate:$(VERSION) .
