@@ -38,17 +38,17 @@ export interface ProjectActions {
   removeAttributeRule(id: number, body: { key: string }): Promise<boolean>
   /** Maps `alias` to the key `to`: a merge, so the alias's stored values (if any) join it. */
   addAttributeAlias(id: number, body: { alias: string; to: string }): Promise<boolean>
-  /** Saves the project's availability monitor; resolves true when saved. */
+  /** Saves one origin's availability monitor; resolves true when saved. */
   updateMonitor(id: number, body: MonitorBody): Promise<boolean>
-  /** Asks for a manual check of the monitor; resolves true when asked. */
-  checkMonitor(id: number): Promise<boolean>
+  /** Asks for a manual check of one origin's monitor; resolves true when asked. */
+  checkMonitor(id: number, origin: string): Promise<boolean>
   /** Puts project `id` right after project `after` (0 first); no toast unless refused. Resolves true once the list has the new order. */
   move(id: number, after: number): Promise<boolean>
   /** True while an action runs; buttons wait on it. */
   pending: boolean
 }
 
-/** What a project write changes: the list, its keys, the usage cards, and the monitor (dropping its origin turns it off). */
+/** What a project write changes: the list, its keys, the usage cards, and the monitors (dropping an origin removes its monitor). */
 const PROJECT_WRITE = ['projects', 'keys', 'usage', 'monitor']
 /** What an event rule changes: the rules, the names listed, and the usage counts. */
 const EVENT_WRITE = ['event-rules', 'event-names', 'usage']
@@ -119,9 +119,9 @@ export function useProjectActions(): ProjectActions {
     updateMonitor: async (id, body) => (await run(() => endpoints.updateMonitor(id, body), 'Saved', ['monitor'])) !== undefined,
     // The answer goes in the cache before pending ends, so the button goes
     // straight to Checking… and polling starts.
-    checkMonitor: async (id) =>
+    checkMonitor: async (id, origin) =>
       (await run(async () => {
-        const m = await endpoints.checkMonitor(id)
+        const m = await endpoints.checkMonitor(id, origin)
         client.setQueryData(['monitor', id], m)
         return m
       }, 'Check started', [])) !== undefined,

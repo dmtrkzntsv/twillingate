@@ -53,10 +53,10 @@ export const projectTabsQuery = (projectId: number) => ({
  */
 export const projectsQuery = { queryKey: ['projects'], queryFn: () => endpoints.projects(), staleTime: 5 * 60_000 }
 
-/** A project's availability monitor and what its checks last found. */
-export const monitorQuery = (projectId: number) => ({
+/** A project's availability monitors and what their checks last found. */
+export const monitorsQuery = (projectId: number) => ({
   queryKey: ['monitor', projectId],
-  queryFn: () => endpoints.monitor(projectId),
+  queryFn: () => endpoints.monitors(projectId),
 })
 
 /** Ingest keys, of one project or of all of them. */

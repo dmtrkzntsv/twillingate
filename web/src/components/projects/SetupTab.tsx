@@ -57,7 +57,7 @@ export default function SetupTab({ project, dash, actions }: Props) {
       <UsageSection projectId={id} range={range} />
       <OriginsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
       {/* Reporting dev serves no monitor, as it serves no project tabs. */}
-      {dash !== undefined && !dash.dev && <MonitoringSection projectId={id} pending={actions.pending} onSave={(body) => actions.updateMonitor(id, body)} onCheck={() => actions.checkMonitor(id)} />}
+      {dash !== undefined && !dash.dev && <MonitoringSection projectId={id} pending={actions.pending} onSave={(body) => actions.updateMonitor(id, body)} onCheck={(origin) => actions.checkMonitor(id, origin)} />}
       <EventsSection
         project={project}
         range={range}

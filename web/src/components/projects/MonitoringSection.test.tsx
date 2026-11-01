@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
-import { endpoints, type Monitor } from '@/lib/api'
+import { endpoints, type Monitor, type Monitors } from '@/lib/api'
 import { renderWithProviders } from '@/test/render'
 import MonitoringSection from './MonitoringSection'
 
@@ -14,459 +14,436 @@ function utcDay(n: number): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + n)).toISOString().slice(0, 10)
 }
 
-const SWITCH = 'Monitor this site'
+const A = 'https://a.example'
+const B = 'https://b.example'
+const C = 'https://c.example'
+const SENTENCE = 'Check that the site is up, and when its certificate and domain expire.'
+const LINK = 'Also look for text on the page'
 
-const base: Monitor = {
-  project_id: 4,
-  enabled: false,
-  origin: '',
-  contains: '',
-  eligible_origins: ['https://a.example', 'https://b.example'],
-  interval_seconds: 60,
-  redirects: 0,
-  cert: { expires_at: '', issuer: '', valid: false, error: '', checked_at: '' },
-  domain: { expires_at: '', checked_at: '' },
-  check: { requested_at: '', finished_at: '', up: false, status: 0, reason: '', error: '', ms: 0 },
+function monitor(origin: string, over: Partial<Monitor> = {}): Monitor {
+  return {
+    origin,
+    enabled: false,
+    contains: '',
+    redirects: 0,
+    cert: { expires_at: '', issuer: '', valid: false, error: '', checked_at: '' },
+    check: { requested_at: '', finished_at: '', up: false, status: 0, reason: '', error: '', ms: 0 },
+    ...over,
+  }
+}
+const on = (origin: string, over: Partial<Monitor> = {}) => monitor(origin, { enabled: true, ...over })
+
+function list(monitors: Monitor[], over: Partial<Monitors> = {}): Monitors {
+  const enabled = monitors.filter((m) => m.enabled).length
+  return { interval_seconds: 60, timeout_seconds: 5, check_every_seconds: 60 * Math.max(enabled, 1), monitors, domains: [], ...over }
 }
 
-function show(m: Monitor, onSave = vi.fn().mockResolvedValue(true), onCheck = vi.fn().mockResolvedValue(true)) {
-  vi.spyOn(endpoints, 'monitor').mockResolvedValue(m)
+function show(data: Monitors, onSave = vi.fn().mockResolvedValue(true), onCheck = vi.fn().mockResolvedValue(true), pending = false) {
+  const read = vi.spyOn(endpoints, 'monitors').mockResolvedValue(data)
   vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs: [{ dashboard_id: 8, title: 'Availability', owner: 'system', group_id: 0 }] })
-  renderWithProviders(
+  const { client } = renderWithProviders(
     <MemoryRouter>
-      <MonitoringSection projectId={4} pending={false} onSave={onSave} onCheck={onCheck} />
+      <MonitoringSection projectId={4} pending={pending} onSave={onSave} onCheck={onCheck} />
     </MemoryRouter>
   )
-  return onSave
+  return { read, onSave, onCheck, client }
 }
+
+/** The row of an origin, once it is drawn. */
+const row = async (origin: string) => within(await screen.findByRole('listitem', { name: origin }))
 
 beforeEach(() => vi.restoreAllMocks())
 
 describe('MonitoringSection', () => {
-  const on: Monitor = { ...base, enabled: true, origin: 'https://a.example' }
-  const one = { eligible_origins: ['https://a.example'] }
-  const checked = new Date().toISOString()
-  /** The value beside a term of the status list. */
-  const status = (term: string) => screen.getByText(term).nextElementSibling
-
-  it('off and saved, shows the switch and one sentence, nothing else', async () => {
-    show(base)
-    expect(await screen.findByRole('switch', { name: SWITCH })).not.toBeChecked()
-    expect(screen.getByText('Check that the site is up, and when its certificate and domain expire.')).toBeInTheDocument()
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+  it('nothing on: the sentence and a switch per origin, nothing else', async () => {
+    show(list([monitor(A), monitor(B)]))
+    expect(await screen.findByRole('switch', { name: `Monitor ${A}` })).not.toBeChecked()
+    expect(screen.getByRole('switch', { name: `Monitor ${B}` })).not.toBeChecked()
+    expect(screen.getByText(SENTENCE)).toBeInTheDocument()
+    expect(screen.getByText(A)).toBeInTheDocument()
+    expect(screen.queryByText(/each site is checked/)).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
     expect(screen.queryAllByRole('button')).toEqual([])
     expect(screen.queryByRole('link')).not.toBeInTheDocument()
   })
 
-  it('switched on with one origin: the origin and interval on one line, and Save', async () => {
-    const user = userEvent.setup()
-    const onSave = show({ ...base, ...one })
-    expect(screen.queryByText(/every 1 min/)).not.toBeInTheDocument()
-    await user.click(await screen.findByRole('switch', { name: SWITCH }))
-    expect(screen.getByText('https://a.example · every 1 min')).toBeInTheDocument()
-    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
-    expect(screen.queryByText(/Check that the site/)).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-    expect(onSave).toHaveBeenCalledWith({ enabled: true, origin: 'https://a.example', contains: '' })
-  })
-
-  it('switched on with several origins: the select and the interval under it', async () => {
-    const user = userEvent.setup()
-    show(base)
-    await user.click(await screen.findByRole('switch', { name: SWITCH }))
-    expect(screen.getByRole('combobox', { name: 'Origin to monitor' })).toBeInTheDocument()
-    expect(screen.getByText('Checked every 1 min')).toBeInTheDocument()
-  })
-
-  it('switching on and off again has nothing to save', async () => {
-    const user = userEvent.setup()
-    show(base)
-    const sw = await screen.findByRole('switch', { name: SWITCH })
-    await user.click(sw)
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
-    await user.click(sw)
-    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
-  })
-
-  it('turning a monitor off is an edit: only the sentence and Save', async () => {
-    const user = userEvent.setup()
-    const onSave = show({ ...on, ...one })
-    await user.click(await screen.findByRole('switch', { name: SWITCH }))
-    expect(screen.getByText(/Check that the site/)).toBeInTheDocument()
-    expect(screen.queryByText('Certificate')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Check now' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-    expect(onSave).toHaveBeenCalledWith({ enabled: false, origin: 'https://a.example', contains: '' })
-  })
-
-  it('hides the text field behind a link, which reveals and focuses it, and saves what was typed', async () => {
-    const user = userEvent.setup()
-    const onSave = show({ ...on, ...one })
-    await screen.findByRole('button', { name: 'Check now' })
-    expect(screen.queryByLabelText('Page must contain')).not.toBeInTheDocument()
-    await user.click(screen.getByRole('button', { name: 'Also look for text on the page' }))
-    const input = screen.getByLabelText('Page must contain')
-    expect(input).toHaveFocus()
-    expect(screen.queryByRole('button', { name: 'Also look for text on the page' })).not.toBeInTheDocument()
-    // Opening it is no edit; typing is.
-    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Check now' })).toBeInTheDocument()
-    await user.type(input, 'Welcome')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-    expect(onSave).toHaveBeenCalledWith({ enabled: true, origin: 'https://a.example', contains: 'Welcome' })
-  })
-
-  it('shows the field directly for a saved text, without taking the focus', async () => {
-    show({ ...on, ...one, contains: 'Welcome' })
-    const input = await screen.findByLabelText('Page must contain')
-    expect(input).toHaveValue('Welcome')
-    expect(input).not.toHaveFocus()
-    expect(screen.queryByRole('button', { name: 'Also look for text on the page' })).not.toBeInTheDocument()
-  })
-
-  it('keeps the field while a saved text is cleared, and goes back to the link once saved', async () => {
-    const user = userEvent.setup()
-    const read = vi.spyOn(endpoints, 'monitor').mockResolvedValue({ ...on, ...one, contains: 'Welcome' })
-    vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs: [] })
-    const onSave = vi.fn().mockResolvedValue(true)
-    const { client } = renderWithProviders(<MemoryRouter><MonitoringSection projectId={4} onCheck={vi.fn()} onSave={onSave} /></MemoryRouter>)
-    await user.clear(await screen.findByLabelText('Page must contain'))
-    expect(screen.getByLabelText('Page must contain')).toHaveValue('')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-    expect(onSave).toHaveBeenCalledWith({ enabled: true, origin: 'https://a.example', contains: '' })
-    read.mockResolvedValue({ ...on, ...one })
-    await client.invalidateQueries({ queryKey: ['monitor'] })
-    expect(await screen.findByRole('button', { name: 'Also look for text on the page' })).toBeInTheDocument()
-    expect(screen.queryByLabelText('Page must contain')).not.toBeInTheDocument()
-  })
-
-  it('goes back to the link when a text asked for is saved and later cleared', async () => {
-    const user = userEvent.setup()
-    const read = vi.spyOn(endpoints, 'monitor').mockResolvedValue({ ...on, ...one })
-    vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs: [] })
-    const onSave = vi.fn().mockResolvedValue(true)
-    const { client } = renderWithProviders(<MemoryRouter><MonitoringSection projectId={4} onCheck={vi.fn()} onSave={onSave} /></MemoryRouter>)
-    await user.click(await screen.findByRole('button', { name: 'Also look for text on the page' }))
-    await user.type(screen.getByLabelText('Page must contain'), 'x')
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-    read.mockResolvedValue({ ...on, ...one, contains: 'x' })
-    await client.invalidateQueries({ queryKey: ['monitor'] })
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument())
-    await user.clear(screen.getByLabelText('Page must contain'))
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-    read.mockResolvedValue({ ...on, ...one })
-    await client.invalidateQueries({ queryKey: ['monitor'] })
-    expect(await screen.findByRole('button', { name: 'Also look for text on the page' })).toBeInTheDocument()
-  })
-
-  it('has no Save at rest, not even on Enter in the field', async () => {
-    const user = userEvent.setup()
-    const onSave = show({ ...on, ...one, contains: 'Welcome' })
-    const input = await screen.findByLabelText('Page must contain')
-    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
-    await user.type(input, '{Enter}')
-    expect(onSave).not.toHaveBeenCalled()
-  })
-
-  it('hides the status and footer while there are edits, and shows them again without', async () => {
-    const user = userEvent.setup()
-    show({ ...on, ...one, contains: 'Welcome' })
-    await screen.findByText('Certificate')
-    const input = screen.getByLabelText('Page must contain')
-    await user.type(input, '!')
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument()
-    expect(screen.queryByText('Certificate')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Check now' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'Open Availability' })).not.toBeInTheDocument()
-    await user.type(input, '{Backspace}')
-    expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
-    expect(screen.getByText('Certificate')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Open Availability' })).toBeInTheDocument()
-  })
-
-  it('names the empty state, with no switch', async () => {
-    show({ ...base, eligible_origins: [] })
+  it('names the empty state, with no rows', async () => {
+    show(list([]))
     expect(await screen.findByText('Add an exact http(s) origin above to monitor it.')).toBeInTheDocument()
     expect(screen.queryByRole('switch')).not.toBeInTheDocument()
+    expect(screen.queryByRole('listitem')).not.toBeInTheDocument()
   })
 
-  it('shows the interval, certificate and domain days left, and the Availability link', async () => {
-    show({
-      ...on,
-      ...one,
-      cert: { expires_at: days(30).toISOString(), issuer: 'R3', valid: true, error: '', checked_at: checked },
-      domain: { expires_at: utcDay(200), checked_at: checked },
-    })
-    expect(await screen.findByText('https://a.example · every 1 min')).toBeInTheDocument()
-    expect(status('Certificate')).toHaveTextContent(/^expires \S+ \(30 days\)$/)
-    expect(status('Domain')).toHaveTextContent(/^renews \S+ \(200 days\)$/)
+  it('shows one row per origin: on rows with what was found, off rows with the origin and switch alone', async () => {
+    const data = list(
+      [
+        on(A, { cert: { expires_at: days(54).toISOString(), issuer: 'R3', valid: true, error: '', checked_at: 'x' } }),
+        on(B, { cert: { expires_at: days(12).toISOString(), issuer: 'R3', valid: true, error: '', checked_at: 'x' } }),
+        monitor(C),
+      ],
+      { domains: [{ domain: 'a.example', origins: [A, B], expires_at: utcDay(285), checked_at: 'x' }] },
+    )
+    show(data)
+    const a = await row(A)
+    expect(a.getByText('cert 54 days')).toBeInTheDocument()
+    expect(a.getByText('cert 54 days')).toHaveAttribute('title', expect.stringMatching(/^expires \S+ \(54 days\)$/))
+    expect(a.getByRole('button', { name: 'Check now' })).toBeEnabled()
+    expect(a.getByRole('button', { name: LINK })).toBeInTheDocument()
+    expect(a.getByRole('switch')).toBeChecked()
+    expect((await row(B)).getByText('cert 12 days')).toBeInTheDocument()
+    const c = await row(C)
+    expect(c.getByRole('switch')).not.toBeChecked()
+    expect(c.queryAllByRole('button')).toEqual([])
+    expect(c.queryByText(/cert/)).not.toBeInTheDocument()
+    // Three monitors' worth of a header, the domain and the link.
+    expect(screen.getByText('each site is checked every 2 min')).toBeInTheDocument()
+    expect(screen.queryByText(SENTENCE)).not.toBeInTheDocument()
+    expect(screen.getByText(`Domain: a.example renews ${utcDay(285)} (285 days)`)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Open Availability' })).toHaveAttribute('href', '/projects/4/dashboards/8')
   })
 
-  it('says when the certificate is unchecked, or the domain unknown', async () => {
-    show(on)
-    await screen.findByText('Certificate')
-    expect(status('Certificate')).toHaveTextContent('not checked yet')
-    expect(status('Domain')).toHaveTextContent('unknown')
+  it('says when a domain is unknown, with a line per domain', async () => {
+    show(
+      list([on(A), on('https://other.test')], {
+        domains: [
+          { domain: 'a.example', origins: [A], expires_at: '', checked_at: '' },
+          { domain: 'other.test', origins: ['https://other.test'], expires_at: utcDay(10), checked_at: 'x' },
+        ],
+      }),
+    )
+    expect(await screen.findByText('Domain: a.example unknown')).toBeInTheDocument()
+    expect(screen.getByText(`Domain: other.test renews ${utcDay(10)} (10 days)`)).toBeInTheDocument()
   })
 
-  it('shows a certificate error', async () => {
-    show({ ...on, cert: { ...base.cert, error: 'x509: expired', checked_at: checked } })
-    await screen.findByText('Certificate')
-    expect(status('Certificate')).toHaveTextContent('x509: expired')
+  describe('the switch', () => {
+    it('saves at once, with no Save button, and shows it at once', async () => {
+      const user = userEvent.setup()
+      let done!: (saved: boolean) => void
+      const onSave = vi.fn().mockReturnValue(new Promise((resolve) => { done = resolve }))
+      const { read } = show(list([monitor(A), monitor(B)]), onSave)
+      const sw = await screen.findByRole('switch', { name: `Monitor ${B}` })
+      expect(screen.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+      await user.click(sw)
+      expect(onSave).toHaveBeenCalledWith({ origin: B, enabled: true })
+      expect(sw).toBeChecked()
+      expect(screen.getByRole('switch', { name: `Monitor ${A}` })).not.toBeChecked()
+      // What the save's refetch brings stays, once it resolves.
+      read.mockResolvedValue(list([monitor(A), on(B)]))
+      done(true)
+      await waitFor(() => expect(sw).toBeChecked())
+    })
+
+    it('goes back when the save fails', async () => {
+      const user = userEvent.setup()
+      const onSave = vi.fn().mockResolvedValue(false) // the toast is the action's
+      show(list([monitor(A)]), onSave)
+      const sw = await screen.findByRole('switch', { name: `Monitor ${A}` })
+      await user.click(sw)
+      await waitFor(() => expect(onSave).toHaveBeenCalled())
+      await waitFor(() => expect(sw).not.toBeChecked())
+    })
+
+    it('turns off a row at once, which goes back to the origin alone once saved', async () => {
+      const user = userEvent.setup()
+      const { read, onSave, client } = show(list([on(A)]))
+      const a = await row(A)
+      read.mockResolvedValue(list([monitor(A)]))
+      await user.click(a.getByRole('switch'))
+      expect(onSave).toHaveBeenCalledWith({ origin: A, enabled: false })
+      await client.invalidateQueries({ queryKey: ['monitor'] })
+      await waitFor(() => expect(a.queryByRole('button', { name: 'Check now' })).not.toBeInTheDocument())
+      expect(await screen.findByText(SENTENCE)).toBeInTheDocument()
+      expect(screen.queryByRole('link', { name: 'Open Availability' })).not.toBeInTheDocument()
+    })
+
+    it('locks while anything is saving', async () => {
+      show(list([on(A, { contains: 'x' })]), undefined, undefined, true)
+      const a = await row(A)
+      expect(a.getByRole('switch')).toBeDisabled()
+      expect(a.getByRole('button', { name: 'Check now' })).toBeDisabled()
+      const input = a.getByLabelText('Page must contain')
+      expect(input).toBeDisabled()
+      expect(input).toHaveAttribute('maxlength', '200')
+    })
   })
 
-  it('shows both a known expiry and the check that failed since', async () => {
-    show({ ...on, cert: { expires_at: days(30).toISOString(), issuer: 'R3', valid: true, error: 'connection refused', checked_at: checked } })
-    await screen.findByText('Certificate')
-    expect(status('Certificate')).toHaveTextContent(/^expires \S+ \(30 days\); last check failed: connection refused$/)
+  describe('the text', () => {
+    it('hides behind a link per row, which reveals and focuses that row\'s field only, and saves what was typed', async () => {
+      const user = userEvent.setup()
+      const { onSave } = show(list([on(A), on(B)]))
+      const a = await row(A)
+      const b = await row(B)
+      expect(a.queryByLabelText('Page must contain')).not.toBeInTheDocument()
+      await user.click(b.getByRole('button', { name: LINK }))
+      const input = b.getByLabelText('Page must contain')
+      expect(input).toHaveFocus()
+      expect(b.queryByRole('button', { name: LINK })).not.toBeInTheDocument()
+      expect(a.getByRole('button', { name: LINK })).toBeInTheDocument()
+      expect(a.queryByLabelText('Page must contain')).not.toBeInTheDocument()
+      // Opening it is no edit; typing is.
+      expect(b.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+      await user.type(input, ' Welcome ')
+      await user.click(b.getByRole('button', { name: 'Save' }))
+      expect(onSave).toHaveBeenCalledWith({ origin: B, contains: 'Welcome' })
+    })
+
+    it('shows the field directly for a saved text, without taking the focus or offering Save', async () => {
+      const user = userEvent.setup()
+      const { onSave } = show(list([on(A, { contains: 'Welcome' })]))
+      const a = await row(A)
+      const input = a.getByLabelText('Page must contain')
+      expect(input).toHaveValue('Welcome')
+      expect(input).not.toHaveFocus()
+      expect(a.queryByRole('button', { name: LINK })).not.toBeInTheDocument()
+      expect(a.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+      await user.type(input, '{Enter}')
+      expect(onSave).not.toHaveBeenCalled()
+    })
+
+    it('keeps the field while a saved text is cleared, and goes back to the link once saved', async () => {
+      const user = userEvent.setup()
+      const { read, onSave, client } = show(list([on(A, { contains: 'Welcome' })]))
+      const a = await row(A)
+      await user.clear(a.getByLabelText('Page must contain'))
+      expect(a.getByLabelText('Page must contain')).toHaveValue('')
+      await user.click(a.getByRole('button', { name: 'Save' }))
+      expect(onSave).toHaveBeenCalledWith({ origin: A, contains: '' })
+      read.mockResolvedValue(list([on(A)]))
+      await client.invalidateQueries({ queryKey: ['monitor'] })
+      expect(await a.findByRole('button', { name: LINK })).toBeInTheDocument()
+      expect(a.queryByLabelText('Page must contain')).not.toBeInTheDocument()
+    })
+
+    it('keeps an edit through a refetch, in its row, and takes what is saved once saved', async () => {
+      const user = userEvent.setup()
+      const onSave = vi.fn().mockResolvedValue(false)
+      const { read, client } = show(list([on(A, { contains: 'first' }), on(B, { contains: 'other' })]), onSave)
+      const a = await row(A)
+      const b = await row(B)
+      const input = a.getByLabelText('Page must contain')
+      expect(input).toHaveValue('first')
+
+      // Untouched, it follows the server.
+      read.mockResolvedValue(list([on(A, { contains: 'second' }), on(B, { contains: 'other' })]))
+      await client.invalidateQueries({ queryKey: ['monitor'] })
+      await waitFor(() => expect(input).toHaveValue('second'))
+
+      // Edited, a refetch (window focus, another row's save) leaves it, and its
+      // neighbour still follows the server.
+      await user.type(input, ' edited')
+      read.mockResolvedValue(list([on(A, { contains: 'third' }), on(B, { contains: 'other two' })]))
+      await client.invalidateQueries({ queryKey: ['monitor'] })
+      await waitFor(() => expect(b.getByLabelText('Page must contain')).toHaveValue('other two'))
+      expect(input).toHaveValue('second edited')
+
+      // A refused save keeps the edit too.
+      await user.click(a.getByRole('button', { name: 'Save' }))
+      await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+      read.mockResolvedValue(list([on(A, { contains: 'fourth' }), on(B, { contains: 'other two' })]))
+      await client.invalidateQueries({ queryKey: ['monitor'] })
+      expect(input).toHaveValue('second edited')
+
+      // A save that went through hands the field back to the server.
+      onSave.mockResolvedValue(true)
+      await user.click(a.getByRole('button', { name: 'Save' }))
+      await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
+      read.mockResolvedValue(list([on(A, { contains: 'saved' }), on(B, { contains: 'other two' })]))
+      await client.invalidateQueries({ queryKey: ['monitor'] })
+      await waitFor(() => expect(input).toHaveValue('saved'))
+    })
   })
 
-  it('says a certificate that was read but does not verify is invalid', async () => {
-    show({ ...on, cert: { expires_at: days(30).toISOString(), issuer: 'R3', valid: false, error: 'x509: unknown authority', checked_at: checked } })
-    await screen.findByText('Certificate')
-    expect(status('Certificate')).toHaveTextContent(/^invalid, expires \S+ \(30 days\): x509: unknown authority$/)
-  })
+  describe('the certificate', () => {
+    const certOf = (cert: Partial<Monitor['cert']>) => monitor(A, { enabled: true, cert: { ...monitor(A).cert, checked_at: 'x', ...cert } })
 
-  it('says no certificate applies to an http:// origin', async () => {
-    show({ ...on, origin: 'http://a.example', eligible_origins: ['http://a.example'], cert: { ...base.cert, checked_at: checked } })
-    await screen.findByText('Certificate')
-    expect(status('Certificate')).toHaveTextContent('none on a plain http:// origin')
+    it('says when it is unchecked, with no second line', async () => {
+      show(list([on(A)]))
+      const a = await row(A)
+      expect(a.getByText('cert not checked yet')).toBeInTheDocument()
+      expect(a.queryByText(/^Certificate:/)).not.toBeInTheDocument()
+    })
+
+    it('has a second line for an error, known expiry or not', async () => {
+      show(list([certOf({ error: 'x509: expired' })]))
+      const a = await row(A)
+      expect(a.getByText('cert unknown')).toBeInTheDocument()
+      expect(a.getByText('Certificate: x509: expired')).toBeInTheDocument()
+    })
+
+    it('shows both a known expiry and the check that failed since', async () => {
+      show(list([certOf({ expires_at: days(30).toISOString(), valid: true, error: 'connection refused' })]))
+      const a = await row(A)
+      expect(a.getByText('cert 30 days')).toBeInTheDocument()
+      expect(a.getByText(/^Certificate: expires \S+ \(30 days\); last check failed: connection refused$/)).toBeInTheDocument()
+    })
+
+    it('says a certificate that was read but does not verify is invalid', async () => {
+      show(list([certOf({ expires_at: days(30).toISOString(), valid: false, error: 'x509: unknown authority' })]))
+      expect((await row(A)).getByText(/^Certificate: invalid, expires \S+ \(30 days\): x509: unknown authority$/)).toBeInTheDocument()
+    })
+
+    it('says expired once the day has passed', async () => {
+      show(list([certOf({ expires_at: days(-3).toISOString(), valid: true })]))
+      expect((await row(A)).getByText('cert expired')).toBeInTheDocument()
+    })
+
+    it('says nothing on an http:// origin, which has none', async () => {
+      show(list([on('http://a.example', { cert: { ...monitor(A).cert, checked_at: 'x' } })]))
+      const a = await row('http://a.example')
+      expect(a.queryByText(/cert/i)).not.toBeInTheDocument()
+    })
   })
 
   it('offers a retry when the read fails', async () => {
     const user = userEvent.setup()
-    const read = vi.spyOn(endpoints, 'monitor').mockRejectedValueOnce(new Error('boom')).mockResolvedValue(base)
+    const read = vi.spyOn(endpoints, 'monitors').mockRejectedValueOnce(new Error('boom')).mockResolvedValue(list([monitor(A)]))
     vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs: [] })
     renderWithProviders(<MemoryRouter><MonitoringSection projectId={4} onCheck={vi.fn()} onSave={vi.fn()} /></MemoryRouter>)
-    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load the monitor. boom")
+    expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load the monitors. boom")
     await user.click(screen.getByRole('button', { name: 'Retry' }))
-    expect(await screen.findByRole('switch', { name: SWITCH })).toBeInTheDocument()
+    expect(await screen.findByRole('switch', { name: `Monitor ${A}` })).toBeInTheDocument()
     expect(read).toHaveBeenCalledTimes(2)
   })
 
-  it('locks the fields while saving and caps the text', async () => {
-    vi.spyOn(endpoints, 'monitor').mockResolvedValue({ ...on, contains: 'Welcome' })
-    vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs: [] })
-    renderWithProviders(<MemoryRouter><MonitoringSection projectId={4} pending onCheck={vi.fn()} onSave={vi.fn()} /></MemoryRouter>)
-    const input = await screen.findByLabelText('Page must contain')
-    expect(input).toBeDisabled()
-    expect(input).toHaveAttribute('maxlength', '200')
-    expect(screen.getByRole('combobox', { name: 'Origin to monitor' })).toBeDisabled()
-    expect(screen.getByRole('switch', { name: SWITCH })).toBeDisabled()
-    expect(screen.getByRole('button', { name: 'Check now' })).toBeDisabled()
-  })
-
-  it('keeps an edit through a refetch, and takes what is saved once saved', async () => {
-    const user = userEvent.setup()
-    const read = vi.spyOn(endpoints, 'monitor').mockResolvedValue({ ...on, contains: 'first' })
-    vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs: [] })
-    const onSave = vi.fn().mockResolvedValue(false)
-    const { client } = renderWithProviders(<MemoryRouter><MonitoringSection projectId={4} onCheck={vi.fn()} onSave={onSave} /></MemoryRouter>)
-    const input = await screen.findByLabelText('Page must contain')
-    expect(input).toHaveValue('first')
-
-    // Untouched, it follows the server.
-    read.mockResolvedValue({ ...on, contains: 'second' })
-    await client.invalidateQueries({ queryKey: ['monitor'] })
-    await waitFor(() => expect(input).toHaveValue('second'))
-
-    // Edited, a refetch (window focus, another section's save) leaves it.
-    await user.type(input, ' edited')
-    read.mockResolvedValue({ ...on, contains: 'third' })
-    await client.invalidateQueries({ queryKey: ['monitor'] })
-    await waitFor(() => expect(read).toHaveBeenCalledTimes(3))
-    expect(input).toHaveValue('second edited')
-
-    // A refused save keeps the edit too.
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
-    read.mockResolvedValue({ ...on, contains: 'fourth' })
-    await client.invalidateQueries({ queryKey: ['monitor'] })
-    await waitFor(() => expect(read).toHaveBeenCalledTimes(4))
-    expect(input).toHaveValue('second edited')
-
-    // A save that went through hands the form back to the server.
-    onSave.mockResolvedValue(true)
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2))
-    read.mockResolvedValue({ ...on, contains: 'saved' })
-    await client.invalidateQueries({ queryKey: ['monitor'] })
-    await waitFor(() => expect(input).toHaveValue('saved'))
-  })
-
   describe('redirect warning', () => {
-    const NOTE = 'Redirects 3 times before answering, which slows every visit'
-
     it('warns at 3 hops, with the count', async () => {
-      show({ ...base, enabled: true, origin: 'https://a.example', redirects: 3 })
-      expect(await screen.findByText(NOTE)).toBeInTheDocument()
+      show(list([on(A, { redirects: 3 }), on(B, { redirects: 5 })]))
+      expect((await row(A)).getByText('Redirects 3 times before answering, which slows every visit')).toBeInTheDocument()
+      expect((await row(B)).getByText('Redirects 5 times before answering, which slows every visit')).toBeInTheDocument()
     })
 
-    it('says the count it has', async () => {
-      show({ ...base, enabled: true, origin: 'https://a.example', redirects: 5 })
-      expect(await screen.findByText('Redirects 5 times before answering, which slows every visit')).toBeInTheDocument()
-    })
-
-    it('says nothing at 2 hops', async () => {
-      show({ ...base, enabled: true, origin: 'https://a.example', redirects: 2 })
-      await screen.findByText('Certificate')
-      expect(screen.queryByText(/Redirects \d+ times/)).not.toBeInTheDocument()
-    })
-
-    it('says nothing when the monitor is off', async () => {
-      show({ ...base, enabled: false, origin: 'https://a.example', redirects: 4 })
-      await screen.findByRole('switch', { name: SWITCH })
+    it('says nothing at 2 hops, or when the monitor is off', async () => {
+      show(list([on(A, { redirects: 2 }), monitor(B, { redirects: 4 })]))
+      await row(A)
       expect(screen.queryByText(/Redirects \d+ times/)).not.toBeInTheDocument()
     })
   })
 
   describe('Check now', () => {
-    const on: Monitor = { ...base, enabled: true, origin: 'https://a.example', contains: 'Welcome' }
     const at = '2026-11-01T10:00:00Z'
-    const pending: Monitor = { ...on, check: { ...on.check, requested_at: at } }
-    const done = (over: Partial<Monitor['check']>): Monitor => ({ ...on, check: { ...on.check, requested_at: at, finished_at: '2026-11-01T10:00:02Z', ...over } })
+    const pendingCheck = { ...monitor(A).check, requested_at: at }
+    const done = (over: Partial<Monitor['check']>): Monitor['check'] => ({ ...monitor(A).check, requested_at: at, finished_at: '2026-11-01T10:00:02Z', ...over })
 
-    it('is a button on an enabled monitor, and asks for the check', async () => {
-      const onCheck = vi.fn().mockResolvedValue(true)
-      show(on, undefined, onCheck)
+    it('is per row, and asks for that origin\'s check', async () => {
       const user = userEvent.setup()
-      await user.click(await screen.findByRole('button', { name: 'Check now' }))
+      const { onCheck } = show(list([on(A), on(B)]))
+      await user.click((await row(B)).getByRole('button', { name: 'Check now' }))
       expect(onCheck).toHaveBeenCalledTimes(1)
+      expect(onCheck).toHaveBeenCalledWith(B)
     })
 
-    it('shows the saved origin, not the first, with nothing to save', async () => {
-      const onCheck = vi.fn().mockResolvedValue(true)
-      show({ ...on, origin: 'https://b.example' }, undefined, onCheck)
-      expect(await screen.findByRole('combobox', { name: 'Origin to monitor' })).toHaveTextContent('https://b.example')
-      expect(await screen.findByRole('button', { name: 'Check now' })).toBeInTheDocument()
+    it('reads Checking… in the row with a check pending only', async () => {
+      show(list([on(A, { check: pendingCheck }), on(B)]))
+      expect((await row(A)).getByRole('button', { name: 'Checking…' })).toBeDisabled()
+      expect((await row(B)).getByRole('button', { name: 'Check now' })).toBeEnabled()
     })
 
-    it('is not offered on a disabled monitor', async () => {
-      show({ ...on, enabled: false })
-      await screen.findByRole('switch', { name: SWITCH })
-      expect(screen.queryByRole('button', { name: 'Check now' })).not.toBeInTheDocument()
-    })
-
-    it('goes away while the form has edits to save, and comes back without them', async () => {
-      const user = userEvent.setup()
-      show(on)
-      await screen.findByRole('button', { name: 'Check now' })
-      const text = screen.getByLabelText('Page must contain')
-      await user.type(text, '!')
-      expect(screen.queryByRole('button', { name: 'Check now' })).not.toBeInTheDocument()
-      await user.type(text, '{Backspace}')
-      expect(screen.getByRole('button', { name: 'Check now' })).toBeInTheDocument()
-    })
-
-    it('is disabled and reads Checking… while a check is pending', async () => {
-      show(pending)
-      expect(await screen.findByRole('button', { name: 'Checking…' })).toBeDisabled()
-      expect(screen.queryByRole('button', { name: 'Check now' })).not.toBeInTheDocument()
-    })
-
-    it('polls until the check finishes, then shows its result and fresh readings, and stops', async () => {
-      show(pending)
-      await screen.findByRole('button', { name: 'Checking…' })
-      expect(status('Domain')).toHaveTextContent('unknown')
-      const spy = vi.mocked(endpoints.monitor)
-      spy.mockResolvedValue({ ...done({ up: true, status: 200, ms: 123 }), domain: { expires_at: utcDay(10), checked_at: at } })
-      await screen.findByText('Last check', undefined, { timeout: 4000 })
-      expect(status('Last check')).toHaveTextContent(/^up, 200, 123 ms \(.+ ago\)$/)
-      expect(status('Domain')).toHaveTextContent(/^renews \S+ \(10 days\)$/)
-      expect(screen.getByRole('button', { name: 'Check now' })).toBeEnabled()
-      const calls = spy.mock.calls.length
+    it('polls while a row has one pending, shows its result and the fresh domain there, and stops', async () => {
+      const { read } = show(list([on(A, { check: pendingCheck }), on(B)]))
+      const a = await row(A)
+      expect(await screen.findByText('each site is checked every 2 min')).toBeInTheDocument()
+      read.mockResolvedValue(list([on(A, { check: done({ up: true, status: 200, ms: 123 }) }), on(B)], {
+        domains: [{ domain: 'a.example', origins: [A, B], expires_at: utcDay(10), checked_at: at }],
+      }))
+      expect(await a.findByText(/^up, 200, 123 ms \(.+ ago\)$/, undefined, { timeout: 4000 })).toBeInTheDocument()
+      expect(screen.getByText(`Domain: a.example renews ${utcDay(10)} (10 days)`)).toBeInTheDocument()
+      expect(a.getByRole('button', { name: 'Check now' })).toBeEnabled()
+      expect((await row(B)).queryByText(/^up,/)).not.toBeInTheDocument()
+      const calls = read.mock.calls.length
       await new Promise((r) => setTimeout(r, 2300))
-      expect(spy.mock.calls.length).toBe(calls)
+      expect(read.mock.calls.length).toBe(calls)
     }, 10_000)
 
     it('keeps an edit through the polling', async () => {
       const user = userEvent.setup()
-      show(pending)
-      await screen.findByRole('button', { name: 'Checking…' })
-      const text = screen.getByLabelText('Page must contain')
+      const { read } = show(list([on(A, { contains: 'Welcome', check: pendingCheck })]))
+      const a = await row(A)
+      const text = a.getByLabelText('Page must contain')
       await user.type(text, ' back')
-      vi.mocked(endpoints.monitor).mockResolvedValue(done({ up: true, status: 200, ms: 5 }))
-      await waitFor(() => expect(vi.mocked(endpoints.monitor).mock.results.length).toBeGreaterThan(1), { timeout: 4000 })
+      read.mockResolvedValue(list([on(A, { contains: 'Welcome', check: done({ up: true, status: 200, ms: 5 }) })]))
+      await waitFor(() => expect(read.mock.results.length).toBeGreaterThan(1), { timeout: 4000 })
       expect(text).toHaveValue('Welcome back')
     }, 10_000)
 
     it('shows a down result with its reason and error', async () => {
-      show(done({ reason: 'content', error: 'text not found', status: 200, ms: 9 }))
-      await screen.findByText('Last check')
-      expect(status('Last check')).toHaveTextContent(/^down, content: text not found \(.+ ago\)$/)
+      show(list([on(A, { check: done({ reason: 'content', error: 'text not found', status: 200, ms: 9 }) })]))
+      expect((await row(A)).getByText(/^down, content: text not found \(.+ ago\)$/)).toBeInTheDocument()
     })
 
     it('says when the check did not run', async () => {
-      show(done({ error: 'the check did not run' }))
-      await screen.findByText('Last check')
-      expect(status('Last check')).toHaveTextContent(/^the check did not run \(.+ ago\)$/)
+      show(list([on(A, { check: done({ error: 'the check did not run' }) })]))
+      expect((await row(A)).getByText(/^the check did not run \(.+ ago\)$/)).toBeInTheDocument()
     })
 
-    it('shows no result line before any check', async () => {
-      show(on)
-      await screen.findByRole('button', { name: 'Check now' })
-      expect(screen.queryByText('Last check')).not.toBeInTheDocument()
+    it('shows no result before any check', async () => {
+      show(list([on(A)]))
+      expect((await row(A)).queryByText(/^(up|down),/)).not.toBeInTheDocument()
     })
 
-    it('gives up waiting after 45 s with a message, and keeps looking every 15 s', async () => {
+    it('gives up waiting on a row after 45 s with a message, and keeps looking every 15 s', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true })
       try {
-        show(pending)
-        await screen.findByRole('button', { name: 'Checking…' })
-        expect(screen.queryByText(/has not finished/)).not.toBeInTheDocument()
-        const spy = vi.mocked(endpoints.monitor)
+        const { read } = show(list([on(A, { check: pendingCheck }), on(B)]))
+        const a = await row(A)
+        expect(a.getByRole('button', { name: 'Checking…' })).toBeDisabled()
+        expect(a.queryByText(/has not finished/)).not.toBeInTheDocument()
         await vi.advanceTimersByTimeAsync(45_500)
-        expect(await screen.findByText(/has not finished/)).toBeInTheDocument()
-        expect(screen.getByRole('button', { name: 'Check now' })).toBeEnabled()
+        expect(await a.findByText(/has not finished/)).toBeInTheDocument()
+        expect(a.getByRole('button', { name: 'Check now' })).toBeEnabled()
         // It looks less often, not never: the text says the result will show.
-        const calls = spy.mock.calls.length
+        const calls = read.mock.calls.length
         await vi.advanceTimersByTimeAsync(10_000)
-        expect(spy.mock.calls.length).toBe(calls)
+        expect(read.mock.calls.length).toBe(calls)
         await vi.advanceTimersByTimeAsync(5_500)
-        expect(spy.mock.calls.length).toBe(calls + 1)
-        spy.mockResolvedValue(done({ up: true, status: 200, ms: 7 }))
+        expect(read.mock.calls.length).toBe(calls + 1)
+        read.mockResolvedValue(list([on(A, { check: done({ up: true, status: 200, ms: 7 }) }), on(B)]))
         await vi.advanceTimersByTimeAsync(15_500)
-        expect(await screen.findByText('Last check')).toBeInTheDocument()
-        expect(screen.queryByText(/has not finished/)).not.toBeInTheDocument()
+        expect(await a.findByText(/^up, 200, 7 ms/)).toBeInTheDocument()
+        expect(a.queryByText(/has not finished/)).not.toBeInTheDocument()
         // Finished, it stops.
-        const finished = spy.mock.calls.length
+        const finished = read.mock.calls.length
         await vi.advanceTimersByTimeAsync(60_000)
-        expect(spy.mock.calls.length).toBe(finished)
+        expect(read.mock.calls.length).toBe(finished)
       } finally {
         vi.useRealTimers()
       }
     })
 
-    it('reads the monitor again when the request is refused, showing the check that is running', async () => {
+    it('polls fast again when another row starts a check after one gave up', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        const { read, client } = show(list([on(A, { check: pendingCheck }), on(B)]))
+        await row(A)
+        await vi.advanceTimersByTimeAsync(45_500)
+        expect(await screen.findByText(/has not finished/)).toBeInTheDocument()
+        client.setQueryData(['monitor', 4], list([on(A, { check: pendingCheck }), on(B, { check: { ...pendingCheck, requested_at: '2026-11-01T10:05:00Z' } })]))
+        read.mockResolvedValue(list([on(A, { check: pendingCheck }), on(B, { check: { ...pendingCheck, requested_at: '2026-11-01T10:05:00Z' } })]))
+        const calls = read.mock.calls.length
+        await vi.advanceTimersByTimeAsync(2_500)
+        expect(read.mock.calls.length).toBeGreaterThan(calls)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('reads the monitors again when the request is refused, showing the check that is running', async () => {
       const user = userEvent.setup()
       const onCheck = vi.fn().mockResolvedValue(false)
-      show(on, undefined, onCheck)
-      const button = await screen.findByRole('button', { name: 'Check now' })
-      vi.mocked(endpoints.monitor).mockResolvedValue(pending)
-      await user.click(button)
-      expect(await screen.findByRole('button', { name: 'Checking…' })).toBeDisabled()
+      const { read } = show(list([on(A)]), undefined, onCheck)
+      const a = await row(A)
+      read.mockResolvedValue(list([on(A, { check: pendingCheck })]))
+      await user.click(a.getByRole('button', { name: 'Check now' }))
+      expect(await a.findByRole('button', { name: 'Checking…' })).toBeDisabled()
     })
 
-    it('does not read the monitor again when the request went through', async () => {
+    it('does not read the monitors again when the request went through', async () => {
       const user = userEvent.setup()
-      show(on)
-      const button = await screen.findByRole('button', { name: 'Check now' })
-      const calls = vi.mocked(endpoints.monitor).mock.calls.length
-      await user.click(button)
+      const { read } = show(list([on(A)]))
+      const a = await row(A)
+      const calls = read.mock.calls.length
+      await user.click(a.getByRole('button', { name: 'Check now' }))
       await new Promise((r) => setTimeout(r, 50))
-      expect(vi.mocked(endpoints.monitor).mock.calls.length).toBe(calls)
-    })
-
-    it('keeps the form as it was when the request is refused', async () => {
-      const user = userEvent.setup()
-      const onCheck = vi.fn().mockResolvedValue(false) // the toast is the action's
-      show(on, undefined, onCheck)
-      await user.click(await screen.findByRole('button', { name: 'Check now' }))
-      await waitFor(() => expect(onCheck).toHaveBeenCalled())
-      expect(screen.getByLabelText('Page must contain')).toHaveValue('Welcome')
-      expect(screen.getByRole('button', { name: 'Check now' })).toBeEnabled()
+      expect(read.mock.calls.length).toBe(calls)
     })
   })
 })

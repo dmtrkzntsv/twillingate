@@ -46,15 +46,16 @@ describe('useProjectActions', () => {
   })
 
   it('asks for a monitor check and puts the answer in the cache at once', async () => {
-    const answer = { project_id: 7, check: { requested_at: '2026-11-01T10:00:00Z' } } as never
-    vi.spyOn(endpoints, 'checkMonitor').mockResolvedValue(answer)
+    const answer = { monitors: [{ origin: 'https://a.example', check: { requested_at: '2026-11-01T10:00:00Z' } }] } as never
+    const ask = vi.spyOn(endpoints, 'checkMonitor').mockResolvedValue(answer)
     const { client, wrapper: w } = wrapper()
     const { result } = renderHook(() => useProjectActions(), { wrapper: w })
     let ok: unknown
     await act(async () => {
-      ok = await result.current.checkMonitor(7)
+      ok = await result.current.checkMonitor(7, 'https://a.example')
     })
     expect(ok).toBe(true)
+    expect(ask).toHaveBeenCalledWith(7, 'https://a.example')
     expect(client.getQueryData(['monitor', 7])).toBe(answer)
     expect(toast.success).toHaveBeenCalled()
   })
@@ -65,7 +66,7 @@ describe('useProjectActions', () => {
     const { result } = renderHook(() => useProjectActions(), { wrapper: w })
     let ok: unknown
     await act(async () => {
-      ok = await result.current.checkMonitor(7)
+      ok = await result.current.checkMonitor(7, 'https://a.example')
     })
     expect(ok).toBe(false)
     expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('try again in 30 s'))

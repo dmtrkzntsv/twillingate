@@ -271,26 +271,39 @@ export interface Project {
   allowed_origins: string[]
 }
 
-/** A project's availability monitor (GET /api/projects/{id}/monitor); empty strings mean unknown. */
+/** One origin's availability monitor; empty strings mean unknown. */
 export interface Monitor {
-  project_id: number
-  enabled: boolean
   origin: string
+  enabled: boolean
   contains: string
-  /** The project's http(s) origins a check can target. */
-  eligible_origins: string[]
-  interval_seconds: number
   /** Redirect hops the last answered check followed. */
   redirects: number
   cert: { expires_at: string; issuer: string; valid: boolean; error: string; checked_at: string }
-  domain: { expires_at: string; checked_at: string }
   /** The last manual check; running while finished_at is before requested_at. */
   check: { requested_at: string; finished_at: string; up: boolean; status: number; reason: string; error: string; ms: number }
 }
 
+/** A main domain's last reading, which the enabled monitors' origins on it share. */
+export interface MonitorDomain {
+  domain: string
+  origins: string[]
+  expires_at: string
+  checked_at: string
+}
+
+/** A project's monitoring (GET /api/projects/{id}/monitors): every origin a check can target, on or off. */
+export interface Monitors {
+  interval_seconds: number
+  timeout_seconds: number
+  /** How often each site comes round: the interval, shared by the enabled monitors. */
+  check_every_seconds: number
+  monitors: Monitor[]
+  domains: MonitorDomain[]
+}
+
 export interface MonitorBody {
+  origin: string
   enabled?: boolean
-  origin?: string
   contains?: string
 }
 
@@ -673,9 +686,9 @@ export const endpoints = {
   keys: (projectId?: number) => api<{ keys: IngestKey[] }>(`/api/keys${toQuery({ project_id: projectId })}`),
   createProject: (body: CreateProjectBody) => api<CreatedProject>('/api/projects', json('POST', body)),
   updateProject: (id: number, body: Partial<CreateProjectBody>) => api<{ project_id: number }>(`/api/projects/${id}`, json('PATCH', body)),
-  monitor: (id: number) => api<Monitor>(`/api/projects/${id}/monitor`),
-  updateMonitor: (id: number, body: MonitorBody) => api<Monitor>(`/api/projects/${id}/monitor`, json('PATCH', body)),
-  checkMonitor: (id: number) => api<Monitor>(`/api/projects/${id}/monitor/check`, { method: 'POST' }),
+  monitors: (id: number) => api<Monitors>(`/api/projects/${id}/monitors`),
+  updateMonitor: (id: number, body: MonitorBody) => api<Monitors>(`/api/projects/${id}/monitors`, json('PATCH', body)),
+  checkMonitor: (id: number, origin: string) => api<Monitors>(`/api/projects/${id}/monitors/check`, json('POST', { origin })),
   moveProject: (id: number, after: number) => api<{ status: string }>(`/api/projects/${id}/move`, json('POST', { after })),
   archiveProject: (id: number) => api<{ status: string }>(`/api/projects/${id}/archive`, json('POST', {})),
   restoreProject: (id: number) => api<{ status: string }>(`/api/projects/${id}/restore`, json('POST', {})),

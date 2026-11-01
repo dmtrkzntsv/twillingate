@@ -131,8 +131,8 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   expect(created.ok(), await created.text()).toBeTruthy()
   const { project_id: id, key } = (await created.json()) as { project_id: number; key: string }
   // Monitor the longer origin, with a long expected text: the Monitoring
-  // section's origin, status lines and fields wrap too.
-  const monitored = await request.patch(`/api/projects/${id}/monitor`, {
+  // section's rows, status lines and fields wrap too. The other stays off.
+  const monitored = await request.patch(`/api/projects/${id}/monitors`, {
     headers: authHeaders(),
     data: {
       enabled: true,
@@ -255,7 +255,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     await check(page, path)
     // The check above means nothing for the Events and Attributes sections unless they are drawn.
     if (path.endsWith('?range=today')) {
-      await expect(page.getByRole('region', { name: 'Monitoring' }).getByText(/^Checked every/)).toBeVisible()
+      await expect(page.getByRole('region', { name: 'Monitoring' }).getByText(/^each site is checked every/)).toBeVisible()
       for (const [section, alias] of [['Events', longEvent], ['Attributes', longAttribute]]) {
         const region = page.getByRole('region', { name: section })
         await expect(region.getByRole('button', { name: `Remove alias ${alias}` })).toBeVisible()
@@ -270,7 +270,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await check(page, `/app/projects/${id}/settings?range=today`)
   const monitoring = page.getByRole('region', { name: 'Monitoring' })
   await monitoring.getByRole('button', { name: 'Check now' }).click()
-  await expect(monitoring.getByText('Last check')).toBeVisible({ timeout: 40_000 })
+  await expect(monitoring.getByText(/^down, /)).toBeVisible({ timeout: 40_000 })
   await expect(monitoring.getByRole('button', { name: 'Check now' })).toBeEnabled()
   expect(await sidewaysScroll(page), 'monitoring after a check').toEqual([])
 
