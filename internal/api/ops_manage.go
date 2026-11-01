@@ -96,9 +96,9 @@ type okOut struct {
 	Status string `json:"status"`
 }
 
-// ok answers an operation that returns nothing but its refusal: err, or
+// okWith answers an operation that returns nothing but its refusal: err, or
 // status when there is none.
-func ok(status string, err error) (okOut, error) {
+func okWith(status string, err error) (okOut, error) {
 	if err != nil {
 		return okOut{}, err
 	}
@@ -124,12 +124,12 @@ func (h *host) moveProject(ctx context.Context, in moveProjectIn) (okOut, error)
 
 func (h *host) archiveProject(ctx context.Context, in idIn) (okOut, error) {
 	err := h.ops.ArchiveProject(ctx, actorFrom(ctx), in.ProjectID)
-	return ok("archived; ingestion rejected, data kept, reversible with restore_project", h.projectErr(ctx, in.ProjectID, err))
+	return okWith("archived; ingestion rejected, data kept, reversible with restore_project", h.projectErr(ctx, in.ProjectID, err))
 }
 
 func (h *host) restoreProject(ctx context.Context, in idIn) (okOut, error) {
 	err := h.ops.RestoreProject(ctx, actorFrom(ctx), in.ProjectID)
-	return ok("restored", h.projectErr(ctx, in.ProjectID, err))
+	return okWith("restored", h.projectErr(ctx, in.ProjectID, err))
 }
 
 type keyIn struct {
@@ -162,11 +162,11 @@ func (h *host) issueKey(ctx context.Context, in keyIn) (keyOut, error) {
 }
 
 func (h *host) disableKey(ctx context.Context, in keyIn) (okOut, error) {
-	return ok("disabled; reversible with enable_ingest_key", h.ops.DisableIngestKey(ctx, actorFrom(ctx), in.ProjectID, in.Label))
+	return okWith("disabled; reversible with enable_ingest_key", h.ops.DisableIngestKey(ctx, actorFrom(ctx), in.ProjectID, in.Label))
 }
 
 func (h *host) enableKey(ctx context.Context, in keyIn) (okOut, error) {
-	return ok("enabled", h.ops.EnableIngestKey(ctx, actorFrom(ctx), in.ProjectID, in.Label))
+	return okWith("enabled", h.ops.EnableIngestKey(ctx, actorFrom(ctx), in.ProjectID, in.Label))
 }
 
 type listKeysIn struct {

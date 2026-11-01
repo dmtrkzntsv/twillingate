@@ -198,11 +198,11 @@ func (h *host) duplicateDashboard(ctx context.Context, in duplicateDashboardIn) 
 }
 
 func (h *host) archiveDashboard(ctx context.Context, in dashboardGroupIn) (okOut, error) {
-	return ok("archived; hidden, reversible with restore_dashboard, purged after RETENTION_ARCHIVED_DAYS", h.rep.ArchiveDashboard(ctx, actorFrom(ctx), in.DashboardID, in.WholeGroup))
+	return okWith("archived; hidden, reversible with restore_dashboard, purged after RETENTION_ARCHIVED_DAYS", h.rep.ArchiveDashboard(ctx, actorFrom(ctx), in.DashboardID, in.WholeGroup))
 }
 
 func (h *host) restoreDashboard(ctx context.Context, in dashboardGroupIn) (okOut, error) {
-	return ok("restored", h.rep.RestoreDashboard(ctx, actorFrom(ctx), in.DashboardID, in.WholeGroup))
+	return okWith("restored", h.rep.RestoreDashboard(ctx, actorFrom(ctx), in.DashboardID, in.WholeGroup))
 }
 
 func (h *host) listProjectTabs(ctx context.Context, in projectTabsIn) (projectTabsOut, error) {
@@ -245,17 +245,17 @@ func (h *host) copyWidget(ctx context.Context, in copyWidgetIn) (reporting.Widge
 }
 
 func (h *host) archiveWidget(ctx context.Context, in widgetIn) (okOut, error) {
-	return ok("archived; hidden in place, reversible with restore_widget, purged after RETENTION_ARCHIVED_DAYS", h.rep.ArchiveWidget(ctx, actorFrom(ctx), in.WidgetID))
+	return okWith("archived; hidden in place, reversible with restore_widget, purged after RETENTION_ARCHIVED_DAYS", h.rep.ArchiveWidget(ctx, actorFrom(ctx), in.WidgetID))
 }
 
 func (h *host) restoreWidget(ctx context.Context, in widgetIn) (okOut, error) {
-	return ok("restored", h.rep.RestoreWidget(ctx, actorFrom(ctx), in.WidgetID))
+	return okWith("restored", h.rep.RestoreWidget(ctx, actorFrom(ctx), in.WidgetID))
 }
 
 // setView stores the viewer's selection. Viewer state, not definition:
 // allowed on system dashboards and not audited (D30).
 func (h *host) setView(ctx context.Context, in viewIn) (okOut, error) {
-	return ok("saved", h.rep.SetView(ctx, reporting.View{
+	return okWith("saved", h.rep.SetView(ctx, reporting.View{
 		DashboardID: in.DashboardID, ProjectID: in.ProjectID, Range: in.Range, From: in.From, To: in.To}))
 }
 

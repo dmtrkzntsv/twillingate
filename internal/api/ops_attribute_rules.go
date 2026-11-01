@@ -71,5 +71,5 @@ func (h *host) blockAttribute(ctx context.Context, in attributeKeyIn) (attribute
 
 func (h *host) removeAttributeRule(ctx context.Context, in attributeKeyIn) (okOut, error) {
 	err := h.ops.RemoveAttributeRule(ctx, actorFrom(ctx), in.ProjectID, in.Key)
-	return ok("removed", h.ruleErr(ctx, in.ProjectID, err))
+	return okWith("removed", h.ruleErr(ctx, in.ProjectID, err))
 }

@@ -233,11 +233,11 @@ func (h *host) markFormSeen(ctx context.Context, in markSeenIn) (okOut, error) {
 	}
 	// Not projectErr: an unknown form is as likely as an unknown project,
 	// and the store's refusal names which.
-	return ok("seen", h.ops.MarkFormSeen(ctx, in.ProjectID, in.Name, until))
+	return okWith("seen", h.ops.MarkFormSeen(ctx, in.ProjectID, in.Name, until))
 }
 
 func (h *host) approveForm(ctx context.Context, in approveFormIn) (okOut, error) {
-	return ok("approved; new submissions keep only the expected fields and each writes a $form_submit event about a minute after it arrives", h.ops.ApproveForm(ctx, actorFrom(ctx), in.ProjectID, in.Name, in.ExpectedFields))
+	return okWith("approved; new submissions keep only the expected fields and each writes a $form_submit event about a minute after it arrives", h.ops.ApproveForm(ctx, actorFrom(ctx), in.ProjectID, in.Name, in.ExpectedFields))
 }
 
 func (h *host) updateForm(ctx context.Context, in updateFormIn) (okOut, error) {
@@ -245,15 +245,15 @@ func (h *host) updateForm(ctx context.Context, in updateFormIn) (okOut, error) {
 	if in.ClosesAt.set {
 		spec.ClosesAt = &in.ClosesAt.at
 	}
-	return ok("updated", h.ops.UpdateForm(ctx, actorFrom(ctx), in.ProjectID, in.Name, spec))
+	return okWith("updated", h.ops.UpdateForm(ctx, actorFrom(ctx), in.ProjectID, in.Name, spec))
 }
 
 func (h *host) archiveForm(ctx context.Context, in formIn) (okOut, error) {
-	return ok("archived; submissions refused and hidden, reversible with restore_form, purged after RETENTION_ARCHIVED_DAYS", h.ops.ArchiveForm(ctx, actorFrom(ctx), in.ProjectID, in.Name))
+	return okWith("archived; submissions refused and hidden, reversible with restore_form, purged after RETENTION_ARCHIVED_DAYS", h.ops.ArchiveForm(ctx, actorFrom(ctx), in.ProjectID, in.Name))
 }
 
 func (h *host) restoreForm(ctx context.Context, in formIn) (okOut, error) {
-	return ok("restored", h.ops.RestoreForm(ctx, actorFrom(ctx), in.ProjectID, in.Name))
+	return okWith("restored", h.ops.RestoreForm(ctx, actorFrom(ctx), in.ProjectID, in.Name))
 }
 
 // subsErr words a submissions-table failure as the caller's to fix where

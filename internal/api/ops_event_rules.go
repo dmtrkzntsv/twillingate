@@ -114,7 +114,7 @@ func (h *host) blockEvent(ctx context.Context, in eventNameIn) (eventRuleResultO
 
 func (h *host) removeEventRule(ctx context.Context, in eventNameIn) (okOut, error) {
 	err := h.ops.RemoveEventRule(ctx, actorFrom(ctx), in.ProjectID, in.Family, in.Name)
-	return ok("removed", h.ruleErr(ctx, in.ProjectID, err))
+	return okWith("removed", h.ruleErr(ctx, in.ProjectID, err))
 }
 
 // eventNamesMax is how many names event_names lists: a project sending
