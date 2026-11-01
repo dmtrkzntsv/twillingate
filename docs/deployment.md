@@ -94,13 +94,6 @@ curl -i -X POST http://localhost:8080/ingest/events \
   -d '{"key":"ak_…","events":[{"name":"$page_view","attributes":{"$host":"myapp.com","$path":"/"}}]}'
 ```
 
-### systemd with ship
-
-The maintainer's hosts install from a private R2 bucket with
-[ship](https://github.com/dmtrkzntsv/ship) instead of `install.sh`; the
-README's [Deploy with ship](https://github.com/dmtrkzntsv/twillingate#deploy-with-ship)
-covers it.
-
 ### One collector, several hostnames
 
 The service binds to loopback by default, so put TLS in front of
