@@ -420,6 +420,65 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 }
 
 // A listen address already in use must surface as an error, not a hang.
+// A console-only process serves no script or /ingest/*, whatever address it
+// listens on, so CONSOLE_URL cannot name its collector: a snippet keeps the
+// placeholder and its note. INGEST_URL, set by hand, is still used.
+func TestServeConsoleOnlySnippets(t *testing.T) {
+	for _, tc := range []struct {
+		name, ingestURL, wantBase string
+		wantNote                  bool
+	}{
+		{"CONSOLE_URL alone", "", manage.SnippetPlaceholderBase, true},
+		{"INGEST_URL set", "https://t.example.com", "https://t.example.com", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			addr := freePort(t)
+			env := map[string]string{
+				"DATABASE_DSN":     "sqlite://" + filepath.Join(t.TempDir(), "t.db"),
+				"GEO_DSN":          "none://",
+				"INGEST_ADDR":      addr,
+				"CONSOLE_URL":      "http://" + addr,
+				"CONSOLE_AUTH_DSN": "token://tok",
+				"INGEST_URL":       tc.ingestURL,
+			}
+			cfg, err := config.FromEnv(func(k string) (string, bool) { v, ok := env[k]; return v, ok })
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := cfg.ValidateConsole(); err != nil {
+				t.Fatal(err)
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			done := make(chan error, 1)
+			go func() { done <- Serve(ctx, cfg, slog.New(slog.DiscardHandler), false, true) }()
+			defer func() { cancel(); <-done }()
+			waitHealthy(t, "http://"+addr)
+
+			req, err := http.NewRequest("POST", "http://"+addr+"/api/projects", strings.NewReader(`{"name":"p"}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Authorization", "Bearer tok")
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			var out struct{ Snippet, Note string }
+			if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.Snippet, tc.wantBase+"/js/twillingate.js") {
+				t.Errorf("snippet = %q, want it on %s", out.Snippet, tc.wantBase)
+			}
+			if (out.Note != "") != tc.wantNote {
+				t.Errorf("note = %q, want one: %v", out.Note, tc.wantNote)
+			}
+		})
+	}
+}
+
 func TestServeReportsListenFailure(t *testing.T) {
 	l, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

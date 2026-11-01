@@ -157,12 +157,14 @@ type Config struct {
 	SQLEngineSocket string
 	Geo             string
 	IngestURL       string // INGEST_URL; defaults to CONSOLE_URL on a shared listener
-	Log             LogConfig
-	Buffer          BufferConfig
-	Retention       Retention
-	Forms           FormsConfig
-	Reporting       ReportingConfig
-	Console         ConsoleConfig
+	// ingestURLIsConsole: IngestURL is that default, which ConsoleOnly undoes.
+	ingestURLIsConsole bool
+	Log                LogConfig
+	Buffer             BufferConfig
+	Retention          Retention
+	Forms              FormsConfig
+	Reporting          ReportingConfig
+	Console            ConsoleConfig
 	// Ignored lists the retired settings the environment still sets, in
 	// the order of retired.
 	Ignored []string
@@ -294,6 +296,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 	// address cannot stand in for the collector's.
 	if c.IngestURL == "" && c.Console.Addr == c.IngestAddr {
 		c.IngestURL = c.Console.URL
+		c.ingestURLIsConsole = c.IngestURL != ""
 	}
 	c.Console.DBPath = strings.TrimPrefix(c.Console.Database, "sqlite://")
 	c.SQLEngineSocket = e.str("SQL_ENGINE_SOCKET", "")
@@ -349,6 +352,15 @@ func refuseRenamed(lookup func(string) (string, bool)) error {
 		}
 	}
 	return nil
+}
+
+// ConsoleOnly is for a process that serves the console and not ingest. It has
+// no script or /ingest/* on any address, so CONSOLE_URL cannot name its
+// collector; an INGEST_URL that was set stays.
+func (c *Config) ConsoleOnly() {
+	if c.ingestURLIsConsole {
+		c.IngestURL, c.ingestURLIsConsole = "", false
+	}
 }
 
 // ExplicitURL is CONSOLE_URL as set, "" when URL only took INGEST_URL's value:
