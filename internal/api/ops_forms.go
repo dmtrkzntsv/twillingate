@@ -57,8 +57,8 @@ type listFormsOut struct {
 	Forms []formOut `json:"forms"`
 	// ActionBase is where a plain HTML form posts: the collector's public
 	// URL (INGEST_URL) + /ingest/forms, so a form's action is
-	// <action_base>/<name>?key=<key>. Empty when INGEST_URL is not set.
-	ActionBase string `json:"action_base" jsonschema:"INGEST_URL + /ingest/forms, where a plain HTML form posts (<action_base>/<name>?key=<key>); empty when INGEST_URL is not configured"`
+	// <action_base>/<name>?key=<key>. Empty when neither INGEST_URL nor CONSOLE_URL is set.
+	ActionBase string `json:"action_base" jsonschema:"INGEST_URL + /ingest/forms, where a plain HTML form posts (<action_base>/<name>?key=<key>); empty when neither INGEST_URL nor CONSOLE_URL is configured"`
 }
 
 type approveFormIn struct {
@@ -437,7 +437,7 @@ func (h *host) registerForms(r *registrar) {
 	const f = p + "/forms/{name}"
 
 	expose(r, spec{Name: "list_forms", Annotations: ro, Method: "GET", Path: p + "/forms",
-		Description: "A project's forms, drafts first (archived: true lists the archived ones instead): name, status (draft or approved), purpose, return_url, fields (every field name sent), expected_fields (what an approved form keeps), draft_until, approved_at, closes_at, submissions (count of active ones), last_submitted_at, new_submissions (active, received after seen_at), archived_submissions (count, purged RETENTION_ARCHIVED_DAYS after archiving), seen_at (how far the console has read the form; reading over MCP never moves it), archived; and action_base, INGEST_URL + /ingest/forms (empty when INGEST_URL is not configured), so a plain HTML form's action is <action_base>/<name>?key=<key>. A form is created as a draft by its first submission to POST /ingest/forms/{name}; a draft keeps every field for RETENTION_FORMS_DRAFT_DAYS, then is archived unless approved, and its submissions never count as conversions. Approve one with approve_form."},
+		Description: "A project's forms, drafts first (archived: true lists the archived ones instead): name, status (draft or approved), purpose, return_url, fields (every field name sent), expected_fields (what an approved form keeps), draft_until, approved_at, closes_at, submissions (count of active ones), last_submitted_at, new_submissions (active, received after seen_at), archived_submissions (count, purged RETENTION_ARCHIVED_DAYS after archiving), seen_at (how far the console has read the form; reading over MCP never moves it), archived; and action_base, INGEST_URL + /ingest/forms (empty when neither INGEST_URL nor CONSOLE_URL is configured), so a plain HTML form's action is <action_base>/<name>?key=<key>. A form is created as a draft by its first submission to POST /ingest/forms/{name}; a draft keeps every field for RETENTION_FORMS_DRAFT_DAYS, then is archived unless approved, and its submissions never count as conversions. Approve one with approve_form."},
 		h.listForms)
 	expose(r, spec{Name: "approve_form", Annotations: write, Method: "POST", Path: f + "/approve",
 		Description: "Approve a draft form with expected_fields (one or more, from list_forms' fields): from now on its submissions keep only those fields, and each writes a $form_submit product event (attribute form = the name), its conversion, about a minute after it arrives. Submissions taken while it was a draft never count as conversions. Approving an approved form is refused (conflict; change its fields with update_form), and approval does not reopen a closed form."},

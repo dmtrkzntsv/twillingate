@@ -348,6 +348,15 @@ func refuseRenamed(lookup func(string) (string, bool)) error {
 	return nil
 }
 
+// ExplicitURL is CONSOLE_URL as set, "" when URL only took INGEST_URL's value:
+// that address may be a collector with no console behind it.
+func (c ConsoleConfig) ExplicitURL() string {
+	if c.urlIsIngest {
+		return ""
+	}
+	return c.URL
+}
+
 func (c *Config) validate() error {
 	if c.Database == "" {
 		return fmt.Errorf("config: DATABASE_DSN is required")

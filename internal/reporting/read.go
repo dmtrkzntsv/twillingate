@@ -40,7 +40,7 @@ type Dashboards struct {
 	// answer it already has. 0 (omitted, both off): no auto-refresh.
 	AutoRefreshSeconds int `json:"auto_refresh_seconds,omitempty"`
 	// ConsoleURL is CONSOLE_URL, where /mcp is. Empty (omitted) when it is
-	// not set, or the address of the page reading this is the best there is.
+	// not set: the address of the page reading this is then the best there is.
 	ConsoleURL string     `json:"console_url,omitempty"`
 	Dev        bool       `json:"dev,omitempty"`    // set by reporting dev
 	Errors     []DevError `json:"errors,omitempty"` // reporting dev only: directories that failed to load
@@ -177,7 +177,7 @@ func (s *Service) Dashboards(ctx context.Context) (Dashboards, error) {
 	out := Dashboards{
 		Timezone: "UTC", Dashboards: make([]DashboardInfo, 0, len(ds)), PurgeAfterDays: s.archivedDays,
 		AutoRefreshSeconds: int(max(s.cache.cacheAge, s.cache.refreshAge) / time.Second),
-		ConsoleURL:         s.shareBase,
+		ConsoleURL:         s.consoleURL,
 	}
 	for _, d := range ds {
 		out.Dashboards = append(out.Dashboards, dashboardInfo(d))

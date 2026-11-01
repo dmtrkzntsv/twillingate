@@ -2031,7 +2031,7 @@ func TestArchiveDashboardRefusesBuiltin(t *testing.T) {
 // D17, review focus 5: list_dashboards says how long an archived user
 // dashboard is kept; 0 (kept forever) is omitted.
 func TestDashboardsConsoleURL(t *testing.T) {
-	svc, _ := newTestServiceOpts(t, Options{ShareBaseURL: "https://console.example.com/"}, 1000)
+	svc, _ := newTestServiceOpts(t, Options{ConsoleURL: "https://console.example.com/", ShareBaseURL: "https://ingest.example.com"}, 1000)
 	got, err := svc.Dashboards(context.Background())
 	if err != nil {
 		t.Fatal(err)

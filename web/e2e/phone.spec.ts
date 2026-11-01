@@ -435,7 +435,8 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
 test('the empty Projects guide and the install dialog fit a phone', async ({ page, request }) => {
   const created = await request.post('/api/projects', {
     headers: authHeaders(),
-    data: { name: `install-${Date.now()} - longer than a phone is wide on one line`, allowed_origins: [] },
+    // One unbroken word: it can only fit by breaking inside it.
+    data: { name: `install${Date.now()}asingleunbrokenwordlongerthanaphoneiswideononeline`, allowed_origins: [] },
   })
   expect(created.ok(), await created.text()).toBeTruthy()
   const { project_id: id } = (await created.json()) as { project_id: number }
@@ -447,7 +448,7 @@ test('the empty Projects guide and the install dialog fit a phone', async ({ pag
 
   await page.goto(`/app/projects/${id}/settings`)
   await page.getByRole('button', { name: 'Show install snippet' }).click()
-  await expect(page.getByRole('dialog').getByRole('button', { name: 'Copy snippet' })).toBeVisible()
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Copy snippet' })).toBeInViewport({ ratio: 1 })
   await expect(page.getByRole('dialog').getByText(/No allowed origins/)).toBeVisible()
   expect(await dialogOverflow(page)).toEqual([])
   await page.keyboard.press('Escape')

@@ -34,7 +34,7 @@ export default function InstallSection({ project, keys, error, onRetry, note }: 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle className="break-words">Install on {project.name}</DialogTitle>
+            <DialogTitle className="wrap-anywhere">Install on {project.name}</DialogTitle>
             <DialogDescription>Paste this into the <code className="font-mono text-xs">&lt;head&gt;</code> of every page.</DialogDescription>
           </DialogHeader>
           {error && !keys ? (
@@ -47,10 +47,10 @@ export default function InstallSection({ project, keys, error, onRetry, note }: 
               <p className="text-xs text-muted-foreground">It uses the key <span className="font-medium break-all">{key.label}</span>.</p>
             </>
           ) : (
-            <p role="status" className="text-sm text-destructive">This project has no active key, so there is nothing to paste yet. Issue or enable one under Ingest keys.</p>
+            <p role="alert" className="text-sm text-destructive">This project has no active key, so there is nothing to paste yet. Issue or enable one under Ingest keys.</p>
           )}
           {project.allowed_origins.length === 0 && (
-            <p role="status" className="text-sm text-destructive">No allowed origins: browsers' events are refused until you add your site under Allowed origins.</p>
+            <p role="alert" className="text-sm text-destructive">No allowed origins: browsers' events are refused until you add your site under Allowed origins.</p>
           )}
         </DialogContent>
       </Dialog>

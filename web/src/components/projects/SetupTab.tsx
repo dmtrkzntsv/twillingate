@@ -56,7 +56,7 @@ export default function SetupTab({ project, dash, actions }: Props) {
         )}
       </DashboardHeader>
       <UsageSection projectId={id} range={range} />
-      {!project.archived && !dash?.dev && (
+      {!project.archived && dash && !dash.dev && (
         <InstallSection project={project} keys={keysQ.data?.keys} error={keysQ.error} onRetry={() => void keysQ.refetch()} note={keysQ.data?.note} />
       )}
       <OriginsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />

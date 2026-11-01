@@ -100,7 +100,7 @@ export interface DashboardsResponse {
   purge_after_days?: number
   /** How often a dashboard with auto-refresh on reloads: max(REPORTING_CACHE_MAX_AGE, REPORTING_REFRESH_MAX_AGE); absent when both are 0. */
   auto_refresh_seconds?: number
-  /** CONSOLE_URL, where /mcp is; absent when the server has no address set. */
+  /** CONSOLE_URL, where /mcp is; absent when it is not set. */
   console_url?: string
 }
 

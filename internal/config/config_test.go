@@ -741,6 +741,9 @@ func TestIngestURLDefaultsToConsoleURL(t *testing.T) {
 		if c.IngestURL != tc.ingest || c.Console.URL != tc.con {
 			t.Errorf("%s: ingest %q, console %q; want %q, %q", tc.name, c.IngestURL, c.Console.URL, tc.ingest, tc.con)
 		}
+		if got, want := c.Console.ExplicitURL(), strings.TrimSuffix(tc.env["CONSOLE_URL"], "/"); got != want {
+			t.Errorf("%s: ExplicitURL = %q, want CONSOLE_URL's own %q", tc.name, got, want)
+		}
 	}
 }
 

@@ -37,7 +37,7 @@ func (h *host) integrationGuide(ctx context.Context, in guideIn) (guideOut, erro
 	baseNote := ""
 	if base == "" {
 		base = manage.SnippetPlaceholderBase
-		baseNote = "\n> INGEST_URL is not configured on the server, so the URLs below use the\n> placeholder " + manage.SnippetPlaceholderBase + ". Ask the operator for the collector's\n> real public URL and substitute it.\n"
+		baseNote = "\n> Neither INGEST_URL nor CONSOLE_URL is configured on the server, so the URLs\n> below use the placeholder " + manage.SnippetPlaceholderBase + ". Ask the operator for the collector's\n> real public URL and substitute it.\n"
 	}
 
 	// An active key, if the project has one.

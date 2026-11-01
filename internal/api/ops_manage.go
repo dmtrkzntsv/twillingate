@@ -41,7 +41,7 @@ func (h *host) snippetNote() string {
 	if h.ingestURL != "" {
 		return ""
 	}
-	return "INGEST_URL is not configured; the snippet uses the placeholder " + manage.SnippetPlaceholderBase + " — ask the operator for the collector's public URL"
+	return "Neither INGEST_URL nor CONSOLE_URL is configured; the snippet uses the placeholder " + manage.SnippetPlaceholderBase + " — ask the operator for the collector's public URL"
 }
 
 // createProject issues the first key in the same transaction as the

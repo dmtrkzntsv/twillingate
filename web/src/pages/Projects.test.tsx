@@ -231,11 +231,11 @@ describe('Projects', () => {
       expect(within(guide).getByText(`${window.location.origin}/mcp`)).toBeInTheDocument()
     })
 
-    it('replaces the sign-in steps with a note when this browser pasted a fixed token', async () => {
+    it('replaces the sign-in steps with a note when this browser pasted a token', async () => {
       localStorage.setItem('twillingate.token', 'ar_x')
       renderPage()
       const guide = await screen.findByRole('region', { name: 'Connect your AI agent' })
-      expect(within(guide).getByText(/fixed token/)).toBeInTheDocument()
+      expect(within(guide).getByText(/signed in here with a token/)).toBeInTheDocument()
       expect(within(guide).queryByText(/Add custom connector/)).not.toBeInTheDocument()
       expect(within(guide).getByText(`${window.location.origin}/mcp`)).toBeInTheDocument()
     })

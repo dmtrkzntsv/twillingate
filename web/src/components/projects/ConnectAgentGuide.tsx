@@ -7,8 +7,8 @@ const DOCS = 'https://github.com/dmtrkzntsv/twillingate/blob/main/docs/deploymen
 /**
  * The empty Projects page: how to connect an AI agent, which then does the
  * rest. `consoleURL` is CONSOLE_URL; a server without one is reached at this
- * page's own address. A browser holding a pasted token is on a server with no
- * sign-in page, where an agent sends that token rather than signing in.
+ * page's own address. A browser holding a pasted token met no sign-in page
+ * here, so an agent may not either.
  */
 export default function ConnectAgentGuide({ consoleURL }: { consoleURL?: string }) {
   const url = `${consoleURL || window.location.origin}/mcp`
@@ -37,7 +37,7 @@ export default function ConnectAgentGuide({ consoleURL }: { consoleURL?: string 
           </>
         ) : (
           <p className="text-sm text-muted-foreground">
-            This server uses a fixed token instead of a sign-in page, so your agent has to send it as an{' '}
+            You signed in here with a token, so your agent may need one too: send it as an{' '}
             <code className="font-mono text-xs">Authorization: Bearer</code> header. See{' '}
             <a href={DOCS} target="_blank" rel="noopener" className="underline underline-offset-2 hover:text-foreground">Connect a client</a>.
           </p>
