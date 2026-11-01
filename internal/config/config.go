@@ -156,7 +156,7 @@ type Config struct {
 	// sql (package sqlengine); "" means none, and SQL is refused.
 	SQLEngineSocket string
 	Geo             string
-	IngestURL       string // INGEST_URL; defaults to CONSOLE_URL
+	IngestURL       string // INGEST_URL; defaults to CONSOLE_URL on a shared listener
 	Log             LogConfig
 	Buffer          BufferConfig
 	Retention       Retention
@@ -252,8 +252,9 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		Geo:            e.str("GEO_DSN", "cloudflare://"),
 		// The collector's public base URL (https://twillingate.example.com).
 		// Embed snippets and MCP integration guidance are built from it;
-		// unset, it takes CONSOLE_URL below, and with neither they carry a
-		// placeholder and tell the model to ask.
+		// unset, it takes CONSOLE_URL below when the console shares its
+		// listener, and otherwise they carry a placeholder and tell the model
+		// to ask.
 		IngestURL: strings.TrimSuffix(e.str("INGEST_URL", ""), "/"),
 		Log: LogConfig{
 			Level:  e.str("LOG_LEVEL", "info"),
@@ -289,7 +290,9 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		QueryTimeout: e.dur("CONSOLE_QUERY_TIMEOUT", 30*time.Second),
 		QueryMaxRows: e.num("CONSOLE_QUERY_ROWS_MAX", 1000),
 	}
-	if c.IngestURL == "" {
+	// A console on its own listener serves no script or /ingest/*, so its
+	// address cannot stand in for the collector's.
+	if c.IngestURL == "" && c.Console.Addr == c.IngestAddr {
 		c.IngestURL = c.Console.URL
 	}
 	c.Console.DBPath = strings.TrimPrefix(c.Console.Database, "sqlite://")

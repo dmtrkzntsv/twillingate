@@ -132,9 +132,9 @@ per-minute `ingest summary` log line, then disable it. Disabling is reversible;
 deleting the entry is the eventual cleanup.
 
 `list_ingest_keys` answers one row per key: `project_id`, `label`, `key`,
-`state` (`active` or `disabled`) and `snippet`, the key's install tag. With
-neither `INGEST_URL` nor `CONSOLE_URL` set, the snippets carry a placeholder
-and the answer adds a `note` saying so.
+`state` (`active` or `disabled`) and `snippet`, the key's install tag. When
+the server has no collector address, the snippets carry a placeholder and the
+answer adds a `note` saying so.
 
 ### Event rules
 

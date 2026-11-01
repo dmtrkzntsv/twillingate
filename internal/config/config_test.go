@@ -731,6 +731,10 @@ func TestIngestURLDefaultsToConsoleURL(t *testing.T) {
 		{"CONSOLE_URL alone", map[string]string{"CONSOLE_URL": "https://c.example.com/"}, "https://c.example.com", "https://c.example.com"},
 		{"INGEST_URL alone", map[string]string{"INGEST_URL": "https://t.example.com/"}, "https://t.example.com", "https://t.example.com"},
 		{"neither", map[string]string{}, "", ""},
+		// A console on its own listener serves no script or /ingest/*: its address
+		// would give snippets that load nothing, so they keep the placeholder.
+		{"CONSOLE_URL alone on its own listener", map[string]string{"CONSOLE_URL": "https://c.example.com", "CONSOLE_ADDR": "127.0.0.1:9000"}, "", "https://c.example.com"},
+		{"CONSOLE_URL alone, CONSOLE_ADDR the ingest listener", map[string]string{"CONSOLE_URL": "https://c.example.com", "CONSOLE_ADDR": "127.0.0.1:8080"}, "https://c.example.com", "https://c.example.com"},
 	}
 	for _, tc := range cases {
 		tc.env["DATABASE_DSN"] = "sqlite:///tmp/x.db"
