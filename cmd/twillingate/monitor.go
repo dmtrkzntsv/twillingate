@@ -166,7 +166,7 @@ func monitorCheckText(m store.Monitor) string {
 func printMonitors(w io.Writer, project int64, l manage.MonitorList, interval, timeout time.Duration) {
 	fmt.Fprintf(w, "project %d monitors\n", project)
 	if interval > 0 {
-		fmt.Fprintf(w, "each site checked every\t%d seconds\n", int(interval/time.Second)*max(l.Enabled(), 1))
+		fmt.Fprintf(w, "each site checked every\t%d seconds\n", int(interval/time.Second))
 	}
 	if timeout > 0 {
 		fmt.Fprintf(w, "timeout\t%d seconds\n", int(timeout/time.Second))

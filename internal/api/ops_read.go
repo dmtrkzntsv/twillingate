@@ -48,6 +48,9 @@ type host struct {
 	monitorInterval time.Duration
 	// monitorTimeout is MONITOR_TIMEOUT, which list_monitors reports.
 	monitorTimeout time.Duration
+	// monitorChecksPerEvent is MONITOR_CHECKS_PER_EVENT, which prices
+	// list_monitors' events_per_month; 0 leaves it 0.
+	monitorChecksPerEvent int
 	// sql runs the query tool's SQL on the external SQL engine, its only
 	// use; nil in a process without one, where that SQL is refused
 	// (reporting.ErrSQLEngine).

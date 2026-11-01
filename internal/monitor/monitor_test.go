@@ -244,7 +244,7 @@ func TestSchedulerSpreadsAndSkipsOverlap(t *testing.T) {
 			r.tick(ctx, prev, now)
 			prev = now
 			r.mu.Lock()
-			running7 := r.slots[7]
+			running7 := r.slots[monitorKey{7, "https://x.example"}]
 			r.mu.Unlock()
 			if running7 {
 				waitIdle(t, r, 1)
@@ -271,8 +271,8 @@ func TestSchedulerSpreadsAndSkipsOverlap(t *testing.T) {
 		if d := got[1].Sub(got[0]); d != interval {
 			t.Errorf("monitor %d: %v between checks, want %v", id, d, interval)
 		}
-		if off := got[0].Sub(t0) % interval; off != offset(id, interval) {
-			t.Errorf("monitor %d at offset %v, want %v", id, off, offset(id, interval))
+		if off := got[0].Sub(t0) % interval; off != offset(id, "https://x.example", interval) {
+			t.Errorf("monitor %d at offset %v, want %v", id, off, offset(id, "https://x.example", interval))
 		}
 		seconds[got[0].Second()] = true
 	}
@@ -295,7 +295,7 @@ func TestSchedulerPoolBounded(t *testing.T) {
 	}
 	r := noReads(New(st, allowAll{}, &fakeLog{}, 10*time.Second, 5*time.Second, quietLogger()))
 	release := make(chan struct{})
-	entered := make(chan struct{}, 40)
+	entered := make(chan struct{}, 80)
 	var mu sync.Mutex
 	active, peak := 0, 0
 	r.job = func(ctx context.Context, m store.Monitor) []store.Event {
@@ -315,23 +315,23 @@ func TestSchedulerPoolBounded(t *testing.T) {
 	r.mu.Lock()
 	dispatched := len(r.slots)
 	r.mu.Unlock()
-	if dispatched != 40 {
-		t.Fatalf("%d dispatched, want 40", dispatched)
+	// A slot that finds no free worker is skipped, never queued.
+	if dispatched != workers {
+		t.Fatalf("%d dispatched, want %d, the rest skipped", dispatched, workers)
 	}
-	// Once the pool is full every worker slot is held, so no further job
-	// can start until one is released.
 	for range workers {
 		<-entered
 	}
 	if n := len(r.sem); n != workers {
 		t.Errorf("%d worker slots held, want %d", n, workers)
 	}
-	// Release one at a time: each release lets exactly one more in.
-	for i := workers; i < 40; i++ {
-		release <- struct{}{}
+	close(release)
+	waitIdle(t, r, 0)
+	// Free again, the next slot finds workers.
+	r.tick(context.Background(), t0.Add(10*time.Second), t0.Add(20*time.Second))
+	for range workers {
 		<-entered
 	}
-	close(release)
 	waitIdle(t, r, 0)
 	if peak != workers {
 		t.Errorf("peak %d concurrent checks, want %d", peak, workers)
@@ -846,7 +846,7 @@ func TestDue(t *testing.T) {
 		t.Error("slot at 37s not due")
 	}
 	for id := int64(0); id < 100; id++ {
-		if o := offset(id, iv); o < 0 || o >= iv {
+		if o := offset(id, "https://x.example", iv); o < 0 || o >= iv {
 			t.Fatalf("offset %v outside [0,%v)", o, iv)
 		}
 	}
@@ -1114,23 +1114,24 @@ func TestOneMonitorIsCheckedEveryInterval(t *testing.T) {
 	}
 }
 
-// Three monitors take the project's slots in turn, so each comes round every 3
-// intervals and the project still makes one check per interval.
-func TestMonitorsShareTheSlotInTurn(t *testing.T) {
+// Three monitors of one project are each checked every interval.
+func TestEveryMonitorOfAProjectIsCheckedEveryInterval(t *testing.T) {
 	st := &fakeStore{monitors: []store.Monitor{on(1, originA), on(1, originB), on(1, originC)}}
 	r, c := slotRunner(st, time.Minute)
 	checks := recordJob(r)
-	for range 7 {
+	for range 3 {
 		c.next(t, r)
 	}
-	want := []string{originA, originB, originC, originA, originB, originC, originA}
-	if got := checks(1); !slices.Equal(got, want) {
-		t.Errorf("checks = %v, want %v", got, want)
+	got := checks(1)
+	slices.Sort(got)
+	want := []string{originA, originA, originA, originB, originB, originB, originC, originC, originC}
+	if !slices.Equal(got, want) {
+		t.Errorf("checks = %v, want each origin three times", got)
 	}
 }
 
-// A project's rows per interval do not grow with its monitors.
-func TestRowsPerIntervalDoNotGrowWithMonitors(t *testing.T) {
+// Every monitor writes a row per interval: rows grow with the monitors.
+func TestRowsPerIntervalGrowWithMonitors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer srv.Close()
 	u, _ := url.Parse(srv.URL)
@@ -1145,13 +1146,13 @@ func TestRowsPerIntervalDoNotGrowWithMonitors(t *testing.T) {
 	lg := &fakeLog{}
 	c := newSlotClock(time.Minute)
 	r := noReads(newRunner(st, allowAll{}, lg, time.Minute, quietLogger(), options{resolver: resolver, allowLoopback: true, now: c.now}))
-	for range 10 {
+	for range 2 {
 		c.next(t, r)
 	}
 	tickOnce(t, r, c.now())
 	rows := lg.all()
 	if len(rows) != 10 {
-		t.Fatalf("%d rows in 10 intervals, want 10", len(rows))
+		t.Fatalf("%d rows in 2 intervals of 5 monitors, want 10", len(rows))
 	}
 	seen := map[string]int{}
 	for _, e := range rows {
@@ -1167,71 +1168,56 @@ func TestRowsPerIntervalDoNotGrowWithMonitors(t *testing.T) {
 	}
 }
 
-func TestDisabledMonitorDropsOutOfTheTurn(t *testing.T) {
-	st := &fakeStore{monitors: []store.Monitor{on(1, originA), on(1, originB), on(1, originC)}}
+func TestDisabledMonitorIsNotChecked(t *testing.T) {
+	st := &fakeStore{monitors: []store.Monitor{on(1, originA), on(1, originB)}}
 	r, c := slotRunner(st, time.Minute)
 	checks := recordJob(r)
-	c.next(t, r) // a
-	c.next(t, r) // b
-	st.setEnabled(on(1, originA), on(1, originC))
-	c.next(t, r) // c, never tried
-	c.next(t, r) // a, the oldest
-	c.next(t, r) // c
-	// One enabled again has lost its place: never tried, it goes first.
-	st.setEnabled(on(1, originA), on(1, originB), on(1, originC))
-	c.next(t, r) // b
-	c.next(t, r) // a
-	want := []string{originA, originB, originC, originA, originC, originB, originA}
-	if got := checks(1); !slices.Equal(got, want) {
+	c.next(t, r)
+	st.setEnabled(on(1, originA))
+	c.next(t, r)
+	c.next(t, r)
+	got := checks(1)
+	slices.Sort(got)
+	if want := []string{originA, originA, originA, originB}; !slices.Equal(got, want) {
 		t.Errorf("checks = %v, want %v", got, want)
 	}
 }
 
-func TestProjectsDoNotShareABudget(t *testing.T) {
-	st := &fakeStore{monitors: []store.Monitor{on(1, originA), on(1, originB), on(1, originC), on(2, originA)}}
-	r, c := slotRunner(st, time.Minute)
-	checks := recordJob(r)
-	for range 3 {
-		c.next(t, r)
-	}
-	if got := checks(1); !slices.Equal(got, []string{originA, originB, originC}) {
-		t.Errorf("project 1: %v", got)
-	}
-	if got := checks(2); !slices.Equal(got, []string{originA, originA, originA}) {
-		t.Errorf("project 2: %v, want its one monitor every interval", got)
-	}
-}
-
-// A project whose last check is still running skips the slot, whichever monitor
-// was next; its turn is not lost.
-func TestRunningCheckSkipsTheProjectsSlot(t *testing.T) {
-	st := &fakeStore{monitors: []store.Monitor{on(1, originA), on(1, originB)}}
+// A monitor whose check is still running skips its own slot; a hanging site
+// delays no other monitor, in its project or another.
+func TestHangingSiteDelaysNoOtherMonitor(t *testing.T) {
+	st := &fakeStore{monitors: []store.Monitor{on(1, originA), on(1, originB), on(2, originA)}}
 	r, c := slotRunner(st, time.Minute)
 	release := make(chan struct{})
 	var mu sync.Mutex
-	var got []string
+	got := map[monitorKey]int{}
 	r.job = func(_ context.Context, m store.Monitor) []store.Event {
 		mu.Lock()
-		got = append(got, m.Origin)
+		got[keyOf(m)]++
 		mu.Unlock()
-		if m.Origin == originA {
+		if m.ProjectID == 1 && m.Origin == originA {
 			<-release
 		}
 		return nil
 	}
-	c.tick(r)
-	for r.inflight() == 0 {
-		time.Sleep(time.Millisecond)
+	for range 3 {
+		c.tick(r)
+		// Everything but the hanging check ends before the next slot.
+		waitIdle(t, r, 1)
 	}
-	c.tick(r)
-	c.tick(r)
 	close(release)
 	waitIdle(t, r, 0)
 	c.next(t, r)
 	mu.Lock()
 	defer mu.Unlock()
-	if !slices.Equal(got, []string{originA, originB}) {
-		t.Errorf("checks = %v, want a, then b once a finished", got)
+	if n := got[monitorKey{1, originA}]; n != 2 {
+		t.Errorf("the hanging monitor ran %d times, want 2 (one skipped slot run, the rest after it finished)", n)
+	}
+	if n := got[monitorKey{1, originB}]; n != 4 {
+		t.Errorf("project 1's other monitor ran %d times, want 4", n)
+	}
+	if n := got[monitorKey{2, originA}]; n != 4 {
+		t.Errorf("project 2's monitor ran %d times, want 4", n)
 	}
 }
 
@@ -1246,6 +1232,7 @@ func TestDailyReadsDoNotDelayAvailability(t *testing.T) {
 	st := &fakeStore{monitors: ms}
 	c := newSlotClock(time.Minute)
 	r := newRunner(st, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{now: c.now})
+	r.sem = make(chan struct{}, 64) // room for every monitor of the slot at once
 	checks := recordJob(r)
 	release := make(chan struct{})
 	var active, peak, reads atomic.Int32
@@ -1281,8 +1268,8 @@ func TestDailyReadsDoNotDelayAvailability(t *testing.T) {
 			time.Sleep(time.Millisecond)
 		}
 	}
-	if got := checks(1); len(got) != 3 || got[0] == got[1] {
-		t.Errorf("project 1's checks = %v, want one per slot, in turn", got)
+	if got := checks(1); len(got) != 90 {
+		t.Errorf("project 1's checks = %d, want every one of its 30 monitors in each of 3 slots", len(got))
 	}
 	if got := checks(2); len(got) != 3 {
 		t.Errorf("project 2's checks = %v, want one per slot", got)
@@ -1428,8 +1415,7 @@ func TestDomainRetryWaitForgottenWithItsLastMonitor(t *testing.T) {
 	}
 }
 
-// A manual check neither uses nor moves the slot: the project's next slot still
-// comes, and it goes to the monitor whose turn is next.
+// A manual check does not move the slots: the monitor's next slot still comes.
 func TestManualCheckLeavesTheSlotAlone(t *testing.T) {
 	st := &fakeStore{monitors: []store.Monitor{on(1, originA), on(1, originB), on(1, originC)}}
 	r, c := slotRunner(st, time.Hour)
@@ -1439,7 +1425,7 @@ func TestManualCheckLeavesTheSlotAlone(t *testing.T) {
 		manual.Store(m.Origin, true)
 		return nil, Result{Up: true}
 	}
-	c.next(t, r) // a
+	c.next(t, r)
 	// A request on c, with no slot in sight: it runs now, a slot's check not.
 	st.mu.Lock()
 	st.monitors[2].CheckRequestedAt = c.now().Format(time.RFC3339)
@@ -1448,15 +1434,13 @@ func TestManualCheckLeavesTheSlotAlone(t *testing.T) {
 	if _, ok := manual.Load(originC); !ok {
 		t.Fatal("the manual check did not run")
 	}
-	if got := checks(1); !slices.Equal(got, []string{originA}) {
-		t.Fatalf("slots = %v, want the first alone", got)
+	if got := checks(1); len(got) != 3 {
+		t.Fatalf("slots = %v, want one each so far", got)
 	}
-	// It counts as c's attempt: the turn goes to b, then a, then c.
 	c.next(t, r)
-	c.next(t, r)
-	c.next(t, r)
-	want := []string{originA, originB, originA, originC}
-	if got := checks(1); !slices.Equal(got, want) {
+	got := checks(1)
+	slices.Sort(got)
+	if want := []string{originA, originA, originB, originB, originC, originC}; !slices.Equal(got, want) {
 		t.Errorf("slots = %v, want %v", got, want)
 	}
 }
@@ -1721,4 +1705,35 @@ func TestManualCheckDuringShutdown(t *testing.T) {
 			t.Errorf("rows kept: %v", lg.all())
 		}
 	})
+}
+
+// A paused runner runs nothing and writes no row, slots due or not; a request
+// found pending is finished as one that did not run, so no page waits for it.
+func TestPausedRunnerRunsNothingAndFinishesPendingChecks(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	st := &fakeStore{monitors: []store.Monitor{
+		{ProjectID: 1, Enabled: true, Origin: originA, CheckRequestedAt: now.Format(time.RFC3339)},
+		{ProjectID: 1, Enabled: true, Origin: originB},
+	}}
+	lg := &fakeLog{}
+	r := newRunner(st, allowAll{}, lg, time.Minute, quietLogger(), options{now: func() time.Time { return now }})
+	var ran atomic.Int32
+	r.job = func(context.Context, store.Monitor) []store.Event { ran.Add(1); return nil }
+	r.check = func(context.Context, store.Monitor) ([]store.Event, Result) { ran.Add(1); return nil, Result{Up: true} }
+	r.readCert = func(context.Context, store.Monitor, time.Time) []store.Event { ran.Add(1); return nil }
+	r.readDomain = func(context.Context, int64, string, time.Time) []store.Event { ran.Add(1); return nil }
+	r.Pause()
+	r.tick(context.Background(), now.Add(-time.Hour), now) // every slot is due
+	r.tick(context.Background(), now, now.Add(time.Second))
+	waitIdle(t, r, 0)
+	if ran.Load() != 0 || len(lg.all()) != 0 {
+		t.Errorf("%d checks ran, %d rows written, want none", ran.Load(), len(lg.all()))
+	}
+	res := st.results(1, originA)
+	if len(res) != 1 || res[0].Error != checkNotRun || res[0].Up {
+		t.Errorf("the pending request finished as %+v, want %q", res, checkNotRun)
+	}
+	if got := st.results(1, originB); len(got) != 0 {
+		t.Errorf("a monitor with no request was finished: %+v", got)
+	}
 }

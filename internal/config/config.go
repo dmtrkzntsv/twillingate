@@ -62,13 +62,19 @@ type ReportingConfig struct {
 
 // MonitorConfig is the availability monitor's settings.
 type MonitorConfig struct {
-	// Interval (MONITOR_INTERVAL, whole seconds) is the time between a
-	// project's availability checks, shared in turn by its enabled monitors:
-	// fixed, 10 to 3600.
+	// Interval (MONITOR_INTERVAL, whole seconds) is the time between the
+	// availability checks of each enabled monitor: fixed, 10 to 3600.
 	Interval time.Duration
 	// Timeout (MONITOR_TIMEOUT, whole seconds) is how long a site has to
 	// answer a check before it counts as down: 1 to 60, below Interval.
 	Timeout time.Duration
+	// ChecksPerEvent (MONITOR_CHECKS_PER_EVENT) is how many checks count as
+	// one event on this install's plan; Settings shows the monthly cost it
+	// implies. 0, the default, shows none.
+	ChecksPerEvent int
+	// Disabled (MONITOR_DISABLED) stops the runner: no check runs and no row
+	// is written. Editing monitors still works; a check on demand is refused.
+	Disabled bool
 }
 
 // retired are settings twillingate no longer reads, each with why. One
@@ -286,8 +292,10 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			RefreshAge: e.dur("REPORTING_REFRESH_MAX_AGE", time.Minute),
 		},
 		Monitor: MonitorConfig{
-			Interval: time.Duration(e.num("MONITOR_INTERVAL", 120)) * time.Second,
-			Timeout:  time.Duration(e.num("MONITOR_TIMEOUT", 5)) * time.Second,
+			Interval:       time.Duration(e.num("MONITOR_INTERVAL", 120)) * time.Second,
+			Timeout:        time.Duration(e.num("MONITOR_TIMEOUT", 5)) * time.Second,
+			ChecksPerEvent: e.num("MONITOR_CHECKS_PER_EVENT", 0),
+			Disabled:       e.bool("MONITOR_DISABLED", false),
 		},
 	}
 	c.Console = ConsoleConfig{
@@ -418,6 +426,9 @@ func (c *Config) validate() error {
 	}
 	if c.Monitor.Timeout < time.Second || c.Monitor.Timeout > time.Minute {
 		return fmt.Errorf("config: MONITOR_TIMEOUT must be between 1 and 60 seconds: %d", int(c.Monitor.Timeout/time.Second))
+	}
+	if c.Monitor.ChecksPerEvent < 0 {
+		return fmt.Errorf("config: MONITOR_CHECKS_PER_EVENT must not be negative: %d", c.Monitor.ChecksPerEvent)
 	}
 	if c.Monitor.Timeout >= c.Monitor.Interval {
 		return fmt.Errorf("config: MONITOR_TIMEOUT (%d seconds) must be below MONITOR_INTERVAL (%d seconds)",

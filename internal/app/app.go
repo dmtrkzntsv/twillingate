@@ -76,6 +76,7 @@ func NewOps(ctx context.Context, cfg *config.Config, st store.Store, logger *slo
 	}
 	ops := manage.NewOps(reg, st)
 	ops.FormDraftDays = cfg.Forms.DraftDays
+	ops.MonitorPaused = cfg.Monitor.Disabled
 	return ops, nil
 }
 
@@ -201,6 +202,10 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	monDone := make(chan struct{})
 	if archiveLog != nil {
 		mon := monitor.New(st, monitorOrigins{reg}, archiveLog, cfg.Monitor.Interval, cfg.Monitor.Timeout, logger)
+		if cfg.Monitor.Disabled {
+			logger.Warn("monitoring is paused (MONITOR_DISABLED): no check runs and no row is written")
+			mon.Pause()
+		}
 		go func() { mon.Run(monCtx); close(monDone) }()
 	} else {
 		close(monDone)

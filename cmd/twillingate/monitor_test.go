@@ -64,7 +64,7 @@ func TestMonitorRoundTrip(t *testing.T) {
 		}
 	}
 	got = runMonitor(t, 0, "set", "-project-id", "1", "-origin", blogOrigin, "-enable")
-	for _, want := range []string{"each site checked every\t240 seconds\n", "origins " + shopOrigin + ", " + blogOrigin + "\n"} {
+	for _, want := range []string{"each site checked every\t120 seconds\n", "origins " + shopOrigin + ", " + blogOrigin + "\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("second set = %q, missing %q", got, want)
 		}

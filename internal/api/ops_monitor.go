@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"math"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 )
@@ -59,18 +60,19 @@ type monitorDomainOut struct {
 }
 
 type monitorsOut struct {
-	IntervalSeconds   int                `json:"interval_seconds" jsonschema:"seconds between the project's availability checks, shared by its enabled monitors in turn, set by MONITOR_INTERVAL"`
-	TimeoutSeconds    int                `json:"timeout_seconds" jsonschema:"seconds a site has to answer a check before it counts as down, set by MONITOR_TIMEOUT"`
-	CheckEverySeconds int                `json:"check_every_seconds" jsonschema:"seconds between checks of each site: interval_seconds times the enabled monitors, or interval_seconds with none on"`
-	Monitors          []monitorOut       `json:"monitors" jsonschema:"every origin a monitor may use, in the project's order; one without settings reads as off"`
-	Domains           []monitorDomainOut `json:"domains" jsonschema:"the main domains of the enabled monitors, by name"`
+	IntervalSeconds int                `json:"interval_seconds" jsonschema:"seconds between the checks of each enabled monitor, set by MONITOR_INTERVAL"`
+	TimeoutSeconds  int                `json:"timeout_seconds" jsonschema:"seconds a site has to answer a check before it counts as down, set by MONITOR_TIMEOUT"`
+	EventsPerMonth  int                `json:"events_per_month" jsonschema:"events one enabled monitor uses a month on this install's plan: a month of checks at interval_seconds, divided by MONITOR_CHECKS_PER_EVENT; 0 when that is not set"`
+	Paused          bool               `json:"paused" jsonschema:"true when MONITOR_DISABLED has monitoring off: no check runs, and check_monitor is refused"`
+	Monitors        []monitorOut       `json:"monitors" jsonschema:"every origin a monitor may use, in the project's order; one without settings reads as off"`
+	Domains         []monitorDomainOut `json:"domains" jsonschema:"the main domains of the enabled monitors, by name"`
 }
 
 func (h *host) monitorsOut(l manage.MonitorList) monitorsOut {
 	interval := int(h.monitorInterval.Seconds())
 	out := monitorsOut{IntervalSeconds: interval, TimeoutSeconds: int(h.monitorTimeout.Seconds()),
-		CheckEverySeconds: interval * max(l.Enabled(), 1),
-		Monitors:          make([]monitorOut, 0, len(l.Monitors)), Domains: make([]monitorDomainOut, 0, len(l.Domains))}
+		EventsPerMonth: eventsPerMonth(interval, h.monitorChecksPerEvent), Paused: h.ops.MonitorPaused,
+		Monitors: make([]monitorOut, 0, len(l.Monitors)), Domains: make([]monitorDomainOut, 0, len(l.Domains))}
 	for _, m := range l.Monitors {
 		out.Monitors = append(out.Monitors, monitorOut{Origin: m.Origin, Enabled: m.Enabled, Contains: m.Contains, Redirects: m.Redirects,
 			Cert: monitorCertOut{ExpiresAt: m.CertExpiresAt, Issuer: m.CertIssuer, Valid: m.CertValid,
@@ -82,6 +84,15 @@ func (h *host) monitorsOut(l manage.MonitorList) monitorsOut {
 		out.Domains = append(out.Domains, monitorDomainOut{Domain: d.Domain, Origins: d.Origins, ExpiresAt: d.ExpiresAt, CheckedAt: d.CheckedAt})
 	}
 	return out
+}
+
+// eventsPerMonth is one monitor's checks in a 30-day month at interval seconds,
+// perEvent to an event, rounded; 0 when either is 0.
+func eventsPerMonth(interval, perEvent int) int {
+	if interval <= 0 || perEvent <= 0 {
+		return 0
+	}
+	return int(math.Round(30 * 24 * 3600 / float64(interval) / float64(perEvent)))
 }
 
 func (h *host) listMonitors(ctx context.Context, in idIn) (monitorsOut, error) {
@@ -111,7 +122,7 @@ func (h *host) checkMonitor(ctx context.Context, in checkMonitorIn) (monitorsOut
 
 func (h *host) registerMonitor(r *registrar) {
 	expose(r, spec{Name: "list_monitors", Annotations: ro, Method: "GET", Path: "/api/projects/{project_id}/monitors",
-		Description: "A project's availability monitors, one per origin: every exact http(s) origin of the project, on or off (origin, enabled, the text the page must contain, redirects, the last certificate reading in cert: expires_at, issuer, valid, error, checked_at, and the last manual check in check: requested_at, finished_at, up, status, reason, error, ms); domains, the renewal date of each enabled monitor's main domain (domain, origins, expires_at, checked_at); interval_seconds (MONITOR_INTERVAL, the project's budget of one availability check, shared by its enabled monitors in turn), check_every_seconds (how often each site comes round) and timeout_seconds (MONITOR_TIMEOUT). Empty strings are unknown. The checks themselves are read from the checks table of query."},
+		Description: "A project's availability monitors, one per origin: every exact http(s) origin of the project, on or off (origin, enabled, the text the page must contain, redirects, the last certificate reading in cert: expires_at, issuer, valid, error, checked_at, and the last manual check in check: requested_at, finished_at, up, status, reason, error, ms); domains, the renewal date of each enabled monitor's main domain (domain, origins, expires_at, checked_at); interval_seconds (MONITOR_INTERVAL, how often each enabled monitor is checked), timeout_seconds (MONITOR_TIMEOUT), events_per_month (what one monitor uses a month on a hosted plan, 0 when not priced) and paused (monitoring is off on this install). Empty strings are unknown. The checks themselves are read from the checks table of query."},
 		h.listMonitors)
 	expose(r, spec{Name: "update_monitor", Annotations: idem, Method: "PATCH", Path: "/api/projects/{project_id}/monitors",
 		Description: "Change one origin's availability monitor: enabled and contains (text the page must contain). origin is required, one of the project's exact http(s) origins; fields you omit are left unchanged. Returns the same as list_monitors."},

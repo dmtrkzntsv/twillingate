@@ -294,11 +294,13 @@ lined up with an outage in the same [structured queries](#structured-queries)
 and dashboards.
 
 `MONITOR_INTERVAL` (a per-install setting, default 120 seconds;
-[deployment.md](deployment.md#configure-the-collector)) is a budget **per project**:
-one availability check per interval, shared by its enabled monitors in turn, so
-with N of them each is checked every N × interval (`check_every_seconds`), and a
-project's rows do not grow with its monitors. A monitor with no attempt yet goes
-first, then the one tried longest ago.
+[deployment.md](deployment.md#configure-the-collector)) is the time between the
+checks of **each** enabled monitor: every one has its own slot in the interval,
+so a project's rows grow with its monitors, and a site that hangs delays no other.
+A monitor whose check is still running skips its slot, and so does one that finds
+all 16 workers busy.
+`MONITOR_DISABLED=true` stops all of it: nothing runs and no row is written,
+monitors can still be edited, and `check_monitor` is refused.
 
 An origin has a monitor when it is one of the project's `allowed_origins`, an
 exact `http://` or `https://` one: no wildcard, no bare `*`, no `tauri://` or
@@ -366,13 +368,15 @@ be read at all (the site unreachable, the handshake failed): the last date
 stands, no row is written, it is tried again an hour later, and `cert.error`
 says why meanwhile. A certificate that was read but does not verify is a
 reading, with `valid` `0`. Enabling a disabled monitor reads its certificate
-again at the project's next slot, the known date kept until then. These daily reads
+again at its next slot, the known date kept until then. These daily reads
 run on a small pool of their own (4 at once across the server), so however many
 there are they do not delay an availability check.
 
-`list_monitors` returns `interval_seconds`, `check_every_seconds` (the interval
-times the enabled monitors, the interval with none on), `timeout_seconds`
-(`MONITOR_TIMEOUT`), `monitors`, one per eligible origin in the project's order,
+`list_monitors` returns `interval_seconds` (how often each enabled monitor is
+checked), `timeout_seconds` (`MONITOR_TIMEOUT`), `events_per_month` (what one
+monitor uses a month on a hosted plan, a month of checks divided by
+`MONITOR_CHECKS_PER_EVENT`; 0 when that is not set), `paused` (`MONITOR_DISABLED`:
+monitoring is off on this install), `monitors`, one per eligible origin in the project's order,
 and `domains`, the main domains of the enabled monitors, by name. A monitor has
 `origin`, `enabled`, `contains`, its last certificate reading in `cert`
 (`expires_at`, `issuer`, `valid`, `error`, `checked_at`), `redirects`, the hops the
@@ -387,8 +391,8 @@ Settings → Monitoring) asks for one check of an origin's three readings outsid
 the schedule: its availability, its certificate and its main domain, whatever the
 daily readings' age, with the same `MONITOR_TIMEOUT`. The server starts it within
 about a second and writes the rows as usual; a certificate or RDAP read that fails
-keeps the last date as usual. It neither uses nor moves the project's slot, and
-counts as that monitor's last attempt. The call returns before the check ran: poll
+keeps the last date as usual. It moves no slot, and the monitor's own slot
+is skipped while it runs. The call returns before the check ran: poll
 `list_monitors` until that monitor's `check.finished_at` is not empty and at or
 past `check.requested_at` (it is empty while the check runs, and `up`, `status`,
 `reason`, `error` and `ms` still hold the previous result until then), then read
@@ -1704,7 +1708,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","values","received","blocked","aliases"}],"keys_total"}`; `aliases` is absent when empty |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
-| `GET` | `/api/projects/{project_id}/monitors` | `list_monitors` | — → `{"interval_seconds","timeout_seconds","check_every_seconds","monitors":[{"origin","enabled","contains","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"check":{"requested_at","finished_at","up","status","reason","error","ms"}}],"domains":[{"domain","origins","expires_at","checked_at"}]}`; empty strings are unknown |
+| `GET` | `/api/projects/{project_id}/monitors` | `list_monitors` | — → `{"interval_seconds","timeout_seconds","events_per_month","paused","monitors":[{"origin","enabled","contains","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"check":{"requested_at","finished_at","up","status","reason","error","ms"}}],"domains":[{"domain","origins","expires_at","checked_at"}]}`; empty strings are unknown |
 | `PATCH` | `/api/projects/{project_id}/monitors` | `update_monitor` | body: `origin`, required, and `enabled`, `contains`, each optional (merge); a foreign origin is `400` → as `list_monitors` |
 | `POST` | `/api/projects/{project_id}/monitors/check` | `check_monitor` | body: `origin` → as `list_monitors`, right away, before the check ran; a monitor that is not on or a foreign origin is `400`, a check pending on it or within 60 s of its last request `429` |
 | `POST` | `/api/projects/{project_id}/move` | `move_project` | body: `after` |

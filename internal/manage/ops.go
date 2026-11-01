@@ -35,6 +35,9 @@ type Ops struct {
 	// values in the event files. Set by the caller after NewOps; nil (a
 	// process with no engine) skips the check.
 	Presence Presence
+	// MonitorPaused is MONITOR_DISABLED: the monitor runner is off, so a
+	// check on demand is refused. Set by the caller after NewOps.
+	MonitorPaused bool
 
 	now func() time.Time
 }

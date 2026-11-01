@@ -413,3 +413,28 @@ func TestCheckMonitorCooldownIsPerMonitor(t *testing.T) {
 		t.Fatalf("its neighbour: %v", err)
 	}
 }
+
+// A paused install refuses a check on demand, before anything is asked.
+func TestCheckMonitorRefusedWhilePaused(t *testing.T) {
+	ops, st, _, id, _ := ruleOps(t)
+	ctx := context.Background()
+	p, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: id, AllowedOrigins: []string{monA}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Enabled: boolp(true)}); err != nil {
+		t.Fatal(err)
+	}
+	ops.MonitorPaused = true
+	if _, err := ops.CheckMonitor(ctx, "cli", p.ID, monA); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "monitoring is paused on this install") {
+		t.Fatalf("paused: %v, want ErrInvalid with the reason", err)
+	}
+	ms, _ := st.ListMonitors(ctx, p.ID)
+	if len(ms) != 1 || ms[0].CheckRequestedAt != "" {
+		t.Errorf("a request was stored: %+v", ms)
+	}
+	// Editing still works.
+	if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Contains: strp("x")}); err != nil {
+		t.Errorf("edit while paused: %v", err)
+	}
+}

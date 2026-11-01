@@ -57,7 +57,7 @@ func TestMonitorToolsAndRoutesAgree(t *testing.T) {
 			t.Errorf("%s is on", m.Origin)
 		}
 	}
-	if !slices.Equal(origins, []string{monBlog, monShop, monLand}) || got.IntervalSeconds != 120 || got.TimeoutSeconds != 7 || got.CheckEverySeconds != 120 {
+	if !slices.Equal(origins, []string{monBlog, monShop, monLand}) || got.IntervalSeconds != 120 || got.TimeoutSeconds != 7 {
 		t.Errorf("GET = %+v", got)
 	}
 	viaMCP := decodeMonitors(t, []byte(textOf(callTool(t, cs, "list_monitors", map[string]any{"project_id": 1}))))
@@ -76,9 +76,6 @@ func TestMonitorToolsAndRoutesAgree(t *testing.T) {
 	if got.Monitors[1].Enabled {
 		t.Errorf("PATCH turned another on: %+v", got.Monitors[1])
 	}
-	if got.CheckEverySeconds != 120 {
-		t.Errorf("one on: check_every_seconds %d, want 120", got.CheckEverySeconds)
-	}
 	res := callTool(t, cs, "update_monitor", map[string]any{"project_id": 1, "origin": monBlog, "contains": ""})
 	if res.IsError {
 		t.Fatalf("update_monitor: %s", textOf(res))
@@ -94,7 +91,7 @@ func TestMonitorToolsAndRoutesAgree(t *testing.T) {
 		t.Errorf("audit actors = %v, want REST's then mcp", out.Rows)
 	}
 
-	// Two more on: the sites take turns on the project's budget, and the domains
+	// Two more on: each site is still checked every interval, and the domains
 	// list what they use, with their origins.
 	for _, o := range []string{monShop, monLand} {
 		if rec := serveREST(t, r, "PATCH", "/api/projects/1/monitors", `{"origin":"`+o+`","enabled":true}`); rec.Code != http.StatusOK {
@@ -102,8 +99,8 @@ func TestMonitorToolsAndRoutesAgree(t *testing.T) {
 		}
 	}
 	got = decodeMonitors(t, serveREST(t, r, "GET", "/api/projects/1/monitors", "").Body.Bytes())
-	if got.CheckEverySeconds != 360 || got.IntervalSeconds != 120 {
-		t.Errorf("three on: check_every_seconds %d, interval %d", got.CheckEverySeconds, got.IntervalSeconds)
+	if got.IntervalSeconds != 120 {
+		t.Errorf("three on: interval %d, want 120: each site comes round every interval", got.IntervalSeconds)
 	}
 	want := []monitorDomainOut{
 		{Domain: "example.com", Origins: []string{monBlog, monShop}},
@@ -342,5 +339,36 @@ func TestCheckMonitor(t *testing.T) {
 	rec = serveREST(t, r, "POST", path, body)
 	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "try again in") {
 		t.Errorf("cooldown = %d %s, want 429", rec.Code, rec.Body)
+	}
+}
+
+// events_per_month is what one monitor costs a month in events, 0 with
+// MONITOR_CHECKS_PER_EVENT unset; paused says the runner is off.
+func TestMonitorsReportCostAndPause(t *testing.T) {
+	h, _ := newTestHost(t)
+	h.monitorInterval = 2 * time.Minute
+	r := newTestRegistrar(t, h)
+	read := func() (monitorsOut, string) {
+		rec := serveREST(t, r, "GET", "/api/projects/1/monitors", "")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET = %d %s", rec.Code, rec.Body)
+		}
+		return decodeMonitors(t, rec.Body.Bytes()), rec.Body.String()
+	}
+	got, body := read()
+	if got.EventsPerMonth != 0 || got.Paused || strings.Contains(body, "check_every_seconds") {
+		t.Errorf("unset: %+v in %s", got, body)
+	}
+	h.monitorChecksPerEvent = 10
+	// 2,592,000 s a month / 120 s = 21,600 checks, 10 to an event.
+	if got, _ := read(); got.EventsPerMonth != 2160 {
+		t.Errorf("events_per_month = %d, want 2160", got.EventsPerMonth)
+	}
+	h.ops.MonitorPaused = true
+	if got, body := read(); !got.Paused || !strings.Contains(body, `"paused":true`) {
+		t.Errorf("paused: %s", body)
+	}
+	if rec := serveREST(t, r, "POST", "/api/projects/1/monitors/check", `{"origin":"`+monBlog+`"}`); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "monitoring is paused on this install") {
+		t.Errorf("check while paused = %d %s, want 400 and the reason", rec.Code, rec.Body)
 	}
 }

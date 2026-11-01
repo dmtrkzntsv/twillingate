@@ -21,8 +21,8 @@ must contain.
 
 ## Goals
 
-- One HTTP availability monitor per origin of a project, sharing one budget of a
-  check per fixed interval, set per install, per project.
+- One HTTP availability monitor per origin of a project, each checked every
+  fixed interval, set per install.
 - Every check result recorded in the project's event files, in a new `checks`
   family that the traffic counts leave out as a whole and `usage` reports
   separately; a hosted plan may count them at a discount.
@@ -93,12 +93,12 @@ must contain.
 
 ### The availability check
 
-`MONITOR_INTERVAL` is a budget **per project**: one availability check per
-interval, at `hash(project_id) % interval`, shared by its enabled monitors in turn.
-Each slot checks the monitor with the oldest last attempt (in memory; never tried
-first, ties by origin order), so with N on each is checked every N × interval, and
-a project's row count does not grow with its monitors. A project whose last check
-is still running skips the slot. Each check:
+`MONITOR_INTERVAL` is the time between the checks of **each** enabled monitor,
+independently: a monitor's slot is at `hash(project_id, origin) % interval`, so
+checks spread across the interval, and a project's rows grow with its monitors. A
+monitor whose last check is still running skips its slot; the pool is 16 workers
+across the install, and a slot that finds none free is skipped, never queued. Each
+check:
 
 - `GET` the origin. Redirects are followed, but **every hop must be allowed
   by the project's origins**, matched with the existing `manage.matchOrigin`
@@ -176,7 +176,7 @@ project however many monitors it has; 21,600 at 120 s).
 On automatically whenever a monitor is enabled. They run in their own small
 bounded pool (4 workers, across projects), not inside the availability slot, so
 however many origins there are they neither delay an availability check nor hold a
-project's slot.
+monitor's slot.
 
 - **Certificate, once a day per origin**, and right after its monitor is enabled:
   TLS handshake to the origin host; store the leaf certificate's `not_after`,
@@ -235,6 +235,23 @@ project's slot.
 
 ## Amended during planning
 
+- **No shared project budget; cost shown; a pause switch (user's decision, after
+  the above; supersedes every per-project budget in this document).** Every
+  enabled monitor is checked every `MONITOR_INTERVAL`, independently, at
+  `hash(project_id, origin) % interval`. The pool of 16 workers stays; a slot that
+  finds none free is skipped. `check_every_seconds` is gone from `list_monitors`
+  and the CLI (`interval_seconds` is the answer), and Settings reads `each site is
+  checked every <interval>`. New `MONITOR_CHECKS_PER_EVENT` (integer, default 0, at
+  least 0): how many checks count as one event on a hosted plan. `list_monitors`
+  adds `events_per_month`, a month (30 days) of checks at the interval divided by
+  it and rounded, 0 when unset; Settings shows `Each site uses about N events a
+  month` when above 0. `usage` still reports raw `checks`. New `MONITOR_DISABLED`
+  (bool, default false): the runner still runs but only ends pending manual checks
+  as "the check did not run" (in the runner, which already owns that finish), runs
+  nothing and writes no row; the API keeps working for edits, `check_monitor` is
+  refused with `ErrInvalid` ("monitoring is paused on this install"), and
+  `list_monitors` adds `paused: true`, which Settings shows as `Monitoring is paused
+  on this install` with Check now disabled.
 - The external SQL engine is a separate repository (`twillingate-sql`). This
   change makes `checks` a table of structured queries (native) only; the SQL
   engine's `checks` view, and leaving `checks` rows out of its `events` view,
@@ -289,17 +306,16 @@ project's slot.
   `requested_at`. The page polls every 2 s and stops waiting after 45 s.
 - **Several monitors per project (user's decision, after planning; replaces one
   per project throughout this document).** Unlimited monitors, one per origin.
-  `MONITOR_INTERVAL` is a per-project budget: one availability check per interval,
-  shared in turn, each of N monitors every N × interval. The certificate is read
+  `MONITOR_INTERVAL` was first a per-project budget shared in turn (superseded by
+  the next amendment: every monitor is checked every interval). The certificate is read
   once a day per origin, the domain once a day per project and main domain. There
   is no more picking an origin, no "disabled with origin kept": an origin leaving
   `allowed_origins` deletes its row. Migration 044 amended (unreleased): `monitors`
   is keyed `(project_id, origin)` without the domain columns, and a new
   `monitor_domains` is keyed `(project_id, domain)`. A monitor's manual check runs
   now, on its own cooldown, for that origin's availability, certificate and main
-  domain; it neither uses nor moves the project's slot, its availability counts as
-  that monitor's last attempt, and a slot skips a monitor whose manual check is
-  running. Rows gain attribute `origin` (`uptime`, `cert`) or `domain` (`domain`).
+  domain; it does not move any slot, and a slot skips a monitor whose manual
+  check is running. Rows gain attribute `origin` (`uptime`, `cert`) or `domain` (`domain`).
   `get_monitor` became `list_monitors`, `GET /api/projects/{project_id}/monitors`,
   and `update_monitor` and `check_monitor` take `origin`; `monitor get` became
   `monitor list`. The earlier notes above about an origin change, the `monitor`

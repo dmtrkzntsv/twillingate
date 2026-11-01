@@ -260,6 +260,9 @@ func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, ori
 // database. The result comes later, on the monitor (CheckFinishedAt reaches
 // CheckRequestedAt).
 func (o *Ops) CheckMonitor(ctx context.Context, actor string, projectID int64, origin string) (MonitorList, error) {
+	if o.MonitorPaused {
+		return MonitorList{}, fmt.Errorf("%w: monitoring is paused on this install", ErrInvalid)
+	}
 	origin, err := o.liveMonitorOrigin(ctx, projectID, origin)
 	if err != nil {
 		return MonitorList{}, err
