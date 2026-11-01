@@ -3,7 +3,9 @@
 // project's event log as a checks/uptime row; once a day (and right after
 // the monitor is enabled or its origin changes) it reads the origin's
 // certificate and its domain's registration expiry, keeps them on the
-// monitor row and writes them as checks/cert and checks/domain rows.
+// monitor row and writes them as checks/cert and checks/domain rows. A read
+// that fails says nothing about either: the last reading stands, unrecorded,
+// and is tried again after an hour.
 //
 // Every connection it makes, redirect hops and RDAP lookups included, goes
 // through a dialer that refuses private addresses.
@@ -19,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -32,6 +35,7 @@ import (
 type Store interface {
 	ListEnabledMonitors(ctx context.Context) ([]store.Monitor, error)
 	SetMonitorCert(ctx context.Context, projectID int64, origin string, c store.CertState) error
+	SetMonitorCertError(ctx context.Context, projectID int64, origin, msg string) error
 	SetMonitorDomain(ctx context.Context, projectID int64, origin string, d store.DomainState) error
 }
 
@@ -86,8 +90,9 @@ type Runner struct {
 	tried   map[int64]attempt
 }
 
-// attempt is the last daily check started for a project, so one whose
-// readings failed to store is not retried every slot.
+// attempt is the last daily check started for an enabled monitor, so one
+// that read nothing is not retried every slot. A monitor switched off
+// loses it, so enabling it again checks at once.
 type attempt struct {
 	origin string
 	at     time.Time
@@ -167,6 +172,7 @@ func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 		}
 		return
 	}
+	r.forgetDisabled(ms)
 	for _, m := range ms {
 		if !due(prev, now, r.interval, offset(m.ProjectID, r.interval)) {
 			continue
@@ -182,6 +188,17 @@ func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 		}
 		r.wg.Add(1)
 		go r.dispatch(ctx, m)
+	}
+}
+
+// forgetDisabled drops the attempts of monitors no longer in enabled.
+func (r *Runner) forgetDisabled(enabled []store.Monitor) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id := range r.tried {
+		if !slices.ContainsFunc(enabled, func(m store.Monitor) bool { return m.ProjectID == id }) {
+			delete(r.tried, id)
+		}
 	}
 }
 
@@ -286,9 +303,19 @@ func uptimeRow(projectID int64, at time.Time, res Result) store.Event {
 	return row(projectID, "uptime", at, &ms, attrs)
 }
 
+// newID is a v7 UUID, a v4 one on entropy exhaustion: a worker must not
+// panic for the sake of an id's order.
+func newID() string {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return uuid.NewString()
+	}
+	return id.String()
+}
+
 func row(projectID int64, name string, at time.Time, value *float64, attrs map[string]string) store.Event {
 	return store.Event{
-		ID: uuid.Must(uuid.NewV7()).String(), ProjectID: projectID, Family: store.FamilyChecks,
+		ID: newID(), ProjectID: projectID, Family: store.FamilyChecks,
 		EventName: name, TS: at, ReceivedAt: at, Value: value, Attributes: attrs,
 	}
 }
@@ -300,13 +327,13 @@ func stale(checkedAt string, now time.Time) bool {
 	return err != nil || now.Sub(t) >= dailyEvery
 }
 
-// daily runs the certificate and domain checks when due: never read for
-// this origin (an origin change clears cert_checked_at), or a day old.
+// daily runs each of the certificate and domain checks when due: never
+// read (an origin change or enabling the monitor clears its check time), or
+// a day old.
 func (r *Runner) daily(ctx context.Context, m store.Monitor) []store.Event {
 	now := r.now().UTC()
-	fresh := m.CertCheckedAt == ""
-	certDue := fresh || stale(m.CertCheckedAt, now)
-	domainDue := fresh || stale(m.DomainCheckedAt, now)
+	certDue := stale(m.CertCheckedAt, now)
+	domainDue := stale(m.DomainCheckedAt, now)
 	if !certDue && !domainDue {
 		return nil
 	}
@@ -334,7 +361,10 @@ func (r *Runner) daily(ctx context.Context, m store.Monitor) []store.Event {
 }
 
 // cert reads and stores the certificate. An http:// origin has none: it
-// stores only the check time and writes no row.
+// stores only the check time and writes no row. A read that got no
+// certificate keeps the last reading and its check time, stores only why,
+// and writes no row; one that got a certificate is a reading, verified or
+// not.
 func (r *Runner) cert(ctx context.Context, m store.Monitor, https bool, now time.Time) []store.Event {
 	st := store.CertState{CheckedAt: now.Format(time.RFC3339)}
 	if https {
@@ -343,6 +373,12 @@ func (r *Runner) cert(ctx context.Context, m store.Monitor, https bool, now time
 		cancel()
 	}
 	if ctx.Err() != nil {
+		return nil
+	}
+	if https && st.ExpiresAt == "" {
+		if err := r.st.SetMonitorCertError(ctx, m.ProjectID, m.Origin, st.Error); err != nil {
+			r.logger.Warn("monitor: store certificate error", "project_id", m.ProjectID, "error", err)
+		}
 		return nil
 	}
 	if err := r.st.SetMonitorCert(ctx, m.ProjectID, m.Origin, st); err != nil {

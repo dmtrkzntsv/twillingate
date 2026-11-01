@@ -176,6 +176,9 @@ func TestRedirectOffOriginsNotFollowed(t *testing.T) {
 	if n := offsite.Load(); n != 0 {
 		t.Errorf("off-site server got %d requests, want 0", n)
 	}
+	if res.Status != http.StatusFound {
+		t.Errorf("status %d, want the redirect's %d", res.Status, http.StatusFound)
+	}
 }
 
 func TestRedirectWithinOriginsFollowed(t *testing.T) {
@@ -218,6 +221,9 @@ func TestRedirectTooMany(t *testing.T) {
 		if !tc.up && (res.Reason != "redirect" || res.Error != "too many redirects") {
 			t.Errorf("%d hops: got %+v, want redirect/too many redirects", tc.hops, res)
 		}
+		if !tc.up && res.Status != http.StatusFound {
+			t.Errorf("%d hops: status %d, want the last redirect's %d", tc.hops, res.Status, http.StatusFound)
+		}
 	}
 }
 
@@ -232,8 +238,10 @@ func TestPrivateAddressBlocked(t *testing.T) {
 	}
 	// An address literal in the origin is guarded too.
 	c := newClient(&guard{resolver: fakeResolver{}}, nil)
-	if res := checkURL(t, c, "http://10.0.0.1", "", anyOrigin); res.Reason != "blocked" {
-		t.Errorf("literal: got %+v, want blocked", res)
+	for _, literal := range []string{"http://10.0.0.1", "http://[fd00::1%25x]", "http://[fe80::1%25eth0]"} {
+		if res := checkURL(t, c, literal, "", anyOrigin); res.Reason != "blocked" {
+			t.Errorf("literal %s: got %+v, want blocked", literal, res)
+		}
 	}
 }
 
@@ -265,13 +273,17 @@ func TestSpecialPurposeAddresses(t *testing.T) {
 		{"::10.0.0.1", true}, {"::127.0.0.1", true},
 		{"64:ff9b::a00:1", true}, {"64:ff9b::7f00:1", true}, {"64:ff9b:1::a00:1", true}, {"64:ff9b:1::5db8:d822", true},
 		{"100::1", true}, {"2001::1", true}, {"2001:1ff::1", true}, {"2001:db8::1", true}, {"3fff::1", true},
-		{"2002:a00:1::1", true}, {"2002:c0a8:101::1", true},
+		// 6to4 is deprecated: blocked whatever the embedded gateway, since the
+		// host behind it (the low bits here) is not what is judged.
+		{"2002:a00:1::1", true}, {"2002:c0a8:101::1", true}, {"2002:808:808::1", true}, {"2002:808:808::a00:1", true},
+		// A zone hides nothing: Prefix.Contains is false for any zoned address.
+		{"fd00::1%x", true}, {"fe80::1%eth0", true}, {"::1%lo", true}, {"ff02::1%eth0", true},
 		{"fc00::1", true}, {"fd12:3456::1", true}, {"fe80::1", true}, {"fec0::1", true}, {"ff02::1", true},
 		// public
 		{"93.184.216.34", false}, {"8.8.8.8", false}, {"100.128.0.1", false}, {"172.32.0.1", false},
 		{"192.0.1.1", false}, {"198.20.0.1", false}, {"223.255.255.1", false},
 		{"2606:2800:220:1::1", false}, {"2001:4860:4860::8888", false}, {"2a00:1450::1", false},
-		{"::ffff:8.8.8.8", false}, {"64:ff9b::808:808", false}, {"2002:808:808::1", false}, {"::8.8.8.8", false},
+		{"::ffff:8.8.8.8", false}, {"64:ff9b::808:808", false}, {"::8.8.8.8", false},
 	} {
 		if got := blocked(mustAddr(t, tc.ip), false); got != tc.blocked {
 			t.Errorf("%s: blocked %v, want %v", tc.ip, got, tc.blocked)
@@ -326,5 +338,54 @@ func TestControlRefusesPrivate(t *testing.T) {
 	}
 	if err := g.control("tcp4", "garbage", nil); err == nil {
 		t.Error("unparsable address passed control")
+	}
+}
+
+func TestAttemptDeadline(t *testing.T) {
+	now := time.Date(2026, 11, 1, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		remaining time.Duration
+		left      int
+		want      time.Duration
+	}{
+		{10 * time.Second, 1, 10 * time.Second}, // the last address takes what is left
+		{10 * time.Second, 2, 5 * time.Second},
+		{9 * time.Second, 3, 3 * time.Second},
+		{10 * time.Second, 10, 2 * time.Second}, // never below the minimum
+		{time.Second, 3, time.Second},           // unless less than that is left
+		{-time.Second, 2, -time.Second},         // already past: nothing to share
+	} {
+		if got := attemptDeadline(now, now.Add(tc.remaining), tc.left); !got.Equal(now.Add(tc.want)) {
+			t.Errorf("%v over %d: %v, want %v", tc.remaining, tc.left, got.Sub(now), tc.want)
+		}
+	}
+}
+
+// deadFirst resolves site.example to two public addresses: the first never
+// answers, as a blackholed one does, and the second reaches serverAddr.
+func deadFirst(serverAddr string, budget time.Duration) *guard {
+	return &guard{
+		resolver: fakeResolver{"site.example": {"93.184.216.34", "93.184.216.35"}},
+		budget:   budget,
+		dial: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			if strings.HasPrefix(addr, "93.184.216.34:") {
+				<-ctx.Done()
+				return nil, ctx.Err()
+			}
+			var d net.Dialer
+			return d.DialContext(ctx, network, serverAddr)
+		},
+	}
+}
+
+// http.Transport detaches its dial from the request's deadline, so this
+// path is the one that needs the guard's own budget.
+func TestCheckSurvivesADeadAddress(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "ok") }))
+	defer srv.Close()
+	c := newClient(deadFirst(srv.Listener.Addr().String(), 4*time.Second), nil)
+	if res := checkURL(t, c, "http://site.example", "ok", anyOrigin); !res.Up {
+		t.Errorf("got %+v, want up through the second address", res)
 	}
 }

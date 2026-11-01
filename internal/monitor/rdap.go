@@ -18,7 +18,10 @@ import (
 const (
 	ianaBootstrap = "https://data.iana.org/rdap/dns.json"
 	bootstrapTTL  = 24 * time.Hour
-	rdapLimit     = 4 << 20 // bytes read of a bootstrap or domain reply
+	// bootstrapRetry is how long a failed bootstrap is kept, so a hung or
+	// failing IANA does not cost every worker its deadline.
+	bootstrapRetry = 5 * time.Minute
+	rdapLimit      = 4 << 20 // bytes read of a bootstrap or domain reply
 )
 
 // rdap looks up a domain's registration expiry: the registrable domain's
@@ -32,6 +35,8 @@ type rdap struct {
 	mu      sync.Mutex
 	servers map[string][]string // TLD (or suffix) → base URLs
 	fetched time.Time
+	failure error // the last fetch's, kept for bootstrapRetry
+	failed  time.Time
 }
 
 // errUnknown marks an answer that the expiry cannot be known: an address
@@ -114,14 +119,32 @@ func (r *rdap) lookup(ctx context.Context, name string) ([]string, error) {
 	return nil, unknown("%s: no RDAP server for its TLD", name)
 }
 
-// bootstrap is the IANA table, cached for bootstrapTTL. A failed fetch is
-// not cached, so the next lookup tries again.
+// bootstrap is the IANA table, cached for bootstrapTTL, a failure for
+// bootstrapRetry. The fetch runs outside the lock: lookups that find nothing
+// cached each fetch, and none waits on another's slow one.
 func (r *rdap) bootstrap(ctx context.Context) (map[string][]string, error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.servers != nil && r.now().Sub(r.fetched) < bootstrapTTL {
-		return r.servers, nil
+	now := r.now()
+	servers, fetched, failure, failed := r.servers, r.fetched, r.failure, r.failed
+	r.mu.Unlock()
+	if servers != nil && now.Sub(fetched) < bootstrapTTL {
+		return servers, nil
 	}
+	if failure != nil && now.Sub(failed) < bootstrapRetry {
+		return nil, failure
+	}
+	servers, err := r.fetchBootstrap(ctx)
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if err != nil {
+		r.failure, r.failed = err, r.now()
+		return nil, err
+	}
+	r.servers, r.fetched, r.failure = servers, r.now(), nil
+	return servers, nil
+}
+
+func (r *rdap) fetchBootstrap(ctx context.Context) (map[string][]string, error) {
 	var doc struct {
 		Services [][][]string `json:"services"`
 	}
@@ -149,7 +172,6 @@ func (r *rdap) bootstrap(ctx context.Context) (map[string][]string, error) {
 			servers[strings.ToLower(tld)] = bases
 		}
 	}
-	r.servers, r.fetched = servers, r.now()
 	return servers, nil
 }
 

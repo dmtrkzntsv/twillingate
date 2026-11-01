@@ -26,6 +26,9 @@ type fakeStore struct {
 	monitors []store.Monitor
 	certs    map[int64]store.CertState
 	domains  map[int64]store.DomainState
+	// certWrites counts every stored reading, certErrs the failures stored apart.
+	certWrites int
+	certErrs   map[int64]string
 }
 
 func (f *fakeStore) ListEnabledMonitors(context.Context) ([]store.Monitor, error) {
@@ -41,11 +44,22 @@ func (f *fakeStore) SetMonitorCert(_ context.Context, id int64, origin string, c
 		f.certs = map[int64]store.CertState{}
 	}
 	f.certs[id] = c
+	f.certWrites++
 	for i := range f.monitors {
 		if f.monitors[i].ProjectID == id && f.monitors[i].Origin == origin {
 			f.monitors[i].CertCheckedAt = c.CheckedAt
 		}
 	}
+	return nil
+}
+
+func (f *fakeStore) SetMonitorCertError(_ context.Context, id int64, origin, msg string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.certErrs == nil {
+		f.certErrs = map[int64]string{}
+	}
+	f.certErrs[id] = msg
 	return nil
 }
 
@@ -579,6 +593,122 @@ func TestRunnerKeepsDomainOnLookupFailure(t *testing.T) {
 	}
 	if n := domainRows(); n != 1 {
 		t.Errorf("%d domain rows after the retry, want 1", n)
+	}
+}
+
+// A failed certificate read says nothing about the certificate: the last
+// date stands, the failure is stored apart, no row is written, and it is
+// tried again after dailyRetry. The domain check keeps its own schedule.
+func TestRunnerKeepsCertOnFailedRead(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	ln.Close()
+	origin := "https://" + addr
+
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	dayOld := now.Add(-25 * time.Hour).Format(time.RFC3339)
+	fresh := now.Format(time.RFC3339)
+	st := &fakeStore{monitors: []store.Monitor{
+		{ProjectID: 5, Enabled: true, Origin: origin, CertExpiresAt: "2027-03-14T00:00:00Z", CertIssuer: "R3",
+			CertValid: true, CertCheckedAt: dayOld, DomainCheckedAt: fresh},
+		{ProjectID: 6, Enabled: true, Origin: origin, DomainCheckedAt: fresh}, // no certificate read yet
+	}}
+	lg := &fakeLog{}
+	var mu sync.Mutex
+	r := newRunner(st, allowAll{}, lg, 60*time.Second, quietLogger(), options{
+		allowLoopback: true, bootstrapURL: "http://127.0.0.1:1/dns.json",
+		now: func() time.Time { mu.Lock(); defer mu.Unlock(); return now },
+	})
+	advance := func(d time.Duration) {
+		mu.Lock()
+		now = now.Add(d)
+		at := now
+		mu.Unlock()
+		r.tick(context.Background(), at.Add(-time.Minute), at)
+		waitIdle(t, r, 0)
+		r.tick(context.Background(), at, at)
+	}
+	certRows := func() (n int) {
+		for _, e := range lg.all() {
+			if e.EventName == "cert" {
+				n++
+			}
+		}
+		return n
+	}
+
+	advance(0)
+	if st.certWrites != 0 {
+		t.Errorf("a failed read stored readings: %+v", st.certs)
+	}
+	if st.monitors[0].CertCheckedAt != dayOld {
+		t.Errorf("checked_at %q, want it left at %q", st.monitors[0].CertCheckedAt, dayOld)
+	}
+	if st.certErrs[5] == "" {
+		t.Error("the failure did not reach the store")
+	}
+	if n := certRows(); n != 0 {
+		t.Errorf("%d cert rows after a failed read, want 0", n)
+	}
+
+	delete(st.certErrs, 5)
+	advance(30 * time.Minute) // within dailyRetry: not tried
+	if st.certErrs[5] != "" {
+		t.Error("tried again within the retry wait")
+	}
+
+	// The site comes back, on the same address.
+	back, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Skipf("the port was taken: %v", err)
+	}
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Listener.Close()
+	srv.Listener = back
+	srv.Config.ErrorLog = discardLog()
+	srv.StartTLS()
+	defer srv.Close()
+
+	advance(31 * time.Minute) // past dailyRetry: tried, and read
+	if c := st.certs[5]; c.ExpiresAt == "" {
+		t.Errorf("stored after the retry %+v", c)
+	}
+	if n := certRows(); n != 2 {
+		t.Errorf("%d cert rows after the retry, want 2 (one per monitor)", n)
+	}
+	if _, ok := st.domains[6]; ok {
+		t.Error("a certificate never read dragged a fresh domain check along")
+	}
+}
+
+// Enabling again reads the certificate and domain at once, whatever a
+// recent attempt under the old monitor says.
+func TestRunnerReenableChecksAtOnce(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer site.Close()
+	rd, _ := fakeRDAP(t, nil)
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	on := store.Monitor{ProjectID: 5, Enabled: true, Origin: site.URL}
+	st := &fakeStore{monitors: []store.Monitor{on}}
+	r := newRunner(st, allowAll{}, &fakeLog{}, 60*time.Second, quietLogger(), options{
+		allowLoopback: true, bootstrapURL: rd.URL + "/dns.json", now: func() time.Time { return now },
+	})
+	ctx := context.Background()
+	r.tick(ctx, now.Add(-time.Minute), now)
+	waitIdle(t, r, 0)
+	if st.certWrites != 1 {
+		t.Fatalf("%d readings stored, want 1", st.certWrites)
+	}
+	st.monitors = nil // disabled
+	r.tick(ctx, now, now.Add(time.Second))
+	st.monitors = []store.Monitor{on} // enabled again: the store cleared the check times
+	r.tick(ctx, now.Add(time.Second), now.Add(time.Minute))
+	waitIdle(t, r, 0)
+	if st.certWrites != 2 {
+		t.Errorf("%d readings stored after enabling again, want 2", st.certWrites)
 	}
 }
 

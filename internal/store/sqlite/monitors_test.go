@@ -89,6 +89,75 @@ func TestSetMonitorOriginChangeClearsState(t *testing.T) {
 	}
 }
 
+func TestSetMonitorEnablingClearsCheckTimesOnly(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	const origin, at = "https://a.example", "2026-11-01T00:00:00Z"
+	set := func(enabled bool) store.Monitor {
+		t.Helper()
+		m, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: enabled, Origin: origin}, monAudit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	set(true)
+	if err := d.SetMonitorCert(ctx, id, origin, store.CertState{ExpiresAt: "2027-01-01T00:00:00Z", Issuer: "R3", Valid: true, CheckedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMonitorDomain(ctx, id, origin, store.DomainState{ExpiresAt: "2027-02-02", CheckedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	// Staying on, or going off, keeps the check times.
+	for _, on := range []bool{true, false, false} {
+		if m := set(on); m.CertCheckedAt != at || m.DomainCheckedAt != at {
+			t.Fatalf("enabled=%v: %+v, want the check times kept", on, m)
+		}
+	}
+	m := set(true)
+	if m.CertCheckedAt != "" || m.DomainCheckedAt != "" {
+		t.Errorf("enabling kept the check times: %+v", m)
+	}
+	if m.CertExpiresAt == "" || m.CertIssuer != "R3" || !m.CertValid || m.DomainExpiresAt != "2027-02-02" {
+		t.Errorf("enabling lost the readings: %+v", m)
+	}
+}
+
+func TestSetMonitorCertErrorKeepsTheReading(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	const origin, at = "https://a.example", "2026-11-01T00:00:00Z"
+	if _, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: origin}, monAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMonitorCert(ctx, id, origin, store.CertState{ExpiresAt: "2027-01-01T00:00:00Z", Issuer: "R3", Valid: true, CheckedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SetMonitorCertError(ctx, id, origin, "connection refused"); err != nil {
+		t.Fatal(err)
+	}
+	m, _ := d.GetMonitor(ctx, id)
+	if m.CertError != "connection refused" || m.CertExpiresAt == "" || m.CertIssuer != "R3" || !m.CertValid || m.CertCheckedAt != at {
+		t.Errorf("after a failed read: %+v", m)
+	}
+	// Another origin's failure is not this one's.
+	if err := d.SetMonitorCertError(ctx, id, "https://old.example", "other"); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ = d.GetMonitor(ctx, id); m.CertError != "connection refused" {
+		t.Errorf("stale origin wrote: %+v", m)
+	}
+	// The next reading clears it.
+	if err := d.SetMonitorCert(ctx, id, origin, store.CertState{ExpiresAt: "2027-01-01T00:00:00Z", Valid: true, CheckedAt: at}); err != nil {
+		t.Fatal(err)
+	}
+	if m, _ = d.GetMonitor(ctx, id); m.CertError != "" {
+		t.Errorf("after a reading: %+v", m)
+	}
+}
+
 func TestListEnabledMonitors(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()

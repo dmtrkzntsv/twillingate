@@ -67,7 +67,9 @@ func (d *DB) GetMonitor(ctx context.Context, projectID int64) (store.Monitor, er
 
 // SetMonitor upserts a project's settings and audits it. A changed origin
 // clears the stored certificate and domain readings, which described
-// another host. It is not managed-config: no version bump.
+// another host. Enabling a disabled monitor clears their check times only,
+// so the next slot reads them again and the known dates stay until then. It
+// is not managed-config: no version bump.
 func (d *DB) SetMonitor(ctx context.Context, projectID int64, s store.MonitorSettings, a store.AuditEntry) (store.Monitor, error) {
 	var m store.Monitor
 	err := d.tx(ctx, func(tx *sql.Tx) error {
@@ -85,9 +87,9 @@ func (d *DB) SetMonitor(ctx context.Context, projectID int64, s store.MonitorSet
 			  cert_issuer       = CASE WHEN origin = excluded.origin THEN cert_issuer ELSE '' END,
 			  cert_valid        = CASE WHEN origin = excluded.origin THEN cert_valid ELSE 0 END,
 			  cert_error        = CASE WHEN origin = excluded.origin THEN cert_error ELSE '' END,
-			  cert_checked_at   = CASE WHEN origin = excluded.origin THEN cert_checked_at ELSE '' END,
+			  cert_checked_at   = CASE WHEN origin = excluded.origin AND (enabled = 1 OR excluded.enabled = 0) THEN cert_checked_at ELSE '' END,
 			  domain_expires_at = CASE WHEN origin = excluded.origin THEN domain_expires_at ELSE '' END,
-			  domain_checked_at = CASE WHEN origin = excluded.origin THEN domain_checked_at ELSE '' END,
+			  domain_checked_at = CASE WHEN origin = excluded.origin AND (enabled = 1 OR excluded.enabled = 0) THEN domain_checked_at ELSE '' END,
 			  enabled = excluded.enabled, origin = excluded.origin, contains = excluded.contains,
 			  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
 			projectID, s.Enabled, s.Origin, s.Contains); err != nil {
@@ -131,6 +133,14 @@ func (d *DB) SetMonitorCert(ctx context.Context, projectID int64, origin string,
 	_, err := d.db.ExecContext(ctx, `UPDATE monitors SET cert_expires_at=?, cert_issuer=?, cert_valid=?,
 		cert_error=?, cert_checked_at=? WHERE project_id=? AND origin=?`,
 		c.ExpiresAt, c.Issuer, c.Valid, c.Error, c.CheckedAt, projectID, origin)
+	return err
+}
+
+// SetMonitorCertError stores why a certificate could not be read, keeping
+// the last reading and its check time, guarded like SetMonitorCert.
+func (d *DB) SetMonitorCertError(ctx context.Context, projectID int64, origin, msg string) error {
+	_, err := d.db.ExecContext(ctx, `UPDATE monitors SET cert_error=? WHERE project_id=? AND origin=?`,
+		msg, projectID, origin)
 	return err
 }
 

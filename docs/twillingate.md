@@ -323,7 +323,7 @@ identifies itself as
   to `https://www.example.com` reads as down until it adds the `www` origin.
   More than 10 hops is also `redirect`.
 - **Private addresses** are refused on every install: an origin or redirect hop
-  that resolves to a loopback, private, link-local, CGNAT, multicast or unspecified address
+  that resolves to a loopback, private, link-local, CGNAT, multicast, 6to4 or unspecified address
   fails with `blocked`, checked when the connection is made. A site reachable
   only on a LAN cannot be monitored.
 - **An `http://` origin** is checked over plain HTTP and has no certificate
@@ -339,14 +339,19 @@ traffic: checks never count against an allowance. They still take disk, about
 | Row | Written | `value` | Attributes |
 | --- | --- | --- | --- |
 | `uptime` | every check | response time in milliseconds, to the end of the body or to the failure | `up` (`1` or `0`); `status`, the final HTTP status, absent without a response; `reason` and `error` when down |
-| `cert` | once a day and when the monitor is enabled or its origin changes, on `https://` origins | whole days left, absent when unknown | `expires` (`YYYY-MM-DD`), `issuer`, `valid` (`1` or `0`), `error` |
+| `cert` | once a day and when the monitor is enabled or its origin changes, on `https://` origins, when a certificate was read (verified or not) | whole days left | `expires` (`YYYY-MM-DD`), `issuer`, `valid` (`1` or `0`), `error`, why it did not verify |
 | `domain` | as `cert`, for the origin host's registrable domain (public suffix list) | whole days left until the registration expires, absent when unknown | `expires` (`YYYY-MM-DD`) |
 
 The domain's expiry is read over RDAP; a top-level domain with no RDAP service,
 or an answer without an expiration, reads as unknown, which is not a failure;
 so does a host under a private suffix of the public suffix list, such as
 `x.github.io`. A lookup that fails (the RDAP server down or slow) keeps the last
-reading and is tried again an hour later.
+reading and is tried again an hour later. So does a certificate that could not
+be read at all (the site unreachable, the handshake failed): the last date
+stands, no row is written, it is tried again an hour later, and `cert.error`
+says why meanwhile. A certificate that was read but does not verify is a
+reading, with `valid` `0`. Enabling a disabled monitor reads both again at its
+next check, the known dates kept until then.
 `get_monitor` returns the last reading of each: `cert` (`expires_at`, `issuer`,
 `valid`, `error`, `checked_at`) and `domain` (`expires_at`, `checked_at`).
 

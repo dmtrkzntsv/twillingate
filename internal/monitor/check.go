@@ -89,7 +89,11 @@ func check(ctx context.Context, c *http.Client, origin, contains string, allowed
 	req.Close = true
 	resp, err := cc.Do(req)
 	if err != nil {
-		return failure(ctx, err)
+		r := failure(ctx, err)
+		if resp != nil { // a refused redirect: the response is that redirect
+			r.Status = resp.StatusCode
+		}
+		return r
 	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, bodyLimit))

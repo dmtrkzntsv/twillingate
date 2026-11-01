@@ -132,11 +132,15 @@ func TestParseEventDate(t *testing.T) {
 	}
 }
 
-func TestRDAPBootstrapFailureNotCached(t *testing.T) {
+// A failed bootstrap answers from memory for bootstrapRetry, so a failing
+// IANA costs one request rather than one per lookup, and is tried again after.
+func TestRDAPBootstrapFailureCachedBriefly(t *testing.T) {
 	var fail atomic.Bool
 	fail.Store(true)
-	srv, boots := fakeRDAP(t, map[string]string{"example.com": `{"events":[{"eventAction":"expiration","eventDate":"2027-03-14T04:00:00Z"}]}`})
+	var asked atomic.Int32
+	srv, _ := fakeRDAP(t, map[string]string{"example.com": `{"events":[{"eventAction":"expiration","eventDate":"2027-03-14T04:00:00Z"}]}`})
 	wrap := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked.Add(1)
 		if fail.Load() {
 			http.Error(w, "down", 503)
 			return
@@ -144,15 +148,63 @@ func TestRDAPBootstrapFailureNotCached(t *testing.T) {
 		http.Redirect(w, r, srv.URL+"/dns.json", http.StatusFound)
 	}))
 	defer wrap.Close()
-	r := &rdap{client: loopbackClient(t), bootstrapURL: wrap.URL, now: time.Now}
-	if _, err := r.expiry(context.Background(), "example.com"); err == nil {
-		t.Fatal("want an error while the bootstrap is down")
+	clock := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	r := &rdap{client: loopbackClient(t), bootstrapURL: wrap.URL, now: func() time.Time { return clock }}
+	ctx := context.Background()
+	if _, err := r.expiry(ctx, "example.com"); err == nil || errors.Is(err, errUnknown) {
+		t.Fatalf("while the bootstrap is down: %v, want a lookup failure", err)
 	}
+	clock = clock.Add(bootstrapRetry - time.Second)
 	fail.Store(false)
-	if got, err := r.expiry(context.Background(), "example.com"); got != "2027-03-14" || err != nil {
-		t.Fatalf("after recovery: %q %v", got, err)
+	if _, err := r.expiry(ctx, "example.com"); err == nil || errors.Is(err, errUnknown) {
+		t.Fatalf("within the retry wait: %v, want the kept failure", err)
 	}
-	if boots.Load() != 1 {
-		t.Errorf("bootstrap fetched %d times", boots.Load())
+	if n := asked.Load(); n != 1 {
+		t.Errorf("bootstrap fetched %d times within the retry wait, want 1", n)
 	}
+	clock = clock.Add(time.Second)
+	if got, err := r.expiry(ctx, "example.com"); got != "2027-03-14" || err != nil {
+		t.Fatalf("after the retry wait: %q %v", got, err)
+	}
+	if n := asked.Load(); n != 2 {
+		t.Errorf("bootstrap fetched %d times, want 2", n)
+	}
+}
+
+// A hung IANA holds no lock: another lookup ends at its own deadline.
+func TestRDAPBootstrapFetchHoldsNoLock(t *testing.T) {
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case started <- struct{}{}:
+		default:
+		}
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	r := &rdap{client: loopbackClient(t), bootstrapURL: srv.URL, now: time.Now}
+	long, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		r.expiry(long, "example.com")
+	}()
+	<-started
+	short, cancelShort := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancelShort()
+	begin := time.Now()
+	if _, err := r.expiry(short, "example.com"); err == nil {
+		t.Error("a hung bootstrap answered")
+	}
+	if d := time.Since(begin); d > 2*time.Second {
+		t.Errorf("the second lookup took %v, waiting on the first one's fetch", d)
+	}
+	cancel()
+	<-done
 }

@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -11,6 +12,11 @@ import (
 	"net/netip"
 	"syscall"
 	"time"
+)
+
+const (
+	dialBudget = 10 * time.Second // a dial's whole limit when its context sets none
+	minAttempt = 2 * time.Second  // one address's least share of the limit
 )
 
 // resolver is the slice of *net.Resolver the guard uses; tests answer
@@ -29,6 +35,11 @@ type guard struct {
 	// allowLoopback admits 127.0.0.0/8 and ::1, nothing else; tests set
 	// it to reach httptest servers.
 	allowLoopback bool
+	// budget is how long a dial whose context carries no deadline may take
+	// over all its addresses (0: dialBudget). dial connects to one resolved
+	// address (nil: a net.Dialer with control). Test seams.
+	budget time.Duration
+	dial   func(ctx context.Context, network, addr string) (net.Conn, error)
 }
 
 // blockedError is a dial refused because every address the name
@@ -61,6 +72,7 @@ var denied = prefixes(
 	// IPv6
 	"::/128",         // unspecified
 	"64:ff9b:1::/48", // local-use NAT64: where the IPv4 sits is the operator's choice
+	"2002::/16",      // 6to4 (deprecated): the address names a gateway, not the host behind it
 	"100::/64",       // discard
 	"2001::/23",      // IETF protocol assignments (Teredo included)
 	"2001:db8::/32",  // documentation
@@ -72,9 +84,8 @@ var denied = prefixes(
 )
 
 var (
-	nat64     = netip.MustParsePrefix("64:ff9b::/96")
-	sixToFour = netip.MustParsePrefix("2002::/16")
-	v4compat  = netip.MustParsePrefix("::/96")
+	nat64    = netip.MustParsePrefix("64:ff9b::/96")
+	v4compat = netip.MustParsePrefix("::/96")
 )
 
 func prefixes(ss ...string) []netip.Prefix {
@@ -86,28 +97,25 @@ func prefixes(ss ...string) []netip.Prefix {
 }
 
 // embedded4 is the IPv4 address an IPv6 address carries by a fixed rule:
-// well-known NAT64 (64:ff9b::/96), 6to4 (2002::/16) or IPv4-compatible
-// (::/96).
+// well-known NAT64 (64:ff9b::/96) or IPv4-compatible (::/96).
 func embedded4(a netip.Addr) (netip.Addr, bool) {
-	b := a.As16()
-	switch {
-	case nat64.Contains(a), v4compat.Contains(a):
+	if nat64.Contains(a) || v4compat.Contains(a) {
+		b := a.As16()
 		return netip.AddrFrom4([4]byte(b[12:16])), true
-	case sixToFour.Contains(a):
-		return netip.AddrFrom4([4]byte(b[2:6])), true
 	}
 	return netip.Addr{}, false
 }
 
 // blocked reports whether a may not be dialed: loopback (unless
-// allowLoopback) or any range in denied. An IPv4 address embedded in an
-// IPv6 one (IPv4-mapped, NAT64, 6to4, IPv4-compatible) is judged as
-// itself.
+// allowLoopback) or any range in denied. A zone is ignored (Prefix.Contains
+// is false for any zoned address, so it would hide the address from the
+// ranges), and an IPv4 address embedded in an IPv6 one (IPv4-mapped, NAT64,
+// IPv4-compatible) is judged as itself.
 func blocked(a netip.Addr, allowLoopback bool) bool {
 	if !a.IsValid() {
 		return true
 	}
-	a = a.Unmap()
+	a = a.WithZone("").Unmap()
 	if a.IsLoopback() {
 		return !allowLoopback
 	}
@@ -124,9 +132,27 @@ func blocked(a netip.Addr, allowLoopback bool) bool {
 	return false
 }
 
+// attemptDeadline is the deadline of one dial with left addresses still to
+// try, the current one among them: its share of the time remaining, but
+// at least minAttempt while that much remains, as the standard library's
+// dialer shares it. One dead address so leaves time for the next.
+func attemptDeadline(now, deadline time.Time, left int) time.Time {
+	remaining := deadline.Sub(now)
+	if remaining <= 0 || left <= 1 {
+		return deadline
+	}
+	share := remaining / time.Duration(left)
+	if share < minAttempt {
+		share = min(remaining, minAttempt)
+	}
+	return now.Add(share)
+}
+
 // DialContext resolves addr's host, drops every private address and dials
-// the rest in turn. When nothing public is left the error is a
-// *blockedError.
+// the rest in turn, each with its share of the time. That time is ctx's
+// deadline, or the budget when it has none: http.Transport detaches its
+// dials from the request's deadline. When nothing public is left the error
+// is a *blockedError.
 func (g *guard) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
@@ -146,15 +172,31 @@ func (g *guard) DialContext(ctx context.Context, network, addr string) (net.Conn
 			}
 		}
 	}
-	d := &net.Dialer{Timeout: 10 * time.Second, Control: g.control}
-	var errs []error
-	tried := false
+	var public []netip.Addr
 	for _, a := range ips {
-		if blocked(a, g.allowLoopback) {
-			continue
+		if !blocked(a, g.allowLoopback) {
+			public = append(public, a.WithZone("").Unmap())
 		}
-		tried = true
-		c, err := d.DialContext(ctx, network, net.JoinHostPort(a.Unmap().String(), port))
+	}
+	if len(public) == 0 {
+		if len(ips) == 0 {
+			return nil, &net.DNSError{Err: "no addresses", Name: host, IsNotFound: true}
+		}
+		return nil, &blockedError{host: host}
+	}
+	connect := g.dial
+	if connect == nil {
+		connect = (&net.Dialer{Control: g.control}).DialContext
+	}
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(cmp.Or(g.budget, dialBudget))
+	}
+	var errs []error
+	for i, a := range public {
+		attempt, cancel := context.WithDeadline(ctx, attemptDeadline(time.Now(), deadline, len(public)-i))
+		c, err := connect(attempt, network, net.JoinHostPort(a.String(), port))
+		cancel()
 		if err == nil {
 			return c, nil
 		}
@@ -162,12 +204,6 @@ func (g *guard) DialContext(ctx context.Context, network, addr string) (net.Conn
 		if ctx.Err() != nil {
 			break
 		}
-	}
-	if !tried {
-		if len(ips) == 0 {
-			return nil, &net.DNSError{Err: "no addresses", Name: host, IsNotFound: true}
-		}
-		return nil, &blockedError{host: host}
 	}
 	return nil, errors.Join(errs...)
 }

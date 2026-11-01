@@ -89,3 +89,16 @@ func TestDaysLeft(t *testing.T) {
 		t.Error("empty: want unknown")
 	}
 }
+
+func TestCertSurvivesADeadAddress(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.Config.ErrorLog = discardLog()
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+	defer cancel()
+	st := checkCert(ctx, deadFirst(srv.Listener.Addr().String(), 0), nil, "https://site.example", time.Now())
+	if st.ExpiresAt == "" {
+		t.Errorf("got %+v, want the certificate read through the second address", st)
+	}
+}
