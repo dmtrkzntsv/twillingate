@@ -429,3 +429,40 @@ func TestRetitleWithOwnGroupStillRenamesGroupOfOne(t *testing.T) {
 		})
 	}
 }
+
+// group_id 0 on the only live tab of a group that still has an archived
+// tab takes it out as a group of its own: its title is not the old
+// group's name.
+func TestLeavingAGroupWithArchivedTabsLeavesItsName(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	f := mustCreate(t, svc, "Overview")
+	b := mustJoin(t, svc, "Detail", f.ID)
+	if _, err := renameGroup(svc, f.ID, "Ops"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ArchiveDashboard(ctx, "test", f.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: b.ID, Title: "Summary", GroupID: ptr(int64(0)), After: ptr(int64(0))}); err != nil {
+		t.Fatal(err)
+	}
+	if gt := groupTitle(t, svc, f.ID); gt != "Ops" {
+		t.Errorf("archived group's name = %q, want \"Ops\"", gt)
+	}
+}
+
+// A move refused for its after changes nothing, the group it named included.
+func TestRefusedMoveDoesNotSettleTheTargetsName(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	f, _ := staleLone(t, svc)
+	other := mustCreate(t, svc, "Other")
+	stray := mustCreate(t, svc, "Stray")
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: other.ID, GroupID: ptr(f.GroupID), After: ptr(stray.ID)}); err == nil {
+		t.Fatal("move after a dashboard outside the group was taken")
+	}
+	if gt := groupTitle(t, svc, f.ID); gt != "Ops" {
+		t.Errorf("group name = %q after a refused move, want \"Ops\" untouched", gt)
+	}
+}

@@ -103,7 +103,7 @@ export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMe
   const first = dashboard.tabs[0] ?? dashboard
   // A group of one tab has one name, its tab's title (as `groupName`; only
   // a user group is renamed here).
-  const lone = dashboard.tabs.length <= 1
+  const lone = dashboard.owner === 'user' && dashboard.tabs.length <= 1
   const groupTitle = (!lone && dashboard.group_title) || first.title
   const userLive = dashboard.owner === 'user' && !dashboard.archived_at
 

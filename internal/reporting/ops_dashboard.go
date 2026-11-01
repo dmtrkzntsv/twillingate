@@ -141,11 +141,20 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 		// its title, so the name is still the tab's once the group grows.
 		lone := o.lone(row.ID, row.GroupID)
 		// It keeps its group with no group_id, its own group's, or 0 when
-		// it is alone already (leaveGroup).
-		keeps := in.GroupID == nil || *in.GroupID == row.GroupID || (*in.GroupID == 0 && lone)
+		// it is the group's only row, archived ones counted (leaveGroup).
+		alone := len(o.without(row.ID).group(row.GroupID)) == 0
+		keeps := in.GroupID == nil || *in.GroupID == row.GroupID || (*in.GroupID == 0 && alone)
 		syncGroup := in.Title != "" && keeps && row.GroupTitle != "" && lone
 		if !keeps && *in.GroupID != 0 {
-			if err := s.settleLoneName(ctx, actor, o.group(*in.GroupID)); err != nil {
+			// Settle the group it joins, once the move is known to be taken.
+			g := *in.GroupID
+			if err := refuseGroup(o, g); err != nil {
+				return err
+			}
+			if _, err := o.keyInGroup(row.ID, g, in.After); err != nil {
+				return err
+			}
+			if err := s.settleLoneName(ctx, actor, o.group(g)); err != nil {
 				return err
 			}
 		}
@@ -300,7 +309,13 @@ func (s *Service) setDashboardArchived(ctx context.Context, actor string, id int
 			}
 		}
 	}
-	if !archived {
+	a := store.AuditEntry{Actor: actor, Action: archiveAction("dashboard", archived)}
+	if archived {
+		return s.st.SetDashboardsArchived(ctx, ids, true, a)
+	}
+	// A restore grows the group: under the placement lock, so a rename
+	// running beside it isn't overwritten by a settle on a stale read.
+	return s.placeDashboards(func() error {
 		all, err := s.st.ListDashboards(ctx)
 		if err != nil {
 			return err
@@ -308,9 +323,8 @@ func (s *Service) setDashboardArchived(ctx context.Context, actor string, id int
 		if err := s.settleLoneName(ctx, actor, groupOf(all, d)); err != nil {
 			return err
 		}
-	}
-	return s.st.SetDashboardsArchived(ctx, ids, archived,
-		store.AuditEntry{Actor: actor, Action: archiveAction("dashboard", archived)})
+		return s.st.SetDashboardsArchived(ctx, ids, false, a)
+	})
 }
 
 // settleLoneName runs before a group of members gains a live tab. While
