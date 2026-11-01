@@ -71,7 +71,13 @@ test.describe('system dashboards', () => {
 
         await assertNoErrorCards(page)
         // A real chart, not just a lucide icon: recharts' own surface class.
-        await expect(page.locator('svg.recharts-surface').first()).toBeVisible()
+        // Availability has none until a project's monitoring has run, and the
+        // seeded instance has no monitor: its About card says so instead.
+        if (title === 'Availability') {
+          await expect(page.getByText('monitoring is not set up for this project')).toBeVisible()
+        } else {
+          await expect(page.locator('svg.recharts-surface').first()).toBeVisible()
+        }
       })
     }
   }
@@ -148,7 +154,7 @@ test('a whole-group copy of Views opens with eight tabs', async ({ page, request
   await page.goto(`/app/dashboards/${copyId}`)
   await page.waitForLoadState('networkidle')
 
-  await expect(page.getByRole('tab')).toHaveCount(7)
+  await expect(page.getByRole('tab')).toHaveCount(8)
 })
 
 test('a 6x6 widget and four 3x3 widgets lay out as a 2x2 block beside it', async ({ page, request }) => {

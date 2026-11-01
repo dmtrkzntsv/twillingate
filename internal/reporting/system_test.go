@@ -1084,3 +1084,43 @@ func systemEvents(projectID int64, today civil.Date) []store.Event {
 	}
 	return evs
 }
+
+// TestAvailabilityFigures holds the Availability tiles to the seeded
+// checks: three of four uptime rows a day succeed, the latest certificate
+// and domain readings in the 7d range are the day before today's, and
+// Recent failures lists the newest day first.
+func TestAvailabilityFigures(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+	from, to := presetDates("7d", f.today)
+	read := func(name string) readsql.Result {
+		t.Helper()
+		got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, f.svc, 8, name), ProjectID: f.project, From: from, To: to})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, ok := got.Data.(readsql.Result)
+		if !ok {
+			t.Fatalf("%s: data is %T", name, got.Data)
+		}
+		return res
+	}
+	if v := column(t, read("uptime"), 0, "value"); v != "0.75" {
+		t.Errorf("uptime = %q, want 0.75", v)
+	}
+	for name, want := range map[string]string{"cert-days": "79", "domain-days": "199"} {
+		res := read(name)
+		if v := column(t, res, len(res.Rows)-1, "value"); v != want {
+			t.Errorf("%s last value = %q, want %s", name, v, want)
+		}
+	}
+	res := read("failures")
+	if len(res.Rows) != 7 {
+		t.Fatalf("failures rows = %d, want 7", len(res.Rows))
+	}
+	for i := 1; i < len(res.Rows); i++ {
+		if a, b := column(t, res, i-1, "Last failure"), column(t, res, i, "Last failure"); a <= b {
+			t.Errorf("failures not newest first: row %d %q, row %d %q", i-1, a, i, b)
+		}
+	}
+}
