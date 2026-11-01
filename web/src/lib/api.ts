@@ -271,6 +271,25 @@ export interface Project {
   allowed_origins: string[]
 }
 
+/** A project's availability monitor (GET /api/projects/{id}/monitor); empty strings mean unknown. */
+export interface Monitor {
+  project_id: number
+  enabled: boolean
+  origin: string
+  contains: string
+  /** The project's http(s) origins a check can target. */
+  eligible_origins: string[]
+  interval_seconds: number
+  cert: { expires_at: string; issuer: string; valid: boolean; error: string; checked_at: string }
+  domain: { expires_at: string; checked_at: string }
+}
+
+export interface MonitorBody {
+  enabled?: boolean
+  origin?: string
+  contains?: string
+}
+
 export interface IngestKey {
   project_id: number
   label: string
@@ -650,6 +669,8 @@ export const endpoints = {
   keys: (projectId?: number) => api<{ keys: IngestKey[] }>(`/api/keys${toQuery({ project_id: projectId })}`),
   createProject: (body: CreateProjectBody) => api<CreatedProject>('/api/projects', json('POST', body)),
   updateProject: (id: number, body: Partial<CreateProjectBody>) => api<{ project_id: number }>(`/api/projects/${id}`, json('PATCH', body)),
+  monitor: (id: number) => api<Monitor>(`/api/projects/${id}/monitor`),
+  updateMonitor: (id: number, body: MonitorBody) => api<Monitor>(`/api/projects/${id}/monitor`, json('PATCH', body)),
   moveProject: (id: number, after: number) => api<{ status: string }>(`/api/projects/${id}/move`, json('POST', { after })),
   archiveProject: (id: number) => api<{ status: string }>(`/api/projects/${id}/archive`, json('POST', {})),
   restoreProject: (id: number) => api<{ status: string }>(`/api/projects/${id}/restore`, json('POST', {})),

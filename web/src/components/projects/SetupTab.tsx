@@ -7,6 +7,7 @@ import RangeSwitcher from '@/components/RangeSwitcher'
 import AttributesSection from '@/components/projects/AttributesSection'
 import EventsSection from '@/components/projects/EventsSection'
 import KeysSection from '@/components/projects/KeysSection'
+import MonitoringSection from '@/components/projects/MonitoringSection'
 import OriginsSection from '@/components/projects/OriginsSection'
 import UsageSection from '@/components/projects/UsageSection'
 import { Button } from '@/components/ui/button'
@@ -55,6 +56,8 @@ export default function SetupTab({ project, dash, actions }: Props) {
       </DashboardHeader>
       <UsageSection projectId={id} range={range} />
       <OriginsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
+      {/* Reporting dev serves no monitor, as it serves no project tabs. */}
+      {!dash?.dev && <MonitoringSection projectId={id} pending={actions.pending} onSave={(body) => actions.updateMonitor(id, body)} />}
       <EventsSection
         project={project}
         range={range}

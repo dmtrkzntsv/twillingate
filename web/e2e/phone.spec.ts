@@ -130,6 +130,17 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   })
   expect(created.ok(), await created.text()).toBeTruthy()
   const { project_id: id, key } = (await created.json()) as { project_id: number; key: string }
+  // Monitor the longer origin, with a long expected text: the Monitoring
+  // section's origin, status lines and fields wrap too.
+  const monitored = await request.patch(`/api/projects/${id}/monitor`, {
+    headers: authHeaders(),
+    data: {
+      enabled: true,
+      origin: 'https://billing-test.another-long-subdomain.example.com',
+      contains: 'a text the page must hold that is longer than a phone is wide on one line',
+    },
+  })
+  expect(monitored.ok(), await monitored.text()).toBeTruthy()
   // A draft form with a name and values longer than a phone is wide: its
   // row, its page and its table wrap or scroll inside their card.
   const formName = 'a-contact-form-whose-name-is-longer-than-a-phone-is-wide-on-one'
@@ -244,6 +255,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     await check(page, path)
     // The check above means nothing for the Events and Attributes sections unless they are drawn.
     if (path.endsWith('?range=today')) {
+      await expect(page.getByRole('region', { name: 'Monitoring' }).getByText(/^Checked every/)).toBeVisible()
       for (const [section, alias] of [['Events', longEvent], ['Attributes', longAttribute]]) {
         const region = page.getByRole('region', { name: section })
         await expect(region.getByRole('button', { name: `Remove alias ${alias}` })).toBeVisible()
