@@ -94,6 +94,11 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 		if err != nil {
 			return err
 		}
+		if in.GroupID != 0 {
+			if err := s.settleLoneName(ctx, actor, o.group(in.GroupID)); err != nil {
+				return err
+			}
+		}
 		id, err = s.st.InsertDashboard(ctx,
 			store.Dashboard{Owner: store.OwnerUser, Title: in.Title, SortKey: key, GroupID: in.GroupID, LastRange: rng, Sidebar: true},
 			ws, store.AuditEntry{Actor: actor, Action: "dashboard.create"})
@@ -134,7 +139,16 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 	err = s.placeRow(ctx, d.ID, func(o order, row store.Dashboard) error {
 		// The only live tab of a named group carries the group's name with
 		// its title, so the name is still the tab's once the group grows.
-		syncGroup := in.Title != "" && in.GroupID == nil && row.GroupTitle != "" && o.lone(row.ID, row.GroupID)
+		lone := o.lone(row.ID, row.GroupID)
+		// It keeps its group with no group_id, its own group's, or 0 when
+		// it is alone already (leaveGroup).
+		keeps := in.GroupID == nil || *in.GroupID == row.GroupID || (*in.GroupID == 0 && lone)
+		syncGroup := in.Title != "" && keeps && row.GroupTitle != "" && lone
+		if !keeps && *in.GroupID != 0 {
+			if err := s.settleLoneName(ctx, actor, o.group(*in.GroupID)); err != nil {
+				return err
+			}
+		}
 		if in.Title != "" {
 			row.Title = in.Title
 		}
@@ -286,8 +300,38 @@ func (s *Service) setDashboardArchived(ctx context.Context, actor string, id int
 			}
 		}
 	}
+	if !archived {
+		all, err := s.st.ListDashboards(ctx)
+		if err != nil {
+			return err
+		}
+		if err := s.settleLoneName(ctx, actor, groupOf(all, d)); err != nil {
+			return err
+		}
+	}
 	return s.st.SetDashboardsArchived(ctx, ids, archived,
 		store.AuditEntry{Actor: actor, Action: archiveAction("dashboard", archived)})
+}
+
+// settleLoneName runs before a group of members gains a live tab. While
+// a group has one live tab, that tab's title is its one name (a title
+// change renames a named group with it, and the page names it by the
+// title), but a name it kept from when it had more tabs, or from before
+// that rule, would come back as the group's name once a second tab
+// joins. So when the group has one live tab and a stored name other than
+// its title, the title becomes the stored name first.
+func (s *Service) settleLoneName(ctx context.Context, actor string, members []store.Dashboard) error {
+	var live []store.Dashboard
+	for _, m := range members {
+		if m.ArchivedAt == "" {
+			live = append(live, m)
+		}
+	}
+	if len(live) != 1 || live[0].Owner != store.OwnerUser || live[0].GroupTitle == "" || live[0].GroupTitle == live[0].Title {
+		return nil
+	}
+	return s.st.SetGroupTitle(ctx, live[0].GroupID, live[0].Title, store.AuditEntry{
+		Actor: actor, Action: "dashboard.group.rename", Detail: fmt.Sprintf("dashboard/%d", live[0].ID)})
 }
 
 // refuseSystem refuses a write to a system dashboard: those change only

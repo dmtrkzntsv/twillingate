@@ -4,6 +4,8 @@ import (
 	"context"
 	"strconv"
 	"testing"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // groupTitle is dashboard id's group name as the store reads it.
@@ -335,5 +337,95 @@ func TestRetitlingATabOfManyKeepsTheGroupName(t *testing.T) {
 	}
 	if got, gt := dashTitle(t, svc, f.ID), groupTitle(t, svc, f.ID); got != "Summary" || gt != "Ops" {
 		t.Errorf("title %q, group %q, want \"Summary\" and \"Ops\"", got, gt)
+	}
+}
+
+// staleLone makes a named group whose one live tab is titled otherwise,
+// as an archived tab or a database from before the one-name rule leaves
+// it: "Overview" live, group "Ops", "Detail" archived. It returns both.
+func staleLone(t *testing.T, svc *Service) (DashboardDetail, DashboardDetail) {
+	t.Helper()
+	f := mustCreate(t, svc, "Overview")
+	tab := mustJoin(t, svc, "Detail", f.ID)
+	if _, err := renameGroup(svc, f.ID, "Ops"); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.ArchiveDashboard(context.Background(), "test", tab.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	return f, tab
+}
+
+// A name a group of one kept never comes back when the group grows: the
+// lone tab's title, its one name, becomes the group's first.
+func TestGrowingGroupOfOneKeepsTheNameShown(t *testing.T) {
+	ctx := context.Background()
+	grow := map[string]func(svc *Service, f, tab DashboardDetail) error{
+		"restore": func(svc *Service, _, tab DashboardDetail) error {
+			return svc.RestoreDashboard(ctx, "test", tab.ID, false)
+		},
+		"create": func(svc *Service, f, _ DashboardDetail) error {
+			_, err := svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "New", GroupID: f.ID})
+			return err
+		},
+		"duplicate tab": func(svc *Service, f, _ DashboardDetail) error {
+			_, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: f.ID, GroupID: f.ID})
+			return err
+		},
+		"move in": func(svc *Service, f, _ DashboardDetail) error {
+			other := mustCreate(t, svc, "Other")
+			_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: other.ID, GroupID: ptr(f.GroupID)})
+			return err
+		},
+	}
+	for name, fn := range grow {
+		t.Run(name, func(t *testing.T) {
+			svc := newTestService(t)
+			f, tab := staleLone(t, svc)
+			if err := fn(svc, f, tab); err != nil {
+				t.Fatal(err)
+			}
+			if gt := groupTitle(t, svc, f.ID); gt != "Overview" {
+				t.Errorf("group name = %q, want \"Overview\", the name it showed", gt)
+			}
+		})
+	}
+}
+
+func TestDuplicatingGroupOfOneCopiesNoKeptName(t *testing.T) {
+	svc := newTestService(t)
+	f, _ := staleLone(t, svc)
+	cp, err := svc.DuplicateDashboard(context.Background(), "test", DuplicateDashboard{ID: f.ID, WholeGroup: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if gt := groupTitle(t, svc, cp.ID); gt != "" {
+		t.Errorf("copy's group name = %q, want none", gt)
+	}
+}
+
+// A title sent with the group the tab is in already, or with group_id 0
+// on a tab alone, keeps the group: the name follows the title.
+func TestRetitleWithOwnGroupStillRenamesGroupOfOne(t *testing.T) {
+	ctx := context.Background()
+	for name, g := range map[string]func(f DashboardDetail) int64{
+		"own group": func(f DashboardDetail) int64 { return f.GroupID },
+		"group 0":   func(DashboardDetail) int64 { return 0 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			svc := newTestService(t)
+			// A lone tab whose group kept a name of its own, as a database
+			// from before the one-name rule has it.
+			f := mustCreate(t, svc, "Overview")
+			if err := svc.st.SetGroupTitle(ctx, f.GroupID, "Ops", store.AuditEntry{Actor: "test", Action: "dashboard.group.rename"}); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: f.ID, Title: "Summary", GroupID: ptr(g(f))}); err != nil {
+				t.Fatal(err)
+			}
+			if gt := groupTitle(t, svc, f.ID); gt != "Summary" {
+				t.Errorf("group name = %q, want \"Summary\"", gt)
+			}
+		})
 	}
 }

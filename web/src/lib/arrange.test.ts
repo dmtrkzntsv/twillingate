@@ -141,6 +141,10 @@ describe('groupName', () => {
     expect(groupName([mkInfo(3, 'Solo', 'user', 3, { group_title: 'Team' })])).toBe('Solo')
   })
 
+  it('keeps a built-in group of one tab\'s name, which comes with the release', () => {
+    expect(groupName([mkInfo(1, 'Views', 'system', 1, { group_title: 'Reports' })])).toBe('Reports')
+  })
+
   it('is the first member title when every member is archived', () => {
     const archived = { archived_at: '2026-09-01T00:00:00Z' }
     const members = [mkInfo(1, 'Old', 'user', 1, archived), mkInfo(2, 'Older', 'user', 1, archived)]
