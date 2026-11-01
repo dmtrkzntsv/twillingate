@@ -10,7 +10,6 @@ package reporting
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/fs"
 	"net"
@@ -453,24 +452,17 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 // writeAPIErr maps err to the API's own refusal shape (rest.go's
 // apiError, repeated here for the same reason devProjectOut is): a typed
-// refusal (store.Refuse, matched by errors.Is against the sentinels
-// CLAUDE.md names) gets its status and code; anything else is a 500,
+// refusal (store.Refuse, matched by HTTPRefusalOf) gets its status and
+// code, a busy one its Retry-After; anything else is a 500,
 // its text kept as-is since reporting dev has no request logger of its
 // own to hand internals to instead.
 func writeAPIErr(w http.ResponseWriter, err error) {
 	status, code := http.StatusInternalServerError, "internal"
-	switch {
-	case errors.Is(err, store.ErrInvalid):
-		status, code = http.StatusBadRequest, "invalid"
-	case errors.Is(err, store.ErrNotFound):
-		status, code = http.StatusNotFound, "not_found"
-	case errors.Is(err, store.ErrConflict):
-		status, code = http.StatusConflict, "conflict"
-	case errors.Is(err, store.ErrBusy):
-		status, code = http.StatusTooManyRequests, "busy"
+	if r, ok := HTTPRefusalOf(err); ok {
+		status, code = r.Status, r.Code
+	}
+	if status == http.StatusTooManyRequests {
 		w.Header().Set("Retry-After", strconv.Itoa(sqlbind.BusyRetryAfter))
-	case errors.Is(err, store.ErrTimeout):
-		status, code = http.StatusGatewayTimeout, "timeout"
 	}
 	writeJSON(w, status, map[string]any{"error": map[string]string{"code": code, "message": err.Error()}})
 }
