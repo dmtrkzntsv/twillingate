@@ -313,6 +313,9 @@ for (const viewport of VIEWPORTS) {
     // The menu's close animation used to take focus back and dismiss the picker.
     await page.waitForTimeout(500)
     await expect(apply).toBeVisible()
+    // Days after today are disabled, so on the 1st the current month offers
+    // one day: pick from the previous month, which is always whole.
+    await page.getByRole('button', { name: 'Go to the Previous Month' }).click()
     const days = page.getByRole('grid').first().getByRole('button', { disabled: false })
     await days.nth(0).click()
     await days.nth(2).click()
@@ -343,7 +346,9 @@ test("a dashboard loads, refreshes, auto-refreshes and switches range, each thro
     }
   })
 
-  await page.goto(`/app/dashboards/${id}`)
+  // Start from a known range: the dashboard otherwise reopens the view an
+  // earlier test left, and switching to that same range asks nothing.
+  await page.goto(`/app/dashboards/${id}?range=7d`)
   await page.waitForLoadState('networkidle')
   const cards = page.locator('[data-slot="widget-card"]')
   expect(await cards.count()).toBeGreaterThan(1)
