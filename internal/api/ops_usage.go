@@ -168,7 +168,7 @@ const usageChunkDays = maxBreakdownLimit / 3
 // of the range in the event files of each project, natively, rules
 // applied: a breakdown by day and family per project, one per 333 days of
 // the range. It also reads when each project's newest row arrived
-// (newestArrival), for every project when asked, else for the live ones
+// (newestRow), for every project when asked, else for the live ones
 // only: an archived project's files only wait for the purge. The
 // projects' queries go in calls (answerAll) of usageProjectsPerCall
 // projects, a project's sharing one scan, read in order: the first error
@@ -235,7 +235,7 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 		return err
 	}
 	// The breakdowns and the newest arrivals go in one call.
-	got, answers, err := h.newestRow(ctx, want, latest, oldest, "received_at", reqs)
+	got, _, answers, err := h.newestRow(ctx, want, latest, oldest, "received_at", reqs, newestOpts{})
 	if err != nil {
 		return err
 	}
@@ -269,6 +269,12 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 	return nil
 }
 
+// newestOpts bounds newestRow's search and says how it takes a failure.
+type newestOpts struct {
+	maxBack  int
+	tolerate bool
+}
+
 // newestRow is, for each of projects with event files, the newest value
 // of column (received_at or ts) among its rows of the events table, which
 // leaves the checks family out. The file names only bound the search
@@ -279,8 +285,18 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 // one month's scan for a project that has traffic, more only for a
 // silent one. A project with no row at all is absent. batch goes in the
 // first call with the first scans, and its answers are returned in order.
-func (h *host) newestRow(ctx context.Context, projects []int64, latest, oldest map[int64]string, column string, batch []native.Request) (map[int64]string, []native.Answered, error) {
-	type span struct{ first, last civil.Date }
+//
+// opt.maxBack bounds the search to that many months before the newest
+// file's (0: down to the oldest file); a project with no row by then is
+// absent. With opt.tolerate a project whose scan fails is left out of the
+// answer and named, with its error, in the third result, where otherwise
+// the first failure is returned.
+func (h *host) newestRow(ctx context.Context, projects []int64, latest, oldest map[int64]string, column string, batch []native.Request, opt newestOpts) (map[int64]string, map[int64]error, []native.Answered, error) {
+	type span struct {
+		first, last civil.Date
+		back        int // months stepped back from the newest file's
+	}
+	failed := map[int64]error{}
 	pending := map[int64]span{}
 	for _, id := range projects {
 		last, err := civil.Parse(latest[id])
@@ -291,7 +307,7 @@ func (h *host) newestRow(ctx context.Context, projects []int64, latest, oldest m
 		if err != nil {
 			continue
 		}
-		pending[id] = span{first, last}
+		pending[id] = span{first: first, last: last}
 	}
 	out := map[int64]string{}
 	batchAnswers := make([]native.Answered, len(batch))
@@ -324,25 +340,31 @@ func (h *host) newestRow(ctx context.Context, projects []int64, latest, oldest m
 				batchAnswers[asks[i].batch] = a
 				continue
 			}
-			if a.Err != nil {
-				return nil, nil, a.Err
-			}
 			id := asks[i].req.Params.Project
+			if a.Err != nil {
+				if !opt.tolerate {
+					return nil, nil, nil, a.Err
+				}
+				failed[id] = a.Err
+				delete(pending, id)
+				continue
+			}
 			if rows := a.Result.Rows; len(rows) == 1 && rows[0][0] != "" {
 				out[id] = rows[0][0]
 				delete(pending, id)
 				continue
 			}
-			prev := pending[id].first.AddDays(-1)
-			if o, err := civil.Parse(oldest[id]); err != nil || prev.Before(o) {
+			sp := pending[id]
+			prev := sp.first.AddDays(-1)
+			if o, err := civil.Parse(oldest[id]); err != nil || prev.Before(o) || (opt.maxBack > 0 && sp.back >= opt.maxBack) {
 				delete(pending, id)
 				continue
 			}
 			m, _ := civil.Parse(prev.String()[:8] + "01")
-			pending[id] = span{m, prev}
+			pending[id] = span{m, prev, sp.back + 1}
 		}
 	}
-	return out, batchAnswers, nil
+	return out, failed, batchAnswers, nil
 }
 
 // readSizes answers every project's latest size, by project id: its

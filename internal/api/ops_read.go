@@ -40,6 +40,8 @@ type host struct {
 	// events caches the last 30 days' events (eventcount.go), counted
 	// natively; nil when native is, where limits leaves events_30d out.
 	events *eventCount
+	// activity caches project_activity's last_event_day (ops_activity.go).
+	activity activityDays
 	// ingestDisabled is INGEST_DISABLED, which limits reports.
 	ingestDisabled bool
 	// monitorInterval is MONITOR_INTERVAL, which get_monitor reports.
@@ -397,7 +399,7 @@ func (h *host) register(r *registrar) {
 		Description: "List projects with id, name and allowed origins, in the order move_project sets. Call this first: every other tool takes a project_id from here."},
 		h.listProjects)
 	restOnly(r, spec{Name: "project_activity", Method: "GET", Path: "/api/project-activity",
-		Description: "Per live project: last_event_day (the day of the newest event in the event files, availability checks aside; null with none), new_submissions (active submissions to live forms the console hasn't read), forms (live forms) and draft_forms (live forms still drafts, waiting to be approved). For the console's badges; not an MCP tool."},
+		Description: "Per live project: last_event_day (the day of the newest event in the event files, availability checks aside, looked for in the newest file's month and the 3 before it; null with none), new_submissions (active submissions to live forms the console hasn't read), forms (live forms) and draft_forms (live forms still drafts, waiting to be approved). For the console's badges; not an MCP tool."},
 		h.projectActivity)
 	expose(r, spec{Name: "limits", Annotations: ro, Method: "GET", Path: "/api/limits",
 		Description: "The limits in force, grouped: retention (days the event files, archived items and form drafts are kept) and ingest (INGEST_LATE_DAYS, how far back a client timestamp may lie before it is clamped, then the wire format's fixed limits: body, batch, attributes, timestamps, measures). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here. Also events_30d: count, the events in the event files from from through to (the 30 days ending today, UTC), of every family and project, counted at most every 5 minutes (never more than 10 minutes old); absent when the last count failed. And ingest_disabled: true when INGEST_DISABLED is set and every ingest route refuses events and form submissions."},

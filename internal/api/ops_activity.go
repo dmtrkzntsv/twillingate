@@ -2,11 +2,13 @@ package api
 
 import (
 	"context"
-	"maps"
 	"slices"
 	"strconv"
+	"sync"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
+	"github.com/dmtrkzntsv/twillingate/internal/manage"
 )
 
 // Project activity (spec 2026-10-08 D6, D7): per live project, the newest
@@ -29,31 +31,12 @@ type projectActivityListOut struct {
 
 func (h *host) projectActivity(ctx context.Context, _ struct{}) (projectActivityListOut, error) {
 	out := projectActivityListOut{Projects: []projectActivityOut{}}
-	// The file names say each project's newest day with a file, which may
-	// hold nothing but availability checks, not the site's events: the
-	// newest event's own day is read from the files (newestRow), a month's
-	// scan for a project with traffic.
-	latest, err := archive.LatestDays(h.eventsDir)
+	live := h.reg.Snapshot(ctx).Projects()
+	days, err := h.lastEventDays(ctx, live)
 	if err != nil {
 		return out, err
 	}
-	days := latest
-	if h.native != nil {
-		oldest, err := archive.OldestDays(h.eventsDir)
-		if err != nil {
-			return out, err
-		}
-		ids := slices.Collect(maps.Keys(latest))
-		ts, _, err := h.newestRow(ctx, ids, latest, oldest, "ts", nil)
-		if err != nil {
-			return out, err
-		}
-		days = map[int64]string{}
-		for id, t := range ts {
-			days[id] = t[:min(len(t), 10)]
-		}
-	}
-	for _, p := range h.reg.Snapshot(ctx).Projects() {
+	for _, p := range live {
 		if p.Archived {
 			continue
 		}
@@ -79,4 +62,75 @@ func (h *host) projectActivity(ctx context.Context, _ struct{}) (projectActivity
 		out.Projects = append(out.Projects, a)
 	}
 	return out, nil
+}
+
+// activityTTL is how long the days project_activity reads answer before
+// the next read scans again: the sidebar asks on every load.
+const activityTTL = 5 * time.Minute
+
+// activityMonthsBack is how many months before the newest file's the
+// scan for a project's newest event goes; a project with none in that
+// window reads null.
+const activityMonthsBack = 3
+
+// activityDays caches lastEventDays for activityTTL.
+type activityDays struct {
+	mu   sync.Mutex
+	now  func() time.Time
+	at   time.Time
+	days map[int64]string
+}
+
+// lastEventDays is the day of the newest event (checks aside) of each live
+// project with event files, from a scan of the newest file's month and at
+// most activityMonthsBack before it (the file names say which month, and
+// the newest file may hold nothing but checks), chunked like usage's and
+// cached for activityTTL. Archived projects are not read, and a project
+// whose scan fails reads its newest file's day, the failure logged: the
+// endpoint does not fail with it. A project with none in the window is
+// absent.
+func (h *host) lastEventDays(ctx context.Context, live []*manage.Project) (map[int64]string, error) {
+	latest, err := archive.LatestDays(h.eventsDir)
+	if err != nil {
+		return nil, err
+	}
+	if h.native == nil {
+		return latest, nil
+	}
+	c := &h.activity
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := time.Now
+	if c.now != nil {
+		now = c.now
+	}
+	if c.days != nil && now().Sub(c.at) < activityTTL {
+		return c.days, nil
+	}
+	oldest, err := archive.OldestDays(h.eventsDir)
+	if err != nil {
+		return nil, err
+	}
+	var ids []int64
+	for _, p := range live {
+		if _, ok := latest[p.ID]; ok && !p.Archived {
+			ids = append(ids, p.ID)
+		}
+	}
+	days := map[int64]string{}
+	for chunk := range slices.Chunk(ids, usageProjectsPerCall) {
+		ts, failed, _, err := h.newestRow(ctx, chunk, latest, oldest, "ts", nil, newestOpts{maxBack: activityMonthsBack, tolerate: true})
+		if err != nil {
+			return nil, err
+		}
+		for id, t := range ts {
+			days[id] = t[:min(len(t), 10)]
+		}
+		for id, ferr := range failed {
+			h.logger.Error("project_activity: last_event_day read from the file names, the events cannot be scanned", "project_id", id, "error", ferr)
+			days[id] = latest[id]
+		}
+	}
+	c.days, c.at = days, now()
+	return days, nil
 }

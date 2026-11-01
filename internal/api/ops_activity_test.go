@@ -1,13 +1,20 @@
 package api
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -171,5 +178,77 @@ func TestProjectActivityNotMCP(t *testing.T) {
 	}
 	if len(routes) != 2 || !routes["project_activity"] || !routes["mark_form_seen"] {
 		t.Errorf("REST-only specs = %v", routes)
+	}
+}
+
+// scanNative records the projects each AnswerMany asked for, failing those
+// of fail.
+type scanNative struct {
+	*native.Engine
+	fail  int64
+	asked []int64
+}
+
+func (n *scanNative) AnswerMany(ctx context.Context, reqs []native.Request, done func(int, native.Answered)) {
+	for i, r := range reqs {
+		n.asked = append(n.asked, r.Params.Project)
+		if r.Params.Project == n.fail {
+			done(i, native.Answered{Err: errors.New("the files are gone")})
+			continue
+		}
+	}
+	// The others are answered by the engine, with their indexes kept.
+	var rest []native.Request
+	var at []int
+	for i, r := range reqs {
+		if r.Params.Project != n.fail {
+			rest, at = append(rest, r), append(at, i)
+		}
+	}
+	n.Engine.AnswerMany(ctx, rest, func(j int, a native.Answered) { done(at[j], a) })
+}
+
+// TestProjectActivityScansLiveProjectsOnceInTheTTL: an archived project is
+// not scanned, a second read within the TTL scans nothing and one past it
+// scans again, and a project whose scan fails reads its newest file's day
+// without failing the endpoint.
+func TestProjectActivityScansLiveProjectsOnceInTheTTL(t *testing.T) {
+	h, _ := newTestHost(t)
+	ctx := t.Context()
+	if err := h.ops.ArchiveProject(ctx, "test", 2); err != nil {
+		t.Fatal(err)
+	}
+	n := &scanNative{Engine: h.native.(*native.Engine)}
+	h.native = n
+	clock := time.Now()
+	h.activity.now = func() time.Time { return clock }
+	out, err := h.projectActivity(ctx, struct{}{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(n.asked) == 0 || slices.ContainsFunc(n.asked, func(id int64) bool { return id != 1 }) {
+		t.Errorf("projects scanned = %v, want project 1 only", n.asked)
+	}
+	if len(out.Projects) != 1 || out.Projects[0].LastEventDay == nil || *out.Projects[0].LastEventDay != "2026-08-26" {
+		t.Errorf("activity = %+v", out.Projects)
+	}
+	asked := len(n.asked)
+	if _, err := h.projectActivity(ctx, struct{}{}); err != nil || len(n.asked) != asked {
+		t.Errorf("a read within the TTL scanned again: %d -> %d (%v)", asked, len(n.asked), err)
+	}
+	clock = clock.Add(activityTTL)
+	n.fail = 1
+	var logs bytes.Buffer
+	h.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	out, err = h.projectActivity(ctx, struct{}{})
+	if err != nil {
+		t.Fatalf("a failing scan failed the endpoint: %v", err)
+	}
+	latest, _ := archive.LatestDays(h.eventsDir)
+	if len(n.asked) == asked || out.Projects[0].LastEventDay == nil || *out.Projects[0].LastEventDay != latest[1] {
+		t.Errorf("after the TTL: asked %d -> %d, activity %+v, want a rescan and the file name's day %s", asked, len(n.asked), out.Projects, latest[1])
+	}
+	if !strings.Contains(logs.String(), "level=ERROR") {
+		t.Errorf("failure not logged: %q", logs.String())
 	}
 }
