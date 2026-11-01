@@ -2,7 +2,10 @@ package monitor
 
 import (
 	"context"
+	"crypto/tls"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -396,9 +399,9 @@ func TestAttemptDeadline(t *testing.T) {
 		{10 * time.Second, 1, 10 * time.Second}, // the last address takes what is left
 		{10 * time.Second, 2, 5 * time.Second},
 		{9 * time.Second, 3, 3 * time.Second},
-		{10 * time.Second, 10, 2 * time.Second}, // never below the minimum
-		{time.Second, 3, time.Second},           // unless less than that is left
-		{-time.Second, 2, -time.Second},         // already past: nothing to share
+		{10 * time.Second, 10, time.Second}, // an even share, however many
+		{2 * time.Second, 2, time.Second},   // a short budget is not eaten by the first address
+		{-time.Second, 2, -time.Second},     // already past: nothing to share
 	} {
 		if got := attemptDeadline(now, now.Add(tc.remaining), tc.left); !got.Equal(now.Add(tc.want)) {
 			t.Errorf("%v over %d: %v, want %v", tc.remaining, tc.left, got.Sub(now), tc.want)
@@ -430,6 +433,119 @@ func TestCheckSurvivesADeadAddress(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "ok") }))
 	defer srv.Close()
 	c := newClient(deadFirst(srv.Listener.Addr().String(), 4*time.Second), nil)
+	if res := checkURL(t, c, "http://site.example", "ok", anyOrigin); !res.Up {
+		t.Errorf("got %+v, want up through the second address", res)
+	}
+}
+
+// silentListener accepts and never writes; closed reports each accepted
+// connection the client closed (its read ended).
+func silentListener(t *testing.T) (addr string, closed chan struct{}) {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	closed = make(chan struct{}, 8)
+	go func() {
+		for {
+			c, err := l.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer c.Close()
+				io.Copy(io.Discard, c) // returns when the client closes
+				closed <- struct{}{}
+			}()
+		}
+	}()
+	return l.Addr().String(), closed
+}
+
+func requireClosed(t *testing.T, closed chan struct{}, within time.Duration) {
+	t.Helper()
+	select {
+	case <-closed:
+	case <-time.After(within):
+		t.Fatalf("the client left the connection open for %v", within)
+	}
+}
+
+// A host that takes the connection and says nothing ends the check as a
+// timeout, and the client closes the socket: nothing is left to leak.
+func TestSilentHostIsClosedByTheClient(t *testing.T) {
+	for _, scheme := range []string{"http", "https"} {
+		t.Run(scheme, func(t *testing.T) {
+			addr, closed := silentListener(t)
+			g := &guard{resolver: net.DefaultResolver, allowLoopback: true, budget: time.Second}
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second) // the dial is detached from it anyway
+			defer cancel()
+			start := time.Now()
+			res := Check(ctx, newClient(g, nil), scheme+"://"+addr, "", anyOrigin)
+			if res.Up || res.Reason != "timeout" {
+				t.Fatalf("got %+v, want timeout", res)
+			}
+			if d := time.Since(start); d > 5*time.Second {
+				t.Errorf("took %v, want about the 1 s budget", d)
+			}
+			requireClosed(t, closed, 3*time.Second)
+		})
+	}
+}
+
+func TestRDAPClientKeepsItsOwnLimit(t *testing.T) {
+	r := newRunner(&fakeStore{}, allowAll{}, &fakeLog{}, 60*time.Second, quietLogger(), options{timeout: time.Second})
+	tr := r.rdap.client.Transport.(*http.Transport)
+	if tr.ResponseHeaderTimeout != rdapTimeout || tr.TLSHandshakeTimeout != rdapTimeout {
+		t.Errorf("rdap transport header %v handshake %v, want %v", tr.ResponseHeaderTimeout, tr.TLSHandshakeTimeout, rdapTimeout)
+	}
+	tr = r.client.Transport.(*http.Transport)
+	if tr.ResponseHeaderTimeout != time.Second || tr.TLSHandshakeTimeout != time.Second {
+		t.Errorf("check transport header %v handshake %v, want 1s", tr.ResponseHeaderTimeout, tr.TLSHandshakeTimeout)
+	}
+}
+
+func TestSilentRDAPHostIsClosed(t *testing.T) {
+	addr, closed := silentListener(t)
+	g := &guard{resolver: net.DefaultResolver, allowLoopback: true, budget: time.Second}
+	r := &rdap{client: newClient(g, nil)}
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/", nil)
+	if _, err := r.client.Do(req); err == nil {
+		t.Fatal("a silent host answered")
+	}
+	requireClosed(t, closed, 3*time.Second)
+}
+
+// Errors from the TLS stage, the server's alert or a version the client
+// refuses, are tls, not connect.
+func TestReasonTLSHandshakeFailures(t *testing.T) {
+	alert := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	alert.TLS = &tls.Config{GetConfigForClient: func(*tls.ClientHelloInfo) (*tls.Config, error) {
+		return nil, errors.New("no")
+	}}
+	old := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	old.TLS = &tls.Config{MinVersion: tls.VersionTLS10, MaxVersion: tls.VersionTLS11}
+	for name, srv := range map[string]*httptest.Server{"alert": alert, "old version": old} {
+		srv.Config.ErrorLog = discardLog()
+		srv.StartTLS()
+		res := checkURL(t, loopbackClient(t), srv.URL, "", anyOrigin)
+		srv.Close()
+		if res.Up || res.Reason != "tls" {
+			t.Errorf("%s: got %+v, want tls", name, res)
+		}
+	}
+}
+
+// At a short budget the first, dead address must not take all of it.
+func TestShortBudgetLeavesTimeForTheNextAddress(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "ok") }))
+	defer srv.Close()
+	c := newClient(deadFirst(srv.Listener.Addr().String(), 2*time.Second), nil)
 	if res := checkURL(t, c, "http://site.example", "ok", anyOrigin); !res.Up {
 		t.Errorf("got %+v, want up through the second address", res)
 	}

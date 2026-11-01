@@ -10,8 +10,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -78,8 +80,9 @@ func Check(ctx context.Context, c *http.Client, origin, contains string, allowed
 // tally is what a check learned on the way: the hops followed and whether
 // any response came.
 type tally struct {
-	hops     int
-	answered bool
+	hops      int
+	answered  bool
+	tlsFailed atomic.Bool // a TLS handshake ended in an error
 }
 
 func check(ctx context.Context, c *http.Client, origin, contains string, allowed func(string) bool, t *tally) Result {
@@ -97,7 +100,12 @@ func check(ctx context.Context, c *http.Client, origin, contains string, allowed
 		t.hops = len(via)
 		return nil
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(origin, "/")+"/", nil)
+	trace := &httptrace.ClientTrace{TLSHandshakeDone: func(_ tls.ConnectionState, err error) {
+		if err != nil {
+			t.tlsFailed.Store(true)
+		}
+	}}
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, strings.TrimSuffix(origin, "/")+"/", nil)
 	if err != nil {
 		return Result{Reason: ReasonConnect, Error: err.Error()}
 	}
@@ -106,6 +114,9 @@ func check(ctx context.Context, c *http.Client, origin, contains string, allowed
 	resp, err := cc.Do(req)
 	if err != nil {
 		r := failure(ctx, err)
+		if t.tlsFailed.Load() && r.Reason == ReasonConnect {
+			r.Reason = ReasonTLS // a failure in the handshake, whatever its error type
+		}
 		if resp != nil { // a refused redirect: the response is that redirect
 			r.Status = resp.StatusCode
 		}

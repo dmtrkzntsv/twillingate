@@ -16,7 +16,6 @@ import (
 
 const (
 	dialBudget = 10 * time.Second // a dial's whole limit when its context sets none
-	minAttempt = 2 * time.Second  // one address's least share of the limit
 )
 
 // resolver is the slice of *net.Resolver the guard uses; tests answer
@@ -133,19 +132,15 @@ func blocked(a netip.Addr, allowLoopback bool) bool {
 }
 
 // attemptDeadline is the deadline of one dial with left addresses still to
-// try, the current one among them: its share of the time remaining, but
-// at least minAttempt while that much remains, as the standard library's
-// dialer shares it. One dead address so leaves time for the next.
+// try, the current one among them: an even share of the time remaining.
+// There is no floor: at a short budget one that took the whole of it would
+// leave nothing for the next address.
 func attemptDeadline(now, deadline time.Time, left int) time.Time {
 	remaining := deadline.Sub(now)
 	if remaining <= 0 || left <= 1 {
 		return deadline
 	}
-	share := remaining / time.Duration(left)
-	if share < minAttempt {
-		share = min(remaining, minAttempt)
-	}
-	return now.Add(share)
+	return now.Add(remaining / time.Duration(left))
 }
 
 // DialContext resolves addr's host, drops every private address and dials
@@ -223,16 +218,21 @@ func (g *guard) control(_, address string, _ syscall.RawConn) error {
 
 // newClient is the client every check shares: the guard dials, no proxy
 // (a proxy would dial for us, past the guard), no cookie jar, no
-// keep-alives, verification on against roots (nil: the system's). No
-// transport timeout of its own: each caller's context bounds the request
-// (MONITOR_TIMEOUT up to 60 s, RDAP 15 s).
+// keep-alives, verification on against roots (nil: the system's), and the
+// guard's budget as the handshake and response-header limit.
 // Check sets its own redirect policy on a copy.
 func newClient(g *guard, roots *x509.CertPool) *http.Client {
+	// The transport detaches its dial and handshake from the request's
+	// deadline, so the guard's budget bounds them too: a host that accepts
+	// and stays silent is closed after it, not left holding a socket.
+	limit := cmp.Or(g.budget, dialBudget)
 	return &http.Client{Transport: &http.Transport{
 		DialContext:            g.DialContext,
 		TLSClientConfig:        &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
 		DisableKeepAlives:      true,
 		ForceAttemptHTTP2:      true,
+		TLSHandshakeTimeout:    limit,
+		ResponseHeaderTimeout:  limit,
 		MaxResponseHeaderBytes: 64 << 10,
 	}}
 }
