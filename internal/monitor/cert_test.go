@@ -2,12 +2,15 @@ package monitor
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"io"
 	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -77,7 +80,9 @@ func TestDaysLeft(t *testing.T) {
 	}{
 		{"2026-11-11T12:00:00Z", 10},
 		{"2026-11-11T11:59:59Z", 9},
-		{"2026-11-11", 9},
+		{"2026-11-11", 10}, // a bare date counts calendar days in UTC
+		{"2026-11-01", 0},  // its own day, not yet past
+		{"2026-10-31", -1},
 		{"2026-10-30T12:00:00Z", -2},
 	} {
 		got, ok := daysLeft(tc.at, now)
@@ -100,5 +105,50 @@ func TestCertSurvivesADeadAddress(t *testing.T) {
 	st := checkCert(ctx, deadFirst(srv.Listener.Addr().String(), 0), nil, "https://site.example", time.Now())
 	if st.ExpiresAt == "" {
 		t.Errorf("got %+v, want the certificate read through the second address", st)
+	}
+}
+
+// A bare date counts the same at any hour, as the console's daysUntilDate
+// does, so the Availability tile and Settings agree.
+func TestDaysLeftDateIsCalendarDaysInUTC(t *testing.T) {
+	for _, at := range []string{"2026-11-01T00:00:00Z", "2026-11-01T10:00:00Z", "2026-11-01T23:59:59Z", "2026-11-01T22:00:00-01:00"} {
+		now, err := time.Parse(time.RFC3339, at)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, ok := daysLeft("2027-03-14", now); !ok || got != 133 {
+			t.Errorf("at %s: %v %v, want 133", at, got, ok)
+		}
+	}
+}
+
+// An internationalized host goes to DNS, SNI and verification as its
+// A-label; one that will not convert is a failed read.
+func TestCertInternationalizedHost(t *testing.T) {
+	var sni atomic.Value
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	srv.TLS = &tls.Config{GetConfigForClient: func(h *tls.ClientHelloInfo) (*tls.Config, error) {
+		sni.Store(h.ServerName)
+		return nil, nil
+	}}
+	srv.Config.ErrorLog = discardLog()
+	srv.StartTLS()
+	defer srv.Close()
+	_, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
+	g := &guard{resolver: fakeResolver{"xn--bcher-kva.de": {"127.0.0.1"}}, allowLoopback: true}
+	ctx := context.Background()
+	st := checkCert(ctx, g, nil, "https://bücher.de:"+port, time.Now())
+	if st.ExpiresAt == "" {
+		t.Fatalf("got %+v, want the certificate read", st)
+	}
+	if got := sni.Load(); got != "xn--bcher-kva.de" {
+		t.Errorf("SNI %v, want the A-label", got)
+	}
+	if !strings.Contains(st.Error, "xn--bcher-kva.de") { // the test certificate is for example.com
+		t.Errorf("verification error %q, want it to name the A-label", st.Error)
+	}
+	st = checkCert(ctx, g, nil, "https://bü_cher.de:"+port, time.Now())
+	if st.ExpiresAt != "" || st.Valid || st.Error == "" {
+		t.Errorf("unconvertible host: got %+v, want a failed read", st)
 	}
 }

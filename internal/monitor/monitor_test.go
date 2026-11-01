@@ -757,7 +757,7 @@ func TestRunnerDomainRow(t *testing.T) {
 	for _, e := range lg.all() {
 		names = append(names, e.EventName)
 		if e.EventName == "domain" {
-			if e.Attributes["expires"] != "2027-03-14" || e.Value == nil || *e.Value != 132 {
+			if e.Attributes["expires"] != "2027-03-14" || e.Value == nil || *e.Value != 133 {
 				t.Errorf("domain row %+v value %v", e.Attributes, e.Value)
 			}
 		}

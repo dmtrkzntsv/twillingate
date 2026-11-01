@@ -7,7 +7,11 @@ import (
 	"math"
 	"net"
 	"net/url"
+	"strings"
 	"time"
+	"unicode/utf8"
+
+	"golang.org/x/net/idna"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -23,7 +27,12 @@ func checkCert(ctx context.Context, g *guard, roots *x509.CertPool, origin strin
 		st.Error = "not a URL"
 		return st
 	}
-	host, port := u.Hostname(), u.Port()
+	host, err := asciiHost(u.Hostname())
+	if err != nil {
+		st.Error = truncate(err.Error())
+		return st
+	}
+	port := u.Port()
 	if port == "" {
 		port = "443"
 	}
@@ -68,15 +77,29 @@ func checkCert(ctx context.Context, g *guard, roots *x509.CertPool, origin strin
 	return st
 }
 
-// daysLeft is the whole days from now until at (RFC 3339, or a bare
-// YYYY-MM-DD read as its midnight UTC), rounded down; false when at is
-// empty or unreadable.
+// daysLeft is the days from now until at: for RFC 3339 the whole days,
+// rounded down; for a bare YYYY-MM-DD the calendar days from now's UTC date,
+// 0 on the day itself, as the console counts it (daysUntilDate). False when
+// at is empty or unreadable.
 func daysLeft(at string, now time.Time) (float64, bool) {
-	t, err := time.Parse(time.RFC3339, at)
-	if err != nil {
-		if t, err = time.Parse(time.DateOnly, at); err != nil {
-			return 0, false
-		}
+	if t, err := time.Parse(time.RFC3339, at); err == nil {
+		return math.Floor(t.Sub(now).Hours() / 24), true
 	}
-	return math.Floor(t.Sub(now).Hours() / 24), true
+	t, err := time.Parse(time.DateOnly, at)
+	if err != nil {
+		return 0, false
+	}
+	y, m, d := now.UTC().Date()
+	return math.Round(t.Sub(time.Date(y, m, d, 0, 0, 0, 0, time.UTC)).Hours() / 24), true
+}
+
+// asciiHost is host as DNS, SNI, certificates and RDAP spell it: an
+// internationalized name as its A-labels, by the rule http.Transport applies
+// to the same origin. An address, or a name already in ASCII, is left as it
+// is.
+func asciiHost(host string) (string, error) {
+	if !strings.ContainsFunc(host, func(r rune) bool { return r >= utf8.RuneSelf }) {
+		return host, nil
+	}
+	return idna.Lookup.ToASCII(host)
 }

@@ -342,7 +342,7 @@ traffic: checks never count against an allowance. They still take disk, about
 | --- | --- | --- | --- |
 | `uptime` | every check | response time in milliseconds, to the end of the body or to the failure | `up` (`1` or `0`); `status`, the final HTTP status, absent without a response; `reason` and `error` when down |
 | `cert` | once a day and when the monitor is enabled or its origin changes, on `https://` origins, when a certificate was read (verified or not) | whole days left | `expires` (`YYYY-MM-DD`), `issuer`, `valid` (`1` or `0`), `error`, why it did not verify |
-| `domain` | as `cert`, for the origin host's registrable domain (public suffix list) | whole days left until the registration expires, absent when unknown | `expires` (`YYYY-MM-DD`) |
+| `domain` | as `cert`, for the origin host's registrable domain (public suffix list) | calendar days (UTC) until the registration expires, 0 on the day itself, absent when unknown | `expires` (`YYYY-MM-DD`) |
 
 The domain's expiry is read over RDAP; a top-level domain with no RDAP service,
 or an answer without an expiration, reads as unknown, which is not a failure;

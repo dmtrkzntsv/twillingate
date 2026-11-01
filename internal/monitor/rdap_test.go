@@ -91,6 +91,22 @@ func TestRDAPUnknownTLD(t *testing.T) {
 	}
 }
 
+func TestRDAPInternationalizedHost(t *testing.T) {
+	srv, _ := fakeRDAP(t, map[string]string{
+		"xn--bcher-kva.com": `{"events":[{"eventAction":"expiration","eventDate":"2027-03-14T04:00:00Z"}]}`,
+	})
+	r := newTestRDAP(t, srv, time.Now)
+	ctx := context.Background()
+	for _, host := range []string{"bücher.com", "shop.BÜCHER.com.", "xn--bcher-kva.com"} {
+		if got, err := r.expiry(ctx, host); got != "2027-03-14" || err != nil {
+			t.Errorf("%s: got %q %v", host, got, err)
+		}
+	}
+	if got, err := r.expiry(ctx, "bü_cher.com"); got != "" || !errors.Is(err, errUnknown) {
+		t.Errorf("unconvertible host: got %q %v, want unknown", got, err)
+	}
+}
+
 func TestRDAPFailureIsNotUnknown(t *testing.T) {
 	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "slow down", http.StatusTooManyRequests)

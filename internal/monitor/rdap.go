@@ -56,6 +56,10 @@ func (r *rdap) expiry(ctx context.Context, host string) (string, error) {
 	if _, err := netip.ParseAddr(host); err == nil {
 		return "", unknown("%s is an address", host)
 	}
+	host, err := asciiHost(host)
+	if err != nil {
+		return "", unknown("%v", err)
+	}
 	if _, icann := publicsuffix.PublicSuffix(host); !icann {
 		return "", unknown("%s is under a private or unlisted suffix", host)
 	}
