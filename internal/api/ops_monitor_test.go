@@ -28,6 +28,7 @@ func decodeMonitor(t *testing.T, raw []byte) monitorOut {
 func TestMonitorToolsAndRoutesAgree(t *testing.T) {
 	h, cs := newTestHost(t)
 	h.monitorInterval = 2 * time.Minute
+	h.monitorTimeout = 7 * time.Second
 	ctx := context.Background()
 	if _, err := h.ops.UpdateProject(ctx, "test", manage.ProjectSpec{ID: 1, AllowedOrigins: []string{"https://blog.example.com", "https://*.example.org", "tauri://app"}}); err != nil {
 		t.Fatal(err)
@@ -39,12 +40,12 @@ func TestMonitorToolsAndRoutesAgree(t *testing.T) {
 		t.Fatalf("GET = %d %s", rec.Code, rec.Body)
 	}
 	got := decodeMonitor(t, rec.Body.Bytes())
-	if got.ProjectID != 1 || got.Enabled || got.IntervalSeconds != 120 ||
+	if got.ProjectID != 1 || got.Enabled || got.IntervalSeconds != 120 || got.TimeoutSeconds != 7 ||
 		!slices.Equal(got.EligibleOrigins, []string{"https://blog.example.com"}) {
 		t.Errorf("GET = %+v", got)
 	}
 	viaMCP := decodeMonitor(t, []byte(textOf(callTool(t, cs, "get_monitor", map[string]any{"project_id": 1}))))
-	if viaMCP.ProjectID != 1 || viaMCP.IntervalSeconds != 120 || !slices.Equal(viaMCP.EligibleOrigins, got.EligibleOrigins) {
+	if viaMCP.ProjectID != 1 || viaMCP.IntervalSeconds != 120 || viaMCP.TimeoutSeconds != 7 || !slices.Equal(viaMCP.EligibleOrigins, got.EligibleOrigins) {
 		t.Errorf("MCP get = %+v", viaMCP)
 	}
 

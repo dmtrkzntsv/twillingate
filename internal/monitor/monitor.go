@@ -53,13 +53,12 @@ type Origins interface {
 }
 
 const (
-	workers      = 16               // checks running at once, across projects
-	checkTimeout = 10 * time.Second // one availability check, whole
-	certTimeout  = 10 * time.Second
-	rdapTimeout  = 15 * time.Second
-	dailyEvery   = 24 * time.Hour
-	dailyRetry   = time.Hour // after a daily check whose result did not stick
-	tickStep     = time.Second
+	workers        = 16              // checks running at once, across projects
+	defaultTimeout = 5 * time.Second // a check's limit when none is configured
+	rdapTimeout    = 15 * time.Second
+	dailyEvery     = 24 * time.Hour
+	dailyRetry     = time.Hour // after a daily check whose result did not stick
+	tickStep       = time.Second
 )
 
 // Runner schedules the checks. Each monitor has a fixed offset within the
@@ -105,12 +104,15 @@ type options struct {
 	allowLoopback bool
 	roots         *x509.CertPool
 	bootstrapURL  string
+	timeout       time.Duration // MONITOR_TIMEOUT; 0: defaultTimeout
 	now           func() time.Time
 }
 
-// New builds a Runner checking every interval.
-func New(st Store, origins Origins, log EventLog, interval time.Duration, logger *slog.Logger) *Runner {
-	return newRunner(st, origins, log, interval, logger, options{})
+// New builds a Runner checking every interval, each check (the availability
+// request and the certificate read) given timeout (config's MONITOR_TIMEOUT,
+// below interval).
+func New(st Store, origins Origins, log EventLog, interval, timeout time.Duration, logger *slog.Logger) *Runner {
+	return newRunner(st, origins, log, interval, logger, options{timeout: timeout})
 }
 
 func newRunner(st Store, origins Origins, log EventLog, interval time.Duration, logger *slog.Logger, o options) *Runner {
@@ -123,11 +125,14 @@ func newRunner(st Store, origins Origins, log EventLog, interval time.Duration, 
 	if o.now == nil {
 		o.now = time.Now
 	}
-	g := &guard{resolver: o.resolver, allowLoopback: o.allowLoopback}
+	if o.timeout <= 0 {
+		o.timeout = defaultTimeout
+	}
+	g := &guard{resolver: o.resolver, allowLoopback: o.allowLoopback, budget: o.timeout}
 	client := newClient(g, o.roots)
 	r := &Runner{
 		st: st, origins: origins, log: log, logger: logger,
-		interval: interval, timeout: checkLimit(interval), step: tickStep, now: o.now,
+		interval: interval, timeout: o.timeout, step: tickStep, now: o.now,
 		guard: g, roots: o.roots, client: client,
 		rdap:    &rdap{client: client, bootstrapURL: o.bootstrapURL, now: o.now},
 		sem:     make(chan struct{}, workers),
@@ -244,16 +249,6 @@ func (r *Runner) inflight() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.running)
-}
-
-// checkLimit is one availability check's limit: checkTimeout, or a second
-// under the interval when that is shorter, so a check ends before its
-// next slot.
-func checkLimit(interval time.Duration) time.Duration {
-	if interval <= checkTimeout {
-		return max(interval-time.Second, time.Second)
-	}
-	return checkTimeout
 }
 
 // offset is a project's fixed place within the interval, in whole ticks.
@@ -376,7 +371,7 @@ func (r *Runner) daily(ctx context.Context, m store.Monitor) []store.Event {
 func (r *Runner) cert(ctx context.Context, m store.Monitor, https bool, now time.Time) []store.Event {
 	st := store.CertState{CheckedAt: now.Format(time.RFC3339)}
 	if https {
-		cctx, cancel := context.WithTimeout(ctx, certTimeout)
+		cctx, cancel := context.WithTimeout(ctx, r.timeout)
 		st = checkCert(cctx, r.guard, r.roots, m.Origin, now)
 		cancel()
 	}

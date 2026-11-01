@@ -223,7 +223,9 @@ func (g *guard) control(_, address string, _ syscall.RawConn) error {
 
 // newClient is the client every check shares: the guard dials, no proxy
 // (a proxy would dial for us, past the guard), no cookie jar, no
-// keep-alives, verification on against roots (nil: the system's).
+// keep-alives, verification on against roots (nil: the system's). No
+// transport timeout of its own: each caller's context bounds the request
+// (MONITOR_TIMEOUT up to 60 s, RDAP 15 s).
 // Check sets its own redirect policy on a copy.
 func newClient(g *guard, roots *x509.CertPool) *http.Client {
 	return &http.Client{Transport: &http.Transport{
@@ -231,8 +233,6 @@ func newClient(g *guard, roots *x509.CertPool) *http.Client {
 		TLSClientConfig:        &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
 		DisableKeepAlives:      true,
 		ForceAttemptHTTP2:      true,
-		TLSHandshakeTimeout:    10 * time.Second,
-		ResponseHeaderTimeout:  10 * time.Second,
 		MaxResponseHeaderBytes: 64 << 10,
 	}}
 }

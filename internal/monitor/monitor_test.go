@@ -147,7 +147,7 @@ func TestSchedulerSpreadsAndSkipsOverlap(t *testing.T) {
 		st.monitors = append(st.monitors, store.Monitor{ProjectID: id, Enabled: true, Origin: "https://x.example"})
 	}
 	interval := 60 * time.Second
-	r := New(st, allowAll{}, &fakeLog{}, interval, quietLogger())
+	r := New(st, allowAll{}, &fakeLog{}, interval, 5*time.Second, quietLogger())
 	release := make(chan struct{})
 	var mu sync.Mutex
 	starts := map[int64][]time.Time{}
@@ -221,7 +221,7 @@ func TestSchedulerPoolBounded(t *testing.T) {
 	for id := int64(1); id <= 40; id++ {
 		st.monitors = append(st.monitors, store.Monitor{ProjectID: id, Enabled: true, Origin: "https://x.example"})
 	}
-	r := New(st, allowAll{}, &fakeLog{}, 10*time.Second, quietLogger())
+	r := New(st, allowAll{}, &fakeLog{}, 10*time.Second, 5*time.Second, quietLogger())
 	release := make(chan struct{})
 	entered := make(chan struct{}, 40)
 	var mu sync.Mutex
@@ -428,7 +428,7 @@ func TestRunnerWriteErrorLogged(t *testing.T) {
 	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 1, Enabled: true, Origin: "https://x.example"}}}
 	lg := &fakeLog{err: errors.New("disk full")}
 	var out syncBuffer
-	r := New(st, allowAll{}, lg, 10*time.Second, slog.New(slog.NewTextHandler(&out, nil)))
+	r := New(st, allowAll{}, lg, 10*time.Second, 5*time.Second, slog.New(slog.NewTextHandler(&out, nil)))
 	r.job = func(context.Context, store.Monitor) []store.Event {
 		return []store.Event{{ID: "a", ProjectID: 1, Family: store.FamilyChecks, EventName: "uptime"}}
 	}
@@ -455,7 +455,7 @@ func TestRunStopsAndFlushes(t *testing.T) {
 		{ProjectID: 2, Enabled: true, Origin: "https://quick.example"},
 	}}
 	lg := &fakeLog{}
-	r := New(st, allowAll{}, lg, 10*time.Second, quietLogger())
+	r := New(st, allowAll{}, lg, 10*time.Second, 5*time.Second, quietLogger())
 	r.step = 5 * time.Millisecond
 	slowStarted := make(chan struct{})
 	quickDone := make(chan struct{})
@@ -505,7 +505,7 @@ func TestRunStopsAndFlushes(t *testing.T) {
 
 func TestRunFlushesPendingOnStop(t *testing.T) {
 	lg := &fakeLog{}
-	r := New(&fakeStore{}, allowAll{}, lg, 10*time.Second, quietLogger())
+	r := New(&fakeStore{}, allowAll{}, lg, 10*time.Second, 5*time.Second, quietLogger())
 	r.step = time.Hour // no tick: only the shutdown flush can write
 	r.pending = []store.Event{{ID: "done-before-stop", ProjectID: 1}}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -518,17 +518,34 @@ func TestRunFlushesPendingOnStop(t *testing.T) {
 	}
 }
 
-func TestCheckLimit(t *testing.T) {
-	for iv, want := range map[time.Duration]time.Duration{
-		10 * time.Second: 9 * time.Second, 11 * time.Second: 10 * time.Second,
-		30 * time.Second: 10 * time.Second, 3600 * time.Second: 10 * time.Second,
-	} {
-		if got := checkLimit(iv); got != want {
-			t.Errorf("interval %v: limit %v, want %v", iv, got, want)
-		}
+func TestRunnerUsesTheConfiguredTimeout(t *testing.T) {
+	if r := New(&fakeStore{}, allowAll{}, &fakeLog{}, 10*time.Second, 7*time.Second, quietLogger()); r.timeout != 7*time.Second || r.guard.budget != 7*time.Second {
+		t.Errorf("timeout %v, dial budget %v, want 7s both", r.timeout, r.guard.budget)
 	}
-	if r := New(&fakeStore{}, allowAll{}, &fakeLog{}, 10*time.Second, quietLogger()); r.timeout != 9*time.Second {
-		t.Errorf("runner at the 10 s floor: timeout %v, want 9s", r.timeout)
+}
+
+func TestSlowSiteIsATimeout(t *testing.T) {
+	release := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer srv.Close()
+	defer close(release)
+	r := newRunner(&fakeStore{}, allowAll{}, &fakeLog{}, 60*time.Second, quietLogger(),
+		options{allowLoopback: true, timeout: time.Second})
+	now := time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC)
+	r.now = func() time.Time { return now }
+	fresh := now.Format(time.RFC3339)
+	start := time.Now()
+	evs := r.runMonitor(context.Background(), store.Monitor{ProjectID: 1, Enabled: true, Origin: srv.URL, CertCheckedAt: fresh, DomainCheckedAt: fresh})
+	if a := evs[0].Attributes; a["up"] != "0" || a["reason"] != "timeout" {
+		t.Errorf("row %+v, want down with reason timeout", a)
+	}
+	if d := time.Since(start); d < 900*time.Millisecond || d > 4*time.Second {
+		t.Errorf("gave up after %v, want about the 1 s timeout", d)
 	}
 }
 

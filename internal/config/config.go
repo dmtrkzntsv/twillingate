@@ -65,6 +65,9 @@ type MonitorConfig struct {
 	// Interval (MONITOR_INTERVAL, whole seconds) is the time between
 	// checks of each enabled monitor: fixed, 10 to 3600.
 	Interval time.Duration
+	// Timeout (MONITOR_TIMEOUT, whole seconds) is how long a site has to
+	// answer a check before it counts as down: 1 to 60, below Interval.
+	Timeout time.Duration
 }
 
 // retired are settings twillingate no longer reads, each with why. One
@@ -281,7 +284,10 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			CacheAge:   e.dur("REPORTING_CACHE_MAX_AGE", 15*time.Minute),
 			RefreshAge: e.dur("REPORTING_REFRESH_MAX_AGE", time.Minute),
 		},
-		Monitor: MonitorConfig{Interval: time.Duration(e.num("MONITOR_INTERVAL", 120)) * time.Second},
+		Monitor: MonitorConfig{
+			Interval: time.Duration(e.num("MONITOR_INTERVAL", 120)) * time.Second,
+			Timeout:  time.Duration(e.num("MONITOR_TIMEOUT", 5)) * time.Second,
+		},
 	}
 	c.Console = ConsoleConfig{
 		Addr: e.str("CONSOLE_ADDR", c.IngestAddr),
@@ -408,6 +414,13 @@ func (c *Config) validate() error {
 	}
 	if c.Monitor.Interval < 10*time.Second || c.Monitor.Interval > time.Hour {
 		return fmt.Errorf("config: MONITOR_INTERVAL must be between 10 and 3600 seconds: %d", int(c.Monitor.Interval/time.Second))
+	}
+	if c.Monitor.Timeout < time.Second || c.Monitor.Timeout > time.Minute {
+		return fmt.Errorf("config: MONITOR_TIMEOUT must be between 1 and 60 seconds: %d", int(c.Monitor.Timeout/time.Second))
+	}
+	if c.Monitor.Timeout >= c.Monitor.Interval {
+		return fmt.Errorf("config: MONITOR_TIMEOUT (%d seconds) must be below MONITOR_INTERVAL (%d seconds)",
+			int(c.Monitor.Timeout/time.Second), int(c.Monitor.Interval/time.Second))
 	}
 	return nil
 }

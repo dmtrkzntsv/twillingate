@@ -848,6 +848,47 @@ func TestRetiredEngineSettingsAreIgnored(t *testing.T) {
 	}
 }
 
+// TestMonitorTimeout: MONITOR_TIMEOUT is whole seconds, 1 to 60 and below
+// MONITOR_INTERVAL, 5 unset.
+func TestMonitorTimeout(t *testing.T) {
+	c, err := load(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Monitor.Timeout != 5*time.Second {
+		t.Errorf("default Monitor.Timeout = %v, want 5s", c.Monitor.Timeout)
+	}
+	for v, want := range map[string]time.Duration{"30": 30 * time.Second, "1": time.Second, "60": time.Minute} {
+		c, err := load(t, map[string]string{"MONITOR_TIMEOUT": v, "MONITOR_INTERVAL": "120"})
+		if err != nil {
+			t.Fatalf("MONITOR_TIMEOUT=%s: %v", v, err)
+		}
+		if c.Monitor.Timeout != want {
+			t.Errorf("MONITOR_TIMEOUT=%s: %v, want %v", v, c.Monitor.Timeout, want)
+		}
+	}
+	for _, v := range []string{"0", "61", "abc", "-1"} {
+		if _, err := load(t, map[string]string{"MONITOR_TIMEOUT": v}); err == nil {
+			t.Errorf("MONITOR_TIMEOUT=%s accepted", v)
+		}
+	}
+	_, err = load(t, map[string]string{"MONITOR_TIMEOUT": "61"})
+	if err == nil || !strings.Contains(err.Error(), "config: MONITOR_TIMEOUT must be between 1 and 60 seconds: 61") {
+		t.Errorf("err = %v", err)
+	}
+	// Strictly below the interval; 5 at the minimum interval of 10 is fine.
+	if _, err := load(t, map[string]string{"MONITOR_TIMEOUT": "5", "MONITOR_INTERVAL": "10"}); err != nil {
+		t.Errorf("5 s timeout at a 10 s interval: %v", err)
+	}
+	for _, kv := range [][2]string{{"10", "10"}, {"30", "20"}} {
+		_, err := load(t, map[string]string{"MONITOR_TIMEOUT": kv[0], "MONITOR_INTERVAL": kv[1]})
+		want := "config: MONITOR_TIMEOUT (" + kv[0] + " seconds) must be below MONITOR_INTERVAL (" + kv[1] + " seconds)"
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("timeout %s interval %s: err = %v, want %q", kv[0], kv[1], err, want)
+		}
+	}
+}
+
 // TestMonitorInterval: MONITOR_INTERVAL is whole seconds, 10 to 3600,
 // 120 unset.
 func TestMonitorInterval(t *testing.T) {

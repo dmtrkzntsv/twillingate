@@ -311,7 +311,7 @@ twillingate monitor set -project-id 1 -disable
 ```
 
 **What is checked.** One `GET` of the origin itself (`https://host/`), nothing
-else, with a 10 second limit (less when the interval is shorter) and no
+else, with a limit of `MONITOR_TIMEOUT` seconds (default 5) and no
 retries; each check is one row. The site is up when the final status is 2xx and,
 with `contains`, the text is on the page. The request sends no cookies and
 identifies itself as
@@ -357,6 +357,7 @@ stands, no row is written, it is tried again an hour later, and `cert.error`
 says why meanwhile. A certificate that was read but does not verify is a
 reading, with `valid` `0`. Enabling a disabled monitor reads both again at its
 next check, the known dates kept until then.
+`get_monitor` also reports `interval_seconds` and `timeout_seconds` (`MONITOR_TIMEOUT`).
 `get_monitor` returns the last reading of each: `cert` (`expires_at`, `issuer`,
 `valid`, `error`, `checked_at`) and `domain` (`expires_at`, `checked_at`), and
 `redirects`, the hops the last check that got an answer followed (a check that
@@ -1661,7 +1662,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","values","received","blocked","aliases"}],"keys_total"}`; `aliases` is absent when empty |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
-| `GET` | `/api/projects/{project_id}/monitor` | `get_monitor` | — → `{"project_id","enabled","origin","contains","eligible_origins","interval_seconds","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"domain":{"expires_at","checked_at"}}`; empty strings are unknown |
+| `GET` | `/api/projects/{project_id}/monitor` | `get_monitor` | — → `{"project_id","enabled","origin","contains","eligible_origins","interval_seconds","timeout_seconds","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"domain":{"expires_at","checked_at"}}`; empty strings are unknown |
 | `PATCH` | `/api/projects/{project_id}/monitor` | `update_monitor` | body: `enabled`, `origin`, `contains`, each optional (merge); a foreign origin is `400` → as `get_monitor` |
 | `POST` | `/api/projects/{project_id}/move` | `move_project` | body: `after` |
 | `POST` | `/api/projects/{project_id}/archive` | `archive_project` | — |

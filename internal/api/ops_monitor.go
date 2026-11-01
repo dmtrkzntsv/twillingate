@@ -38,6 +38,7 @@ type monitorOut struct {
 	Contains        string           `json:"contains"`
 	EligibleOrigins []string         `json:"eligible_origins" jsonschema:"the project's allowed origins a monitor may use: exact http:// or https:// ones"`
 	IntervalSeconds int              `json:"interval_seconds" jsonschema:"seconds between checks, set by MONITOR_INTERVAL"`
+	TimeoutSeconds  int              `json:"timeout_seconds" jsonschema:"seconds a site has to answer a check before it counts as down, set by MONITOR_TIMEOUT"`
 	Redirects       int              `json:"redirects" jsonschema:"redirect hops the last check that got an answer followed; 0 when none or not checked yet"`
 	Cert            monitorCertOut   `json:"cert"`
 	Domain          monitorDomainOut `json:"domain"`
@@ -49,7 +50,7 @@ func (h *host) monitorOut(ctx context.Context, m store.Monitor) monitorOut {
 		eligible = append(eligible, manage.MonitorOrigins(p.AllowedOrigins)...)
 	}
 	return monitorOut{ProjectID: m.ProjectID, Enabled: m.Enabled, Origin: m.Origin, Contains: m.Contains,
-		EligibleOrigins: eligible, IntervalSeconds: int(h.monitorInterval.Seconds()), Redirects: m.Redirects,
+		EligibleOrigins: eligible, IntervalSeconds: int(h.monitorInterval.Seconds()), TimeoutSeconds: int(h.monitorTimeout.Seconds()), Redirects: m.Redirects,
 		Cert: monitorCertOut{ExpiresAt: m.CertExpiresAt, Issuer: m.CertIssuer, Valid: m.CertValid,
 			Error: m.CertError, CheckedAt: m.CertCheckedAt},
 		Domain: monitorDomainOut{ExpiresAt: m.DomainExpiresAt, CheckedAt: m.DomainCheckedAt}}
@@ -74,7 +75,7 @@ func (h *host) updateMonitor(ctx context.Context, in updateMonitorIn) (monitorOu
 
 func (h *host) registerMonitor(r *registrar) {
 	expose(r, spec{Name: "get_monitor", Annotations: ro, Method: "GET", Path: "/api/projects/{project_id}/monitor",
-		Description: "A project's availability monitor: enabled, the origin checked, the text the page must contain, eligible_origins (the project's exact http(s) origins a monitor may use), interval_seconds (set by MONITOR_INTERVAL), and the last certificate reading (expires_at, issuer, valid, error, checked_at) and domain renewal date (expires_at, checked_at); empty strings are unknown. The checks themselves are read from the checks table of query."},
+		Description: "A project's availability monitor: enabled, the origin checked, the text the page must contain, eligible_origins (the project's exact http(s) origins a monitor may use), interval_seconds (set by MONITOR_INTERVAL), timeout_seconds (set by MONITOR_TIMEOUT), and the last certificate reading (expires_at, issuer, valid, error, checked_at) and domain renewal date (expires_at, checked_at); empty strings are unknown. The checks themselves are read from the checks table of query."},
 		h.getMonitor)
 	expose(r, spec{Name: "update_monitor", Annotations: idem, Method: "PATCH", Path: "/api/projects/{project_id}/monitor",
 		Description: "Change a project's availability monitor: enabled, origin (one of eligible_origins) and contains (text the page must contain). Fields you omit are left unchanged; enabling with no origin set picks the project's only eligible one. Returns the monitor as get_monitor."},

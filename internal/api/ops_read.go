@@ -46,6 +46,8 @@ type host struct {
 	ingestDisabled bool
 	// monitorInterval is MONITOR_INTERVAL, which get_monitor reports.
 	monitorInterval time.Duration
+	// monitorTimeout is MONITOR_TIMEOUT, which get_monitor reports.
+	monitorTimeout time.Duration
 	// sql runs the query tool's SQL on the external SQL engine, its only
 	// use; nil in a process without one, where that SQL is refused
 	// (reporting.ErrSQLEngine).

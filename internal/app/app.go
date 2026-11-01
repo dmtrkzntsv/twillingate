@@ -200,7 +200,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	monCtx, stopMonitor := context.WithCancel(context.Background())
 	monDone := make(chan struct{})
 	if archiveLog != nil {
-		mon := monitor.New(st, monitorOrigins{reg}, archiveLog, cfg.Monitor.Interval, logger)
+		mon := monitor.New(st, monitorOrigins{reg}, archiveLog, cfg.Monitor.Interval, cfg.Monitor.Timeout, logger)
 		go func() { mon.Run(monCtx); close(monDone) }()
 	} else {
 		close(monDone)

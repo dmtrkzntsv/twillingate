@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -63,7 +64,7 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 			spec.Contains = contains
 		}
 	}
-	ops, _, closeStore, err := openOps(envFile)
+	ops, cfg, closeStore, err := openOps(envFile)
 	if err != nil {
 		fmt.Fprintln(stdout, err)
 		return 1
@@ -84,11 +85,11 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 	if p := ops.Reg.Snapshot(ctx).Project(*project); p != nil {
 		eligible = manage.MonitorOrigins(p.AllowedOrigins)
 	}
-	printMonitor(stdout, m, eligible)
+	printMonitor(stdout, m, eligible, cfg.Monitor.Timeout)
 	return 0
 }
 
-func printMonitor(w io.Writer, m store.Monitor, eligible []string) {
+func printMonitor(w io.Writer, m store.Monitor, eligible []string, timeout time.Duration) {
 	state := "disabled"
 	if m.Enabled {
 		state = "enabled"
@@ -103,6 +104,9 @@ func printMonitor(w io.Writer, m store.Monitor, eligible []string) {
 			fmt.Fprintf(w, ", error %s", m.CertError)
 		}
 		fmt.Fprintln(w)
+	}
+	if timeout > 0 {
+		fmt.Fprintf(w, "timeout\t%d seconds\n", int(timeout/time.Second))
 	}
 	if m.Redirects > 0 {
 		fmt.Fprintf(w, "redirects\t%d\n", m.Redirects)

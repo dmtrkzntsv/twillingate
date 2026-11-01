@@ -24,8 +24,8 @@ func TestMonitorRoundTrip(t *testing.T) {
 		"-origin", "https://*.example.org"}, &out); code != 0 {
 		t.Fatal(out.String())
 	}
-	if got := runMonitor(t, 0, "get", "-project-id", "1"); !strings.Contains(got, "disabled") || !strings.Contains(got, "https://shop.example.com") {
-		t.Errorf("get = %q, want disabled and the eligible origin listed", got)
+	if got := runMonitor(t, 0, "get", "-project-id", "1"); !strings.Contains(got, "disabled") || !strings.Contains(got, "https://shop.example.com") || !strings.Contains(got, "timeout\t5 seconds\n") {
+		t.Errorf("get = %q, want disabled, the eligible origin listed and the 5 second timeout", got)
 	}
 	got := runMonitor(t, 0, "set", "-project-id", "1", "-enable", "-contains", "Welcome")
 	for _, want := range []string{"enabled", "https://shop.example.com", "Welcome"} {
@@ -96,7 +96,7 @@ func TestPrintMonitorCertificate(t *testing.T) {
 		{"plain http", store.Monitor{Origin: "http://a.example", CertCheckedAt: at}, ""},
 	} {
 		var out bytes.Buffer
-		printMonitor(&out, c.m, nil)
+		printMonitor(&out, c.m, nil, 0)
 		got := out.String()
 		if c.want == "" {
 			if strings.Contains(got, "certificate") {
@@ -116,7 +116,7 @@ func TestPrintMonitorRedirects(t *testing.T) {
 		want string
 	}{{0, ""}, {2, "redirects\t2\n"}} {
 		var out bytes.Buffer
-		printMonitor(&out, store.Monitor{Origin: "https://a.example", Redirects: c.n}, nil)
+		printMonitor(&out, store.Monitor{Origin: "https://a.example", Redirects: c.n}, nil, 0)
 		got := out.String()
 		if c.want == "" && strings.Contains(got, "redirects") {
 			t.Errorf("%d: printed %q, want no redirects line", c.n, got)

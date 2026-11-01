@@ -59,6 +59,8 @@ the page must contain.
   `MONITOR_INTERVAL` (seconds; my call on the name, default 120). The $5 tier
   sets 120, the $20 tier 30. Documented in `docs/deployment.md`, validated in
   `internal/config` (my call: refuse below 10 and above 3600).
+- The check timeout is `MONITOR_TIMEOUT` (seconds, default 5, 1 to 60, strictly
+  below the interval; refused at startup otherwise).
 - One static binary, no cgo, no new third-party dependency without a very
   reputable vendor (CLAUDE.md). `golang.org/x/net/publicsuffix` (Go team) for
   the registrable domain is my call and acceptable under that rule; RDAP is
@@ -109,8 +111,8 @@ Every `MONITOR_INTERVAL` seconds, per enabled monitor:
 - Up means: the final status is 2xx and, when `contains` is set, the text
   appears in the first 1 MB of the body (plain substring, case-sensitive; my
   call).
-- Timeout: 10 s for the whole check (my call), or less than the interval if
-  the interval is shorter.
+- Timeout: `MONITOR_TIMEOUT` seconds for the whole check, default 5 (user's
+  decision, amended; see below).
 - No retries. Each check is one row.
 - **Private addresses refused**: an origin (or any redirect hop) that resolves
   to loopback, private, link-local, CGNAT or unspecified addresses fails with
@@ -243,3 +245,11 @@ changes, so the dates appear immediately.
   when it changed and only from a check that got an answer; an origin change
   resets it. It is exposed as `redirects` in `get_monitor` and printed by
   `monitor get` when above 0.
+- **Check timeout (user's decision, after planning):** the timeout defaults to
+  5 s and is set per install by `MONITOR_TIMEOUT` (whole seconds, 1 to 60,
+  strictly below `MONITOR_INTERVAL`, refused at startup otherwise). This
+  replaces "10 s, or less when the interval is shorter". It bounds the
+  availability check, the per-address dial share, the guard's own dial budget
+  and the daily certificate read; the RDAP lookup keeps its own 15 s, as it
+  talks to a registry, not the site. `get_monitor` returns `timeout_seconds`
+  and `monitor get` prints it.
