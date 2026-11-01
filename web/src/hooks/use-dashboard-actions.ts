@@ -31,6 +31,8 @@ export interface DashboardActions {
    * the toast), so a drag can drop its optimistic order at once.
    */
   move(id: number, body: MoveBody): Promise<boolean>
+  /** Retitles the dashboard (its tab); resolves true when saved, false after the toast. */
+  rename(id: number, title: string): Promise<boolean>
   /** Names the dashboard's group; resolves true when saved, false after the toast. */
   renameGroup(id: number, title: string): Promise<boolean>
   /** True while an action runs, from its request until the list has refetched; buttons wait on it. Per hook call. */
@@ -39,7 +41,7 @@ export interface DashboardActions {
 
 /**
  * The actions the page writes dashboards with: duplicate, archive, restore,
- * the sidebar flag and move, each the existing audited route, with the page's own bearer
+ * the sidebar flag, move and rename, each the existing audited route, with the page's own bearer
  * token (D19). Every action refetches the dashboard list and the
  * dashboard shown so the sidebar and the tabs follow, and navigates only
  * once the list is back: "/dashboards" picks from that list, and before the
@@ -54,9 +56,10 @@ export function useDashboardActions(): DashboardActions {
   const navigate = useNavigate()
   const [pending, setPending] = useState(false)
 
-  /** Refetches both; resolves once the list has (a failed refetch resolves too). */
+  /** Refetches both, and the project tabs that name dashboards; resolves once the list has (a failed refetch resolves too). */
   const refresh = useCallback(async () => {
     void queryClient.invalidateQueries({ queryKey: ['dashboard'] })
+    void queryClient.invalidateQueries({ queryKey: ['project-tabs'] })
     await queryClient.invalidateQueries({ queryKey: ['dashboards'] })
   }, [queryClient])
 
@@ -121,11 +124,12 @@ export function useDashboardActions(): DashboardActions {
     [run, navigate]
   )
 
-  const move = useCallback(
-    async (id: number, body: MoveBody) => {
+  /** Runs a write that answers whether it was saved: true once the server took it, false after the toast. */
+  const save = useCallback(
+    async (write: () => Promise<unknown>) => {
       let ok = false
       await run(async () => {
-        await endpoints.move(id, body)
+        await write()
         ok = true
       })
       return ok
@@ -133,17 +137,9 @@ export function useDashboardActions(): DashboardActions {
     [run]
   )
 
-  const renameGroup = useCallback(
-    async (id: number, title: string) => {
-      let ok = false
-      await run(async () => {
-        await endpoints.renameGroup(id, title)
-        ok = true
-      })
-      return ok
-    },
-    [run]
-  )
+  const move = useCallback((id: number, body: MoveBody) => save(() => endpoints.move(id, body)), [save])
+  const rename = useCallback((id: number, title: string) => save(() => endpoints.rename(id, title)), [save])
+  const renameGroup = useCallback((id: number, title: string) => save(() => endpoints.renameGroup(id, title)), [save])
 
-  return { duplicate, archive, restore, setSidebar, move, renameGroup, pending }
+  return { duplicate, archive, restore, setSidebar, move, rename, renameGroup, pending }
 }

@@ -272,6 +272,45 @@ test('renames a group from its sidebar menu without touching the dashboard title
   await expect(page.getByRole('heading', { level: 1, name: 'E2E Rename', exact: true })).toBeVisible()
 })
 
+test('renames a tab and the dashboard from the page menus', async ({ page, request }) => {
+  const stamp = Date.now()
+  const a = await createDashboard(request, `E2E Retitle ${stamp}`)
+  toArchive.push({ id: a.id, wholeGroup: true })
+  await createDashboard(request, `E2E Second ${stamp}`, a.groupId)
+
+  await login(page)
+  await page.goto(`/app/dashboards/${a.id}`)
+  await page.waitForLoadState('networkidle')
+  const sidebar = page.locator('[data-sidebar="sidebar"]')
+  const tabs = page.getByRole('tablist', { name: 'Tabs' })
+
+  // The tab's own title: its heading, its tab and, the group having no name
+  // of its own, the sidebar entry too.
+  await page.getByRole('button', { name: 'Tab actions' }).click()
+  await page.getByRole('menuitem', { name: 'Rename tab…' }).click()
+  const tabField = page.getByRole('textbox', { name: 'Tab name' })
+  await expect(tabField).toHaveValue(`E2E Retitle ${stamp}`)
+  await tabField.fill(`E2E Overview ${stamp}`)
+  await tabField.press('Enter')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByRole('heading', { level: 1, name: `E2E Overview ${stamp}`, exact: true })).toBeVisible()
+  await expect(tabs.getByRole('tab', { name: `E2E Overview ${stamp}`, exact: true })).toBeVisible()
+  await expect(sidebar.getByRole('link', { name: `E2E Overview ${stamp}`, exact: true })).toBeVisible()
+
+  // The dashboard's name: the sidebar's, every tab keeping its title.
+  await page.getByRole('button', { name: 'Dashboard actions' }).click()
+  await page.getByRole('menuitem', { name: 'Rename dashboard…' }).click()
+  const groupField = page.getByRole('textbox', { name: 'Dashboard name' })
+  await groupField.fill(`E2E Team ${stamp}`)
+  await page.getByRole('button', { name: 'Save' }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(sidebar.getByRole('link', { name: `E2E Team ${stamp}`, exact: true })).toBeVisible()
+  await expect(tabs.getByRole('tab', { name: `E2E Overview ${stamp}`, exact: true })).toBeVisible()
+  await page.reload()
+  await expect(sidebar.getByRole('link', { name: `E2E Team ${stamp}`, exact: true })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: `E2E Overview ${stamp}`, exact: true })).toBeVisible()
+})
+
 test('drag reorder persists across a reload', async ({ page, request }) => {
   const x = await createDashboard(request, 'E2E X')
   toArchive.push({ id: x.id })

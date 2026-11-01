@@ -1803,11 +1803,14 @@ Archiving is how to undo, and the only way to remove anything:
   (`update_dashboard` with `sidebar: true`); every group's "…" menu
   duplicates the whole group, and a tab's copies that tab to a new
   dashboard. On any dashboard, the "…" menu at the top right of the tab
-  bar acts on the whole dashboard ("Duplicate dashboard", `whole_group`),
-  and the one beside the title on that tab: "Duplicate tab" adds its copy
-  as the next tab (`group_id` its own group), "Copy to new dashboard"
-  makes it a dashboard of its own (no `group_id`); a system tab offers
-  only the latter.
+  bar acts on the whole dashboard ("Duplicate dashboard", `whole_group`;
+  on your own, "Rename dashboard…", `whole_group` with `title`, the name
+  the sidebar shows, as the sidebar entry's own "Rename" does), and the
+  one beside the title on that tab: "Rename tab…" retitles it (`title`;
+  your own tabs only, here and on a project page), "Duplicate tab" adds
+  its copy as the next tab (`group_id` its own group), "Copy to new
+  dashboard" makes it a dashboard of its own (no `group_id`); a system
+  tab offers only the latter.
 - `archive_dashboard` and `restore_dashboard` refuse a system dashboard,
   with or without `whole_group`; system widgets cannot be archived.
 - `archive_widget_share` takes a share down at once; `restore_widget_share`

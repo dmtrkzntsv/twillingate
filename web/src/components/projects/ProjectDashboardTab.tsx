@@ -130,6 +130,7 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
             actions={actions}
             search={rangeParams(url).toString()}
             autoRefresh={autoRefresh}
+            renamable={arrange !== undefined}
           />
         }
       >
