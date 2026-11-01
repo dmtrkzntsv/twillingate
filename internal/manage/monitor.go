@@ -89,10 +89,8 @@ func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, spe
 		return store.Monitor{}, err
 	}
 	next := store.MonitorSettings{Enabled: cur.Enabled, Origin: cur.Origin, Contains: cur.Contains}
-	var changed []string
-	if spec.Enabled != nil && *spec.Enabled != cur.Enabled {
+	if spec.Enabled != nil {
 		next.Enabled = *spec.Enabled
-		changed = append(changed, fmt.Sprintf("enabled=%t", next.Enabled))
 	}
 	eligible := MonitorOrigins(p.AllowedOrigins)
 	if spec.Origin != nil {
@@ -105,20 +103,14 @@ func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, spe
 			}
 			want = n[0]
 		}
-		if want != cur.Origin {
-			next.Origin = want
-			changed = append(changed, "origin="+want)
-		}
+		next.Origin = want
 	}
 	if spec.Contains != nil {
 		c := strings.TrimSpace(*spec.Contains)
 		if utf8.RuneCountInString(c) > maxMonitorContains {
 			return store.Monitor{}, fmt.Errorf("%w: contains is longer than %d characters", ErrInvalid, maxMonitorContains)
 		}
-		if c != cur.Contains {
-			next.Contains = c
-			changed = append(changed, "contains")
-		}
+		next.Contains = c
 	}
 	if next.Enabled && next.Origin == "" {
 		if len(eligible) == 0 {
@@ -128,10 +120,21 @@ func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, spe
 			return store.Monitor{}, fmt.Errorf("%w: pick one of the project's origins (%s)", ErrInvalid, strings.Join(eligible, ", "))
 		}
 		next.Origin = eligible[0]
-		changed = append(changed, "origin="+next.Origin)
 	}
 	if next.Enabled && !slices.Contains(eligible, next.Origin) {
 		return store.Monitor{}, fmt.Errorf("%w: the monitored origin %q is no longer one of the project's origins; pick one", ErrInvalid, next.Origin)
+	}
+	// What changed is read off the outcome: an empty origin the only eligible
+	// one fills back in changes nothing.
+	var changed []string
+	if next.Enabled != cur.Enabled {
+		changed = append(changed, fmt.Sprintf("enabled=%t", next.Enabled))
+	}
+	if next.Origin != cur.Origin {
+		changed = append(changed, "origin="+next.Origin)
+	}
+	if next.Contains != cur.Contains {
+		changed = append(changed, "contains")
 	}
 	if len(changed) == 0 {
 		return cur, nil

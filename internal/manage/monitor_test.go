@@ -138,6 +138,11 @@ func TestSetMonitorNoChangeWritesNoAudit(t *testing.T) {
 	if err != nil || again != first {
 		t.Fatalf("no-op = %+v, %v, want %+v", again, err, first)
 	}
+	// An empty origin on an enabled monitor picks the only one again: the same.
+	again, err = ops.SetMonitor(ctx, "alice", p, MonitorSpec{Origin: strp("")})
+	if err != nil || again != first {
+		t.Fatalf("empty origin = %+v, %v, want %+v", again, err, first)
+	}
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		t.Fatal(err)
