@@ -78,7 +78,7 @@ export default function Projects() {
           <div className="flex flex-col gap-1">
             <h1 className="text-xl font-semibold tracking-tight">Projects</h1>
             <p className="min-h-5 text-sm text-muted-foreground">
-              {projectsData ? `${plural(active.length, 'project')}` : null}
+              {projectsData ? plural(active.length, 'project') : null}
             </p>
             {months.length > 0 && (
               <p className="text-sm text-muted-foreground">

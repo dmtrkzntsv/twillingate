@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react'
-import type { OptionLoader } from '@/components/table-filters'
+import type { OptionLoader } from '@/lib/table-view'
 import type { MarkdownData, PageInfo, SqlData } from '@/lib/api'
 import type { TableView } from '@/lib/table-view'
 

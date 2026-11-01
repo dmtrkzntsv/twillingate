@@ -147,6 +147,9 @@ export function viewChanged(view: TableView, next: TableView): boolean {
 }
 
 /** One value a column holds, with how many rows hold it; `capped` when the list was cut short. */
+/** Loads the distinct values a column can be filtered to, under the other filters. */
+export type OptionLoader = (column: string, filters: Filter[]) => Promise<ValueOption[]>
+
 export interface ValueOption {
   value: string
   rows: number

@@ -8,9 +8,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Format } from '@/lib/format'
-import { isDecimal, OPS, type Filter, type FilterOp, type TableView, type ValueOption } from '@/lib/table-view'
-
-export type OptionLoader = (column: string, filters: Filter[]) => Promise<ValueOption[]>
+import { isDecimal, OPS, type Filter, type FilterOp, type OptionLoader, type TableView, type ValueOption } from '@/lib/table-view'
 
 const OP_LABELS: Record<FilterOp, string> = { '=': '=', '!=': '≠', '<': '<', '>': '>', in: 'in', 'not in': 'not in' }
 

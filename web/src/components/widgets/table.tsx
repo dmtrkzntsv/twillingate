@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent } from 'react'
 import { ArrowDownIcon, ArrowUpIcon } from 'lucide-react'
 import { useCardMode } from '@/components/share/card-mode'
-import { FilterBar, PageFooter, type OptionLoader } from '@/components/table-filters'
+import { FilterBar, PageFooter } from '@/components/table-filters'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Table as ShadcnTable, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { approx, approximate, formatValue, type Format } from '@/lib/format'
@@ -11,6 +11,7 @@ import {
   emptyView,
   isDecimal,
   liveFilters,
+  type OptionLoader,
   type Sort,
   type TableView,
 } from '@/lib/table-view'

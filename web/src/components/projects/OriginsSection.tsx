@@ -86,6 +86,7 @@ export default function OriginsSection({ project, pending, onSave }: Props) {
         action="Remove origin"
         onAction={() => {
           const o = removing.target
+          if (o === undefined) return
           void save(origins.filter((x) => x !== o))
         }}
       />

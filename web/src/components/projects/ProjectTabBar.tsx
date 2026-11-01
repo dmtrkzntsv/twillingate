@@ -6,10 +6,10 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
 import type { DashboardInfo, ProjectTab } from '@/lib/api'
+import { plural } from '@/lib/format'
 import { FORMS_ID, rangeParams, SETTINGS_ID, tabAfter, tabPath } from '@/lib/project-tabs'
 import { cn } from '@/lib/utils'
 import AddTabDialog from './AddTabDialog'
-import { plural } from '@/lib/format'
 
 /** The button for the page on screen reads as an active control. */
 const current = 'aria-[current=page]:bg-accent aria-[current=page]:text-foreground'

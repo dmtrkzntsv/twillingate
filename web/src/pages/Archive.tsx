@@ -77,33 +77,6 @@ function ShareThumb({ share }: { share: WidgetShare }) {
   return <img src={url} alt={`Shared image of ${share.title}`} className={`${size} object-cover`} />
 }
 
-/**
- * `/archive`: every group of the user's with a dashboard out of the
- * sidebar, the only page that reaches one once it is archived (D17a). A
- * group of one is a single row; a larger group is a card listing its
- * tabs, the live ones too, so it reads as the dashboard it is in the
- * sidebar. Each archived tab restores on its own, and "Restore all"
- * brings back every archived tab at once. Its buttons wait while one
- * action runs; reporting dev, which takes no writes, shows none.
- *
- * Below the dashboards, an Archived widgets section lists the widgets
- * archived out of the user's live dashboards, grouped under each one with
- * Restore. It is left out when there are none, and in reporting dev, which
- * takes no writes.
- *
- * Then a Projects section lists the archived projects, in list order, each
- * linking to its page with its purge date and Restore. It is left out when there are none, and
- * in reporting dev, which takes no writes.
- *
- * Then a Shares section lists the archived widget shares,
- * most recently archived first, each restorable with a new archive date
- * (D9). It is left out when there are none, and in reporting dev, which has
- * no shares.
- *
- * Last, a Forms section lists each live project's archived forms with
- * Restore (forms D11, D12); an archived project hides its forms, so its
- * own are not asked for. Reporting dev serves no forms.
- */
 /** One kind of archived thing: a heading over its rows. */
 function ArchiveSection({ id, title, children }: { id: string; title: string; children: ReactNode }) {
   return (
@@ -151,6 +124,33 @@ function ArchivedRow({ thumb, name, under, status, onRestore, disabled }: RowPro
   )
 }
 
+/**
+ * `/archive`: every group of the user's with a dashboard out of the
+ * sidebar, the only page that reaches one once it is archived (D17a). A
+ * group of one is a single row; a larger group is a card listing its
+ * tabs, the live ones too, so it reads as the dashboard it is in the
+ * sidebar. Each archived tab restores on its own, and "Restore all"
+ * brings back every archived tab at once. Its buttons wait while one
+ * action runs; reporting dev, which takes no writes, shows none.
+ *
+ * Below the dashboards, an Archived widgets section lists the widgets
+ * archived out of the user's live dashboards, grouped under each one with
+ * Restore. It is left out when there are none, and in reporting dev, which
+ * takes no writes.
+ *
+ * Then a Projects section lists the archived projects, in list order, each
+ * linking to its page with its purge date and Restore. It is left out when there are none, and
+ * in reporting dev, which takes no writes.
+ *
+ * Then a Shares section lists the archived widget shares,
+ * most recently archived first, each restorable with a new archive date
+ * (D9). It is left out when there are none, and in reporting dev, which has
+ * no shares.
+ *
+ * Last, a Forms section lists each live project's archived forms with
+ * Restore (forms D11, D12); an archived project hides its forms, so its
+ * own are not asked for. Reporting dev serves no forms.
+ */
 export default function Archive() {
   const { data } = useQuery(dashboardsQuery)
   const dashboards = data?.dashboards ?? []
