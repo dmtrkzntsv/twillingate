@@ -369,7 +369,7 @@ func TestCheckMonitor(t *testing.T) {
 	// Finished, but the last request was under 60 s ago: the cooldown runs
 	// from the request, for everyone, per monitor.
 	now = time.Date(2026, 11, 1, 10, 0, 30, 0, time.UTC)
-	if err := st.FinishMonitorCheck(ctx, p.ID, monA, store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:02Z", Up: true}); err != nil {
+	if err := st.FinishMonitorCheck(ctx, p.ID, monA, "2026-11-01T10:00:00Z", store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:02Z", Up: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ops.CheckMonitor(ctx, "bob", p.ID, monA); !errors.Is(err, ErrBusy) || !strings.Contains(err.Error(), "30 s") {
@@ -403,7 +403,7 @@ func TestCheckMonitorCooldownIsPerMonitor(t *testing.T) {
 	if _, err := ops.CheckMonitor(ctx, "cli", p.ID, monA); err != nil {
 		t.Fatal(err)
 	}
-	if err := st.FinishMonitorCheck(ctx, p.ID, monA, store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:00Z"}); err != nil {
+	if err := st.FinishMonitorCheck(ctx, p.ID, monA, "2026-11-01T10:00:00Z", store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:00Z"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ops.CheckMonitor(ctx, "cli", p.ID, monA); !errors.Is(err, ErrBusy) {

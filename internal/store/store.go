@@ -375,9 +375,9 @@ type Store interface {
 	// RequestMonitorCheck records a manual check of one monitor for the runner
 	// to serve, audited: ErrNotFound for an unknown project, ErrInvalid for a
 	// monitor not enabled, ErrBusy while one is pending or when the last request is less than cooldown before at. It clears the finish time and keeps the last result fields. FinishMonitorCheck
-	// records its result unless the monitor is gone; not audited.
+	// records its result unless the monitor is gone or its request is no longer the one at requestedAt; not audited.
 	RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, cooldown time.Duration, a AuditEntry) error
-	FinishMonitorCheck(ctx context.Context, projectID int64, origin string, r MonitorCheckResult) error
+	FinishMonitorCheck(ctx context.Context, projectID int64, origin, requestedAt string, r MonitorCheckResult) error
 	// SetSubmissionsArchived archives (archived true) or restores the
 	// project's submissions with these ids and returns how many changed:
 	// ids that match nothing, an archived one being archived and an active

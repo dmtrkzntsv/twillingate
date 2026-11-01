@@ -46,7 +46,7 @@ type Store interface {
 	ListMonitorDomains(ctx context.Context, projectID int64) ([]store.MonitorDomain, error)
 	SetMonitorDomain(ctx context.Context, projectID int64, domain string, d store.DomainState) error
 	SetMonitorRedirects(ctx context.Context, projectID int64, origin string, n int) error
-	FinishMonitorCheck(ctx context.Context, projectID int64, origin string, r store.MonitorCheckResult) error
+	FinishMonitorCheck(ctx context.Context, projectID int64, origin, requestedAt string, r store.MonitorCheckResult) error
 }
 
 // EventLog is where check rows go (archive.Log).
@@ -490,7 +490,7 @@ func (r *Runner) finishCheck(ctx context.Context, m store.Monitor, res Result) {
 	}
 	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
 	defer cancel()
-	if err := r.st.FinishMonitorCheck(fctx, m.ProjectID, m.Origin, store.MonitorCheckResult{
+	if err := r.st.FinishMonitorCheck(fctx, m.ProjectID, m.Origin, m.CheckRequestedAt, store.MonitorCheckResult{
 		FinishedAt: at, Up: res.Up, Status: res.Status, Reason: res.Reason, Error: res.Error, MS: elapsedMS(res),
 	}); err != nil {
 		r.logger.Warn("monitor: store manual check", "project_id", m.ProjectID, "error", err)

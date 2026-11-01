@@ -326,7 +326,7 @@ func TestCheckMonitor(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.FinishMonitorCheck(ctx, 1, monBlog, store.MonitorCheckResult{
+	if err := st.FinishMonitorCheck(ctx, 1, monBlog, got.Check.RequestedAt, store.MonitorCheckResult{
 		FinishedAt: got.Check.RequestedAt, Status: 500, Reason: "http_5xx", Error: "status 500", MS: 42}); err != nil {
 		t.Fatal(err)
 	}

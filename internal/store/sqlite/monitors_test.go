@@ -348,7 +348,7 @@ func TestMonitorStateWritesOfARemovedMonitorAreIgnored(t *testing.T) {
 	if err := d.SetMonitorRedirects(ctx, id, old, 9); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.FinishMonitorCheck(ctx, id, old, store.MonitorCheckResult{FinishedAt: monAt}); err != nil {
+	if err := d.FinishMonitorCheck(ctx, id, old, monAt, store.MonitorCheckResult{FinishedAt: monAt}); err != nil {
 		t.Fatal(err)
 	}
 	// A project with no row at all is a no-op too.
@@ -377,7 +377,7 @@ func TestMonitorStateWritesStayOnTheirOrigin(t *testing.T) {
 	if err := d.RequestMonitorCheck(ctx, id, monA, monAt, 0, store.AuditEntry{Actor: "t", Action: "monitor.check"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.FinishMonitorCheck(ctx, id, monA, store.MonitorCheckResult{FinishedAt: monAt, Up: true}); err != nil {
+	if err := d.FinishMonitorCheck(ctx, id, monA, monAt, store.MonitorCheckResult{FinishedAt: monAt, Up: true}); err != nil {
 		t.Fatal(err)
 	}
 	if m := getMon(t, d, id, monA); m.CertIssuer != "R3" || m.Redirects != 4 || !m.CheckUp || m.CheckFinishedAt != monAt {
@@ -479,7 +479,7 @@ func TestMonitorCheckRequestAndFinish(t *testing.T) {
 	}
 
 	res := store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:03Z", Up: false, Status: 503, Reason: "http_5xx", Error: "status 503", MS: 123}
-	if err := d.FinishMonitorCheck(ctx, id, monA, res); err != nil {
+	if err := d.FinishMonitorCheck(ctx, id, monA, "2026-11-01T10:00:00Z", res); err != nil {
 		t.Fatal(err)
 	}
 	m = getMon(t, d, id, monA)
@@ -491,7 +491,7 @@ func TestMonitorCheckRequestAndFinish(t *testing.T) {
 		t.Fatalf("audit rows after finish = %d, want 2", n)
 	}
 	up := store.MonitorCheckResult{FinishedAt: "2026-11-01T10:01:03Z", Up: true, Status: 200, MS: 5}
-	if err := d.FinishMonitorCheck(ctx, id, monA, up); err != nil {
+	if err := d.FinishMonitorCheck(ctx, id, monA, "2026-11-01T10:00:00Z", up); err != nil {
 		t.Fatal(err)
 	}
 	if m = getMon(t, d, id, monA); !m.CheckUp || m.CheckReason != "" || m.CheckError != "" {
@@ -546,7 +546,7 @@ func TestRequestMonitorCheckCooldownIsInTheWrite(t *testing.T) {
 	if err := d.RequestMonitorCheck(ctx, id, monA, "2026-11-01T10:00:00Z", cool, audit); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.FinishMonitorCheck(ctx, id, monA, store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:02Z", Up: true}); err != nil {
+	if err := d.FinishMonitorCheck(ctx, id, monA, "2026-11-01T10:00:00Z", store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:02Z", Up: true}); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.RequestMonitorCheck(ctx, id, monA, "2026-11-01T10:00:59Z", cool, audit); !errors.Is(err, store.ErrBusy) {
@@ -571,7 +571,7 @@ func TestRequestMonitorCheckInTheSecondOfTheLastFinish(t *testing.T) {
 	if err := d.RequestMonitorCheck(ctx, id, monA, "2026-11-01T10:00:00Z", 0, audit); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.FinishMonitorCheck(ctx, id, monA, store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:05Z", Up: false, Status: 503, Error: "e", MS: 7}); err != nil {
+	if err := d.FinishMonitorCheck(ctx, id, monA, "2026-11-01T10:00:00Z", store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:05Z", Up: false, Status: 503, Error: "e", MS: 7}); err != nil {
 		t.Fatal(err)
 	}
 	if m := getMon(t, d, id, monA); m.CheckPending() {
@@ -590,7 +590,7 @@ func TestRequestMonitorCheckInTheSecondOfTheLastFinish(t *testing.T) {
 	if err := d.RequestMonitorCheck(ctx, id, monA, "2026-11-01T10:00:05Z", 0, audit); !errors.Is(err, store.ErrBusy) {
 		t.Errorf("a second request while pending: %v, want ErrBusy", err)
 	}
-	if err := d.FinishMonitorCheck(ctx, id, monA, store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:05Z", Up: true}); err != nil {
+	if err := d.FinishMonitorCheck(ctx, id, monA, "2026-11-01T10:00:05Z", store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:05Z", Up: true}); err != nil {
 		t.Fatal(err)
 	}
 	if m := getMon(t, d, id, monA); m.CheckPending() {
@@ -640,5 +640,41 @@ func TestPendingCheckEndsWhenTheProjectIsArchived(t *testing.T) {
 	}
 	if o := getMon(t, d, other, monA); !o.CheckPending() {
 		t.Errorf("the other project: %+v, want still pending", o)
+	}
+}
+
+// A late finish of an older request writes nothing: the monitor was turned off
+// and on and asked again, and the newer request stays pending for the runner.
+func TestFinishMonitorCheckOfAnOlderRequestWritesNothing(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	audit := store.AuditEntry{Actor: "t", Action: "monitor.check", Subject: "1"}
+	const r1, r2 = "2026-11-01T10:00:00Z", "2026-11-01T10:05:00Z"
+	if err := d.RequestMonitorCheck(ctx, id, monA, r1, 0, audit); err != nil {
+		t.Fatal(err)
+	}
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: false})
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	if err := d.RequestMonitorCheck(ctx, id, monA, r2, 0, audit); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.FinishMonitorCheck(ctx, id, monA, r1, store.MonitorCheckResult{FinishedAt: "2026-11-01T10:05:01Z", Up: true}); err != nil {
+		t.Fatal(err)
+	}
+	m := getMon(t, d, id, monA)
+	if !m.CheckPending() || m.CheckRequestedAt != r2 || m.CheckUp {
+		t.Fatalf("R2 after R1's finish: %+v, want still pending", m)
+	}
+	ms, err := d.ListEnabledMonitors(ctx)
+	if err != nil || len(ms) != 1 || !ms[0].CheckPending() {
+		t.Fatalf("the runner's list: %+v, %v", ms, err)
+	}
+	if err := d.FinishMonitorCheck(ctx, id, monA, r2, store.MonitorCheckResult{FinishedAt: "2026-11-01T10:05:02Z", Up: true}); err != nil {
+		t.Fatal(err)
+	}
+	if m := getMon(t, d, id, monA); m.CheckPending() || !m.CheckUp {
+		t.Fatalf("R2 after its own finish: %+v", m)
 	}
 }

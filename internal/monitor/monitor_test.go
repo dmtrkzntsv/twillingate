@@ -49,7 +49,7 @@ type fakeStore struct {
 	onList func()
 }
 
-func (f *fakeStore) FinishMonitorCheck(ctx context.Context, id int64, origin string, res store.MonitorCheckResult) error {
+func (f *fakeStore) FinishMonitorCheck(ctx context.Context, id int64, origin, requestedAt string, res store.MonitorCheckResult) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.finished == nil {

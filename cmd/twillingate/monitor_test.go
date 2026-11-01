@@ -183,7 +183,7 @@ func serveMonitorCheck(t *testing.T, res store.MonitorCheckResult) {
 			for _, m := range ms {
 				if m.CheckPending() {
 					res.FinishedAt = m.CheckRequestedAt
-					if err := st.FinishMonitorCheck(context.Background(), 1, m.Origin, res); err != nil {
+					if err := st.FinishMonitorCheck(context.Background(), 1, m.Origin, m.CheckRequestedAt, res); err != nil {
 						t.Error(err)
 					}
 					return

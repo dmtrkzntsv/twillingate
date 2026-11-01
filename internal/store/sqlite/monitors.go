@@ -347,10 +347,12 @@ func (d *DB) RequestMonitorCheck(ctx context.Context, projectID int64, origin, a
 }
 
 // FinishMonitorCheck stores how a manual check ended, guarded like
-// SetMonitorCert. Not audited.
-func (d *DB) FinishMonitorCheck(ctx context.Context, projectID int64, origin string, r store.MonitorCheckResult) error {
+// SetMonitorCert, and only for the request it served: requestedAt is the
+// request's time, so a late finish of an older request, after the monitor was
+// turned off and on and asked again, writes nothing. Not audited.
+func (d *DB) FinishMonitorCheck(ctx context.Context, projectID int64, origin, requestedAt string, r store.MonitorCheckResult) error {
 	_, err := d.db.ExecContext(ctx, `UPDATE monitors SET check_finished_at=?, check_up=?, check_status=?,
-		check_reason=?, check_error=?, check_ms=? WHERE project_id=? AND origin=?`,
-		r.FinishedAt, r.Up, r.Status, r.Reason, r.Error, r.MS, projectID, origin)
+		check_reason=?, check_error=?, check_ms=? WHERE project_id=? AND origin=? AND check_requested_at=?`,
+		r.FinishedAt, r.Up, r.Status, r.Reason, r.Error, r.MS, projectID, origin, requestedAt)
 	return err
 }
