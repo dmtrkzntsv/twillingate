@@ -66,63 +66,163 @@ func (h *host) projectActivity(ctx context.Context, _ struct{}) (projectActivity
 }
 
 // activityTTL is how long the days project_activity reads answer before
-// the next read scans again: the sidebar asks on every load.
+// a read starts another scan: the sidebar asks on every load.
 const activityTTL = 5 * time.Minute
+
+// activityFallbackTTL is how long an answer from a scan that failed stands
+// before a read starts another, so a failing scan is not repeated per read.
+const activityFallbackTTL = 30 * time.Second
 
 // activityRecheck is how often, within activityTTL, a live project with
 // event files but no day yet is looked at again (its newest file's month
 // only): the first event of a new project must not wait out the TTL.
 const activityRecheck = 30 * time.Second
 
-// activityDays caches lastEventDays for activityTTL.
+// activityDays caches lastEventDays. Scans run in the background, one at a
+// time, on a context of their own, as eventCount's do (the host has no
+// shutdown hook; each request of a scan is bounded by CONSOLE_QUERY_TIMEOUT).
+// mu is never held across one, so a read never waits for it but the very
+// first, which has nothing to answer.
 type activityDays struct {
-	mu   sync.Mutex
-	now  func() time.Time
-	at   time.Time // the last full scan
+	mu  sync.Mutex
+	now func() time.Time
+	// days is the last answer, nil before the first; err how the last scan
+	// failed when it listed no files.
 	days map[int64]string
+	err  error
+	// fresh is when days or err stop answering without a new scan.
+	fresh time.Time
 	// checked is the last full scan or recheck of projects with no day.
 	checked time.Time
+	// running is closed when the scan in flight ends; nil when none is.
+	running chan struct{}
+}
+
+func (c *activityDays) clock() time.Time {
+	if c.now != nil {
+		return c.now()
+	}
+	return time.Now()
 }
 
 // lastEventDays is the day of the newest event (checks aside) of each live
-// project with event files, from a scan of the newest file's month and,
-// while it holds none, the months before it down to the oldest file (the
-// file names say which month, and the newest may hold nothing but checks),
-// chunked like usage's and
-// cached for activityTTL (not an answer with a fallback in it, nor a read
-// whose context ended). Archived projects are not read, and a project
-// whose scan fails reads its newest file's day, the failure logged: the
-// endpoint does not fail with it. A file name's day stops at today, a month
-// file counting as its last day. A project with no event at all is
-// absent. A live project with files but no day in the cached answer is
-// looked at again every activityRecheck, in its newest file's month only,
-// so its first event shows within seconds.
+// project with event files (see scanEventDays). A read with an answer cached
+// returns it at once, whatever its age, and past activityTTL (activityFallbackTTL
+// after a failed scan) starts a refresh unless one is running; only a read with
+// none waits, as long as its own context lets it, sharing the scan with any
+// other. Within the TTL a live project with files but no day in the answer is
+// looked at again every activityRecheck (recheckMissing), so its first event
+// shows within seconds. In a process with no engine it reads the file names.
 func (h *host) lastEventDays(ctx context.Context, live []*manage.Project) (map[int64]string, error) {
 	c := &h.activity
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	now := time.Now
-	if c.now != nil {
-		now = c.now
-	}
-	if c.days != nil && now().Sub(c.at) < activityTTL {
-		h.recheckMissing(ctx, live, now())
-		return c.days, nil
-	}
-	today := now().UTC().Format(time.DateOnly)
-	latest, err := archive.LatestDays(h.eventsDir)
-	if err != nil {
-		return nil, err
-	}
 	if h.native == nil {
+		latest, err := archive.LatestDays(h.eventsDir)
+		if err != nil {
+			return nil, err
+		}
+		today := c.clock().UTC().Format(time.DateOnly)
 		for id, d := range latest {
 			latest[id] = min(d, today)
 		}
 		return latest, nil
 	}
-	oldest, err := archive.OldestDays(h.eventsDir)
-	if err != nil {
+	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	c.mu.Lock()
+	now := c.clock()
+	expired := !now.Before(c.fresh)
+	if c.days != nil {
+		switch {
+		case expired:
+			h.startActivityLocked(func() { h.scanEventDays(live) })
+		case now.Sub(c.checked) >= activityRecheck:
+			if missing := c.missingLocked(live); len(missing) > 0 {
+				c.checked = now
+				h.startActivityLocked(func() { h.recheckMissing(missing) })
+			}
+		}
+		days := c.days
+		c.mu.Unlock()
+		return days, nil
+	}
+	if c.err != nil && !expired {
+		err := c.err
+		c.mu.Unlock()
+		return nil, err
+	}
+	done := h.startActivityLocked(func() { h.scanEventDays(live) })
+	c.mu.Unlock()
+	select {
+	case <-done:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.days, c.err
+}
+
+// startActivityLocked runs scan in the background unless a scan is running,
+// returning the channel closed when the one in flight ends.
+func (h *host) startActivityLocked(scan func()) chan struct{} {
+	c := &h.activity
+	if c.running != nil {
+		return c.running
+	}
+	done := make(chan struct{})
+	c.running = done
+	go func() {
+		defer func() {
+			c.mu.Lock()
+			c.running = nil
+			c.mu.Unlock()
+			close(done)
+		}()
+		scan()
+	}()
+	return done
+}
+
+// missingLocked is the live projects the answer has no day for.
+func (c *activityDays) missingLocked(live []*manage.Project) []int64 {
+	var missing []int64
+	for _, p := range live {
+		if _, ok := c.days[p.ID]; !ok && !p.Archived {
+			missing = append(missing, p.ID)
+		}
+	}
+	return missing
+}
+
+// scanEventDays stores the day of the newest event (checks aside) of each
+// live project with event files, from a scan of the newest file's month and,
+// while it holds none, the months before it down to the oldest file (the
+// file names say which month, and the newest may hold nothing but checks),
+// chunked like usage's. Archived projects are not read, and a project whose
+// scan fails, a timeout included, reads its newest file's day, the failure
+// logged, and the answer stands only for activityFallbackTTL. A file name's day
+// stops at today, a month file counting as its last day. A project with no
+// event at all is absent. Files that cannot be listed leave the last answer as
+// it is, for as long.
+func (h *host) scanEventDays(live []*manage.Project) {
+	c := &h.activity
+	ctx := context.Background() // a reader that leaves does not end it for the others
+	today := c.clock().UTC().Format(time.DateOnly)
+	listed := func() (latest, oldest map[int64]string, err error) {
+		if latest, err = archive.LatestDays(h.eventsDir); err != nil {
+			return nil, nil, err
+		}
+		oldest, err = archive.OldestDays(h.eventsDir)
+		return latest, oldest, err
+	}
+	latest, oldest, err := listed()
+	if err != nil {
+		h.logger.Error("project_activity: the event files cannot be listed", "error", err)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.err, c.fresh = err, c.clock().Add(activityFallbackTTL)
+		return
 	}
 	var ids []int64
 	for _, p := range live {
@@ -134,46 +234,37 @@ func (h *host) lastEventDays(ctx context.Context, live []*manage.Project) (map[i
 	fellBack := false
 	for chunk := range slices.Chunk(ids, usageProjectsPerCall) {
 		ts, failed, _, err := h.newestRow(ctx, chunk, latest, oldest, "ts", nil, newestOpts{tolerate: true})
-		if err != nil {
-			return nil, err
+		if err != nil { // with tolerate, none today: every project of the chunk failed
+			failed = map[int64]error{}
+			for _, id := range chunk {
+				failed[id] = err
+			}
 		}
 		for id, t := range ts {
 			days[id] = t[:min(len(t), 10)]
 		}
-		if len(failed) > 0 {
-			if err := ctx.Err(); err != nil {
-				return nil, err // a gone client, not a bad scan
-			}
-			fellBack = true
-		}
 		for id, ferr := range failed {
 			h.logger.Error("project_activity: last_event_day read from the file names, the events cannot be scanned", "project_id", id, "error", ferr)
 			days[id] = min(latest[id], today)
+			fellBack = true
 		}
 	}
-	if !fellBack { // a fallback day is not kept: the next read scans again
-		c.days, c.at, c.checked = days, now(), now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	now := c.clock()
+	ttl := activityTTL
+	if fellBack {
+		ttl = activityFallbackTTL
 	}
-	return days, nil
+	c.days, c.err, c.fresh, c.checked = days, nil, now.Add(ttl), now
 }
 
-// recheckMissing looks again at the live projects the cached answer has no
-// day for, when it has been activityRecheck since the last look: their
-// newest file's month only, so a monitoring-only project does not pay for
-// a step back to its oldest file at every read. A day found joins the
-// cached answer. c.mu is held. A failure leaves the answer as it was.
-func (h *host) recheckMissing(ctx context.Context, live []*manage.Project, now time.Time) {
+// recheckMissing looks again at projects the answer has no day for: their
+// newest file's month only, so a monitoring-only project does not pay for a
+// step back to its oldest file at every look. A day found joins the answer; a
+// failure leaves it as it was.
+func (h *host) recheckMissing(missing []int64) {
 	c := &h.activity
-	var missing []int64
-	for _, p := range live {
-		if _, ok := c.days[p.ID]; !ok && !p.Archived {
-			missing = append(missing, p.ID)
-		}
-	}
-	if len(missing) == 0 || h.native == nil || now.Sub(c.checked) < activityRecheck {
-		return
-	}
-	c.checked = now
 	latest, err := archive.LatestDays(h.eventsDir)
 	if err != nil {
 		return
@@ -184,12 +275,9 @@ func (h *host) recheckMissing(ctx context.Context, live []*manage.Project, now t
 			ids = append(ids, id)
 		}
 	}
-	if len(ids) == 0 {
-		return
-	}
 	found := map[int64]string{}
 	for chunk := range slices.Chunk(ids, usageProjectsPerCall) {
-		ts, _, _, err := h.newestRow(ctx, chunk, latest, nil, "ts", nil, newestOpts{onlyNewest: true, tolerate: true})
+		ts, _, _, err := h.newestRow(context.Background(), chunk, latest, nil, "ts", nil, newestOpts{onlyNewest: true, tolerate: true})
 		if err != nil {
 			return
 		}
@@ -200,6 +288,8 @@ func (h *host) recheckMissing(ctx context.Context, live []*manage.Project, now t
 	if len(found) == 0 {
 		return
 	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
 	days := maps.Clone(c.days) // the map a reader may still hold is not written
 	maps.Copy(days, found)
 	c.days = days

@@ -190,9 +190,16 @@ type scanNative struct {
 	*native.Engine
 	fail  int64
 	asked []int64
+	// entered, when set, hears each call, and release holds it until closed.
+	entered chan context.Context
+	release chan struct{}
 }
 
 func (n *scanNative) AnswerMany(ctx context.Context, reqs []native.Request, done func(int, native.Answered)) {
+	if n.entered != nil {
+		n.entered <- ctx
+		<-n.release
+	}
 	for i, r := range reqs {
 		n.asked = append(n.asked, r.Params.Project)
 		if r.Params.Project == n.fail {
@@ -209,6 +216,16 @@ func (n *scanNative) AnswerMany(ctx context.Context, reqs []native.Request, done
 		}
 	}
 	n.Engine.AnswerMany(ctx, rest, func(j int, a native.Answered) { done(at[j], a) })
+}
+
+// settleActivity waits for the background refresh in flight, if any.
+func settleActivity(h *host) {
+	h.activity.mu.Lock()
+	running := h.activity.running
+	h.activity.mu.Unlock()
+	if running != nil {
+		<-running
+	}
 }
 
 // TestProjectActivityScansLiveProjectsOnceInTheTTL: an archived project is
@@ -243,6 +260,11 @@ func TestProjectActivityScansLiveProjectsOnceInTheTTL(t *testing.T) {
 	n.fail = 1
 	var logs bytes.Buffer
 	h.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	// Past the TTL a read answers what it has and starts a refresh.
+	if out, err = h.projectActivity(ctx, struct{}{}); err != nil || *out.Projects[0].LastEventDay != "2026-08-26" {
+		t.Fatalf("read past the TTL: %+v, %v", out.Projects, err)
+	}
+	settleActivity(h)
 	out, err = h.projectActivity(ctx, struct{}{})
 	if err != nil {
 		t.Fatalf("a failing scan failed the endpoint: %v", err)
@@ -254,11 +276,148 @@ func TestProjectActivityScansLiveProjectsOnceInTheTTL(t *testing.T) {
 	if !strings.Contains(logs.String(), "level=ERROR") {
 		t.Errorf("failure not logged: %q", logs.String())
 	}
-	// An answer with a fallback in it is not kept: the next read scans.
+	// An answer with a fallback in it is kept 30 s: a failing scan is not
+	// repeated on every read. Then one read starts the scan again.
 	n.fail = 0
 	asked = len(n.asked)
-	if out, err = h.projectActivity(ctx, struct{}{}); err != nil || len(n.asked) == asked || *out.Projects[0].LastEventDay != "2026-08-26" {
-		t.Errorf("read after a fallback: asked %d -> %d, %+v, %v; want a rescan", asked, len(n.asked), out.Projects, err)
+	clock = clock.Add(activityFallbackTTL - time.Second)
+	if _, err = h.projectActivity(ctx, struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	settleActivity(h)
+	if len(n.asked) != asked {
+		t.Errorf("a read within 30 s of a fallback scanned: %d -> %d", asked, len(n.asked))
+	}
+	clock = clock.Add(time.Second)
+	if _, err = h.projectActivity(ctx, struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	settleActivity(h)
+	out, err = h.projectActivity(ctx, struct{}{})
+	if err != nil || len(n.asked) == asked || *out.Projects[0].LastEventDay != "2026-08-26" {
+		t.Errorf("read after a fallback's 30 s: asked %d -> %d, %+v, %v; want a rescan", asked, len(n.asked), out.Projects, err)
+	}
+}
+
+// TestProjectActivityReadsDoNotWaitForARefresh: past the TTL every read answers
+// the last days at once, and however many there are one refresh runs, on a
+// context of its own.
+func TestProjectActivityReadsDoNotWaitForARefresh(t *testing.T) {
+	h, _ := newTestHost(t)
+	n := &scanNative{Engine: h.native.(*native.Engine)}
+	h.native = n
+	clock := time.Now()
+	h.activity.now = func() time.Time { return clock }
+	if _, err := h.projectActivity(t.Context(), struct{}{}); err != nil {
+		t.Fatal(err)
+	}
+	n.entered, n.release = make(chan context.Context, 8), make(chan struct{})
+	clock = clock.Add(activityTTL)
+	reader, gone := context.WithCancel(t.Context())
+	for range 5 {
+		start := time.Now()
+		out, err := h.projectActivity(reader, struct{}{})
+		if err != nil || out.Projects[0].LastEventDay == nil {
+			t.Fatalf("read during a refresh: %+v, %v", out.Projects, err)
+		}
+		if d := time.Since(start); d > 5*time.Second {
+			t.Errorf("a read took %v", d)
+		}
+	}
+	scan := <-n.entered
+	gone() // the reader that started it leaves: the refresh goes on
+	if err := scan.Err(); err != nil {
+		t.Errorf("the refresh ended with its reader: %v", err)
+	}
+	close(n.release)
+	settleActivity(h)
+	if extra := len(n.entered); extra != 0 {
+		t.Errorf("%d more scans ran during the refresh, want none", extra)
+	}
+}
+
+// TestProjectActivityFirstReadHonoursItsContext: with nothing cached a read
+// waits, but no longer than its own context, and leaves the scan running for
+// the reads after it, which share it.
+func TestProjectActivityFirstReadHonoursItsContext(t *testing.T) {
+	h, _ := newTestHost(t)
+	n := &scanNative{Engine: h.native.(*native.Engine), entered: make(chan context.Context, 8), release: make(chan struct{})}
+	h.native = n
+	ctx, cancel := context.WithCancel(t.Context())
+	failed := make(chan error, 1)
+	go func() {
+		_, err := h.projectActivity(ctx, struct{}{})
+		failed <- err
+	}()
+	scan := <-n.entered
+	cancel()
+	if err := <-failed; !errors.Is(err, context.Canceled) {
+		t.Errorf("a cancelled wait = %v, want its cancellation", err)
+	}
+	if err := scan.Err(); err != nil {
+		t.Errorf("the scan ended with its reader: %v", err)
+	}
+	second := make(chan projectActivityListOut, 1)
+	go func() {
+		out, err := h.projectActivity(t.Context(), struct{}{})
+		if err != nil {
+			t.Error(err)
+		}
+		second <- out
+	}()
+	close(n.release)
+	out := <-second
+	if len(out.Projects) == 0 || out.Projects[0].LastEventDay == nil || *out.Projects[0].LastEventDay != "2026-08-26" {
+		t.Errorf("the second read = %+v", out.Projects)
+	}
+	if extra := len(n.entered); extra != 0 {
+		t.Errorf("%d more scans, want the one shared", extra)
+	}
+}
+
+// TestProjectActivityListingFailure: files that cannot be listed leave the last
+// days answering, or with none fail the read, and are not listed again for 30 s.
+func TestProjectActivityListingFailure(t *testing.T) {
+	h, _ := newTestHost(t)
+	ctx := t.Context()
+	var logs bytes.Buffer
+	h.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	clock := time.Now()
+	h.activity.now = func() time.Time { return clock }
+	good := h.eventsDir
+	notDir := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(notDir, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.eventsDir = notDir
+	if _, err := h.projectActivity(ctx, struct{}{}); err == nil {
+		t.Fatal("no files, nothing cached: answered")
+	}
+	// The failure stands for 30 s, though the files are back.
+	h.eventsDir = good
+	if _, err := h.projectActivity(ctx, struct{}{}); err == nil {
+		t.Error("a read within 30 s of the failure listed the files again")
+	}
+	clock = clock.Add(activityFallbackTTL)
+	out, err := h.projectActivity(ctx, struct{}{})
+	if err != nil || out.Projects[0].LastEventDay == nil {
+		t.Fatalf("after 30 s: %+v, %v", out.Projects, err)
+	}
+	day := *out.Projects[0].LastEventDay
+	// With days cached the failure does not show, only in the log.
+	h.eventsDir = notDir
+	logs.Reset()
+	clock = clock.Add(activityTTL)
+	if out, err = h.projectActivity(ctx, struct{}{}); err != nil || *out.Projects[0].LastEventDay != day {
+		t.Errorf("past the TTL: %+v, %v", out.Projects, err)
+	}
+	settleActivity(h)
+	if out, err = h.projectActivity(ctx, struct{}{}); err != nil || *out.Projects[0].LastEventDay != day {
+		t.Errorf("after the failed refresh: %+v, %v", out.Projects, err)
+	}
+	settleActivity(h)
+	if !strings.Contains(logs.String(), "level=ERROR") {
+		t.Errorf("failure not logged: %q", logs.String())
 	}
 }
 
@@ -313,8 +472,8 @@ func TestProjectActivityFallbackDayIsNeverFuture(t *testing.T) {
 }
 
 // TestProjectActivityCancelledReadCachesNothing: a read whose context has
-// ended fails without logging per project and leaves the cache empty, so
-// the next read scans.
+// already ended fails without logging and starts nothing, so the next read
+// scans.
 func TestProjectActivityCancelledReadCachesNothing(t *testing.T) {
 	h, _ := newTestHost(t)
 	n := &scanNative{Engine: h.native.(*native.Engine)}
@@ -330,6 +489,9 @@ func TestProjectActivityCancelledReadCachesNothing(t *testing.T) {
 		t.Errorf("cancellation logged: %q", logs.String())
 	}
 	asked := len(n.asked)
+	if asked != 0 {
+		t.Errorf("a cancelled read started a scan: %v", n.asked)
+	}
 	out, err := h.projectActivity(t.Context(), struct{}{})
 	if err != nil || len(n.asked) == asked || out.Projects[0].LastEventDay == nil || *out.Projects[0].LastEventDay != "2026-08-26" {
 		t.Errorf("read after cancel: asked %d -> %d, %+v, %v; want a scan", asked, len(n.asked), out.Projects, err)
@@ -366,10 +528,16 @@ func TestProjectActivityRechecksAProjectWithNoDay(t *testing.T) {
 	asked := len(n.asked)
 	clock = clock.Add(10 * time.Second)
 	out, _ := h.projectActivity(ctx, struct{}{})
+	settleActivity(h)
 	if len(n.asked) != asked || out.Projects[0].LastEventDay != nil {
 		t.Fatalf("rechecked within 30 s: asked %d -> %d, %+v", asked, len(n.asked), out.Projects)
 	}
 	clock = clock.Add(25 * time.Second)
+	// The read that starts the recheck answers what it has; the next, the day.
+	if out, err := h.projectActivity(ctx, struct{}{}); err != nil || out.Projects[0].LastEventDay != nil {
+		t.Fatalf("read starting the recheck: %+v, %v", out.Projects, err)
+	}
+	settleActivity(h)
 	out, err := h.projectActivity(ctx, struct{}{})
 	if err != nil {
 		t.Fatal(err)
@@ -383,7 +551,9 @@ func TestProjectActivityRechecksAProjectWithNoDay(t *testing.T) {
 	// And the day is kept: the next read within the TTL asks nothing.
 	asked = len(n.asked)
 	clock = clock.Add(time.Minute)
-	if _, err := h.projectActivity(ctx, struct{}{}); err != nil || len(n.asked) != asked {
+	_, err = h.projectActivity(ctx, struct{}{})
+	settleActivity(h)
+	if err != nil || len(n.asked) != asked {
 		t.Errorf("a read after the recheck scanned again: %d -> %d (%v)", asked, len(n.asked), err)
 	}
 }
