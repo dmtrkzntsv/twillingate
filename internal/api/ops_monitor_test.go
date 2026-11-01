@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -13,55 +14,76 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-func decodeMonitor(t *testing.T, raw []byte) monitorOut {
+func decodeMonitors(t *testing.T, raw []byte) monitorsOut {
 	t.Helper()
-	var m monitorOut
+	var m monitorsOut
 	if err := json.Unmarshal(raw, &m); err != nil {
-		t.Fatalf("monitor %q: %v", raw, err)
+		t.Fatalf("monitors %q: %v", raw, err)
 	}
 	return m
 }
 
-// TestMonitorToolsAndRoutesAgree: get_monitor and update_monitor answer the
-// same over MCP and REST, eligible origins are the exact ones, and the
-// audit names the transport's actor.
+const (
+	monBlog = "https://blog.example.com"
+	monShop = "https://shop.example.com"
+	monLand = "https://land.example.org"
+)
+
+// TestMonitorToolsAndRoutesAgree: list_monitors and update_monitor
+// answer the same over MCP and REST, every exact origin is listed, and the audit
+// names the transport's actor.
 func TestMonitorToolsAndRoutesAgree(t *testing.T) {
 	h, cs := newTestHost(t)
 	h.monitorInterval = 2 * time.Minute
 	h.monitorTimeout = 7 * time.Second
 	ctx := context.Background()
-	if _, err := h.ops.UpdateProject(ctx, "test", manage.ProjectSpec{ID: 1, AllowedOrigins: []string{"https://blog.example.com", "https://*.example.org", "tauri://app"}}); err != nil {
+	if _, err := h.ops.UpdateProject(ctx, "test", manage.ProjectSpec{ID: 1, AllowedOrigins: []string{monBlog, monShop, monLand, "https://*.example.org", "tauri://app"}}); err != nil {
 		t.Fatal(err)
 	}
 	r := newTestRegistrar(t, h)
 
-	rec := serveREST(t, r, "GET", "/api/projects/1/monitor", "")
+	rec := serveREST(t, r, "GET", "/api/projects/1/monitors", "")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET = %d %s", rec.Code, rec.Body)
 	}
-	got := decodeMonitor(t, rec.Body.Bytes())
-	if got.ProjectID != 1 || got.Enabled || got.IntervalSeconds != 120 || got.TimeoutSeconds != 7 ||
-		!slices.Equal(got.EligibleOrigins, []string{"https://blog.example.com"}) {
+	if !strings.Contains(rec.Body.String(), `"domains":[]`) {
+		t.Errorf("GET = %s, want an empty domains array", rec.Body)
+	}
+	got := decodeMonitors(t, rec.Body.Bytes())
+	var origins []string
+	for _, m := range got.Monitors {
+		origins = append(origins, m.Origin)
+		if m.Enabled {
+			t.Errorf("%s is on", m.Origin)
+		}
+	}
+	if !slices.Equal(origins, []string{monBlog, monShop, monLand}) || got.IntervalSeconds != 120 || got.TimeoutSeconds != 7 || got.CheckEverySeconds != 120 {
 		t.Errorf("GET = %+v", got)
 	}
-	viaMCP := decodeMonitor(t, []byte(textOf(callTool(t, cs, "get_monitor", map[string]any{"project_id": 1}))))
-	if viaMCP.ProjectID != 1 || viaMCP.IntervalSeconds != 120 || viaMCP.TimeoutSeconds != 7 || !slices.Equal(viaMCP.EligibleOrigins, got.EligibleOrigins) {
-		t.Errorf("MCP get = %+v", viaMCP)
+	viaMCP := decodeMonitors(t, []byte(textOf(callTool(t, cs, "list_monitors", map[string]any{"project_id": 1}))))
+	if !reflect.DeepEqual(viaMCP, got) {
+		t.Errorf("MCP list = %+v, want %+v", viaMCP, got)
 	}
 
-	rec = serveREST(t, r, "PATCH", "/api/projects/1/monitor", `{"enabled":true,"contains":"Welcome"}`)
+	rec = serveREST(t, r, "PATCH", "/api/projects/1/monitors", `{"origin":"`+monBlog+`","enabled":true,"contains":"Welcome"}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PATCH = %d %s", rec.Code, rec.Body)
 	}
-	got = decodeMonitor(t, rec.Body.Bytes())
-	if !got.Enabled || got.Origin != "https://blog.example.com" || got.Contains != "Welcome" {
-		t.Errorf("PATCH = %+v, want enabled on the only origin", got)
+	got = decodeMonitors(t, rec.Body.Bytes())
+	if m := got.Monitors[0]; !m.Enabled || m.Origin != monBlog || m.Contains != "Welcome" {
+		t.Errorf("PATCH = %+v", m)
 	}
-	res := callTool(t, cs, "update_monitor", map[string]any{"project_id": 1, "contains": ""})
+	if got.Monitors[1].Enabled {
+		t.Errorf("PATCH turned another on: %+v", got.Monitors[1])
+	}
+	if got.CheckEverySeconds != 120 {
+		t.Errorf("one on: check_every_seconds %d, want 120", got.CheckEverySeconds)
+	}
+	res := callTool(t, cs, "update_monitor", map[string]any{"project_id": 1, "origin": monBlog, "contains": ""})
 	if res.IsError {
 		t.Fatalf("update_monitor: %s", textOf(res))
 	}
-	if m := decodeMonitor(t, []byte(textOf(res))); !m.Enabled || m.Contains != "" {
+	if m := decodeMonitors(t, []byte(textOf(res))).Monitors[0]; !m.Enabled || m.Contains != "" {
 		t.Errorf("MCP update = %+v, want still enabled, contains cleared", m)
 	}
 	out, err := h.db.Run(ctx, "SELECT actor FROM audit_log WHERE action='monitor.update' AND subject=? ORDER BY rowid", "1")
@@ -71,24 +93,49 @@ func TestMonitorToolsAndRoutesAgree(t *testing.T) {
 	if len(out.Rows) != 2 || out.Rows[0][0] == "mcp" || out.Rows[1][0] != "mcp" {
 		t.Errorf("audit actors = %v, want REST's then mcp", out.Rows)
 	}
+
+	// Two more on: the sites take turns on the project's budget, and the domains
+	// list what they use, with their origins.
+	for _, o := range []string{monShop, monLand} {
+		if rec := serveREST(t, r, "PATCH", "/api/projects/1/monitors", `{"origin":"`+o+`","enabled":true}`); rec.Code != http.StatusOK {
+			t.Fatalf("PATCH %s = %d %s", o, rec.Code, rec.Body)
+		}
+	}
+	got = decodeMonitors(t, serveREST(t, r, "GET", "/api/projects/1/monitors", "").Body.Bytes())
+	if got.CheckEverySeconds != 360 || got.IntervalSeconds != 120 {
+		t.Errorf("three on: check_every_seconds %d, interval %d", got.CheckEverySeconds, got.IntervalSeconds)
+	}
+	want := []monitorDomainOut{
+		{Domain: "example.com", Origins: []string{monBlog, monShop}},
+		{Domain: "example.org", Origins: []string{monLand}},
+	}
+	if !reflect.DeepEqual(got.Domains, want) {
+		t.Errorf("domains = %+v, want %+v", got.Domains, want)
+	}
+	if v := decodeMonitors(t, []byte(textOf(callTool(t, cs, "list_monitors", map[string]any{"project_id": 1})))); !reflect.DeepEqual(v, got) {
+		t.Errorf("MCP list = %+v, want %+v", v, got)
+	}
 }
 
 func TestMonitorRefusals(t *testing.T) {
 	h, cs := newTestHost(t)
 	r := newTestRegistrar(t, h)
-	if rec := serveREST(t, r, "PATCH", "/api/projects/1/monitor", `{"origin":"https://evil.example"}`); rec.Code != http.StatusBadRequest {
+	if rec := serveREST(t, r, "PATCH", "/api/projects/1/monitors", `{"origin":"https://evil.example"}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("foreign origin = %d %s, want 400", rec.Code, rec.Body)
 	}
-	if rec := serveREST(t, r, "GET", "/api/projects/99/monitor", ""); rec.Code != http.StatusNotFound {
+	if rec := serveREST(t, r, "PATCH", "/api/projects/1/monitors", `{"enabled":true}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("no origin = %d %s, want 400", rec.Code, rec.Body)
+	}
+	if rec := serveREST(t, r, "GET", "/api/projects/99/monitors", ""); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown project GET = %d, want 404", rec.Code)
 	}
-	if rec := serveREST(t, r, "PATCH", "/api/projects/99/monitor", `{"enabled":false}`); rec.Code != http.StatusNotFound {
+	if rec := serveREST(t, r, "PATCH", "/api/projects/99/monitors", `{"origin":"https://a.example","enabled":false}`); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown project PATCH = %d, want 404", rec.Code)
 	}
 	for _, c := range []struct {
 		tool string
 		args map[string]any
-	}{{"update_monitor", map[string]any{"project_id": 99, "enabled": false}}, {"get_monitor", map[string]any{"project_id": 99}}} {
+	}{{"update_monitor", map[string]any{"project_id": 99, "origin": "https://a.example", "enabled": false}}, {"list_monitors", map[string]any{"project_id": 99}}} {
 		res := callTool(t, cs, c.tool, c.args)
 		if !res.IsError || !strings.Contains(textOf(res), "unknown project 99") {
 			t.Errorf("%s unknown = %s", c.tool, textOf(res))
@@ -140,20 +187,20 @@ func TestUsageIgnoresChecks(t *testing.T) {
 	}
 }
 
-// TestMonitorReportsRedirects: the last check's redirect count is in
-// get_monitor, over REST and MCP.
-func TestMonitorReportsRedirects(t *testing.T) {
+// TestMonitorReportsReadings: what the runner stored reads back through
+// list_monitors, over REST and MCP: a monitor's redirect count, its domain's date.
+func TestMonitorReportsReadings(t *testing.T) {
 	h, cs := newTestHost(t)
 	ctx := context.Background()
-	if _, err := h.ops.UpdateProject(ctx, "test", manage.ProjectSpec{ID: 1, AllowedOrigins: []string{"https://blog.example.com"}}); err != nil {
+	if _, err := h.ops.UpdateProject(ctx, "test", manage.ProjectSpec{ID: 1, AllowedOrigins: []string{monBlog}}); err != nil {
 		t.Fatal(err)
 	}
 	r := newTestRegistrar(t, h)
-	if rec := serveREST(t, r, "PATCH", "/api/projects/1/monitor", `{"enabled":true}`); rec.Code != http.StatusOK {
+	if rec := serveREST(t, r, "PATCH", "/api/projects/1/monitors", `{"origin":"`+monBlog+`","enabled":true}`); rec.Code != http.StatusOK {
 		t.Fatalf("PATCH = %d %s", rec.Code, rec.Body)
 	}
-	if got := decodeMonitor(t, serveREST(t, r, "GET", "/api/projects/1/monitor", "").Body.Bytes()); got.Redirects != 0 {
-		t.Errorf("fresh monitor: redirects %d, want 0", got.Redirects)
+	if got := decodeMonitors(t, serveREST(t, r, "GET", "/api/projects/1/monitors", "").Body.Bytes()); got.Monitors[0].Redirects != 0 {
+		t.Errorf("fresh monitor: redirects %d, want 0", got.Monitors[0].Redirects)
 	}
 	// What the runner does after a check: its own handle on the same file.
 	st, err := store.Open("sqlite://" + testDBPaths[h])
@@ -161,84 +208,105 @@ func TestMonitorReportsRedirects(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.SetMonitorRedirects(ctx, 1, "https://blog.example.com", 3); err != nil {
+	if err := st.SetMonitorRedirects(ctx, 1, monBlog, 3); err != nil {
 		t.Fatal(err)
 	}
-	rec := serveREST(t, r, "GET", "/api/projects/1/monitor", "")
-	if !strings.Contains(rec.Body.String(), `"redirects":3`) || decodeMonitor(t, rec.Body.Bytes()).Redirects != 3 {
+	if err := st.SetMonitorDomain(ctx, 1, "example.com", store.DomainState{ExpiresAt: "2027-08-13", CheckedAt: "2026-11-01T00:00:00Z"}); err != nil {
+		t.Fatal(err)
+	}
+	rec := serveREST(t, r, "GET", "/api/projects/1/monitors", "")
+	if !strings.Contains(rec.Body.String(), `"redirects":3`) || decodeMonitors(t, rec.Body.Bytes()).Monitors[0].Redirects != 3 {
 		t.Errorf("GET = %s, want redirects 3", rec.Body)
 	}
-	if m := decodeMonitor(t, []byte(textOf(callTool(t, cs, "get_monitor", map[string]any{"project_id": 1})))); m.Redirects != 3 {
-		t.Errorf("MCP get = %+v, want redirects 3", m)
+	want := []monitorDomainOut{{Domain: "example.com", Origins: []string{monBlog}, ExpiresAt: "2027-08-13", CheckedAt: "2026-11-01T00:00:00Z"}}
+	m := decodeMonitors(t, []byte(textOf(callTool(t, cs, "list_monitors", map[string]any{"project_id": 1}))))
+	if m.Monitors[0].Redirects != 3 || !reflect.DeepEqual(m.Domains, want) {
+		t.Errorf("MCP list = %+v, want redirects 3 and %+v", m, want)
 	}
 }
 
 // TestCheckMonitor: check_monitor answers the same over MCP and REST at once,
-// with the request on the monitor, and refuses over both as the others do.
+// with the request on that monitor, and refuses over both as the others do.
 func TestCheckMonitor(t *testing.T) {
 	h, cs := newTestHost(t)
 	ctx := context.Background()
-	if _, err := h.ops.UpdateProject(ctx, "test", manage.ProjectSpec{ID: 1, AllowedOrigins: []string{"https://blog.example.com"}}); err != nil {
+	if _, err := h.ops.UpdateProject(ctx, "test", manage.ProjectSpec{ID: 1, AllowedOrigins: []string{monBlog, monShop}}); err != nil {
 		t.Fatal(err)
 	}
 	r := newTestRegistrar(t, h)
+	const path = "/api/projects/1/monitors/check"
+	body := `{"origin":"` + monBlog + `"}`
+	args := map[string]any{"project_id": 1, "origin": monBlog}
 
 	// Not on: 400 and an MCP error.
-	rec := serveREST(t, r, "POST", "/api/projects/1/monitor/check", "")
+	rec := serveREST(t, r, "POST", path, body)
 	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "turn the monitor on first") {
 		t.Errorf("not on = %d %s, want 400", rec.Code, rec.Body)
 	}
-	if res := callTool(t, cs, "check_monitor", map[string]any{"project_id": 1}); !res.IsError || !strings.Contains(textOf(res), "turn the monitor on first") {
+	if res := callTool(t, cs, "check_monitor", args); !res.IsError || !strings.Contains(textOf(res), "turn the monitor on first") {
 		t.Errorf("MCP not on = %s", textOf(res))
 	}
+	// A foreign origin: 400.
+	if rec := serveREST(t, r, "POST", path, `{"origin":"https://evil.example"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("foreign = %d %s, want 400", rec.Code, rec.Body)
+	}
 	// Unknown project: 404.
-	if rec := serveREST(t, r, "POST", "/api/projects/99/monitor/check", ""); rec.Code != http.StatusNotFound {
+	if rec := serveREST(t, r, "POST", "/api/projects/99/monitors/check", body); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown = %d %s, want 404", rec.Code, rec.Body)
 	}
-	if res := callTool(t, cs, "check_monitor", map[string]any{"project_id": 99}); !res.IsError || !strings.Contains(textOf(res), "unknown project 99") {
+	if res := callTool(t, cs, "check_monitor", map[string]any{"project_id": 99, "origin": monBlog}); !res.IsError || !strings.Contains(textOf(res), "unknown project 99") {
 		t.Errorf("MCP unknown = %s", textOf(res))
 	}
 
 	on := true
-	if _, err := h.ops.SetMonitor(ctx, "test", 1, manage.MonitorSpec{Enabled: &on}); err != nil {
-		t.Fatal(err)
+	for _, o := range []string{monBlog, monShop} {
+		if _, err := h.ops.SetMonitor(ctx, "test", 1, o, manage.MonitorSpec{Enabled: &on}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	rec = serveREST(t, r, "POST", "/api/projects/1/monitor/check", "")
+	rec = serveREST(t, r, "POST", path, body)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("POST = %d %s", rec.Code, rec.Body)
 	}
-	got := decodeMonitor(t, rec.Body.Bytes())
+	all := decodeMonitors(t, rec.Body.Bytes())
+	got := all.Monitors[0]
 	if got.Check.RequestedAt == "" || got.Check.FinishedAt != "" || !got.Enabled {
 		t.Errorf("POST = %+v, want it requested and not finished", got)
 	}
-	// Pending: 429 over REST, an error over MCP.
-	if rec := serveREST(t, r, "POST", "/api/projects/1/monitor/check", ""); rec.Code != http.StatusTooManyRequests {
+	if all.Monitors[1].Check.RequestedAt != "" {
+		t.Errorf("POST asked the other monitor too: %+v", all.Monitors[1])
+	}
+	// Pending: 429 over REST, an error over MCP, on this monitor only.
+	if rec := serveREST(t, r, "POST", path, body); rec.Code != http.StatusTooManyRequests {
 		t.Errorf("pending = %d %s, want 429", rec.Code, rec.Body)
 	}
-	if res := callTool(t, cs, "check_monitor", map[string]any{"project_id": 1}); !res.IsError {
+	if res := callTool(t, cs, "check_monitor", args); !res.IsError {
 		t.Errorf("MCP pending = %s", textOf(res))
 	}
+	if res := callTool(t, cs, "check_monitor", map[string]any{"project_id": 1, "origin": monShop}); res.IsError {
+		t.Errorf("MCP the other monitor = %s", textOf(res))
+	}
 
-	// The result reads back through get_monitor, the same both ways.
+	// The result reads back through list_monitors, the same both ways.
 	st, err := store.Open("sqlite://" + testDBPaths[h])
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.FinishMonitorCheck(ctx, 1, "https://blog.example.com", store.MonitorCheckResult{
+	if err := st.FinishMonitorCheck(ctx, 1, monBlog, store.MonitorCheckResult{
 		FinishedAt: got.Check.RequestedAt, Status: 500, Reason: "http_5xx", Error: "status 500", MS: 42}); err != nil {
 		t.Fatal(err)
 	}
 	want := monitorCheckOut{RequestedAt: got.Check.RequestedAt, FinishedAt: got.Check.RequestedAt, Status: 500, Reason: "http_5xx", Error: "status 500", MS: 42}
-	rec = serveREST(t, r, "GET", "/api/projects/1/monitor", "")
-	if c := decodeMonitor(t, rec.Body.Bytes()).Check; c != want {
+	rec = serveREST(t, r, "GET", "/api/projects/1/monitors", "")
+	if c := decodeMonitors(t, rec.Body.Bytes()).Monitors[0].Check; c != want {
 		t.Errorf("GET check = %+v, want %+v", c, want)
 	}
-	if c := decodeMonitor(t, []byte(textOf(callTool(t, cs, "get_monitor", map[string]any{"project_id": 1})))).Check; c != want {
+	if c := decodeMonitors(t, []byte(textOf(callTool(t, cs, "list_monitors", map[string]any{"project_id": 1})))).Monitors[0].Check; c != want {
 		t.Errorf("MCP check = %+v, want %+v", c, want)
 	}
 	// Finished, but within the cooldown: still 429, with the server's message.
-	rec = serveREST(t, r, "POST", "/api/projects/1/monitor/check", "")
+	rec = serveREST(t, r, "POST", path, body)
 	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "try again in") {
 		t.Errorf("cooldown = %d %s, want 429", rec.Code, rec.Body)
 	}

@@ -3,6 +3,7 @@ package manage
 import (
 	"context"
 	"fmt"
+	"maps"
 	"net/url"
 	"slices"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"golang.org/x/net/idna"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/maindomain"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -18,7 +20,7 @@ const (
 	// maxMonitorContains caps the text a monitored page must contain.
 	maxMonitorContains = 200
 	// monitorCheckCooldown is the least time between manual checks of a
-	// project, whatever its interval: it protects the site and the RDAP
+	// monitor, whatever the interval: it protects the site and the RDAP
 	// registries, so it applies to everyone.
 	monitorCheckCooldown = 60 * time.Second
 )
@@ -97,123 +99,190 @@ func asciiOrigin(origin string) string {
 	return u.Scheme + "://" + host
 }
 
-// MonitorSpec is a change to a project's monitor: a nil field keeps the
-// current value.
+// MonitorSpec is a change to a monitor: a nil field keeps the current value.
 type MonitorSpec struct {
-	Enabled          *bool
-	Origin, Contains *string
+	Enabled  *bool
+	Contains *string
 }
 
-// Monitor reads a project's monitor; a project without one reads as the
-// zero Monitor carrying its id.
-func (o *Ops) Monitor(ctx context.Context, projectID int64) (store.Monitor, error) {
-	if err := o.requireProject(ctx, projectID); err != nil {
-		return store.Monitor{}, err
+// MonitorDomain is the last reading of a main domain, and the enabled monitors'
+// origins on it, which share it. Empty strings are unknown.
+type MonitorDomain struct {
+	Domain               string
+	Origins              []string
+	ExpiresAt, CheckedAt string
+}
+
+// MonitorList is what a project's monitoring reads as.
+type MonitorList struct {
+	// Monitors holds every eligible origin in the order the project lists
+	// them, whether or not it has a row: an origin with none reads as off.
+	Monitors []store.Monitor
+	// Domains holds the main domains of the enabled monitors, by name.
+	Domains []MonitorDomain
+}
+
+// Enabled counts the monitors that are on.
+func (l MonitorList) Enabled() int {
+	n := 0
+	for _, m := range l.Monitors {
+		if m.Enabled {
+			n++
+		}
 	}
-	return o.St.GetMonitor(ctx, projectID)
+	return n
 }
 
-// SetMonitor merges spec over the project's monitor and writes it. The
-// origin must be one of MonitorOrigins of the project's allowed origins;
-// enabling with none set picks the only eligible one.
-func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, spec MonitorSpec) (store.Monitor, error) {
+// Monitor is origin's entry in the list (an exact match).
+func (l MonitorList) Monitor(origin string) (store.Monitor, bool) {
+	for _, m := range l.Monitors {
+		if m.Origin == origin {
+			return m, true
+		}
+	}
+	return store.Monitor{}, false
+}
+
+// ListMonitors reads a project's monitoring.
+func (o *Ops) ListMonitors(ctx context.Context, projectID int64) (MonitorList, error) {
 	p := o.Reg.Snapshot(ctx).Project(projectID)
 	if p == nil {
-		return store.Monitor{}, fmt.Errorf("unknown project %d: %w", projectID, ErrNotFound)
+		return MonitorList{}, fmt.Errorf("unknown project %d: %w", projectID, ErrNotFound)
+	}
+	rows, err := o.St.ListMonitors(ctx, projectID)
+	if err != nil {
+		return MonitorList{}, err
+	}
+	readings, err := o.St.ListMonitorDomains(ctx, projectID)
+	if err != nil {
+		return MonitorList{}, err
+	}
+	var l MonitorList
+	byDomain := map[string]*MonitorDomain{}
+	for _, origin := range MonitorOrigins(p.AllowedOrigins) {
+		m := store.Monitor{ProjectID: projectID, Origin: origin}
+		if i := slices.IndexFunc(rows, func(r store.Monitor) bool { return r.Origin == origin }); i >= 0 {
+			m = rows[i]
+		}
+		l.Monitors = append(l.Monitors, m)
+		if !m.Enabled {
+			continue
+		}
+		name := maindomain.OfOrigin(origin)
+		d := byDomain[name]
+		if d == nil {
+			d = &MonitorDomain{Domain: name}
+			byDomain[name] = d
+			if i := slices.IndexFunc(readings, func(r store.MonitorDomain) bool { return r.Domain == name }); i >= 0 {
+				d.ExpiresAt, d.CheckedAt = readings[i].ExpiresAt, readings[i].CheckedAt
+			}
+		}
+		d.Origins = append(d.Origins, origin)
+	}
+	for _, name := range slices.Sorted(maps.Keys(byDomain)) {
+		l.Domains = append(l.Domains, *byDomain[name])
+	}
+	return l, nil
+}
+
+// liveMonitorOrigin is origin in its normalized form, refused when project
+// projectID is unknown or archived or origin is not one a monitor of it may use.
+func (o *Ops) liveMonitorOrigin(ctx context.Context, projectID int64, origin string) (string, error) {
+	p := o.Reg.Snapshot(ctx).Project(projectID)
+	if p == nil {
+		return "", fmt.Errorf("unknown project %d: %w", projectID, ErrNotFound)
 	}
 	if p.Archived {
-		return store.Monitor{}, fmt.Errorf("%w: project %d is archived; restore it first", ErrInvalid, projectID)
+		return "", fmt.Errorf("%w: project %d is archived; restore it first", ErrInvalid, projectID)
 	}
-	cur, err := o.St.GetMonitor(ctx, projectID)
+	// Through MonitorOrigins, so a path is refused, not dropped.
+	n := MonitorOrigins([]string{strings.TrimSpace(origin)})
+	if len(n) != 1 || !slices.Contains(MonitorOrigins(p.AllowedOrigins), n[0]) {
+		return "", fmt.Errorf("%w: %q is not an exact http(s) origin in the project's allowed_origins", ErrInvalid, origin)
+	}
+	return n[0], nil
+}
+
+// monitorRow is origin's row, or the row it would be: off.
+func (o *Ops) monitorRow(ctx context.Context, projectID int64, origin string) (store.Monitor, error) {
+	rows, err := o.St.ListMonitors(ctx, projectID)
 	if err != nil {
 		return store.Monitor{}, err
 	}
-	next := store.MonitorSettings{Enabled: cur.Enabled, Origin: cur.Origin, Contains: cur.Contains}
+	if i := slices.IndexFunc(rows, func(r store.Monitor) bool { return r.Origin == origin }); i >= 0 {
+		return rows[i], nil
+	}
+	return store.Monitor{ProjectID: projectID, Origin: origin}, nil
+}
+
+// SetMonitor merges spec over origin's monitor and writes it. The origin must
+// be one of MonitorOrigins of the project's allowed origins. A change to nothing
+// writes nothing.
+func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, origin string, spec MonitorSpec) (MonitorList, error) {
+	origin, err := o.liveMonitorOrigin(ctx, projectID, origin)
+	if err != nil {
+		return MonitorList{}, err
+	}
+	cur, err := o.monitorRow(ctx, projectID, origin)
+	if err != nil {
+		return MonitorList{}, err
+	}
+	next := store.MonitorSettings{Enabled: cur.Enabled, Contains: cur.Contains}
 	if spec.Enabled != nil {
 		next.Enabled = *spec.Enabled
-	}
-	eligible := MonitorOrigins(p.AllowedOrigins)
-	if spec.Origin != nil {
-		want := strings.TrimSpace(*spec.Origin)
-		if want != "" {
-			// Through MonitorOrigins, so a path is refused, not dropped.
-			n := MonitorOrigins([]string{want})
-			if len(n) != 1 || !slices.Contains(eligible, n[0]) {
-				return store.Monitor{}, fmt.Errorf("%w: %q is not an exact http(s) origin in the project's allowed_origins", ErrInvalid, want)
-			}
-			want = n[0]
-		}
-		next.Origin = want
 	}
 	if spec.Contains != nil {
 		c := strings.TrimSpace(*spec.Contains)
 		if utf8.RuneCountInString(c) > maxMonitorContains {
-			return store.Monitor{}, fmt.Errorf("%w: contains is longer than %d characters", ErrInvalid, maxMonitorContains)
+			return MonitorList{}, fmt.Errorf("%w: contains is longer than %d characters", ErrInvalid, maxMonitorContains)
 		}
 		next.Contains = c
 	}
-	if next.Enabled && next.Origin == "" {
-		if len(eligible) == 0 {
-			return store.Monitor{}, fmt.Errorf("%w: a monitor needs one exact http(s) origin in the project's allowed_origins", ErrInvalid)
-		}
-		if len(eligible) > 1 {
-			return store.Monitor{}, fmt.Errorf("%w: pick one of the project's origins (%s)", ErrInvalid, strings.Join(eligible, ", "))
-		}
-		next.Origin = eligible[0]
-	}
-	if next.Enabled && !slices.Contains(eligible, next.Origin) {
-		return store.Monitor{}, fmt.Errorf("%w: the monitored origin %q is no longer one of the project's origins; pick one", ErrInvalid, next.Origin)
-	}
-	// What changed is read off the outcome: an empty origin the only eligible
-	// one fills back in changes nothing.
-	var changed []string
+	changed := []string{"origin=" + origin}
 	if next.Enabled != cur.Enabled {
 		changed = append(changed, fmt.Sprintf("enabled=%t", next.Enabled))
-	}
-	if next.Origin != cur.Origin {
-		changed = append(changed, "origin="+next.Origin)
 	}
 	if next.Contains != cur.Contains {
 		changed = append(changed, "contains")
 	}
-	if len(changed) == 0 {
-		return cur, nil
+	if len(changed) > 1 {
+		if _, err := o.St.SetMonitor(ctx, projectID, origin, next, store.AuditEntry{
+			Actor: actor, Action: "monitor.update", Subject: idSubject(projectID),
+			Detail: strings.Join(changed, " ")}); err != nil {
+			return MonitorList{}, err
+		}
 	}
-	return o.St.SetMonitor(ctx, projectID, next, store.AuditEntry{
-		Actor: actor, Action: "monitor.update", Subject: idSubject(projectID),
-		Detail: strings.Join(changed, " ")})
+	return o.ListMonitors(ctx, projectID)
 }
 
-// CheckMonitor asks for a check of all three now, which the monitor's runner
-// serves: it may be another process, sharing only the database. The result
-// comes later, on the monitor (CheckFinishedAt reaches CheckRequestedAt).
-func (o *Ops) CheckMonitor(ctx context.Context, actor string, projectID int64) (store.Monitor, error) {
-	p := o.Reg.Snapshot(ctx).Project(projectID)
-	if p == nil {
-		return store.Monitor{}, fmt.Errorf("unknown project %d: %w", projectID, ErrNotFound)
-	}
-	if p.Archived {
-		return store.Monitor{}, fmt.Errorf("%w: project %d is archived; restore it first", ErrInvalid, projectID)
-	}
-	m, err := o.St.GetMonitor(ctx, projectID)
+// CheckMonitor asks for a check of origin's monitor now, all three readings,
+// which the monitor's runner serves: it may be another process, sharing only the
+// database. The result comes later, on the monitor (CheckFinishedAt reaches
+// CheckRequestedAt).
+func (o *Ops) CheckMonitor(ctx context.Context, actor string, projectID int64, origin string) (MonitorList, error) {
+	origin, err := o.liveMonitorOrigin(ctx, projectID, origin)
 	if err != nil {
-		return store.Monitor{}, err
+		return MonitorList{}, err
+	}
+	m, err := o.monitorRow(ctx, projectID, origin)
+	if err != nil {
+		return MonitorList{}, err
 	}
 	if !m.Enabled {
-		return store.Monitor{}, fmt.Errorf("%w: turn the monitor on first", ErrInvalid)
+		return MonitorList{}, fmt.Errorf("%w: turn the monitor on first", ErrInvalid)
 	}
 	if m.CheckRequestedAt > m.CheckFinishedAt {
-		return store.Monitor{}, fmt.Errorf("%w: a check is already running", ErrBusy)
+		return MonitorList{}, fmt.Errorf("%w: a check is already running", ErrBusy)
 	}
 	now := o.now().UTC()
 	if last, err := time.Parse(time.RFC3339, m.CheckRequestedAt); err == nil {
 		if wait := monitorCheckCooldown - now.Sub(last); wait > 0 {
-			return store.Monitor{}, fmt.Errorf("%w: checked moments ago; try again in %d s", ErrBusy, int(wait.Round(time.Second)/time.Second))
+			return MonitorList{}, fmt.Errorf("%w: checked moments ago; try again in %d s", ErrBusy, int(wait.Round(time.Second)/time.Second))
 		}
 	}
-	if err := o.St.RequestMonitorCheck(ctx, projectID, now.Format(time.RFC3339), store.AuditEntry{
-		Actor: actor, Action: "monitor.check", Subject: idSubject(projectID)}); err != nil {
-		return store.Monitor{}, err
+	if err := o.St.RequestMonitorCheck(ctx, projectID, origin, now.Format(time.RFC3339), store.AuditEntry{
+		Actor: actor, Action: "monitor.check", Subject: idSubject(projectID), Detail: origin}); err != nil {
+		return MonitorList{}, err
 	}
-	return o.St.GetMonitor(ctx, projectID)
+	return o.ListMonitors(ctx, projectID)
 }

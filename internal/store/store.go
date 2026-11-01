@@ -139,9 +139,9 @@ type RegistryProject struct {
 	SortKey        string // its place in the order (migration 034)
 	// MonitorOrigins, on UpdateProject only, is nil when the origins did not
 	// change, else the origins a monitor may now use (none: empty, not nil).
-	// A monitor enabled on any other is switched off in the same transaction
-	// (audited monitor.disable, "origin removed"), keeping its origin text.
-	// Never read back.
+	// A monitor on any other is deleted in the same transaction (audited
+	// monitor.remove, "origin removed: <origin>"), and with it a domain reading no
+	// monitor left uses. Never read back.
 	MonitorOrigins []string
 }
 
@@ -350,30 +350,30 @@ type Store interface {
 	// "form.expire", subject "form/<project_id>/<name>"), and returns how
 	// many.
 	ExpireDrafts(ctx context.Context, now time.Time) (int, error)
-	// Availability monitors (migration 044). GetMonitor reads one project's
-	// row (none reads as Monitor{ProjectID}, an unknown project is
-	// ErrNotFound). SetMonitor upserts the settings, audited, clears the
-	// certificate and domain readings when the origin changes, and their
-	// check times alone when a disabled monitor is enabled.
-	// ListEnabledMonitors lists the enabled monitors of live projects by
-	// project id. SetMonitorCert and SetMonitorDomain store a reading,
-	// SetMonitorCertError only why a certificate could not be read,
-	// SetMonitorRedirects stores the hop count of the last check that got an
-	// answer. All are unaudited and do nothing when the row's origin is no
-	// longer origin; an origin change resets the count to 0.
-	GetMonitor(ctx context.Context, projectID int64) (Monitor, error)
-	SetMonitor(ctx context.Context, projectID int64, s MonitorSettings, a AuditEntry) (Monitor, error)
+	// Availability monitors (migration 044), one per project and origin.
+	// ListMonitors reads a project's rows by origin. SetMonitor upserts one's
+	// settings, audited, and clears its certificate's check time when it goes
+	// from disabled to enabled. ListEnabledMonitors lists the enabled monitors
+	// of live projects by project id and origin. SetMonitorCert stores a
+	// reading, SetMonitorCertError only why a certificate could not be read,
+	// SetMonitorRedirects the hop count of the last check that got an answer.
+	// All three are unaudited and do nothing when the monitor is gone.
+	ListMonitors(ctx context.Context, projectID int64) ([]Monitor, error)
+	SetMonitor(ctx context.Context, projectID int64, origin string, s MonitorSettings, a AuditEntry) (Monitor, error)
 	ListEnabledMonitors(ctx context.Context) ([]Monitor, error)
 	SetMonitorCert(ctx context.Context, projectID int64, origin string, c CertState) error
 	SetMonitorCertError(ctx context.Context, projectID int64, origin, msg string) error
-	SetMonitorDomain(ctx context.Context, projectID int64, origin string, d DomainState) error
 	SetMonitorRedirects(ctx context.Context, projectID int64, origin string, n int) error
-	// RequestMonitorCheck records a manual check for the runner to serve,
-	// audited: ErrNotFound for an unknown project, ErrInvalid for a monitor not
-	// enabled, ErrBusy while one is pending. FinishMonitorCheck records its
-	// result unless the row's origin is no longer origin; not audited. An
-	// origin change in SetMonitor clears both.
-	RequestMonitorCheck(ctx context.Context, projectID int64, at string, a AuditEntry) error
+	// ListMonitorDomains reads a project's domain readings by domain, which its
+	// monitors on one main domain share. SetMonitorDomain stores one, unaudited,
+	// unless no monitor of the project has an origin on that domain any more.
+	ListMonitorDomains(ctx context.Context, projectID int64) ([]MonitorDomain, error)
+	SetMonitorDomain(ctx context.Context, projectID int64, domain string, d DomainState) error
+	// RequestMonitorCheck records a manual check of one monitor for the runner
+	// to serve, audited: ErrNotFound for an unknown project, ErrInvalid for a
+	// monitor not enabled, ErrBusy while one is pending. FinishMonitorCheck
+	// records its result unless the monitor is gone; not audited.
+	RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, a AuditEntry) error
 	FinishMonitorCheck(ctx context.Context, projectID int64, origin string, r MonitorCheckResult) error
 	// SetSubmissionsArchived archives (archived true) or restores the
 	// project's submissions with these ids and returns how many changed:

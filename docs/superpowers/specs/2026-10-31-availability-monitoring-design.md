@@ -16,25 +16,24 @@ wants to know three things about their site without another tool:
    the owner never misses a renewal: the stored fact is the renewal (expiry)
    date.
 
-It must be super simple: enable, pick a domain, save, done. Optionally a text
-the page must contain.
+It must be super simple: switch a site on, done. Optionally a text the page
+must contain.
 
 ## Goals
 
-- One HTTP availability monitor per project, on one of the project's existing
-  origins, at a fixed interval set per install.
+- One HTTP availability monitor per origin of a project, sharing one budget of a
+  check per fixed interval, set per install, per project.
 - Every check result recorded in the project's event files, in a new `checks`
   family that the event allowance and traffic counts leave out as a whole.
 - A failure reason from a closed vocabulary on every failed check, so a pie
   chart of reasons is a plain breakdown.
-- A daily HTTPS certificate check and a daily domain expiry check on the same
-  origin, keeping the current dates in SQLite.
+- A daily HTTPS certificate check per origin and a daily domain expiry check per
+  main domain, keeping the current dates in SQLite.
 - A system dashboard showing all of it.
 
 ## Non-goals
 
 - Notifications of any kind (email, webhook, push). Not yet.
-- More than one monitor per project.
 - Custom URLs, paths, ports, methods, headers, or a domain that is not one of
   the project's origins.
 - Other monitor kinds (TCP, ping, DNS, keyword-absent, JSON value, …).
@@ -45,7 +44,7 @@ the page must contain.
 
 ## Anti-goals
 
-- A settings form with more than: on/off, origin, optional text. If it grows
+- A settings form with more than: on/off per origin, optional text. If it grows
   knobs, it has failed even if it works.
 - Check rows counting toward a customer's event allowance, `usage` or
   `limits`, or showing up as product events or measures anywhere.
@@ -76,26 +75,29 @@ the page must contain.
 
 ### Setup
 
-- A project has at most one monitor: `enabled`, `origin`, and an optional
-  `contains` text.
-- `origin` is picked from the project's `allowed_origins`, offering only exact
-  `http://` or `https://` origins: no wildcards, no bare `*`, no `tauri://`,
-  `app://` or `null`. A non-default port is allowed as listed. An `http://`
-  origin is checked over plain HTTP, so it gets no certificate check (the
-  domain check still runs). (My calls.)
+- A project has at most one monitor per origin, any number in all: `enabled` and
+  an optional `contains` text.
+- An origin qualifies if it is one of the project's `allowed_origins`, exact
+  `http://` or `https://`: no wildcards, no bare `*`, no `tauri://`, `app://` or
+  `null`. A non-default port is allowed as listed. An `http://` origin is checked
+  over plain HTTP, so it gets no certificate check (the domain check still runs).
+  (My calls.)
 - Exposed in the web UI as a **Monitoring** section in project settings, next to
-  origins: switch, origin picker (hidden when the project has one origin, which
-  is then used), optional "page must contain" field, Save. Also over MCP and
+  origins: one row per eligible origin with a switch that saves at once, and per
+  row an optional "page must contain" field with its own Save. Also over MCP and
   the CLI, as every project field is.
-- Removing an origin that the monitor uses: my call — the monitor is turned off
-  (the change is refused would block origin edits; turning off is quieter and
-  visible in the section). The builder may choose refusal instead if the
-  registry's patterns make that clearly more consistent; say which in the PR.
+- Removing an origin deletes its monitor in the same transaction (audited
+  `monitor.remove`), and the domain reading no monitor left uses.
 - The URL checked is the origin itself (`https://host/`), nothing else.
 
 ### The availability check
 
-Every `MONITOR_INTERVAL` seconds, per enabled monitor:
+`MONITOR_INTERVAL` is a budget **per project**: one availability check per
+interval, at `hash(project_id) % interval`, shared by its enabled monitors in turn.
+Each slot checks the monitor with the oldest last attempt (in memory; never tried
+first, ties by origin order), so with N on each is checked every N × interval, and
+a project's row count does not grow with its monitors. A project whose last check
+is still running skips the slot. Each check:
 
 - `GET` the origin. Redirects are followed, but **every hop must be allowed
   by the project's origins**, matched with the existing `manage.matchOrigin`
@@ -130,6 +132,7 @@ checks into hourly rows):
 | family | `checks` |
 | name | `uptime` (the only name for now; future monitor kinds get their own) |
 | value | response time in ms (time to the end of the body read, or to the failure) |
+| attribute `origin` | the origin checked |
 | attribute `up` | `"1"` or `"0"` |
 | attribute `status` | final HTTP status code, absent when there was no response |
 | attribute `reason` | absent when up; otherwise one of the table below |
@@ -164,47 +167,50 @@ site's own traffic and of any event allowance: `usage` (samples and
 `limits`' `events_30d`, the `measures` and `product_events` tools,
 `list_attributes`, and the console's event-name lists. Disk size per project
 includes them; that is fine (at 30 s, about 86,400 small rows a month per
-project; 21,600 at 120 s).
+project however many monitors it has; 21,600 at 120 s).
 
 ### Daily certificate and domain checks
 
-On automatically whenever the monitor is enabled, run once a day (my call: in
-the daily pass, or on the monitor's own loop once per 24 h per monitor;
-builder's choice) and once right after the monitor is enabled or its origin
-changes, so the dates appear immediately.
+On automatically whenever a monitor is enabled. They run in their own small
+bounded pool (4 workers, across projects), not inside the availability slot, so
+however many origins there are they neither delay an availability check nor hold a
+project's slot.
 
-- **Certificate:** TLS handshake to the origin host; store the leaf
-  certificate's `not_after`, issuer common name, whether it verified, and the
-  check time.
-- **Domain:** take the registrable domain of the origin host (public suffix
+- **Certificate, once a day per origin**, and right after its monitor is enabled:
+  TLS handshake to the origin host; store the leaf certificate's `not_after`,
+  issuer common name, whether it verified, and the check time.
+- **Domain, once a day per main domain per project** (`shop.example.com` and
+  `example.com` share one lookup and one date), and as soon as an enabled monitor's
+  main domain has no fresh reading; enabling a monitor clears no other's. Take the
+  registrable domain of the origin host (public suffix
   list: `shop.example.co.uk` → `example.co.uk`), look up the RDAP server for
   its TLD via the IANA bootstrap (`https://data.iana.org/rdap/dns.json`, cached
   for a day), query `/domain/<name>`, store the `expiration` event date and the
   check time. A TLD without RDAP, or a reply without an expiration, stores
   "unknown"; that is not a failure.
-- The current state is kept in SQLite on the monitor row (a new migration),
-  for the settings section and the API.
+- The current state is kept in SQLite (migration 044) for the settings section
+  and the API: the certificate on the monitor's row (`monitors`, keyed by project
+  and origin), the domain in `monitor_domains`, keyed by project and domain.
 - **Amended during planning (my call):** each daily check also writes one
   `checks` row, `cert` or `domain`, value = whole days left (absent when
-  unknown), attributes `expires` (YYYY-MM-DD), and for `cert` `issuer`,
-  `valid` (`"1"`/`"0"`) and `error`. It is two rows a day, free of quota, and it
-  lets the dashboard tiles read them with a structured query's `latest`
-  instead of a new widget source over SQLite.
+  unknown), attributes `expires` (YYYY-MM-DD), `origin` on `cert` and `domain` on
+  `domain`, and for `cert` `issuer`, `valid` (`"1"`/`"0"`) and `error`. It is a few
+  rows a day, free of quota, and it lets the dashboard read them with a structured
+  query's `latest` instead of a new widget source over SQLite.
 
 ### Where it shows
 
 - A new system dashboard **Availability**, built like Web Vitals
   (`internal/reporting/system/<name>/`, `project_tab: true`), default range 7d:
-  - stats: uptime % for the range, average response time, certificate expires
-    in N days (with the date), domain renews in N days (with the date, or
-    "unknown")
-  - response time by hour/day (line), with down checks visible
+  - stats: uptime % for the range, average response time, over all monitors
+  - a table of sites: origin, uptime %, average response
+  - response time by day (line), the overall average
   - pie: failed checks by `reason`
-  - table: recent failed checks (time, status, reason, error)
-  The certificate and domain tiles read the latest `cert`/`domain` row
-  (`latest` of `value`); uptime % is a `ratio` of `count` where `attr_up` is 1
-  over `count`. When the monitor is off,
-  the dashboard says so and links to the Monitoring settings.
+  - tables of certificates (origin, days left) and domains (main domain, days to
+    renewal), each by name, `latest` of `value`
+  - table: recent failed checks (origin, day, reason, status, last failure, count)
+  Uptime % is a `ratio` of `count` where `attr_up` is 1 over `count`. When no
+  monitor is on, the dashboard says so and links to the Monitoring settings.
 - Optional, if cheap: a one-line status on the project page
   (`up · cert 34d · domain 120d`).
 
@@ -279,3 +285,30 @@ changes, so the dates appear immediately.
   reason and error "the check did not run". An origin change clears all of it.
   `get_monitor` returns it as `check`; pending while `finished_at` is before
   `requested_at`. The page polls every 2 s and stops waiting after 45 s.
+- **Several monitors per project (user's decision, after planning; replaces one
+  per project throughout this document).** Unlimited monitors, one per origin.
+  `MONITOR_INTERVAL` is a per-project budget: one availability check per interval,
+  shared in turn, each of N monitors every N × interval. The certificate is read
+  once a day per origin, the domain once a day per project and main domain. There
+  is no more picking an origin, no "disabled with origin kept": an origin leaving
+  `allowed_origins` deletes its row. Migration 044 amended (unreleased): `monitors`
+  is keyed `(project_id, origin)` without the domain columns, and a new
+  `monitor_domains` is keyed `(project_id, domain)`. A monitor's manual check runs
+  now, on its own cooldown, for that origin's availability, certificate and main
+  domain; it neither uses nor moves the project's slot, its availability counts as
+  that monitor's last attempt, and a slot skips a monitor whose manual check is
+  running. Rows gain attribute `origin` (`uptime`, `cert`) or `domain` (`domain`).
+  `get_monitor` became `list_monitors`, `GET /api/projects/{project_id}/monitors`,
+  and `update_monitor` and `check_monitor` take `origin`; `monitor get` became
+  `monitor list`. The earlier notes above about an origin change, the `monitor`
+  routes and `get_monitor` describe the one-monitor shape and are superseded by
+  this one.
+
+  The dashboard replaced its certificate and domain tiles with Sites, Certificates
+  and Domains tables, three rather than one since each has its own rows and a table
+  holding two would repeat them. Not expressible in a structured query, so not
+  built: a line per site (a trend has no `other`, and a limit alone would hide
+  sites silently, so it stays the overall average); soonest expiry first (`order` is
+  descending by a metric or ascending by a dimension, so the tables are by name and
+  a viewer sorts by clicking a header). A breakdown takes 3 dimensions, so Recent
+  failures groups by origin, day and reason and reads the status as `latest`.

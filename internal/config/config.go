@@ -62,8 +62,9 @@ type ReportingConfig struct {
 
 // MonitorConfig is the availability monitor's settings.
 type MonitorConfig struct {
-	// Interval (MONITOR_INTERVAL, whole seconds) is the time between
-	// checks of each enabled monitor: fixed, 10 to 3600.
+	// Interval (MONITOR_INTERVAL, whole seconds) is the time between a
+	// project's availability checks, shared in turn by its enabled monitors:
+	// fixed, 10 to 3600.
 	Interval time.Duration
 	// Timeout (MONITOR_TIMEOUT, whole seconds) is how long a site has to
 	// answer a check before it counts as down: 1 to 60, below Interval.

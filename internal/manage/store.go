@@ -52,7 +52,8 @@ type Store interface {
 
 	// Availability monitors: settings are audited by the store from the
 	// AuditEntry passed, no config bump (monitors are not in the snapshot).
-	GetMonitor(ctx context.Context, projectID int64) (store.Monitor, error)
-	SetMonitor(ctx context.Context, projectID int64, s store.MonitorSettings, a store.AuditEntry) (store.Monitor, error)
-	RequestMonitorCheck(ctx context.Context, projectID int64, at string, a store.AuditEntry) error
+	ListMonitors(ctx context.Context, projectID int64) ([]store.Monitor, error)
+	ListMonitorDomains(ctx context.Context, projectID int64) ([]store.MonitorDomain, error)
+	SetMonitor(ctx context.Context, projectID int64, origin string, s store.MonitorSettings, a store.AuditEntry) (store.Monitor, error)
+	RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, a store.AuditEntry) error
 }

@@ -203,8 +203,8 @@ func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec)
 	if err != nil {
 		return nil, err
 	}
-	// A monitor on an origin the project no longer lists is switched off in
-	// the same transaction as the edit, which alone knows the monitor's row.
+	// A monitor on an origin the project no longer lists is deleted in the same
+	// transaction as the edit, which alone knows the monitors' rows.
 	if !slices.Equal(spec.AllowedOrigins, cur.AllowedOrigins) {
 		row.MonitorOrigins = append([]string{}, MonitorOrigins(spec.AllowedOrigins)...)
 	}

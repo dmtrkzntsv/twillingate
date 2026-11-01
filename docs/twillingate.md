@@ -61,9 +61,9 @@ Projects live in a registry table, managed through the CLI or, over the API
 | Issue an ingest key | `twillingate key issue` | `issue_ingest_key` | `{project_id, label}`; returns the key **and** a paste-ready snippet |
 | List keys | `twillingate key list` | `list_ingest_keys` | `{project_id}` |
 | Disable / enable a key | `twillingate key disable` / `enable` | `disable_ingest_key` / `enable_ingest_key` | `{project_id, label}` |
-| Read a project's monitor | `twillingate monitor get` | `get_monitor` | `{project_id}`; returns the monitor, see [Monitoring](#monitoring) |
-| Change it | `twillingate monitor set` | `update_monitor` | `{project_id, enabled, origin, contains}`, each optional; merges, so an omitted field keeps its value and `contains: ""` clears the text; returns the monitor |
-| Check it now | `twillingate monitor check` | `check_monitor` | `{project_id}`; asks for a check of all three and returns the monitor right away, see [Monitoring](#monitoring). `monitor check` waits for the result, up to twice `MONITOR_TIMEOUT` plus 20 s, and prints it; exit 1 if it did not finish |
+| Read a project's monitors | `twillingate monitor list` | `list_monitors` | `{project_id}`; returns every eligible origin's monitor and the domains, see [Monitoring](#monitoring) |
+| Change one | `twillingate monitor set` | `update_monitor` | `{project_id, origin, enabled, contains}`, `origin` required; merges, so an omitted field keeps its value and `contains: ""` clears the text; returns the same as `list_monitors` |
+| Check one now | `twillingate monitor check` | `check_monitor` | `{project_id, origin}`; asks for a check of all three and returns the same as `list_monitors` right away, see [Monitoring](#monitoring). `monitor check` waits for the result, up to twice `MONITOR_TIMEOUT` plus 20 s, and prints it; exit 1 if it did not finish |
 | Rename an event | — | `rename_event` | `{project_id, family, from, to}`; `family` is `product` or `measures`; returns the rule. See [Event rules](#event-rules) |
 | Merge an event into another | — | `merge_event` | `{project_id, family, from, to}`; returns what `rename_event` does |
 | Block an event | — | `block_event` | `{project_id, family, name}` |
@@ -287,29 +287,34 @@ blocked key and a key with aliases are listed even with nothing in the range.
 
 ### Monitoring
 
-A project can have one availability monitor: the server itself fetches one of
-the project's origins every `MONITOR_INTERVAL` seconds (a per-install setting,
-default 120; [deployment.md](deployment.md#configure-the-collector)) and records
-whether it answered. The results land in the event files beside the site's own
-events, so a drop in conversions can be lined up with an outage in the same
-[structured queries](#structured-queries) and dashboards.
+A project can have an availability monitor on each of its sites: the server
+itself fetches the origin and records whether it answered. The results land in
+the event files beside the site's own events, so a drop in conversions can be
+lined up with an outage in the same [structured queries](#structured-queries)
+and dashboards.
 
-The settings are three: `enabled`, `origin` and an optional `contains`.
-`origin` is one of the project's `allowed_origins`, and only an exact `http://`
-or `https://` one is eligible (`eligible_origins` lists them): no wildcard, no
-bare `*`, no `tauri://` or `app://`. A non-default port is allowed as listed.
-Anything but an origin (`https://myapp.com/status`) is refused rather than cut
-down to one. Enabling with no origin picks the project's only eligible one, and
-with several the call is refused until one is named. Removing the monitored origin from
-`allowed_origins` turns the monitor off. `contains` is a text of at most 200
-characters the page must contain (case-sensitive, in the first 1 MB of the
-body); `""` clears it.
+`MONITOR_INTERVAL` (a per-install setting, default 120 seconds;
+[deployment.md](deployment.md#configure-the-collector)) is a budget **per project**:
+one availability check per interval, shared by its enabled monitors in turn, so
+with N of them each is checked every N × interval (`check_every_seconds`), and a
+project's rows do not grow with its monitors. A monitor with no attempt yet goes
+first, then the one tried longest ago.
+
+An origin has a monitor when it is one of the project's `allowed_origins`, an
+exact `http://` or `https://` one: no wildcard, no bare `*`, no `tauri://` or
+`app://`. A non-default port is allowed as listed. Anything but an origin
+(`https://myapp.com/status`) is refused rather than cut down to one. Each has two
+settings: `enabled`, and an optional `contains`, a text of at most 200 characters
+the page must contain (case-sensitive, in the first 1 MB of the body); `""` clears
+it. `list_monitors` reads every eligible origin, one with no settings as off.
+Removing an origin from `allowed_origins` removes its monitor (audited
+`monitor.remove`), and the domain reading no other monitor uses.
 
 ```bash
-twillingate monitor get -project-id 1
-twillingate monitor set -project-id 1 -enable -origin https://myapp.com -contains "Sign in"
-twillingate monitor set -project-id 1 -disable
-twillingate monitor check -project-id 1
+twillingate monitor list -project-id 1
+twillingate monitor set -project-id 1 -origin https://myapp.com -enable -contains "Sign in"
+twillingate monitor set -project-id 1 -origin https://myapp.com -disable
+twillingate monitor check -project-id 1 -origin https://myapp.com
 ```
 
 **What is checked.** One `GET` of the origin itself (`https://host/`), nothing
@@ -334,22 +339,22 @@ identifies itself as
   fails with `blocked`, checked when the connection is made. A site reachable
   only on a LAN cannot be monitored.
 - **An `http://` origin** is checked over plain HTTP and has no certificate
-  check: its daily `cert` row has no value, so the certificate tile goes blank
-  rather than keep a reading from before a move to it. Its domain check still
-  runs.
+  check: its daily `cert` row has no value, so Certificates shows it blank. Its
+  domain check still runs.
 
 **The `checks` table.** Every check is a row of the `checks` family in the
 project's event files, read with structured queries (`table: "checks"`, see
 [Structured queries](#structured-queries)), and left out of `usage`,
 `limits`' `events_30d`, `events` and everything that counts the site's own
 traffic: checks never count against an allowance. They still take disk, about
-21,600 small rows a month at the default interval.
+21,600 small `uptime` rows a month per project at the default interval, however
+many monitors it has.
 
 | Row | Written | `value` | Attributes |
 | --- | --- | --- | --- |
-| `uptime` | every check | response time in milliseconds, to the end of the body or to the failure | `up` (`1` or `0`); `status`, the final HTTP status, absent without a response; `reason` and `error` when down; `redirects`, the redirect hops followed (`"0"` when none; on a failed check, the count reached) |
-| `cert` | once a day and when the monitor is enabled or its origin changes, when a certificate was read (verified or not), and on an `http://` origin, which has none | whole days left, absent on an `http://` origin | `expires` (`YYYY-MM-DD`), `issuer`, `valid` (`1` or `0`), `error`, why it did not verify; none on an `http://` origin |
-| `domain` | as `cert`, for the origin host's registrable domain (public suffix list) | calendar days (UTC) until the registration expires, 0 on the day itself, absent when unknown | `expires` (`YYYY-MM-DD`) |
+| `uptime` | every check | response time in milliseconds, to the end of the body or to the failure | `origin`; `up` (`1` or `0`); `status`, the final HTTP status, absent without a response; `reason` and `error` when down; `redirects`, the redirect hops followed (`"0"` when none; on a failed check, the count reached) |
+| `cert` | once a day per origin and when the monitor is enabled, when a certificate was read (verified or not), and on an `http://` origin, which has none | whole days left, absent on an `http://` origin | `origin`; `expires` (`YYYY-MM-DD`), `issuer`, `valid` (`1` or `0`), `error`, why it did not verify; only `origin` on an `http://` origin |
+| `domain` | once a day per main domain of the project (the registrable domain of the public suffix list: `shop.example.com` and `example.com` share one lookup and one date), and as soon as an enabled monitor's has no fresh reading | calendar days (UTC) until the registration expires, 0 on the day itself, absent when unknown | `domain`; `expires` (`YYYY-MM-DD`) |
 
 The domain's expiry is read over RDAP; a top-level domain with no RDAP service,
 or an answer without an expiration, reads as unknown, which is not a failure;
@@ -359,33 +364,41 @@ reading and is tried again an hour later. So does a certificate that could not
 be read at all (the site unreachable, the handshake failed): the last date
 stands, no row is written, it is tried again an hour later, and `cert.error`
 says why meanwhile. A certificate that was read but does not verify is a
-reading, with `valid` `0`. Enabling a disabled monitor reads both again at its
-next check, the known dates kept until then.
-`get_monitor` also reports `interval_seconds` and `timeout_seconds` (`MONITOR_TIMEOUT`).
-`get_monitor` returns the last reading of each: `cert` (`expires_at`, `issuer`,
-`valid`, `error`, `checked_at`) and `domain` (`expires_at`, `checked_at`), and
-`redirects`, the hops the last check that got an answer followed (a check that
-got no response, such as a refused connection or a timeout before any answer,
-leaves it as it was; changing the origin resets it to 0). `twillingate monitor
-get` prints it when above 0.
+reading, with `valid` `0`. Enabling a disabled monitor reads its certificate
+again at the project's next slot, the known date kept until then. These daily reads
+run on a small pool of their own (4 at once across the server), so however many
+there are they do not delay an availability check.
+
+`list_monitors` returns `interval_seconds`, `check_every_seconds` (the interval
+times the enabled monitors, the interval with none on), `timeout_seconds`
+(`MONITOR_TIMEOUT`), `monitors`, one per eligible origin in the project's order,
+and `domains`, the main domains of the enabled monitors, by name. A monitor has
+`origin`, `enabled`, `contains`, its last certificate reading in `cert`
+(`expires_at`, `issuer`, `valid`, `error`, `checked_at`), `redirects`, the hops the
+last check that got an answer followed (a check that got no response, such as a
+refused connection or a timeout before any answer, leaves it as it was), and
+`check` below. A domain has `domain`, `origins`, the enabled monitors' on it,
+`expires_at` and `checked_at`. `twillingate monitor list` prints them, `redirects`
+when above 0.
 
 **Checking now.** `check_monitor` (`twillingate monitor check`, or Check now in
-Settings → Monitoring) asks for one check of all three outside the schedule:
-the availability check, the certificate and the domain, whatever the daily
-readings' age, with the same `MONITOR_TIMEOUT`. The server runs it within about
-a second, or after the check that is running, and writes the rows as usual; a
-certificate or RDAP read that fails keeps the last date as usual. The call
-returns before the check ran: poll `get_monitor` until `check.finished_at` is at
-or past `check.requested_at`, then read the result in `check` (`up`, `status`,
-`reason`, `error`, `ms`). A monitor that is not on is refused, and so is a request
-while one is pending or within 60 seconds of the last one, whatever the interval:
-this protects the site and the registries. A request not served within 2 minutes
+Settings → Monitoring) asks for one check of an origin's three readings outside
+the schedule: its availability, its certificate and its main domain, whatever the
+daily readings' age, with the same `MONITOR_TIMEOUT`. The server starts it within
+about a second and writes the rows as usual; a certificate or RDAP read that fails
+keeps the last date as usual. It neither uses nor moves the project's slot, and
+counts as that monitor's last attempt. The call returns before the check ran: poll
+`list_monitors` until that monitor's `check.finished_at` is at or past
+`check.requested_at`, then read the result in `check` (`up`, `status`, `reason`,
+`error`, `ms`). A monitor that is not on is refused, and so is a request while one
+is pending on it or within 60 seconds of its last one, whatever the interval: this
+protects the site and the registries. A request not served within 2 minutes
 (the server was down) finishes with an empty `reason` and `error` `the check did
 not run`; so does one cut short by the server stopping. Only the server's runner
 serves requests, so `monitor check` needs it up. It waits as long as the longest
 check, twice `MONITOR_TIMEOUT` plus 20 seconds, then exits 1, saying the check is
-still running, or, for a request over 2 minutes old, asking whether the server is up. Changing the origin clears `check`. Each request is audited as
-`monitor.check`.
+still running, or, for a request over 2 minutes old, asking whether the server is
+up. Each request is audited as `monitor.check`.
 
 `reason` is a closed vocabulary, on every failed `uptime` row:
 
@@ -1627,7 +1640,7 @@ from the `views` table:
 | `consent` | `consent` | `given`, `none` (also views sent before the visitor answered a prompt) or `unknown` (sent without `$consent`) |
 | `locales` | `browser_locale`, `app_locale` | the browser's language and the product's; views that sent neither are left out |
 
-**Managing** — `create_project`, `update_project`, `get_monitor`, `update_monitor`, `check_monitor`, `move_project`,
+**Managing** — `create_project`, `update_project`, `list_monitors`, `update_monitor`, `check_monitor`, `move_project`,
 `archive_project`, `restore_project`, `issue_ingest_key`, `list_ingest_keys`,
 `enable_ingest_key`, `disable_ingest_key`, `rename_event`, `merge_event`, `block_event`,
 `list_event_rules`, `remove_event_rule`, `rename_attribute`, `merge_attribute`,
@@ -1684,9 +1697,9 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","values","received","blocked","aliases"}],"keys_total"}`; `aliases` is absent when empty |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
-| `GET` | `/api/projects/{project_id}/monitor` | `get_monitor` | — → `{"project_id","enabled","origin","contains","eligible_origins","interval_seconds","timeout_seconds","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"domain":{"expires_at","checked_at"},"check":{"requested_at","finished_at","up","status","reason","error","ms"}}`; empty strings are unknown |
-| `PATCH` | `/api/projects/{project_id}/monitor` | `update_monitor` | body: `enabled`, `origin`, `contains`, each optional (merge); a foreign origin is `400` → as `get_monitor` |
-| `POST` | `/api/projects/{project_id}/monitor/check` | `check_monitor` | — → as `get_monitor`, right away, before the check ran; a monitor that is not on is `400`, a check pending or within 60 s of the last request `429` |
+| `GET` | `/api/projects/{project_id}/monitors` | `list_monitors` | — → `{"interval_seconds","timeout_seconds","check_every_seconds","monitors":[{"origin","enabled","contains","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"check":{"requested_at","finished_at","up","status","reason","error","ms"}}],"domains":[{"domain","origins","expires_at","checked_at"}]}`; empty strings are unknown |
+| `PATCH` | `/api/projects/{project_id}/monitors` | `update_monitor` | body: `origin`, required, and `enabled`, `contains`, each optional (merge); a foreign origin is `400` → as `list_monitors` |
+| `POST` | `/api/projects/{project_id}/monitors/check` | `check_monitor` | body: `origin` → as `list_monitors`, right away, before the check ran; a monitor that is not on or a foreign origin is `400`, a check pending on it or within 60 s of its last request `429` |
 | `POST` | `/api/projects/{project_id}/move` | `move_project` | body: `after` |
 | `POST` | `/api/projects/{project_id}/archive` | `archive_project` | — |
 | `POST` | `/api/projects/{project_id}/restore` | `restore_project` | — |

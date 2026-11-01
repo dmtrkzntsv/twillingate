@@ -20,107 +20,169 @@ func monitorProject(t *testing.T, d *DB, name string) int64 {
 
 var monAudit = store.AuditEntry{Actor: "test", Action: "monitor.set", Subject: "monitor"}
 
+const (
+	monA  = "https://a.example.com"
+	monB  = "https://b.example.com"
+	monC  = "https://c.other.org"
+	monAt = "2026-11-01T00:00:00Z"
+)
+
+func setMon(t *testing.T, d *DB, id int64, origin string, s store.MonitorSettings) store.Monitor {
+	t.Helper()
+	m, err := d.SetMonitor(context.Background(), id, origin, s, monAudit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return m
+}
+
+// getMon is the project's row for origin; the zero Monitor when it has none.
+func getMon(t *testing.T, d *DB, id int64, origin string) store.Monitor {
+	t.Helper()
+	ms, err := d.ListMonitors(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, m := range ms {
+		if m.Origin == origin {
+			return m
+		}
+	}
+	return store.Monitor{}
+}
+
+func auditCount(t *testing.T, d *DB, action string) (n int) {
+	t.Helper()
+	if err := d.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM audit_log WHERE action=?`, action).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	return n
+}
+
 func TestMonitorRoundTrip(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
 
-	m, err := d.GetMonitor(ctx, id)
-	if err != nil {
-		t.Fatal(err)
+	if ms, err := d.ListMonitors(ctx, id); err != nil || len(ms) != 0 {
+		t.Fatalf("no rows: %+v, %v", ms, err)
 	}
-	if want := (store.Monitor{ProjectID: id}); m != want {
-		t.Fatalf("no row: %+v, want %+v", m, want)
-	}
-
-	got, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: "https://a.example", Contains: "ok"}, monAudit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := store.Monitor{ProjectID: id, Enabled: true, Origin: "https://a.example", Contains: "ok"}
+	got := setMon(t, d, id, monA, store.MonitorSettings{Enabled: true, Contains: "ok"})
+	want := store.Monitor{ProjectID: id, Origin: monA, Enabled: true, Contains: "ok"}
 	if got != want {
 		t.Fatalf("SetMonitor = %+v, want %+v", got, want)
 	}
-	if m, _ = d.GetMonitor(ctx, id); m != want {
-		t.Fatalf("GetMonitor = %+v, want %+v", m, want)
+	if m := getMon(t, d, id, monA); m != want {
+		t.Fatalf("ListMonitors = %+v, want %+v", m, want)
 	}
-	var n int
-	if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='monitor.set'`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("audit rows = %d, %v", n, err)
-	}
-}
-
-func TestSetMonitorOriginChangeClearsState(t *testing.T) {
-	d := newTestDB(t)
-	ctx := context.Background()
-	id := monitorProject(t, d, "a")
-	set := func(s store.MonitorSettings) store.Monitor {
-		t.Helper()
-		m, err := d.SetMonitor(ctx, id, s, monAudit)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return m
-	}
-	set(store.MonitorSettings{Enabled: true, Origin: "https://a.example"})
-	if err := d.SetMonitorCert(ctx, id, "https://a.example", store.CertState{
-		ExpiresAt: "2027-01-01T00:00:00Z", Issuer: "R3", Valid: true, CheckedAt: "2026-11-01T00:00:00Z"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := d.SetMonitorDomain(ctx, id, "https://a.example", store.DomainState{
-		ExpiresAt: "2027-02-02", CheckedAt: "2026-11-01T00:00:00Z"}); err != nil {
-		t.Fatal(err)
-	}
-	m, _ := d.GetMonitor(ctx, id)
-	if m.CertIssuer != "R3" || !m.CertValid || m.CertExpiresAt == "" || m.DomainExpiresAt != "2027-02-02" || m.DomainCheckedAt == "" {
-		t.Fatalf("state not stored: %+v", m)
-	}
-
-	// Same origin keeps the state, whatever else changes.
-	m = set(store.MonitorSettings{Enabled: false, Origin: "https://a.example", Contains: "x"})
-	if m.CertIssuer != "R3" || m.DomainExpiresAt != "2027-02-02" || m.Enabled || m.Contains != "x" {
-		t.Fatalf("same-origin edit changed state: %+v", m)
-	}
-	// A new origin clears it.
-	m = set(store.MonitorSettings{Enabled: true, Origin: "https://b.example"})
-	want := store.Monitor{ProjectID: id, Enabled: true, Origin: "https://b.example"}
-	if m != want {
-		t.Fatalf("origin change: %+v, want %+v", m, want)
+	if n := auditCount(t, d, "monitor.set"); n != 1 {
+		t.Fatalf("audit rows = %d", n)
 	}
 }
 
-func TestSetMonitorEnablingClearsCheckTimesOnly(t *testing.T) {
+// The key is the project and the origin: a project holds many, by origin, and
+// two projects may hold the same one.
+func TestMonitorsAreKeyedByProjectAndOrigin(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	a, b := monitorProject(t, d, "a"), monitorProject(t, d, "b")
+	setMon(t, d, a, monB, store.MonitorSettings{Enabled: true})
+	setMon(t, d, a, monA, store.MonitorSettings{Enabled: false, Contains: "x"})
+	setMon(t, d, b, monA, store.MonitorSettings{Enabled: true})
+	// Writing one again updates it.
+	setMon(t, d, a, monB, store.MonitorSettings{Enabled: true, Contains: "y"})
+
+	ms, err := d.ListMonitors(ctx, a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ms) != 2 || ms[0].Origin != monA || ms[1].Origin != monB {
+		t.Fatalf("ListMonitors = %+v, want a project's two, by origin", ms)
+	}
+	if ms[0].Enabled || ms[0].Contains != "x" || !ms[1].Enabled || ms[1].Contains != "y" {
+		t.Errorf("rows mixed up: %+v", ms)
+	}
+	if ms, _ := d.ListMonitors(ctx, b); len(ms) != 1 || ms[0].Contains != "" {
+		t.Errorf("the other project's: %+v", ms)
+	}
+}
+
+func TestSetMonitorEnablingClearsCertCheckTimeOnly(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	const origin, at = "https://a.example", "2026-11-01T00:00:00Z"
-	set := func(enabled bool) store.Monitor {
-		t.Helper()
-		m, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: enabled, Origin: origin}, monAudit)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return m
-	}
-	set(true)
-	if err := d.SetMonitorCert(ctx, id, origin, store.CertState{ExpiresAt: "2027-01-01T00:00:00Z", Issuer: "R3", Valid: true, CheckedAt: at}); err != nil {
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	if err := d.SetMonitorCert(ctx, id, monA, store.CertState{ExpiresAt: "2027-01-01T00:00:00Z", Issuer: "R3", Valid: true, CheckedAt: monAt}); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.SetMonitorDomain(ctx, id, origin, store.DomainState{ExpiresAt: "2027-02-02", CheckedAt: at}); err != nil {
-		t.Fatal(err)
-	}
-	// Staying on, or going off, keeps the check times.
+	// Staying on, or going off, keeps the check time.
 	for _, on := range []bool{true, false, false} {
-		if m := set(on); m.CertCheckedAt != at || m.DomainCheckedAt != at {
-			t.Fatalf("enabled=%v: %+v, want the check times kept", on, m)
+		if m := setMon(t, d, id, monA, store.MonitorSettings{Enabled: on}); m.CertCheckedAt != monAt {
+			t.Fatalf("enabled=%v: %+v, want the check time kept", on, m)
 		}
 	}
-	m := set(true)
-	if m.CertCheckedAt != "" || m.DomainCheckedAt != "" {
-		t.Errorf("enabling kept the check times: %+v", m)
+	m := setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	if m.CertCheckedAt != "" {
+		t.Errorf("enabling kept the check time: %+v", m)
 	}
-	if m.CertExpiresAt == "" || m.CertIssuer != "R3" || !m.CertValid || m.DomainExpiresAt != "2027-02-02" {
-		t.Errorf("enabling lost the readings: %+v", m)
+	if m.CertExpiresAt == "" || m.CertIssuer != "R3" || !m.CertValid {
+		t.Errorf("enabling lost the reading: %+v", m)
+	}
+}
+
+// A domain's reading is shared: enabling a monitor does not clear it.
+func TestSetMonitorEnablingKeepsTheSharedDomainReading(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	if err := d.SetMonitorDomain(ctx, id, "example.com", store.DomainState{ExpiresAt: "2027-02-02", CheckedAt: monAt}); err != nil {
+		t.Fatal(err)
+	}
+	setMon(t, d, id, monB, store.MonitorSettings{Enabled: true})
+	ds, err := d.ListMonitorDomains(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (store.MonitorDomain{ProjectID: id, Domain: "example.com", ExpiresAt: "2027-02-02", CheckedAt: monAt}); len(ds) != 1 || ds[0] != want {
+		t.Fatalf("domains = %+v, want %+v", ds, want)
+	}
+}
+
+func TestSetMonitorDomain(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id, other := monitorProject(t, d, "a"), monitorProject(t, d, "b")
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monC, store.MonitorSettings{})
+	setMon(t, d, other, monA, store.MonitorSettings{Enabled: true})
+	for _, w := range []struct {
+		project int64
+		domain  string
+		state   store.DomainState
+	}{
+		{id, "example.com", store.DomainState{ExpiresAt: "2027-02-02", CheckedAt: monAt}},
+		{id, "other.org", store.DomainState{CheckedAt: monAt}},
+		{other, "example.com", store.DomainState{ExpiresAt: "2028-02-02", CheckedAt: monAt}},
+		// The later reading replaces the earlier.
+		{id, "example.com", store.DomainState{ExpiresAt: "2029-02-02", CheckedAt: "2026-11-02T00:00:00Z"}},
+		// One no monitor's origin uses (it raced the origin's removal) lands nowhere.
+		{id, "gone.example", store.DomainState{ExpiresAt: "2030-01-01", CheckedAt: monAt}},
+		{id + 100, "example.com", store.DomainState{ExpiresAt: "2030-01-01", CheckedAt: monAt}},
+	} {
+		if err := d.SetMonitorDomain(ctx, w.project, w.domain, w.state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ds, err := d.ListMonitorDomains(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ds) != 2 || ds[0].Domain != "example.com" || ds[0].ExpiresAt != "2029-02-02" || ds[1].Domain != "other.org" || ds[1].ExpiresAt != "" {
+		t.Fatalf("domains = %+v", ds)
+	}
+	if ds, _ := d.ListMonitorDomains(ctx, other); len(ds) != 1 || ds[0].ExpiresAt != "2028-02-02" {
+		t.Errorf("the other project's = %+v", ds)
 	}
 }
 
@@ -128,88 +190,119 @@ func TestSetMonitorCertErrorKeepsTheReading(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	const origin, at = "https://a.example", "2026-11-01T00:00:00Z"
-	if _, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: origin}, monAudit); err != nil {
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	if err := d.SetMonitorCert(ctx, id, monA, store.CertState{ExpiresAt: "2027-01-01T00:00:00Z", Issuer: "R3", Valid: true, CheckedAt: monAt}); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.SetMonitorCert(ctx, id, origin, store.CertState{ExpiresAt: "2027-01-01T00:00:00Z", Issuer: "R3", Valid: true, CheckedAt: at}); err != nil {
+	if err := d.SetMonitorCertError(ctx, id, monA, "connection refused"); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.SetMonitorCertError(ctx, id, origin, "connection refused"); err != nil {
-		t.Fatal(err)
-	}
-	m, _ := d.GetMonitor(ctx, id)
-	if m.CertError != "connection refused" || m.CertExpiresAt == "" || m.CertIssuer != "R3" || !m.CertValid || m.CertCheckedAt != at {
+	m := getMon(t, d, id, monA)
+	if m.CertError != "connection refused" || m.CertExpiresAt == "" || m.CertIssuer != "R3" || !m.CertValid || m.CertCheckedAt != monAt {
 		t.Errorf("after a failed read: %+v", m)
 	}
-	// Another origin's failure is not this one's.
-	if err := d.SetMonitorCertError(ctx, id, "https://old.example", "other"); err != nil {
-		t.Fatal(err)
-	}
-	if m, _ = d.GetMonitor(ctx, id); m.CertError != "connection refused" {
-		t.Errorf("stale origin wrote: %+v", m)
-	}
 	// The next reading clears it.
-	if err := d.SetMonitorCert(ctx, id, origin, store.CertState{ExpiresAt: "2027-01-01T00:00:00Z", Valid: true, CheckedAt: at}); err != nil {
+	if err := d.SetMonitorCert(ctx, id, monA, store.CertState{ExpiresAt: "2027-01-01T00:00:00Z", Valid: true, CheckedAt: monAt}); err != nil {
 		t.Fatal(err)
 	}
-	if m, _ = d.GetMonitor(ctx, id); m.CertError != "" {
+	if m = getMon(t, d, id, monA); m.CertError != "" {
 		t.Errorf("after a reading: %+v", m)
 	}
 }
 
-func TestUpdateProjectDisablesMonitorInItsTransaction(t *testing.T) {
+// update is an origins edit: eligible are the origins a monitor may now use.
+func updateOrigins(t *testing.T, d *DB, id int64, eligible []string) {
+	t.Helper()
+	if err := d.UpdateProject(context.Background(), store.RegistryProject{ID: id, Name: "a", AllowedOrigins: "[]", MonitorOrigins: eligible},
+		store.AuditEntry{Actor: "t", Action: "project.update", Subject: "1"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestUpdateProjectDeletesMonitorsOfRemovedOrigins(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
-	id := monitorProject(t, d, "a")
-	const origin = "https://a.example"
-	audits := func() (n int) {
-		t.Helper()
-		if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='monitor.disable'`).Scan(&n); err != nil {
+	id, other := monitorProject(t, d, "a"), monitorProject(t, d, "b")
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monB, store.MonitorSettings{Enabled: false}) // off: still a row, still removed
+	setMon(t, d, id, monC, store.MonitorSettings{Enabled: true})
+	setMon(t, d, other, monA, store.MonitorSettings{Enabled: true})
+
+	updateOrigins(t, d, id, nil) // the origins did not change
+	updateOrigins(t, d, id, []string{monA, monB, monC, "https://new.example"})
+	if ms, _ := d.ListMonitors(ctx, id); len(ms) != 3 || auditCount(t, d, "monitor.remove") != 0 {
+		t.Fatalf("origins kept: %+v, %d audit rows", ms, auditCount(t, d, "monitor.remove"))
+	}
+
+	updateOrigins(t, d, id, []string{monC})
+	ms, _ := d.ListMonitors(ctx, id)
+	if len(ms) != 1 || ms[0].Origin != monC {
+		t.Fatalf("after the removal: %+v", ms)
+	}
+	if n := auditCount(t, d, "monitor.remove"); n != 2 {
+		t.Fatalf("%d monitor.remove rows, want one per monitor", n)
+	}
+	var detail, subject string
+	if err := d.db.QueryRowContext(ctx, `SELECT subject, detail FROM audit_log WHERE action='monitor.remove' ORDER BY rowid LIMIT 1`).Scan(&subject, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if subject != "1" || detail != "origin removed: "+monA {
+		t.Errorf("audit subject %q detail %q", subject, detail)
+	}
+	if o, _ := d.ListMonitors(ctx, other); len(o) != 1 {
+		t.Errorf("the other project's monitor: %+v", o)
+	}
+
+	// No eligible origin left: none stays.
+	updateOrigins(t, d, id, []string{})
+	if ms, _ := d.ListMonitors(ctx, id); len(ms) != 0 || auditCount(t, d, "monitor.remove") != 3 {
+		t.Errorf("no eligible origin: %+v, %d audit rows", ms, auditCount(t, d, "monitor.remove"))
+	}
+}
+
+func TestUpdateProjectDeletesDomainsNoMonitorUses(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id, other := monitorProject(t, d, "a"), monitorProject(t, d, "b")
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monB, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monC, store.MonitorSettings{Enabled: true})
+	setMon(t, d, other, monC, store.MonitorSettings{Enabled: true})
+	for _, w := range []struct {
+		id     int64
+		domain string
+	}{{id, "example.com"}, {id, "other.org"}, {other, "other.org"}} {
+		if err := d.SetMonitorDomain(ctx, w.id, w.domain, store.DomainState{CheckedAt: monAt}); err != nil {
 			t.Fatal(err)
 		}
-		return n
 	}
-	update := func(eligible []string) {
+	domains := func(p int64) (out []string) {
 		t.Helper()
-		if err := d.UpdateProject(ctx, store.RegistryProject{ID: id, Name: "a", AllowedOrigins: "[]", MonitorOrigins: eligible},
-			store.AuditEntry{Actor: "t", Action: "project.update", Subject: "1"}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	enabled := func() bool {
-		t.Helper()
-		m, err := d.GetMonitor(ctx, id)
+		ds, err := d.ListMonitorDomains(ctx, p)
 		if err != nil {
 			t.Fatal(err)
 		}
-		return m.Enabled
+		for _, x := range ds {
+			out = append(out, x.Domain)
+		}
+		return out
 	}
-	if _, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: origin}, monAudit); err != nil {
-		t.Fatal(err)
+	// One of two origins on a domain goes: the domain stays.
+	updateOrigins(t, d, id, []string{monB, monC})
+	if got := domains(id); len(got) != 2 {
+		t.Fatalf("domains = %v, want both", got)
 	}
-	update(nil) // the origins did not change
-	update([]string{origin, "https://b.example"})
-	if !enabled() || audits() != 0 {
-		t.Fatalf("origin kept: enabled %v, %d audit rows", enabled(), audits())
+	// The last goes: so does the domain, in this project only.
+	updateOrigins(t, d, id, []string{monB})
+	if got := domains(id); len(got) != 1 || got[0] != "example.com" {
+		t.Fatalf("domains = %v, want example.com", got)
 	}
-	update([]string{"https://b.example"})
-	if enabled() || audits() != 1 {
-		t.Fatalf("origin dropped: enabled %v, %d audit rows", enabled(), audits())
+	if got := domains(other); len(got) != 1 {
+		t.Errorf("the other project's = %v", got)
 	}
-	// Already off: nothing to disable, nothing to audit.
-	update([]string{"https://c.example"})
-	update([]string{})
-	if audits() != 1 {
-		t.Errorf("%d audit rows after updates of a disabled monitor, want 1", audits())
-	}
-	// No eligible origin left: off whatever the row says.
-	if _, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: origin}, monAudit); err != nil {
-		t.Fatal(err)
-	}
-	update([]string{})
-	if enabled() || audits() != 2 {
-		t.Errorf("no eligible origin: enabled %v, %d audit rows", enabled(), audits())
+	updateOrigins(t, d, id, []string{"https://elsewhere.net"})
+	if got := domains(id); len(got) != 0 {
+		t.Errorf("domains = %v, want none", got)
 	}
 }
 
@@ -217,11 +310,12 @@ func TestListEnabledMonitors(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	a, b, c, e := monitorProject(t, d, "a"), monitorProject(t, d, "b"), monitorProject(t, d, "c"), monitorProject(t, d, "d")
-	for id, on := range map[int64]bool{a: true, b: false, c: true, e: true} {
-		if _, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: on, Origin: "https://x.example"}, monAudit); err != nil {
-			t.Fatal(err)
-		}
-	}
+	setMon(t, d, a, monB, store.MonitorSettings{Enabled: true})
+	setMon(t, d, a, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, a, monC, store.MonitorSettings{Enabled: false})
+	setMon(t, d, b, monA, store.MonitorSettings{Enabled: false})
+	setMon(t, d, c, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, e, monA, store.MonitorSettings{Enabled: true})
 	if err := d.SetProjectArchived(ctx, c, true, store.AuditEntry{Actor: "t", Action: "project.archive"}); err != nil {
 		t.Fatal(err)
 	}
@@ -229,96 +323,106 @@ func TestListEnabledMonitors(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ms) != 2 || ms[0].ProjectID != a || ms[1].ProjectID != e {
-		t.Fatalf("ListEnabledMonitors = %+v, want projects %d, %d", ms, a, e)
+	if len(ms) != 3 || ms[0].ProjectID != a || ms[0].Origin != monA || ms[1].ProjectID != a || ms[1].Origin != monB || ms[2].ProjectID != e {
+		t.Fatalf("ListEnabledMonitors = %+v, want %d's two by origin, then %d's", ms, a, e)
 	}
 }
 
-func TestMonitorStateWriteWithStaleOriginIsIgnored(t *testing.T) {
+// A check that raced the row's removal writes nothing, and brings nothing back.
+func TestMonitorStateWritesOfARemovedMonitorAreIgnored(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	if _, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: "https://new.example"}, monAudit); err != nil {
+	const old = "https://old.example"
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	if err := d.SetMonitorCert(ctx, id, old, store.CertState{Issuer: "R3", Valid: true}); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.SetMonitorCert(ctx, id, "https://old.example", store.CertState{Issuer: "R3", Valid: true}); err != nil {
+	if err := d.SetMonitorCertError(ctx, id, old, "other"); err != nil {
 		t.Fatal(err)
 	}
-	if err := d.SetMonitorDomain(ctx, id, "https://old.example", store.DomainState{ExpiresAt: "2027-01-01"}); err != nil {
+	if err := d.SetMonitorRedirects(ctx, id, old, 9); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.FinishMonitorCheck(ctx, id, old, store.MonitorCheckResult{FinishedAt: monAt}); err != nil {
 		t.Fatal(err)
 	}
 	// A project with no row at all is a no-op too.
-	if err := d.SetMonitorCert(ctx, id+100, "https://old.example", store.CertState{Issuer: "R3"}); err != nil {
+	if err := d.SetMonitorCert(ctx, id+100, old, store.CertState{Issuer: "R3"}); err != nil {
 		t.Fatal(err)
 	}
-	m, _ := d.GetMonitor(ctx, id)
-	if want := (store.Monitor{ProjectID: id, Enabled: true, Origin: "https://new.example"}); m != want {
-		t.Fatalf("stale write landed: %+v", m)
+	ms, _ := d.ListMonitors(ctx, id)
+	if want := (store.Monitor{ProjectID: id, Origin: monA, Enabled: true}); len(ms) != 1 || ms[0] != want {
+		t.Fatalf("a stale write landed: %+v", ms)
 	}
 }
 
-func TestSetMonitorRedirects(t *testing.T) {
+// Writes touch their own origin's row, not the project's others.
+func TestMonitorStateWritesStayOnTheirOrigin(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	set := func(s store.MonitorSettings) store.Monitor {
-		t.Helper()
-		m, err := d.SetMonitor(ctx, id, s, monAudit)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return m
-	}
-	set(store.MonitorSettings{Enabled: true, Origin: "https://a.example"})
-	if err := d.SetMonitorRedirects(ctx, id, "https://a.example", 4); err != nil {
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monB, store.MonitorSettings{Enabled: true})
+	if err := d.SetMonitorCert(ctx, id, monA, store.CertState{Issuer: "R3", CheckedAt: monAt}); err != nil {
 		t.Fatal(err)
 	}
-	if m, _ := d.GetMonitor(ctx, id); m.Redirects != 4 {
-		t.Fatalf("Redirects %d, want 4", m.Redirects)
-	}
-	// A write for an origin the row no longer has is ignored.
-	if err := d.SetMonitorRedirects(ctx, id, "https://old.example", 9); err != nil {
+	if err := d.SetMonitorRedirects(ctx, id, monA, 4); err != nil {
 		t.Fatal(err)
 	}
-	if m, _ := d.GetMonitor(ctx, id); m.Redirects != 4 {
-		t.Errorf("stale write landed: Redirects %d", m.Redirects)
+	if err := d.RequestMonitorCheck(ctx, id, monA, monAt, store.AuditEntry{Actor: "t", Action: "monitor.check"}); err != nil {
+		t.Fatal(err)
 	}
-	// The same origin keeps it, listed too; a new origin resets it.
-	if m := set(store.MonitorSettings{Enabled: true, Origin: "https://a.example", Contains: "x"}); m.Redirects != 4 {
-		t.Errorf("same-origin edit: Redirects %d, want 4", m.Redirects)
+	if err := d.FinishMonitorCheck(ctx, id, monA, store.MonitorCheckResult{FinishedAt: monAt, Up: true}); err != nil {
+		t.Fatal(err)
+	}
+	if m := getMon(t, d, id, monA); m.CertIssuer != "R3" || m.Redirects != 4 || !m.CheckUp || m.CheckFinishedAt != monAt {
+		t.Errorf("the written row: %+v", m)
+	}
+	if m, want := getMon(t, d, id, monB), (store.Monitor{ProjectID: id, Origin: monB, Enabled: true}); m != want {
+		t.Errorf("the other row: %+v", m)
+	}
+}
+
+func TestSetMonitorRedirectsKeptByAnEdit(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	if err := d.SetMonitorRedirects(ctx, id, monA, 4); err != nil {
+		t.Fatal(err)
+	}
+	if m := setMon(t, d, id, monA, store.MonitorSettings{Enabled: true, Contains: "x"}); m.Redirects != 4 {
+		t.Errorf("an edit: Redirects %d, want 4", m.Redirects)
 	}
 	if ms, err := d.ListEnabledMonitors(ctx); err != nil || len(ms) != 1 || ms[0].Redirects != 4 {
 		t.Errorf("ListEnabledMonitors = %+v, %v, want Redirects 4", ms, err)
-	}
-	if m := set(store.MonitorSettings{Enabled: true, Origin: "https://b.example"}); m.Redirects != 0 {
-		t.Errorf("origin change: Redirects %d, want 0", m.Redirects)
 	}
 }
 
 func TestMonitorUnknownProject(t *testing.T) {
 	d := newTestDB(t)
-	ctx := context.Background()
-	if _, err := d.GetMonitor(ctx, 999); !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("GetMonitor: %v, want ErrNotFound", err)
-	}
-	if _, err := d.SetMonitor(ctx, 999, store.MonitorSettings{Origin: "https://x.example"}, monAudit); !errors.Is(err, store.ErrNotFound) {
+	if _, err := d.SetMonitor(context.Background(), 999, monA, store.MonitorSettings{}, monAudit); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("SetMonitor: %v, want ErrNotFound", err)
 	}
 }
 
-func TestDeleteProjectRemovesMonitor(t *testing.T) {
+func TestDeleteProjectRemovesMonitorsAndDomains(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	if _, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: "https://a.example"}, monAudit); err != nil {
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	if err := d.SetMonitorDomain(ctx, id, "example.com", store.DomainState{CheckedAt: monAt}); err != nil {
 		t.Fatal(err)
 	}
 	if err := d.DeleteProjectData(ctx, id, store.AuditEntry{Actor: "t", Action: "project.delete"}); err != nil {
 		t.Fatal(err)
 	}
-	var n int
-	if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM monitors`).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("monitors rows = %d, %v", n, err)
+	for _, table := range []string{"monitors", "monitor_domains"} {
+		var n int
+		if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("%s rows = %d, %v", table, n, err)
+		}
 	}
 }
 
@@ -326,87 +430,74 @@ func TestMonitorCheckRequestAndFinish(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	const origin = "https://a.example"
 	audit := store.AuditEntry{Actor: "test", Action: "monitor.check", Subject: "1"}
-	request := func(at string) error { return d.RequestMonitorCheck(ctx, id, at, audit) }
+	request := func(origin, at string) error { return d.RequestMonitorCheck(ctx, id, origin, at, audit) }
 
 	// No monitor to check: refused, and nothing audited.
-	if err := request("2026-11-01T10:00:00Z"); !errors.Is(err, store.ErrInvalid) {
+	if err := request(monA, "2026-11-01T10:00:00Z"); !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("request with no monitor: %v, want ErrInvalid", err)
 	}
-	if err := d.RequestMonitorCheck(ctx, 99, "2026-11-01T10:00:00Z", audit); !errors.Is(err, store.ErrNotFound) {
+	if err := d.RequestMonitorCheck(ctx, 99, monA, "2026-11-01T10:00:00Z", audit); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("request on an unknown project: %v, want ErrNotFound", err)
 	}
-	if _, err := d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: origin}, monAudit); err != nil {
+	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monB, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monC, store.MonitorSettings{Enabled: false})
+	if err := request(monA, "2026-11-01T10:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	if err := request("2026-11-01T10:00:00Z"); err != nil {
-		t.Fatal(err)
-	}
-	m, err := d.GetMonitor(ctx, id)
-	if err != nil {
-		t.Fatal(err)
-	}
+	m := getMon(t, d, id, monA)
 	if m.CheckRequestedAt != "2026-11-01T10:00:00Z" || m.CheckFinishedAt != "" {
 		t.Fatalf("after the request: %+v", m)
 	}
-	var n int
-	if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='monitor.check'`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("audit rows = %d, %v", n, err)
+	if n := auditCount(t, d, "monitor.check"); n != 1 {
+		t.Fatalf("audit rows = %d", n)
 	}
 	// One pending: two callers cannot both pass.
-	if err := request("2026-11-01T10:00:01Z"); !errors.Is(err, store.ErrBusy) {
+	if err := request(monA, "2026-11-01T10:00:01Z"); !errors.Is(err, store.ErrBusy) {
 		t.Fatalf("second request: %v, want ErrBusy", err)
 	}
-	if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='monitor.check'`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("audit rows after the refusal = %d, %v", n, err)
+	if n := auditCount(t, d, "monitor.check"); n != 1 {
+		t.Fatalf("audit rows after the refusal = %d", n)
+	}
+	// Pending on one monitor holds back only that one.
+	if err := request(monB, "2026-11-01T10:00:01Z"); err != nil {
+		t.Errorf("the other monitor: %v", err)
+	}
+	if err := request(monC, "2026-11-01T10:00:01Z"); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("a disabled monitor: %v, want ErrInvalid", err)
 	}
 
 	// The runner lists it.
 	ms, err := d.ListEnabledMonitors(ctx)
-	if err != nil || len(ms) != 1 || ms[0].CheckRequestedAt != "2026-11-01T10:00:00Z" {
+	if err != nil || len(ms) != 2 || ms[0].CheckRequestedAt != "2026-11-01T10:00:00Z" {
 		t.Fatalf("listed %+v, %v", ms, err)
 	}
 
 	res := store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:03Z", Up: false, Status: 503, Reason: "http_5xx", Error: "status 503", MS: 123}
-	// A check of another origin raced an edit: not recorded.
-	if err := d.FinishMonitorCheck(ctx, id, "https://old.example", res); err != nil {
+	if err := d.FinishMonitorCheck(ctx, id, monA, res); err != nil {
 		t.Fatal(err)
 	}
-	if m, _ := d.GetMonitor(ctx, id); m.CheckFinishedAt != "" {
-		t.Fatalf("a stale origin's result was stored: %+v", m)
-	}
-	if err := d.FinishMonitorCheck(ctx, id, origin, res); err != nil {
-		t.Fatal(err)
-	}
-	m, _ = d.GetMonitor(ctx, id)
+	m = getMon(t, d, id, monA)
 	if m.CheckFinishedAt != res.FinishedAt || m.CheckUp || m.CheckStatus != 503 || m.CheckReason != "http_5xx" || m.CheckError != "status 503" || m.CheckMS != 123 {
 		t.Fatalf("after finish: %+v", m)
 	}
-	// Finishing is not audited; requesting again is allowed by the store.
-	if err := d.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_log WHERE action='monitor.check'`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("audit rows after finish = %d, %v", n, err)
+	// Finishing is not audited.
+	if n := auditCount(t, d, "monitor.check"); n != 2 {
+		t.Fatalf("audit rows after finish = %d, want 2", n)
 	}
 	up := store.MonitorCheckResult{FinishedAt: "2026-11-01T10:01:03Z", Up: true, Status: 200, MS: 5}
-	if err := d.FinishMonitorCheck(ctx, id, origin, up); err != nil {
+	if err := d.FinishMonitorCheck(ctx, id, monA, up); err != nil {
 		t.Fatal(err)
 	}
-	if m, _ = d.GetMonitor(ctx, id); !m.CheckUp || m.CheckReason != "" || m.CheckError != "" {
+	if m = getMon(t, d, id, monA); !m.CheckUp || m.CheckReason != "" || m.CheckError != "" {
 		t.Fatalf("second result left the first's fields: %+v", m)
 	}
-
-	// The same origin keeps it, a new one clears every field.
-	if m, err = d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: false, Origin: origin}, monAudit); err != nil || m.CheckFinishedAt == "" {
-		t.Fatalf("same origin: %+v, %v", m, err)
+	// An edit keeps it.
+	if m := setMon(t, d, id, monA, store.MonitorSettings{Enabled: false}); m.CheckFinishedAt == "" {
+		t.Fatalf("an edit: %+v", m)
 	}
-	if err := request("2026-11-01T10:02:00Z"); !errors.Is(err, store.ErrInvalid) {
+	if err := request(monA, "2026-11-01T10:02:00Z"); !errors.Is(err, store.ErrInvalid) {
 		t.Fatalf("request on a disabled monitor: %v, want ErrInvalid", err)
-	}
-	m, err = d.SetMonitor(ctx, id, store.MonitorSettings{Enabled: true, Origin: "https://b.example"}, monAudit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := (store.Monitor{ProjectID: id, Enabled: true, Origin: "https://b.example"}); m != want {
-		t.Fatalf("origin change: %+v, want %+v", m, want)
 	}
 }

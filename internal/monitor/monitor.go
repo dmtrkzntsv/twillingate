@@ -1,15 +1,17 @@
-// Package monitor runs each project's availability monitor: every
-// interval it GETs the monitor's origin and writes the result to the
-// project's event log as a checks/uptime row; once a day (and right after
-// the monitor is enabled or its origin changes) it reads the origin's
-// certificate and its domain's registration expiry, keeps them on the
-// monitor row and writes them as checks/cert and checks/domain rows. A read
-// that fails says nothing about either: the last reading stands, unrecorded,
-// and is tried again after an hour.
+// Package monitor runs a project's availability monitors, one per origin.
+// A project has one availability check per interval, shared by its enabled
+// monitors in turn: the slot GETs the monitor tried longest ago and writes the
+// result to the project's event log as a checks/uptime row. Once a day (and right
+// after a monitor is enabled) it reads each origin's certificate, and once a day
+// each main domain's registration expiry, shared by the project's origins on it;
+// it keeps them in the store and writes them as checks/cert and checks/domain
+// rows. Those reads run on a small pool of their own, so that they never hold an
+// availability check back. A read that fails says nothing about either: the last
+// reading stands, unrecorded, and is tried again after an hour.
 //
-// A manual check is a request on the monitor row, since the API that takes it
-// may be another process: the next tick runs all three outside the slot and
-// records the availability result on the row.
+// A manual check is a request on the monitor's row, since the API that takes it
+// may be another process: the next tick runs all three for that origin, outside
+// the slot, and records the availability result on the row.
 //
 // Every connection it makes, redirect hops and RDAP lookups included, goes
 // through a dialer that refuses private addresses.
@@ -26,13 +28,13 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"slices"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/maindomain"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -41,7 +43,8 @@ type Store interface {
 	ListEnabledMonitors(ctx context.Context) ([]store.Monitor, error)
 	SetMonitorCert(ctx context.Context, projectID int64, origin string, c store.CertState) error
 	SetMonitorCertError(ctx context.Context, projectID int64, origin, msg string) error
-	SetMonitorDomain(ctx context.Context, projectID int64, origin string, d store.DomainState) error
+	ListMonitorDomains(ctx context.Context, projectID int64) ([]store.MonitorDomain, error)
+	SetMonitorDomain(ctx context.Context, projectID int64, domain string, d store.DomainState) error
 	SetMonitorRedirects(ctx context.Context, projectID int64, origin string, n int) error
 	FinishMonitorCheck(ctx context.Context, projectID int64, origin string, r store.MonitorCheckResult) error
 }
@@ -59,7 +62,8 @@ type Origins interface {
 }
 
 const (
-	workers        = 16              // checks running at once, across projects
+	workers        = 16              // availability checks running at once, across projects
+	readWorkers    = 4               // certificate and domain reads running at once, across projects
 	defaultTimeout = 5 * time.Second // a check's limit when none is configured
 	rdapTimeout    = 15 * time.Second
 	dailyEvery     = 24 * time.Hour
@@ -74,9 +78,10 @@ const (
 	checkNotRun   = "the check did not run"
 )
 
-// Runner schedules the checks. Each monitor has a fixed offset within the
-// interval, from its project id, so checks spread across it; a monitor
-// whose previous check is still running skips its slot.
+// Runner schedules the checks. Each project has a fixed offset within the
+// interval, from its id, so checks spread across it. Which monitor a slot checks
+// is decided when it comes, so adding or removing one needs no reschedule; a
+// project whose last check is still running skips its slot.
 type Runner struct {
 	st       Store
 	origins  Origins
@@ -92,26 +97,49 @@ type Runner struct {
 	client *http.Client
 	rdap   *rdap
 
-	// job runs one monitor's slot and returns its rows; a seam for tests.
+	// job runs one slot's availability check and returns its row; a seam for
+	// tests, as are the two below it.
 	job func(ctx context.Context, m store.Monitor) []store.Event
-	// check runs one manual check and returns its rows and result; likewise.
+	// check runs one manual check and returns its rows and result.
 	check func(ctx context.Context, m store.Monitor) ([]store.Event, Result)
+	// readCert and readDomain read and store one reading and return its row.
+	readCert   func(ctx context.Context, m store.Monitor, now time.Time) []store.Event
+	readDomain func(ctx context.Context, projectID int64, domain string, now time.Time) []store.Event
 
-	sem     chan struct{}
+	sem     chan struct{} // availability checks
+	readSem chan struct{} // certificate and domain reads
 	wg      sync.WaitGroup
 	mu      sync.Mutex
-	running map[int64]bool
+	slots   map[int64]bool      // projects whose slot check is running
+	manuals map[monitorKey]bool // monitors whose manual check is running
+	reads   map[readKey]bool    // daily reads queued or running
 	pending []store.Event
-	tried   map[int64]attempt
+	// attempts is when each enabled monitor's availability was last tried,
+	// tried when each of its daily reads last was, so one that read nothing is
+	// not retried every slot. Neither is kept for a monitor switched off, so
+	// enabling it again takes its turn first and reads at once.
+	attempts map[monitorKey]time.Time
+	tried    map[readKey]time.Time
+	domains  map[string]string // each enabled origin's main domain
 }
 
-// attempt is the last daily check started for an enabled monitor, so one
-// that read nothing is not retried every slot. A monitor switched off
-// loses it, so enabling it again checks at once.
-type attempt struct {
-	origin string
-	at     time.Time
+// monitorKey names a monitor.
+type monitorKey struct {
+	projectID int64
+	origin    string
 }
+
+// readKey names a daily reading: an origin's certificate, or a main domain's
+// expiry.
+type readKey struct {
+	projectID int64
+	kind      string // "cert" or "domain"
+	name      string // the origin or the domain
+}
+
+func keyOf(m store.Monitor) monitorKey { return monitorKey{m.ProjectID, m.Origin} }
+
+func certKey(m store.Monitor) readKey { return readKey{m.ProjectID, "cert", m.Origin} }
 
 // options are the test seams.
 type options struct {
@@ -123,8 +151,8 @@ type options struct {
 	now           func() time.Time
 }
 
-// New builds a Runner checking every interval, each check (the availability
-// request and the certificate read) given timeout (config's MONITOR_TIMEOUT,
+// New builds a Runner giving each project one check per interval, each check
+// (the availability request and the certificate read) given timeout (config's MONITOR_TIMEOUT,
 // below interval).
 func New(st Store, origins Origins, log EventLog, interval, timeout time.Duration, logger *slog.Logger) *Runner {
 	return newRunner(st, origins, log, interval, logger, options{timeout: timeout})
@@ -151,11 +179,14 @@ func newRunner(st Store, origins Origins, log EventLog, interval time.Duration, 
 		guard: g, roots: o.roots, client: client,
 		rdap:    &rdap{client: newClient(&guard{resolver: o.resolver, allowLoopback: o.allowLoopback, budget: rdapTimeout}, o.roots), bootstrapURL: o.bootstrapURL, now: o.now},
 		sem:     make(chan struct{}, workers),
-		running: map[int64]bool{},
-		tried:   map[int64]attempt{},
+		readSem: make(chan struct{}, readWorkers),
+		slots:   map[int64]bool{}, manuals: map[monitorKey]bool{}, reads: map[readKey]bool{},
+		attempts: map[monitorKey]time.Time{}, tried: map[readKey]time.Time{}, domains: map[string]string{},
 	}
-	r.job = r.runMonitor
+	r.job = r.runSlot
 	r.check = r.runCheck
+	r.readCert = r.cert
+	r.readDomain = r.domain
 	return r
 }
 
@@ -182,16 +213,16 @@ func (r *Runner) Run(ctx context.Context) {
 	}
 }
 
-// tick writes the rows finished since the last tick in one batch, then
-// reloads the enabled monitors and starts each with a manual check pending,
-// or whose slot falls in (prev, now].
+// tick writes the rows finished since the last tick in one batch, then reloads
+// the enabled monitors, starts each with a manual check pending, and serves each
+// project whose slot falls in (prev, now]. The list is by project id.
 func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 	r.flush(ctx)
 	// Taken before the list: a check that finishes while the list is read
 	// reads as pending in it, and must not run twice. One that finished before
 	// this has recorded so, which the list shows.
 	r.mu.Lock()
-	wasBusy := maps.Clone(r.running)
+	wasBusy := maps.Clone(r.manuals)
 	r.mu.Unlock()
 	ms, err := r.st.ListEnabledMonitors(ctx)
 	if err != nil {
@@ -204,26 +235,177 @@ func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 	for _, m := range ms {
 		// A busy monitor's request waits, however old: it may be that request
 		// which is running.
-		manual := m.CheckRequestedAt > m.CheckFinishedAt && !wasBusy[m.ProjectID] && ctx.Err() == nil
-		if manual && tooOld(m.CheckRequestedAt, now) {
-			r.finishCheck(ctx, m, Result{Error: checkNotRun})
-			manual = false
+		if m.CheckRequestedAt > m.CheckFinishedAt && !wasBusy[keyOf(m)] && ctx.Err() == nil {
+			r.startManual(ctx, m, now)
 		}
-		if !manual && !due(prev, now, r.interval, offset(m.ProjectID, r.interval)) {
-			continue
-		}
-		r.mu.Lock()
-		busy := r.running[m.ProjectID]
-		if !busy {
-			r.running[m.ProjectID] = true
-		}
-		r.mu.Unlock()
-		if busy {
-			continue
-		}
-		r.wg.Add(1)
-		go r.dispatch(ctx, m, manual)
 	}
+	for i := 0; i < len(ms); {
+		j := i + 1
+		for j < len(ms) && ms[j].ProjectID == ms[i].ProjectID {
+			j++
+		}
+		if project := ms[i:j]; due(prev, now, r.interval, offset(project[0].ProjectID, r.interval)) {
+			r.startReads(ctx, project)
+			r.startSlot(ctx, project, now)
+		}
+		i = j
+	}
+}
+
+// startManual starts m's manual check, unless it is too old to be worth serving.
+// It counts as m's attempt, which leaves the project's slot to its next monitor.
+func (r *Runner) startManual(ctx context.Context, m store.Monitor, now time.Time) {
+	if tooOld(m.CheckRequestedAt, now) {
+		r.finishCheck(ctx, m, Result{Error: checkNotRun})
+		return
+	}
+	k := keyOf(m)
+	r.mu.Lock()
+	busy := r.manuals[k]
+	if !busy {
+		r.manuals[k] = true
+		r.attempts[k] = now
+	}
+	r.mu.Unlock()
+	if !busy {
+		r.wg.Add(1)
+		go r.dispatchManual(ctx, m)
+	}
+}
+
+// startSlot starts the check of a project's slot: the monitor with the oldest
+// attempt, one never tried first and ties by the list's order, leaving out one
+// whose manual check is running now. A project whose last check is still running
+// skips the slot, and so does one with nothing left to check.
+func (r *Runner) startSlot(ctx context.Context, project []store.Monitor, now time.Time) {
+	id := project[0].ProjectID
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.slots[id] {
+		return
+	}
+	pick, found := store.Monitor{}, false
+	var oldest time.Time
+	for _, m := range project {
+		k := keyOf(m)
+		if r.manuals[k] {
+			continue
+		}
+		at := r.attempts[k] // the zero time when never tried
+		if !found || at.Before(oldest) {
+			pick, oldest, found = m, at, true
+		}
+	}
+	if !found {
+		return
+	}
+	r.slots[id] = true
+	r.attempts[keyOf(pick)] = now
+	r.wg.Add(1)
+	go r.dispatchSlot(ctx, pick)
+}
+
+// startReads queues the daily reads due in a project: each monitor's certificate
+// and each main domain's expiry. They wait for the read pool, not the project's
+// slot.
+func (r *Runner) startReads(ctx context.Context, project []store.Monitor) {
+	id := project[0].ProjectID
+	now := r.now().UTC()
+	for _, m := range project {
+		if stale(m.CertCheckedAt, now) {
+			r.startRead(ctx, certKey(m), now, func(ctx context.Context, at time.Time) []store.Event {
+				return r.readCert(ctx, m, at)
+			})
+		}
+	}
+	readings, err := r.st.ListMonitorDomains(ctx, id)
+	if err != nil {
+		if ctx.Err() == nil {
+			r.logger.Warn("monitor: list domains", "project_id", id, "error", err)
+		}
+		return
+	}
+	checked := map[string]string{}
+	for _, d := range readings {
+		checked[d.Domain] = d.CheckedAt
+	}
+	seen := map[string]bool{}
+	for _, m := range project {
+		domain := r.domainOf(m.Origin)
+		if domain == "" || seen[domain] {
+			continue
+		}
+		seen[domain] = true
+		if stale(checked[domain], now) {
+			r.startRead(ctx, readKey{id, "domain", domain}, now, func(ctx context.Context, at time.Time) []store.Event {
+				return r.readDomain(ctx, id, domain, at)
+			})
+		}
+	}
+}
+
+// startRead queues one daily read, unless one is queued or running, or the last
+// attempt was within dailyRetry.
+func (r *Runner) startRead(ctx context.Context, k readKey, now time.Time, read func(context.Context, time.Time) []store.Event) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if last, ok := r.tried[k]; r.reads[k] || (ok && now.Sub(last) < dailyRetry) || ctx.Err() != nil {
+		return
+	}
+	r.reads[k] = true
+	r.tried[k] = now
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		defer func() {
+			r.mu.Lock()
+			delete(r.reads, k)
+			// From when it ended, for a list read before it did.
+			if _, ok := r.tried[k]; ok {
+				r.tried[k] = r.now().UTC()
+			}
+			r.mu.Unlock()
+		}()
+		if !acquire(ctx, r.readSem) {
+			return
+		}
+		evs := read(ctx, r.now().UTC())
+		<-r.readSem
+		r.keep(ctx, evs)
+	}()
+}
+
+// domainOf is origin's main domain, worked out once while it is enabled.
+func (r *Runner) domainOf(origin string) string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	d, ok := r.domains[origin]
+	if !ok {
+		d = maindomain.OfOrigin(origin)
+		r.domains[origin] = d
+	}
+	return d
+}
+
+// acquire takes a worker of sem, unless shutdown comes first.
+func acquire(ctx context.Context, sem chan struct{}) bool {
+	select {
+	case sem <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// keep holds a check's rows for the next flush, unless shutdown cut it short,
+// which makes them no real result.
+func (r *Runner) keep(ctx context.Context, evs []store.Event) {
+	if ctx.Err() != nil {
+		return
+	}
+	r.mu.Lock()
+	r.pending = append(r.pending, evs...)
+	r.mu.Unlock()
 }
 
 // tooOld reports whether a manual check requested at (RFC 3339) is no longer
@@ -233,56 +415,69 @@ func tooOld(requestedAt string, now time.Time) bool {
 	return err != nil || now.Sub(t) > checkMaxAge
 }
 
-// forgetDisabled drops the attempts of monitors no longer in enabled.
+// forgetDisabled drops what is remembered of monitors no longer in enabled, and
+// of main domains none of them uses any more.
 func (r *Runner) forgetDisabled(enabled []store.Monitor) {
+	monitors := make(map[monitorKey]bool, len(enabled))
+	reads := make(map[readKey]bool, 2*len(enabled))
+	origins := make(map[string]bool, len(enabled))
+	for _, m := range enabled {
+		monitors[keyOf(m)] = true
+		origins[m.Origin] = true
+		reads[certKey(m)] = true
+		reads[readKey{m.ProjectID, "domain", r.domainOf(m.Origin)}] = true
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	for id := range r.tried {
-		if !slices.ContainsFunc(enabled, func(m store.Monitor) bool { return m.ProjectID == id }) {
-			delete(r.tried, id)
+	for k := range r.attempts {
+		if !monitors[k] {
+			delete(r.attempts, k)
+		}
+	}
+	for k := range r.tried {
+		if !reads[k] {
+			delete(r.tried, k)
+		}
+	}
+	for o := range r.domains {
+		if !origins[o] {
+			delete(r.domains, o)
 		}
 	}
 }
 
-// dispatch runs m's slot, or its manual check, on a worker. A manual check
-// always records how it ended, before the monitor counts as free, whatever
-// shutdown does to it.
-func (r *Runner) dispatch(ctx context.Context, m store.Monitor, manual bool) {
+// dispatchSlot runs a slot's check on a worker; the project is free again after.
+func (r *Runner) dispatchSlot(ctx context.Context, m store.Monitor) {
 	defer r.wg.Done()
 	defer func() {
 		r.mu.Lock()
-		delete(r.running, m.ProjectID)
+		delete(r.slots, m.ProjectID)
 		r.mu.Unlock()
 	}()
-	select {
-	case r.sem <- struct{}{}:
-	case <-ctx.Done():
-		if manual {
-			r.finishCheck(ctx, m, Result{Error: checkNotRun})
-		}
+	if !acquire(ctx, r.sem) {
 		return
 	}
-	var evs []store.Event
-	var res Result
-	switch {
-	case !manual:
-		evs = r.job(ctx, m)
-	case ctx.Err() == nil:
-		evs, res = r.check(ctx, m)
-	}
+	evs := r.job(ctx, m)
 	<-r.sem
+	r.keep(ctx, evs)
+}
+
+// dispatchManual runs m's manual check. It always records how it ended, before
+// the monitor counts as free, whatever shutdown does to it.
+func (r *Runner) dispatchManual(ctx context.Context, m store.Monitor) {
+	defer r.wg.Done()
+	defer func() {
+		r.mu.Lock()
+		delete(r.manuals, keyOf(m))
+		r.mu.Unlock()
+	}()
+	evs, res := r.check(ctx, m)
 	if ctx.Err() != nil {
-		if manual {
-			r.finishCheck(ctx, m, Result{Error: checkNotRun})
-		}
-		return // cut short by shutdown: not a real result
+		r.finishCheck(ctx, m, Result{Error: checkNotRun})
+		return
 	}
-	r.mu.Lock()
-	r.pending = append(r.pending, evs...)
-	r.mu.Unlock()
-	if manual {
-		r.finishCheck(ctx, m, res)
-	}
+	r.keep(ctx, evs)
+	r.finishCheck(ctx, m, res)
 }
 
 // finishCheck records how m's manual check ended, on a context shutdown does
@@ -320,7 +515,7 @@ func (r *Runner) flush(ctx context.Context) {
 func (r *Runner) inflight() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return len(r.running)
+	return len(r.slots) + len(r.manuals) + len(r.reads)
 }
 
 // offset is a project's fixed place within the interval, in whole ticks.
@@ -343,23 +538,42 @@ func due(prev, now time.Time, interval, off time.Duration) bool {
 	return slot > prev.UnixNano()
 }
 
-// runMonitor is one slot: the availability check, then the daily checks
-// when due.
-func (r *Runner) runMonitor(ctx context.Context, m store.Monitor) []store.Event {
+// runSlot is one slot's check: the availability of its monitor.
+func (r *Runner) runSlot(ctx context.Context, m store.Monitor) []store.Event {
 	up, _ := r.availability(ctx, m)
-	return append([]store.Event{up}, r.daily(ctx, m)...)
+	return []store.Event{up}
 }
 
-// runCheck is one manual check: the availability check and both daily ones,
-// due or not. It counts as the day's attempt, so a read that failed is not
-// tried again by the next slot.
+// runCheck is one manual check: the availability check on the availability pool,
+// then both daily reads on theirs, due or not. They count as the day's attempts,
+// so a read that failed is not tried again by the next slot. Shutdown cuts it
+// short, which its caller sees on ctx.
 func (r *Runner) runCheck(ctx context.Context, m store.Monitor) ([]store.Event, Result) {
+	if !acquire(ctx, r.sem) {
+		return nil, Result{}
+	}
 	up, res := r.availability(ctx, m)
-	now := r.now().UTC()
-	r.mu.Lock()
-	r.tried[m.ProjectID] = attempt{m.Origin, now}
-	r.mu.Unlock()
-	return append([]store.Event{up}, r.readings(ctx, m, true, true, now)...), res
+	<-r.sem
+	evs := []store.Event{up}
+	domain := r.domainOf(m.Origin)
+	for _, read := range []struct {
+		key readKey
+		run func(time.Time) []store.Event
+	}{
+		{certKey(m), func(at time.Time) []store.Event { return r.readCert(ctx, m, at) }},
+		{readKey{m.ProjectID, "domain", domain}, func(at time.Time) []store.Event { return r.readDomain(ctx, m.ProjectID, domain, at) }},
+	} {
+		if !acquire(ctx, r.readSem) {
+			return evs, res
+		}
+		now := r.now().UTC()
+		r.mu.Lock()
+		r.tried[read.key] = now
+		r.mu.Unlock()
+		evs = append(evs, read.run(now)...)
+		<-r.readSem
+	}
+	return evs, res
 }
 
 // availability GETs m's origin: its row and the result.
@@ -377,7 +591,7 @@ func (r *Runner) availability(ctx context.Context, m store.Monitor) (store.Event
 			r.logger.Warn("monitor: store redirect count", "project_id", m.ProjectID, "error", err)
 		}
 	}
-	return uptimeRow(m.ProjectID, start, res), res
+	return uptimeRow(m.ProjectID, m.Origin, start, res), res
 }
 
 // elapsedMS is a check's time in whole milliseconds.
@@ -385,8 +599,8 @@ func elapsedMS(res Result) int {
 	return int(math.Round(float64(res.Elapsed) / float64(time.Millisecond)))
 }
 
-func uptimeRow(projectID int64, at time.Time, res Result) store.Event {
-	attrs := map[string]string{"up": "0", "redirects": strconv.Itoa(res.Redirects)}
+func uptimeRow(projectID int64, origin string, at time.Time, res Result) store.Event {
+	attrs := map[string]string{"origin": origin, "up": "0", "redirects": strconv.Itoa(res.Redirects)}
 	if res.Up {
 		attrs["up"] = "1"
 	} else {
@@ -424,49 +638,17 @@ func stale(checkedAt string, now time.Time) bool {
 	return err != nil || now.Sub(t) >= dailyEvery
 }
 
-// daily runs each of the certificate and domain checks when due: never
-// read (an origin change or enabling the monitor clears its check time), or
-// a day old.
-func (r *Runner) daily(ctx context.Context, m store.Monitor) []store.Event {
-	now := r.now().UTC()
-	certDue := stale(m.CertCheckedAt, now)
-	domainDue := stale(m.DomainCheckedAt, now)
-	if !certDue && !domainDue {
-		return nil
-	}
-	r.mu.Lock()
-	last, ok := r.tried[m.ProjectID]
-	if ok && last.origin == m.Origin && now.Sub(last.at) < dailyRetry {
-		r.mu.Unlock()
-		return nil
-	}
-	r.tried[m.ProjectID] = attempt{m.Origin, now}
-	r.mu.Unlock()
-	return r.readings(ctx, m, certDue, domainDue, now)
-}
-
-// readings runs the certificate check and the domain check, each when asked.
-func (r *Runner) readings(ctx context.Context, m store.Monitor, certDue, domainDue bool, now time.Time) []store.Event {
-	u, err := url.Parse(m.Origin)
-	if err != nil {
-		return nil
-	}
-	var evs []store.Event
-	if certDue {
-		evs = append(evs, r.cert(ctx, m, u.Scheme == "https", now)...)
-	}
-	if domainDue && ctx.Err() == nil {
-		evs = append(evs, r.domain(ctx, m, u.Hostname(), now)...)
-	}
-	return evs
-}
-
 // cert reads and stores the certificate. An http:// origin has none: it
 // stores only the check time and writes a row with no value, so a reading
 // from before a move to it stops showing. A read that got no certificate
 // keeps the last reading and its check time, stores only why, and writes no
 // row; one that got a certificate is a reading, verified or not.
-func (r *Runner) cert(ctx context.Context, m store.Monitor, https bool, now time.Time) []store.Event {
+func (r *Runner) cert(ctx context.Context, m store.Monitor, now time.Time) []store.Event {
+	u, err := url.Parse(m.Origin)
+	if err != nil {
+		return nil
+	}
+	https := u.Scheme == "https"
 	st := store.CertState{CheckedAt: now.Format(time.RFC3339)}
 	if https {
 		cctx, cancel := context.WithTimeout(ctx, r.timeout)
@@ -486,9 +668,9 @@ func (r *Runner) cert(ctx context.Context, m store.Monitor, https bool, now time
 		r.logger.Warn("monitor: store certificate", "project_id", m.ProjectID, "error", err)
 	}
 	if !https {
-		return []store.Event{row(m.ProjectID, "cert", now, nil, map[string]string{})}
+		return []store.Event{row(m.ProjectID, "cert", now, nil, map[string]string{"origin": m.Origin})}
 	}
-	attrs := map[string]string{"valid": "0", "issuer": st.Issuer, "error": st.Error}
+	attrs := map[string]string{"origin": m.Origin, "valid": "0", "issuer": st.Issuer, "error": st.Error}
 	if st.Valid {
 		attrs["valid"] = "1"
 	}
@@ -505,33 +687,33 @@ func (r *Runner) cert(ctx context.Context, m store.Monitor, https bool, now time
 	return []store.Event{row(m.ProjectID, "cert", now, value, attrs)}
 }
 
-// domain reads and stores the domain's expiry. A domain RDAP cannot
-// answer for is stored as unknown; a failed lookup keeps the last reading
-// and writes no row.
-func (r *Runner) domain(ctx context.Context, m store.Monitor, host string, now time.Time) []store.Event {
+// domain reads and stores a main domain's expiry. One RDAP cannot answer for (an
+// address, a private suffix, a TLD without RDAP) is stored as unknown; a failed
+// lookup keeps the last reading and writes no row.
+func (r *Runner) domain(ctx context.Context, projectID int64, domain string, now time.Time) []store.Event {
 	dctx, cancel := context.WithTimeout(ctx, rdapTimeout)
-	exp, err := r.rdap.expiry(dctx, host)
+	exp, err := r.rdap.expiry(dctx, domain)
 	cancel()
 	if ctx.Err() != nil {
 		return nil
 	}
 	switch {
 	case errors.Is(err, errUnknown):
-		r.logger.Debug("monitor: domain expiry unknown", "project_id", m.ProjectID, "host", host, "error", err)
+		r.logger.Debug("monitor: domain expiry unknown", "project_id", projectID, "domain", domain, "error", err)
 	case err != nil:
 		// The lookup failed, which says nothing about the domain: the last
 		// reading stands, unrecorded, and is retried after dailyRetry.
-		r.logger.Debug("monitor: domain expiry lookup failed", "project_id", m.ProjectID, "host", host, "error", err)
+		r.logger.Debug("monitor: domain expiry lookup failed", "project_id", projectID, "domain", domain, "error", err)
 		return nil
 	}
-	if err := r.st.SetMonitorDomain(ctx, m.ProjectID, m.Origin, store.DomainState{ExpiresAt: exp, CheckedAt: now.Format(time.RFC3339)}); err != nil {
-		r.logger.Warn("monitor: store domain expiry", "project_id", m.ProjectID, "error", err)
+	if err := r.st.SetMonitorDomain(ctx, projectID, domain, store.DomainState{ExpiresAt: exp, CheckedAt: now.Format(time.RFC3339)}); err != nil {
+		r.logger.Warn("monitor: store domain expiry", "project_id", projectID, "error", err)
 	}
-	attrs := map[string]string{}
+	attrs := map[string]string{"domain": domain}
 	var value *float64
 	if d, ok := daysLeft(exp, now); ok {
 		value = &d
 		attrs["expires"] = exp
 	}
-	return []store.Event{row(m.ProjectID, "domain", now, value, attrs)}
+	return []store.Event{row(projectID, "domain", now, value, attrs)}
 }

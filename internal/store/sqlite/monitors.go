@@ -3,22 +3,36 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"fmt"
+	"slices"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/maindomain"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-const monitorCols = `project_id, enabled, origin, contains, cert_expires_at, cert_issuer,
-	cert_valid, cert_error, cert_checked_at, domain_expires_at, domain_checked_at, redirects,
+const monitorCols = `project_id, origin, enabled, contains, cert_expires_at, cert_issuer,
+	cert_valid, cert_error, cert_checked_at, redirects,
 	check_requested_at, check_finished_at, check_up, check_status, check_reason, check_error, check_ms`
 
 func scanMonitor(s rowScanner) (store.Monitor, error) {
 	var m store.Monitor
-	err := s.Scan(&m.ProjectID, &m.Enabled, &m.Origin, &m.Contains, &m.CertExpiresAt, &m.CertIssuer,
-		&m.CertValid, &m.CertError, &m.CertCheckedAt, &m.DomainExpiresAt, &m.DomainCheckedAt, &m.Redirects,
+	err := s.Scan(&m.ProjectID, &m.Origin, &m.Enabled, &m.Contains, &m.CertExpiresAt, &m.CertIssuer,
+		&m.CertValid, &m.CertError, &m.CertCheckedAt, &m.Redirects,
 		&m.CheckRequestedAt, &m.CheckFinishedAt, &m.CheckUp, &m.CheckStatus, &m.CheckReason, &m.CheckError, &m.CheckMS)
 	return m, err
+}
+
+func scanMonitors(rows *sql.Rows) ([]store.Monitor, error) {
+	defer rows.Close()
+	var out []store.Monitor
+	for rows.Next() {
+		m, err := scanMonitor(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
 }
 
 func unknownProject(id int64) error {
@@ -36,43 +50,20 @@ func projectExists(ctx context.Context, q interface {
 	return n > 0, nil
 }
 
-// getMonitor reads project id's monitor; a project without a row reads as
-// Monitor{ProjectID: id}, an unknown project as ErrNotFound.
-func getMonitor(ctx context.Context, tx *sql.Tx, id int64) (store.Monitor, error) {
-	m, err := scanMonitor(tx.QueryRowContext(ctx,
-		`SELECT `+monitorCols+` FROM monitors WHERE project_id=?`, id))
-	if err == nil {
-		return m, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return store.Monitor{}, err
-	}
-	ok, err := projectExists(ctx, tx, id)
+// ListMonitors lists the project's monitor rows, by origin.
+func (d *DB) ListMonitors(ctx context.Context, projectID int64) ([]store.Monitor, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT `+monitorCols+` FROM monitors WHERE project_id=? ORDER BY origin`, projectID)
 	if err != nil {
-		return store.Monitor{}, err
+		return nil, err
 	}
-	if !ok {
-		return store.Monitor{}, unknownProject(id)
-	}
-	return store.Monitor{ProjectID: id}, nil
+	return scanMonitors(rows)
 }
 
-// GetMonitor reads one project's monitor.
-func (d *DB) GetMonitor(ctx context.Context, projectID int64) (store.Monitor, error) {
-	var m store.Monitor
-	err := d.tx(ctx, func(tx *sql.Tx) (err error) {
-		m, err = getMonitor(ctx, tx, projectID)
-		return err
-	})
-	return m, err
-}
-
-// SetMonitor upserts a project's settings and audits it. A changed origin
-// clears the stored certificate and domain readings, the redirect count and the
-// manual check, which described another host. Enabling a disabled monitor clears their check times only,
-// so the next slot reads them again and the known dates stay until then. It
-// is not managed-config: no version bump.
-func (d *DB) SetMonitor(ctx context.Context, projectID int64, s store.MonitorSettings, a store.AuditEntry) (store.Monitor, error) {
+// SetMonitor upserts a monitor's settings and audits it. Enabling a disabled
+// monitor clears its certificate's check time only, so the certificate is read
+// again and the known date stays until then. It leaves the domain reading alone:
+// other monitors share it. It is not managed-config: no version bump.
+func (d *DB) SetMonitor(ctx context.Context, projectID int64, origin string, s store.MonitorSettings, a store.AuditEntry) (store.Monitor, error) {
 	var m store.Monitor
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		ok, err := projectExists(ctx, tx, projectID)
@@ -82,64 +73,41 @@ func (d *DB) SetMonitor(ctx context.Context, projectID int64, s store.MonitorSet
 		if !ok {
 			return unknownProject(projectID)
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO monitors (project_id, enabled, origin, contains)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO monitors (project_id, origin, enabled, contains)
 			VALUES (?,?,?,?)
-			ON CONFLICT (project_id) DO UPDATE SET
-			  cert_expires_at   = CASE WHEN origin = excluded.origin THEN cert_expires_at ELSE '' END,
-			  cert_issuer       = CASE WHEN origin = excluded.origin THEN cert_issuer ELSE '' END,
-			  cert_valid        = CASE WHEN origin = excluded.origin THEN cert_valid ELSE 0 END,
-			  cert_error        = CASE WHEN origin = excluded.origin THEN cert_error ELSE '' END,
-			  cert_checked_at   = CASE WHEN origin = excluded.origin AND (enabled = 1 OR excluded.enabled = 0) THEN cert_checked_at ELSE '' END,
-			  domain_expires_at = CASE WHEN origin = excluded.origin THEN domain_expires_at ELSE '' END,
-			  domain_checked_at = CASE WHEN origin = excluded.origin AND (enabled = 1 OR excluded.enabled = 0) THEN domain_checked_at ELSE '' END,
-			  redirects         = CASE WHEN origin = excluded.origin THEN redirects ELSE 0 END,
-			  check_requested_at = CASE WHEN origin = excluded.origin THEN check_requested_at ELSE '' END,
-			  check_finished_at = CASE WHEN origin = excluded.origin THEN check_finished_at ELSE '' END,
-			  check_up          = CASE WHEN origin = excluded.origin THEN check_up ELSE 0 END,
-			  check_status      = CASE WHEN origin = excluded.origin THEN check_status ELSE 0 END,
-			  check_reason      = CASE WHEN origin = excluded.origin THEN check_reason ELSE '' END,
-			  check_error       = CASE WHEN origin = excluded.origin THEN check_error ELSE '' END,
-			  check_ms          = CASE WHEN origin = excluded.origin THEN check_ms ELSE 0 END,
-			  enabled = excluded.enabled, origin = excluded.origin, contains = excluded.contains,
+			ON CONFLICT (project_id, origin) DO UPDATE SET
+			  cert_checked_at = CASE WHEN enabled = 1 OR excluded.enabled = 0 THEN cert_checked_at ELSE '' END,
+			  enabled = excluded.enabled, contains = excluded.contains,
 			  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
-			projectID, s.Enabled, s.Origin, s.Contains); err != nil {
+			projectID, origin, s.Enabled, s.Contains); err != nil {
 			return err
 		}
 		if err := audit(ctx, tx, a); err != nil {
 			return err
 		}
-		m, err = getMonitor(ctx, tx, projectID)
+		m, err = scanMonitor(tx.QueryRowContext(ctx,
+			`SELECT `+monitorCols+` FROM monitors WHERE project_id=? AND origin=?`, projectID, origin))
 		return err
 	})
 	return m, err
 }
 
 // ListEnabledMonitors lists the enabled monitors of live (not archived)
-// projects, by project id.
+// projects, by project id and then origin.
 func (d *DB) ListEnabledMonitors(ctx context.Context) ([]store.Monitor, error) {
-	rows, err := d.db.QueryContext(ctx, `SELECT m.project_id, m.enabled, m.origin, m.contains,
-		m.cert_expires_at, m.cert_issuer, m.cert_valid, m.cert_error, m.cert_checked_at,
-		m.domain_expires_at, m.domain_checked_at, m.redirects,
+	rows, err := d.db.QueryContext(ctx, `SELECT m.project_id, m.origin, m.enabled, m.contains,
+		m.cert_expires_at, m.cert_issuer, m.cert_valid, m.cert_error, m.cert_checked_at, m.redirects,
 		m.check_requested_at, m.check_finished_at, m.check_up, m.check_status, m.check_reason, m.check_error, m.check_ms
 		FROM monitors m JOIN projects p ON p.id = m.project_id
-		WHERE m.enabled = 1 AND p.archived_at IS NULL ORDER BY m.project_id`)
+		WHERE m.enabled = 1 AND p.archived_at IS NULL ORDER BY m.project_id, m.origin`)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var out []store.Monitor
-	for rows.Next() {
-		m, err := scanMonitor(rows)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, m)
-	}
-	return out, rows.Err()
+	return scanMonitors(rows)
 }
 
-// SetMonitorCert stores a certificate reading unless the row's origin is no
-// longer origin (the check raced an edit). Not audited.
+// SetMonitorCert stores a certificate reading. A monitor no longer there (the
+// check raced an origin's removal) is left out. Not audited.
 func (d *DB) SetMonitorCert(ctx context.Context, projectID int64, origin string, c store.CertState) error {
 	_, err := d.db.ExecContext(ctx, `UPDATE monitors SET cert_expires_at=?, cert_issuer=?, cert_valid=?,
 		cert_error=?, cert_checked_at=? WHERE project_id=? AND origin=?`,
@@ -155,13 +123,6 @@ func (d *DB) SetMonitorCertError(ctx context.Context, projectID int64, origin, m
 	return err
 }
 
-// SetMonitorDomain stores a domain-expiry reading, guarded like SetMonitorCert.
-func (d *DB) SetMonitorDomain(ctx context.Context, projectID int64, origin string, s store.DomainState) error {
-	_, err := d.db.ExecContext(ctx, `UPDATE monitors SET domain_expires_at=?, domain_checked_at=?
-		WHERE project_id=? AND origin=?`, s.ExpiresAt, s.CheckedAt, projectID, origin)
-	return err
-}
-
 // SetMonitorRedirects stores the redirect count of the last check that got
 // an answer, guarded like SetMonitorCert.
 func (d *DB) SetMonitorRedirects(ctx context.Context, projectID int64, origin string, n int) error {
@@ -170,13 +131,134 @@ func (d *DB) SetMonitorRedirects(ctx context.Context, projectID int64, origin st
 	return err
 }
 
-// RequestMonitorCheck records a manual check for the runner to serve and
-// audits it. The write itself refuses a monitor not enabled and one with a
-// request pending, so two callers cannot both pass.
-func (d *DB) RequestMonitorCheck(ctx context.Context, projectID int64, at string, a store.AuditEntry) error {
+// ListMonitorDomains lists the project's domain readings, by domain.
+func (d *DB) ListMonitorDomains(ctx context.Context, projectID int64) ([]store.MonitorDomain, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT project_id, domain, expires_at, checked_at
+		FROM monitor_domains WHERE project_id=? ORDER BY domain`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.MonitorDomain
+	for rows.Next() {
+		var m store.MonitorDomain
+		if err := rows.Scan(&m.ProjectID, &m.Domain, &m.ExpiresAt, &m.CheckedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, m)
+	}
+	return out, rows.Err()
+}
+
+// monitorDomainsInUse is the main domains of the project's monitor rows.
+func monitorDomainsInUse(ctx context.Context, tx *sql.Tx, projectID int64) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `SELECT origin FROM monitors WHERE project_id=?`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var origin string
+		if err := rows.Scan(&origin); err != nil {
+			return nil, err
+		}
+		out = append(out, maindomain.OfOrigin(origin))
+	}
+	return out, rows.Err()
+}
+
+// SetMonitorDomain stores a domain reading. One no monitor of the project uses
+// any more (the lookup raced an origin's removal) is left out, so that it does
+// not come back. Not audited.
+func (d *DB) SetMonitorDomain(ctx context.Context, projectID int64, domain string, s store.DomainState) error {
+	return d.tx(ctx, func(tx *sql.Tx) error {
+		used, err := monitorDomainsInUse(ctx, tx, projectID)
+		if err != nil || !slices.Contains(used, domain) {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO monitor_domains (project_id, domain, expires_at, checked_at)
+			VALUES (?,?,?,?)
+			ON CONFLICT (project_id, domain) DO UPDATE SET expires_at = excluded.expires_at, checked_at = excluded.checked_at`,
+			projectID, domain, s.ExpiresAt, s.CheckedAt)
+		return err
+	})
+}
+
+// removeMonitorsOffOrigins deletes the project's monitors whose origin is not
+// among eligible, each audited, and the domain readings no monitor left uses.
+func removeMonitorsOffOrigins(ctx context.Context, tx *sql.Tx, projectID int64, eligible []string, a store.AuditEntry) error {
+	removed, err := deleteMonitorsOffOrigins(ctx, tx, projectID, eligible)
+	if err != nil {
+		return err
+	}
+	for _, origin := range removed {
+		if err := audit(ctx, tx, store.AuditEntry{Actor: a.Actor, Action: "monitor.remove",
+			Subject: a.Subject, Detail: "origin removed: " + origin}); err != nil {
+			return err
+		}
+	}
+	used, err := monitorDomainsInUse(ctx, tx, projectID)
+	if err != nil {
+		return err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT domain FROM monitor_domains WHERE project_id=?`, projectID)
+	if err != nil {
+		return err
+	}
+	var unused []string
+	for rows.Next() {
+		var domain string
+		if err := rows.Scan(&domain); err != nil {
+			rows.Close()
+			return err
+		}
+		if !slices.Contains(used, domain) {
+			unused = append(unused, domain)
+		}
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, domain := range unused {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM monitor_domains WHERE project_id=? AND domain=?`, projectID, domain); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// deleteMonitorsOffOrigins deletes the project's monitors whose origin is not
+// among eligible and returns their origins.
+func deleteMonitorsOffOrigins(ctx context.Context, tx *sql.Tx, projectID int64, eligible []string) ([]string, error) {
+	rows, err := tx.QueryContext(ctx, `DELETE FROM monitors
+		WHERE project_id=? AND origin NOT IN (`+placeholders(len(eligible))+`) RETURNING origin`,
+		append([]any{projectID}, toArgs(eligible)...)...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var removed []string
+	for rows.Next() {
+		var origin string
+		if err := rows.Scan(&origin); err != nil {
+			return nil, err
+		}
+		removed = append(removed, origin)
+	}
+	slices.Sort(removed)
+	return removed, rows.Err()
+}
+
+// RequestMonitorCheck records a manual check of one monitor for the runner to
+// serve and audits it. The write itself refuses a monitor not enabled and one
+// with a request pending, so two callers cannot both pass.
+func (d *DB) RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, a store.AuditEntry) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE monitors SET check_requested_at=?
-			WHERE project_id=? AND enabled=1 AND check_requested_at <= check_finished_at`, at, projectID)
+			WHERE project_id=? AND origin=? AND enabled=1 AND check_requested_at <= check_finished_at`, at, projectID, origin)
 		if err != nil {
 			return err
 		}
@@ -187,14 +269,22 @@ func (d *DB) RequestMonitorCheck(ctx context.Context, projectID int64, at string
 		if n == 1 {
 			return audit(ctx, tx, a)
 		}
-		m, err := getMonitor(ctx, tx, projectID)
+		ok, err := projectExists(ctx, tx, projectID)
 		if err != nil {
 			return err
 		}
-		if !m.Enabled {
-			return store.Refuse(store.ErrInvalid, "project %d's monitor is not on", projectID)
+		if !ok {
+			return unknownProject(projectID)
 		}
-		return store.Refuse(store.ErrBusy, "a check of project %d is already running", projectID)
+		var on int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM monitors WHERE project_id=? AND origin=? AND enabled=1`,
+			projectID, origin).Scan(&on); err != nil {
+			return err
+		}
+		if on == 0 {
+			return store.Refuse(store.ErrInvalid, "%s is not monitored in project %d", origin, projectID)
+		}
+		return store.Refuse(store.ErrBusy, "a check of %s is already running", origin)
 	})
 }
 

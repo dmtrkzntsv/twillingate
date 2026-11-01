@@ -1,24 +1,23 @@
 package store
 
-// Monitor is a project's availability-monitor row (migration 044): the
-// settings and the last certificate and domain readings. A project with no
-// row reads as the zero Monitor carrying its id.
+// Monitor is one origin's availability-monitor row (migration 044): its
+// settings and its last certificate reading. An origin with no row reads as a
+// Monitor that is off.
 type Monitor struct {
-	ProjectID        int64
-	Enabled          bool
-	Origin, Contains string
-	CertExpiresAt    string // RFC 3339 UTC, "" unknown
-	CertIssuer       string
-	CertValid        bool
-	CertError        string
-	CertCheckedAt    string
-	DomainExpiresAt  string // YYYY-MM-DD, "" unknown
-	DomainCheckedAt  string
-	Redirects        int // hops the last answered check followed; 0 on an origin change
+	ProjectID     int64
+	Origin        string
+	Enabled       bool
+	Contains      string
+	CertExpiresAt string // RFC 3339 UTC, "" unknown
+	CertIssuer    string
+	CertValid     bool
+	CertError     string
+	CertCheckedAt string
+	Redirects     int // hops the last answered check followed
 
-	// The last manual check, all cleared on an origin change: when it was
-	// requested and finished (RFC 3339 UTC, "" never; pending while requested
-	// is the later), and the availability result it finished with.
+	// The last manual check: when it was requested and finished (RFC 3339 UTC,
+	// "" never; pending while requested is the later), and the availability
+	// result it finished with.
 	CheckRequestedAt, CheckFinishedAt string
 	CheckUp                           bool
 	CheckStatus                       int
@@ -26,10 +25,19 @@ type Monitor struct {
 	CheckMS                           int
 }
 
-// MonitorSettings is what an operator edits.
+// MonitorSettings is what an operator edits on a monitor.
 type MonitorSettings struct {
-	Enabled          bool
-	Origin, Contains string
+	Enabled  bool
+	Contains string
+}
+
+// MonitorDomain is the last registration-expiry reading of a main domain, which
+// a project's monitors on that domain share.
+type MonitorDomain struct {
+	ProjectID int64
+	Domain    string
+	ExpiresAt string // YYYY-MM-DD, "" unknown
+	CheckedAt string
 }
 
 // MonitorCheckResult is how a manual check finished.

@@ -44,9 +44,9 @@ type host struct {
 	activity activityDays
 	// ingestDisabled is INGEST_DISABLED, which limits reports.
 	ingestDisabled bool
-	// monitorInterval is MONITOR_INTERVAL, which get_monitor reports.
+	// monitorInterval is MONITOR_INTERVAL, which list_monitors reports.
 	monitorInterval time.Duration
-	// monitorTimeout is MONITOR_TIMEOUT, which get_monitor reports.
+	// monitorTimeout is MONITOR_TIMEOUT, which list_monitors reports.
 	monitorTimeout time.Duration
 	// sql runs the query tool's SQL on the external SQL engine, its only
 	// use; nil in a process without one, where that SQL is refused

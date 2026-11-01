@@ -15,7 +15,7 @@ import (
 
 func init() { commands["monitor"] = cmdMonitor }
 
-const monitorUsage = "usage: twillingate monitor <get|set|check> -project-id <id> [flags]"
+const monitorUsage = "usage: twillingate monitor <list|set|check> -project-id <id> [flags]"
 
 // What monitor check waits for: the longest check the server's runner can run
 // is the availability check and the certificate read at MONITOR_TIMEOUT each and
@@ -38,33 +38,36 @@ func monitorCheckWait(timeout time.Duration) time.Duration {
 // the drop a runner may well be on it; past it, one would have dropped it.
 func monitorCheckNotFinished(requestedAt string, now time.Time) string {
 	if t, err := time.Parse(time.RFC3339, requestedAt); err == nil && now.Sub(t) <= monitorCheckDrop {
-		return "the check is still running; see monitor get for its result"
+		return "the check is still running; see monitor list for its result"
 	}
 	return "the check did not finish and nothing picked it up: is the server up?"
 }
 
 func cmdMonitor(args []string, stdout io.Writer) int {
-	envFile, sub, subArgs, ok := subcommand("monitor", monitorUsage, []string{"get", "set", "check"}, args, stdout)
+	envFile, sub, subArgs, ok := subcommand("monitor", monitorUsage, []string{"list", "set", "check"}, args, stdout)
 	if !ok {
 		return 2
 	}
 	sf := flag.NewFlagSet("monitor "+sub, flag.ContinueOnError)
 	sf.SetOutput(stdout)
 	project := sf.Int64("project-id", 0, "project id (required)")
+	var origin *string
+	if sub != "list" {
+		origin = sf.String("origin", "", "the monitor's origin, one of the project's exact http(s) origins (required)")
+	}
 	var enable, disable *bool
-	var origin, contains *string
+	var contains *string
 	if sub == "set" {
 		enable = sf.Bool("enable", false, "turn the monitor on")
 		disable = sf.Bool("disable", false, "turn the monitor off")
-		origin = sf.String("origin", "", "the origin to check, one of the project's exact http(s) origins")
 		contains = sf.String("contains", "", "text the page must contain; empty clears it")
 	}
 	if err := sf.Parse(subArgs); err != nil {
 		return 2
 	}
-	if *project == 0 {
+	if *project == 0 || (origin != nil && *origin == "") {
 		fmt.Fprintln(stdout, "usage: twillingate monitor "+sub+" -project-id <id>"+
-			map[string]string{"get": "", "set": " [-enable|-disable] [-origin URL] [-contains TEXT]", "check": ""}[sub])
+			map[string]string{"list": "", "set": " -origin URL [-enable|-disable] [-contains TEXT]", "check": " -origin URL"}[sub])
 		return 2
 	}
 	var spec manage.MonitorSpec
@@ -83,9 +86,6 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 			on := !*disable
 			spec.Enabled = &on
 		}
-		if given["origin"] {
-			spec.Origin = origin
-		}
 		if given["contains"] {
 			spec.Contains = contains
 		}
@@ -98,33 +98,33 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 	defer closeStore()
 	ctx := context.Background()
 	if sub == "check" {
-		return monitorCheck(ctx, ops, *project, monitorCheckWait(cfg.Monitor.Timeout), stdout)
+		return monitorCheck(ctx, ops, *project, *origin, monitorCheckWait(cfg.Monitor.Timeout), stdout)
 	}
-	var m store.Monitor
+	var l manage.MonitorList
 	if sub == "set" {
-		m, err = ops.SetMonitor(ctx, "cli", *project, spec)
+		l, err = ops.SetMonitor(ctx, "cli", *project, *origin, spec)
 	} else {
-		m, err = ops.Monitor(ctx, *project)
+		l, err = ops.ListMonitors(ctx, *project)
 	}
 	if err != nil {
 		fmt.Fprintln(stdout, err)
 		return 1
 	}
-	var eligible []string
-	if p := ops.Reg.Snapshot(ctx).Project(*project); p != nil {
-		eligible = manage.MonitorOrigins(p.AllowedOrigins)
-	}
-	printMonitor(stdout, m, eligible, cfg.Monitor.Timeout)
+	printMonitors(stdout, *project, l, cfg.Monitor.Interval, cfg.Monitor.Timeout)
 	return 0
 }
 
-// monitorCheck asks for a check and waits for the server's runner to serve it.
-func monitorCheck(ctx context.Context, ops *manage.Ops, project int64, wait time.Duration, stdout io.Writer) int {
-	m, err := ops.CheckMonitor(ctx, "cli", project)
+// monitorCheck asks for a check of one monitor and waits for the server's runner
+// to serve it.
+func monitorCheck(ctx context.Context, ops *manage.Ops, project int64, origin string, wait time.Duration, stdout io.Writer) int {
+	l, err := ops.CheckMonitor(ctx, "cli", project, origin)
 	if err != nil {
 		fmt.Fprintln(stdout, err)
 		return 1
 	}
+	// Taken as the server stored it: it was accepted, so this spelling is one.
+	origin = manage.MonitorOrigins([]string{strings.TrimSpace(origin)})[0]
+	m, _ := l.Monitor(origin)
 	deadline := time.Now().Add(wait)
 	for m.CheckRequestedAt > m.CheckFinishedAt {
 		if time.Now().After(deadline) {
@@ -132,10 +132,11 @@ func monitorCheck(ctx context.Context, ops *manage.Ops, project int64, wait time
 			return 1
 		}
 		time.Sleep(monitorCheckPoll)
-		if m, err = ops.Monitor(ctx, project); err != nil {
+		if l, err = ops.ListMonitors(ctx, project); err != nil {
 			fmt.Fprintln(stdout, err)
 			return 1
 		}
+		m, _ = l.Monitor(origin)
 	}
 	fmt.Fprintln(stdout, monitorCheckText(m))
 	if !m.CheckUp && m.CheckReason == "" {
@@ -155,33 +156,48 @@ func monitorCheckText(m store.Monitor) string {
 	return fmt.Sprintf("down, %s: %s (%s)", m.CheckReason, m.CheckError, m.CheckFinishedAt)
 }
 
-func printMonitor(w io.Writer, m store.Monitor, eligible []string, timeout time.Duration) {
+// printMonitors prints a project's monitors and the domains they share.
+func printMonitors(w io.Writer, project int64, l manage.MonitorList, interval, timeout time.Duration) {
+	fmt.Fprintf(w, "project %d monitors\n", project)
+	if interval > 0 {
+		fmt.Fprintf(w, "each site checked every\t%d seconds\n", int(interval/time.Second)*max(l.Enabled(), 1))
+	}
+	if timeout > 0 {
+		fmt.Fprintf(w, "timeout\t%d seconds\n", int(timeout/time.Second))
+	}
+	if len(l.Monitors) == 0 {
+		fmt.Fprintln(w, "no exact http(s) origin to monitor")
+	}
+	for _, m := range l.Monitors {
+		printMonitor(w, m)
+	}
+	for _, d := range l.Domains {
+		fmt.Fprintf(w, "domain %s\texpires %s, checked %s, origins %s\n", d.Domain, orUnknown(d.ExpiresAt), orUnknown(d.CheckedAt), strings.Join(d.Origins, ", "))
+	}
+}
+
+// printMonitor prints one monitor: a line for it, and what it holds under it.
+func printMonitor(w io.Writer, m store.Monitor) {
 	state := "disabled"
 	if m.Enabled {
 		state = "enabled"
 	}
-	fmt.Fprintf(w, "project %d monitor %s\n", m.ProjectID, state)
-	fmt.Fprintf(w, "origin\t%s\n", m.Origin)
-	fmt.Fprintf(w, "contains\t%s\n", m.Contains)
-	fmt.Fprintf(w, "eligible origins\t%s\n", strings.Join(eligible, ", "))
+	fmt.Fprintf(w, "%s %s\n", m.Origin, state)
+	if m.Contains != "" {
+		fmt.Fprintf(w, "  contains\t%s\n", m.Contains)
+	}
 	if !strings.HasPrefix(m.Origin, "http://") && (m.CertCheckedAt != "" || m.CertError != "") {
-		fmt.Fprintf(w, "certificate\texpires %s, issuer %s, valid %t, checked %s", orUnknown(m.CertExpiresAt), orUnknown(m.CertIssuer), m.CertValid, orUnknown(m.CertCheckedAt))
+		fmt.Fprintf(w, "  certificate\texpires %s, issuer %s, valid %t, checked %s", orUnknown(m.CertExpiresAt), orUnknown(m.CertIssuer), m.CertValid, orUnknown(m.CertCheckedAt))
 		if m.CertError != "" {
 			fmt.Fprintf(w, ", error %s", m.CertError)
 		}
 		fmt.Fprintln(w)
 	}
-	if timeout > 0 {
-		fmt.Fprintf(w, "timeout\t%d seconds\n", int(timeout/time.Second))
-	}
 	if m.Redirects > 0 {
-		fmt.Fprintf(w, "redirects\t%d\n", m.Redirects)
-	}
-	if m.DomainCheckedAt != "" {
-		fmt.Fprintf(w, "domain\texpires %s, checked %s\n", orUnknown(m.DomainExpiresAt), m.DomainCheckedAt)
+		fmt.Fprintf(w, "  redirects\t%d\n", m.Redirects)
 	}
 	if m.CheckFinishedAt != "" {
-		fmt.Fprintf(w, "last manual check\t%s\n", monitorCheckText(m))
+		fmt.Fprintf(w, "  last manual check\t%s\n", monitorCheckText(m))
 	}
 }
 
