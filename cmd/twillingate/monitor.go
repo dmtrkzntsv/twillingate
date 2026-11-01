@@ -1,6 +1,7 @@
 package main
 
 import (
+	"cmp"
 	"context"
 	"flag"
 	"fmt"
@@ -41,15 +42,18 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 	}
 	var spec manage.MonitorSpec
 	if sub == "set" {
-		if *enable && *disable {
-			fmt.Fprintln(stdout, "use -enable or -disable, not both")
-			return 2
-		}
 		// A flag left out keeps the value; an empty -contains clears it.
 		given := map[string]bool{}
 		sf.Visit(func(f *flag.Flag) { given[f.Name] = true })
-		if *enable || *disable {
-			on := *enable
+		if given["enable"] && given["disable"] {
+			fmt.Fprintln(stdout, "use -enable or -disable, not both")
+			return 2
+		}
+		if given["enable"] {
+			spec.Enabled = enable
+		}
+		if given["disable"] {
+			on := !*disable
 			spec.Enabled = &on
 		}
 		if given["origin"] {
@@ -93,14 +97,18 @@ func printMonitor(w io.Writer, m store.Monitor, eligible []string) {
 	fmt.Fprintf(w, "origin\t%s\n", m.Origin)
 	fmt.Fprintf(w, "contains\t%s\n", m.Contains)
 	fmt.Fprintf(w, "eligible origins\t%s\n", strings.Join(eligible, ", "))
-	if m.CertCheckedAt != "" {
-		fmt.Fprintf(w, "certificate\texpires %s, issuer %s, valid %t, checked %s\n", m.CertExpiresAt, m.CertIssuer, m.CertValid, m.CertCheckedAt)
+	if !strings.HasPrefix(m.Origin, "http://") && (m.CertCheckedAt != "" || m.CertError != "") {
+		fmt.Fprintf(w, "certificate\texpires %s, issuer %s, valid %t, checked %s", orUnknown(m.CertExpiresAt), orUnknown(m.CertIssuer), m.CertValid, orUnknown(m.CertCheckedAt))
+		if m.CertError != "" {
+			fmt.Fprintf(w, ", error %s", m.CertError)
+		}
+		fmt.Fprintln(w)
 	}
 	if m.DomainCheckedAt != "" {
-		exp := m.DomainExpiresAt
-		if exp == "" {
-			exp = "unknown"
-		}
-		fmt.Fprintf(w, "domain\texpires %s, checked %s\n", exp, m.DomainCheckedAt)
+		fmt.Fprintf(w, "domain\texpires %s, checked %s\n", orUnknown(m.DomainExpiresAt), m.DomainCheckedAt)
 	}
+}
+
+func orUnknown(s string) string {
+	return cmp.Or(s, "unknown")
 }

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 func runMonitor(t *testing.T, want int, args ...string) string {
@@ -52,6 +54,58 @@ func TestMonitorRefusals(t *testing.T) {
 	runMonitor(t, 2)                                                            // no subcommand
 	runMonitor(t, 2, "get")                                                     // no project
 	runMonitor(t, 2, "set", "-project-id", "1", "-enable", "-disable")          // both
+	runMonitor(t, 2, "set", "-project-id", "1", "-enable=false", "-disable")    // both, though they agree
 	runMonitor(t, 1, "set", "-project-id", "1", "-origin", "https://evil.test") // foreign
 	runMonitor(t, 1, "get", "-project-id", "9")                                 // unknown
+}
+
+// A flag given with a value says what it says: the given flags decide.
+func TestMonitorFlagValues(t *testing.T) {
+	withDB(t)
+	var out bytes.Buffer
+	if code := run([]string{"project", "create", "-name", "Shop", "-origin", "https://shop.example.com"}, &out); code != 0 {
+		t.Fatal(out.String())
+	}
+	for _, c := range []struct {
+		flag string
+		want string
+	}{
+		{"-disable=false", "monitor enabled"}, {"-enable=false", "monitor disabled"},
+		{"-enable=true", "monitor enabled"}, {"-disable=true", "monitor disabled"},
+	} {
+		if got := runMonitor(t, 0, "set", "-project-id", "1", c.flag); !strings.Contains(got, c.want) {
+			t.Errorf("%s = %q, want %q", c.flag, got, c.want)
+		}
+	}
+}
+
+func TestPrintMonitorCertificate(t *testing.T) {
+	const at = "2026-11-01T00:00:00Z"
+	for _, c := range []struct {
+		name string
+		m    store.Monitor
+		want string // "" when no certificate line is printed
+	}{
+		{"read", store.Monitor{Origin: "https://a.example", CertExpiresAt: "2027-01-01T00:00:00Z", CertIssuer: "R3", CertValid: true, CertCheckedAt: at},
+			"certificate\texpires 2027-01-01T00:00:00Z, issuer R3, valid true, checked " + at + "\n"},
+		{"never read, failed", store.Monitor{Origin: "https://a.example", CertError: "refused"},
+			"certificate\texpires unknown, issuer unknown, valid false, checked unknown, error refused\n"},
+		{"read, last check failed", store.Monitor{Origin: "https://a.example", CertExpiresAt: "2027-01-01T00:00:00Z", CertIssuer: "R3", CertValid: true, CertCheckedAt: at, CertError: "refused"},
+			"certificate\texpires 2027-01-01T00:00:00Z, issuer R3, valid true, checked " + at + ", error refused\n"},
+		{"never read", store.Monitor{Origin: "https://a.example"}, ""},
+		{"plain http", store.Monitor{Origin: "http://a.example", CertCheckedAt: at}, ""},
+	} {
+		var out bytes.Buffer
+		printMonitor(&out, c.m, nil)
+		got := out.String()
+		if c.want == "" {
+			if strings.Contains(got, "certificate") {
+				t.Errorf("%s: printed %q, want no certificate line", c.name, got)
+			}
+			continue
+		}
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s: printed %q, want %q", c.name, got, c.want)
+		}
+	}
 }
