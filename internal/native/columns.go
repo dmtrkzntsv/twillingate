@@ -5,12 +5,13 @@ import (
 	"strings"
 )
 
-// columnType is a dimension column's type, as ColumnTypes names it.
+// columnType is a dimension column's type, or that of a column latest reads,
+// as ColumnTypes names it.
 func columnType(column string) string {
 	switch {
 	case column == "day", isFirstSeen(column):
 		return "day"
-	case column == "bucket", plainColumns[column]:
+	case column == "bucket", column == "value", plainColumns[column]:
 		return "number"
 	}
 	return "text"

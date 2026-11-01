@@ -348,7 +348,7 @@ func TestRunnerWritesChecksRows(t *testing.T) {
 	}
 
 	// A day later both daily checks are due again on every monitor; an
-	// http:// origin stores a check time but writes no cert row.
+	// http:// origin stores a check time and writes a cert row with no value.
 	now = now.Add(25 * time.Hour)
 	r.tick(ctx, now.Add(-60*time.Second), now)
 	waitIdle(t, r, 0)
@@ -359,14 +359,18 @@ func TestRunnerWritesChecksRows(t *testing.T) {
 	if st.certs[1].ExpiresAt != "" {
 		t.Errorf("http origin cert %+v", st.certs[1])
 	}
-	var certRows int
+	certRows := map[int64]int{}
 	for _, e := range lg.all() {
-		if e.EventName == "cert" {
-			certRows++
+		if e.EventName != "cert" {
+			continue
+		}
+		certRows[e.ProjectID]++
+		if e.ProjectID != 3 && (e.Value != nil || len(e.Attributes) != 0) {
+			t.Errorf("http origin's cert row: value %v, attrs %v, want neither", e.Value, e.Attributes)
 		}
 	}
-	if certRows != 2 {
-		t.Errorf("%d cert rows, want 2 (project 3 twice, none for http origins)", certRows)
+	if certRows[1] != 1 || certRows[2] != 1 || certRows[3] != 2 {
+		t.Errorf("cert rows per project = %v, want one each for the http origins, two for project 3", certRows)
 	}
 }
 
@@ -801,8 +805,8 @@ func TestRunnerDomainRow(t *testing.T) {
 			t.Errorf("uptime row %+v", e.Attributes)
 		}
 	}
-	if len(names) != 2 {
-		t.Errorf("rows %v, want uptime and domain (no cert for http)", names)
+	if len(names) != 3 {
+		t.Errorf("rows %v, want uptime, an empty cert (http has none) and domain", names)
 	}
 	if d := st.domains[4]; d.ExpiresAt != "2027-03-14" {
 		t.Errorf("stored domain %+v", d)

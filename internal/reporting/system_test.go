@@ -1094,6 +1094,51 @@ func systemEvents(projectID int64, today civil.Date) []store.Event {
 // checks: three of four uptime rows a day succeed, the latest certificate
 // and domain readings in the 7d range are the day before today's, and
 // Recent failures lists the newest day first.
+// TestAvailabilityTilesShowTheNewestReading: each stale case of the
+// certificate and domain tiles, on a project of its own. Two readings in a
+// day show the later, and a newest reading with no value (an http:// origin,
+// a domain gone unknown) shows no figure, not the older one.
+func TestAvailabilityTilesShowTheNewestReading(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+	from, to := presetDates("7d", f.today)
+	num := func(v float64) *float64 { return &v }
+	day := f.today.AddDays(-1).Time()
+	for _, c := range []struct {
+		name     string
+		readings []*float64
+		want     string
+	}{
+		{"same day renewal", []*float64{num(10), num(90)}, "90"},
+		{"same day change down", []*float64{num(90), num(10)}, "10"},
+		{"newest empty", []*float64{num(90), nil}, ""},
+		{"empty then back", []*float64{nil, num(30)}, "30"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pid := mustCreateProject(t, f.st, c.name)
+			for _, event := range []string{"cert", "domain"} {
+				for i, v := range c.readings {
+					f.files.Write(t, store.Event{ID: fmt.Sprintf("%d-%s-%d", pid, event, i), ProjectID: pid, Family: store.FamilyChecks,
+						EventName: event, TS: day.Add(time.Duration(i+1) * time.Hour), Value: v})
+				}
+			}
+			for _, tile := range []string{"cert-days", "domain-days"} {
+				got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, f.svc, 8, tile), ProjectID: pid, From: from, To: to})
+				if err != nil {
+					t.Fatal(err)
+				}
+				res, ok := got.Data.(readsql.Result)
+				if !ok {
+					t.Fatalf("%s: data is %T", tile, got.Data)
+				}
+				if v := column(t, res, 0, "value"); v != c.want {
+					t.Errorf("%s = %q, want %q", tile, v, c.want)
+				}
+			}
+		})
+	}
+}
+
 func TestAvailabilityFigures(t *testing.T) {
 	ctx := context.Background()
 	f := newSystemFixture(t)
@@ -1113,10 +1158,15 @@ func TestAvailabilityFigures(t *testing.T) {
 	if v := column(t, read("uptime"), 0, "value"); v != "0.75" {
 		t.Errorf("uptime = %q, want 0.75", v)
 	}
-	for name, want := range map[string]string{"cert-days": "79", "domain-days": "199"} {
+	// The newest reading, the later of its day's two, which is greater than
+	// the day's first: not the day's least.
+	for name, want := range map[string]string{"cert-days": "149", "domain-days": "289"} {
 		res := read(name)
-		if v := column(t, res, len(res.Rows)-1, "value"); v != want {
-			t.Errorf("%s last value = %q, want %s", name, v, want)
+		if len(res.Rows) != 1 {
+			t.Errorf("%s: %d rows, want one figure", name, len(res.Rows))
+		}
+		if v := column(t, res, 0, "value"); v != want {
+			t.Errorf("%s = %q, want %s", name, v, want)
 		}
 	}
 	res := read("failures")

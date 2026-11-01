@@ -332,7 +332,9 @@ identifies itself as
   fails with `blocked`, checked when the connection is made. A site reachable
   only on a LAN cannot be monitored.
 - **An `http://` origin** is checked over plain HTTP and has no certificate
-  check; its domain check still runs.
+  check: its daily `cert` row has no value, so the certificate tile goes blank
+  rather than keep a reading from before a move to it. Its domain check still
+  runs.
 
 **The `checks` table.** Every check is a row of the `checks` family in the
 project's event files, read with structured queries (`table: "checks"`, see
@@ -344,7 +346,7 @@ traffic: checks never count against an allowance. They still take disk, about
 | Row | Written | `value` | Attributes |
 | --- | --- | --- | --- |
 | `uptime` | every check | response time in milliseconds, to the end of the body or to the failure | `up` (`1` or `0`); `status`, the final HTTP status, absent without a response; `reason` and `error` when down; `redirects`, the redirect hops followed (`"0"` when none; on a failed check, the count reached) |
-| `cert` | once a day and when the monitor is enabled or its origin changes, on `https://` origins, when a certificate was read (verified or not) | whole days left | `expires` (`YYYY-MM-DD`), `issuer`, `valid` (`1` or `0`), `error`, why it did not verify |
+| `cert` | once a day and when the monitor is enabled or its origin changes, when a certificate was read (verified or not), and on an `http://` origin, which has none | whole days left, absent on an `http://` origin | `expires` (`YYYY-MM-DD`), `issuer`, `valid` (`1` or `0`), `error`, why it did not verify; none on an `http://` origin |
 | `domain` | as `cert`, for the origin host's registrable domain (public suffix list) | calendar days (UTC) until the registration expires, 0 on the day itself, absent when unknown | `expires` (`YYYY-MM-DD`) |
 
 The domain's expiry is read over RDAP; a top-level domain with no RDAP service,
@@ -1954,7 +1956,7 @@ may name but not a dimension or series. It takes the metrics `count`
 | `count` | | rows |
 | `actors`, `users`, `groups` | | distinct `actor_id`, `user_id`, `group_id` over the range (NULL left out) |
 | `sum`, `avg`, `min`, `max` | `column`: `value`, `sample_rate`, `display_width` or `display_height`; on `sessions` `duration_sec` or `views`; on `identities` `views` or `events`. `min` and `max` also take `day`, `ts` and `received_at`, on `sessions` `day`, `started_at` and `ended_at` (below) | the column's aggregate; empty over no value |
-| `latest` | `column`: any column a filter names, `attr_<key>` and `def_` ones included, `bucket` and the identity ones (`user_label` and the like) aside | the column's value on the group's latest row by `ts` that has one (a later row with the column NULL or empty text does not hide it) (on the day, in a trend), the greater value on a tie, of the column's type: an instance's version as last seen (`{"op": "latest", "column": "app_version"}` in a breakdown by `group_id`); empty over none. Not on `sessions` or `identities`, nor in a ratio's side or a trend of several metrics |
+| `latest` | `column`: `value`, or any column a filter names, `attr_<key>` and `def_` ones included, `bucket` and the identity ones (`user_label` and the like) aside | the column's value on the group's latest row by `ts` that has one (a later row with the column NULL or empty text does not hide it) (on the day, in a trend), the greater value on a tie, of the column's type: an instance's version as last seen (`{"op": "latest", "column": "app_version"}` in a breakdown by `group_id`); empty over none. `value` alone reads the latest row whether it has one or not, so a newest row with no value reads as empty: the last `cert` reading (`{"op": "latest", "column": "value"}`) is empty once the origin moves to `http://`. Not on `sessions` or `identities`, nor in a ratio's side or a trend of several metrics |
 | `daily_sum`, `daily_max`, `daily_avg` | `of`: `actors`, `users` or `groups` | the distinct count per day, summed, maxed or averaged over the days with rows |
 | `days` | | the distinct days with rows (`count(DISTINCT day)`), exact; `0` over none; not on `sessions` or `identities` |
 | `bounces` | | `sessions` only: the sessions of one view |

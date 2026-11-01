@@ -253,3 +253,13 @@ changes, so the dates appear immediately.
   and the daily certificate read; the RDAP lookup keeps its own 15 s, as it
   talks to a registry, not the site. `get_monitor` returns `timeout_seconds`
   and `monitor get` prints it.
+- **Tiles show the newest reading (user's decision, after planning):** the
+  certificate and domain tiles were the day's `min(value)` with stat aggregate
+  `last`, which showed an older figure after a same-day re-check, an origin
+  change or a move to an `http://` or unknown-expiry origin. They are now a
+  `stat` of `latest` of `value`. The native `latest` metric reads `value`, and
+  for that column alone a newest row with no value reads as empty instead of
+  falling back to an older row. Every reading writes a row: an `http://` origin
+  a `cert` row with no value and no attributes, an unknown domain a `domain` row
+  with no value as before. A certificate read that failed still writes no row
+  and keeps the last reading.

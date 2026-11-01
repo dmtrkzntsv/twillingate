@@ -364,10 +364,10 @@ func (r *Runner) daily(ctx context.Context, m store.Monitor) []store.Event {
 }
 
 // cert reads and stores the certificate. An http:// origin has none: it
-// stores only the check time and writes no row. A read that got no
-// certificate keeps the last reading and its check time, stores only why,
-// and writes no row; one that got a certificate is a reading, verified or
-// not.
+// stores only the check time and writes a row with no value, so a reading
+// from before a move to it stops showing. A read that got no certificate
+// keeps the last reading and its check time, stores only why, and writes no
+// row; one that got a certificate is a reading, verified or not.
 func (r *Runner) cert(ctx context.Context, m store.Monitor, https bool, now time.Time) []store.Event {
 	st := store.CertState{CheckedAt: now.Format(time.RFC3339)}
 	if https {
@@ -388,7 +388,7 @@ func (r *Runner) cert(ctx context.Context, m store.Monitor, https bool, now time
 		r.logger.Warn("monitor: store certificate", "project_id", m.ProjectID, "error", err)
 	}
 	if !https {
-		return nil
+		return []store.Event{row(m.ProjectID, "cert", now, nil, map[string]string{})}
 	}
 	attrs := map[string]string{"valid": "0", "issuer": st.Issuer, "error": st.Error}
 	if st.Valid {
