@@ -873,7 +873,7 @@ func TestMonitorInterval(t *testing.T) {
 		}
 	}
 	_, err = load(t, map[string]string{"MONITOR_INTERVAL": "9"})
-	if err == nil || !strings.Contains(err.Error(), "config: MONITOR_INTERVAL must be between 10 and 3600 seconds") {
+	if err == nil || !strings.Contains(err.Error(), "config: MONITOR_INTERVAL must be between 10 and 3600 seconds: 9") {
 		t.Errorf("err = %v", err)
 	}
 }

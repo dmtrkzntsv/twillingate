@@ -56,15 +56,15 @@ type FormsConfig struct {
 // (RefreshAge instead), which must not exceed CacheAge when that is
 // non-zero. REPORTING_CACHE_MAX_AGE 0 turns the cache off outright: every
 // request, fresh or not, loads again.
+type ReportingConfig struct {
+	CacheAge, RefreshAge time.Duration
+}
+
 // MonitorConfig is the availability monitor's settings.
 type MonitorConfig struct {
 	// Interval (MONITOR_INTERVAL, whole seconds) is the time between
 	// checks of each enabled monitor: fixed, 10 to 3600.
 	Interval time.Duration
-}
-
-type ReportingConfig struct {
-	CacheAge, RefreshAge time.Duration
 }
 
 // retired are settings twillingate no longer reads, each with why. One
@@ -407,7 +407,7 @@ func (c *Config) validate() error {
 			c.Reporting.RefreshAge, c.Reporting.CacheAge)
 	}
 	if c.Monitor.Interval < 10*time.Second || c.Monitor.Interval > time.Hour {
-		return fmt.Errorf("config: MONITOR_INTERVAL must be between 10 and 3600 seconds")
+		return fmt.Errorf("config: MONITOR_INTERVAL must be between 10 and 3600 seconds: %d", int(c.Monitor.Interval/time.Second))
 	}
 	return nil
 }
