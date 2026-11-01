@@ -652,6 +652,32 @@ describe('Dashboard', () => {
     expect(screen.getByRole('menuitemcheckbox', { name: 'Auto-refresh every 15 min' })).toHaveAttribute('aria-checked', 'true')
   })
 
+  it("keeps each group's auto-refresh choice when moving to another group", async () => {
+    mockApi()
+    vi.mocked(endpoints.dashboards).mockResolvedValue({ ...dashboardsList(), auto_refresh_seconds: 900 })
+    localStorage.setItem('twillingate.auto_refresh.13', 'true')
+    renderAt('/dashboards/13')
+    const autoRefresh = async () => {
+      await userEvent.click(await screen.findByRole('button', { name: 'Dashboard actions' }))
+      return screen.getByRole('menuitemcheckbox', { name: 'Auto-refresh every 15 min' })
+    }
+    expect(await autoRefresh()).toHaveAttribute('aria-checked', 'true')
+    await userEvent.keyboard('{Escape}')
+
+    // The page stays mounted from Marketing (group 13) to Launch week (group 10).
+    await userEvent.click(screen.getByRole('link', { name: 'Launch week' }))
+    expect(await screen.findByRole('heading', { level: 1, name: 'Launch week' })).toBeInTheDocument()
+    const auto = await autoRefresh()
+    expect(auto).toHaveAttribute('aria-checked', 'false')
+    await userEvent.click(auto)
+    expect(localStorage.getItem('twillingate.auto_refresh.10')).toBe('true')
+    expect(localStorage.getItem('twillingate.auto_refresh.13')).toBe('true')
+
+    await userEvent.click(await autoRefresh())
+    expect(localStorage.getItem('twillingate.auto_refresh.10')).toBeNull()
+    expect(localStorage.getItem('twillingate.auto_refresh.13')).toBe('true')
+  })
+
   it('offers no auto-refresh when the server allows none', async () => {
     mockApi()
     renderAt('/dashboards/13')
