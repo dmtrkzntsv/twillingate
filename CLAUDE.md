@@ -11,6 +11,7 @@ internal/app/        composition root: opens the store, wires the surfaces
 internal/server/     ingest HTTP API; serves the JS SDK and the helper scripts
 internal/api/        private API: MCP endpoint and REST routes, one auth
 internal/jobs/       daily pass: salt rotation, aggregation, prune, view rebuild
+internal/monitor/    availability checks, certificate and domain expiry, written as checks rows
 internal/pipeline/   write buffer between ingest and the store
 internal/manage/     project registry snapshot and its audited operations
 internal/reporting/  dashboards, widgets and components: validation, operations, system dashboards, cache; embeds the web app
@@ -33,7 +34,7 @@ web/                 dashboard web app source (React, TypeScript); the build is 
 deploy/              installer, systemd unit, compose file, UPGRADES.md; ship/ holds the unit template and env example ship installs
 ```
 
-`app` imports the surfaces (`server`, `api`, `jobs`, `pipeline`);
+`app` imports the surfaces (`server`, `api`, `jobs`, `monitor`, `pipeline`);
 surfaces import `manage`, `reporting` and the leaves, never each other; `manage` and the
 leaves import only leaves. A surface that needs another's behaviour takes an
 interface and `app` passes the implementation (`server.Enqueuer` is

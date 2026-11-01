@@ -312,7 +312,9 @@ twillingate monitor set -project-id 1 -disable
 **What is checked.** One `GET` of the origin itself (`https://host/`), nothing
 else, with a 10 second limit (less when the interval is shorter) and no
 retries; each check is one row. The site is up when the final status is 2xx and,
-with `contains`, the text is on the page.
+with `contains`, the text is on the page. The request sends no cookies and
+identifies itself as
+`User-Agent: twillingate-monitor/<version> (+https://github.com/dmtrkzntsv/twillingate)`.
 
 - **Redirects** are followed, but every hop must match the project's
   `allowed_origins` (wildcard patterns count; a bare `*` does not). A redirect
@@ -321,7 +323,7 @@ with `contains`, the text is on the page.
   to `https://www.example.com` reads as down until it adds the `www` origin.
   More than 10 hops is also `redirect`.
 - **Private addresses** are refused on every install: an origin or redirect hop
-  that resolves to a loopback, private, link-local, CGNAT or unspecified address
+  that resolves to a loopback, private, link-local, CGNAT, multicast or unspecified address
   fails with `blocked`, checked when the connection is made. A site reachable
   only on a LAN cannot be monitored.
 - **An `http://` origin** is checked over plain HTTP and has no certificate

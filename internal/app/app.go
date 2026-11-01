@@ -19,6 +19,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
 	"github.com/dmtrkzntsv/twillingate/internal/jobs"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/monitor"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/pipeline"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
@@ -194,9 +195,23 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	jobsDone := make(chan struct{})
 	go func() { runner.Run(jobsCtx); close(jobsDone) }()
 
-	// stopBackground shuts down jobs then pipeline, in that order, for use
-	// on early-return error paths before the HTTP surfaces exist.
+	// The availability monitor runs in the process that writes the event
+	// files, beside jobs, and stops before the archive log closes.
+	monCtx, stopMonitor := context.WithCancel(context.Background())
+	monDone := make(chan struct{})
+	if archiveLog != nil {
+		mon := monitor.New(st, monitorOrigins{reg}, archiveLog, cfg.Monitor.Interval, logger)
+		go func() { mon.Run(monCtx); close(monDone) }()
+	} else {
+		close(monDone)
+	}
+
+	// stopBackground shuts down the monitor, jobs, then the pipeline, in
+	// that order, for use on early-return error paths before the HTTP
+	// surfaces exist.
 	stopBackground := func() {
+		stopMonitor()
+		<-monDone
 		stopJobs()
 		<-jobsDone
 		stopPipe()
@@ -324,6 +339,8 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	<-summaryDone
 	stopCheck()
 	<-checkDone
+	stopMonitor()
+	<-monDone
 	stopJobs()
 	<-jobsDone
 	stopPipe() // triggers final flush
@@ -335,6 +352,13 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		}
 	}
 	return listenErr
+}
+
+// monitorOrigins hands the monitor the registry's current origin rules.
+type monitorOrigins struct{ reg *manage.Registry }
+
+func (o monitorOrigins) RedirectAllowed(projectID int64, target, reqOrigin string) bool {
+	return o.reg.Snapshot(context.Background()).RedirectAllowed(projectID, target, reqOrigin)
 }
 
 // DatabasePath extracts the filesystem path from a sqlite DSN: the data dir

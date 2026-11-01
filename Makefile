@@ -39,7 +39,7 @@ test: $(UI)
 # SQLite: under -race they take seconds, so check keeps them race-tested on
 # every pull request. A package that opens SQLite in its tests belongs in
 # `make test` only.
-RACE_PKGS = ./internal/pipeline/... ./internal/identity/... ./internal/geo/...
+RACE_PKGS = ./internal/pipeline/... ./internal/identity/... ./internal/geo/... ./internal/monitor/...
 
 # vet covers the two release targets' code paths alike: both are 64-bit
 # (dist builds linux/amd64 and linux/arm64).
