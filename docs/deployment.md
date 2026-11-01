@@ -160,6 +160,7 @@ The stream sends a keepalive every 15 seconds, well inside Cloudflare's
 | `SQL_ENGINE_SOCKET` | Path of the Unix socket of the [external SQL engine](#external-sql-engine) that answers SQL: a widget's and `query`'s. Unset or empty, there is none: SQL widgets and `query`'s `sql` are refused, `sql` leaves the component list, and everything else works. Give the console's process the same value as `reporting dev`. Default empty. |
 | `REPORTING_CACHE_MAX_AGE` | How long an ordinary widget data request reuses a sql widget's loaded value before loading again. 0 turns the cache off: every request loads again. Default `15m`. |
 | `REPORTING_REFRESH_MAX_AGE` | A `fresh=true` request reuses a result younger than this instead of `REPORTING_CACHE_MAX_AGE`; must not exceed it when that is non-zero. Default `1m`. A dashboard with auto-refresh on reloads every max(`REPORTING_CACHE_MAX_AGE`, `REPORTING_REFRESH_MAX_AGE`) while its window has focus; both 0 removes the option. |
+| `MONITOR_INTERVAL` | Seconds between availability checks of each enabled monitor; fixed, 10 to 3600, default 120. |
 
 Day counts end in `_DAYS` and take a whole number; every other time
 (`BUFFER_FLUSH_INTERVAL`, `CONSOLE_QUERY_TIMEOUT`, `REPORTING_*_MAX_AGE`)

@@ -847,3 +847,33 @@ func TestRetiredEngineSettingsAreIgnored(t *testing.T) {
 		}
 	}
 }
+
+// TestMonitorInterval: MONITOR_INTERVAL is whole seconds, 10 to 3600,
+// 120 unset.
+func TestMonitorInterval(t *testing.T) {
+	c, err := load(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Monitor.Interval != 120*time.Second {
+		t.Errorf("default Monitor.Interval = %v, want 2m", c.Monitor.Interval)
+	}
+	for v, want := range map[string]time.Duration{"30": 30 * time.Second, "10": 10 * time.Second, "3600": time.Hour} {
+		c, err := load(t, map[string]string{"MONITOR_INTERVAL": v})
+		if err != nil {
+			t.Fatalf("MONITOR_INTERVAL=%s: %v", v, err)
+		}
+		if c.Monitor.Interval != want {
+			t.Errorf("MONITOR_INTERVAL=%s: %v, want %v", v, c.Monitor.Interval, want)
+		}
+	}
+	for _, v := range []string{"9", "3601", "abc", "0", "-5"} {
+		if _, err := load(t, map[string]string{"MONITOR_INTERVAL": v}); err == nil {
+			t.Errorf("MONITOR_INTERVAL=%s accepted", v)
+		}
+	}
+	_, err = load(t, map[string]string{"MONITOR_INTERVAL": "9"})
+	if err == nil || !strings.Contains(err.Error(), "config: MONITOR_INTERVAL must be between 10 and 3600 seconds") {
+		t.Errorf("err = %v", err)
+	}
+}

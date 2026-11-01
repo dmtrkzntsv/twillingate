@@ -56,6 +56,13 @@ type FormsConfig struct {
 // (RefreshAge instead), which must not exceed CacheAge when that is
 // non-zero. REPORTING_CACHE_MAX_AGE 0 turns the cache off outright: every
 // request, fresh or not, loads again.
+// MonitorConfig is the availability monitor's settings.
+type MonitorConfig struct {
+	// Interval (MONITOR_INTERVAL, whole seconds) is the time between
+	// checks of each enabled monitor: fixed, 10 to 3600.
+	Interval time.Duration
+}
+
 type ReportingConfig struct {
 	CacheAge, RefreshAge time.Duration
 }
@@ -161,6 +168,7 @@ type Config struct {
 	Retention       Retention
 	Forms           FormsConfig
 	Reporting       ReportingConfig
+	Monitor         MonitorConfig
 	Console         ConsoleConfig
 	// Ignored lists the retired settings the environment still sets, in
 	// the order of retired.
@@ -273,6 +281,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			CacheAge:   e.dur("REPORTING_CACHE_MAX_AGE", 15*time.Minute),
 			RefreshAge: e.dur("REPORTING_REFRESH_MAX_AGE", time.Minute),
 		},
+		Monitor: MonitorConfig{Interval: time.Duration(e.num("MONITOR_INTERVAL", 120)) * time.Second},
 	}
 	c.Console = ConsoleConfig{
 		Addr: e.str("CONSOLE_ADDR", c.IngestAddr),
@@ -396,6 +405,9 @@ func (c *Config) validate() error {
 	if c.Reporting.CacheAge > 0 && c.Reporting.RefreshAge > c.Reporting.CacheAge {
 		return fmt.Errorf("config: REPORTING_REFRESH_MAX_AGE (%s) exceeds REPORTING_CACHE_MAX_AGE (%s)",
 			c.Reporting.RefreshAge, c.Reporting.CacheAge)
+	}
+	if c.Monitor.Interval < 10*time.Second || c.Monitor.Interval > time.Hour {
+		return fmt.Errorf("config: MONITOR_INTERVAL must be between 10 and 3600 seconds")
 	}
 	return nil
 }
