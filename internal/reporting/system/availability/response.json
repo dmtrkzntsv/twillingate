@@ -1,0 +1,7 @@
+{
+  "component": "stat",
+  "title": "Response time (ms)",
+  "props": {
+    "format": "number"
+  }
+}

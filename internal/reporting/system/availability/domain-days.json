@@ -1,0 +1,8 @@
+{
+  "component": "stat",
+  "title": "Domain renews in (days)",
+  "props": {
+    "format": "number",
+    "aggregate": "last"
+  }
+}

@@ -121,8 +121,15 @@ var parityAllowances = map[string][]allowance{
 // newSystemWidgets names the system query widgets that have no old SQL
 // to compare with (one split from another, say), each with the reason.
 var newSystemWidgets = map[string]string{
-	"vitals/by-device":  "G9: split from by-device-browser; TestVitalsByDeviceAndBrowserSplitTheOldTable holds it to the old table's device rows",
-	"vitals/by-browser": "G9: split from by-device-browser; TestVitalsByDeviceAndBrowserSplitTheOldTable holds it to the old table's browser rows",
+	"vitals/by-device":             "G9: split from by-device-browser; TestVitalsByDeviceAndBrowserSplitTheOldTable holds it to the old table's device rows",
+	"vitals/by-browser":            "G9: split from by-device-browser; TestVitalsByDeviceAndBrowserSplitTheOldTable holds it to the old table's browser rows",
+	"availability/uptime":          "new in availability monitoring",
+	"availability/response":        "new in availability monitoring",
+	"availability/cert-days":       "new in availability monitoring",
+	"availability/domain-days":     "new in availability monitoring",
+	"availability/response-by-day": "new in availability monitoring",
+	"availability/reasons":         "new in availability monitoring",
+	"availability/failures":        "new in availability monitoring",
 }
 
 // TestSystemWidgetParity runs the harness on this release's system

@@ -1,0 +1,1 @@
+{"query":{"kind":"trend","table":"checks","where":[{"column":"event_name","op":"eq","values":["cert"]}],"metrics":[{"op":"avg","column":"value","round":0,"as":"value"}]},"rename":{"day":"x"}}

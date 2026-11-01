@@ -1,0 +1,7 @@
+{
+  "component": "pie",
+  "title": "Failures by reason",
+  "props": {
+    "format": "number"
+  }
+}

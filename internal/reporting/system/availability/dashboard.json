@@ -1,0 +1,18 @@
+{
+  "id": 8,
+  "title": "Availability",
+  "range": "7d",
+  "sidebar": true,
+  "project_tab": true,
+  "group": 1,
+  "layout": [
+    {"widget": "uptime", "width": 3, "height": 3},
+    {"widget": "response", "width": 3, "height": 3},
+    {"widget": "cert-days", "width": 3, "height": 3},
+    {"widget": "domain-days", "width": 3, "height": 3},
+    {"widget": "response-by-day", "width": 8, "height": 8},
+    {"widget": "reasons", "width": 4, "height": 8},
+    {"widget": "failures", "width": 12, "height": 10},
+    {"widget": "about", "width": 12, "height": 4}
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "component": "line",
+  "title": "Response time by day (ms)",
+  "props": {
+    "format": "number"
+  }
+}

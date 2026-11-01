@@ -73,7 +73,7 @@ func TestSystemDashboards(t *testing.T) {
 			titles = append(titles, fmt.Sprintf("%d %s %s", d.ID, d.Title, d.Range))
 		}
 	}
-	want := "1 Views 7d, 2 Product 7d, 3 Users 7d, 4 Groups 7d, 5 Retention 90d, 6 Web Vitals 30d, 7 Measures 7d"
+	want := "1 Views 7d, 2 Product 7d, 3 Users 7d, 4 Groups 7d, 5 Retention 90d, 6 Web Vitals 30d, 7 Measures 7d, 8 Availability 7d"
 	if got := strings.Join(titles, ", "); got != want {
 		t.Fatalf("system dashboards = %s, want %s", got, want)
 	}
@@ -133,7 +133,7 @@ func TestSystemDashboards(t *testing.T) {
 }
 
 // TestSystemDashboardGroups is D16: Views (id 1) names no group of its
-// own, so it is group 1; every other system dashboard (ids 2-7) names
+// own, so it is group 1; every other system dashboard (ids 2-8) names
 // "group": 1 in its dashboard.json, so the system dashboards are one
 // sidebar entry. This release's
 // embedded system definition (loaded by the real Migrate, not a test
@@ -152,14 +152,14 @@ func TestSystemDashboardGroups(t *testing.T) {
 			got[d.ID] = d.GroupID
 		}
 	}
-	want := map[int64]int64{1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1}
+	want := map[int64]int64{1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 8: 1}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("system dashboard GroupIDs = %v, want %v", got, want)
 	}
 }
 
 // TestSystemGroupNames: Views (id 1) founds the Reports group and gives
-// it its name (D6); the seven system dashboards are one group, so all of
+// it its name (D6); the eight system dashboards are one group, so all of
 // them read it.
 func TestSystemGroupNames(t *testing.T) {
 	ctx := context.Background()
@@ -175,7 +175,7 @@ func TestSystemGroupNames(t *testing.T) {
 			got[d.ID] = d.GroupTitle
 		}
 	}
-	want := map[int64]string{1: "Reports", 2: "Reports", 3: "Reports", 4: "Reports", 5: "Reports", 6: "Reports", 7: "Reports"}
+	want := map[int64]string{1: "Reports", 2: "Reports", 3: "Reports", 4: "Reports", 5: "Reports", 6: "Reports", 7: "Reports", 8: "Reports"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("system dashboard group titles = %v, want %v", got, want)
 	}
@@ -922,6 +922,32 @@ func systemEvents(projectID int64, today civil.Date) []store.Event {
 				add(e)
 			}
 		}
+	}
+
+	// Availability checks on each of the last ten days: four uptime rows
+	// (every day's last one down, a timeout on odd days and a 503 on
+	// even), a certificate and a domain reading.
+	for back := 0; back < 10; back++ {
+		day := today.AddDays(-back)
+		check := func(id, name string, h int, value *float64, attrs map[string]string) {
+			add(store.Event{ID: fmt.Sprintf("c-%d-%s", back, id), Family: store.FamilyChecks, EventName: name,
+				TS: at(day, h, 0, 0), Value: value, Attributes: attrs})
+		}
+		for n := 0; n < 4; n++ {
+			ms := float64(120 + 40*n + 10*back)
+			if n < 3 {
+				check(fmt.Sprintf("u%d", n), "uptime", 2+6*n, &ms, map[string]string{"up": "1", "status": "200"})
+				continue
+			}
+			attrs := map[string]string{"up": "0", "reason": "timeout", "error": "deadline exceeded"}
+			if back%2 == 0 {
+				attrs["reason"], attrs["status"], attrs["error"] = "status", "503", ""
+			}
+			check("u3", "uptime", 20, &ms, attrs)
+		}
+		cert, domain := float64(80-back), float64(200-back)
+		check("cert", "cert", 3, &cert, map[string]string{"valid": "1", "issuer": "Example CA", "expires": "2027-01-20"})
+		check("domain", "domain", 4, &domain, map[string]string{"expires": "2027-05-20"})
 	}
 
 	// Every older day: ten anonymous visitors (actor kind connection, not
