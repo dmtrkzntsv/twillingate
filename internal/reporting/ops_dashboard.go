@@ -309,31 +309,19 @@ func (s *Service) setDashboardArchived(ctx context.Context, actor string, id int
 			}
 		}
 	}
-	a := store.AuditEntry{Actor: actor, Action: archiveAction("dashboard", archived)}
-	if archived {
-		return s.st.SetDashboardsArchived(ctx, ids, true, a)
-	}
-	// A restore grows the group: under the placement lock, so a rename
-	// running beside it isn't overwritten by a settle on a stale read.
-	return s.placeDashboards(func() error {
-		all, err := s.st.ListDashboards(ctx)
-		if err != nil {
-			return err
-		}
-		if err := s.settleLoneName(ctx, actor, groupOf(all, d)); err != nil {
-			return err
-		}
-		return s.st.SetDashboardsArchived(ctx, ids, false, a)
-	})
+	return s.st.SetDashboardsArchived(ctx, ids, archived,
+		store.AuditEntry{Actor: actor, Action: archiveAction("dashboard", archived)})
 }
 
-// settleLoneName runs before a group of members gains a live tab. While
-// a group has one live tab, that tab's title is its one name (a title
-// change renames a named group with it, and the page names it by the
-// title), but a name it kept from when it had more tabs, or from before
-// that rule, would come back as the group's name once a second tab
-// joins. So when the group has one live tab and a stored name other than
-// its title, the title becomes the stored name first.
+// settleLoneName runs before a new tab joins a group of members (create,
+// duplicate or move into it). While a group has one live tab, that tab's
+// title is its one name (a title change renames a named group with it,
+// and the page names it by the title), but a name it kept from when it
+// had more tabs, or from before that rule, would come back as the group's
+// name once a second tab joins. So when the group has one live tab and a
+// stored name other than its title, the title becomes the stored name
+// first. A restore does not settle: it undoes an archive, and the group
+// comes back under the name it had.
 func (s *Service) settleLoneName(ctx context.Context, actor string, members []store.Dashboard) error {
 	var live []store.Dashboard
 	for _, m := range members {

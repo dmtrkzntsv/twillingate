@@ -1613,7 +1613,9 @@ rows carry the name as `group_title`; absent, the group has none and its
 first live tab's title stands in. A group of one live tab has one name,
 its tab's title: `whole_group` with a `title` retitles that tab too, a
 `title` on that tab renames a named group with it, and the page names such
-a group by its tab's title. A name can be replaced, never cleared, and
+a group by its tab's title. A tab that joins it (created, copied or moved
+in) keeps that name; restoring an archived tab brings back the name the
+group had. A name can be replaced, never cleared, and
 a system or archived dashboard cannot be renamed this way. Duplicating a
 named group with `whole_group` names the copy with the same name and
 " (copy)". A dashboard title and a group name need at least 2 characters

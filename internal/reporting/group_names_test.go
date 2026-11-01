@@ -356,14 +356,11 @@ func staleLone(t *testing.T, svc *Service) (DashboardDetail, DashboardDetail) {
 	return f, tab
 }
 
-// A name a group of one kept never comes back when the group grows: the
-// lone tab's title, its one name, becomes the group's first.
+// A name a group of one kept never comes back when a new tab joins it:
+// the lone tab's title, its one name, becomes the group's first.
 func TestGrowingGroupOfOneKeepsTheNameShown(t *testing.T) {
 	ctx := context.Background()
 	grow := map[string]func(svc *Service, f, tab DashboardDetail) error{
-		"restore": func(svc *Service, _, tab DashboardDetail) error {
-			return svc.RestoreDashboard(ctx, "test", tab.ID, false)
-		},
 		"create": func(svc *Service, f, _ DashboardDetail) error {
 			_, err := svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "New", GroupID: f.ID})
 			return err
@@ -389,6 +386,18 @@ func TestGrowingGroupOfOneKeepsTheNameShown(t *testing.T) {
 				t.Errorf("group name = %q, want \"Overview\", the name it showed", gt)
 			}
 		})
+	}
+}
+
+// Restoring a tab undoes its archive: the group is named as it was.
+func TestRestoreBringsBackTheGroupsName(t *testing.T) {
+	svc := newTestService(t)
+	f, tab := staleLone(t, svc)
+	if err := svc.RestoreDashboard(context.Background(), "test", tab.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if gt := groupTitle(t, svc, f.ID); gt != "Ops" {
+		t.Errorf("group name = %q after the restore, want \"Ops\"", gt)
 	}
 }
 
