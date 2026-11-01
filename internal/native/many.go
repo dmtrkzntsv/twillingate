@@ -229,7 +229,7 @@ type consumer struct {
 	sp     aggSpec
 	rng    dayRange
 	lo, hi int64  // rng's days since 1970-01-01
-	fam    string // the family its rows are of ("" for all)
+	fam    string // the family filter of its rows ("" for all; notChecks)
 	idCols []string
 
 	mu      sync.RWMutex // a and ms, written under Lock; add under RLock
@@ -692,7 +692,7 @@ func (sh *sharedScan) feedLog(ctx context.Context, w int, it manyItem) error {
 			continue
 		}
 		for _, b := range bs {
-			b = c.r.s.rules.apply(b, c.fam)
+			b = c.r.s.rules.apply(b, ruleFamily(c.fam))
 			if ids != nil {
 				addIdentityColumns(b, c.idCols, ids)
 			}
@@ -767,7 +767,7 @@ func (sh *sharedScan) feedGroup(w int, gr *groupReader, it manyItem) error {
 		}
 		cb = finish(cb, requested, l.all, c.fam, c.lo, c.hi)
 		if !sh.sessions {
-			cb = c.r.s.rules.apply(cb, c.fam)
+			cb = c.r.s.rules.apply(cb, ruleFamily(c.fam))
 			if l.ids != nil {
 				addIdentityColumns(cb, c.idCols, l.ids)
 			}

@@ -901,10 +901,12 @@ decides instead:
 | anything else | product | — | `product_events`, `product_attributes` |
 | `$form_submit` | product | — | written by the collector beside an approved form's submission ([Form submissions](#form-submissions)); a client sending it is rejected |
 | any name, with `family: "measures"` | measures | — | `measures`, the Web Vitals and Measures dashboards |
+| `uptime`, `cert`, `domain`, with `family: "checks"` | checks | — | the availability checks the server itself runs; written by the server only, a client sending the family is rejected; read through the `checks` table of [Structured queries](#structured-queries) |
 
-All three families are stored in the event files' `events` table, whose
-`family` column is `views`, `product` or `measures`; the `views`, `product`
-and `measures` tables and the tools of each family read only its own rows.
+The families are stored in the event files, whose `family` column is
+`views`, `product`, `measures` or `checks`; the `views`, `product`,
+`measures` and `checks` tables and the tools of each family read only its own
+rows. The `events` table holds every family but `checks`.
 
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning; an unrecognized `$`
@@ -1145,6 +1147,7 @@ reads as undeclared and a custom key is absent.
 | `views` | `$page_view` or `$screen_view` | `$path` (or `$screen`) | inferred from `name`: these two names are views |
 | `product` | anything else | `name` | inferred from `name`: the default for every other name |
 | `measures` | any name, or a reserved `$` metric | a `value` from `0` to `1e15` and a `measure` of `time`, `size` or `number` | never inferred — a measure only exists when the event declares `family: "measures"` |
+| `checks` | `uptime`, `cert` or `domain` | — | written by the server only; a client sending it is rejected |
 
 `family` absent keeps the pre-measures rule unchanged: `$page_view` and
 `$screen_view` are views, everything else is product, so a client built
@@ -1153,6 +1156,8 @@ before this change keeps working unchanged.
 A per-event rejection (the batch's other events are still stored):
 - **`$form_submit`**, in any family: only the [form endpoint](#form-submissions)
   writes it.
+- **`family: "checks"`**, with any name: the availability checks are the
+  server's own.
 - **An unknown `family`** (anything but `views`, `product` or `measures`) is
   rejected, not stored as `product`.
 - **A contradiction is rejected:** `family: "views"` with a name that is not
@@ -1642,12 +1647,15 @@ close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
 `day BETWEEN DATE '2026-01-01' AND DATE '2026-01-31'`, `GROUP BY ALL`,
 `DESCRIBE events` for the columns.
 
-Seven tables. `events` holds every event of every family; `views`,
-`product` and `measures` hold its rows of one family each. Three more are
+Eight tables. `events` holds every event of every family but `checks`;
+`views`, `product`, `measures` and `checks` hold its rows of one family each
+(`checks` are the server's availability checks: `value` is milliseconds for
+`uptime` and days for `cert` and `domain`, with `attr_up`, `attr_status`,
+`attr_reason` and the like). Three more are
 derived from the events (below the column list). The `_tw_*` tables are
 the reader's own and hold rows before the rules apply: a query naming one
 is refused.
-`events`, `views`, `product` and `measures` have:
+`events`, `views`, `product`, `measures` and `checks` have:
 
 | Column | Type | |
 | --- | --- | --- |
@@ -1748,7 +1756,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | Field | Kinds | Meaning |
 | --- | --- | --- |
 | `kind` | all | `stat`, `trend`, `breakdown`, `retention`, `attributes`, `funnel` or `paths` (below) |
-| `table` | all | `events` (every family), `views`, `product` or `measures`; or `sessions`, one row per session, or `identities`, one row per user or group (below); a retention reads `events`, and may leave it out; an attributes `product` or `measures`, its `keys` also `events` (product and measures both, the default) |
+| `table` | all | `events` (every family but `checks`), `views`, `product`, `measures` or `checks`; or `sessions`, one row per session, or `identities`, one row per user or group (below); a retention reads `events`, and may leave it out; an attributes `product`, `measures` or `checks`, its `keys` also `events` (product and measures both, the default) |
 | `metrics` | stat, trend, breakdown, attributes | the aggregates, each an output column; a trend takes one to five, exactly one with `series` (several are its series, below); an attributes' `keys` none |
 | `where` | all | filters, `{column, op, values}` (`{op, columns}` for `any_set`, `{op, any}` for `any_of`), every one of which a row must satisfy |
 | `dimensions` | breakdown, attributes | a breakdown's 1 to 3 columns to group by; an attributes' `day`, `event_name` or both, in that order, before its attribute and value |
@@ -1797,8 +1805,8 @@ as `day` does:
 | `device_label` | `events`, `views`, `product` | `device_model` when not empty, else `device` when not empty; else NULL |
 | `platform_version` | `events`, `views`, `product` | `platform`, a space, then `app_version` (`ios 2.4.1`), where `app_version` is not empty; else NULL |
 | `consent_state` | `events`, `views`, `product` | `given` (`consent` 1), `none` (0) or `unknown` (NULL) |
-| `hour` | `events`, `views`, `product`, `measures` | the UTC hour of `ts`, `00` to `23`, two digits so the hours sort as text; NULL without a `ts` |
-| `weekday` | `events`, `views`, `product`, `measures` | the UTC weekday of `ts`, `1 Mon` to `7 Sun`, so the days sort as text (`labels` shows them as `Mon` to `Sun`); NULL without a `ts`. A breakdown by `weekday` and `hour` is the `heatmap` of a week |
+| `hour` | `events`, `views`, `product`, `measures`, `checks` | the UTC hour of `ts`, `00` to `23`, two digits so the hours sort as text; NULL without a `ts` |
+| `weekday` | `events`, `views`, `product`, `measures`, `checks` | the UTC weekday of `ts`, `1 Mon` to `7 Sun`, so the days sort as text (`labels` shows them as `Mon` to `Sun`); NULL without a `ts`. A breakdown by `weekday` and `hour` is the `heatmap` of a week |
 | `user_status` | `events`, `views`, `product` | `new` on the day the row's `user_id` was first seen (its `first_seen` in `identities`, over the whole history the files hold, whatever the range), `returning` on a later day; NULL when `user_id` is empty, or not in `identities` (an id only measures carried), and on a measure sent before it was first seen |
 | `group_status` | `events`, `views`, `product` | the same of `group_id` |
 | `user_label` | `events`, `views`, `product` | the `name` of the row's `user_id` in `identities` (over the whole history, the latest name as `identities` combines it, so every row of a renamed user reads its current name), else the `user_id` itself; NULL when `user_id` is empty |
@@ -1980,7 +1988,7 @@ Output `keys` summarises the keys instead, as `list_attributes` does:
 an empty one among them) and `keys_total` (the number of attributes), a
 row per attribute, by `events` descending, then `attribute`. It reads
 `events` (the rows of `product` and `measures` both: the default),
-`product` or `measures`, takes `where`, `limit` (the busiest attributes
+`product`, `measures` or `checks`, takes `where`, `limit` (the busiest attributes
 kept, 50 by default) and `keep` (attributes listed past `limit` too,
 named as the answer spells them, exactly: an attribute with no event in
 the range is not listed), and refuses `metrics`, `dimensions`,

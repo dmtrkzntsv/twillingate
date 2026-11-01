@@ -100,7 +100,7 @@ func (c *eventCount) startLocked() chan struct{} {
 }
 
 // countEvents counts the events of the 30 days ending today (UTC) in the
-// event files, of every family and of every project that has files,
+// event files, of every family but checks and of every project that has files,
 // rules applied: a native count per project from that day on, summed,
 // under one CONSOLE_QUERY_TIMEOUT. limits reports the window as of its
 // read: only a count started before midnight and read after it is a day

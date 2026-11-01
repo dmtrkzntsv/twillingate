@@ -374,6 +374,10 @@ func resolveFamily(ev rawEvent) (family store.Family, name, warn, reject string)
 	if !ok {
 		return "", "", "", fmt.Sprintf("unknown family %s", ev.Family)
 	}
+	// Likewise the checks family: the server's own availability probes.
+	if fam == string(store.FamilyChecks) {
+		return "", "", "", fmt.Sprintf("family %q is written by the server only", fam)
+	}
 	_, isView := viewName(ev.Name)
 	switch fam {
 	case "":

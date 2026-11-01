@@ -730,7 +730,8 @@ func (x *logEntry) view(cols []string, tail []byte) *logView {
 func (v *logView) batches(path string, cols []string, family string, r dayRange) ([]*batch, error) {
 	from, to := r.days()
 	ofFamily := func(p int) bool {
-		return family == "" || v.parts[p].fam == famKey{family, true}
+		pf := v.parts[p].fam
+		return family == "" || (!pf.ok && family == notChecks) || (pf.ok && famMatch(family, pf.name))
 	}
 	inRange := func(p, i int) bool {
 		day := v.parts[p].cols["day"]
@@ -818,7 +819,7 @@ func (v *logView) batches(path string, cols []string, family string, r dayRange)
 func (v *logView) tailBatch(path string, cols, requested []string, keyOf map[string]string, family string, from, to int64) (*batch, error) {
 	m := v.tailM
 	if family != "" {
-		if fam, ok, _ := archive.JSONText(m["family"]); !ok || fam != family {
+		if fam, ok, _ := archive.JSONText(m["family"]); !ok && family != notChecks || ok && !famMatch(family, fam) {
 			return nil, nil
 		}
 	}

@@ -80,7 +80,7 @@ func readLog(path string, cols []string, family string, r dayRange) (*batch, err
 			continue
 		}
 		if family != "" {
-			if fam, ok, _ := archive.JSONText(m["family"]); !ok || fam != family {
+			if fam, ok, _ := archive.JSONText(m["family"]); !ok && family != notChecks || ok && !famMatch(family, fam) {
 				continue
 			}
 		}

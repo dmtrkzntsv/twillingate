@@ -9,8 +9,9 @@ import (
 )
 
 // Family names the kind of event a row is: a view (views_overview,
-// views_breakdown), a product event (product_events, product_attributes)
-// or a measure (measures). Ingest decides it from the event's family, or
+// views_breakdown), a product event (product_events, product_attributes),
+// a measure (measures) or a check, an availability probe the server writes
+// (only the native table checks reads it). Ingest decides it from the event's family, or
 // from its name when family is absent; nothing holds a list of families.
 type Family string
 
@@ -18,6 +19,7 @@ const (
 	FamilyViews    Family = "views"
 	FamilyProduct  Family = "product"
 	FamilyMeasures Family = "measures"
+	FamilyChecks   Family = "checks"
 )
 
 // The kinds a measure declares, each with a fixed unit: time in

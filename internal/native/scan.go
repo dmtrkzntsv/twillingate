@@ -5,6 +5,8 @@ import (
 	"slices"
 	"strings"
 	"sync"
+
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // scanParallel hands groups (row groups, or any other work items), in order, to `workers` goroutines and calls
@@ -176,13 +178,28 @@ type groupStats struct {
 // family or day matches no filter, so all needs none (of family only when
 // filtering by it).
 func (s groupStats) decide(family string, from, to int64) (keep, all bool) {
-	if family != "" && s.famOK && (family < s.famMin || family > s.famMax) {
-		return false, false
+	if family != "" && s.famOK {
+		if family == notChecks {
+			if c := string(store.FamilyChecks); s.famMin == c && s.famMax == c {
+				return false, false
+			}
+		} else if family < s.famMin || family > s.famMax {
+			return false, false
+		}
 	}
 	if s.dayOK && (s.dayMax < from || s.dayMin > to) {
 		return false, false
 	}
-	famAll := family == "" || (s.famOK && s.famNulls == 0 && s.famMin == family && s.famMax == family)
+	var famAll bool
+	switch {
+	case family == "":
+		famAll = true
+	case family == notChecks:
+		c := string(store.FamilyChecks)
+		famAll = s.famOK && (s.famMax < c || s.famMin > c)
+	default:
+		famAll = s.famOK && s.famNulls == 0 && s.famMin == family && s.famMax == family
+	}
 	return true, famAll && s.dayOK && s.dayNulls == 0 && s.dayMin >= from && s.dayMax <= to
 }
 
@@ -208,13 +225,13 @@ func filterBatch(b *batch, family string, from, to int64) *batch {
 	if family != "" {
 		match = make([]bool, len(fam.Dict))
 		for i, s := range fam.Dict {
-			match[i] = s == family
+			match[i] = famMatch(family, s)
 		}
 	}
 	sel := make([]int32, 0, b.N)
 	for i := range b.N {
 		if match != nil {
-			if f := fam.Idx[i]; f < 0 || !match[f] {
+			if f := fam.Idx[i]; f < 0 && family != notChecks || f >= 0 && !match[f] {
 				continue
 			}
 		}
