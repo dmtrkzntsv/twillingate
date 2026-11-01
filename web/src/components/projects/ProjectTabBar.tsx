@@ -47,7 +47,7 @@ export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, 
   const formsLabel = [
     'Forms',
     newSubmissions > 0 && `${newSubmissions} new`,
-    draftForms > 0 && `${plural(draftForms, 'draft')}`,
+    draftForms > 0 && plural(draftForms, 'draft'),
   ]
     .filter(Boolean)
     .join(', ')

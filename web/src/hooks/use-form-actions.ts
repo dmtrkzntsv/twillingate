@@ -2,8 +2,8 @@ import { useCallback, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
 import { endpoints, type FormUpdate, type SubmissionsSelector } from '@/lib/api'
-import { toastError } from '@/lib/toast-error'
 import { plural } from '@/lib/format'
+import { toastError } from '@/lib/toast-error'
 
 interface FormActions {
   approve(projectId: number, name: string, fields: string[]): Promise<boolean>
