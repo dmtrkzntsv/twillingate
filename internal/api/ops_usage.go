@@ -1,7 +1,9 @@
 package api
 
 import (
+	"cmp"
 	"context"
+	"maps"
 	"slices"
 	"strconv"
 	"time"
@@ -175,7 +177,8 @@ const usageChunkDays = maxBreakdownLimit / 3
 //
 // Every query reads the events table, which leaves the checks family out
 // (the availability monitor's rows are not the site's traffic), so checks
-// are in neither the counts nor last_received_at (TestUsageIgnoresChecks).
+// are in neither the counts nor last_received_at, which newestRow finds
+// even when the newest file holds only checks (TestUsageIgnoresChecks).
 func (h *host) usageCounts(ctx context.Context, projects []*manage.Project, asked bool, fromD, toD civil.Date) (fileCounts, error) {
 	latest, err := archive.LatestDays(h.eventsDir)
 	if err != nil {
@@ -206,7 +209,6 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 	// are read.
 	type ask struct {
 		project int64
-		arrival bool
 	}
 	var reqs []native.Request
 	var asks []ask
@@ -221,25 +223,28 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 				Params: native.Params{Project: p.ID, From: lo, To: hi}})
 			asks = append(asks, ask{project: p.ID})
 		}
-		if !asked && p.Archived {
-			continue
-		}
-		if r, ok := newestArrival(p.ID, latest[p.ID]); ok {
-			reqs = append(reqs, r)
-			asks = append(asks, ask{project: p.ID, arrival: true})
+	}
+	var want []int64
+	for _, p := range projects {
+		if asked || !p.Archived {
+			want = append(want, p.ID)
 		}
 	}
-	for i, a := range h.answerEach(ctx, reqs) {
+	oldest, err := archive.OldestDays(h.eventsDir)
+	if err != nil {
+		return err
+	}
+	// The breakdowns and the newest arrivals go in one call.
+	got, answers, err := h.newestRow(ctx, want, latest, oldest, "received_at", reqs)
+	if err != nil {
+		return err
+	}
+	maps.Copy(out.received, got)
+	for i, a := range answers {
 		if a.Err != nil {
 			return a.Err
 		}
 		res, project := a.Result, asks[i].project
-		if asks[i].arrival {
-			if len(res.Rows) == 1 && res.Rows[0][0] != "" {
-				out.received[project] = res.Rows[0][0]
-			}
-			continue
-		}
 		if res.Truncated {
 			return invalidf("usage: too many rows; narrow the date range")
 		}
@@ -264,23 +269,80 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 	return nil
 }
 
-// newestArrival is the query of when the newest row of a project
-// arrived, ok false when it has no files: the newest received_at from the
-// first day of the month of its newest file name (latest,
-// archive.LatestDays: a month's file counts as its last day, its rows may
-// end earlier) to that day, so it is found whatever the range and scans
-// at most a month. It answers "" when the project has no row there.
-func newestArrival(project int64, latest string) (req native.Request, ok bool) {
-	last, err := civil.Parse(latest)
-	if err != nil {
-		return native.Request{}, false // no files
+// newestRow is, for each of projects with event files, the newest value
+// of column (received_at or ts) among its rows of the events table, which
+// leaves the checks family out. The file names only bound the search
+// (latest, oldest: archive.LatestDays and OldestDays, a month file
+// counting as its last or first day), and the newest file may hold nothing
+// but checks, so it scans the month of the newest file name and, while a
+// project has no row there, the month before, down to its oldest file:
+// one month's scan for a project that has traffic, more only for a
+// silent one. A project with no row at all is absent. batch goes in the
+// first call with the first scans, and its answers are returned in order.
+func (h *host) newestRow(ctx context.Context, projects []int64, latest, oldest map[int64]string, column string, batch []native.Request) (map[int64]string, []native.Answered, error) {
+	type span struct{ first, last civil.Date }
+	pending := map[int64]span{}
+	for _, id := range projects {
+		last, err := civil.Parse(latest[id])
+		if err != nil {
+			continue // no files
+		}
+		first, err := civil.Parse(latest[id][:8] + "01")
+		if err != nil {
+			continue
+		}
+		pending[id] = span{first, last}
 	}
-	first, err := civil.Parse(latest[:8] + "01")
-	if err != nil {
-		return native.Request{}, false
+	out := map[int64]string{}
+	batchAnswers := make([]native.Answered, len(batch))
+	first := true
+	for first || len(pending) > 0 {
+		// Requests of one project stay together, in the order given: the
+		// engine takes a project's scans as one pass.
+		type ask struct {
+			req   native.Request
+			batch int // index in batch, or -1 for a scan of pending
+		}
+		var asks []ask
+		if first {
+			for i, r := range batch {
+				asks = append(asks, ask{r, i})
+			}
+		}
+		for id, sp := range pending {
+			asks = append(asks, ask{native.Request{Query: native.Query{Kind: "stat", Table: "events", Metrics: []native.Metric{{Op: "max", Column: column}}},
+				Params: native.Params{Project: id, From: sp.first, To: sp.last}}, -1})
+		}
+		slices.SortStableFunc(asks, func(x, y ask) int { return cmp.Compare(x.req.Params.Project, y.req.Params.Project) })
+		reqs := make([]native.Request, len(asks))
+		for i, a := range asks {
+			reqs[i] = a.req
+		}
+		first = false
+		for i, a := range h.answerEach(ctx, reqs) {
+			if asks[i].batch >= 0 {
+				batchAnswers[asks[i].batch] = a
+				continue
+			}
+			if a.Err != nil {
+				return nil, nil, a.Err
+			}
+			id := asks[i].req.Params.Project
+			if rows := a.Result.Rows; len(rows) == 1 && rows[0][0] != "" {
+				out[id] = rows[0][0]
+				delete(pending, id)
+				continue
+			}
+			prev := pending[id].first.AddDays(-1)
+			if o, err := civil.Parse(oldest[id]); err != nil || prev.Before(o) {
+				delete(pending, id)
+				continue
+			}
+			m, _ := civil.Parse(prev.String()[:8] + "01")
+			pending[id] = span{m, prev}
+		}
 	}
-	return native.Request{Query: native.Query{Kind: "stat", Table: "events", Metrics: []native.Metric{{Op: "max", Column: "received_at"}}},
-		Params: native.Params{Project: project, From: first, To: last}}, true
+	return out, batchAnswers, nil
 }
 
 // readSizes answers every project's latest size, by project id: its

@@ -291,7 +291,7 @@ the project's origins every `MONITOR_INTERVAL` seconds (a per-install setting,
 default 120; [deployment.md](deployment.md#configure-the-collector)) and records
 whether it answered. The results land in the event files beside the site's own
 events, so a drop in conversions can be lined up with an outage in the same
-queries and dashboards.
+[structured queries](#structured-queries) and dashboards.
 
 The settings are three: `enabled`, `origin` and an optional `contains`.
 `origin` is one of the project's `allowed_origins`, and only an exact `http://`
@@ -1636,7 +1636,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | Method | Path | Mirrors | Input |
 |---|---|---|---|
 | `GET` | `/api/projects` | `list_projects` | — |
-| `GET` | `/api/project-activity` | `project_activity`, REST only: no MCP tool | — → `{"projects":[{"project_id","last_event_day","new_submissions","forms","draft_forms"}]}` for every live project: the newest day file in the event files (a month file counts as its last day; null with none), the submissions to live forms the console has not read, its live forms, and how many of them are drafts waiting to be approved |
+| `GET` | `/api/project-activity` | `project_activity`, REST only: no MCP tool | — → `{"projects":[{"project_id","last_event_day","new_submissions","forms","draft_forms"}]}` for every live project: the day of the newest event in the event files (availability checks aside; null with none), the submissions to live forms the console has not read, its live forms, and how many of them are drafts waiting to be approved |
 | `GET` | `/api/limits` | `limits` | — |
 | `GET` | `/api/usage` | `usage` | query: `project_id`, `from`, `to` |
 | `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","values","received","blocked","aliases"}],"keys_total"}`; `aliases` is absent when empty |

@@ -76,7 +76,11 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 		fmt.Fprintln(stdout, err)
 		return 1
 	}
-	printMonitor(stdout, m, manage.MonitorOrigins(ops.Reg.Snapshot(ctx).Project(*project).AllowedOrigins))
+	var eligible []string
+	if p := ops.Reg.Snapshot(ctx).Project(*project); p != nil {
+		eligible = manage.MonitorOrigins(p.AllowedOrigins)
+	}
+	printMonitor(stdout, m, eligible)
 	return 0
 }
 

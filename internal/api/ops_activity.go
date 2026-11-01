@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"maps"
+	"slices"
 	"strconv"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
@@ -15,7 +17,7 @@ import (
 
 type projectActivityOut struct {
 	ProjectID      int64   `json:"project_id"`
-	LastEventDay   *string `json:"last_event_day" jsonschema:"the newest day file in the event files, a month file counting as its last day; null with none"`
+	LastEventDay   *string `json:"last_event_day" jsonschema:"the day of the newest event in the event files (availability checks aside); null with none"`
 	NewSubmissions int     `json:"new_submissions" jsonschema:"submissions to live forms received after each form's seen_at"`
 	Forms          int     `json:"forms" jsonschema:"live (not archived) forms"`
 	DraftForms     int     `json:"draft_forms" jsonschema:"live forms still drafts, waiting to be approved"`
@@ -27,10 +29,29 @@ type projectActivityListOut struct {
 
 func (h *host) projectActivity(ctx context.Context, _ struct{}) (projectActivityListOut, error) {
 	out := projectActivityListOut{Projects: []projectActivityOut{}}
-	// The file names say each project's newest day: no file is opened.
-	days, err := archive.LatestDays(h.eventsDir)
+	// The file names say each project's newest day with a file, which may
+	// hold nothing but availability checks, not the site's events: the
+	// newest event's own day is read from the files (newestRow), a month's
+	// scan for a project with traffic.
+	latest, err := archive.LatestDays(h.eventsDir)
 	if err != nil {
 		return out, err
+	}
+	days := latest
+	if h.native != nil {
+		oldest, err := archive.OldestDays(h.eventsDir)
+		if err != nil {
+			return out, err
+		}
+		ids := slices.Collect(maps.Keys(latest))
+		ts, _, err := h.newestRow(ctx, ids, latest, oldest, "ts", nil)
+		if err != nil {
+			return out, err
+		}
+		days = map[int64]string{}
+		for id, t := range ts {
+			days[id] = t[:min(len(t), 10)]
+		}
 	}
 	for _, p := range h.reg.Snapshot(ctx).Projects() {
 		if p.Archived {

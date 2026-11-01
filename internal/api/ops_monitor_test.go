@@ -114,21 +114,22 @@ func TestUsageIgnoresChecks(t *testing.T) {
 		return store.Event{Family: store.FamilyChecks, ProjectID: 1, EventName: "uptime", Value: &ms,
 			Measure: store.MeasureTime, TS: ts, Attributes: map[string]string{"up": "1", "status": "200"}}
 	}
-	// In the month of the template's last event, so a leak shows as a newer
-	// last_received_at.
-	writeHostEvents(t, h, check(time.Date(2026, 8, 28, 9, 0, 0, 0, time.UTC)))
+	// A check in a month after the template's last event, and today's: the
+	// newest file now holds nothing but checks.
+	writeHostEvents(t, h, check(time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC)), check(time.Now().UTC()))
+	h.events = h.newHostEventCount()
 	after, err := h.usage(ctx, in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	b, a := before.Projects[0], after.Projects[0]
-	if a.Totals != b.Totals || deref(a.LastReceivedAt) != deref(b.LastReceivedAt) {
+	if a.Totals != b.Totals || b.LastReceivedAt == nil || deref(a.LastReceivedAt) != deref(b.LastReceivedAt) {
 		t.Errorf("usage changed by checks: %+v %v -> %+v %v", b.Totals, deref(b.LastReceivedAt), a.Totals, deref(a.LastReceivedAt))
 	}
-	// Today's, for events_30d (usage's newest-arrival window follows the
-	// newest file, so a check today would hide a template this old).
-	writeHostEvents(t, h, check(time.Now().UTC()))
-	h.events = h.newHostEventCount()
+	act := getActivity(t, h)
+	if len(act) == 0 || act[0].ProjectID != 1 || act[0].LastEventDay == nil || *act[0].LastEventDay != "2026-08-26" {
+		t.Errorf("project-activity last_event_day = %+v, want 2026-08-26, the newest real event", act)
+	}
 	limAfter, err := h.listLimits(ctx, struct{}{})
 	if err != nil {
 		t.Fatal(err)
