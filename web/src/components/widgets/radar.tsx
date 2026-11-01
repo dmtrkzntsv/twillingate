@@ -3,9 +3,9 @@ import {
   ChartContainer,
   ChartTooltip,
 } from '@/components/ui/chart'
-import { seriesColor, seriesConfig } from '@/lib/chart'
+import { seriesColor } from '@/lib/chart'
 import { approximate, type Format } from '@/lib/format'
-import { pivot, toRecords } from '@/lib/records'
+import { chartSeries, toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
 import { useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
@@ -71,11 +71,7 @@ export default function Radar({ data, props }: WidgetProps<RadarProps>) {
   if (records.length === 0) return null
 
   const format = props.format ?? 'number'
-  const hasSeries = sql.columns.includes('series')
-  const { rows, keys } = hasSeries
-    ? pivot(records, 'axis', 'series', 'value')
-    : { rows: records, keys: ['value'] }
-  const config = hasSeries ? seriesConfig(keys) : { value: { label: 'value' } }
+  const { hasSeries, rows, keys, config } = chartSeries(sql.columns, records, 'axis', 'value')
   // One shape carries a wash; several stay mostly outline so none hides another.
   const wash = keys.length === 1 ? 0.25 : 0.08
 

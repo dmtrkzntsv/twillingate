@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useEffect, useMemo, type ReactNode } from 'react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { useParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
 import DashboardHeader from '@/components/DashboardHeader'
@@ -11,20 +11,17 @@ import RangeSwitcher from '@/components/RangeSwitcher'
 import ReportTabs from '@/components/ReportTabs'
 import { Button } from '@/components/ui/button'
 import WidgetGrid from '@/components/WidgetGrid'
-import { useAutoRefresh } from '@/hooks/use-auto-refresh'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
+import { useDashboardRefresh } from '@/hooks/use-dashboard-refresh'
 import { useDashboardSelection } from '@/hooks/use-dashboard-selection'
 import { useDevReload } from '@/hooks/use-dev-reload'
 import { useFreshness } from '@/hooks/use-freshness'
-import { useSelectionSignal } from '@/hooks/use-selection-signal'
-import { useStoredState } from '@/hooks/use-stored-state'
 import { useWidgetActions } from '@/hooks/use-widget-actions'
 import type { DashboardDetail, DashboardInfo, DashboardsResponse, DashboardTab } from '@/lib/api'
 import { moveTabBody } from '@/lib/arrange'
 import { rememberDashboard } from '@/lib/last-dashboard'
 import { dashboardQuery, dashboardsQuery, projectsQuery } from '@/lib/queries'
 import type { ShareContext } from '@/lib/share'
-import { refreshDashboard } from '@/lib/widget-query'
 
 /** `/dashboards/:id`: one dashboard in the app shell, as a report tab or a page of its own (D36). */
 export default function Dashboard() {
@@ -81,8 +78,17 @@ function shownTabs(dashboard: DashboardDetail, list: DashboardInfo[]): Dashboard
     : [{ dashboard_id: dashboard.dashboard_id, title: dashboard.title }]
 }
 
+/** A line above the dashboard saying why it is not in the sidebar, with the way back. */
+function PageNotice({ text, children }: { text: string; children: ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
+      <span>{text}</span>
+      {children}
+    </div>
+  )
+}
+
 function DashboardView({ list, dashboard, frozen }: ViewProps) {
-  const client = useQueryClient()
   const projects = useQuery({ ...projectsQuery, enabled: dashboard.follows_project })
   const all = projects.data?.projects ?? []
   const { sel, switchers, range, paramsFor, change, openTab } = useDashboardSelection(dashboard, all, list.timezone, frozen)
@@ -91,7 +97,6 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const noProjects = switchers.project && projects.data !== undefined && all.every((p) => p.archived)
   const showGrid = !waiting && !noProjects && dashboard.widgets.length > 0
   const freshness = useFreshness(dashboard.widgets, paramsFor, showGrid && !frozen)
-  const [refreshing, setRefreshing] = useState(false)
   const { move, restore, setSidebar, pending } = useDashboardActions()
   const widgetActions = useWidgetActions()
   // Reporting dev serves only reads (and the view), so the page offers no
@@ -134,25 +139,13 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
     return body ? move(id, body) : false
   }
 
-  // Refresh all reloads through one stream, with `fresh` (widget-stream.ts);
-  // leaving the selection stops what is still loading.
-  const selectionSignal = useSelectionSignal(paramsFor)
-  const refreshAll = () => {
-    setRefreshing(true)
-    // Each widget refreshes what its card shows, a remote table its current page.
-    void refreshDashboard(client, freshness.refreshable, paramsFor, selectionSignal()).finally(() => setRefreshing(false))
-  }
-
-  // Auto-refresh is the viewer's own choice per dashboard, kept in this
-  // browser and off until turned on. Each reload is an ordinary one, without
-  // `fresh`: the interval is at least REPORTING_CACHE_MAX_AGE, so it runs the
-  // queries again rather than being served the answers already on screen.
-  // The cards' refetches start together, so they go out as one stream.
-  const autoSeconds = list.auto_refresh_seconds ?? 0
-  const [autoOn, setAutoOn] = useStoredState(`twillingate.auto_refresh.${dashboard.group_id}`, (v) => (v === true ? true : null))
-  useAutoRefresh(autoOn === true && showGrid && !frozen, autoSeconds, () => {
-    void client.invalidateQueries({ queryKey: ['widget'] })
-  })
+  const { refreshing, refreshAll, autoRefresh } = useDashboardRefresh(
+    freshness.refreshable,
+    paramsFor,
+    dashboard.group_id,
+    list.auto_refresh_seconds ?? 0,
+    showGrid && !frozen
+  )
 
   return (
     <>
@@ -170,11 +163,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
               dashboard={dashboard}
               editable={menus}
               refresh={{ count: showGrid ? freshness.refreshable.length : 0, refreshing, onRefresh: refreshAll }}
-              autoRefresh={
-                autoSeconds > 0
-                  ? { seconds: autoSeconds, on: autoOn === true, onChange: (on) => setAutoOn(on ? true : null) }
-                  : undefined
-              }
+              autoRefresh={autoRefresh}
             />
           </div>
         )}
@@ -188,8 +177,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
           // A built-in is never archived; hidden, it is out of the sidebar
           // and this line is the page's hint, with the way back. Your own
           // dashboards are always in the sidebar.
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-            <span>Hidden from the sidebar</span>
+          <PageNotice text="Hidden from the sidebar">
             {writable && (
               <Button
                 variant="outline"
@@ -200,20 +188,19 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
                 Show in sidebar
               </Button>
             )}
-          </div>
+          </PageNotice>
         )}
         {dashboard.owner === 'user' && dashboard.archived_at && (
           // `get_dashboard` and widget data still serve an archived
           // dashboard opened by its URL; this line is the only hint on the
           // page itself that it is gone from the sidebar (D18).
-          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border/70 bg-muted/40 px-3 py-2 text-sm text-muted-foreground">
-            <span>Archived: not in the sidebar</span>
+          <PageNotice text="Archived: not in the sidebar">
             {writable && (
               <Button variant="outline" size="sm" disabled={pending} onClick={() => void restore(dashboard.dashboard_id)}>
                 Restore
               </Button>
             )}
-          </div>
+          </PageNotice>
         )}
         <WidgetEditingProvider
           dashboardId={dashboard.dashboard_id}

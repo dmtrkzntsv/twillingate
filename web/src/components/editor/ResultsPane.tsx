@@ -9,11 +9,12 @@ import { Spinner } from '@/components/ui/spinner'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { widgets } from '@/components/widgets'
 import type { PreviewResult } from '@/lib/api'
+import { plural } from '@/lib/format'
 import { rowsPx } from '@/lib/grid'
 import { cn } from '@/lib/utils'
 
 /** A run's rows, with the visualization and props the server checked them against. */
-export interface Ran {
+interface Ran {
   result: PreviewResult
   component: string
   props: Record<string, unknown>
@@ -47,8 +48,6 @@ export function problemOf(state: RunState, component: string | null, props: Reco
 
 const checkedAgainst = (ran: Ran, component: string | null, props: Record<string, unknown>) =>
   ran.component === component && JSON.stringify(ran.props) === JSON.stringify(props)
-
-const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`
 
 interface PreviewProps {
   component: string | null

@@ -1,4 +1,4 @@
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useMemo, useRef, useState } from 'react'
 import { CheckIcon, ChevronDownIcon, CopyIcon, DownloadIcon, TriangleAlertIcon } from 'lucide-react'
 import LayoutGrid from '@/components/LayoutGrid'
 import { CARD } from '@/components/share/card-mode'
@@ -10,6 +10,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import type { Example, WidgetModule } from '@/components/widgets/types'
+import { useCopy } from '@/hooks/use-copy'
 import { useElementWidth } from '@/hooks/use-element-width'
 import { captureCard, downloadBlob } from '@/lib/capture'
 import { rowsPx } from '@/lib/grid'
@@ -27,26 +28,9 @@ export function addWidgetJson(name: string, example: Example): string {
   return JSON.stringify({ component: name, props: example.props }, null, 2)
 }
 
-type CopyState = 'idle' | 'copied' | 'failed'
-
 /** A button that copies `text`; plain http has no clipboard, so failing is a state, not an error. */
 function CopyButton({ text, label }: { text: string; label: string }) {
-  const [state, setState] = useState<CopyState>('idle')
-  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
-  useEffect(() => () => clearTimeout(timer.current), [])
-  const copy = async () => {
-    // A second click before the first reset fires must not let the old
-    // timer clear a label the new click just set.
-    clearTimeout(timer.current)
-    try {
-      if (!navigator.clipboard) throw new Error('no clipboard')
-      await navigator.clipboard.writeText(text)
-      setState('copied')
-    } catch {
-      setState('failed')
-    }
-    timer.current = setTimeout(() => setState('idle'), 2000)
-  }
+  const { state, copy } = useCopy()
   return (
     <Button
       variant="outline"
@@ -55,7 +39,7 @@ function CopyButton({ text, label }: { text: string; label: string }) {
       // row, see the comment below), the label wraps instead of forcing
       // the button past the card's edge.
       className="h-auto min-h-7 max-w-full justify-start text-left whitespace-normal"
-      onClick={() => void copy()}
+      onClick={() => void copy(text)}
     >
       {state === 'copied' ? <CheckIcon /> : state === 'failed' ? <TriangleAlertIcon /> : <CopyIcon />}
       <span aria-live="polite">{state === 'copied' ? 'Copied' : state === 'failed' ? 'Copy failed' : label}</span>

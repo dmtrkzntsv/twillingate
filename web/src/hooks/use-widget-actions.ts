@@ -1,7 +1,7 @@
 import { useCallback, useMemo } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { toast } from 'sonner'
-import { ApiError, endpoints, type DashboardDetail, type Widget, type WidgetLayoutBody } from '@/lib/api'
+import { endpoints, type DashboardDetail, type Widget, type WidgetLayoutBody } from '@/lib/api'
+import { toastError } from '@/lib/toast-error'
 
 /** A widget's size on the grid: columns out of 12 and 40px rows. */
 export interface WidgetSize {
@@ -48,9 +48,7 @@ export function useWidgetActions(): WidgetActions {
       try {
         saved = await endpoints.updateWidget(id, body)
       } catch (err) {
-        if (err instanceof ApiError) toast.error(err.message)
-        else if (err instanceof TypeError) toast.error("Couldn't reach the server")
-        else toast.error(err instanceof Error ? err.message : String(err))
+        toastError(err)
       }
       // Counted after the write, and in the same tick as the invalidation,
       // which cancels a fetch the page's query already has running: any

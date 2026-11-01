@@ -2,7 +2,7 @@ import { useRef, type CSSProperties, type ReactNode } from 'react'
 import { useElementWidth } from '@/hooks/use-element-width'
 import { span } from '@/lib/grid'
 
-export interface GridCell {
+interface GridCell {
   key: string | number
   /** Columns out of 12 at full width; `span` narrows it on smaller grids. */
   width: number

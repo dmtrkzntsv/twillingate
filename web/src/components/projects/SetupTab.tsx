@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router'
+import ConfirmDialog from '@/components/ConfirmDialog'
 import DashboardHeader from '@/components/DashboardHeader'
 import RangeSwitcher from '@/components/RangeSwitcher'
 import AttributesSection from '@/components/projects/AttributesSection'
@@ -8,10 +9,6 @@ import EventsSection from '@/components/projects/EventsSection'
 import KeysSection from '@/components/projects/KeysSection'
 import OriginsSection from '@/components/projects/OriginsSection'
 import UsageSection from '@/components/projects/UsageSection'
-import {
-  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
-  AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import type { ProjectActions } from '@/hooks/use-project-actions'
 import type { DashboardsResponse, Project } from '@/lib/api'
@@ -87,21 +84,19 @@ export default function SetupTab({ project, dash, actions }: Props) {
         onDisable={(label) => actions.disableKey(id, label)}
         onEnable={(label) => actions.enableKey(id, label)}
       />
-      <AlertDialog open={archiving} onOpenChange={setArchiving}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Archive {project.name}?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Ingestion stops; data and dashboards keep working.
-              {purgeOn ? ` Unless restored, the project and its data are deleted on ${purgeOn} (${purgeDays} days).` : ' It is kept until restored.'}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void actions.archive(id)}>Archive project</AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <ConfirmDialog
+        open={archiving}
+        onOpenChange={setArchiving}
+        title={<>Archive {project.name}?</>}
+        description={
+          <>
+            Ingestion stops; data and dashboards keep working.
+            {purgeOn ? ` Unless restored, the project and its data are deleted on ${purgeOn} (${purgeDays} days).` : ' It is kept until restored.'}
+          </>
+        }
+        action="Archive project"
+        onAction={() => void actions.archive(id)}
+      />
     </>
   )
 }

@@ -4,9 +4,9 @@ import {
   ChartContainer,
   ChartTooltip,
 } from '@/components/ui/chart'
-import { activeDot, axis, formatTick, grid, niceTicks, numericX, seriesColor, seriesConfig, stackTotals, valueAxis, valuesOf } from '@/lib/chart'
+import { activeDot, axis, formatTick, grid, niceTicks, numericX, seriesColor, stackTotals, valueAxis, valuesOf } from '@/lib/chart'
 import { approximate, formatValue, type Format } from '@/lib/format'
-import { pivot, toRecords } from '@/lib/records'
+import { chartSeries, toRecords } from '@/lib/records'
 import { legend, tooltip } from '@/components/chart-parts'
 import { CARD_TICK_GAP, useCardMode } from '@/components/share/card-mode'
 import type { Contract, Example, SqlData, WidgetProps } from './types'
@@ -88,13 +88,11 @@ export default function Area({ data, props }: WidgetProps<AreaProps>) {
 
   const format = props.format ?? 'number'
   const curve = props.curve ?? 'monotone'
-  const hasSeries = sql.columns.includes('series')
-  const pivoted = hasSeries ? pivot(records, 'x', 'series', 'y') : { rows: records, keys: ['y'] }
-  const keys = pivoted.keys
+  const pivoted = chartSeries(sql.columns, records, 'x', 'y')
+  const { hasSeries, keys, config } = pivoted
   // Numbers on x (a retention curve's offsets) plot to scale, in order.
   const numeric = numericX(pivoted.rows)
   const rows = numeric?.rows ?? pivoted.rows
-  const config = hasSeries ? seriesConfig(keys) : { y: { label: 'y' } }
   // Overlapping areas each keep a lighter wash so the ones behind still show.
   const ticks = niceTicks(props.stacked ? stackTotals(rows, keys) : valuesOf(rows, keys))
   const wash = props.stacked || keys.length === 1 ? 0.32 : 0.16

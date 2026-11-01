@@ -23,7 +23,7 @@ export const STREAM_MAX = 64
 export const FALLBACK_GETS = 6
 
 /** One widget's event on the stream: its GET body, or the refusal the GET route would answer. */
-export type StreamAnswer =
+type StreamAnswer =
   | { widget_id: number; data: WidgetData }
   | { widget_id: number; error: { code: string; message: string } }
 
@@ -46,7 +46,7 @@ function answerOf(data: string): StreamAnswer | undefined {
  * it arrives. It resolves when `done` arrives or the body ends, and throws
  * when the request fails or the body breaks off.
  */
-export async function readStream(
+async function readStream(
   items: WidgetStreamItem[],
   signal: AbortSignal,
   onAnswer: (answer: StreamAnswer) => void
@@ -64,7 +64,7 @@ export async function readStream(
 const statusOf: Record<string, number> = { invalid: 400, not_found: 404, conflict: 409, busy: 429, timeout: 504, internal: 500 }
 
 /** A streamed refusal as the error its GET would have thrown, so a card shows it the same way. */
-export function streamError(error: { code: string; message: string }): ApiError {
+function streamError(error: { code: string; message: string }): ApiError {
   return new ApiError(statusOf[error.code] ?? 500, error.message, error.code)
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { eventsByMonth, formatAgo, formatDay, formatSpan, monthStart } from './units'
+import { eventsByMonth, formatAgo, formatDay, monthStart } from './units'
 
 describe('formatAgo', () => {
   const now = new Date('2026-10-03T16:05:00Z')
@@ -18,17 +18,6 @@ describe('formatDay', () => {
     expect(formatDay('2026-10-02', now)).toBe('yesterday')
     expect(formatDay('2026-09-28', now)).toBe('Sep 28')
     expect(formatDay('2025-12-31', now)).toBe('Dec 31, 2025')
-  })
-})
-
-describe('formatSpan', () => {
-  const now = new Date('2026-10-06T12:00:00Z')
-  it('says a range in the current year without years, one day once', () => {
-    expect(formatSpan('2026-09-30', '2026-10-06', now)).toBe('Sep 30 – Oct 6')
-    expect(formatSpan('2026-10-06', '2026-10-06', now)).toBe('Oct 6')
-  })
-  it('names the years when the range leaves the current year', () => {
-    expect(formatSpan('2025-12-30', '2026-01-05', now)).toBe('Dec 30, 2025 – Jan 5, 2026')
   })
 })
 

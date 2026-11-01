@@ -4,7 +4,7 @@ import type { Widget, WidgetData, WidgetDataQuery } from '@/lib/api'
 import { canRefresh, shownQueries } from '@/lib/widget-query'
 import { useNow } from './use-now'
 
-export interface Freshness {
+interface Freshness {
   /** The oldest `cached_at` among the widgets on screen. */
   asOf?: Date
   /** The widgets past their `refresh_after`. */

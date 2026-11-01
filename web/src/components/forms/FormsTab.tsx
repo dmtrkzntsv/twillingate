@@ -1,10 +1,10 @@
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
 import CopyButton from '@/components/projects/CopyButton'
 import LoadError from '@/components/projects/LoadError'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
+import { useClosingTarget } from '@/hooks/use-closing-target'
 import { useFormActions } from '@/hooks/use-form-actions'
 import type { Form, Project } from '@/lib/api'
 import { closingDone, formatDay, formPath, formStatus } from '@/lib/forms'
@@ -106,7 +106,7 @@ export default function FormsTab({ project }: { project: Project }) {
   const [url] = useSearchParams()
   const search = rangeParams(url).toString()
   const actions = useFormActions()
-  const [approving, setApproving] = useState<{ form: Form; open: boolean } | null>(null)
+  const approving = useClosingTarget<Form>()
   const forms = q.data?.forms
 
   return (
@@ -127,7 +127,7 @@ export default function FormsTab({ project }: { project: Project }) {
               projectId={id}
               search={search}
               pending={actions.pending}
-              onApprove={() => setApproving({ form: f, open: true })}
+              onApprove={() => approving.show(f)}
               onClosing={(closes_at) => actions.update(id, f.name, { closes_at }, closingDone(f.name, closes_at))}
               onArchive={() => void actions.archive(id, f.name)}
             />
@@ -135,12 +135,12 @@ export default function FormsTab({ project }: { project: Project }) {
         </ul>
       )}
       <ApproveDialog
-        open={approving?.open === true}
-        onOpenChange={(o) => !o && setApproving((a) => a && { ...a, open: false })}
-        name={approving?.form.name ?? ''}
-        fields={approving?.form.fields ?? []}
+        open={approving.open}
+        onOpenChange={approving.onOpenChange}
+        name={approving.target?.name ?? ''}
+        fields={approving.target?.fields ?? []}
         pending={actions.pending}
-        onApprove={(fields) => actions.approve(id, approving!.form.name, fields)}
+        onApprove={(fields) => actions.approve(id, approving.target!.name, fields)}
       />
     </div>
   )

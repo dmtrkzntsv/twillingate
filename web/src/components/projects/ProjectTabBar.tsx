@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
 import type { DashboardInfo, ProjectTab } from '@/lib/api'
+import { plural } from '@/lib/format'
 import { FORMS_ID, rangeParams, SETTINGS_ID, tabAfter, tabPath } from '@/lib/project-tabs'
 import { cn } from '@/lib/utils'
 import AddTabDialog from './AddTabDialog'
@@ -46,7 +47,7 @@ export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, 
   const formsLabel = [
     'Forms',
     newSubmissions > 0 && `${newSubmissions} new`,
-    draftForms > 0 && `${draftForms} ${draftForms === 1 ? 'draft' : 'drafts'}`,
+    draftForms > 0 && plural(draftForms, 'draft'),
   ]
     .filter(Boolean)
     .join(', ')

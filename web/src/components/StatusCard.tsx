@@ -24,7 +24,7 @@ export default function StatusCard({ title, description, children }: Props) {
   )
 }
 
-export function Brand() {
+function Brand() {
   return (
     <div className="flex items-center gap-2.5 text-lg font-semibold tracking-tight">
       <IcebergLogo className="size-8 rounded-[22%] ring-1 ring-black/5" />

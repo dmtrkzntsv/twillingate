@@ -3,6 +3,7 @@ import { RefreshCwIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { formatAsOf } from '@/lib/time'
+import { plural } from '@/lib/format'
 
 interface Props {
   title: string
@@ -58,7 +59,7 @@ export default function DashboardHeader({ title, children, asOf, refreshable = 0
               <TooltipContent>
                 {refreshable === 0
                   ? 'Nothing to refresh yet'
-                  : `Refresh ${refreshable} ${refreshable === 1 ? 'widget' : 'widgets'}`}
+                  : `Refresh ${plural(refreshable, 'widget')}`}
               </TooltipContent>
             </Tooltip>
           )}

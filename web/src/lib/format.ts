@@ -62,3 +62,8 @@ export function approximate(data: { columns: string[]; approximate?: string[] },
 export function approx(text: string, on: boolean): string {
   return on && text !== '' && text !== '–' ? `≈${text}` : text
 }
+
+/** A count and its noun: `1 row`, `2 rows`. */
+export function plural(n: number, one: string): string {
+  return `${n} ${one}${n === 1 ? '' : 's'}`
+}

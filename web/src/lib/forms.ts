@@ -1,4 +1,5 @@
 import type { Attribution, DashboardsResponse, Form, ProjectActivity } from './api'
+import { plural } from './format'
 
 const DAY = 86_400_000
 
@@ -48,7 +49,7 @@ export function formStatus(form: Form, now = Date.now()): string {
     const left = form.draft_until ? Date.parse(form.draft_until) - now : 0
     if (left < DAY) return 'Draft · expires today'
     const n = Math.ceil(left / DAY)
-    return `Draft · expires in ${n} ${n === 1 ? 'day' : 'days'}`
+    return `Draft · expires in ${plural(n, 'day')}`
   }
   if (form.closes_at) return `Closes ${formatDay(new Date(form.closes_at))}`
   return 'Approved'
@@ -102,7 +103,7 @@ export function purgeDays(dash: DashboardsResponse | undefined): PurgeDays {
 export function purgeNote(days: PurgeDays): string {
   if (days === null) return 'Archived submissions are kept until restored: RETENTION_ARCHIVED_DAYS is 0.'
   if (days === undefined) return 'Archived submissions are deleted for good RETENTION_ARCHIVED_DAYS after archiving unless restored.'
-  return `Archived submissions are deleted for good ${days} ${days === 1 ? 'day' : 'days'} after archiving unless restored.`
+  return `Archived submissions are deleted for good ${plural(days, 'day')} after archiving unless restored.`
 }
 
 /** Where a form lives under a project, as a link from the Forms tab. */

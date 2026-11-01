@@ -40,7 +40,7 @@ function parse(text: string): { ok: true; value: unknown } | { ok: false } {
 }
 
 /** A prop key as a label: `bar_format` reads "Bar format". */
-export function labelOf(key: string): string {
+function labelOf(key: string): string {
   const words = key.replace(/_/g, ' ')
   return words.charAt(0).toUpperCase() + words.slice(1)
 }

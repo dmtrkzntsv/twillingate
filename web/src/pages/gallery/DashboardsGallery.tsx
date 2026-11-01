@@ -3,6 +3,7 @@ import { DashboardGroup, LoneDashboard, type GroupRow } from '@/components/Dashb
 import TemplateMenu from '@/components/TemplateMenu'
 import type { DashboardInfo } from '@/lib/api'
 import { groupName } from '@/lib/arrange'
+import { plural } from '@/lib/format'
 import { dashboardsQuery } from '@/lib/queries'
 import GalleryLayout from './GalleryLayout'
 
@@ -31,7 +32,7 @@ function systemGroups(dashboards: DashboardInfo[]): SystemGroup[] {
 
 const HIDDEN = 'hidden'
 
-const widgets = (d: DashboardInfo) => `${d.widgets} ${d.widgets === 1 ? 'widget' : 'widgets'}`
+const widgets = (d: DashboardInfo) => plural(d.widgets, 'widget')
 
 /**
  * `/gallery/dashboards`: every system group as a template, shown as on the

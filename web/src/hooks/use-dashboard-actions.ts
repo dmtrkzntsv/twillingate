@@ -2,7 +2,8 @@ import { useCallback, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
-import { ApiError, endpoints, type MoveBody } from '@/lib/api'
+import { endpoints, type MoveBody } from '@/lib/api'
+import { toastError } from '@/lib/toast-error'
 
 export interface DashboardActions {
   /**
@@ -67,9 +68,7 @@ export function useDashboardActions(): DashboardActions {
       try {
         then = await fn()
       } catch (err) {
-        if (err instanceof ApiError) toast.error(err.message)
-        else if (err instanceof TypeError) toast.error("Couldn't reach the server")
-        else toast.error(err instanceof Error ? err.message : String(err))
+        toastError(err)
       } finally {
         await refresh()
         setPending(false)

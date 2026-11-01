@@ -201,7 +201,7 @@ export function usesParams(sql: string): { project: boolean; range: boolean } {
 }
 
 /** Whether a query source's content fixes its project (a positive project_id beside query). */
-export function fixesProject(query: string): boolean {
+function fixesProject(query: string): boolean {
   try {
     const c: unknown = JSON.parse(query)
     if (c === null || typeof c !== 'object') return false

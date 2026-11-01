@@ -17,26 +17,11 @@ import { downloadBlob } from '@/lib/capture'
 import { closingDone, formatDay, formStatus, purgeDays as purgeDaysOf, purgeNote as purgeNoteFor, toCSV, type PurgeDays } from '@/lib/forms'
 import { FORMS_ID, rangeParams, tabPath } from '@/lib/project-tabs'
 import { dashboardsQuery, formsQuery, submissionsQuery } from '@/lib/queries'
-import { liveFilters, parseView, type Filter, type TableView } from '@/lib/table-view'
+import { liveFilters, parseView, remoteArgs, valueOptions, viewChanged, type Filter, type TableView } from '@/lib/table-view'
 import ApproveDialog from './ApproveDialog'
 import FormMenu from './FormMenu'
 import SettingsDialog from './SettingsDialog'
 import SubmissionDrawer from './SubmissionDrawer'
-
-/**
- * The table's arguments for a view: once an answer has named the columns,
- * only the filters and sort on columns it has (the server refuses the
- * rest); before one has, the view whole. Empty parts are left out.
- */
-function viewArgs(view: TableView, columns: string[] | undefined, archived: boolean): SubmissionsQuery {
-  const filters = columns ? liveFilters(view, columns) : view.filters
-  const sort = view.sort && (!columns || columns.includes(view.sort.column)) ? view.sort : null
-  const q: SubmissionsQuery = archived ? { archived: true } : {}
-  if (filters.length > 0) q.filters = JSON.stringify(filters)
-  if (sort) q.sort = `${sort.column}:${sort.dir}`
-  if (view.offset > 0) q.offset = view.offset
-  return q
-}
 
 /** The stored part of a form's view: the sort alone, read with parseView's rules. */
 function parseSort(stored: unknown): Pick<TableView, 'sort'> | null {
@@ -57,7 +42,7 @@ function useFormView(key: string): [TableView, (next: TableView) => void] {
   const [offset, setOffset] = useState(0)
   const view: TableView = { filters, sort: stored?.sort ?? null, offset }
   const setView = (next: TableView) => {
-    const changed = JSON.stringify([next.filters, next.sort]) !== JSON.stringify([view.filters, view.sort])
+    const changed = viewChanged(view, next)
     if (JSON.stringify(next.sort) !== JSON.stringify(view.sort)) setStored(next.sort === null ? null : { sort: next.sort })
     setFilters(next.filters)
     setOffset(changed ? 0 : next.offset)
@@ -95,7 +80,7 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
   // The stored view was refused before any answer named the columns: ask
   // once without it, to learn them.
   const [blind, setBlind] = useState(false)
-  const args = viewArgs(view, last?.columns ?? (blind ? [] : undefined), archived)
+  const args: SubmissionsQuery = { ...(archived ? { archived: true } : {}), ...remoteArgs(view, last?.columns ?? (blind ? [] : undefined)) }
   const q = useQuery({ ...submissionsQuery(projectId, name, args), placeholderData: keepPreviousData })
   const settled = q.isPlaceholderData ? undefined : q.data
   useEffect(() => {
@@ -128,8 +113,7 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
       ...(others.length > 0 ? { filters: JSON.stringify(others) } : {}),
       distinct: column,
     })
-    const capped = res.matched > res.offset + res.rows.length
-    return res.rows.map(([value, n]) => ({ value, rows: Number(n), capped }))
+    return valueOptions(res.rows, res)
   }
 
   // Archived ones go back, active ones are set aside; either way the toast says how many.
@@ -150,7 +134,7 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
   const csv = async () => {
     setDownloading(true)
     try {
-      const { filters, sort } = viewArgs({ ...view, offset: 0 }, answer?.columns, archived)
+      const { filters, sort } = remoteArgs({ ...view, offset: 0 }, answer?.columns)
       const blob = await endpoints.exportSubmissions(projectId, name, {
         ...(archived ? { archived: true } : {}),
         ...(filters ? { filters } : {}),
@@ -165,6 +149,13 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
   }
 
   const purgeNote = purgeNoteFor(purgeDays)
+  // Beside the heading: the rows the filters match, of all of them.
+  const count = answer && answer.total > 0 && (
+    <span className="ml-1 text-sm font-normal text-muted-foreground">
+      {' '}
+      {live.length > 0 ? `${answer.matched.toLocaleString('en-US')} of ${answer.total.toLocaleString('en-US')}` : answer.total.toLocaleString('en-US')}
+    </span>
+  )
 
   return (
     <section aria-label="Submissions" className="flex min-w-0 flex-col gap-2">
@@ -177,27 +168,13 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
             </Button>
             <h3 className="text-base font-semibold">
               Archived
-              {answer && answer.total > 0 && (
-              <span className="ml-1 text-sm font-normal text-muted-foreground">
-                {' '}
-                {live.length > 0
-                  ? `${answer.matched.toLocaleString('en-US')} of ${answer.total.toLocaleString('en-US')}`
-                  : answer.total.toLocaleString('en-US')}
-              </span>
-            )}
+              {count}
             </h3>
           </div>
         ) : (
           <h3 className="text-base font-semibold">
             Submissions
-            {answer && answer.total > 0 && (
-              <span className="ml-1 text-sm font-normal text-muted-foreground">
-                {' '}
-                {live.length > 0
-                  ? `${answer.matched.toLocaleString('en-US')} of ${answer.total.toLocaleString('en-US')}`
-                  : answer.total.toLocaleString('en-US')}
-              </span>
-            )}
+            {count}
           </h3>
         )}
         {selected.length > 0 ? (

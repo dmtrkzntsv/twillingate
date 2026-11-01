@@ -2,15 +2,8 @@ import { useCallback, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router'
 import { toast } from 'sonner'
-import { ApiError, endpoints, type ProjectTab } from '@/lib/api'
+import { endpoints, errorMessage, type ProjectTab } from '@/lib/api'
 import { tabPath } from '@/lib/project-tabs'
-
-/** What a failed call tells the person: the server's refusal, or why none came. */
-function describe(err: unknown): string {
-  if (err instanceof ApiError) return err.message
-  if (err instanceof TypeError) return "Couldn't reach the server"
-  return err instanceof Error ? err.message : String(err)
-}
 
 export interface ProjectTabActions {
   /** Shows a dashboard as a tab of the project; resolves true when the server took it, false after the toast. */
@@ -52,7 +45,7 @@ export function useProjectTabActions(): ProjectTabActions {
         queryClient.setQueryData(['project-tabs', projectId], { tabs })
         return true
       } catch (err) {
-        toast.error(describe(err))
+        toast.error(errorMessage(err))
         return false
       } finally {
         setPending(false)
@@ -75,7 +68,7 @@ export function useProjectTabActions(): ProjectTabActions {
         try {
           return await endpoints.addProjectTab(projectId, { dashboard_id: id })
         } catch (err) {
-          throw new Error(`Created '${title}' but couldn't add it as a tab: ${describe(err)}`)
+          throw new Error(`Created '${title}' but couldn't add it as a tab: ${errorMessage(err)}`)
         }
       })
       // The new dashboard is in the list even when it did not become a tab.

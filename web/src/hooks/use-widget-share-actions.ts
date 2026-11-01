@@ -1,7 +1,8 @@
 import { useCallback, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { ApiError, endpoints, type ArchiveAfter, type WidgetShare } from '@/lib/api'
+import { endpoints, type ArchiveAfter, type WidgetShare } from '@/lib/api'
+import { toastError } from '@/lib/toast-error'
 
 export interface WidgetShareActions {
   /** True while an action runs; buttons wait on it. */
@@ -31,9 +32,7 @@ export function useWidgetShareActions(): WidgetShareActions {
         await client.invalidateQueries({ queryKey: ['widget-shares'] })
         return out
       } catch (err) {
-        if (err instanceof ApiError) toast.error(err.message)
-        else if (err instanceof TypeError) toast.error("Couldn't reach the server")
-        else toast.error(err instanceof Error ? err.message : String(err))
+        toastError(err)
         return undefined
       } finally {
         setPending(false)
