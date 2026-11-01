@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -85,7 +86,8 @@ func (r *rdap) expiry(ctx context.Context, host string) (string, error) {
 		errs = append(errs, err)
 	}
 	if err != nil {
-		if errors.Is(err, errNotFound) {
+		// Not found only when every server said so: one that failed may know it.
+		if !slices.ContainsFunc(errs, func(e error) bool { return !errors.Is(e, errNotFound) }) {
 			return "", unknown("%s: not found over RDAP", name)
 		}
 		return "", errors.Join(errs...)

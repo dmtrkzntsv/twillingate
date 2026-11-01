@@ -224,3 +224,38 @@ func TestRDAPBootstrapFetchHoldsNoLock(t *testing.T) {
 	cancel()
 	<-done
 }
+
+// With several RDAP servers, a 404 from the last does not make the domain
+// unknown when another one failed: that reads as a failure, which keeps the
+// known date. Unknown only when every server said it does not know the name.
+func TestRDAPNotFoundIsUnknownOnlyWhenEveryServerSaysSo(t *testing.T) {
+	status := func(code int) *httptest.Server {
+		s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Error(w, "no", code)
+		}))
+		t.Cleanup(s.Close)
+		return s
+	}
+	for _, tc := range []struct {
+		name          string
+		first, second int
+		unknown       bool
+	}{
+		{"503 then 404", http.StatusServiceUnavailable, http.StatusNotFound, false},
+		{"404 then 503", http.StatusNotFound, http.StatusServiceUnavailable, false},
+		{"404 and 404", http.StatusNotFound, http.StatusNotFound, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a, b := status(tc.first), status(tc.second)
+			boot := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				fmt.Fprintf(w, `{"services":[[["com"],["%s/","%s/"]]]}`, a.URL, b.URL)
+			}))
+			defer boot.Close()
+			r := &rdap{client: loopbackClient(t), bootstrapURL: boot.URL, now: time.Now}
+			got, err := r.expiry(context.Background(), "example.com")
+			if got != "" || err == nil || errors.Is(err, errUnknown) == !tc.unknown {
+				t.Errorf("got %q %v, want unknown=%t", got, err, tc.unknown)
+			}
+		})
+	}
+}
