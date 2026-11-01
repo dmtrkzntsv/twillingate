@@ -21,14 +21,28 @@ import (
 // maxAPIBody caps a REST request body; larger bodies are refused as invalid.
 const maxAPIBody = 1 << 20
 
-// restHandler adapts one operation to HTTP: decode the request into In,
-// run fn as actor "api", and answer with Out as JSON at s.Status (200 when
-// unset) or with the refusal mapped by writeError.
+// writeJSON answers v as JSON at status, never cached.
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
+// restHandler adapts one operation to HTTP: its Out answered as JSON at
+// s.Status (200 when unset).
 func restHandler[In, Out any](r *registrar, s spec, fn func(context.Context, In) (Out, error)) http.HandlerFunc {
 	status := s.Status
 	if status == 0 {
 		status = http.StatusOK
 	}
+	return restWith(r, fn, func(w http.ResponseWriter, _ *http.Request, out Out) { writeJSON(w, status, out) })
+}
+
+// restWith adapts one operation to HTTP: decode the request into In, run
+// fn as actor "api", and answer with write, or with the refusal mapped by
+// writeError.
+func restWith[In, Out any](r *registrar, fn func(context.Context, In) (Out, error), write func(http.ResponseWriter, *http.Request, Out)) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		var in In
 		if err := decodeRequest(req, &in); err != nil {
@@ -40,7 +54,7 @@ func restHandler[In, Out any](r *registrar, s spec, fn func(context.Context, In)
 			writeError(w, r.logger, req, err)
 			return
 		}
-		writeJSON(w, status, out)
+		write(w, req, out)
 	}
 }
 

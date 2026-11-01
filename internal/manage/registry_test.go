@@ -263,9 +263,9 @@ func TestRedirectAllowed(t *testing.T) {
 	}
 }
 
-// TestSnapshotRuleLists: every project's rules, ordered, for the event
+// TestSnapshotRules: every project's rules, ordered, for the event
 // files' tables, which apply them on read.
-func TestSnapshotRuleLists(t *testing.T) {
+func TestSnapshotRules(t *testing.T) {
 	ops, _, reg := newOps(t)
 	ctx := context.Background()
 	a, err := ops.CreateProject(ctx, "t", ProjectSpec{Name: "A"})
@@ -286,7 +286,8 @@ func TestSnapshotRuleLists(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	events, attrs := reg.Snapshot(ctx).RuleLists()
+	rules := reg.Snapshot(ctx).Rules()
+	events, attrs := rules.Events, rules.Attributes
 	if len(events) != 2 || events[0].ProjectID != a.ID || events[0].Name != "z" || events[0].To != "y" ||
 		events[1].ProjectID != b.ID || events[1].Action != store.EventRuleBlock {
 		t.Fatalf("events = %+v", events)

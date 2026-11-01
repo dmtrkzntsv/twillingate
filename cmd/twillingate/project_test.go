@@ -81,9 +81,9 @@ func TestProjectUpdateClearsOriginsOnlyWhenAsked(t *testing.T) {
 		t.Fatalf("clear: %s", out.String())
 	}
 	// The registry is the source of truth: reopen it and look.
-	ops, _, closeStore, code := openOps(&out, "")
-	if code != 0 {
-		t.Fatal(out.String())
+	ops, _, closeStore, err := openOps("")
+	if err != nil {
+		t.Fatal(err)
 	}
 	defer closeStore()
 	p := ops.Reg.Snapshot(context.Background()).Project(1)
@@ -185,10 +185,9 @@ func TestProjectUpdateMergeSemantics(t *testing.T) {
 // own output is not the source of truth, the database is.
 func snapshotProject(t *testing.T, id int64) *manage.Project {
 	t.Helper()
-	var out bytes.Buffer
-	ops, _, closeStore, code := openOps(&out, "")
-	if code != 0 {
-		t.Fatal(out.String())
+	ops, _, closeStore, err := openOps("")
+	if err != nil {
+		t.Fatal(err)
 	}
 	defer closeStore()
 	p := ops.Reg.Snapshot(context.Background()).Project(id)

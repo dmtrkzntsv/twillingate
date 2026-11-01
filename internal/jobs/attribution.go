@@ -172,9 +172,9 @@ func (r *Runner) attributeBatch(ctx context.Context, now time.Time, givenUp *int
 	}
 	var found []archive.Found
 	if len(ls) > 0 {
-		events, attrs := r.reg.Snapshot(ctx).RuleLists()
+		rules := r.reg.Snapshot(ctx).Rules()
 		lookupCtx, cancel := context.WithTimeout(ctx, r.attributionTimeout)
-		found, err = r.attributor.Attribute(lookupCtx, ls, r.cfg.Forms.AttributionDays, archive.Rules{Events: events, Attributes: attrs})
+		found, err = r.attributor.Attribute(lookupCtx, ls, r.cfg.Forms.AttributionDays, rules)
 		cancel()
 		if err != nil {
 			more = false

@@ -11,7 +11,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/sqlengine"
 )
 
-// ---- filesTable (over runFiles and sqlError) and checkRange() branches
+// ---- filesTable (over runFiles and sqlError) and rangeOf() branches
 // not reached via the happy-path *Overview/*Breakdown tests ----
 
 // TestFilesTableTruncatesErrorsAndTimesOut: what the engine answers

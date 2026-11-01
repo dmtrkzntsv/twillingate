@@ -31,7 +31,8 @@ func (h *host) productEvents(ctx context.Context, in productEventsIn) (productEv
 	// One deadline for every query the answer runs.
 	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
-	if err := h.checkRange(ctx, in.rangeIn); err != nil {
+	p, ok, err := h.rangeOf(ctx, in.rangeIn)
+	if err != nil {
 		return productEventsOut{}, err
 	}
 	out := productEventsOut{
@@ -41,7 +42,6 @@ func (h *host) productEvents(ctx context.Context, in productEventsIn) (productEv
 	if in.Event != "" {
 		out.Totals = tableOut{}
 	}
-	p, ok := rangeParams(in.rangeIn)
 	if !ok {
 		return out, nil
 	}
@@ -137,11 +137,11 @@ func (h *host) capQuery(q native.Query, limit int) (native.Query, func(native.Re
 // most CONSOLE_QUERY_ROWS_MAX rows (and the engine's 1,000), the earliest
 // days'. A range the engine cannot hold is refused (native.ErrTooLarge).
 func (h *host) productAttributes(ctx context.Context, in productEventsIn) (tableOut, error) {
-	if err := h.checkRange(ctx, in.rangeIn); err != nil {
+	p, ok, err := h.rangeOf(ctx, in.rangeIn)
+	if err != nil {
 		return tableOut{}, err
 	}
 	cols := []string{"day", "event_name", "attr_key", "attr_value", "count", "unique_users", "unique_groups"}
-	p, ok := rangeParams(in.rangeIn)
 	if !ok {
 		return tableOut{Columns: cols, Rows: [][]string{}}, nil
 	}
@@ -190,7 +190,8 @@ var retentionColumns = []string{"cohort_day", "day_offset", "actors", "cohort_si
 // partial. aggregated_through is the newest such day with a view or
 // product event in the project's files.
 func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, error) {
-	if err := h.checkRange(ctx, in.rangeIn); err != nil {
+	params, grid, err := h.rangeOf(ctx, in.rangeIn)
+	if err != nil {
 		return retentionOut{}, err
 	}
 	if in.Actor != "user" && in.Actor != "install" {
@@ -209,7 +210,6 @@ func (h *host) retention(ctx context.Context, in retentionIn) (retentionOut, err
 	}
 	// The grid and how far it reaches, in one call.
 	var reqs []native.Request
-	params, grid := rangeParams(in.rangeIn)
 	if grid {
 		reqs = append(reqs, native.Request{Query: native.Query{Kind: "retention", Output: "grid", IdentifiedBy: in.Actor, Offsets: retentionOffsets}, Params: params})
 	}
@@ -282,7 +282,8 @@ type identitiesIn struct {
 // label's, the identities' name of the id; the label reads the id itself
 // for an id without a name, which reads as no name here.
 func (h *host) identities(ctx context.Context, in identitiesIn) (tableOut, error) {
-	if err := h.checkRange(ctx, in.rangeIn); err != nil {
+	p, ok, err := h.rangeOf(ctx, in.rangeIn)
+	if err != nil {
 		return tableOut{}, err
 	}
 	if in.Kind != "user" && in.Kind != "group" {
@@ -293,7 +294,6 @@ func (h *host) identities(ctx context.Context, in identitiesIn) (tableOut, error
 		limit = 50
 	}
 	cols := []string{"id", "name", "actors", "users", "views", "events"}
-	p, ok := rangeParams(in.rangeIn)
 	if !ok {
 		return tableOut{Columns: cols, Rows: [][]string{}}, nil
 	}

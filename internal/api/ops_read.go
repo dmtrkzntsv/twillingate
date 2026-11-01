@@ -20,7 +20,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/readsql"
 	"github.com/google/jsonschema-go/jsonschema"
-	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 type host struct {
@@ -77,22 +76,29 @@ type rangeIn struct {
 	To        string `json:"to" jsonschema:"end day inclusive, YYYY-MM-DD"`
 }
 
-// checkRange validates the shared inputs. Error text is written for a
-// model to recover from (endpoint spec §10): an unknown project lists
-// the valid ids and names instead of just refusing.
-func (h *host) checkRange(ctx context.Context, in rangeIn) error {
+// rangeOf validates the shared inputs and opens them as a native query's
+// project and days. Error text is written for a model to recover from
+// (endpoint spec §10): an unknown project lists the valid ids and names
+// instead of just refusing. ok is false when to is before from: a range
+// of no day, which answers no row.
+func (h *host) rangeOf(ctx context.Context, in rangeIn) (p native.Params, ok bool, err error) {
 	if !isDay(in.From) || !isDay(in.To) {
-		return invalidf("from and to must be YYYY-MM-DD, got %q and %q", in.From, in.To)
+		return native.Params{}, false, invalidf("from and to must be YYYY-MM-DD, got %q and %q", in.From, in.To)
 	}
 	if h.reg.Snapshot(ctx).Project(in.ProjectID) == nil {
-		return h.unknownProjectErr(ctx, in.ProjectID)
+		return native.Params{}, false, h.unknownProjectErr(ctx, in.ProjectID)
 	}
-	return nil
+	from, err1 := civil.Parse(in.From)
+	to, err2 := civil.Parse(in.To)
+	if err1 != nil || err2 != nil || to.Before(from) {
+		return native.Params{}, false, nil
+	}
+	return native.Params{Project: in.ProjectID, From: from, To: to}, true, nil
 }
 
 // unknownProjectErr lists the valid ids with their names so a model can
 // recover (endpoint spec §10) without a second list_projects call. Shared
-// by checkRange and by tools that re-fetch the project after checkRange
+// by rangeOf and by tools that re-fetch the project after rangeOf
 // has already validated it, in case the registry reloaded in between (a
 // nil project would otherwise panic on field access).
 func (h *host) unknownProjectErr(ctx context.Context, id int64) error {
@@ -155,10 +161,10 @@ func (h *host) viewsOverview(ctx context.Context, in overviewIn) (tableOut, erro
 	// One deadline for every query the answer runs.
 	ctx, cancel := context.WithTimeout(ctx, h.queryTimeout)
 	defer cancel()
-	if err := h.checkRange(ctx, in.rangeIn); err != nil {
+	p, ok, err := h.rangeOf(ctx, in.rangeIn)
+	if err != nil {
 		return tableOut{}, err
 	}
-	p, ok := rangeParams(in.rangeIn)
 	cols := []string{"day", "visitors", "views", "sessions", "bounces", "duration_sec", "bounce_rate", "avg_session_sec"}
 	if !ok {
 		return tableOut{Columns: cols, Rows: [][]string{}}, nil
@@ -217,17 +223,6 @@ func (h *host) rowCap() int {
 		return maxBreakdownLimit
 	}
 	return min(h.queryRows, maxBreakdownLimit)
-}
-
-// rangeParams is in's project and days as a native query's, ok false
-// when to is before from: a range of no day, which answers no row.
-func rangeParams(in rangeIn) (native.Params, bool) {
-	from, err1 := civil.Parse(in.From)
-	to, err2 := civil.Parse(in.To)
-	if err1 != nil || err2 != nil || to.Before(from) {
-		return native.Params{}, false
-	}
-	return native.Params{Project: in.ProjectID, From: from, To: to}, true
 }
 
 // rangeDays is the days of p's range, from and to included.
@@ -326,15 +321,15 @@ type breakdownIn struct {
 // dimension's columns: visitors (distinct per day and value, added up)
 // and views, the busiest by visitors, then views, then the values.
 func (h *host) viewsBreakdown(ctx context.Context, in breakdownIn) (tableOut, error) {
-	if err := h.checkRange(ctx, in.rangeIn); err != nil {
+	p, ok, err := h.rangeOf(ctx, in.rangeIn)
+	if err != nil {
 		return tableOut{}, err
 	}
-	dim, ok := viewsDimensions[in.Dimension]
-	if !ok {
+	dim, known := viewsDimensions[in.Dimension]
+	if !known {
 		return tableOut{}, invalidf("unknown dimension %q; valid: %s", in.Dimension, dimensionNames())
 	}
 	cols := append(slices.Clone(dim.cols), "visitors", "views")
-	p, ok := rangeParams(in.rangeIn)
 	if !ok {
 		return tableOut{Columns: cols, Rows: [][]string{}}, nil
 	}
@@ -394,15 +389,6 @@ func (h *host) topRows(ctx context.Context, q native.Query, p native.Params, n i
 // declared) REST. Read operations carry ReadOnlyHint; management
 // operations (ops_manage.go) do not.
 func (h *host) register(r *registrar) {
-	ro := &mcp.ToolAnnotations{ReadOnlyHint: true}
-	// DestructiveHint is *bool in the SDK. Nothing here is destructive but
-	// merge_event and merge_attribute (a merge cannot be split again) and
-	// block_event and block_attribute, which ask the operator.
-	no, yes := false, true
-	write := &mcp.ToolAnnotations{DestructiveHint: &no}
-	idem := &mcp.ToolAnnotations{DestructiveHint: &no, IdempotentHint: true}
-	destroy := &mcp.ToolAnnotations{DestructiveHint: &yes}
-	destroyIdem := &mcp.ToolAnnotations{DestructiveHint: &yes, IdempotentHint: true}
 	const p = "/api/projects/{project_id}"
 
 	expose(r, spec{Name: "list_projects", Annotations: ro, Method: "GET", Path: "/api/projects",
@@ -516,10 +502,11 @@ func (h *host) register(r *registrar) {
 // engine its sql mode too, without one only the structured query, so an
 // agent is never offered SQL it would be refused.
 func (h *host) queryDescription() string {
+	const structured = "query is the native structured language over one project (project_id, from, to: default the 30 days ending today): a stat (one row of metrics, optionally against the previous period), a trend (one metric per day, optionally split by a series) or a breakdown (metrics grouped by 1-3 dimensions), over events, views, product or measures, with filters; or a retention (output grid, curve or milestones: the cohorts of users and installs first active in the range and the days they came back, counted over the days before today); distinct counts past 1,024 ids per group are estimated (about ±2%) and named in approximate (docs://twillingate, \"Structured queries\")."
 	if h.sql == nil {
-		return "Ask the event files a question. query is the native structured language over one project (project_id, from, to: default the 30 days ending today): a stat (one row of metrics, optionally against the previous period), a trend (one metric per day, optionally split by a series) or a breakdown (metrics grouped by 1-3 dimensions), over events, views, product or measures, with filters; or a retention (output grid, curve or milestones: the cohorts of users and installs first active in the range and the days they came back, counted over the days before today); distinct counts past 1,024 ids per group are estimated (about ±2%) and named in approximate (docs://twillingate, \"Structured queries\"). Row-capped and time-limited; read-only."
+		return "Ask the event files a question. " + structured + " Row-capped and time-limited; read-only."
 	}
-	return "Ask the event files a question, one of two ways. query is the native structured language over one project (project_id, from, to: default the 30 days ending today): a stat (one row of metrics, optionally against the previous period), a trend (one metric per day, optionally split by a series) or a breakdown (metrics grouped by 1-3 dimensions), over events, views, product or measures, with filters; or a retention (output grid, curve or milestones: the cohorts of users and installs first active in the range and the days they came back, counted over the days before today); distinct counts past 1,024 ids per group are estimated (about ±2%) and named in approximate (docs://twillingate, \"Structured queries\"). sql is the escape hatch, DuckDB SQL answered by the external SQL engine: one read-only SELECT/WITH over the tables events, views, product, measures, sessions, identities and aliases and nothing else (no table function but range, generate_series and unnest, no schema-qualified name such as main.events), one attr_<key> column per attribute key, every project's rows; read schema://views first (\"Writing SQL against the event files\"). Give sql or query, not both. Row-capped and time-limited; read-only."
+	return "Ask the event files a question, one of two ways. " + structured + " sql is the escape hatch, DuckDB SQL answered by the external SQL engine: one read-only SELECT/WITH over the tables events, views, product, measures, sessions, identities and aliases and nothing else (no table function but range, generate_series and unnest, no schema-qualified name such as main.events), one attr_<key> column per attribute key, every project's rows; read schema://views first (\"Writing SQL against the event files\"). Give sql or query, not both. Row-capped and time-limited; read-only."
 }
 
 // constrainQuery is queryEnums, and without an external SQL engine the
