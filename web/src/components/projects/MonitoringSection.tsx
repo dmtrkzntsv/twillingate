@@ -32,7 +32,8 @@ const CHECK_SLOW_POLL_MS = 15_000
 
 /** The manual check still to finish on an enabled monitor, by when it was asked for. */
 function pendingCheck(m: Monitor): string | null {
-  return m.enabled && m.check.requested_at > m.check.finished_at ? m.check.requested_at : null
+  const { requested_at: requested, finished_at: finished } = m.check
+  return m.enabled && requested !== '' && (finished === '' || finished < requested) ? requested : null
 }
 
 /** How the last manual check went. */

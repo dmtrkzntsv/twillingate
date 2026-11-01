@@ -338,6 +338,12 @@ describe('MonitoringSection', () => {
       expect((await row(B)).getByRole('button', { name: 'Check now' })).toBeEnabled()
     })
 
+    it('reads a request as pending while the previous result stays in the fields, and finished once the finish time reaches it', async () => {
+      show(list([on(A, { check: { ...pendingCheck, up: true, status: 200, ms: 5 } }), on(B, { check: done({ finished_at: at }) })]))
+      expect((await row(A)).getByRole('button', { name: 'Checking…' })).toBeDisabled()
+      expect((await row(B)).getByRole('button', { name: 'Check now' })).toBeEnabled()
+    })
+
     it('polls while a row has one pending, shows its result and the fresh domain there, and stops', async () => {
       const { read } = show(list([on(A, { check: pendingCheck }), on(B)]))
       const a = await row(A)
