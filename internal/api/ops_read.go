@@ -447,7 +447,7 @@ func (h *host) register(r *registrar) {
 		Description: "Restore an archived project."},
 		h.restoreProject)
 	expose(r, spec{Name: "list_ingest_keys", Annotations: ro, Method: "GET", Path: "/api/keys",
-		Description: "List ingest keys with their state, including disabled ones."},
+		Description: "List ingest keys with their state and install snippet, including disabled ones."},
 		h.listKeys)
 	expose(r, spec{Name: "issue_ingest_key", Annotations: write, Method: "POST", Path: p + "/keys", Status: http.StatusCreated,
 		Description: "Issue a new ingest key for a project. Ingest keys are public identifiers (they ship in page source); retirement is disable, not secrecy. Confirm the snippet's collector hostname with the user."},

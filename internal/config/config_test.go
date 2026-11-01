@@ -719,6 +719,31 @@ func TestAudienceGivenOnlyWhenExplicit(t *testing.T) {
 	}
 }
 
+// TestIngestURLDefaultsToConsoleURL: either address alone is enough, so a
+// server with one hostname sets one variable and its snippets still name it.
+func TestIngestURLDefaultsToConsoleURL(t *testing.T) {
+	cases := []struct {
+		name        string
+		env         map[string]string
+		ingest, con string
+	}{
+		{"both", map[string]string{"INGEST_URL": "https://t.example.com/", "CONSOLE_URL": "https://c.example.com/"}, "https://t.example.com", "https://c.example.com"},
+		{"CONSOLE_URL alone", map[string]string{"CONSOLE_URL": "https://c.example.com/"}, "https://c.example.com", "https://c.example.com"},
+		{"INGEST_URL alone", map[string]string{"INGEST_URL": "https://t.example.com/"}, "https://t.example.com", "https://t.example.com"},
+		{"neither", map[string]string{}, "", ""},
+	}
+	for _, tc := range cases {
+		tc.env["DATABASE_DSN"] = "sqlite:///tmp/x.db"
+		c, err := FromEnv(func(k string) (string, bool) { v, ok := tc.env[k]; return v, ok })
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if c.IngestURL != tc.ingest || c.Console.URL != tc.con {
+			t.Errorf("%s: ingest %q, console %q; want %q, %q", tc.name, c.IngestURL, c.Console.URL, tc.ingest, tc.con)
+		}
+	}
+}
+
 // TestConsoleURLIsTheResourceDefault: CONSOLE_URL names the console's own public
 // address; the login's resource (so its issuer and the dashboards'
 // callback) follows it, falling back to INGEST_URL, and resource= still

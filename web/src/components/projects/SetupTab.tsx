@@ -6,6 +6,7 @@ import DashboardHeader from '@/components/DashboardHeader'
 import RangeSwitcher from '@/components/RangeSwitcher'
 import AttributesSection from '@/components/projects/AttributesSection'
 import EventsSection from '@/components/projects/EventsSection'
+import InstallSection from '@/components/projects/InstallSection'
 import KeysSection from '@/components/projects/KeysSection'
 import OriginsSection from '@/components/projects/OriginsSection'
 import UsageSection from '@/components/projects/UsageSection'
@@ -26,8 +27,9 @@ interface Props {
 }
 
 /**
- * A project's Settings page (project landing D4): its usage, allowed origins,
- * events, attributes and keys, with
+ * A project's Settings page (project landing D4): its usage, how to install
+ * the script (not on an archived project, which takes nothing, or in reporting
+ * dev, which has no keys), allowed origins, events, attributes and keys, with
  * Archive or Restore. The range is the URL's, which every tab of the
  * project shares (D8), else 7 days.
  */
@@ -54,6 +56,9 @@ export default function SetupTab({ project, dash, actions }: Props) {
         )}
       </DashboardHeader>
       <UsageSection projectId={id} range={range} />
+      {!project.archived && !dash?.dev && (
+        <InstallSection project={project} keys={keysQ.data?.keys} error={keysQ.error} onRetry={() => void keysQ.refetch()} note={keysQ.data?.note} />
+      )}
       <OriginsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
       <EventsSection
         project={project}

@@ -136,7 +136,7 @@ The stream sends a keepalive every 15 seconds, well inside Cloudflare's
 | --- | --- |
 | `INGEST_ADDR` | Address to bind. Default `127.0.0.1:8080` (the docker image sets `0.0.0.0:8080`). |
 | `INGEST_DISABLED` | `true` (or `1`) stops ingest completely while the console keeps running: `POST /ingest/events`, the legacy `POST /api/events` and `POST /ingest/forms/{name}` refuse every request with `429`, `ingest is disabled` and `Retry-After: 3600`, before the body is read or the key looked up, so nothing is written. The SDK drops a batch refused with a 4xx rather than queueing it. Preflights, the SDK scripts and `/healthz` answer as usual; `limits` reports `ingest_disabled` and the console's Projects page says so. For a migration, a restore or an abuse incident. When the ingest and console surfaces run as separate processes, set it for both: the refusal is the ingest process's setting, while the console's banner and `limits` read the console process's own. Takes `true`/`false`, `1`/`0`; anything else refuses the boot. Default `false`. |
-| `INGEST_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets and MCP integration guidance are built from it; unset, they carry a placeholder. Also the default for `CONSOLE_URL`. With [several hostnames](#one-collector-several-hostnames), the default one. |
+| `INGEST_URL` | The collector's public base URL (`https://twillingate.example.com`). Embed snippets and MCP integration guidance are built from it. Defaults to `CONSOLE_URL`; with neither set, they carry a placeholder. Also the default for `CONSOLE_URL`, so one variable is enough on a single hostname. Set both when ingest has a hostname of its own, or snippets name the console. With [several hostnames](#one-collector-several-hostnames), the default one. |
 | `DATABASE_DSN` | Store DSN. Only `sqlite://<path>` today. Required. |
 | `DATA_DIR` | Directory of the event files: a log per project and day, then Parquet day and month files. Default `data/` beside the database's file (`/var/lib/twillingate/data`). Its name before this release is ignored, with a warning at start (see `deploy/UPGRADES.md`). The engine reads and writes everything in it, so it may not hold the database. On a split install, give both processes the same value. It must be on a filesystem that supports `flock` (most local filesystems; not some FUSE or SMB mounts): the ingest process holds `.lock` in it, and refuses to start where it cannot. A second ingest process refuses while one runs. To move it, stop the service, move the directory, set the variable, start. |
 | `GEO_DSN` | Country lookup: `cloudflare://` (header), `maxmind://<license-key>`, or `none://`. |
@@ -153,7 +153,7 @@ The stream sends a keepalive every 15 seconds, well inside Cloudflare's
 | `RETENTION_ARCHIVED_DAYS` | Days after archiving that a project (with all its data and its widget shares), a dashboard, a widget, a widget share, a form (with its submissions) or a form submission is deleted by the daily pass. 0 keeps archived items forever. Default 30. |
 | `CONSOLE_AUTH_DSN` | Authentication for the console (MCP, REST and the dashboards' data): `token://<token>?password=…` for the built-in browser login (see [The console](#the-console)), or `oauth://<issuer-host>` for your own identity provider. Unset, bare `serve` skips the console with a warning. |
 | `CONSOLE_ADDR` | Give the console its own listener. Defaults to `INGEST_ADDR` (shared). |
-| `CONSOLE_URL` | The console's public origin when it has a hostname of its own (`https://console.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry, and share links are built on it. Defaults to `INGEST_URL`. |
+| `CONSOLE_URL` | The console's public origin when it has a hostname of its own (`https://console.example.com`), no path. The login's resource, issuer and the dashboards' callback follow it, so that host needs no `redirect=` entry, and share links and the MCP address on the console's empty Projects page are built on it. Defaults to `INGEST_URL`. |
 | `CONSOLE_DATABASE_DSN` | Database the console reads for queries, as `sqlite://<path>` (a copy or replica of the store, say). Defaults to `DATABASE_DSN`. |
 | `CONSOLE_QUERY_TIMEOUT` | Per-query guard on reads and the `query` operation; also bounds a reporting widget's sql. Default `30s`. |
 | `CONSOLE_QUERY_ROWS_MAX` | Row cap on the `query` operation; also bounds a reporting widget's sql. Default 1000. |
@@ -234,6 +234,9 @@ exactly (`claude.ai` does not admit `foo.claude.ai`) — once the list is
 edited, new logins follow it. A self-chosen token must not contain `?`.
 
 ### Connect a client
+
+Until the first project exists, the console's Projects page shows these steps
+with the server's own `/mcp` address (`CONSOLE_URL`, else the page's address).
 
 - **claude.ai, Claude Desktop:** Settings → Connectors → **Add custom
   connector**, URL `https://twillingate.example.com/mcp`, client id and

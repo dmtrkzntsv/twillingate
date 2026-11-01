@@ -1,3 +1,4 @@
+import CodeBlock from './CodeBlock'
 import CopyButton from './CopyButton'
 
 interface Props {
@@ -17,12 +18,7 @@ export default function IssuedKeyView({ keyValue, snippet, note }: Props) {
           <CopyButton value={keyValue} label="Copy key" />
         </div>
       )}
-      {snippet && (
-        <div className="flex items-start gap-2 rounded-md border p-2">
-          <pre className="flex-1 overflow-x-auto font-mono text-xs whitespace-pre-wrap">{snippet}</pre>
-          <CopyButton value={snippet} label="Copy snippet" />
-        </div>
-      )}
+      {snippet && <CodeBlock value={snippet} label="Copy snippet" />}
       {note && <p className="text-xs text-muted-foreground">{note}</p>}
     </div>
   )

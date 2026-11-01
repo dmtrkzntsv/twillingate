@@ -85,6 +85,7 @@ var retired = []struct{ key, why string }{
 type ConsoleConfig struct {
 	Addr          string // CONSOLE_ADDR, defaults to IngestAddr
 	URL           string // CONSOLE_URL, the console's public origin; defaults to INGEST_URL
+	urlIsIngest   bool   // URL came from INGEST_URL, the variable a refusal of it names
 	Database      string // CONSOLE_DATABASE_DSN, sqlite:// only; defaults to DATABASE_DSN
 	DBPath        string // Database's file path, what the console's read handles open
 	AuthDSN       string // CONSOLE_AUTH_DSN, verbatim
@@ -155,7 +156,7 @@ type Config struct {
 	// sql (package sqlengine); "" means none, and SQL is refused.
 	SQLEngineSocket string
 	Geo             string
-	IngestURL       string
+	IngestURL       string // INGEST_URL; defaults to CONSOLE_URL
 	Log             LogConfig
 	Buffer          BufferConfig
 	Retention       Retention
@@ -251,7 +252,8 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		Geo:            e.str("GEO_DSN", "cloudflare://"),
 		// The collector's public base URL (https://twillingate.example.com).
 		// Embed snippets and MCP integration guidance are built from it;
-		// unset, they carry a placeholder and tell the model to ask.
+		// unset, it takes CONSOLE_URL below, and with neither they carry a
+		// placeholder and tell the model to ask.
 		IngestURL: strings.TrimSuffix(e.str("INGEST_URL", ""), "/"),
 		Log: LogConfig{
 			Level:  e.str("LOG_LEVEL", "info"),
@@ -281,10 +283,14 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		// login's resource, issuer and dashboards callback follow it, so the
 		// console's own host needs no redirect= entry.
 		URL:          strings.TrimSuffix(e.str("CONSOLE_URL", c.IngestURL), "/"),
+		urlIsIngest:  e.str("CONSOLE_URL", "") == "",
 		Database:     e.str("CONSOLE_DATABASE_DSN", c.Database),
 		AuthDSN:      e.str("CONSOLE_AUTH_DSN", ""),
 		QueryTimeout: e.dur("CONSOLE_QUERY_TIMEOUT", 30*time.Second),
 		QueryMaxRows: e.num("CONSOLE_QUERY_ROWS_MAX", 1000),
+	}
+	if c.IngestURL == "" {
+		c.IngestURL = c.Console.URL
 	}
 	c.Console.DBPath = strings.TrimPrefix(c.Console.Database, "sqlite://")
 	c.SQLEngineSocket = e.str("SQL_ENGINE_SOCKET", "")
@@ -519,7 +525,7 @@ func (c *Config) resource(scheme, given string) (string, error) {
 		r, err := resourceOrigin(c.Console.URL)
 		if err != nil {
 			name := "CONSOLE_URL"
-			if c.Console.URL == c.IngestURL {
+			if c.Console.urlIsIngest {
 				name = "INGEST_URL (CONSOLE_URL's default)"
 			}
 			return "", fmt.Errorf("config: %s=%q %v, or set CONSOLE_URL", name, c.Console.URL, err)
