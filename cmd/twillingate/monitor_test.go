@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -180,7 +181,7 @@ func serveMonitorCheck(t *testing.T, res store.MonitorCheckResult) {
 				return
 			}
 			for _, m := range ms {
-				if m.CheckRequestedAt > m.CheckFinishedAt {
+				if m.CheckPending() {
 					res.FinishedAt = m.CheckRequestedAt
 					if err := st.FinishMonitorCheck(context.Background(), 1, m.Origin, res); err != nil {
 						t.Error(err)
@@ -308,5 +309,36 @@ func TestMonitorCheckNotFinishedText(t *testing.T) {
 	}
 	if got := monitorCheckNotFinished(at(2*time.Minute+time.Second), now); !strings.Contains(got, "is the server up") {
 		t.Errorf("past 2 minutes = %q", got)
+	}
+}
+
+// The origin goes while the command waits: it says so and exits 1, not print a
+// zero monitor's empty result.
+func TestMonitorCheckOriginRemovedWhileWaiting(t *testing.T) {
+	withDB(t)
+	defer func(p time.Duration) { monitorCheckPoll = p }(monitorCheckPoll)
+	monitorCheckPoll = 10 * time.Millisecond
+	var out bytes.Buffer
+	if code := run([]string{"project", "create", "-name", "Shop", "-origin", shopOrigin, "-origin", blogOrigin}, &out); code != 0 {
+		t.Fatal(out.String())
+	}
+	runMonitor(t, 0, "set", "-project-id", "1", "-origin", shopOrigin, "-enable")
+	ops, _, closeStore, err := openOps("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeStore()
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		if _, err := ops.UpdateProject(context.Background(), "test", manage.ProjectSpec{ID: 1, AllowedOrigins: []string{blogOrigin}}); err != nil {
+			t.Error(err)
+		}
+	}()
+	out.Reset()
+	if code := monitorCheck(context.Background(), ops, 1, shopOrigin, 5*time.Second, &out); code != 1 {
+		t.Errorf("exit %d, want 1: %s", code, out.String())
+	}
+	if got := out.String(); !strings.Contains(got, "removed") {
+		t.Errorf("out = %q, want it to say the monitor was removed", got)
 	}
 }

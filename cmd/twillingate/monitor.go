@@ -124,9 +124,9 @@ func monitorCheck(ctx context.Context, ops *manage.Ops, project int64, origin st
 	}
 	// Taken as the server stored it: it was accepted, so this spelling is one.
 	origin = manage.MonitorOrigins([]string{strings.TrimSpace(origin)})[0]
-	m, _ := l.Monitor(origin)
+	m, ok := l.Monitor(origin)
 	deadline := time.Now().Add(wait)
-	for m.CheckRequestedAt > m.CheckFinishedAt {
+	for ok && m.CheckPending() {
 		if time.Now().After(deadline) {
 			fmt.Fprintln(stdout, monitorCheckNotFinished(m.CheckRequestedAt, time.Now()))
 			return 1
@@ -136,7 +136,13 @@ func monitorCheck(ctx context.Context, ops *manage.Ops, project int64, origin st
 			fmt.Fprintln(stdout, err)
 			return 1
 		}
-		m, _ = l.Monitor(origin)
+		m, ok = l.Monitor(origin)
+	}
+	// A row gone reads as the blank one (this process's list of origins may
+	// not have caught up yet), which no request was ever made on.
+	if !ok || m.CheckRequestedAt == "" {
+		fmt.Fprintf(stdout, "the monitor of %s was removed: it is no longer an origin of project %d\n", origin, project)
+		return 1
 	}
 	fmt.Fprintln(stdout, monitorCheckText(m))
 	if !m.CheckUp && m.CheckReason == "" {
