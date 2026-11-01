@@ -469,44 +469,30 @@ var sqliteTable = regexp.MustCompile(`(?i)Table with name (v_|raw_|agg_)\w* does
 // a refusal with what the SQL read, the engine's own message on the SQL
 // as it is. An engine that failed or could not be reached reads as such,
 // its cause logged; a caller that went away keeps its own error.
+// sqlbind.Classify tells the cases apart, as it does for widgets.
 func (h *host) sqlError(ctx context.Context, err error) error {
-	var se *sqlengine.Error
-	isKind := func(k sqlengine.Kind) bool { return errors.As(err, &se) && se.Kind == k }
-	switch {
-	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
-		return timeoutf("%s", sqlbind.Timeout(h.queryTimeout))
-	case ctx.Err() != nil: // the caller went away: whatever the engine said last
+	f, msg := sqlbind.Classify(ctx, err, h.queryTimeout)
+	switch f {
+	case sqlbind.FailOther:
 		return err
-	case isKind(sqlengine.KindTimeout):
-		return timeoutf("%s", sqlbind.Timeout(h.queryTimeout))
-	case isKind(sqlengine.KindOutOfMemoryLoadingLog):
-		return invalidf("%s", sqlbind.LogsOutOfMemory)
-	case isKind(sqlengine.KindOutOfMemory):
-		return invalidf("%s", sqlbind.OutOfMemory)
-	case isKind(sqlengine.KindRefused):
-		msg := se.Message
+	case sqlbind.FailDeadline, sqlbind.FailTimeout:
+		return timeoutf("%s", msg)
+	case sqlbind.FailRefused:
 		if sqliteTable.MatchString(msg) {
 			msg += "; the v_*, raw_* and agg_* tables went with the database's events (docs://twillingate)"
 		}
-		return invalidf("%s", msg)
-	case isKind(sqlengine.KindSQL) && sqliteTable.MatchString(se.Message):
-		return invalidf(`%s; the v_*, raw_* and agg_* tables went with the database's events. The event files hold events, views, product, measures, sessions, identities and aliases (docs://twillingate)`,
-			strings.SplitN(se.Message, "\n", 2)[0])
-	case isKind(sqlengine.KindSQL):
-		return invalidf("SQL error (DuckDB): %s", se.Message)
-	case isKind(sqlengine.KindExited):
-		return invalidf("%s", sqlbind.EngineExited)
-	case isKind(sqlengine.KindBusy):
-		return store.Refuse(manage.ErrBusy, "%s", sqlbind.Busy)
-	case isKind(sqlengine.KindStale):
-		return invalidf("%s", sqlbind.Stale)
-	case errors.Is(err, sqlengine.ErrTooLarge):
-		return invalidf("%s", sqlbind.TooLarge)
-	case errors.As(err, &se), errors.Is(err, sqlengine.ErrUnavailable):
+	case sqlbind.FailSQL:
+		if sqliteTable.MatchString(msg) {
+			return invalidf(`%s; the v_*, raw_* and agg_* tables went with the database's events. The event files hold events, views, product, measures, sessions, identities and aliases (docs://twillingate)`,
+				strings.SplitN(msg, "\n", 2)[0])
+		}
+		return invalidf("SQL error (DuckDB): %s", msg)
+	case sqlbind.FailBusy:
+		return store.Refuse(manage.ErrBusy, "%s", msg)
+	case sqlbind.FailEngine:
 		h.logger.Warn("the SQL engine failed", "error", err.Error())
-		return invalidf("%s", sqlbind.EngineFailed)
 	}
-	return err
+	return invalidf("%s", msg) // the rest: the advice, or the refused SQL's message
 }
 
 // cellRows is an engine result's rows as text (cellText), never nil.
