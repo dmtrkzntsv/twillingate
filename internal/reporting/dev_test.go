@@ -302,7 +302,7 @@ func TestDevHandlerSystemRangeIdsPreviewAsSystem(t *testing.T) {
 // give the wrong order (groups, product, retention, users, views); 2-5
 // name "group":1, 1 names none (so its own id, 1, is the group) — the
 // same shape as the real Views/Product/Users/Groups/Retention release.
-// loadDevDashboards sorts by id (the same rule LoadDashboards uses for
+// loadDevDashboards sorts by id (the same rule loadDashboards uses for
 // the real release), so both devListDashboards and a group's Tabs come
 // out in id order — Views, Product, Users, Groups, Retention — matching
 // what ships, not the directory scan order.

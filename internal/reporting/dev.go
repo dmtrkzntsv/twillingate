@@ -9,8 +9,6 @@ package reporting
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -103,15 +101,6 @@ func loopbackOnly(h http.Handler) http.Handler {
 	})
 }
 
-// compIndex keys comps by name, for validateWidget and storeWidget.
-func compIndex(comps []Component) map[string]Component {
-	out := make(map[string]Component, len(comps))
-	for _, c := range comps {
-		out[c.Name] = c
-	}
-	return out
-}
-
 // devDashboardDirs resolves dirs (CLI arguments) to the directories that
 // are themselves dashboard directories: an argument that has its own
 // dashboard.json is one; otherwise every immediate subdirectory of it
@@ -156,16 +145,16 @@ func hasDashboardJSON(dir string) bool {
 // starting at firstDevDashboardID, in the order its directory was
 // encountered (devDashboardDirs' scan order — alphabetical by directory
 // name, os.ReadDir's own order). The result is then sorted by id, the
-// same rule LoadDashboards uses for the real release: dev has no sort
+// same rule loadDashboards uses for the real release: dev has no sort
 // key to order by, and ordering by id is the only ordering that matches
 // what a group's members will look like once it ships (D17), for both
 // devListDashboards and a group's Tabs.
-func loadDevDashboards(dirs []string) ([]FileDashboard, []DevError) {
+func loadDevDashboards(dirs []string) ([]fileDashboard, []DevError) {
 	paths, errs := devDashboardDirs(dirs)
-	var out []FileDashboard
+	var out []fileDashboard
 	nextID := int64(firstDevDashboardID)
 	for _, p := range paths {
-		fd, err := LoadDashboard(os.DirFS(p), ".")
+		fd, err := loadDashboard(os.DirFS(p), ".")
 		if err != nil {
 			errs = append(errs, DevError{Dir: p, Message: err.Error()})
 			continue
@@ -180,19 +169,19 @@ func loadDevDashboards(dirs []string) ([]FileDashboard, []DevError) {
 	return out, errs
 }
 
-func findDevDashboard(fds []FileDashboard, id int64) (FileDashboard, bool) {
+func findDevDashboard(fds []fileDashboard, id int64) (fileDashboard, bool) {
 	for _, fd := range fds {
 		if fd.ID == id {
 			return fd, true
 		}
 	}
-	return FileDashboard{}, false
+	return fileDashboard{}, false
 }
 
 // devWidgetRow builds the store.Widget row for fd's widget at index i
 // (0-based), with the dashboardID*1000+index(1-based) id the widget data
 // route parses back apart.
-func devWidgetRow(fd FileDashboard, i int, comps map[string]Component) store.Widget {
+func devWidgetRow(fd fileDashboard, i int, comps map[string]Component) store.Widget {
 	w := storeWidget(fd.Widgets[i], "", comps)
 	w.ID = fd.ID*1000 + int64(i+1)
 	w.DashboardID = fd.ID
@@ -207,7 +196,7 @@ func devWidgetRow(fd FileDashboard, i int, comps map[string]Component) store.Wid
 // or fd.ID when the file names none (its own sidebar entry). Sidebar is
 // always true whatever the file says: dev has no project pages, so the
 // sidebar is a preview's only way in.
-func devDashboardRow(fd FileDashboard, groupTitles map[int64]string) store.Dashboard {
+func devDashboardRow(fd fileDashboard, groupTitles map[int64]string) store.Dashboard {
 	owner := store.OwnerUser
 	if fd.ID >= 1 && fd.ID <= 999 {
 		owner = store.OwnerSystem
@@ -222,7 +211,7 @@ func devDashboardRow(fd FileDashboard, groupTitles map[int64]string) store.Dashb
 // it (D6), for the groups that have one. A file that is not its group's
 // founder (`group` set and not its own id) is skipped, as the release
 // refuses its `group_title` (checkGroups).
-func devGroupTitles(fds []FileDashboard) map[int64]string {
+func devGroupTitles(fds []fileDashboard) map[int64]string {
 	m := map[int64]string{}
 	for _, x := range fds {
 		if x.GroupTitle != "" && (x.Group == 0 || x.Group == x.ID) {
@@ -257,32 +246,18 @@ func devGetDashboard(dirs []string, svc *Service, comps map[string]Component) ht
 			writeAPIErr(w, store.Refuse(store.ErrNotFound, "dashboard %d not found", id))
 			return
 		}
+		// Service.Dashboard's answer, over rows built from the files: in
+		// dev mode every loaded file counts as live.
 		titles := devGroupTitles(fds)
-		row := devDashboardRow(fd, titles)
-		// Mirrors Service.Dashboard's rule (read.go): the group's live
-		// members, same owner, in list order. In dev mode every loaded
-		// file counts as live — there is no archived state to skip.
-		tabs := []Tab{}
+		all := make([]store.Dashboard, 0, len(fds))
 		for _, x := range fds {
-			xRow := devDashboardRow(x, titles)
-			if xRow.GroupID == row.GroupID && xRow.Owner == row.Owner {
-				tabs = append(tabs, Tab{ID: xRow.ID, Title: xRow.Title})
-			}
+			all = append(all, devDashboardRow(x, titles))
 		}
-		widgets := make([]WidgetInfo, 0, len(fd.Widgets))
-		var followsProject, followsRange bool
+		ws := make([]store.Widget, 0, len(fd.Widgets))
 		for i := range fd.Widgets {
-			info := svc.widgetInfo(devWidgetRow(fd, i, comps))
-			followsProject = followsProject || info.FollowsProject
-			followsRange = followsRange || info.FollowsRange
-			widgets = append(widgets, info)
+			ws = append(ws, devWidgetRow(fd, i, comps))
 		}
-		out := DashboardDetail{
-			DashboardInfo:  dashboardInfo(row),
-			FollowsProject: followsProject, FollowsRange: followsRange,
-			Tabs: tabs, Widgets: widgets,
-		}
-		writeJSON(w, http.StatusOK, out)
+		writeJSON(w, http.StatusOK, svc.detail(devDashboardRow(fd, titles), all, ws))
 	}
 }
 
@@ -312,7 +287,6 @@ func devWidgetData(dirs []string, svc *Service, comps map[string]Component) http
 			writeAPIErr(w, err)
 			return
 		}
-		comp := comps[row.Component] // present: validateWidget just checked it
 
 		q := r.URL.Query()
 		var projectID int64
@@ -336,26 +310,19 @@ func devWidgetData(dirs []string, svc *Service, comps map[string]Component) http
 				}
 			}
 		}
-		followsProject, followsRange := svc.follows(row)
-		params, echo, err := svc.widgetParams(followsProject, followsRange, id, in)
+		// WidgetData's load, uncached: svc has no cache.
+		p, err := svc.prepareRow(row, in, func() (map[string]Component, error) { return comps, nil })
 		if err != nil {
 			writeAPIErr(w, err)
 			return
 		}
-
-		src := svc.sources[row.SourceType] // present: validateWidget just checked it
-		v, load, err := svc.loader(row, src, params, in)
-		if err != nil {
-			writeAPIErr(w, err)
-			return
-		}
-		value, err := load(ctx)
+		value, err := p.load(ctx)
 		if err != nil {
 			writeAPIErr(w, wrapLoadErr(err))
 			return
 		}
-		out := WidgetData{WidgetID: id, SourceType: row.SourceType, ProjectID: echo.ProjectID, From: echo.From, To: echo.To}
-		if err := setData(&out, comp, v, value); err != nil {
+		out, err := p.finish(value, time.Time{})
+		if err != nil {
 			writeAPIErr(w, err)
 			return
 		}
@@ -367,7 +334,7 @@ func devComponents(svc *Service, comps []Component) http.HandlerFunc {
 	out := struct {
 		SourceTypes []string    `json:"source_types"`
 		Components  []Component `json:"components"`
-	}{SourceTypes: svc.SourceTypes(), Components: WithSourceTypes(comps, svc.SourceTypes())}
+	}{SourceTypes: svc.SourceTypes(), Components: withSourceTypes(comps, svc.SourceTypes())}
 	return func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, out)
 	}
@@ -443,11 +410,7 @@ func devProjects(db DevProjects) http.HandlerFunc {
 // single byte inside a .sql — without needing to know which files
 // matter to which dashboard.
 func hashDirs(dirs []string) (string, error) {
-	type file struct {
-		path    string
-		content []byte
-	}
-	var files []file
+	var files []hashedFile
 	for _, dir := range dirs {
 		err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 			if err != nil {
@@ -460,21 +423,14 @@ func hashDirs(dirs []string) (string, error) {
 			if err != nil {
 				return err
 			}
-			files = append(files, file{p, b})
+			files = append(files, hashedFile{p, b})
 			return nil
 		})
 		if err != nil {
 			return "", fmt.Errorf("reporting: dev: %w", err)
 		}
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
-
-	h := sha256.New()
-	for _, f := range files {
-		writeFramed(h, []byte(f.path))
-		writeFramed(h, f.content)
-	}
-	return hex.EncodeToString(h.Sum(nil)), nil
+	return hashFiles(files), nil
 }
 
 func devVersion(dirs []string) http.HandlerFunc {

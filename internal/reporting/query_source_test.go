@@ -37,7 +37,8 @@ func querySources(t *testing.T, files *testFiles, asked *[]int64) map[string]Sou
 		}
 		return archive.Rules{}
 	}
-	return newSources(files.eng(), false, time.Now, native.New(native.Options{Dir: files.Dir}), rules, files.timeout, files.maxRows)
+	return newSources(files.eng(), false, time.Now, Options{
+		Native: native.New(native.Options{Dir: files.Dir}), Rules: rules, QueryTimeout: files.timeout, QueryMaxRows: files.maxRows})
 }
 
 // countryEvent is one view of project 1 on day by actor in country.
@@ -218,7 +219,7 @@ func TestQuerySourceEmptyProject(t *testing.T) {
 
 func TestQuerySourceWithoutNative(t *testing.T) {
 	_, files := newTestStoreAndFiles(t, 1000)
-	src := newSources(files.eng(), false, time.Now, nil, nil, files.timeout, files.maxRows)["query"]
+	src := newSources(files.eng(), false, time.Now, Options{QueryTimeout: files.timeout, QueryMaxRows: files.maxRows})["query"]
 	// Validating needs no engine: the columns come from the query.
 	if err := src.Validate(context.Background(), countryBars, oneComponent(t, queryBarList)); err != nil {
 		t.Fatalf("Validate: %v", err)
@@ -233,7 +234,7 @@ func TestQuerySourceRefusesTooLarge(t *testing.T) {
 	_, files := newTestStoreAndFiles(t, 1000)
 	writeCountries(t, files)
 	nat := native.New(native.Options{Dir: files.Dir, MaxBytes: 1})
-	src := newSources(files.eng(), false, time.Now, nat, nil, files.timeout, files.maxRows)["query"]
+	src := newSources(files.eng(), false, time.Now, Options{Native: nat, QueryTimeout: files.timeout, QueryMaxRows: files.maxRows})["query"]
 	content := `{"query":{"kind":"stat","table":"views","metrics":[{"op":"actors","as":"value"}]}}`
 	_, err := src.Load(context.Background(), content, countryParams)
 	if !errors.Is(err, store.ErrInvalid) || !strings.Contains(err.Error(), "more memory than allowed") {

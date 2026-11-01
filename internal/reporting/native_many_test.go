@@ -49,11 +49,12 @@ func TestSystemWidgetsAnswerManyEqualsAnswer(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		qc, _, _, err := parseQuery(string(content))
+		pq, err := parseQuery(string(content))
 		if err != nil {
 			t.Errorf("%s: %v", p, err)
 			return nil
 		}
+		qc := pq.qc
 		dir := path.Dir(p)
 		if _, ok := byDashboard[dir]; !ok {
 			dashboards = append(dashboards, dir)

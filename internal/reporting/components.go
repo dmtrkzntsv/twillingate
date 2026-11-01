@@ -59,7 +59,7 @@ func ParseManifest(b []byte) ([]Component, error) {
 		}
 		seen[mc.Name] = true
 		for _, a := range mc.Accepts {
-			if !validSourceType(a) {
+			if !sourceTypes[a] {
 				return nil, store.Refuse(store.ErrInvalid,
 					"%s: accepts names %s, which is not a registered source type", mc.Name, a)
 			}

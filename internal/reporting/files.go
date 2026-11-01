@@ -1,8 +1,8 @@
 // The system directory format a release ships (D20): one directory per
 // dashboard, holding dashboard.json (its title, starting range,
 // placement flags and widget layout) plus one $name.json/$name.(sql|md|query)
-// pair per widget the layout places. LoadDashboard reads one such
-// directory; LoadDashboards reads every one under a filesystem root and
+// pair per widget the layout places. loadDashboard reads one such
+// directory; loadDashboards reads every one under a filesystem root and
 // orders them by id, for migrate.go to hash and sync.
 package reporting
 
@@ -16,32 +16,32 @@ import (
 	"strings"
 )
 
-// FileWidget is one widget as the system directory format describes it:
+// fileWidget is one widget as the system directory format describes it:
 // a $name.json config (component, title, props) paired with a $name.sql,
 // $name.md or $name.query data file, whose extension names the source
 // type, placed by dashboard.json's layout.
-type FileWidget struct {
+type fileWidget struct {
 	Name, Component, Title string
 	Props                  json.RawMessage
 	SourceType, Source     string
 	Width, Height          int // 0 = the component's default
 }
 
-// FileDashboard is one directory under a system definition: its
+// fileDashboard is one directory under a system definition: its
 // dashboard.json plus the widgets its layout places, in layout order.
-type FileDashboard struct {
+type fileDashboard struct {
 	ID           int64 // 0 when the file gives none (reporting dev only)
 	Title, Range string
 	Group        int64        // the group this dashboard is a tab of; 0 = its own id (D16)
 	GroupTitle   string       // the group's name; only on a group's founding dashboard (D6)
 	Sidebar      bool         // in the sidebar on first install; the same across a group (spec 2026-10-05 D6)
 	ProjectTab   bool         // a new project gets it as a tab; re-synced every release (spec 2026-10-05 D6)
-	Widgets      []FileWidget // layout order
+	Widgets      []fileWidget // layout order
 }
 
 // groupID resolves Group: 0 (the file names no group) means this
 // dashboard is its own, so its group is its own id.
-func (fd FileDashboard) groupID() int64 {
+func (fd fileDashboard) groupID() int64 {
 	if fd.Group == 0 {
 		return fd.ID
 	}
@@ -76,7 +76,7 @@ type fileWidgetDoc struct {
 }
 
 // widgetBuild collects the (at most one config, at most one data) files
-// found for one widget base name, before LoadDashboard has read either.
+// found for one widget base name, before loadDashboard has read either.
 type widgetBuild struct {
 	configPath, dataPath, sourceType string
 }
@@ -92,41 +92,41 @@ func decodeStrict(name string, b []byte, v any) error {
 	return nil
 }
 
-// LoadDashboard reads one system directory: dashboard.json plus the
+// loadDashboard reads one system directory: dashboard.json plus the
 // $name.json/$name.(sql|md|query) pair for every widget its layout names. Any
 // other file in the directory — an extension other than json/sql/md/query,
 // most often a typo like visitors.sq — is refused rather than silently
-// ignored. LoadDashboard does not check dashboard.json's id
-// (LoadDashboards does, for a release's system directory; reporting dev
+// ignored. loadDashboard does not check dashboard.json's id
+// (loadDashboards does, for a release's system directory; reporting dev
 // reads directly and accepts no id at all).
-func LoadDashboard(fsys fs.FS, dir string) (FileDashboard, error) {
+func loadDashboard(fsys fs.FS, dir string) (fileDashboard, error) {
 	dashPath := path.Join(dir, "dashboard.json")
 	dashBytes, err := fs.ReadFile(fsys, dashPath)
 	if err != nil {
-		return FileDashboard{}, fmt.Errorf("reporting: %s: %w", dashPath, err)
+		return fileDashboard{}, fmt.Errorf("reporting: %s: %w", dashPath, err)
 	}
 	var doc fileDashboardDoc
 	if err := decodeStrict(dashPath, dashBytes, &doc); err != nil {
-		return FileDashboard{}, err
+		return fileDashboard{}, err
 	}
 
 	if _, err := checkName("title", doc.Title); err != nil {
-		return FileDashboard{}, fmt.Errorf("reporting: %s: %w", dashPath, err)
+		return fileDashboard{}, fmt.Errorf("reporting: %s: %w", dashPath, err)
 	}
 	// Required, like range: the release states its choice rather than
 	// relying on a default (spec 2026-10-05 D6).
 	if doc.Sidebar == nil || doc.ProjectTab == nil {
-		return FileDashboard{}, fmt.Errorf("reporting: %s: needs \"sidebar\" and \"project_tab\" (true or false)", dashPath)
+		return fileDashboard{}, fmt.Errorf("reporting: %s: needs \"sidebar\" and \"project_tab\" (true or false)", dashPath)
 	}
 	if doc.GroupTitle != "" {
 		if _, err := checkName("group_title", doc.GroupTitle); err != nil {
-			return FileDashboard{}, fmt.Errorf("reporting: %s: %w", dashPath, err)
+			return fileDashboard{}, fmt.Errorf("reporting: %s: %w", dashPath, err)
 		}
 	}
 
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
-		return FileDashboard{}, fmt.Errorf("reporting: %s: %w", dir, err)
+		return fileDashboard{}, fmt.Errorf("reporting: %s: %w", dir, err)
 	}
 
 	builds := map[string]*widgetBuild{}
@@ -138,7 +138,7 @@ func LoadDashboard(fsys fs.FS, dir string) (FileDashboard, error) {
 		ext := strings.TrimPrefix(path.Ext(name), ".")
 		base := strings.TrimSuffix(name, path.Ext(name))
 		if ext != "json" && ext != "sql" && ext != "md" && ext != "query" {
-			return FileDashboard{}, fmt.Errorf("reporting: %s: unexpected file %s", dir, name)
+			return fileDashboard{}, fmt.Errorf("reporting: %s: unexpected file %s", dir, name)
 		}
 		b := builds[base]
 		if b == nil {
@@ -148,85 +148,85 @@ func LoadDashboard(fsys fs.FS, dir string) (FileDashboard, error) {
 		p := path.Join(dir, name)
 		if ext == "json" {
 			if b.configPath != "" {
-				return FileDashboard{}, fmt.Errorf("reporting: %s: widget %q has two config files", dir, base)
+				return fileDashboard{}, fmt.Errorf("reporting: %s: widget %q has two config files", dir, base)
 			}
 			b.configPath = p
 			continue
 		}
 		if b.dataPath != "" {
-			return FileDashboard{}, fmt.Errorf("reporting: %s: widget %q has two data files", dir, base)
+			return fileDashboard{}, fmt.Errorf("reporting: %s: widget %q has two data files", dir, base)
 		}
 		b.dataPath, b.sourceType = p, ext
 	}
 
-	byName := make(map[string]FileWidget, len(builds))
+	byName := make(map[string]fileWidget, len(builds))
 	for name, b := range builds {
 		switch {
 		case b.configPath == "":
-			return FileDashboard{}, fmt.Errorf("reporting: %s: widget %q has a data file but no config", dir, name)
+			return fileDashboard{}, fmt.Errorf("reporting: %s: widget %q has a data file but no config", dir, name)
 		case b.dataPath == "":
-			return FileDashboard{}, fmt.Errorf("reporting: %s: widget %q has a config but no data file", dir, name)
+			return fileDashboard{}, fmt.Errorf("reporting: %s: widget %q has a config but no data file", dir, name)
 		}
 		configBytes, err := fs.ReadFile(fsys, b.configPath)
 		if err != nil {
-			return FileDashboard{}, fmt.Errorf("reporting: %s: %w", b.configPath, err)
+			return fileDashboard{}, fmt.Errorf("reporting: %s: %w", b.configPath, err)
 		}
 		var wdoc fileWidgetDoc
 		if err := decodeStrict(b.configPath, configBytes, &wdoc); err != nil {
-			return FileDashboard{}, err
+			return fileDashboard{}, err
 		}
 		content, err := fs.ReadFile(fsys, b.dataPath)
 		if err != nil {
-			return FileDashboard{}, fmt.Errorf("reporting: %s: %w", b.dataPath, err)
+			return fileDashboard{}, fmt.Errorf("reporting: %s: %w", b.dataPath, err)
 		}
-		byName[name] = FileWidget{
+		byName[name] = fileWidget{
 			Name: name, Component: wdoc.Component, Title: wdoc.Title, Props: wdoc.Props,
 			SourceType: b.sourceType, Source: string(content),
 		}
 	}
 
 	seen := make(map[string]bool, len(doc.Layout))
-	widgets := make([]FileWidget, 0, len(doc.Layout))
+	widgets := make([]fileWidget, 0, len(doc.Layout))
 	for _, item := range doc.Layout {
 		if seen[item.Widget] {
-			return FileDashboard{}, fmt.Errorf("reporting: %s: layout names %q twice", dashPath, item.Widget)
+			return fileDashboard{}, fmt.Errorf("reporting: %s: layout names %q twice", dashPath, item.Widget)
 		}
 		seen[item.Widget] = true
 		w, ok := byName[item.Widget]
 		if !ok {
-			return FileDashboard{}, fmt.Errorf("reporting: %s: layout names %q, which has no widget files", dashPath, item.Widget)
+			return fileDashboard{}, fmt.Errorf("reporting: %s: layout names %q, which has no widget files", dashPath, item.Widget)
 		}
 		w.Width, w.Height = item.Width, item.Height
 		widgets = append(widgets, w)
 	}
 	for name := range byName {
 		if !seen[name] {
-			return FileDashboard{}, fmt.Errorf("reporting: %s: widget %q is not in dashboard.json's layout", dir, name)
+			return fileDashboard{}, fmt.Errorf("reporting: %s: widget %q is not in dashboard.json's layout", dir, name)
 		}
 	}
 
-	return FileDashboard{
+	return fileDashboard{
 		ID: doc.ID, Title: doc.Title, Range: doc.Range, Group: doc.Group, GroupTitle: doc.GroupTitle,
 		Sidebar: *doc.Sidebar, ProjectTab: *doc.ProjectTab, Widgets: widgets,
 	}, nil
 }
 
-// LoadDashboards loads every top-level directory in fsys as a
-// FileDashboard, sorted by id, refusing a duplicate id or one outside
+// loadDashboards loads every top-level directory in fsys as a
+// fileDashboard, sorted by id, refusing a duplicate id or one outside
 // 1-999 — the range reserved for system dashboards (store.OwnerSystem;
 // an agent-made dashboard starts at 1001).
-func LoadDashboards(fsys fs.FS) ([]FileDashboard, error) {
+func loadDashboards(fsys fs.FS) ([]fileDashboard, error) {
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return nil, fmt.Errorf("reporting: system: %w", err)
 	}
 	seen := make(map[int64]bool, len(entries))
-	out := make([]FileDashboard, 0, len(entries))
+	out := make([]fileDashboard, 0, len(entries))
 	for _, e := range entries {
 		if !e.IsDir() {
 			continue
 		}
-		fd, err := LoadDashboard(fsys, e.Name())
+		fd, err := loadDashboard(fsys, e.Name())
 		if err != nil {
 			return nil, err
 		}

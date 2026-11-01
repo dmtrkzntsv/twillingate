@@ -21,7 +21,6 @@ import (
 	"embed"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"hash"
@@ -97,12 +96,9 @@ func migrateFrom(ctx context.Context, st Store, sql SQL, opt Options, system fs.
 	if err != nil {
 		return err
 	}
-	compsByName := make(map[string]Component, len(comps))
-	for _, c := range comps {
-		compsByName[c.Name] = c
-	}
+	compsByName := compIndex(comps)
 
-	fds, err := LoadDashboards(system)
+	fds, err := loadDashboards(system)
 	if err != nil {
 		return err
 	}
@@ -204,30 +200,14 @@ func (paramsOnly) Validate(_ context.Context, content string, _ Component) error
 	return err
 }
 
-// storeWidget converts fw to the store row Migrate writes, defaulting a
-// size left at 0 (the file gave none) to comps' component's default —
-// the same rule buildWidgets applies for an agent-built widget. A
-// component unknown to comps is left unsized; validateWidget refuses it
-// with a clearer message than an out-of-range size would.
-func storeWidget(fw FileWidget, sortKey string, comps map[string]Component) store.Widget {
-	width, height := fw.Width, fw.Height
-	if c, ok := comps[fw.Component]; ok {
-		if width == 0 {
-			width = c.DefaultWidth
-		}
-		if height == 0 {
-			height = c.DefaultHeight
-		}
-	}
-	props := fw.Props
-	if len(props) == 0 {
-		props = json.RawMessage("{}")
-	}
-	return store.Widget{
-		Component: fw.Component, SortKey: sortKey, Width: width, Height: height,
-		Name: fw.Name, Title: fw.Title, Props: string(props),
+// storeWidget converts fw to the store row Migrate writes, with the
+// defaults buildWidgets applies for an agent-built widget (withDefaults).
+func storeWidget(fw fileWidget, sortKey string, comps map[string]Component) store.Widget {
+	return withDefaults(store.Widget{
+		Component: fw.Component, SortKey: sortKey, Width: fw.Width, Height: fw.Height,
+		Name: fw.Name, Title: fw.Title, Props: string(fw.Props),
 		SourceType: fw.SourceType, Source: fw.Source,
-	}
+	}, comps)
 }
 
 // checkGroups refuses a release whose "group" fields (D16) don't hold
@@ -235,12 +215,12 @@ func storeWidget(fw FileWidget, sortKey string, comps map[string]Component) stor
 // in the same release, and that dashboard must not itself be in another
 // group (a group names its first dashboard, which cannot be a tab of
 // something else). It also refuses a release whose groups are not
-// contiguous in files' order (LoadDashboards' id order, the same order
+// contiguous in files' order (loadDashboards' id order, the same order
 // sortkey.Spread assigns keys in), since a gap there could never close
 // up into a contiguous run of sort keys either, and one whose members
 // disagree on sidebar: the sidebar shows groups (spec 2026-10-05 D3).
-func checkGroups(files []FileDashboard) error {
-	byID := make(map[int64]FileDashboard, len(files))
+func checkGroups(files []fileDashboard) error {
+	byID := make(map[int64]fileDashboard, len(files))
 	for _, fd := range files {
 		byID[fd.ID] = fd
 	}
@@ -298,11 +278,7 @@ func writeFramed(h hash.Hash, b []byte) {
 // split can collide with a different one, hex-encoded: the same bytes on
 // two runs mean nothing to sync.
 func hashSystem(system fs.FS, manifest []byte) (string, error) {
-	type file struct {
-		path    string
-		content []byte
-	}
-	var files []file
+	var files []hashedFile
 	err := fs.WalkDir(system, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -314,19 +290,32 @@ func hashSystem(system fs.FS, manifest []byte) (string, error) {
 		if err != nil {
 			return err
 		}
-		files = append(files, file{p, b})
+		files = append(files, hashedFile{p, b})
 		return nil
 	})
 	if err != nil {
 		return "", fmt.Errorf("reporting: hash system: %w", err)
 	}
-	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
+	return hashFiles(files, manifest), nil
+}
 
+// hashedFile is one file hashSystem or hashDirs read: its path and bytes.
+type hashedFile struct {
+	path    string
+	content []byte
+}
+
+// hashFiles hashes files sorted by path, each path and content framed,
+// then each of extra framed, hex-encoded.
+func hashFiles(files []hashedFile, extra ...[]byte) string {
+	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
 	h := sha256.New()
 	for _, f := range files {
 		writeFramed(h, []byte(f.path))
 		writeFramed(h, f.content)
 	}
-	writeFramed(h, manifest)
-	return hex.EncodeToString(h.Sum(nil)), nil
+	for _, b := range extra {
+		writeFramed(h, b)
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }

@@ -95,6 +95,117 @@ func refuseGroup(o order, g int64) error {
 	return store.Refuse(store.ErrInvalid, "group %d has no live user dashboard", g)
 }
 
+// placeDashboard writes row (already retitled if asked) at the place in
+// asks for, computed over o, the user order read for this attempt.
+func (s *Service) placeDashboard(ctx context.Context, o order, row store.Dashboard, in UpdateDashboard, a store.AuditEntry) error {
+	switch {
+	case in.GroupID != nil && *in.GroupID == 0:
+		return s.leaveGroup(ctx, o, row, in.After, a)
+
+	case in.GroupID != nil:
+		g := *in.GroupID
+		if err := refuseGroup(o, g); err != nil {
+			return err
+		}
+		if in.After != nil && *in.After == row.ID && row.GroupID == g {
+			break // after itself in its own group: stays where it is
+		}
+		key, err := o.keyInGroup(row.ID, g, in.After)
+		if err != nil {
+			return err
+		}
+		if g != row.GroupID {
+			heirs := o.handOver(row)
+			row.GroupID, row.SortKey = g, key
+			return s.writePlaced(ctx, row, heirs, a)
+		}
+		row.SortKey = key
+
+	case in.After != nil && *in.After != row.ID: // after itself: stays where it is
+		if x, ok := o.find(*in.After); ok && x.GroupID == row.GroupID {
+			key, err := o.keyInGroup(row.ID, row.GroupID, in.After) // among its tabs
+			if err != nil {
+				return err
+			}
+			row.SortKey = key
+			break
+		}
+		keys, err := o.moveGroup(row.GroupID, *in.After) // with its whole group
+		if err != nil {
+			return err
+		}
+		if keys == nil {
+			break // already there: only the title, if any, below
+		}
+		// MoveDashboards audits under its first key's dashboard: name
+		// the one the caller moved. The keys are parked before any is
+		// written, so their order is free.
+		i := slices.IndexFunc(keys, func(k store.DashboardKey) bool { return k.ID == row.ID })
+		keys[0], keys[i] = keys[i], keys[0]
+		if err := s.st.MoveDashboards(ctx, keys, store.GroupRekey{}, a); err != nil {
+			return err
+		}
+		if in.Title == "" {
+			return nil
+		}
+		// A new title is a second write (and a second audit row): the
+		// move rewrites keys only. row takes its new key so the title
+		// write keeps it.
+		row.SortKey = keys[0].SortKey
+	}
+	return s.st.UpdateDashboard(ctx, row, a)
+}
+
+// leaveGroup takes row out of its group as a group of one (group_id: 0),
+// placed by after in the sidebar, or right after the group it left.
+//
+// A dashboard already alone is a group of one: it keeps its group id and
+// moves only if after says so. One with others takes its own id as its
+// group id: that id is free, because a group whose id it was is handed
+// to another member as row leaves (order.handOver, spec decision 2).
+func (s *Service) leaveGroup(ctx context.Context, o order, row store.Dashboard, after *int64, a store.AuditEntry) error {
+	if after != nil && *after == row.ID {
+		after = nil // after itself: no place of its own to name
+	}
+	others := o.without(row.ID).group(row.GroupID)
+	var heirs []store.DashboardKey
+	if len(others) > 0 {
+		heirs = o.handOver(row)
+		row.GroupID = row.ID
+		if after == nil {
+			after = &others[len(others)-1].ID
+		}
+	}
+	if after != nil {
+		key, err := o.keyAfterGroup(row.ID, after)
+		if err != nil {
+			return err
+		}
+		row.SortKey = key
+	}
+	return s.writePlaced(ctx, row, heirs, a)
+}
+
+// writePlaced writes row at its new group and key. When row leaves a
+// group that used its id, heirs repoints the members left behind in the
+// same transaction (MoveDashboards), so no moment exists where two
+// groups share a number; a title change, if any, is a second write. The
+// group's name, if it has one, moves with the heirs (D3): heirs is
+// non-empty only when row founded the group, so its old number is row.ID.
+func (s *Service) writePlaced(ctx context.Context, row store.Dashboard, heirs []store.DashboardKey, a store.AuditEntry) error {
+	if len(heirs) == 0 {
+		return s.st.UpdateDashboard(ctx, row, a)
+	}
+	// MoveDashboards audits under its first key's dashboard: row, the one
+	// the caller moved.
+	keys := append([]store.DashboardKey{{ID: row.ID, GroupID: row.GroupID, SortKey: row.SortKey}}, heirs...)
+	rekey := store.GroupRekey{From: row.ID, To: heirs[0].GroupID}
+	if err := s.st.MoveDashboards(ctx, keys, rekey, a); err != nil {
+		return err
+	}
+	return s.st.UpdateDashboard(ctx, row, a)
+}
+
 // insertWidget places w on its dashboard after `after` and writes it,
 // returning what was written.
 func (s *Service) insertWidget(ctx context.Context, w store.Widget, after *int64, a store.AuditEntry) (WidgetInfo, error) {

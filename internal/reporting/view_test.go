@@ -90,8 +90,8 @@ func TestRemoteTableDefaultsToTheCap(t *testing.T) {
 	id := mustRemoteTable(t, svc, threeRows)
 
 	res, page := pageOf(t, svc, DataRequest{WidgetID: id})
-	if page.Limit != svc.maxRows() {
-		t.Errorf("page.limit = %d, want MaxRows %d", page.Limit, svc.maxRows())
+	if page.Limit != svc.queryRows {
+		t.Errorf("page.limit = %d, want MaxRows %d", page.Limit, svc.queryRows)
 	}
 	if len(res.Rows) != 3 || res.Truncated || page.Matched != 3 || page.Total != 3 {
 		t.Errorf("rows = %v (truncated %v), page = %+v; want all three", res.Rows, res.Truncated, page)
@@ -149,7 +149,7 @@ func TestViewRefusals(t *testing.T) {
 		{"unknown sort column", DataRequest{Sort: "Zed:asc"}, "Key, N"},
 		{"negative offset", DataRequest{Offset: -1}, "offset"},
 		{"negative limit", DataRequest{Limit: -1}, "CONSOLE_QUERY_ROWS_MAX"},
-		{"limit over the cap", DataRequest{Limit: svc.maxRows() + 1}, "CONSOLE_QUERY_ROWS_MAX"},
+		{"limit over the cap", DataRequest{Limit: svc.queryRows + 1}, "CONSOLE_QUERY_ROWS_MAX"},
 		{"distinct with sort", DataRequest{Distinct: "N", Sort: "N:asc"}, "distinct"},
 		{"unknown distinct column", DataRequest{Distinct: "Zed"}, "Key, N"},
 	} {

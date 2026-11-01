@@ -238,7 +238,7 @@ func parityWidgets(t *testing.T, cfg parityConfig) ([]parityWidget, []string) {
 		if !e.IsDir() {
 			continue
 		}
-		fd, err := LoadDashboard(cfg.system, e.Name())
+		fd, err := loadDashboard(cfg.system, e.Name())
 		if err != nil {
 			t.Fatal(err)
 		}

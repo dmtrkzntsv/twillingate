@@ -52,7 +52,7 @@ func ConstrainWidget(widget *jsonschema.Schema, comps []Component, sourceTypes [
 		props[name].Minimum, props[name].Maximum = &one, &twelve
 	}
 
-	for _, c := range WithSourceTypes(comps, sourceTypes) {
+	for _, c := range withSourceTypes(comps, sourceTypes) {
 		var ps jsonschema.Schema
 		if err := json.Unmarshal(c.Props, &ps); err != nil {
 			return fmt.Errorf("reporting: component %s: props: %w", c.Name, err)

@@ -40,10 +40,9 @@ func (s *Service) Preview(ctx context.Context, in PreviewIn) (Preview, error) {
 	if err != nil {
 		return Preview{}, err
 	}
-	comp, ok := comps[in.Component]
-	if !ok {
-		return Preview{}, store.Refuse(store.ErrInvalid,
-			"component %s does not exist; list_components names the ones there are", in.Component)
+	comp, err := componentNamed(comps, in.Component)
+	if err != nil {
+		return Preview{}, err
 	}
 	if in.Source.Type != "sql" && in.Source.Type != "query" {
 		return Preview{}, store.Refuse(store.ErrInvalid, "preview runs sql and query only; markdown is drawn as it is typed")
@@ -51,9 +50,8 @@ func (s *Service) Preview(ctx context.Context, in PreviewIn) (Preview, error) {
 	if in.Source.Type == "sql" && s.sql == nil {
 		return Preview{}, ErrSQLEngine
 	}
-	if !accepts(comp, in.Source.Type) {
-		return Preview{}, store.Refuse(store.ErrInvalid,
-			"%s does not accept %s; it accepts %s", comp.Name, in.Source.Type, joinAnd(comp.Accepts))
+	if err := checkAccepts(comp, in.Source.Type); err != nil {
+		return Preview{}, err
 	}
 	if err := checkRemoteTable(store.Widget{Component: in.Component, Props: string(in.Props), SourceType: in.Source.Type}); err != nil {
 		return Preview{}, err
@@ -87,11 +85,11 @@ func (s *Service) previewRows(ctx context.Context, in PreviewIn) (readsql.Result
 		if !ok {
 			return readsql.Result{}, errors.New("reporting: the query source type is not registered")
 		}
-		qc, _, _, err := parseQuery(in.Source.Content)
+		pq, err := parseQuery(in.Source.Content)
 		if err != nil {
 			return readsql.Result{}, err
 		}
-		p, err := s.previewQueryParams(in, qc.Project > 0)
+		p, err := s.previewQueryParams(in, pq.qc.Project > 0)
 		if err != nil {
 			return readsql.Result{}, err
 		}

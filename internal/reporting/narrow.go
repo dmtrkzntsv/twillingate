@@ -36,10 +36,11 @@ func narrowed(w store.Widget, n Narrow) (store.Widget, error) {
 		return store.Widget{}, store.Refuse(store.ErrInvalid,
 			"widget %s is %s: where and project_id narrow query widgets only; copy it without them, or write it as a query", w.Name, w.SourceType)
 	}
-	qc, _, _, err := parseQuery(w.Source)
+	pq, err := parseQuery(w.Source)
 	if err != nil {
 		return store.Widget{}, err
 	}
+	qc := pq.qc
 	qc.Query.Where = slices.Concat(n.Where, qc.Query.Where)
 	if n.ProjectID > 0 {
 		qc.Project = n.ProjectID

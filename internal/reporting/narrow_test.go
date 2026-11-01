@@ -16,10 +16,11 @@ func TestNarrowed(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	qc, _, _, err := parseQuery(got.Source)
+	pq, err := parseQuery(got.Source)
 	if err != nil {
 		t.Fatal(err)
 	}
+	qc := pq.qc
 	if qc.Project != 9 || len(qc.Query.Where) != 1 || qc.Query.Where[0].Column != "country" || qc.Rename["actors"] != "value" {
 		t.Errorf("narrowed content = %s", got.Source)
 	}

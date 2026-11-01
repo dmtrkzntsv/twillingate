@@ -15,7 +15,7 @@ func TestLoadDashboardConfigWithNoDataFile(t *testing.T) {
 		"d/dashboard.json": mapFile(`{"id":1,"title":"DD","range":"7d","sidebar":true,"project_tab":true,"layout":[{"widget":"a"}]}`),
 		"d/a.json":         mapFile(`{"component":"markdown","title":"A"}`),
 	}
-	if _, err := LoadDashboard(fsys, "d"); err == nil {
+	if _, err := loadDashboard(fsys, "d"); err == nil {
 		t.Fatal("want error: a config with no data file")
 	}
 }
@@ -27,7 +27,7 @@ func TestLoadDashboardConfigWithTwoDataFiles(t *testing.T) {
 		"d/a.md":           mapFile("hi"),
 		"d/a.sql":          mapFile("select 1"),
 	}
-	if _, err := LoadDashboard(fsys, "d"); err == nil {
+	if _, err := loadDashboard(fsys, "d"); err == nil {
 		t.Fatal("want error: a config with two data files")
 	}
 }
@@ -37,7 +37,7 @@ func TestLoadDashboardDataFileWithNoConfig(t *testing.T) {
 		"d/dashboard.json": mapFile(`{"id":1,"title":"DD","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`),
 		"d/a.md":           mapFile("hi"),
 	}
-	if _, err := LoadDashboard(fsys, "d"); err == nil {
+	if _, err := loadDashboard(fsys, "d"); err == nil {
 		t.Fatal("want error: a data file with no config")
 	}
 }
@@ -48,7 +48,7 @@ func TestLoadDashboardRefusesStrayFile(t *testing.T) {
 		"d/visitors.json":  mapFile(`{"component":"stat","title":"Visitors"}`),
 		"d/visitors.sq":    mapFile("select 1 as value"), // typo: .sq, not .sql
 	}
-	_, err := LoadDashboard(fsys, "d")
+	_, err := loadDashboard(fsys, "d")
 	if err == nil {
 		t.Fatal("want error: a stray file with an unexpected extension")
 	}
@@ -61,7 +61,7 @@ func TestLoadDashboardLayoutNamesMissingWidget(t *testing.T) {
 	fsys := fstest.MapFS{
 		"d/dashboard.json": mapFile(`{"id":1,"title":"DD","range":"7d","sidebar":true,"project_tab":true,"layout":[{"widget":"missing"}]}`),
 	}
-	if _, err := LoadDashboard(fsys, "d"); err == nil {
+	if _, err := loadDashboard(fsys, "d"); err == nil {
 		t.Fatal("want error: layout names a missing widget")
 	}
 }
@@ -72,7 +72,7 @@ func TestLoadDashboardLayoutNamesWidgetTwice(t *testing.T) {
 		"d/a.json":         mapFile(`{"component":"markdown","title":"A"}`),
 		"d/a.md":           mapFile("hi"),
 	}
-	if _, err := LoadDashboard(fsys, "d"); err == nil {
+	if _, err := loadDashboard(fsys, "d"); err == nil {
 		t.Fatal("want error: layout names a widget twice")
 	}
 }
@@ -83,7 +83,7 @@ func TestLoadDashboardWidgetLeftOutOfLayout(t *testing.T) {
 		"d/a.json":         mapFile(`{"component":"markdown","title":"A"}`),
 		"d/a.md":           mapFile("hi"),
 	}
-	if _, err := LoadDashboard(fsys, "d"); err == nil {
+	if _, err := loadDashboard(fsys, "d"); err == nil {
 		t.Fatal("want error: a widget the layout leaves out")
 	}
 }
@@ -92,7 +92,7 @@ func TestLoadDashboardBrokenJSONNamesFile(t *testing.T) {
 	fsys := fstest.MapFS{
 		"d/dashboard.json": mapFile(`{"id":1,`),
 	}
-	_, err := LoadDashboard(fsys, "d")
+	_, err := loadDashboard(fsys, "d")
 	if err == nil {
 		t.Fatal("want error: broken JSON")
 	}
@@ -107,7 +107,7 @@ func TestLoadDashboardBrokenWidgetJSONNamesFile(t *testing.T) {
 		"d/a.json":         mapFile(`{"component":`),
 		"d/a.md":           mapFile("hi"),
 	}
-	_, err := LoadDashboard(fsys, "d")
+	_, err := loadDashboard(fsys, "d")
 	if err == nil {
 		t.Fatal("want error: broken JSON")
 	}
@@ -120,7 +120,7 @@ func TestLoadDashboardUnknownKeyRefused(t *testing.T) {
 	fsys := fstest.MapFS{
 		"d/dashboard.json": mapFile(`{"id":1,"title":"DD","range":"7d","sidebar":true,"project_tab":true,"layout":[],"bogus":true}`),
 	}
-	if _, err := LoadDashboard(fsys, "d"); err == nil {
+	if _, err := loadDashboard(fsys, "d"); err == nil {
 		t.Fatal("want error: unknown key in dashboard.json")
 	}
 }
@@ -131,7 +131,7 @@ func TestLoadDashboardUnknownWidgetKeyRefused(t *testing.T) {
 		"d/a.json":         mapFile(`{"component":"markdown","title":"A","bogus":true}`),
 		"d/a.md":           mapFile("hi"),
 	}
-	if _, err := LoadDashboard(fsys, "d"); err == nil {
+	if _, err := loadDashboard(fsys, "d"); err == nil {
 		t.Fatal("want error: unknown key in widget config")
 	}
 }
@@ -145,7 +145,7 @@ func TestLoadDashboardHappyPath(t *testing.T) {
 		"d/b.json": mapFile(`{"component":"markdown","title":"B"}`),
 		"d/b.md":   mapFile("hello"),
 	}
-	fd, err := LoadDashboard(fsys, "d")
+	fd, err := loadDashboard(fsys, "d")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +181,7 @@ func TestLoadDashboardMissingPlacementFlag(t *testing.T) {
 		"sidebar":     `{"id":1,"title":"DD","range":"7d","project_tab":true,"layout":[]}`,
 		"project_tab": `{"id":1,"title":"DD","range":"7d","sidebar":true,"layout":[]}`,
 	} {
-		_, err := LoadDashboard(fstest.MapFS{"d/dashboard.json": mapFile(doc)}, "d")
+		_, err := loadDashboard(fstest.MapFS{"d/dashboard.json": mapFile(doc)}, "d")
 		if err == nil {
 			t.Fatalf("no %s: want error", field)
 		}
@@ -195,7 +195,7 @@ func TestLoadDashboardParsesGroup(t *testing.T) {
 	fsys := fstest.MapFS{
 		"d/dashboard.json": mapFile(`{"id":2,"title":"DD","range":"7d","sidebar":true,"project_tab":true,"group":1,"layout":[]}`),
 	}
-	fd, err := LoadDashboard(fsys, "d")
+	fd, err := loadDashboard(fsys, "d")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -208,7 +208,7 @@ func TestLoadDashboardGroupDefaultsToZero(t *testing.T) {
 	fsys := fstest.MapFS{
 		"d/dashboard.json": mapFile(`{"id":1,"title":"DD","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`),
 	}
-	fd, err := LoadDashboard(fsys, "d")
+	fd, err := loadDashboard(fsys, "d")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestLoadDashboardAcceptsNoID(t *testing.T) {
 	fsys := fstest.MapFS{
 		"d/dashboard.json": mapFile(`{"title":"DD","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`),
 	}
-	fd, err := LoadDashboard(fsys, "d")
+	fd, err := loadDashboard(fsys, "d")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,12 +235,12 @@ func TestLoadDashboardsSortsByID(t *testing.T) {
 		"b/dashboard.json": mapFile(`{"id":2,"title":"BB","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`),
 		"a/dashboard.json": mapFile(`{"id":1,"title":"AA","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`),
 	}
-	fds, err := LoadDashboards(fsys)
+	fds, err := loadDashboards(fsys)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(fds) != 2 || fds[0].ID != 1 || fds[1].ID != 2 {
-		t.Fatalf("LoadDashboards order = %+v", fds)
+		t.Fatalf("loadDashboards order = %+v", fds)
 	}
 }
 
@@ -249,7 +249,7 @@ func TestLoadDashboardsRefusesDuplicateID(t *testing.T) {
 		"a/dashboard.json": mapFile(`{"id":1,"title":"AA","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`),
 		"b/dashboard.json": mapFile(`{"id":1,"title":"BB","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`),
 	}
-	if _, err := LoadDashboards(fsys); err == nil {
+	if _, err := loadDashboards(fsys); err == nil {
 		t.Fatal("want error: duplicate id")
 	}
 }
@@ -258,7 +258,7 @@ func TestLoadDashboardsRefusesIDOutsideRange(t *testing.T) {
 	fsys := fstest.MapFS{
 		"a/dashboard.json": mapFile(`{"id":1000,"title":"AA","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`),
 	}
-	if _, err := LoadDashboards(fsys); err == nil {
+	if _, err := loadDashboards(fsys); err == nil {
 		t.Fatal("want error: id outside 1-999")
 	}
 }
@@ -267,7 +267,7 @@ func TestLoadDashboardsRefusesNoID(t *testing.T) {
 	fsys := fstest.MapFS{
 		"a/dashboard.json": mapFile(`{"title":"AA","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`),
 	}
-	if _, err := LoadDashboards(fsys); err == nil {
+	if _, err := loadDashboards(fsys); err == nil {
 		t.Fatal("want error: id 0 is outside 1-999")
 	}
 }
@@ -276,7 +276,7 @@ func TestLoadDashboardTitleMinimum(t *testing.T) {
 	fsys := fstest.MapFS{
 		"d/dashboard.json": mapFile(`{"id":1,"title":"x","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`),
 	}
-	if _, err := LoadDashboard(fsys, "d"); err == nil {
+	if _, err := loadDashboard(fsys, "d"); err == nil {
 		t.Fatal("want error: a one-character title")
 	}
 }
@@ -285,13 +285,13 @@ func TestLoadDashboardGroupTitle(t *testing.T) {
 	short := fstest.MapFS{
 		"d/dashboard.json": mapFile(`{"id":1,"title":"DD","group_title":"é","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`),
 	}
-	if _, err := LoadDashboard(short, "d"); err == nil {
+	if _, err := loadDashboard(short, "d"); err == nil {
 		t.Error("want error: a one-character group_title")
 	}
 	ok := fstest.MapFS{
 		"d/dashboard.json": mapFile(`{"id":1,"title":"DD","group_title":"Ops","range":"7d","sidebar":true,"project_tab":true,"layout":[]}`),
 	}
-	fd, err := LoadDashboard(ok, "d")
+	fd, err := loadDashboard(ok, "d")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +307,7 @@ func TestSystemLoaderReadsQuery(t *testing.T) {
 		"d/a.json":         mapFile(`{"component":"stat","title":"A"}`),
 		"d/a.query":        mapFile(q),
 	}
-	d, err := LoadDashboard(fsys, "d")
+	d, err := loadDashboard(fsys, "d")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestSystemLoaderRefusesTwoSources(t *testing.T) {
 		"d/a.sql":          mapFile("select 1"),
 		"d/a.query":        mapFile(`{"query":{}}`),
 	}
-	_, err := LoadDashboard(fsys, "d")
+	_, err := loadDashboard(fsys, "d")
 	if err == nil || !strings.Contains(err.Error(), `"a"`) {
 		t.Fatalf("err = %v, want a refusal naming widget a", err)
 	}

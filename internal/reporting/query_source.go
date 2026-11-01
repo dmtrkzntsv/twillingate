@@ -70,50 +70,59 @@ func (*querySource) Follows(content string) (project, rng bool) {
 	return true, true
 }
 
+// parsedQuery is a query source's content as parseQuery checked it: the
+// content, every column the query returns, renamed, and the columns the
+// source returns, renamed and picked, with their types.
+type parsedQuery struct {
+	qc          queryContent
+	renamed     []string
+	cols, types []string
+}
+
 // parseQuery reads and checks content: one JSON object with no unknown
 // field, a valid query, a rename of its output columns onto distinct
 // names, labels of text columns only, and columns naming distinct ones
-// of the renamed columns. It returns the content and the columns the
-// source returns, renamed and picked, with their types.
-func parseQuery(content string) (queryContent, []string, []string, error) {
+// of the renamed columns.
+func parseQuery(content string) (parsedQuery, error) {
 	if strings.TrimSpace(content) == "" {
-		return queryContent{}, nil, nil, store.Refuse(store.ErrInvalid, "query source is empty")
+		return parsedQuery{}, store.Refuse(store.ErrInvalid, "query source is empty")
 	}
 	var qc queryContent
 	dec := json.NewDecoder(strings.NewReader(content))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&qc); err != nil {
-		return queryContent{}, nil, nil, store.Refuse(store.ErrInvalid, "query source: %s", err)
+		return parsedQuery{}, store.Refuse(store.ErrInvalid, "query source: %s", err)
 	}
 	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
-		return queryContent{}, nil, nil, store.Refuse(store.ErrInvalid, "query source: more than one JSON value")
+		return parsedQuery{}, store.Refuse(store.ErrInvalid, "query source: more than one JSON value")
 	}
 	if qc.Project < 0 {
-		return queryContent{}, nil, nil, store.Refuse(store.ErrInvalid, "project_id: a project's id is 1 or more; omit it to follow the project switcher")
+		return parsedQuery{}, store.Refuse(store.ErrInvalid, "project_id: a project's id is 1 or more; omit it to follow the project switcher")
 	}
 	if err := qc.Query.Validate(); err != nil {
-		return queryContent{}, nil, nil, queryErr(err)
+		return parsedQuery{}, queryErr(err)
 	}
 	cols, err := renamed(qc.Query.Columns(), qc.Rename)
 	if err != nil {
-		return queryContent{}, nil, nil, err
+		return parsedQuery{}, err
 	}
 	types := qc.Query.ColumnTypes()
 	if err := checkLabels(qc.Labels, cols, types); err != nil {
-		return queryContent{}, nil, nil, err
+		return parsedQuery{}, err
 	}
+	pq := parsedQuery{qc: qc, renamed: cols, cols: cols, types: types}
 	if qc.Columns == nil {
-		return qc, cols, types, nil
+		return pq, nil
 	}
 	picked, err := pick(qc.Columns, cols)
 	if err != nil {
-		return queryContent{}, nil, nil, err
+		return parsedQuery{}, err
 	}
-	outCols, outTypes := make([]string, len(picked)), make([]string, len(picked))
+	pq.cols, pq.types = make([]string, len(picked)), make([]string, len(picked))
 	for i, j := range picked {
-		outCols[i], outTypes[i] = cols[j], types[j]
+		pq.cols[i], pq.types[i] = cols[j], types[j]
 	}
-	return qc, outCols, outTypes, nil
+	return pq, nil
 }
 
 // pick is the index in cols (renamed) of each of columns, refusing an
@@ -239,14 +248,14 @@ func queryErr(err error) error {
 // names, and their types against the ones c declares. It reads no data:
 // the columns and their types come from the query alone.
 func (*querySource) Validate(_ context.Context, content string, c Component) error {
-	_, cols, types, err := parseQuery(content)
+	pq, err := parseQuery(content)
 	if err != nil {
 		return err
 	}
-	if err := c.checkColumns(cols); err != nil {
+	if err := c.checkColumns(pq.cols); err != nil {
 		return err
 	}
-	return c.checkColumnTypes(cols, types)
+	return c.checkColumnTypes(pq.cols, pq.types)
 }
 
 func (s *querySource) Load(ctx context.Context, content string, p Params) (any, error) {
@@ -281,14 +290,11 @@ type queryPlan struct {
 // plan checks content and p for a load, and reads the rules it runs
 // with.
 func (s *querySource) plan(ctx context.Context, content string, p Params) (queryPlan, error) {
-	qc, _, _, err := parseQuery(content)
+	pq, err := parseQuery(content)
 	if err != nil {
 		return queryPlan{}, err
 	}
-	cols, err := renamed(qc.Query.Columns(), qc.Rename)
-	if err != nil {
-		return queryPlan{}, err
-	}
+	qc := pq.qc
 	if s.native == nil {
 		return queryPlan{}, store.Refuse(store.ErrInvalid, "structured queries are not available in this process")
 	}
@@ -308,7 +314,7 @@ func (s *querySource) plan(ctx context.Context, content string, p Params) (query
 	if s.rules != nil {
 		rules = s.rules(ctx, project)
 	}
-	return queryPlan{qc: qc, cols: cols, q: qc.Query, p: native.Params{Project: project, From: from, To: to}, rules: rules}, nil
+	return queryPlan{qc: qc, cols: pq.renamed, q: qc.Query, p: native.Params{Project: project, From: from, To: to}, rules: rules}, nil
 }
 
 // withTimeout is ctx under CONSOLE_QUERY_TIMEOUT; without one, ctx
