@@ -215,7 +215,9 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
   const data = q.data
   const giveUp = useCallback((origin: string, requestedAt: string) => setGaveUp((g) => ({ ...g, [origin]: requestedAt })), [])
 
-  if (q.isError) {
+  // A refetch that fails over cached monitors keeps the rows (and any unsaved
+  // text in them); only a first load that failed replaces the section.
+  if (q.isError && !q.data) {
     return (
       <section aria-label="Monitoring" className="flex flex-col gap-3 rounded-lg border p-4">
         <h2 className="text-base font-semibold">Monitoring</h2>
@@ -250,6 +252,12 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
         <h2 className="text-base font-semibold">Monitoring</h2>
         {anyOn && <p className="text-sm text-muted-foreground">{`each site is checked every ${formatInterval(data.check_every_seconds)}`}</p>}
       </div>
+      {q.isError && (
+        <p role="status" className="text-sm text-muted-foreground">
+          Couldn't refresh the monitors; what shows may be out of date.{' '}
+          <button type="button" className="underline underline-offset-2" onClick={() => void q.refetch()}>Retry</button>
+        </p>
+      )}
       {!anyOn && <p className="text-sm text-muted-foreground">Check that the site is up, and when its certificate and domain expire.</p>}
       <ul className="flex flex-col divide-y">
         {data.monitors.map((m) => (

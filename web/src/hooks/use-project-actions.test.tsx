@@ -60,6 +60,21 @@ describe('useProjectActions', () => {
     expect(toast.success).toHaveBeenCalled()
   })
 
+  it('puts a saved monitor in the cache before the refetch, so a switch or a text save does not jump back', async () => {
+    const answer = { monitors: [{ origin: 'https://a.example', enabled: true }] } as never
+    vi.spyOn(endpoints, 'updateMonitor').mockResolvedValue(answer)
+    const { client, wrapper: w } = wrapper()
+    // The GET is held pending for good.
+    vi.spyOn(client, 'invalidateQueries').mockImplementation((() => new Promise<void>(() => {})) as never)
+    const { result } = renderHook(() => useProjectActions(), { wrapper: w })
+    let ok: unknown
+    await act(async () => {
+      ok = await result.current.updateMonitor(7, { origin: 'https://a.example', enabled: true })
+    })
+    expect(ok).toBe(true)
+    expect(client.getQueryData(['monitor', 7])).toBe(answer)
+  })
+
   it('toasts the server\'s message when a monitor check is refused', async () => {
     vi.spyOn(endpoints, 'checkMonitor').mockRejectedValue(new ApiError(429, 'checked moments ago; try again in 30 s', 'busy'))
     const { client, wrapper: w } = wrapper()

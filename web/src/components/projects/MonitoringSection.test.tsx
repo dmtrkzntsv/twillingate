@@ -167,6 +167,34 @@ describe('MonitoringSection', () => {
     })
   })
 
+  describe('a failed refetch', () => {
+    it('with the monitors cached keeps the rows and an unsaved text, and says so inline', async () => {
+      const user = userEvent.setup()
+      const { read, client } = show(list([on(A)]))
+      const a = await row(A)
+      await user.click(a.getByRole('button', { name: LINK }))
+      await user.type(a.getByLabelText('Page must contain'), 'Welcome')
+      read.mockRejectedValue(new Error('server restarting'))
+      await client.invalidateQueries({ queryKey: ['monitor'] })
+      expect(await screen.findByText(/Couldn't refresh the monitors/)).toBeInTheDocument()
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+      expect(screen.getByRole('listitem', { name: A })).toBeInTheDocument()
+      expect(a.getByLabelText('Page must contain')).toHaveValue('Welcome')
+    })
+
+    it('with nothing cached shows only the error and Retry', async () => {
+      vi.spyOn(endpoints, 'monitors').mockRejectedValue(new Error('down'))
+      vi.spyOn(endpoints, 'projectTabs').mockResolvedValue({ tabs: [] })
+      renderWithProviders(
+        <MemoryRouter>
+          <MonitoringSection projectId={4} pending={false} onSave={vi.fn()} onCheck={vi.fn()} />
+        </MemoryRouter>
+      )
+      expect(await screen.findByRole('alert')).toHaveTextContent("Couldn't load the monitors")
+      expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    })
+  })
+
   describe('the text', () => {
     it('hides behind a link per row, which reveals and focuses that row\'s field only, and saves what was typed', async () => {
       const user = userEvent.setup()

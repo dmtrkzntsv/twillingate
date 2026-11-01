@@ -116,7 +116,18 @@ export function useProjectActions(): ProjectActions {
     pending,
     create: (body) => run(() => endpoints.createProject(body), `Created ${body.name}`, PROJECT_WRITE),
     update: async (id, body) => (await run(() => endpoints.updateProject(id, body), 'Saved', PROJECT_WRITE)) !== undefined,
-    updateMonitor: async (id, body) => (await run(() => endpoints.updateMonitor(id, body), 'Saved', ['monitor'])) !== undefined,
+    // The answer goes in the cache before pending ends, so the switch and the
+    // text's Save keep the saved state until the refetch lands.
+    updateMonitor: async (id, body) =>
+      (await run(
+        async () => {
+          const m = await endpoints.updateMonitor(id, body)
+          client.setQueryData(['monitor', id], m)
+          return m
+        },
+        'Saved',
+        ['monitor']
+      )) !== undefined,
     // The answer goes in the cache before pending ends, so the button goes
     // straight to Checking… and polling starts.
     checkMonitor: async (id, origin) =>
