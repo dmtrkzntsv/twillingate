@@ -83,9 +83,10 @@ func openOps(envFile string) (*manage.Ops, *config.Config, func(), error) {
 }
 
 // subcommand parses a command's own flag, -env-file, and splits off its
-// subcommand, which must be one of valid unless valid is nil. ok is false,
-// for exit 2, when the flags do not parse or the subcommand is missing or
-// not valid; what went wrong has been printed then.
+// subcommand, which must be one of valid, so that a typo is refused before
+// the store is opened. ok is false, for exit 2, when the flags do not parse
+// or the subcommand is missing or not valid; what went wrong has been
+// printed then.
 func subcommand(cmd, usage string, valid []string, args []string, stdout io.Writer) (envFile, sub string, subArgs []string, ok bool) {
 	fs := flag.NewFlagSet(cmd, flag.ContinueOnError)
 	fs.SetOutput(stdout)
@@ -98,7 +99,7 @@ func subcommand(cmd, usage string, valid []string, args []string, stdout io.Writ
 		fmt.Fprintln(stdout, usage)
 		return "", "", nil, false
 	}
-	if valid != nil && !slices.Contains(valid, rest[0]) {
+	if !slices.Contains(valid, rest[0]) {
 		fmt.Fprintf(stdout, "unknown subcommand %q\n%s\n", rest[0], usage)
 		return "", "", nil, false
 	}
