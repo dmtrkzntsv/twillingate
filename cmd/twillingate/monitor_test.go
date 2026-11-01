@@ -216,17 +216,53 @@ func TestMonitorCheckDownAndNotRun(t *testing.T) {
 	}
 }
 
-// No server served it: exit 1, saying so.
+// The wait covers the longest check: availability and certificate at
+// MONITOR_TIMEOUT each, the RDAP lookup's 15 s, and a tick's margin.
+func TestMonitorCheckWait(t *testing.T) {
+	for timeout, want := range map[time.Duration]time.Duration{
+		5 * time.Second:  30 * time.Second,
+		60 * time.Second: 140 * time.Second,
+	} {
+		if got := monitorCheckWait(timeout); got != want {
+			t.Errorf("wait at a %v timeout = %v, want %v", timeout, got, want)
+		}
+	}
+}
+
+// Out of time, it exits 1, saying the check is still running: a slow check is
+// not a server that is down.
 func TestMonitorCheckDidNotFinish(t *testing.T) {
 	withDB(t)
-	defer func(p, w time.Duration) { monitorCheckPoll, monitorCheckWait = p, w }(monitorCheckPoll, monitorCheckWait)
-	monitorCheckPoll, monitorCheckWait = 5*time.Millisecond, 30*time.Millisecond
+	defer func(p time.Duration) { monitorCheckPoll = p }(monitorCheckPoll)
+	monitorCheckPoll = 5 * time.Millisecond
 	var out bytes.Buffer
 	if code := run([]string{"project", "create", "-name", "Shop", "-origin", "https://shop.example.com"}, &out); code != 0 {
 		t.Fatal(out.String())
 	}
 	runMonitor(t, 0, "set", "-project-id", "1", "-enable")
-	if got := runMonitor(t, 1, "check", "-project-id", "1"); !strings.Contains(got, "did not finish") {
-		t.Errorf("check = %q", got)
+	ops, _, closeStore, err := openOps("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeStore()
+	out.Reset()
+	if code := monitorCheck(context.Background(), ops, 1, 30*time.Millisecond, &out); code != 1 {
+		t.Errorf("exit %d, want 1: %s", code, out.String())
+	}
+	if got := out.String(); !strings.Contains(got, "still running") || strings.Contains(got, "server") {
+		t.Errorf("out of time = %q, want it still running and no word of the server", got)
+	}
+}
+
+// A request past the runner's 2-minute drop that is still pending was seen by
+// no runner: that is when the server is worth asking about.
+func TestMonitorCheckNotFinishedText(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	at := func(ago time.Duration) string { return now.Add(-ago).Format(time.RFC3339) }
+	if got := monitorCheckNotFinished(at(2*time.Minute), now); !strings.Contains(got, "still running") {
+		t.Errorf("at 2 minutes = %q", got)
+	}
+	if got := monitorCheckNotFinished(at(2*time.Minute+time.Second), now); !strings.Contains(got, "is the server up") {
+		t.Errorf("past 2 minutes = %q", got)
 	}
 }

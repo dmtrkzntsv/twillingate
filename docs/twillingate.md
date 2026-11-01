@@ -63,7 +63,7 @@ Projects live in a registry table, managed through the CLI or, over the API
 | Disable / enable a key | `twillingate key disable` / `enable` | `disable_ingest_key` / `enable_ingest_key` | `{project_id, label}` |
 | Read a project's monitor | `twillingate monitor get` | `get_monitor` | `{project_id}`; returns the monitor, see [Monitoring](#monitoring) |
 | Change it | `twillingate monitor set` | `update_monitor` | `{project_id, enabled, origin, contains}`, each optional; merges, so an omitted field keeps its value and `contains: ""` clears the text; returns the monitor |
-| Check it now | `twillingate monitor check` | `check_monitor` | `{project_id}`; asks for a check of all three and returns the monitor right away, see [Monitoring](#monitoring). `monitor check` waits up to 30 s for the result and prints it; exit 1 if it did not finish |
+| Check it now | `twillingate monitor check` | `check_monitor` | `{project_id}`; asks for a check of all three and returns the monitor right away, see [Monitoring](#monitoring). `monitor check` waits for the result, up to twice `MONITOR_TIMEOUT` plus 20 s, and prints it; exit 1 if it did not finish |
 | Rename an event | — | `rename_event` | `{project_id, family, from, to}`; `family` is `product` or `measures`; returns the rule. See [Event rules](#event-rules) |
 | Merge an event into another | — | `merge_event` | `{project_id, family, from, to}`; returns what `rename_event` does |
 | Block an event | — | `block_event` | `{project_id, family, name}` |
@@ -382,8 +382,9 @@ while one is pending or within 60 seconds of the last one, whatever the interval
 this protects the site and the registries. A request not served within 2 minutes
 (the server was down) finishes with an empty `reason` and `error` `the check did
 not run`; so does one cut short by the server stopping. Only the server's runner
-serves requests, so `monitor check` needs it up, and exits 1 when nothing finishes
-within 30 seconds. Changing the origin clears `check`. Each request is audited as
+serves requests, so `monitor check` needs it up. It waits as long as the longest
+check, twice `MONITOR_TIMEOUT` plus 20 seconds, then exits 1, saying the check is
+still running, or, for a request over 2 minutes old, asking whether the server is up. Changing the origin clears `check`. Each request is audited as
 `monitor.check`.
 
 `reason` is a closed vocabulary, on every failed `uptime` row:

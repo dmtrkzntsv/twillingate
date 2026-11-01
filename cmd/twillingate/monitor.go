@@ -17,12 +17,31 @@ func init() { commands["monitor"] = cmdMonitor }
 
 const monitorUsage = "usage: twillingate monitor <get|set|check> -project-id <id> [flags]"
 
-// How long monitor check waits for the server's runner, and how often it
-// looks; variables for the tests.
-var (
-	monitorCheckWait = 30 * time.Second
-	monitorCheckPoll = time.Second
+// What monitor check waits for: the longest check the server's runner can run
+// is the availability check and the certificate read at MONITOR_TIMEOUT each and
+// the RDAP lookup's limit, and it drops a request it has not served after
+// monitorCheckDrop. These mirror internal/monitor's rdapTimeout and checkMaxAge.
+const (
+	monitorCheckRDAP   = 15 * time.Second
+	monitorCheckMargin = 5 * time.Second // the tick that starts it and the one that writes
+	monitorCheckDrop   = 2 * time.Minute
 )
+
+// monitorCheckPoll is how often monitor check looks; a variable for the tests.
+var monitorCheckPoll = time.Second
+
+func monitorCheckWait(timeout time.Duration) time.Duration {
+	return 2*timeout + monitorCheckRDAP + monitorCheckMargin
+}
+
+// monitorCheckNotFinished says what a request still pending at now means. Within
+// the drop a runner may well be on it; past it, one would have dropped it.
+func monitorCheckNotFinished(requestedAt string, now time.Time) string {
+	if t, err := time.Parse(time.RFC3339, requestedAt); err == nil && now.Sub(t) <= monitorCheckDrop {
+		return "the check is still running; see monitor get for its result"
+	}
+	return "the check did not finish and nothing picked it up: is the server up?"
+}
 
 func cmdMonitor(args []string, stdout io.Writer) int {
 	envFile, sub, subArgs, ok := subcommand("monitor", monitorUsage, []string{"get", "set", "check"}, args, stdout)
@@ -79,7 +98,7 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 	defer closeStore()
 	ctx := context.Background()
 	if sub == "check" {
-		return monitorCheck(ctx, ops, *project, stdout)
+		return monitorCheck(ctx, ops, *project, monitorCheckWait(cfg.Monitor.Timeout), stdout)
 	}
 	var m store.Monitor
 	if sub == "set" {
@@ -100,16 +119,16 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 }
 
 // monitorCheck asks for a check and waits for the server's runner to serve it.
-func monitorCheck(ctx context.Context, ops *manage.Ops, project int64, stdout io.Writer) int {
+func monitorCheck(ctx context.Context, ops *manage.Ops, project int64, wait time.Duration, stdout io.Writer) int {
 	m, err := ops.CheckMonitor(ctx, "cli", project)
 	if err != nil {
 		fmt.Fprintln(stdout, err)
 		return 1
 	}
-	deadline := time.Now().Add(monitorCheckWait)
+	deadline := time.Now().Add(wait)
 	for m.CheckRequestedAt > m.CheckFinishedAt {
 		if time.Now().After(deadline) {
-			fmt.Fprintf(stdout, "the check did not finish within %s: the server runs it, is it up?\n", monitorCheckWait)
+			fmt.Fprintln(stdout, monitorCheckNotFinished(m.CheckRequestedAt, time.Now()))
 			return 1
 		}
 		time.Sleep(monitorCheckPoll)
