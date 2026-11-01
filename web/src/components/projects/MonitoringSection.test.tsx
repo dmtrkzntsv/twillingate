@@ -34,8 +34,7 @@ function monitor(origin: string, over: Partial<Monitor> = {}): Monitor {
 const on = (origin: string, over: Partial<Monitor> = {}) => monitor(origin, { enabled: true, ...over })
 
 function list(monitors: Monitor[], over: Partial<Monitors> = {}): Monitors {
-  const enabled = monitors.filter((m) => m.enabled).length
-  return { interval_seconds: 60, timeout_seconds: 5, check_every_seconds: 60 * Math.max(enabled, 1), monitors, domains: [], ...over }
+  return { interval_seconds: 60, timeout_seconds: 5, events_per_month: 0, paused: false, monitors, domains: [], ...over }
 }
 
 function show(data: Monitors, onSave = vi.fn().mockResolvedValue(true), onCheck = vi.fn().mockResolvedValue(true), pending = false) {
@@ -95,8 +94,8 @@ describe('MonitoringSection', () => {
     expect(c.getByRole('switch')).not.toBeChecked()
     expect(c.queryAllByRole('button')).toEqual([])
     expect(c.queryByText(/cert/)).not.toBeInTheDocument()
-    // Three monitors' worth of a header, the domain and the link.
-    expect(screen.getByText('each site is checked every 2 min')).toBeInTheDocument()
+    // The header is the interval, however many are on; then the domain and the link.
+    expect(screen.getByText('each site is checked every 1 min')).toBeInTheDocument()
     expect(screen.queryByText(SENTENCE)).not.toBeInTheDocument()
     expect(screen.getByText(`Domain: a.example renews ${utcDay(285)} (285 days)`)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Open Availability' })).toHaveAttribute('href', '/projects/4/dashboards/8')
@@ -164,6 +163,34 @@ describe('MonitoringSection', () => {
       const input = a.getByLabelText('Page must contain')
       expect(input).toBeDisabled()
       expect(input).toHaveAttribute('maxlength', '200')
+    })
+  })
+
+  describe('the install', () => {
+    it('shows what a site costs a month in events, in full, only when priced', async () => {
+      show(list([on(A)], { events_per_month: 2160 }))
+      expect(await screen.findByText('Each site uses about 2,160 events a month')).toBeInTheDocument()
+    })
+
+    it('says nothing of cost when not priced', async () => {
+      show(list([on(A)]))
+      await row(A)
+      expect(screen.queryByText(/events a month/)).not.toBeInTheDocument()
+    })
+
+    it('paused: shows the rows as they are, disables Check now, and says so once', async () => {
+      show(list([on(A), monitor(B)], { paused: true }))
+      const a = await row(A)
+      expect(screen.getByText('Monitoring is paused on this install')).toBeInTheDocument()
+      expect(a.getByRole('switch')).toBeEnabled()
+      expect(a.getByRole('button', { name: 'Check now' })).toBeDisabled()
+      expect((await row(B)).getByRole('switch')).not.toBeChecked()
+    })
+
+    it('not paused: no such line', async () => {
+      show(list([on(A)]))
+      await row(A)
+      expect(screen.queryByText(/paused/)).not.toBeInTheDocument()
     })
   })
 
@@ -375,7 +402,7 @@ describe('MonitoringSection', () => {
     it('polls while a row has one pending, shows its result and the fresh domain there, and stops', async () => {
       const { read } = show(list([on(A, { check: pendingCheck }), on(B)]))
       const a = await row(A)
-      expect(await screen.findByText('each site is checked every 2 min')).toBeInTheDocument()
+      expect(await screen.findByText('each site is checked every 1 min')).toBeInTheDocument()
       read.mockResolvedValue(list([on(A, { check: done({ up: true, status: 200, ms: 123 }) }), on(B)], {
         domains: [{ domain: 'a.example', origins: [A, B], expires_at: utcDay(10), checked_at: at }],
       }))

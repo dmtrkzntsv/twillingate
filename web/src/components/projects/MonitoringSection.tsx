@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import type { Monitor, MonitorBody, MonitorDomain } from '@/lib/api'
-import { plural } from '@/lib/format'
+import { formatExact, plural } from '@/lib/format'
 import { monitorsQuery, projectTabsQuery } from '@/lib/queries'
 import { rangeParams, tabPath } from '@/lib/project-tabs'
 import { daysUntil, daysUntilDate, formatInterval } from '@/lib/time'
@@ -80,13 +80,15 @@ interface RowProps {
   onGiveUp: (origin: string, requestedAt: string) => void
   onSave: Props['onSave']
   onCheck: () => void
+  /** Monitoring is off on this install, so Check now is too. */
+  paused: boolean
 }
 
 /**
  * One origin: a switch that saves at once and, while on, what the checks found,
  * Check now, and an optional text with its own Save. An off row is just the two.
  */
-function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck }: RowProps) {
+function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused }: RowProps) {
   // Where the switch goes while its save is out; a failed one drops back.
   const [switching, setSwitching] = useState<boolean | null>(null)
   const [contains, setContains] = useState(m.contains)
@@ -144,7 +146,7 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck }: RowP
                 {m.check.finished_at && certShort && ' · '}
                 {certShort && <span title={certFull}>{certShort}</span>}
               </span>
-              <Button type="button" size="sm" variant="outline" className="ml-auto" disabled={pending || checking} onClick={onCheck}>
+              <Button type="button" size="sm" variant="outline" className="ml-auto" disabled={pending || checking || paused} onClick={onCheck}>
                 {checking ? 'Checking…' : 'Check now'}
               </Button>
             </>
@@ -250,7 +252,7 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
     <section aria-label="Monitoring" className="flex flex-col gap-3 rounded-lg border p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3">
         <h2 className="text-base font-semibold">Monitoring</h2>
-        {anyOn && <p className="text-sm text-muted-foreground">{`each site is checked every ${formatInterval(data.check_every_seconds)}`}</p>}
+        {anyOn && <p className="text-sm text-muted-foreground">{`each site is checked every ${formatInterval(data.interval_seconds)}`}</p>}
       </div>
       {q.isError && (
         <p role="status" className="text-sm text-muted-foreground">
@@ -270,9 +272,14 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
             onGiveUp={giveUp}
             onSave={onSave}
             onCheck={() => check(m.origin)}
+            paused={data.paused}
           />
         ))}
       </ul>
+      {data.paused && <p className="text-sm text-muted-foreground">Monitoring is paused on this install</p>}
+      {data.events_per_month > 0 && (
+        <p className="text-sm text-muted-foreground">{`Each site uses about ${formatExact(data.events_per_month)} events a month`}</p>
+      )}
       {data.domains.map((d) => (
         <p key={d.domain} className="min-w-0 text-sm break-words text-muted-foreground">{domainText(d, now)}</p>
       ))}

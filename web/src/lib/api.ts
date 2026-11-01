@@ -293,10 +293,13 @@ export interface MonitorDomain {
 
 /** A project's monitoring (GET /api/projects/{id}/monitors): every origin a check can target, on or off. */
 export interface Monitors {
+  /** Seconds between the checks of each enabled monitor. */
   interval_seconds: number
   timeout_seconds: number
-  /** How often each site comes round: the interval, shared by the enabled monitors. */
-  check_every_seconds: number
+  /** Events one enabled monitor uses a month on this install's plan; 0 when it is not priced. */
+  events_per_month: number
+  /** Monitoring is off on this install: nothing runs and a check on demand is refused. */
+  paused: boolean
   monitors: Monitor[]
   domains: MonitorDomain[]
 }
