@@ -409,6 +409,20 @@ describe('Project tabs', () => {
     expect(endpoints.projectTabs).not.toHaveBeenCalled()
   })
 
+  it('reads no monitor until the dashboards list says this is not reporting dev', async () => {
+    const monitor = vi.spyOn(endpoints, 'monitor').mockResolvedValue({
+      project_id: 7, enabled: false, origin: '', contains: '', eligible_origins: [], interval_seconds: 60,
+      cert: { expires_at: '', issuer: '', valid: false, error: '', checked_at: '' }, domain: { expires_at: '', checked_at: '' },
+    })
+    let list!: (v: Awaited<ReturnType<typeof endpoints.dashboards>>) => void
+    vi.mocked(endpoints.dashboards).mockReturnValue(new Promise((resolve) => { list = resolve }))
+    renderAt('/projects/7/settings')
+    expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
+    expect(monitor).not.toHaveBeenCalled()
+    list(dashboardsList({ purge_after_days: 30 }))
+    await vi.waitFor(() => expect(monitor).toHaveBeenCalled())
+  })
+
   it('reads the built-ins and your own as tabs, then Add tab, with Forms and Settings as buttons after them', async () => {
     renderAt('/projects/7/dashboards/1')
     await screen.findByRole('tab', { name: 'Mine' })

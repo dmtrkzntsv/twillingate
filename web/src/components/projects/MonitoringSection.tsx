@@ -1,12 +1,13 @@
-import { useEffect, useId, useState, type FormEvent } from 'react'
+import { useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
+import LoadError from '@/components/projects/LoadError'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import type { MonitorBody } from '@/lib/api'
+import type { Monitor, MonitorBody } from '@/lib/api'
 import { plural } from '@/lib/format'
 import { monitorQuery, projectTabsQuery } from '@/lib/queries'
 import { rangeParams, tabPath } from '@/lib/project-tabs'
@@ -24,6 +25,16 @@ function left(days: number): string {
   return days < 0 ? 'expired' : plural(days, 'day')
 }
 
+/** What Settings says about the monitored origin's certificate. */
+function certificateText(origin: string, cert: Monitor['cert'], now: Date): string {
+  if (origin.startsWith('http://')) return 'none on a plain http:// origin'
+  if (!cert.expires_at) return cert.error || 'not checked yet'
+  const expiry = `expires ${cert.expires_at.slice(0, 10)} (${left(daysUntil(new Date(cert.expires_at), now))})`
+  if (!cert.valid) return cert.error ? `invalid, ${expiry}: ${cert.error}` : `invalid, ${expiry}`
+  if (cert.error) return `${expiry}; last check failed: ${cert.error}`
+  return expiry
+}
+
 /**
  * A project's availability monitor: on or off, the origin to check, and an
  * optional text the page must hold. Below, once on, what the checks found
@@ -38,10 +49,17 @@ export default function MonitoringSection({ projectId, pending, onSave }: Props)
   const [origin, setOrigin] = useState('')
   const [contains, setContains] = useState('')
   const containsId = useId()
+  // The project whose form holds an edit not saved yet: a refetch (window
+  // focus, another section's save) must not throw it away.
+  const edited = useRef<number | null>(null)
+  const edit = () => {
+    edited.current = projectId
+  }
 
   // Start from what is saved, again after each save or a project change.
   useEffect(() => {
-    if (!m) return
+    if (!m || edited.current === m.project_id) return
+    edited.current = null
     setEnabled(m.enabled)
     setOrigin(m.origin || m.eligible_origins[0] || '')
     setContains(m.contains)
@@ -51,9 +69,7 @@ export default function MonitoringSection({ projectId, pending, onSave }: Props)
     return (
       <section aria-label="Monitoring" className="flex flex-col gap-3 rounded-lg border p-4">
         <h2 className="text-base font-semibold">Monitoring</h2>
-        <p className="text-sm text-muted-foreground">
-          Could not load the monitor. <Button variant="link" className="h-auto p-0" onClick={() => void q.refetch()}>Retry</Button>
-        </p>
+        <LoadError what="the monitor" error={q.error} onRetry={() => void q.refetch()} />
       </section>
     )
   }
@@ -71,15 +87,11 @@ export default function MonitoringSection({ projectId, pending, onSave }: Props)
   }
   const submit = (e: FormEvent) => {
     e.preventDefault()
-    void onSave({ enabled, origin: chosen, contains: contains.trim() })
+    void onSave({ enabled, origin: chosen, contains: contains.trim() }).then((saved) => {
+      if (saved) edited.current = null
+    })
   }
   const now = new Date()
-  const cert = m.cert
-  const certText = cert.error
-    ? cert.error
-    : cert.expires_at
-      ? `expires ${cert.expires_at.slice(0, 10)} (${left(daysUntil(new Date(cert.expires_at), now))})`
-      : 'not checked yet'
   const domainText = m.domain.expires_at ? `renews ${m.domain.expires_at} (${left(daysUntilDate(m.domain.expires_at, now))})` : 'unknown'
 
   return (
@@ -87,13 +99,30 @@ export default function MonitoringSection({ projectId, pending, onSave }: Props)
       <h2 className="text-base font-semibold">Monitoring</h2>
       <form onSubmit={submit} className="grid grid-cols-1 gap-3">
         <div className="flex items-center gap-2">
-          <Switch id={`${containsId}-on`} aria-label="Monitor this project" checked={enabled} disabled={pending} onCheckedChange={setEnabled} />
+          <Switch
+            id={`${containsId}-on`}
+            checked={enabled}
+            disabled={pending}
+            onCheckedChange={(on) => {
+              edit()
+              setEnabled(on)
+            }}
+          />
           <Label htmlFor={`${containsId}-on`}>Check this project's availability</Label>
         </div>
         {m.eligible_origins.length === 1 ? (
-          <code className="text-sm break-all">{m.eligible_origins[0]}</code>
+          <p className="text-sm">
+            Origin to monitor: <code className="break-all">{m.eligible_origins[0]}</code>
+          </p>
         ) : (
-          <Select value={chosen} onValueChange={setOrigin}>
+          <Select
+            value={chosen}
+            disabled={pending}
+            onValueChange={(o) => {
+              edit()
+              setOrigin(o)
+            }}
+          >
             <SelectTrigger aria-label="Origin to monitor" className="w-full max-w-full">
               <SelectValue />
             </SelectTrigger>
@@ -106,7 +135,16 @@ export default function MonitoringSection({ projectId, pending, onSave }: Props)
         )}
         <div className="flex flex-col gap-1.5">
           <Label htmlFor={containsId}>Page must contain (optional)</Label>
-          <Input id={containsId} value={contains} onChange={(e) => setContains(e.target.value)} />
+          <Input
+            id={containsId}
+            value={contains}
+            disabled={pending}
+            maxLength={200}
+            onChange={(e) => {
+              edit()
+              setContains(e.target.value)
+            }}
+          />
         </div>
         <div>
           <Button type="submit" size="sm" disabled={pending}>Save</Button>
@@ -115,7 +153,7 @@ export default function MonitoringSection({ projectId, pending, onSave }: Props)
       {m.enabled && (
         <div className="flex flex-col gap-1 text-sm text-muted-foreground">
           <p>{`Checked every ${formatInterval(m.interval_seconds)}`}</p>
-          <p className="break-words">{`Certificate: ${certText}`}</p>
+          <p className="break-words">{`Certificate: ${certificateText(m.origin, m.cert, now)}`}</p>
           <p>{`Domain: ${domainText}`}</p>
           {availability && (
             <Link className="w-fit text-foreground underline underline-offset-4" to={tabPath(projectId, availability.dashboard_id, rangeParams(url).toString())}>
