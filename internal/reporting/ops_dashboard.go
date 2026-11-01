@@ -132,10 +132,20 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 	}
 	a := store.AuditEntry{Actor: actor, Action: "dashboard.update"}
 	err = s.placeRow(ctx, d.ID, func(o order, row store.Dashboard) error {
+		// The only live tab of a named group carries the group's name with
+		// its title, so the name is still the tab's once the group grows.
+		syncGroup := in.Title != "" && in.GroupID == nil && row.GroupTitle != "" && o.lone(row.ID, row.GroupID)
 		if in.Title != "" {
 			row.Title = in.Title
 		}
-		return s.placeDashboard(ctx, o, row, in, a)
+		if err := s.placeDashboard(ctx, o, row, in, a); err != nil {
+			return err
+		}
+		if !syncGroup {
+			return nil
+		}
+		return s.st.SetGroupTitle(ctx, row.GroupID, in.Title, store.AuditEntry{
+			Actor: actor, Action: "dashboard.group.rename", Detail: fmt.Sprintf("dashboard/%d", row.ID)})
 	})
 	if err != nil {
 		return DashboardInfo{}, err
@@ -207,7 +217,8 @@ func (s *Service) setPlacement(ctx context.Context, actor string, in UpdateDashb
 }
 
 // renameGroup names id's group (spec 2026-10-04 D5). The title is
-// required: a name is never cleared, only replaced. The group id is read
+// required: a name is never cleared, only replaced. A group of one live
+// tab has one name, so that tab is retitled with it. The group id is read
 // inside the placement mutex, so a handover running beside it can't
 // leave the name on the group's old number.
 func (s *Service) renameGroup(ctx context.Context, actor string, in UpdateDashboard) (DashboardInfo, error) {
@@ -222,7 +233,15 @@ func (s *Service) renameGroup(ctx context.Context, actor string, in UpdateDashbo
 	if err != nil {
 		return DashboardInfo{}, err
 	}
-	err = s.placeRow(ctx, d.ID, func(_ order, row store.Dashboard) error {
+	err = s.placeRow(ctx, d.ID, func(o order, row store.Dashboard) error {
+		// A group of one tab has one name: its tab takes it as its title,
+		// which is what the sidebar and the page show for it.
+		if o.lone(row.ID, row.GroupID) && row.Title != title {
+			row.Title = title
+			if err := s.st.UpdateDashboard(ctx, row, store.AuditEntry{Actor: actor, Action: "dashboard.update"}); err != nil {
+				return err
+			}
+		}
 		return s.st.SetGroupTitle(ctx, row.GroupID, title, store.AuditEntry{
 			Actor: actor, Action: "dashboard.group.rename", Detail: fmt.Sprintf("dashboard/%d", d.ID)})
 	})

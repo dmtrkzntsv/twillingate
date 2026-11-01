@@ -224,6 +224,16 @@ describe('TabMenu, Rename tab', () => {
 })
 
 describe('GroupMenu, Rename dashboard', () => {
+  it('on a dashboard of one tab, starts on its title, whatever name its group kept', async () => {
+    renderGroupMenu({ ...launchWeek, group_title: 'Old name' })
+    await openGroupMenu()
+    await userEvent.click(screen.getByText('Rename dashboard…'))
+    const field = screen.getByRole('textbox', { name: 'Dashboard name' })
+    expect(field).toHaveValue('Launch week')
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }))
+    expect(renameGroup).not.toHaveBeenCalled()
+  })
+
   async function openRename(d: DashboardDetail) {
     renderGroupMenu(d)
     await openGroupMenu()
@@ -259,13 +269,23 @@ describe('GroupMenu, Rename dashboard', () => {
 
 describe('TabMenu, "Move to" names a group by its group_title', () => {
   it('lists the other group by its stored name, not its first dashboard', async () => {
+    const named = list.map((d) => (d.group_id === 13 ? { ...d, group_title: 'Growth' } : d))
+    renderWithProviders(<TabMenu dashboard={launchWeek} list={named} />)
+    await openTabMenu()
+    await userEvent.click(screen.getByText('Move to'))
+
+    expect(await screen.findByText('Growth')).toBeInTheDocument()
+    expect(screen.queryByText('Marketing')).not.toBeInTheDocument()
+  })
+
+  it('lists a group of one tab by that tab\'s title, whatever name it kept', async () => {
     const named = list.map((d) => (d.group_id === 20 ? { ...d, group_title: 'Launch plans' } : d))
     renderWithProviders(<TabMenu dashboard={marketing} list={named} />)
     await openTabMenu()
     await userEvent.click(screen.getByText('Move to'))
 
-    expect(await screen.findByText('Launch plans')).toBeInTheDocument()
-    expect(screen.queryByText('Launch week')).not.toBeInTheDocument()
+    expect(await screen.findByText('Launch week')).toBeInTheDocument()
+    expect(screen.queryByText('Launch plans')).not.toBeInTheDocument()
   })
 })
 

@@ -220,14 +220,15 @@ describe('Archive, a user group', () => {
     expect(within(card).getByRole('link', { name: 'Funnel' })).toHaveAttribute('href', '/dashboards/14')
   })
 
-  it('is named by its group_title when it has one', async () => {
+  it('is named by its one live tab\'s title, whatever group_title it kept', async () => {
     mockApiWith(
       dashboards.map((d) => (d.group_id === 13 ? { ...d, group_title: 'Team metrics' } : d))
     )
     renderArchive()
 
-    const card = await group('Team metrics')
+    const card = await group('Marketing')
     expect(within(card).getByRole('link', { name: 'Marketing' })).toHaveAttribute('href', '/dashboards/13')
+    expect(screen.queryByText('Team metrics')).not.toBeInTheDocument()
   })
 
   it('marks the live tab as in the sidebar, with no Restore', async () => {

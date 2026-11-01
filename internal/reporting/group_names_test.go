@@ -270,3 +270,70 @@ func TestNoNameOutlivesItsGroup(t *testing.T) {
 	syncReporting(t, svc, nil)
 	check("sync dropping it")
 }
+
+// dashTitle is dashboard id's own title as the store reads it.
+func dashTitle(t *testing.T, svc *Service, id int64) string {
+	t.Helper()
+	d, err := svc.st.GetDashboard(context.Background(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return d.Title
+}
+
+func TestLoneDashboardHasOneName(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+
+	// Naming a group of one tab retitles the tab.
+	a := mustCreate(t, svc, "Solo")
+	if _, err := renameGroup(svc, a.ID, "Launch"); err != nil {
+		t.Fatal(err)
+	}
+	if got, gt := dashTitle(t, svc, a.ID), groupTitle(t, svc, a.ID); got != "Launch" || gt != "Launch" {
+		t.Errorf("after group rename: title %q, group %q, want both \"Launch\"", got, gt)
+	}
+
+	// Retitling it carries the group's name along.
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: a.ID, Title: "Week 1"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, gt := dashTitle(t, svc, a.ID), groupTitle(t, svc, a.ID); got != "Week 1" || gt != "Week 1" {
+		t.Errorf("after retitle: title %q, group %q, want both \"Week 1\"", got, gt)
+	}
+
+	// A named group whose other tabs are archived is a group of one too.
+	f := mustCreate(t, svc, "Overview")
+	tab := mustJoin(t, svc, "Detail", f.ID)
+	if _, err := renameGroup(svc, f.ID, "Ops"); err != nil {
+		t.Fatal(err)
+	}
+	if got := dashTitle(t, svc, f.ID); got != "Overview" {
+		t.Errorf("group of two: first tab title = %q, want it kept", got)
+	}
+	if err := svc.ArchiveDashboard(ctx, "test", tab.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: f.ID, Title: "Ops overview"}); err != nil {
+		t.Fatal(err)
+	}
+	if gt := groupTitle(t, svc, f.ID); gt != "Ops overview" {
+		t.Errorf("lone tab retitled: group %q, want \"Ops overview\"", gt)
+	}
+}
+
+func TestRetitlingATabOfManyKeepsTheGroupName(t *testing.T) {
+	ctx := context.Background()
+	svc := newTestService(t)
+	f := mustCreate(t, svc, "Overview")
+	mustJoin(t, svc, "Detail", f.ID)
+	if _, err := renameGroup(svc, f.ID, "Ops"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: f.ID, Title: "Summary"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, gt := dashTitle(t, svc, f.ID), groupTitle(t, svc, f.ID); got != "Summary" || gt != "Ops" {
+		t.Errorf("title %q, group %q, want \"Summary\" and \"Ops\"", got, gt)
+	}
+}

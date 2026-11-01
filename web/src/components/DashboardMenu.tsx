@@ -101,7 +101,9 @@ export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMe
   const { duplicate, archive, setSidebar, renameGroup, pending } = useDashboardActions()
   const [renaming, setRenaming] = useState(false)
   const first = dashboard.tabs[0] ?? dashboard
-  const groupTitle = dashboard.group_title ?? first.title
+  // A group of one tab has one name, its tab's title (as `groupName`).
+  const lone = dashboard.tabs.length <= 1
+  const groupTitle = (!lone && dashboard.group_title) || first.title
   const userLive = dashboard.owner === 'user' && !dashboard.archived_at
 
   return (
@@ -162,10 +164,10 @@ export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMe
           open={renaming}
           onOpenChange={setRenaming}
           title="Rename dashboard"
-          description="The name in the sidebar. Each tab keeps its own title."
+          description={lone ? 'Its name in the sidebar and on its page.' : 'The name in the sidebar. Each tab keeps its own title.'}
           label="Dashboard name"
           name={groupTitle}
-          saveUnchanged={!dashboard.group_title}
+          saveUnchanged={!lone && !dashboard.group_title}
           pending={pending}
           onSave={(title) => renameGroup(first.dashboard_id, title)}
         />
