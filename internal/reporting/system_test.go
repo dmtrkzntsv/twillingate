@@ -948,6 +948,11 @@ func systemEvents(projectID int64, today civil.Date) []store.Event {
 		cert, domain := float64(80-back), float64(200-back)
 		check("cert", "cert", 3, &cert, map[string]string{"valid": "1", "issuer": "Example CA", "expires": "2027-01-20"})
 		check("domain", "domain", 4, &domain, map[string]string{"expires": "2027-05-20"})
+		if back == 1 { // the origin changed: a second, later date that day
+			laterCert, laterDomain := cert+70, domain+90
+			check("cert2", "cert", 15, &laterCert, map[string]string{"valid": "1", "issuer": "Example CA", "expires": "2027-03-31"})
+			check("domain2", "domain", 16, &laterDomain, map[string]string{"expires": "2027-08-18"})
+		}
 	}
 
 	// Every older day: ten anonymous visitors (actor kind connection, not
