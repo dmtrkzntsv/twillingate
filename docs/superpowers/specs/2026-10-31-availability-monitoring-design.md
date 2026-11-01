@@ -40,7 +40,8 @@ the page must contain.
 - Other monitor kinds (TCP, ping, DNS, keyword-absent, JSON value, …).
 - A user-chosen interval, retries, a "pending" state, or incident tracking.
   Outages are worked out when reading, not stored as state.
-- History of certificate and domain checks.
+- Showing a history of certificate and domain checks (the daily rows exist, but
+  nothing charts them).
 
 ## Anti-goals
 
@@ -178,8 +179,14 @@ changes, so the dates appear immediately.
   for a day), query `/domain/<name>`, store the `expiration` event date and the
   check time. A TLD without RDAP, or a reply without an expiration, stores
   "unknown"; that is not a failure.
-- Only the current state is kept, in SQLite on the monitor row (a new
-  migration). No history, no events.
+- The current state is kept in SQLite on the monitor row (a new migration),
+  for the settings section and the API.
+- **Amended during planning (my call):** each daily check also writes one
+  `checks` row, `cert` or `domain`, value = whole days left (absent when
+  unknown), attributes `expires` (YYYY-MM-DD), and for `cert` `issuer`,
+  `valid` (`"1"`/`"0"`) and `error`. It is two rows a day, free of quota, and it
+  lets the dashboard tiles read them with a structured query's `latest`
+  instead of a new widget source over SQLite.
 
 ### Where it shows
 
@@ -191,9 +198,9 @@ changes, so the dates appear immediately.
   - response time by hour/day (line), with down checks visible
   - pie: failed checks by `reason`
   - table: recent failed checks (time, status, reason, error)
-  The certificate and domain tiles read SQLite state, not the event files; the
-  builder picks how a system widget gets that (a query source over a new
-  resource, or a component fed by the project API). When the monitor is off,
+  The certificate and domain tiles read the latest `cert`/`domain` row
+  (`latest` of `value`); uptime % is a `ratio` of `count` where `attr_up` is 1
+  over `count`. When the monitor is off,
   the dashboard says so and links to the Monitoring settings.
 - Optional, if cheap: a one-line status on the project page
   (`up · cert 34d · domain 120d`).
@@ -214,3 +221,14 @@ changes, so the dates appear immediately.
 - Tests: an `httptest` server for each `reason`, redirect-off-site, private
   address refusal (with a resolver seam), RDAP with a fake server, and the
   system dashboard in `TestSystemDashboards`.
+
+## Amended during planning
+
+- The external SQL engine is a separate repository (`twillingate-sql`). This
+  change makes `checks` a table of structured queries (native) only; the SQL
+  engine's `checks` view, and leaving `checks` rows out of its `events` view,
+  are a follow-up there. Until then `schemaFiles` does not list `checks`.
+- The `events` table of structured queries leaves the `checks` family out (it
+  is the site's traffic); `checks` is read through its own table. This makes
+  `usage`, `limits` and every `events` widget exclude checks without
+  per-reader filters.
