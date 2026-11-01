@@ -270,7 +270,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await check(page, `/app/projects/${id}/settings?range=today`)
   const monitoring = page.getByRole('region', { name: 'Monitoring' })
   await monitoring.getByRole('button', { name: 'Check now' }).click()
-  await expect(monitoring.getByText(/^Last manual check: /)).toBeVisible({ timeout: 40_000 })
+  await expect(monitoring.getByText('Last check')).toBeVisible({ timeout: 40_000 })
   await expect(monitoring.getByRole('button', { name: 'Check now' })).toBeEnabled()
   expect(await sidewaysScroll(page), 'monitoring after a check').toEqual([])
 
