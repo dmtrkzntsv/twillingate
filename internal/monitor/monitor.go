@@ -12,6 +12,7 @@ package monitor
 import (
 	"context"
 	"crypto/x509"
+	"errors"
 	"hash/fnv"
 	"log/slog"
 	"math"
@@ -120,7 +121,7 @@ func newRunner(st Store, origins Origins, log EventLog, interval time.Duration, 
 	client := newClient(g, o.roots)
 	r := &Runner{
 		st: st, origins: origins, log: log, logger: logger,
-		interval: interval, timeout: min(checkTimeout, interval), step: tickStep, now: o.now,
+		interval: interval, timeout: checkLimit(interval), step: tickStep, now: o.now,
 		guard: g, roots: o.roots, client: client,
 		rdap:    &rdap{client: client, bootstrapURL: o.bootstrapURL, now: o.now},
 		sem:     make(chan struct{}, workers),
@@ -225,6 +226,16 @@ func (r *Runner) inflight() int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return len(r.running)
+}
+
+// checkLimit is one availability check's limit: checkTimeout, or a second
+// under the interval when that is shorter, so a check ends before its
+// next slot.
+func checkLimit(interval time.Duration) time.Duration {
+	if interval <= checkTimeout {
+		return max(interval-time.Second, time.Second)
+	}
+	return checkTimeout
 }
 
 // offset is a project's fixed place within the interval, in whole ticks.
@@ -357,7 +368,9 @@ func (r *Runner) cert(ctx context.Context, m store.Monitor, https bool, now time
 	return []store.Event{row(m.ProjectID, "cert", now, value, attrs)}
 }
 
-// domain reads and stores the domain's expiry; any failure is "unknown".
+// domain reads and stores the domain's expiry. A domain RDAP cannot
+// answer for is stored as unknown; a failed lookup keeps the last reading
+// and writes no row.
 func (r *Runner) domain(ctx context.Context, m store.Monitor, host string, now time.Time) []store.Event {
 	dctx, cancel := context.WithTimeout(ctx, rdapTimeout)
 	exp, err := r.rdap.expiry(dctx, host)
@@ -365,8 +378,14 @@ func (r *Runner) domain(ctx context.Context, m store.Monitor, host string, now t
 	if ctx.Err() != nil {
 		return nil
 	}
-	if err != nil {
+	switch {
+	case errors.Is(err, errUnknown):
 		r.logger.Debug("monitor: domain expiry unknown", "project_id", m.ProjectID, "host", host, "error", err)
+	case err != nil:
+		// The lookup failed, which says nothing about the domain: the last
+		// reading stands, unrecorded, and is retried after dailyRetry.
+		r.logger.Debug("monitor: domain expiry lookup failed", "project_id", m.ProjectID, "host", host, "error", err)
+		return nil
 	}
 	if err := r.st.SetMonitorDomain(ctx, m.ProjectID, m.Origin, store.DomainState{ExpiresAt: exp, CheckedAt: now.Format(time.RFC3339)}); err != nil {
 		r.logger.Warn("monitor: store domain expiry", "project_id", m.ProjectID, "error", err)

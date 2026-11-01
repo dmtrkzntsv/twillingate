@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"bytes"
 	"context"
 	"crypto/x509"
 	"errors"
@@ -10,7 +11,9 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -187,6 +190,7 @@ func TestSchedulerPoolBounded(t *testing.T) {
 	}
 	r := New(st, allowAll{}, &fakeLog{}, 10*time.Second, quietLogger())
 	release := make(chan struct{})
+	entered := make(chan struct{}, 40)
 	var mu sync.Mutex
 	active, peak := 0, 0
 	r.job = func(ctx context.Context, m store.Monitor) []store.Event {
@@ -194,6 +198,7 @@ func TestSchedulerPoolBounded(t *testing.T) {
 		active++
 		peak = max(peak, active)
 		mu.Unlock()
+		entered <- struct{}{}
 		<-release
 		mu.Lock()
 		active--
@@ -205,14 +210,24 @@ func TestSchedulerPoolBounded(t *testing.T) {
 	if r.inflight() != 40 {
 		t.Fatalf("%d dispatched, want 40", r.inflight())
 	}
-	time.Sleep(50 * time.Millisecond)
-	mu.Lock()
-	if peak > workers {
-		t.Errorf("peak %d concurrent checks, want ≤ %d", peak, workers)
+	// Once the pool is full every worker slot is held, so no further job
+	// can start until one is released.
+	for range workers {
+		<-entered
 	}
-	mu.Unlock()
+	if n := len(r.sem); n != workers {
+		t.Errorf("%d worker slots held, want %d", n, workers)
+	}
+	// Release one at a time: each release lets exactly one more in.
+	for i := workers; i < 40; i++ {
+		release <- struct{}{}
+		<-entered
+	}
 	close(release)
 	waitIdle(t, r, 0)
+	if peak != workers {
+		t.Errorf("peak %d concurrent checks, want %d", peak, workers)
+	}
 }
 
 func TestRunnerWritesChecksRows(t *testing.T) {
@@ -358,10 +373,29 @@ func (o *recordOrigins) RedirectAllowed(id int64, target, req string) bool {
 	return false
 }
 
+// syncBuffer is a log sink the runner's goroutines can share.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
 func TestRunnerWriteErrorLogged(t *testing.T) {
 	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 1, Enabled: true, Origin: "https://x.example"}}}
 	lg := &fakeLog{err: errors.New("disk full")}
-	r := New(st, allowAll{}, lg, 10*time.Second, quietLogger())
+	var out syncBuffer
+	r := New(st, allowAll{}, lg, 10*time.Second, slog.New(slog.NewTextHandler(&out, nil)))
 	r.job = func(context.Context, store.Monitor) []store.Event {
 		return []store.Event{{ID: "a", ProjectID: 1, Family: store.FamilyChecks, EventName: "uptime"}}
 	}
@@ -369,6 +403,10 @@ func TestRunnerWriteErrorLogged(t *testing.T) {
 	r.tick(context.Background(), t0, t0.Add(10*time.Second))
 	waitIdle(t, r, 0)
 	r.tick(context.Background(), t0.Add(10*time.Second), t0.Add(10*time.Second)) // must not panic
+	if got := out.String(); !strings.Contains(got, "level=ERROR") || !strings.Contains(got, `msg="monitor: write check rows"`) ||
+		!strings.Contains(got, `error="disk full"`) || !strings.Contains(got, "rows=1") {
+		t.Errorf("log %q, want the failed write logged", got)
+	}
 	lg.mu.Lock()
 	lg.err = nil
 	lg.mu.Unlock()
@@ -379,18 +417,24 @@ func TestRunnerWriteErrorLogged(t *testing.T) {
 }
 
 func TestRunStopsAndFlushes(t *testing.T) {
-	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 1, Enabled: true, Origin: "https://x.example"}}}
+	st := &fakeStore{monitors: []store.Monitor{
+		{ProjectID: 1, Enabled: true, Origin: "https://slow.example"},
+		{ProjectID: 2, Enabled: true, Origin: "https://quick.example"},
+	}}
 	lg := &fakeLog{}
 	r := New(st, allowAll{}, lg, 10*time.Second, quietLogger())
 	r.step = 5 * time.Millisecond
-	started := make(chan struct{}, 1)
+	slowStarted := make(chan struct{})
+	quickDone := make(chan struct{})
+	var once sync.Once
 	r.job = func(ctx context.Context, m store.Monitor) []store.Event {
-		select {
-		case started <- struct{}{}:
-		default:
+		if m.ProjectID == 2 {
+			defer once.Do(func() { close(quickDone) })
+			return []store.Event{{ID: uuid.NewString(), ProjectID: 2, EventName: "finished"}}
 		}
+		close(slowStarted)
 		<-ctx.Done()
-		return []store.Event{{ID: "late"}}
+		return []store.Event{{ID: "late", ProjectID: 1}}
 	}
 	// Every slot is due: the clock jumps a whole interval per tick.
 	var mu sync.Mutex
@@ -399,10 +443,12 @@ func TestRunStopsAndFlushes(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() { r.Run(ctx); close(done) }()
-	select {
-	case <-started:
-	case <-time.After(5 * time.Second):
-		t.Fatal("no check started")
+	for _, c := range []chan struct{}{slowStarted, quickDone} {
+		select {
+		case <-c:
+		case <-time.After(5 * time.Second):
+			t.Fatal("checks did not run")
+		}
 	}
 	cancel()
 	select {
@@ -410,8 +456,129 @@ func TestRunStopsAndFlushes(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run did not return after cancel")
 	}
-	if n := len(lg.all()); n != 0 {
-		t.Errorf("%d rows from a cancelled check, want 0", n)
+	var finished int
+	for _, e := range lg.all() {
+		if e.ID == "late" {
+			t.Error("a check cut short by the cancel was written")
+		}
+		if e.EventName == "finished" {
+			finished++
+		}
+	}
+	if finished == 0 {
+		t.Error("rows finished before the cancel were not written")
+	}
+}
+
+func TestRunFlushesPendingOnStop(t *testing.T) {
+	lg := &fakeLog{}
+	r := New(&fakeStore{}, allowAll{}, lg, 10*time.Second, quietLogger())
+	r.step = time.Hour // no tick: only the shutdown flush can write
+	r.pending = []store.Event{{ID: "done-before-stop", ProjectID: 1}}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { r.Run(ctx); close(done) }()
+	cancel()
+	<-done
+	if evs := lg.all(); len(evs) != 1 || evs[0].ID != "done-before-stop" {
+		t.Errorf("rows written at stop %+v", evs)
+	}
+}
+
+func TestCheckLimit(t *testing.T) {
+	for iv, want := range map[time.Duration]time.Duration{
+		10 * time.Second: 9 * time.Second, 11 * time.Second: 10 * time.Second,
+		30 * time.Second: 10 * time.Second, 3600 * time.Second: 10 * time.Second,
+	} {
+		if got := checkLimit(iv); got != want {
+			t.Errorf("interval %v: limit %v, want %v", iv, got, want)
+		}
+	}
+	if r := New(&fakeStore{}, allowAll{}, &fakeLog{}, 10*time.Second, quietLogger()); r.timeout != 9*time.Second {
+		t.Errorf("runner at the 10 s floor: timeout %v, want 9s", r.timeout)
+	}
+}
+
+func TestRunnerKeepsDomainOnLookupFailure(t *testing.T) {
+	var failing atomic.Bool
+	failing.Store(true)
+	var hits atomic.Int32
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/dns.json" {
+			fmt.Fprintf(w, `{"services":[[["com"],["%s/rdap/"]]]}`, srv.URL)
+			return
+		}
+		hits.Add(1)
+		if failing.Load() {
+			http.Error(w, "down", http.StatusServiceUnavailable)
+			return
+		}
+		fmt.Fprint(w, `{"events":[{"eventAction":"expiration","eventDate":"2028-05-05T00:00:00Z"}]}`)
+	}))
+	defer srv.Close()
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer site.Close()
+	_, port, _ := net.SplitHostPort(site.Listener.Addr().String())
+	origin := "http://shop.example.com:" + port
+
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	dayOld := now.Add(-25 * time.Hour).Format(time.RFC3339)
+	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 5, Enabled: true, Origin: origin,
+		CertCheckedAt: dayOld, DomainExpiresAt: "2027-03-14", DomainCheckedAt: dayOld}}}
+	lg := &fakeLog{}
+	var mu sync.Mutex
+	r := newRunner(st, allowAll{}, lg, 60*time.Second, quietLogger(), options{
+		resolver: fakeResolver{"shop.example.com": {"127.0.0.1"}}, allowLoopback: true,
+		bootstrapURL: srv.URL + "/dns.json", now: func() time.Time { mu.Lock(); defer mu.Unlock(); return now },
+	})
+	advance := func(d time.Duration) {
+		mu.Lock()
+		now = now.Add(d)
+		at := now
+		mu.Unlock()
+		r.tick(context.Background(), at.Add(-time.Minute), at)
+		waitIdle(t, r, 0)
+		r.tick(context.Background(), at, at)
+	}
+	domainRows := func() (n int) {
+		for _, e := range lg.all() {
+			if e.EventName == "domain" {
+				n++
+			}
+		}
+		return n
+	}
+
+	advance(0)
+	if hits.Load() != 1 {
+		t.Fatalf("%d RDAP queries, want 1", hits.Load())
+	}
+	if _, ok := st.domains[5]; ok {
+		t.Errorf("a failed lookup stored %+v", st.domains[5])
+	}
+	if st.monitors[0].DomainExpiresAt != "2027-03-14" || st.monitors[0].DomainCheckedAt != dayOld {
+		t.Errorf("monitor after a failed lookup %+v", st.monitors[0])
+	}
+	if n := domainRows(); n != 0 {
+		t.Errorf("%d domain rows after a failed lookup, want 0", n)
+	}
+
+	advance(30 * time.Minute) // within dailyRetry: no new lookup
+	if hits.Load() != 1 {
+		t.Errorf("%d RDAP queries within the retry wait, want 1", hits.Load())
+	}
+
+	failing.Store(false)
+	advance(31 * time.Minute) // past dailyRetry: retried
+	if hits.Load() != 2 {
+		t.Errorf("%d RDAP queries after the retry wait, want 2", hits.Load())
+	}
+	if d := st.domains[5]; d.ExpiresAt != "2028-05-05" {
+		t.Errorf("stored domain after the retry %+v", d)
+	}
+	if n := domainRows(); n != 1 {
+		t.Errorf("%d domain rows after the retry, want 1", n)
 	}
 }
 

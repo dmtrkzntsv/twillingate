@@ -39,29 +39,89 @@ func (e *blockedError) Error() string {
 	return fmt.Sprintf("%s resolves to a private address", e.host)
 }
 
-var (
-	cgnat     = netip.MustParsePrefix("100.64.0.0/10")
-	thisNet   = netip.MustParsePrefix("0.0.0.0/8")
-	broadcast = netip.MustParseAddr("255.255.255.255")
-	nat64     = netip.MustParsePrefix("64:ff9b::/96")
+// denied lists the special-purpose ranges (IANA's IPv4 and IPv6
+// special-purpose registries) a site cannot legitimately be on. Loopback
+// is judged apart, for the test seam.
+var denied = prefixes(
+	// IPv4
+	"0.0.0.0/8",       // "this network", unspecified
+	"10.0.0.0/8",      // private
+	"100.64.0.0/10",   // CGNAT
+	"169.254.0.0/16",  // link-local
+	"172.16.0.0/12",   // private
+	"192.0.0.0/24",    // IETF protocol assignments
+	"192.0.2.0/24",    // TEST-NET-1
+	"192.88.99.0/24",  // 6to4 relay anycast
+	"192.168.0.0/16",  // private
+	"198.18.0.0/15",   // benchmarking
+	"198.51.100.0/24", // TEST-NET-2
+	"203.0.113.0/24",  // TEST-NET-3
+	"224.0.0.0/4",     // multicast
+	"240.0.0.0/4",     // reserved, broadcast included
+	// IPv6
+	"::/128",         // unspecified
+	"64:ff9b:1::/48", // local-use NAT64: where the IPv4 sits is the operator's choice
+	"100::/64",       // discard
+	"2001::/23",      // IETF protocol assignments (Teredo included)
+	"2001:db8::/32",  // documentation
+	"3fff::/20",      // documentation
+	"fc00::/7",       // unique local
+	"fe80::/10",      // link-local
+	"fec0::/10",      // site-local (deprecated)
+	"ff00::/8",       // multicast
 )
 
-// blocked reports whether a may not be dialed: loopback (unless
-// allowLoopback), private (RFC 1918, fc00::/7), link-local, CGNAT,
-// unspecified, "this network", broadcast or multicast. An IPv4 address
-// embedded as IPv4-mapped or in the NAT64 prefix is judged as itself.
-func blocked(a netip.Addr, allowLoopback bool) bool {
-	a = a.Unmap()
-	if nat64.Contains(a) {
-		b := a.As16()
-		a = netip.AddrFrom4([4]byte(b[12:16]))
+var (
+	nat64     = netip.MustParsePrefix("64:ff9b::/96")
+	sixToFour = netip.MustParsePrefix("2002::/16")
+	v4compat  = netip.MustParsePrefix("::/96")
+)
+
+func prefixes(ss ...string) []netip.Prefix {
+	out := make([]netip.Prefix, len(ss))
+	for i, s := range ss {
+		out[i] = netip.MustParsePrefix(s)
 	}
+	return out
+}
+
+// embedded4 is the IPv4 address an IPv6 address carries by a fixed rule:
+// well-known NAT64 (64:ff9b::/96), 6to4 (2002::/16) or IPv4-compatible
+// (::/96).
+func embedded4(a netip.Addr) (netip.Addr, bool) {
+	b := a.As16()
+	switch {
+	case nat64.Contains(a), v4compat.Contains(a):
+		return netip.AddrFrom4([4]byte(b[12:16])), true
+	case sixToFour.Contains(a):
+		return netip.AddrFrom4([4]byte(b[2:6])), true
+	}
+	return netip.Addr{}, false
+}
+
+// blocked reports whether a may not be dialed: loopback (unless
+// allowLoopback) or any range in denied. An IPv4 address embedded in an
+// IPv6 one (IPv4-mapped, NAT64, 6to4, IPv4-compatible) is judged as
+// itself.
+func blocked(a netip.Addr, allowLoopback bool) bool {
+	if !a.IsValid() {
+		return true
+	}
+	a = a.Unmap()
 	if a.IsLoopback() {
 		return !allowLoopback
 	}
-	return !a.IsValid() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() ||
-		a.IsInterfaceLocalMulticast() || a.IsMulticast() || a.IsUnspecified() ||
-		cgnat.Contains(a) || thisNet.Contains(a) || a == broadcast
+	if a.Is6() {
+		if v4, ok := embedded4(a); ok {
+			return blocked(v4, false)
+		}
+	}
+	for _, p := range denied {
+		if p.Contains(a) {
+			return true
+		}
+	}
+	return false
 }
 
 // DialContext resolves addr's host, drops every private address and dials

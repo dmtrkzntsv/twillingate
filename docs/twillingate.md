@@ -343,7 +343,10 @@ traffic: checks never count against an allowance. They still take disk, about
 | `domain` | as `cert`, for the origin host's registrable domain (public suffix list) | whole days left until the registration expires, absent when unknown | `expires` (`YYYY-MM-DD`) |
 
 The domain's expiry is read over RDAP; a top-level domain with no RDAP service,
-or an answer without an expiration, reads as unknown, which is not a failure.
+or an answer without an expiration, reads as unknown, which is not a failure;
+so does a host under a private suffix of the public suffix list, such as
+`x.github.io`. A lookup that fails (the RDAP server down or slow) keeps the last
+reading and is tried again an hour later.
 `get_monitor` returns the last reading of each: `cert` (`expires_at`, `issuer`,
 `valid`, `error`, `checked_at`) and `domain` (`expires_at`, `checked_at`).
 

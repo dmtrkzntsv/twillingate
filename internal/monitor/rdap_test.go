@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -82,10 +83,52 @@ func TestRDAPUnknownTLD(t *testing.T) {
 	})
 	r := newTestRDAP(t, srv, time.Now)
 	ctx := context.Background()
-	for _, host := range []string{"example.zz", "noexpiry.com", "missing.com", "127.0.0.1", "localhost"} {
-		if got, err := r.expiry(ctx, host); got != "" || err == nil {
+	for _, host := range []string{"example.zz", "noexpiry.com", "missing.com", "127.0.0.1", "localhost",
+		"x.github.io", "example.org"} {
+		if got, err := r.expiry(ctx, host); got != "" || !errors.Is(err, errUnknown) {
 			t.Errorf("%s: got %q %v, want unknown with a reason", host, got, err)
 		}
+	}
+}
+
+func TestRDAPFailureIsNotUnknown(t *testing.T) {
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "slow down", http.StatusTooManyRequests)
+	}))
+	defer down.Close()
+	garbled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/dns.json" {
+			fmt.Fprintf(w, `{"services":[[["com"],["http://%s/"]]]}`, r.Host)
+			return
+		}
+		fmt.Fprint(w, "<html>not json")
+	}))
+	defer garbled.Close()
+	for name, boot := range map[string]string{"bootstrap down": down.URL + "/dns.json", "reply garbled": garbled.URL + "/dns.json"} {
+		r := &rdap{client: loopbackClient(t), bootstrapURL: boot, now: time.Now}
+		if got, err := r.expiry(context.Background(), "example.com"); got != "" || err == nil || errors.Is(err, errUnknown) {
+			t.Errorf("%s: got %q %v, want a lookup failure", name, got, err)
+		}
+	}
+}
+
+func TestParseEventDate(t *testing.T) {
+	for in, want := range map[string]string{
+		"2027-03-14T04:00:00Z":      "2027-03-14T04:00:00Z",
+		"2027-03-14T04:00:00.5Z":    "2027-03-14T04:00:00Z",
+		"2027-03-14T23:00:00-02:00": "2027-03-15T01:00:00Z",
+		"2027-03-14T23:00:00":       "2027-03-14T23:00:00Z",
+		"2027-03-14T23:00:00.123":   "2027-03-14T23:00:00Z",
+		"2027-03-14 23:00:00":       "2027-03-14T23:00:00Z",
+		"2027-03-14":                "2027-03-14T00:00:00Z",
+	} {
+		got, err := parseEventDate(in)
+		if err != nil || got.UTC().Truncate(time.Second).Format(time.RFC3339) != want {
+			t.Errorf("%q: got %v %v, want %s", in, got, err, want)
+		}
+	}
+	if _, err := parseEventDate("soon"); err == nil {
+		t.Error("garbage parsed")
 	}
 }
 

@@ -34,17 +34,29 @@ type rdap struct {
 	fetched time.Time
 }
 
-// expiry is host's registrable domain's expiry date (YYYY-MM-DD, UTC). An
-// error means unknown: no RDAP for the TLD, no expiration in the reply,
-// or a failure on the way.
+// errUnknown marks an answer that the expiry cannot be known: an address
+// host, a name outside the ICANN part of the public suffix list (a
+// private suffix such as github.io), a TLD with no RDAP server, a domain
+// the server does not know, or a reply without an expiration. Any other
+// error is a failed lookup, which says nothing about the domain.
+var errUnknown = errors.New("domain expiry unknown")
+
+func unknown(format string, a ...any) error {
+	return fmt.Errorf("%w: %s", errUnknown, fmt.Sprintf(format, a...))
+}
+
+// expiry is host's registrable domain's expiry date (YYYY-MM-DD, UTC).
 func (r *rdap) expiry(ctx context.Context, host string) (string, error) {
 	host = strings.TrimSuffix(strings.ToLower(host), ".")
 	if _, err := netip.ParseAddr(host); err == nil {
-		return "", errors.New("an address has no domain")
+		return "", unknown("%s is an address", host)
+	}
+	if _, icann := publicsuffix.PublicSuffix(host); !icann {
+		return "", unknown("%s is under a private or unlisted suffix", host)
 	}
 	name, err := publicsuffix.EffectiveTLDPlusOne(host)
 	if err != nil {
-		return "", err
+		return "", unknown("%v", err)
 	}
 	bases, err := r.lookup(ctx, name)
 	if err != nil {
@@ -64,19 +76,22 @@ func (r *rdap) expiry(ctx context.Context, host string) (string, error) {
 		errs = append(errs, err)
 	}
 	if err != nil {
+		if errors.Is(err, errNotFound) {
+			return "", unknown("%s: not found over RDAP", name)
+		}
 		return "", errors.Join(errs...)
 	}
 	for _, e := range reply.Events {
 		if e.Action != "expiration" {
 			continue
 		}
-		t, err := time.Parse(time.RFC3339, e.Date)
+		t, err := parseEventDate(e.Date)
 		if err != nil {
 			return "", fmt.Errorf("expiration date %q: %w", e.Date, err)
 		}
 		return t.UTC().Format(time.DateOnly), nil
 	}
-	return "", fmt.Errorf("%s: no expiration in the RDAP reply", name)
+	return "", unknown("%s: no expiration in the RDAP reply", name)
 }
 
 // lookup is the RDAP base URLs for name's longest listed suffix, https
@@ -96,7 +111,7 @@ func (r *rdap) lookup(ctx context.Context, name string) ([]string, error) {
 		}
 		s = rest
 	}
-	return nil, fmt.Errorf("%s: no RDAP server for its TLD", name)
+	return nil, unknown("%s: no RDAP server for its TLD", name)
 }
 
 // bootstrap is the IANA table, cached for bootstrapTTL. A failed fetch is
@@ -150,8 +165,29 @@ func (r *rdap) getJSON(ctx context.Context, url string, v any) error {
 		return err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return fmt.Errorf("GET %s: %w", url, errNotFound)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("GET %s: HTTP %d", url, resp.StatusCode)
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, rdapLimit)).Decode(v)
+}
+
+var errNotFound = errors.New("HTTP 404")
+
+// parseEventDate reads an RDAP eventDate: RFC 3339, or the same without a
+// zone (or a bare date), read as UTC.
+func parseEventDate(s string) (time.Time, error) {
+	if t, err := time.Parse(time.RFC3339, s); err == nil {
+		return t, nil
+	}
+	var err error
+	for _, layout := range []string{"2006-01-02T15:04:05", "2006-01-02 15:04:05", time.DateOnly} {
+		var t time.Time
+		if t, err = time.ParseInLocation(layout, s, time.UTC); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, err
 }
