@@ -906,7 +906,7 @@ decides instead:
 The families are stored in the event files, whose `family` column is
 `views`, `product`, `measures` or `checks`; the `views`, `product`,
 `measures` and `checks` tables and the tools of each family read only its own
-rows. The `events` table holds every family but `checks`.
+rows. The structured queries' `events` table leaves `checks` out.
 
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning; an unrecognized `$`
@@ -1158,8 +1158,9 @@ A per-event rejection (the batch's other events are still stored):
   writes it.
 - **`family: "checks"`**, with any name: the availability checks are the
   server's own.
-- **An unknown `family`** (anything but `views`, `product` or `measures`) is
-  rejected, not stored as `product`.
+- **An unknown `family`** (anything but `views`, `product` or `measures`;
+  `checks` too, which is written by the server only) is rejected, not stored
+  as `product`.
 - **A contradiction is rejected:** `family: "views"` with a name that is not
   a view name; `family: "product"` with a view name; `family: "measures"`
   without a valid `value` or `measure`; a reserved metric (`$lcp`, `$inp`,
@@ -1647,15 +1648,14 @@ close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
 `day BETWEEN DATE '2026-01-01' AND DATE '2026-01-31'`, `GROUP BY ALL`,
 `DESCRIBE events` for the columns.
 
-Eight tables. `events` holds every event of every family but `checks`;
-`views`, `product`, `measures` and `checks` hold its rows of one family each
-(`checks` are the server's availability checks: `value` is milliseconds for
-`uptime` and days for `cert` and `domain`, with `attr_up`, `attr_status`,
-`attr_reason` and the like). Three more are
+Seven tables. `events` holds every event of every family; `views`,
+`product` and `measures` hold its rows of one family each. Three more are
 derived from the events (below the column list). The `_tw_*` tables are
 the reader's own and hold rows before the rules apply: a query naming one
-is refused.
-`events`, `views`, `product`, `measures` and `checks` have:
+is refused. `events` here currently also holds the server's availability
+`checks` rows; `checks` is a table of [structured queries](#structured-queries)
+only, so filter `family <> 'checks'` in SQL.
+`events`, `views`, `product` and `measures` have:
 
 | Column | Type | |
 | --- | --- | --- |

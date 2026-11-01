@@ -107,7 +107,7 @@ type Filter struct {
 	// Any are any_of's filters, in place of Column.
 	Any []Filter `json:"any,omitempty" jsonschema:"any_of only, in place of column: 2 to 10 filters, none of them an any_of, of which a row passes when at least one does (an OR: event_name prefix import_ or event_name in a list)"`
 	// Where, By and Over are ever's and never's.
-	Where []Filter `json:"where,omitempty" jsonschema:"ever and never only, in place of column: 1 to 10 filters over the project's events (every family), all of which one of the actor's events passes"`
+	Where []Filter `json:"where,omitempty" jsonschema:"ever and never only, in place of column: 1 to 10 filters over the project's events (every family but checks), all of which one of the actor's events passes"`
 	By    string   `json:"by,omitempty" jsonschema:"ever and never only: actor (the default), user or group: whose events count, and whose rows pass"`
 	Over  string   `json:"over,omitempty" jsonschema:"ever and never only: all (the default), every day up to the query's to, or range, its days only"`
 }
