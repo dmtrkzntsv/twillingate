@@ -550,3 +550,77 @@ func TestShortBudgetLeavesTimeForTheNextAddress(t *testing.T) {
 		t.Errorf("got %+v, want up through the second address", res)
 	}
 }
+
+// resolverFunc answers lookups with a function.
+type resolverFunc func(ctx context.Context, host string) ([]net.IPAddr, error)
+
+func (f resolverFunc) LookupIPAddr(ctx context.Context, host string) ([]net.IPAddr, error) {
+	return f(ctx, host)
+}
+
+// http.Transport hands its dial a context with no deadline, so a lookup must
+// get the budget too: a slow one must not outlive the check, holding a worker.
+func TestDialBudgetBoundsTheLookup(t *testing.T) {
+	var deadlined bool
+	g := &guard{budget: 50 * time.Millisecond, resolver: resolverFunc(func(ctx context.Context, _ string) ([]net.IPAddr, error) {
+		_, deadlined = ctx.Deadline()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(5 * time.Second):
+			return nil, errors.New("the lookup was not cut short")
+		}
+	})}
+	start := time.Now()
+	_, err := g.DialContext(context.Background(), "tcp", "site.example:443")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Errorf("err = %v, want the budget's deadline", err)
+	}
+	if !deadlined {
+		t.Error("the lookup's context had no deadline")
+	}
+	if d := time.Since(start); d > 2*time.Second {
+		t.Errorf("took %v, want about the 50 ms budget", d)
+	}
+}
+
+// The lookup and the connections share one deadline: what the lookup took is
+// not given back to them.
+func TestDialLookupSharesTheDeadlineWithTheConnections(t *testing.T) {
+	var lookup, attempt time.Time
+	g := &guard{
+		budget: time.Minute,
+		resolver: resolverFunc(func(ctx context.Context, _ string) ([]net.IPAddr, error) {
+			lookup, _ = ctx.Deadline()
+			return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
+		}),
+		dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			attempt, _ = ctx.Deadline()
+			return nil, errors.New("refused")
+		},
+	}
+	if _, err := g.DialContext(context.Background(), "tcp", "site.example:443"); err == nil {
+		t.Fatal("dialed")
+	}
+	if lookup.IsZero() || !attempt.Equal(lookup) {
+		t.Errorf("lookup's deadline %v, the only attempt's %v: want one and the same", lookup, attempt)
+	}
+}
+
+// A context's own deadline stands: the budget does not extend or replace it.
+func TestDialKeepsTheContextsDeadline(t *testing.T) {
+	want := time.Now().Add(time.Hour)
+	ctx, cancel := context.WithDeadline(context.Background(), want)
+	defer cancel()
+	var got time.Time
+	g := &guard{budget: time.Millisecond, resolver: resolverFunc(func(ctx context.Context, _ string) ([]net.IPAddr, error) {
+		got, _ = ctx.Deadline()
+		return nil, errors.New("no")
+	})}
+	if _, err := g.DialContext(ctx, "tcp", "site.example:443"); err == nil {
+		t.Fatal("dialed")
+	}
+	if !got.Equal(want) {
+		t.Errorf("lookup's deadline %v, want %v", got, want)
+	}
+}

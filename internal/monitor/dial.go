@@ -144,15 +144,21 @@ func attemptDeadline(now, deadline time.Time, left int) time.Time {
 }
 
 // DialContext resolves addr's host, drops every private address and dials
-// the rest in turn, each with its share of the time. That time is ctx's
-// deadline, or the budget when it has none: http.Transport detaches its
-// dials from the request's deadline. When nothing public is left the error
-// is a *blockedError.
+// the rest in turn, each with its share of the time. That time, the lookup's
+// included, is ctx's deadline, or the budget when it has none: http.Transport
+// detaches its dials from the request's deadline. When nothing public is left
+// the error is a *blockedError.
 func (g *guard) DialContext(ctx context.Context, network, addr string) (net.Conn, error) {
 	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, err
 	}
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, cmp.Or(g.budget, dialBudget))
+		defer cancel() // the connection, once made, does not depend on ctx
+	}
+	deadline, _ := ctx.Deadline()
 	var ips []netip.Addr
 	if a, err := netip.ParseAddr(host); err == nil {
 		ips = []netip.Addr{a}
@@ -182,10 +188,6 @@ func (g *guard) DialContext(ctx context.Context, network, addr string) (net.Conn
 	connect := g.dial
 	if connect == nil {
 		connect = (&net.Dialer{Control: g.control}).DialContext
-	}
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		deadline = time.Now().Add(cmp.Or(g.budget, dialBudget))
 	}
 	var errs []error
 	for i, a := range public {
