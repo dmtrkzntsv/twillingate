@@ -1,0 +1,216 @@
+# Availability monitoring — design
+
+Date: 2026-10-31. Status: draft, awaiting approval.
+
+## Intent
+
+twillingate is offered as a hosted service in tiers ($5, $20). A project owner
+wants to know three things about their site without another tool:
+
+1. **Is it up?** So that a conversion drop can be lined up against "the site
+   was down or slow then" in the same event files, the same queries and the
+   same dashboards as the conversions. This is why check results live in the
+   event files, not in a separate store.
+2. **When does the HTTPS certificate expire?**
+3. **When does the domain need renewing?** The main point of this check is that
+   the owner never misses a renewal: the stored fact is the renewal (expiry)
+   date.
+
+It must be super simple: enable, pick a domain, save, done. Optionally a text
+the page must contain.
+
+## Goals
+
+- One HTTP availability monitor per project, on one of the project's existing
+  origins, at a fixed interval set per install.
+- Every check result recorded in the project's event files, in a new `checks`
+  family that the event allowance and traffic counts leave out as a whole.
+- A failure reason from a closed vocabulary on every failed check, so a pie
+  chart of reasons is a plain breakdown.
+- A daily HTTPS certificate check and a daily domain expiry check on the same
+  origin, keeping the current dates in SQLite.
+- A system dashboard showing all of it.
+
+## Non-goals
+
+- Notifications of any kind (email, webhook, push). Not yet.
+- More than one monitor per project.
+- Custom URLs, paths, ports, methods, headers, or a domain that is not one of
+  the project's origins.
+- Other monitor kinds (TCP, ping, DNS, keyword-absent, JSON value, …).
+- A user-chosen interval, retries, a "pending" state, or incident tracking.
+  Outages are worked out when reading, not stored as state.
+- History of certificate and domain checks.
+
+## Anti-goals
+
+- A settings form with more than: on/off, origin, optional text. If it grows
+  knobs, it has failed even if it works.
+- Check rows counting toward a customer's event allowance, `usage` or
+  `limits`, or showing up as product events or measures anywhere.
+- The checker becoming a way to make the hosted machine request internal
+  addresses (SSRF).
+- Following a redirect to a host outside the project's origins.
+
+## Constraints
+
+- The interval is a **fixed** value from the environment, not a floor:
+  `MONITOR_INTERVAL` (seconds; my call on the name, default 120). The $5 tier
+  sets 120, the $20 tier 30. Documented in `docs/deployment.md`, validated in
+  `internal/config` (my call: refuse below 10 and above 3600).
+- One static binary, no cgo, no new third-party dependency without a very
+  reputable vendor (CLAUDE.md). `golang.org/x/net/publicsuffix` (Go team) for
+  the registrable domain is my call and acceptable under that rule; RDAP is
+  plain JSON over HTTPS with the standard library.
+- Layering per CLAUDE.md: the checker is new behaviour beside `jobs`, wired by
+  `app`; it takes interfaces for what it needs (the event log, the project
+  registry, its slice of the store). New packages go into the archtest rank
+  table.
+- Docs, components and env vars updated in the same commit per the CLAUDE.md
+  table; `docs_sync_test` will bind several of them.
+
+## What was decided
+
+### Setup
+
+- A project has at most one monitor: `enabled`, `origin`, and an optional
+  `contains` text.
+- `origin` is picked from the project's `allowed_origins`, offering only exact
+  `http://` or `https://` origins: no wildcards, no bare `*`, no `tauri://`,
+  `app://` or `null`. A non-default port is allowed as listed. An `http://`
+  origin is checked over plain HTTP, so it gets no certificate check (the
+  domain check still runs). (My calls.)
+- Exposed in the web UI as a **Monitoring** section in project settings, next to
+  origins: switch, origin picker (hidden when the project has one origin, which
+  is then used), optional "page must contain" field, Save. Also over MCP and
+  the CLI, as every project field is.
+- Removing an origin that the monitor uses: my call — the monitor is turned off
+  (the change is refused would block origin edits; turning off is quieter and
+  visible in the section). The builder may choose refusal instead if the
+  registry's patterns make that clearly more consistent; say which in the PR.
+- The URL checked is the origin itself (`https://host/`), nothing else.
+
+### The availability check
+
+Every `MONITOR_INTERVAL` seconds, per enabled monitor:
+
+- `GET` the origin. Redirects are followed, but **every hop must be allowed
+  by the project's origins**, matched with the existing `manage.matchOrigin`
+  (scheme, host, port, wildcard patterns included). A bare `*` does not count,
+  as with forms' `return_url`. A redirect anywhere else stops the check
+  without following it and is a failure with reason `redirect` and the target
+  in `error`, e.g. `redirected off-site to https://www.example.com — add it to
+  the project's origins if it is yours`. This is strict on purpose: a project
+  listing only `https://example.com` whose site redirects to
+  `https://www.example.com` shows as down until it adds the `www` origin
+  (my call; the user asked that it never redirect outside the added domains).
+  More than 10 hops is also `redirect`.
+- Up means: the final status is 2xx and, when `contains` is set, the text
+  appears in the first 1 MB of the body (plain substring, case-sensitive; my
+  call).
+- Timeout: 10 s for the whole check (my call), or less than the interval if
+  the interval is shorter.
+- No retries. Each check is one row.
+- **Private addresses refused**: an origin (or any redirect hop) that resolves
+  to loopback, private, link-local, CGNAT or unspecified addresses fails with
+  reason `blocked`, checked at dial time so DNS rebinding cannot get around it.
+  This applies to every install, including self-hosted ones; a LAN-only site
+  cannot be monitored (my call, stated to the user).
+
+Each check is written to the project's event log as one row of a **new fourth
+family, `checks`**, beside `views`, `product` and `measures` (the user's
+decision, over storing them as measures and filtering a name, or folding up
+checks into hourly rows):
+
+| Field | Value |
+| --- | --- |
+| family | `checks` |
+| name | `uptime` (the only name for now; future monitor kinds get their own) |
+| value | response time in ms (time to the end of the body read, or to the failure) |
+| attribute `up` | `"1"` or `"0"` |
+| attribute `status` | final HTTP status code, absent when there was no response |
+| attribute `reason` | absent when up; otherwise one of the table below |
+| attribute `error` | short human text when down (e.g. `redirected off-site to evil.example`) |
+
+The details are ordinary attributes on the row, so the files' column shape
+does not change (my call). The family must be added wherever the family list
+lives: `store.Family`, the event files and their table spec for the SQL engine
+(a `checks` table, as `views`/`product`/`measures` are), native queries,
+`schemaFiles` in `internal/api/resources.go`, and `docs/twillingate.md`'s
+families table. Ingest refuses `family: "checks"`: only the server writes it.
+Event and attribute rules (rename, merge, block) do not apply to it (my call).
+
+`reason` vocabulary (closed; documented in `docs/twillingate.md`):
+
+| `reason` | When |
+| --- | --- |
+| `dns` | the name does not resolve |
+| `connect` | connection refused or unreachable |
+| `timeout` | no complete answer within the timeout |
+| `tls` | certificate invalid, expired, or for another name |
+| `http_4xx` | final status 400–499 |
+| `http_5xx` | final status 500–599 (and any other non-2xx, my call: 1xx/3xx-without-location count here) |
+| `redirect` | redirect off the project's origins, or more than 10 hops |
+| `content` | `contains` text missing |
+| `blocked` | resolves to a private address |
+
+The `checks` family is left out **as a whole** of everything that counts the
+site's own traffic and of any event allowance: `usage` (samples and
+`last_received_at`, which would otherwise keep a silent site looking alive),
+`limits`' `events_30d`, the `measures` and `product_events` tools,
+`list_attributes`, and the console's event-name lists. Disk size per project
+includes them; that is fine (at 30 s, about 86,400 small rows a month per
+project; 21,600 at 120 s).
+
+### Daily certificate and domain checks
+
+On automatically whenever the monitor is enabled, run once a day (my call: in
+the daily pass, or on the monitor's own loop once per 24 h per monitor;
+builder's choice) and once right after the monitor is enabled or its origin
+changes, so the dates appear immediately.
+
+- **Certificate:** TLS handshake to the origin host; store the leaf
+  certificate's `not_after`, issuer common name, whether it verified, and the
+  check time.
+- **Domain:** take the registrable domain of the origin host (public suffix
+  list: `shop.example.co.uk` → `example.co.uk`), look up the RDAP server for
+  its TLD via the IANA bootstrap (`https://data.iana.org/rdap/dns.json`, cached
+  for a day), query `/domain/<name>`, store the `expiration` event date and the
+  check time. A TLD without RDAP, or a reply without an expiration, stores
+  "unknown"; that is not a failure.
+- Only the current state is kept, in SQLite on the monitor row (a new
+  migration). No history, no events.
+
+### Where it shows
+
+- A new system dashboard **Availability**, built like Web Vitals
+  (`internal/reporting/system/<name>/`, `project_tab: true`), default range 7d:
+  - stats: uptime % for the range, average response time, certificate expires
+    in N days (with the date), domain renews in N days (with the date, or
+    "unknown")
+  - response time by hour/day (line), with down checks visible
+  - pie: failed checks by `reason`
+  - table: recent failed checks (time, status, reason, error)
+  The certificate and domain tiles read SQLite state, not the event files; the
+  builder picks how a system widget gets that (a query source over a new
+  resource, or a component fed by the project API). When the monitor is off,
+  the dashboard says so and links to the Monitoring settings.
+- Optional, if cheap: a one-line status on the project page
+  (`up · cert 34d · domain 120d`).
+
+## Left to the builder
+
+- Package name and placement (e.g. `internal/monitor`), the scheduling loop
+  (the jobs ticker is per minute, so the checker needs its own), concurrency
+  limits across many projects, and spreading checks across the interval so
+  they do not all fire at once.
+- The exact SQLite schema and migration number, the manage operations and
+  audit entries, MCP tool and REST route names (follow `update_project`
+  patterns; a `monitor` field on the project or its own tools).
+- The User-Agent string (identify as twillingate's monitor; must not be
+  filtered as a crawler from our own data if that matters, and must not be
+  counted as a view — it never goes through ingest, so it should not).
+- How the system widgets read SQLite state.
+- Tests: an `httptest` server for each `reason`, redirect-off-site, private
+  address refusal (with a resolver seam), RDAP with a fake server, and the
+  system dashboard in `TestSystemDashboards`.
