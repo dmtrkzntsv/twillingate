@@ -32,8 +32,8 @@ func attrSubject(id int64, key string) string { return fmt.Sprintf("%d/%s", id, 
 // attrTarget validates what every attribute rule operation names: a known
 // project and a key rules may carry.
 func (o *Ops) attrTarget(ctx context.Context, projectID int64, key string) error {
-	if o.Reg.Snapshot(ctx).Project(projectID) == nil {
-		return fmt.Errorf("project %d: %w", projectID, ErrNotFound)
+	if err := o.requireProject(ctx, projectID); err != nil {
+		return err
 	}
 	return attrKey(key)
 }

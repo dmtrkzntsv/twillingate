@@ -183,12 +183,28 @@ func (o *Ops) create(ctx context.Context, actor string, spec ProjectSpec, write 
 	return o.written(ctx, spec, o.afterWrite(ctx, id)), nil
 }
 
+// project is the registry's project id, or ErrNotFound naming it: the one
+// refusal every operation on a project gives when the project is unknown.
+func (o *Ops) project(ctx context.Context, id int64) (*Project, error) {
+	if p := o.Reg.Snapshot(ctx).Project(id); p != nil {
+		return p, nil
+	}
+	return nil, fmt.Errorf("unknown project %d: %w", id, ErrNotFound)
+}
+
+// requireProject is project for an operation that needs only to know the
+// project exists.
+func (o *Ops) requireProject(ctx context.Context, id int64) error {
+	_, err := o.project(ctx, id)
+	return err
+}
+
 // UpdateProject merges spec over the current row (see ProjectSpec) and
 // writes the result whole.
 func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec) (*Project, error) {
-	cur := o.Reg.Snapshot(ctx).Project(spec.ID)
-	if cur == nil {
-		return nil, fmt.Errorf("update project: unknown id %d: %w", spec.ID, ErrNotFound)
+	cur, err := o.project(ctx, spec.ID)
+	if err != nil {
+		return nil, err
 	}
 	if spec.Name == "" {
 		spec.Name = cur.Name
@@ -303,8 +319,8 @@ func moveKeys(rest []*Project, i int, id int64) ([]store.ProjectSortKey, error) 
 }
 
 func (o *Ops) IssueIngestKey(ctx context.Context, actor string, projectID int64, label string) (string, error) {
-	if o.Reg.Snapshot(ctx).Project(projectID) == nil {
-		return "", fmt.Errorf("unknown project %d: %w", projectID, ErrNotFound)
+	if err := o.requireProject(ctx, projectID); err != nil {
+		return "", err
 	}
 	key, err := MintIngestKey()
 	if err != nil {

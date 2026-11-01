@@ -91,7 +91,7 @@ func TestProjectUpdateClearsOriginsOnlyWhenAsked(t *testing.T) {
 		t.Fatalf("project = %+v, want name Shop UK and no origins", p)
 	}
 	out.Reset()
-	if code := run([]string{"project", "update", "-id", "9"}, &out); code != 1 || !strings.Contains(out.String(), "unknown id 9") {
+	if code := run([]string{"project", "update", "-id", "9"}, &out); code != 1 || !strings.Contains(out.String(), "unknown project 9") {
 		t.Fatalf("unknown id: exit %d %s", code, out.String())
 	}
 	out.Reset()
