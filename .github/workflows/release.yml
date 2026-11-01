@@ -277,7 +277,7 @@ jobs:
   # After the release, so R2 never holds a version GitHub does not; a
   # failure here leaves the release as it is, and re-running this job
   # alone publishes it (ship skips an identical version and still moves
-  # latest). Credentials: an R2 token with Object Read & Write on the lab
+  # latest). Credentials: an R2 token with Object Read & Write on the ship
   # bucket, in the repository secrets R2_ENDPOINT, R2_ACCESS_KEY_ID and
   # R2_SECRET_ACCESS_KEY.
   r2:
