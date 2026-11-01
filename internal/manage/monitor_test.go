@@ -124,6 +124,32 @@ func TestSnapshotMonitorRedirect(t *testing.T) {
 	}
 }
 
+// A redirect between the Unicode and the A-label spelling of a host is the
+// same site, whichever one the project lists.
+func TestSnapshotMonitorRedirectIDN(t *testing.T) {
+	ops, _, _ := newOps(t)
+	ctx := context.Background()
+	u, _ := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "U", AllowedOrigins: []string{"https://bücher.com"}})
+	a, _ := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "A", AllowedOrigins: []string{"https://xn--bcher-kva.com"}})
+	snap := ops.Reg.Snapshot(ctx)
+	for _, c := range []struct {
+		project int64
+		target  string
+		want    bool
+	}{
+		{u.ID, "https://xn--bcher-kva.com/login", true},
+		{u.ID, "https://bücher.com/login", true},
+		{u.ID, "https://xn--other-kva.com/", false},
+		{a.ID, "https://bücher.com/login", true},
+		{a.ID, "https://BÜCHER.com/login", true},
+		{a.ID, "http://bücher.com/login", false},
+	} {
+		if got := snap.MonitorRedirectAllowed(c.project, c.target, "https://bücher.com"); got != c.want {
+			t.Errorf("project %d, %s: %v, want %v", c.project, c.target, got, c.want)
+		}
+	}
+}
+
 func TestSetMonitorNoChangeWritesNoAudit(t *testing.T) {
 	ops, _, _, p, path := ruleOps(t)
 	ctx := context.Background()

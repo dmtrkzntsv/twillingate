@@ -8,6 +8,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"golang.org/x/net/idna"
+
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -54,7 +56,38 @@ func (s *Snapshot) MonitorRedirectAllowed(projectID int64, target, reqOrigin str
 		return false
 	}
 	origin, ok := urlOrigin(target)
-	return ok && slices.Contains(MonitorOrigins(p.AllowedOrigins), origin)
+	if !ok {
+		return false
+	}
+	// Compared with the hosts in their A-label form, so a redirect between
+	// the Unicode and the xn-- spelling of one host is the same site.
+	origin = asciiOrigin(origin)
+	for _, o := range MonitorOrigins(p.AllowedOrigins) {
+		if asciiOrigin(o) == origin {
+			return true
+		}
+	}
+	return false
+}
+
+// asciiOrigin is a normalized origin (see urlOrigin) with its host in
+// A-label form; one idna cannot convert is returned as it is.
+func asciiOrigin(origin string) string {
+	u, err := url.Parse(origin)
+	if err != nil {
+		return origin
+	}
+	host, err := idna.Lookup.ToASCII(u.Hostname())
+	if err != nil {
+		return origin
+	}
+	if strings.Contains(host, ":") {
+		host = "[" + host + "]"
+	}
+	if p := u.Port(); p != "" {
+		host += ":" + p
+	}
+	return u.Scheme + "://" + host
 }
 
 // MonitorSpec is a change to a project's monitor: a nil field keeps the
