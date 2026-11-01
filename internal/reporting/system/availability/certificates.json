@@ -1,0 +1,9 @@
+{
+  "component": "table",
+  "title": "Certificates",
+  "props": {
+    "formats": {
+      "Days left": "number"
+    }
+  }
+}

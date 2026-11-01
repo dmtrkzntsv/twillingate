@@ -1,7 +1,0 @@
-{
-  "component": "stat",
-  "title": "Certificate expires in (days)",
-  "props": {
-    "format": "number"
-  }
-}

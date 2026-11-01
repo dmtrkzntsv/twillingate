@@ -1,0 +1,10 @@
+{
+  "component": "table",
+  "title": "Sites",
+  "props": {
+    "formats": {
+      "Uptime": "percent",
+      "Response time (ms)": "number"
+    }
+  }
+}
