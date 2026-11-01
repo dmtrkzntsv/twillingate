@@ -410,7 +410,7 @@ describe('MonitoringSection', () => {
       expect(screen.queryByText('Last check')).not.toBeInTheDocument()
     })
 
-    it('gives up after 45 s with a message, and stops polling', async () => {
+    it('gives up waiting after 45 s with a message, and keeps looking every 15 s', async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true })
       try {
         show(pending)
@@ -420,12 +420,43 @@ describe('MonitoringSection', () => {
         await vi.advanceTimersByTimeAsync(45_500)
         expect(await screen.findByText(/has not finished/)).toBeInTheDocument()
         expect(screen.getByRole('button', { name: 'Check now' })).toBeEnabled()
+        // It looks less often, not never: the text says the result will show.
         const calls = spy.mock.calls.length
         await vi.advanceTimersByTimeAsync(10_000)
         expect(spy.mock.calls.length).toBe(calls)
+        await vi.advanceTimersByTimeAsync(5_500)
+        expect(spy.mock.calls.length).toBe(calls + 1)
+        spy.mockResolvedValue(done({ up: true, status: 200, ms: 7 }))
+        await vi.advanceTimersByTimeAsync(15_500)
+        expect(await screen.findByText('Last check')).toBeInTheDocument()
+        expect(screen.queryByText(/has not finished/)).not.toBeInTheDocument()
+        // Finished, it stops.
+        const finished = spy.mock.calls.length
+        await vi.advanceTimersByTimeAsync(60_000)
+        expect(spy.mock.calls.length).toBe(finished)
       } finally {
         vi.useRealTimers()
       }
+    })
+
+    it('reads the monitor again when the request is refused, showing the check that is running', async () => {
+      const user = userEvent.setup()
+      const onCheck = vi.fn().mockResolvedValue(false)
+      show(on, undefined, onCheck)
+      const button = await screen.findByRole('button', { name: 'Check now' })
+      vi.mocked(endpoints.monitor).mockResolvedValue(pending)
+      await user.click(button)
+      expect(await screen.findByRole('button', { name: 'Checking…' })).toBeDisabled()
+    })
+
+    it('does not read the monitor again when the request went through', async () => {
+      const user = userEvent.setup()
+      show(on)
+      const button = await screen.findByRole('button', { name: 'Check now' })
+      const calls = vi.mocked(endpoints.monitor).mock.calls.length
+      await user.click(button)
+      await new Promise((r) => setTimeout(r, 50))
+      expect(vi.mocked(endpoints.monitor).mock.calls.length).toBe(calls)
     })
 
     it('keeps the form as it was when the request is refused', async () => {

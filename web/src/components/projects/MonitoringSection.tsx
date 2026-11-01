@@ -26,9 +26,10 @@ interface Props {
 /** Hops from which the chain is worth a warning (the check still passes up to 5). */
 const LONG_CHAIN = 3
 
-/** How often a pending manual check is looked at, and when the page stops waiting (the runner serves one within seconds, or never). */
+/** How often a pending manual check is looked at, when the page stops waiting for it (the runner serves one within seconds, or may be down), and how often after that. */
 const CHECK_POLL_MS = 2_000
 const CHECK_GIVE_UP_MS = 45_000
+const CHECK_SLOW_POLL_MS = 15_000
 
 /** The manual check still to finish on an enabled monitor, by when it was asked for. */
 function pendingCheck(m: Monitor | undefined): string | null {
@@ -64,14 +65,15 @@ function certificateText(origin: string, cert: Monitor['cert'], now: Date): stri
  * save; at rest, what the checks found, Check now and the Availability tab.
  */
 export default function MonitoringSection({ projectId, pending, onSave, onCheck }: Props) {
-  // The check the page stopped waiting for: it polls no more, and offers the
-  // button again, whose press the server answers.
+  // The check the page stopped waiting for: it looks less often, and offers
+  // the button again, whose press the server answers.
   const [gaveUp, setGaveUp] = useState<string | null>(null)
   const q = useQuery({
     ...monitorQuery(projectId),
     refetchInterval: (query) => {
       const waiting = pendingCheck(query.state.data)
-      return waiting && waiting !== gaveUp ? CHECK_POLL_MS : false
+      if (!waiting) return false
+      return waiting === gaveUp ? CHECK_SLOW_POLL_MS : CHECK_POLL_MS
     },
   })
   const tabs = useQuery(projectTabsQuery(projectId)).data?.tabs
@@ -137,6 +139,13 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
         edited.current = null
         setAskedForText(null)
       }
+    })
+  }
+  // A refusal may mean a check this page has not heard of, from another tab
+  // or the CLI: read the monitor, so it shows.
+  const check = () => {
+    void onCheck().then((asked) => {
+      if (!asked) void q.refetch()
     })
   }
   const now = new Date()
@@ -241,7 +250,7 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
           {m.redirects >= LONG_CHAIN && <p className="text-sm text-muted-foreground">{`Redirects ${m.redirects} times before answering, which slows every visit`}</p>}
           {waiting && waiting === gaveUp && <p role="status" className="text-sm text-muted-foreground">The check has not finished yet: its result will show here when the server has run it</p>}
           <div className="flex flex-wrap items-center gap-3">
-            <Button type="button" size="sm" variant="outline" disabled={pending || checking} onClick={() => void onCheck()}>
+            <Button type="button" size="sm" variant="outline" disabled={pending || checking} onClick={check}>
               {checking ? 'Checking…' : 'Check now'}
             </Button>
             {availability && (
