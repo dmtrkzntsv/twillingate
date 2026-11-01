@@ -2,6 +2,10 @@ package main
 
 import (
 	"bytes"
+	"errors"
+	"io/fs"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -45,6 +49,23 @@ func TestKeyIssueListDisableEnable(t *testing.T) {
 	code = run([]string{"key", "enable", "-project-id", "1", "-label", "web"}, &out)
 	if code != 0 {
 		t.Fatalf("enable: %s", out.String())
+	}
+}
+
+// An unknown key subcommand is a usage error, refused before the store is
+// opened: it neither creates nor migrates the database.
+func TestKeyUnknownSubcommandTouchesNoDatabase(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "never.db")
+	setEnv(t, dbPath)
+	var out bytes.Buffer
+	if code := run([]string{"key", "lst", "-project-id", "1"}, &out); code != 2 {
+		t.Fatalf("exit %d, want 2: %s", code, out.String())
+	}
+	if !strings.Contains(out.String(), `unknown subcommand "lst"`) {
+		t.Fatalf("output: %q", out.String())
+	}
+	if _, err := os.Stat(dbPath); !errors.Is(err, fs.ErrNotExist) {
+		t.Fatalf("database touched: stat err = %v", err)
 	}
 }
 

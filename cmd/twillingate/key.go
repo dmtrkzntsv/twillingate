@@ -14,9 +14,8 @@ func init() { commands["key"] = cmdKey }
 const keyUsage = "usage: twillingate key <issue|list|disable|enable> [flags]"
 
 func cmdKey(args []string, stdout io.Writer) int {
-	// No list of subcommands: an unknown one is refused after the store
-	// is opened and migrated.
-	envFile, sub, subArgs, ok := subcommand("key", keyUsage, nil, args, stdout)
+	envFile, sub, subArgs, ok := subcommand("key", keyUsage,
+		[]string{"issue", "list", "disable", "enable"}, args, stdout)
 	if !ok {
 		return 2
 	}
@@ -73,7 +72,7 @@ func cmdKey(args []string, stdout io.Writer) int {
 			fmt.Fprintf(stdout, "%d\t%s\t%s\t%s\n", k.ProjectID, k.Label, k.Key, state)
 		}
 		return 0
-	case "disable", "enable":
+	default: // disable, enable
 		var err error
 		if sub == "disable" {
 			err = ops.DisableIngestKey(ctx, "cli", *projectID, *label)
@@ -86,8 +85,5 @@ func cmdKey(args []string, stdout io.Writer) int {
 		}
 		fmt.Fprintf(stdout, "key %d/%s %sd\n", *projectID, *label, sub)
 		return 0
-	default:
-		fmt.Fprintf(stdout, "unknown subcommand %q\n%s\n", sub, keyUsage)
-		return 2
 	}
 }
