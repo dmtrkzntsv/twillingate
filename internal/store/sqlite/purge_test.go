@@ -48,7 +48,7 @@ func createPurgeableDashboard(t *testing.T, db *DB, owner, sortKey string, ws []
 
 // archiveDashboardDaysAgo sets a dashboard's archived_at using the RFC3339
 // format the reporting writers use, n days in the past. ExecForTest
-// bypasses SetDashboardArchived, which is how a system dashboard's
+// bypasses SetDashboardsArchived, which is how a system dashboard's
 // archived_at gets forced for the system-row test: production code never
 // archives one.
 func archiveDashboardDaysAgo(t *testing.T, db *DB, id int64, n int) {

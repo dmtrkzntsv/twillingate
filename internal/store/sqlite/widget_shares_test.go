@@ -322,7 +322,7 @@ func TestArchiveDueWidgetShares(t *testing.T) {
 	e := shareID(5)
 	insertShare(t, db, e, pid, wid, "2026-10-06T00:00:00Z")
 
-	n, err := db.ArchiveDueWidgetShares(ctx, shareNow)
+	n, err := db.ArchiveDueWidgetShares(ctx, ts(shareNow))
 	if err != nil || n != 2 {
 		t.Fatalf("archived = %d, %v; want 2", n, err)
 	}
@@ -354,7 +354,7 @@ func TestArchiveDueWidgetShares(t *testing.T) {
 			t.Errorf("audit row %+v", r)
 		}
 	}
-	if n, err := db.ArchiveDueWidgetShares(ctx, shareNow); err != nil || n != 0 {
+	if n, err := db.ArchiveDueWidgetShares(ctx, ts(shareNow)); err != nil || n != 0 {
 		t.Fatalf("second pass = %d, %v; want 0", n, err)
 	}
 }

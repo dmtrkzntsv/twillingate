@@ -15,10 +15,10 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
+// auditAndBump is audit for a managed-config write: it also bumps
+// meta.config_version, which other processes poll to reload the registry.
 func auditAndBump(ctx context.Context, tx *sql.Tx, a store.AuditEntry) error {
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO audit_log (actor, action, subject, detail) VALUES (?,?,?,?)`,
-		a.Actor, a.Action, a.Subject, a.Detail); err != nil {
+	if err := audit(ctx, tx, a); err != nil {
 		return err
 	}
 	_, err := tx.ExecContext(ctx,

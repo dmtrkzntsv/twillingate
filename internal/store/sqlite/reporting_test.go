@@ -325,7 +325,7 @@ func TestDashboardArchiveRestoreRoundTripsAndIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	archiveAudit := store.AuditEntry{Actor: "agent", Action: "dashboard.archive"}
-	if err := db.SetDashboardArchived(ctx, id, true, archiveAudit); err != nil {
+	if err := db.SetDashboardsArchived(ctx, []int64{id}, true, archiveAudit); err != nil {
 		t.Fatal(err)
 	}
 	got, err := db.GetDashboard(ctx, id)
@@ -338,7 +338,7 @@ func TestDashboardArchiveRestoreRoundTripsAndIsIdempotent(t *testing.T) {
 	firstArchivedAt := got.ArchivedAt
 
 	// idempotent: archiving again does not change archived_at.
-	if err := db.SetDashboardArchived(ctx, id, true, archiveAudit); err != nil {
+	if err := db.SetDashboardsArchived(ctx, []int64{id}, true, archiveAudit); err != nil {
 		t.Fatal(err)
 	}
 	got, err = db.GetDashboard(ctx, id)
@@ -350,7 +350,7 @@ func TestDashboardArchiveRestoreRoundTripsAndIsIdempotent(t *testing.T) {
 	}
 
 	// restore clears it.
-	if err := db.SetDashboardArchived(ctx, id, false, store.AuditEntry{Actor: "agent", Action: "dashboard.restore"}); err != nil {
+	if err := db.SetDashboardsArchived(ctx, []int64{id}, false, store.AuditEntry{Actor: "agent", Action: "dashboard.restore"}); err != nil {
 		t.Fatal(err)
 	}
 	got, err = db.GetDashboard(ctx, id)
@@ -362,7 +362,7 @@ func TestDashboardArchiveRestoreRoundTripsAndIsIdempotent(t *testing.T) {
 	}
 
 	// idempotent restore.
-	if err := db.SetDashboardArchived(ctx, id, false, store.AuditEntry{Actor: "agent", Action: "dashboard.restore"}); err != nil {
+	if err := db.SetDashboardsArchived(ctx, []int64{id}, false, store.AuditEntry{Actor: "agent", Action: "dashboard.restore"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -422,9 +422,9 @@ func TestReportingUnknownIDIsNotFound(t *testing.T) {
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("UpdateWidget unknown id = %v, want ErrNotFound", err)
 	}
-	err = db.SetDashboardArchived(ctx, 999999, true, store.AuditEntry{Actor: "agent", Action: "dashboard.archive"})
+	err = db.SetDashboardsArchived(ctx, []int64{999999}, true, store.AuditEntry{Actor: "agent", Action: "dashboard.archive"})
 	if !errors.Is(err, store.ErrNotFound) {
-		t.Errorf("SetDashboardArchived unknown id = %v, want ErrNotFound", err)
+		t.Errorf("SetDashboardsArchived unknown id = %v, want ErrNotFound", err)
 	}
 	err = db.SetWidgetArchived(ctx, 999999, true, store.AuditEntry{Actor: "agent", Action: "widget.archive"})
 	if !errors.Is(err, store.ErrNotFound) {
@@ -730,7 +730,7 @@ func TestReportingWritesDoNotBumpConfigVersion(t *testing.T) {
 		store.AuditEntry{Actor: "agent", Action: "dashboard.update"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SetDashboardArchived(ctx, id, true, store.AuditEntry{Actor: "agent", Action: "dashboard.archive"}); err != nil {
+	if err := db.SetDashboardsArchived(ctx, []int64{id}, true, store.AuditEntry{Actor: "agent", Action: "dashboard.archive"}); err != nil {
 		t.Fatal(err)
 	}
 	v1, err := db.ConfigVersion(ctx)
@@ -920,7 +920,7 @@ func TestSetDashboardsArchivedRestoresMixedIDs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := db.SetDashboardArchived(ctx, id1, true, store.AuditEntry{Actor: "agent", Action: "dashboard.archive"}); err != nil {
+	if err := db.SetDashboardsArchived(ctx, []int64{id1}, true, store.AuditEntry{Actor: "agent", Action: "dashboard.archive"}); err != nil {
 		t.Fatal(err)
 	}
 	// id2 is left live.

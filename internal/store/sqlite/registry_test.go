@@ -672,21 +672,3 @@ func TestInsertKeyConflictIsTyped(t *testing.T) {
 		t.Fatalf("same label on another project: %v", err)
 	}
 }
-
-func TestProjectIDsAscending(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	for _, n := range []string{"c", "a", "b"} {
-		if _, err := db.CreateProject(ctx, store.RegistryProject{Name: n, AllowedOrigins: "[]"},
-			store.AuditEntry{Actor: "test", Action: "project.create"}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	ids, err := db.ProjectIDs(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ids) != 3 || ids[0] != 1 || ids[1] != 2 || ids[2] != 3 {
-		t.Fatalf("ids = %v, want [1 2 3]", ids)
-	}
-}

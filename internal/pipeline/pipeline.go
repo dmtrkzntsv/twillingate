@@ -21,9 +21,9 @@ type Sink interface {
 var retryDelays = []time.Duration{time.Second, 5 * time.Second, 25 * time.Second}
 
 type Buffer struct {
-	cfg     config.BufferConfig
-	sink    Sink
-	logger  *slog.Logger
+	cfg    config.BufferConfig
+	sink   Sink
+	logger *slog.Logger
 	// ch holds pointers: a channel of events would allocate Capacity
 	// whole events (about 600 bytes each, 6 MB at the default 10000) up
 	// front, and the ring touches every slot within Capacity events, so
@@ -37,10 +37,9 @@ func New(cfg config.BufferConfig, sink Sink, logger *slog.Logger) *Buffer {
 	return &Buffer{cfg: cfg, sink: sink, logger: logger, ch: make(chan *store.Event, cfg.Capacity)}
 }
 
-func (b *Buffer) Enqueue(e store.Event) { b.enqueue(e) }
-func (b *Buffer) Dropped() uint64       { return b.dropped.Load() }
+func (b *Buffer) Dropped() uint64 { return b.dropped.Load() }
 
-func (b *Buffer) enqueue(e store.Event) {
+func (b *Buffer) Enqueue(e store.Event) {
 	for {
 		select {
 		case b.ch <- &e:
@@ -59,17 +58,13 @@ func (b *Buffer) enqueue(e store.Event) {
 func (b *Buffer) Run(ctx context.Context) {
 	ticker := time.NewTicker(b.cfg.FlushInterval)
 	defer ticker.Stop()
+	// Views and product events share the one batch, which is written in
+	// one transaction, so a failing row drops both families' rows in that
+	// batch once the retries are spent.
 	var batch []store.Event
-	// One append used by both the steady-state receive and the shutdown
-	// drain. Views and product events share the one batch, which is
-	// written in one transaction, so a failing row drops both families'
-	// rows in that batch once the retries are spent.
-	take := func(e store.Event) {
-		batch = append(batch, e)
-	}
 	flush := func(ctx context.Context) {
 		if len(batch) > 0 {
-			b.write(ctx, func(c context.Context) error { return b.sink.WriteEvents(c, batch) }, len(batch), "events")
+			b.write(ctx, batch)
 			batch = nil
 		}
 	}
@@ -80,7 +75,7 @@ func (b *Buffer) Run(ctx context.Context) {
 			for {
 				select {
 				case e := <-b.ch:
-					take(*e)
+					batch = append(batch, *e)
 					continue
 				default:
 				}
@@ -89,7 +84,7 @@ func (b *Buffer) Run(ctx context.Context) {
 			flush(ctx)
 			return
 		case e := <-b.ch:
-			take(*e)
+			batch = append(batch, *e)
 			if len(batch) >= b.cfg.FlushMaxEvents {
 				flush(ctx)
 			}
@@ -107,7 +102,7 @@ func (b *Buffer) Run(ctx context.Context) {
 // without delay, so a failing flush can't stall shutdown past the retry
 // writes themselves. Normal (non-shutdown) operation keeps the full
 // 1s/5s/25s backoff.
-func (b *Buffer) write(ctx context.Context, fn func(context.Context) error, n int, kind string) {
+func (b *Buffer) write(ctx context.Context, batch []store.Event) {
 	var err error
 	for attempt := 0; attempt <= len(retryDelays); attempt++ {
 		if attempt > 0 {
@@ -116,9 +111,9 @@ func (b *Buffer) write(ctx context.Context, fn func(context.Context) error, n in
 			case <-ctx.Done():
 			}
 		}
-		if err = fn(context.Background()); err == nil {
+		if err = b.sink.WriteEvents(context.Background(), batch); err == nil {
 			return
 		}
 	}
-	b.logger.Error("pipeline: batch dropped after retries", "kind", kind, "count", n, "error", err)
+	b.logger.Error("pipeline: batch dropped after retries", "kind", "events", "count", len(batch), "error", err)
 }

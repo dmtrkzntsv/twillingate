@@ -74,15 +74,8 @@ func dumpLog(ctx context.Context, src, out string) error {
 	}
 	d.sort()
 	// columnsOf lists the fields first, in order.
-	w, err := newRowWriter(out, pq, eventsCut(fieldIndex("family"), fieldIndex("day")))
-	if err != nil {
-		return err
-	}
-	if err := d.write(ctx, f, name, w, col); err != nil {
-		w.Abort()
-		return err
-	}
-	return w.Close()
+	return writeParquet(out, pq, eventsCut(fieldOf("family"), fieldOf("day")),
+		func(w *rowWriter) error { return d.write(ctx, f, name, w, col) })
 }
 
 // dumpCheckEvery is how many lines a dump reads, in either pass, between
@@ -442,28 +435,4 @@ func colTypeOf(typ string) (colType, error) {
 		return colTimestamp, nil
 	}
 	return 0, fmt.Errorf("unknown type %s", typ)
-}
-
-// fieldIndex is the position of the fixed column name in fields, which is
-// its column in every dump.
-func fieldIndex(name string) int {
-	for i, f := range fields {
-		if f.name == name {
-			return i
-		}
-	}
-	panic("archive: no field " + name)
-}
-
-// nullsLast orders two values with by, a NULL after every value.
-func nullsLast(x, y value, by func(a, b value) int) int {
-	switch {
-	case x.ok && y.ok:
-		return by(x, y)
-	case x.ok:
-		return -1
-	case y.ok:
-		return 1
-	}
-	return 0
 }

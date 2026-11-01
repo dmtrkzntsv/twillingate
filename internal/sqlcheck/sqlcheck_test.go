@@ -24,14 +24,11 @@ import (
 // constant. TestDynamicSitesAreListed checks it both ways: a function
 // that builds SQL needs an entry, and an entry needs such a function.
 var dynamic = map[string]string{
-	"shared/readsql/page.go:QueryPage":            "wraps the caller's query in the page's filters, sort and window",
-	"shared/readsql/page.go:countWhenEmpty":       "wraps the caller's query to count its rows",
-	"shared/readsql/readsql.go:QueryLimit":        "wraps the caller's query to cap its rows",
-	"store/sqlite/forms.go:FindSubmissions":       "the FROM and WHERE come from the search, and a cursor condition is appended",
-	"store/sqlite/forms.go:SubmissionIDsMatching": "the FROM and WHERE come from the search",
-	"store/sqlite/migrate.go:migrateThrough":      "runs each embedded migration file as read; every test that migrates runs them",
-	"store/sqlite/reporting.go:ListWidgets":       "the WHERE and ORDER BY are appended depending on whether a dashboard is given",
-	"store/sqlite/reporting.go:UpdateWidget":      "the SET list holds only the columns being written",
+	"shared/readsql/page.go:QueryPage":       "wraps the caller's query in the page's filters, sort and window",
+	"shared/readsql/page.go:countWhenEmpty":  "wraps the caller's query to count its rows",
+	"shared/readsql/readsql.go:QueryLimit":   "wraps the caller's query to cap its rows",
+	"store/sqlite/migrate.go:migrateThrough": "runs each embedded migration file as read; every test that migrates runs them",
+	"store/sqlite/reporting.go:UpdateWidget": "the SET list holds only the columns being written",
 }
 
 // minSites guards the scan: finding far fewer SQL sites than the tree

@@ -333,7 +333,7 @@ func attributeAll(t *testing.T, db *DB, found func(store.Event) store.Event) {
 		if found != nil {
 			ev = found(ev)
 		}
-		if _, err := db.AttributeSubmission(context.Background(), p, ev); err != nil {
+		if err := db.AttributeSubmission(context.Background(), p, ev); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -351,22 +351,14 @@ func TestAttributeSubmissionFillsTheOutbox(t *testing.T) {
 	if err != nil || len(ps) == 0 {
 		t.Fatalf("pending = %+v, %v", ps, err)
 	}
-	var wrote int
 	for _, p := range ps {
-		w, err := db.AttributeSubmission(ctx, p, p.Event)
-		if err != nil {
+		if err := db.AttributeSubmission(ctx, p, p.Event); err != nil {
 			t.Fatal(err)
 		}
-		if w {
-			wrote++
-		}
-	}
-	if wrote != 1 {
-		t.Fatalf("wrote = %d, want the approved form's one", wrote)
 	}
 	us, err := db.UnloggedEvents(ctx, 10)
 	if err != nil || len(us) != 1 || us[0].Event.ID != "s1" {
-		t.Fatalf("unlogged = %+v, %v; want s1", us, err)
+		t.Fatalf("unlogged = %+v, %v; want only the approved form's s1", us, err)
 	}
 }
 
@@ -407,8 +399,8 @@ func TestSubmissionWaitsForItsAttribution(t *testing.T) {
 	if left, _ := db.PendingSubmissions(ctx, formsNow.Add(time.Hour), 10); len(left) != 0 {
 		t.Fatalf("still pending: %+v", left)
 	}
-	if wrote, err := db.AttributeSubmission(ctx, ps[1], ps[1].Event); err != nil || wrote {
-		t.Fatalf("second AttributeSubmission wrote=%v err=%v", wrote, err)
+	if err := db.AttributeSubmission(ctx, ps[1], ps[1].Event); err != nil {
+		t.Fatalf("second AttributeSubmission: %v", err)
 	}
 	if c, err := db.UnloggedCount(ctx); err != nil || c != 1 {
 		t.Fatalf("%d events queued after a second attribution, %v", c, err)
@@ -475,8 +467,8 @@ func TestPendingSubmissionsReturnsAnUnreadableEventWithItsError(t *testing.T) {
 	}
 	// The job clears it as attributed with nothing: no attribution, no
 	// event, its fields kept, out of the queue.
-	if wrote, err := db.AttributeSubmission(ctx, bad, store.Event{}); err != nil || wrote {
-		t.Fatalf("clearing wrote=%v err=%v", wrote, err)
+	if err := db.AttributeSubmission(ctx, bad, store.Event{}); err != nil {
+		t.Fatalf("clearing: %v", err)
 	}
 	if c := countRows(t, db, `SELECT COUNT(*) FROM submissions WHERE id='s1' AND pending_event IS NULL
 		AND attribution IS NULL AND fields='{}'`); c != 1 {
@@ -504,9 +496,8 @@ func TestAttributeSubmissionAfterDeleteWritesNothing(t *testing.T) {
 	}
 	ps, _ := db.PendingSubmissions(ctx, formsNow, 10)
 	execAll(t, db, `DELETE FROM submissions WHERE id='s1'`)
-	wrote, err := db.AttributeSubmission(ctx, ps[1], ps[1].Event)
-	if err != nil || wrote {
-		t.Fatalf("wrote=%v err=%v", wrote, err)
+	if err := db.AttributeSubmission(ctx, ps[1], ps[1].Event); err != nil {
+		t.Fatal(err)
 	}
 	if us, err := db.UnloggedEvents(ctx, 10); err != nil || len(us) != 0 {
 		t.Fatalf("outbox for a deleted submission = %+v, %v; want empty", us, err)

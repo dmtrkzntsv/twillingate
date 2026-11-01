@@ -71,10 +71,6 @@ func TestOperationsOnClosedDB(t *testing.T) {
 			return err
 		},
 		"SetMeta": func() error { return db.SetMeta(ctx, "k", "v") },
-		"ProjectIDs": func() error {
-			_, err := db.ProjectIDs(ctx)
-			return err
-		},
 		"GetMeta": func() error { _, err := db.GetMeta(ctx, "k"); return err },
 	} {
 		if err := op(); err == nil {

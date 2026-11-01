@@ -49,53 +49,41 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 	}
 	var errs error
 
-	projectIDs, err := d.purgeableIDs(ctx,
+	projectIDs, err := queryColumn[int64](ctx, d.db,
 		`SELECT id FROM projects
 		 WHERE archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?`, days)
 	if err != nil {
 		errs = errors.Join(errs, fmt.Errorf("select archived projects: %w", err))
 	}
-	for _, id := range projectIDs {
-		if err := d.tx(ctx, func(tx *sql.Tx) error {
-			if err := deleteProject(ctx, tx, id); err != nil {
-				return err
-			}
-			return auditAndBump(ctx, tx, store.AuditEntry{
-				Actor: "retention", Action: "project.purge", Subject: strconv.FormatInt(id, 10)})
-		}); err != nil {
-			errs = errors.Join(errs, fmt.Errorf("purge project %d: %w", id, err))
-			continue
+	res.Projects = purgeEach(ctx, d, &errs, "project", projectIDs, func(tx *sql.Tx, id int64) error {
+		if err := deleteProject(ctx, tx, id); err != nil {
+			return err
 		}
-		res.Projects = append(res.Projects, id)
-	}
+		return auditAndBump(ctx, tx, store.AuditEntry{
+			Actor: "retention", Action: "project.purge", Subject: strconv.FormatInt(id, 10)})
+	})
 
-	dashboardIDs, err := d.purgeableIDs(ctx,
+	dashboardIDs, err := queryColumn[int64](ctx, d.db,
 		`SELECT id FROM dashboards
 		 WHERE owner='user' AND archived_at IS NOT NULL
 		   AND julianday(archived_at) < julianday('now') - ?`, days)
 	if err != nil {
 		errs = errors.Join(errs, fmt.Errorf("select archived dashboards: %w", err))
 	}
-	for _, id := range dashboardIDs {
-		if err := d.tx(ctx, func(tx *sql.Tx) error {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM dashboards WHERE id=?`, id); err != nil {
-				return fmt.Errorf("delete dashboard %d: %w", id, err)
-			}
-			return audit(ctx, tx, store.AuditEntry{
-				Actor: "retention", Action: "dashboard.purge", Subject: fmt.Sprintf("dashboard/%d", id)})
-		}); err != nil {
-			errs = errors.Join(errs, fmt.Errorf("purge dashboard %d: %w", id, err))
-			continue
+	res.Dashboards = purgeEach(ctx, d, &errs, "dashboard", dashboardIDs, func(tx *sql.Tx, id int64) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM dashboards WHERE id=?`, id); err != nil {
+			return fmt.Errorf("delete dashboard %d: %w", id, err)
 		}
-		res.Dashboards = append(res.Dashboards, id)
-	}
+		return audit(ctx, tx, store.AuditEntry{
+			Actor: "retention", Action: "dashboard.purge", Subject: fmt.Sprintf("dashboard/%d", id)})
+	})
 
 	// The join with dashboards restricts every widget considered here to
 	// one on a user-owned dashboard (defense in depth: production code
 	// never archives a widget on a system dashboard either, but a forced
 	// row must still never be selected), and d's own archived state tells
 	// whether that dashboard is being purged in this same pass.
-	widgetIDs, err := d.purgeableIDs(ctx,
+	widgetIDs, err := queryColumn[int64](ctx, d.db,
 		`SELECT w.id FROM widgets w JOIN dashboards d ON d.id = w.dashboard_id
 		 WHERE d.owner='user'
 		   AND w.archived_at IS NOT NULL AND julianday(w.archived_at) < julianday('now') - ?
@@ -104,48 +92,32 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 	if err != nil {
 		errs = errors.Join(errs, fmt.Errorf("select archived widgets: %w", err))
 	}
-	for _, id := range widgetIDs {
-		if err := d.tx(ctx, func(tx *sql.Tx) error {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM widgets WHERE id=?`, id); err != nil {
-				return fmt.Errorf("delete widget %d: %w", id, err)
-			}
-			return audit(ctx, tx, store.AuditEntry{
-				Actor: "retention", Action: "widget.purge", Subject: fmt.Sprintf("widget/%d", id)})
-		}); err != nil {
-			errs = errors.Join(errs, fmt.Errorf("purge widget %d: %w", id, err))
-			continue
+	res.Widgets = purgeEach(ctx, d, &errs, "widget", widgetIDs, func(tx *sql.Tx, id int64) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM widgets WHERE id=?`, id); err != nil {
+			return fmt.Errorf("delete widget %d: %w", id, err)
 		}
-		res.Widgets = append(res.Widgets, id)
-	}
+		return audit(ctx, tx, store.AuditEntry{
+			Actor: "retention", Action: "widget.purge", Subject: fmt.Sprintf("widget/%d", id)})
+	})
 
-	shareIDs, err := d.purgeableStrings(ctx,
+	shareIDs, err := queryColumn[string](ctx, d.db,
 		`SELECT id FROM widget_shares
 		 WHERE archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?`, days)
 	if err != nil {
 		errs = errors.Join(errs, fmt.Errorf("select archived widget shares: %w", err))
 	}
-	for _, id := range shareIDs {
-		if err := d.tx(ctx, func(tx *sql.Tx) error {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM widget_shares WHERE id=?`, id); err != nil {
-				return fmt.Errorf("delete widget share %s: %w", id, err)
-			}
-			return audit(ctx, tx, store.AuditEntry{
-				Actor: "retention", Action: "widget_share.purge", Subject: "widget_share/" + id})
-		}); err != nil {
-			errs = errors.Join(errs, fmt.Errorf("purge widget share %s: %w", id, err))
-			continue
+	res.WidgetShares = purgeEach(ctx, d, &errs, "widget share", shareIDs, func(tx *sql.Tx, id string) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM widget_shares WHERE id=?`, id); err != nil {
+			return fmt.Errorf("delete widget share %s: %w", id, err)
 		}
-		res.WidgetShares = append(res.WidgetShares, id)
-	}
+		return audit(ctx, tx, store.AuditEntry{
+			Actor: "retention", Action: "widget_share.purge", Subject: "widget_share/" + id})
+	})
 
 	formRows, err := d.db.QueryContext(ctx,
 		`SELECT project_id, name FROM forms
 		 WHERE archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?
 		 ORDER BY project_id, name`, days)
-	type formKey struct {
-		project int64
-		name    string
-	}
 	var forms []formKey
 	if err != nil {
 		errs = errors.Join(errs, fmt.Errorf("select archived forms: %w", err))
@@ -160,20 +132,16 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 		}
 		errs = errors.Join(errs, formRows.Err(), formRows.Close())
 	}
-	for _, k := range forms {
-		// A form purged with its project above is already gone; its rows
-		// were deleted with the project's, so it is not selected here.
-		if err := d.tx(ctx, func(tx *sql.Tx) error {
-			if err := deleteFormData(ctx, tx, k.project, k.name); err != nil {
-				return err
-			}
-			return audit(ctx, tx, store.AuditEntry{
-				Actor: "retention", Action: "form.purge", Subject: formSubject(k.project, k.name)})
-		}); err != nil {
-			errs = errors.Join(errs, fmt.Errorf("purge form %d/%s: %w", k.project, k.name, err))
-			continue
+	// A form purged with its project above is already gone; its rows
+	// were deleted with the project's, so it is not selected here.
+	for _, k := range purgeEach(ctx, d, &errs, "form", forms, func(tx *sql.Tx, k formKey) error {
+		if err := deleteFormData(ctx, tx, k.project, k.name); err != nil {
+			return err
 		}
-		res.Forms = append(res.Forms, fmt.Sprintf("%d/%s", k.project, k.name))
+		return audit(ctx, tx, store.AuditEntry{
+			Actor: "retention", Action: "form.purge", Subject: formSubject(k.project, k.name)})
+	}) {
+		res.Forms = append(res.Forms, k.String())
 	}
 
 	// Submissions archived on their own, one transaction and audit row per
@@ -183,66 +151,50 @@ func (d *DB) PurgeArchived(ctx context.Context, days int) (store.PurgeResult, er
 	// job has written it to the event files, so the conversion stays.
 	const archivedSubmissions = `archived_at IS NOT NULL AND julianday(archived_at) < julianday('now') - ?
 		AND pending_event IS NULL AND unlogged_event IS NULL`
-	subProjects, err := d.purgeableIDs(ctx,
+	subProjects, err := queryColumn[int64](ctx, d.db,
 		`SELECT DISTINCT project_id FROM submissions WHERE `+archivedSubmissions+` ORDER BY project_id`, days)
 	if err != nil {
 		errs = errors.Join(errs, fmt.Errorf("select archived submissions: %w", err))
 	}
-	for _, id := range subProjects {
-		var n int64
-		if err := d.tx(ctx, func(tx *sql.Tx) error {
-			r, err := tx.ExecContext(ctx, `DELETE FROM submissions WHERE project_id=? AND `+archivedSubmissions, id, days)
-			if err != nil {
-				return fmt.Errorf("delete submissions: %w", err)
-			}
-			if n, err = r.RowsAffected(); err != nil {
-				return err
-			}
-			return audit(ctx, tx, store.AuditEntry{Actor: "retention", Action: "submission.purge",
-				Subject: "project/" + strconv.FormatInt(id, 10), Detail: fmt.Sprintf("%d purged", n)})
-		}); err != nil {
-			errs = errors.Join(errs, fmt.Errorf("purge archived submissions of project %d: %w", id, err))
-			continue
+	purged := map[int64]int64{}
+	for _, id := range purgeEach(ctx, d, &errs, "archived submissions of project", subProjects, func(tx *sql.Tx, id int64) error {
+		r, err := tx.ExecContext(ctx, `DELETE FROM submissions WHERE project_id=? AND `+archivedSubmissions, id, days)
+		if err != nil {
+			return fmt.Errorf("delete submissions: %w", err)
 		}
-		res.Submissions += int(n)
+		n, err := r.RowsAffected()
+		if err != nil {
+			return err
+		}
+		purged[id] = n
+		return audit(ctx, tx, store.AuditEntry{Actor: "retention", Action: "submission.purge",
+			Subject: "project/" + strconv.FormatInt(id, 10), Detail: fmt.Sprintf("%d purged", n)})
+	}) {
+		res.Submissions += int(purged[id])
 	}
 
 	return res, errs
 }
 
-// purgeableIDs runs a SELECT of a single int64 column outside any
-// transaction: the deletes that follow each open and commit their own.
-func (d *DB) purgeableIDs(ctx context.Context, q string, args ...any) ([]int64, error) {
-	rows, err := d.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []int64
-	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+// formKey names one form; it prints as project/name.
+type formKey struct {
+	project int64
+	name    string
 }
 
-// purgeableStrings is purgeableIDs for a single string column.
-func (d *DB) purgeableStrings(ctx context.Context, q string, args ...any) ([]string, error) {
-	rows, err := d.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
+func (k formKey) String() string { return fmt.Sprintf("%d/%s", k.project, k.name) }
+
+// purgeEach runs del on each of keys, each in its own transaction, and
+// returns the keys that went, in order. A failure is joined into errs as
+// "purge <what> <key>: ..." and the rest are still attempted.
+func purgeEach[K any](ctx context.Context, d *DB, errs *error, what string, keys []K, del func(*sql.Tx, K) error) []K {
+	var done []K
+	for _, k := range keys {
+		if err := d.tx(ctx, func(tx *sql.Tx) error { return del(tx, k) }); err != nil {
+			*errs = errors.Join(*errs, fmt.Errorf("purge %s %v: %w", what, k, err))
+			continue
 		}
-		ids = append(ids, id)
+		done = append(done, k)
 	}
-	return ids, rows.Err()
+	return done
 }

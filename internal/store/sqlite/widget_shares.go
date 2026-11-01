@@ -9,6 +9,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -173,28 +174,14 @@ func (d *DB) SetWidgetShareArchived(ctx context.Context, id string, archived boo
 	return out, err
 }
 
-func (d *DB) ArchiveDueWidgetShares(ctx context.Context, now string) (int, error) {
+func (d *DB) ArchiveDueWidgetShares(ctx context.Context, now time.Time) (int, error) {
 	var n int
 	err := d.tx(ctx, func(tx *sql.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT id FROM widget_shares
-			WHERE archived_at IS NULL AND archive_at IS NOT NULL AND archive_at <= ?`, now)
+		ids, err := queryColumn[string](ctx, tx, `SELECT id FROM widget_shares
+			WHERE archived_at IS NULL AND archive_at IS NOT NULL AND archive_at <= ?`, fmtTime(now))
 		if err != nil {
 			return err
 		}
-		var ids []string
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return err
-			}
-			ids = append(ids, id)
-		}
-		if err := rows.Err(); err != nil {
-			rows.Close()
-			return err
-		}
-		rows.Close()
 		for _, id := range ids {
 			if _, err := tx.ExecContext(ctx, `UPDATE widget_shares SET archived_at = archive_at WHERE id = ?`, id); err != nil {
 				return err

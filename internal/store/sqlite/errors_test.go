@@ -251,17 +251,6 @@ func TestOpenAtFailsOnReadonlyFile(t *testing.T) {
 
 // --- write.go ---
 
-func TestProjectIDsFailsOnMissingTable(t *testing.T) {
-	db := newTestDB(t)
-	ctx := context.Background()
-	if _, err := db.db.ExecContext(ctx, `DROP TABLE projects`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.ProjectIDs(ctx); err == nil {
-		t.Error("want error listing ids from a missing table")
-	}
-}
-
 // --- migrate.go ---
 
 func TestMigrateFailsOnLookupQuery(t *testing.T) {

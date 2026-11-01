@@ -3,6 +3,7 @@ package archive
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -60,33 +61,54 @@ func ListFiles(dir string) (map[int64]Files, error) {
 
 // listFiles is ListFiles of the projects keep keeps.
 func listFiles(dir string, keep func(int64) bool) (map[int64]Files, error) {
-	entries, err := os.ReadDir(dir)
+	pdirs, err := projectDirs(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return map[int64]Files{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("archive: %w", err)
+		return nil, err
 	}
 	out := map[int64]Files{}
-	for _, e := range entries {
-		id, err := strconv.ParseInt(e.Name(), 10, 64)
-		if err != nil || !e.IsDir() || !keep(id) {
+	for _, p := range pdirs {
+		if !keep(p.id) {
 			continue
 		}
-		pdir := filepath.Join(dir, e.Name())
-		names, err := list(pdir)
+		names, err := list(p.path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
 		if err != nil {
 			return nil, err
 		}
-		pf, err := projectOf(pdir, names)
+		pf, err := projectOf(p.path, names)
 		if err != nil {
 			return nil, err
 		}
 		if len(pf.Parquet)+len(pf.Logs) > 0 {
-			out[id] = pf.Files
+			out[p.id] = pf.Files
+		}
+	}
+	return out, nil
+}
+
+// projectDir is one project's directory under data/.
+type projectDir struct {
+	id   int64
+	path string
+}
+
+// projectDirs is the project directories in dir, in name order: an entry
+// that is no directory, or whose name is no id, is left out. A missing
+// dir fails with an error that wraps os.ErrNotExist.
+func projectDirs(dir string) ([]projectDir, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("archive: %w", err)
+	}
+	var out []projectDir
+	for _, e := range entries {
+		if id, err := strconv.ParseInt(e.Name(), 10, 64); err == nil && e.IsDir() {
+			out = append(out, projectDir{id: id, path: filepath.Join(dir, e.Name())})
 		}
 	}
 	return out, nil
@@ -139,7 +161,7 @@ func (pf *projectFiles) derived(pdir string, have map[string]bool, days map[stri
 		return err
 	}
 	var gaps []Span
-	for _, month := range keysOf(monthFile) {
+	for _, month := range slices.Sorted(maps.Keys(monthFile)) {
 		s := filepath.Join(sdir, month+".parquet")
 		ok, err := current(s, []string{monthFile[month]})
 		if err != nil {
@@ -162,7 +184,7 @@ func (pf *projectFiles) derived(pdir string, have map[string]bool, days map[stri
 			}
 		}
 	}
-	for _, day := range keysOf(days) {
+	for _, day := range slices.Sorted(maps.Keys(days)) {
 		if logDays[day] {
 			gaps = append(gaps, Span{day, day})
 			continue
@@ -265,16 +287,6 @@ func nextDay(day string) string {
 	return d.AddDays(1).String()
 }
 
-// keysOf is m's keys in order.
-func keysOf[V any](m map[string]V) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	slices.Sort(keys)
-	return keys
-}
-
 // LatestDays is each project's newest day with events in dir (YYYY-MM-DD),
 // from the file names alone: a month file counts as its last day, a day
 // file, segment, log or claimed log as its day. A project with none is
@@ -297,20 +309,16 @@ func OldestDays(dir string) (map[int64]string, error) {
 // names (day) that wins over every other (better), a name with no day
 // left out.
 func projectDays(dir string, day func(string) string, better func(day, cur string) bool) (map[int64]string, error) {
-	entries, err := os.ReadDir(dir)
+	pdirs, err := projectDirs(dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return map[int64]string{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("archive: %w", err)
+		return nil, err
 	}
 	out := map[int64]string{}
-	for _, e := range entries {
-		id, err := strconv.ParseInt(e.Name(), 10, 64)
-		if err != nil || !e.IsDir() {
-			continue
-		}
-		names, err := list(filepath.Join(dir, e.Name()))
+	for _, p := range pdirs {
+		names, err := list(p.path)
 		if errors.Is(err, os.ErrNotExist) {
 			continue
 		}
@@ -318,8 +326,8 @@ func projectDays(dir string, day func(string) string, better func(day, cur strin
 			return nil, err
 		}
 		for _, n := range names {
-			if d := day(n); d != "" && better(d, out[id]) {
-				out[id] = d
+			if d := day(n); d != "" && better(d, out[p.id]) {
+				out[p.id] = d
 			}
 		}
 	}

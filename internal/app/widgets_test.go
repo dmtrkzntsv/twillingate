@@ -457,7 +457,7 @@ func TestCheckUserWidgetsTriesEveryProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, d := range ds {
-		if err := f.st.SetDashboardArchived(ctx, d.ID, true, store.AuditEntry{Actor: "test", Action: "dashboard.archive"}); err != nil {
+		if err := f.st.SetDashboardsArchived(ctx, []int64{d.ID}, true, store.AuditEntry{Actor: "test", Action: "dashboard.archive"}); err != nil {
 			t.Fatal(err)
 		}
 	}

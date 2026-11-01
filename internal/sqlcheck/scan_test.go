@@ -128,9 +128,17 @@ func pathDir(p string) string {
 	return "."
 }
 
-// calleeName is the name a call is made by: f(…) or x.f(…).
+// calleeName is the name a call is made by: f(…) or x.f(…), with or
+// without type arguments (f[T](…)).
 func calleeName(c *ast.CallExpr) string {
-	switch f := c.Fun.(type) {
+	fun := c.Fun
+	switch f := fun.(type) {
+	case *ast.IndexExpr:
+		fun = f.X
+	case *ast.IndexListExpr:
+		fun = f.X
+	}
+	switch f := fun.(type) {
 	case *ast.Ident:
 		return f.Name
 	case *ast.SelectorExpr:

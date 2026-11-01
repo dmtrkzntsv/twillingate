@@ -75,15 +75,13 @@ type passStats struct{ dumped, merged, expired, derived, failed int }
 // Projects lists, in ascending order, the ids of the projects with a
 // directory under data/.
 func (a *Archive) Projects() ([]int64, error) {
-	entries, err := os.ReadDir(a.log.Dir())
+	pdirs, err := projectDirs(a.log.Dir())
 	if err != nil {
-		return nil, fmt.Errorf("archive: %w", err)
+		return nil, err
 	}
 	var ids []int64
-	for _, e := range entries {
-		if id, err := strconv.ParseInt(e.Name(), 10, 64); err == nil && e.IsDir() {
-			ids = append(ids, id)
-		}
+	for _, p := range pdirs {
+		ids = append(ids, p.id)
 	}
 	slices.Sort(ids)
 	return ids, nil

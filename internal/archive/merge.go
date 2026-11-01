@@ -1,7 +1,6 @@
 package archive
 
 import (
-	"cmp"
 	"container/heap"
 	"context"
 	"errors"
@@ -154,21 +153,11 @@ func openMerge(inputs []string) (*monthMerge, error) {
 }
 
 func openInput(path string) (*mergeInput, error) {
-	f, err := os.Open(path)
+	f, pf, err := openParquet(path)
 	if err != nil {
-		return nil, fmt.Errorf("archive: %w", err)
-	}
-	st, err := f.Stat()
-	if err != nil {
-		f.Close()
-		return nil, fmt.Errorf("archive: %w", err)
-	}
-	in := &mergeInput{path: path, f: f, size: st.Size(), fam: -1, ts: -1, id: -1}
-	pf, err := in.decode()
-	if err != nil {
-		f.Close()
 		return nil, err
 	}
+	in := &mergeInput{path: path, f: f, size: pf.Size(), fam: -1, ts: -1, id: -1}
 	in.pf, in.rows = pf, pf.NumRows()
 	var start int64
 	for _, rg := range pf.Metadata().RowGroups {
@@ -186,15 +175,6 @@ func openInput(path string) (*mergeInput, error) {
 	return in, nil
 }
 
-func (in *mergeInput) decode() (*parquet.File, error) {
-	pf, err := parquet.OpenFile(in.f, in.size, parquet.SkipPageIndex(true), parquet.SkipBloomFilters(true),
-		parquet.ReadBufferSize(256<<10))
-	if err != nil {
-		return nil, fmt.Errorf("archive: %s: %w", filepath.Base(in.path), err)
-	}
-	return pf, nil
-}
-
 // file is in's footer, decoded again if it was let go, then the most
 // recently used; past maxFooters, the least recently used other footer is
 // let go. What was read through a footer let go stays valid: a vector
@@ -206,7 +186,7 @@ func (in *mergeInput) file() (*parquet.File, error) {
 		fs.open = append(slices.Delete(fs.open, i, i+1), in)
 		return in.pf, nil
 	}
-	pf, err := in.decode()
+	pf, err := decodeParquet(in.f, in.size, in.path)
 	if err != nil {
 		return nil, err
 	}
@@ -231,8 +211,8 @@ func (m *monthMerge) addColumns(in *mergeInput, byName map[string]int) error {
 	name := filepath.Base(in.path)
 	seen := map[string]bool{}
 	for leaf, fl := range in.pf.Schema().Fields() {
-		if !fl.Leaf() || fl.Repeated() {
-			return fmt.Errorf("archive: %s: column %s is not a flat column", name, visible(fl.Name()))
+		if err := checkFlat(name, fl); err != nil {
+			return err
 		}
 		lower := strings.ToLower(fl.Name())
 		if seen[lower] {
@@ -243,9 +223,9 @@ func (m *monthMerge) addColumns(in *mergeInput, byName map[string]int) error {
 		if i := fieldOf(lower); i >= 0 {
 			want, _ = colTypeOf(fields[i].typ)
 		}
-		got, scale, ok := leafType(fl.Type())
-		if !ok || got != want {
-			return fmt.Errorf("archive: %s: column %s is %s, want %s", name, visible(fl.Name()), fl.Type(), typeNames[want])
+		ic, err := leafColumn(name, leaf, fl, want)
+		if err != nil {
+			return err
 		}
 		out, ok := byName[lower]
 		if !ok {
@@ -261,15 +241,66 @@ func (m *monthMerge) addColumns(in *mergeInput, byName map[string]int) error {
 		case "id":
 			in.id = leaf
 		}
-		in.cols = append(in.cols, inColumn{name: fl.Name(), leaf: leaf, out: out, typ: want, scale: scale})
+		ic.out = out
+		in.cols = append(in.cols, ic)
 	}
 	return nil
+}
+
+// openParquet opens path and decodes its footer (decodeParquet).
+func openParquet(path string) (*os.File, *parquet.File, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("archive: %w", err)
+	}
+	st, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, nil, fmt.Errorf("archive: %w", err)
+	}
+	pf, err := decodeParquet(f, st.Size(), path)
+	if err != nil {
+		f.Close()
+		return nil, nil, err
+	}
+	return f, pf, nil
+}
+
+// decodeParquet decodes the footer of f, of size bytes, opened from path,
+// as every reader of the events files does: without the page index and
+// bloom filters, which none of them uses.
+func decodeParquet(f *os.File, size int64, path string) (*parquet.File, error) {
+	pf, err := parquet.OpenFile(f, size, parquet.SkipPageIndex(true), parquet.SkipBloomFilters(true),
+		parquet.ReadBufferSize(256<<10))
+	if err != nil {
+		return nil, fmt.Errorf("archive: %s: %w", filepath.Base(path), err)
+	}
+	return pf, nil
+}
+
+// checkFlat fails on fl, a column of the file named file, unless it is a
+// flat column: every reader here reads leaves only.
+func checkFlat(file string, fl parquet.Field) error {
+	if !fl.Leaf() || fl.Repeated() {
+		return fmt.Errorf("archive: %s: column %s is not a flat column", file, visible(fl.Name()))
+	}
+	return nil
+}
+
+// leafColumn is fl, leaf column leaf of the file named file, read as type
+// want; it fails when fl is of another type.
+func leafColumn(file string, leaf int, fl parquet.Field, want colType) (inColumn, error) {
+	got, scale, ok := leafType(fl.Type())
+	if !ok || got != want {
+		return inColumn{}, fmt.Errorf("archive: %s: column %s is %s, want %s", file, visible(fl.Name()), fl.Type(), typeNames[want])
+	}
+	return inColumn{name: fl.Name(), leaf: leaf, typ: want, scale: scale}, nil
 }
 
 var typeNames = map[colType]string{colVarchar: "VARCHAR", colBigint: "BIGINT", colDouble: "DOUBLE", colDate: "DATE", colTimestamp: "TIMESTAMP"}
 
 // fieldOf is the index in fields of the fixed column named lower, -1 for
-// none.
+// none; in a dump, also its column.
 func fieldOf(lower string) int {
 	for i, f := range fields {
 		if f.name == lower {
@@ -402,15 +433,7 @@ func (in *mergeInput) dropped(row int64) bool { return in.drop[row/64]&(1<<(row%
 // write is pass 2: it merges the inputs into out.
 func (m *monthMerge) write(ctx context.Context, out string) error {
 	fam, day := m.column("family"), m.column("day")
-	w, err := newRowWriter(out, m.cols, eventsCut(fam, day))
-	if err != nil {
-		return err
-	}
-	if err := m.writeRows(ctx, w); err != nil {
-		w.Abort()
-		return err
-	}
-	return w.Close()
+	return writeParquet(out, m.cols, eventsCut(fam, day), func(w *rowWriter) error { return m.writeRows(ctx, w) })
 }
 
 // column is the output column named name (a field, so always there).
@@ -661,10 +684,10 @@ func (c *cursor) fill(buf row, set []int) []int {
 
 // compareKeys orders (family, ts) pairs, NULLs last in each.
 func compareKeys(f1, t1, f2, t2 value) int {
-	if c := nullsLast(f1, f2, func(a, b value) int { return strings.Compare(a.s, b.s) }); c != 0 {
+	if c := cmpNullsLast(f1, f2); c != 0 {
 		return c
 	}
-	return nullsLast(t1, t2, func(a, b value) int { return cmp.Compare(a.n, b.n) })
+	return cmpNullsLast(t1, t2)
 }
 
 // cursorHeap orders the cursors by their row's (family, ts), then by

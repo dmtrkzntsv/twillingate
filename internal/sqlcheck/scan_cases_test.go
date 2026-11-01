@@ -93,6 +93,14 @@ func G(ctx context.Context, h *H) { h.run(ctx, "SELECT ?, ?", 1, 2) }`)
 	}
 }
 
+func TestGenericWrappersAreCalledByName(t *testing.T) {
+	sites := scanOne(t, `func column[T any](ctx context.Context, db *sql.DB, q string, args ...any) { db.QueryContext(ctx, q, args...) }
+func G(ctx context.Context, db *sql.DB) { column[int64](ctx, db, "SELECT id FROM t WHERE a = ? AND b = ?", 1, 2) }`)
+	if len(sites) != 1 || sites[0].key != "a/a.go:G" || !reflect.DeepEqual(sites[0].nargs, []int{2}) {
+		t.Fatalf("got %+v, want one site in G passing 2 arguments", sites)
+	}
+}
+
 func TestResolvePackageVariablesAndStringLoops(t *testing.T) {
 	sites := scanOne(t, `var tables = []string{"a", "b"}
 var counts = []struct{ key, sql string }{{"n", "SELECT COUNT(*) FROM a"}}
