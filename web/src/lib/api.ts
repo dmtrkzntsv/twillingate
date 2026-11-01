@@ -381,6 +381,8 @@ export interface UsageDay {
   views: number
   events: number
   measures: number
+  /** The availability monitor's rows, not the site's traffic: leave them out of its sums. */
+  checks: number
   /** The project's event file bytes as the daily pass measured them that day; null on a day not measured. */
   total_bytes: number | null
 }
@@ -388,7 +390,7 @@ export interface UsageDay {
 export interface ProjectUsage {
   project_id: number
   series: UsageDay[]
-  totals: { views: number; events: number; measures: number }
+  totals: { views: number; events: number; measures: number; checks: number }
   /** When the newest event in the project's files arrived, whatever the range; null with none. */
   last_received_at: string | null
   /** The oldest day the project's event files hold; null with none. */

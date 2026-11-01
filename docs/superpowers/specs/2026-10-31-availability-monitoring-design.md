@@ -24,7 +24,8 @@ must contain.
 - One HTTP availability monitor per origin of a project, sharing one budget of a
   check per fixed interval, set per install, per project.
 - Every check result recorded in the project's event files, in a new `checks`
-  family that the event allowance and traffic counts leave out as a whole.
+  family that the traffic counts leave out as a whole and `usage` reports
+  separately; a hosted plan may count them at a discount.
 - A failure reason from a closed vocabulary on every failed check, so a pie
   chart of reasons is a plain breakdown.
 - A daily HTTPS certificate check per origin and a daily domain expiry check per
@@ -46,8 +47,8 @@ must contain.
 
 - A settings form with more than: on/off per origin, optional text. If it grows
   knobs, it has failed even if it works.
-- Check rows counting toward a customer's event allowance, `usage` or
-  `limits`, or showing up as product events or measures anywhere.
+- Check rows counting in the traffic counts of `usage` or `limits`, or showing up
+  as product events or measures anywhere.
 - The checker becoming a way to make the hosted machine request internal
   addresses (SSRF).
 - Following a redirect to a host outside the project's origins.
@@ -162,7 +163,8 @@ Event and attribute rules (rename, merge, block) do not apply to it (my call).
 | `blocked` | resolves to a private address |
 
 The `checks` family is left out **as a whole** of everything that counts the
-site's own traffic and of any event allowance: `usage` (samples and
+site's own traffic, and reported separately, as `checks` in `usage`, which a hosted
+plan may count at a discount: `usage`'s traffic counts (samples and
 `last_received_at`, which would otherwise keep a silent site looking alive),
 `limits`' `events_30d`, the `measures` and `product_events` tools,
 `list_attributes`, and the console's event-name lists. Disk size per project
@@ -195,7 +197,7 @@ project's slot.
   `checks` row, `cert` or `domain`, value = whole days left (absent when
   unknown), attributes `expires` (YYYY-MM-DD), `origin` on `cert` and `domain` on
   `domain`, and for `cert` `issuer`, `valid` (`"1"`/`"0"`) and `error`. It is a few
-  rows a day, free of quota, and it lets the dashboard read them with a structured
+  rows a day, and it lets the dashboard read them with a structured
   query's `latest` instead of a new widget source over SQLite.
 
 ### Where it shows

@@ -144,7 +144,8 @@ func TestMonitorRefusals(t *testing.T) {
 }
 
 // TestUsageIgnoresChecks: check rows are not the site's traffic: usage's
-// samples and last_received_at and limits' events_30d stay as they were.
+// samples and last_received_at and limits' events_30d stay as they were. They
+// are reported apart, as checks, every row of the table, per day and in total.
 func TestUsageIgnoresChecks(t *testing.T) {
 	h, _ := newTestHost(t)
 	ctx := context.Background()
@@ -165,12 +166,44 @@ func TestUsageIgnoresChecks(t *testing.T) {
 	// A check in a month after the template's last event, and today's: the
 	// newest file now holds nothing but checks.
 	writeHostEvents(t, h, check(time.Date(2026, 10, 3, 9, 0, 0, 0, time.UTC)), check(time.Now().UTC()))
+	// Within the range: an uptime, a certificate and a domain row on one day, an
+	// uptime on another. Project 2 has none.
+	named := func(name string, ts time.Time) store.Event {
+		e := check(ts)
+		e.EventName = name
+		return e
+	}
+	aug21 := time.Date(2026, 8, 21, 9, 0, 0, 0, time.UTC)
+	writeHostEvents(t, h, named("uptime", aug21), named("cert", aug21.Add(time.Hour)), named("domain", aug21.Add(2*time.Hour)),
+		named("uptime", time.Date(2026, 8, 25, 9, 0, 0, 0, time.UTC)))
 	h.events = h.newHostEventCount()
 	after, err := h.usage(ctx, in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	b, a := before.Projects[0], after.Projects[0]
+	if b.Totals.Checks != 0 || a.Totals.Checks != 4 {
+		t.Errorf("checks in total: %d -> %d, want 0 -> 4", b.Totals.Checks, a.Totals.Checks)
+	}
+	for i, d := range a.Series {
+		want := map[string]int64{"2026-08-21": 3, "2026-08-25": 1}[d.Day]
+		if d.Checks != want {
+			t.Errorf("%s: checks %d, want %d", d.Day, d.Checks, want)
+		}
+		traffic := d
+		traffic.Checks = 0
+		if prev := b.Series[i]; traffic.Views != prev.Views || traffic.Events != prev.Events || traffic.Measures != prev.Measures {
+			t.Errorf("%s: traffic changed by checks: %+v -> %+v", d.Day, prev, traffic)
+		}
+	}
+	quiet, err := h.usage(ctx, usageIn{ProjectID: 2, usageRangeIn: in.usageRangeIn})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q := quiet.Projects[0]; q.Totals.Checks != 0 {
+		t.Errorf("a project without monitors: %d checks, want 0", q.Totals.Checks)
+	}
+	a.Totals.Checks = 0 // the traffic counts below, as they were
 	if a.Totals != b.Totals || b.LastReceivedAt == nil || deref(a.LastReceivedAt) != deref(b.LastReceivedAt) {
 		t.Errorf("usage changed by checks: %+v %v -> %+v %v", b.Totals, deref(b.LastReceivedAt), a.Totals, deref(a.LastReceivedAt))
 	}

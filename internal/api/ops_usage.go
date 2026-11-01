@@ -27,6 +27,9 @@ type usageDay struct {
 	Views    int64  `json:"views"`
 	Events   int64  `json:"events"`
 	Measures int64  `json:"measures"`
+	// Checks counts the availability monitor's rows of every kind, which are
+	// not the site's traffic: apart from the three above.
+	Checks int64 `json:"checks"`
 	// TotalBytes is the project's event file bytes as the daily pass
 	// measured them that day; null on a day it did not.
 	TotalBytes *int64 `json:"total_bytes"`
@@ -36,6 +39,7 @@ type usageTotals struct {
 	Views    int64 `json:"views"`
 	Events   int64 `json:"events"`
 	Measures int64 `json:"measures"`
+	Checks   int64 `json:"checks"`
 }
 
 type usageSize struct {
@@ -132,7 +136,7 @@ func (h *host) usage(ctx context.Context, in usageIn) (usageOut, error) {
 		for d := fromD; !toD.Before(d); d = d.AddDays(1) {
 			day := usageDay{Day: d.String()}
 			if c := counts.days[p.ID][day.Day]; c != nil {
-				day.Views, day.Events, day.Measures = c.Views, c.Events, c.Measures
+				day.Views, day.Events, day.Measures, day.Checks = c.Views, c.Events, c.Measures, c.Checks
 			}
 			if n, ok := st.files[p.ID][day.Day]; ok {
 				day.TotalBytes = &n
@@ -140,6 +144,7 @@ func (h *host) usage(ctx context.Context, in usageIn) (usageOut, error) {
 			ps.Totals.Views += day.Views
 			ps.Totals.Events += day.Events
 			ps.Totals.Measures += day.Measures
+			ps.Totals.Checks += day.Checks
 			ps.Series = append(ps.Series, day)
 		}
 		if r, ok := counts.received[p.ID]; ok {
@@ -161,24 +166,26 @@ type fileCounts struct {
 }
 
 // usageChunkDays is the most days one usage breakdown counts: a group per
-// day and family, three families, within the engine's 1,000 groups.
+// day and family within the engine's 1,000 groups, over the events table's three
+// families (views, product, measures). The checks family is on a table of its own
+// and one family, so its breakdown by day fits in the same chunk.
 const usageChunkDays = maxBreakdownLimit / 3
 
-// usageCounts counts the views, product events and measures of every day
-// of the range in the event files of each project, natively, rules
-// applied: a breakdown by day and family per project, one per 333 days of
-// the range. It also reads when each project's newest row arrived
-// (newestRow), for every project when asked, else for the live ones
-// only: an archived project's files only wait for the purge. The
-// projects' queries go in calls (answerAll) of usageProjectsPerCall
-// projects, a project's sharing one scan, read in order: the first error
-// is returned and later calls never run. Each query has a
+// usageCounts counts the views, product events and measures of every day of the
+// range in the event files of each project, natively, rules applied: a breakdown
+// by day and family per project, one per 333 days of the range. Beside each one a
+// breakdown by day of the checks table counts the availability monitor's rows. It
+// also reads when each project's newest row arrived (newestRow), for every project
+// when asked, else for the live ones only: an archived project's files only wait
+// for the purge. The projects' queries go in calls (answerAll) of
+// usageProjectsPerCall projects, a project's sharing one scan, read in order: the
+// first error is returned and later calls never run. Each query has a
 // CONSOLE_QUERY_TIMEOUT of its own (answerEach).
 //
-// Every query reads the events table, which leaves the checks family out
-// (the availability monitor's rows are not the site's traffic), so checks
-// are in neither the counts nor last_received_at, which newestRow finds
-// even when the newest file holds only checks (TestUsageIgnoresChecks).
+// The traffic counts and the newest arrival read the events table, which leaves
+// the checks family out (the monitor's rows are not the site's traffic), so checks
+// are in neither, and newestRow finds the arrival even when the newest file holds
+// only checks (TestUsageIgnoresChecks).
 func (h *host) usageCounts(ctx context.Context, projects []*manage.Project, asked bool, fromD, toD civil.Date) (fileCounts, error) {
 	latest, err := archive.LatestDays(h.eventsDir)
 	if err != nil {
@@ -208,11 +215,11 @@ const usageProjectsPerCall = 4 * native.DefaultMaxScans
 // usageGroup is usageCounts over one group of projects, in one call,
 // into out.
 func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked bool, fromD, toD civil.Date, latest, oldest map[int64]string, out fileCounts) error {
-	// asks is each request's project and whether it reads the newest
-	// arrival (else it is a chunk's breakdown), in the order the answers
-	// are read.
+	// asks is each breakdown's project and whether it counts checks (else the
+	// traffic), in the order the answers are read.
 	type ask struct {
 		project int64
+		checks  bool
 	}
 	var reqs []native.Request
 	var asks []ask
@@ -226,6 +233,10 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 				Metrics: []native.Metric{{Op: "count"}}, Order: "day", Limit: maxBreakdownLimit},
 				Params: native.Params{Project: p.ID, From: lo, To: hi}})
 			asks = append(asks, ask{project: p.ID})
+			reqs = append(reqs, native.Request{Query: native.Query{Kind: "breakdown", Table: "checks", Dimensions: []string{"day"},
+				Metrics: []native.Metric{{Op: "count"}}, Order: "day", Limit: maxBreakdownLimit},
+				Params: native.Params{Project: p.ID, From: lo, To: hi}})
+			asks = append(asks, ask{project: p.ID, checks: true})
 		}
 	}
 	var want []int64
@@ -244,7 +255,7 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 		if a.Err != nil {
 			return a.Err
 		}
-		res, project := a.Result, asks[i].project
+		res, project, checks := a.Result, asks[i].project, asks[i].checks
 		if res.Truncated {
 			return invalidf("usage: too many rows; narrow the date range")
 		}
@@ -254,6 +265,10 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 			if c == nil {
 				c = &usageTotals{}
 				days[row[0]] = c
+			}
+			if checks {
+				c.Checks = cellInt(row[1])
+				continue
 			}
 			n := cellInt(row[2])
 			switch store.Family(row[1]) {
