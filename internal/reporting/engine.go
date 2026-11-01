@@ -147,28 +147,42 @@ func (e *sqlEngine) sampleProjects(ctx context.Context) ([]int64, error) {
 // went stale on every attempt and an engine that failed or could not be
 // reached are a resourceErr: refused all the same, but no verdict on the
 // SQL. A caller
-// that went away keeps its own error. sqlbind.Classify tells the cases
-// apart; api's sqlError is the query tool's own wording of the same.
+// that went away keeps its own error. api's sqlError is the query tool's
+// own wording of the same.
 func (e *sqlEngine) err(ctx context.Context, err error) error {
-	f, msg := sqlbind.Classify(ctx, err, e.timeout)
-	switch f {
-	case sqlbind.FailOther:
-		return err
-	case sqlbind.FailDeadline:
+	resource := func(msg string, cause error) error {
+		return &resourceErr{store.Refuse(store.ErrInvalid, "%s", msg), cause}
+	}
+	var se *sqlengine.Error
+	isKind := func(k sqlengine.Kind) bool { return errors.As(err, &se) && se.Kind == k }
+	switch {
+	case errors.Is(ctx.Err(), context.DeadlineExceeded), errors.Is(err, context.DeadlineExceeded):
 		return timedOut(e.timeout, err)
-	case sqlbind.FailTimeout:
+	case ctx.Err() != nil: // the caller went away: whatever the engine said last
+		return err
+	case isKind(sqlengine.KindTimeout):
 		// A timeout's cause says so (stopsCheck, Migrate's reason), as ctx's.
 		return timedOut(e.timeout, fmt.Errorf("%w: %w", context.DeadlineExceeded, err))
-	case sqlbind.FailRefused:
-		return engineRefused{store.Refuse(store.ErrInvalid, "%s", withHint(msg))}
-	case sqlbind.FailSQL:
-		return store.Refuse(store.ErrInvalid, "%s", withHint(oneLine(msg)))
-	case sqlbind.FailBusy:
-		return &resourceErr{store.Refuse(store.ErrBusy, "%s", msg), err}
-	case sqlbind.FailTooLarge:
-		return store.Refuse(store.ErrInvalid, "%s", msg)
+	case isKind(sqlengine.KindOutOfMemoryLoadingLog):
+		return resource(sqlbind.LogsOutOfMemory, err)
+	case isKind(sqlengine.KindOutOfMemory):
+		return resource(sqlbind.OutOfMemory, err)
+	case isKind(sqlengine.KindRefused):
+		return engineRefused{store.Refuse(store.ErrInvalid, "%s", withHint(se.Message))}
+	case isKind(sqlengine.KindSQL):
+		return store.Refuse(store.ErrInvalid, "%s", withHint(oneLine(se.Message)))
+	case isKind(sqlengine.KindExited):
+		return resource(sqlbind.EngineExited, err)
+	case isKind(sqlengine.KindBusy):
+		return &resourceErr{store.Refuse(store.ErrBusy, "%s", sqlbind.Busy), err}
+	case isKind(sqlengine.KindStale):
+		return resource(sqlbind.Stale, err)
+	case errors.Is(err, sqlengine.ErrTooLarge):
+		return store.Refuse(store.ErrInvalid, "%s", sqlbind.TooLarge)
+	case errors.As(err, &se), errors.Is(err, sqlengine.ErrUnavailable):
+		return resource(sqlbind.EngineFailed, err)
 	}
-	return &resourceErr{store.Refuse(store.ErrInvalid, "%s", msg), err} // the rest: no verdict on the SQL
+	return err
 }
 
 // timedOut is the refusal of a query that ran past CONSOLE_QUERY_TIMEOUT

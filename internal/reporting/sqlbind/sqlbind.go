@@ -1,8 +1,7 @@
 // Package sqlbind is the text side of the SQL a widget or a tool sends to
 // the external SQL engine (SQL_ENGINE_SOCKET), as readsql's is for SQLite:
 // it finds the :name parameters the SQL uses and rewrites them into bound
-// ones, tells the engine's failures apart (Classify) and words the advice
-// that follows them. The
+// ones, and words the advice that follows the engine's failures. The
 // scanner guards the engine's wraps around the query (rows as text, the
 // shape check, a remote table's page), not the files: the engine is what
 // refuses anything but one SELECT, and what keeps it on the tables it is
