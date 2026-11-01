@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"regexp"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -622,5 +623,80 @@ func TestDialKeepsTheContextsDeadline(t *testing.T) {
 	}
 	if !got.Equal(want) {
 		t.Errorf("lookup's deadline %v, want %v", got, want)
+	}
+}
+
+// serverDetails finds an address or a port in a check's error, which customers
+// read: the server's resolver or its own side of a connection must not show.
+var serverDetails = regexp.MustCompile(`\d+\.\d+\.\d+\.\d+|\[?[0-9a-f]*:[0-9a-f:]+\]?|:\d+|\bdial\b|\btcp\b`)
+
+// failingResolver answers every lookup with err, as the system resolver does.
+type failingResolver struct{ err error }
+
+func (f failingResolver) LookupIPAddr(context.Context, string) ([]net.IPAddr, error) {
+	return nil, f.err
+}
+
+// TestCheckErrorsNameNoServerDetails: what a failure says of the network is fixed
+// text. The raw errors name this server's resolver and its side of the connection.
+func TestCheckErrorsNameNoServerDetails(t *testing.T) {
+	notFound := &net.DNSError{Err: "no such host", Name: "x.example", Server: "127.0.0.53:53", IsNotFound: true}
+	servfail := &net.DNSError{Err: "server misbehaving", Name: "x.example", Server: "10.1.2.3:53", IsTemporary: true}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := ln.Addr().String()
+	ln.Close()
+	// A listener that resets every connection once the client has spoken, so the
+	// dial itself has succeeded.
+	drop, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer drop.Close()
+	go func() {
+		for {
+			c, err := drop.Accept()
+			if err != nil {
+				return
+			}
+			if tc, ok := c.(*net.TCPConn); ok {
+				tc.SetLinger(0) // a reset, whose error names both ends
+			}
+			c.Read(make([]byte, 1))
+			c.Close()
+		}
+	}()
+	for _, c := range []struct {
+		name, origin string
+		resolver     resolver
+		reason       string
+		want         string // the availability check's
+		wantCert     string // the certificate read's, of https:// on the same address
+	}{
+		{"name not found", "http://x.example", failingResolver{notFound}, ReasonDNS, "no such host", "no such host"},
+		{"resolver failing", "http://x.example", failingResolver{servfail}, ReasonDNS, "DNS lookup failed", "DNS lookup failed"},
+		{"refused", "http://" + closed, nil, ReasonConnect, "connection refused", "connection refused"},
+		{"dropped", "http://" + drop.Addr().String(), nil, ReasonConnect, "connection failed", "TLS handshake failed"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			g := &guard{resolver: c.resolver, allowLoopback: true}
+			res := Check(context.Background(), newClient(g, nil), c.origin, "", func(string) bool { return true })
+			if res.Reason != c.reason || res.Error != c.want {
+				t.Errorf("check = %q %q, want %q %q", res.Reason, res.Error, c.reason, c.want)
+			}
+			if m := serverDetails.FindString(res.Error); m != "" {
+				t.Errorf("check error %q names %q", res.Error, m)
+			}
+			https := "https://" + strings.TrimPrefix(c.origin, "http://")
+			st := checkCert(context.Background(), g, nil, https, time.Now())
+			if st.Error != c.wantCert {
+				t.Errorf("certificate error = %q, want %q", st.Error, c.wantCert)
+			}
+			if m := serverDetails.FindString(st.Error); m != "" {
+				t.Errorf("certificate error %q names %q", st.Error, m)
+			}
+		})
 	}
 }

@@ -38,7 +38,7 @@ func checkCert(ctx context.Context, g *guard, roots *x509.CertPool, origin strin
 	}
 	raw, err := g.DialContext(ctx, "tcp", net.JoinHostPort(host, port))
 	if err != nil {
-		st.Error = truncate(err.Error())
+		st.Error = truncate(failure(ctx, err).Error)
 		return st
 	}
 	defer raw.Close()
@@ -50,7 +50,11 @@ func checkCert(ctx context.Context, g *guard, roots *x509.CertPool, origin strin
 	// closes right after the handshake.
 	conn := tls.Client(raw, &tls.Config{ServerName: host, InsecureSkipVerify: true, MinVersion: tls.VersionTLS12})
 	if err := conn.HandshakeContext(ctx); err != nil {
-		st.Error = truncate(err.Error())
+		r := failure(ctx, err)
+		if r.Reason == ReasonConnect {
+			r.Error = handshakeFailed
+		}
+		st.Error = truncate(r.Error)
 		return st
 	}
 	certs := conn.ConnectionState().PeerCertificates

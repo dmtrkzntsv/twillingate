@@ -401,6 +401,10 @@ check, twice `MONITOR_TIMEOUT` plus 20 seconds, then exits 1, saying the check i
 still running, or, for a request over 2 minutes old, asking whether the server is
 up. Each request is audited as `monitor.check`.
 
+An `error` about the network is short fixed text, which names nothing of the
+server's own (`no such host`, `DNS lookup failed`, `connection refused`,
+`connection failed`, `TLS handshake failed`, `no complete answer in time`).
+
 `reason` is a closed vocabulary, on every failed `uptime` row:
 
 | `reason` | When |

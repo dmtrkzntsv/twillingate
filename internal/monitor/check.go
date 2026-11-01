@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -115,7 +116,8 @@ func check(ctx context.Context, c *http.Client, origin, contains string, allowed
 	if err != nil {
 		r := failure(ctx, err)
 		if t.tlsFailed.Load() && r.Reason == ReasonConnect {
-			r.Reason = ReasonTLS // a failure in the handshake, whatever its error type
+			// A failure in the handshake, whatever its error type.
+			r.Reason, r.Error = ReasonTLS, handshakeFailed
 		}
 		if resp != nil { // a refused redirect: the response is that redirect
 			r.Status = resp.StatusCode
@@ -151,18 +153,28 @@ func statusText(s int) string {
 	return fmt.Sprint(s)
 }
 
-// failure classifies a request that got no usable response.
+// What a check says of the network, which customers read: fixed text, since the
+// raw errors name this server's side, its resolver and its address on the
+// connection ("lookup x on 127.0.0.53:53", "read tcp 10.0.0.5:4242->...").
+const (
+	noAnswerInTime  = "no complete answer in time"
+	noSuchHost      = "no such host"
+	lookupFailed    = "DNS lookup failed"
+	connRefused     = "connection refused"
+	connFailed      = "connection failed"
+	handshakeFailed = "TLS handshake failed"
+)
+
+// failure classifies a request that got no usable response. Only what describes
+// the site keeps its own words: a refused redirect, a private address, and what
+// TLS says of its certificate and handshake.
 func failure(ctx context.Context, err error) Result {
-	msg := err.Error()
-	var ue *url.Error
-	if errors.As(err, &ue) {
-		msg = ue.Err.Error()
-	}
 	var (
 		be  *blockedError
 		re  *redirectError
 		dns *net.DNSError
 		ne  net.Error
+		ue  *url.Error
 	)
 	switch {
 	case errors.As(err, &be):
@@ -170,15 +182,23 @@ func failure(ctx context.Context, err error) Result {
 	case errors.As(err, &re):
 		return Result{Reason: ReasonRedirect, Error: re.msg}
 	case errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil:
-		return Result{Reason: ReasonTimeout, Error: "no complete answer in time"}
+		return Result{Reason: ReasonTimeout, Error: noAnswerInTime}
 	case errors.As(err, &dns):
-		return Result{Reason: ReasonDNS, Error: dns.Error()}
+		if dns.IsNotFound {
+			return Result{Reason: ReasonDNS, Error: noSuchHost}
+		}
+		return Result{Reason: ReasonDNS, Error: lookupFailed}
 	case isTLS(err):
-		return Result{Reason: ReasonTLS, Error: msg}
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
+		return Result{Reason: ReasonTLS, Error: err.Error()}
 	case errors.As(err, &ne) && ne.Timeout():
-		return Result{Reason: ReasonTimeout, Error: msg}
+		return Result{Reason: ReasonTimeout, Error: noAnswerInTime}
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return Result{Reason: ReasonConnect, Error: connRefused}
 	default:
-		return Result{Reason: ReasonConnect, Error: msg}
+		return Result{Reason: ReasonConnect, Error: connFailed}
 	}
 }
 
