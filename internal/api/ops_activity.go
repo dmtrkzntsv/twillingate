@@ -85,7 +85,8 @@ type activityDays struct {
 // project with event files, from a scan of the newest file's month and at
 // most activityMonthsBack before it (the file names say which month, and
 // the newest file may hold nothing but checks), chunked like usage's and
-// cached for activityTTL. Archived projects are not read, and a project
+// cached for activityTTL (not an answer with a fallback in it, nor a read
+// whose context ended). Archived projects are not read, and a project
 // whose scan fails reads its newest file's day, the failure logged: the
 // endpoint does not fail with it. A project with none in the window is
 // absent.
@@ -118,6 +119,7 @@ func (h *host) lastEventDays(ctx context.Context, live []*manage.Project) (map[i
 		}
 	}
 	days := map[int64]string{}
+	fellBack := false
 	for chunk := range slices.Chunk(ids, usageProjectsPerCall) {
 		ts, failed, _, err := h.newestRow(ctx, chunk, latest, oldest, "ts", nil, newestOpts{maxBack: activityMonthsBack, tolerate: true})
 		if err != nil {
@@ -126,11 +128,19 @@ func (h *host) lastEventDays(ctx context.Context, live []*manage.Project) (map[i
 		for id, t := range ts {
 			days[id] = t[:min(len(t), 10)]
 		}
+		if len(failed) > 0 {
+			if err := ctx.Err(); err != nil {
+				return nil, err // a gone client, not a bad scan
+			}
+			fellBack = true
+		}
 		for id, ferr := range failed {
 			h.logger.Error("project_activity: last_event_day read from the file names, the events cannot be scanned", "project_id", id, "error", ferr)
 			days[id] = latest[id]
 		}
 	}
-	c.days, c.at = days, now()
+	if !fellBack { // a fallback day is not kept: the next read scans again
+		c.days, c.at = days, now()
+	}
 	return days, nil
 }

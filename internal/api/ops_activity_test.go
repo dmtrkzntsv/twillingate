@@ -251,4 +251,34 @@ func TestProjectActivityScansLiveProjectsOnceInTheTTL(t *testing.T) {
 	if !strings.Contains(logs.String(), "level=ERROR") {
 		t.Errorf("failure not logged: %q", logs.String())
 	}
+	// An answer with a fallback in it is not kept: the next read scans.
+	n.fail = 0
+	asked = len(n.asked)
+	if out, err = h.projectActivity(ctx, struct{}{}); err != nil || len(n.asked) == asked || *out.Projects[0].LastEventDay != "2026-08-26" {
+		t.Errorf("read after a fallback: asked %d -> %d, %+v, %v; want a rescan", asked, len(n.asked), out.Projects, err)
+	}
+}
+
+// TestProjectActivityCancelledReadCachesNothing: a read whose context has
+// ended fails without logging per project and leaves the cache empty, so
+// the next read scans.
+func TestProjectActivityCancelledReadCachesNothing(t *testing.T) {
+	h, _ := newTestHost(t)
+	n := &scanNative{Engine: h.native.(*native.Engine)}
+	h.native = n
+	var logs bytes.Buffer
+	h.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	if _, err := h.projectActivity(ctx, struct{}{}); err == nil {
+		t.Fatal("a cancelled read answered")
+	}
+	if logs.Len() != 0 {
+		t.Errorf("cancellation logged: %q", logs.String())
+	}
+	asked := len(n.asked)
+	out, err := h.projectActivity(t.Context(), struct{}{})
+	if err != nil || len(n.asked) == asked || out.Projects[0].LastEventDay == nil || *out.Projects[0].LastEventDay != "2026-08-26" {
+		t.Errorf("read after cancel: asked %d -> %d, %+v, %v; want a scan", asked, len(n.asked), out.Projects, err)
+	}
 }
