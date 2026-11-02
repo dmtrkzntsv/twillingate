@@ -256,7 +256,11 @@ describe('Project', () => {
     const user = userEvent.setup()
     actions.archive.mockResolvedValue(true)
     renderAt('/projects/4/settings')
-    await user.click(await screen.findByRole('button', { name: 'Archive' }))
+    const danger = await screen.findByRole('region', { name: 'Danger' })
+    // The last section of the page, and the only place that offers Archive.
+    expect(danger.parentElement?.lastElementChild).toBe(danger)
+    expect(screen.getAllByRole('button', { name: 'Archive' })).toHaveLength(1)
+    await user.click(within(danger).getByRole('button', { name: 'Archive' }))
     const purge = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }).format(new Date(Date.now() + 30 * 86_400_000))
     expect(screen.getByText(new RegExp(`deleted on ${purge} \\(30 days\\)`))).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: 'Archive project' }))
@@ -268,6 +272,7 @@ describe('Project', () => {
     expect(await screen.findByRole('button', { name: 'Restore' })).toBeInTheDocument()
     expect(screen.getByText('Archived')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Archive' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Danger' })).not.toBeInTheDocument()
   })
 
   it('says so for an unknown project', async () => {

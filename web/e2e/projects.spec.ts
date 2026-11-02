@@ -64,7 +64,7 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await page.getByRole('button', { name: 'Disable key' }).click()
   await expect(keys.getByRole('row', { name: /ios app/ }).getByText('disabled')).toBeVisible()
 
-  await page.getByRole('button', { name: 'Archive', exact: true }).click()
+  await page.getByRole('region', { name: 'Danger' }).getByRole('button', { name: 'Archive', exact: true }).click()
   await page.getByRole('button', { name: 'Archive project' }).click()
   // The badge on the page; a toast says "Archived" too.
   await expect(page.getByRole('main').getByText('Archived', { exact: true })).toBeVisible()
