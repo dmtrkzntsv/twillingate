@@ -334,6 +334,68 @@ describe('MonitoringSection', () => {
     })
   })
 
+  describe('closing the text field', () => {
+    it('Cancel puts the saved text back, closes the field and focuses the saved text', async () => {
+      const user = userEvent.setup()
+      const { onSave } = show(list([on(A, { contains: 'Welcome' })]))
+      const a = await row(A)
+      await user.click(a.getByRole('button', { name: 'must contain "Welcome"' }))
+      await user.type(a.getByLabelText('Page must contain'), ' more')
+      expect(a.getByRole('button', { name: 'Save' })).toBeInTheDocument()
+      await user.click(a.getByRole('button', { name: 'Cancel' }))
+      expect(a.queryByLabelText('Page must contain')).not.toBeInTheDocument()
+      const saved = a.getByRole('button', { name: 'must contain "Welcome"' })
+      expect(saved).toHaveFocus()
+      expect(onSave).not.toHaveBeenCalled()
+      // Opened again, it starts from the saved text.
+      await user.click(saved)
+      expect(a.getByLabelText('Page must contain')).toHaveValue('Welcome')
+    })
+
+    it('with nothing saved, only Cancel shows on an empty field, and it returns focus to the menu button', async () => {
+      const user = userEvent.setup()
+      show(list([on(A)]))
+      const a = await row(A)
+      await openText(user, A)
+      expect(a.getByLabelText('Page must contain')).toHaveFocus()
+      expect(a.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+      await user.type(a.getByLabelText('Page must contain'), 'x')
+      expect(a.getByRole('button', { name: 'Save' })).toBeInTheDocument()
+      await user.clear(a.getByLabelText('Page must contain'))
+      expect(a.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+      await user.click(a.getByRole('button', { name: 'Cancel' }))
+      expect(a.queryByLabelText('Page must contain')).not.toBeInTheDocument()
+      expect(a.getByRole('button', { name: `More for ${A}` })).toHaveFocus()
+    })
+
+    it('Escape in the input does the same as Cancel', async () => {
+      const user = userEvent.setup()
+      show(list([on(A)]))
+      const a = await row(A)
+      await openText(user, A)
+      await user.type(a.getByLabelText('Page must contain'), 'draft')
+      await user.keyboard('{Escape}')
+      expect(a.queryByLabelText('Page must contain')).not.toBeInTheDocument()
+      expect(a.getByRole('button', { name: `More for ${A}` })).toHaveFocus()
+      await openText(user, A)
+      expect(a.getByLabelText('Page must contain')).toHaveValue('')
+    })
+
+    it('an edit undone to the saved text follows the server again', async () => {
+      const user = userEvent.setup()
+      const { read, client } = show(list([on(A, { contains: 'first' })]))
+      const a = await row(A)
+      await user.click(a.getByRole('button', { name: 'must contain "first"' }))
+      const input = a.getByLabelText('Page must contain')
+      await user.type(input, '!')
+      await user.type(input, '{Backspace}')
+      expect(input).toHaveValue('first')
+      read.mockResolvedValue(list([on(A, { contains: 'second' })]))
+      await client.invalidateQueries({ queryKey: ['monitor'] })
+      await waitFor(() => expect(input).toHaveValue('second'))
+    })
+  })
+
   describe('the certificate', () => {
     const certOf = (cert: Partial<Monitor['cert']>) => monitor(A, { enabled: true, cert: { ...monitor(A).cert, checked_at: 'x', ...cert } })
 
@@ -626,6 +688,26 @@ describe('MonitoringSection', () => {
         const none = off.read.mock.calls.length
         await vi.advanceTimersByTimeAsync(61_000)
         expect(off.read.mock.calls.length).toBe(none)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('keeps the age current on an open page when the poll brings nothing new', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        const at = new Date().toISOString()
+        const data = () => list([on(A, { last: result({ up: true, status: 200, ms: 12, checked_at: at }) })])
+        const { read } = show(data())
+        const a = await row(A)
+        expect(await a.findByText('Up, 200, 12 ms, just now')).toBeInTheDocument()
+        const calls = read.mock.calls.length
+        read.mockResolvedValue(data()) // the same JSON: the query keeps its data
+        await vi.advanceTimersByTimeAsync(61_000)
+        expect(read.mock.calls.length).toBe(calls + 1)
+        expect(await a.findByText('Up, 200, 12 ms, 1 min ago')).toBeInTheDocument()
+        await vi.advanceTimersByTimeAsync(120_000)
+        expect(await a.findByText('Up, 200, 12 ms, 3 min ago')).toBeInTheDocument()
       } finally {
         vi.useRealTimers()
       }

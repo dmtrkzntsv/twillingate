@@ -124,15 +124,21 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
   const containsId = useId()
   // The text field, asked for from the menu or the saved text, stays open until saved.
   const [editing, setEditing] = useState(false)
-  // A text not saved yet: a refetch (polling, window focus, another row's save)
-  // must not throw it away.
-  const edited = useRef(false)
+  // The text the server had when the field last followed it: a refetch (polling,
+  // window focus, another row's save) moves the field only while it still shows that.
+  const followed = useRef(m.contains)
+  // Closing the field hands focus back, once it is gone.
+  const closing = useRef(false)
+  const menuRef = useRef<HTMLButtonElement>(null)
+  const savedRef = useRef<HTMLButtonElement>(null)
   // The menu's item opened the field, so closing the menu focuses it.
   const opening = useRef(false)
 
-  // Start from what is saved, again after each save.
+  // Start from what is saved, again after each save; a real edit stays.
   useEffect(() => {
-    if (!edited.current) setContains(m.contains)
+    const was = followed.current
+    followed.current = m.contains
+    setContains((c) => (c === was ? m.contains : c))
   }, [m.contains])
 
   const waiting = pendingCheck(m)
@@ -153,7 +159,8 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
     const text = contains.trim()
     void onSave({ origin: m.origin, contains: text }).then((saved) => {
       if (saved) {
-        edited.current = false
+        // What was saved is what the field follows from here on.
+        followed.current = text
         setEditing(false)
         setContains(text)
       }
@@ -168,6 +175,16 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
   const cert = certificateShort(m, now)
   const inputRef = useRef<HTMLInputElement>(null)
   const showField = editing || contains !== m.contains
+  const cancel = () => {
+    closing.current = true
+    setContains(m.contains)
+    setEditing(false)
+  }
+  useEffect(() => {
+    if (!closing.current || showField) return
+    closing.current = false
+    ;(savedRef.current ?? menuRef.current)?.focus()
+  }, [showField])
   const label = `Check ${m.origin} now`
   const notRun = !checking && !paused && checkNotRun(m)
   const hasNotes = notRun || certProblem || m.redirects >= LONG_CHAIN || (waiting !== null && waiting === gaveUp) || showField
@@ -180,6 +197,7 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
         {m.enabled && m.contains !== '' && !showField && (
           <button
             type="button"
+            ref={savedRef}
             className="w-fit max-w-full text-left text-sm break-words text-muted-foreground underline-offset-2 hover:underline"
             disabled={pending}
             onClick={() => setEditing(true)}
@@ -210,7 +228,7 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
             </Tooltip>
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button type="button" size="icon-sm" variant="ghost" aria-label={`More for ${m.origin}`} disabled={pending}>
+                <Button ref={menuRef} type="button" size="icon-sm" variant="ghost" aria-label={`More for ${m.origin}`} disabled={pending}>
                   <MoreHorizontalIcon />
                 </Button>
               </DropdownMenuTrigger>
@@ -246,13 +264,16 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
                     disabled={pending}
                     maxLength={200}
                     // Mounted by the menu or the saved text, the only time the field is new.
-                    autoFocus={editing && !edited.current}
-                    onChange={(e) => {
-                      edited.current = true
-                      setContains(e.target.value)
+                    autoFocus={editing && contains === m.contains}
+                    onChange={(e) => setContains(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Escape') return
+                      e.preventDefault()
+                      cancel()
                     }}
                   />
                   {textEdited && <Button type="submit" size="sm" disabled={pending}>Save</Button>}
+                  <Button type="button" size="sm" variant="ghost" onClick={cancel}>Cancel</Button>
                 </div>
               </form>
             )}
@@ -283,6 +304,16 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
   const tabs = useQuery(projectTabsQuery(projectId)).data?.tabs
   const [url] = useSearchParams()
   const data = q.data
+  const anyOn = data?.monitors.some((m) => m.enabled) ?? false
+  // Re-render once a minute while a monitor is on: a poll that brings the same
+  // JSON leaves the data as it was, and the ages would freeze.
+  const [now, setNow] = useState(() => new Date())
+  useEffect(() => {
+    if (!anyOn) return
+    setNow(new Date())
+    const timer = setInterval(() => setNow(new Date()), STATUS_POLL_MS)
+    return () => clearInterval(timer)
+  }, [anyOn])
   const giveUp = useCallback((origin: string, requestedAt: string) => setGaveUp((g) => ({ ...g, [origin]: requestedAt })), [])
 
   // A refetch that fails over cached monitors keeps the rows (and any unsaved
@@ -305,7 +336,6 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
       </section>
     )
   }
-  const anyOn = data.monitors.some((m) => m.enabled)
   const availability = tabs?.find((t) => t.owner === 'system' && t.title === 'Availability')
   // A refusal may mean a check this page has not heard of, from another tab
   // or the CLI: read the monitors, so it shows.
@@ -314,7 +344,6 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
       if (!asked) void q.refetch()
     })
   }
-  const now = new Date()
 
   return (
     <section aria-label="Monitoring" className="flex flex-col gap-3 rounded-lg border p-4">
