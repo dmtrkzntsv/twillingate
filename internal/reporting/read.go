@@ -41,9 +41,7 @@ type Dashboards struct {
 	AutoRefreshSeconds int `json:"auto_refresh_seconds,omitempty"`
 	// ConsoleURL is CONSOLE_URL, where /mcp is. Empty (omitted) when it is
 	// not set: the address of the page reading this is then the best there is.
-	ConsoleURL string     `json:"console_url,omitempty"`
-	Dev        bool       `json:"dev,omitempty"`    // set by reporting dev
-	Errors     []DevError `json:"errors,omitempty"` // reporting dev only: directories that failed to load
+	ConsoleURL string `json:"console_url,omitempty"`
 }
 
 // WidgetInfo is one widget as the API returns it. Component is nil when
@@ -200,17 +198,10 @@ func (s *Service) Dashboard(ctx context.Context, id int64) (DashboardDetail, err
 	if err != nil {
 		return DashboardDetail{}, err
 	}
-	return s.detail(d, ds, ws), nil
-}
-
-// detail is d's DashboardDetail from every dashboard (all, for its
-// group's tabs) and its widgets (ws, archived ones skipped). It reads no
-// store: reporting dev answers from rows it builds out of files.
-func (s *Service) detail(d store.Dashboard, all []store.Dashboard, ws []store.Widget) DashboardDetail {
 	out := DashboardDetail{DashboardInfo: dashboardInfo(d), Tabs: []Tab{}, Widgets: []WidgetInfo{}}
 	// An archived dashboard is not a tab, but its detail still shows the
 	// tabs of the group it belongs to.
-	for _, x := range groupOf(all, d) {
+	for _, x := range groupOf(ds, d) {
 		if x.ArchivedAt == "" {
 			out.Tabs = append(out.Tabs, Tab{ID: x.ID, Title: x.Title})
 		}
@@ -224,7 +215,7 @@ func (s *Service) detail(d store.Dashboard, all []store.Dashboard, ws []store.Wi
 		out.FollowsRange = out.FollowsRange || info.FollowsRange
 		out.Widgets = append(out.Widgets, info)
 	}
-	return out
+	return out, nil
 }
 
 // Widgets lists widgets, archived ones included, each with its dashboard

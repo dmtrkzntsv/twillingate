@@ -33,7 +33,9 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://127.0.0.1:3100',
+      // A running `twillingate serve` on its default address; the app asks
+      // for CONSOLE_AUTH_DSN's token, as it does for a real console.
+      '/api': 'http://127.0.0.1:8080',
     },
   },
   test: {

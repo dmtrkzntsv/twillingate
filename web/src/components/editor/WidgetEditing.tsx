@@ -39,8 +39,7 @@ interface Props {
   defaults: EditorDefaults
   /**
    * Every dashboard, for "Copy to dashboard…" on each card; absent where
-   * the page writes nothing (reporting dev, a page being left, an archived
-   * dashboard).
+   * the page writes nothing (a page being left, an archived dashboard).
    */
   copyTo?: DashboardInfo[]
   children: ReactNode
@@ -55,7 +54,7 @@ const WidgetEditor = lazy(() => import('./WidgetEditor'))
  * Makes a user dashboard's widgets editable from the page (spec D8): the
  * header's Add widget, the empty state's, and each card's Edit…, Rename,
  * Duplicate and Archive read this; outside it, or while it is not enabled
- * (a system dashboard, reporting dev, a page being left), they are not
+ * (a system dashboard, a page being left), they are not
  * shown. The editor loads on first open and saves to the dashboard it was
  * opened on. Given `copyTo`, each card also offers "Copy to dashboard…",
  * on a built-in dashboard too, whose copy stays on this page.

@@ -306,7 +306,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		}
 	}
 	if c.EventsDir = e.str("DATA_DIR", ""); c.EventsDir == "" {
-		c.EventsDir = DefaultEventsDir(filepath.Dir(strings.TrimPrefix(c.Database, "sqlite://")))
+		c.EventsDir = filepath.Join(filepath.Dir(strings.TrimPrefix(c.Database, "sqlite://")), "data")
 	}
 	if abs, err := filepath.Abs(c.EventsDir); err == nil {
 		c.EventsDir = abs
@@ -636,12 +636,6 @@ func (c *Config) ValidateConsole() error {
 		return fmt.Errorf("config: -console requires CONSOLE_AUTH_DSN (token://<token> or oauth://<issuer-host>)")
 	}
 	return m.authErr
-}
-
-// DefaultEventsDir is where the event files live when DATA_DIR is unset:
-// data/ in dbDir, the database's directory.
-func DefaultEventsDir(dbDir string) string {
-	return filepath.Join(dbDir, "data")
 }
 
 // IgnoredWarning is the start's one warning about the retired settings the

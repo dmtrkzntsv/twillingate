@@ -40,8 +40,7 @@ export default function Projects() {
   const { data: statsData } = statsQ
   const { data: keysData } = keysQ
   const { data: limitsData } = useQuery(limitsQuery)
-  // Reporting dev serves no forms: the cards ask for no activity there.
-  const { data: activityData } = useQuery({ ...projectActivityQuery, enabled: dash !== undefined && !dash.dev })
+  const { data: activityData } = useQuery(projectActivityQuery)
   const { create, move, pending } = useProjectActions()
   const [creating, setCreating] = useState(false)
   const [created, setCreated] = useState<CreatedProject | null>(null)
@@ -50,7 +49,6 @@ export default function Projects() {
   const months = eventsByMonth(monthsData?.projects ?? [])
   const active = projects.filter((p) => !p.archived)
   const activeIds = active.map((p) => p.project_id)
-  const readOnly = dash?.dev === true
   const { order, busy, context } = useReorder(
     activeIds,
     (id, to) => move(id, afterAt(activeIds, id, to)),
@@ -70,7 +68,7 @@ export default function Projects() {
   }
 
   return (
-    <AppShell dashboards={dash?.dashboards ?? []} currentId={0} readOnly={dash?.dev === true}>
+    <AppShell dashboards={dash?.dashboards ?? []} currentId={0}>
       <TopBar>
         <Crumbs items={[{ label: 'Projects' }]} />
       </TopBar>
@@ -112,14 +110,13 @@ export default function Projects() {
           <LoadError what={statsFailed ? 'usage' : 'keys'} error={(statsFailed ? statsQ.error : keysQ.error)!} onRetry={retryUsage} />
         )}
         {projectsData && active.length === 0 && !dashPending && (
-          // Reporting dev has no MCP to connect to.
-          readOnly ? <p className="text-sm text-muted-foreground">No projects yet.</p> : <ConnectAgentGuide consoleURL={dash?.console_url} />
+          <ConnectAgentGuide consoleURL={dash?.console_url} />
         )}
         <DndContext collisionDetection={closestCenter} {...context}>
           <SortableContext items={order} strategy={rectSortingStrategy}>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {order.map((id) => byId.get(id)).filter((p) => p !== undefined).map((p) => (
-                <SortableProjectCard key={p.project_id} id={p.project_id} movable={!readOnly} disabled={busy}>
+                <SortableProjectCard key={p.project_id} id={p.project_id} disabled={busy}>
                   <ProjectCard project={p} stats={statsOf(p.project_id)} keys={keysOf(p.project_id)} statsFailed={statsFailed} activity={activityOf(p.project_id)} />
                 </SortableProjectCard>
               ))}

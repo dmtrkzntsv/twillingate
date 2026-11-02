@@ -88,22 +88,20 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
   // the range shown, else the default 7 days, as on the dashboard page.
   const shareRange = range ?? resolve('7d', list.timezone, new Date())
   const rangeShown = sel.range !== undefined
-  const writable = !list.dev
   const share = useMemo<ShareContext>(
     () => ({
       project: { id: projectId, name: project.name },
       from: shareRange.from,
       to: shareRange.to,
       rangeShown,
-      writable,
     }),
-    [projectId, project.name, shareRange.from, shareRange.to, rangeShown, writable]
+    [projectId, project.name, shareRange.from, shareRange.to, rangeShown]
   )
 
   // The user's own dashboard is arranged and edited here as on its own
   // page; a project page shows only live dashboards.
   const widgetActions = useWidgetActions()
-  const arrange = writable && dashboard.owner === 'user' ? widgetActions : undefined
+  const arrange = dashboard.owner === 'user' ? widgetActions : undefined
 
   const showGrid = dashboard.widgets.length > 0
   const freshness = useFreshness(dashboard.widgets, paramsFor, showGrid)
@@ -114,7 +112,7 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
       dashboardId={dashboard.dashboard_id}
       enabled={arrange !== undefined}
       defaults={{ projectId, range: { range: sel.range ?? '7d', from: shareRange.from, to: shareRange.to }, timezone: list.timezone }}
-      copyTo={writable ? list.dashboards : undefined}
+      copyTo={list.dashboards}
     >
       <DashboardHeader
         title={dashboard.title}
@@ -130,7 +128,7 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
             actions={actions}
             search={rangeParams(url).toString()}
             autoRefresh={autoRefresh}
-            renamable={writable && dashboard.owner === 'user'}
+            renamable={dashboard.owner === 'user'}
           />
         }
       >

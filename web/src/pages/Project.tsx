@@ -1,11 +1,10 @@
 import { Fragment, useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { LayoutGridIcon } from 'lucide-react'
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
 import NotFound from '@/components/NotFound'
-import { GridSkeleton, Notice, PageError } from '@/components/PageStates'
+import { GridSkeleton, PageError } from '@/components/PageStates'
 import ProjectDashboardTab from '@/components/projects/ProjectDashboardTab'
 import ProjectName from '@/components/projects/ProjectName'
 import ProjectTabBar from '@/components/projects/ProjectTabBar'
@@ -49,13 +48,10 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
   const id = Number(param)
   const valid = Number.isInteger(id) && id > 0
   const dashId = landing ? LANDING : tab === 'forms' ? FORMS_ID : params.dashId === undefined ? SETTINGS_ID : Number(params.dashId)
-  const { data: dash, error: dashError } = useQuery(dashboardsQuery)
+  const { data: dash } = useQuery(dashboardsQuery)
   const { data: projectsData, isLoading } = useQuery(projectsQuery)
-  // Reporting dev serves no project tabs and takes no writes: the page asks
-  // for none once the list says it is dev, and shows Settings alone.
-  const dev = dash?.dev === true
-  const tabsQ = useQuery({ ...projectTabsQuery(id), enabled: valid && dash !== undefined && !dev })
-  const activity = useQuery({ ...projectActivityQuery, enabled: valid && dash !== undefined && !dev })
+  const tabsQ = useQuery({ ...projectTabsQuery(id), enabled: valid })
+  const activity = useQuery({ ...projectActivityQuery, enabled: valid })
   const mine = activity.data?.projects.find((p) => p.project_id === id)
   const actions = useProjectActions()
   const tabActions = useProjectTabActions()
@@ -68,12 +64,10 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
   // Each visit fetches the tabs afresh, even with this page already mounted:
   // a tab removed elsewhere since the cache was filled would otherwise land
   // on the "isn't a tab" notice.
-  const listed = dash !== undefined
   useEffect(() => {
     if (!landing) return
     const toSettings = () => navigate(`settings${search}`, { replace: true })
-    if (!valid || dev || dashError) return void toSettings()
-    if (!listed) return
+    if (!valid) return void toSettings()
     let live = true
     const range = rangeParams(new URLSearchParams(search)).toString()
     client.fetchQuery({ ...projectTabsQuery(id), staleTime: 0 }).then(
@@ -83,10 +77,10 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
     return () => {
       live = false
     }
-  }, [landing, visit, valid, dev, dashError, listed, id, search, client, navigate])
+  }, [landing, visit, valid, id, search, client, navigate])
 
   return (
-    <AppShell dashboards={dash?.dashboards ?? []} currentId={0} readOnly={dev}>
+    <AppShell dashboards={dash?.dashboards ?? []} currentId={0}>
       <TopBar>
         <Crumbs items={[{ label: 'Projects', to: '/projects' }, { label: project?.name ?? String(param) }]} />
       </TopBar>
@@ -132,7 +126,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
                 newSubmissions={mine?.new_submissions ?? 0}
                 draftForms={mine?.draft_forms ?? 0}
                 // A tab write while landing would cancel its fresh fetch.
-                readOnly={dev || landing}
+                readOnly={landing}
               />
             </div>
             {mine && mine.last_event_day === null && dashId !== SETTINGS_ID && dashId !== FORMS_ID && dashId !== LANDING && (
@@ -147,10 +141,6 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
               <GridSkeleton />
             ) : dashId === SETTINGS_ID ? (
               <SetupTab project={project} dash={dash} actions={actions} />
-            ) : dev ? (
-              <Notice icon={<LayoutGridIcon />} title="No project tabs in reporting dev">
-                Reporting dev serves the dashboards alone: open one from the sidebar.
-              </Notice>
             ) : dashId === FORMS_ID ? (
               params.name === undefined ? (
                 <FormsTab project={project} />

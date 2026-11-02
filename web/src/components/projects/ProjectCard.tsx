@@ -19,7 +19,7 @@ interface Props {
   keys?: IngestKey[]
   /** The stats read failed (the page says why): no skeleton, which would never resolve. */
   statsFailed?: boolean
-  /** Undefined while activity loads, and in reporting dev. */
+  /** Undefined while activity loads. */
   activity?: ProjectActivity
 }
 

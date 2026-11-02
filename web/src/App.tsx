@@ -12,7 +12,6 @@ import Dashboard from '@/pages/Dashboard'
 import ComponentsGallery from '@/pages/gallery/ComponentsGallery'
 import DashboardsGallery from '@/pages/gallery/DashboardsGallery'
 import Home from '@/pages/Home'
-import Landing from '@/pages/Landing'
 import Login from '@/pages/Login'
 import NoSuchPage from '@/pages/NoSuchPage'
 import Project from '@/pages/Project'
@@ -54,11 +53,7 @@ function App() {
         <Routes>
           <Route
             path="/"
-            element={
-              <OnlineOnly>
-                <Landing />
-              </OnlineOnly>
-            }
+            element={<Navigate to="/projects" replace />}
           />
           <Route
             path="/dashboards"

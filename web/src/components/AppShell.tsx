@@ -9,8 +9,6 @@ import AppSidebar from './AppSidebar'
 interface Props {
   dashboards: DashboardInfo[]
   currentId: number
-  /** Reporting dev: no menus and no dragging in the sidebar, since it takes no writes. */
-  readOnly?: boolean
   children: ReactNode
 }
 
@@ -21,7 +19,7 @@ const WIDE = '(min-width: 1024px)'
  * footer with the running version. The sidebar is open on wide screens and
  * collapsed to icons below 1024px (it stays togglable either way).
  */
-export default function AppShell({ dashboards, currentId, readOnly = false, children }: Props) {
+export default function AppShell({ dashboards, currentId, children }: Props) {
   const wide = useMediaQuery(WIDE)
   const [open, setOpen] = useState(wide)
   const [wasWide, setWasWide] = useState(wide)
@@ -33,10 +31,10 @@ export default function AppShell({ dashboards, currentId, readOnly = false, chil
 
   return (
     <SidebarProvider open={open} onOpenChange={setOpen}>
-      <AppSidebar dashboards={dashboards} currentId={currentId} readOnly={readOnly} />
+      <AppSidebar dashboards={dashboards} currentId={currentId} />
       <SidebarInset className="sky-wash min-w-0">
         {children}
-        <Footer apiDocs={!readOnly} />
+        <Footer />
       </SidebarInset>
     </SidebarProvider>
   )
@@ -56,18 +54,13 @@ export function TopBar({ children }: { children?: ReactNode }) {
 /**
  * The running version, linked to the REST API's reference (/api/docs, a
  * page of its own outside the app), and a link to the project's site.
- * Reporting dev serves no API reference, so there the version is plain text.
  */
-function Footer({ apiDocs }: { apiDocs: boolean }) {
+function Footer() {
   return (
     <footer className="mt-auto flex flex-wrap items-center justify-center gap-x-2 px-3 py-4 text-xs text-muted-foreground">
-      {apiDocs ? (
-        <a href="/api/docs" target="_blank" rel="noopener" title="API reference" className={`break-all ${link}`}>
-          {appVersion()}
-        </a>
-      ) : (
-        <span className="break-all">{appVersion()}</span>
-      )}
+      <a href="/api/docs" target="_blank" rel="noopener" title="API reference" className={`break-all ${link}`}>
+        {appVersion()}
+      </a>
       <span aria-hidden>·</span>
       <a href="https://twillingate.dev" target="_blank" rel="noopener" className={link}>
         twillingate.dev

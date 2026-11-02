@@ -31,11 +31,6 @@ afterEach(() => {
 })
 
 describe('AppSidebar log out', () => {
-  it('is hidden in open mode, with no credential to forget', () => {
-    renderSidebar()
-    expect(screen.queryByRole('button', { name: 'Log out' })).not.toBeInTheDocument()
-  })
-
   it('forgets the credentials and goes to the login page', async () => {
     localStorage.setItem('twillingate.token', 'pasted')
     localStorage.setItem('twillingate.last_dashboard', '3')
@@ -342,17 +337,6 @@ describe('Projects group', () => {
     expect(projects.compareDocumentPosition(views) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('is absent in dev mode, which serves none of the console routes', async () => {
-    renderWithProviders(
-      <MemoryRouter>
-        <SidebarProvider>
-          <AppSidebar dashboards={[]} currentId={0} readOnly />
-        </SidebarProvider>
-      </MemoryRouter>
-    )
-    expect(await screen.findByRole('link', { name: 'Archive' })).toBeInTheDocument()
-    expect(screen.queryByRole('link', { name: 'Projects' })).not.toBeInTheDocument()
-  })
 })
 
 describe('Shares link', () => {
@@ -372,16 +356,6 @@ describe('Shares link', () => {
     expect(shares.compareDocumentPosition(within(footer).getByRole('link', { name: 'Archive' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('is absent in dev mode, as Projects is', () => {
-    renderWithProviders(
-      <MemoryRouter>
-        <SidebarProvider>
-          <AppSidebar dashboards={[]} currentId={0} readOnly />
-        </SidebarProvider>
-      </MemoryRouter>
-    )
-    expect(screen.queryByRole('link', { name: 'Shares' })).not.toBeInTheDocument()
-  })
 })
 
 describe('Dashboards group', () => {
@@ -440,10 +414,4 @@ describe('AppSidebar footer', () => {
     }
   })
 
-  it('keeps Archive without a login to forget', () => {
-    renderSidebar()
-    const footer = document.querySelector('[data-sidebar="footer"]') as HTMLElement
-    expect(within(footer).getByRole('link', { name: 'Archive' })).toBeInTheDocument()
-    expect(within(footer).queryByRole('button', { name: 'Log out' })).toBeNull()
-  })
 })

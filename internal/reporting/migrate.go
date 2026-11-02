@@ -25,7 +25,6 @@ import (
 	"fmt"
 	"hash"
 	"io/fs"
-	"sort"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/sortkey"
@@ -273,12 +272,13 @@ func writeFramed(h hash.Hash, b []byte) {
 	h.Write(b)
 }
 
-// hashSystem hashes every file path and content under system (sorted by
-// path) plus manifest, each length-framed (writeFramed) so no path/content
-// split can collide with a different one, hex-encoded: the same bytes on
-// two runs mean nothing to sync.
+// hashSystem hashes every file path and content under system (in
+// fs.WalkDir's order, the same on every run) plus manifest, each
+// length-framed (writeFramed) so no path/content split can collide with a
+// different one, hex-encoded: the same bytes on two runs mean nothing to
+// sync.
 func hashSystem(system fs.FS, manifest []byte) (string, error) {
-	var files []hashedFile
+	h := sha256.New()
 	err := fs.WalkDir(system, ".", func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -290,32 +290,13 @@ func hashSystem(system fs.FS, manifest []byte) (string, error) {
 		if err != nil {
 			return err
 		}
-		files = append(files, hashedFile{p, b})
+		writeFramed(h, []byte(p))
+		writeFramed(h, b)
 		return nil
 	})
 	if err != nil {
 		return "", fmt.Errorf("reporting: hash system: %w", err)
 	}
-	return hashFiles(files, manifest), nil
-}
-
-// hashedFile is one file hashSystem or hashDirs read: its path and bytes.
-type hashedFile struct {
-	path    string
-	content []byte
-}
-
-// hashFiles hashes files sorted by path, each path and content framed,
-// then each of extra framed, hex-encoded.
-func hashFiles(files []hashedFile, extra ...[]byte) string {
-	sort.Slice(files, func(i, j int) bool { return files[i].path < files[j].path })
-	h := sha256.New()
-	for _, f := range files {
-		writeFramed(h, []byte(f.path))
-		writeFramed(h, f.content)
-	}
-	for _, b := range extra {
-		writeFramed(h, b)
-	}
-	return hex.EncodeToString(h.Sum(nil))
+	writeFramed(h, manifest)
+	return hex.EncodeToString(h.Sum(nil)), nil
 }

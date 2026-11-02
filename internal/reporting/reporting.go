@@ -151,8 +151,8 @@ func New(st Store, sql SQL, opt Options) *Service {
 
 // newService is the part of a Service that loads and checks widgets: its
 // store, engine, guards and source types; sampleRows as newSources takes
-// it. New adds the cache and the shares; Migrate, CheckUserWidgets and
-// reporting dev use it as it is.
+// it. New adds the cache and the shares; Migrate and CheckUserWidgets use
+// it as it is.
 func newService(st Store, sql SQL, sampleRows bool, opt Options) *Service {
 	now := opt.Now
 	if now == nil {

@@ -88,7 +88,7 @@ export function onUnauthorized(handler: () => void): void {
   unauthorized = handler
 }
 
-/** The current Authorization header value, if any (open mode has none). */
+/** The current Authorization header value, if any. */
 export function getAuthHeader(): string | undefined {
   const token = accessToken ?? localStorage.getItem(PASTED_TOKEN_KEY)
   return token ? `Bearer ${token}` : undefined
@@ -150,17 +150,14 @@ function hostOf(url: string): string {
 }
 
 /**
- * Which login path the client should take (D41): "open" needs no
- * credentials at all (reporting dev), "paste" is a bare bearer token typed
- * in, "login" is the full PKCE flow against a discovered authorization
+ * Which login path the client should take (D41): "paste" is a bare bearer
+ * token typed in, "login" is the full PKCE flow against a discovered authorization
  * server. When it falls back to "paste" because the server has no
  * registration endpoint, `authProviderHint()` names the server so the UI
  * can say why.
  */
-export async function detectAuth(): Promise<'open' | 'login' | 'paste'> {
+export async function detectAuth(): Promise<'login' | 'paste'> {
   providerHint = undefined
-  const open = await fetch('/api/dashboards')
-  if (open.ok) return 'open'
   const found = await discover()
   if (!found) return 'paste'
   if (!found.meta.registration_endpoint) {
@@ -386,7 +383,7 @@ let refreshInFlight: Promise<boolean> | null = null
 /**
  * Redeems the stored refresh token for a new access token. Used by `api()`
  * after a 401 (at most once per failure, shared across concurrent callers);
- * returns false with nothing to refresh (open or paste mode) or on failure.
+ * returns false with nothing to refresh (paste mode) or on failure.
  */
 export function refreshAccess(): Promise<boolean> {
   if (!refreshInFlight) {

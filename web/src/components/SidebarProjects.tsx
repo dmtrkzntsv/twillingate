@@ -21,7 +21,7 @@ import type { Project } from '@/lib/api'
 import { afterAt } from '@/lib/arrange'
 import { formsNeedAttention } from '@/lib/forms'
 import { rangeParams } from '@/lib/project-tabs'
-import { dashboardsQuery, projectActivityQuery, projectsQuery } from '@/lib/queries'
+import { projectActivityQuery, projectsQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 
 /** Whether the project list under "Projects" is open; absent means open. */
@@ -51,9 +51,7 @@ export default function SidebarProjects({ onNavigate, iconOnly, className }: Pro
   const [listStored, setListStored] = useStoredState(LIST_KEY, (v) => (typeof v === 'boolean' ? v : null))
   const listOpen = listStored ?? true
   const onProject = pathname.startsWith('/projects/')
-  // Reporting dev serves no forms; the sidebar may mount before the list says it is dev.
-  const { data: dash } = useQuery(dashboardsQuery)
-  const { data: activity } = useQuery({ ...projectActivityQuery, enabled: dash !== undefined && !dash.dev })
+  const { data: activity } = useQuery(projectActivityQuery)
   const marked = new Set((activity?.projects ?? []).filter(formsNeedAttention).map((a) => a.project_id))
   const dot = (!listOpen || iconOnly) && marked.size > 0
 

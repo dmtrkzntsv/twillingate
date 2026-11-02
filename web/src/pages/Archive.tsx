@@ -131,36 +131,32 @@ function ArchivedRow({ thumb, name, under, status, onRestore, disabled }: RowPro
  * tabs, the live ones too, so it reads as the dashboard it is in the
  * sidebar. Each archived tab restores on its own, and "Restore all"
  * brings back every archived tab at once. Its buttons wait while one
- * action runs; reporting dev, which takes no writes, shows none.
+ * action runs.
  *
  * Below the dashboards, an Archived widgets section lists the widgets
  * archived out of the user's live dashboards, grouped under each one with
- * Restore. It is left out when there are none, and in reporting dev, which
- * takes no writes.
+ * Restore. It is left out when there are none.
  *
  * Then a Projects section lists the archived projects, in list order, each
- * linking to its page with its purge date and Restore. It is left out when there are none, and
- * in reporting dev, which takes no writes.
+ * linking to its page with its purge date and Restore. It is left out when there are none.
  *
  * Then a Shares section lists the archived widget shares,
  * most recently archived first, each restorable with a new archive date
- * (D9). It is left out when there are none, and in reporting dev, which has
- * no shares.
+ * (D9). It is left out when there are none.
  *
  * Last, a Forms section lists each live project's archived forms with
  * Restore (forms D11, D12); an archived project hides its forms, so its
- * own are not asked for. Reporting dev serves no forms.
+ * own are not asked for.
  */
 export default function Archive() {
   const { data } = useQuery(dashboardsQuery)
   const dashboards = data?.dashboards ?? []
-  const writable = data?.dev !== true
   const purgeDays = data?.purge_after_days
   const { restore, pending } = useDashboardActions()
   const groups = archivedGroups(dashboards)
-  const sharesQ = useQuery({ ...widgetSharesQuery({ state: 'archived' }), enabled: data !== undefined && writable })
+  const sharesQ = useQuery(widgetSharesQuery({ state: 'archived' }))
   const shares = sharesQ.data?.shares ?? []
-  const widgetsQ = useQuery({ ...archivedWidgetsQuery, enabled: data !== undefined && writable })
+  const widgetsQ = useQuery(archivedWidgetsQuery)
   const widgetGroups = archivedWidgetGroups(widgetsQ.data?.widgets ?? [])
   const widgetEdits = useWidgetEdits()
   // The widgets whose restore is out: their Restore waits, so a double click restores once.
@@ -178,12 +174,11 @@ export default function Archive() {
     }
   }
   const [restoring, setRestoring] = useState<WidgetShare>()
-  const projectsQ = useQuery({ ...projectsQuery, enabled: data !== undefined && writable })
+  const projectsQ = useQuery(projectsQuery)
   const live: Project[] = (projectsQ.data?.projects ?? []).filter((p) => !p.archived)
-  // The sidebar reads the projects in reporting dev too, so the cache can hold them there.
-  const archivedProjects: Project[] = writable ? (projectsQ.data?.projects ?? []).filter((p) => p.archived) : []
+  const archivedProjects: Project[] = (projectsQ.data?.projects ?? []).filter((p) => p.archived)
   const projectActions = useProjectActions()
-  const formsQs = useQueries({ queries: live.map((p) => ({ ...formsQuery(p.project_id, true), enabled: writable })) })
+  const formsQs = useQueries({ queries: live.map((p) => formsQuery(p.project_id, true)) })
   const archivedForms: { project: Project; form: Form }[] = live.flatMap((p, i) =>
     (formsQs[i]?.data?.forms ?? []).map((form) => ({ project: p, form }))
   )
@@ -197,12 +192,11 @@ export default function Archive() {
     return purged ? `archived · deleted on ${formatPurgeDate(purged)}` : 'archived'
   }
 
-  const restoreButton = (label: string, onClick: () => void) =>
-    writable && (
-      <Button variant="outline" size="sm" disabled={pending} onClick={onClick}>
-        {label}
-      </Button>
-    )
+  const restoreButton = (label: string, onClick: () => void) => (
+    <Button variant="outline" size="sm" disabled={pending} onClick={onClick}>
+      {label}
+    </Button>
+  )
 
   const renderGroup = (g: Group) => {
     const archived = g.members.filter((m) => m.archived_at)
@@ -240,7 +234,7 @@ export default function Archive() {
   }
 
   return (
-    <AppShell dashboards={dashboards} currentId={0} readOnly={data?.dev === true}>
+    <AppShell dashboards={dashboards} currentId={0}>
       <TopBar>
         <Crumbs items={[{ label: 'Archive' }]} />
       </TopBar>
@@ -320,7 +314,7 @@ export default function Archive() {
                 }
                 under={s.project_name}
                 status={archivedStatus(s.archived_at)}
-                onRestore={writable ? () => setRestoring(s) : undefined}
+                onRestore={() => setRestoring(s)}
               />
             ))}
           </ArchiveSection>
