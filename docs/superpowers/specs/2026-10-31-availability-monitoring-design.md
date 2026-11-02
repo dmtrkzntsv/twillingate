@@ -168,8 +168,8 @@ plan may count at a discount: `usage`'s traffic counts (samples and
 `last_received_at`, which would otherwise keep a silent site looking alive),
 `limits`' `events_30d`, the `measures` and `product_events` tools,
 `list_attributes`, and the console's event-name lists. Disk size per project
-includes them; that is fine (at 30 s, about 86,400 small rows a month per
-project however many monitors it has; 21,600 at 120 s).
+includes them; that is fine (every monitor is checked every interval: at
+30 s, about 86,400 small rows a month per monitor; 21,600 at 120 s).
 
 ### Daily certificate and domain checks
 

@@ -1,7 +1,7 @@
 Empty cards here mean monitoring is not set up for this project, or it has not
 run yet: set it up in Settings → Monitoring.
 
-twillingate fetches each monitored site on a schedule, one site at a time, and
+twillingate fetches each monitored site on a schedule and
 records whether it answered, how long it took, and why it failed when it did
 not. Once a day it also reads each site's TLS certificate and the registration
 of each main domain, which subdomains share. Uptime is the share of checks that

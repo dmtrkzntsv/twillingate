@@ -350,8 +350,8 @@ project's event files, read with structured queries (`table: "checks"`, see
 `events_30d`, `events` and everything that counts the site's own traffic: `usage`
 reports them as `checks`, apart from the traffic counts, every row of the table.
 They still take disk, about
-21,600 small `uptime` rows a month per project at the default interval, however
-many monitors it has.
+21,600 small `uptime` rows a month per monitor at the default interval (every
+monitor is checked every interval).
 
 | Row | Written | `value` | Attributes |
 | --- | --- | --- | --- |
