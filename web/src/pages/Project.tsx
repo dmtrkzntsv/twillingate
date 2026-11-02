@@ -48,7 +48,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
   const id = Number(param)
   const valid = Number.isInteger(id) && id > 0
   const dashId = landing ? LANDING : tab === 'forms' ? FORMS_ID : params.dashId === undefined ? SETTINGS_ID : Number(params.dashId)
-  const { data: dash } = useQuery(dashboardsQuery)
+  const { data: dash, error: dashError } = useQuery(dashboardsQuery)
   const { data: projectsData, isLoading } = useQuery(projectsQuery)
   const tabsQ = useQuery({ ...projectTabsQuery(id), enabled: valid })
   const activity = useQuery({ ...projectActivityQuery, enabled: valid })
@@ -64,10 +64,14 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
   // Each visit fetches the tabs afresh, even with this page already mounted:
   // a tab removed elsewhere since the cache was filled would otherwise land
   // on the "isn't a tab" notice.
+  // A dashboard tab needs the dashboards list, so landing waits for it, and
+  // without it opens Settings, which does not.
+  const listed = dash !== undefined
   useEffect(() => {
     if (!landing) return
     const toSettings = () => navigate(`settings${search}`, { replace: true })
-    if (!valid) return void toSettings()
+    if (!valid || dashError) return void toSettings()
+    if (!listed) return
     let live = true
     const range = rangeParams(new URLSearchParams(search)).toString()
     client.fetchQuery({ ...projectTabsQuery(id), staleTime: 0 }).then(
@@ -77,7 +81,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
     return () => {
       live = false
     }
-  }, [landing, visit, valid, id, search, client, navigate])
+  }, [landing, visit, valid, dashError, listed, id, search, client, navigate])
 
   return (
     <AppShell dashboards={dash?.dashboards ?? []} currentId={0}>

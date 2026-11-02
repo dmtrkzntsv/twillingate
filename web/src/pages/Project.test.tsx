@@ -394,6 +394,13 @@ describe('Project tabs', () => {
     expect(location()).toBe('/projects/7/dashboards/1')
   })
 
+  it('opens Settings when the dashboards list cannot be read, which a tab needs', async () => {
+    vi.mocked(endpoints.dashboards).mockRejectedValue(new ApiError(500, 'database is locked', 'internal'))
+    renderAt('/projects/7')
+    await vi.waitFor(() => expect(location()).toBe('/projects/7/settings'))
+    expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
+  })
+
   it('opens Settings when the project has no tabs', async () => {
     vi.mocked(endpoints.projectTabs).mockResolvedValue({ tabs: [] })
     renderAt('/projects/7')

@@ -33,9 +33,11 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // A running `twillingate serve` on its default address; the app asks
-      // for CONSOLE_AUTH_DSN's token, as it does for a real console.
+      // A running `twillingate serve` on its default address, signing in as
+      // on a real console: discovery and the login server sit outside /api.
       '/api': 'http://127.0.0.1:8080',
+      '/.well-known': 'http://127.0.0.1:8080',
+      '/oauth': 'http://127.0.0.1:8080',
     },
   },
   test: {

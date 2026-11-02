@@ -96,8 +96,7 @@ interface RowProps {
   /** A line under the name: what it belongs to. */
   under?: string
   status: ReactNode
-  /** Undefined offers no Restore. */
-  onRestore?: () => void
+  onRestore: () => void
   disabled?: boolean
 }
 
@@ -115,11 +114,9 @@ function ArchivedRow({ thumb, name, under, status, onRestore, disabled }: RowPro
         )}
         <div className="text-xs break-words text-muted-foreground">{status}</div>
       </div>
-      {onRestore && (
-        <Button variant="outline" size="sm" disabled={disabled} onClick={onRestore}>
-          Restore
-        </Button>
-      )}
+      <Button variant="outline" size="sm" disabled={disabled} onClick={onRestore}>
+        Restore
+      </Button>
     </li>
   )
 }
