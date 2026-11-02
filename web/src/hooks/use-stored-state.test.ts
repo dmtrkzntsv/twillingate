@@ -57,4 +57,46 @@ describe('useStoredState', () => {
     expect(result.current[0]).toBe(9)
     expect(localStorage.length).toBe(0)
   })
+
+  it('reads the new key when the key changes, and writes under it', () => {
+    localStorage.setItem('a', '1')
+    const { result, rerender } = renderHook(({ k }) => useStoredState(k, asNumber), { initialProps: { k: 'a' } })
+    expect(result.current[0]).toBe(1)
+    rerender({ k: 'b' })
+    expect(result.current[0]).toBeNull()
+    act(() => result.current[1](2))
+    expect(result.current[0]).toBe(2)
+    expect(localStorage.getItem('b')).toBe('2')
+    expect(localStorage.getItem('a')).toBe('1')
+    rerender({ k: 'a' })
+    expect(result.current[0]).toBe(1)
+  })
+
+  it("never returns the old key's value once the key has changed", () => {
+    localStorage.setItem('a', '1')
+    const seen: { k: string; value: number | null }[] = []
+    const { rerender } = renderHook(
+      ({ k }) => {
+        const [value] = useStoredState(k, asNumber)
+        seen.push({ k, value })
+      },
+      { initialProps: { k: 'a' } }
+    )
+    rerender({ k: 'b' })
+    const forB = seen.filter((s) => s.k === 'b')
+    expect(forB.length).toBeGreaterThan(0)
+    expect(forB.every((s) => s.value === null)).toBe(true)
+  })
+
+  it('reads nothing when the key goes away, and leaves the stored value alone', () => {
+    localStorage.setItem('a', '1')
+    const { result, rerender } = renderHook(({ k }: { k?: string }) => useStoredState(k, asNumber), {
+      initialProps: { k: 'a' } as { k?: string },
+    })
+    rerender({ k: undefined })
+    expect(result.current[0]).toBeNull()
+    act(() => result.current[1](4))
+    expect(result.current[0]).toBe(4)
+    expect(localStorage.getItem('a')).toBe('1')
+  })
 })

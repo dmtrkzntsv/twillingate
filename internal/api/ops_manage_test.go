@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -369,5 +370,25 @@ func TestListKeysUsesSnakeCase(t *testing.T) {
 		if _, ok := got.Keys[0][field]; ok {
 			t.Errorf("key row still carries %q: %v", field, got.Keys[0])
 		}
+	}
+}
+
+// list_ingest_keys hands every key its install snippet on the collector, so
+// a project's snippet can be read again after the answer that issued its key.
+func TestListKeysCarriesEachKeysSnippet(t *testing.T) {
+	h, cs := newTestHost(t)
+	callTool(t, cs, "issue_ingest_key", map[string]any{"project_id": 1, "label": "web"})
+	out := textOf(callTool(t, cs, "list_ingest_keys", map[string]any{"project_id": 1}))
+	if !strings.Contains(out, `src=\"https://collector.test/js/twillingate.js\"`) {
+		t.Errorf("no snippet on the collector: %s", out)
+	}
+	if strings.Contains(out, `"note"`) {
+		t.Errorf("a note with INGEST_URL set: %s", out)
+	}
+
+	h.ingestURL = ""
+	out = textOf(callTool(t, cs, "list_ingest_keys", map[string]any{"project_id": 1}))
+	if !strings.Contains(out, manage.SnippetPlaceholderBase) || !strings.Contains(out, `"note"`) {
+		t.Errorf("without INGEST_URL, want the placeholder and its note: %s", out)
 	}
 }

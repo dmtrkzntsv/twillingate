@@ -2030,6 +2030,17 @@ func TestArchiveDashboardRefusesBuiltin(t *testing.T) {
 
 // D17, review focus 5: list_dashboards says how long an archived user
 // dashboard is kept; 0 (kept forever) is omitted.
+func TestDashboardsConsoleURL(t *testing.T) {
+	svc, _ := newTestServiceOpts(t, Options{ConsoleURL: "https://console.example.com/", ShareBaseURL: "https://ingest.example.com"}, 1000)
+	got, err := svc.Dashboards(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ConsoleURL != "https://console.example.com" {
+		t.Errorf("ConsoleURL = %q, want CONSOLE_URL without its trailing slash", got.ConsoleURL)
+	}
+}
+
 func TestDashboardsPurgeAfterDays(t *testing.T) {
 	svc, _ := newTestServiceOpts(t, Options{ArchivedDays: 30}, 1000)
 	got, err := svc.Dashboards(context.Background())
@@ -2151,15 +2162,16 @@ func TestRenameGroupNamesEveryTabAndKeepsTitles(t *testing.T) {
 	}
 }
 
-func TestRenameGroupOfOneLeavesTitle(t *testing.T) {
+// A group of one tab has one name: naming the group retitles its tab.
+func TestRenameGroupOfOneRetitlesItsTab(t *testing.T) {
 	svc := newTestService(t)
 	d := mustCreate(t, svc, "Solo")
 	info, err := renameGroup(svc, d.ID, "Team")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.GroupTitle != "Team" || info.Title != "Solo" {
-		t.Errorf("got group %q title %q, want \"Team\" and \"Solo\"", info.GroupTitle, info.Title)
+	if info.GroupTitle != "Team" || info.Title != "Team" {
+		t.Errorf("got group %q title %q, want both \"Team\"", info.GroupTitle, info.Title)
 	}
 }
 

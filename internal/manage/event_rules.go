@@ -36,8 +36,8 @@ func ruleSubject(id int64, f store.Family, name string) string {
 // ruleTarget validates what every rule operation names: a known project,
 // a family rules apply to, and an event name.
 func (o *Ops) ruleTarget(ctx context.Context, projectID int64, family, name string) (store.Family, error) {
-	if o.Reg.Snapshot(ctx).Project(projectID) == nil {
-		return "", fmt.Errorf("project %d: %w", projectID, ErrNotFound)
+	if err := o.requireProject(ctx, projectID); err != nil {
+		return "", err
 	}
 	f, err := ruleFamily(family)
 	if err != nil {
@@ -48,8 +48,8 @@ func (o *Ops) ruleTarget(ctx context.Context, projectID int64, family, name stri
 
 // ListEventRules is the project's rules ordered by family, then name.
 func (o *Ops) ListEventRules(ctx context.Context, projectID int64) ([]store.EventRule, error) {
-	if o.Reg.Snapshot(ctx).Project(projectID) == nil {
-		return nil, fmt.Errorf("project %d: %w", projectID, ErrNotFound)
+	if err := o.requireProject(ctx, projectID); err != nil {
+		return nil, err
 	}
 	all, err := o.St.LoadEventRules(ctx)
 	if err != nil {

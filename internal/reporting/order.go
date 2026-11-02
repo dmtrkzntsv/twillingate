@@ -36,6 +36,17 @@ func (o order) group(g int64) []store.Dashboard {
 	return out
 }
 
+// lone reports whether id is the only live member of its group g: a
+// group of one tab has one name, its tab's title (spec 2026-10-31).
+func (o order) lone(id, g int64) bool {
+	for _, d := range o.group(g) {
+		if d.ID != id && d.ArchivedAt == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // find returns the row with id, or false.
 func (o order) find(id int64) (store.Dashboard, bool) {
 	for _, d := range o {

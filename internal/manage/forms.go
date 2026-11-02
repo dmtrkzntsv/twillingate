@@ -35,13 +35,6 @@ func formSubject(projectID int64, name string) string {
 	return "form/" + strconv.FormatInt(projectID, 10) + "/" + name
 }
 
-func (o *Ops) requireProject(ctx context.Context, projectID int64) error {
-	if o.Reg.Snapshot(ctx).Project(projectID) == nil {
-		return fmt.Errorf("unknown project %d: %w", projectID, ErrNotFound)
-	}
-	return nil
-}
-
 // checkExpected validates a field list kept by an approved form: every name
 // non-empty, at most 64 characters, free of control characters (U+0000 to
 // U+001F, U+007F, which ingest drops) and not starting with "$" (the
@@ -106,9 +99,10 @@ func (o *Ops) ApproveForm(ctx context.Context, actor string, projectID int64, na
 
 // UpdateForm merges spec over the stored form and writes the result.
 func (o *Ops) UpdateForm(ctx context.Context, actor string, projectID int64, name string, spec FormSpec) error {
+	// One snapshot for the project and its redirect origins.
 	snap := o.Reg.Snapshot(ctx)
 	if snap.Project(projectID) == nil {
-		return fmt.Errorf("unknown project %d: %w", projectID, ErrNotFound)
+		return unknownProject(projectID)
 	}
 	f, err := o.St.GetForm(ctx, projectID, name)
 	if err != nil {

@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import {
   ArchiveIcon,
   ArrowLeftIcon,
@@ -6,6 +7,7 @@ import {
   CopyPlusIcon,
   FolderInputIcon,
   MoreHorizontalIcon,
+  PencilIcon,
   RefreshCwIcon,
   EyeOffIcon,
 } from 'lucide-react'
@@ -21,6 +23,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Button } from '@/components/ui/button'
+import NameDialog, { RenameTabDialog } from '@/components/NameDialog'
 import { useDashboardActions, type DashboardActions } from '@/hooks/use-dashboard-actions'
 import type { DashboardDetail, DashboardInfo } from '@/lib/api'
 import { groupName, liveGroups, moveTabBody, nextAfterArchive } from '@/lib/arrange'
@@ -85,7 +88,9 @@ interface GroupMenuProps {
  * the sidebar's (D10, D11). "Refresh" reloads every card past its
  * `refresh_after`, as the button under the title does; "Auto-refresh
  * every …" is a checkmark that reloads the dashboard on that interval
- * while the window has focus. "Duplicate dashboard" copies every tab and
+ * while the window has focus. "Rename dashboard…", on a live user group,
+ * names the group (D5): the sidebar's entry, not any tab's title.
+ * "Duplicate dashboard" copies every tab and
  * opens the copy, never archiving anything; "Archive dashboard" takes the
  * whole group out of the sidebar and lands on "/dashboards" ("Hide
  * dashboard" on a system group, which sets `sidebar` off instead and comes
@@ -93,56 +98,82 @@ interface GroupMenuProps {
  * banner already brings it back.
  */
 export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMenuProps) {
-  const { duplicate, archive, setSidebar, pending } = useDashboardActions()
+  const { duplicate, archive, setSidebar, renameGroup, pending } = useDashboardActions()
+  const [renaming, setRenaming] = useState(false)
   const first = dashboard.tabs[0] ?? dashboard
-  const groupTitle = dashboard.group_title ?? first.title
+  // A group of one tab has one name, its tab's title (as `groupName`; only
+  // a user group is renamed here).
+  const lone = dashboard.owner === 'user' && dashboard.tabs.length <= 1
+  const groupTitle = (!lone && dashboard.group_title) || first.title
+  const userLive = dashboard.owner === 'user' && !dashboard.archived_at
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="size-8" aria-label="Dashboard actions">
-          <MoreHorizontalIcon />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem disabled={refresh.count === 0 || refresh.refreshing} onClick={refresh.onRefresh}>
-          <RefreshCwIcon />
-          Refresh
-        </DropdownMenuItem>
-        {autoRefresh && (
-          <DropdownMenuCheckboxItem checked={autoRefresh.on} onCheckedChange={(on) => autoRefresh.onChange(on === true)}>
-            Auto-refresh every {formatInterval(autoRefresh.seconds)}
-          </DropdownMenuCheckboxItem>
-        )}
-        {editable && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem disabled={pending} onClick={() => void duplicate(first, { wholeGroup: true })}>
-              <CopyIcon />
-              Duplicate dashboard
-            </DropdownMenuItem>
-            {dashboard.owner === 'system' && dashboard.sidebar && (
-              <DropdownMenuItem
-                disabled={pending}
-                onClick={() => void setSidebar({ dashboard_id: first.dashboard_id, title: groupTitle }, false, { navigateTo: '/dashboards' })}
-              >
-                <EyeOffIcon />
-                Hide dashboard
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="size-8" aria-label="Dashboard actions">
+            <MoreHorizontalIcon />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          <DropdownMenuItem disabled={refresh.count === 0 || refresh.refreshing} onClick={refresh.onRefresh}>
+            <RefreshCwIcon />
+            Refresh
+          </DropdownMenuItem>
+          {autoRefresh && (
+            <DropdownMenuCheckboxItem checked={autoRefresh.on} onCheckedChange={(on) => autoRefresh.onChange(on === true)}>
+              Auto-refresh every {formatInterval(autoRefresh.seconds)}
+            </DropdownMenuCheckboxItem>
+          )}
+          {editable && (
+            <>
+              <DropdownMenuSeparator />
+              {userLive && (
+                <DropdownMenuItem disabled={pending} onClick={() => setRenaming(true)}>
+                  <PencilIcon />
+                  Rename dashboard…
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem disabled={pending} onClick={() => void duplicate(first, { wholeGroup: true })}>
+                <CopyIcon />
+                Duplicate dashboard
               </DropdownMenuItem>
-            )}
-            {dashboard.owner === 'user' && !dashboard.archived_at && (
-              <DropdownMenuItem
-                disabled={pending}
-                onClick={() => void archive({ dashboard_id: first.dashboard_id, title: groupTitle }, { wholeGroup: true, navigateTo: '/dashboards' })}
-              >
-                <ArchiveIcon />
-                Archive dashboard
-              </DropdownMenuItem>
-            )}
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+              {dashboard.owner === 'system' && dashboard.sidebar && (
+                <DropdownMenuItem
+                  disabled={pending}
+                  onClick={() => void setSidebar({ dashboard_id: first.dashboard_id, title: groupTitle }, false, { navigateTo: '/dashboards' })}
+                >
+                  <EyeOffIcon />
+                  Hide dashboard
+                </DropdownMenuItem>
+              )}
+              {userLive && (
+                <DropdownMenuItem
+                  disabled={pending}
+                  onClick={() => void archive({ dashboard_id: first.dashboard_id, title: groupTitle }, { wholeGroup: true, navigateTo: '/dashboards' })}
+                >
+                  <ArchiveIcon />
+                  Archive dashboard
+                </DropdownMenuItem>
+              )}
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {editable && userLive && (
+        <NameDialog
+          open={renaming}
+          onOpenChange={setRenaming}
+          title="Rename dashboard"
+          description={lone ? 'Its name in the sidebar and on its page.' : 'The name in the sidebar. Each tab keeps its own title.'}
+          label="Dashboard name"
+          name={groupTitle}
+          saveUnchanged={!lone && !dashboard.group_title}
+          pending={pending}
+          onSave={(title) => renameGroup(first.dashboard_id, title)}
+        />
+      )}
+    </>
   )
 }
 
@@ -150,14 +181,16 @@ export function GroupMenu({ dashboard, editable, refresh, autoRefresh }: GroupMe
  * The "…" menu beside a tab's title, acting on that tab alone (D11), the
  * same for a group of one tab as of several. Every tab offers "Copy to
  * new dashboard", its copy a dashboard of its own (no `groupId`). A live
- * user tab adds "Duplicate tab", whose copy joins this group right after
- * it, "Archive tab", Move left/right and "Move to". A system tab
+ * user tab adds "Rename tab…" (its title), "Duplicate tab", whose copy
+ * joins this group right after it, "Archive tab", Move left/right and
+ * "Move to". A system tab
  * is only copied out: its group takes no new tabs, and it is never
  * archived or moved on its own.
  */
 export function TabMenu({ dashboard, list }: Props) {
   const actions = useDashboardActions()
-  const { duplicate, archive, move, pending } = actions
+  const { duplicate, archive, move, rename, pending } = actions
+  const [renaming, setRenaming] = useState(false)
   const { tabs, dashboard_id: id, group_id: groupId } = dashboard
   const n = tabs.length
   const i = tabs.findIndex((t) => t.dashboard_id === id)
@@ -169,45 +202,57 @@ export function TabMenu({ dashboard, list }: Props) {
   }
 
   return (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="size-7" aria-label="Tab actions">
-          <MoreHorizontalIcon />
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="start">
-        {editable && (
-          <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard, { groupId })}>
-            <CopyIcon />
-            Duplicate tab
+    <>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="size-7" aria-label="Tab actions">
+            <MoreHorizontalIcon />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="start">
+          {editable && (
+            <>
+              <DropdownMenuItem disabled={pending} onClick={() => setRenaming(true)}>
+                <PencilIcon />
+                Rename tab…
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard, { groupId })}>
+                <CopyIcon />
+                Duplicate tab
+              </DropdownMenuItem>
+            </>
+          )}
+          <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard)}>
+            <CopyPlusIcon />
+            Copy to new dashboard
           </DropdownMenuItem>
-        )}
-        <DropdownMenuItem disabled={pending} onClick={() => void duplicate(dashboard)}>
-          <CopyPlusIcon />
-          Copy to new dashboard
-        </DropdownMenuItem>
-        {editable && (
-          <>
-            <DropdownMenuItem
-              disabled={pending}
-              onClick={() => void archive(dashboard, { navigateTo: nextAfterArchive(tabs, id) })}
-            >
-              <ArchiveIcon />
-              Archive tab
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem disabled={pending || i <= 0} onClick={() => moveTo(i - 1)}>
-              <ArrowLeftIcon />
-              Move left
-            </DropdownMenuItem>
-            <DropdownMenuItem disabled={pending || i === n - 1} onClick={() => moveTo(i + 1)}>
-              <ArrowRightIcon />
-              Move right
-            </DropdownMenuItem>
-            <MoveTo dashboard={dashboard} list={list} actions={actions} />
-          </>
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
+          {editable && (
+            <>
+              <DropdownMenuItem
+                disabled={pending}
+                onClick={() => void archive(dashboard, { navigateTo: nextAfterArchive(tabs, id) })}
+              >
+                <ArchiveIcon />
+                Archive tab
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled={pending || i <= 0} onClick={() => moveTo(i - 1)}>
+                <ArrowLeftIcon />
+                Move left
+              </DropdownMenuItem>
+              <DropdownMenuItem disabled={pending || i === n - 1} onClick={() => moveTo(i + 1)}>
+                <ArrowRightIcon />
+                Move right
+              </DropdownMenuItem>
+              <MoveTo dashboard={dashboard} list={list} actions={actions} />
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      {editable && (
+        <RenameTabDialog open={renaming} onOpenChange={setRenaming} dashboard={dashboard} rename={rename} pending={pending} />
+      )}
+    </>
   )
 }
+

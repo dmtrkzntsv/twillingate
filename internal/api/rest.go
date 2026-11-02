@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dmtrkzntsv/twillingate/internal/manage"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 )
 
@@ -202,21 +202,14 @@ func writeError(w http.ResponseWriter, logger *slog.Logger, req *http.Request, e
 // refusalOf is err's status and error body, as writeError sends them;
 // an untyped error is logged and answered generically.
 func refusalOf(logger *slog.Logger, req *http.Request, err error) (int, apiError) {
-	switch {
-	case errors.Is(err, context.Canceled) && req.Context().Err() != nil:
+	internal := apiError{Code: "internal", Message: "internal error"}
+	if errors.Is(err, context.Canceled) && req.Context().Err() != nil {
 		// The client left: nobody reads the answer, so nothing is logged.
-		return http.StatusInternalServerError, apiError{Code: "internal", Message: "internal error"}
-	case errors.Is(err, manage.ErrInvalid):
-		return http.StatusBadRequest, apiError{Code: "invalid", Message: err.Error()}
-	case errors.Is(err, manage.ErrNotFound):
-		return http.StatusNotFound, apiError{Code: "not_found", Message: err.Error()}
-	case errors.Is(err, manage.ErrConflict):
-		return http.StatusConflict, apiError{Code: "conflict", Message: err.Error()}
-	case errors.Is(err, manage.ErrBusy):
-		return http.StatusTooManyRequests, apiError{Code: "busy", Message: err.Error()}
-	case errors.Is(err, manage.ErrTimeout):
-		return http.StatusGatewayTimeout, apiError{Code: "timeout", Message: err.Error()}
+		return http.StatusInternalServerError, internal
+	}
+	if r, ok := reporting.HTTPRefusalOf(err); ok {
+		return r.Status, apiError{Code: r.Code, Message: err.Error()}
 	}
 	logger.Error("api request failed", "method", req.Method, "path", req.URL.Path, "error", err)
-	return http.StatusInternalServerError, apiError{Code: "internal", Message: "internal error"}
+	return http.StatusInternalServerError, internal
 }

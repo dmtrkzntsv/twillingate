@@ -95,6 +95,9 @@ func NewOps(ctx context.Context, cfg *config.Config, st store.Store, logger *slo
 // only then is the pipeline cancelled — its cancellation is what triggers
 // the final flush, so it must come last or buffered events would be lost.
 func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runIngest, runConsole bool) error {
+	if runConsole && !runIngest {
+		cfg.ConsoleOnly()
+	}
 	// Retired settings still set start nothing: say so once.
 	if w := cfg.IgnoredWarning(); w != "" {
 		logger.Warn(w)

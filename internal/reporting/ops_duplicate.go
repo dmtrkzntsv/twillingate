@@ -93,6 +93,11 @@ func (s *Service) duplicateOne(ctx context.Context, actor string, src store.Dash
 		if err != nil {
 			return err
 		}
+		if copyOf.GroupID != 0 {
+			if err := s.settleLoneName(ctx, actor, o.group(copyOf.GroupID)); err != nil {
+				return err
+			}
+		}
 		newID, err = s.st.InsertDashboard(ctx, copyOf, ws, store.AuditEntry{
 			Actor: actor, Action: "dashboard.duplicate",
 			Detail: fmt.Sprintf("from dashboard/%d", src.ID)})
@@ -152,7 +157,10 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 		// D7: the name is copied like the first tab's title. Taken from this
 		// attempt's own read (every member row carries the group's name), not
 		// from src, which a concurrent rename may have outdated.
-		if len(members) > 0 && members[0].GroupTitle != "" {
+		// A user group of one tab has one name, its title, which the copy's
+		// title already carries: a name it kept from when it had more is
+		// not copied. A built-in's name comes with the release and is.
+		if (system || len(members) > 1) && members[0].GroupTitle != "" {
 			ds[0].GroupTitle = members[0].GroupTitle + " (copy)"
 		}
 

@@ -51,6 +51,7 @@ beforeEach(() => {
     restore: vi.fn(),
     setSidebar,
     move,
+    rename: vi.fn(),
     renameGroup,
     pending: false,
   } satisfies DashboardActions)

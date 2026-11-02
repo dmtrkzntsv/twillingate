@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { Link, useSearchParams } from 'react-router'
-import CopyButton from '@/components/projects/CopyButton'
+import CodeBlock from '@/components/projects/CodeBlock'
 import LoadError from '@/components/projects/LoadError'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -20,16 +20,6 @@ const SNIPPET = `<form data-twillingate-form="contact">
   <button>Send</button>
 </form>`
 
-/** One line of copyable code that wraps rather than widening the page. */
-function Code({ value, label }: { value: string; label: string }) {
-  return (
-    <div className="flex items-start gap-2 rounded-md border p-2">
-      <pre className="min-w-0 flex-1 font-mono text-xs break-all whitespace-pre-wrap">{value}</pre>
-      <CopyButton value={value} label={label} />
-    </div>
-  )
-}
-
 /**
  * No forms yet: how to add one. A form is created by its first submission,
  * so the hint is a tagged form for a page with the SDK, and the URL a plain
@@ -48,12 +38,12 @@ function AddFormHint({ projectId, actionBase }: { projectId: number; actionBase:
         A form appears here with its first submission, as a draft that keeps every field for a few days. On a page with the twillingate
         script, tag the form:
       </p>
-      <Code value={SNIPPET} label="Copy form snippet" />
+      <CodeBlock value={SNIPPET} label="Copy form snippet" />
       <p className="max-w-prose text-sm text-muted-foreground">
         Without the script, point a plain form's <code className="font-mono text-xs">action</code> at the collector, the address your install
         snippet loads <code className="font-mono text-xs">twillingate.js</code> from:
       </p>
-      <Code value={action} label="Copy action URL" />
+      <CodeBlock value={action} label="Copy action URL" />
     </section>
   )
 }
