@@ -33,11 +33,11 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      // A running `twillingate serve` on its default address, signing in as
-      // on a real console: discovery and the login server sit outside /api.
-      '/api': 'http://127.0.0.1:8080',
-      '/.well-known': 'http://127.0.0.1:8080',
-      '/oauth': 'http://127.0.0.1:8080',
+      // A running `twillingate serve` with INGEST_ADDR=127.0.0.1:8291, signing
+      // in as on a real console: discovery and the login server sit outside /api.
+      '/api': 'http://127.0.0.1:8291',
+      '/.well-known': 'http://127.0.0.1:8291',
+      '/oauth': 'http://127.0.0.1:8291',
     },
   },
   test: {
