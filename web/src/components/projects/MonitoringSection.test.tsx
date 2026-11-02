@@ -243,6 +243,18 @@ describe('MonitoringSection', () => {
       expect(onSave).toHaveBeenCalledWith({ origin: B, contains: 'Welcome' })
     })
 
+    it('returns focus to the menu button on Escape, and to the field only when the item opened it', async () => {
+      const user = userEvent.setup()
+      show(list([on(A)]))
+      const more = await screen.findByRole('button', { name: `More for ${A}` })
+      await user.click(more)
+      await screen.findByRole('menuitem', { name: ITEM })
+      await user.keyboard('{Escape}')
+      await waitFor(() => expect(more).toHaveFocus())
+      await openText(user, A)
+      expect((await row(A)).getByLabelText('Page must contain')).toHaveFocus()
+    })
+
     it('shows a saved text under the origin, which opens the field when clicked', async () => {
       const user = userEvent.setup()
       const { onSave } = show(list([on(A, { contains: 'Welcome' })]))
@@ -458,6 +470,16 @@ describe('MonitoringSection', () => {
     it('shows a down result with its reason and error', async () => {
       show(list([on(A, { check: done({ reason: 'content', error: 'text not found', status: 200, ms: 9 }) })]))
       expect((await row(A)).getByText(/^down, content: text not found \(.+ ago\)$/)).toBeInTheDocument()
+    })
+
+    it('puts a failed result in the full-width notes row, wrapping, and a success in its column', async () => {
+      const long = 'redirected off-site to https://www.example.com — add it to the project\'s origins if it is yours'
+      show(list([on(A, { check: done({ reason: 'redirect', error: long }) }), on(B, { check: done({ up: true, status: 200, ms: 24 }) })]))
+      const failed = (await row(A)).getByText(/^down, redirect: /)
+      expect(failed.parentElement).toHaveClass('break-words')
+      expect(failed.closest('div')).toHaveClass('sm:col-span-4')
+      const ok = (await row(B)).getByText(/^up, 200, 24 ms/)
+      expect(ok.closest('div')).not.toHaveClass('sm:col-span-4')
     })
 
     it('says when the check did not run', async () => {

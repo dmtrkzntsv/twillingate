@@ -12,6 +12,11 @@ const TOKEN = 'e2e-token'
 // widget's own content (a wide data table), which scrolls inside its card.
 const PHONE = { width: 360, height: 740 }
 
+// A registrable domain longer than a phone is wide on one line, which the
+// Domains section lists whole (the subdomains in front reduce to it).
+const LONG_DOMAIN = 'a-registrable-domain-name-longer-than-a-phone-is-wide.com'
+const MONITORED = `https://billing-test.another-long-subdomain.${LONG_DOMAIN}`
+
 function authHeaders() {
   return { Authorization: `Bearer ${TOKEN}` }
 }
@@ -125,7 +130,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     headers: authHeaders(),
     data: {
       name: `phone-${Date.now()} - longer than a phone is wide on one line`,
-      allowed_origins: ['https://www.a-long-subdomain.example.com', 'https://billing-test.another-long-subdomain.example.com'],
+      allowed_origins: ['https://www.a-long-subdomain.example.com', 'https://billing-test.another-long-subdomain.' + LONG_DOMAIN],
     },
   })
   expect(created.ok(), await created.text()).toBeTruthy()
@@ -136,7 +141,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     headers: authHeaders(),
     data: {
       enabled: true,
-      origin: 'https://billing-test.another-long-subdomain.example.com',
+      origin: MONITORED,
       contains: 'a text the page must hold that is longer than a phone is wide on one line',
     },
   })
@@ -256,6 +261,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     // The check above means nothing for the Events and Attributes sections unless they are drawn.
     if (path.endsWith('?range=today')) {
       await expect(page.getByRole('region', { name: 'Monitoring' }).getByText(/^each site is checked every/)).toBeVisible()
+      await expect(page.getByRole('region', { name: 'Domains' }).getByText(LONG_DOMAIN)).toBeVisible()
       for (const [section, alias] of [['Events', longEvent], ['Attributes', longAttribute]]) {
         const region = page.getByRole('region', { name: section })
         await expect(region.getByRole('button', { name: `Remove alias ${alias}` })).toBeVisible()
@@ -269,7 +275,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   // its result is a down line, with the long origin's error, that wraps too.
   await check(page, `/app/projects/${id}/settings?range=today`)
   const monitoring = page.getByRole('region', { name: 'Monitoring' })
-  const monitoredOrigin = 'https://billing-test.another-long-subdomain.example.com'
+  const monitoredOrigin = MONITORED
   await monitoring.getByRole('button', { name: `Check ${monitoredOrigin} now` }).click()
   await expect(monitoring.getByText(/^down, /)).toBeVisible({ timeout: 40_000 })
   await expect(monitoring.getByRole('button', { name: `Check ${monitoredOrigin} now` })).toBeEnabled()
@@ -281,6 +287,32 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await expect(monitoring.getByLabel('Page must contain')).toBeVisible()
   expect(await sidewaysScroll(page), 'monitoring text field').toEqual([])
   expect(await sidewaysScroll(page), 'monitoring after a check').toEqual([])
+  expect(await sidewaysScroll(page), 'domains').toEqual([])
+
+  // The long down result, from the sm breakpoint up: it sits under the origin
+  // and wraps, so the origin keeps its column on a tablet.
+  for (const width of [768, 900, 1024]) {
+    await page.setViewportSize({ width, height: 900 })
+    const result = monitoring.getByText(/^down, /)
+    await expect(result).toBeVisible()
+    const origin = (await monitoring.getByText(monitoredOrigin, { exact: true }).boundingBox())!
+    const note = (await result.boundingBox())!
+    expect(origin.width, `origin column at ${width}px`).toBeGreaterThan(200)
+    expect(note.y, `result under the origin at ${width}px`).toBeGreaterThan(origin.y)
+    // The sections themselves and the page; the tab bar above scrolls on a tablet by design.
+    const wide = await page.evaluate(() => {
+      const root = document.documentElement
+      const out: string[] = root.scrollWidth > root.clientWidth ? ['page'] : []
+      for (const name of ['Monitoring', 'Domains']) {
+        for (const el of Array.from(document.querySelectorAll<HTMLElement>(`[aria-label="${name}"], [aria-label="${name}"] *`))) {
+          if (el.scrollWidth > el.clientWidth + 1) out.push(`${name}: ${el.tagName.toLowerCase()} ${el.scrollWidth}px in ${el.clientWidth}px`)
+        }
+      }
+      return out
+    })
+    expect(wide, `sideways scroll at ${width}px`).toEqual([])
+  }
+  await page.setViewportSize(PHONE)
 
   // The Attributes section's dialogs, over its long keys, fit the phone.
   await check(page, `/app/projects/${id}/settings?range=today`)

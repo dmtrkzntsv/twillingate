@@ -38,7 +38,7 @@ export default function DomainsSection({ projectId }: { projectId: number }) {
             const days = d.expires_at ? daysUntilDate(d.expires_at, now) : null
             return (
               <TableRow key={d.domain} aria-label={d.domain}>
-                <TableCell className="break-words whitespace-normal">{d.domain}</TableCell>
+                <TableCell className="min-w-0 break-all whitespace-normal">{d.domain}</TableCell>
                 <TableCell className="text-muted-foreground">{d.expires_at ? (<><span className="hidden sm:inline">renews </span>{d.expires_at}</>) : 'unknown'}</TableCell>
                 <TableCell className={days !== null && days < 0 ? 'text-destructive' : 'text-muted-foreground'}>
                   {days === null ? '' : formatDaysLeft(days)}

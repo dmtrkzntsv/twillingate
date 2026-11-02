@@ -63,7 +63,7 @@ export default function SetupTab({ project, dash, actions }: Props) {
       )}
       <OriginsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
       {/* Reporting dev serves no monitor, as it serves no project tabs. */}
-      {dash !== undefined && !dash.dev && (
+      {!project.archived && dash !== undefined && !dash.dev && (
         <>
           <MonitoringSection projectId={id} pending={actions.pending} onSave={(body) => actions.updateMonitor(id, body)} onCheck={(origin) => actions.checkMonitor(id, origin)} />
           <DomainsSection projectId={id} />

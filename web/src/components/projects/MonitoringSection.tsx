@@ -96,6 +96,8 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
   // A text not saved yet: a refetch (polling, window focus, another row's save)
   // must not throw it away.
   const edited = useRef(false)
+  // The menu's item opened the field, so closing the menu focuses it.
+  const opening = useRef(false)
 
   // Start from what is saved, again after each save.
   useEffect(() => {
@@ -134,8 +136,11 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
   const inputRef = useRef<HTMLInputElement>(null)
   const showField = editing || contains !== m.contains
   const label = `Check ${m.origin} now`
-  const hasDetails = cert !== null || checking || m.check.finished_at !== ''
-  const hasNotes = certProblem || m.redirects >= LONG_CHAIN || (waiting !== null && waiting === gaveUp) || showField
+  // A failed result can run long (an error names a URL): it goes under the
+  // origin, wrapping, while a success stays short in its column.
+  const failed = !checking && m.check.finished_at !== '' && !m.check.up
+  const hasDetails = cert !== null || checking || (m.check.finished_at !== '' && !failed)
+  const hasNotes = failed || certProblem || m.redirects >= LONG_CHAIN || (waiting !== null && waiting === gaveUp) || showField
 
   return (
     <li aria-label={m.origin} className="col-span-full grid grid-cols-subgrid items-center gap-y-1">
@@ -159,8 +164,8 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
             {cert && (
               <span className={`min-w-0 sm:col-start-3 sm:row-start-1 sm:whitespace-nowrap ${cert.expired ? 'text-destructive' : ''}`} title={certFull}>{cert.text}</span>
             )}
-            <span className="min-w-0 sm:col-start-4 sm:row-start-1">
-              {checking ? 'Checking…' : m.check.finished_at && (<><span>Last check </span><span>{checkText(m.check, now)}</span></>)}
+            <span className="min-w-0 sm:col-start-4 sm:row-start-1 sm:max-w-60">
+              {checking ? 'Checking…' : m.check.finished_at && !failed && (<><span>Last check </span><span>{checkText(m.check, now)}</span></>)}
             </span>
           </div>}
           <div className="col-start-3 row-start-1 flex items-center gap-1 sm:col-start-5">
@@ -180,14 +185,21 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end" // Focus goes to the field the item opened, not back to the trigger.
               onCloseAutoFocus={(e) => {
+                // Escape or a click away leaves focus to the trigger.
+                if (!opening.current) return
+                opening.current = false
                 e.preventDefault()
                 inputRef.current?.focus()
               }}>
-                <DropdownMenuItem onSelect={() => setEditing(true)}>Look for text on the page</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => {
+                  opening.current = true
+                  setEditing(true)
+                }}>Look for text on the page</DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
           {hasNotes && <div className="col-span-2 col-start-2 flex min-w-0 flex-col gap-1 sm:col-span-4">
+            {failed && <p className="min-w-0 text-sm break-words text-muted-foreground"><span>Last check </span><span>{checkText(m.check, now)}</span></p>}
             {certProblem && <p className="min-w-0 text-sm break-words text-muted-foreground">{`Certificate: ${certFull}`}</p>}
             {m.redirects >= LONG_CHAIN && <p className="text-sm text-muted-foreground">{`Redirects ${m.redirects} times before answering, which slows every visit`}</p>}
             {waiting && waiting === gaveUp && <p role="status" className="text-sm text-muted-foreground">The check has not finished yet: its result will show here when the server has run it</p>}
