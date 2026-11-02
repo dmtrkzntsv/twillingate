@@ -321,7 +321,7 @@ what a structured query cannot say.
   is for what neither can show (see [Workflow](#workflow), step 4).
 - A query returns exactly the columns the component reads, named by alias; a
   column marked optional may be left out, and only `table` takes any columns.
-- Widget SQL is DuckDB SQL, one `SELECT`, over the seven tables in
+- Widget SQL is DuckDB SQL, one `SELECT`, over the eight tables in
   [Tables](#tables) and nothing else. The database's `v_*` views and
   `agg_*` tables went with its events (migration 042).
 - SQL needs an external SQL engine (`SQL_ENGINE_SOCKET`). Without one,
@@ -333,7 +333,7 @@ what a structured query cannot say.
   same refusal while the dashboard's other widgets load. Use `query`
   widgets instead, which need no engine.
 - Saving, previewing and running a widget refuse SQL that reads past the
-  seven tables: a table function other than `range`, `generate_series`
+  eight tables: a table function other than `range`, `generate_series`
   and `unnest` (`read_parquet`, `read_csv`, `glob` and the others read
   files or the catalog), a file named in `FROM`, a name with a schema
   (`main.events`, which would read every project's rows past `:project`)
@@ -375,7 +375,7 @@ Widget SQL is DuckDB SQL ([duckdb.org/docs/sql](https://duckdb.org/docs/stable/s
 the dialect the docs and the built-in examples assume, run by the
 external SQL engine over the raw events twillingate keeps as files beside
 its database: the
-seven tables `query` reads. Their columns, and how
+eight tables `query` reads. Their columns, and how
 rules apply to them, are in [twillingate.md](twillingate.md#writing-sql-against-the-event-files).
 The files hold the events since the upgrade that began writing them, and
 the raw days the database still held when `twillingate events import` ran
@@ -384,10 +384,11 @@ today's events are in them within `BUFFER_FLUSH_INTERVAL`.
 
 | Table | One row per | A widget reads it for |
 | --- | --- | --- |
-| `events` | event of any family | anything across families: activity of `views` and `product` together |
+| `events` | event of the `views`, `product` and `measures` families (the `checks` rows are their own table) | anything across families: activity of `views` and `product` together |
 | `views` | page or screen view | visitors (`count(DISTINCT actor_id)`), views (`count(*)`), and the breakdowns: `path`, `host`, `referrer_source`, `utm_source`/`utm_medium`/`utm_campaign`, `country`, `os`/`os_version`, `browser`/`browser_version`, `platform`/`app_version`, `device`/`device_model`, `display_width`/`display_height`, `consent` |
 | `product` | product event | events by `event_name`, the users behind them (`count(DISTINCT actor_id)`, as the system dashboards count active users, so a custom widget's figure matches theirs; `user_id` counts only signed-in people), groups (`group_id`), and each attribute as a column `attr_<key>` |
 | `measures` | measure sample | `value` (`measure` is `time`, in ms, `size`, in bytes, or `number`), `sample_rate`, and `bucket`, its log-scale bucket (see [Percentiles from measures](#percentiles-from-measures)) |
+| `checks` | availability check (`uptime`, `cert`, `domain`; [Monitoring](twillingate.md#monitoring)) | the monitors' own results: `event_name`, `value` (response time in ms for `uptime`), and each attribute as a column `attr_<key>`; no actor, user or session |
 | `sessions` | session of views | sessions (`count(*)`), bounces (`views = 1`), `duration_sec`, the entry and exit pages, the first view's referrer and UTMs |
 | `identities` | user or group | `name`, and `first_seen`, the first event the files hold for it: new users. It is a TIMESTAMP: compare `first_seen::DATE` with `day` |
 | `aliases` | user id and install id sent together | one person's events across devices |
@@ -1865,8 +1866,8 @@ widget's name (`widget visitors: …`), and nothing is created.
 | line needs y (number); columns are x, visitors | Alias the column to the input: `visitors AS y`. |
 | visitors is not an input of line | Drop the column, or alias it to an input; only `table` takes any columns. |
 | line.y: "n/a" is not number | Return a number, a `YYYY-MM-DD` day or text as the input asks; `CAST(… AS DOUBLE)` where needed. An empty value (SQL `NULL`) always passes. |
-| Catalog Error: Table with name v_views_daily does not exist! …; widget SQL is DuckDB SQL over events, views, product, measures, sessions, identities and aliases; see docs://reporting | The widget was written for SQLite, before widgets moved to the event files. Rewrite it over [Tables](#tables); see [When widgets break after an update](#when-widgets-break-after-an-update). The same hint follows `julianday`, `strftime('%s', …)`, `date(x, '-1 day')`, the `identities` columns the files do not have, the JSON `attributes` column (each key is its own column now: `json_extract(attributes, '$.plan')` reads `attr_plan`), `MAX(a, b)` with two arguments (`GREATEST` here) and any syntax error. |
-| read_parquet() is not allowed (only range, generate_series and unnest are); SQL here reads only the tables events, views, product, measures, sessions, identities and aliases, by their plain names, and its own WITH names | Read the seven tables in [Tables](#tables); a widget never reads a file itself. The same refusal names a schema-qualified table (`main.events names a schema`: write `events`, scoped by `:project`) and any other table (`"_tw_all" is not a table here`). |
+| Catalog Error: Table with name v_views_daily does not exist! …; widget SQL is DuckDB SQL over events, views, product, measures, checks, sessions, identities and aliases; see docs://reporting | The widget was written for SQLite, before widgets moved to the event files. Rewrite it over [Tables](#tables); see [When widgets break after an update](#when-widgets-break-after-an-update). The same hint follows `julianday`, `strftime('%s', …)`, `date(x, '-1 day')`, the `identities` columns the files do not have, the JSON `attributes` column (each key is its own column now: `json_extract(attributes, '$.plan')` reads `attr_plan`), `MAX(a, b)` with two arguments (`GREATEST` here) and any syntax error. |
+| read_parquet() is not allowed (only range, generate_series and unnest are); SQL here reads only the tables events, views, product, measures, checks, sessions, identities and aliases, by their plain names, and its own WITH names | Read the eight tables in [Tables](#tables); a widget never reads a file itself. The same refusal names a schema-qualified table (`main.events names a schema`: write `events`, scoped by `:project`) and any other table (`"_tw_all" is not a table here`). |
 | ? is not a parameter here; use :name | Use `:project`, `:from` or `:to`, or write the value into the SQL. `$1` and `$name` are refused the same way. |
 | sql must be a single statement; remove what follows the ';' | One `SELECT` (or `WITH … SELECT`). An unterminated string or comment and an unmatched `(` or `)` are refused too. |
 | query exceeded CONSOLE_QUERY_TIMEOUT (30s); narrow the date range, or aggregate | Filter on `day`, group in SQL or read fewer days; the operator can raise `CONSOLE_QUERY_TIMEOUT`. |
@@ -1947,7 +1948,7 @@ source. A remote table has no `query` form: its SQL needs the engine.
 **Widgets written for SQLite.** Widget SQL used to be SQLite's, over the
 `v_*` views; it is now DuckDB's, over the event files, and nothing rewrote
 the widgets users had made. Such a widget fails with DuckDB's error and
-the hint "widget SQL is DuckDB SQL over events, views, product, measures,
+the hint "widget SQL is DuckDB SQL over events, views, product, measures, checks,
 sessions, identities and aliases; see docs://reporting". The console also
 logs each one when it starts (`widget SQL fails on the event files`, with
 `widget_id`, `dashboard_id` and `title`); a widget whose check ran out of

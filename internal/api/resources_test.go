@@ -85,13 +85,13 @@ func tableLines(text string) map[string][]string {
 }
 
 // TestSchemaViewsMatchesTheFiles binds the files' part of schema://views
-// to the tables the reader defines: each of the seven, with exactly its
+// to the tables the reader defines: each of the eight, with exactly its
 // fixed columns in order (the attr_<key> columns, which vary, aside), and
 // no other table before the deprecated part.
 func TestSchemaViewsMatchesTheFiles(t *testing.T) {
 	h, _ := newTestHost(t)
 	listed := tableLines(schemaFiles)
-	tables := []string{"events", "views", "product", "measures", "sessions", "identities", "aliases"}
+	tables := []string{"events", "views", "product", "measures", "checks", "sessions", "identities", "aliases"}
 	if len(listed) != len(tables) {
 		t.Errorf("schemaFiles lists %d tables, want the files' %d: %v", len(listed), len(tables), listed)
 	}

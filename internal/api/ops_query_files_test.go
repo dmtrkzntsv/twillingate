@@ -50,7 +50,7 @@ func TestQueryFilesSourceRunsOnTheFiles(t *testing.T) {
 	}
 	if r := files.req; r.SQL != "SELECT count(*) FROM events" || r.Mode != sqlengine.ModeRows || r.MaxRows != h.queryRows || !files.deadline ||
 		r.Scope != nil || !r.Confine || len(r.Args) != 0 {
-		t.Fatalf("the engine got %+v, deadline %v; want the SQL as rows, CONSOLE_QUERY_ROWS_MAX, a deadline, every project and the seven tables only",
+		t.Fatalf("the engine got %+v, deadline %v; want the SQL as rows, CONSOLE_QUERY_ROWS_MAX, a deadline, every project and the eight tables only",
 			r, files.deadline)
 	}
 	// Every project's files (blog's: docs has none), by paths relative to
@@ -143,7 +143,7 @@ func TestQueryFilesSourceErrors(t *testing.T) {
 }
 
 // TestQueryReadsOnlyTheTables: on the host's own files, query refuses SQL
-// that reads a file or the catalog past the seven tables, as invalid with
+// that reads a file or the catalog past the eight tables, as invalid with
 // the check's message, and runs SQL over them across every project.
 func TestQueryReadsOnlyTheTables(t *testing.T) {
 	_, cs := newTestHost(t)

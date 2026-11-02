@@ -57,7 +57,7 @@ func newSQLEngine(client SQL, opt Options) *sqlEngine {
 
 // boundSQL is a widget's SQL with its parameters bound (bindSQL): the
 // statement, its $tw_* arguments, the project it is scoped to (nil: every
-// project), and whether it reads only the seven tables.
+// project), and whether it reads only the eight tables.
 type boundSQL struct {
 	sql     string
 	args    map[string]string
@@ -138,7 +138,7 @@ func (e *sqlEngine) sampleProjects(ctx context.Context) ([]int64, error) {
 
 // err classifies an error from running a widget's own SQL, by the
 // engine's kind, as store.ErrInvalid where a person can act on it: SQL
-// the engine refused (it read past the seven tables) says what it read,
+// the engine refused (it read past the eight tables) says what it read,
 // the timeout names its environment variable, running out of memory says
 // what to change, and the engine's own message on the SQL passes
 // through, with the hint when it names SQLite's; an answer past the
@@ -193,7 +193,7 @@ func timedOut(d time.Duration, cause error) error {
 }
 
 // engineRefused is the engine's refusal of a request (KindRefused): the
-// SQL reads past the seven tables, or a page it cannot build. LoadPage
+// SQL reads past the eight tables, or a page it cannot build. LoadPage
 // tells a refusal of its page from one of the widget by it.
 type engineRefused struct{ error }
 
@@ -202,7 +202,7 @@ func (e engineRefused) Unwrap() error { return e.error }
 // sqliteHint follows an error that names what only SQLite had (Decision
 // 10): a widget written before the switch fails on the first such name,
 // and the error alone would not say that the whole dialect changed.
-const sqliteHint = "widget SQL is DuckDB SQL over events, views, product, measures, sessions, identities and aliases; see docs://reporting"
+const sqliteHint = "widget SQL is DuckDB SQL over events, views, product, measures, checks, sessions, identities and aliases; see docs://reporting"
 
 // sqliteNames matches DuckDB's errors, as it words them, for SQLite's
 // tables (v_*, agg_*, raw_*), the SQLite functions DuckDB lacks

@@ -11,7 +11,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// schemaFiles is the reference to the event files' seven tables, which
+// schemaFiles is the reference to the event files' eight tables, which
 // query reads by default and widget SQL reads: the facts a model cannot
 // infer from the column names first, then one indented
 // "name(col, col, …)  -- note" line per table, which the console's SQL
@@ -47,10 +47,11 @@ Facts you cannot infer from the column names:
 
 Tables:
 
-  events(id, project_id, family, event_name, ts, day, received_at, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, value, measure, sample_rate)  -- every event; family 'views'|'product'|'measures'; plus one attr_<key> column per attribute key
+  events(id, project_id, family, event_name, ts, day, received_at, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, value, measure, sample_rate)  -- every event but the monitoring checks; family 'views'|'product'|'measures'; plus one attr_<key> column per attribute key
   views(id, project_id, family, event_name, ts, day, received_at, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, value, measure, sample_rate)  -- the events of family 'views': page and screen views
   product(id, project_id, family, event_name, ts, day, received_at, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, value, measure, sample_rate)  -- the events of family 'product'
   measures(id, project_id, family, event_name, ts, day, received_at, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, value, measure, sample_rate, bucket)  -- the events of family 'measures'; measure: 'time' (ms)|'size' (bytes)|'number'
+  checks(id, project_id, family, event_name, ts, day, received_at, kind, actor_id, actor_kind, user_id, group_id, session_id, install_id, user_name, group_name, host, path, referrer_source, utm_source, utm_medium, utm_campaign, platform, os, os_version, os_name, browser, browser_version, browser_locale, app_version, app_locale, device, device_model, display_width, display_height, country, consent, value, measure, sample_rate)  -- the server's own availability checks, the rows of family 'checks' that events leaves out: event_name 'uptime'|'cert'|'domain'; plus one attr_<key> column per attribute key
   sessions(project_id, day, kind, actor_id, actor_kind, session_id, started_at, ended_at, duration_sec, views, entry_host, entry_path, exit_path, referrer_source, utm_source, utm_medium, utm_campaign)  -- one row per session of views, cut at midnight UTC; a session of 1 view is a bounce
   identities(project_id, kind, id, name, first_seen, last_seen, views, events)  -- kind: 'user' (from user_id)|'group' (from group_id); name: sent with the latest event that carried one
   aliases(project_id, user_id, install_id, first_seen, last_seen, events)  -- each user_id and install_id sent on the same event
@@ -95,7 +96,7 @@ func (h *host) registerResources(s *mcp.Server) {
 
 	s.AddResource(&mcp.Resource{
 		URI: "schema://views", Name: "views",
-		Description: "The event files' seven tables, their columns, and the caveats needed to write correct SQL. Read before using the query tool.",
+		Description: "The event files' eight tables, their columns, and the caveats needed to write correct SQL. Read before using the query tool.",
 		MIMEType:    "text/plain",
 	}, func(_ context.Context, _ *mcp.ReadResourceRequest) (*mcp.ReadResourceResult, error) {
 		return &mcp.ReadResourceResult{Contents: []*mcp.ResourceContents{{

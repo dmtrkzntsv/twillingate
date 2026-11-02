@@ -347,8 +347,9 @@ identifies itself as
   domain check still runs.
 
 **The `checks` table.** Every check is a row of the `checks` family in the
-project's event files, read with structured queries (`table: "checks"`, see
-[Structured queries](#structured-queries)), and left out of `limits`'
+project's event files, read through the `checks` table, in structured queries
+(`table: "checks"`, see [Structured queries](#structured-queries)) and in SQL
+alike, and left out of `limits`'
 `events_30d`, `events` and everything that counts the site's own traffic: `usage`
 reports them as `checks`, apart from the traffic counts, every row of the table.
 They still take disk, about
@@ -1047,12 +1048,12 @@ decides instead:
 | anything else | product | — | `product_events`, `product_attributes` |
 | `$form_submit` | product | — | written by the collector beside an approved form's submission ([Form submissions](#form-submissions)); a client sending it is rejected |
 | any name, with `family: "measures"` | measures | — | `measures`, the Web Vitals and Measures dashboards |
-| `uptime`, `cert`, `domain`, with `family: "checks"` | checks | — | the availability checks the server itself runs; written by the server only, a client sending the family is rejected; read through the `checks` table of [Structured queries](#structured-queries) |
+| `uptime`, `cert`, `domain`, with `family: "checks"` | checks | — | the availability checks the server itself runs; written by the server only, a client sending the family is rejected; read through the `checks` table, in [Structured queries](#structured-queries) and in SQL |
 
 The families are stored in the event files, whose `family` column is
 `views`, `product`, `measures` or `checks`; the `views`, `product`,
 `measures` and `checks` tables and the tools of each family read only its own
-rows. The structured queries' `events` table leaves `checks` out.
+rows. The `events` table leaves `checks` out, in SQL and in structured queries.
 
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning; an unrecognized `$`
@@ -1618,7 +1619,7 @@ history starts where the files' does. `query`, the count of events in
 | `measures` | `name`, `attr_key` | per metric: samples, estimated count, mean, p50/p75/p95 (time in ms, size in bytes). `attr_key` breaks each metric down by any key the measures carried, with no declaration needed: a custom attribute key or one of the reserved keys `product_attributes` breaks down (`$browser`, `$path`, …); a key none carried gives no rows. By metric, kind and value; at most 1,000 rows |
 | `retention` | `actor` (`user` or `install`) | Cohort curves for the cohorts that began in the range, every offset up to 90 days after the cohort day (the [retention grid](#structured-queries)'s horizon; a later day back is not listed), by cohort, then offset, counted over the days before today (UTC), plus `aggregated_through`, the newest such day with views or product events — cohorts and offsets after it are **absent, not zero**. A project whose actors' retention state the engine cannot hold in memory is refused. Empty for a project whose clients send neither `$user_id` nor `$install_id` |
 | `identities` | `kind` (`user` or `group`), `limit` (default 50) | Per user or group, busiest first (views plus product events in the range): its `actors` and `users` (itself for a user, its members for a group), each distinct per day and added up over the days, its `views`, `events` and the display `name` sent with its latest event (empty when none was sent, and when the name is the id itself). At most 1,000 rows. **Surfaces personal data on projects whose clients send ids** |
-| `query` | `sql`, or `project_id`, `from`, `to` (optional: the 30 days ending today, UTC) and `query` | One of two, never both. `query` is a structured query over one project, answered natively: a stat, a trend, a breakdown, a retention or an attributes, see [Structured queries](#structured-queries). `sql` is a single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them, answered by an external SQL engine (`SQL_ENGINE_SOCKET`; without one the tool's schema and description leave `sql` out, and a call that sends it anyway is refused as `invalid`, "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)"): see [Writing SQL against the event files](#writing-sql-against-the-event-files); it reads those seven tables only (no table function but `range`, `generate_series` and `unnest`, no schema-qualified name such as `main.events`), every project's rows, and takes none of `project_id`, `from` and `to`. Row-capped and time-limited either way |
+| `query` | `sql`, or `project_id`, `from`, `to` (optional: the 30 days ending today, UTC) and `query` | One of two, never both. `query` is a structured query over one project, answered natively: a stat, a trend, a breakdown, a retention or an attributes, see [Structured queries](#structured-queries). `sql` is a single read-only `SELECT`/`WITH` in DuckDB SQL over the raw events and the tables derived from them, answered by an external SQL engine (`SQL_ENGINE_SOCKET`; without one the tool's schema and description leave `sql` out, and a call that sends it anyway is refused as `invalid`, "SQL needs an external SQL engine (SQL_ENGINE_SOCKET)"): see [Writing SQL against the event files](#writing-sql-against-the-event-files); it reads those eight tables only (no table function but `range`, `generate_series` and `unnest`, no schema-qualified name such as `main.events`), every project's rows, and takes none of `project_id`, `from` and `to`. Row-capped and time-limited either way |
 
 `views_overview`, `views_breakdown`, `product_events`, `product_attributes`,
 `measures`, `identities`, `list_attributes`, `retention` and `usage` (and
@@ -1783,7 +1784,7 @@ be queried.
 Today's events are included, each `BUFFER_FLUSH_INTERVAL`. A query is
 row-capped (`CONSOLE_QUERY_ROWS_MAX`, default 1000) and time-limited
 (`CONSOLE_QUERY_TIMEOUT`, default `30s`); it cannot write, and it reads
-the seven tables below and nothing else: a table function that reads files
+the eight tables below and nothing else: a table function that reads files
 or the catalog (`read_parquet`, `read_csv`, `glob`, `query`, `duckdb_*`), a
 file named in `FROM` (`FROM 'x.parquet'`), a name with a schema
 (`main.events`, `information_schema.tables`), any other table (the reader's
@@ -1797,14 +1798,17 @@ close to Postgres: `date_trunc('month', ts)`, `count(DISTINCT user_id)`,
 `day BETWEEN DATE '2026-01-01' AND DATE '2026-01-31'`, `GROUP BY ALL`,
 `DESCRIBE events` for the columns.
 
-Seven tables. `events` holds every event of every family; `views`,
-`product` and `measures` hold its rows of one family each. Three more are
-derived from the events (below the column list). The `_tw_*` tables are
-the reader's own and hold rows before the rules apply: a query naming one
-is refused. `events` here currently also holds the server's availability
-`checks` rows; `checks` is a table of [structured queries](#structured-queries)
-only, so filter `family <> 'checks'` in SQL.
-`events`, `views`, `product` and `measures` have:
+Eight tables. `events` holds every event of the `views`, `product` and
+`measures` families, and those three tables hold its rows of one family each.
+`checks` holds the server's own availability checks (family `checks`, see
+[Monitoring](#monitoring)): it is a table of its own, in SQL and in
+[structured queries](#structured-queries) alike, and `events` leaves it out in
+both. Three more are derived from the events (below the column list). The
+`_tw_*` tables are the reader's own and hold rows before the rules apply: a
+query naming one is refused. `checks` needs an SQL engine from 2026.11.01-2 on;
+an older one has seven tables, its `events` still holds the `checks` rows and
+`SELECT … FROM checks` is refused (filter `family <> 'checks'` there).
+`events`, `views`, `product`, `measures` and `checks` have:
 
 | Column | Type | |
 | --- | --- | --- |

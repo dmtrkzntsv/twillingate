@@ -341,7 +341,7 @@ func TestWidgetSQLReadsOnlyTheTables(t *testing.T) {
 		check := func(how string, err error) {
 			t.Helper()
 			if !errors.Is(err, store.ErrInvalid) || !strings.HasPrefix(err.Error(), want) ||
-				!strings.Contains(err.Error(), "; SQL here reads only the tables events, views, product, measures, sessions, identities and aliases") {
+				!strings.Contains(err.Error(), "; SQL here reads only the tables events, views, product, measures, checks, sessions, identities and aliases") {
 				t.Errorf("%s %s: err = %v; want ErrInvalid %q", how, content, err, want)
 			}
 		}

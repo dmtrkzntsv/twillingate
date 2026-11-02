@@ -177,7 +177,7 @@ func checkSQLParams(content string) ([]string, error) {
 // content reads :project, even to one with no rows (project 0 among them,
 // which reads none), and otherwise over every project, as a widget that
 // never names one read on SQLite (Decision 2). Either way it reads only
-// the seven tables (confine): the save, the preview and every run of a
+// the eight tables (confine): the save, the preview and every run of a
 // widget refuse the same SQL.
 func bindSQL(content string, params []string, p Params) (boundSQL, error) {
 	bound, args, err := sqlbind.Bind(content, map[string]sqlbind.Value{
@@ -255,7 +255,7 @@ func (s *sqlSource) Validate(ctx context.Context, content string, c Component) e
 // can cause. The engine's sql kind covers a syntax error too, and only
 // the message would tell the two apart, so any such refusal moves on;
 // the cost is bounded by the live projects. A request the engine
-// refused (engineRefused: it reads past the seven tables) and a check
+// refused (engineRefused: it reads past the eight tables) and a check
 // that could not run (resourceErr) are no verdict another project
 // would change.
 func otherProject(err error) bool {
