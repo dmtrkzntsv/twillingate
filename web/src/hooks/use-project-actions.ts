@@ -129,9 +129,12 @@ export function useProjectActions(): ProjectActions {
         ['monitor']
       )) !== undefined,
     // The answer goes in the cache before pending ends, so the button goes
-    // straight to Checking… and polling starts.
+    // straight to Checking… and polling starts. A GET in flight is cancelled
+    // first: it began before the request, and its answer, landing after this
+    // one, would put the pending check back to idle and stop the polling.
     checkMonitor: async (id, origin) =>
       (await run(async () => {
+        await client.cancelQueries({ queryKey: ['monitor', id] })
         const m = await endpoints.checkMonitor(id, origin)
         client.setQueryData(['monitor', id], m)
         return m

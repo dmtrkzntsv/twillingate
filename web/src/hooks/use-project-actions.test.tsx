@@ -60,6 +60,24 @@ describe('useProjectActions', () => {
     expect(toast.success).toHaveBeenCalled()
   })
 
+  it('cancels a monitor fetch in flight before asking, so its older answer cannot overwrite the pending check', async () => {
+    const answer = { monitors: [{ origin: 'https://a.example', check: { requested_at: '2026-11-01T10:00:00Z' } }] } as never
+    const stale = { monitors: [{ origin: 'https://a.example' }] } as never
+    vi.spyOn(endpoints, 'checkMonitor').mockResolvedValue(answer)
+    const { client, wrapper: w } = wrapper()
+    let land!: () => void
+    const get = client
+      .fetchQuery({ queryKey: ['monitor', 7], queryFn: () => new Promise((resolve) => (land = () => resolve(stale))) })
+      .catch(() => undefined)
+    const { result } = renderHook(() => useProjectActions(), { wrapper: w })
+    await act(async () => {
+      await result.current.checkMonitor(7, 'https://a.example')
+    })
+    land()
+    await get
+    expect(client.getQueryData(['monitor', 7])).toBe(answer)
+  })
+
   it('puts a saved monitor in the cache before the refetch, so a switch or a text save does not jump back', async () => {
     const answer = { monitors: [{ origin: 'https://a.example', enabled: true }] } as never
     vi.spyOn(endpoints, 'updateMonitor').mockResolvedValue(answer)
