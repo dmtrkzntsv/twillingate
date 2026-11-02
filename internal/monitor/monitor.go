@@ -117,7 +117,7 @@ type Runner struct {
 	// time, so the one that ran last holds the newest result. Kept for good (one
 	// small channel per origin and main domain).
 	readLocks map[readKey]chan struct{}
-	pending []store.Event
+	pending   []store.Event
 	// tried is when each daily read last was, so one that read nothing is not
 	// retried every slot. It is not kept for a monitor switched off, so
 	// enabling it again reads at once.
