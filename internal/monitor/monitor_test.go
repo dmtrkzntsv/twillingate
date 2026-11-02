@@ -41,35 +41,57 @@ type fakeStore struct {
 	// redirects holds the stored hop counts, redirectWrites every write.
 	redirects      map[int64]int
 	redirectWrites int
-	// finished holds each stored manual check's result; finishCtxErr the
+	// finished holds the time each manual check ended at; finishCtxErr the
 	// context error the last one was stored under.
-	finished     map[monitorKey][]store.MonitorCheckResult
+	finished     map[monitorKey][]string
 	finishCtxErr error
+	// last holds every stored result, of checks of any kind, and finishedWith
+	// how many there were when each manual check ended.
+	last         map[monitorKey][]store.MonitorResult
+	finishedWith []int
 	// onList, when set, runs after the list is read and before it is returned.
 	onList func()
 }
 
-func (f *fakeStore) FinishMonitorCheck(ctx context.Context, id int64, origin, requestedAt string, res store.MonitorCheckResult) error {
+func (f *fakeStore) FinishMonitorCheck(ctx context.Context, id int64, origin, requestedAt, finishedAt string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.finished == nil {
-		f.finished = map[monitorKey][]store.MonitorCheckResult{}
+		f.finished = map[monitorKey][]string{}
 	}
 	k := monitorKey{id, origin}
-	f.finished[k] = append(f.finished[k], res)
+	f.finished[k] = append(f.finished[k], finishedAt)
+	f.finishedWith = append(f.finishedWith, len(f.last[k]))
 	f.finishCtxErr = ctx.Err()
 	for i := range f.monitors {
 		if f.monitors[i].ProjectID == id && f.monitors[i].Origin == origin {
-			f.monitors[i].CheckFinishedAt = res.FinishedAt
+			f.monitors[i].CheckFinishedAt = finishedAt
 		}
 	}
 	return nil
 }
 
-func (f *fakeStore) results(id int64, origin string) []store.MonitorCheckResult {
+func (f *fakeStore) finishes(id int64, origin string) []string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return append([]store.MonitorCheckResult(nil), f.finished[monitorKey{id, origin}]...)
+	return append([]string(nil), f.finished[monitorKey{id, origin}]...)
+}
+
+func (f *fakeStore) SetMonitorLast(_ context.Context, id int64, origin string, res store.MonitorResult) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.last == nil {
+		f.last = map[monitorKey][]store.MonitorResult{}
+	}
+	k := monitorKey{id, origin}
+	f.last[k] = append(f.last[k], res)
+	return nil
+}
+
+func (f *fakeStore) lasts(id int64, origin string) []store.MonitorResult {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]store.MonitorResult(nil), f.last[monitorKey{id, origin}]...)
 }
 
 func (f *fakeStore) SetMonitorRedirects(_ context.Context, id int64, origin string, n int) error {
@@ -989,6 +1011,63 @@ func namesOf(evs []store.Event) []string {
 	return names
 }
 
+// Every availability check keeps its result on the row, up or down, on a schedule
+// or by hand; Settings reads it from there.
+func TestEveryCheckKeepsItsResult(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "ok") }))
+	defer up.Close()
+	down := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(503) }))
+	defer down.Close()
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	const at = "2026-11-01T10:00:00Z"
+	check := func(res store.MonitorResult, wantUp bool, wantStatus int, wantReason string) {
+		t.Helper()
+		if res.CheckedAt != at || res.Up != wantUp || res.Status != wantStatus || res.Reason != wantReason || (res.Error == "") == !wantUp || res.MS < 0 {
+			t.Errorf("result = %+v, want up %t, status %d, reason %q", res, wantUp, wantStatus, wantReason)
+		}
+	}
+	st := &fakeStore{}
+	r := noReads(newRunner(st, allowAll{}, &fakeLog{}, time.Hour, quietLogger(), options{allowLoopback: true, now: func() time.Time { return now }}))
+
+	t.Run("scheduled", func(t *testing.T) {
+		r.runSlot(context.Background(), store.Monitor{ProjectID: 1, Enabled: true, Origin: up.URL})
+		r.runSlot(context.Background(), store.Monitor{ProjectID: 1, Enabled: true, Origin: down.URL})
+		upRes, downRes := st.lasts(1, up.URL), st.lasts(1, down.URL)
+		if len(upRes) != 1 || len(downRes) != 1 {
+			t.Fatalf("results %+v, %+v, want one each", upRes, downRes)
+		}
+		check(upRes[0], true, 200, "")
+		check(downRes[0], false, 503, ReasonHTTP5xx)
+	})
+	t.Run("manual", func(t *testing.T) {
+		r.runCheck(context.Background(), store.Monitor{ProjectID: 2, Enabled: true, Origin: up.URL})
+		r.runCheck(context.Background(), store.Monitor{ProjectID: 2, Enabled: true, Origin: down.URL})
+		upRes, downRes := st.lasts(2, up.URL), st.lasts(2, down.URL)
+		if len(upRes) != 1 || len(downRes) != 1 {
+			t.Fatalf("results %+v, %+v, want one each", upRes, downRes)
+		}
+		check(upRes[0], true, 200, "")
+		check(downRes[0], false, 503, ReasonHTTP5xx)
+	})
+	// Cut short by shutdown it says nothing about the site.
+	t.Run("cut short", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		r.runSlot(ctx, store.Monitor{ProjectID: 3, Enabled: true, Origin: up.URL})
+		if got := st.lasts(3, up.URL); len(got) != 0 {
+			t.Errorf("a cancelled check stored %+v", got)
+		}
+	})
+	// Dated no earlier than its request, or it would read as a check that did not run.
+	t.Run("clock stepped back", func(t *testing.T) {
+		req := now.Add(time.Minute).Format(time.RFC3339)
+		r.runSlot(context.Background(), store.Monitor{ProjectID: 4, Enabled: true, Origin: up.URL, CheckRequestedAt: req})
+		if got := st.lasts(4, up.URL); len(got) != 1 || got[0].CheckedAt != req {
+			t.Errorf("result %+v, want dated %s", got, req)
+		}
+	})
+}
+
 // TestManualCheckRunsAllThree: a request runs the availability, certificate
 // and domain checks at once, outside the slot and although the daily readings
 // are fresh, and records the availability result; it runs once.
@@ -1022,19 +1101,26 @@ func TestManualCheckRunsAllThree(t *testing.T) {
 	if d, _ := st.domain(1, domain); st.certWrites != 1 || d.CheckedAt != now.Format(time.RFC3339) {
 		t.Errorf("readings not stored: %d cert writes, domain %+v", st.certWrites, d)
 	}
-	res := st.results(1, srv.URL)
+	if got := st.finishes(1, srv.URL); !slices.Equal(got, []string{"2026-11-01T10:00:00Z"}) {
+		t.Errorf("finished = %v", got)
+	}
+	res := st.lasts(1, srv.URL)
 	if len(res) != 1 {
 		t.Fatalf("%d results, want 1", len(res))
 	}
-	if !res[0].Up || res[0].Status != 200 || res[0].Reason != "" || res[0].Error != "" || res[0].FinishedAt != "2026-11-01T10:00:00Z" {
+	if !res[0].Up || res[0].Status != 200 || res[0].Reason != "" || res[0].Error != "" || res[0].CheckedAt != "2026-11-01T10:00:00Z" {
 		t.Errorf("result = %+v", res[0])
+	}
+	// On the row by the time the request reads as ended.
+	if !slices.Equal(st.finishedWith, []int{1}) {
+		t.Errorf("results stored when the check ended = %v, want the one", st.finishedWith)
 	}
 	if hits.Load() != 1 {
 		t.Errorf("%d requests to the site, want 1", hits.Load())
 	}
 	// It does not run again.
 	tickOnce(t, r, now.Add(time.Second))
-	if n := len(st.results(1, srv.URL)); n != 1 || hits.Load() != 1 {
+	if n := len(st.finishes(1, srv.URL)); n != 1 || hits.Load() != 1 {
 		t.Errorf("ran again: %d results, %d requests", n, hits.Load())
 	}
 }
@@ -1428,9 +1514,9 @@ func TestManualCheckLeavesTheSlotAlone(t *testing.T) {
 	r, c := slotRunner(st, time.Hour)
 	checks := recordJob(r)
 	var manual sync.Map
-	r.check = func(_ context.Context, m store.Monitor) ([]store.Event, Result) {
+	r.check = func(_ context.Context, m store.Monitor) []store.Event {
 		manual.Store(m.Origin, true)
-		return nil, Result{Up: true}
+		return nil
 	}
 	c.next(t, r)
 	// A request on c, with no slot in sight: it runs now, a slot's check not.
@@ -1460,9 +1546,9 @@ func TestManualCheckDoesNotWaitForTheProjectsSlot(t *testing.T) {
 	release := make(chan struct{})
 	r.job = func(context.Context, store.Monitor) []store.Event { <-release; return nil }
 	checked := make(chan string, 1)
-	r.check = func(_ context.Context, m store.Monitor) ([]store.Event, Result) {
+	r.check = func(_ context.Context, m store.Monitor) []store.Event {
 		checked <- m.Origin
-		return nil, Result{Up: true}
+		return nil
 	}
 	c.tick(r) // a's slot, which blocks
 	st.mu.Lock()
@@ -1493,8 +1579,8 @@ func TestManualCheckStandsInForTheSlot(t *testing.T) {
 	r := newRunner(st, allowAll{}, &fakeLog{}, 60*time.Second, quietLogger(), options{allowLoopback: true, bootstrapURL: rd.URL + "/dns.json", now: func() time.Time { return now }})
 	r.tick(context.Background(), now.Add(-time.Minute), now) // the slot is due
 	waitIdle(t, r, 0)
-	if hits.Load() != 1 || len(st.results(1, srv.URL)) != 1 {
-		t.Errorf("%d requests, %d results, want one of each", hits.Load(), len(st.results(1, srv.URL)))
+	if hits.Load() != 1 || len(st.lasts(1, srv.URL)) != 1 || len(st.finishes(1, srv.URL)) != 1 {
+		t.Errorf("%d requests, %d results, %d finishes, want one of each", hits.Load(), len(st.lasts(1, srv.URL)), len(st.finishes(1, srv.URL)))
 	}
 }
 
@@ -1507,10 +1593,10 @@ func TestManualCheckWaitsForItsOwnRun(t *testing.T) {
 	r := noReads(newRunner(st, allowAll{}, &fakeLog{}, time.Hour, quietLogger(), options{now: func() time.Time { return now }}))
 	release := make(chan struct{})
 	var checks atomic.Int32
-	r.check = func(context.Context, store.Monitor) ([]store.Event, Result) {
+	r.check = func(context.Context, store.Monitor) []store.Event {
 		checks.Add(1)
 		<-release
-		return nil, Result{Up: true, Status: 200}
+		return nil
 	}
 	ctx := context.Background()
 	r.tick(ctx, now, now) // it starts, and blocks
@@ -1519,13 +1605,13 @@ func TestManualCheckWaitsForItsOwnRun(t *testing.T) {
 	}
 	r.tick(ctx, now, now.Add(time.Second))
 	r.tick(ctx, now, now.Add(3*time.Minute)) // too old by now, but not to be judged while busy
-	if checks.Load() != 1 || len(st.results(1, origin)) != 0 {
-		t.Fatalf("%d checks, results %+v while busy", checks.Load(), st.results(1, origin))
+	if checks.Load() != 1 || len(st.finishes(1, origin)) != 0 {
+		t.Fatalf("%d checks, finished %+v while busy", checks.Load(), st.finishes(1, origin))
 	}
 	close(release)
 	waitIdle(t, r, 0)
-	if res := st.results(1, origin); len(res) != 1 || !res[0].Up {
-		t.Fatalf("results %+v after it finished", res)
+	if res := st.finishes(1, origin); len(res) != 1 {
+		t.Fatalf("finished %+v after it finished", res)
 	}
 }
 
@@ -1537,10 +1623,10 @@ func TestManualCheckNotRepeatedByAStaleList(t *testing.T) {
 	r := noReads(newRunner(st, allowAll{}, &fakeLog{}, time.Hour, quietLogger(), options{now: func() time.Time { return now }}))
 	release := make(chan struct{})
 	var checks atomic.Int32
-	r.check = func(context.Context, store.Monitor) ([]store.Event, Result) {
+	r.check = func(context.Context, store.Monitor) []store.Event {
 		checks.Add(1)
 		<-release
-		return nil, Result{Up: true}
+		return nil
 	}
 	ctx := context.Background()
 	r.tick(ctx, now, now)
@@ -1583,7 +1669,10 @@ func TestManualCheckFailedReadsKeepTheDates(t *testing.T) {
 	if got := namesOf(lg.all()); !slices.Contains(got, "uptime") || slices.Contains(got, "cert") {
 		t.Errorf("rows = %v, want uptime and no cert", got)
 	}
-	res := st.results(1, origin)
+	if len(st.finishes(1, origin)) != 1 {
+		t.Errorf("finished %v, want once", st.finishes(1, origin))
+	}
+	res := st.lasts(1, origin)
 	if len(res) != 1 || res[0].Up || res[0].Reason != ReasonConnect || res[0].Error == "" {
 		t.Errorf("results = %+v, want one, down on connect", res)
 	}
@@ -1601,9 +1690,9 @@ func TestManualCheckTooOldIsDropped(t *testing.T) {
 	lg := &fakeLog{}
 	r := noReads(newRunner(st, allowAll{}, lg, time.Hour, quietLogger(), options{now: func() time.Time { return now }}))
 	var checked sync.Map
-	r.check = func(_ context.Context, m store.Monitor) ([]store.Event, Result) {
+	r.check = func(_ context.Context, m store.Monitor) []store.Event {
 		checked.Store(m.ProjectID, true)
-		return nil, Result{Up: true}
+		return nil
 	}
 	tickOnce(t, r, now)
 	if _, ok := checked.Load(int64(1)); ok {
@@ -1612,10 +1701,11 @@ func TestManualCheckTooOldIsDropped(t *testing.T) {
 	if _, ok := checked.Load(int64(2)); !ok {
 		t.Error("the request of exactly 2 minutes was not checked")
 	}
-	res := st.results(1, origin)
-	want := store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:00Z", Error: "the check did not run"}
-	if len(res) != 1 || res[0] != want {
-		t.Errorf("results = %+v, want %+v", res, want)
+	if got := st.finishes(1, origin); !slices.Equal(got, []string{"2026-11-01T10:00:00Z"}) {
+		t.Errorf("finished = %v", got)
+	}
+	if got := st.lasts(1, origin); len(got) != 0 {
+		t.Errorf("a check that did not run stored a result: %+v", got)
 	}
 	if len(lg.all()) != 0 {
 		t.Errorf("rows %v", lg.all())
@@ -1630,10 +1720,10 @@ func TestManualCheckFinishesPastItsRequest(t *testing.T) {
 	const origin = "https://x.example"
 	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 1, Enabled: true, Origin: origin, CheckRequestedAt: req}}}
 	r := noReads(newRunner(st, allowAll{}, &fakeLog{}, time.Hour, quietLogger(), options{now: func() time.Time { return now }}))
-	r.check = func(context.Context, store.Monitor) ([]store.Event, Result) { return nil, Result{Up: true} }
+	r.check = func(context.Context, store.Monitor) []store.Event { return nil }
 	tickOnce(t, r, now)
-	if res := st.results(1, origin); len(res) != 1 || res[0].FinishedAt != req {
-		t.Errorf("results = %+v, want finished at %s", res, req)
+	if res := st.finishes(1, origin); len(res) != 1 || res[0] != req {
+		t.Errorf("finished = %+v, want at %s", res, req)
 	}
 }
 
@@ -1647,7 +1737,7 @@ func TestManualCheckDuringShutdown(t *testing.T) {
 		st := &fakeStore{monitors: []store.Monitor{mon}}
 		r := noReads(newRunner(st, allowAll{}, &fakeLog{}, time.Hour, quietLogger(), options{now: func() time.Time { return now }}))
 		var checks atomic.Int32
-		r.check = func(context.Context, store.Monitor) ([]store.Event, Result) { checks.Add(1); return nil, Result{} }
+		r.check = func(context.Context, store.Monitor) []store.Event { checks.Add(1); return nil }
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 		r.tick(ctx, now, now)
@@ -1661,19 +1751,18 @@ func TestManualCheckDuringShutdown(t *testing.T) {
 		lg := &fakeLog{}
 		r := noReads(newRunner(st, allowAll{}, lg, time.Hour, quietLogger(), options{now: func() time.Time { return now }}))
 		entered := make(chan struct{})
-		r.check = func(ctx context.Context, m store.Monitor) ([]store.Event, Result) {
+		r.check = func(ctx context.Context, m store.Monitor) []store.Event {
 			close(entered)
 			<-ctx.Done()
-			return []store.Event{uptimeRow(m.ProjectID, m.Origin, now, Result{})}, Result{Reason: ReasonTimeout}
+			return []store.Event{uptimeRow(m.ProjectID, m.Origin, now, Result{})}
 		}
 		ctx, cancel := context.WithCancel(context.Background())
 		r.tick(ctx, now, now)
 		<-entered
 		cancel()
 		waitIdle(t, r, 0)
-		res := st.results(1, origin)
-		if len(res) != 1 || res[0].Error != "the check did not run" || res[0].Reason != "" {
-			t.Errorf("results = %+v", res)
+		if len(st.finishes(1, origin)) != 1 {
+			t.Errorf("finished = %+v", st.finishes(1, origin))
 		}
 		if st.finishCtxErr != nil {
 			t.Errorf("finished under a cancelled context: %v", st.finishCtxErr)
@@ -1726,7 +1815,7 @@ func TestPausedRunnerRunsNothingAndFinishesPendingChecks(t *testing.T) {
 	r := newRunner(st, allowAll{}, lg, time.Minute, quietLogger(), options{now: func() time.Time { return now }})
 	var ran atomic.Int32
 	r.job = func(context.Context, store.Monitor) []store.Event { ran.Add(1); return nil }
-	r.check = func(context.Context, store.Monitor) ([]store.Event, Result) { ran.Add(1); return nil, Result{Up: true} }
+	r.check = func(context.Context, store.Monitor) []store.Event { ran.Add(1); return nil }
 	r.readCert = func(context.Context, store.Monitor, time.Time) []store.Event { ran.Add(1); return nil }
 	r.readDomain = func(context.Context, int64, string, time.Time) []store.Event { ran.Add(1); return nil }
 	r.Pause()
@@ -1736,11 +1825,13 @@ func TestPausedRunnerRunsNothingAndFinishesPendingChecks(t *testing.T) {
 	if ran.Load() != 0 || len(lg.all()) != 0 {
 		t.Errorf("%d checks ran, %d rows written, want none", ran.Load(), len(lg.all()))
 	}
-	res := st.results(1, originA)
-	if len(res) != 1 || res[0].Error != checkNotRun || res[0].Up {
-		t.Errorf("the pending request finished as %+v, want %q", res, checkNotRun)
+	if res := st.finishes(1, originA); len(res) != 1 {
+		t.Errorf("the pending request finished %+v, want once", res)
 	}
-	if got := st.results(1, originB); len(got) != 0 {
+	if got := st.lasts(1, originA); len(got) != 0 {
+		t.Errorf("a check that did not run stored a result: %+v", got)
+	}
+	if got := st.finishes(1, originB); len(got) != 0 {
 		t.Errorf("a monitor with no request was finished: %+v", got)
 	}
 }

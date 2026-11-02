@@ -144,22 +144,20 @@ func monitorCheck(ctx context.Context, ops *manage.Ops, project int64, origin st
 		fmt.Fprintf(stdout, "the monitor of %s was removed: it is no longer an origin of project %d\n", origin, project)
 		return 1
 	}
-	fmt.Fprintln(stdout, monitorCheckText(m))
-	if !m.CheckUp && m.CheckReason == "" {
-		return 1 // finished, but it never ran
+	if m.CheckNotRun() {
+		fmt.Fprintln(stdout, "the check did not run")
+		return 1
 	}
+	fmt.Fprintln(stdout, monitorResultText(m.Last))
 	return 0
 }
 
-// monitorCheckText is the last manual check's result, as the console words it.
-func monitorCheckText(m store.Monitor) string {
-	switch {
-	case m.CheckUp:
-		return fmt.Sprintf("up, %d, %d ms (%s)", m.CheckStatus, m.CheckMS, m.CheckFinishedAt)
-	case m.CheckReason == "":
-		return fmt.Sprintf("%s (%s)", m.CheckError, m.CheckFinishedAt)
+// monitorResultText is an availability check's result, as the console words it.
+func monitorResultText(r store.MonitorResult) string {
+	if r.Up {
+		return fmt.Sprintf("up, %d, %d ms (%s)", r.Status, r.MS, r.CheckedAt)
 	}
-	return fmt.Sprintf("down, %s: %s (%s)", m.CheckReason, m.CheckError, m.CheckFinishedAt)
+	return fmt.Sprintf("down, %s: %s (%s)", r.Reason, r.Error, r.CheckedAt)
 }
 
 // printMonitors prints a project's monitors and the domains they share.
@@ -202,8 +200,8 @@ func printMonitor(w io.Writer, m store.Monitor) {
 	if m.Redirects > 0 {
 		fmt.Fprintf(w, "  redirects\t%d\n", m.Redirects)
 	}
-	if m.CheckFinishedAt != "" {
-		fmt.Fprintf(w, "  last manual check\t%s\n", monitorCheckText(m))
+	if m.Last.CheckedAt != "" {
+		fmt.Fprintf(w, "  last check\t%s\n", monitorResultText(m.Last))
 	}
 }
 

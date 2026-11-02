@@ -63,7 +63,7 @@ Projects live in a registry table, managed through the CLI or, over the API
 | Disable / enable a key | `twillingate key disable` / `enable` | `disable_ingest_key` / `enable_ingest_key` | `{project_id, label}` |
 | Read a project's monitors | `twillingate monitor list` | `list_monitors` | `{project_id}`; returns every eligible origin's monitor and the domains, see [Monitoring](#monitoring) |
 | Change one | `twillingate monitor set` | `update_monitor` | `{project_id, origin, enabled, contains}`, `origin` required; merges, so an omitted field keeps its value and `contains: ""` clears the text; returns the same as `list_monitors` |
-| Check one now | `twillingate monitor check` | `check_monitor` | `{project_id, origin}`; asks for a check of all three and returns the same as `list_monitors` right away, see [Monitoring](#monitoring). `monitor check` waits for the result, up to twice `MONITOR_TIMEOUT` plus 20 s, and prints it; exit 1 if it did not finish |
+| Check one now | `twillingate monitor check` | `check_monitor` | `{project_id, origin}`; asks for a check of all three and returns the same as `list_monitors` right away, see [Monitoring](#monitoring). `monitor check` waits for the result, up to twice `MONITOR_TIMEOUT` plus 20 s, and prints `last`; exit 1 if it did not finish or did not run |
 | Rename an event | — | `rename_event` | `{project_id, family, from, to}`; `family` is `product` or `measures`; returns the rule. See [Event rules](#event-rules) |
 | Merge an event into another | — | `merge_event` | `{project_id, family, from, to}`; returns what `rename_event` does |
 | Block an event | — | `block_event` | `{project_id, family, name}` |
@@ -383,10 +383,12 @@ and `domains`, the main domains of the enabled monitors, by name. A monitor has
 `origin`, `enabled`, `contains`, its last certificate reading in `cert`
 (`expires_at`, `issuer`, `valid`, `error`, `checked_at`), `redirects`, the hops the
 last check that got an answer followed (a check that got no response, such as a
-refused connection or a timeout before any answer, leaves it as it was), and
-`check` below. A domain has `domain`, `origins`, the enabled monitors' on it,
+refused connection or a timeout before any answer, leaves it as it was), the
+latest availability check, scheduled or manual, in `last` (`checked_at`, empty
+before the first, `up`, `status`, `reason`, `error` and `ms`), and `check` below.
+A domain has `domain`, `origins`, the enabled monitors' on it,
 `expires_at` and `checked_at`. `twillingate monitor list` prints them, `redirects`
-when above 0.
+when above 0 and `last` once there is one.
 
 **Checking now.** `check_monitor` (`twillingate monitor check`, or Check now in
 Settings → Monitoring) asks for one check of an origin's three readings outside
@@ -395,15 +397,16 @@ daily readings' age, with the same `MONITOR_TIMEOUT`. The server starts it withi
 about a second and writes the rows as usual; a certificate or RDAP read that fails
 keeps the last date as usual. It moves no slot, and the monitor's own slot
 is skipped while it runs. The call returns before the check ran: poll
-`list_monitors` until that monitor's `check.finished_at` is not empty and at or
-past `check.requested_at` (it is empty while the check runs, and `up`, `status`,
-`reason`, `error` and `ms` still hold the previous result until then), then read
-the result in `check`. A monitor that is not on is refused, and so is a request while one
+`list_monitors` until that monitor's `check.finished_at` (`check` is only
+`requested_at` and `finished_at`) is not empty and at or past `check.requested_at`
+(it is empty while the check runs, and `last` still holds the previous result
+until then), then read the result in `last`. A monitor that is not on is refused, and so is a request while one
 is pending on it or within 60 seconds of its last one, whatever the interval: this
 protects the site and the registries. A request not served within 2 minutes
-(the server was down) finishes with an empty `reason` and `error` `the check did
-not run`; so does one cut short by the server stopping, and one still pending when
-its monitor is turned off or its project archived. Only the server's runner
+(the server was down) finishes with `last` untouched, so `last.checked_at` stays
+before `check.requested_at`, which is how a check that did not run reads; so does
+one cut short by the server stopping, and one still pending when its monitor is
+turned off or its project archived. Only the server's runner
 serves requests, so `monitor check` needs it up. It waits as long as the longest
 check, twice `MONITOR_TIMEOUT` plus 20 seconds, then exits 1, saying the check is
 still running, or, for a request over 2 minutes old, asking whether the server is
@@ -1710,7 +1713,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","values","received","blocked","aliases"}],"keys_total"}`; `aliases` is absent when empty |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
-| `GET` | `/api/projects/{project_id}/monitors` | `list_monitors` | — → `{"interval_seconds","timeout_seconds","events_per_month","paused","monitors":[{"origin","enabled","contains","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"check":{"requested_at","finished_at","up","status","reason","error","ms"}}],"domains":[{"domain","origins","expires_at","checked_at"}]}`; empty strings are unknown |
+| `GET` | `/api/projects/{project_id}/monitors` | `list_monitors` | — → `{"interval_seconds","timeout_seconds","events_per_month","paused","monitors":[{"origin","enabled","contains","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"last":{"checked_at","up","status","reason","error","ms"},"check":{"requested_at","finished_at"}}],"domains":[{"domain","origins","expires_at","checked_at"}]}`; empty strings are unknown |
 | `PATCH` | `/api/projects/{project_id}/monitors` | `update_monitor` | body: `origin`, required, and `enabled`, `contains`, each optional (merge); a foreign origin is `400` → as `list_monitors` |
 | `POST` | `/api/projects/{project_id}/monitors/check` | `check_monitor` | body: `origin` → as `list_monitors`, right away, before the check ran; a monitor that is not on or a foreign origin is `400`, a check pending on it or within 60 s of its last request `429` |
 | `POST` | `/api/projects/{project_id}/move` | `move_project` | body: `after` |

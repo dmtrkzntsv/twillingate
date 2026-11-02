@@ -1,9 +1,10 @@
 -- 044: availability monitors (spec 2026-10-31-availability-monitoring). One
 -- row per monitor a project has been given, keyed by its origin: an optional
 -- text the page must contain, the last certificate reading, how many redirect
--- hops the last check that got an answer followed, and the last manual check: a
--- request the runner serves, and its result. A row's origin is one of the
--- project's: an origins edit that drops it deletes the row. A plain new table.
+-- hops the last check that got an answer followed, the latest result of any
+-- availability check, scheduled or manual, and the last manual check: a request
+-- the runner serves. A row's origin is one of the project's: an origins edit that
+-- drops it deletes the row. A plain new table.
 CREATE TABLE monitors (
     project_id        INTEGER NOT NULL REFERENCES projects(id),
     origin            TEXT    NOT NULL,
@@ -17,11 +18,12 @@ CREATE TABLE monitors (
     redirects         INTEGER NOT NULL DEFAULT 0,
     check_requested_at TEXT   NOT NULL DEFAULT '',
     check_finished_at TEXT    NOT NULL DEFAULT '',
-    check_up          INTEGER NOT NULL DEFAULT 0,
-    check_status      INTEGER NOT NULL DEFAULT 0,
-    check_reason      TEXT    NOT NULL DEFAULT '',
-    check_error       TEXT    NOT NULL DEFAULT '',
-    check_ms          INTEGER NOT NULL DEFAULT 0,
+    last_checked_at   TEXT    NOT NULL DEFAULT '',
+    last_up           INTEGER NOT NULL DEFAULT 0,
+    last_status       INTEGER NOT NULL DEFAULT 0,
+    last_reason       TEXT    NOT NULL DEFAULT '',
+    last_error        TEXT    NOT NULL DEFAULT '',
+    last_ms           INTEGER NOT NULL DEFAULT 0,
     updated_at        TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
     PRIMARY KEY (project_id, origin)
 ) WITHOUT ROWID;

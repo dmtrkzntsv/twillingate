@@ -323,17 +323,29 @@ func TestCheckMonitor(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer st.Close()
-	if err := st.FinishMonitorCheck(ctx, 1, monBlog, got.Check.RequestedAt, store.MonitorCheckResult{
-		FinishedAt: got.Check.RequestedAt, Status: 500, Reason: "http_5xx", Error: "status 500", MS: 42}); err != nil {
+	if err := st.SetMonitorLast(ctx, 1, monBlog, store.MonitorResult{
+		CheckedAt: got.Check.RequestedAt, Status: 500, Reason: "http_5xx", Error: "status 500", MS: 42}); err != nil {
 		t.Fatal(err)
 	}
-	want := monitorCheckOut{RequestedAt: got.Check.RequestedAt, FinishedAt: got.Check.RequestedAt, Status: 500, Reason: "http_5xx", Error: "status 500", MS: 42}
-	rec = serveREST(t, r, "GET", "/api/projects/1/monitors", "")
-	if c := decodeMonitors(t, rec.Body.Bytes()).Monitors[0].Check; c != want {
-		t.Errorf("GET check = %+v, want %+v", c, want)
+	if err := st.FinishMonitorCheck(ctx, 1, monBlog, got.Check.RequestedAt, got.Check.RequestedAt); err != nil {
+		t.Fatal(err)
 	}
-	if c := decodeMonitors(t, []byte(textOf(callTool(t, cs, "list_monitors", map[string]any{"project_id": 1})))).Monitors[0].Check; c != want {
-		t.Errorf("MCP check = %+v, want %+v", c, want)
+	want := monitorCheckOut{RequestedAt: got.Check.RequestedAt, FinishedAt: got.Check.RequestedAt}
+	wantLast := monitorLastOut{CheckedAt: got.Check.RequestedAt, Status: 500, Reason: "http_5xx", Error: "status 500", MS: 42}
+	rec = serveREST(t, r, "GET", "/api/projects/1/monitors", "")
+	// The wire names, as the docs give them.
+	for _, name := range []string{`"last":{"checked_at":`, `"check":{"requested_at":`} {
+		if !strings.Contains(rec.Body.String(), name) {
+			t.Errorf("GET body has no %s: %s", name, rec.Body)
+		}
+	}
+	rest := decodeMonitors(t, rec.Body.Bytes()).Monitors[0]
+	if rest.Check != want || rest.Last != wantLast {
+		t.Errorf("GET check = %+v, last = %+v, want %+v, %+v", rest.Check, rest.Last, want, wantLast)
+	}
+	mcp := decodeMonitors(t, []byte(textOf(callTool(t, cs, "list_monitors", map[string]any{"project_id": 1})))).Monitors[0]
+	if mcp.Check != want || mcp.Last != wantLast {
+		t.Errorf("MCP check = %+v, last = %+v, want %+v, %+v", mcp.Check, mcp.Last, want, wantLast)
 	}
 	// Finished, but within the cooldown: still 429, with the server's message.
 	rec = serveREST(t, r, "POST", path, body)

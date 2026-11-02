@@ -330,3 +330,17 @@ monitor's slot.
   descending by a metric or ascending by a dimension, so the tables are by name and
   a viewer sorts by clicking a header). A breakdown takes 3 dimensions, so Recent
   failures groups by origin, day and reason and reads the status as `latest`.
+- **The latest result of any check (user's decision, after Settings showed a
+  result only for manual checks; supersedes the result columns in Check now
+  above).** Migration 044 amended (unreleased): `check_up`, `check_status`,
+  `check_reason`, `check_error` and `check_ms` become `last_checked_at`, `last_up`,
+  `last_status`, `last_reason`, `last_error` and `last_ms`, written unaudited by the
+  runner after every availability check, scheduled or manual, one small write per
+  check, and only to a row still there, so a check that raced its origin's removal
+  brings nothing back. `check_requested_at` and `check_finished_at` stay for the
+  pending state: `FinishMonitorCheck` keeps its request guard and only ends it, so
+  "the check did not run" is no longer a stored error but `last.checked_at` before
+  `check.requested_at`. The API gains `last: {checked_at, up, status, reason, error,
+  ms}`, and `check` shrinks to `{requested_at, finished_at}`; `monitor list` prints
+  `last` and `monitor check` prints it. Settings shows it on every on row, as a
+  status line under the origin and its `must contain` text.

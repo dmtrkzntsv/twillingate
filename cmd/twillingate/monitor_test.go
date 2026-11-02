@@ -148,6 +148,31 @@ func TestPrintMonitorCertificate(t *testing.T) {
 	}
 }
 
+// A monitor's latest result prints once there is one, whatever kind of check it
+// came from: no manual check was asked for here.
+func TestPrintMonitorLast(t *testing.T) {
+	const at = "2026-11-01T00:00:00Z"
+	for _, c := range []struct {
+		name string
+		last store.MonitorResult
+		want string
+	}{
+		{"none", store.MonitorResult{}, ""},
+		{"up", store.MonitorResult{CheckedAt: at, Up: true, Status: 200, MS: 176}, "last check\tup, 200, 176 ms (" + at + ")\n"},
+		{"down", store.MonitorResult{CheckedAt: at, Reason: "dns", Error: "no such host", MS: 3}, "last check\tdown, dns: no such host (" + at + ")\n"},
+	} {
+		var out bytes.Buffer
+		printMonitor(&out, store.Monitor{Origin: "https://a.example", Enabled: true, Last: c.last})
+		got := out.String()
+		if c.want == "" && strings.Contains(got, "last check") {
+			t.Errorf("%s: printed %q, want no last line", c.name, got)
+		}
+		if !strings.Contains(got, c.want) {
+			t.Errorf("%s: printed %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 func TestPrintMonitorRedirects(t *testing.T) {
 	for _, c := range []struct {
 		n    int
@@ -165,9 +190,9 @@ func TestPrintMonitorRedirects(t *testing.T) {
 	}
 }
 
-// serveMonitorCheck plays the server's runner: it waits for the request and
-// finishes it.
-func serveMonitorCheck(t *testing.T, res store.MonitorCheckResult) {
+// serveMonitorCheck plays the server's runner: it waits for the request, stores
+// res unless that is nil, and finishes it.
+func serveMonitorCheck(t *testing.T, res *store.MonitorResult) {
 	t.Helper()
 	st := openStore(t)
 	done := make(chan struct{})
@@ -182,8 +207,13 @@ func serveMonitorCheck(t *testing.T, res store.MonitorCheckResult) {
 			}
 			for _, m := range ms {
 				if m.CheckPending() {
-					res.FinishedAt = m.CheckRequestedAt
-					if err := st.FinishMonitorCheck(context.Background(), 1, m.Origin, m.CheckRequestedAt, res); err != nil {
+					if res != nil {
+						res.CheckedAt = m.CheckRequestedAt
+						if err := st.SetMonitorLast(context.Background(), 1, m.Origin, *res); err != nil {
+							t.Error(err)
+						}
+					}
+					if err := st.FinishMonitorCheck(context.Background(), 1, m.Origin, m.CheckRequestedAt, m.CheckRequestedAt); err != nil {
 						t.Error(err)
 					}
 					return
@@ -211,7 +241,7 @@ func TestMonitorCheckRoundTrip(t *testing.T) {
 	runMonitor(t, 0, "set", "-project-id", "1", "-origin", shopOrigin, "-enable")
 	runMonitor(t, 0, "set", "-project-id", "1", "-origin", blogOrigin, "-enable")
 
-	serveMonitorCheck(t, store.MonitorCheckResult{Up: true, Status: 200, MS: 123})
+	serveMonitorCheck(t, &store.MonitorResult{Up: true, Status: 200, MS: 123})
 	if got := runMonitor(t, 0, check...); !strings.Contains(got, "up, 200, 123 ms") {
 		t.Errorf("check = %q", got)
 	}
@@ -221,14 +251,14 @@ func TestMonitorCheckRoundTrip(t *testing.T) {
 	if m := storedMonitor(t, blogOrigin); m.CheckRequestedAt != "" {
 		t.Fatalf("the other monitor was asked too: %+v", m)
 	}
-	if got := runMonitor(t, 0, "list", "-project-id", "1"); !strings.Contains(got, "last manual check\tup, 200, 123 ms") {
+	if got := runMonitor(t, 0, "list", "-project-id", "1"); !strings.Contains(got, "last check\tup, 200, 123 ms") {
 		t.Errorf("list = %q", got)
 	}
 	// The cooldown is the server's refusal, printed; another monitor has its own.
 	if got := runMonitor(t, 1, check...); !strings.Contains(got, "try again in") {
 		t.Errorf("cooldown = %q", got)
 	}
-	serveMonitorCheck(t, store.MonitorCheckResult{Up: true, Status: 201, MS: 1})
+	serveMonitorCheck(t, &store.MonitorResult{Up: true, Status: 201, MS: 1})
 	if got := runMonitor(t, 0, "check", "-project-id", "1", "-origin", blogOrigin+"/"); !strings.Contains(got, "up, 201") {
 		t.Errorf("the other monitor, spelled with a slash = %q", got)
 	}
@@ -239,12 +269,12 @@ func TestMonitorCheckDownAndNotRun(t *testing.T) {
 	monitorCheckPoll = 10 * time.Millisecond
 	for _, c := range []struct {
 		name string
-		res  store.MonitorCheckResult
+		res  *store.MonitorResult
 		code int
 		want string
 	}{
-		{"down", store.MonitorCheckResult{Reason: "content", Error: "text not found", Status: 200, MS: 9}, 0, "down, content: text not found"},
-		{"not run", store.MonitorCheckResult{Error: "the check did not run"}, 1, "the check did not run"},
+		{"down", &store.MonitorResult{Reason: "content", Error: "text not found", Status: 200, MS: 9}, 0, "down, content: text not found"},
+		{"not run", nil, 1, "the check did not run"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			withDB(t)

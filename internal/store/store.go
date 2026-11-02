@@ -362,14 +362,16 @@ type Store interface {
 	// ends a pending manual check as one that did not run. ListEnabledMonitors lists the enabled monitors
 	// of live projects by project id and origin. SetMonitorCert stores a
 	// reading, SetMonitorCertError only why a certificate could not be read,
-	// SetMonitorRedirects the hop count of the last check that got an answer, written only when it differs.
-	// All three are unaudited and do nothing when the monitor is gone.
+	// SetMonitorRedirects the hop count of the last check that got an answer, written only when it differs,
+	// SetMonitorLast the result of any availability check.
+	// All four are unaudited and do nothing when the monitor is gone.
 	ListMonitors(ctx context.Context, projectID int64) ([]Monitor, error)
 	SetMonitor(ctx context.Context, projectID int64, origin string, s MonitorSettings, eligible func(allowedOrigins []string) []string, a AuditEntry) (Monitor, error)
 	ListEnabledMonitors(ctx context.Context) ([]Monitor, error)
 	SetMonitorCert(ctx context.Context, projectID int64, origin string, c CertState) error
 	SetMonitorCertError(ctx context.Context, projectID int64, origin, msg string) error
 	SetMonitorRedirects(ctx context.Context, projectID int64, origin string, n int) error
+	SetMonitorLast(ctx context.Context, projectID int64, origin string, r MonitorResult) error
 	// ListMonitorDomains reads a project's domain readings by domain, which its
 	// monitors on one main domain share. SetMonitorDomain stores one, unaudited,
 	// unless no monitor of the project has an origin on that domain any more.
@@ -377,10 +379,10 @@ type Store interface {
 	SetMonitorDomain(ctx context.Context, projectID int64, domain string, d DomainState) error
 	// RequestMonitorCheck records a manual check of one monitor for the runner
 	// to serve, audited: ErrNotFound for an unknown project, ErrInvalid for a
-	// monitor not enabled, ErrBusy while one is pending or when the last request is less than cooldown before at. It clears the finish time and keeps the last result fields. FinishMonitorCheck
-	// records its result unless the monitor is gone or its request is no longer the one at requestedAt; not audited.
+	// monitor not enabled, ErrBusy while one is pending or when the last request is less than cooldown before at. It clears the finish time. FinishMonitorCheck
+	// ends it unless the monitor is gone or its request is no longer the one at requestedAt; not audited.
 	RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, cooldown time.Duration, a AuditEntry) error
-	FinishMonitorCheck(ctx context.Context, projectID int64, origin, requestedAt string, r MonitorCheckResult) error
+	FinishMonitorCheck(ctx context.Context, projectID int64, origin, requestedAt, finishedAt string) error
 	// SetSubmissionsArchived archives (archived true) or restores the
 	// project's submissions with these ids and returns how many changed:
 	// ids that match nothing, an archived one being archived and an active

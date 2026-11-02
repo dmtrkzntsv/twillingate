@@ -35,12 +35,16 @@ type monitorCertOut struct {
 
 type monitorCheckOut struct {
 	RequestedAt string `json:"requested_at" jsonschema:"when the last manual check was asked for, RFC 3339 UTC; empty when none"`
-	FinishedAt  string `json:"finished_at" jsonschema:"when it ended; empty while the check runs (the result fields then still hold the previous one), and before requested_at only on a row from an older version"`
-	Up          bool   `json:"up"`
-	Status      int    `json:"status" jsonschema:"the final HTTP status; 0 without a response"`
-	Reason      string `json:"reason" jsonschema:"why it was down, the same vocabulary as an uptime row's; empty when up or when it did not run"`
-	Error       string `json:"error" jsonschema:"the failure's text; \"the check did not run\" when it was never served"`
-	MS          int    `json:"ms" jsonschema:"response time in milliseconds"`
+	FinishedAt  string `json:"finished_at" jsonschema:"when it ended; empty while the check runs, and before requested_at only on a row from an older version"`
+}
+
+type monitorLastOut struct {
+	CheckedAt string `json:"checked_at" jsonschema:"when the latest availability check, scheduled or manual, ended, RFC 3339 UTC; empty before the first"`
+	Up        bool   `json:"up"`
+	Status    int    `json:"status" jsonschema:"the final HTTP status; 0 without a response"`
+	Reason    string `json:"reason" jsonschema:"why it was down, the same vocabulary as an uptime row's; empty when up"`
+	Error     string `json:"error" jsonschema:"the failure's text; empty when up"`
+	MS        int    `json:"ms" jsonschema:"response time in milliseconds"`
 }
 
 type monitorOut struct {
@@ -49,7 +53,8 @@ type monitorOut struct {
 	Contains  string          `json:"contains"`
 	Redirects int             `json:"redirects" jsonschema:"redirect hops the last check that got an answer followed; 0 when none or not checked yet"`
 	Cert      monitorCertOut  `json:"cert"`
-	Check     monitorCheckOut `json:"check" jsonschema:"the last manual check (check_monitor)"`
+	Last      monitorLastOut  `json:"last" jsonschema:"the latest availability check, scheduled or manual"`
+	Check     monitorCheckOut `json:"check" jsonschema:"the last manual check's request (check_monitor); its result is in last"`
 }
 
 type monitorDomainOut struct {
@@ -77,8 +82,9 @@ func (h *host) monitorsOut(l manage.MonitorList) monitorsOut {
 		out.Monitors = append(out.Monitors, monitorOut{Origin: m.Origin, Enabled: m.Enabled, Contains: m.Contains, Redirects: m.Redirects,
 			Cert: monitorCertOut{ExpiresAt: m.CertExpiresAt, Issuer: m.CertIssuer, Valid: m.CertValid,
 				Error: m.CertError, CheckedAt: m.CertCheckedAt},
-			Check: monitorCheckOut{RequestedAt: m.CheckRequestedAt, FinishedAt: m.CheckFinishedAt, Up: m.CheckUp,
-				Status: m.CheckStatus, Reason: m.CheckReason, Error: m.CheckError, MS: m.CheckMS}})
+			Last: monitorLastOut{CheckedAt: m.Last.CheckedAt, Up: m.Last.Up, Status: m.Last.Status,
+				Reason: m.Last.Reason, Error: m.Last.Error, MS: m.Last.MS},
+			Check: monitorCheckOut{RequestedAt: m.CheckRequestedAt, FinishedAt: m.CheckFinishedAt}})
 	}
 	for _, d := range l.Domains {
 		out.Domains = append(out.Domains, monitorDomainOut{Domain: d.Domain, Origins: d.Origins, ExpiresAt: d.ExpiresAt, CheckedAt: d.CheckedAt})
@@ -122,12 +128,12 @@ func (h *host) checkMonitor(ctx context.Context, in checkMonitorIn) (monitorsOut
 
 func (h *host) registerMonitor(r *registrar) {
 	expose(r, spec{Name: "list_monitors", Annotations: ro, Method: "GET", Path: "/api/projects/{project_id}/monitors",
-		Description: "A project's availability monitors, one per origin: every exact http(s) origin of the project, on or off (origin, enabled, the text the page must contain, redirects, the last certificate reading in cert: expires_at, issuer, valid, error, checked_at, and the last manual check in check: requested_at, finished_at, up, status, reason, error, ms); domains, the renewal date of each enabled monitor's main domain (domain, origins, expires_at, checked_at); interval_seconds (MONITOR_INTERVAL, how often each enabled monitor is checked), timeout_seconds (MONITOR_TIMEOUT), events_per_month (what one monitor uses a month on a hosted plan, 0 when not priced) and paused (monitoring is off on this install). Empty strings are unknown. The checks themselves are read from the checks table of query."},
+		Description: "A project's availability monitors, one per origin: every exact http(s) origin of the project, on or off (origin, enabled, the text the page must contain, redirects, the last certificate reading in cert: expires_at, issuer, valid, error, checked_at, the latest availability check, scheduled or manual, in last: checked_at, up, status, reason, error, ms, and the last manual check's request in check: requested_at, finished_at); domains, the renewal date of each enabled monitor's main domain (domain, origins, expires_at, checked_at); interval_seconds (MONITOR_INTERVAL, how often each enabled monitor is checked), timeout_seconds (MONITOR_TIMEOUT), events_per_month (what one monitor uses a month on a hosted plan, 0 when not priced) and paused (monitoring is off on this install). Empty strings are unknown. The checks themselves are read from the checks table of query."},
 		h.listMonitors)
 	expose(r, spec{Name: "update_monitor", Annotations: idem, Method: "PATCH", Path: "/api/projects/{project_id}/monitors",
 		Description: "Change one origin's availability monitor: enabled and contains (text the page must contain). origin is required, one of the project's exact http(s) origins; fields you omit are left unchanged. Returns the same as list_monitors."},
 		h.updateMonitor)
 	expose(r, spec{Name: "check_monitor", Annotations: write, Method: "POST", Path: "/api/projects/{project_id}/monitors/check",
-		Description: "Ask for a check of one enabled monitor now: its origin's availability, certificate and main domain together, outside the schedule. Returns the same as list_monitors right away, before the check ran; call list_monitors until that monitor's check.finished_at is not empty and at or past check.requested_at (it is empty while the check runs, and the result fields hold the previous result until then), then read check.up, status, reason, error and ms, and the fresh cert and domain. Refused while one is pending on that monitor and within 60 seconds of its last request."},
+		Description: "Ask for a check of one enabled monitor now: its origin's availability, certificate and main domain together, outside the schedule. Returns the same as list_monitors right away, before the check ran; call list_monitors until that monitor's check.finished_at is not empty and at or past check.requested_at (it is empty while the check runs, and last holds the previous result until then), then read last.up, status, reason, error and ms, and the fresh cert and domain; last.checked_at still before check.requested_at means the check did not run. Refused while one is pending on that monitor and within 60 seconds of its last request."},
 		h.checkMonitor)
 }

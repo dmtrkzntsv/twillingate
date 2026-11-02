@@ -16,13 +16,13 @@ import (
 
 const monitorCols = `project_id, origin, enabled, contains, cert_expires_at, cert_issuer,
 	cert_valid, cert_error, cert_checked_at, redirects,
-	check_requested_at, check_finished_at, check_up, check_status, check_reason, check_error, check_ms`
+	check_requested_at, check_finished_at, last_checked_at, last_up, last_status, last_reason, last_error, last_ms`
 
 func scanMonitor(s rowScanner) (store.Monitor, error) {
 	var m store.Monitor
 	err := s.Scan(&m.ProjectID, &m.Origin, &m.Enabled, &m.Contains, &m.CertExpiresAt, &m.CertIssuer,
 		&m.CertValid, &m.CertError, &m.CertCheckedAt, &m.Redirects,
-		&m.CheckRequestedAt, &m.CheckFinishedAt, &m.CheckUp, &m.CheckStatus, &m.CheckReason, &m.CheckError, &m.CheckMS)
+		&m.CheckRequestedAt, &m.CheckFinishedAt, &m.Last.CheckedAt, &m.Last.Up, &m.Last.Status, &m.Last.Reason, &m.Last.Error, &m.Last.MS)
 	return m, err
 }
 
@@ -153,11 +153,10 @@ func (d *DB) SetMonitor(ctx context.Context, projectID int64, origin string, s s
 // good, and a client polling for its end would never stop.
 func finishPendingChecks(ctx context.Context, tx *sql.Tx, projectID int64, origin string) error {
 	_, err := tx.ExecContext(ctx, `UPDATE monitors SET
-		check_finished_at = MAX(strftime('%Y-%m-%dT%H:%M:%SZ','now'), check_requested_at),
-		check_up=0, check_status=0, check_reason='', check_error=?, check_ms=0
+		check_finished_at = MAX(strftime('%Y-%m-%dT%H:%M:%SZ','now'), check_requested_at)
 		WHERE project_id=? AND (?='' OR origin=?)
 		AND check_requested_at != '' AND (check_finished_at = '' OR check_finished_at < check_requested_at)`,
-		store.MonitorCheckNotRun, projectID, origin, origin)
+		projectID, origin, origin)
 	return err
 }
 
@@ -166,7 +165,7 @@ func finishPendingChecks(ctx context.Context, tx *sql.Tx, projectID int64, origi
 func (d *DB) ListEnabledMonitors(ctx context.Context) ([]store.Monitor, error) {
 	rows, err := d.db.QueryContext(ctx, `SELECT m.project_id, m.origin, m.enabled, m.contains,
 		m.cert_expires_at, m.cert_issuer, m.cert_valid, m.cert_error, m.cert_checked_at, m.redirects,
-		m.check_requested_at, m.check_finished_at, m.check_up, m.check_status, m.check_reason, m.check_error, m.check_ms
+		m.check_requested_at, m.check_finished_at, m.last_checked_at, m.last_up, m.last_status, m.last_reason, m.last_error, m.last_ms
 		FROM monitors m JOIN projects p ON p.id = m.project_id
 		WHERE m.enabled = 1 AND p.archived_at IS NULL ORDER BY m.project_id, m.origin`)
 	if err != nil {
@@ -198,6 +197,16 @@ func (d *DB) SetMonitorCertError(ctx context.Context, projectID int64, origin, m
 func (d *DB) SetMonitorRedirects(ctx context.Context, projectID int64, origin string, n int) error {
 	_, err := d.db.ExecContext(ctx, `UPDATE monitors SET redirects=? WHERE project_id=? AND origin=? AND redirects<>?`,
 		n, projectID, origin, n)
+	return err
+}
+
+// SetMonitorLast stores the result of an availability check, scheduled or manual,
+// guarded like SetMonitorCert: a check that raced its origin's removal leaves no
+// row behind. Not audited.
+func (d *DB) SetMonitorLast(ctx context.Context, projectID int64, origin string, r store.MonitorResult) error {
+	_, err := d.db.ExecContext(ctx, `UPDATE monitors SET last_checked_at=?, last_up=?, last_status=?,
+		last_reason=?, last_error=?, last_ms=? WHERE project_id=? AND origin=?`,
+		r.CheckedAt, r.Up, r.Status, r.Reason, r.Error, r.MS, projectID, origin)
 	return err
 }
 
@@ -324,8 +333,7 @@ func deleteMonitorsOffOrigins(ctx context.Context, tx *sql.Tx, projectID int64, 
 
 // RequestMonitorCheck records a manual check of one monitor for the runner to
 // serve and audits it, clearing the finish time so the request reads as pending
-// even in the second the last check finished (the last result stays until the
-// next one replaces it). The write itself refuses a monitor not enabled, one
+// even in the second the last check finished. The write itself refuses a monitor not enabled, one
 // with a request pending and one requested less than cooldown before at, so
 // two callers cannot both pass.
 func (d *DB) RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, cooldown time.Duration, a store.AuditEntry) error {
@@ -379,13 +387,14 @@ func (d *DB) RequestMonitorCheck(ctx context.Context, projectID int64, origin, a
 	})
 }
 
-// FinishMonitorCheck stores how a manual check ended, guarded like
+// FinishMonitorCheck ends a manual check's pending state, guarded like
 // SetMonitorCert, and only for the request it served: requestedAt is the
 // request's time, so a late finish of an older request, after the monitor was
-// turned off and on and asked again, writes nothing. Not audited.
-func (d *DB) FinishMonitorCheck(ctx context.Context, projectID int64, origin, requestedAt string, r store.MonitorCheckResult) error {
-	_, err := d.db.ExecContext(ctx, `UPDATE monitors SET check_finished_at=?, check_up=?, check_status=?,
-		check_reason=?, check_error=?, check_ms=? WHERE project_id=? AND origin=? AND check_requested_at=?`,
-		r.FinishedAt, r.Up, r.Status, r.Reason, r.Error, r.MS, projectID, origin, requestedAt)
+// turned off and on and asked again, writes nothing. Its result is SetMonitorLast's.
+// Not audited.
+func (d *DB) FinishMonitorCheck(ctx context.Context, projectID int64, origin, requestedAt, finishedAt string) error {
+	_, err := d.db.ExecContext(ctx, `UPDATE monitors SET check_finished_at=?
+		WHERE project_id=? AND origin=? AND check_requested_at=?`,
+		finishedAt, projectID, origin, requestedAt)
 	return err
 }

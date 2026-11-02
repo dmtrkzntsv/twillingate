@@ -16,13 +16,11 @@ type Monitor struct {
 	Redirects     int // hops the last answered check followed
 
 	// The last manual check: when it was requested and finished (RFC 3339 UTC,
-	// "" never; pending while requested is the later), and the availability
-	// result it finished with.
+	// "" never; pending while requested is the later).
 	CheckRequestedAt, CheckFinishedAt string
-	CheckUp                           bool
-	CheckStatus                       int
-	CheckReason, CheckError           string
-	CheckMS                           int
+
+	// The latest availability check of any kind, scheduled or manual.
+	Last MonitorResult
 }
 
 // MonitorSettings is what an operator edits on a monitor: the fields to change,
@@ -43,9 +41,9 @@ type MonitorDomain struct {
 	CheckedAt string
 }
 
-// MonitorCheckResult is how a manual check finished.
-type MonitorCheckResult struct {
-	FinishedAt    string
+// MonitorResult is how an availability check went.
+type MonitorResult struct {
+	CheckedAt     string // RFC 3339 UTC, "" never
 	Up            bool
 	Status        int
 	Reason, Error string
@@ -61,12 +59,16 @@ type CertState struct {
 // DomainState is one domain-expiry reading.
 type DomainState struct{ ExpiresAt, CheckedAt string }
 
-// MonitorCheckNotRun is the error of a manual check that ended without running.
-const MonitorCheckNotRun = "the check did not run"
-
 // CheckPending reports whether a manual check was requested and has not
 // finished: requested, and finished empty (the request clears it) or older than
 // the request.
 func (m Monitor) CheckPending() bool {
 	return m.CheckRequestedAt != "" && (m.CheckFinishedAt == "" || m.CheckFinishedAt < m.CheckRequestedAt)
+}
+
+// CheckNotRun reports whether the last manual check ended without an availability
+// check at or after its request: the server was down, stopping, or the monitor
+// went off. A result in the request's own second counts as the check's.
+func (m Monitor) CheckNotRun() bool {
+	return m.CheckRequestedAt != "" && !m.CheckPending() && m.Last.CheckedAt < m.CheckRequestedAt
 }

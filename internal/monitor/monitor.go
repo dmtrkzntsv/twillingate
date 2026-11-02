@@ -9,9 +9,10 @@
 // availability check back. A read that fails says nothing about either: the last
 // reading stands, unrecorded, and is tried again after an hour.
 //
-// A manual check is a request on the monitor's row, since the API that takes it
-// may be another process: the next tick runs all three for that origin, outside
-// the slot, and records the availability result on the row.
+// Every availability check, scheduled or manual, keeps its result on the monitor's
+// row, which Settings shows. A manual check is a request on that row, since the API
+// that takes it may be another process: the next tick runs all three for that
+// origin, outside the slot.
 //
 // Every connection it makes, redirect hops and RDAP lookups included, goes
 // through a dialer that refuses private addresses.
@@ -46,7 +47,8 @@ type Store interface {
 	ListMonitorDomains(ctx context.Context, projectID int64) ([]store.MonitorDomain, error)
 	SetMonitorDomain(ctx context.Context, projectID int64, domain string, d store.DomainState) error
 	SetMonitorRedirects(ctx context.Context, projectID int64, origin string, n int) error
-	FinishMonitorCheck(ctx context.Context, projectID int64, origin, requestedAt string, r store.MonitorCheckResult) error
+	SetMonitorLast(ctx context.Context, projectID int64, origin string, r store.MonitorResult) error
+	FinishMonitorCheck(ctx context.Context, projectID int64, origin, requestedAt, finishedAt string) error
 }
 
 // EventLog is where check rows go (archive.Log).
@@ -75,7 +77,6 @@ const (
 	// finishTimeout bounds recording a manual check's end, on a context of its
 	// own so that a shutdown does not leave it pending.
 	finishTimeout = 5 * time.Second
-	checkNotRun   = store.MonitorCheckNotRun
 )
 
 // Runner schedules the checks. Each monitor has a fixed offset within the
@@ -100,8 +101,8 @@ type Runner struct {
 	// job runs one slot's availability check and returns its row; a seam for
 	// tests, as are the two below it.
 	job func(ctx context.Context, m store.Monitor) []store.Event
-	// check runs one manual check and returns its rows and result.
-	check func(ctx context.Context, m store.Monitor) ([]store.Event, Result)
+	// check runs one manual check and returns its rows.
+	check func(ctx context.Context, m store.Monitor) []store.Event
 	// readCert and readDomain read and store one reading and return its row.
 	readCert   func(ctx context.Context, m store.Monitor, now time.Time) []store.Event
 	readDomain func(ctx context.Context, projectID int64, domain string, now time.Time) []store.Event
@@ -265,7 +266,7 @@ func (r *Runner) Pause() { r.paused = true }
 func (r *Runner) finishPending(ctx context.Context, ms []store.Monitor) {
 	for _, m := range ms {
 		if m.CheckPending() && ctx.Err() == nil {
-			r.finishCheck(ctx, m, Result{Error: checkNotRun})
+			r.finishCheck(ctx, m)
 		}
 	}
 }
@@ -274,7 +275,7 @@ func (r *Runner) finishPending(ctx context.Context, ms []store.Monitor) {
 // While it runs, m's slot is skipped: it is the check.
 func (r *Runner) startManual(ctx context.Context, m store.Monitor, now time.Time) {
 	if tooOld(m.CheckRequestedAt, now) {
-		r.finishCheck(ctx, m, Result{Error: checkNotRun})
+		r.finishCheck(ctx, m)
 		return
 	}
 	k := keyOf(m)
@@ -470,30 +471,30 @@ func (r *Runner) dispatchManual(ctx context.Context, m store.Monitor) {
 		delete(r.manuals, keyOf(m))
 		r.mu.Unlock()
 	}()
-	evs, res := r.check(ctx, m)
-	if ctx.Err() != nil {
-		r.finishCheck(ctx, m, Result{Error: checkNotRun})
-		return
-	}
+	evs := r.check(ctx, m)
 	r.keep(ctx, evs)
-	r.finishCheck(ctx, m, res)
+	r.finishCheck(ctx, m)
 }
 
-// finishCheck records how m's manual check ended, on a context shutdown does
-// not cancel. Never before its request: the page waits for finished_at to reach
-// requested_at, and a clock that stepped back must not leave it waiting.
-func (r *Runner) finishCheck(ctx context.Context, m store.Monitor, res Result) {
-	at := r.now().UTC().Format(time.RFC3339)
-	if at < m.CheckRequestedAt {
-		at = m.CheckRequestedAt
-	}
+// finishCheck ends m's manual check, on a context shutdown does not cancel; its
+// result, if it got that far, is on the row already.
+func (r *Runner) finishCheck(ctx context.Context, m store.Monitor) {
 	fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), finishTimeout)
 	defer cancel()
-	if err := r.st.FinishMonitorCheck(fctx, m.ProjectID, m.Origin, m.CheckRequestedAt, store.MonitorCheckResult{
-		FinishedAt: at, Up: res.Up, Status: res.Status, Reason: res.Reason, Error: res.Error, MS: elapsedMS(res),
-	}); err != nil {
+	if err := r.st.FinishMonitorCheck(fctx, m.ProjectID, m.Origin, m.CheckRequestedAt, r.stamp(m)); err != nil {
 		r.logger.Warn("monitor: store manual check", "project_id", m.ProjectID, "error", err)
 	}
+}
+
+// stamp is now as a row's time. Never before m's request: the page waits for
+// finished_at to reach requested_at and reads a result older than it as a check
+// that did not run, and a clock that stepped back must not make it so.
+func (r *Runner) stamp(m store.Monitor) string {
+	at := r.now().UTC().Format(time.RFC3339)
+	if at < m.CheckRequestedAt {
+		return m.CheckRequestedAt
+	}
+	return at
 }
 
 // flush writes the pending rows. A failed write is logged and the rows
@@ -539,19 +540,18 @@ func due(prev, now time.Time, interval, off time.Duration) bool {
 
 // runSlot is one slot's check: the availability of its monitor.
 func (r *Runner) runSlot(ctx context.Context, m store.Monitor) []store.Event {
-	up, _ := r.availability(ctx, m)
-	return []store.Event{up}
+	return []store.Event{r.availability(ctx, m)}
 }
 
 // runCheck is one manual check: the availability check on the availability pool,
 // then both daily reads on theirs, due or not. They count as the day's attempts,
 // so a read that failed is not tried again by the next slot. Shutdown cuts it
-// short, which its caller sees on ctx.
-func (r *Runner) runCheck(ctx context.Context, m store.Monitor) ([]store.Event, Result) {
+// short, which drops its rows.
+func (r *Runner) runCheck(ctx context.Context, m store.Monitor) []store.Event {
 	if !acquire(ctx, r.sem) {
-		return nil, Result{}
+		return nil
 	}
-	up, res := r.availability(ctx, m)
+	up := r.availability(ctx, m)
 	<-r.sem
 	evs := []store.Event{up}
 	domain := r.domainOf(m.Origin)
@@ -566,11 +566,11 @@ func (r *Runner) runCheck(ctx context.Context, m store.Monitor) ([]store.Event, 
 		// one, the newer, is the one stored last.
 		unlock, ok := r.lockRead(ctx, read.key)
 		if !ok {
-			return evs, res
+			return evs
 		}
 		if !acquire(ctx, r.readSem) {
 			unlock()
-			return evs, res
+			return evs
 		}
 		now := r.now().UTC()
 		r.mu.Lock()
@@ -580,7 +580,7 @@ func (r *Runner) runCheck(ctx context.Context, m store.Monitor) ([]store.Event, 
 		<-r.readSem
 		unlock()
 	}
-	return evs, res
+	return evs
 }
 
 // lockRead waits for its turn to read k, one reading at a time whoever asks. It
@@ -600,8 +600,8 @@ func (r *Runner) lockRead(ctx context.Context, k readKey) (unlock func(), ok boo
 	return func() { <-ch }, true
 }
 
-// availability GETs m's origin: its row and the result.
-func (r *Runner) availability(ctx context.Context, m store.Monitor) (store.Event, Result) {
+// availability GETs m's origin, keeps the result on its row and returns its check row.
+func (r *Runner) availability(ctx context.Context, m store.Monitor) store.Event {
 	start := r.now().UTC()
 	cctx, cancel := context.WithTimeout(ctx, r.timeout)
 	res := Check(cctx, r.client, m.Origin, m.Contains, func(target string) bool {
@@ -617,7 +617,16 @@ func (r *Runner) availability(ctx context.Context, m store.Monitor) (store.Event
 			r.logger.Warn("monitor: store redirect count", "project_id", m.ProjectID, "error", err)
 		}
 	}
-	return uptimeRow(m.ProjectID, m.Origin, start, res), res
+	// A check shutdown cut short says nothing of the site. The store's write
+	// leaves out a row an origins edit removed meanwhile.
+	if ctx.Err() == nil {
+		if err := r.st.SetMonitorLast(ctx, m.ProjectID, m.Origin, store.MonitorResult{
+			CheckedAt: r.stamp(m), Up: res.Up, Status: res.Status, Reason: res.Reason, Error: res.Error, MS: elapsedMS(res),
+		}); err != nil {
+			r.logger.Warn("monitor: store last result", "project_id", m.ProjectID, "error", err)
+		}
+	}
+	return uptimeRow(m.ProjectID, m.Origin, start, res)
 }
 
 // elapsedMS is a check's time in whole milliseconds.
