@@ -113,6 +113,10 @@ type Runner struct {
 	slots   map[monitorKey]bool // monitors whose slot check is running
 	manuals map[monitorKey]bool // monitors whose manual check is running
 	reads   map[readKey]bool    // daily reads queued or running
+	// readLocks orders the reads of one reading, scheduled or manual: one at a
+	// time, so the one that ran last holds the newest result. Kept for good (one
+	// small channel per origin and main domain).
+	readLocks map[readKey]chan struct{}
 	pending []store.Event
 	// tried is when each daily read last was, so one that read nothing is not
 	// retried every slot. It is not kept for a monitor switched off, so
@@ -179,7 +183,7 @@ func newRunner(st Store, origins Origins, log EventLog, interval time.Duration, 
 		rdap:    &rdap{client: newClient(&guard{resolver: o.resolver, allowLoopback: o.allowLoopback, budget: rdapTimeout}, o.roots), bootstrapURL: o.bootstrapURL, now: o.now},
 		sem:     make(chan struct{}, workers),
 		readSem: make(chan struct{}, readWorkers),
-		slots:   map[monitorKey]bool{}, manuals: map[monitorKey]bool{}, reads: map[readKey]bool{},
+		slots:   map[monitorKey]bool{}, manuals: map[monitorKey]bool{}, reads: map[readKey]bool{}, readLocks: map[readKey]chan struct{}{},
 		tried: map[readKey]time.Time{}, domains: map[string]string{},
 	}
 	r.job = r.runSlot
@@ -364,6 +368,11 @@ func (r *Runner) startRead(ctx context.Context, k readKey, now time.Time, read f
 			}
 			r.mu.Unlock()
 		}()
+		unlock, ok := r.lockRead(ctx, k)
+		if !ok {
+			return
+		}
+		defer unlock()
 		if !acquire(ctx, r.readSem) {
 			return
 		}
@@ -553,7 +562,14 @@ func (r *Runner) runCheck(ctx context.Context, m store.Monitor) ([]store.Event, 
 		{certKey(m), func(at time.Time) []store.Event { return r.readCert(ctx, m, at) }},
 		{readKey{m.ProjectID, "domain", domain}, func(at time.Time) []store.Event { return r.readDomain(ctx, m.ProjectID, domain, at) }},
 	} {
+		// Waits for a scheduled read of the same reading in flight, so this
+		// one, the newer, is the one stored last.
+		unlock, ok := r.lockRead(ctx, read.key)
+		if !ok {
+			return evs, res
+		}
 		if !acquire(ctx, r.readSem) {
+			unlock()
 			return evs, res
 		}
 		now := r.now().UTC()
@@ -562,8 +578,26 @@ func (r *Runner) runCheck(ctx context.Context, m store.Monitor) ([]store.Event, 
 		r.mu.Unlock()
 		evs = append(evs, read.run(now)...)
 		<-r.readSem
+		unlock()
 	}
 	return evs, res
+}
+
+// lockRead waits for its turn to read k, one reading at a time whoever asks. It
+// is taken before a pool slot and the clock, so a read that waited is dated
+// after the one it waited for. ok is false when ctx ended first.
+func (r *Runner) lockRead(ctx context.Context, k readKey) (unlock func(), ok bool) {
+	r.mu.Lock()
+	ch := r.readLocks[k]
+	if ch == nil {
+		ch = make(chan struct{}, 1)
+		r.readLocks[k] = ch
+	}
+	r.mu.Unlock()
+	if !acquire(ctx, ch) {
+		return nil, false
+	}
+	return func() { <-ch }, true
 }
 
 // availability GETs m's origin: its row and the result.

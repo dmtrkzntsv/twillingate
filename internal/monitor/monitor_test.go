@@ -1737,3 +1737,58 @@ func TestPausedRunnerRunsNothingAndFinishesPendingChecks(t *testing.T) {
 		t.Errorf("a monitor with no request was finished: %+v", got)
 	}
 }
+
+// A manual read and a scheduled one of the same reading do not overlap: the
+// manual read waits for the one in flight and runs after it, so the newest
+// result is the one stored. The availability check does not wait for either.
+func TestManualReadWaitsForTheScheduledReadOfTheSameKey(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "ok") }))
+	defer srv.Close()
+	m := store.Monitor{ProjectID: 1, Enabled: true, Origin: srv.URL}
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	r := newRunner(&fakeStore{monitors: []store.Monitor{m}}, allowAll{}, &fakeLog{}, time.Hour, quietLogger(),
+		options{allowLoopback: true, now: func() time.Time { return now }})
+	r.readDomain = func(context.Context, int64, string, time.Time) []store.Event { return nil }
+	var mu sync.Mutex
+	var order []string
+	entered := make(chan string, 2)
+	release := make(chan struct{})
+	r.readCert = func(_ context.Context, _ store.Monitor, _ time.Time) []store.Event {
+		mu.Lock()
+		who := "scheduled"
+		if len(order) > 0 {
+			who = "manual"
+		}
+		order = append(order, who+" start")
+		mu.Unlock()
+		entered <- who
+		if who == "scheduled" {
+			<-release
+		}
+		mu.Lock()
+		order = append(order, who+" end")
+		mu.Unlock()
+		return nil
+	}
+	ctx := context.Background()
+	r.startRead(ctx, certKey(m), now, func(ctx context.Context, at time.Time) []store.Event { return r.readCert(ctx, m, at) })
+	if who := <-entered; who != "scheduled" {
+		t.Fatalf("first read = %s", who)
+	}
+	done := make(chan struct{})
+	go func() { r.runCheck(ctx, m); close(done) }()
+	select {
+	case who := <-entered:
+		t.Fatalf("the %s read started while the scheduled one was still running", who)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	<-done
+	waitIdle(t, r, 0)
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"scheduled start", "scheduled end", "manual start", "manual end"}
+	if !slices.Equal(order, want) {
+		t.Errorf("order = %v, want %v", order, want)
+	}
+}
