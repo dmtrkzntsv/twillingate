@@ -47,3 +47,8 @@ export function daysUntilDate(day: string, now: Date = new Date()): number {
   const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
   return Math.round((Date.parse(`${day}T00:00:00Z`) - today) / DAY)
 }
+
+/** "73 days", or "expired" once the day has passed. */
+export function formatDaysLeft(days: number): string {
+  return days < 0 ? 'expired' : `${days} day${days === 1 ? '' : 's'}`
+}

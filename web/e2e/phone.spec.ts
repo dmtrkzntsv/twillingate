@@ -269,9 +269,17 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   // its result is a down line, with the long origin's error, that wraps too.
   await check(page, `/app/projects/${id}/settings?range=today`)
   const monitoring = page.getByRole('region', { name: 'Monitoring' })
-  await monitoring.getByRole('button', { name: 'Check now' }).click()
+  const monitoredOrigin = 'https://billing-test.another-long-subdomain.example.com'
+  await monitoring.getByRole('button', { name: `Check ${monitoredOrigin} now` }).click()
   await expect(monitoring.getByText(/^down, /)).toBeVisible({ timeout: 40_000 })
-  await expect(monitoring.getByRole('button', { name: 'Check now' })).toBeEnabled()
+  await expect(monitoring.getByRole('button', { name: `Check ${monitoredOrigin} now` })).toBeEnabled()
+  // The saved text, then the field and the row menu, over the long origin.
+  await expect(monitoring.getByRole('button', { name: /^must contain "a text the page must hold/ })).toBeVisible()
+  expect(await sidewaysScroll(page), 'monitoring saved text').toEqual([])
+  await monitoring.getByRole('button', { name: `More for ${monitoredOrigin}` }).click()
+  await page.getByRole('menuitem', { name: 'Look for text on the page' }).click()
+  await expect(monitoring.getByLabel('Page must contain')).toBeVisible()
+  expect(await sidewaysScroll(page), 'monitoring text field').toEqual([])
   expect(await sidewaysScroll(page), 'monitoring after a check').toEqual([])
 
   // The Attributes section's dialogs, over its long keys, fit the phone.
