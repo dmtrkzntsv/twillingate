@@ -33,7 +33,8 @@ function monitor(origin: string, over: Partial<Monitor> = {}): Monitor {
     contains: '',
     redirects: 0,
     cert: { expires_at: '', issuer: '', valid: false, error: '', checked_at: '' },
-    check: { requested_at: '', finished_at: '', up: false, status: 0, reason: '', error: '', ms: 0 },
+    last: { checked_at: '', up: false, status: 0, reason: '', error: '', ms: 0 },
+    check: { requested_at: '', finished_at: '' },
     ...over,
   }
 }
@@ -339,7 +340,7 @@ describe('MonitoringSection', () => {
     it('says when it is unchecked, with no second line', async () => {
       show(list([on(A)]))
       const a = await row(A)
-      expect(a.getByText('Cert not checked yet')).toBeInTheDocument()
+      expect(a.getByText('Cert unknown')).toBeInTheDocument()
       expect(a.queryByText(/^Certificate:/)).not.toBeInTheDocument()
     })
 
@@ -348,6 +349,17 @@ describe('MonitoringSection', () => {
       const a = await row(A)
       expect(a.getByText('Cert unknown')).toBeInTheDocument()
       expect(a.getByText('Certificate: x509: expired')).toBeInTheDocument()
+    })
+
+    it('does not repeat a failure the status line already says', async () => {
+      const last = { checked_at: '2026-11-01T10:00:00Z', up: false, status: 0, reason: 'dns', error: 'no such host', ms: 3 }
+      show(list([
+        on(A, { last, cert: { ...monitor(A).cert, error: 'no such host' } }),
+        on(B, { last, cert: { ...monitor(A).cert, error: 'TLS handshake failed' } }),
+      ]))
+      expect((await row(A)).queryByText(/^Certificate:/)).not.toBeInTheDocument()
+      expect((await row(A)).getByText('Cert unknown')).toBeInTheDocument()
+      expect((await row(B)).getByText('Certificate: TLS handshake failed')).toBeInTheDocument()
     })
 
     it('shows both a known expiry and the check that failed since', async () => {
@@ -359,13 +371,21 @@ describe('MonitoringSection', () => {
 
     it('says a certificate that was read but does not verify is invalid', async () => {
       show(list([certOf({ expires_at: days(30).toISOString(), valid: false, error: 'x509: unknown authority' })]))
-      expect((await row(A)).getByText(/^Certificate: invalid, expires \S+ \(30 days\): x509: unknown authority$/)).toBeInTheDocument()
+      const a = await row(A)
+      expect(a.getByText('Cert invalid')).toHaveClass('text-destructive')
+      expect(a.getByText(/^Certificate: invalid, expires \S+ \(30 days\): x509: unknown authority$/)).toBeInTheDocument()
     })
 
     it('says expired once the day has passed', async () => {
-      show(list([certOf({ expires_at: days(-3).toISOString(), valid: true })]))
+      show(list([certOf({ expires_at: days(-3).toISOString(), valid: false })]))
       const expired = (await row(A)).getByText('Cert expired')
       expect(expired).toHaveClass('text-destructive')
+    })
+
+    it('never wraps, and moves into the stacked block on a phone', async () => {
+      show(list([certOf({ expires_at: days(30).toISOString(), valid: true })]))
+      const cert = (await row(A)).getByText('Cert 30 days')
+      expect(cert).toHaveClass('whitespace-nowrap', 'col-start-2', 'sm:col-start-3')
     })
 
     it('says nothing on an http:// origin, which has none', async () => {
@@ -400,10 +420,83 @@ describe('MonitoringSection', () => {
     })
   })
 
+  describe('the status line', () => {
+    const checked = (minutes: number) => new Date(Date.now() - minutes * 60_000 - 1000).toISOString()
+    /** The whole line a text is in. */
+    const line = (el: HTMLElement) => el.closest('p') as HTMLElement
+
+    it('reads Up with the status, the time and the age, from a scheduled check with no manual one', async () => {
+      show(list([on(A, { last: { checked_at: checked(11), up: true, status: 200, reason: '', error: '', ms: 1234 } })]))
+      const up = (await row(A)).getByText('Up, 200, 1,234 ms, 11 min ago')
+      expect(line(up).querySelector('[aria-hidden]')).toHaveClass('bg-emerald-500')
+      expect(line(up)).toHaveClass('text-muted-foreground')
+    })
+
+    it('reads Down with the failure text, the word and the dot in the destructive colour, and wraps', async () => {
+      show(list([on(A, { last: { checked_at: checked(1), up: false, status: 0, reason: 'dns', error: 'no such host', ms: 3 } })]))
+      const down = (await row(A)).getByText('Down')
+      expect(down).toHaveClass('text-destructive')
+      const p = line(down)
+      expect(p).toHaveTextContent(/^Down, no such host, 1 min ago$/)
+      expect(p.querySelector('[aria-hidden]')).toHaveClass('bg-destructive')
+      expect(down.parentElement).toHaveClass('break-words')
+    })
+
+    it('reads Not checked yet before the first result, with no title', async () => {
+      show(list([on(A)]))
+      const text = (await row(A)).getByText('Not checked yet')
+      expect(line(text)).not.toHaveAttribute('title')
+      expect(line(text).querySelector('[aria-hidden]')).toHaveClass('bg-muted-foreground/40')
+    })
+
+    it('reads Checking… while a manual check runs', async () => {
+      show(list([on(A, { check: { requested_at: '2026-11-01T10:00:00Z', finished_at: '' } })]))
+      expect((await row(A)).getByText('Checking…')).toBeInTheDocument()
+    })
+
+    it('reads Paused on a paused install, whatever the last result', async () => {
+      show(list([on(A, { last: { checked_at: checked(5), up: false, status: 503, reason: 'http_5xx', error: 'HTTP 503', ms: 3 } })], { paused: true }))
+      const a = await row(A)
+      expect(a.getByText('Paused')).toBeInTheDocument()
+      expect(a.queryByText('Down')).not.toBeInTheDocument()
+      expect(a.queryByText(/HTTP 503/)).not.toBeInTheDocument()
+    })
+
+    it('has the exact time and the HTTP status as its title', async () => {
+      show(list([
+        on(A, { last: { checked_at: '2026-11-01T19:30:12Z', up: true, status: 200, reason: '', error: '', ms: 5 } }),
+        on(B, { last: { checked_at: '2026-11-01T19:30:12Z', up: false, status: 0, reason: 'dns', error: 'no such host', ms: 5 } }),
+      ]))
+      expect(line((await row(A)).getByText(/^Up,/))).toHaveAttribute('title', 'HTTP 200, 2026-11-01 19:30 UTC')
+      expect(line((await row(B)).getByText('Down'))).toHaveAttribute('title', '2026-11-01 19:30 UTC')
+    })
+
+    it('stacks the origin, the text and the status line in that order, then the notes', async () => {
+      show(list([on(A, { contains: 'Welcome', redirects: 3, last: { checked_at: checked(1), up: true, status: 200, reason: '', error: '', ms: 5 } })]))
+      const a = await row(A)
+      const li = screen.getByRole('listitem', { name: A })
+      const order = [a.getByText(A), a.getByRole('button', { name: 'must contain "Welcome"' }), a.getByText(/^Up,/), a.getByText(/^Redirects 3/)]
+      for (let i = 1; i < order.length; i++) {
+        expect(order[i - 1].compareDocumentPosition(order[i]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      }
+      expect(li).toContainElement(order[3])
+    })
+
+    it('is not on an off row, nor anything else but the switch and the origin', async () => {
+      show(list([monitor(A, { contains: 'x', redirects: 4, last: { checked_at: checked(1), up: true, status: 200, reason: '', error: '', ms: 5 } })]))
+      const a = await row(A)
+      expect(a.getByText(A)).toHaveClass('text-muted-foreground')
+      expect(a.queryByText(/^Up,|Not checked|Cert/)).not.toBeInTheDocument()
+      expect(a.queryAllByRole('button')).toEqual([])
+      expect(screen.getByRole('listitem', { name: A }).childElementCount).toBe(2)
+    })
+  })
+
   describe('Check now', () => {
     const at = '2026-11-01T10:00:00Z'
-    const pendingCheck = { ...monitor(A).check, requested_at: at }
-    const done = (over: Partial<Monitor['check']>): Monitor['check'] => ({ ...monitor(A).check, requested_at: at, finished_at: '2026-11-01T10:00:02Z', ...over })
+    const pendingCheck = { requested_at: at, finished_at: '' }
+    const done = { requested_at: at, finished_at: '2026-11-01T10:00:02Z' }
+    const result = (over: Partial<Monitor['last']>): Monitor['last'] => ({ ...monitor(A).last, checked_at: '2026-11-01T10:00:02Z', ...over })
 
     it('is an icon button with a tooltip, which spins while the check runs', async () => {
       const user = userEvent.setup()
@@ -434,11 +527,15 @@ describe('MonitoringSection', () => {
       expect((await row(B)).getByRole('button', { name: `Check ${B} now` })).toBeEnabled()
     })
 
-    it('reads a request as pending while the previous result stays in the fields, and finished once the finish time reaches it', async () => {
-      show(list([on(A, { check: { ...pendingCheck, up: true, status: 200, ms: 5 } }), on(B, { check: done({ finished_at: at }) })]))
+    it('reads a request as pending while the previous result stands, and finished once the finish time reaches it', async () => {
+      show(list([
+        on(A, { check: pendingCheck, last: result({ up: true, status: 200, ms: 5 }) }),
+        on(B, { check: { ...done, finished_at: at }, last: result({ up: true, status: 200, ms: 5 }) }),
+      ]))
       const a = await row(A)
       expect(a.getByRole('button', { name: `Check ${A} now` })).toBeDisabled()
       expect(a.getByText('Checking…')).toBeInTheDocument()
+      expect(a.queryByText(/^Up,/)).not.toBeInTheDocument()
       expect((await row(B)).getByRole('button', { name: `Check ${B} now` })).toBeEnabled()
     })
 
@@ -446,10 +543,10 @@ describe('MonitoringSection', () => {
       const { read } = show(list([on(A, { check: pendingCheck }), on(B)]))
       const a = await row(A)
       expect(await screen.findByText('each site is checked every 1 min')).toBeInTheDocument()
-      read.mockResolvedValue(list([on(A, { check: done({ up: true, status: 200, ms: 123 }) }), on(B)]))
-      expect(await a.findByText(/^up, 200, 123 ms \(.+ ago\)$/, undefined, { timeout: 4000 })).toBeInTheDocument()
+      read.mockResolvedValue(list([on(A, { check: done, last: result({ up: true, status: 200, ms: 123 }) }), on(B)]))
+      expect(await a.findByText(/^Up, 200, 123 ms, .+ ago$/, undefined, { timeout: 4000 })).toBeInTheDocument()
       expect(a.getByRole('button', { name: `Check ${A} now` })).toBeEnabled()
-      expect((await row(B)).queryByText(/^up,/)).not.toBeInTheDocument()
+      expect((await row(B)).queryByText(/^Up,/)).not.toBeInTheDocument()
       const calls = read.mock.calls.length
       await new Promise((r) => setTimeout(r, 2300))
       expect(read.mock.calls.length).toBe(calls)
@@ -462,34 +559,22 @@ describe('MonitoringSection', () => {
       await user.click(a.getByRole('button', { name: 'must contain "Welcome"' }))
       const text = a.getByLabelText('Page must contain')
       await user.type(text, ' back')
-      read.mockResolvedValue(list([on(A, { contains: 'Welcome', check: done({ up: true, status: 200, ms: 5 }) })]))
+      read.mockResolvedValue(list([on(A, { contains: 'Welcome', check: done, last: result({ up: true, status: 200, ms: 5 }) })]))
       await waitFor(() => expect(read.mock.results.length).toBeGreaterThan(1), { timeout: 4000 })
       expect(text).toHaveValue('Welcome back')
     }, 10_000)
 
-    it('shows a down result with its reason and error', async () => {
-      show(list([on(A, { check: done({ reason: 'content', error: 'text not found', status: 200, ms: 9 }) })]))
-      expect((await row(A)).getByText(/^down, content: text not found \(.+ ago\)$/)).toBeInTheDocument()
-    })
-
-    it('puts a failed result in the full-width notes row, wrapping, and a success in its column', async () => {
-      const long = 'redirected off-site to https://www.example.com — add it to the project\'s origins if it is yours'
-      show(list([on(A, { check: done({ reason: 'redirect', error: long }) }), on(B, { check: done({ up: true, status: 200, ms: 24 }) })]))
-      const failed = (await row(A)).getByText(/^down, redirect: /)
-      expect(failed.parentElement).toHaveClass('break-words')
-      expect(failed.closest('div')).toHaveClass('sm:col-span-4')
-      const ok = (await row(B)).getByText(/^up, 200, 24 ms/)
-      expect(ok.closest('div')).not.toHaveClass('sm:col-span-4')
-    })
-
-    it('says when the check did not run', async () => {
-      show(list([on(A, { check: done({ error: 'the check did not run' }) })]))
-      expect((await row(A)).getByText(/^the check did not run \(.+ ago\)$/)).toBeInTheDocument()
-    })
-
-    it('shows no result before any check', async () => {
-      show(list([on(A)]))
-      expect((await row(A)).queryByText(/^(up|down),/)).not.toBeInTheDocument()
+    it('says so when the check it asked for did not run, under the result that stands', async () => {
+      show(list([
+        on(A, { check: done, last: result({ checked_at: '2026-11-01T09:58:00Z', up: true, status: 200, ms: 5 }) }),
+        on(B, { check: done, last: result({ up: true, status: 200, ms: 5 }) }),
+        on(C, { check: done }),
+      ]))
+      const a = await row(A)
+      expect(a.getByText('The last check did not run')).toBeInTheDocument()
+      expect(a.getByText(/^Up, 200, 5 ms/)).toBeInTheDocument()
+      expect((await row(B)).queryByText(/did not run/)).not.toBeInTheDocument()
+      expect((await row(C)).getByText('The last check did not run')).toBeInTheDocument()
     })
 
     it('gives up waiting on a row after 45 s with a message, and keeps looking every 15 s', async () => {
@@ -509,9 +594,9 @@ describe('MonitoringSection', () => {
         expect(read.mock.calls.length).toBe(calls)
         await vi.advanceTimersByTimeAsync(5_500)
         expect(read.mock.calls.length).toBe(calls + 1)
-        read.mockResolvedValue(list([on(A, { check: done({ up: true, status: 200, ms: 7 }) }), on(B)]))
+        read.mockResolvedValue(list([on(A, { check: done, last: result({ up: true, status: 200, ms: 7 }) }), on(B)]))
         await vi.advanceTimersByTimeAsync(15_500)
-        expect(await a.findByText(/^up, 200, 7 ms/)).toBeInTheDocument()
+        expect(await a.findByText(/^Up, 200, 7 ms/)).toBeInTheDocument()
         expect(a.queryByText(/has not finished/)).not.toBeInTheDocument()
         // Finished, it stops.
         const finished = read.mock.calls.length

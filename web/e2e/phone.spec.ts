@@ -272,12 +272,12 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   for (const d of await dashboardIds(request)) await check(page, `/app/dashboards/${d}`)
 
   // Check now, served by the live runner: the origin does not resolve here, so
-  // its result is a down line, with the long origin's error, that wraps too.
+  // its status line reads Down, with the long origin's error, and wraps too.
   await check(page, `/app/projects/${id}/settings?range=today`)
   const monitoring = page.getByRole('region', { name: 'Monitoring' })
   const monitoredOrigin = MONITORED
   await monitoring.getByRole('button', { name: `Check ${monitoredOrigin} now` }).click()
-  await expect(monitoring.getByText(/^down, /)).toBeVisible({ timeout: 40_000 })
+  await expect(monitoring.getByText(/^Down, /)).toBeVisible({ timeout: 40_000 })
   await expect(monitoring.getByRole('button', { name: `Check ${monitoredOrigin} now` })).toBeEnabled()
   // The saved text, then the field and the row menu, over the long origin.
   await expect(monitoring.getByRole('button', { name: /^must contain "a text the page must hold/ })).toBeVisible()
@@ -293,7 +293,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   // and wraps, so the origin keeps its column on a tablet.
   for (const width of [768, 900, 1024]) {
     await page.setViewportSize({ width, height: 900 })
-    const result = monitoring.getByText(/^down, /)
+    const result = monitoring.getByText(/^Down, /)
     await expect(result).toBeVisible()
     const origin = (await monitoring.getByText(monitoredOrigin, { exact: true }).boundingBox())!
     const note = (await result.boundingBox())!
@@ -305,7 +305,8 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
       const out: string[] = root.scrollWidth > root.clientWidth ? ['page'] : []
       for (const name of ['Monitoring', 'Domains']) {
         for (const el of Array.from(document.querySelectorAll<HTMLElement>(`[aria-label="${name}"], [aria-label="${name}"] *`))) {
-          if (el.scrollWidth > el.clientWidth + 1) out.push(`${name}: ${el.tagName.toLowerCase()} ${el.scrollWidth}px in ${el.clientWidth}px`)
+          // A text field scrolls a long value inside itself, as any does; it is open here.
+          if (el.tagName !== 'INPUT' && el.scrollWidth > el.clientWidth + 1) out.push(`${name}: ${el.tagName.toLowerCase()} ${el.scrollWidth}px in ${el.clientWidth}px`)
         }
       }
       return out

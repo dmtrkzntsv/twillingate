@@ -39,12 +39,40 @@ function pendingCheck(m: Monitor): string | null {
   return m.enabled && requested !== '' && (finished === '' || finished < requested) ? requested : null
 }
 
-/** How the last manual check went. */
-function checkText(check: Monitor['check'], now: Date): string {
-  const when = formatAgo(check.finished_at, now)
-  if (check.up) return `up, ${check.status}, ${check.ms} ms (${when})`
-  if (!check.reason) return `${check.error} (${when})`
-  return `down, ${check.reason}: ${check.error} (${when})`
+/** Whether the last manual check ended with no result of its own: the server was down or stopping. */
+function checkNotRun(m: Monitor): boolean {
+  const { requested_at: requested, finished_at: finished } = m.check
+  return requested !== '' && finished >= requested && m.last.checked_at < requested
+}
+
+/** A check's exact time and, when it got one, its HTTP status. */
+function checkedTitle(last: Monitor['last']): string | undefined {
+  if (!last.checked_at) return undefined
+  const at = `${last.checked_at.slice(0, 16).replace('T', ' ')} UTC`
+  return last.status > 0 ? `HTTP ${last.status}, ${at}` : at
+}
+
+/** The dot and the words under an origin: the state of a row that is on. */
+function StatusLine({ m, now, checking, paused }: { m: Monitor; now: Date; checking: boolean; paused: boolean }) {
+  const { last } = m
+  const checked = last.checked_at !== ''
+  let dot = 'bg-muted-foreground/40'
+  let words = <>Not checked yet</>
+  if (paused) words = <>Paused</>
+  else if (checking) words = <>Checking…</>
+  else if (checked && last.up) {
+    dot = 'bg-emerald-500'
+    words = <>{`Up, ${last.status}, ${formatExact(last.ms)} ms, ${formatAgo(last.checked_at, now)}`}</>
+  } else if (checked) {
+    dot = 'bg-destructive'
+    words = <><span className="text-destructive">Down</span>{`, ${last.error || last.reason}, ${formatAgo(last.checked_at, now)}`}</>
+  }
+  return (
+    <p className="flex min-w-0 items-start gap-1.5 text-sm text-muted-foreground" title={checkedTitle(last)}>
+      <span aria-hidden className={`mt-1.5 size-2 shrink-0 rounded-full ${dot}`} />
+      <span className="min-w-0 break-words">{words}</span>
+    </p>
+  )
 }
 
 /** What Settings says in full about an origin's certificate. */
@@ -57,14 +85,14 @@ function certificateText(origin: string, cert: Monitor['cert'], now: Date): stri
   return expiry
 }
 
-/** The certificate in a word or two on the row, and whether it has expired; null when it has none to speak of. */
-function certificateShort(m: Monitor, now: Date): { text: string; expired: boolean } | null {
+/** The certificate in a word or two on the row, and whether that is a problem; null on a plain http:// origin, which has none. */
+function certificateShort(m: Monitor, now: Date): { text: string; bad: boolean } | null {
   if (m.origin.startsWith('http://')) return null
-  if (m.cert.expires_at) {
-    const days = daysUntil(new Date(m.cert.expires_at), now)
-    return { text: `Cert ${formatDaysLeft(days)}`, expired: days < 0 }
-  }
-  return { text: m.cert.error ? 'Cert unknown' : 'Cert not checked yet', expired: false }
+  if (!m.cert.expires_at) return { text: 'Cert unknown', bad: false }
+  const days = daysUntil(new Date(m.cert.expires_at), now)
+  if (days < 0) return { text: `Cert ${formatDaysLeft(days)}`, bad: true }
+  if (!m.cert.valid) return { text: 'Cert invalid', bad: true }
+  return { text: `Cert ${formatDaysLeft(days)}`, bad: false }
 }
 
 interface RowProps {
@@ -81,10 +109,11 @@ interface RowProps {
 }
 
 /**
- * One origin on a grid shared with the other rows: a switch that saves at once,
- * the origin and, while on, the certificate, the last check and two buttons
- * (Check now; a menu with the page text). An off row is the switch and the
- * origin alone. On a phone the details wrap below the origin.
+ * One origin: a switch that saves at once, then a stacked block of the origin,
+ * its page text, the status line and any notes, and to the right the certificate
+ * and two buttons (Check now; a menu with the page text). An off row is the switch
+ * and the origin alone. On a phone the certificate is a line of the block: the
+ * grid places the one element either way.
  */
 function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused }: RowProps) {
   // Where the switch goes while its save is out; a failed one drops back.
@@ -131,44 +160,44 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
 
   const checking = waiting !== null && waiting !== gaveUp
   const certFull = certificateText(m.origin, m.cert, now)
-  const certProblem = !m.origin.startsWith('http://') && (m.cert.error !== '' || (m.cert.expires_at !== '' && !m.cert.valid))
+  // A site that is down fails its certificate read the same way: the status line says it already.
+  const sameAsDown = !paused && !checking && m.last.checked_at !== '' && !m.last.up && m.cert.error === m.last.error
+  const certProblem = !m.origin.startsWith('http://') && !sameAsDown && (m.cert.error !== '' || (m.cert.expires_at !== '' && !m.cert.valid))
   const cert = certificateShort(m, now)
   const inputRef = useRef<HTMLInputElement>(null)
   const showField = editing || contains !== m.contains
   const label = `Check ${m.origin} now`
-  // A failed result can run long (an error names a URL): it goes under the
-  // origin, wrapping, while a success stays short in its column.
-  const failed = !checking && m.check.finished_at !== '' && !m.check.up
-  const hasDetails = cert !== null || checking || (m.check.finished_at !== '' && !failed)
-  const hasNotes = failed || certProblem || m.redirects >= LONG_CHAIN || (waiting !== null && waiting === gaveUp) || showField
+  const notRun = !checking && !paused && checkNotRun(m)
+  const hasNotes = notRun || certProblem || m.redirects >= LONG_CHAIN || (waiting !== null && waiting === gaveUp) || showField
 
   return (
-    <li aria-label={m.origin} className="col-span-full grid grid-cols-subgrid items-center gap-y-1">
-      <Switch aria-label={`Monitor ${m.origin}`} className="col-start-1 row-start-1" checked={switching ?? m.enabled} disabled={pending} onCheckedChange={toggle} />
-      <div className="col-start-2 row-start-1 flex min-w-0 flex-col">
+    <li aria-label={m.origin} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 sm:grid-cols-[auto_minmax(0,1fr)_6rem_auto]">
+      <Switch aria-label={`Monitor ${m.origin}`} className="col-start-1 row-start-1 mt-px" checked={switching ?? m.enabled} disabled={pending} onCheckedChange={toggle} />
+      <div className="col-start-2 row-start-1 flex min-w-0 flex-col gap-0.5">
         <span className={`min-w-0 text-sm font-medium break-all ${m.enabled ? '' : 'text-muted-foreground'}`}>{m.origin}</span>
         {m.enabled && m.contains !== '' && !showField && (
           <button
             type="button"
-            className="w-fit max-w-full text-left text-xs break-words text-muted-foreground underline-offset-2 hover:underline"
+            className="w-fit max-w-full text-left text-sm break-words text-muted-foreground underline-offset-2 hover:underline"
             disabled={pending}
             onClick={() => setEditing(true)}
           >
             {`must contain "${m.contains}"`}
           </button>
         )}
+        {m.enabled && <StatusLine m={m} now={now} checking={checking} paused={paused} />}
       </div>
       {m.enabled && (
         <>
-          {hasDetails && <div className="col-span-2 col-start-2 row-start-2 flex min-w-0 flex-wrap gap-x-3 text-sm text-muted-foreground sm:contents">
-            {cert && (
-              <span className={`min-w-0 sm:col-start-3 sm:row-start-1 sm:whitespace-nowrap ${cert.expired ? 'text-destructive' : ''}`} title={certFull}>{cert.text}</span>
-            )}
-            <span className="min-w-0 sm:col-start-4 sm:row-start-1 sm:max-w-60">
-              {checking ? 'Checking…' : m.check.finished_at && !failed && (<><span>Last check </span><span>{checkText(m.check, now)}</span></>)}
+          {cert && (
+            <span
+              className={`col-start-2 row-start-2 mt-0.5 text-sm whitespace-nowrap sm:col-start-3 sm:row-start-1 sm:mt-0 ${cert.bad ? 'text-destructive' : 'text-muted-foreground'}`}
+              title={certFull}
+            >
+              {cert.text}
             </span>
-          </div>}
-          <div className="col-start-3 row-start-1 flex items-center gap-1 sm:col-start-5">
+          )}
+          <div className="col-start-3 row-start-1 -mt-1.5 flex items-center gap-1 sm:col-start-4">
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button type="button" size="icon-sm" variant="ghost" aria-label={label} disabled={pending || checking || paused} onClick={onCheck}>
@@ -198,13 +227,13 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
-          {hasNotes && <div className="col-span-2 col-start-2 flex min-w-0 flex-col gap-1 sm:col-span-4">
-            {failed && <p className="min-w-0 text-sm break-words text-muted-foreground"><span>Last check </span><span>{checkText(m.check, now)}</span></p>}
+          {hasNotes && <div className="col-start-2 row-start-3 mt-0.5 flex min-w-0 flex-col gap-1 sm:row-start-2">
+            {notRun && <p className="text-sm text-muted-foreground">The last check did not run</p>}
             {certProblem && <p className="min-w-0 text-sm break-words text-muted-foreground">{`Certificate: ${certFull}`}</p>}
             {m.redirects >= LONG_CHAIN && <p className="text-sm text-muted-foreground">{`Redirects ${m.redirects} times before answering, which slows every visit`}</p>}
             {waiting && waiting === gaveUp && <p role="status" className="text-sm text-muted-foreground">The check has not finished yet: its result will show here when the server has run it</p>}
             {showField && (
-              <form onSubmit={save} className="flex min-w-0 flex-col gap-1.5">
+              <form onSubmit={save} className="mt-1 flex min-w-0 flex-col gap-1.5">
                 <Label htmlFor={containsId}>Page must contain</Label>
                 <div className="flex min-w-0 items-center gap-2">
                   <Input
@@ -310,7 +339,7 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
         </p>
       )}
       {!anyOn && <p className="text-sm text-muted-foreground">Check that the site is up, and when its certificate and domain expire.</p>}
-      <ul className="grid grid-cols-[auto_minmax(0,1fr)_auto] gap-x-3 gap-y-3 sm:grid-cols-[auto_minmax(0,1fr)_auto_auto_auto]">
+      <ul className="flex flex-col gap-5">
         {data.monitors.map((m) => (
           <MonitorRow
             key={`${projectId}:${m.origin}`}

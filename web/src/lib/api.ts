@@ -281,8 +281,10 @@ export interface Monitor {
   /** Redirect hops the last answered check followed. */
   redirects: number
   cert: { expires_at: string; issuer: string; valid: boolean; error: string; checked_at: string }
-  /** The last manual check; running while requested_at is set and finished_at is empty or before it (the result fields hold the previous check's until then). */
-  check: { requested_at: string; finished_at: string; up: boolean; status: number; reason: string; error: string; ms: number }
+  /** The latest availability check, scheduled or manual; checked_at is empty before the first. */
+  last: { checked_at: string; up: boolean; status: number; reason: string; error: string; ms: number }
+  /** The last manual check; running while requested_at is set and finished_at is empty or before it. Its result is in last. */
+  check: { requested_at: string; finished_at: string }
 }
 
 /** A main domain's last reading, which the enabled monitors' origins on it share. */
