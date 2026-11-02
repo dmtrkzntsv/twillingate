@@ -33,7 +33,11 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': 'http://127.0.0.1:3100',
+      // A running `twillingate serve` with INGEST_ADDR=127.0.0.1:8291, signing
+      // in as on a real console: discovery and the login server sit outside /api.
+      '/api': 'http://127.0.0.1:8291',
+      '/.well-known': 'http://127.0.0.1:8291',
+      '/oauth': 'http://127.0.0.1:8291',
     },
   },
   test: {

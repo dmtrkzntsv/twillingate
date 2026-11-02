@@ -123,7 +123,7 @@ export default function Shares() {
   }
 
   return (
-    <AppShell dashboards={dash?.dashboards ?? []} currentId={0} readOnly={dash?.dev === true}>
+    <AppShell dashboards={dash?.dashboards ?? []} currentId={0}>
       <TopBar>
         <Crumbs items={[{ label: 'Shares' }]} />
       </TopBar>

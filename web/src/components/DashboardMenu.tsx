@@ -75,7 +75,7 @@ function MoveTo({ dashboard, list, actions }: Props & { actions: DashboardAction
 
 interface GroupMenuProps {
   dashboard: DashboardDetail
-  /** Whether Duplicate and Archive are offered: not in reporting dev, not on an archived user dashboard. */
+  /** Whether Duplicate and Archive are offered: not on an archived user dashboard. */
   editable: boolean
   /** How many cards may be refreshed now (past `refresh_after`), whether a refresh runs, and the refresh. */
   refresh: { count: number; refreshing: boolean; onRefresh: () => void }

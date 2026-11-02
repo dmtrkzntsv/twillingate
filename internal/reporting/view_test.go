@@ -4,12 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/url"
-	"os"
-	"path/filepath"
 	"reflect"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -292,42 +287,6 @@ func TestRemoteTableEmptyPageCounts(t *testing.T) {
 		if len(res.Rows) != 0 || res.Rows == nil || res.Truncated || page.Matched != c.matched || page.Total != c.total {
 			t.Errorf("%s: rows %v (truncated %v), page %+v; want [] of %d matched, %d in all", name, res.Rows, res.Truncated, page, c.matched, c.total)
 		}
-	}
-}
-
-// TestDevWidgetDataPagesRemoteTables: reporting dev's data handler takes
-// the same paging arguments from its query string as widget_data, and
-// refuses a limit that is not an integer.
-func TestDevWidgetDataPagesRemoteTables(t *testing.T) {
-	root := devDir(t, struct{ name, component, ext, content string }{"t", "table", "sql", threeRows})
-	cfg := `{"component":"table","title":"t","props":{"mode":"remote"}}`
-	if err := os.WriteFile(filepath.Join(root, "ok", "t.json"), []byte(cfg), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	h := newDevHandler(t, []string{root})
-	path := "/api/widgets/" + strconv.FormatInt(firstDevDashboardID*1000+1, 10) + "/data"
-
-	var got struct {
-		Data struct {
-			Rows      [][]string `json:"rows"`
-			Truncated bool       `json:"truncated"`
-		} `json:"data"`
-		Page *PageInfo `json:"page"`
-	}
-	q := url.Values{"filters": {`[{"column":"N","op":">","value":"1"}]`}, "sort": {"N:desc"}, "offset": {"1"}, "limit": {"1"}}
-	if res := getJSON(t, h, path+"?"+q.Encode(), &got); res.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d", res.StatusCode)
-	}
-	if want := [][]string{{"c", "2"}}; !reflect.DeepEqual(got.Data.Rows, want) || got.Data.Truncated {
-		t.Errorf("rows = %v (truncated %v), want %v", got.Data.Rows, got.Data.Truncated, want)
-	}
-	if got.Page == nil || got.Page.Offset != 1 || got.Page.Limit != 1 || got.Page.Matched != 2 || got.Page.Total != 3 {
-		t.Errorf("page = %+v", got.Page)
-	}
-
-	var body map[string]map[string]string
-	if res := getJSON(t, h, path+"?limit=ten", &body); res.StatusCode != http.StatusBadRequest {
-		t.Errorf("limit=ten: status = %d, want 400", res.StatusCode)
 	}
 }
 

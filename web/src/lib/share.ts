@@ -13,8 +13,6 @@ export interface ShareContext {
   to: string
   /** Whether the page hands its range to its widgets (it has a range switcher). */
   rangeShown: boolean
-  /** False in reporting dev, which serves only reads: Share… is not offered there, Download PNG is. */
-  writable: boolean
 }
 
 /**

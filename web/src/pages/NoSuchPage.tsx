@@ -8,17 +8,15 @@ import { dashboardsQuery } from '@/lib/queries'
 /** Any /app/ address no route answers, in the app shell so the sidebar still leads somewhere. */
 export default function NoSuchPage() {
   const { data } = useQuery(dashboardsQuery)
-  // Reporting dev has no projects: its start is the dashboards.
-  const dev = data?.dev === true
   return (
-    <AppShell dashboards={data?.dashboards ?? []} currentId={0} readOnly={dev}>
+    <AppShell dashboards={data?.dashboards ?? []} currentId={0}>
       <TopBar />
       <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col p-3 sm:p-4 lg:p-6">
         <NotFound
           title="No page at this address"
           actions={
             <Button asChild variant="outline">
-              {dev ? <Link to="/dashboards">Go to your dashboards</Link> : <Link to="/projects">Go to your projects</Link>}
+              <Link to="/projects">Go to your projects</Link>
             </Button>
           }
         >

@@ -30,7 +30,6 @@ are in [deployment.md](deployment.md).
 - [Archiving and the purge](#archiving-and-the-purge)
 - [Refusals and fixes](#refusals-and-fixes)
 - [When widgets break after an update](#when-widgets-break-after-an-update)
-- [Local development](#local-development)
 
 ---
 
@@ -1703,8 +1702,7 @@ then gives `widget_id`, `dashboard_id` and `dashboard_title` as `null`.
 Archiving the project leaves its shares up too. Deleting the project, with
 `project delete` or by the purge, deletes its shares, live and archived.
 
-**The Shares page** (`/app/shares`, at the bottom of the sidebar above Gallery and Archive; not in
-the read-only preview of `reporting dev`) lists live shares, newest first: the 1x image,
+**The Shares page** (`/app/shares`, at the bottom of the sidebar above Gallery and Archive) lists live shares, newest first: the 1x image,
 linking to the share's page; the title, with the dashboard and project it
 came from, linking to the dashboard (plain text once the widget is gone);
 the range, with the day it was created on hover; when it archives, changeable
@@ -1970,49 +1968,3 @@ day and `event_name`, `v_measures_daily` `measures` with `bucket`,
 A component that comes back in a later release does not reattach itself: set
 it again with `update_widget`. System dashboards are fixed by the release
 itself.
-
-## Local development
-
-`twillingate reporting dev` previews dashboard files, the form system
-dashboards take in the repository, against a real database before they
-ship:
-
-```bash
-twillingate reporting dev <dir>… [-db <path>] [-addr 127.0.0.1:3100]
-```
-
-Open `http://127.0.0.1:3100/`, which redirects to the dashboards at `/app/`.
-
-- Each `<dir>` is a dashboard directory (it has a `dashboard.json`) or a
-  parent of several. A `dashboard.json` without an `id` gets 1001, 1002, …
-  in argument order. One with an `id` from 1 to 999 previews as a system
-  dashboard, in its group: a tab of the dashboard its `group` names, or its
-  own sidebar entry when it names none. A `group_title` names the group
-  only on the group's founding file, as on release.
-- `dashboard.json` must say `"sidebar"` and `"project_tab"`, both
-  booleans, as a release's system files do; a file without either does not
-  load. On release, `sidebar` is written when the dashboard first ships and
-  then belongs to the install, and `project_tab` is the release's on every
-  upgrade (see [Project tabs and the sidebar](#project-tabs-and-the-sidebar)).
-  A preview ignores `sidebar`: every previewed dashboard is in the sidebar,
-  since `reporting dev` has no project pages.
-- `-db` defaults to `DATABASE_DSN`'s path. The database is opened read-only
-  and never written: the view route answers but stores nothing, and the page
-  offers no writes (no "…" menus, dragging or Restore buttons).
-- Widget SQL runs on the event files in `DATA_DIR` (default `data/` beside
-  the database), on the external SQL engine at `SQL_ENGINE_SOCKET`, which
-  `reporting dev` reads from its environment as the console does (without
-  it, a SQL widget's card shows the refusal), but
-  without the projects' event and attribute rules: a renamed event reads
-  under the name it was stored with.
-- `-addr` is refused unless it is a loopback address, and a request naming
-  any other host (`Host:`) gets `403`, so a page elsewhere cannot reach it
-  by pointing its own name at `127.0.0.1`. There is no login: the page finds
-  `GET /api/dashboards` answering without a token and skips the login.
-- Files are read again on every request, and the page polls
-  `/api/dev/version` twice a second and reloads when they change.
-- A directory that does not load shows as a banner (the `errors` array of
-  `GET /api/dashboards`) while the others load. A widget is validated when
-  its data is requested: a refusal is a `400` shown in its card.
-- In `web/`, `npm run dev` proxies `/api` to it (`127.0.0.1:3100`), so
-  components hot-reload against real data.

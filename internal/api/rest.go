@@ -14,7 +14,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/dmtrkzntsv/twillingate/internal/reporting"
+	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 )
 
@@ -199,6 +199,20 @@ func writeError(w http.ResponseWriter, logger *slog.Logger, req *http.Request, e
 	writeJSON(w, status, map[string]apiError{"error": e})
 }
 
+// refusals is how each kind of refusal is answered, in the order they are
+// checked: an error that matches more than one gets the first.
+var refusals = []struct {
+	kind   error
+	status int
+	code   string
+}{
+	{manage.ErrInvalid, http.StatusBadRequest, "invalid"},
+	{manage.ErrNotFound, http.StatusNotFound, "not_found"},
+	{manage.ErrConflict, http.StatusConflict, "conflict"},
+	{manage.ErrBusy, http.StatusTooManyRequests, "busy"},
+	{manage.ErrTimeout, http.StatusGatewayTimeout, "timeout"},
+}
+
 // refusalOf is err's status and error body, as writeError sends them;
 // an untyped error is logged and answered generically.
 func refusalOf(logger *slog.Logger, req *http.Request, err error) (int, apiError) {
@@ -207,8 +221,10 @@ func refusalOf(logger *slog.Logger, req *http.Request, err error) (int, apiError
 		// The client left: nobody reads the answer, so nothing is logged.
 		return http.StatusInternalServerError, internal
 	}
-	if r, ok := reporting.HTTPRefusalOf(err); ok {
-		return r.Status, apiError{Code: r.Code, Message: err.Error()}
+	for _, r := range refusals {
+		if errors.Is(err, r.kind) {
+			return r.status, apiError{Code: r.code, Message: err.Error()}
+		}
 	}
 	logger.Error("api request failed", "method", req.Method, "path", req.URL.Path, "error", err)
 	return http.StatusInternalServerError, internal

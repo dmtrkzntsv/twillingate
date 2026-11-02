@@ -196,7 +196,7 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
             )}
             {(share || editing || copying) && (
               <WidgetMenu
-                canShare={share !== undefined && share.writable && share.project !== undefined}
+                canShare={share !== undefined && share.project !== undefined}
                 canDownload={share !== undefined}
                 disabled={!shareable}
                 downloading={downloading}
@@ -215,7 +215,7 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
             {share && (
               <>
                 {/* Both draw into portals: they take no room in the corner. */}
-                {share.writable && share.project && drawable && (
+                {share.project && drawable && (
                   <ShareDialog
                     open={sharing}
                     onOpenChange={setSharing}
@@ -420,7 +420,7 @@ function StaleWarning({ error }: { error: Error }) {
 }
 
 interface MenuProps {
-  /** Whether Share… is offered (not in reporting dev). */
+  /** Whether Share… is offered (a share belongs to a project). */
   canShare: boolean
   /** Whether Download PNG is offered (the card knows the project and range it shows). */
   canDownload: boolean

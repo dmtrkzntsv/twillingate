@@ -39,12 +39,11 @@ const widgets = (d: DashboardInfo) => plural(d.widgets, 'widget')
  * Archive page (D17): a group of one is a row, a larger group a card with
  * its tabs. The group's "…" menu duplicates the whole group, and adds a
  * group hidden from the sidebar back to it; a tab's copies that tab to a
- * new dashboard. Reporting dev, which takes no writes, shows no menu.
+ * new dashboard.
  */
 export default function DashboardsGallery() {
   const { data } = useQuery(dashboardsQuery)
   const dashboards = data?.dashboards ?? []
-  const writable = data?.dev !== true
   const groups = systemGroups(dashboards)
 
   return (
@@ -63,7 +62,7 @@ export default function DashboardsGallery() {
             // `sidebar` is the group's, the same on every member.
             const hidden = g.members.every((m) => !m.sidebar)
             const name = groupName(g.members)
-            const groupMenu = writable && <TemplateMenu dashboard={first} name={name} wholeGroup hidden={hidden} />
+            const groupMenu = <TemplateMenu dashboard={first} name={name} wholeGroup hidden={hidden} />
             if (g.members.length === 1) {
               const detail = [widgets(first), hidden && HIDDEN].filter(Boolean).join(' · ')
               return <LoneDashboard key={g.groupId} row={{ ...first, title: name, detail, action: groupMenu }} />
@@ -71,7 +70,7 @@ export default function DashboardsGallery() {
             const rows: GroupRow[] = g.members.map((d) => ({
               ...d,
               detail: widgets(d),
-              action: writable && <TemplateMenu dashboard={d} />,
+              action: <TemplateMenu dashboard={d} />,
             }))
             const meta = [`${g.members.length} tabs`, hidden && HIDDEN].filter(Boolean).join(' · ')
             return <DashboardGroup key={g.groupId} title={name} meta={meta} action={groupMenu} rows={rows} />

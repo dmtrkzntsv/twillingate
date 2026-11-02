@@ -1,7 +1,6 @@
 import type { ReactNode } from 'react'
 import { FolderPlusIcon, LayoutGridIcon, TriangleAlertIcon } from 'lucide-react'
 import { Link } from 'react-router'
-import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Empty, EmptyDescription, EmptyHeader, EmptyMedia, EmptyTitle } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -40,25 +39,6 @@ export function NoWidgets({ action }: { action?: ReactNode }) {
     <Notice icon={<LayoutGridIcon />} title="No widgets yet">
       {action}
     </Notice>
-  )
-}
-
-/** `reporting dev`: the dashboard directories that failed to load. */
-export function DevErrors({ errors }: { errors: { dir: string; message: string }[] }) {
-  return (
-    <Alert variant="destructive">
-      <TriangleAlertIcon />
-      <AlertTitle>Some dashboards did not load</AlertTitle>
-      <AlertDescription>
-        <ul className="list-disc pl-4">
-          {errors.map((e) => (
-            <li key={e.dir}>
-              <span className="font-mono">{e.dir}</span>: {e.message}
-            </li>
-          ))}
-        </ul>
-      </AlertDescription>
-    </Alert>
   )
 }
 

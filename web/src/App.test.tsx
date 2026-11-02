@@ -46,16 +46,6 @@ describe('App', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/app/projects'))
   })
 
-  it('opens the dashboards on "/" in a dashboards preview, which has no projects', async () => {
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(
-      json({ timezone: 'UTC', dev: true, dashboards: [{ dashboard_id: 3, title: 'Views', owner: 'system', group_id: 3, widgets: 1, sidebar: true, project_tab: false }] })))
-    window.history.pushState({}, '', '/app/')
-
-    renderApp()
-
-    await waitFor(() => expect(window.location.pathname).toBe('/app/dashboards/3'))
-  })
-
   it('redirects "/dashboards" to the last dashboard opened on this device', async () => {
     localStorage.setItem('twillingate.last_dashboard', '2')
     vi.stubGlobal(

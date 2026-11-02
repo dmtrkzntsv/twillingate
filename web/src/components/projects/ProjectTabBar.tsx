@@ -27,7 +27,7 @@ interface Props {
   newSubmissions: number
   /** Live draft forms, waiting to be approved: a dot on the Forms button while no submission is new. */
   draftForms: number
-  /** Reporting dev, which takes no writes and serves no forms: no Forms button, no "+" and no dragging. */
+  /** While the project page is still landing, where a tab write would cancel its fetch: no Forms button, no "+" and no dragging. */
   readOnly?: boolean
 }
 

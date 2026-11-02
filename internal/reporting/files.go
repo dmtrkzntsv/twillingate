@@ -30,7 +30,7 @@ type fileWidget struct {
 // fileDashboard is one directory under a system definition: its
 // dashboard.json plus the widgets its layout places, in layout order.
 type fileDashboard struct {
-	ID           int64 // 0 when the file gives none (reporting dev only)
+	ID           int64
 	Title, Range string
 	Group        int64        // the group this dashboard is a tab of; 0 = its own id (D16)
 	GroupTitle   string       // the group's name; only on a group's founding dashboard (D6)
@@ -96,9 +96,8 @@ func decodeStrict(name string, b []byte, v any) error {
 // $name.json/$name.(sql|md|query) pair for every widget its layout names. Any
 // other file in the directory — an extension other than json/sql/md/query,
 // most often a typo like visitors.sq — is refused rather than silently
-// ignored. loadDashboard does not check dashboard.json's id
-// (loadDashboards does, for a release's system directory; reporting dev
-// reads directly and accepts no id at all).
+// ignored. loadDashboard does not check dashboard.json's id: loadDashboards
+// does.
 func loadDashboard(fsys fs.FS, dir string) (fileDashboard, error) {
 	dashPath := path.Join(dir, "dashboard.json")
 	dashBytes, err := fs.ReadFile(fsys, dashPath)

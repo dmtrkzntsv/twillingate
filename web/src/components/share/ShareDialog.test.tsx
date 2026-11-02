@@ -33,7 +33,6 @@ const share = {
   from: '2026-09-05',
   to: '2026-10-04',
   rangeShown: true,
-  writable: true,
 }
 
 const created: WidgetShare = {

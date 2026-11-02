@@ -14,17 +14,14 @@ function LocationProbe() {
   return <output data-testid="location">{location.pathname + location.search}</output>
 }
 
-function mockApi(opts: { projects?: Project[]; dev?: boolean } = {}) {
-  vi.spyOn(endpoints, 'dashboards').mockResolvedValue(
-    dashboardsList(opts.dev ? { dev: true, errors: [{ dir: 'dashboards/sales', message: 'widget "x": unknown component' }] } : {})
-  )
+function mockApi(opts: { projects?: Project[] } = {}) {
+  vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList())
   vi.spyOn(endpoints, 'dashboard').mockImplementation(async (id) => {
     const d = details[id]
     if (!d) throw new ApiError(404, 'no such dashboard', 'not_found')
     return d
   })
   vi.spyOn(endpoints, 'projects').mockResolvedValue({ projects: opts.projects ?? projects })
-  vi.spyOn(endpoints, 'devVersion').mockResolvedValue({ version: 'v1' })
   vi.spyOn(endpoints, 'saveView').mockResolvedValue({ status: 'saved' })
   return vi.spyOn(endpoints, 'widgetData').mockImplementation(async (id) => answerFor(widgetsById.get(id)!))
 }
@@ -432,7 +429,9 @@ describe('Dashboard', () => {
   })
 
   it('says so when a dashboard has no widgets, asking the agent where the page cannot add one', async () => {
-    mockApi({ dev: true })
+    mockApi()
+    // Archived: the page offers no edits on it.
+    vi.mocked(endpoints.dashboard).mockResolvedValue({ ...details[12], archived_at: '2026-09-01T00:00:00Z' })
     renderAt('/dashboards/12')
     expect(await screen.findByText('No widgets yet — ask your agent to add some')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Add widget' })).not.toBeInTheDocument()
@@ -463,13 +462,10 @@ describe('Dashboard', () => {
     ])
   })
 
-  it.each([
-    ['a system dashboard', '/dashboards/2?project=7&range=7d', false, true],
-    ['reporting dev', '/dashboards/10', true, false],
-  ])('offers no Add widget and no card edits on %s', async (_, url, dev, copies) => {
+  it('offers no Add widget and no card edits on a system dashboard', async () => {
     const user = userEvent.setup()
-    const widgetData = mockApi({ dev })
-    renderAt(url)
+    const widgetData = mockApi()
+    renderAt('/dashboards/2?project=7&range=7d')
 
     await waitFor(() => expect(widgetData).toHaveBeenCalled())
     expect(screen.queryByRole('button', { name: 'Add widget' })).not.toBeInTheDocument()
@@ -477,8 +473,8 @@ describe('Dashboard', () => {
     const items = screen.getAllByRole('menuitem').map((i) => i.textContent)
     expect(items).toContain('Download PNG')
     for (const edit of ['Edit…', 'Rename', 'Duplicate', 'Archive']) expect(items).not.toContain(edit)
-    // A built-in widget is still copied out; reporting dev writes nothing.
-    expect(items.includes('Copy to dashboard…')).toBe(copies)
+    // A built-in widget is still copied out.
+    expect(items).toContain('Copy to dashboard…')
   })
 
   it('duplicates a widget right after itself', async () => {
@@ -600,14 +596,6 @@ describe('Dashboard', () => {
     expect(await screen.findByText(/^Data as of /)).toBeInTheDocument()
   })
 
-  it('lists the dev errors in a banner and polls the dev version', async () => {
-    mockApi({ dev: true })
-    renderAt('/dashboards/10')
-    expect(await screen.findByText(/unknown component/)).toBeInTheDocument()
-    expect(screen.getByText(/dashboards\/sales/)).toBeInTheDocument()
-    await waitFor(() => expect(endpoints.devVersion).toHaveBeenCalled())
-  })
-
   it('shows the archived line and a Restore button only for an archived dashboard', async () => {
     mockApi()
     vi.spyOn(endpoints, 'restore').mockResolvedValue({ status: 'ok' })
@@ -616,25 +604,6 @@ describe('Dashboard', () => {
     expect(await screen.findByText('Archived: not in the sidebar')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Restore' }))
     await waitFor(() => expect(endpoints.restore).toHaveBeenCalledWith(11, false))
-  })
-
-  it('offers no writes in reporting dev: only Refresh, no tab menu, no sortable tabs', async () => {
-    mockApi({ dev: true })
-    renderAt('/dashboards/13')
-
-    const tabs = await screen.findAllByRole('tab')
-    for (const tab of tabs) expect(tab).not.toHaveAttribute('aria-roledescription')
-    expect(screen.getByRole('link', { name: 'Marketing' })).not.toHaveAttribute('aria-roledescription')
-    // No "Tab actions", and no sidebar "… actions": only the dashboard's
-    // own menu and the widgets', which hold reads alone.
-    const widgetMenus = await screen.findAllByRole('button', { name: 'Widget actions' })
-    const labels = screen.getAllByRole('button', { name: /actions$/ }).map((b) => b.getAttribute('aria-label'))
-    expect(new Set(labels)).toEqual(new Set(['Dashboard actions', 'Widget actions']))
-    await userEvent.click(screen.getByRole('button', { name: 'Dashboard actions' }))
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Refresh'])
-    await userEvent.keyboard('{Escape}')
-    await userEvent.click(widgetMenus[0])
-    expect((await screen.findAllByRole('menuitem')).map((i) => i.textContent)).toEqual(['Download PNG'])
   })
 
   it('offers auto-refresh at the server\'s interval, remembered per dashboard in this browser', async () => {
@@ -734,14 +703,6 @@ describe('Dashboard', () => {
     expect(screen.queryByText('Hidden from the sidebar')).not.toBeInTheDocument()
   })
 
-  it('offers no Restore on an archived dashboard in reporting dev', async () => {
-    mockApi({ dev: true })
-    renderAt('/dashboards/11')
-
-    expect(await screen.findByText('Archived: not in the sidebar')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Restore' })).not.toBeInTheDocument()
-  })
-
   it('shows no archived line for a live dashboard', async () => {
     mockApi()
     renderAt('/dashboards/10')
@@ -750,14 +711,6 @@ describe('Dashboard', () => {
     expect(screen.queryByText('Archived: not in the sidebar')).not.toBeInTheDocument()
   })
 
-  it('reloads the page when the dev version changes', async () => {
-    mockApi({ dev: true })
-    vi.mocked(endpoints.devVersion).mockResolvedValueOnce({ version: 'v1' }).mockResolvedValue({ version: 'v2' })
-    const reload = vi.fn()
-    vi.stubGlobal('location', { ...window.location, reload })
-    renderAt('/dashboards/10')
-    await waitFor(() => expect(reload).toHaveBeenCalled(), { timeout: 3000 })
-  })
 })
 
 // The grid reads its own width from a ResizeObserver; play one that reports
