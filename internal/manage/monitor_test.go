@@ -454,7 +454,10 @@ func TestSetMonitorConcurrentEditsOfDifferentFieldsBothLand(t *testing.T) {
 		}
 		errs := make(chan error, 2)
 		go func() { _, err := ops.SetMonitor(ctx, "a", p.ID, monA, MonitorSpec{Contains: strp("c")}); errs <- err }()
-		go func() { _, err := ops.SetMonitor(ctx, "b", p.ID, monA, MonitorSpec{Enabled: boolp(false)}); errs <- err }()
+		go func() {
+			_, err := ops.SetMonitor(ctx, "b", p.ID, monA, MonitorSpec{Enabled: boolp(false)})
+			errs <- err
+		}()
 		for range 2 {
 			if err := <-errs; err != nil {
 				t.Fatalf("round %d: %v", i, err)
