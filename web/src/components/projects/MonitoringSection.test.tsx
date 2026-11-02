@@ -41,7 +41,7 @@ function monitor(origin: string, over: Partial<Monitor> = {}): Monitor {
 const on = (origin: string, over: Partial<Monitor> = {}) => monitor(origin, { enabled: true, ...over })
 
 function list(monitors: Monitor[], over: Partial<Monitors> = {}): Monitors {
-  return { interval_seconds: 60, timeout_seconds: 5, events_per_month: 0, paused: false, monitors, domains: [], ...over }
+  return { interval_seconds: 60, timeout_seconds: 5, paused: false, monitors, domains: [], ...over }
 }
 
 function show(data: Monitors, onSave = vi.fn().mockResolvedValue(true), onCheck = vi.fn().mockResolvedValue(true), pending = false) {
@@ -170,17 +170,6 @@ describe('MonitoringSection', () => {
   })
 
   describe('the install', () => {
-    it('shows what a site costs a month in events, in full, only when priced', async () => {
-      show(list([on(A)], { events_per_month: 2160 }))
-      expect(await screen.findByText('Each site uses about 2,160 events a month')).toBeInTheDocument()
-    })
-
-    it('says nothing of cost when not priced', async () => {
-      show(list([on(A)]))
-      await row(A)
-      expect(screen.queryByText(/events a month/)).not.toBeInTheDocument()
-    })
-
     it('paused: shows the rows as they are, disables Check now, and says so once', async () => {
       show(list([on(A), monitor(B)], { paused: true }))
       const a = await row(A)

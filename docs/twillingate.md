@@ -375,9 +375,7 @@ run on a small pool of their own (4 at once across the server), so however many
 there are they do not delay an availability check.
 
 `list_monitors` returns `interval_seconds` (how often each enabled monitor is
-checked), `timeout_seconds` (`MONITOR_TIMEOUT`), `events_per_month` (what one
-monitor uses a month on a hosted plan, a month of checks divided by
-`MONITOR_CHECKS_PER_EVENT`; 0 when that is not set), `paused` (`MONITOR_DISABLED`:
+checked), `timeout_seconds` (`MONITOR_TIMEOUT`), `paused` (`MONITOR_DISABLED`:
 monitoring is off on this install), `monitors`, one per eligible origin in the project's order,
 and `domains`, the main domains of the enabled monitors, by name. A monitor has
 `origin`, `enabled`, `contains`, its last certificate reading in `cert`
@@ -1713,7 +1711,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","values","received","blocked","aliases"}],"keys_total"}`; `aliases` is absent when empty |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
-| `GET` | `/api/projects/{project_id}/monitors` | `list_monitors` | — → `{"interval_seconds","timeout_seconds","events_per_month","paused","monitors":[{"origin","enabled","contains","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"last":{"checked_at","up","status","reason","error","ms"},"check":{"requested_at","finished_at"}}],"domains":[{"domain","origins","expires_at","checked_at"}]}`; empty strings are unknown |
+| `GET` | `/api/projects/{project_id}/monitors` | `list_monitors` | — → `{"interval_seconds","timeout_seconds","paused","monitors":[{"origin","enabled","contains","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"last":{"checked_at","up","status","reason","error","ms"},"check":{"requested_at","finished_at"}}],"domains":[{"domain","origins","expires_at","checked_at"}]}`; empty strings are unknown |
 | `PATCH` | `/api/projects/{project_id}/monitors` | `update_monitor` | body: `origin`, required, and `enabled`, `contains`, each optional (merge); a foreign origin is `400` → as `list_monitors` |
 | `POST` | `/api/projects/{project_id}/monitors/check` | `check_monitor` | body: `origin` → as `list_monitors`, right away, before the check ran; a monitor that is not on or a foreign origin is `400`, a check pending on it or within 60 s of its last request `429` |
 | `POST` | `/api/projects/{project_id}/move` | `move_project` | body: `after` |

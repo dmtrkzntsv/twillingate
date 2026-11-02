@@ -361,9 +361,6 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
         )}
       </div>
       {data.paused && <p className="text-sm text-muted-foreground">Monitoring is paused on this install</p>}
-      {data.events_per_month > 0 && (
-        <p className="text-sm text-muted-foreground">{`Each site uses about ${formatExact(data.events_per_month)} events a month`}</p>
-      )}
       {q.isError && (
         <p role="status" className="text-sm text-muted-foreground">
           Couldn't refresh the monitors; what shows may be out of date.{' '}

@@ -354,9 +354,8 @@ func TestCheckMonitor(t *testing.T) {
 	}
 }
 
-// events_per_month is what one monitor costs a month in events, 0 with
-// MONITOR_CHECKS_PER_EVENT unset; paused says the runner is off.
-func TestMonitorsReportCostAndPause(t *testing.T) {
+// paused says the runner is off.
+func TestMonitorsReportPause(t *testing.T) {
 	h, _ := newTestHost(t)
 	h.monitorInterval = 2 * time.Minute
 	r := newTestRegistrar(t, h)
@@ -368,13 +367,8 @@ func TestMonitorsReportCostAndPause(t *testing.T) {
 		return decodeMonitors(t, rec.Body.Bytes()), rec.Body.String()
 	}
 	got, body := read()
-	if got.EventsPerMonth != 0 || got.Paused || strings.Contains(body, "check_every_seconds") {
+	if got.Paused || strings.Contains(body, "check_every_seconds") {
 		t.Errorf("unset: %+v in %s", got, body)
-	}
-	h.monitorChecksPerEvent = 10
-	// 2,592,000 s a month / 120 s = 21,600 checks, 10 to an event.
-	if got, _ := read(); got.EventsPerMonth != 2160 {
-		t.Errorf("events_per_month = %d, want 2160", got.EventsPerMonth)
 	}
 	h.ops.MonitorPaused = true
 	if got, body := read(); !got.Paused || !strings.Contains(body, `"paused":true`) {

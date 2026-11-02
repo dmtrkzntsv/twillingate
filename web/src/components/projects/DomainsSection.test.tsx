@@ -11,7 +11,7 @@ function utcDay(n: number): string {
 }
 
 function show(domains: Monitors['domains']) {
-  vi.spyOn(endpoints, 'monitors').mockResolvedValue({ interval_seconds: 60, timeout_seconds: 5, events_per_month: 0, paused: false, monitors: [], domains })
+  vi.spyOn(endpoints, 'monitors').mockResolvedValue({ interval_seconds: 60, timeout_seconds: 5, paused: false, monitors: [], domains })
   return renderWithProviders(<DomainsSection projectId={4} />)
 }
 

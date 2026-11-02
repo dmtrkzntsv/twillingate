@@ -951,24 +951,23 @@ func TestMonitorInterval(t *testing.T) {
 	}
 }
 
-// MONITOR_CHECKS_PER_EVENT is a whole number from 0, 0 (not shown) unset;
 // MONITOR_DISABLED is a boolean, false unset.
-func TestMonitorBillingAndPause(t *testing.T) {
+func TestMonitorPause(t *testing.T) {
 	c, err := load(t, map[string]string{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Monitor.ChecksPerEvent != 0 || c.Monitor.Disabled {
-		t.Errorf("defaults: %+v, want 0 and false", c.Monitor)
+	if c.Monitor.Disabled {
+		t.Errorf("defaults: %+v, want false", c.Monitor)
 	}
-	c, err = load(t, map[string]string{"MONITOR_CHECKS_PER_EVENT": "20", "MONITOR_DISABLED": "true"})
+	c, err = load(t, map[string]string{"MONITOR_DISABLED": "true"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Monitor.ChecksPerEvent != 20 || !c.Monitor.Disabled {
-		t.Errorf("set: %+v, want 20 and true", c.Monitor)
+	if !c.Monitor.Disabled {
+		t.Errorf("set: %+v, want true", c.Monitor)
 	}
-	for _, env := range []map[string]string{{"MONITOR_CHECKS_PER_EVENT": "-1"}, {"MONITOR_CHECKS_PER_EVENT": "x"}, {"MONITOR_DISABLED": "maybe"}} {
+	for _, env := range []map[string]string{{"MONITOR_DISABLED": "maybe"}} {
 		if _, err := load(t, env); err == nil {
 			t.Errorf("%v accepted", env)
 		}

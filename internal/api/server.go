@@ -55,7 +55,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 		RefreshAge: cfg.Reporting.RefreshAge, ArchivedDays: cfg.Retention.ArchivedDays, ConsoleURL: cfg.Console.ExplicitURL(), ShareBaseURL: cfg.Console.URL, Native: nat}))
 	h := &host{db: db, subs: subs, reg: reg, ops: ops, rep: rep,
 		ingestURL: cfg.IngestURL, logger: logger, limits: limitsFrom(cfg),
-		ingestDisabled: cfg.IngestDisabled, monitorInterval: cfg.Monitor.Interval, monitorTimeout: cfg.Monitor.Timeout, monitorChecksPerEvent: cfg.Monitor.ChecksPerEvent, sql: sql, native: nat, eventsDir: cfg.EventsDir,
+		ingestDisabled: cfg.IngestDisabled, monitorInterval: cfg.Monitor.Interval, monitorTimeout: cfg.Monitor.Timeout, sql: sql, native: nat, eventsDir: cfg.EventsDir,
 		queryTimeout: cfg.Console.QueryTimeout, queryRows: cfg.Console.QueryMaxRows}
 	if nat != nil {
 		h.events = h.newHostEventCount()

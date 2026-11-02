@@ -241,11 +241,9 @@ monitor's slot.
   `hash(project_id, origin) % interval`. The pool of 16 workers stays; a slot that
   finds none free is skipped. `check_every_seconds` is gone from `list_monitors`
   and the CLI (`interval_seconds` is the answer), and Settings reads `each site is
-  checked every <interval>`. New `MONITOR_CHECKS_PER_EVENT` (integer, default 0, at
-  least 0): how many checks count as one event on a hosted plan. `list_monitors`
-  adds `events_per_month`, a month (30 days) of checks at the interval divided by
-  it and rounded, 0 when unset; Settings shows `Each site uses about N events a
-  month` when above 0. `usage` still reports raw `checks`. New `MONITOR_DISABLED`
+  checked every <interval>`. A proposed `MONITOR_CHECKS_PER_EVENT` with
+  `events_per_month` in `list_monitors` and an `Each site uses about N events a
+  month` line in Settings was dropped. `usage` reports raw `checks`. New `MONITOR_DISABLED`
   (bool, default false): the runner still runs but only ends pending manual checks
   as "the check did not run" (in the runner, which already owns that finish), runs
   nothing and writes no row; the API keeps working for edits, `check_monitor` is

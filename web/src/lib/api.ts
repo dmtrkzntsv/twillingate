@@ -300,8 +300,6 @@ export interface Monitors {
   /** Seconds between the checks of each enabled monitor. */
   interval_seconds: number
   timeout_seconds: number
-  /** Events one enabled monitor uses a month on this install's plan; 0 when it is not priced. */
-  events_per_month: number
   /** Monitoring is off on this install: nothing runs and a check on demand is refused. */
   paused: boolean
   monitors: Monitor[]
