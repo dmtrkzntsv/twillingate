@@ -21,7 +21,7 @@ import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import { useReorder } from '@/hooks/use-reorder'
 import { groupName, isLoneGroup, liveGroups, moveGroupBody, type Group } from '@/lib/arrange'
 import type { DashboardInfo } from '@/lib/api'
-import { currentAuthState, logout } from '@/lib/auth'
+import { logout } from '@/lib/auth'
 import GroupNameField from './GroupNameField'
 import IcebergLogo from './IcebergLogo'
 import SidebarGallery from './SidebarGallery'
@@ -33,15 +33,13 @@ interface Props {
   /** Every dashboard, in sidebar order: system ones, then the user's. Those with `sidebar` off are left out. */
   dashboards: DashboardInfo[]
   currentId: number
-  /** Reporting dev, which takes no writes: no "…" menus and no dragging. */
-  readOnly?: boolean
 }
 
 /**
  * Projects (a link to the list, opening to every live project, see
  * `SidebarProjects`) first, then "Dashboards": one entry per
  * dashboard group in the sidebar (`sidebar`, tabs D20), the system groups first with a "Built-in"
- * badge, then the user's. At the bottom, Shares (not in reporting dev),
+ * badge, then the user's. At the bottom, Shares,
  * Gallery (a menu of the components playground and the Dashboards gallery
  * of templates, D17, see `SidebarGallery`), then Archive (every user group
  * with an archived dashboard, D17a), above Log out. Each entry links to its group's first live
@@ -50,10 +48,8 @@ interface Props {
  * ones do not, and since the sortable list holds only user groups,
  * nothing drops above them. Icons only at 640–1023px, a drawer on phones
  * (D37).
- * Log out shows only when the app holds a credential: reporting dev's
- * open mode has none to forget.
  */
-export default function AppSidebar({ dashboards, currentId, readOnly = false }: Props) {
+export default function AppSidebar({ dashboards, currentId }: Props) {
   const { isMobile, setOpenMobile, state } = useSidebar()
   const { pathname } = useLocation()
   const groups = liveGroups(dashboards.filter((d) => d.sidebar))
@@ -106,15 +102,13 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        {!readOnly && (
-          <SidebarGroup>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarProjects onNavigate={close} iconOnly={state === 'collapsed' && !isMobile} className={item} />
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        )}
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarProjects onNavigate={close} iconOnly={state === 'collapsed' && !isMobile} className={item} />
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
         <SidebarGroup>
           <SidebarGroupLabel className="text-sidebar-foreground/60">Dashboards</SidebarGroupLabel>
           <SidebarGroupContent className="flex flex-col gap-1">
@@ -136,60 +130,48 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
                         </span>
                       </Link>
                     </SidebarMenuButton>
-                    {!readOnly && <SidebarGroupMenu group={g} userGroups={yours} currentId={currentId} />}
+                    <SidebarGroupMenu group={g} userGroups={yours} currentId={currentId} />
                   </SidebarMenuItem>
                 ))}
               </SidebarMenu>
             )}
-            {readOnly ? (
-              <SidebarMenu>
-                {yours.map((g) => (
-                  <SidebarMenuItem key={g.groupId}>
-                    <SidebarMenuButton asChild isActive={isActive(g)} tooltip={groupName(g.members)} className={item}>
-                      {yourLink(g)}
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ))}
-              </SidebarMenu>
-            ) : (
-              <DndContext collisionDetection={closestCenter} {...context}>
-                <SortableContext items={order} strategy={verticalListSortingStrategy}>
-                  <SidebarMenu>
-                    {yours.map((g) =>
-                      renaming === g.groupId ? (
-                        <SidebarMenuItem key={g.groupId}>
-                          <GroupNameField
-                            name={groupName(g.members)}
-                            named={isLoneGroup(g.members) || g.members.some((m) => !!m.group_title)}
-                            pending={pending}
-                            onRename={(title) => renameGroup(g.members[0].dashboard_id, title)}
-                            onDone={() => setRenaming(null)}
-                          />
-                        </SidebarMenuItem>
-                      ) : (
-                        <SortableGroupItem
-                          key={g.groupId}
-                          groupId={g.groupId}
-                          title={groupName(g.members)}
-                          isActive={isActive(g)}
-                          className={item}
-                          disabled={busy}
-                          link={yourLink(g)}
-                          menu={
-                            <SidebarGroupMenu
-                              group={g}
-                              userGroups={yours}
-                              currentId={currentId}
-                              onRename={() => setRenaming(g.groupId)}
-                            />
-                          }
+            <DndContext collisionDetection={closestCenter} {...context}>
+              <SortableContext items={order} strategy={verticalListSortingStrategy}>
+                <SidebarMenu>
+                  {yours.map((g) =>
+                    renaming === g.groupId ? (
+                      <SidebarMenuItem key={g.groupId}>
+                        <GroupNameField
+                          name={groupName(g.members)}
+                          named={isLoneGroup(g.members) || g.members.some((m) => !!m.group_title)}
+                          pending={pending}
+                          onRename={(title) => renameGroup(g.members[0].dashboard_id, title)}
+                          onDone={() => setRenaming(null)}
                         />
-                      )
-                    )}
-                  </SidebarMenu>
-                </SortableContext>
-              </DndContext>
-            )}
+                      </SidebarMenuItem>
+                    ) : (
+                      <SortableGroupItem
+                        key={g.groupId}
+                        groupId={g.groupId}
+                        title={groupName(g.members)}
+                        isActive={isActive(g)}
+                        className={item}
+                        disabled={busy}
+                        link={yourLink(g)}
+                        menu={
+                          <SidebarGroupMenu
+                            group={g}
+                            userGroups={yours}
+                            currentId={currentId}
+                            onRename={() => setRenaming(g.groupId)}
+                          />
+                        }
+                      />
+                    )
+                  )}
+                </SidebarMenu>
+              </SortableContext>
+            </DndContext>
             {yours.length === 0 && (
               <p className="px-2 py-1 text-xs text-sidebar-foreground/55 group-data-[collapsible=icon]:hidden">
                 {system.length > 0 ? 'None of your own yet. Ask your agent to make one.' : 'None yet. Ask your agent to make one.'}
@@ -200,16 +182,14 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
-          {!readOnly && (
-            <SidebarMenuItem>
-              <SidebarMenuButton asChild isActive={pathname.startsWith('/shares')} tooltip="Shares" className={item}>
-                <Link to="/shares" onClick={close}>
-                  <Share2Icon />
-                  <span>Shares</span>
-                </Link>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          )}
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild isActive={pathname.startsWith('/shares')} tooltip="Shares" className={item}>
+              <Link to="/shares" onClick={close}>
+                <Share2Icon />
+                <span>Shares</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarGallery onNavigate={close} className={item} />
           <SidebarMenuItem>
             <SidebarMenuButton asChild isActive={pathname === '/archive'} tooltip="Archive" className={item}>
@@ -219,14 +199,12 @@ export default function AppSidebar({ dashboards, currentId, readOnly = false }: 
               </Link>
             </SidebarMenuButton>
           </SidebarMenuItem>
-          {currentAuthState().kind !== 'none' && (
-            <SidebarMenuItem>
-              <SidebarMenuButton tooltip="Log out" onClick={logOut}>
-                <LogOutIcon />
-                <span>Log out</span>
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-          )}
+          <SidebarMenuItem>
+            <SidebarMenuButton tooltip="Log out" onClick={logOut}>
+              <LogOutIcon />
+              <span>Log out</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
         </SidebarMenu>
       </SidebarFooter>
       <SidebarRail />

@@ -29,7 +29,7 @@ interface Props {
   search: string
   /** The auto-refresh interval and its per-viewer switch, as on the dashboard page; absent when the server allows none. */
   autoRefresh?: { seconds: number; on: boolean; onChange: (on: boolean) => void }
-  /** Offers Rename tab: the user's own dashboard, outside reporting dev. */
+  /** Offers Rename tab: the user's own dashboard. */
   renamable?: boolean
 }
 

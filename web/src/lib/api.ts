@@ -93,8 +93,6 @@ export interface DashboardTab {
 
 export interface DashboardsResponse {
   timezone: string
-  dev?: boolean
-  errors?: { dir: string; message: string }[]
   dashboards: DashboardInfo[]
   /** Days until an archived dashboard is purged; absent when retention is off (D17a). */
   purge_after_days?: number
@@ -746,7 +744,6 @@ export const endpoints = {
     api<WidgetShare>(`/api/widget-shares/${id}/restore`, json('POST', { archive_after })),
   /** A share's 1x PNG in any state; the public image URL answers 404 once the share is archived. */
   widgetShareImage: (id: string) => apiBlob(`/api/widget-shares/${id}/image`),
-  devVersion: () => api<{ version: string }>('/api/dev/version'),
   /** A project's forms, drafts first; `archived` lists the archived ones instead. */
   forms: (projectId: number, archived = false) =>
     api<FormsResponse>(`/api/projects/${projectId}/forms${toQuery({ archived: archived || undefined })}`),

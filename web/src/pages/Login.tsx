@@ -22,9 +22,6 @@ function Login() {
       .then((outcome) => {
         if (cancelled) return
         switch (outcome) {
-          case 'open':
-            navigate(returnTo, { replace: true })
-            break
           case 'login':
             setMode('redirecting')
             beginLogin(returnTo).catch((e: unknown) => {

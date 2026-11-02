@@ -83,7 +83,7 @@ describe('embedCode', () => {
 })
 
 describe('shareCaption', () => {
-  const ctx: ShareContext = { project: { id: 7, name: 'blog' }, from: '2026-09-05', to: '2026-10-04', rangeShown: true, writable: true }
+  const ctx: ShareContext = { project: { id: 7, name: 'blog' }, from: '2026-09-05', to: '2026-10-04', rangeShown: true }
   const follows = (follows_project: boolean, follows_range: boolean) => ({ follows_project, follows_range })
 
   it('names the project and the range the widget follows', () => {

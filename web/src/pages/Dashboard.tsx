@@ -5,7 +5,7 @@ import AppShell, { TopBar } from '@/components/AppShell'
 import DashboardHeader from '@/components/DashboardHeader'
 import { GroupMenu, TabMenu } from '@/components/DashboardMenu'
 import { AddWidgetButton, WidgetEditingProvider } from '@/components/editor/WidgetEditing'
-import { DevErrors, GridSkeleton, NoProjects, NoWidgets, PageError, PageLoading } from '@/components/PageStates'
+import { GridSkeleton, NoProjects, NoWidgets, PageError, PageLoading } from '@/components/PageStates'
 import ProjectSwitcher from '@/components/ProjectSwitcher'
 import RangeSwitcher from '@/components/RangeSwitcher'
 import ReportTabs from '@/components/ReportTabs'
@@ -14,7 +14,6 @@ import WidgetGrid from '@/components/WidgetGrid'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
 import { useDashboardRefresh } from '@/hooks/use-dashboard-refresh'
 import { useDashboardSelection } from '@/hooks/use-dashboard-selection'
-import { useDevReload } from '@/hooks/use-dev-reload'
 import { useFreshness } from '@/hooks/use-freshness'
 import { useWidgetActions } from '@/hooks/use-widget-actions'
 import type { DashboardDetail, DashboardInfo, DashboardsResponse, DashboardTab } from '@/lib/api'
@@ -30,7 +29,6 @@ export default function Dashboard() {
   // Moving to another dashboard keeps the current one on screen, frozen,
   // until the next one has loaded, so the tabs and header do not flash away.
   const detail = useQuery({ ...dashboardQuery(id), placeholderData: keepPreviousData })
-  useDevReload(list.data?.dev === true)
 
   useEffect(() => {
     if (detail.data && !detail.isPlaceholderData && !detail.data.archived_at) rememberDashboard(detail.data.dashboard_id)
@@ -38,7 +36,7 @@ export default function Dashboard() {
 
   const error = list.error ?? detail.error
   return (
-    <AppShell dashboards={list.data?.dashboards ?? []} currentId={id} readOnly={list.data?.dev === true}>
+    <AppShell dashboards={list.data?.dashboards ?? []} currentId={id}>
       {error ? (
         <PageError error={error} onRetry={() => (list.error ? list.refetch() : detail.refetch())} />
       ) : list.data && detail.data ? (
@@ -99,9 +97,6 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const freshness = useFreshness(dashboard.widgets, paramsFor, showGrid && !frozen)
   const { move, restore, setSidebar, pending } = useDashboardActions()
   const widgetActions = useWidgetActions()
-  // Reporting dev serves only reads (and the view), so the page offers no
-  // writes there: every one of them would answer 405.
-  const writable = !list.dev
   // What a card needs to be shared or downloaded: the project and range
   // shown. With no project, Download PNG is still offered; Share… is not,
   // since a share belongs to a project.
@@ -116,9 +111,8 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
       from,
       to,
       rangeShown,
-      writable,
     }),
-    [projectId, projectName, from, to, rangeShown, writable]
+    [projectId, projectName, from, to, rangeShown]
   )
   // Only a live user dashboard's group and widgets are arranged from the
   // page (D11, D14), and never while frozen: the dashboard on screen is
@@ -126,13 +120,13 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   // Its tabs stay sortable while frozen, only without moves, so the tab
   // list is not rebuilt under the focus of the tab just chosen.
   // Its widgets are edited from the page under the same rule (widget editor D8).
-  const userGroup = writable && dashboard.owner === 'user' && !dashboard.archived_at
+  const userGroup = dashboard.owner === 'user' && !dashboard.archived_at
   const arrangeable = userGroup && !frozen
   // The group's "…" sits top right, a tab's own one beside its title
   // (D11), never while frozen. The group's always offers its refreshes;
   // both offer writes on a system group (a template, in the sidebar or
   // not, which can still be duplicated) and on a live user one.
-  const menus = writable && !frozen && (dashboard.owner === 'system' || !dashboard.archived_at)
+  const menus = !frozen && (dashboard.owner === 'system' || !dashboard.archived_at)
   const tabs = shownTabs(dashboard, list.dashboards)
   const moveTab = async (id: number, to: number) => {
     const body = moveTabBody(dashboard.tabs, id, dashboard.group_id, to)
@@ -172,22 +166,19 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
         aria-busy={frozen || undefined}
         className={`mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-4 p-3 transition-opacity sm:p-4 lg:p-6 ${frozen ? 'opacity-60' : ''}`}
       >
-        {list.dev && list.errors && list.errors.length > 0 && <DevErrors errors={list.errors} />}
         {dashboard.owner === 'system' && !dashboard.sidebar && (
           // A built-in is never archived; hidden, it is out of the sidebar
           // and this line is the page's hint, with the way back. Your own
           // dashboards are always in the sidebar.
           <PageNotice text="Hidden from the sidebar">
-            {writable && (
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={pending}
-                onClick={() => void setSidebar({ dashboard_id: dashboard.dashboard_id, title: dashboard.group_title ?? dashboard.title }, true)}
-              >
-                Show in sidebar
-              </Button>
-            )}
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={pending}
+              onClick={() => void setSidebar({ dashboard_id: dashboard.dashboard_id, title: dashboard.group_title ?? dashboard.title }, true)}
+            >
+              Show in sidebar
+            </Button>
           </PageNotice>
         )}
         {dashboard.owner === 'user' && dashboard.archived_at && (
@@ -195,11 +186,9 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
           // dashboard opened by its URL; this line is the only hint on the
           // page itself that it is gone from the sidebar (D18).
           <PageNotice text="Archived: not in the sidebar">
-            {writable && (
-              <Button variant="outline" size="sm" disabled={pending} onClick={() => void restore(dashboard.dashboard_id)}>
-                Restore
-              </Button>
-            )}
+            <Button variant="outline" size="sm" disabled={pending} onClick={() => void restore(dashboard.dashboard_id)}>
+              Restore
+            </Button>
           </PageNotice>
         )}
         <WidgetEditingProvider

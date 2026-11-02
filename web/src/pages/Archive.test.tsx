@@ -311,16 +311,6 @@ describe('Archive, empty state', () => {
   })
 })
 
-describe('Archive, writes', () => {
-  it('shows no Restore in reporting dev, which takes no writes', async () => {
-    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ timezone: 'UTC', dashboards, dev: true })
-    renderArchive()
-
-    await screen.findByText('Old experiment')
-    expect(within(screen.getByRole('main')).queryByRole('button', { name: /Restore/ })).not.toBeInTheDocument()
-  })
-})
-
 describe('Archive, shares', () => {
   it('asks only for the archived ones', async () => {
     mockApi()
@@ -495,16 +485,6 @@ describe('Archive, shares', () => {
     expect(screen.queryByText('Nothing archived.')).not.toBeInTheDocument()
   })
 
-  it('asks for no shares in reporting dev, which serves none, and offers no Restore', async () => {
-    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ timezone: 'UTC', dashboards, dev: true })
-    mockShares(archivedShares)
-    renderArchive()
-
-    await screen.findByText('Old experiment')
-    expect(endpoints.widgetShares).not.toHaveBeenCalled()
-    expect(screen.queryByRole('heading', { name: 'Shares' })).not.toBeInTheDocument()
-    expect(within(screen.getByRole('main')).queryByRole('button', { name: /Restore/ })).not.toBeInTheDocument()
-  })
 })
 
 describe('Archive, forms', () => {
@@ -592,13 +572,6 @@ describe('Archive, projects', () => {
     expect(screen.queryByText('Nothing archived.')).toBeNull()
   })
 
-  it('asks for no projects in reporting dev, which takes no writes', async () => {
-    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ timezone: 'UTC', dashboards, dev: true })
-    vi.mocked(endpoints.projects).mockResolvedValue({ projects: [{ project_id: 3, name: 'legacy', archived: true, allowed_origins: [] }] })
-    renderArchive()
-    await screen.findByText('Old experiment')
-    expect(screen.queryByRole('region', { name: 'Projects' })).toBeNull()
-  })
 })
 
 function listed(widget_id: number, dashboard: DashboardInfo, extra: Partial<ListedWidget> = {}): ListedWidget {
@@ -707,11 +680,4 @@ describe('Archive, widgets', () => {
     expect(screen.queryByText('Nothing archived.')).not.toBeInTheDocument()
   })
 
-  it('asks for no widgets in reporting dev', async () => {
-    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ timezone: 'UTC', dashboards, dev: true })
-    renderArchive()
-
-    await screen.findByText('Old experiment')
-    expect(endpoints.listWidgets).not.toHaveBeenCalled()
-  })
 })

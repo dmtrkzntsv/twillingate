@@ -16,7 +16,7 @@ interface Props {
 export default function GalleryLayout({ title, description, sections, children }: Props) {
   const list = useQuery(dashboardsQuery)
   return (
-    <AppShell dashboards={list.data?.dashboards ?? []} currentId={0} readOnly={list.data?.dev === true}>
+    <AppShell dashboards={list.data?.dashboards ?? []} currentId={0}>
       <TopBar>
         <Crumbs items={[{ label: 'Gallery', to: '/gallery/components' }, { label: title }]} />
       </TopBar>

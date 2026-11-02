@@ -73,21 +73,14 @@ afterEach(() => {
 })
 
 describe('detectAuth', () => {
-  it('is "open" when /api/dashboards answers without a token', async () => {
-    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ dashboards: [] }))
-    expect(await detectAuth()).toBe('open')
-  })
-
   it('is "paste" when the protected-resource document is missing', async () => {
     vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response(null, { status: 401 }))
       .mockResolvedValueOnce(new Response(null, { status: 404 }))
     expect(await detectAuth()).toBe('paste')
   })
 
   it('is "login" when the authorization server has a registration endpoint', async () => {
     vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response(null, { status: 401 }))
       .mockResolvedValueOnce(jsonResponse(PROTECTED_RESOURCE))
       .mockResolvedValueOnce(jsonResponse(AS_METADATA))
     expect(await detectAuth()).toBe('login')
@@ -95,7 +88,6 @@ describe('detectAuth', () => {
 
   it('is "paste" when the authorization server has no registration endpoint', async () => {
     vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response(null, { status: 401 }))
       .mockResolvedValueOnce(jsonResponse(PROTECTED_RESOURCE))
       .mockResolvedValueOnce(jsonResponse({ ...AS_METADATA, registration_endpoint: undefined }))
     expect(await detectAuth()).toBe('paste')
@@ -105,7 +97,6 @@ describe('detectAuth', () => {
 describe('authProviderHint', () => {
   it('names the authorization server when it falls back to paste', async () => {
     vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response(null, { status: 401 }))
       .mockResolvedValueOnce(jsonResponse(PROTECTED_RESOURCE))
       .mockResolvedValueOnce(jsonResponse({ ...AS_METADATA, registration_endpoint: undefined }))
     await detectAuth()
@@ -114,7 +105,6 @@ describe('authProviderHint', () => {
 
   it('is unset after a "login" outcome', async () => {
     vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response(null, { status: 401 }))
       .mockResolvedValueOnce(jsonResponse(PROTECTED_RESOURCE))
       .mockResolvedValueOnce(jsonResponse(AS_METADATA))
     await detectAuth()

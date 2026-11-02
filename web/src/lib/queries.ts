@@ -1,7 +1,7 @@
 import { queryOptions, replaceEqualDeep } from '@tanstack/react-query'
 import { endpoints, type DashboardDetail, type RangeQuery, type ShareState, type SubmissionsQuery } from './api'
 
-/** The dashboards list: the sidebar, the timezone, dev mode. */
+/** The dashboards list: the sidebar, the timezone. */
 export const dashboardsQuery = { queryKey: ['dashboards'], queryFn: () => endpoints.dashboards() }
 
 /** One dashboard with its widgets and its stored selection. */

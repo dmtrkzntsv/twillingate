@@ -1,10 +1,9 @@
-import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useSearchParams } from 'react-router'
-import ConfirmDialog from '@/components/ConfirmDialog'
 import DashboardHeader from '@/components/DashboardHeader'
 import RangeSwitcher from '@/components/RangeSwitcher'
 import AttributesSection from '@/components/projects/AttributesSection'
+import DangerSection from '@/components/projects/DangerSection'
 import EventsSection from '@/components/projects/EventsSection'
 import InstallSection from '@/components/projects/InstallSection'
 import KeysSection from '@/components/projects/KeysSection'
@@ -18,7 +17,6 @@ import type { DashboardsResponse, Project } from '@/lib/api'
 import { keysQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import { chooseSelection } from '@/lib/selection'
-import { formatPurgeDate } from '@/lib/time'
 import { selectionParams } from '@/lib/view'
 
 interface Props {
@@ -30,40 +28,34 @@ interface Props {
 
 /**
  * A project's Settings page (project landing D4): its usage, how to install
- * the script (not on an archived project, which takes nothing, or in reporting
- * dev, which has no keys), allowed origins, events, attributes and keys, with
- * Archive or Restore. The range is the URL's, which every tab of the
- * project shares (D8), else 7 days.
+ * the script (not on an archived project, which takes nothing), allowed
+ * origins, events, attributes and keys, then Archive in a Danger section; an
+ * archived project has Restore in the header instead. The range is the URL's,
+ * which every tab of the project shares (D8), else 7 days.
  */
 export default function SetupTab({ project, dash, actions }: Props) {
   const id = project.project_id
   const keysQ = useQuery(keysQuery(id))
   const [url, setURL] = useSearchParams()
-  const [archiving, setArchiving] = useState(false)
   const sel = chooseSelection(url, { range: '7d' }, [], { project: false, range: true })
   const tz = dash?.timezone ?? 'UTC'
   const range = resolve(sel.range!, tz, new Date(), sel.from && sel.to ? { from: sel.from, to: sel.to } : undefined)
-  const purgeDays = dash?.purge_after_days
-  const purgeOn = purgeDays ? formatPurgeDate(new Date(Date.now() + purgeDays * 86_400_000)) : null
 
   return (
     <>
       {/* The same header as a dashboard tab, so switching tabs moves nothing above the cards. */}
       <DashboardHeader title="Settings">
         <RangeSwitcher value={{ range: sel.range!, from: sel.from, to: sel.to }} timezone={tz} onChange={(r) => setURL(selectionParams(r))} />
-        {project.archived ? (
+        {project.archived && (
           <Button variant="outline" size="sm" disabled={actions.pending} onClick={() => void actions.restore(id)}>Restore</Button>
-        ) : (
-          <Button variant="outline" size="sm" disabled={actions.pending} onClick={() => setArchiving(true)}>Archive</Button>
         )}
       </DashboardHeader>
       <UsageSection projectId={id} range={range} />
-      {!project.archived && dash && !dash.dev && (
+      {!project.archived && (
         <InstallSection project={project} keys={keysQ.data?.keys} error={keysQ.error} onRetry={() => void keysQ.refetch()} note={keysQ.data?.note} />
       )}
       <OriginsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
-      {/* Reporting dev serves no monitor, as it serves no project tabs. */}
-      {!project.archived && dash !== undefined && !dash.dev && (
+      {!project.archived && (
         <>
           <MonitoringSection projectId={id} pending={actions.pending} onSave={(body) => actions.updateMonitor(id, body)} onCheck={(origin) => actions.checkMonitor(id, origin)} />
           <DomainsSection projectId={id} />
@@ -98,19 +90,9 @@ export default function SetupTab({ project, dash, actions }: Props) {
         onDisable={(label) => actions.disableKey(id, label)}
         onEnable={(label) => actions.enableKey(id, label)}
       />
-      <ConfirmDialog
-        open={archiving}
-        onOpenChange={setArchiving}
-        title={<>Archive {project.name}?</>}
-        description={
-          <>
-            Ingestion stops; data and dashboards keep working.
-            {purgeOn ? ` Unless restored, the project and its data are deleted on ${purgeOn} (${purgeDays} days).` : ' It is kept until restored.'}
-          </>
-        }
-        action="Archive project"
-        onAction={() => void actions.archive(id)}
-      />
+      {!project.archived && (
+        <DangerSection name={project.name} purgeDays={dash?.purge_after_days} pending={actions.pending} onArchive={() => void actions.archive(id)} />
+      )}
     </>
   )
 }

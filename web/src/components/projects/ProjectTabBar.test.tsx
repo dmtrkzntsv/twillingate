@@ -94,13 +94,6 @@ describe('ProjectTabBar', () => {
     expect(screen.getByRole('combobox', { name: 'Tab' })).toHaveTextContent('Product')
   })
 
-  it('in reporting dev keeps the gear alone: no Forms, no Add tab, no dragging', () => {
-    renderBar({ currentId: SETTINGS_ID, newSubmissions: 0, readOnly: true })
-    expect(screen.queryByRole('link', { name: 'Forms' })).toBeNull()
-    expect(screen.queryByRole('button', { name: 'Add tab' })).toBeNull()
-    expect(screen.getByRole('link', { name: 'Settings' })).toBeInTheDocument()
-  })
-
   describe('New dashboard…', () => {
     async function openForm() {
       const user = userEvent.setup()

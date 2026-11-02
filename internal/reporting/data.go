@@ -131,15 +131,6 @@ func (s *Service) prepare(ctx context.Context, in DataRequest) (prepared, error)
 		// loads.
 		return prepared{}, ErrSQLEngine
 	}
-	return s.prepareRow(w, in, func() (map[string]Component, error) { return s.components(ctx) })
-}
-
-// prepareRow is prepare's part after the widget is read, shared with
-// reporting dev's data handler, which reads its widget from a file: the
-// switchers' inputs, the component (from comps, read only once those
-// pass) and source type, the paging arguments, and the cache key when
-// s has a cache.
-func (s *Service) prepareRow(w store.Widget, in DataRequest, comps func() (map[string]Component, error)) (prepared, error) {
 	p := prepared{w: w, out: WidgetData{WidgetID: w.ID, SourceType: w.SourceType}}
 	followsProject, followsRange := s.follows(w)
 	params, echo, err := s.widgetParams(followsProject, followsRange, w.ID, in)
@@ -149,7 +140,7 @@ func (s *Service) prepareRow(w store.Widget, in DataRequest, comps func() (map[s
 	p.params = params
 	p.out.ProjectID, p.out.From, p.out.To = echo.ProjectID, echo.From, echo.To
 
-	cs, err := comps()
+	cs, err := s.components(ctx)
 	if err != nil {
 		return prepared{}, err
 	}
@@ -165,7 +156,7 @@ func (s *Service) prepareRow(w store.Widget, in DataRequest, comps func() (map[s
 	if p.v, p.load, err = s.loader(w, src, params, in); err != nil {
 		return prepared{}, err
 	}
-	if src.Cacheable() && s.cache != nil {
+	if src.Cacheable() {
 		var suffix string
 		if remoteTable(w) {
 			suffix = p.v.cacheSuffix()
@@ -199,8 +190,7 @@ func (p prepared) finish(value any, cachedAt time.Time) (WidgetData, error) {
 // loader parses in's paging arguments for w and returns them with the
 // load that answers them: one page of the result for a remote table, the
 // whole result for any other widget, which is refused any paging
-// argument. Shared by WidgetData and reporting dev's data handler, so
-// the two cannot disagree on which widgets page or how.
+// argument.
 func (s *Service) loader(w store.Widget, src SourceType, p Params, in DataRequest) (paging, func(context.Context) (any, error), error) {
 	v, err := parsePaging(in, s.queryRows)
 	if err != nil {
@@ -249,10 +239,7 @@ func setData(out *WidgetData, comp Component, v paging, value any) error {
 // widgetParams resolves a load's bound Params and the fields WidgetData
 // echoes, from what a widget's content follows and what the caller
 // asked for: refused when a followed switcher's input is missing,
-// clamped when a custom "to" runs into the future. Shared by WidgetData
-// (against a widget already read from the store) and reporting dev's
-// data handler (against one read fresh from a file, never saved) — the
-// project/range handling is otherwise identical either way.
+// clamped when a custom "to" runs into the future.
 func (s *Service) widgetParams(followsProject, followsRange bool, widgetID int64, in DataRequest) (Params, WidgetData, error) {
 	var p Params
 	var echo WidgetData

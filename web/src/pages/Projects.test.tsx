@@ -122,15 +122,6 @@ describe('Projects', () => {
     }
   })
 
-  it('does not drag cards in reporting dev, which takes no writes', async () => {
-    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ ...dashboardsList(), dev: true })
-    renderPage()
-    await screen.findByRole('article', { name: 'econumo.com' })
-    await vi.waitFor(() =>
-      expect(screen.getByRole('article', { name: 'econumo.com' }).parentElement).not.toHaveAttribute('aria-roledescription')
-    )
-  })
-
   it('leaves archived projects to the Archive page', async () => {
     renderPage()
     await screen.findByRole('article', { name: 'econumo.com' })
@@ -240,12 +231,6 @@ describe('Projects', () => {
       expect(within(guide).getByText(`${window.location.origin}/mcp`)).toBeInTheDocument()
     })
 
-    it('shows reporting dev, which has no MCP, no guide', async () => {
-      vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList({ dev: true }))
-      renderPage()
-      expect(await screen.findByText(/No projects yet/)).toBeInTheDocument()
-      expect(screen.queryByRole('region', { name: 'Connect your AI agent' })).not.toBeInTheDocument()
-    })
   })
 
   it('shows no guide once a project exists', async () => {

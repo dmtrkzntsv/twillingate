@@ -222,11 +222,4 @@ describe('DashboardsGallery, templates', () => {
     expect(screen.getByRole('menuitem', { name: 'Duplicate dashboard' })).toHaveAttribute('data-disabled')
   })
 
-  it('shows no "…" menu in reporting dev, which takes no writes', async () => {
-    vi.spyOn(endpoints, 'dashboards').mockResolvedValue({ timezone: 'UTC', dashboards, dev: true })
-    renderGallery()
-
-    await screen.findByRole('heading', { name: 'Views' })
-    expect(within(screen.getByRole('main')).queryByRole('button', { name: /actions/ })).not.toBeInTheDocument()
-  })
 })
