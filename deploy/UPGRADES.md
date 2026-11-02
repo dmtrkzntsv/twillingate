@@ -1549,3 +1549,21 @@ nothing, while the old files stay where they were.
 Rollback: an older release reads `EVENTS_DIR`, defaulting to `raw/`. If
 you renamed `raw/`, stop the service and rename it back, or set
 `EVENTS_DIR` to the `data/` path.
+
+### Upgrading to the `checks` SQL table (no migration)
+
+The availability checks (family `checks`) are a table of their own in SQL,
+beside structured queries, and `events` leaves them out in both. The
+external SQL engine has this from 2026.11.01-2.
+
+- **Before the upgrade**, update the engine (`twillingate-sql`) first or with
+  twillingate. The protocol is unchanged (still version 1), so an older engine
+  starts and answers, with seven tables: `SELECT … FROM checks` is refused,
+  and `events` still holds the checks, so a custom widget or `query` that
+  counts events then counts them too (filter `family <> 'checks'` until
+  the engine is updated).
+- **On the day**, nothing to do by hand: `schema://views` lists `checks`, and
+  the refusal of SQL that reads past the tables names it.
+
+Rollback: install the previous release and, if you updated it, the previous
+engine; nothing on disk changed.

@@ -15,7 +15,7 @@ describe('parseSchemaViews', () => {
   it('reads the event files tables, with their columns', () => {
     const tables = parseSchemaViews(served)
     const documented = [...files.matchAll(/^\s+(\w+)\(/gm)].map((m) => m[1])
-    expect(documented).toEqual(['events', 'views', 'product', 'measures', 'sessions', 'identities', 'aliases'])
+    expect(documented).toEqual(['events', 'views', 'product', 'measures', 'checks', 'sessions', 'identities', 'aliases'])
     expect(tables.map((t) => t.name)).toEqual(documented)
     expect(tables.find((t) => t.name === 'views')?.columns).toContain('actor_id')
     expect(tables.find((t) => t.name === 'measures')?.columns).toContain('bucket')

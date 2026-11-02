@@ -254,6 +254,7 @@ monitor's slot.
   change makes `checks` a table of structured queries (native) only; the SQL
   engine's `checks` view, and leaving `checks` rows out of its `events` view,
   are a follow-up there. Until then `schemaFiles` does not list `checks`.
+  Done: the engine's 2026.11.01-2 has the table and `schemaFiles` lists it.
 - The `events` table of structured queries leaves the `checks` family out (it
   is the site's traffic); `checks` is read through its own table. This makes
   `usage`, `limits` and every `events` widget exclude checks without

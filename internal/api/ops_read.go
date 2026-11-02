@@ -513,7 +513,7 @@ func (h *host) queryDescription() string {
 	if h.sql == nil {
 		return "Ask the event files a question. " + structured + " Row-capped and time-limited; read-only."
 	}
-	return "Ask the event files a question, one of two ways. " + structured + " sql is the escape hatch, DuckDB SQL answered by the external SQL engine: one read-only SELECT/WITH over the tables events, views, product, measures, sessions, identities and aliases and nothing else (no table function but range, generate_series and unnest, no schema-qualified name such as main.events), one attr_<key> column per attribute key, every project's rows; read schema://views first (\"Writing SQL against the event files\"). Give sql or query, not both. Row-capped and time-limited; read-only."
+	return "Ask the event files a question, one of two ways. " + structured + " sql is the escape hatch, DuckDB SQL answered by the external SQL engine: one read-only SELECT/WITH over the tables events, views, product, measures, checks, sessions, identities and aliases and nothing else (no table function but range, generate_series and unnest, no schema-qualified name such as main.events), one attr_<key> column per attribute key, every project's rows; read schema://views first (\"Writing SQL against the event files\"). Give sql or query, not both. Row-capped and time-limited; read-only."
 }
 
 // constrainQuery is queryEnums, and without an external SQL engine the

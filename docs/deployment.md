@@ -349,7 +349,7 @@ client and fixtures: [sqlengine/protocol.go](https://github.com/dmtrkzntsv/twill
   `max_rows` caps the page size: a `page.limit` of 0 means `max_rows`, and
   a page whose limit exceeds it is refused. `scope` is a
   project id or `null` for every project; `confine` keeps the SQL on the
-  seven tables. `tables` names the files to read: per project its Parquet
+  eight tables. `tables` names the files to read: per project its Parquet
   files, logs, session files and the days they do not cover yet,
   identities and aliases, every path relative to `DATA_DIR` (the engine
   refuses one that is absolute or climbs out), with the event and
@@ -390,19 +390,21 @@ already defines a behaviour, it is linked rather than repeated.
   that version 1 does not define: version 1 grows by adding fields, and
   an engine that refuses one breaks on the next release. twillingate
   ignores unknown fields of an answer the same way.
-- **The seven tables.** `events`, `views`, `product`, `measures`,
+- **The eight tables.** `events`, `views`, `product`, `measures`, `checks`,
   `sessions`, `identities` and `aliases`, with the columns, types and
   meanings in [Writing SQL against the event files](twillingate.md#writing-sql-against-the-event-files)
   and `schema://views`. `events` is the union, by column name, of the
   spec's Parquet files and open logs, with one `attr_<key>` VARCHAR column
-  per attribute key any of them carries; `views`, `product` and
-  `measures` are its rows of one `family`, `measures` with `bucket` added
-  as defined there. A file's columns may differ from another's: a column
-  a file lacks reads NULL. The `v` key of a log line (its format version)
-  is no column.
-- **Rules on read.** Apply `tables.rules` to `events` and the three
-  family tables, never to `sessions`, `identities` or `aliases`, which
-  describe the events as stored. Their meaning is in
+  per attribute key any of them carries, but the rows of family `checks`
+  (a row with no family stays); `views`, `product`, `measures` and `checks`
+  are the rows of one `family`, `measures` with `bucket` added as defined
+  there. A file's columns may differ from another's: a column a file lacks
+  reads NULL. The `v` key of a log line (its format version) is no column.
+  twillingate expects the `checks` table: an engine before 2026.11.01-2 has
+  seven, `events` still holds the `checks` rows and `checks` is no table.
+- **Rules on read.** Apply `tables.rules` to `events` and the
+  `views`, `product` and `measures` tables, never to `checks`, `sessions`,
+  `identities` or `aliases`, which describe the events as stored. Their meaning is in
   [Event rules](twillingate.md#event-rules) and
   [Attribute rules](twillingate.md#attribute-rules); on the wire, a merge
   is a `rename` (both read the same), and these details are written down
@@ -452,12 +454,12 @@ already defines a behaviour, it is linked rather than repeated.
   derive the table from every event of the project. Folding keeps one row
   per key: the earliest `first_seen`, the latest `last_seen`, the counts
   added up and the `name` sent with the latest event that carried one.
-- **`scope`.** With a project id, each of the seven tables reads only that
+- **`scope`.** With a project id, each of the eight tables reads only that
   project's rows, as if the SQL had filtered `project_id` itself; `null`
   reads every project the spec names. Scope keeps SQL on one project, but
   only `confine` stops SQL written to leave it.
 - **`confine`.** Refuse, as `refused` and before anything runs, SQL that
-  reads anything but the seven tables and its own `WITH` names: a table
+  reads anything but the eight tables and its own `WITH` names: a table
   function other than `range`, `generate_series` and `unnest`, a file
   named in `FROM`, a name with a schema or catalog (`main.events`), any
   other table or view, and `SHOW`; the list is in

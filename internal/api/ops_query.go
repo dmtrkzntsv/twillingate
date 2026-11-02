@@ -422,7 +422,7 @@ func nativeError(err error) error {
 // files, under CONSOLE_QUERY_ROWS_MAX and CONSOLE_QUERY_TIMEOUT, with the
 // registry's rules. The engine runs one read-only SELECT and reaches no
 // file outside the table spec (raw-first D21); confine keeps it on the
-// seven tables, where the rules apply (D6), and off data/'s files
+// eight tables, where the rules apply (D6), and off data/'s files
 // themselves, as widget SQL is (#192): always set from the tool. An
 // engine that finds a file of the spec gone (the daily pass moved it)
 // gets a fresh spec, within the timeout (sqlengine.QueryFresh).
@@ -490,7 +490,7 @@ func (h *host) sqlError(ctx context.Context, err error) error {
 		}
 		return invalidf("%s", msg)
 	case isKind(sqlengine.KindSQL) && sqliteTable.MatchString(se.Message):
-		return invalidf(`%s; the v_*, raw_* and agg_* tables went with the database's events. The event files hold events, views, product, measures, sessions, identities and aliases (docs://twillingate)`,
+		return invalidf(`%s; the v_*, raw_* and agg_* tables went with the database's events. The event files hold events, views, product, measures, checks, sessions, identities and aliases (docs://twillingate)`,
 			strings.SplitN(se.Message, "\n", 2)[0])
 	case isKind(sqlengine.KindSQL):
 		return invalidf("SQL error (DuckDB): %s", se.Message)
