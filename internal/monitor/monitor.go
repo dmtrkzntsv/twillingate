@@ -608,9 +608,11 @@ func (r *Runner) availability(ctx context.Context, m store.Monitor) (store.Event
 		return r.origins.RedirectAllowed(m.ProjectID, target, m.Origin)
 	})
 	cancel()
-	// Keep the count Settings shows, written only when it moved and only
-	// from a check that got an answer: a blip must not hide the warning.
-	if res.Answered && res.Redirects != m.Redirects && ctx.Err() == nil {
+	// Keep the count Settings shows, from every check that got an answer (a
+	// blip must not hide the warning). m is a snapshot an overlapping check
+	// may have outdated, so no comparison is made here: the store writes
+	// only when the stored value differs.
+	if res.Answered && ctx.Err() == nil {
 		if err := r.st.SetMonitorRedirects(ctx, m.ProjectID, m.Origin, res.Redirects); err != nil {
 			r.logger.Warn("monitor: store redirect count", "project_id", m.ProjectID, "error", err)
 		}

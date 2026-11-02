@@ -414,6 +414,21 @@ func TestSetMonitorRedirectsKeptByAnEdit(t *testing.T) {
 	}
 }
 
+func TestSetMonitorRedirectsLaterZeroOverwrites(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	setMon(t, d, id, monA, ms{Enabled: true})
+	for _, n := range []int{3, 3, 0, 0} {
+		if err := d.SetMonitorRedirects(ctx, id, monA, n); err != nil {
+			t.Fatal(err)
+		}
+		if m := getMon(t, d, id, monA); m.Redirects != n {
+			t.Fatalf("after writing %d: Redirects %d", n, m.Redirects)
+		}
+	}
+}
+
 func TestMonitorUnknownProject(t *testing.T) {
 	d := newTestDB(t)
 	if _, err := d.SetMonitor(context.Background(), 999, monA, store.MonitorSettings{}, monEligible, monAudit); !errors.Is(err, store.ErrNotFound) {

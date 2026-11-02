@@ -929,22 +929,29 @@ func TestUptimeRowCarriesRedirects(t *testing.T) {
 	}
 }
 
-func TestRedirectsStoredOnlyOnChange(t *testing.T) {
+// A check works from the snapshot its slot took, which an overlapping check
+// may have outdated: it writes its count whatever the snapshot says, and the
+// store skips the write when the value already stands.
+func TestRedirectsWrittenByEveryAnsweredCheck(t *testing.T) {
 	srv := hopServer(3)
 	defer srv.Close()
 	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 1, Enabled: true, Origin: srv.URL}}}
 	r := redirectsRunner(st)
 	now := time.Date(2026, 11, 1, 1, 0, 0, 0, time.UTC)
 	r.now = func() time.Time { return now }
-	run := func() { r.runSlot(context.Background(), st.monitors[0]) }
-	run()
+	snapshot := st.monitors[0]
+	r.runSlot(context.Background(), snapshot)
 	if st.redirects[1] != 3 || st.redirectWrites != 1 {
 		t.Fatalf("stored %v after %d writes, want 3 after 1", st.redirects, st.redirectWrites)
 	}
-	run()
-	run()
-	if st.redirectWrites != 1 {
-		t.Errorf("%d writes after unchanged checks, want 1", st.redirectWrites)
+	// A later check that sees no redirect, from the same zero snapshot.
+	plain := hopServer(0)
+	defer plain.Close()
+	snapshot.Origin = plain.URL
+	st.monitors[0].Origin = plain.URL
+	r.runSlot(context.Background(), snapshot)
+	if st.monitors[0].Redirects != 0 || st.redirectWrites != 2 {
+		t.Errorf("stored %d after %d writes: a later zero must overwrite an earlier three", st.monitors[0].Redirects, st.redirectWrites)
 	}
 }
 

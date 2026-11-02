@@ -193,10 +193,11 @@ func (d *DB) SetMonitorCertError(ctx context.Context, projectID int64, origin, m
 }
 
 // SetMonitorRedirects stores the redirect count of the last check that got
-// an answer, guarded like SetMonitorCert.
+// an answer, guarded like SetMonitorCert. It writes only when the stored
+// count differs, so a caller may call it on every answered check.
 func (d *DB) SetMonitorRedirects(ctx context.Context, projectID int64, origin string, n int) error {
-	_, err := d.db.ExecContext(ctx, `UPDATE monitors SET redirects=? WHERE project_id=? AND origin=?`,
-		n, projectID, origin)
+	_, err := d.db.ExecContext(ctx, `UPDATE monitors SET redirects=? WHERE project_id=? AND origin=? AND redirects<>?`,
+		n, projectID, origin, n)
 	return err
 }
 

@@ -362,7 +362,7 @@ type Store interface {
 	// ends a pending manual check as one that did not run. ListEnabledMonitors lists the enabled monitors
 	// of live projects by project id and origin. SetMonitorCert stores a
 	// reading, SetMonitorCertError only why a certificate could not be read,
-	// SetMonitorRedirects the hop count of the last check that got an answer.
+	// SetMonitorRedirects the hop count of the last check that got an answer, written only when it differs.
 	// All three are unaudited and do nothing when the monitor is gone.
 	ListMonitors(ctx context.Context, projectID int64) ([]Monitor, error)
 	SetMonitor(ctx context.Context, projectID int64, origin string, s MonitorSettings, eligible func(allowedOrigins []string) []string, a AuditEntry) (Monitor, error)
