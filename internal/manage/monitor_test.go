@@ -438,3 +438,34 @@ func TestCheckMonitorRefusedWhilePaused(t *testing.T) {
 		t.Errorf("edit while paused: %v", err)
 	}
 }
+
+// Two edits of different fields, at once, both land: the merge is the store's,
+// in its transaction, not a read here followed by a write of both fields.
+func TestSetMonitorConcurrentEditsOfDifferentFieldsBothLand(t *testing.T) {
+	ops, _, _ := newOps(t)
+	ctx := context.Background()
+	p, err := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "A", AllowedOrigins: []string{monA}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range 25 {
+		if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Enabled: boolp(true), Contains: strp("")}); err != nil {
+			t.Fatal(err)
+		}
+		errs := make(chan error, 2)
+		go func() { _, err := ops.SetMonitor(ctx, "a", p.ID, monA, MonitorSpec{Contains: strp("c")}); errs <- err }()
+		go func() { _, err := ops.SetMonitor(ctx, "b", p.ID, monA, MonitorSpec{Enabled: boolp(false)}); errs <- err }()
+		for range 2 {
+			if err := <-errs; err != nil {
+				t.Fatalf("round %d: %v", i, err)
+			}
+		}
+		l, err := ops.ListMonitors(ctx, p.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m, _ := l.Monitor(monA); m.Enabled || m.Contains != "c" {
+			t.Fatalf("round %d: %+v, want off with contains c", i, m)
+		}
+	}
+}

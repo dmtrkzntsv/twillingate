@@ -352,7 +352,10 @@ type Store interface {
 	ExpireDrafts(ctx context.Context, now time.Time) (int, error)
 	// Availability monitors (migration 044), one per project and origin.
 	// ListMonitors reads a project's rows by origin. SetMonitor upserts one's
-	// settings, audited, and clears its certificate's check time when it goes
+	// settings, audited, merging the fields given (not nil) over the row in the same
+	// transaction, writing and auditing nothing when none changes, with the audit
+	// detail ("origin=... enabled=false contains") built there from what changed,
+	// and clears its certificate's check time when it goes
 	// from disabled to enabled. It refuses with ErrInvalid, in the write, an origin
 	// that eligible (given the project's allowed origins as they stand) does not
 	// keep, unless it only turns off a monitor that has a row; turning one off

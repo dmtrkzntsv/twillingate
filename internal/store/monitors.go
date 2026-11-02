@@ -25,10 +25,13 @@ type Monitor struct {
 	CheckMS                           int
 }
 
-// MonitorSettings is what an operator edits on a monitor.
+// MonitorSettings is what an operator edits on a monitor: the fields to change,
+// nil for one to leave as the row has it. The store merges them over the row
+// inside its transaction, so two edits of different fields cannot overwrite
+// each other.
 type MonitorSettings struct {
-	Enabled  bool
-	Contains string
+	Enabled  *bool
+	Contains *string
 }
 
 // MonitorDomain is the last registration-expiry reading of a main domain, which

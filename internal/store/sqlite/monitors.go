@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/maindomain"
@@ -76,16 +77,38 @@ func (d *DB) SetMonitor(ctx context.Context, projectID int64, origin string, s s
 		if !ok {
 			return unknownProject(projectID)
 		}
+		cur, err := scanMonitor(tx.QueryRowContext(ctx,
+			`SELECT `+monitorCols+` FROM monitors WHERE project_id=? AND origin=?`, projectID, origin))
+		exists := err == nil
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if !exists {
+			cur = store.Monitor{ProjectID: projectID, Origin: origin}
+		}
+		next := store.MonitorSettings{Enabled: &cur.Enabled, Contains: &cur.Contains}
+		if s.Enabled != nil {
+			next.Enabled = s.Enabled
+		}
+		if s.Contains != nil {
+			next.Contains = s.Contains
+		}
+		changed := []string{"origin=" + origin}
+		if *next.Enabled != cur.Enabled {
+			changed = append(changed, fmt.Sprintf("enabled=%t", *next.Enabled))
+		}
+		if *next.Contains != cur.Contains {
+			changed = append(changed, "contains")
+		}
+		if len(changed) == 1 {
+			m = cur
+			return nil
+		}
 		// Checked here, in the write, against the origins as they stand: an
 		// origins edit may have committed since the caller looked, and the
 		// upsert would bring back the row it deleted. Turning off a monitor
 		// that has a row stays allowed.
-		var exists int
-		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM monitors WHERE project_id=? AND origin=?`,
-			projectID, origin).Scan(&exists); err != nil {
-			return err
-		}
-		if s.Enabled || exists == 0 {
+		if *next.Enabled || !exists {
 			var raw string
 			if err := tx.QueryRowContext(ctx, `SELECT allowed_origins FROM projects WHERE id=?`, projectID).Scan(&raw); err != nil {
 				return err
@@ -104,14 +127,15 @@ func (d *DB) SetMonitor(ctx context.Context, projectID int64, origin string, s s
 			  cert_checked_at = CASE WHEN enabled = 1 OR excluded.enabled = 0 THEN cert_checked_at ELSE '' END,
 			  enabled = excluded.enabled, contains = excluded.contains,
 			  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
-			projectID, origin, s.Enabled, s.Contains); err != nil {
+			projectID, origin, *next.Enabled, *next.Contains); err != nil {
 			return err
 		}
-		if !s.Enabled {
+		if !*next.Enabled {
 			if err := finishPendingChecks(ctx, tx, projectID, origin); err != nil {
 				return err
 			}
 		}
+		a.Detail = strings.Join(changed, " ")
 		if err := audit(ctx, tx, a); err != nil {
 			return err
 		}
@@ -312,6 +336,7 @@ func (d *DB) RequestMonitorCheck(ctx context.Context, projectID int64, origin, a
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `UPDATE monitors SET check_requested_at=?, check_finished_at=''
 			WHERE project_id=? AND origin=? AND enabled=1
+			AND EXISTS (SELECT 1 FROM projects WHERE id = monitors.project_id AND archived_at IS NULL)
 			AND (check_requested_at = '' OR (check_finished_at != '' AND check_finished_at >= check_requested_at))
 			AND check_requested_at <= ?`, at, projectID, origin, cutoff)
 		if err != nil {
@@ -330,6 +355,13 @@ func (d *DB) RequestMonitorCheck(ctx context.Context, projectID int64, origin, a
 		}
 		if !ok {
 			return unknownProject(projectID)
+		}
+		var archived int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM projects WHERE id=? AND archived_at IS NOT NULL`, projectID).Scan(&archived); err != nil {
+			return err
+		}
+		if archived > 0 {
+			return store.Refuse(store.ErrInvalid, "project %d is archived; nothing serves a check of %s", projectID, origin)
 		}
 		m, err := scanMonitor(tx.QueryRowContext(ctx,
 			`SELECT `+monitorCols+` FROM monitors WHERE project_id=? AND origin=?`, projectID, origin))

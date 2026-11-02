@@ -223,34 +223,19 @@ func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, ori
 	if err != nil {
 		return MonitorList{}, err
 	}
-	cur, err := o.monitorRow(ctx, projectID, origin)
-	if err != nil {
-		return MonitorList{}, err
-	}
-	next := store.MonitorSettings{Enabled: cur.Enabled, Contains: cur.Contains}
-	if spec.Enabled != nil {
-		next.Enabled = *spec.Enabled
-	}
+	next := store.MonitorSettings{Enabled: spec.Enabled}
 	if spec.Contains != nil {
 		c := strings.TrimSpace(*spec.Contains)
 		if utf8.RuneCountInString(c) > maxMonitorContains {
 			return MonitorList{}, fmt.Errorf("%w: contains is longer than %d characters", ErrInvalid, maxMonitorContains)
 		}
-		next.Contains = c
+		next.Contains = &c
 	}
-	changed := []string{"origin=" + origin}
-	if next.Enabled != cur.Enabled {
-		changed = append(changed, fmt.Sprintf("enabled=%t", next.Enabled))
-	}
-	if next.Contains != cur.Contains {
-		changed = append(changed, "contains")
-	}
-	if len(changed) > 1 {
-		if _, err := o.St.SetMonitor(ctx, projectID, origin, next, MonitorOrigins, store.AuditEntry{
-			Actor: actor, Action: "monitor.update", Subject: idSubject(projectID),
-			Detail: strings.Join(changed, " ")}); err != nil {
-			return MonitorList{}, err
-		}
+	// The store merges next over the row inside its transaction, builds the
+	// audit detail from what changed and writes nothing when nothing does.
+	if _, err := o.St.SetMonitor(ctx, projectID, origin, next, MonitorOrigins, store.AuditEntry{
+		Actor: actor, Action: "monitor.update", Subject: idSubject(projectID)}); err != nil {
+		return MonitorList{}, err
 	}
 	return o.ListMonitors(ctx, projectID)
 }

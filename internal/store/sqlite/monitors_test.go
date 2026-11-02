@@ -31,9 +31,19 @@ const (
 	monAt = "2026-11-01T00:00:00Z"
 )
 
-func setMon(t *testing.T, d *DB, id int64, origin string, s store.MonitorSettings) store.Monitor {
+// ms is both fields of a monitor's settings, as the tests set them.
+type ms struct {
+	Enabled  bool
+	Contains string
+}
+
+func (s ms) patch() store.MonitorSettings {
+	return store.MonitorSettings{Enabled: &s.Enabled, Contains: &s.Contains}
+}
+
+func setMon(t *testing.T, d *DB, id int64, origin string, s ms) store.Monitor {
 	t.Helper()
-	m, err := d.SetMonitor(context.Background(), id, origin, s, monEligible, monAudit)
+	m, err := d.SetMonitor(context.Background(), id, origin, s.patch(), monEligible, monAudit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +81,7 @@ func TestMonitorRoundTrip(t *testing.T) {
 	if ms, err := d.ListMonitors(ctx, id); err != nil || len(ms) != 0 {
 		t.Fatalf("no rows: %+v, %v", ms, err)
 	}
-	got := setMon(t, d, id, monA, store.MonitorSettings{Enabled: true, Contains: "ok"})
+	got := setMon(t, d, id, monA, ms{Enabled: true, Contains: "ok"})
 	want := store.Monitor{ProjectID: id, Origin: monA, Enabled: true, Contains: "ok"}
 	if got != want {
 		t.Fatalf("SetMonitor = %+v, want %+v", got, want)
@@ -90,11 +100,11 @@ func TestMonitorsAreKeyedByProjectAndOrigin(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	a, b := monitorProject(t, d, "a"), monitorProject(t, d, "b")
-	setMon(t, d, a, monB, store.MonitorSettings{Enabled: true})
-	setMon(t, d, a, monA, store.MonitorSettings{Enabled: false, Contains: "x"})
-	setMon(t, d, b, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, a, monB, ms{Enabled: true})
+	setMon(t, d, a, monA, ms{Enabled: false, Contains: "x"})
+	setMon(t, d, b, monA, ms{Enabled: true})
 	// Writing one again updates it.
-	setMon(t, d, a, monB, store.MonitorSettings{Enabled: true, Contains: "y"})
+	setMon(t, d, a, monB, ms{Enabled: true, Contains: "y"})
 
 	ms, err := d.ListMonitors(ctx, a)
 	if err != nil {
@@ -115,17 +125,17 @@ func TestSetMonitorEnablingClearsCertCheckTimeOnly(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
 	if err := d.SetMonitorCert(ctx, id, monA, store.CertState{ExpiresAt: "2027-01-01T00:00:00Z", Issuer: "R3", Valid: true, CheckedAt: monAt}); err != nil {
 		t.Fatal(err)
 	}
 	// Staying on, or going off, keeps the check time.
 	for _, on := range []bool{true, false, false} {
-		if m := setMon(t, d, id, monA, store.MonitorSettings{Enabled: on}); m.CertCheckedAt != monAt {
+		if m := setMon(t, d, id, monA, ms{Enabled: on}); m.CertCheckedAt != monAt {
 			t.Fatalf("enabled=%v: %+v, want the check time kept", on, m)
 		}
 	}
-	m := setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	m := setMon(t, d, id, monA, ms{Enabled: true})
 	if m.CertCheckedAt != "" {
 		t.Errorf("enabling kept the check time: %+v", m)
 	}
@@ -139,11 +149,11 @@ func TestSetMonitorEnablingKeepsTheSharedDomainReading(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
 	if err := d.SetMonitorDomain(ctx, id, "example.com", store.DomainState{ExpiresAt: "2027-02-02", CheckedAt: monAt}); err != nil {
 		t.Fatal(err)
 	}
-	setMon(t, d, id, monB, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monB, ms{Enabled: true})
 	ds, err := d.ListMonitorDomains(ctx, id)
 	if err != nil {
 		t.Fatal(err)
@@ -157,9 +167,9 @@ func TestSetMonitorDomain(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id, other := monitorProject(t, d, "a"), monitorProject(t, d, "b")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
-	setMon(t, d, id, monC, store.MonitorSettings{})
-	setMon(t, d, other, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
+	setMon(t, d, id, monC, ms{Contains: "x"})
+	setMon(t, d, other, monA, ms{Enabled: true})
 	for _, w := range []struct {
 		project int64
 		domain  string
@@ -194,7 +204,7 @@ func TestSetMonitorCertErrorKeepsTheReading(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
 	if err := d.SetMonitorCert(ctx, id, monA, store.CertState{ExpiresAt: "2027-01-01T00:00:00Z", Issuer: "R3", Valid: true, CheckedAt: monAt}); err != nil {
 		t.Fatal(err)
 	}
@@ -227,10 +237,10 @@ func TestUpdateProjectDeletesMonitorsOfRemovedOrigins(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id, other := monitorProject(t, d, "a"), monitorProject(t, d, "b")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
-	setMon(t, d, id, monB, store.MonitorSettings{Enabled: false}) // off: still a row, still removed
-	setMon(t, d, id, monC, store.MonitorSettings{Enabled: true})
-	setMon(t, d, other, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
+	setMon(t, d, id, monB, ms{Contains: "x"}) // off: still a row, still removed
+	setMon(t, d, id, monC, ms{Enabled: true})
+	setMon(t, d, other, monA, ms{Enabled: true})
 
 	updateOrigins(t, d, id, nil) // the origins did not change
 	updateOrigins(t, d, id, []string{monA, monB, monC, "https://new.example"})
@@ -268,10 +278,10 @@ func TestUpdateProjectDeletesDomainsNoMonitorUses(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id, other := monitorProject(t, d, "a"), monitorProject(t, d, "b")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
-	setMon(t, d, id, monB, store.MonitorSettings{Enabled: true})
-	setMon(t, d, id, monC, store.MonitorSettings{Enabled: true})
-	setMon(t, d, other, monC, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
+	setMon(t, d, id, monB, ms{Enabled: true})
+	setMon(t, d, id, monC, ms{Enabled: true})
+	setMon(t, d, other, monC, ms{Enabled: true})
 	for _, w := range []struct {
 		id     int64
 		domain string
@@ -314,12 +324,12 @@ func TestListEnabledMonitors(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	a, b, c, e := monitorProject(t, d, "a"), monitorProject(t, d, "b"), monitorProject(t, d, "c"), monitorProject(t, d, "d")
-	setMon(t, d, a, monB, store.MonitorSettings{Enabled: true})
-	setMon(t, d, a, monA, store.MonitorSettings{Enabled: true})
-	setMon(t, d, a, monC, store.MonitorSettings{Enabled: false})
-	setMon(t, d, b, monA, store.MonitorSettings{Enabled: false})
-	setMon(t, d, c, monA, store.MonitorSettings{Enabled: true})
-	setMon(t, d, e, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, a, monB, ms{Enabled: true})
+	setMon(t, d, a, monA, ms{Enabled: true})
+	setMon(t, d, a, monC, ms{Contains: "x"})
+	setMon(t, d, b, monA, ms{Contains: "x"})
+	setMon(t, d, c, monA, ms{Enabled: true})
+	setMon(t, d, e, monA, ms{Enabled: true})
 	if err := d.SetProjectArchived(ctx, c, true, store.AuditEntry{Actor: "t", Action: "project.archive"}); err != nil {
 		t.Fatal(err)
 	}
@@ -338,7 +348,7 @@ func TestMonitorStateWritesOfARemovedMonitorAreIgnored(t *testing.T) {
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
 	const old = "https://old.example"
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
 	if err := d.SetMonitorCert(ctx, id, old, store.CertState{Issuer: "R3", Valid: true}); err != nil {
 		t.Fatal(err)
 	}
@@ -366,8 +376,8 @@ func TestMonitorStateWritesStayOnTheirOrigin(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
-	setMon(t, d, id, monB, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
+	setMon(t, d, id, monB, ms{Enabled: true})
 	if err := d.SetMonitorCert(ctx, id, monA, store.CertState{Issuer: "R3", CheckedAt: monAt}); err != nil {
 		t.Fatal(err)
 	}
@@ -392,11 +402,11 @@ func TestSetMonitorRedirectsKeptByAnEdit(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
 	if err := d.SetMonitorRedirects(ctx, id, monA, 4); err != nil {
 		t.Fatal(err)
 	}
-	if m := setMon(t, d, id, monA, store.MonitorSettings{Enabled: true, Contains: "x"}); m.Redirects != 4 {
+	if m := setMon(t, d, id, monA, ms{Enabled: true, Contains: "x"}); m.Redirects != 4 {
 		t.Errorf("an edit: Redirects %d, want 4", m.Redirects)
 	}
 	if ms, err := d.ListEnabledMonitors(ctx); err != nil || len(ms) != 1 || ms[0].Redirects != 4 {
@@ -415,7 +425,7 @@ func TestDeleteProjectRemovesMonitorsAndDomains(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
 	if err := d.SetMonitorDomain(ctx, id, "example.com", store.DomainState{CheckedAt: monAt}); err != nil {
 		t.Fatal(err)
 	}
@@ -444,9 +454,9 @@ func TestMonitorCheckRequestAndFinish(t *testing.T) {
 	if err := d.RequestMonitorCheck(ctx, 99, monA, "2026-11-01T10:00:00Z", 0, audit); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("request on an unknown project: %v, want ErrNotFound", err)
 	}
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
-	setMon(t, d, id, monB, store.MonitorSettings{Enabled: true})
-	setMon(t, d, id, monC, store.MonitorSettings{Enabled: false})
+	setMon(t, d, id, monA, ms{Enabled: true})
+	setMon(t, d, id, monB, ms{Enabled: true})
+	setMon(t, d, id, monC, ms{Enabled: false})
 	if err := request(monA, "2026-11-01T10:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
@@ -473,9 +483,9 @@ func TestMonitorCheckRequestAndFinish(t *testing.T) {
 	}
 
 	// The runner lists it.
-	ms, err := d.ListEnabledMonitors(ctx)
-	if err != nil || len(ms) != 2 || ms[0].CheckRequestedAt != "2026-11-01T10:00:00Z" {
-		t.Fatalf("listed %+v, %v", ms, err)
+	listed, err := d.ListEnabledMonitors(ctx)
+	if err != nil || len(listed) != 2 || listed[0].CheckRequestedAt != "2026-11-01T10:00:00Z" {
+		t.Fatalf("listed %+v, %v", listed, err)
 	}
 
 	res := store.MonitorCheckResult{FinishedAt: "2026-11-01T10:00:03Z", Up: false, Status: 503, Reason: "http_5xx", Error: "status 503", MS: 123}
@@ -498,7 +508,7 @@ func TestMonitorCheckRequestAndFinish(t *testing.T) {
 		t.Fatalf("second result left the first's fields: %+v", m)
 	}
 	// An edit keeps it.
-	if m := setMon(t, d, id, monA, store.MonitorSettings{Enabled: false}); m.CheckFinishedAt == "" {
+	if m := setMon(t, d, id, monA, ms{Enabled: false}); m.CheckFinishedAt == "" {
 		t.Fatalf("an edit: %+v", m)
 	}
 	if err := request(monA, "2026-11-01T10:02:00Z"); !errors.Is(err, store.ErrInvalid) {
@@ -512,13 +522,13 @@ func TestSetMonitorRefusesAnOriginNoLongerListed(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
 	if err := d.UpdateProject(ctx, store.RegistryProject{ID: id, Name: "a", AllowedOrigins: `["https://b.example.com"]`,
 		MonitorOrigins: []string{monB}}, store.AuditEntry{Actor: "t", Action: "project.update", Subject: "1"}); err != nil {
 		t.Fatal(err)
 	}
 	for _, on := range []bool{true, false} {
-		if _, err := d.SetMonitor(ctx, id, monA, store.MonitorSettings{Enabled: on}, monEligible, monAudit); !errors.Is(err, store.ErrInvalid) {
+		if _, err := d.SetMonitor(ctx, id, monA, ms{Enabled: on, Contains: "x"}.patch(), monEligible, monAudit); !errors.Is(err, store.ErrInvalid) {
 			t.Errorf("enabled=%t on a removed origin: %v, want ErrInvalid", on, err)
 		}
 	}
@@ -526,12 +536,12 @@ func TestSetMonitorRefusesAnOriginNoLongerListed(t *testing.T) {
 		t.Errorf("the row came back: %+v", m)
 	}
 	// Turning an existing monitor off stays allowed whatever the origins say.
-	setMon(t, d, id, monB, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monB, ms{Enabled: true})
 	none := func([]string) []string { return nil }
-	if m, err := d.SetMonitor(ctx, id, monB, store.MonitorSettings{Enabled: false}, none, monAudit); err != nil || m.Enabled {
+	if m, err := d.SetMonitor(ctx, id, monB, ms{Enabled: false}.patch(), none, monAudit); err != nil || m.Enabled {
 		t.Errorf("turning off: %+v, %v", m, err)
 	}
-	if _, err := d.SetMonitor(ctx, id, monB, store.MonitorSettings{Enabled: true}, none, monAudit); !errors.Is(err, store.ErrInvalid) {
+	if _, err := d.SetMonitor(ctx, id, monB, ms{Enabled: true}.patch(), none, monAudit); !errors.Is(err, store.ErrInvalid) {
 		t.Errorf("enabling when not eligible: %v, want ErrInvalid", err)
 	}
 }
@@ -540,7 +550,7 @@ func TestRequestMonitorCheckCooldownIsInTheWrite(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
 	audit := store.AuditEntry{Actor: "t", Action: "monitor.check", Subject: "1"}
 	cool := 60 * time.Second
 	if err := d.RequestMonitorCheck(ctx, id, monA, "2026-11-01T10:00:00Z", cool, audit); err != nil {
@@ -566,7 +576,7 @@ func TestRequestMonitorCheckInTheSecondOfTheLastFinish(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
 	audit := store.AuditEntry{Actor: "t", Action: "monitor.check", Subject: "1"}
 	if err := d.RequestMonitorCheck(ctx, id, monA, "2026-11-01T10:00:00Z", 0, audit); err != nil {
 		t.Fatal(err)
@@ -602,15 +612,15 @@ func TestPendingCheckEndsWhenTheMonitorIsTurnedOff(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
-	setMon(t, d, id, monB, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
+	setMon(t, d, id, monB, ms{Enabled: true})
 	audit := store.AuditEntry{Actor: "t", Action: "monitor.check", Subject: "1"}
 	for _, o := range []string{monA, monB} {
 		if err := d.RequestMonitorCheck(ctx, id, o, "2026-11-01T10:00:00Z", 0, audit); err != nil {
 			t.Fatal(err)
 		}
 	}
-	m := setMon(t, d, id, monA, store.MonitorSettings{Enabled: false})
+	m := setMon(t, d, id, monA, ms{Enabled: false})
 	if m.CheckPending() || m.CheckFinishedAt < m.CheckRequestedAt || m.CheckError != "the check did not run" || m.CheckUp {
 		t.Errorf("turned off: %+v, want finished with the not-run error", m)
 	}
@@ -623,8 +633,8 @@ func TestPendingCheckEndsWhenTheProjectIsArchived(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id, other := monitorProject(t, d, "a"), monitorProject(t, d, "b")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
-	setMon(t, d, other, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
+	setMon(t, d, other, monA, ms{Enabled: true})
 	audit := store.AuditEntry{Actor: "t", Action: "monitor.check", Subject: "1"}
 	for _, p := range []int64{id, other} {
 		if err := d.RequestMonitorCheck(ctx, p, monA, "2026-11-01T10:00:00Z", 0, audit); err != nil {
@@ -649,14 +659,14 @@ func TestFinishMonitorCheckOfAnOlderRequestWritesNothing(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: true})
 	audit := store.AuditEntry{Actor: "t", Action: "monitor.check", Subject: "1"}
 	const r1, r2 = "2026-11-01T10:00:00Z", "2026-11-01T10:05:00Z"
 	if err := d.RequestMonitorCheck(ctx, id, monA, r1, 0, audit); err != nil {
 		t.Fatal(err)
 	}
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: false})
-	setMon(t, d, id, monA, store.MonitorSettings{Enabled: true})
+	setMon(t, d, id, monA, ms{Enabled: false})
+	setMon(t, d, id, monA, ms{Enabled: true})
 	if err := d.RequestMonitorCheck(ctx, id, monA, r2, 0, audit); err != nil {
 		t.Fatal(err)
 	}
@@ -676,5 +686,55 @@ func TestFinishMonitorCheckOfAnOlderRequestWritesNothing(t *testing.T) {
 	}
 	if m := getMon(t, d, id, monA); m.CheckPending() || !m.CheckUp {
 		t.Fatalf("R2 after its own finish: %+v", m)
+	}
+}
+
+func TestSetMonitorMergesOnlyTheFieldsGiven(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	off, on, x, y := false, true, "x", "y"
+	set := func(p store.MonitorSettings) store.Monitor {
+		t.Helper()
+		m, err := d.SetMonitor(ctx, id, monA, p, monEligible, monAudit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m
+	}
+	set(store.MonitorSettings{Enabled: &on, Contains: &x})
+	// Each edit keeps the field it does not name, as the row stands now.
+	if m := set(store.MonitorSettings{Enabled: &off}); m.Enabled || m.Contains != "x" {
+		t.Fatalf("enabled only: %+v", m)
+	}
+	if m := set(store.MonitorSettings{Contains: &y}); m.Enabled || m.Contains != "y" {
+		t.Fatalf("contains only: %+v", m)
+	}
+	n := auditCount(t, d, monAudit.Action)
+	set(store.MonitorSettings{Enabled: &off, Contains: &y}) // no change
+	if after := auditCount(t, d, monAudit.Action); after != n {
+		t.Fatalf("a no-op audited: %d -> %d", n, after)
+	}
+}
+
+// The runner serves only enabled monitors of live projects, so a request on an
+// archived project's monitor would stay pending for good.
+func TestRequestMonitorCheckRefusesAnArchivedProject(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	setMon(t, d, id, monA, ms{Enabled: true})
+	if err := d.SetProjectArchived(ctx, id, true, store.AuditEntry{Actor: "t", Action: "project.archive"}); err != nil {
+		t.Fatal(err)
+	}
+	audit := store.AuditEntry{Actor: "test", Action: "monitor.check", Subject: "1"}
+	if err := d.RequestMonitorCheck(ctx, id, monA, "2026-11-01T10:00:00Z", 0, audit); !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("request on an archived project: %v, want ErrInvalid", err)
+	}
+	if m := getMon(t, d, id, monA); m.CheckRequestedAt != "" || m.CheckPending() {
+		t.Fatalf("left a request behind: %+v", m)
+	}
+	if n := auditCount(t, d, "monitor.check"); n != 0 {
+		t.Fatalf("audit rows = %d", n)
 	}
 }
