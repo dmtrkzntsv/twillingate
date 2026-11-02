@@ -4,7 +4,7 @@ import { expect, test, type APIRequestContext, type Page } from '@playwright/tes
 const PASSWORD = 'e2e-pass'
 const TOKEN = 'e2e-token'
 
-const SYSTEM_TITLES = ['Views', 'Product', 'Users', 'Groups', 'Retention', 'Web Vitals', 'Measures']
+const SYSTEM_TITLES = ['Views', 'Product', 'Users', 'Groups', 'Retention', 'Web Vitals', 'Measures', 'Availability']
 const VIEWPORTS = [
   { width: 1280, height: 800, name: 'desktop' },
   { width: 390, height: 844, name: 'phone' },
@@ -71,7 +71,13 @@ test.describe('system dashboards', () => {
 
         await assertNoErrorCards(page)
         // A real chart, not just a lucide icon: recharts' own surface class.
-        await expect(page.locator('svg.recharts-surface').first()).toBeVisible()
+        // Availability has none until a project's monitoring has run, and the
+        // seeded instance has no monitor: its About card says so instead.
+        if (title === 'Availability') {
+          await expect(page.getByText('monitoring is not set up for this project')).toBeVisible()
+        } else {
+          await expect(page.locator('svg.recharts-surface').first()).toBeVisible()
+        }
       })
     }
   }
@@ -131,7 +137,7 @@ test('an agent-made group shows its tab bar', async ({ page, request }) => {
   await expect(page.getByRole('link', { name: 'Retention (beta)', exact: true })).toHaveCount(0)
 })
 
-test('a whole-group copy of Views opens with seven tabs', async ({ page, request }) => {
+test('a whole-group copy of Views opens with eight tabs', async ({ page, request }) => {
   const ids = await dashboardIds(request)
   const viewsId = ids.get('Views')
   expect(viewsId, 'no dashboard titled Views').toBeDefined()
@@ -142,13 +148,13 @@ test('a whole-group copy of Views opens with seven tabs', async ({ page, request
   })
   expect(copied.ok(), await copied.text()).toBeTruthy()
   const { dashboard_id: copyId, tabs } = (await copied.json()) as { dashboard_id: number; tabs: { dashboard_id: number }[] }
-  expect(tabs).toHaveLength(7)
+  expect(tabs).toHaveLength(8)
 
   await login(page)
   await page.goto(`/app/dashboards/${copyId}`)
   await page.waitForLoadState('networkidle')
 
-  await expect(page.getByRole('tab')).toHaveCount(7)
+  await expect(page.getByRole('tab')).toHaveCount(8)
 })
 
 test('a 6x6 widget and four 3x3 widgets lay out as a 2x2 block beside it', async ({ page, request }) => {

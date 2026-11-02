@@ -7,6 +7,8 @@ import DangerSection from '@/components/projects/DangerSection'
 import EventsSection from '@/components/projects/EventsSection'
 import InstallSection from '@/components/projects/InstallSection'
 import KeysSection from '@/components/projects/KeysSection'
+import DomainsSection from '@/components/projects/DomainsSection'
+import MonitoringSection from '@/components/projects/MonitoringSection'
 import OriginsSection from '@/components/projects/OriginsSection'
 import UsageSection from '@/components/projects/UsageSection'
 import { Button } from '@/components/ui/button'
@@ -53,6 +55,12 @@ export default function SetupTab({ project, dash, actions }: Props) {
         <InstallSection project={project} keys={keysQ.data?.keys} error={keysQ.error} onRetry={() => void keysQ.refetch()} note={keysQ.data?.note} />
       )}
       <OriginsSection project={project} pending={actions.pending} onSave={(body) => actions.update(id, body)} />
+      {!project.archived && (
+        <>
+          <MonitoringSection projectId={id} pending={actions.pending} onSave={(body) => actions.updateMonitor(id, body)} onCheck={(origin) => actions.checkMonitor(id, origin)} />
+          <DomainsSection projectId={id} />
+        </>
+      )}
       <EventsSection
         project={project}
         range={range}

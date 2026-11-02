@@ -5,12 +5,13 @@ import (
 	"strings"
 )
 
-// columnType is a dimension column's type, as ColumnTypes names it.
+// columnType is a dimension column's type, or that of a column latest reads,
+// as ColumnTypes names it.
 func columnType(column string) string {
 	switch {
 	case column == "day", isFirstSeen(column):
 		return "day"
-	case column == "bucket", plainColumns[column]:
+	case column == "bucket", column == "value", plainColumns[column]:
 		return "number"
 	}
 	return "text"
@@ -38,8 +39,8 @@ var computedTables = map[string][]string{
 	"device_label":     {"events", "views", "product"},
 	"platform_version": {"events", "views", "product"},
 	"consent_state":    {"events", "views", "product"},
-	"hour":             {"events", "views", "product", "measures"},
-	"weekday":          {"events", "views", "product", "measures"},
+	"hour":             {"events", "views", "product", "measures", "checks"},
+	"weekday":          {"events", "views", "product", "measures", "checks"},
 	"user_status":      {"events", "views", "product"},
 	"group_status":     {"events", "views", "product"},
 	"user_label":       {"events", "views", "product"},

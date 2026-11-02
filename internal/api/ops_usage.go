@@ -1,7 +1,9 @@
 package api
 
 import (
+	"cmp"
 	"context"
+	"maps"
 	"slices"
 	"strconv"
 	"time"
@@ -25,6 +27,9 @@ type usageDay struct {
 	Views    int64  `json:"views"`
 	Events   int64  `json:"events"`
 	Measures int64  `json:"measures"`
+	// Checks counts the availability monitor's rows of every kind, which are
+	// not the site's traffic: apart from the three above.
+	Checks int64 `json:"checks"`
 	// TotalBytes is the project's event file bytes as the daily pass
 	// measured them that day; null on a day it did not.
 	TotalBytes *int64 `json:"total_bytes"`
@@ -34,6 +39,7 @@ type usageTotals struct {
 	Views    int64 `json:"views"`
 	Events   int64 `json:"events"`
 	Measures int64 `json:"measures"`
+	Checks   int64 `json:"checks"`
 }
 
 type usageSize struct {
@@ -130,7 +136,7 @@ func (h *host) usage(ctx context.Context, in usageIn) (usageOut, error) {
 		for d := fromD; !toD.Before(d); d = d.AddDays(1) {
 			day := usageDay{Day: d.String()}
 			if c := counts.days[p.ID][day.Day]; c != nil {
-				day.Views, day.Events, day.Measures = c.Views, c.Events, c.Measures
+				day.Views, day.Events, day.Measures, day.Checks = c.Views, c.Events, c.Measures, c.Checks
 			}
 			if n, ok := st.files[p.ID][day.Day]; ok {
 				day.TotalBytes = &n
@@ -138,6 +144,7 @@ func (h *host) usage(ctx context.Context, in usageIn) (usageOut, error) {
 			ps.Totals.Views += day.Views
 			ps.Totals.Events += day.Events
 			ps.Totals.Measures += day.Measures
+			ps.Totals.Checks += day.Checks
 			ps.Series = append(ps.Series, day)
 		}
 		if r, ok := counts.received[p.ID]; ok {
@@ -159,21 +166,32 @@ type fileCounts struct {
 }
 
 // usageChunkDays is the most days one usage breakdown counts: a group per
-// day and family, three families, within the engine's 1,000 groups.
+// day and family within the engine's 1,000 groups, over the events table's three
+// families (views, product, measures). The checks family is on a table of its own
+// and one family, so its breakdown by day fits in the same chunk.
 const usageChunkDays = maxBreakdownLimit / 3
 
-// usageCounts counts the views, product events and measures of every day
-// of the range in the event files of each project, natively, rules
-// applied: a breakdown by day and family per project, one per 333 days of
-// the range. It also reads when each project's newest row arrived
-// (newestArrival), for every project when asked, else for the live ones
-// only: an archived project's files only wait for the purge. The
-// projects' queries go in calls (answerAll) of usageProjectsPerCall
-// projects, a project's sharing one scan, read in order: the first error
-// is returned and later calls never run. Each query has a
+// usageCounts counts the views, product events and measures of every day of the
+// range in the event files of each project, natively, rules applied: a breakdown
+// by day and family per project, one per 333 days of the range. Beside each one a
+// breakdown by day of the checks table counts the availability monitor's rows. It
+// also reads when each project's newest row arrived (newestRow), for every project
+// when asked, else for the live ones only: an archived project's files only wait
+// for the purge. The projects' queries go in calls (answerAll) of
+// usageProjectsPerCall projects, a project's sharing one scan, read in order: the
+// first error is returned and later calls never run. Each query has a
 // CONSOLE_QUERY_TIMEOUT of its own (answerEach).
+//
+// The traffic counts and the newest arrival read the events table, which leaves
+// the checks family out (the monitor's rows are not the site's traffic), so checks
+// are in neither, and newestRow finds the arrival even when the newest file holds
+// only checks (TestUsageIgnoresChecks).
 func (h *host) usageCounts(ctx context.Context, projects []*manage.Project, asked bool, fromD, toD civil.Date) (fileCounts, error) {
 	latest, err := archive.LatestDays(h.eventsDir)
+	if err != nil {
+		return fileCounts{}, err
+	}
+	oldest, err := archive.OldestDays(h.eventsDir)
 	if err != nil {
 		return fileCounts{}, err
 	}
@@ -182,7 +200,7 @@ func (h *host) usageCounts(ctx context.Context, projects []*manage.Project, aske
 		out.days[p.ID] = map[string]*usageTotals{}
 	}
 	for group := range slices.Chunk(projects, usageProjectsPerCall) {
-		if err := h.usageGroup(ctx, group, asked, fromD, toD, latest, out); err != nil {
+		if err := h.usageGroup(ctx, group, asked, fromD, toD, latest, oldest, out); err != nil {
 			return fileCounts{}, err
 		}
 	}
@@ -196,13 +214,12 @@ const usageProjectsPerCall = 4 * native.DefaultMaxScans
 
 // usageGroup is usageCounts over one group of projects, in one call,
 // into out.
-func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked bool, fromD, toD civil.Date, latest map[int64]string, out fileCounts) error {
-	// asks is each request's project and whether it reads the newest
-	// arrival (else it is a chunk's breakdown), in the order the answers
-	// are read.
+func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked bool, fromD, toD civil.Date, latest, oldest map[int64]string, out fileCounts) error {
+	// asks is each breakdown's project and whether it counts checks (else the
+	// traffic), in the order the answers are read.
 	type ask struct {
 		project int64
-		arrival bool
+		checks  bool
 	}
 	var reqs []native.Request
 	var asks []ask
@@ -216,26 +233,29 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 				Metrics: []native.Metric{{Op: "count"}}, Order: "day", Limit: maxBreakdownLimit},
 				Params: native.Params{Project: p.ID, From: lo, To: hi}})
 			asks = append(asks, ask{project: p.ID})
-		}
-		if !asked && p.Archived {
-			continue
-		}
-		if r, ok := newestArrival(p.ID, latest[p.ID]); ok {
-			reqs = append(reqs, r)
-			asks = append(asks, ask{project: p.ID, arrival: true})
+			reqs = append(reqs, native.Request{Query: native.Query{Kind: "breakdown", Table: "checks", Dimensions: []string{"day"},
+				Metrics: []native.Metric{{Op: "count"}}, Order: "day", Limit: maxBreakdownLimit},
+				Params: native.Params{Project: p.ID, From: lo, To: hi}})
+			asks = append(asks, ask{project: p.ID, checks: true})
 		}
 	}
-	for i, a := range h.answerEach(ctx, reqs) {
+	var want []int64
+	for _, p := range projects {
+		if asked || !p.Archived {
+			want = append(want, p.ID)
+		}
+	}
+	// The breakdowns and the newest arrivals go in one call.
+	got, _, answers, err := h.newestRow(ctx, want, latest, oldest, "received_at", reqs, newestOpts{})
+	if err != nil {
+		return err
+	}
+	maps.Copy(out.received, got)
+	for i, a := range answers {
 		if a.Err != nil {
 			return a.Err
 		}
-		res, project := a.Result, asks[i].project
-		if asks[i].arrival {
-			if len(res.Rows) == 1 && res.Rows[0][0] != "" {
-				out.received[project] = res.Rows[0][0]
-			}
-			continue
-		}
+		res, project, checks := a.Result, asks[i].project, asks[i].checks
 		if res.Truncated {
 			return invalidf("usage: too many rows; narrow the date range")
 		}
@@ -245,6 +265,10 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 			if c == nil {
 				c = &usageTotals{}
 				days[row[0]] = c
+			}
+			if checks {
+				c.Checks = cellInt(row[1])
+				continue
 			}
 			n := cellInt(row[2])
 			switch store.Family(row[1]) {
@@ -260,23 +284,104 @@ func (h *host) usageGroup(ctx context.Context, projects []*manage.Project, asked
 	return nil
 }
 
-// newestArrival is the query of when the newest row of a project
-// arrived, ok false when it has no files: the newest received_at from the
-// first day of the month of its newest file name (latest,
-// archive.LatestDays: a month's file counts as its last day, its rows may
-// end earlier) to that day, so it is found whatever the range and scans
-// at most a month. It answers "" when the project has no row there.
-func newestArrival(project int64, latest string) (req native.Request, ok bool) {
-	last, err := civil.Parse(latest)
-	if err != nil {
-		return native.Request{}, false // no files
+// newestOpts bounds newestRow's search and says how it takes a failure.
+type newestOpts struct {
+	maxBack int
+	// onlyNewest looks at the newest file's month and no further back.
+	onlyNewest bool
+	tolerate   bool
+}
+
+// newestRow is, for each of projects with event files, the newest value
+// of column (received_at or ts) among its rows of the events table, which
+// leaves the checks family out. The file names only bound the search
+// (latest, oldest: archive.LatestDays and OldestDays, a month file
+// counting as its last or first day), and the newest file may hold nothing
+// but checks, so it scans the month of the newest file name and, while a
+// project has no row there, the month before, down to its oldest file:
+// one month's scan for a project that has traffic, more only for a
+// silent one. A project with no row at all is absent. batch goes in the
+// first call with the first scans, and its answers are returned in order.
+//
+// opt.onlyNewest stops after the newest file's month. opt.maxBack bounds the search to that many months before the newest
+// file's (0: down to the oldest file); a project with no row by then is
+// absent. With opt.tolerate a project whose scan fails is left out of the
+// answer and named, with its error, in the third result, where otherwise
+// the first failure is returned.
+func (h *host) newestRow(ctx context.Context, projects []int64, latest, oldest map[int64]string, column string, batch []native.Request, opt newestOpts) (map[int64]string, map[int64]error, []native.Answered, error) {
+	type span struct {
+		first, last civil.Date
+		back        int // months stepped back from the newest file's
 	}
-	first, err := civil.Parse(latest[:8] + "01")
-	if err != nil {
-		return native.Request{}, false
+	failed := map[int64]error{}
+	pending := map[int64]span{}
+	for _, id := range projects {
+		last, err := civil.Parse(latest[id])
+		if err != nil {
+			continue // no files
+		}
+		first, err := civil.Parse(latest[id][:8] + "01")
+		if err != nil {
+			continue
+		}
+		pending[id] = span{first: first, last: last}
 	}
-	return native.Request{Query: native.Query{Kind: "stat", Table: "events", Metrics: []native.Metric{{Op: "max", Column: "received_at"}}},
-		Params: native.Params{Project: project, From: first, To: last}}, true
+	out := map[int64]string{}
+	batchAnswers := make([]native.Answered, len(batch))
+	first := true
+	for first || len(pending) > 0 {
+		// Requests of one project stay together, in the order given: the
+		// engine takes a project's scans as one pass.
+		type ask struct {
+			req   native.Request
+			batch int // index in batch, or -1 for a scan of pending
+		}
+		var asks []ask
+		if first {
+			for i, r := range batch {
+				asks = append(asks, ask{r, i})
+			}
+		}
+		for id, sp := range pending {
+			asks = append(asks, ask{native.Request{Query: native.Query{Kind: "stat", Table: "events", Metrics: []native.Metric{{Op: "max", Column: column}}},
+				Params: native.Params{Project: id, From: sp.first, To: sp.last}}, -1})
+		}
+		slices.SortStableFunc(asks, func(x, y ask) int { return cmp.Compare(x.req.Params.Project, y.req.Params.Project) })
+		reqs := make([]native.Request, len(asks))
+		for i, a := range asks {
+			reqs[i] = a.req
+		}
+		first = false
+		for i, a := range h.answerEach(ctx, reqs) {
+			if asks[i].batch >= 0 {
+				batchAnswers[asks[i].batch] = a
+				continue
+			}
+			id := asks[i].req.Params.Project
+			if a.Err != nil {
+				if !opt.tolerate {
+					return nil, nil, nil, a.Err
+				}
+				failed[id] = a.Err
+				delete(pending, id)
+				continue
+			}
+			if rows := a.Result.Rows; len(rows) == 1 && rows[0][0] != "" {
+				out[id] = rows[0][0]
+				delete(pending, id)
+				continue
+			}
+			sp := pending[id]
+			prev := sp.first.AddDays(-1)
+			if o, err := civil.Parse(oldest[id]); err != nil || prev.Before(o) || opt.onlyNewest || (opt.maxBack > 0 && sp.back >= opt.maxBack) {
+				delete(pending, id)
+				continue
+			}
+			m, _ := civil.Parse(prev.String()[:8] + "01")
+			pending[id] = span{m, prev, sp.back + 1}
+		}
+	}
+	return out, failed, batchAnswers, nil
 }
 
 // readSizes answers every project's latest size, by project id: its

@@ -1,0 +1,1 @@
+{"query":{"kind":"breakdown","table":"checks","dimensions":["attr_origin"],"order":"attr_origin","limit":1000,"where":[{"column":"event_name","op":"eq","values":["cert"]}],"metrics":[{"op":"latest","column":"value","as":"Days left"}]},"rename":{"attr_origin":"Site"}}

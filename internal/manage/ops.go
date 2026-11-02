@@ -35,6 +35,9 @@ type Ops struct {
 	// values in the event files. Set by the caller after NewOps; nil (a
 	// process with no engine) skips the check.
 	Presence Presence
+	// MonitorPaused is MONITOR_DISABLED: the monitor runner is off, so a
+	// check on demand is refused. Set by the caller after NewOps.
+	MonitorPaused bool
 
 	now func() time.Time
 }
@@ -224,6 +227,11 @@ func (o *Ops) UpdateProject(ctx context.Context, actor string, spec ProjectSpec)
 	row, err := spec.row()
 	if err != nil {
 		return nil, err
+	}
+	// A monitor on an origin the project no longer lists is deleted in the same
+	// transaction as the edit, which alone knows the monitors' rows.
+	if !slices.Equal(spec.AllowedOrigins, cur.AllowedOrigins) {
+		row.MonitorOrigins = append([]string{}, MonitorOrigins(spec.AllowedOrigins)...)
 	}
 	if err := o.St.UpdateProject(ctx, row, store.AuditEntry{
 		Actor: actor, Action: "project.update", Subject: idSubject(spec.ID)}); err != nil {

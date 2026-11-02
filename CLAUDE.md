@@ -11,6 +11,7 @@ internal/app/        composition root: opens the store, wires the surfaces
 internal/server/     ingest HTTP API; serves the JS SDK and the helper scripts
 internal/api/        private API: MCP endpoint and REST routes, one auth
 internal/jobs/       daily pass: salt rotation, aggregation, prune, view rebuild
+internal/monitor/    availability checks, certificate and domain expiry, written as checks rows
 internal/pipeline/   write buffer between ingest and the store
 internal/manage/     project registry snapshot and its audited operations
 internal/reporting/  dashboards, widgets and components: validation, operations, system dashboards, cache; embeds the web app
@@ -23,7 +24,7 @@ internal/geo/        MaxMind lookup
 internal/wire/       the ingest wire format's fixed limits, shared by server and api
 internal/native/     structured queries (stat, trend, breakdown) answered in Go over the event files
 internal/archive/    raw events as files under data/: the per-day NDJSON log, the dump to Parquet, the month merge, retention by file, the derived sessions, identities and aliases, and the table spec the external SQL engine reads
-internal/shared/     small generic leaf packages: civil (calendar dates), golden (tests' expected answers under testdata/), readsql, sortkey, version
+internal/shared/     small generic leaf packages: civil (calendar dates), golden (tests' expected answers under testdata/), maindomain (a host's registrable domain), readsql, sortkey, version
 internal/shared/hll/ distinct counts, exact up to 1,024 ids then a HyperLogLog sketch (about ±2%), for internal/native
 internal/sqlcheck/   tests only: prepares every SQL string the code hands database/sql against a migrated database
 sqlengine/           public protocol and client for an external SQL engine over a Unix socket; stdlib only, importable by other modules
@@ -33,7 +34,7 @@ web/                 dashboard web app source (React, TypeScript); the build is 
 deploy/              installer, systemd unit, compose file, UPGRADES.md; ship/ holds the unit template and env example ship installs
 ```
 
-`app` imports the surfaces (`server`, `api`, `jobs`, `pipeline`);
+`app` imports the surfaces (`server`, `api`, `jobs`, `monitor`, `pipeline`);
 surfaces import `manage`, `reporting` and the leaves, never each other; `manage` and the
 leaves import only leaves. A surface that needs another's behaviour takes an
 interface and `app` passes the implementation (`server.Enqueuer` is

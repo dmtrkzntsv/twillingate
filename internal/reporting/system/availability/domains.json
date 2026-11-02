@@ -1,0 +1,9 @@
+{
+  "component": "table",
+  "title": "Domains",
+  "props": {
+    "formats": {
+      "Days to renewal": "number"
+    }
+  }
+}

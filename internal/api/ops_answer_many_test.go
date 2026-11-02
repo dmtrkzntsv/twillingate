@@ -67,12 +67,12 @@ func TestAnalyticsToolsAnswerFromOneCall(t *testing.T) {
 			return h.productEvents(ctx, productEventsIn{rangeIn: month, Event: "signup"})
 		}},
 		{"retention", 2, func() (any, error) { return h.retention(ctx, retentionIn{rangeIn: month, Actor: "user"}) }},
-		// One breakdown chunk and the newest arrival.
-		{"usage", 2, func() (any, error) {
+		// One chunk's two breakdowns (traffic, checks) and the newest arrival.
+		{"usage", 3, func() (any, error) {
 			return h.usage(ctx, usageIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: month.From, To: month.To}})
 		}},
-		// Two chunks of 333 days and the newest arrival.
-		{"usage two chunks", 3, func() (any, error) {
+		// Two chunks of 333 days, two breakdowns each, and the newest arrival.
+		{"usage two chunks", 5, func() (any, error) {
 			return h.usage(ctx, usageIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2025-09-01", To: "2026-08-31"}})
 		}},
 		{"limits' event count", -1, func() (any, error) { return h.countEvents(ctx) }},

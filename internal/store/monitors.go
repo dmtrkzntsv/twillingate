@@ -1,0 +1,74 @@
+package store
+
+// Monitor is one origin's availability-monitor row (migration 044): its
+// settings and its last certificate reading. An origin with no row reads as a
+// Monitor that is off.
+type Monitor struct {
+	ProjectID     int64
+	Origin        string
+	Enabled       bool
+	Contains      string
+	CertExpiresAt string // RFC 3339 UTC, "" unknown
+	CertIssuer    string
+	CertValid     bool
+	CertError     string
+	CertCheckedAt string
+	Redirects     int // hops the last answered check followed
+
+	// The last manual check: when it was requested and finished (RFC 3339 UTC,
+	// "" never; pending while requested is the later).
+	CheckRequestedAt, CheckFinishedAt string
+
+	// The latest availability check of any kind, scheduled or manual.
+	Last MonitorResult
+}
+
+// MonitorSettings is what an operator edits on a monitor: the fields to change,
+// nil for one to leave as the row has it. The store merges them over the row
+// inside its transaction, so two edits of different fields cannot overwrite
+// each other.
+type MonitorSettings struct {
+	Enabled  *bool
+	Contains *string
+}
+
+// MonitorDomain is the last registration-expiry reading of a main domain, which
+// a project's monitors on that domain share.
+type MonitorDomain struct {
+	ProjectID int64
+	Domain    string
+	ExpiresAt string // YYYY-MM-DD, "" unknown
+	CheckedAt string
+}
+
+// MonitorResult is how an availability check went.
+type MonitorResult struct {
+	CheckedAt     string // RFC 3339 UTC, "" never
+	Up            bool
+	Status        int
+	Reason, Error string
+	MS            int
+}
+
+// CertState is one certificate reading.
+type CertState struct {
+	ExpiresAt, Issuer, Error, CheckedAt string
+	Valid                               bool
+}
+
+// DomainState is one domain-expiry reading.
+type DomainState struct{ ExpiresAt, CheckedAt string }
+
+// CheckPending reports whether a manual check was requested and has not
+// finished: requested, and finished empty (the request clears it) or older than
+// the request.
+func (m Monitor) CheckPending() bool {
+	return m.CheckRequestedAt != "" && (m.CheckFinishedAt == "" || m.CheckFinishedAt < m.CheckRequestedAt)
+}
+
+// CheckNotRun reports whether the last manual check ended without an availability
+// check at or after its request: the server was down, stopping, or the monitor
+// went off. A result in the request's own second counts as the check's.
+func (m Monitor) CheckNotRun() bool {
+	return m.CheckRequestedAt != "" && !m.CheckPending() && m.Last.CheckedAt < m.CheckRequestedAt
+}

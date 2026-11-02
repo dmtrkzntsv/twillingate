@@ -275,6 +275,16 @@ describe('Project', () => {
     expect(screen.queryByRole('region', { name: 'Danger' })).not.toBeInTheDocument()
   })
 
+  it('shows no monitoring or domains on an archived project, which refuses every change', async () => {
+    const monitor = vi.spyOn(endpoints, 'monitors').mockResolvedValue({ interval_seconds: 60, timeout_seconds: 5, paused: false, monitors: [], domains: [] })
+    renderAt('/projects/3/settings')
+    expect(await screen.findByRole('button', { name: 'Restore' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Usage' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Monitoring' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Domains' })).not.toBeInTheDocument()
+    expect(monitor).not.toHaveBeenCalled()
+  })
+
   it('says so for an unknown project', async () => {
     renderAt('/projects/77/settings')
     expect(await screen.findByText(/There is no project 77\./)).toBeInTheDocument()

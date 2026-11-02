@@ -15,8 +15,8 @@ vi.mock('@/hooks/use-project-actions', () => ({
 function stats(project_id: number, over: Partial<ProjectUsage> = {}): ProjectUsage {
   return {
     project_id,
-    series: [{ day: '2026-10-02', views: 5, events: 2, measures: 0, total_bytes: null }],
-    totals: { views: 5, events: 2, measures: 0 },
+    series: [{ day: '2026-10-02', views: 5, events: 2, measures: 0, checks: 700, total_bytes: null }],
+    totals: { views: 5, events: 2, measures: 0, checks: 700 },
     last_received_at: new Date(Date.now() - 120_000).toISOString(),
     first_day: '2026-09-01',
     size: { total_bytes: 2_300_000, measured_at: '2026-10-03' },
@@ -37,7 +37,7 @@ beforeEach(() => {
     { day: '2026-09-03', bytes: 2_000_000_000 }, { day: '2026-09-04', bytes: null }, { day: '2026-10-02', bytes: 2_100_000_000 },
   ], projects: [
     stats(4),
-    stats(5, { last_received_at: null, totals: { views: 0, events: 0, measures: 0 }, size: null }),
+    stats(5, { last_received_at: null, totals: { views: 0, events: 0, measures: 0, checks: 700 }, size: null }),
     stats(3),
   ] })
   vi.spyOn(endpoints, 'projectActivity').mockResolvedValue({ projects: [

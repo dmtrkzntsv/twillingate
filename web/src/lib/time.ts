@@ -36,3 +36,19 @@ export function formatAsOf(at: Date, now: Date = new Date()): string {
 export function formatPurgeDate(date: Date): string {
   return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }).format(date)
 }
+
+/** Whole days from `now` until `at`, rounded down; negative once passed. */
+export function daysUntil(at: Date, now: Date = new Date()): number {
+  return Math.floor((at.getTime() - now.getTime()) / DAY)
+}
+
+/** Calendar days from `now`'s UTC date to the `YYYY-MM-DD` date `day`; negative once passed. */
+export function daysUntilDate(day: string, now: Date = new Date()): number {
+  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())
+  return Math.round((Date.parse(`${day}T00:00:00Z`) - today) / DAY)
+}
+
+/** "73 days", or "expired" once the day has passed. */
+export function formatDaysLeft(days: number): string {
+  return days < 0 ? 'expired' : `${days} day${days === 1 ? '' : 's'}`
+}

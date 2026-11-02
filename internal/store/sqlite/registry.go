@@ -167,6 +167,11 @@ func (d *DB) UpdateProject(ctx context.Context, p store.RegistryProject, a store
 		if n, _ := res.RowsAffected(); n == 0 {
 			return fmt.Errorf("update project: unknown id %d: %w", p.ID, store.ErrNotFound)
 		}
+		if p.MonitorOrigins != nil {
+			if err := removeMonitorsOffOrigins(ctx, tx, p.ID, p.MonitorOrigins, a); err != nil {
+				return err
+			}
+		}
 		return auditAndBump(ctx, tx, a)
 	})
 }
@@ -193,6 +198,13 @@ func (d *DB) SetProjectArchived(ctx context.Context, id int64, archived bool, a 
 			}
 			if c == 0 {
 				return fmt.Errorf("unknown project %d: %w", id, store.ErrNotFound)
+			}
+		}
+		if archived {
+			// The runner skips archived projects; a request pending on one
+			// would never finish.
+			if err := finishPendingChecks(ctx, tx, id, ""); err != nil {
+				return err
 			}
 		}
 		return auditAndBump(ctx, tx, a)
@@ -264,7 +276,7 @@ func (d *DB) SetIngestKeyDisabled(ctx context.Context, projectID int64, label st
 // both directions, so a forgotten addition or a stale entry fails loudly
 // instead of silently orphaning rows on DeleteProjectData.
 var projectTables = []string{
-	"ingest_keys", "rules", "usage_history", "project_tabs", "widget_shares", "forms", "submissions",
+	"ingest_keys", "rules", "usage_history", "project_tabs", "widget_shares", "forms", "submissions", "monitors", "monitor_domains",
 }
 
 // DeleteProjectData hard-deletes every row keyed by the project's id, then

@@ -549,10 +549,37 @@ type scan struct {
 	logs    logReader // reads the logs; nil: the engine's log cache
 }
 
-// family is the family the query's table holds ("" for events: all).
+// notChecks is the family filter of table events: every family but checks,
+// the availability probes the server writes, which only table checks reads.
+// A null family passes it, as it passes "".
+const notChecks = "!" + string(store.FamilyChecks)
+
+// famMatch says whether a row of family got passes the filter want ("": any;
+// notChecks: any but checks; else that one).
+func famMatch(want, got string) bool {
+	switch want {
+	case "":
+		return true
+	case notChecks:
+		return got != string(store.FamilyChecks)
+	}
+	return got == want
+}
+
+// ruleFamily is the family argument of ruleSet.apply for the filter fam: a
+// concrete one as it is, and "" (the batch's family column says) otherwise.
+func ruleFamily(fam string) string {
+	if fam == notChecks {
+		return ""
+	}
+	return fam
+}
+
+// family is the family filter of the query's table: "" for none, notChecks
+// for events (every family but checks), else the table's own.
 func (s scan) family() string {
 	if s.q.Table == "events" {
-		return ""
+		return notChecks
 	}
 	return s.q.Table
 }
@@ -656,7 +683,7 @@ func (s scan) scanEvents(ctx context.Context, files archive.Files, r dayRange, c
 		readLog = s.e.logs.read
 	}
 	return s.e.scanFiles(ctx, logs, groups, readLog, read, fam, r, func(w int, b *batch) error {
-		b = s.rules.apply(b, fam)
+		b = s.rules.apply(b, ruleFamily(fam))
 		if ids != nil {
 			addIdentityColumns(b, idCols, ids)
 		}

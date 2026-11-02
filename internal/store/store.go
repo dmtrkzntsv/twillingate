@@ -9,8 +9,9 @@ import (
 )
 
 // Family names the kind of event a row is: a view (views_overview,
-// views_breakdown), a product event (product_events, product_attributes)
-// or a measure (measures). Ingest decides it from the event's family, or
+// views_breakdown), a product event (product_events, product_attributes),
+// a measure (measures) or a check, an availability probe the server writes
+// (only the native table checks reads it). Ingest decides it from the event's family, or
 // from its name when family is absent; nothing holds a list of families.
 type Family string
 
@@ -18,6 +19,7 @@ const (
 	FamilyViews    Family = "views"
 	FamilyProduct  Family = "product"
 	FamilyMeasures Family = "measures"
+	FamilyChecks   Family = "checks"
 )
 
 // The kinds a measure declares, each with a fixed unit: time in
@@ -135,6 +137,12 @@ type RegistryProject struct {
 	Archived       bool
 	ArchivedAt     string // RFC 3339 UTC, "" = live
 	SortKey        string // its place in the order (migration 034)
+	// MonitorOrigins, on UpdateProject only, is nil when the origins did not
+	// change, else the origins a monitor may now use (none: empty, not nil).
+	// A monitor on any other is deleted in the same transaction (audited
+	// monitor.remove, "origin removed: <origin>"), and with it a domain reading no
+	// monitor left uses. Never read back.
+	MonitorOrigins []string
 }
 
 // EventRule is one event rule (rules with kind 'event', migration 040): a rename (To set)
@@ -342,6 +350,39 @@ type Store interface {
 	// "form.expire", subject "form/<project_id>/<name>"), and returns how
 	// many.
 	ExpireDrafts(ctx context.Context, now time.Time) (int, error)
+	// Availability monitors (migration 044), one per project and origin.
+	// ListMonitors reads a project's rows by origin. SetMonitor upserts one's
+	// settings, audited, merging the fields given (not nil) over the row in the same
+	// transaction, writing and auditing nothing when none changes, with the audit
+	// detail ("origin=... enabled=false contains") built there from what changed,
+	// and clears its certificate's check time when it goes
+	// from disabled to enabled. It refuses with ErrInvalid, in the write, an origin
+	// that eligible (given the project's allowed origins as they stand) does not
+	// keep, unless it only turns off a monitor that has a row; turning one off
+	// ends a pending manual check as one that did not run. ListEnabledMonitors lists the enabled monitors
+	// of live projects by project id and origin. SetMonitorCert stores a
+	// reading, SetMonitorCertError only why a certificate could not be read,
+	// SetMonitorRedirects the hop count of the last check that got an answer, written only when it differs,
+	// SetMonitorLast the result of any availability check.
+	// All four are unaudited and do nothing when the monitor is gone.
+	ListMonitors(ctx context.Context, projectID int64) ([]Monitor, error)
+	SetMonitor(ctx context.Context, projectID int64, origin string, s MonitorSettings, eligible func(allowedOrigins []string) []string, a AuditEntry) (Monitor, error)
+	ListEnabledMonitors(ctx context.Context) ([]Monitor, error)
+	SetMonitorCert(ctx context.Context, projectID int64, origin string, c CertState) error
+	SetMonitorCertError(ctx context.Context, projectID int64, origin, msg string) error
+	SetMonitorRedirects(ctx context.Context, projectID int64, origin string, n int) error
+	SetMonitorLast(ctx context.Context, projectID int64, origin string, r MonitorResult) error
+	// ListMonitorDomains reads a project's domain readings by domain, which its
+	// monitors on one main domain share. SetMonitorDomain stores one, unaudited,
+	// unless no monitor of the project has an origin on that domain any more.
+	ListMonitorDomains(ctx context.Context, projectID int64) ([]MonitorDomain, error)
+	SetMonitorDomain(ctx context.Context, projectID int64, domain string, d DomainState) error
+	// RequestMonitorCheck records a manual check of one monitor for the runner
+	// to serve, audited: ErrNotFound for an unknown project, ErrInvalid for a
+	// monitor not enabled, ErrBusy while one is pending or when the last request is less than cooldown before at. It clears the finish time. FinishMonitorCheck
+	// ends it unless the monitor is gone or its request is no longer the one at requestedAt; not audited.
+	RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, cooldown time.Duration, a AuditEntry) error
+	FinishMonitorCheck(ctx context.Context, projectID int64, origin, requestedAt, finishedAt string) error
 	// SetSubmissionsArchived archives (archived true) or restores the
 	// project's submissions with these ids and returns how many changed:
 	// ids that match nothing, an archived one being archived and an active

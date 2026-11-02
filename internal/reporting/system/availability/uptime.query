@@ -1,0 +1,1 @@
+{"query":{"kind":"stat","table":"checks","where":[{"column":"event_name","op":"eq","values":["uptime"]}],"metrics":[{"op":"ratio","as":"value","num":{"op":"count","where":[{"column":"attr_up","op":"eq","values":["1"]}]},"den":{"op":"count"}}]}}

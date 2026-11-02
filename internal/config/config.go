@@ -60,6 +60,19 @@ type ReportingConfig struct {
 	CacheAge, RefreshAge time.Duration
 }
 
+// MonitorConfig is the availability monitor's settings.
+type MonitorConfig struct {
+	// Interval (MONITOR_INTERVAL, whole seconds) is the time between the
+	// availability checks of each enabled monitor: fixed, 10 to 3600.
+	Interval time.Duration
+	// Timeout (MONITOR_TIMEOUT, whole seconds) is how long a site has to
+	// answer a check before it counts as down: 1 to 60, below Interval.
+	Timeout time.Duration
+	// Disabled (MONITOR_DISABLED) stops the runner: no check runs and no row
+	// is written. Editing monitors still works; a check on demand is refused.
+	Disabled bool
+}
+
 // retired are settings twillingate no longer reads, each with why. One
 // still set is ignored, and the start says so once (IgnoredWarning).
 var retired = []struct{ key, why string }{
@@ -164,6 +177,7 @@ type Config struct {
 	Retention          Retention
 	Forms              FormsConfig
 	Reporting          ReportingConfig
+	Monitor            MonitorConfig
 	Console            ConsoleConfig
 	// Ignored lists the retired settings the environment still sets, in
 	// the order of retired.
@@ -277,6 +291,11 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		Reporting: ReportingConfig{
 			CacheAge:   e.dur("REPORTING_CACHE_MAX_AGE", 15*time.Minute),
 			RefreshAge: e.dur("REPORTING_REFRESH_MAX_AGE", time.Minute),
+		},
+		Monitor: MonitorConfig{
+			Interval: time.Duration(e.num("MONITOR_INTERVAL", 120)) * time.Second,
+			Timeout:  time.Duration(e.num("MONITOR_TIMEOUT", 5)) * time.Second,
+			Disabled: e.bool("MONITOR_DISABLED", false),
 		},
 	}
 	c.Console = ConsoleConfig{
@@ -426,6 +445,16 @@ func (c *Config) validate() error {
 	if c.Reporting.CacheAge > 0 && c.Reporting.RefreshAge > c.Reporting.CacheAge {
 		return fmt.Errorf("config: REPORTING_REFRESH_MAX_AGE (%s) exceeds REPORTING_CACHE_MAX_AGE (%s)",
 			c.Reporting.RefreshAge, c.Reporting.CacheAge)
+	}
+	if c.Monitor.Interval < 10*time.Second || c.Monitor.Interval > time.Hour {
+		return fmt.Errorf("config: MONITOR_INTERVAL must be between 10 and 3600 seconds: %d", int(c.Monitor.Interval/time.Second))
+	}
+	if c.Monitor.Timeout < time.Second || c.Monitor.Timeout > time.Minute {
+		return fmt.Errorf("config: MONITOR_TIMEOUT must be between 1 and 60 seconds: %d", int(c.Monitor.Timeout/time.Second))
+	}
+	if c.Monitor.Timeout >= c.Monitor.Interval {
+		return fmt.Errorf("config: MONITOR_TIMEOUT (%d seconds) must be below MONITOR_INTERVAL (%d seconds)",
+			int(c.Monitor.Timeout/time.Second), int(c.Monitor.Interval/time.Second))
 	}
 	return nil
 }

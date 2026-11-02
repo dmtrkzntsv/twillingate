@@ -1,7 +1,7 @@
 import { useCallback, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { toast } from 'sonner'
-import { ApiError, endpoints, type CreateProjectBody, type CreatedProject, type EventFamily, type IssuedKey } from '@/lib/api'
+import { ApiError, endpoints, type CreateProjectBody, type CreatedProject, type EventFamily, type IssuedKey, type MonitorBody } from '@/lib/api'
 import { toastError } from '@/lib/toast-error'
 
 export interface ProjectActions {
@@ -38,14 +38,18 @@ export interface ProjectActions {
   removeAttributeRule(id: number, body: { key: string }): Promise<boolean>
   /** Maps `alias` to the key `to`: a merge, so the alias's stored values (if any) join it. */
   addAttributeAlias(id: number, body: { alias: string; to: string }): Promise<boolean>
+  /** Saves one origin's availability monitor; resolves true when saved. */
+  updateMonitor(id: number, body: MonitorBody): Promise<boolean>
+  /** Asks for a manual check of one origin's monitor; resolves true when asked. */
+  checkMonitor(id: number, origin: string): Promise<boolean>
   /** Puts project `id` right after project `after` (0 first); no toast unless refused. Resolves true once the list has the new order. */
   move(id: number, after: number): Promise<boolean>
   /** True while an action runs; buttons wait on it. */
   pending: boolean
 }
 
-/** What a project write changes: the list, its keys, and the usage cards. */
-const PROJECT_WRITE = ['projects', 'keys', 'usage']
+/** What a project write changes: the list, its keys, the usage cards, and the monitors (dropping an origin removes its monitor). */
+const PROJECT_WRITE = ['projects', 'keys', 'usage', 'monitor']
 /** What an event rule changes: the rules, the names listed, and the usage counts. */
 const EVENT_WRITE = ['event-rules', 'event-names', 'usage']
 /** What an attribute rule changes: the attributes listed, and the usage counts. */
@@ -112,6 +116,29 @@ export function useProjectActions(): ProjectActions {
     pending,
     create: (body) => run(() => endpoints.createProject(body), `Created ${body.name}`, PROJECT_WRITE),
     update: async (id, body) => (await run(() => endpoints.updateProject(id, body), 'Saved', PROJECT_WRITE)) !== undefined,
+    // The answer goes in the cache before pending ends, so the switch and the
+    // text's Save keep the saved state until the refetch lands.
+    updateMonitor: async (id, body) =>
+      (await run(
+        async () => {
+          const m = await endpoints.updateMonitor(id, body)
+          client.setQueryData(['monitor', id], m)
+          return m
+        },
+        'Saved',
+        ['monitor']
+      )) !== undefined,
+    // The answer goes in the cache before pending ends, so the button goes
+    // straight to Checking… and polling starts. A GET in flight is cancelled
+    // first: it began before the request, and its answer, landing after this
+    // one, would put the pending check back to idle and stop the polling.
+    checkMonitor: async (id, origin) =>
+      (await run(async () => {
+        await client.cancelQueries({ queryKey: ['monitor', id] })
+        const m = await endpoints.checkMonitor(id, origin)
+        client.setQueryData(['monitor', id], m)
+        return m
+      }, 'Check started', [])) !== undefined,
     archive: (id) => run(async () => (await endpoints.archiveProject(id), true), 'Archived', PROJECT_WRITE),
     restore: (id) => run(async () => (await endpoints.restoreProject(id), true), 'Restored', PROJECT_WRITE),
     issueKey: (id, label) => run(() => endpoints.issueKey(id, label), `Issued ${label}`, KEY_WRITE),

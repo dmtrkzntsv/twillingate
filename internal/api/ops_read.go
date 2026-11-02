@@ -40,8 +40,14 @@ type host struct {
 	// events caches the last 30 days' events (eventcount.go), counted
 	// natively; nil when native is, where limits leaves events_30d out.
 	events *eventCount
+	// activity caches project_activity's last_event_day (ops_activity.go).
+	activity activityDays
 	// ingestDisabled is INGEST_DISABLED, which limits reports.
 	ingestDisabled bool
+	// monitorInterval is MONITOR_INTERVAL, which list_monitors reports.
+	monitorInterval time.Duration
+	// monitorTimeout is MONITOR_TIMEOUT, which list_monitors reports.
+	monitorTimeout time.Duration
 	// sql runs the query tool's SQL on the external SQL engine, its only
 	// use; nil in a process without one, where that SQL is refused
 	// (reporting.ErrSQLEngine).
@@ -395,16 +401,16 @@ func (h *host) register(r *registrar) {
 		Description: "List projects with id, name and allowed origins, in the order move_project sets. Call this first: every other tool takes a project_id from here."},
 		h.listProjects)
 	restOnly(r, spec{Name: "project_activity", Method: "GET", Path: "/api/project-activity",
-		Description: "Per live project: last_event_day (the newest day file in the event files, a month file counting as its last day; null with none), new_submissions (active submissions to live forms the console hasn't read), forms (live forms) and draft_forms (live forms still drafts, waiting to be approved). For the console's badges; not an MCP tool."},
+		Description: "Per live project: last_event_day (the day of the newest event in the event files, availability checks aside, looked for from the newest file's month back to the oldest; null with none), new_submissions (active submissions to live forms the console hasn't read), forms (live forms) and draft_forms (live forms still drafts, waiting to be approved). For the console's badges; not an MCP tool."},
 		h.projectActivity)
 	expose(r, spec{Name: "limits", Annotations: ro, Method: "GET", Path: "/api/limits",
-		Description: "The limits in force, grouped: retention (days the event files, archived items and form drafts are kept) and ingest (INGEST_LATE_DAYS, how far back a client timestamp may lie before it is clamped, then the wire format's fixed limits: body, batch, attributes, timestamps, measures). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here. Also events_30d: count, the events in the event files from from through to (the 30 days ending today, UTC), of every family and project, counted at most every 5 minutes (never more than 10 minutes old); absent when the last count failed. And ingest_disabled: true when INGEST_DISABLED is set and every ingest route refuses events and form submissions."},
+		Description: "The limits in force, grouped: retention (days the event files, archived items and form drafts are kept) and ingest (INGEST_LATE_DAYS, how far back a client timestamp may lie before it is clamped, then the wire format's fixed limits: body, batch, attributes, timestamps, measures). Each has a name, value, unit and description; settings also carry the environment variable and its default. Set in the server's environment, not here. Also events_30d: count, the events in the event files from from through to (the 30 days ending today, UTC), of every project and every family but the availability checks, counted at most every 5 minutes (never more than 10 minutes old); absent when the last count failed. And ingest_disabled: true when INGEST_DISABLED is set and every ingest route refuses events and form submissions."},
 		h.listLimits)
 	expose(r, spec{Name: "list_attributes", Annotations: ro, Method: "GET", Path: p + "/attributes",
 		Description: "A project's attributes, from the event files with the attribute rules applied: the keys its product events and measures carried over a range (default the last 30 days, at most 400). Per key the events that carried it and its distinct values over the range, whether any event carried it (received), whether block_attribute hides it (blocked), and its aliases, the keys renamed or merged into it. Lists the 500 busiest keys plus every key a rule names (received false when none carried it; a blocked key always); a key renamed away reads as its target and is listed only in its aliases. keys_total counts the distinct keys received. A key's values past 1,024 are estimated (about ±2%); a range with more keys than one pass counts is refused."},
 		h.listAttributes)
 	expose(r, spec{Name: "usage", Annotations: ro, Method: "GET", Path: "/api/usage",
-		Description: "Usage per project over a range (default the last 30 days, at most 400), from the event files: views, product events and measure samples per day (every day, zeros included) and in total, when the newest event arrived (whatever the range), the oldest day the files hold, and the bytes the project's event files take (measured by the daily pass of the process that keeps them, which also runs at start: size is the latest, with the day it was measured_at, null until the first measurement; each series day carries that day's total_bytes, null on days not measured). Without project_id, every project. Also the database's size now and per day (database_series, null on days not measured), and what the server keeps on disk, the database plus every project's event files, now (disk_bytes) and per day (disk_series, null on days the database was not measured)."},
+		Description: "Usage per project over a range (default the last 30 days, at most 400), from the event files: views, product events and measure samples per day (every day, zeros included) and in total, and apart from those checks, the availability monitor's rows of every kind, which are not traffic; when the newest event arrived (whatever the range), the oldest day the files hold, and the bytes the project's event files take (measured by the daily pass of the process that keeps them, which also runs at start: size is the latest, with the day it was measured_at, null until the first measurement; each series day carries that day's total_bytes, null on days not measured). Without project_id, every project. Also the database's size now and per day (database_series, null on days not measured), and what the server keeps on disk, the database plus every project's event files, now (disk_bytes) and per day (disk_series, null on days the database was not measured)."},
 		h.usage)
 	expose(r, spec{Name: "views_overview", Annotations: ro, Method: "GET", Path: p + "/views/overview",
 		Description: "Daily views for one project: visitors (distinct per day), views, sessions, bounces, duration, with derived bounce_rate and avg_session_sec. Counts every kind (web, app, cli, …) unless kind is given. Read from the event files, today included; a note names the columns holding an estimate (distinct counts past 1,024 ids a day, about ±2%)."},
@@ -437,6 +443,7 @@ func (h *host) register(r *registrar) {
 	expose(r, spec{Name: "update_project", Annotations: write, Method: "PATCH", Path: "/api/projects/{project_id}",
 		Description: "Update a project's name and/or allowed origins. Fields you omit are left unchanged; allowed_origins replaces the whole list when given, and an explicit empty allowed_origins clears it."},
 		h.updateProject)
+	h.registerMonitor(r)
 	expose(r, spec{Name: "move_project", Annotations: idem, Method: "POST", Path: "/api/projects/{project_id}/move",
 		Description: "Put a project right after another (after: a project id, archived ones included; 0 first) in the order list_projects, the console and the CLI show. A new project comes last."},
 		h.moveProject)

@@ -566,6 +566,21 @@ func TestDecideCountsNulls(t *testing.T) {
 			t.Errorf("%+v: keep %v all %v", c, keep, all)
 		}
 	}
+	// A null family passes notChecks, so a group whose bounds read checks
+	// but which also holds nulls is kept, and read row by row.
+	checks := groupStats{famOK: true, famMin: "checks", famMax: "checks", dayOK: true, dayMin: 10, dayMax: 12}
+	if keep, _ := checks.decide(notChecks, 10, 12); keep {
+		t.Error("a group of checks alone was kept for notChecks")
+	}
+	checks.famNulls = 1
+	if keep, all := checks.decide(notChecks, 10, 12); !keep || all {
+		t.Errorf("checks with nulls: keep %v all %v, want kept and filtered", keep, all)
+	}
+	// Nulls beside other families all pass notChecks: no row filter needed.
+	s = groupStats{famOK: true, famMin: "measures", famMax: "views", famNulls: 2, dayOK: true, dayMin: 10, dayMax: 12}
+	if keep, all := s.decide(notChecks, 10, 12); !keep || !all {
+		t.Errorf("no checks, nulls: keep %v all %v, want both", keep, all)
+	}
 }
 
 func TestDictDedupes(t *testing.T) {

@@ -1625,3 +1625,21 @@ func TestIngestAppliesAttributeRules(t *testing.T) {
 		t.Errorf("plain project events = %+v, want attributes unchanged", q.events)
 	}
 }
+
+// The checks family is the server's: a client declaring it is rejected per
+// event, whatever the name.
+func TestIngestRefusesChecksFamily(t *testing.T) {
+	q, h := testServer(t)
+	w := post(h, envelopeOf(`{"family":"checks","name":"uptime"},
+		{"family":"checks","name":"cert","value":1},
+		{"name":"ok"}`), nil)
+	res := decodeResult(t, w)
+	if res.Accepted != 1 || res.Rejected != 2 || len(q.events) != 1 || len(q.measures) != 0 {
+		t.Fatalf("result %+v, events %d, measures %d; want only the ordinary event stored", res, len(q.events), len(q.measures))
+	}
+	for _, e := range res.Errors {
+		if e.Reason != `family "checks" is written by the server only` {
+			t.Errorf("reason %q", e.Reason)
+		}
+	}
+}

@@ -34,8 +34,15 @@ type latestCol struct {
 // answer as numbers.
 func (l latestCol) numeric() bool { return columnType(l.name) == "number" }
 
+// emptyCounts says whether a row with no value is still the column's newest
+// row, so that it reads as empty rather than as the older value before it.
+// value alone: a row's value is a reading, and its absence is one too ("no
+// certificate"), where another column's absence only means it was not sent.
+func (l latestCol) emptyCounts() bool { return l.name == "value" }
+
 // latestPart is one latest column's partials per cell: the ts of the
-// latest row with a value, and that value; set says the cell has one.
+// latest row with a value (any row, for emptyCounts, its value then ""), and
+// that value; set says the cell has one.
 type latestPart struct {
 	ts  []int64
 	val []string
@@ -48,8 +55,8 @@ func (lp *latestPart) grow(cells int) {
 }
 
 // later says whether (ts, v) is after (ts0, v0): by time, a tie by the
-// greater value (as numbers when num), so workers and merges agree
-// whatever their order.
+// greater value (as numbers when num; an empty one is the least), so workers
+// and merges agree whatever their order.
 func later(ts int64, v string, ts0 int64, v0 string, num bool) bool {
 	if ts != ts0 {
 		return ts > ts0
@@ -59,7 +66,7 @@ func later(ts int64, v string, ts0 int64, v0 string, num bool) bool {
 
 // cmpLatest compares two latest values, as numbers when num.
 func cmpLatest(a, b string, num bool) int {
-	if num {
+	if num && a != "" && b != "" {
 		x, errA := strconv.ParseFloat(a, 64)
 		y, errB := strconv.ParseFloat(b, 64)
 		if errA == nil && errB == nil {
@@ -114,7 +121,7 @@ func (a *agg) addLatest(p *part, b *batch, sel, gids []int32, pass [][]bool, cel
 	}
 	for j, l := range a.latests {
 		c := batchColumn(b, l.name)
-		if c == nil {
+		if c == nil && !l.emptyCounts() {
 			continue
 		}
 		typ := typeOf(l.name)
@@ -124,7 +131,7 @@ func (a *agg) addLatest(p *part, b *batch, sel, gids []int32, pass [][]bool, cel
 			if gids[k] < 0 || (keep != nil && !keep[i]) || (ts.Null != nil && ts.Null[i]) {
 				continue
 			}
-			if v, ok := latestText(c, int(i), typ); ok {
+			if v, ok := latestText(c, int(i), typ); ok || l.emptyCounts() {
 				p.grew += lp.put(cell(k, i), ts.Times[i], v)
 			}
 		}
@@ -154,7 +161,7 @@ func (m *merged) latestOf(mt metricSpec, gs []int32, day int) value {
 			}
 		})
 	}
-	if !found {
+	if !found || v == "" { // v: an emptyCounts row, the others keep no empty
 		return value{null: true}
 	}
 	if lp.num { // a number, which ranks as one

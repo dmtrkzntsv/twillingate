@@ -457,7 +457,7 @@ func (m Metric) validateAt(kind, table, p string, side bool) error {
 		case idColumns[m.Column].id != "":
 			return invalid(p+".column", "%s is read from identities; latest reads a column of the rows", m.Column)
 		}
-		if _, ok := columnInfo(table, m.Column); !ok || m.Column == "bucket" {
+		if _, ok := columnInfo(table, m.Column); (!ok && m.Column != "value") || m.Column == "bucket" {
 			return invalid(p+".column", "%q is not a column of %s", m.Column, table)
 		}
 	case "sum", "avg", "min", "max":

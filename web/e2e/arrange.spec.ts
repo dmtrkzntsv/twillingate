@@ -132,7 +132,7 @@ test('duplicates Views from the sidebar without hiding it, then hides it and sho
   toArchive.push({ id: copyId, wholeGroup: true })
 
   // Duplicating is only a copy: Reports (the group's name) is still in the sidebar alongside it.
-  await expect(page.getByRole('tab')).toHaveCount(7)
+  await expect(page.getByRole('tab')).toHaveCount(8)
   await expect(page.getByRole('link', { name: 'Reports', exact: true })).toHaveCount(1)
   // By id: app.spec.ts runs first on the same server and leaves its own
   // "Reports (copy)" behind, so the name alone is not this test's copy.
@@ -155,13 +155,13 @@ test('duplicates Views from the sidebar without hiding it, then hides it and sho
   await page.goto('/app/gallery/dashboards')
   await page.waitForLoadState('networkidle')
   const viewsGroup = page.getByRole('main').getByRole('listitem', { name: 'Reports', exact: true })
-  await expect(viewsGroup.getByText('7 tabs · hidden')).toBeVisible()
+  await expect(viewsGroup.getByText('8 tabs · hidden')).toBeVisible()
   await viewsGroup.getByRole('button', { name: 'Reports actions', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Show in sidebar' }).click()
 
   // The gallery card links to its Views tab too; count the sidebar's alone.
   await expect(page.locator('[data-sidebar="sidebar"]').getByRole('link', { name: 'Reports', exact: true })).toHaveCount(1)
-  await expect(viewsGroup.getByText('7 tabs', { exact: true })).toBeVisible()
+  await expect(viewsGroup.getByText('8 tabs', { exact: true })).toBeVisible()
 })
 
 test('archives a user tab and undoes it', async ({ page, request }) => {
@@ -364,7 +364,7 @@ test('copies a system group and one of its tabs from the gallery while it is hid
   const groupCopyId = Number(page.url().match(/dashboards\/(\d+)/)?.[1])
   toArchive.push({ id: groupCopyId, wholeGroup: true })
   await expect(page.getByRole('heading', { level: 1, name: 'Views (copy)', exact: true })).toBeVisible()
-  await expect(page.getByRole('tab')).toHaveCount(7)
+  await expect(page.getByRole('tab')).toHaveCount(8)
 
   // One tab of the hidden template, from that tab's row in the gallery.
   await page.goto('/app/gallery/dashboards')

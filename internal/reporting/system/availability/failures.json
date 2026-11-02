@@ -1,0 +1,9 @@
+{
+  "component": "table",
+  "title": "Recent failures",
+  "props": {
+    "formats": {
+      "Failed checks": "number"
+    }
+  }
+}

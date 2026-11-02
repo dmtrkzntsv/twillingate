@@ -61,6 +61,9 @@ Projects live in a registry table, managed through the CLI or, over the API
 | Issue an ingest key | `twillingate key issue` | `issue_ingest_key` | `{project_id, label}`; returns the key **and** a paste-ready snippet |
 | List keys | `twillingate key list` | `list_ingest_keys` | `{project_id}` |
 | Disable / enable a key | `twillingate key disable` / `enable` | `disable_ingest_key` / `enable_ingest_key` | `{project_id, label}` |
+| Read a project's monitors | `twillingate monitor list` | `list_monitors` | `{project_id}`; returns every eligible origin's monitor and the domains, see [Monitoring](#monitoring) |
+| Change one | `twillingate monitor set` | `update_monitor` | `{project_id, origin, enabled, contains}`, `origin` required; merges, so an omitted field keeps its value and `contains: ""` clears the text; returns the same as `list_monitors` |
+| Check one now | `twillingate monitor check` | `check_monitor` | `{project_id, origin}`; asks for a check of all three and returns the same as `list_monitors` right away, see [Monitoring](#monitoring). `monitor check` waits for the result, up to twice `MONITOR_TIMEOUT` plus 20 s, and prints `last`; exit 1 if it did not finish or did not run |
 | Rename an event | — | `rename_event` | `{project_id, family, from, to}`; `family` is `product` or `measures`; returns the rule. See [Event rules](#event-rules) |
 | Merge an event into another | — | `merge_event` | `{project_id, family, from, to}`; returns what `rename_event` does |
 | Block an event | — | `block_event` | `{project_id, family, name}` |
@@ -283,6 +286,147 @@ events stored while it was blocked stay without it.
 found there: a blocked key is marked `blocked`; the keys renamed or merged into
 a key are its `aliases`, and a key renamed away is listed only there. Both a
 blocked key and a key with aliases are listed even with nothing in the range.
+
+### Monitoring
+
+A project can have an availability monitor on each of its sites: the server
+itself fetches the origin and records whether it answered. The results land in
+the event files beside the site's own events, so a drop in conversions can be
+lined up with an outage in the same [structured queries](#structured-queries)
+and dashboards.
+
+`MONITOR_INTERVAL` (a per-install setting, default 120 seconds;
+[deployment.md](deployment.md#configure-the-collector)) is the time between the
+checks of **each** enabled monitor: every one has its own slot in the interval,
+so a project's rows grow with its monitors, and a site that hangs delays no other.
+A monitor whose check is still running skips its slot, and so does one that finds
+all 16 workers busy.
+`MONITOR_DISABLED=true` stops all of it: nothing runs and no row is written,
+monitors can still be edited, and `check_monitor` is refused.
+
+An origin has a monitor when it is one of the project's `allowed_origins`, an
+exact `http://` or `https://` one: no wildcard, no bare `*`, no `tauri://` or
+`app://`. A non-default port is allowed as listed. Anything but an origin
+(`https://myapp.com/status`) is refused rather than cut down to one. Each has two
+settings: `enabled`, and an optional `contains`, a text of at most 200 characters
+the page must contain (case-sensitive, in the first 1 MB of the body); `""` clears
+it. `list_monitors` reads every eligible origin, one with no settings as off.
+Removing an origin from `allowed_origins` removes its monitor (audited
+`monitor.remove`), and the domain reading no other monitor uses.
+
+```bash
+twillingate monitor list -project-id 1
+twillingate monitor set -project-id 1 -origin https://myapp.com -enable -contains "Sign in"
+twillingate monitor set -project-id 1 -origin https://myapp.com -disable
+twillingate monitor check -project-id 1 -origin https://myapp.com
+```
+
+**What is checked.** One `GET` of the origin itself (`https://host/`), nothing
+else, with a limit of `MONITOR_TIMEOUT` seconds (default 5) and no
+retries; each check is one row. The site is up when the final status is 2xx and,
+with `contains`, the text is on the page. The request sends no cookies and
+identifies itself as
+`User-Agent: twillingate-monitor/<version> (+https://github.com/dmtrkzntsv/twillingate)`.
+
+- **Redirects** are followed, but every hop must match the project's
+  `allowed_origins` (wildcard patterns count, and an exact origin however it is
+  spelled there; a bare `*` does not). A redirect
+  anywhere else is not followed and fails with `reason` `redirect`, the target
+  in `error`: a project listing only `https://example.com` whose site redirects
+  to `https://www.example.com` reads as down until it adds the `www` origin.
+  Up to 5 hops are followed; a 6th is not requested and fails with `redirect`
+  (`too many redirects`). A chain of 3 or more is only a warning: the check
+  stays up, and Settings → Monitoring says the site redirects that many times
+  before answering, which slows every visit.
+- **Private addresses** are refused on every install: an origin or redirect hop
+  that resolves to a loopback, private, link-local, CGNAT, multicast, 6to4 or unspecified address
+  fails with `blocked`, checked when the connection is made. A site reachable
+  only on a LAN cannot be monitored.
+- **An `http://` origin** is checked over plain HTTP and has no certificate
+  check: its daily `cert` row has no value, so Certificates shows it blank. Its
+  domain check still runs.
+
+**The `checks` table.** Every check is a row of the `checks` family in the
+project's event files, read with structured queries (`table: "checks"`, see
+[Structured queries](#structured-queries)), and left out of `limits`'
+`events_30d`, `events` and everything that counts the site's own traffic: `usage`
+reports them as `checks`, apart from the traffic counts, every row of the table.
+They still take disk, about
+21,600 small `uptime` rows a month per monitor at the default interval (every
+monitor is checked every interval).
+
+| Row | Written | `value` | Attributes |
+| --- | --- | --- | --- |
+| `uptime` | every check | response time in milliseconds, to the end of the body or to the failure | `origin`; `up` (`1` or `0`); `status`, the final HTTP status, absent without a response; `reason` and `error` when down; `redirects`, the redirect hops followed (`"0"` when none; on a failed check, the count reached) |
+| `cert` | once a day per origin and when the monitor is enabled, when a certificate was read (verified or not), and on an `http://` origin, which has none | whole days left, absent on an `http://` origin | `origin`; `expires` (`YYYY-MM-DD`), `issuer`, `valid` (`1` or `0`), `error`, why it did not verify; only `origin` on an `http://` origin |
+| `domain` | once a day per main domain of the project (the registrable domain of the public suffix list: `shop.example.com` and `example.com` share one lookup and one date), and as soon as an enabled monitor's has no fresh reading | calendar days (UTC) until the registration expires, 0 on the day itself, absent when unknown | `domain`; `expires` (`YYYY-MM-DD`) |
+
+The domain's expiry is read over RDAP; a top-level domain with no RDAP service,
+or an answer without an expiration, reads as unknown, which is not a failure;
+so does a host under a private suffix of the public suffix list, such as
+`x.github.io`. A lookup that fails (the RDAP server down or slow) keeps the last
+reading and is tried again an hour later. So does a certificate that could not
+be read at all (the site unreachable, the handshake failed): the last date
+stands, no row is written, it is tried again an hour later, and `cert.error`
+says why meanwhile. A certificate that was read but does not verify is a
+reading, with `valid` `0`. Enabling a disabled monitor reads its certificate
+again at its next slot, the known date kept until then. These daily reads
+run on a small pool of their own (4 at once across the server), so however many
+there are they do not delay an availability check.
+
+`list_monitors` returns `interval_seconds` (how often each enabled monitor is
+checked), `timeout_seconds` (`MONITOR_TIMEOUT`), `paused` (`MONITOR_DISABLED`:
+monitoring is off on this install), `monitors`, one per eligible origin in the project's order,
+and `domains`, the main domains of the enabled monitors, by name. A monitor has
+`origin`, `enabled`, `contains`, its last certificate reading in `cert`
+(`expires_at`, `issuer`, `valid`, `error`, `checked_at`), `redirects`, the hops the
+last check that got an answer followed (a check that got no response, such as a
+refused connection or a timeout before any answer, leaves it as it was), the
+latest availability check, scheduled or manual, in `last` (`checked_at`, empty
+before the first, `up`, `status`, `reason`, `error` and `ms`), and `check` below.
+A domain has `domain`, `origins`, the enabled monitors' on it,
+`expires_at` and `checked_at`. `twillingate monitor list` prints them, `redirects`
+when above 0 and `last` once there is one.
+
+**Checking now.** `check_monitor` (`twillingate monitor check`, or Check now in
+Settings → Monitoring) asks for one check of an origin's three readings outside
+the schedule: its availability, its certificate and its main domain, whatever the
+daily readings' age, with the same `MONITOR_TIMEOUT`. The server starts it within
+about a second and writes the rows as usual; a certificate or RDAP read that fails
+keeps the last date as usual. It moves no slot, and the monitor's own slot
+is skipped while it runs. The call returns before the check ran: poll
+`list_monitors` until that monitor's `check.finished_at` (`check` is only
+`requested_at` and `finished_at`) is not empty and at or past `check.requested_at`
+(it is empty while the check runs, and `last` still holds the previous result
+until then), then read the result in `last`. A monitor that is not on is refused, and so is a request while one
+is pending on it or within 60 seconds of its last one, whatever the interval: this
+protects the site and the registries. A request not served within 2 minutes
+(the server was down) finishes with `last` untouched, so `last.checked_at` stays
+before `check.requested_at`, which is how a check that did not run reads; so does
+one cut short by the server stopping, and one still pending when its monitor is
+turned off or its project archived. Only the server's runner
+serves requests, so `monitor check` needs it up. It waits as long as the longest
+check, twice `MONITOR_TIMEOUT` plus 20 seconds, then exits 1, saying the check is
+still running, or, for a request over 2 minutes old, asking whether the server is
+up. Each request is audited as `monitor.check`.
+
+An `error` about the network is short fixed text, which names nothing of the
+server's own (`no such host`, `DNS lookup failed`, `connection refused`,
+`connection failed`, `TLS handshake failed`, `no complete answer in time`).
+
+`reason` is a closed vocabulary, on every failed `uptime` row:
+
+| `reason` | When |
+| --- | --- |
+| `dns` | the name does not resolve |
+| `connect` | connection refused or unreachable |
+| `timeout` | no complete answer within the limit |
+| `tls` | certificate invalid, expired, or for another name |
+| `http_4xx` | final status 400 to 499 |
+| `http_5xx` | final status 500 to 599, and any other non-2xx |
+| `redirect` | a redirect off the project's origins, or more than 5 hops |
+| `content` | the `contains` text is missing |
+| `blocked` | resolves to a private address |
 
 ---
 
@@ -903,10 +1047,12 @@ decides instead:
 | anything else | product | — | `product_events`, `product_attributes` |
 | `$form_submit` | product | — | written by the collector beside an approved form's submission ([Form submissions](#form-submissions)); a client sending it is rejected |
 | any name, with `family: "measures"` | measures | — | `measures`, the Web Vitals and Measures dashboards |
+| `uptime`, `cert`, `domain`, with `family: "checks"` | checks | — | the availability checks the server itself runs; written by the server only, a client sending the family is rejected; read through the `checks` table of [Structured queries](#structured-queries) |
 
-All three families are stored in the event files' `events` table, whose
-`family` column is `views`, `product` or `measures`; the `views`, `product`
-and `measures` tables and the tools of each family read only its own rows.
+The families are stored in the event files, whose `family` column is
+`views`, `product`, `measures` or `checks`; the `views`, `product`,
+`measures` and `checks` tables and the tools of each family read only its own
+rows. The structured queries' `events` table leaves `checks` out.
 
 The `$` prefix is reserved for the system. An unrecognized `$` **name** is
 stored as an ordinary custom event with a warning; an unrecognized `$`
@@ -1147,6 +1293,7 @@ reads as undeclared and a custom key is absent.
 | `views` | `$page_view` or `$screen_view` | `$path` (or `$screen`) | inferred from `name`: these two names are views |
 | `product` | anything else | `name` | inferred from `name`: the default for every other name |
 | `measures` | any name, or a reserved `$` metric | a `value` from `0` to `1e15` and a `measure` of `time`, `size` or `number` | never inferred — a measure only exists when the event declares `family: "measures"` |
+| `checks` | `uptime`, `cert` or `domain` | — | written by the server only; a client sending it is rejected |
 
 `family` absent keeps the pre-measures rule unchanged: `$page_view` and
 `$screen_view` are views, everything else is product, so a client built
@@ -1155,8 +1302,11 @@ before this change keeps working unchanged.
 A per-event rejection (the batch's other events are still stored):
 - **`$form_submit`**, in any family: only the [form endpoint](#form-submissions)
   writes it.
-- **An unknown `family`** (anything but `views`, `product` or `measures`) is
-  rejected, not stored as `product`.
+- **`family: "checks"`**, with any name: the availability checks are the
+  server's own.
+- **An unknown `family`** (anything but `views`, `product` or `measures`;
+  `checks` too, which is written by the server only) is rejected, not stored
+  as `product`.
 - **A contradiction is rejected:** `family: "views"` with a name that is not
   a view name; `family: "product"` with a view name; `family: "measures"`
   without a valid `value` or `measure`; a reserved metric (`$lcp`, `$inp`,
@@ -1441,7 +1591,7 @@ form submissions](#collect-form-submissions).
 
 ## Answer questions with the data
 
-A connected session gets sixty-five tools: the thirty-one below, the ten
+A connected session gets sixty-eight tools: the thirty-four below, the ten
 in [Collect form submissions](#collect-form-submissions), and twenty-four
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
@@ -1458,9 +1608,9 @@ history starts where the files' does. `query`, the count of events in
 | Tool | Extra parameters | Returns |
 | --- | --- | --- |
 | `list_projects` | none | Every project with its `project_id`, name, `archived` and `archived_at` (RFC 3339, only when archived), and `allowed_origins`, in the order `move_project` sets. Call this first — every other tool needs a `project_id` |
-| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in two groups: `retention` (`RETENTION_DAYS`, `RETENTION_ARCHIVED_DAYS`, `RETENTION_FORMS_DRAFT_DAYS`) and `ingest`: `INGEST_LATE_DAYS`, then the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`kept forever`). Nothing is capped. The output also carries `events_30d`, `{count, from, to}`: the events in the event files from `from` through `to` (the 30 days ending today, UTC), of every family and project, rules applied (what the server's disk and its dashboards' scans of a month follow), counted at most every 5 minutes: a call past the 5 minutes answers the previous count and starts the next, one past 10 waits for it, so the count is never more than 10 minutes old. Absent when the last count failed, `CONSOLE_QUERY_TIMEOUT` included (a failure is logged once and kept for the same 5 minutes), and on a server that cannot read the files. And `ingest_disabled`, `true` when `INGEST_DISABLED` is set and every ingest route refuses with `429` |
+| `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in two groups: `retention` (`RETENTION_DAYS`, `RETENTION_ARCHIVED_DAYS`, `RETENTION_FORMS_DRAFT_DAYS`) and `ingest`: `INGEST_LATE_DAYS`, then the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`kept forever`). Nothing is capped. The output also carries `events_30d`, `{count, from, to}`: the events in the event files from `from` through `to` (the 30 days ending today, UTC), of every project and every family but the availability checks, rules applied (what the server's disk and its dashboards' scans of a month follow), counted at most every 5 minutes: a call past the 5 minutes answers the previous count and starts the next, one past 10 waits for it, so the count is never more than 10 minutes old. Absent when the last count failed, `CONSOLE_QUERY_TIMEOUT` included (a failure is logged once and kept for the same 5 minutes), and on a server that cannot read the files. And `ingest_disabled`, `true` when `INGEST_DISABLED` is set and every ingest route refuses with `429` |
 | `list_attributes` | `from`, `to` (optional: the last 30 days; at most 400 days) | The project's attributes from the event files, rules applied, busiest first: each key's `events` (the product events and measures of the range that carried it) and `values` (its distinct values over the range), `received`, `blocked` and `aliases` (the keys renamed or merged into it; absent when none) — for the 500 busiest keys plus every key a rule names (`received` false when none carried it: a blocked key always, its values hidden from every read); a key renamed away reads as its target and is listed only in its target's `aliases`. Also `keys_total`, the distinct keys received. A key's `values` past 1,024 are estimated (about ±2%). A range with more keys than the engine counts in one pass is refused: narrow it |
-| `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project, from the event files: `views`, product `events` and measure `samples` per day and in total, `last_received_at` (when the newest event arrived, whatever the range; `null` for an archived project unless `project_id` names it), `first_day` (the oldest day the files hold; a month's file counts from its first day), and `size` (`{total_bytes, measured_at}`: the project's event file bytes as the daily pass of the process that keeps the files last measured them, at 03:00 UTC and at start; `null` until the first measurement), with each day's measured `total_bytes` in the series (`null` on days not measured); plus the database's size on disk now and per day (`database_series`), and what the server keeps on disk, the database file and every project's event files (Parquet, logs and derived tables, as the daily pass last measured them), now (`disk_bytes`) and per day (`disk_series`, `null` on days the database was not measured) |
+| `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project, from the event files: `views`, product `events` and measure `samples` per day and in total, and apart from those the availability `checks` (every row of the `checks` table, see [Monitoring](#monitoring)), `last_received_at` (when the newest event arrived, availability checks aside, whatever the range; `null` for an archived project unless `project_id` names it), `first_day` (the oldest day the files hold; a month's file counts from its first day), and `size` (`{total_bytes, measured_at}`: the project's event file bytes as the daily pass of the process that keeps the files last measured them, at 03:00 UTC and at start; `null` until the first measurement), with each day's measured `total_bytes` in the series (`null` on days not measured); plus the database's size on disk now and per day (`database_series`), and what the server keeps on disk, the database file and every project's event files (Parquet, logs and derived tables, as the daily pass last measured them), now (`disk_bytes`) and per day (`disk_series`, `null` on days the database was not measured) |
 | `views_overview` | `kind` (optional) | Per day: visitors (distinct per day: an actor seen under two kinds on one day counts once), views, and the `sessions` table's sessions, bounces, `duration_sec`, `bounce_rate` and `avg_session_sec` (a day with views but no session reads `0` for each), over every kind unless `kind` filters one. Today included. At most 1,000 days, the earliest |
 | `views_breakdown` | `dimension`, `limit` (default 20, at most 1,000) | Top rows of one dimension (the table below), busiest by visitors (distinct per day and value, added up over the range), then by views, then by the values. Two-key dimensions return both columns. A value not sent reads as empty |
 | `product_events` | `event` (optional filter) | Count and unique users (distinct per day) per event name and day, by day, the most events first, then by name; plus daily totals. At most 1,000 rows each, the earliest days': a cut inside a day keeps that day's names alphabetically, not the busiest |
@@ -1504,7 +1654,7 @@ from the `views` table:
 | `consent` | `consent` | `given`, `none` (also views sent before the visitor answered a prompt) or `unknown` (sent without `$consent`) |
 | `locales` | `browser_locale`, `app_locale` | the browser's language and the product's; views that sent neither are left out |
 
-**Managing** — `create_project`, `update_project`, `move_project`,
+**Managing** — `create_project`, `update_project`, `list_monitors`, `update_monitor`, `check_monitor`, `move_project`,
 `archive_project`, `restore_project`, `issue_ingest_key`, `list_ingest_keys`,
 `enable_ingest_key`, `disable_ingest_key`, `rename_event`, `merge_event`, `block_event`,
 `list_event_rules`, `remove_event_rule`, `rename_attribute`, `merge_attribute`,
@@ -1555,12 +1705,15 @@ curl -H "Authorization: Bearer $TOKEN" \
 | Method | Path | Mirrors | Input |
 |---|---|---|---|
 | `GET` | `/api/projects` | `list_projects` | — |
-| `GET` | `/api/project-activity` | `project_activity`, REST only: no MCP tool | — → `{"projects":[{"project_id","last_event_day","new_submissions","forms","draft_forms"}]}` for every live project: the newest day file in the event files (a month file counts as its last day; null with none), the submissions to live forms the console has not read, its live forms, and how many of them are drafts waiting to be approved |
+| `GET` | `/api/project-activity` | `project_activity`, REST only: no MCP tool | — → `{"projects":[{"project_id","last_event_day","new_submissions","forms","draft_forms"}]}` for every live project: the day of the newest event in the event files (availability checks aside), looked for from the month of the newest file back to the oldest, so null only when there is none. The days are read in the background at most every 5 minutes, every 30 seconds after a read that failed, and a request answers the last days at once (a project with files but no day yet is looked at again, in its newest month, every 30 seconds), the submissions to live forms the console has not read, its live forms, and how many of them are drafts waiting to be approved |
 | `GET` | `/api/limits` | `limits` | — |
 | `GET` | `/api/usage` | `usage` | query: `project_id`, `from`, `to` |
 | `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","values","received","blocked","aliases"}],"keys_total"}`; `aliases` is absent when empty |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
+| `GET` | `/api/projects/{project_id}/monitors` | `list_monitors` | — → `{"interval_seconds","timeout_seconds","paused","monitors":[{"origin","enabled","contains","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"last":{"checked_at","up","status","reason","error","ms"},"check":{"requested_at","finished_at"}}],"domains":[{"domain","origins","expires_at","checked_at"}]}`; empty strings are unknown |
+| `PATCH` | `/api/projects/{project_id}/monitors` | `update_monitor` | body: `origin`, required, and `enabled`, `contains`, each optional (merge); a foreign origin is `400` → as `list_monitors` |
+| `POST` | `/api/projects/{project_id}/monitors/check` | `check_monitor` | body: `origin` → as `list_monitors`, right away, before the check ran; a monitor that is not on or a foreign origin is `400`, a check pending on it or within 60 s of its last request `429` |
 | `POST` | `/api/projects/{project_id}/move` | `move_project` | body: `after` |
 | `POST` | `/api/projects/{project_id}/archive` | `archive_project` | — |
 | `POST` | `/api/projects/{project_id}/restore` | `restore_project` | — |
@@ -1648,7 +1801,9 @@ Seven tables. `events` holds every event of every family; `views`,
 `product` and `measures` hold its rows of one family each. Three more are
 derived from the events (below the column list). The `_tw_*` tables are
 the reader's own and hold rows before the rules apply: a query naming one
-is refused.
+is refused. `events` here currently also holds the server's availability
+`checks` rows; `checks` is a table of [structured queries](#structured-queries)
+only, so filter `family <> 'checks'` in SQL.
 `events`, `views`, `product` and `measures` have:
 
 | Column | Type | |
@@ -1750,7 +1905,7 @@ message naming the field (`dimensions`, `metrics[0].column`,
 | Field | Kinds | Meaning |
 | --- | --- | --- |
 | `kind` | all | `stat`, `trend`, `breakdown`, `retention`, `attributes`, `funnel` or `paths` (below) |
-| `table` | all | `events` (every family), `views`, `product` or `measures`; or `sessions`, one row per session, or `identities`, one row per user or group (below); a retention reads `events`, and may leave it out; an attributes `product` or `measures`, its `keys` also `events` (product and measures both, the default) |
+| `table` | all | `events` (every family but `checks`), `views`, `product`, `measures` or `checks`; or `sessions`, one row per session, or `identities`, one row per user or group (below); a retention reads `events`, and may leave it out; an attributes `product`, `measures` or `checks`, its `keys` also `events` (product and measures both, the default) |
 | `metrics` | stat, trend, breakdown, attributes | the aggregates, each an output column; a trend takes one to five, exactly one with `series` (several are its series, below); an attributes' `keys` none |
 | `where` | all | filters, `{column, op, values}` (`{op, columns}` for `any_set`, `{op, any}` for `any_of`), every one of which a row must satisfy |
 | `dimensions` | breakdown, attributes | a breakdown's 1 to 3 columns to group by; an attributes' `day`, `event_name` or both, in that order, before its attribute and value |
@@ -1799,8 +1954,8 @@ as `day` does:
 | `device_label` | `events`, `views`, `product` | `device_model` when not empty, else `device` when not empty; else NULL |
 | `platform_version` | `events`, `views`, `product` | `platform`, a space, then `app_version` (`ios 2.4.1`), where `app_version` is not empty; else NULL |
 | `consent_state` | `events`, `views`, `product` | `given` (`consent` 1), `none` (0) or `unknown` (NULL) |
-| `hour` | `events`, `views`, `product`, `measures` | the UTC hour of `ts`, `00` to `23`, two digits so the hours sort as text; NULL without a `ts` |
-| `weekday` | `events`, `views`, `product`, `measures` | the UTC weekday of `ts`, `1 Mon` to `7 Sun`, so the days sort as text (`labels` shows them as `Mon` to `Sun`); NULL without a `ts`. A breakdown by `weekday` and `hour` is the `heatmap` of a week |
+| `hour` | `events`, `views`, `product`, `measures`, `checks` | the UTC hour of `ts`, `00` to `23`, two digits so the hours sort as text; NULL without a `ts` |
+| `weekday` | `events`, `views`, `product`, `measures`, `checks` | the UTC weekday of `ts`, `1 Mon` to `7 Sun`, so the days sort as text (`labels` shows them as `Mon` to `Sun`); NULL without a `ts`. A breakdown by `weekday` and `hour` is the `heatmap` of a week |
 | `user_status` | `events`, `views`, `product` | `new` on the day the row's `user_id` was first seen (its `first_seen` in `identities`, over the whole history the files hold, whatever the range), `returning` on a later day; NULL when `user_id` is empty, or not in `identities` (an id only measures carried), and on a measure sent before it was first seen |
 | `group_status` | `events`, `views`, `product` | the same of `group_id` |
 | `user_label` | `events`, `views`, `product` | the `name` of the row's `user_id` in `identities` (over the whole history, the latest name as `identities` combines it, so every row of a renamed user reads its current name), else the `user_id` itself; NULL when `user_id` is empty |
@@ -1849,7 +2004,7 @@ may name but not a dimension or series. It takes the metrics `count`
 | `count` | | rows |
 | `actors`, `users`, `groups` | | distinct `actor_id`, `user_id`, `group_id` over the range (NULL left out) |
 | `sum`, `avg`, `min`, `max` | `column`: `value`, `sample_rate`, `display_width` or `display_height`; on `sessions` `duration_sec` or `views`; on `identities` `views` or `events`. `min` and `max` also take `day`, `ts` and `received_at`, on `sessions` `day`, `started_at` and `ended_at` (below) | the column's aggregate; empty over no value |
-| `latest` | `column`: any column a filter names, `attr_<key>` and `def_` ones included, `bucket` and the identity ones (`user_label` and the like) aside | the column's value on the group's latest row by `ts` that has one (a later row with the column NULL or empty text does not hide it) (on the day, in a trend), the greater value on a tie, of the column's type: an instance's version as last seen (`{"op": "latest", "column": "app_version"}` in a breakdown by `group_id`); empty over none. Not on `sessions` or `identities`, nor in a ratio's side or a trend of several metrics |
+| `latest` | `column`: `value`, or any column a filter names, `attr_<key>` and `def_` ones included, `bucket` and the identity ones (`user_label` and the like) aside | the column's value on the group's latest row by `ts` that has one (a later row with the column NULL or empty text does not hide it) (on the day, in a trend), the greater value on a tie, of the column's type: an instance's version as last seen (`{"op": "latest", "column": "app_version"}` in a breakdown by `group_id`); empty over none. `value` alone reads the latest row whether it has one or not, so a newest row with no value reads as empty: the last `cert` reading (`{"op": "latest", "column": "value"}`) is empty once the origin moves to `http://`. Not on `sessions` or `identities`, nor in a ratio's side or a trend of several metrics |
 | `daily_sum`, `daily_max`, `daily_avg` | `of`: `actors`, `users` or `groups` | the distinct count per day, summed, maxed or averaged over the days with rows |
 | `days` | | the distinct days with rows (`count(DISTINCT day)`), exact; `0` over none; not on `sessions` or `identities` |
 | `bounces` | | `sessions` only: the sessions of one view |
@@ -1982,7 +2137,7 @@ Output `keys` summarises the keys instead, as `list_attributes` does:
 an empty one among them) and `keys_total` (the number of attributes), a
 row per attribute, by `events` descending, then `attribute`. It reads
 `events` (the rows of `product` and `measures` both: the default),
-`product` or `measures`, takes `where`, `limit` (the busiest attributes
+`product`, `measures` or `checks`, takes `where`, `limit` (the busiest attributes
 kept, 50 by default) and `keep` (attributes listed past `limit` too,
 named as the answer spells them, exactly: an attribute with no event in
 the range is not listed), and refuses `metrics`, `dimensions`,

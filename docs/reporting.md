@@ -39,8 +39,8 @@ are in [deployment.md](deployment.md).
 `user`:
 
 - **System dashboards** ship with each release, have ids 1–999, and change only
-  when the release does: Views, Product, Users, Groups, Retention, Web Vitals
-  and Measures, one group (the Reports entry). They are never archived:
+  when the release does: Views, Product, Users, Groups, Retention, Web Vitals,
+  Measures and Availability, one group (the Reports entry). They are never archived:
   `update_dashboard` with `sidebar: false` takes the group out of the
   sidebar, and `remove_project_tab` takes one off a project's page. Every
   other write refuses them. To customize one, call `duplicate_dashboard`:
@@ -61,7 +61,7 @@ starts as a group of one, its `group_id` its own id; beyond that, a
 `list_dashboards` or `get_dashboard`, never assume it names a member.
 System dashboards are one group: `group_id` 1, whose sidebar entry reads
 "Reports" (its `group_title`), with tabs Views · Product · Users · Groups ·
-Retention · Web Vitals · Measures.
+Retention · Web Vitals · Measures · Availability.
 
 **A widget** is a component plus a source:
 

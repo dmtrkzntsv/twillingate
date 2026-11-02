@@ -49,4 +49,11 @@ type Store interface {
 	FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]store.Submission, string, error)
 	SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error)
 	GetSubmission(ctx context.Context, projectID int64, form, id string) (store.Submission, error)
+
+	// Availability monitors: settings are audited by the store from the
+	// AuditEntry passed, no config bump (monitors are not in the snapshot).
+	ListMonitors(ctx context.Context, projectID int64) ([]store.Monitor, error)
+	ListMonitorDomains(ctx context.Context, projectID int64) ([]store.MonitorDomain, error)
+	SetMonitor(ctx context.Context, projectID int64, origin string, s store.MonitorSettings, eligible func(allowedOrigins []string) []string, a store.AuditEntry) (store.Monitor, error)
+	RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, cooldown time.Duration, a store.AuditEntry) error
 }

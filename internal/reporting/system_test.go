@@ -73,7 +73,7 @@ func TestSystemDashboards(t *testing.T) {
 			titles = append(titles, fmt.Sprintf("%d %s %s", d.ID, d.Title, d.Range))
 		}
 	}
-	want := "1 Views 7d, 2 Product 7d, 3 Users 7d, 4 Groups 7d, 5 Retention 90d, 6 Web Vitals 30d, 7 Measures 7d"
+	want := "1 Views 7d, 2 Product 7d, 3 Users 7d, 4 Groups 7d, 5 Retention 90d, 6 Web Vitals 30d, 7 Measures 7d, 8 Availability 7d"
 	if got := strings.Join(titles, ", "); got != want {
 		t.Fatalf("system dashboards = %s, want %s", got, want)
 	}
@@ -133,7 +133,7 @@ func TestSystemDashboards(t *testing.T) {
 }
 
 // TestSystemDashboardGroups is D16: Views (id 1) names no group of its
-// own, so it is group 1; every other system dashboard (ids 2-7) names
+// own, so it is group 1; every other system dashboard (ids 2-8) names
 // "group": 1 in its dashboard.json, so the system dashboards are one
 // sidebar entry. This release's
 // embedded system definition (loaded by the real Migrate, not a test
@@ -152,14 +152,14 @@ func TestSystemDashboardGroups(t *testing.T) {
 			got[d.ID] = d.GroupID
 		}
 	}
-	want := map[int64]int64{1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1}
+	want := map[int64]int64{1: 1, 2: 1, 3: 1, 4: 1, 5: 1, 6: 1, 7: 1, 8: 1}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("system dashboard GroupIDs = %v, want %v", got, want)
 	}
 }
 
 // TestSystemGroupNames: Views (id 1) founds the Reports group and gives
-// it its name (D6); the seven system dashboards are one group, so all of
+// it its name (D6); the eight system dashboards are one group, so all of
 // them read it.
 func TestSystemGroupNames(t *testing.T) {
 	ctx := context.Background()
@@ -175,7 +175,7 @@ func TestSystemGroupNames(t *testing.T) {
 			got[d.ID] = d.GroupTitle
 		}
 	}
-	want := map[int64]string{1: "Reports", 2: "Reports", 3: "Reports", 4: "Reports", 5: "Reports", 6: "Reports", 7: "Reports"}
+	want := map[int64]string{1: "Reports", 2: "Reports", 3: "Reports", 4: "Reports", 5: "Reports", 6: "Reports", 7: "Reports", 8: "Reports"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("system dashboard group titles = %v, want %v", got, want)
 	}
@@ -924,6 +924,44 @@ func systemEvents(projectID int64, today civil.Date) []store.Event {
 		}
 	}
 
+	// Availability checks of two sites on each of the last ten days. The first
+	// has four uptime rows (every day's last one down, a timeout on odd days and
+	// a 503 on even), the second four up; each has a certificate and a domain
+	// reading, on a main domain of its own.
+	const siteA, siteB = "https://www.example.com", "https://shop.example.org"
+	for back := 0; back < 10; back++ {
+		day := today.AddDays(-back)
+		check := func(id, name string, h int, value *float64, attrs map[string]string) {
+			add(store.Event{ID: fmt.Sprintf("c-%d-%s", back, id), Family: store.FamilyChecks, EventName: name,
+				TS: at(day, h, 0, 0), Value: value, Attributes: attrs})
+		}
+		for n := 0; n < 4; n++ {
+			ms := float64(120 + 40*n + 10*back)
+			up := float64(300)
+			check(fmt.Sprintf("b-u%d", n), "uptime", 3+6*n, &up, map[string]string{"origin": siteB, "up": "1", "status": "200"})
+			if n < 3 {
+				check(fmt.Sprintf("u%d", n), "uptime", 2+6*n, &ms, map[string]string{"origin": siteA, "up": "1", "status": "200"})
+				continue
+			}
+			attrs := map[string]string{"origin": siteA, "up": "0", "reason": "timeout", "error": "deadline exceeded"}
+			if back%2 == 0 {
+				attrs["reason"], attrs["status"], attrs["error"] = "status", "503", ""
+			}
+			check("u3", "uptime", 20, &ms, attrs)
+		}
+		cert, domain := float64(80-back), float64(200-back)
+		check("cert", "cert", 3, &cert, map[string]string{"origin": siteA, "valid": "1", "issuer": "Example CA", "expires": "2027-01-20"})
+		check("domain", "domain", 4, &domain, map[string]string{"domain": "example.com", "expires": "2027-05-20"})
+		certB, domainB := float64(30-back), float64(60-back)
+		check("b-cert", "cert", 3, &certB, map[string]string{"origin": siteB, "valid": "1", "issuer": "Example CA", "expires": "2026-12-01"})
+		check("b-domain", "domain", 4, &domainB, map[string]string{"domain": "example.org", "expires": "2027-01-01"})
+		if back == 1 { // renewed: a second, later date that day
+			laterCert, laterDomain := cert+70, domain+90
+			check("cert2", "cert", 15, &laterCert, map[string]string{"origin": siteA, "valid": "1", "issuer": "Example CA", "expires": "2027-03-31"})
+			check("domain2", "domain", 16, &laterDomain, map[string]string{"domain": "example.com", "expires": "2027-08-18"})
+		}
+	}
+
 	// Every older day: ten anonymous visitors (actor kind connection, not
 	// cohorted), seven in browsers and three in the iOS app, across every
 	// breakdown the Views dashboard draws; two views each, a few minutes
@@ -1057,4 +1095,138 @@ func systemEvents(projectID int64, today civil.Date) []store.Event {
 		}
 	}
 	return evs
+}
+
+// TestAvailabilityReadingsShowTheNewest: each stale case of the Certificates and
+// Domains tables, on a project of its own and for two sites. Two readings in a
+// day show the later, and a newest reading with no value (an http:// origin, a
+// domain gone unknown) shows no figure, not the older one.
+func TestAvailabilityReadingsShowTheNewest(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+	from, to := presetDates("7d", f.today)
+	num := func(v float64) *float64 { return &v }
+	day := f.today.AddDays(-1).Time()
+	for _, c := range []struct {
+		name     string
+		readings []*float64
+		want     string
+	}{
+		{"same day renewal", []*float64{num(10), num(90)}, "90"},
+		{"same day change down", []*float64{num(90), num(10)}, "10"},
+		{"newest empty", []*float64{num(90), nil}, ""},
+		{"empty then back", []*float64{nil, num(30)}, "30"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			pid := mustCreateProject(t, f.st, c.name)
+			for _, r := range []struct{ event, attr, widget, column string }{
+				{"cert", "origin", "certificates", "Days left"},
+				{"domain", "domain", "domains", "Days to renewal"},
+			} {
+				for i, v := range c.readings {
+					f.files.Write(t, store.Event{ID: fmt.Sprintf("%d-%s-%d", pid, r.event, i), ProjectID: pid, Family: store.FamilyChecks,
+						EventName: r.event, TS: day.Add(time.Duration(i+1) * time.Hour), Value: v, Attributes: map[string]string{r.attr: "a"}})
+				}
+				// Another site's reading, with the first's last, stays apart.
+				f.files.Write(t, store.Event{ID: fmt.Sprintf("%d-%s-b", pid, r.event), ProjectID: pid, Family: store.FamilyChecks,
+					EventName: r.event, TS: day.Add(10 * time.Hour), Value: num(7), Attributes: map[string]string{r.attr: "b"}})
+				got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, f.svc, 8, r.widget), ProjectID: pid, From: from, To: to})
+				if err != nil {
+					t.Fatal(err)
+				}
+				res, ok := got.Data.(readsql.Result)
+				if !ok {
+					t.Fatalf("%s: data is %T", r.widget, got.Data)
+				}
+				if len(res.Rows) != 2 {
+					t.Fatalf("%s: %d rows, want one per name", r.widget, len(res.Rows))
+				}
+				if v := column(t, res, 0, r.column); v != c.want {
+					t.Errorf("%s of a = %q, want %q", r.widget, v, c.want)
+				}
+				if v := column(t, res, 1, r.column); v != "7" {
+					t.Errorf("%s of b = %q, want 7", r.widget, v)
+				}
+			}
+		})
+	}
+}
+
+// TestAvailabilityFigures holds the Availability widgets to the seeded checks of
+// two sites: all of one's and three of four of the other's uptime rows a day
+// succeed, the latest certificate and domain readings in the 7d range are the day
+// before today's, and Recent failures lists the newest day first, with its origin.
+func TestAvailabilityFigures(t *testing.T) {
+	ctx := context.Background()
+	f := newSystemFixture(t)
+	from, to := presetDates("7d", f.today)
+	const siteA, siteB = "https://www.example.com", "https://shop.example.org"
+	read := func(name string) readsql.Result {
+		t.Helper()
+		got, err := f.svc.WidgetData(ctx, DataRequest{WidgetID: systemWidgetOf(t, f.svc, 8, name), ProjectID: f.project, From: from, To: to})
+		if err != nil {
+			t.Fatal(err)
+		}
+		res, ok := got.Data.(readsql.Result)
+		if !ok {
+			t.Fatalf("%s: data is %T", name, got.Data)
+		}
+		return res
+	}
+	want := func(res readsql.Result, name string, row int, col, value string) {
+		t.Helper()
+		if v := column(t, res, row, col); v != value {
+			t.Errorf("%s row %d %s = %q, want %q", name, row, col, v, value)
+		}
+	}
+	want(read("uptime"), "uptime", 0, "value", "0.875")
+	sites := read("sites")
+	if len(sites.Rows) != 2 {
+		t.Fatalf("sites rows = %d, want 2", len(sites.Rows))
+	}
+	// By name, so shop.example.org first.
+	want(sites, "sites", 0, "Site", siteB)
+	want(sites, "sites", 0, "Uptime", "1")
+	want(sites, "sites", 0, "Response time (ms)", "300")
+	want(sites, "sites", 1, "Site", siteA)
+	want(sites, "sites", 1, "Uptime", "0.75")
+
+	// The newest reading, the later of its day's two, which is greater than
+	// the day's first: not the day's least.
+	certs := read("certificates")
+	if len(certs.Rows) != 2 {
+		t.Fatalf("certificates rows = %d, want 2", len(certs.Rows))
+	}
+	want(certs, "certificates", 0, "Site", siteB)
+	want(certs, "certificates", 0, "Days left", "29")
+	want(certs, "certificates", 1, "Site", siteA)
+	want(certs, "certificates", 1, "Days left", "149")
+	domains := read("domains")
+	if len(domains.Rows) != 2 {
+		t.Fatalf("domains rows = %d, want 2", len(domains.Rows))
+	}
+	want(domains, "domains", 0, "Domain", "example.com")
+	want(domains, "domains", 0, "Days to renewal", "289")
+	want(domains, "domains", 1, "Domain", "example.org")
+	want(domains, "domains", 1, "Days to renewal", "59")
+
+	res := read("failures")
+	if len(res.Rows) != 7 {
+		t.Fatalf("failures rows = %d, want 7", len(res.Rows))
+	}
+	if res.Columns[0] != "Origin" {
+		t.Errorf("failures columns = %q, want Origin first", res.Columns)
+	}
+	for i := 1; i < len(res.Rows); i++ {
+		if a, b := column(t, res, i-1, "Last failure"), column(t, res, i, "Last failure"); a <= b {
+			t.Errorf("failures not newest first: row %d %q, row %d %q", i-1, a, i, b)
+		}
+	}
+	for i := range res.Rows {
+		want(res, "failures", i, "Origin", siteA)
+		reason := column(t, res, i, "Reason")
+		status := map[string]string{"status": "503", "timeout": ""}[reason]
+		want(res, "failures", i, "Status", status)
+		want(res, "failures", i, "Failed checks", "1")
+	}
 }

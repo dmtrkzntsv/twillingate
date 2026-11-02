@@ -76,7 +76,7 @@ test('every link and button shows the pointer', async ({ page, request }) => {
 
   // A project whose attributes show every control: a renamed key with its
   // alias chip, a blocked one, and a plain one for the menus and dialogs.
-  const attrs = await createProject(request, `cursor-attrs-${Date.now()}`, [])
+  const attrs = await createProject(request, `cursor-attrs-${Date.now()}`, ['https://monitored.example.com', 'https://off.example.com'])
   await trackWithAttributes(request, attrs.key, [{ name: 'signup', attributes: { planType: 'pro', plan: 'team', debug: '1' } }])
   await attributesListed(request, attrs.id, ['planType', 'plan', 'debug'])
   for (const [action, body] of [
@@ -86,6 +86,13 @@ test('every link and button shows the pointer', async ({ page, request }) => {
     const rule = await request.post(`/api/projects/${attrs.id}/attribute-rules/${action}`, { headers, data: body })
     expect(rule.ok(), await rule.text()).toBeTruthy()
   }
+
+  // One monitor on and one off, so the Monitoring rows show every control.
+  const monitored = await request.patch(`/api/projects/${attrs.id}/monitors`, {
+    headers,
+    data: { enabled: true, origin: 'https://monitored.example.com', contains: 'Welcome' },
+  })
+  expect(monitored.ok(), await monitored.text()).toBeTruthy()
 
   await login(page)
   for (const path of [
@@ -106,6 +113,17 @@ test('every link and button shows the pointer', async ({ page, request }) => {
     await expect(page.locator('main, [data-slot="sidebar-inset"]').first()).toBeVisible()
     expect(await withoutPointer(page), path).toEqual([])
   }
+
+  // The Monitoring section's rows: the switches, Check now, the saved text and the row menu.
+  await page.goto(`/app/projects/${attrs.id}/settings?range=today`)
+  const monitoring = page.getByRole('region', { name: 'Monitoring' })
+  await expect(monitoring.getByRole('button', { name: 'Check https://monitored.example.com now' })).toBeVisible()
+  await expect(monitoring.getByRole('button', { name: 'must contain "Welcome"' })).toBeVisible()
+  expect(await withoutPointer(page), 'monitoring rows').toEqual([])
+  await monitoring.getByRole('button', { name: 'More for https://monitored.example.com' }).click()
+  await expect(page.getByRole('menuitem', { name: 'Look for text on the page' })).toBeVisible()
+  expect(await withoutPointer(page), 'monitoring menu').toEqual([])
+  await page.keyboard.press('Escape')
 
   // The Attributes section's row menu (a blocked key offers Unblock), its
   // alias remove and add buttons, and its merge, rename and confirm dialogs.

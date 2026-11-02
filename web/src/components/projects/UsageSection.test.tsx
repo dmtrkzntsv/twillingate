@@ -13,8 +13,8 @@ describe('UsageSection', () => {
   it('shows totals, freshness and the first day, and no size', async () => {
     vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: '2026-09-01', to: '2026-09-02', database_bytes: 0, database_series: [], projects: [{
       project_id: 4,
-      series: [{ day: '2026-09-01', views: 10, events: 3, measures: 1, total_bytes: null }, { day: '2026-09-02', views: 20, events: 0, measures: 0, total_bytes: 2_262_000 }],
-      totals: { views: 30, events: 3, measures: 1 },
+      series: [{ day: '2026-09-01', views: 10, events: 3, measures: 1, checks: 900, total_bytes: null }, { day: '2026-09-02', views: 20, events: 0, measures: 0, checks: 900, total_bytes: 2_262_000 }],
+      totals: { views: 30, events: 3, measures: 1, checks: 1800 },
       last_received_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
       first_day: '2026-08-01',
       size: { total_bytes: 2_262_000, measured_at: new Date(Date.now() - 86_400_000).toISOString().slice(0, 10) },
@@ -32,7 +32,7 @@ describe('UsageSection', () => {
 
   it('shows an empty project without errors', async () => {
     vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
-      project_id: 5, series: [{ day: 'a', views: 0, events: 0, measures: 0, total_bytes: null }, { day: 'b', views: 0, events: 0, measures: 0, total_bytes: null }], totals: { views: 0, events: 0, measures: 0 }, last_received_at: null,
+      project_id: 5, series: [{ day: 'a', views: 0, events: 0, measures: 0, checks: 720, total_bytes: null }, { day: 'b', views: 0, events: 0, measures: 0, checks: 720, total_bytes: null }], totals: { views: 0, events: 0, measures: 0, checks: 1440 }, last_received_at: null,
       first_day: null, size: null,
     }] })
     renderWithProviders(<UsageSection projectId={5} range={{ from: 'a', to: 'b' }} />)
@@ -52,7 +52,7 @@ describe('UsageSection', () => {
 
   it('shows a skeleton on the first load, then keeps the previous numbers while a new range loads', async () => {
     const mk = (views: number) => ({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
-      project_id: 4, series: [{ day: '2026-09-01', views, events: 0, measures: 0, total_bytes: null }], totals: { views, events: 0, measures: 0 },
+      project_id: 4, series: [{ day: '2026-09-01', views, events: 0, measures: 0, checks: 0, total_bytes: null }], totals: { views, events: 0, measures: 0, checks: 0 },
       last_received_at: null, first_day: null, size: null,
     }] })
     let release!: () => void

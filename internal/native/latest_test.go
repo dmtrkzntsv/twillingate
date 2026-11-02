@@ -3,8 +3,13 @@ package native
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // TestLatest: latest reads a column's value at the group's latest row by
@@ -123,5 +128,98 @@ func TestLatestSkipsEmptyText(t *testing.T) {
 	}
 	if _, ok := latestText(c, 1, typeString); ok {
 		t.Error("empty text read as a value")
+	}
+}
+
+// latestValueFixture holds checks and measures rows, on two days: the
+// newest of each name is what TestLatestValue reads.
+func latestValueFixture(t *testing.T, maintain bool) *Engine {
+	t.Helper()
+	f := archivetest.New(t)
+	base := date(t, "2026-09-08").Time()
+	num := func(v float64) *float64 { return &v }
+	rows := []struct {
+		family store.Family
+		name   string
+		at     time.Duration
+		value  *float64
+	}{
+		{store.FamilyChecks, "renewed", 3 * time.Hour, num(10)}, // two readings a day, the later greater
+		{store.FamilyChecks, "renewed", 15 * time.Hour, num(90)},
+		{store.FamilyChecks, "lower", 3 * time.Hour, num(90)}, // and the later lower: not a max
+		{store.FamilyChecks, "lower", 15 * time.Hour, num(10)},
+		{store.FamilyChecks, "cleared", 24 * time.Hour, num(40)}, // then a day later, no value
+		{store.FamilyChecks, "cleared", 48 * time.Hour, nil},
+		{store.FamilyChecks, "back", 24 * time.Hour, nil}, // no value, then a value
+		{store.FamilyChecks, "back", 48 * time.Hour, num(0)},
+		{store.FamilyChecks, "tied", 24 * time.Hour, nil}, // one instant, with and without
+		{store.FamilyChecks, "tied", 24 * time.Hour, num(5)},
+		{store.FamilyChecks, "never", 24 * time.Hour, nil},
+		{store.FamilyMeasures, "m", 3 * time.Hour, num(1.5)},
+		{store.FamilyMeasures, "m", 15 * time.Hour, num(2.5)},
+	}
+	for i, r := range rows {
+		e := store.Event{ID: fmt.Sprintf("r%d", i), ProjectID: 1, Family: r.family, EventName: r.name, TS: base.Add(r.at), Value: r.value}
+		if r.family == store.FamilyMeasures {
+			e.Measure, e.SampleRate = "size", 1
+		}
+		f.Write(t, e)
+	}
+	if maintain {
+		f.Maintain(t, today)
+	}
+	return New(Options{Dir: f.Dir, Workers: 2})
+}
+
+// TestLatestValue: latest of value is the newest row's, on the log and on
+// Parquet; a newest row with no value reads as empty rather than falling
+// back to an older one, which is how a reading says "none any more".
+func TestLatestValue(t *testing.T) {
+	for _, maintain := range []bool{false, true} {
+		t.Run(fmt.Sprintf("parquet=%v", maintain), func(t *testing.T) {
+			e := latestValueFixture(t, maintain)
+			stat := func(table, name string) string {
+				t.Helper()
+				return checksRows(t, e, Query{Kind: "stat", Table: table,
+					Where:   []Filter{{Column: "event_name", Op: "eq", Values: []string{name}}},
+					Metrics: []Metric{{Op: "latest", Column: "value", As: "value"}}})[0][0]
+			}
+			for name, want := range map[string]string{
+				"renewed": "90", "lower": "10", "cleared": "", "back": "0", "tied": "5", "never": "", "absent": "",
+			} {
+				if got := stat("checks", name); got != want {
+					t.Errorf("checks %s = %q, want %q", name, got, want)
+				}
+			}
+			if got := stat("measures", "m"); got != "2.5" {
+				t.Errorf("measures m = %q, want 2.5", got)
+			}
+			// In a breakdown, the same; a group's empty ranks last.
+			rows := checksRows(t, e, Query{Kind: "breakdown", Table: "checks", Dimensions: []string{"event_name"}, Limit: 10,
+				Order: "v", Metrics: []Metric{{Op: "latest", Column: "value", As: "v"}}})
+			got := map[string]string{}
+			for _, r := range rows {
+				got[r[0]] = r[1]
+			}
+			if got["renewed"] != "90" || got["cleared"] != "" || rows[0][0] != "renewed" {
+				t.Errorf("breakdown = %v", rows)
+			}
+		})
+	}
+}
+
+func TestLatestValueValidatesAsANumber(t *testing.T) {
+	q := Query{Kind: "stat", Table: "checks", Metrics: []Metric{{Op: "latest", Column: "value"}}}
+	if err := q.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	if types := q.ColumnTypes(); types[0] != "number" {
+		t.Errorf("ColumnTypes = %v, want number", types)
+	}
+	for _, table := range []string{"sessions", "identities"} {
+		q := Query{Kind: "stat", Table: table, Metrics: []Metric{{Op: "latest", Column: "value"}}}
+		if err := q.Validate(); !errors.Is(err, ErrInvalid) {
+			t.Errorf("%s: %v, want a refusal", table, err)
+		}
 	}
 }

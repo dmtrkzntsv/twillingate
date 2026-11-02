@@ -13,7 +13,7 @@ import (
 
 var version = internalversion.Version
 
-const usage = "usage: twillingate <serve|migrate|keygen|project|key|form|version> [flags]"
+const usage = "usage: twillingate <serve|migrate|keygen|project|key|form|monitor|version> [flags]"
 
 var commands = map[string]func(args []string, stdout io.Writer) int{}
 

@@ -4,7 +4,7 @@ import { createProject } from './forms'
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
 const PASSWORD = 'e2e-pass'
 const TOKEN = 'e2e-token'
-const BUILT_INS = ['Views', 'Product', 'Users', 'Groups', 'Retention', 'Web Vitals', 'Measures']
+const BUILT_INS = ['Views', 'Product', 'Users', 'Groups', 'Retention', 'Web Vitals', 'Measures', 'Availability']
 // A built-in tab removed and added back goes last, like a tab a release adds.
 const READDED = [...BUILT_INS.filter((name) => name !== 'Product'), 'Product']
 

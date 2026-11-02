@@ -271,6 +271,45 @@ export interface Project {
   allowed_origins: string[]
 }
 
+/** One origin's availability monitor; empty strings mean unknown. */
+export interface Monitor {
+  origin: string
+  enabled: boolean
+  contains: string
+  /** Redirect hops the last answered check followed. */
+  redirects: number
+  cert: { expires_at: string; issuer: string; valid: boolean; error: string; checked_at: string }
+  /** The latest availability check, scheduled or manual; checked_at is empty before the first. */
+  last: { checked_at: string; up: boolean; status: number; reason: string; error: string; ms: number }
+  /** The last manual check; running while requested_at is set and finished_at is empty or before it. Its result is in last. */
+  check: { requested_at: string; finished_at: string }
+}
+
+/** A main domain's last reading, which the enabled monitors' origins on it share. */
+export interface MonitorDomain {
+  domain: string
+  origins: string[]
+  expires_at: string
+  checked_at: string
+}
+
+/** A project's monitoring (GET /api/projects/{id}/monitors): every origin a check can target, on or off. */
+export interface Monitors {
+  /** Seconds between the checks of each enabled monitor. */
+  interval_seconds: number
+  timeout_seconds: number
+  /** Monitoring is off on this install: nothing runs and a check on demand is refused. */
+  paused: boolean
+  monitors: Monitor[]
+  domains: MonitorDomain[]
+}
+
+export interface MonitorBody {
+  origin: string
+  enabled?: boolean
+  contains?: string
+}
+
 export interface IngestKey {
   project_id: number
   label: string
@@ -347,6 +386,8 @@ export interface UsageDay {
   views: number
   events: number
   measures: number
+  /** The availability monitor's rows, not the site's traffic: leave them out of its sums. */
+  checks: number
   /** The project's event file bytes as the daily pass measured them that day; null on a day not measured. */
   total_bytes: number | null
 }
@@ -354,7 +395,7 @@ export interface UsageDay {
 export interface ProjectUsage {
   project_id: number
   series: UsageDay[]
-  totals: { views: number; events: number; measures: number }
+  totals: { views: number; events: number; measures: number; checks: number }
   /** When the newest event in the project's files arrived, whatever the range; null with none. */
   last_received_at: string | null
   /** The oldest day the project's event files hold; null with none. */
@@ -661,6 +702,9 @@ export const endpoints = {
   keys: (projectId?: number) => api<{ keys: IngestKey[]; note?: string }>(`/api/keys${toQuery({ project_id: projectId })}`),
   createProject: (body: CreateProjectBody) => api<CreatedProject>('/api/projects', json('POST', body)),
   updateProject: (id: number, body: Partial<CreateProjectBody>) => api<{ project_id: number }>(`/api/projects/${id}`, json('PATCH', body)),
+  monitors: (id: number) => api<Monitors>(`/api/projects/${id}/monitors`),
+  updateMonitor: (id: number, body: MonitorBody) => api<Monitors>(`/api/projects/${id}/monitors`, json('PATCH', body)),
+  checkMonitor: (id: number, origin: string) => api<Monitors>(`/api/projects/${id}/monitors/check`, json('POST', { origin })),
   moveProject: (id: number, after: number) => api<{ status: string }>(`/api/projects/${id}/move`, json('POST', { after })),
   archiveProject: (id: number) => api<{ status: string }>(`/api/projects/${id}/archive`, json('POST', {})),
   restoreProject: (id: number) => api<{ status: string }>(`/api/projects/${id}/restore`, json('POST', {})),
