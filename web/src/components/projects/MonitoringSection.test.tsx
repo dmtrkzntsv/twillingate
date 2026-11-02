@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, waitFor, within } from '@testing-library/react'
+import { cleanup, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { endpoints, type Monitor, type Monitors } from '@/lib/api'
@@ -598,10 +598,34 @@ describe('MonitoringSection', () => {
         await vi.advanceTimersByTimeAsync(15_500)
         expect(await a.findByText(/^Up, 200, 7 ms/)).toBeInTheDocument()
         expect(a.queryByText(/has not finished/)).not.toBeInTheDocument()
-        // Finished, it stops.
+        // Finished, it goes back to its once a minute.
         const finished = read.mock.calls.length
-        await vi.advanceTimersByTimeAsync(60_000)
+        await vi.advanceTimersByTimeAsync(30_000)
         expect(read.mock.calls.length).toBe(finished)
+        await vi.advanceTimersByTimeAsync(31_000)
+        expect(read.mock.calls.length).toBe(finished + 1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('refreshes a monitored row once a minute, and an unmonitored section never', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        const { read } = show(list([on(A)]))
+        const a = await row(A)
+        const calls = read.mock.calls.length
+        read.mockResolvedValue(list([on(A, { last: result({ up: false, reason: 'dns', error: 'no such host' }) })]))
+        await vi.advanceTimersByTimeAsync(61_000)
+        expect(read.mock.calls.length).toBe(calls + 1)
+        expect(await a.findByText('no such host', { exact: false })).toBeInTheDocument()
+
+        cleanup()
+        const off = show(list([on(A, { enabled: false })]))
+        await row(A)
+        const none = off.read.mock.calls.length
+        await vi.advanceTimersByTimeAsync(61_000)
+        expect(off.read.mock.calls.length).toBe(none)
       } finally {
         vi.useRealTimers()
       }

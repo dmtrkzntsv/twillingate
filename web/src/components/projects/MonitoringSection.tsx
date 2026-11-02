@@ -32,6 +32,8 @@ const LONG_CHAIN = 3
 const CHECK_POLL_MS = 2_000
 const CHECK_GIVE_UP_MS = 45_000
 const CHECK_SLOW_POLL_MS = 15_000
+/** How often a page left open looks for the scheduled checks' results. */
+const STATUS_POLL_MS = 60_000
 
 /** The manual check still to finish on an enabled monitor, by when it was asked for. */
 function pendingCheck(m: Monitor): string | null {
@@ -272,8 +274,9 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
   const q = useQuery({
     ...monitorsQuery(projectId),
     refetchInterval: (query) => {
-      const waiting = (query.state.data?.monitors ?? []).filter((m) => pendingCheck(m) !== null)
-      if (waiting.length === 0) return false
+      const monitors = query.state.data?.monitors ?? []
+      const waiting = monitors.filter((m) => pendingCheck(m) !== null)
+      if (waiting.length === 0) return monitors.some((m) => m.enabled) ? STATUS_POLL_MS : false
       return waiting.every((m) => pendingCheck(m) === gaveUp[m.origin]) ? CHECK_SLOW_POLL_MS : CHECK_POLL_MS
     },
   })
