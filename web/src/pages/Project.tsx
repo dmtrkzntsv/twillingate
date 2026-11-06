@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Link, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
+import { Link, Navigate, useLocation, useNavigate, useParams, useSearchParams } from 'react-router'
 import AppShell, { TopBar } from '@/components/AppShell'
 import Crumbs from '@/components/Crumbs'
 import NotFound from '@/components/NotFound'
@@ -17,7 +17,7 @@ import { useStuck } from '@/hooks/use-stuck'
 import FormPage from '@/components/forms/FormPage'
 import FormsTab from '@/components/forms/FormsTab'
 import { readLastTab } from '@/lib/last-tab'
-import { FORMS_ID, landingPath, rangeParams, SETTINGS_ID, tabPath } from '@/lib/project-tabs'
+import { FORMS_ID, landingPath, rangeParams, SETTINGS_ID, settingsPath, settingsSection } from '@/lib/project-tabs'
 import { dashboardsQuery, projectActivityQuery, projectsQuery, projectTabsQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 
@@ -28,10 +28,14 @@ const TOP_BAR = 48
 const LANDING = -2
 
 /**
- * `/projects/:id` (with `landing`), `/projects/:id/settings`, `/projects/:id/forms` (with `tab="forms"`, and
- * `/forms/:name` for one form) and `/projects/:id/dashboards/:dashId`: one
- * project, renamed in place, with its dashboards as tabs (project tabs D1,
- * D8) and Forms and Settings as buttons beside them (project landing D4).
+ * `/projects/:id` (with `landing`), `/projects/:id/settings` (and
+ * `/settings/:section` for each Settings tab), `/projects/:id/forms` (with
+ * `tab="forms"`, and `/forms/:name` for one form) and
+ * `/projects/:id/dashboards/:dashId`: one project, renamed in place, with its
+ * dashboards as tabs (project tabs D1, D8) and Forms and Settings as buttons
+ * beside them (project landing D4). On Settings the tab row holds the
+ * Settings tabs instead (project settings tabs); a section the project does
+ * not have goes to `/settings`, its first.
  *
  * With `landing`, the page goes to the last tab used here, else the first,
  * else Settings (project landing D3). It draws the page around a skeleton
@@ -56,6 +60,8 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
   const actions = useProjectActions()
   const tabActions = useProjectTabActions()
   const project = valid ? projectsData?.projects?.find((p) => p.project_id === id) : undefined
+  const section = project && dashId === SETTINGS_ID ? settingsSection(!!project.archived, params.section) : null
+  const rangeSearch = rangeParams(url).toString()
   // The tab row's backdrop shows only while it is pinned, so at rest the sky wash shows through.
   const [tabBar, setTabBar] = useState<HTMLDivElement | null>(null)
   const stuck = useStuck(tabBar, TOP_BAR)
@@ -125,10 +131,13 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
                 projectId={id}
                 currentId={dashId}
                 tabs={tabsQ.data?.tabs ?? []}
+                tabsLoaded={tabsQ.data !== undefined}
                 dashboards={dash?.dashboards ?? []}
                 actions={tabActions}
                 newSubmissions={mine?.new_submissions ?? 0}
                 draftForms={mine?.draft_forms ?? 0}
+                archived={!!project.archived}
+                section={section ?? undefined}
                 // A tab write while landing would cancel its fresh fetch.
                 readOnly={landing}
               />
@@ -136,7 +145,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
             {mine && mine.last_event_day === null && dashId !== SETTINGS_ID && dashId !== FORMS_ID && dashId !== LANDING && (
               <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed p-3 text-sm">
                 <span>No events received yet</span>
-                <Link to={tabPath(id, SETTINGS_ID, rangeParams(url).toString())} className="font-medium underline-offset-2 hover:underline">
+                <Link to={settingsPath(id, project.archived ? undefined : 'install', rangeSearch)} className="font-medium underline-offset-2 hover:underline">
                   Set up this project
                 </Link>
               </div>
@@ -144,7 +153,11 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
             {dashId === LANDING ? (
               <GridSkeleton />
             ) : dashId === SETTINGS_ID ? (
-              <SetupTab project={project} dash={dash} actions={actions} />
+              section === null ? (
+                <Navigate to={settingsPath(id, undefined, rangeSearch)} replace />
+              ) : (
+                <SetupTab project={project} dash={dash} actions={actions} section={section} />
+              )
             ) : dashId === FORMS_ID ? (
               params.name === undefined ? (
                 <FormsTab project={project} />

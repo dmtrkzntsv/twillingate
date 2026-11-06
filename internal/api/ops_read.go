@@ -493,7 +493,7 @@ func (h *host) register(r *registrar) {
 		Description: "Remove a project's rule for an attribute key: reads of the event files stop applying it, so events stored before the rule show the key as sent again (ingest stored the later ones as the rule said), and a block lets the key be stored again."},
 		h.removeAttributeRule)
 	restOnly(r, spec{Name: "event_names", Method: "GET", Path: p + "/event-names",
-		Description: "A project's product and measures event names in a range with their event counts, the busiest 200, busiest first, ties by name. For the console's Settings page; not an MCP tool (product_events and measures answer agents)."},
+		Description: "A project's product and measures event names in a range with their event counts, the busiest 200, busiest first, ties by name. For the console's Settings → Events tab; not an MCP tool (product_events and measures answer agents)."},
 		h.eventNames)
 
 	expose(r, spec{Name: "integration_guide", Annotations: ro, // MCP only

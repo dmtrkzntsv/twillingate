@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ProjectTab } from './api'
-import { FORMS_ID, landingPath, pickerSections, rangeParams, SETTINGS_ID, tabAfter, tabPath } from './project-tabs'
+import { FORMS_ID, landingPath, pickerSections, rangeParams, SETTINGS_ID, settingsPath, settingsSection, settingsSections, tabAfter, tabPath } from './project-tabs'
 import { dashboardsList } from '@/test/fixtures'
 
 const tabs: ProjectTab[] = [
@@ -10,6 +10,26 @@ const tabs: ProjectTab[] = [
   { dashboard_id: 10, title: 'Launch week', owner: 'user', group_id: 10 },
   { dashboard_id: 14, title: 'Funnel', owner: 'user', group_id: 13 },
 ]
+
+describe('settings tabs', () => {
+  it('lists every tab in order, and no Install or Danger on an archived project', () => {
+    expect(settingsSections(false).map((s) => s.id)).toEqual(['usage', 'install', 'domains', 'events', 'attributes', 'danger'])
+    expect(settingsSections(true).map((s) => s.id)).toEqual(['usage', 'domains', 'events', 'attributes'])
+  })
+
+  it('reads the section from the URL: the first when none, null when not one of the project\'s', () => {
+    expect(settingsSection(false, undefined)).toBe('usage')
+    expect(settingsSection(false, 'install')).toBe('install')
+    expect(settingsSection(true, 'install')).toBeNull()
+    expect(settingsSection(true, 'danger')).toBeNull()
+    expect(settingsSection(false, 'keys')).toBeNull()
+  })
+
+  it('opens a tab at /settings/:section, keeping the search', () => {
+    expect(settingsPath(7)).toBe('/projects/7/settings')
+    expect(settingsPath(7, 'events', 'range=30d')).toBe('/projects/7/settings/events?range=30d')
+  })
+})
 
 describe('tabPath', () => {
   it('opens Settings at /settings and a dashboard under /dashboards', () => {

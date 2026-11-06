@@ -332,7 +332,8 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
     return (
       <section aria-label="Monitoring" className="flex flex-col gap-3 rounded-lg border p-4">
         <h2 className="text-base font-semibold">Monitoring</h2>
-        <p className="text-sm text-muted-foreground">Add an exact http(s) origin above to monitor it.</p>
+        {/* Monitors check the allowed origins, which sit right above this section. */}
+        <p className="text-sm text-muted-foreground">To monitor your site, first add its address to Allowed origins above, as an exact http(s) origin such as https://example.com.</p>
       </section>
     )
   }

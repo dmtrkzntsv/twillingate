@@ -1,5 +1,5 @@
 Empty cards here mean monitoring is not set up for this project, or it has not
-run yet: set it up in Settings → Monitoring.
+run yet: set it up in Settings → Domains, under Monitoring.
 
 twillingate fetches each monitored site on a schedule and
 records whether it answered, how long it took, and why it failed when it did

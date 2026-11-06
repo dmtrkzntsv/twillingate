@@ -11,7 +11,7 @@ interface Props {
   onArchive: () => void
 }
 
-/** The end of a live project's Settings page: Archive, confirmed. */
+/** A live project's Settings → Danger tab: Archive, confirmed. */
 export default function DangerSection({ name, purgeDays, pending, onArchive }: Props) {
   const [archiving, setArchiving] = useState(false)
   const purgeOn = purgeDays ? formatPurgeDate(new Date(Date.now() + purgeDays * 86_400_000)) : null

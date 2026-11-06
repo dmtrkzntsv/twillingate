@@ -35,12 +35,17 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await page.getByRole('link', { name: 'Settings', exact: true }).click()
   await expect(page).toHaveURL(/\/projects\/\d+\/settings$/)
   await expect(page.getByRole('heading', { name })).toBeVisible()
+  // Settings is tabs, each at its own address, in the dashboards' place.
+  const sections = page.getByRole('navigation', { name: 'Settings sections' })
+  await expect(page.getByRole('heading', { level: 1, name: 'Usage' })).toBeVisible()
 
   await page.getByRole('button', { name: 'Rename' }).click()
   await page.getByRole('textbox', { name: 'Project name' }).fill(`${name}-renamed`)
   await page.keyboard.press('Enter')
   await expect(page.getByRole('heading', { level: 1, name: `${name}-renamed` })).toBeVisible()
 
+  await sections.getByRole('link', { name: 'Domains' }).click()
+  await expect(page).toHaveURL(/\/projects\/\d+\/settings\/domains$/)
   const origins = page.getByRole('region', { name: 'Allowed origins' })
   await origins.getByRole('button', { name: 'Add origin' }).click()
   await page.getByLabel('Origin', { exact: true }).fill('https://app.e2e.example')
@@ -54,6 +59,7 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await page.getByRole('button', { name: 'Remove origin' }).click()
   await expect(origins.getByText('https://e2e.example', { exact: true })).toHaveCount(0)
 
+  await sections.getByRole('link', { name: 'Install' }).click()
   const keys = page.getByRole('region', { name: 'Ingest keys' })
   await keys.getByRole('button', { name: 'Issue key' }).click()
   await page.getByLabel('Label').fill('ios app')
@@ -64,11 +70,16 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await page.getByRole('button', { name: 'Disable key' }).click()
   await expect(keys.getByRole('row', { name: /ios app/ }).getByText('disabled')).toBeVisible()
 
+  await sections.getByRole('link', { name: 'Danger' }).click()
   await page.getByRole('region', { name: 'Danger' }).getByRole('button', { name: 'Archive', exact: true }).click()
   await page.getByRole('button', { name: 'Archive project' }).click()
   // The badge on the page; a toast says "Archived" too.
   await expect(page.getByRole('main').getByText('Archived', { exact: true })).toBeVisible()
+  // An archived project has no Danger tab: the page goes to the first tab.
+  await expect(page).toHaveURL(/\/projects\/\d+\/settings$/)
+  await expect(sections.getByRole('link', { name: 'Danger' })).toHaveCount(0)
   await page.getByRole('button', { name: 'Restore' }).click()
+  await sections.getByRole('link', { name: 'Danger' }).click()
   await expect(page.getByRole('button', { name: 'Archive', exact: true })).toBeVisible()
 
   // Archived again, it leaves the Projects page for the Archive page, which restores it too.

@@ -75,7 +75,7 @@ describe('MonitoringSection', () => {
 
   it('names the empty state, with no rows', async () => {
     show(list([]))
-    expect(await screen.findByText('Add an exact http(s) origin above to monitor it.')).toBeInTheDocument()
+    expect(await screen.findByText(/first add its address to Allowed origins above/)).toBeInTheDocument()
     expect(screen.queryByRole('switch')).not.toBeInTheDocument()
     expect(screen.queryByRole('listitem')).not.toBeInTheDocument()
   })
