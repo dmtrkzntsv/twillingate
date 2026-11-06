@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
 import type { DashboardInfo, ProjectTab } from '@/lib/api'
 import { plural } from '@/lib/format'
-import { readLastTab } from '@/lib/last-tab'
+import { readLastTab, writeLastTab } from '@/lib/last-tab'
 import { FORMS_ID, landingPath, rangeParams, SETTINGS_ID, tabAfter, tabPath, type SettingsSection } from '@/lib/project-tabs'
 import { cn } from '@/lib/utils'
 import AddTabDialog from './AddTabDialog'
@@ -55,7 +55,12 @@ export default function ProjectTabBar({ projectId, currentId, tabs, tabsLoaded =
   const [url] = useSearchParams()
   const [adding, setAdding] = useState(false)
   const search = rangeParams(url).toString()
-  const open = (id: number) => navigate(tabPath(projectId, id, search))
+  const open = (id: number) => {
+    // Remembered on the choice, not only once the tab has loaded, so
+    // "← Dashboards" from a tab left while loading goes back to it.
+    if (tabs.some((t) => t.dashboard_id === id)) writeLastTab(projectId, id)
+    navigate(tabPath(projectId, id, search))
+  }
   const badge = newSubmissions > 99 ? '99+' : String(newSubmissions)
   const formsLabel = [
     'Forms',
@@ -90,9 +95,10 @@ export default function ProjectTabBar({ projectId, currentId, tabs, tabsLoaded =
             </Button>
           ) : (
             tabsLoaded && (
-              <Button variant="ghost" size="sm" className="shrink-0" onClick={() => setAdding(true)}>
+              // Its icon alone on a phone, where the row also holds the section select.
+              <Button variant="ghost" size="sm" className="shrink-0 max-sm:size-8 max-sm:px-0" aria-label="Add dashboard" onClick={() => setAdding(true)}>
                 <PlusIcon />
-                Add dashboard
+                <span className="hidden sm:inline">Add dashboard</span>
               </Button>
             )
           )}
@@ -153,7 +159,7 @@ export default function ProjectTabBar({ projectId, currentId, tabs, tabsLoaded =
         tabs={tabs}
         pending={actions.pending}
         onAdd={add}
-        onCreate={(title) => actions.create(projectId, title)}
+        onCreate={(title) => actions.create(projectId, title, search)}
       />
     </div>
   )

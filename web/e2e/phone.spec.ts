@@ -531,3 +531,33 @@ test('the empty Projects guide and the install dialog fit a phone', async ({ pag
   await expect(guide.getByText('http://127.0.0.1:18080/mcp', { exact: true })).toBeVisible()
   expect(await sidewaysScroll(page)).toEqual([])
 })
+
+test('a project with no dashboard tabs fits its Settings row on a phone', async ({ page, request }) => {
+  const created = await request.post('/api/projects', {
+    headers: authHeaders(),
+    data: { name: `no-tabs-${Date.now()} - longer than a phone is wide on one line`, allowed_origins: [] },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { project_id: id } = (await created.json()) as { project_id: number }
+  try {
+    const listed = await request.get(`/api/projects/${id}/tabs`, { headers: authHeaders() })
+    for (const t of ((await listed.json()) as { tabs: { dashboard_id: number }[] }).tabs) {
+      const removed = await request.post(`/api/projects/${id}/tabs/${t.dashboard_id}/remove`, { headers: authHeaders(), data: {} })
+      expect(removed.ok(), await removed.text()).toBeTruthy()
+    }
+    await page.goto('/app/')
+    await page.waitForURL(/\/oauth\/authorize\?/)
+    await page.getByLabel('Password').fill(PASSWORD)
+    await page.getByRole('button', { name: 'Connect' }).click()
+    await page.waitForURL(/\/app\/projects$/)
+
+    // Add dashboard (its icon alone here), the section select, Forms and the gear share one row.
+    await check(page, `/app/projects/${id}/settings`)
+    await expect(page.getByRole('button', { name: 'Add dashboard' })).toBeInViewport({ ratio: 1 })
+    await expect(page.getByRole('combobox', { name: 'Settings section' })).toBeInViewport({ ratio: 1 })
+    await expect(page.getByRole('link', { name: /^Forms/ })).toBeInViewport({ ratio: 1 })
+    await expect(page.getByRole('link', { name: 'Settings', exact: true })).toBeInViewport({ ratio: 1 })
+  } finally {
+    await request.post(`/api/projects/${id}/archive`, { headers: authHeaders() })
+  }
+})

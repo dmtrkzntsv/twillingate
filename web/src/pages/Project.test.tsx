@@ -267,6 +267,16 @@ describe('Project', () => {
     await vi.waitFor(() => expect(screen.getByRole('link', { name: 'Dashboards' })).toHaveAttribute('href', '/projects/4/dashboards/1'))
   })
 
+  it('offers neither "← Dashboards" nor Add dashboard when the tabs cannot be read', async () => {
+    vi.mocked(endpoints.projectTabs).mockRejectedValue(new ApiError(500, 'database is locked', 'internal'))
+    renderAt('/projects/7/settings')
+    expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
+    await vi.waitFor(() => expect(endpoints.projectTabs).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.queryByRole('button', { name: 'Add dashboard' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Dashboards' })).not.toBeInTheDocument()
+  })
+
   it('offers Add dashboard in place of "← Dashboards" on a project with no tabs, and opens the one added', async () => {
     const user = userEvent.setup()
     vi.mocked(endpoints.projectTabs).mockResolvedValue({ tabs: [] })
