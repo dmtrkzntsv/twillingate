@@ -150,9 +150,9 @@ describe('ProjectTabBar', () => {
 
     it('offers Add dashboard, the "+" picker, when the project has no tabs, and the gear stays on Settings', async () => {
       const user = userEvent.setup()
-      renderBar({ currentId: SETTINGS_ID, newSubmissions: 0, tabs: [] })
+      renderBar({ currentId: SETTINGS_ID, newSubmissions: 0, tabs: [], section: 'events' })
       expect(screen.queryByRole('link', { name: 'Dashboards' })).toBeNull()
-      expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/projects/7/settings?range=30d')
+      expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/projects/7/settings/events?range=30d')
       await user.click(screen.getByRole('button', { name: 'Add dashboard' }))
       expect(await screen.findByRole('button', { name: 'New dashboard…' })).toBeInTheDocument()
     })
