@@ -183,3 +183,40 @@ test('a 120-character title is cut to two lines on a cold page, in the card and 
   expect(png.status()).toBe(200)
   expect(pngSize(await png.body())).toEqual({ width: 1200, height: 630 })
 })
+
+test('a dashboard with no project switcher shares under the project its queries are pinned to', async ({ page, request }) => {
+  test.setTimeout(120_000)
+  const made = await request.post('/api/projects', { headers: authHeaders(), data: { name: `pinned-${Date.now()}`, skip_key: true } })
+  expect(made.ok(), await made.text()).toBeTruthy()
+  const { project_id: projectId } = (await made.json()) as { project_id: number }
+  // A query pinned to the project and a markdown widget: nothing follows the
+  // project switcher, so the page has none.
+  const query = { project_id: projectId, query: { kind: 'stat', table: 'views', metrics: [{ op: 'count' }] }, rename: { count: 'value' } }
+  const created = await request.post('/api/dashboards', {
+    headers: authHeaders(),
+    data: {
+      title: 'Share pinned project',
+      range: '7d',
+      widgets: [
+        { component: 'stat', title: 'pinned', source: { type: 'query', content: JSON.stringify(query) }, width: 6, height: 4 },
+        { component: 'markdown', title: 'notes', source: { type: 'md', content: 'Pinned **notes**' }, width: 6, height: 4 },
+      ],
+    },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { dashboard_id: dashboardId } = (await created.json()) as { dashboard_id: number }
+
+  await login(page)
+  // The sidebar's Projects list closed: it loads the projects too while
+  // open, so the page has to load them itself.
+  await page.evaluate(() => localStorage.setItem('twillingate.sidebar.projects', 'false'))
+  await page.goto(`/app/dashboards/${dashboardId}`)
+  await page.waitForLoadState('networkidle')
+  await expect(page.getByRole('button', { name: /^Project:/ })).toHaveCount(0)
+  // The markdown widget, which names no project, is shared under the same one.
+  await chooseAction(page, page.locator('[data-slot="widget-card"]').nth(1), 'Share…')
+  const id = (await createLink(page)).split('/').pop()!
+  const res = await request.get('/api/widget-shares', { headers: authHeaders() })
+  const { shares } = (await res.json()) as { shares: { id: string; project_id: number }[] }
+  expect(shares.find((s) => s.id === id)?.project_id).toBe(projectId)
+})

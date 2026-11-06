@@ -20,7 +20,7 @@ import type { DashboardDetail, DashboardInfo, DashboardsResponse, DashboardTab }
 import { moveTabBody } from '@/lib/arrange'
 import { rememberDashboard } from '@/lib/last-dashboard'
 import { dashboardQuery, dashboardsQuery, projectsQuery } from '@/lib/queries'
-import type { ShareContext } from '@/lib/share'
+import { pinnedProject, type ShareContext } from '@/lib/share'
 
 /** `/dashboards/:id`: one dashboard in the app shell, as a report tab or a page of its own (D36). */
 export default function Dashboard() {
@@ -87,7 +87,13 @@ function PageNotice({ text, children }: { text: string; children: ReactNode }) {
 }
 
 function DashboardView({ list, dashboard, frozen }: ViewProps) {
-  const projects = useQuery({ ...projectsQuery, enabled: dashboard.follows_project })
+  // With no project switcher, the one project the widgets are pinned to,
+  // which the page shares under; the projects are loaded for its name.
+  const pinned = useMemo(
+    () => (dashboard.follows_project ? undefined : pinnedProject(dashboard.widgets)),
+    [dashboard.follows_project, dashboard.widgets]
+  )
+  const projects = useQuery({ ...projectsQuery, enabled: dashboard.follows_project || pinned !== undefined })
   const all = projects.data?.projects ?? []
   const { sel, switchers, range, paramsFor, change, openTab } = useDashboardSelection(dashboard, all, list.timezone, frozen)
 
@@ -98,9 +104,10 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const { move, restore, setSidebar, pending } = useDashboardActions()
   const widgetActions = useWidgetActions()
   // What a card needs to be shared or downloaded: the project and range
-  // shown. With no project, Download PNG is still offered; Share… is not,
-  // since a share belongs to a project.
-  const shown = all.find((p) => p.project_id === sel.projectId)
+  // shown, or with no project switcher the pinned one. With no project,
+  // Download PNG is still offered; Share… is not, since a share belongs
+  // to a project.
+  const shown = all.find((p) => p.project_id === (switchers.project ? sel.projectId : pinned))
   const projectId = shown?.project_id
   const projectName = shown?.name
   const { from, to } = range

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
-import type { WidgetShare } from './api'
-import { archiveLabel, embedCode, rangeInWords, shareCaption, type ShareContext } from './share'
+import type { Widget, WidgetShare } from './api'
+import { archiveLabel, embedCode, pinnedProject, rangeInWords, shareCaption, type ShareContext } from './share'
 
 function share(over: Partial<WidgetShare> = {}): WidgetShare {
   return {
@@ -99,5 +99,25 @@ describe('shareCaption', () => {
   it('leaves out what the page does not hand down: no project, no range switcher', () => {
     expect(shareCaption(follows(true, true), { ...ctx, project: undefined })).toEqual({ from: '2026-09-05', to: '2026-10-04' })
     expect(shareCaption(follows(true, true), { ...ctx, rangeShown: false })).toEqual({ projectName: 'blog' })
+  })
+})
+
+describe('pinnedProject', () => {
+  const w = (type: Widget['source']['type'], content: string) => ({ source: { type, content } })
+  const q = (body: object) => w('query', JSON.stringify(body))
+
+  it('is the one project every query is pinned to, past SQL and markdown', () => {
+    expect(pinnedProject([w('md', '# hi'), q({ project_id: 9, query: {} }), w('sql', 'SELECT 1'), q({ project_id: 9 })])).toBe(9)
+  })
+
+  it.each([
+    ['no widget', []],
+    ['no query widget', [w('sql', 'SELECT 1'), w('md', 'x')]],
+    ['two projects', [q({ project_id: 9 }), q({ project_id: 3 })]],
+    ['a query that follows the page', [q({ project_id: 9 }), q({ query: {} })]],
+    ['a source that is not JSON', [q({ project_id: 9 }), w('query', '{')]],
+    ['a project id that is not a number', [q({ project_id: '9' })]],
+  ])('is undefined with %s', (_, widgets) => {
+    expect(pinnedProject(widgets)).toBeUndefined()
   })
 })
