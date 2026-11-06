@@ -210,6 +210,9 @@ test('a dashboard with no project switcher shares under the project its queries 
   // The sidebar's Projects list closed: it loads the projects too while
   // open, so the page has to load them itself.
   await page.evaluate(() => localStorage.setItem('twillingate.sidebar.projects', 'false'))
+  // And even with the project list failing, the share is made under the
+  // project the widgets pin, never as one with no project.
+  await page.route('**/api/projects', (route) => route.abort())
   await page.goto(`/app/dashboards/${dashboardId}`)
   await page.waitForLoadState('networkidle')
   await expect(page.getByRole('button', { name: /^Project:/ })).toHaveCount(0)
