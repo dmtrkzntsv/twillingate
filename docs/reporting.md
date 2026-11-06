@@ -1737,10 +1737,14 @@ a tab of a project's page (`/app/projects/{project_id}`).
 - **A project page is tabs.** The dashboards are the tabs, in one order per
   project, then **+**, which adds one. `list_project_tabs` lists them. The
   page opens on the tab last used for that project in the browser, else the
-  first. Settings (the project's usage and file size, origins, event and
-  attribute rules and keys, and Archive in a Danger section at the end) and
-  Forms are not dashboards and are never listed: they are buttons beside the
-  tabs, Settings behind the gear.
+  first. Settings and Forms are not dashboards and are never listed: they
+  are buttons beside the tabs, Settings behind the gear. Settings has tabs of
+  its own, which take the dashboards' place in the row while it is open, each
+  at `/app/projects/{project_id}/settings/{section}`: Usage (the project's
+  usage and file size), Install (the script and the ingest keys), Domains
+  (allowed origins, monitoring and domain expiry), Events, Attributes (their
+  rules), and Danger (Archive). **← Dashboards** goes back to the tab last
+  used.
   - Each project keeps its own list: `add_project_tab`,
     `remove_project_tab` and `move_project_tab` change one project's page
     and no other.

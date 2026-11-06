@@ -29,7 +29,7 @@ test('renames, merges, blocks and unblocks attributes from a project settings pa
 
     await login(page)
     // The default range ends yesterday; these events are from today.
-    await page.goto(`/app/projects/${id}/settings?range=today`)
+    await page.goto(`/app/projects/${id}/settings/attributes?range=today`)
     const attributes = page.getByRole('region', { name: 'Attributes' })
     const rows = attributes.getByRole('table')
     const row = (name: string) => rows.getByRole('row', { name: new RegExp(`\\b${name}\\b`) })
