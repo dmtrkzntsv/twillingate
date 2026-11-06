@@ -20,7 +20,7 @@ import type { DashboardDetail, DashboardInfo, DashboardsResponse, DashboardTab }
 import { moveTabBody } from '@/lib/arrange'
 import { rememberDashboard } from '@/lib/last-dashboard'
 import { dashboardQuery, dashboardsQuery, projectsQuery } from '@/lib/queries'
-import type { ShareContext } from '@/lib/share'
+import { pinnedProject, type ShareContext } from '@/lib/share'
 
 /** `/dashboards/:id`: one dashboard in the app shell, as a report tab or a page of its own (D36). */
 export default function Dashboard() {
@@ -98,9 +98,14 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const { move, restore, setSidebar, pending } = useDashboardActions()
   const widgetActions = useWidgetActions()
   // What a card needs to be shared or downloaded: the project and range
-  // shown. With no project, Download PNG is still offered; Share… is not,
-  // since a share belongs to a project.
-  const shown = all.find((p) => p.project_id === sel.projectId)
+  // shown, or with no project switcher the one project the widgets are
+  // pinned to. With no project, Download PNG is still offered; Share… is
+  // not, since a share belongs to a project.
+  const pinned = useMemo(
+    () => (switchers.project ? undefined : pinnedProject(dashboard.widgets)),
+    [switchers.project, dashboard.widgets]
+  )
+  const shown = all.find((p) => p.project_id === (switchers.project ? sel.projectId : pinned))
   const projectId = shown?.project_id
   const projectName = shown?.name
   const { from, to } = range

@@ -1668,8 +1668,10 @@ view.
 
 **Share… and Download PNG** are in a widget card's "…" menu. Download PNG
 saves the 2400×1260 card as `<widget-name>-<from>-<to>.png` and stores
-nothing; it is there on a dashboard without a project switcher too, where
-Share… is not, since a share needs a project. Share… opens a dialog: a preview, which is the captured image
+nothing. Share… needs a project, since a share belongs to one: the project
+switcher's, or on a dashboard without one, the project every `query` widget
+there pins with `project_id` (SQL and markdown widgets name none and are
+passed over). With no such project, only Download PNG is offered. Share… opens a dialog: a preview, which is the captured image
 itself, an **Archive after** choice and **Create and copy link**, which makes
 the link and copies it in one click. The dialog then keeps its layout: the
 button copies the link again, **Copy embed code** and **Open** join it, and

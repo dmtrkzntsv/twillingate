@@ -3,8 +3,9 @@ import type { ArchiveAfter, Widget, WidgetShare } from './api'
 /** What a widget needs to be shared or downloaded: the page's project and range, and whether it may write. */
 export interface ShareContext {
   /**
-   * The project the page shows; absent on a dashboard with no project
-   * switcher. A share belongs to a project, so Share… is not offered
+   * The project the page shows; on a dashboard with no project switcher,
+   * the one project its query widgets are pinned to (pinnedProject), else
+   * absent. A share belongs to a project, so Share… is not offered
    * without one; Download PNG, which stores nothing, is.
    */
   project?: { id: number; name: string }
@@ -28,6 +29,26 @@ export function shareCaption(
     ...(ctx.project && widget.follows_project ? { projectName: ctx.project.name } : {}),
     ...(ctx.rangeShown && widget.follows_range ? { from: ctx.from, to: ctx.to } : {}),
   }
+}
+
+/**
+ * The one project a dashboard's structured queries are pinned to: each
+ * query widget names it as its `project_id`, and no query names another
+ * or none. SQL and markdown widgets name no project and are passed over;
+ * undefined when there is no query widget, or no single project.
+ */
+export function pinnedProject(widgets: readonly Pick<Widget, 'source'>[]): number | undefined {
+  const ids = new Set<unknown>()
+  for (const { source } of widgets) {
+    if (source.type !== 'query') continue
+    try {
+      ids.add((JSON.parse(source.content) as { project_id?: unknown } | null)?.project_id)
+    } catch {
+      return undefined
+    }
+  }
+  const [id] = ids
+  return ids.size === 1 && typeof id === 'number' ? id : undefined
 }
 
 /** The archive-after choices, in the order the pickers list them. */
