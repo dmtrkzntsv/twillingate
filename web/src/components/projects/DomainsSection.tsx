@@ -22,8 +22,8 @@ export default function DomainsSection({ projectId }: { projectId: number }) {
   if (domains.length === 0) return null
   const now = new Date()
   return (
-    <section aria-label="Domains" className="flex flex-col gap-3 rounded-lg border p-4">
-      <h2 className="text-base font-semibold">Domains</h2>
+    <section aria-label="Domain expiry" className="flex flex-col gap-3 rounded-lg border p-4">
+      <h2 className="text-base font-semibold">Domain expiry</h2>
       <Table>
         <TableHeader>
           <TableRow>

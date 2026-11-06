@@ -62,7 +62,7 @@ test('blocks, renames and merges events from a project settings page', async ({ 
 
     await login(page)
     // The default range ends yesterday; these events are from today.
-    await page.goto(`/app/projects/${id}/settings?range=today`)
+    await page.goto(`/app/projects/${id}/settings/events?range=today`)
     const events = page.getByRole('region', { name: 'Events' })
     const rows = events.getByRole('table')
     await expect(rows.getByRole('row', { name: /signup/ })).toContainText('2')

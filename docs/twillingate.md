@@ -204,8 +204,8 @@ are stored; those sent while it was blocked were dropped and stay gone.
 to, created_at}` with `action` `rename` (left by a rename or a merge) or
 `block`, and no `to` for a block.
 
-The console lists a project's event names for these tools on its Settings page,
-from `GET /api/projects/{project_id}/event-names`, a route with no MCP tool
+The console lists a project's event names for these tools under Settings →
+Events, from `GET /api/projects/{project_id}/event-names`, a route with no MCP tool
 (`product_events` and `measures` answer agents). It lists the busiest 200 names
 in the range and leaves out `$` names, which take no rule. Each rule shows on
 its event there: a blocked event is marked, and listed even with nothing in the
@@ -336,8 +336,8 @@ identifies itself as
   to `https://www.example.com` reads as down until it adds the `www` origin.
   Up to 5 hops are followed; a 6th is not requested and fails with `redirect`
   (`too many redirects`). A chain of 3 or more is only a warning: the check
-  stays up, and Settings → Monitoring says the site redirects that many times
-  before answering, which slows every visit.
+  stays up, and Settings → Domains, under Monitoring, says the site
+  redirects that many times before answering, which slows every visit.
 - **Private addresses** are refused on every install: an origin or redirect hop
   that resolves to a loopback, private, link-local, CGNAT, multicast, 6to4 or unspecified address
   fails with `blocked`, checked when the connection is made. A site reachable
@@ -389,9 +389,9 @@ A domain has `domain`, `origins`, the enabled monitors' on it,
 `expires_at` and `checked_at`. `twillingate monitor list` prints them, `redirects`
 when above 0 and `last` once there is one.
 
-**Checking now.** `check_monitor` (`twillingate monitor check`, or Check now in
-Settings → Monitoring) asks for one check of an origin's three readings outside
-the schedule: its availability, its certificate and its main domain, whatever the
+**Checking now.** `check_monitor` (`twillingate monitor check`, or Check now
+under Monitoring in Settings → Domains) asks for one check of an origin's three
+readings outside the schedule: its availability, its certificate and its main domain, whatever the
 daily readings' age, with the same `MONITOR_TIMEOUT`. The server starts it within
 about a second and writes the rows as usual; a certificate or RDAP read that fails
 keeps the last date as usual. It moves no slot, and the monitor's own slot
