@@ -5,8 +5,8 @@ export interface ShareContext {
   /**
    * The project the page shows; on a dashboard with no project switcher,
    * the one project its query widgets are pinned to (pinnedProject), else
-   * absent. A share belongs to a project, so Share… is not offered
-   * without one; Download PNG, which stores nothing, is.
+   * absent: a share then has no project, so it never names one and is
+   * never deleted with one.
    */
   project?: { id: number; name: string }
   /** The range's first and last day, YYYY-MM-DD: the page's, or the default 7 days with no range switcher. */
@@ -51,14 +51,20 @@ export function pinnedProject(widgets: readonly Pick<Widget, 'source'>[]): numbe
   return ids.size === 1 && typeof id === 'number' ? id : undefined
 }
 
-/** The archive-after choices, in the order the pickers list them. */
-export const ARCHIVE_AFTER: { value: ArchiveAfter; label: string }[] = [
-  { value: '7d', label: '1 week' },
-  { value: '30d', label: '1 month' },
-  { value: '90d', label: '3 months' },
-  { value: '365d', label: '1 year' },
-  { value: 'project', label: 'Project lifetime' },
-]
+/**
+ * The archive-after choices, in the order the pickers list them: the
+ * periods, then no date, which is the project's lifetime for a share with
+ * a project and "Never" for one without.
+ */
+export function archiveAfterChoices(hasProject: boolean): { value: ArchiveAfter; label: string }[] {
+  return [
+    { value: '7d', label: '1 week' },
+    { value: '30d', label: '1 month' },
+    { value: '90d', label: '3 months' },
+    { value: '365d', label: '1 year' },
+    hasProject ? { value: 'project', label: 'Project lifetime' } : { value: 'never', label: 'Never' },
+  ]
+}
 
 export const DEFAULT_ARCHIVE_AFTER: ArchiveAfter = '30d'
 
@@ -89,10 +95,11 @@ export function rangeInWords(from: string, to: string): string {
 
 /**
  * When a share archives itself: "Nov 4" (UTC), with the year when it is not
- * this one ("Jan 4, 2027"), or "Project lifetime" when it never does.
+ * this one ("Jan 4, 2027"), or with no date "Project lifetime", or "Never"
+ * for a share with no project.
  */
 export function archiveLabel(share: WidgetShare, now: Date = new Date()): string {
-  if (!share.archive_at) return 'Project lifetime'
+  if (!share.archive_at) return share.project_id === null ? 'Never' : 'Project lifetime'
   const d = new Date(share.archive_at)
   return format(d, d.getUTCFullYear() !== now.getUTCFullYear())
 }

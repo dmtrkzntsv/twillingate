@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, endpoints, type Project, type Widget } from '@/lib/api'
 import { span } from '@/lib/grid'
 import { answerFor, dashboardsList, details, launchWeek, product, projects, views, widgetsById } from '@/test/fixtures'
-import { renderWithProviders } from '@/test/render'
+import { renderWithProviders, testClient } from '@/test/render'
 import Dashboard from './Dashboard'
 import Home from './Home'
 
@@ -26,7 +26,7 @@ function mockApi(opts: { projects?: Project[] } = {}) {
   return vi.spyOn(endpoints, 'widgetData').mockImplementation(async (id) => answerFor(widgetsById.get(id)!))
 }
 
-function renderAt(url: string) {
+function renderAt(url: string, client = testClient()) {
   return renderWithProviders(
     <MemoryRouter initialEntries={[url]}>
       <Routes>
@@ -40,7 +40,8 @@ function renderAt(url: string) {
           }
         />
       </Routes>
-    </MemoryRouter>
+    </MemoryRouter>,
+    client
   )
 }
 
@@ -179,7 +180,7 @@ describe('Dashboard', () => {
     expect(screen.getByRole('menuitem', { name: 'Download PNG' })).toBeInTheDocument()
   })
 
-  it('offers only Download PNG on a dashboard with no project switcher', async () => {
+  it('offers Share… and Download PNG on a dashboard with no project switcher', async () => {
     const user = userEvent.setup()
     const widgetData = mockApi()
     const noProject = { ...product, follows_project: false, widgets: product.widgets.map((w) => ({ ...w, follows_project: false })) }
@@ -190,7 +191,29 @@ describe('Dashboard', () => {
     expect(screen.queryByRole('button', { name: /^Project/ })).not.toBeInTheDocument()
     await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
     expect(await screen.findByRole('menuitem', { name: 'Download PNG' })).toBeInTheDocument()
-    expect(screen.queryByRole('menuitem', { name: 'Share…' })).not.toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Share…' })).toBeInTheDocument()
+  })
+
+  it.each([
+    ['one project, under it', 7, 'Project lifetime', 'Never'],
+    ['no single project, with none', undefined, 'Never', 'Project lifetime'],
+  ])('shares a dashboard pinned to %s', async (_, pinned, offered, notOffered) => {
+    const user = userEvent.setup()
+    const widgetData = mockApi()
+    const query = JSON.stringify({ project_id: pinned, query: { kind: 'stat', table: 'views', metrics: [{ op: 'count' }] } })
+    vi.spyOn(endpoints, 'dashboard').mockResolvedValue({
+      ...product,
+      follows_project: false,
+      widgets: product.widgets.map((w) => ({ ...w, follows_project: false, source: { type: 'query' as const, content: query } })),
+    })
+    renderAt('/dashboards/2')
+
+    await waitFor(() => expect(widgetData).toHaveBeenCalled())
+    await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
+    await user.click(await screen.findByRole('menuitem', { name: 'Share…' }))
+    const select = await screen.findByLabelText('Archive after')
+    await waitFor(() => expect(within(select).getByRole('option', { name: offered })).toBeInTheDocument())
+    expect(within(select).queryByRole('option', { name: notOffered })).not.toBeInTheDocument()
   })
 
   it('shows a tablist for a two-tab user group, its tabs sortable', async () => {
@@ -457,6 +480,7 @@ describe('Dashboard', () => {
       'Rename',
       'Duplicate',
       'Copy to dashboard…',
+      'Share…',
       'Download PNG',
       'Archive',
     ])

@@ -20,10 +20,10 @@ const maxShareUpload = 12 << 20 // two 5 MB images and the fields
 
 type createWidgetShareIn struct {
 	WidgetID     int64  `json:"widget_id" jsonschema:"the widget to share"`
-	ProjectID    int64  `json:"project_id" jsonschema:"the project the picture shows"`
+	ProjectID    int64  `json:"project_id,omitempty" jsonschema:"the project the picture shows; omit for none (a widget shared from a dashboard with no project), and the share is then never deleted with a project and never names one"`
 	From         string `json:"from" jsonschema:"range start, YYYY-MM-DD"`
 	To           string `json:"to" jsonschema:"range end, YYYY-MM-DD, not in the future"`
-	ArchiveAfter string `json:"archive_after,omitempty" jsonschema:"7d, 30d, 90d, 365d or project; default 30d"`
+	ArchiveAfter string `json:"archive_after,omitempty" jsonschema:"7d, 30d, 90d, 365d, or for no date project (with a project) or never (without one); default 30d"`
 	Image        string `json:"image" jsonschema:"1200×630 PNG file, at most 5 MB"`
 	Image2x      string `json:"image_2x" jsonschema:"2400×1260 PNG file, at most 5 MB"`
 	// Strings, as multipart fields are: 1, 0, true or false.
@@ -50,12 +50,12 @@ func (h *host) widgetShareImage(ctx context.Context, in widgetShareIn) ([]byte, 
 
 type widgetShareDateIn struct {
 	ID           string `json:"id" jsonschema:"share id (a UUID)"`
-	ArchiveAfter string `json:"archive_after" jsonschema:"7d, 30d, 90d, 365d or project (no date: the share lives as long as its project)"`
+	ArchiveAfter string `json:"archive_after" jsonschema:"7d, 30d, 90d, 365d, or for no date project (a share with a project: it lives as long as the project) or never (a share with none)"`
 }
 
 type widgetShareRestoreIn struct {
 	ID           string `json:"id" jsonschema:"share id (a UUID)"`
-	ArchiveAfter string `json:"archive_after,omitempty" jsonschema:"7d, 30d, 90d, 365d or project; default 30d"`
+	ArchiveAfter string `json:"archive_after,omitempty" jsonschema:"7d, 30d, 90d, 365d, or for no date project (with a project) or never (without one); default 30d"`
 }
 
 // shareTextParts and shareFileParts are what create_widget_share's
@@ -84,7 +84,7 @@ func (h *host) createWidgetShare(w http.ResponseWriter, r *http.Request) {
 }
 
 func readShareUpload(w http.ResponseWriter, r *http.Request) (reporting.NewShare, error) {
-	const want = "expected multipart/form-data with widget_id, project_id, from, to, image and image_2x"
+	const want = "expected multipart/form-data with widget_id, from, to, image and image_2x"
 	if r.URL.RawQuery != "" {
 		return reporting.NewShare{}, invalidf("POST takes a multipart body, not query parameters")
 	}
@@ -106,8 +106,11 @@ func readShareUpload(w http.ResponseWriter, r *http.Request) (reporting.NewShare
 	}
 	var in reporting.NewShare
 	for name, dst := range map[string]*int64{"widget_id": &in.WidgetID, "project_id": &in.ProjectID} {
+		if name == "project_id" && r.FormValue(name) == "" {
+			continue // 0: no project
+		}
 		n, err := strconv.ParseInt(r.FormValue(name), 10, 64)
-		if err != nil {
+		if err != nil || (name == "project_id" && n <= 0) {
 			return reporting.NewShare{}, invalidf("%s must be an integer, got %q", name, r.FormValue(name))
 		}
 		*dst = n
@@ -180,21 +183,21 @@ func (h *host) registerWidgetShares(r *registrar) {
 	const p = "/api/widget-shares"
 
 	restRaw[createWidgetShareIn, reporting.WidgetShareOut](r, spec{Name: "create_widget_share", Method: "POST", Path: p, Status: http.StatusCreated,
-		Description: "Share a widget: store the two PNGs the web app captured of it (image 1200×630, image_2x 2400×1260, each at most 5 MB) as a public, frozen picture at /share/<id>, with the widget's title, the project and the range they show. multipart/form-data. caption_project and caption_range (1 or 0, default 1) say whether the page names the project and the range; the web sends 0 for what the widget does not follow. archive_after (7d, 30d, 90d, 365d or project; default 30d) sets when the share archives itself; project gives it no date, so it lives as long as its project. Needs CONSOLE_URL (or INGEST_URL) for its links. REST only: an agent has no browser to capture with."},
+		Description: "Share a widget: store the two PNGs the web app captured of it (image 1200×630, image_2x 2400×1260, each at most 5 MB) as a public, frozen picture at /share/<id>, with the widget's title, the project and the range they show. multipart/form-data. project_id is optional: omit it for a widget shared from a dashboard with no project, and the share then names none and is never deleted with a project. caption_project and caption_range (1 or 0, default 1) say whether the page names the project and the range; the web sends 0 for what the widget does not follow. archive_after (7d, 30d, 90d, 365d, project or never; default 30d) sets when the share archives itself; project (a share with a project) and never (one without) give it no date. Needs CONSOLE_URL (or INGEST_URL) for its links. REST only: an agent has no browser to capture with."},
 		h.createWidgetShare)
 	expose(r, spec{Name: "list_widget_shares", Annotations: ro, Method: "GET", Path: p,
-		Description: "Widget shares, live ones newest first, archived ones most recently archived first: each one's id, its public page url (/share/<id>) and image URLs, the widget and dashboard it came from (null once the widget is gone), the project, range and title it shows, created_at, archive_at (when it archives itself; null: it lives as long as its project) and archived_at (null: live). Filter by widget_id, and by state: live, or archived (which includes a share whose archive_at has passed and that the daily pass has not yet archived)."},
+		Description: "Widget shares, live ones newest first, archived ones most recently archived first: each one's id, its public page url (/share/<id>) and image URLs, the widget and dashboard it came from (null once the widget is gone), the project (null: none), range and title it shows, created_at, archive_at (when it archives itself; null: no date, so it lives as long as its project, or until archived by hand with none) and archived_at (null: live). Filter by widget_id, and by state: live, or archived (which includes a share whose archive_at has passed and that the daily pass has not yet archived)."},
 		h.listWidgetShares)
 	restImage(r, spec{Name: "widget_share_image", Method: "GET", Path: p + "/{id}/image",
 		Description: "A share's 1200×630 picture as image/png, whatever its state: unlike the public /share/<id>.png, it still answers once the share is archived. Authenticated, so the console's Archive page can show it. REST only: it is a picture, not data."},
 		h.widgetShareImage)
 	expose(r, spec{Name: "update_widget_share", Annotations: idem, Method: "PATCH", Path: p + "/{id}",
-		Description: "Change when a live share archives itself: archive_after is 7d, 30d, 90d or 365d from now, or project for no date (it then lives as long as its project). An archived share is a conflict: restore_widget_share it instead. The picture itself never changes; a new one is a new share."},
+		Description: "Change when a live share archives itself: archive_after is 7d, 30d, 90d or 365d from now, or for no date project (a share with a project: it then lives as long as the project) or never (a share with none). An archived share is a conflict: restore_widget_share it instead. The picture itself never changes; a new one is a new share."},
 		h.updateWidgetShare)
 	expose(r, spec{Name: "archive_widget_share", Annotations: idem, Method: "POST", Path: p + "/{id}/archive",
 		Description: "Take a share down now: its page and images answer 404. Feeds that already unfurled the link keep their copy of the image. Reversible with restore_widget_share; purged RETENTION_ARCHIVED_DAYS (default 30) after archiving unless restored."},
 		h.archiveWidgetShare)
 	expose(r, spec{Name: "restore_widget_share", Annotations: idem, Method: "POST", Path: p + "/{id}/restore",
-		Description: "Put an archived share back up at its old URL, with a new archive date: archive_after is 7d, 30d, 90d or 365d from now, or project (no date); default 30d, since the old date has usually passed."},
+		Description: "Put an archived share back up at its old URL, with a new archive date: archive_after is 7d, 30d, 90d or 365d from now, or for no date project (with a project) or never (without one); default 30d, since the old date has usually passed."},
 		h.restoreWidgetShare)
 }

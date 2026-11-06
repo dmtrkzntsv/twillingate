@@ -210,6 +210,9 @@ test('a dashboard with no project switcher shares under the project its queries 
   // The sidebar's Projects list closed: it loads the projects too while
   // open, so the page has to load them itself.
   await page.evaluate(() => localStorage.setItem('twillingate.sidebar.projects', 'false'))
+  // And even with the project list failing, the share is made under the
+  // project the widgets pin, never as one with no project.
+  await page.route('**/api/projects', (route) => route.abort())
   await page.goto(`/app/dashboards/${dashboardId}`)
   await page.waitForLoadState('networkidle')
   await expect(page.getByRole('button', { name: /^Project:/ })).toHaveCount(0)
@@ -219,4 +222,38 @@ test('a dashboard with no project switcher shares under the project its queries 
   const res = await request.get('/api/widget-shares', { headers: authHeaders() })
   const { shares } = (await res.json()) as { shares: { id: string; project_id: number }[] }
   expect(shares.find((s) => s.id === id)?.project_id).toBe(projectId)
+})
+
+test('a dashboard with no project shares with none, archiving never if asked', async ({ page, request }) => {
+  test.setTimeout(120_000)
+  const created = await request.post('/api/dashboards', {
+    headers: authHeaders(),
+    data: {
+      title: 'Share no project',
+      range: '7d',
+      widgets: [{ component: 'markdown', title: 'notes', source: { type: 'md', content: 'No **project** here' }, width: 6, height: 4 }],
+    },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { dashboard_id: dashboardId } = (await created.json()) as { dashboard_id: number }
+
+  await login(page)
+  await page.goto(`/app/dashboards/${dashboardId}`)
+  await page.waitForLoadState('networkidle')
+  await chooseAction(page, page.locator('[data-slot="widget-card"]').first(), 'Share…')
+  const dialog = page.getByRole('dialog', { name: 'Share widget' })
+  await expect(dialog.getByRole('img', { name: 'Preview of the share card' })).toBeVisible({ timeout: 30_000 })
+  await dialog.getByLabel('Archive after').selectOption('never')
+  await page.context().grantPermissions(['clipboard-read', 'clipboard-write'], { origin: ORIGIN })
+  await dialog.getByRole('button', { name: 'Create and copy link' }).click()
+  const open = dialog.getByRole('link', { name: 'Open' })
+  await expect(open).toBeVisible()
+  const id = (await open.getAttribute('href'))!.split('/').pop()!
+
+  const res = await request.get('/api/widget-shares', { headers: authHeaders() })
+  const { shares } = (await res.json()) as { shares: { id: string; project_id: number | null; archive_at: string | null }[] }
+  expect(shares.find((s) => s.id === id)).toMatchObject({ project_id: null, archive_at: null })
+  // The Shares page says it never archives.
+  await page.goto('/app/shares')
+  await expect(page.getByRole('button', { name: 'Archives Never' }).first()).toBeVisible()
 })

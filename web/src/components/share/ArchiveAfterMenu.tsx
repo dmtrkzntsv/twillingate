@@ -3,11 +3,13 @@ import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import type { ArchiveAfter } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { ARCHIVE_AFTER } from '@/lib/share'
+import { archiveAfterChoices } from '@/lib/share'
 
 interface Props {
-  /** When the share archives now: "Nov 4", or "Project lifetime". */
+  /** When the share archives now: "Nov 4", "Project lifetime" or "Never". */
   current: string
+  /** Whether the share has a project: its no-date choice is then the project's lifetime, else "Never". */
+  hasProject: boolean
   onChange: (value: ArchiveAfter) => void
   disabled?: boolean
   /** The compact trigger, for a line of small text (the Shares page's folded line). */
@@ -19,7 +21,7 @@ interface Props {
  * archive-after periods, counted from today. For a list, where a select per
  * row would be heavy.
  */
-export function ArchiveAfterMenu({ current, onChange, disabled, small }: Props) {
+export function ArchiveAfterMenu({ current, hasProject, onChange, disabled, small }: Props) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -36,7 +38,7 @@ export function ArchiveAfterMenu({ current, onChange, disabled, small }: Props) 
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start">
         <DropdownMenuLabel className="text-xs font-normal text-muted-foreground">Archive after, from today</DropdownMenuLabel>
-        {ARCHIVE_AFTER.map((o) => (
+        {archiveAfterChoices(hasProject).map((o) => (
           <DropdownMenuItem key={o.value} onClick={() => onChange(o.value)}>
             {o.label}
           </DropdownMenuItem>

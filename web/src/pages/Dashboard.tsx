@@ -87,13 +87,7 @@ function PageNotice({ text, children }: { text: string; children: ReactNode }) {
 }
 
 function DashboardView({ list, dashboard, frozen }: ViewProps) {
-  // With no project switcher, the one project the widgets are pinned to,
-  // which the page shares under; the projects are loaded for its name.
-  const pinned = useMemo(
-    () => (dashboard.follows_project ? undefined : pinnedProject(dashboard.widgets)),
-    [dashboard.follows_project, dashboard.widgets]
-  )
-  const projects = useQuery({ ...projectsQuery, enabled: dashboard.follows_project || pinned !== undefined })
+  const projects = useQuery({ ...projectsQuery, enabled: dashboard.follows_project })
   const all = projects.data?.projects ?? []
   const { sel, switchers, range, paramsFor, change, openTab } = useDashboardSelection(dashboard, all, list.timezone, frozen)
 
@@ -104,12 +98,17 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const { move, restore, setSidebar, pending } = useDashboardActions()
   const widgetActions = useWidgetActions()
   // What a card needs to be shared or downloaded: the project and range
-  // shown, or with no project switcher the pinned one. With no project,
-  // Download PNG is still offered; Share… is not, since a share belongs
-  // to a project.
-  const shown = all.find((p) => p.project_id === (switchers.project ? sel.projectId : pinned))
-  const projectId = shown?.project_id
-  const projectName = shown?.name
+  // shown, or with no project switcher the one project the widgets pin,
+  // read from them alone (a pinned project since deleted is refused when
+  // shared). No widget there follows the project, so no caption names it,
+  // and its name is not needed. With no project, a share has none.
+  const pinned = useMemo(
+    () => (switchers.project ? undefined : pinnedProject(dashboard.widgets)),
+    [switchers.project, dashboard.widgets]
+  )
+  const shown = all.find((p) => p.project_id === sel.projectId)
+  const projectId = switchers.project ? shown?.project_id : pinned
+  const projectName = switchers.project ? shown?.name : ''
   const { from, to } = range
   const rangeShown = sel.range !== undefined
   const share = useMemo<ShareContext>(

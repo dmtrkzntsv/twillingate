@@ -21,10 +21,15 @@ interface Props {
 export function RestoreShareDialog({ share, onClose }: Props) {
   const { restore, pending } = useWidgetShareActions()
   const [archiveAfter, setArchiveAfter] = useState<ArchiveAfter>(DEFAULT_ARCHIVE_AFTER)
-  // The title outlives `share` while the dialog fades out, instead of going blank.
+  // The title and the archive choices outlive `share` while the dialog
+  // fades out, instead of going blank or changing.
   const [title, setTitle] = useState('')
+  const [hasProject, setHasProject] = useState(true)
   useEffect(() => {
-    if (share) setTitle(share.title)
+    if (share) {
+      setTitle(share.title)
+      setHasProject(share.project_id !== null)
+    }
   }, [share])
 
   const close = () => {
@@ -50,7 +55,12 @@ export function RestoreShareDialog({ share, onClose }: Props) {
         <form onSubmit={submit} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="restore-share-archive-after">Archive after</Label>
-            <ArchiveAfterSelect id="restore-share-archive-after" value={archiveAfter} onChange={setArchiveAfter} />
+            <ArchiveAfterSelect
+              id="restore-share-archive-after"
+              value={archiveAfter}
+              hasProject={hasProject}
+              onChange={setArchiveAfter}
+            />
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={close}>
