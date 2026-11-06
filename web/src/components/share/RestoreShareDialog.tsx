@@ -50,7 +50,12 @@ export function RestoreShareDialog({ share, onClose }: Props) {
         <form onSubmit={submit} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="restore-share-archive-after">Archive after</Label>
-            <ArchiveAfterSelect id="restore-share-archive-after" value={archiveAfter} onChange={setArchiveAfter} />
+            <ArchiveAfterSelect
+              id="restore-share-archive-after"
+              value={archiveAfter}
+              hasProject={share?.project_id !== null}
+              onChange={setArchiveAfter}
+            />
           </div>
           <DialogFooter>
             <Button type="button" variant="outline" onClick={close}>

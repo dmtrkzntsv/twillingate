@@ -454,8 +454,8 @@ is older than `REPORTING_CACHE_MAX_AGE`:
 | `copy_widget` | `widget_id`, `dashboard_id`, `after`, `where`, `project_id` | the independent copy, same size; the original may be on a system dashboard. `where` and `project_id` narrow a `query` widget's copy as `duplicate_dashboard`'s do |
 | `archive_widget` | `widget_id` | hides it in place |
 | `restore_widget` | `widget_id` | puts it back where it was |
-| `list_widget_shares` | `widget_id`?, `state`? (`live`/`archived`) | every share, live ones newest first, archived ones most recently archived first, with its URLs and archive date |
-| `update_widget_share` | `id`, `archive_after` | the share, its `archive_at` counted from now (`null` for `project`); an archived share is a `409 conflict` |
+| `list_widget_shares` | `widget_id`?, `state`? (`live`/`archived`) | every share, live ones newest first, archived ones most recently archived first, with its URLs and archive date; `project_id` and `project_name` are `null` for a share with no project |
+| `update_widget_share` | `id`, `archive_after` | the share, its `archive_at` counted from now (`null` for `project` or `never`); an archived share is a `409 conflict` |
 | `archive_widget_share` | `id` | the share, taken down at once: its page and images answer 404 |
 | `restore_widget_share` | `id`, `archive_after`? (default `30d`) | the share, live again at its old URL |
 
@@ -512,7 +512,7 @@ public `/share/<id>.png` stops at archiving
 | `PUT` | `/api/dashboards/{dashboard_id}/view` | `view`, REST only: no MCP tool | body: `project_id`, `range`, and `from`/`to` for `custom` → `{"status":"saved"}` |
 | `POST` | `/api/widgets/stream` | `widget_stream`, REST only: no MCP tool | body: `{"widgets":[{"widget_id","project_id","from","to","fresh"}]}`, at most 64 → `text/event-stream`: one `widget` event per widget, `{"widget_id","data"}` or `{"widget_id","error":{"code","message"}}`, then `done` |
 | `POST` | `/api/widgets/preview` | `preview_widget`, REST only: no MCP tool | body: `component`, `props`, `source`, `project_id`, `from`, `to` → `{columns, rows, truncated, approximate, problem, elapsed_ms}` |
-| `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id`, `from`, `to`, `archive_after`, `caption_project`, `caption_range`, `image`, `image_2x` → 201 |
+| `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id` (optional), `from`, `to`, `archive_after`, `caption_project`, `caption_range`, `image`, `image_2x` → 201 |
 | `GET` | `/api/widget-shares` | `list_widget_shares` | query: `widget_id`, `state` |
 | `PATCH` | `/api/widget-shares/{id}` | `update_widget_share` | body: `archive_after` |
 | `POST` | `/api/widget-shares/{id}/archive` | `archive_widget_share` | — |
@@ -1668,10 +1668,11 @@ view.
 
 **Share… and Download PNG** are in a widget card's "…" menu. Download PNG
 saves the 2400×1260 card as `<widget-name>-<from>-<to>.png` and stores
-nothing. Share… needs a project, since a share belongs to one: the project
-switcher's, or on a dashboard without one, the project every `query` widget
-there pins with `project_id` (SQL and markdown widgets name none and are
-passed over). With no such project, only Download PNG is offered. Share… opens a dialog: a preview, which is the captured image
+nothing. A share is made under the project switcher's project, or on a
+dashboard without one, the project every `query` widget there pins with
+`project_id` (SQL and markdown widgets name none and are passed over). With
+no such project the share has none: its page names no project, and it is
+never deleted with one. Share… opens a dialog: a preview, which is the captured image
 itself, an **Archive after** choice and **Create and copy link**, which makes
 the link and copies it in one click. The dialog then keeps its layout: the
 button copies the link again, **Copy embed code** and **Open** join it, and
@@ -1688,10 +1689,12 @@ link, not an iframe:
 ```
 
 **Archive after** is 1 week, 1 month (the default), 3 months, 1 year or
-Project lifetime: `archive_after` `7d`, `30d`, `90d`, `365d` or `project`.
-A dated share answers 404 from its `archive_at` on, at once; the next daily
-pass then archives it, with `archived_at` set to that date. Project lifetime
-sets no date. The date can be changed on a live share
+no date: `archive_after` `7d`, `30d`, `90d`, `365d`, or `project` (Project
+lifetime) for a share with a project and `never` (Never) for one without;
+each refuses the other. A dated share answers 404 from its `archive_at` on,
+at once; the next daily pass then archives it, with `archived_at` set to
+that date. No date sets none: the share stays until the project is deleted,
+or with no project until it is archived by hand. The date can be changed on a live share
 (`update_widget_share`, counted from now), and is asked again on restore
 (`restore_widget_share`, default `30d`). Feeds keep their copy: a platform
 that already unfurled the link keeps the card image in its own cache, and
@@ -1703,11 +1706,12 @@ the title, the project name and the images, so archiving, purging or
 deleting the widget or its dashboard leaves it up; `list_widget_shares`
 then gives `widget_id`, `dashboard_id` and `dashboard_title` as `null`.
 Archiving the project leaves its shares up too. Deleting the project, with
-`project delete` or by the purge, deletes its shares, live and archived.
+`project delete` or by the purge, deletes its shares, live and archived; a
+share with no project is never deleted that way.
 
 **The Shares page** (`/app/shares`, at the bottom of the sidebar above Gallery and Archive) lists live shares, newest first: the 1x image,
-linking to the share's page; the title, with the dashboard and project it
-came from, linking to the dashboard (plain text once the widget is gone);
+linking to the share's page; the title, with the dashboard and project (if
+any) it came from, linking to the dashboard (plain text once the widget is gone);
 the range, with the day it was created on hover; when it archives, changeable
 in place from the date's pencil; **Copy link**; and a "…" menu with **Copy
 embed code**, **Open** and **Archive**. `?widget=<id>` narrows it
@@ -1718,8 +1722,10 @@ archived shares are on the Archive page
 Creating a share is REST only (`POST /api/widget-shares`, multipart). It is
 refused (`400 invalid`) when an image is not a PNG of exactly its size or is
 over 5 MB, when the range spans more than 365 days or ends after today, and
-when `archive_after` is not one of the five values; an unknown or archived
-widget is a `404`. `caption_project` and `caption_range` (`1` or `0`,
+when `archive_after` is not one of the five values the share takes; an
+unknown or archived widget, or an unknown project, is a `404`. `project_id`
+is optional: without it the share has no project, and `caption_project` is
+then always false. `caption_project` and `caption_range` (`1` or `0`,
 default `1`) say whether the page names the project and the range; each
 share in `list_widget_shares` reports them as booleans.
 

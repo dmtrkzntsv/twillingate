@@ -1,11 +1,11 @@
-import { act, screen, waitFor } from '@testing-library/react'
+import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useState } from 'react'
 import { MemoryRouter } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { endpoints, type Widget, type WidgetShare } from '@/lib/api'
 import { widgets } from '@/components/widgets'
-import { embedCode } from '@/lib/share'
+import { embedCode, type ShareContext } from '@/lib/share'
 import { renderWithProviders } from '@/test/render'
 import { ShareDialog } from './ShareDialog'
 
@@ -28,7 +28,7 @@ const widget: Widget = {
   follows_project: true,
   follows_range: true,
 }
-const share = {
+const share: ShareContext = {
   project: { id: 7, name: 'blog' },
   from: '2026-09-05',
   to: '2026-10-04',
@@ -55,10 +55,10 @@ const created: WidgetShare = {
   caption_range: true,
 }
 
-function dialog(w: Widget = widget) {
+function dialog(w: Widget = widget, ctx: ShareContext = share) {
   return renderWithProviders(
     <MemoryRouter>
-      <ShareDialog open onOpenChange={() => {}} widget={w} data={widgets.stat.examples[0].data} share={share} />
+      <ShareDialog open onOpenChange={() => {}} widget={w} data={widgets.stat.examples[0].data} share={ctx} />
     </MemoryRouter>,
   )
 }
@@ -195,6 +195,21 @@ describe('ShareDialog', () => {
     await user.selectOptions(screen.getByLabelText('Archive after'), 'project')
     await user.click(button)
     expect(create.mock.calls[0][0].get('archive_after')).toBe('project')
+  })
+
+  it('shares with no project from a page with none: no project_id, and Never in place of the project lifetime', async () => {
+    const user = userEvent.setup()
+    const create = vi.spyOn(endpoints, 'createWidgetShare').mockResolvedValue({ ...created, project_id: null, project_name: null })
+    dialog(widget, { ...share, project: undefined })
+    const button = await createButton()
+    const select = screen.getByLabelText('Archive after')
+    expect(within(select).queryByRole('option', { name: 'Project lifetime' })).not.toBeInTheDocument()
+    await user.selectOptions(select, 'never')
+    await user.click(button)
+    const form = create.mock.calls[0][0]
+    expect(form.has('project_id')).toBe(false)
+    expect(form.get('caption_project')).toBe('0')
+    expect(form.get('archive_after')).toBe('never')
   })
 
   it('changes the archive date of the link it made', async () => {

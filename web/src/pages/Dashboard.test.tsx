@@ -179,7 +179,7 @@ describe('Dashboard', () => {
     expect(screen.getByRole('menuitem', { name: 'Download PNG' })).toBeInTheDocument()
   })
 
-  it('offers only Download PNG on a dashboard with no project switcher', async () => {
+  it('offers Share… and Download PNG on a dashboard with no project switcher', async () => {
     const user = userEvent.setup()
     const widgetData = mockApi()
     const noProject = { ...product, follows_project: false, widgets: product.widgets.map((w) => ({ ...w, follows_project: false })) }
@@ -190,7 +190,7 @@ describe('Dashboard', () => {
     expect(screen.queryByRole('button', { name: /^Project/ })).not.toBeInTheDocument()
     await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
     expect(await screen.findByRole('menuitem', { name: 'Download PNG' })).toBeInTheDocument()
-    expect(screen.queryByRole('menuitem', { name: 'Share…' })).not.toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Share…' })).toBeInTheDocument()
   })
 
   it('shows a tablist for a two-tab user group, its tabs sortable', async () => {
@@ -457,6 +457,7 @@ describe('Dashboard', () => {
       'Rename',
       'Duplicate',
       'Copy to dashboard…',
+      'Share…',
       'Download PNG',
       'Archive',
     ])

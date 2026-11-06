@@ -23,7 +23,8 @@ const (
 var archivePeriods = map[string]int{"7d": 7, "30d": 30, "90d": 90, "365d": 365}
 
 // NewShare is what CreateWidgetShare takes: the widget and project the
-// picture shows, the days it covers, when it archives, its two PNGs
+// picture shows (ProjectID 0: none, for a widget shared from a dashboard
+// with no project; such a share never names one), the days it covers, when it archives, its two PNGs
 // (1200×630 and 2400×1260), and whether its captions name the project and
 // the range (nil = yes). The web names only what the widget follows, so a
 // widget pinned to its own project or range is never captioned with the
@@ -31,7 +32,7 @@ var archivePeriods = map[string]int{"7d": 7, "30d": 30, "90d": 90, "365d": 365}
 type NewShare struct {
 	WidgetID, ProjectID          int64
 	From, To                     string // YYYY-MM-DD
-	ArchiveAfter                 string // 7d|30d|90d|365d|project; "" = 30d
+	ArchiveAfter                 string // 7d|30d|90d|365d, project (with one) or never (without); "" = 30d
 	Image, Image2x               []byte
 	CaptionProject, CaptionRange *bool
 }
@@ -47,8 +48,8 @@ type WidgetShareOut struct {
 	WidgetID       *int64  `json:"widget_id"`
 	DashboardID    *int64  `json:"dashboard_id"`
 	DashboardTitle *string `json:"dashboard_title"`
-	ProjectID      int64   `json:"project_id"`
-	ProjectName    string  `json:"project_name"`
+	ProjectID      *int64  `json:"project_id"`
+	ProjectName    *string `json:"project_name"`
 	From           string  `json:"from"`
 	To             string  `json:"to"`
 	Title          string  `json:"title"`
@@ -59,17 +60,30 @@ type WidgetShareOut struct {
 	ArchivedAt     *string `json:"archived_at"`
 }
 
-// archiveAtFor turns an archive_after value into archive_at: "" for
-// project lifetime ("project"), else now plus the period.
-func archiveAtFor(v string, now time.Time) (string, error) {
-	if v == "project" {
+// archiveAtFor turns an archive_after value into archive_at: "" for no
+// date, which is "project" (its lifetime) for a share with a project and
+// "never" for one without, else now plus the period.
+func archiveAtFor(v string, hasProject bool, now time.Time) (string, error) {
+	if days, ok := archivePeriods[v]; ok {
+		return now.UTC().AddDate(0, 0, days).Format(shareStamp), nil
+	}
+	if v == noDate(hasProject) {
 		return "", nil
 	}
-	days, ok := archivePeriods[v]
-	if !ok {
-		return "", store.Refuse(store.ErrInvalid, "archive_after %q: want 7d, 30d, 90d, 365d or project", v)
+	return "", store.Refuse(store.ErrInvalid, "archive_after %q: want %s", v, archiveChoices(hasProject))
+}
+
+// noDate is the archive_after value for no date: project for a share
+// with a project, never for one without.
+func noDate(hasProject bool) string {
+	if hasProject {
+		return "project"
 	}
-	return now.UTC().AddDate(0, 0, days).Format(shareStamp), nil
+	return "never"
+}
+
+func archiveChoices(hasProject bool) string {
+	return "7d, 30d, 90d, 365d or " + noDate(hasProject)
 }
 
 // checkPNG refuses anything but a PNG of exactly w×h, at most 5 MB.
@@ -124,7 +138,7 @@ func (s *Service) CreateWidgetShare(ctx context.Context, actor string, in NewSha
 	if archiveAfter == "" {
 		archiveAfter = "30d"
 	}
-	archiveAt, err := archiveAtFor(archiveAfter, s.now())
+	archiveAt, err := archiveAtFor(archiveAfter, in.ProjectID != 0, s.now())
 	if err != nil {
 		return WidgetShareOut{}, err
 	}
@@ -136,7 +150,7 @@ func (s *Service) CreateWidgetShare(ctx context.Context, actor string, in NewSha
 		ID: newShareID(), WidgetID: in.WidgetID, ProjectID: in.ProjectID,
 		From: in.From, To: in.To, Title: title,
 		Image: in.Image, Image2x: in.Image2x, ArchiveAt: archiveAt,
-		CaptionProject: in.CaptionProject == nil || *in.CaptionProject,
+		CaptionProject: in.ProjectID != 0 && (in.CaptionProject == nil || *in.CaptionProject),
 		CaptionRange:   in.CaptionRange == nil || *in.CaptionRange,
 	}, store.AuditEntry{Actor: actor, Action: "widget_share.create"})
 	if err != nil {
@@ -164,10 +178,14 @@ func (s *Service) ListWidgetShares(ctx context.Context, widgetID int64, state st
 // UpdateWidgetShare changes when a live share archives. The value is
 // required; an archived or due share is a conflict (restore it instead).
 func (s *Service) UpdateWidgetShare(ctx context.Context, actor, id, archiveAfter string) (WidgetShareOut, error) {
-	if archiveAfter == "" {
-		return WidgetShareOut{}, store.Refuse(store.ErrInvalid, "archive_after is required: 7d, 30d, 90d, 365d or project")
+	cur, err := s.st.GetWidgetShare(ctx, id)
+	if err != nil {
+		return WidgetShareOut{}, err
 	}
-	at, err := archiveAtFor(archiveAfter, s.now())
+	if archiveAfter == "" {
+		return WidgetShareOut{}, store.Refuse(store.ErrInvalid, "archive_after is required: %s", archiveChoices(cur.ProjectID != 0))
+	}
+	at, err := archiveAtFor(archiveAfter, cur.ProjectID != 0, s.now())
 	if err != nil {
 		return WidgetShareOut{}, err
 	}
@@ -196,7 +214,11 @@ func (s *Service) RestoreWidgetShare(ctx context.Context, actor, id, archiveAfte
 	if archiveAfter == "" {
 		archiveAfter = "30d"
 	}
-	at, err := archiveAtFor(archiveAfter, s.now())
+	cur, err := s.st.GetWidgetShare(ctx, id)
+	if err != nil {
+		return WidgetShareOut{}, err
+	}
+	at, err := archiveAtFor(archiveAfter, cur.ProjectID != 0, s.now())
 	if err != nil {
 		return WidgetShareOut{}, err
 	}
@@ -243,12 +265,14 @@ func (s *Service) shareOut(r store.WidgetShare) WidgetShareOut {
 	url := s.shareBase + "/share/" + r.ID
 	out := WidgetShareOut{
 		ID: r.ID, URL: url, ImageURL: url + ".png", Image2xURL: url + "@2x.png",
-		ProjectID: r.ProjectID, ProjectName: r.ProjectName,
 		From: r.From, To: r.To, Title: r.Title, CreatedAt: r.CreatedAt,
 		CaptionProject: r.CaptionProject, CaptionRange: r.CaptionRange,
 	}
 	if r.WidgetID != 0 {
 		out.WidgetID = &r.WidgetID
+	}
+	if r.ProjectID != 0 {
+		out.ProjectID, out.ProjectName = &r.ProjectID, &r.ProjectName
 	}
 	if r.DashboardID != 0 {
 		out.DashboardID = &r.DashboardID

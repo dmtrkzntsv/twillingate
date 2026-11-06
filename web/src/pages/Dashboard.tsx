@@ -104,9 +104,8 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const { move, restore, setSidebar, pending } = useDashboardActions()
   const widgetActions = useWidgetActions()
   // What a card needs to be shared or downloaded: the project and range
-  // shown, or with no project switcher the pinned one. With no project,
-  // Download PNG is still offered; Share… is not, since a share belongs
-  // to a project.
+  // shown, or with no project switcher the pinned one. With no project, a
+  // share has none.
   const shown = all.find((p) => p.project_id === (switchers.project ? sel.projectId : pinned))
   const projectId = shown?.project_id
   const projectName = shown?.name

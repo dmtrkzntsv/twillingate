@@ -83,6 +83,37 @@ func TestInsertWidgetShareCopiesProjectName(t *testing.T) {
 	}
 }
 
+// A share with no project names none, even when asked to, and stays when
+// a project is deleted; an unknown project is still refused.
+func TestInsertWidgetShareWithoutProject(t *testing.T) {
+	db, pid, wid := shareFixture(t)
+	ctx := context.Background()
+	got, err := db.InsertWidgetShare(ctx, store.NewWidgetShare{ID: shareID(1),
+		WidgetID: wid, From: "2026-09-01", To: "2026-09-30", Title: "Visitors",
+		Image: png1(), Image2x: png2(), CaptionProject: true, CaptionRange: true},
+		store.AuditEntry{Actor: "api", Action: "widget_share.create"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ProjectID != 0 || got.ProjectName != "" || got.CaptionProject || !got.CaptionRange || got.ArchiveAt != "" {
+		t.Fatalf("got %+v", got)
+	}
+	insertShare(t, db, shareID(2), pid, wid, "")
+	if err := db.DeleteProjectData(ctx, pid, store.AuditEntry{Actor: "api", Action: "project.delete"}); err != nil {
+		t.Fatal(err)
+	}
+	left, err := db.ListWidgetShares(ctx, store.WidgetShareFilter{Now: shareNow})
+	if err != nil || !reflect.DeepEqual(shareIDs(left), []string{shareID(1)}) {
+		t.Fatalf("after deleting the project: %v, %v", shareIDs(left), err)
+	}
+	_, err = db.InsertWidgetShare(ctx, store.NewWidgetShare{ID: shareID(3),
+		WidgetID: wid, ProjectID: 999, From: "2026-09-01", To: "2026-09-30", Title: "Visitors",
+		Image: png1(), Image2x: png2()}, store.AuditEntry{Actor: "api", Action: "widget_share.create"})
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("unknown project: err = %v, want not found", err)
+	}
+}
+
 func TestInsertWidgetShareProjectLifetime(t *testing.T) {
 	db, pid, wid := shareFixture(t)
 	got := insertShare(t, db, shareID(1), pid, wid, "")

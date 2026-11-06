@@ -319,7 +319,8 @@ export interface IngestKey {
   snippet?: string
 }
 
-export type ArchiveAfter = '7d' | '30d' | '90d' | '365d' | 'project'
+/** When a share archives itself; with no date, `project` for a share with a project and `never` for one without. */
+export type ArchiveAfter = '7d' | '30d' | '90d' | '365d' | 'project' | 'never'
 export type ShareState = 'live' | 'archived'
 
 /** A public link to one widget's image over a range: its page, its two images, and when it archives itself. */
@@ -332,8 +333,9 @@ export interface WidgetShare {
   widget_id: number | null
   dashboard_id: number | null
   dashboard_title: string | null
-  project_id: number
-  project_name: string
+  /** Null for a share with no project, taken from a dashboard with none to share under. */
+  project_id: number | null
+  project_name: string | null
   from: string
   to: string
   title: string
@@ -341,7 +343,7 @@ export interface WidgetShare {
   caption_project: boolean
   caption_range: boolean
   created_at: string
-  /** Null for a share that lives as long as its project. */
+  /** Null for a share with no date: it lives as long as its project, or with none until archived. */
   archive_at: string | null
   archived_at: string | null
 }

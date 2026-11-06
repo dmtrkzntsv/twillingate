@@ -196,8 +196,7 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
             )}
             {(share || editing || copying) && (
               <WidgetMenu
-                canShare={share !== undefined && share.project !== undefined}
-                canDownload={share !== undefined}
+                canShare={share !== undefined}
                 disabled={!shareable}
                 downloading={downloading}
                 onShare={() => setSharing(true)}
@@ -215,13 +214,13 @@ function WidgetCard({ widget, params, idle = false, share, grip, corner }: Props
             {share && (
               <>
                 {/* Both draw into portals: they take no room in the corner. */}
-                {share.project && drawable && (
+                {drawable && (
                   <ShareDialog
                     open={sharing}
                     onOpenChange={setSharing}
                     widget={widget}
                     data={answer?.data}
-                    share={{ ...share, project: share.project }}
+                    share={share}
                   />
                 )}
                 {downloading && drawable && (
@@ -420,10 +419,8 @@ function StaleWarning({ error }: { error: Error }) {
 }
 
 interface MenuProps {
-  /** Whether Share… is offered (a share belongs to a project). */
+  /** Whether Share… and Download PNG are offered (the card knows the range it shows). */
   canShare: boolean
-  /** Whether Download PNG is offered (the card knows the project and range it shows). */
-  canDownload: boolean
   /** No answer to draw yet, or none that can be: both actions wait. */
   disabled: boolean
   downloading: boolean
@@ -446,7 +443,6 @@ interface MenuProps {
  */
 function WidgetMenu({
   canShare,
-  canDownload,
   disabled,
   downloading,
   onShare,
@@ -510,7 +506,7 @@ function WidgetMenu({
               Share…
             </DropdownMenuItem>
           )}
-          {canDownload && (
+          {canShare && (
             <DropdownMenuItem disabled={disabled || downloading} onClick={onDownload}>
               <DownloadIcon />
               Download PNG

@@ -51,7 +51,7 @@ export default function Shares() {
 
   const range = (s: WidgetShare) => <span title={`Created ${createdOn(s)}`}>{rangeInWords(s.from, s.to)}</span>
   const archiveDate = (s: WidgetShare, small: boolean) => (
-    <ArchiveAfterMenu current={archiveLabel(s)} small={small} disabled={pending} onChange={(v) => void setArchiveAfter(s.id, v)} />
+    <ArchiveAfterMenu current={archiveLabel(s)} hasProject={s.project_id !== null} small={small} disabled={pending} onChange={(v) => void setArchiveAfter(s.id, v)} />
   )
 
   const row = (s: WidgetShare) => {
@@ -73,8 +73,7 @@ export default function Shares() {
                 <Link to={`/dashboards/${s.dashboard_id}`} className="underline underline-offset-2">
                   {s.dashboard_title}
                 </Link>
-                {' · '}
-                {s.project_name}
+                {s.project_name && ` · ${s.project_name}`}
               </>
             ) : (
               from

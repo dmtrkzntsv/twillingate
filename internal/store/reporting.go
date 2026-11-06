@@ -84,25 +84,26 @@ type WidgetShare struct {
 	WidgetID       int64  // 0 once the widget is deleted
 	DashboardID    int64  // 0 once the widget is deleted
 	DashboardTitle string // "" once the widget is deleted
-	ProjectID      int64
-	ProjectName    string // copied at capture
+	ProjectID      int64  // 0 = no project
+	ProjectName    string // copied at capture; "" with no project
 	From, To       string // YYYY-MM-DD
 	Title          string // copied at capture
 	CaptionProject bool   // the page names the project
 	CaptionRange   bool   // the page names the range
 	CreatedAt      string // 2006-01-02T15:04:05Z
-	ArchiveAt      string // "" = project lifetime
+	ArchiveAt      string // "" = no date: the project's lifetime, or never with no project
 	ArchivedAt     string // "" = not archived by hand or by the daily pass
 }
 
 // NewWidgetShare is what InsertWidgetShare writes; the project's name is
-// copied from the projects row in the same statement.
+// copied from the projects row in the same statement. ProjectID 0 is a
+// share with no project, which never names one.
 type NewWidgetShare struct {
 	ID                  string
 	WidgetID, ProjectID int64
 	From, To, Title     string
 	Image, Image2x      []byte
-	ArchiveAt           string // "" = project lifetime
+	ArchiveAt           string // "" = no date
 	// CaptionProject and CaptionRange: whether the page names the project
 	// and the range, which it does only for what the widget follows.
 	CaptionProject, CaptionRange bool

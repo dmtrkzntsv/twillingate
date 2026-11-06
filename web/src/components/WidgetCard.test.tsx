@@ -518,13 +518,13 @@ describe('WidgetCard menu', () => {
     expect(screen.getByRole('menuitem', { name: 'Download PNG' })).toBeEnabled()
   })
 
-  it('offers only Download PNG with no project to share from', async () => {
+  it('offers Share… and Download PNG with no project to share under', async () => {
     const user = userEvent.setup()
     vi.spyOn(endpoints, 'widgetData').mockResolvedValue(sqlAnswer())
     withShare({ ...shareCtx, project: undefined })
     await openMenu(user)
     expect(await screen.findByRole('menuitem', { name: 'Download PNG' })).toBeEnabled()
-    expect(screen.queryByRole('menuitem', { name: 'Share…' })).not.toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: 'Share…' })).toBeEnabled()
   })
 
   it('has no menu without a share context', async () => {

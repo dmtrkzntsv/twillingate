@@ -1567,3 +1567,21 @@ external SQL engine has this from 2026.11.01-2.
 
 Rollback: install the previous release and, if you updated it, the previous
 engine; nothing on disk changed.
+
+### Upgrading to shares with no project (migration 045)
+
+Nothing to check before the upgrade: the migration rebuilds `widget_shares`
+so that `project_id` may be empty, keeping every share as it was.
+
+- **On the day:** a widget on a dashboard with no project to share under
+  (no project switcher, and no single project its `query` widgets pin) now
+  offers Share…. Such a share has no project: `list_widget_shares` gives
+  `project_id` and `project_name` as `null`, its page names no project, and
+  deleting a project never deletes it. Its no-date choice is `never` rather
+  than `project`. An agent or script that reads `project_id` as a number
+  needs to allow `null`.
+
+Rollback: install the previous release, after archiving every share with no
+project and waiting for the purge, or deleting them: the previous release
+cannot read a share with no project, and the Shares and Archive pages fail
+while one is there. Shares with a project are untouched.

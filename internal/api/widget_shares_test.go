@@ -150,6 +150,27 @@ func TestCreateWidgetShareREST(t *testing.T) {
 	}
 }
 
+// Without project_id the share has none: null in the answer, no project
+// caption, and never as its no-date choice.
+func TestCreateWidgetShareRESTWithoutProject(t *testing.T) {
+	h, wid := shareFixture(t)
+	f := shareFields(wid)
+	delete(f, "project_id")
+	f["archive_after"] = "never"
+	body, ct := shareForm(t, f, shareFiles(t))
+	rec := call(h, "POST", "/api/widget-shares", body, ct, true)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("POST = %d %s", rec.Code, rec.Body.String())
+	}
+	var got map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["project_id"] != nil || got["project_name"] != nil || got["caption_project"] != false || got["archive_at"] != nil {
+		t.Errorf("share = %v, want no project, no project caption and no date", got)
+	}
+}
+
 func TestCreateWidgetShareRESTCaptions(t *testing.T) {
 	h, wid := shareFixture(t)
 	for _, c := range []struct {
@@ -229,6 +250,15 @@ func TestCreateWidgetShareRESTRefusals(t *testing.T) {
 		}, 400, "invalid"},
 		{"unknown field", func() (io.Reader, string) {
 			return with(func(f map[string]string, _ map[string][]byte) { f["widget"] = "1" })
+		}, 400, "invalid"},
+		{"project_id 0", func() (io.Reader, string) {
+			return with(func(f map[string]string, _ map[string][]byte) { f["project_id"] = "0" })
+		}, 400, "invalid"},
+		{"unknown project", func() (io.Reader, string) {
+			return with(func(f map[string]string, _ map[string][]byte) { f["project_id"] = "99999" })
+		}, 404, "not_found"},
+		{"project without one", func() (io.Reader, string) {
+			return with(func(f map[string]string, _ map[string][]byte) { delete(f, "project_id"); f["archive_after"] = "project" })
 		}, 400, "invalid"},
 		{"unknown widget", func() (io.Reader, string) {
 			return with(func(f map[string]string, _ map[string][]byte) { f["widget_id"] = "99999" })

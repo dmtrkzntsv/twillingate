@@ -98,8 +98,8 @@ func TestCreateWidgetShare(t *testing.T) {
 	if got.WidgetID == nil || *got.WidgetID != e.widgetID || got.DashboardID == nil || strOf(got.DashboardTitle) != "Board" {
 		t.Errorf("widget/dashboard = %v/%v/%s", got.WidgetID, got.DashboardID, strOf(got.DashboardTitle))
 	}
-	if got.ProjectID != e.projectID || got.ProjectName != "Acme" || got.From != "2026-09-01" || got.To != "2026-09-30" {
-		t.Errorf("project/range = %d %q %s %s", got.ProjectID, got.ProjectName, got.From, got.To)
+	if got.ProjectID == nil || *got.ProjectID != e.projectID || strOf(got.ProjectName) != "Acme" || got.From != "2026-09-01" || got.To != "2026-09-30" {
+		t.Errorf("project/range = %v %s %s %s", got.ProjectID, strOf(got.ProjectName), got.From, got.To)
 	}
 	if got.Title != "Visits" {
 		t.Errorf("Title = %q, want Visits", got.Title)
@@ -135,9 +135,67 @@ func TestCreateWidgetShareCaptions(t *testing.T) {
 			t.Errorf("captions = %v %v, want %v", got.CaptionProject, got.CaptionRange, c.want)
 		}
 		// The owner's view still has the project and range either way.
-		if got.ProjectName != "Acme" || got.From != "2026-09-01" {
-			t.Errorf("project/range = %q %s", got.ProjectName, got.From)
+		if strOf(got.ProjectName) != "Acme" || got.From != "2026-09-01" {
+			t.Errorf("project/range = %s %s", strOf(got.ProjectName), got.From)
 		}
+	}
+}
+
+// A share with no project names none and reports null for it. Its no-date
+// choice is never, not project; a period works as with a project.
+func TestCreateWidgetShareWithoutProject(t *testing.T) {
+	e := newShareEnv(t)
+	ctx := context.Background()
+	in := e.input(t)
+	in.ProjectID = 0
+	got, err := e.svc.CreateWidgetShare(ctx, "test", in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ProjectID != nil || got.ProjectName != nil || got.CaptionProject || !got.CaptionRange {
+		t.Errorf("project = %v %v, captions = %v %v", got.ProjectID, got.ProjectName, got.CaptionProject, got.CaptionRange)
+	}
+	if strOf(got.ArchiveAt) != "2026-11-05T12:00:00Z" {
+		t.Errorf("default ArchiveAt = %s, want 30 days", strOf(got.ArchiveAt))
+	}
+	in.ArchiveAfter = "never"
+	never, err := e.svc.CreateWidgetShare(ctx, "test", in)
+	if err != nil || never.ArchiveAt != nil {
+		t.Fatalf("never: %v, ArchiveAt = %s", err, strOf(never.ArchiveAt))
+	}
+	in.ArchiveAfter = "project"
+	if _, err := e.svc.CreateWidgetShare(ctx, "test", in); !errors.Is(err, store.ErrInvalid) ||
+		!strings.Contains(err.Error(), "or never") {
+		t.Errorf("project without one: err = %v, want ErrInvalid naming never", err)
+	}
+	with := e.input(t)
+	with.ArchiveAfter = "never"
+	if _, err := e.svc.CreateWidgetShare(ctx, "test", with); !errors.Is(err, store.ErrInvalid) ||
+		!strings.Contains(err.Error(), "or project") {
+		t.Errorf("never with a project: err = %v, want ErrInvalid naming project", err)
+	}
+
+	// Update and restore take the share's own no-date choice.
+	if _, err := e.svc.UpdateWidgetShare(ctx, "test", got.ID, "project"); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("update to project: err = %v, want ErrInvalid", err)
+	}
+	if up, err := e.svc.UpdateWidgetShare(ctx, "test", got.ID, "never"); err != nil || up.ArchiveAt != nil {
+		t.Errorf("update to never: %v, ArchiveAt = %s", err, strOf(up.ArchiveAt))
+	}
+	if _, err := e.svc.ArchiveWidgetShare(ctx, "test", got.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.svc.RestoreWidgetShare(ctx, "test", got.ID, "project"); !errors.Is(err, store.ErrInvalid) {
+		t.Errorf("restore to project: err = %v, want ErrInvalid", err)
+	}
+	if back, err := e.svc.RestoreWidgetShare(ctx, "test", got.ID, "never"); err != nil || back.ArchivedAt != nil || back.ArchiveAt != nil {
+		t.Errorf("restore to never: %v, %+v", err, back)
+	}
+	if _, err := e.svc.UpdateWidgetShare(ctx, "test", "nope", "7d"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("update unknown: err = %v, want ErrNotFound", err)
+	}
+	if _, err := e.svc.RestoreWidgetShare(ctx, "test", "nope", ""); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("restore unknown: err = %v, want ErrNotFound", err)
 	}
 }
 

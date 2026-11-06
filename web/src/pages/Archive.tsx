@@ -309,7 +309,7 @@ export default function Archive() {
                     {s.title}
                   </div>
                 }
-                under={s.project_name}
+                under={s.project_name ?? undefined}
                 status={archivedStatus(s.archived_at)}
                 onRestore={() => setRestoring(s)}
               />

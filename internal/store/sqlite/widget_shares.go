@@ -1,7 +1,7 @@
-// Widget shares (migration 033): a frozen picture of one widget, two PNGs
-// and the text they show, served publicly by id. A share lives as long as
-// its project (projectTables) and outlives its widget (widget_id goes
-// NULL). Like the other reporting writers these audit without bumping
+// Widget shares (migrations 033 and 045): a frozen picture of one widget,
+// two PNGs and the text they show, served publicly by id. A share with a
+// project lives as long as it (projectTables), one with none until it is
+// archived; either outlives its widget (widget_id goes NULL). Like the other reporting writers these audit without bumping
 // config_version.
 package sqlite
 
@@ -15,7 +15,7 @@ import (
 )
 
 const shareCols = `s.id, COALESCE(s.widget_id,0), COALESCE(w.dashboard_id,0), COALESCE(d.title,''),
-	s.project_id, s.project_name, s.range_from, s.range_to, s.title, s.caption_project, s.caption_range, s.created_at,
+	COALESCE(s.project_id,0), COALESCE(s.project_name,''), s.range_from, s.range_to, s.title, s.caption_project, s.caption_range, s.created_at,
 	COALESCE(s.archive_at,''), COALESCE(s.archived_at,'')`
 
 const shareFrom = ` FROM widget_shares s
@@ -48,11 +48,14 @@ func (d *DB) InsertWidgetShare(ctx context.Context, n store.NewWidgetShare, a st
 	var out store.WidgetShare
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		// widget_id 0 would break the foreign key; a share is always taken
-		// of a widget that exists, so it is passed as-is.
+		// of a widget that exists, so it is passed as-is. ProjectID 0 is a
+		// share with no project, which names none.
 		res, err := tx.ExecContext(ctx, `INSERT INTO widget_shares
 			(id, widget_id, project_id, range_from, range_to, title, project_name, caption_project, caption_range,
 			 image, image_2x, archive_at)
-			SELECT ?, ?, id, ?, ?, ?, name, ?, ?, ?, ?, NULLIF(?, '') FROM projects WHERE id = ?`,
+			SELECT ?1, ?2, p.id, ?3, ?4, ?5, p.name, ?6 AND p.id IS NOT NULL, ?7, ?8, ?9, NULLIF(?10, '')
+			FROM (SELECT 1) LEFT JOIN projects p ON p.id = ?11
+			WHERE ?11 = 0 OR p.id IS NOT NULL`,
 			n.ID, n.WidgetID, n.From, n.To, n.Title, n.CaptionProject, n.CaptionRange,
 			n.Image, n.Image2x, n.ArchiveAt, n.ProjectID)
 		if err != nil {

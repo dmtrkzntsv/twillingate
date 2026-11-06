@@ -40,8 +40,9 @@ describe('rangeInWords', () => {
 })
 
 describe('archiveLabel', () => {
-  it('names the project lifetime when there is no archive date', () => {
+  it('names the project lifetime when there is no archive date, or Never with no project', () => {
     expect(archiveLabel(share({ archive_at: null }))).toBe('Project lifetime')
+    expect(archiveLabel(share({ archive_at: null, project_id: null, project_name: null }))).toBe('Never')
   })
 
   const now = new Date('2026-10-06T12:00:00Z')

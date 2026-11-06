@@ -22,8 +22,8 @@ interface Props {
   widget: Widget
   /** The widget's current answer, drawn on the card. */
   data: unknown
-  /** With its project: only a page that shows one offers Share…. */
-  share: ShareContext & { project: NonNullable<ShareContext['project']> }
+  /** The page's project and range; with no project, the share has none. */
+  share: ShareContext
 }
 
 type Captured = { image: Blob; image2x: Blob }
@@ -87,7 +87,7 @@ export function ShareDialog({ open, onOpenChange, widget, data, share }: Props) 
     if (!captured) return undefined
     const form = new FormData()
     form.set('widget_id', String(widget.widget_id))
-    form.set('project_id', String(share.project.id))
+    if (share.project) form.set('project_id', String(share.project.id))
     form.set('from', share.from)
     form.set('to', share.to)
     form.set('archive_after', archiveAfter)
@@ -155,7 +155,7 @@ export function ShareDialog({ open, onOpenChange, widget, data, share }: Props) 
               <Label htmlFor="share-archive-after" className="whitespace-nowrap">
                 Archive after
               </Label>
-              <ArchiveAfterSelect id="share-archive-after" value={archiveAfter} disabled={actions.pending} onChange={(v) => void changeArchiveAfter(v)} />
+              <ArchiveAfterSelect id="share-archive-after" value={archiveAfter} hasProject={share.project !== undefined} disabled={actions.pending} onChange={(v) => void changeArchiveAfter(v)} />
             </div>
             <div className="ml-auto flex items-center gap-1">
               {created && (
