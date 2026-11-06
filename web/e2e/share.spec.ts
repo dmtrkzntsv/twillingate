@@ -207,6 +207,9 @@ test('a dashboard with no project switcher shares under the project its queries 
   const { dashboard_id: dashboardId } = (await created.json()) as { dashboard_id: number }
 
   await login(page)
+  // The sidebar's Projects list closed: it loads the projects too while
+  // open, so the page has to load them itself.
+  await page.evaluate(() => localStorage.setItem('twillingate.sidebar.projects', 'false'))
   await page.goto(`/app/dashboards/${dashboardId}`)
   await page.waitForLoadState('networkidle')
   await expect(page.getByRole('button', { name: /^Project:/ })).toHaveCount(0)
