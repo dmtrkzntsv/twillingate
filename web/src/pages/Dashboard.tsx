@@ -107,9 +107,11 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   // shown, or with no project switcher the pinned one, known from the
   // widgets themselves, so never mistaken for none while the projects load
   // or fail (its name is only for a caption, and no widget here follows the
-  // project). With no project, a share has none.
+  // project). Once they have loaded without it, the project is gone, and a
+  // share has none, as on a page with no project.
   const shown = all.find((p) => p.project_id === (switchers.project ? sel.projectId : pinned))
-  const projectId = switchers.project ? shown?.project_id : pinned
+  const pinnedGone = projects.data !== undefined && shown === undefined
+  const projectId = switchers.project ? shown?.project_id : pinnedGone ? undefined : pinned
   const projectName = shown?.name ?? (switchers.project ? undefined : '')
   const { from, to } = range
   const rangeShown = sel.range !== undefined
