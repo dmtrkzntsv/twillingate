@@ -63,7 +63,15 @@ export function ShareDialog({ open, onOpenChange, widget, data, share }: Props) 
     }
   }, [captured])
 
-  const caption = shareCaption(widget, share)
+  // The project is fixed for each opening, as the page's may change under
+  // it (the projects loading); once the link is made, its own counts.
+  const [opened, setOpened] = useState<{ project: ShareContext['project'] }>()
+  if (open && !opened) setOpened({ project: share.project })
+  if (!open && opened) setOpened(undefined)
+  const project = opened ? opened.project : share.project
+  const hasProject = created ? created.project_id !== null : project !== undefined
+
+  const caption = shareCaption(widget, { ...share, project })
 
   const others = useQuery({
     ...widgetSharesQuery({ widget_id: widget.widget_id, state: 'live' }),
@@ -87,7 +95,7 @@ export function ShareDialog({ open, onOpenChange, widget, data, share }: Props) 
     if (!captured) return undefined
     const form = new FormData()
     form.set('widget_id', String(widget.widget_id))
-    if (share.project) form.set('project_id', String(share.project.id))
+    if (project) form.set('project_id', String(project.id))
     form.set('from', share.from)
     form.set('to', share.to)
     form.set('archive_after', archiveAfter)
@@ -155,7 +163,7 @@ export function ShareDialog({ open, onOpenChange, widget, data, share }: Props) 
               <Label htmlFor="share-archive-after" className="whitespace-nowrap">
                 Archive after
               </Label>
-              <ArchiveAfterSelect id="share-archive-after" value={archiveAfter} hasProject={share.project !== undefined} disabled={actions.pending} onChange={(v) => void changeArchiveAfter(v)} />
+              <ArchiveAfterSelect id="share-archive-after" value={archiveAfter} hasProject={hasProject} disabled={actions.pending} onChange={(v) => void changeArchiveAfter(v)} />
             </div>
             <div className="ml-auto flex items-center gap-1">
               {created && (

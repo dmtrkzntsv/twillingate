@@ -93,7 +93,13 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
     () => (dashboard.follows_project ? undefined : pinnedProject(dashboard.widgets)),
     [dashboard.follows_project, dashboard.widgets]
   )
-  const projects = useQuery({ ...projectsQuery, enabled: dashboard.follows_project || pinned !== undefined })
+  // A pinned project missing from the list is gone only by a list fetched
+  // since the page opened, never by a cached one that predates it.
+  const projects = useQuery({
+    ...projectsQuery,
+    enabled: dashboard.follows_project || pinned !== undefined,
+    refetchOnMount: pinned !== undefined ? 'always' : true,
+  })
   const all = projects.data?.projects ?? []
   const { sel, switchers, range, paramsFor, change, openTab } = useDashboardSelection(dashboard, all, list.timezone, frozen)
 
@@ -107,10 +113,10 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   // shown, or with no project switcher the pinned one, known from the
   // widgets themselves, so never mistaken for none while the projects load
   // or fail (its name is only for a caption, and no widget here follows the
-  // project). Once they have loaded without it, the project is gone, and a
-  // share has none, as on a page with no project.
+  // project). Once a fresh list has come without it, the project is gone,
+  // and a share has none, as on a page with no project.
   const shown = all.find((p) => p.project_id === (switchers.project ? sel.projectId : pinned))
-  const pinnedGone = projects.data !== undefined && shown === undefined
+  const pinnedGone = projects.isFetchedAfterMount && !projects.isError && shown === undefined
   const projectId = switchers.project ? shown?.project_id : pinnedGone ? undefined : pinned
   const projectName = shown?.name ?? (switchers.project ? undefined : '')
   const { from, to } = range

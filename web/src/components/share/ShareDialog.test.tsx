@@ -212,6 +212,30 @@ describe('ShareDialog', () => {
     expect(form.get('archive_after')).toBe('never')
   })
 
+  it('keeps the project it opened with while the page loses it', async () => {
+    const user = userEvent.setup()
+    const create = vi.spyOn(endpoints, 'createWidgetShare').mockResolvedValue(created)
+    let drop = () => {}
+    function Page() {
+      const [ctx, setCtx] = useState(share)
+      drop = () => setCtx({ ...share, project: undefined })
+      return <ShareDialog open onOpenChange={() => {}} widget={widget} data={widgets.stat.examples[0].data} share={ctx} />
+    }
+    renderWithProviders(
+      <MemoryRouter>
+        <Page />
+      </MemoryRouter>,
+    )
+    const button = await createButton()
+    await user.selectOptions(screen.getByLabelText('Archive after'), 'project')
+    act(() => drop())
+    expect(screen.getByLabelText('Archive after')).toHaveValue('project')
+    await user.click(button)
+    const form = create.mock.calls[0][0]
+    expect(form.get('project_id')).toBe('7')
+    expect(form.get('archive_after')).toBe('project')
+  })
+
   it('changes the archive date of the link it made', async () => {
     const user = userEvent.setup()
     vi.spyOn(endpoints, 'createWidgetShare').mockResolvedValue(created)

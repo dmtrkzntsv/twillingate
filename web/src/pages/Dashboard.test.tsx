@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ApiError, endpoints, type Project, type Widget } from '@/lib/api'
 import { span } from '@/lib/grid'
 import { answerFor, dashboardsList, details, launchWeek, product, projects, views, widgetsById } from '@/test/fixtures'
-import { renderWithProviders } from '@/test/render'
+import { renderWithProviders, testClient } from '@/test/render'
 import Dashboard from './Dashboard'
 import Home from './Home'
 
@@ -26,7 +26,7 @@ function mockApi(opts: { projects?: Project[] } = {}) {
   return vi.spyOn(endpoints, 'widgetData').mockImplementation(async (id) => answerFor(widgetsById.get(id)!))
 }
 
-function renderAt(url: string) {
+function renderAt(url: string, client = testClient()) {
   return renderWithProviders(
     <MemoryRouter initialEntries={[url]}>
       <Routes>
@@ -40,7 +40,8 @@ function renderAt(url: string) {
           }
         />
       </Routes>
-    </MemoryRouter>
+    </MemoryRouter>,
+    client
   )
 }
 
@@ -196,16 +197,20 @@ describe('Dashboard', () => {
   it.each([
     ['a live project, under it', 7, 'Project lifetime', 'Never'],
     ['a deleted project, with none', 99, 'Never', 'Project lifetime'],
+    ['a project newer than the cached list, under it', 55, 'Project lifetime', 'Never'],
   ])('shares a dashboard pinned to %s', async (_, pinned, offered, notOffered) => {
     const user = userEvent.setup()
-    const widgetData = mockApi()
+    // The cache holds the list from before project 55 was made; the server has it.
+    const client = testClient()
+    client.setQueryData(['projects'], { projects })
+    const widgetData = mockApi({ projects: [...projects, { project_id: 55, name: 'new', allowed_origins: [] }] })
     const query = JSON.stringify({ project_id: pinned, query: { kind: 'stat', table: 'views', metrics: [{ op: 'count' }] } })
     vi.spyOn(endpoints, 'dashboard').mockResolvedValue({
       ...product,
       follows_project: false,
       widgets: product.widgets.map((w) => ({ ...w, follows_project: false, source: { type: 'query' as const, content: query } })),
     })
-    renderAt('/dashboards/2')
+    renderAt('/dashboards/2', client)
 
     await waitFor(() => expect(widgetData).toHaveBeenCalled())
     await waitFor(() => expect(endpoints.projects).toHaveBeenCalled())
