@@ -121,7 +121,7 @@ func (h *host) removeEventRule(ctx context.Context, in eventNameIn) (okOut, erro
 // generated names would otherwise exceed the row cap.
 const eventNamesMax = 200
 
-// eventNames feeds the console's Settings page: every product and
+// eventNames feeds the console's Settings → Events tab: every product and
 // measures name of the range in the event files, rules applied, the
 // busiest eventNamesMax first, ties by name. Product counts events;
 // measures count samples. $ names are left out: rules refuse them. A

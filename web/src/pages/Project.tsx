@@ -131,7 +131,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
                 projectId={id}
                 currentId={dashId}
                 tabs={tabsQ.data?.tabs ?? []}
-                tabsLoaded={tabsQ.data !== undefined || tabsQ.isError}
+                tabsLoaded={tabsQ.data !== undefined}
                 dashboards={dash?.dashboards ?? []}
                 actions={tabActions}
                 newSubmissions={mine?.new_submissions ?? 0}

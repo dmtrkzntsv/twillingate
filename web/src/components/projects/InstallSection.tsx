@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Link } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -15,13 +16,15 @@ interface Props {
   onRetry?: () => void
   /** The server's word on the snippets, when they carry a placeholder collector. */
   note?: string
+  /** Settings → Domains, where the allowed origins are added, with the range kept. */
+  domainsPath: string
 }
 
 /**
  * How to add the script by hand: the snippet of the project's first active
  * key, behind a button, with what would stop it from working.
  */
-export default function InstallSection({ project, keys, error, onRetry, note }: Props) {
+export default function InstallSection({ project, keys, error, onRetry, note, domainsPath }: Props) {
   const [open, setOpen] = useState(false)
   const key = keys?.find((k) => k.state === 'active')
   return (
@@ -50,7 +53,10 @@ export default function InstallSection({ project, keys, error, onRetry, note }: 
             <p role="alert" className="text-sm text-destructive">This project has no active key, so there is nothing to paste yet. Issue or enable one under Ingest keys.</p>
           )}
           {project.allowed_origins.length === 0 && (
-            <p role="alert" className="text-sm text-destructive">No allowed origins: browsers' events are refused until you add your site under Allowed origins.</p>
+            <p role="alert" className="text-sm text-destructive">
+              No allowed origins: browsers' events are refused until you add your site under Allowed origins, in{' '}
+              <Link to={domainsPath} className="font-medium underline underline-offset-2">Settings → Domains</Link>.
+            </p>
           )}
         </DialogContent>
       </Dialog>

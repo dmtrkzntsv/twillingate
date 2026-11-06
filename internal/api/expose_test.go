@@ -26,7 +26,7 @@ func TestEveryToolChoosesATransport(t *testing.T) {
 		"preview_widget":     true,                           // the console editor's Run query
 		"widget_stream":      true,                           // the console's dashboard load, as Server-Sent Events
 		"mark_form_seen":     true, "project_activity": true, // the console's own read mark and badges
-		"event_names": true, // the Settings page's event list
+		"event_names": true, // the Settings → Events tab's event list
 	}
 	seen := map[string]string{}
 	tools := 0

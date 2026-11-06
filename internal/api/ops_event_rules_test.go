@@ -261,7 +261,7 @@ func TestEventNamesReadTheFiles(t *testing.T) {
 	}
 }
 
-// A project sending generated names must not turn the Settings page into a
+// A project sending generated names must not turn the Settings → Events tab into a
 // 400 at the row cap: the busiest 200 come back, the rest are left out.
 func TestEventNamesKeepsTheBusiest200(t *testing.T) {
 	h, _ := newTestHost(t)

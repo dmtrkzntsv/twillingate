@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { MemoryRouter } from 'react-router'
 import type { IngestKey, Project } from '@/lib/api'
 import InstallSection from './InstallSection'
 
@@ -14,7 +15,11 @@ const key = (label: string, state: IngestKey['state']): IngestKey => ({
 })
 
 async function open(props: Partial<Parameters<typeof InstallSection>[0]> = {}) {
-  render(<InstallSection project={project} keys={[key('web', 'active')]} {...props} />)
+  render(
+    <MemoryRouter>
+      <InstallSection project={project} keys={[key('web', 'active')]} domainsPath="/projects/4/settings/domains?range=30d" {...props} />
+    </MemoryRouter>
+  )
   // The snippet waits behind the button.
   expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
   await userEvent.click(screen.getByRole('button', { name: 'Show install snippet' }))
@@ -45,6 +50,7 @@ describe('InstallSection', () => {
     const dialog = await open({ project: { ...project, allowed_origins: [] } })
     expect(within(dialog).getByText(/No allowed origins/)).toBeInTheDocument()
     expect(within(dialog).getByText(/data-key="ak_web"/)).toBeInTheDocument()
+    expect(within(dialog).getByRole('link', { name: 'Settings → Domains' })).toHaveAttribute('href', '/projects/4/settings/domains?range=30d')
   })
 
   it("passes on the server's note about a placeholder collector", async () => {

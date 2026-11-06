@@ -5,7 +5,7 @@ import { MemoryRouter } from 'react-router'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
 import type { ProjectTab } from '@/lib/api'
-import { writeLastTab } from '@/lib/last-tab'
+import { readLastTab, writeLastTab } from '@/lib/last-tab'
 import { FORMS_ID, SETTINGS_ID, type SettingsSection } from '@/lib/project-tabs'
 import ProjectTabBar from './ProjectTabBar'
 
@@ -63,6 +63,13 @@ describe('ProjectTabBar', () => {
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Views', 'Product', 'Mine'])
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/projects/7/settings?range=30d')
     expect(screen.getByRole('link', { name: 'Forms' })).toHaveAttribute('href', '/projects/7/forms?range=30d')
+  })
+
+  it('remembers a tab as soon as it is chosen, before it loads', async () => {
+    localStorage.clear()
+    renderBar({ currentId: 1, newSubmissions: 0 })
+    await userEvent.click(screen.getByRole('tab', { name: 'Product' }))
+    expect(readLastTab(7)).toBe(2)
   })
 
   it('drags the built-ins like the rest', () => {
@@ -195,7 +202,7 @@ describe('ProjectTabBar', () => {
       vi.mocked(actions.create).mockResolvedValue(true)
       const { user, field } = await openForm()
       await user.type(field, ' Launch {Enter}')
-      expect(actions.create).toHaveBeenCalledWith(7, 'Launch')
+      expect(actions.create).toHaveBeenCalledWith(7, 'Launch', 'range=30d')
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     })
 

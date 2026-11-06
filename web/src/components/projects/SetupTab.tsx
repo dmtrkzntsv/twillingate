@@ -14,7 +14,7 @@ import UsageSection from '@/components/projects/UsageSection'
 import { Button } from '@/components/ui/button'
 import type { ProjectActions } from '@/hooks/use-project-actions'
 import type { DashboardsResponse, Project } from '@/lib/api'
-import { SETTINGS_SECTIONS, type SettingsSection } from '@/lib/project-tabs'
+import { rangeParams, SETTINGS_SECTIONS, settingsPath, type SettingsSection } from '@/lib/project-tabs'
 import { keysQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import { chooseSelection } from '@/lib/selection'
@@ -66,7 +66,7 @@ export default function SetupTab({ project, dash, actions, section }: Props) {
       {section === 'usage' && <UsageSection projectId={id} range={range} />}
       {section === 'install' && !project.archived && (
         <>
-          <InstallSection project={project} keys={keysQ.data?.keys} error={keysQ.error} onRetry={() => void keysQ.refetch()} note={keysQ.data?.note} />
+          <InstallSection project={project} keys={keysQ.data?.keys} error={keysQ.error} onRetry={() => void keysQ.refetch()} note={keysQ.data?.note} domainsPath={settingsPath(id, 'domains', rangeParams(url).toString())} />
           <KeysSection
             keys={keysQ.data?.keys}
             error={keysQ.error}

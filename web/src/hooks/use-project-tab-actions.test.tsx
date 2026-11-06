@@ -138,19 +138,19 @@ describe('useProjectTabActions', () => {
   describe('create', () => {
     const created = { dashboard_id: 21, title: 'Launch' } as DashboardDetail
 
-    it('makes the dashboard, adds it as the project\'s tab, refreshes the lists and opens it', async () => {
+    it('makes the dashboard, adds it as the project\'s tab, refreshes the lists and opens it, keeping the range', async () => {
       vi.mocked(endpoints.createDashboard).mockResolvedValue(created)
       vi.mocked(endpoints.addProjectTab).mockResolvedValue({ tabs })
       const invalidate = vi.spyOn(client, 'invalidateQueries')
       const { result } = renderHook(() => useProjectTabActions(), { wrapper })
 
-      await expect(act(() => result.current.create(4, 'Launch'))).resolves.toBe(true)
+      await expect(act(() => result.current.create(4, 'Launch', 'range=30d'))).resolves.toBe(true)
 
       expect(endpoints.createDashboard).toHaveBeenCalledWith({ title: 'Launch' })
       expect(endpoints.addProjectTab).toHaveBeenCalledWith(4, { dashboard_id: 21 })
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ['dashboards'] })
       expect(invalidate).toHaveBeenCalledWith({ queryKey: ['project-tabs', 4] })
-      expect(navigate).toHaveBeenCalledWith(tabPath(4, 21))
+      expect(navigate).toHaveBeenCalledWith(tabPath(4, 21, 'range=30d'))
       expect(result.current.pending).toBe(false)
     })
 
