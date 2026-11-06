@@ -195,25 +195,20 @@ describe('Dashboard', () => {
   })
 
   it.each([
-    ['a live project, under it', 7, 'Project lifetime', 'Never'],
-    ['a deleted project, with none', 99, 'Never', 'Project lifetime'],
-    ['a project newer than the cached list, under it', 55, 'Project lifetime', 'Never'],
+    ['one project, under it', 7, 'Project lifetime', 'Never'],
+    ['no single project, with none', undefined, 'Never', 'Project lifetime'],
   ])('shares a dashboard pinned to %s', async (_, pinned, offered, notOffered) => {
     const user = userEvent.setup()
-    // The cache holds the list from before project 55 was made; the server has it.
-    const client = testClient()
-    client.setQueryData(['projects'], { projects })
-    const widgetData = mockApi({ projects: [...projects, { project_id: 55, name: 'new', allowed_origins: [] }] })
+    const widgetData = mockApi()
     const query = JSON.stringify({ project_id: pinned, query: { kind: 'stat', table: 'views', metrics: [{ op: 'count' }] } })
     vi.spyOn(endpoints, 'dashboard').mockResolvedValue({
       ...product,
       follows_project: false,
       widgets: product.widgets.map((w) => ({ ...w, follows_project: false, source: { type: 'query' as const, content: query } })),
     })
-    renderAt('/dashboards/2', client)
+    renderAt('/dashboards/2')
 
     await waitFor(() => expect(widgetData).toHaveBeenCalled())
-    await waitFor(() => expect(endpoints.projects).toHaveBeenCalled())
     await user.click((await screen.findAllByRole('button', { name: 'Widget actions' }))[0])
     await user.click(await screen.findByRole('menuitem', { name: 'Share…' }))
     const select = await screen.findByLabelText('Archive after')

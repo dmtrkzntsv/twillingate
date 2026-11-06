@@ -87,19 +87,7 @@ function PageNotice({ text, children }: { text: string; children: ReactNode }) {
 }
 
 function DashboardView({ list, dashboard, frozen }: ViewProps) {
-  // With no project switcher, the one project the widgets are pinned to,
-  // which the page shares under; the projects are loaded for its name.
-  const pinned = useMemo(
-    () => (dashboard.follows_project ? undefined : pinnedProject(dashboard.widgets)),
-    [dashboard.follows_project, dashboard.widgets]
-  )
-  // A pinned project missing from the list is gone only by a list fetched
-  // since the page opened, never by a cached one that predates it.
-  const projects = useQuery({
-    ...projectsQuery,
-    enabled: dashboard.follows_project || pinned !== undefined,
-    refetchOnMount: pinned !== undefined ? 'always' : true,
-  })
+  const projects = useQuery({ ...projectsQuery, enabled: dashboard.follows_project })
   const all = projects.data?.projects ?? []
   const { sel, switchers, range, paramsFor, change, openTab } = useDashboardSelection(dashboard, all, list.timezone, frozen)
 
@@ -110,15 +98,17 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const { move, restore, setSidebar, pending } = useDashboardActions()
   const widgetActions = useWidgetActions()
   // What a card needs to be shared or downloaded: the project and range
-  // shown, or with no project switcher the pinned one, known from the
-  // widgets themselves, so never mistaken for none while the projects load
-  // or fail (its name is only for a caption, and no widget here follows the
-  // project). Once a fresh list has come without it, the project is gone,
-  // and a share has none, as on a page with no project.
-  const shown = all.find((p) => p.project_id === (switchers.project ? sel.projectId : pinned))
-  const pinnedGone = projects.isFetchedAfterMount && !projects.isError && shown === undefined
-  const projectId = switchers.project ? shown?.project_id : pinnedGone ? undefined : pinned
-  const projectName = shown?.name ?? (switchers.project ? undefined : '')
+  // shown, or with no project switcher the one project the widgets pin,
+  // read from them alone (a pinned project since deleted is refused when
+  // shared). No widget there follows the project, so no caption names it,
+  // and its name is not needed. With no project, a share has none.
+  const pinned = useMemo(
+    () => (switchers.project ? undefined : pinnedProject(dashboard.widgets)),
+    [switchers.project, dashboard.widgets]
+  )
+  const shown = all.find((p) => p.project_id === sel.projectId)
+  const projectId = switchers.project ? shown?.project_id : pinned
+  const projectName = switchers.project ? shown?.name : ''
   const { from, to } = range
   const rangeShown = sel.range !== undefined
   const share = useMemo<ShareContext>(
