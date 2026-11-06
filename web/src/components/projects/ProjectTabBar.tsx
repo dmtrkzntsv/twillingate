@@ -8,7 +8,7 @@ import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
 import type { DashboardInfo, ProjectTab } from '@/lib/api'
 import { plural } from '@/lib/format'
 import { readLastTab, writeLastTab } from '@/lib/last-tab'
-import { FORMS_ID, landingPath, rangeParams, SETTINGS_ID, tabAfter, tabPath, type SettingsSection } from '@/lib/project-tabs'
+import { FORMS_ID, landingPath, rangeParams, SETTINGS_ID, settingsPath, tabAfter, tabPath, type SettingsSection } from '@/lib/project-tabs'
 import { cn } from '@/lib/utils'
 import AddTabDialog from './AddTabDialog'
 import SettingsTabs from './SettingsTabs'
@@ -74,7 +74,7 @@ export default function ProjectTabBar({ projectId, currentId, tabs, tabsLoaded =
   // Back from Settings, as opening the project lands (D3); with no dashboard
   // the gear stays where it is.
   const dashboardsPath = tabs.length > 0 ? landingPath(projectId, tabs, readLastTab(projectId), search) : null
-  const gearPath = onSettings && dashboardsPath ? dashboardsPath : tabPath(projectId, SETTINGS_ID, search)
+  const gearPath = !onSettings ? tabPath(projectId, SETTINGS_ID, search) : (dashboardsPath ?? settingsPath(projectId, section, search))
 
   const add = async (id: number) => {
     const ok = await actions.add(projectId, id)
