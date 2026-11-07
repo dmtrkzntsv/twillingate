@@ -75,7 +75,7 @@ describe('MonitoringSection', () => {
 
   it('names the empty state, with no rows', async () => {
     show(list([]))
-    expect(await screen.findByText('Add an exact http(s) origin above to monitor it.')).toBeInTheDocument()
+    expect(await screen.findByText(/first add its address to Allowed origins above/)).toBeInTheDocument()
     expect(screen.queryByRole('switch')).not.toBeInTheDocument()
     expect(screen.queryByRole('listitem')).not.toBeInTheDocument()
   })
@@ -101,8 +101,8 @@ describe('MonitoringSection', () => {
     expect(c.getByRole('switch')).not.toBeChecked()
     expect(c.queryAllByRole('button')).toEqual([])
     expect(c.queryByText(/cert/i)).not.toBeInTheDocument()
-    // The header is the interval, however many are on, and the link; the domains are another section's.
-    expect(screen.getByText('each site is checked every 1 min')).toBeInTheDocument()
+    // The header is the link alone, no interval; the domains are another section's.
+    expect(screen.queryByText(/checked every/)).not.toBeInTheDocument()
     expect(screen.queryByText(SENTENCE)).not.toBeInTheDocument()
     expect(screen.queryByText(/^Domain:/)).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Open Availability' })).toHaveAttribute('href', '/projects/4/dashboards/8')
@@ -593,7 +593,6 @@ describe('MonitoringSection', () => {
     it('polls while a row has one pending, shows its result there, and stops', async () => {
       const { read } = show(list([on(A, { check: pendingCheck }), on(B)]))
       const a = await row(A)
-      expect(await screen.findByText('each site is checked every 1 min')).toBeInTheDocument()
       read.mockResolvedValue(list([on(A, { check: done, last: result({ up: true, status: 200, ms: 123 }) }), on(B)]))
       expect(await a.findByText(/^Up, 200, 123 ms, .+ ago$/, undefined, { timeout: 4000 })).toBeInTheDocument()
       expect(a.getByRole('button', { name: `Check ${A} now` })).toBeEnabled()

@@ -32,15 +32,23 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await page.getByRole('article', { name }).getByRole('link', { name }).click()
   // A project opens on its first dashboard tab; its settings are behind the gear.
   await expect(page).toHaveURL(/\/projects\/\d+\/dashboards\/\d+$/)
-  await page.getByRole('link', { name: 'Settings', exact: true }).click()
-  await expect(page).toHaveURL(/\/projects\/\d+\/settings$/)
-  await expect(page.getByRole('heading', { name })).toBeVisible()
-
+  // The name is renamed where it heads the page: on a dashboard.
   await page.getByRole('button', { name: 'Rename' }).click()
   await page.getByRole('textbox', { name: 'Project name' }).fill(`${name}-renamed`)
   await page.keyboard.press('Enter')
   await expect(page.getByRole('heading', { level: 1, name: `${name}-renamed` })).toBeVisible()
 
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
+  await expect(page).toHaveURL(/\/projects\/\d+\/settings$/)
+  // On Settings a back button to the dashboards takes the name's place, with no pencil.
+  await expect(page.getByRole('link', { name: `Back to the dashboards of ${name}-renamed` })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Rename' })).toHaveCount(0)
+  // Settings is tabs, each at its own address, in the dashboards' place.
+  const sections = page.getByRole('navigation', { name: 'Settings sections' })
+  await expect(page.getByRole('heading', { level: 1, name: 'Overview' })).toBeVisible()
+
+  await sections.getByRole('link', { name: 'Domains' }).click()
+  await expect(page).toHaveURL(/\/projects\/\d+\/settings\/domains$/)
   const origins = page.getByRole('region', { name: 'Allowed origins' })
   await origins.getByRole('button', { name: 'Add origin' }).click()
   await page.getByLabel('Origin', { exact: true }).fill('https://app.e2e.example')
@@ -54,6 +62,7 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await page.getByRole('button', { name: 'Remove origin' }).click()
   await expect(origins.getByText('https://e2e.example', { exact: true })).toHaveCount(0)
 
+  await sections.getByRole('link', { name: 'Overview' }).click()
   const keys = page.getByRole('region', { name: 'Ingest keys' })
   await keys.getByRole('button', { name: 'Issue key' }).click()
   await page.getByLabel('Label').fill('ios app')
@@ -64,11 +73,16 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await page.getByRole('button', { name: 'Disable key' }).click()
   await expect(keys.getByRole('row', { name: /ios app/ }).getByText('disabled')).toBeVisible()
 
+  await sections.getByRole('link', { name: 'Danger' }).click()
   await page.getByRole('region', { name: 'Danger' }).getByRole('button', { name: 'Archive', exact: true }).click()
   await page.getByRole('button', { name: 'Archive project' }).click()
   // The badge on the page; a toast says "Archived" too.
   await expect(page.getByRole('main').getByText('Archived', { exact: true })).toBeVisible()
+  // An archived project has no Danger tab: the page goes to the first tab.
+  await expect(page).toHaveURL(/\/projects\/\d+\/settings$/)
+  await expect(sections.getByRole('link', { name: 'Danger' })).toHaveCount(0)
   await page.getByRole('button', { name: 'Restore' }).click()
+  await sections.getByRole('link', { name: 'Danger' }).click()
   await expect(page.getByRole('button', { name: 'Archive', exact: true })).toBeVisible()
 
   // Archived again, it leaves the Projects page for the Archive page, which restores it too.
@@ -94,6 +108,15 @@ test('shows usage for the seeded project', async ({ page }) => {
   const usage = page.getByRole('region', { name: 'Usage' })
   await expect(usage.getByText('Events', { exact: true })).toBeVisible()
   await expect(usage.locator('.recharts-bar-rectangle').first()).toBeVisible()
+  // The monthly chart: the checks stacked at the weight serve.sh sets
+  // (QUOTA_CHECK_RATIO=0.1), the month under way so far, and no budget line.
+  const monthly = usage.getByTestId('monthly-usage')
+  await expect(monthly.getByText('so far')).toBeVisible()
+  await expect(monthly.getByText('Checks', { exact: true })).toBeVisible()
+  await expect(monthly.locator('.recharts-reference-line')).toHaveCount(0)
+  // The daily chart stacks the weighted checks too.
+  const daily = usage.locator('[data-slot="chart"]').nth(1)
+  await expect(daily.getByText('Checks', { exact: true })).toBeVisible()
 })
 
 test('lists Projects first in the sidebar, with the projects under it, closed state remembered', async ({ page }) => {

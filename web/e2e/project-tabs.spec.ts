@@ -137,13 +137,25 @@ test('a project opens on its first dashboard tab; tabs are removed and re-added 
     await page.getByRole('dialog').getByRole('group', { name: 'Your dashboards' }).getByRole('button', { name: title, exact: true }).click()
     await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
 
-    // Settings is a button beside the tabs, not a tab.
+    // Settings is a button beside the tabs, not a tab; open, its own tabs
+    // take the dashboards' place, each at its own address.
     await expect(tabs.getByRole('tab', { name: 'Settings' })).toHaveCount(0)
     await page.getByRole('link', { name: 'Settings', exact: true }).click()
     await expect(page).toHaveURL(/\/settings$/)
     await expect(page.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute('aria-current', 'page')
+    const sections = page.getByRole('navigation', { name: 'Settings sections' })
+    await expect(sections.getByRole('link')).toHaveText(['Overview', 'Domains', 'Events', 'Attributes', 'Danger'])
+    await expect(page.getByRole('tab')).toHaveCount(0)
+    await sections.getByRole('link', { name: 'Domains' }).click()
+    await expect(page).toHaveURL(/\/settings\/domains$/)
     await expect(page.getByRole('region', { name: 'Allowed origins' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute('aria-current', 'page')
+    // The back button in the title goes back to the tab last opened, the one just added.
+    await page.getByRole('link', { name: /^Back to the dashboards of / }).click()
+    await expect(page.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible()
     await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
+    await page.getByRole('link', { name: 'Settings', exact: true }).click()
+    await expect(page).toHaveURL(/\/settings$/)
   } finally {
     // Whatever failed above, the shared dev project goes back as the other
     // specs and the CI retry expect it: Product right after Views, and none

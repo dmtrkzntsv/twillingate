@@ -204,8 +204,8 @@ are stored; those sent while it was blocked were dropped and stay gone.
 to, created_at}` with `action` `rename` (left by a rename or a merge) or
 `block`, and no `to` for a block.
 
-The console lists a project's event names for these tools on its Settings page,
-from `GET /api/projects/{project_id}/event-names`, a route with no MCP tool
+The console lists a project's event names for these tools under Settings →
+Events, from `GET /api/projects/{project_id}/event-names`, a route with no MCP tool
 (`product_events` and `measures` answer agents). It lists the busiest 200 names
 in the range and leaves out `$` names, which take no rule. Each rule shows on
 its event there: a blocked event is marked, and listed even with nothing in the
@@ -336,8 +336,8 @@ identifies itself as
   to `https://www.example.com` reads as down until it adds the `www` origin.
   Up to 5 hops are followed; a 6th is not requested and fails with `redirect`
   (`too many redirects`). A chain of 3 or more is only a warning: the check
-  stays up, and Settings → Monitoring says the site redirects that many times
-  before answering, which slows every visit.
+  stays up, and Settings → Domains, under Monitoring, says the site
+  redirects that many times before answering, which slows every visit.
 - **Private addresses** are refused on every install: an origin or redirect hop
   that resolves to a loopback, private, link-local, CGNAT, multicast, 6to4 or unspecified address
   fails with `blocked`, checked when the connection is made. A site reachable
@@ -389,9 +389,9 @@ A domain has `domain`, `origins`, the enabled monitors' on it,
 `expires_at` and `checked_at`. `twillingate monitor list` prints them, `redirects`
 when above 0 and `last` once there is one.
 
-**Checking now.** `check_monitor` (`twillingate monitor check`, or Check now in
-Settings → Monitoring) asks for one check of an origin's three readings outside
-the schedule: its availability, its certificate and its main domain, whatever the
+**Checking now.** `check_monitor` (`twillingate monitor check`, or Check now
+under Monitoring in Settings → Domains) asks for one check of an origin's three
+readings outside the schedule: its availability, its certificate and its main domain, whatever the
 daily readings' age, with the same `MONITOR_TIMEOUT`. The server starts it within
 about a second and writes the rows as usual; a certificate or RDAP read that fails
 keeps the last date as usual. It moves no slot, and the monitor's own slot
@@ -1611,7 +1611,7 @@ history starts where the files' does. `query`, the count of events in
 | `list_projects` | none | Every project with its `project_id`, name, `archived` and `archived_at` (RFC 3339, only when archived), and `allowed_origins`, in the order `move_project` sets. Call this first — every other tool needs a `project_id` |
 | `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in two groups: `retention` (`RETENTION_DAYS`, `RETENTION_ARCHIVED_DAYS`, `RETENTION_FORMS_DRAFT_DAYS`) and `ingest`: `INGEST_LATE_DAYS`, then the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`kept forever`). Nothing is capped. The output also carries `events_30d`, `{count, from, to}`: the events in the event files from `from` through `to` (the 30 days ending today, UTC), of every project and every family but the availability checks, rules applied (what the server's disk and its dashboards' scans of a month follow), counted at most every 5 minutes: a call past the 5 minutes answers the previous count and starts the next, one past 10 waits for it, so the count is never more than 10 minutes old. Absent when the last count failed, `CONSOLE_QUERY_TIMEOUT` included (a failure is logged once and kept for the same 5 minutes), and on a server that cannot read the files. And `ingest_disabled`, `true` when `INGEST_DISABLED` is set and every ingest route refuses with `429` |
 | `list_attributes` | `from`, `to` (optional: the last 30 days; at most 400 days) | The project's attributes from the event files, rules applied, busiest first: each key's `events` (the product events and measures of the range that carried it) and `values` (its distinct values over the range), `received`, `blocked` and `aliases` (the keys renamed or merged into it; absent when none) — for the 500 busiest keys plus every key a rule names (`received` false when none carried it: a blocked key always, its values hidden from every read); a key renamed away reads as its target and is listed only in its target's `aliases`. Also `keys_total`, the distinct keys received. A key's `values` past 1,024 are estimated (about ±2%). A range with more keys than the engine counts in one pass is refused: narrow it |
-| `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project, from the event files: `views`, product `events` and measure `samples` per day and in total, and apart from those the availability `checks` (every row of the `checks` table, see [Monitoring](#monitoring)), `last_received_at` (when the newest event arrived, availability checks aside, whatever the range; `null` for an archived project unless `project_id` names it), `first_day` (the oldest day the files hold; a month's file counts from its first day), and `size` (`{total_bytes, measured_at}`: the project's event file bytes as the daily pass of the process that keeps the files last measured them, at 03:00 UTC and at start; `null` until the first measurement), with each day's measured `total_bytes` in the series (`null` on days not measured); plus the database's size on disk now and per day (`database_series`), and what the server keeps on disk, the database file and every project's event files (Parquet, logs and derived tables, as the daily pass last measured them), now (`disk_bytes`) and per day (`disk_series`, `null` on days the database was not measured) |
+| `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project, from the event files: `views`, product `events` and measure `samples` per day and in total, and apart from those the availability `checks` (every row of the `checks` table, see [Monitoring](#monitoring)), `last_received_at` (when the newest event arrived, availability checks aside, whatever the range; `null` for an archived project unless `project_id` names it), `first_day` (the oldest day the files hold; a month's file counts from its first day), and `size` (`{total_bytes, measured_at}`: the project's event file bytes as the daily pass of the process that keeps the files last measured them, at 03:00 UTC and at start; `null` until the first measurement), with each day's measured `total_bytes` in the series (`null` on days not measured); plus the database's size on disk now and per day (`database_series`), and what the server keeps on disk, the database file and every project's event files (Parquet, logs and derived tables, as the daily pass last measured them), now (`disk_bytes`) and per day (`disk_series`, `null` on days the database was not measured); and `quota_check_ratio` (`QUOTA_CHECK_RATIO`, default 1): the weight one check row counts toward the event totals the console shows, `checks` above staying the plain count |
 | `views_overview` | `kind` (optional) | Per day: visitors (distinct per day: an actor seen under two kinds on one day counts once), views, and the `sessions` table's sessions, bounces, `duration_sec`, `bounce_rate` and `avg_session_sec` (a day with views but no session reads `0` for each), over every kind unless `kind` filters one. Today included. At most 1,000 days, the earliest |
 | `views_breakdown` | `dimension`, `limit` (default 20, at most 1,000) | Top rows of one dimension (the table below), busiest by visitors (distinct per day and value, added up over the range), then by views, then by the values. Two-key dimensions return both columns. A value not sent reads as empty |
 | `product_events` | `event` (optional filter) | Count and unique users (distinct per day) per event name and day, by day, the most events first, then by name; plus daily totals. At most 1,000 rows each, the earliest days': a cut inside a day keeps that day's names alphabetically, not the busiest |

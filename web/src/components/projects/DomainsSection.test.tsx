@@ -24,7 +24,7 @@ describe('DomainsSection', () => {
       { domain: 'late.test', origins: ['https://a.late.test', 'https://b.late.test'], expires_at: utcDay(300), checked_at: 'x' },
       { domain: 'soon.test', origins: ['https://soon.test'], expires_at: utcDay(10), checked_at: 'x' },
     ])
-    const region = await screen.findByRole('region', { name: 'Domains' })
+    const region = await screen.findByRole('region', { name: 'Domain expiry' })
     const names = within(region).getAllByRole('row').slice(1).map((r) => r.getAttribute('aria-label'))
     expect(names).toEqual(['soon.test', 'late.test', 'unknown.test'])
     const soon = within(within(region).getByRole('row', { name: 'soon.test' }))
@@ -44,6 +44,6 @@ describe('DomainsSection', () => {
     const read = show([])
     await vi.waitFor(() => expect(endpoints.monitors).toHaveBeenCalled())
     await read.client.fetchQuery({ queryKey: ['monitor', 4], queryFn: () => endpoints.monitors(4) })
-    expect(screen.queryByRole('region', { name: 'Domains' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Domain expiry' })).not.toBeInTheDocument()
   })
 })

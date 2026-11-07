@@ -98,8 +98,8 @@ test('every link and button shows the pointer', async ({ page, request }) => {
   for (const path of [
     '/app/projects',
     '/app/projects/1/settings',
-    // Today, where the attributes above were received (the default range ends yesterday).
-    `/app/projects/${attrs.id}/settings?range=today`,
+    // Every Settings tab; today, where the attributes above were received (the default range ends yesterday).
+    ...['overview', 'domains', 'events', 'attributes', 'danger'].map((s) => `/app/projects/${attrs.id}/settings/${s}?range=today`),
     `/app/projects/${forms.id}/forms`,
     `/app/projects/${forms.id}/forms/contact`,
     '/app/dashboards',
@@ -115,7 +115,7 @@ test('every link and button shows the pointer', async ({ page, request }) => {
   }
 
   // The Monitoring section's rows: the switches, Check now, the saved text and the row menu.
-  await page.goto(`/app/projects/${attrs.id}/settings?range=today`)
+  await page.goto(`/app/projects/${attrs.id}/settings/domains?range=today`)
   const monitoring = page.getByRole('region', { name: 'Monitoring' })
   await expect(monitoring.getByRole('button', { name: 'Check https://monitored.example.com now' })).toBeVisible()
   await expect(monitoring.getByRole('button', { name: 'must contain "Welcome"' })).toBeVisible()
@@ -127,7 +127,7 @@ test('every link and button shows the pointer', async ({ page, request }) => {
 
   // The Attributes section's row menu (a blocked key offers Unblock), its
   // alias remove and add buttons, and its merge, rename and confirm dialogs.
-  await page.goto(`/app/projects/${attrs.id}/settings?range=today`)
+  await page.goto(`/app/projects/${attrs.id}/settings/attributes?range=today`)
   const attributes = page.getByRole('region', { name: 'Attributes' })
   await expect(attributes.getByRole('button', { name: 'Remove alias planType' })).toBeVisible()
   await expect(attributes.getByRole('button', { name: 'Add alias to plan_type' })).toBeVisible()

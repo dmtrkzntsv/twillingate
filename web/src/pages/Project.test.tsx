@@ -8,6 +8,7 @@ import { contactPage, form } from '@/test/forms'
 import { renderWithProviders, testClient } from '@/test/render'
 import Project from './Project'
 import { readLastTab, writeLastTab } from '@/lib/last-tab'
+import { monthsRange, utcToday } from '@/lib/usage-months'
 
 const actions = {
   update: vi.fn(), archive: vi.fn(), restore: vi.fn(), issueKey: vi.fn(),
@@ -80,6 +81,7 @@ function renderAt(path: string, client = testClient()) {
       <Routes>
         <Route path="/projects/:id" element={<Project landing />} />
         <Route path="/projects/:id/settings" element={<Project />} />
+        <Route path="/projects/:id/settings/:section" element={<Project />} />
         <Route path="/projects/:id/dashboards/:dashId" element={<Project />} />
         <Route path="/projects/:id/forms" element={<Project tab="forms" />} />
         <Route path="/projects/:id/forms/:name" element={<Project tab="forms" />} />
@@ -131,7 +133,7 @@ describe('Project', () => {
   it('renames the project in place through PATCH, the name alone', async () => {
     const user = userEvent.setup()
     actions.update.mockResolvedValue(true)
-    renderAt('/projects/4/settings')
+    renderAt('/projects/4/dashboards/1')
     await user.click(await screen.findByRole('button', { name: 'Rename' }))
     const field = screen.getByRole('textbox', { name: 'Project name' })
     await user.clear(field)
@@ -146,12 +148,12 @@ describe('Project', () => {
       { project_id: 7, name: 'shop', allowed_origins: [] },
     ] })
     renderWithProviders(
-      <MemoryRouter initialEntries={['/projects/4/settings']}>
+      <MemoryRouter initialEntries={['/projects/4/dashboards/1']}>
         <Routes>
           <Route path="/projects/:id" element={<Project landing />} />
-          <Route path="/projects/:id/settings" element={<Project />} />
+          <Route path="/projects/:id/dashboards/:dashId" element={<Project />} />
         </Routes>
-        <Link to="/projects/7/settings">other</Link>
+        <Link to="/projects/7/dashboards/1">other</Link>
       </MemoryRouter>,
       testClient()
     )
@@ -164,7 +166,7 @@ describe('Project', () => {
   it('shows the allowed origins and adds one through PATCH, never the name or attributes', async () => {
     const user = userEvent.setup()
     actions.update.mockResolvedValue(true)
-    renderAt('/projects/4/settings')
+    renderAt('/projects/4/settings/domains')
     const origins = await screen.findByRole('region', { name: 'Allowed origins' })
     expect(within(origins).getByText('https://econumo.com')).toBeInTheDocument()
     expect(within(origins).queryByText('plan')).not.toBeInTheDocument()
@@ -175,21 +177,160 @@ describe('Project', () => {
     expect(actions.update).toHaveBeenCalledWith(4, { allowed_origins: ['https://econumo.com', 'https://app.econumo.com'] })
   })
 
-  it('places Attributes right after Events, before Ingest keys', async () => {
+  it('shows the Settings tabs in place of the dashboards, each with its own address, keeping the range', async () => {
+    renderAt('/projects/4/settings?range=30d')
+    expect(await screen.findByRole('heading', { name: 'Overview', level: 1 })).toBeInTheDocument()
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' })
+    expect(within(nav).getAllByRole('link').map((l) => [l.textContent, l.getAttribute('href')])).toEqual([
+      ['Overview', '/projects/4/settings/overview?range=30d'],
+      ['Domains', '/projects/4/settings/domains?range=30d'],
+      ['Events', '/projects/4/settings/events?range=30d'],
+      ['Attributes', '/projects/4/settings/attributes?range=30d'],
+      ['Danger', '/projects/4/settings/danger?range=30d'],
+    ])
+    expect(within(nav).getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.queryByRole('tab')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add tab' })).toBeNull()
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('shows one tab at a time, titled with its name, and the range only where it counts something', async () => {
+    const user = userEvent.setup()
+    renderAt('/projects/4/settings/overview?range=30d')
+    expect(await screen.findByRole('heading', { name: 'Overview', level: 1 })).toBeInTheDocument()
+    // Usage by month and by day, then the install snippet and the keys.
+    const usage = await screen.findByRole('region', { name: 'Usage' })
+    expect(within(usage).getByRole('heading', { name: 'By month', level: 3 })).toBeInTheDocument()
+    expect(within(usage).getByRole('heading', { name: 'By day', level: 3 })).toBeInTheDocument()
+    expect(await screen.findByRole('region', { name: 'Ingest keys' })).toBeInTheDocument()
+    const regions = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))
+    expect(regions.filter((r) => ['Usage', 'Install', 'Ingest keys'].includes(r!))).toEqual(['Usage', 'Install', 'Ingest keys'])
+    expect(screen.getByRole('button', { name: /^Range:/ })).toBeInTheDocument()
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' })
+    expect(within(nav).getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
+
+    await user.click(within(nav).getByRole('link', { name: 'Domains' }))
+    expect(location()).toBe('/projects/4/settings/domains?range=30d')
+    expect(await screen.findByRole('region', { name: 'Allowed origins' })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Ingest keys' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Range:/ })).not.toBeInTheDocument()
+
+    for (const [name, region] of [['Events', 'Events'], ['Attributes', 'Attributes'], ['Overview', 'Usage']]) {
+      await user.click(within(nav).getByRole('link', { name }))
+      expect(await screen.findByRole('region', { name: region })).toBeInTheDocument()
+      expect(screen.getByRole('heading', { name, level: 1 })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /^Range:/ })).toBeInTheDocument()
+    }
+
+    await user.click(within(nav).getByRole('link', { name: 'Danger' }))
+    expect(await screen.findByRole('region', { name: 'Danger' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Range:/ })).not.toBeInTheDocument()
+  })
+
+  it('goes from an unknown section to the first tab, keeping the range', async () => {
+    renderAt('/projects/4/settings/keys?range=30d')
+    expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
+    expect(location()).toBe('/projects/4/settings?range=30d')
+  })
+
+  it('goes from the first version\'s Usage and Install tabs to Overview, keeping the range', async () => {
+    for (const old of ['usage', 'install']) {
+      const { unmount } = renderAt(`/projects/4/settings/${old}?range=7d`)
+      expect(await screen.findByRole('heading', { name: 'Overview', level: 1 })).toBeInTheDocument()
+      expect(location()).toBe('/projects/4/settings?range=7d')
+      unmount()
+    }
+  })
+
+  it('has no Danger tab on an archived project, nor install or keys on its Overview', async () => {
+    renderAt('/projects/3/settings/danger')
+    expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
+    expect(location()).toBe('/projects/3/settings')
+    const nav = screen.getByRole('navigation', { name: 'Settings sections' })
+    expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Overview', 'Domains', 'Events', 'Attributes'])
+    expect(screen.queryByRole('region', { name: 'Install' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Ingest keys' })).not.toBeInTheDocument()
+    expect(endpoints.keys).not.toHaveBeenCalled()
+  })
+
+  it('keeps Restore in the header of every tab of an archived project', async () => {
+    const user = userEvent.setup()
+    renderAt('/projects/3/settings')
+    const nav = await screen.findByRole('navigation', { name: 'Settings sections' })
+    for (const name of ['Overview', 'Domains', 'Events', 'Attributes']) {
+      await user.click(within(nav).getByRole('link', { name }))
+      expect(await screen.findByRole('heading', { name, level: 1 })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Restore' })).toBeInTheDocument()
+    }
+  })
+
+  it('heads Settings with a back button to the dashboard last opened here, else the first, as the gear does', async () => {
+    const user = userEvent.setup()
+    writeLastTab(4, 2)
+    const { unmount } = renderAt('/projects/4/settings/events?range=30d')
+    const back = await screen.findByRole('link', { name: 'Back to the dashboards of econumo.com' })
+    expect(back).toHaveTextContent('econumo.com')
+    // In place of the name and its pencil, which only a dashboard page has.
+    expect(screen.queryByRole('heading', { name: 'econumo.com' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Rename' })).not.toBeInTheDocument()
+    await vi.waitFor(() => expect(back).toHaveAttribute('href', '/projects/4/dashboards/2?range=30d'))
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/projects/4/dashboards/2?range=30d')
+    await user.click(back)
+    expect(await screen.findByRole('heading', { name: 'Product', level: 1 })).toBeInTheDocument()
+    expect(location()).toBe('/projects/4/dashboards/2?range=30d')
+    expect(screen.getByRole('heading', { name: 'econumo.com' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Rename' })).toBeInTheDocument()
+    // Back on a dashboard, the gear opens Settings again.
+    expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/projects/4/settings?range=30d')
+    unmount()
+    localStorage.clear()
     renderAt('/projects/4/settings')
-    await screen.findByRole('region', { name: 'Attributes' })
-    const names = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))
-    expect(names).not.toContain('Breakdowns')
-    expect(names.indexOf('Allowed origins')).toBeGreaterThan(-1)
-    expect(names.indexOf('Allowed origins')).toBeLessThan(names.indexOf('Events'))
-    expect(names.indexOf('Attributes')).toBe(names.indexOf('Events') + 1)
-    expect(names.indexOf('Attributes')).toBeLessThan(names.indexOf('Ingest keys'))
+    await vi.waitFor(() => expect(screen.getByRole('link', { name: 'Back to the dashboards of econumo.com' })).toHaveAttribute('href', '/projects/4/dashboards/1'))
+  })
+
+  it('heads the Forms pages with the back button too, and shows no dashboard tabs there', async () => {
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [] })
+    renderAt('/projects/4/forms?range=30d')
+    await vi.waitFor(() => expect(screen.getByRole('link', { name: 'Back to the dashboards of econumo.com' })).toHaveAttribute('href', '/projects/4/dashboards/1?range=30d'))
+    expect(screen.queryByRole('tab')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add tab' })).toBeNull()
+    expect(screen.getByRole('link', { name: /^Forms/ })).toHaveAttribute('aria-current', 'page')
+  })
+
+  it('keeps the Archived badge beside the back button', async () => {
+    renderAt('/projects/3/settings')
+    const back = await screen.findByRole('link', { name: 'Back to the dashboards of legacy' })
+    expect(back.parentElement).toHaveTextContent('Archived')
+  })
+
+  it('offers neither the back button nor Add dashboard when the tabs cannot be read', async () => {
+    vi.mocked(endpoints.projectTabs).mockRejectedValue(new ApiError(500, 'database is locked', 'internal'))
+    renderAt('/projects/7/settings')
+    expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
+    await vi.waitFor(() => expect(endpoints.projectTabs).toHaveBeenCalled())
+    await new Promise((r) => setTimeout(r, 50))
+    expect(screen.queryByRole('button', { name: 'Add dashboard' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Back to the dashboards/ })).not.toBeInTheDocument()
+  })
+
+  it('offers Add dashboard in place of the back button on a project with no tabs, and opens the one added', async () => {
+    const user = userEvent.setup()
+    vi.mocked(endpoints.projectTabs).mockResolvedValue({ tabs: [] })
+    const add = vi.spyOn(endpoints, 'addProjectTab').mockResolvedValue({ tabs: [{ dashboard_id: 3, title: 'Users', owner: 'system', group_id: 1 }] })
+    renderAt('/projects/7/settings?range=30d')
+    await user.click(await screen.findByRole('button', { name: 'Add dashboard' }))
+    expect(screen.queryByRole('link', { name: /Back to the dashboards/ })).not.toBeInTheDocument()
+    const builtin = await screen.findByRole('group', { name: 'Built-in' })
+    await user.click(within(builtin).getByRole('button', { name: 'Users' }))
+    expect(add).toHaveBeenCalledWith(7, { dashboard_id: 3 })
+    await vi.waitFor(() => expect(location()).toBe('/projects/7/dashboards/3?range=30d'))
   })
 
   it('blocks an attribute, hiding its past events at once', async () => {
     const user = userEvent.setup()
     actions.blockAttribute.mockResolvedValue(true)
-    renderAt('/projects/4/settings')
+    renderAt('/projects/4/settings/attributes')
     const section = await screen.findByRole('region', { name: 'Attributes' })
     await user.click(await within(section).findByRole('button', { name: 'Actions for tier' }))
     await user.click(await screen.findByRole('menuitem', { name: 'Block…' }))
@@ -201,7 +342,7 @@ describe('Project', () => {
   it('lists keys and disables one after confirming', async () => {
     const user = userEvent.setup()
     actions.disableKey.mockResolvedValue(true)
-    renderAt('/projects/4/settings')
+    renderAt('/projects/4/settings/overview')
     const keys = await screen.findByRole('region', { name: 'Ingest keys' })
     const row = await within(keys).findByRole('row', { name: /web/ })
     expect(within(row).getByText('active')).toBeInTheDocument()
@@ -215,21 +356,18 @@ describe('Project', () => {
   it('enables a disabled key without asking', async () => {
     const user = userEvent.setup()
     actions.enableKey.mockResolvedValue(true)
-    renderAt('/projects/4/settings')
+    renderAt('/projects/4/settings/overview')
     const keys = await screen.findByRole('region', { name: 'Ingest keys' })
     await user.click(await within(keys).findByRole('button', { name: 'Enable old' }))
     expect(actions.enableKey).toHaveBeenCalledWith(4, 'old')
   })
 
-  it('lists the events before Attributes and the keys, and blocks one, hiding its past events at once', async () => {
+  it('lists the events and blocks one, hiding its past events at once', async () => {
     const user = userEvent.setup()
     actions.blockEvent.mockResolvedValue(true)
     actions.removeEventRule.mockResolvedValue(true)
-    renderAt('/projects/4/settings')
+    renderAt('/projects/4/settings/events')
     const events = await screen.findByRole('region', { name: 'Events' })
-    const regions = screen.getAllByRole('region').map((r) => r.getAttribute('aria-label'))
-    expect(regions.indexOf('Events')).toBe(regions.indexOf('Attributes') - 1)
-    expect(regions.indexOf('Events')).toBeLessThan(regions.indexOf('Ingest keys'))
     await user.click(await within(events).findByRole('button', { name: 'Actions for checkout (product)' }))
     await user.click(await screen.findByRole('menuitem', { name: 'Block…' }))
     expect(await screen.findByText(/past events included; new ones are not stored/)).toBeInTheDocument()
@@ -243,7 +381,7 @@ describe('Project', () => {
   it('issues a key and shows it with its snippet', async () => {
     const user = userEvent.setup()
     actions.issueKey.mockResolvedValue({ key: 'ak_ios', snippet: 'twillingate.init(…)', status: 'issued' })
-    renderAt('/projects/4/settings')
+    renderAt('/projects/4/settings/overview')
     await user.click(await screen.findByRole('button', { name: 'Issue key' }))
     await user.type(screen.getByLabelText('Label'), 'ios')
     await user.click(screen.getByRole('button', { name: 'Issue' }))
@@ -255,10 +393,9 @@ describe('Project', () => {
   it('archives after a confirmation naming the purge window', async () => {
     const user = userEvent.setup()
     actions.archive.mockResolvedValue(true)
-    renderAt('/projects/4/settings')
+    renderAt('/projects/4/settings/danger')
     const danger = await screen.findByRole('region', { name: 'Danger' })
-    // The last section of the page, and the only place that offers Archive.
-    expect(danger.parentElement?.lastElementChild).toBe(danger)
+    // The only place that offers Archive.
     expect(screen.getAllByRole('button', { name: 'Archive' })).toHaveLength(1)
     await user.click(within(danger).getByRole('button', { name: 'Archive' }))
     const purge = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' }).format(new Date(Date.now() + 30 * 86_400_000))
@@ -275,13 +412,13 @@ describe('Project', () => {
     expect(screen.queryByRole('region', { name: 'Danger' })).not.toBeInTheDocument()
   })
 
-  it('shows no monitoring or domains on an archived project, which refuses every change', async () => {
+  it('shows only the origins under Domains on an archived project, which refuses every change', async () => {
     const monitor = vi.spyOn(endpoints, 'monitors').mockResolvedValue({ interval_seconds: 60, timeout_seconds: 5, paused: false, monitors: [], domains: [] })
-    renderAt('/projects/3/settings')
+    renderAt('/projects/3/settings/domains')
     expect(await screen.findByRole('button', { name: 'Restore' })).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: 'Usage' })).toBeInTheDocument()
+    expect(screen.getByRole('region', { name: 'Allowed origins' })).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Monitoring' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: 'Domains' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Domain expiry' })).not.toBeInTheDocument()
     expect(monitor).not.toHaveBeenCalled()
   })
 
@@ -290,25 +427,34 @@ describe('Project', () => {
     expect(await screen.findByText(/There is no project 77\./)).toBeInTheDocument()
   })
 
-  it('shows usage over the last 7 days, no cap impact, and refetches when the range changes', async () => {
+  it('shows daily usage over the last 30 days on Overview, no cap impact, and refetches when the range changes', async () => {
     const user = userEvent.setup()
+    // The daily chart's calls; the monthly chart reads its own six months.
+    const daily = () => vi.mocked(endpoints.usage).mock.calls.map(([q]) => q).filter((q) => q.from !== monthsRange(utcToday()).from)
     renderAt('/projects/4/settings')
     expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Cap impact' })).not.toBeInTheDocument()
-    const first = vi.mocked(endpoints.usage).mock.calls.at(-1)![0]
+    await vi.waitFor(() => expect(daily().length).toBeGreaterThan(0))
+    const first = daily().at(-1)!
     expect(first).toMatchObject({ project_id: 4 })
-    // Opens on the last 7 days, today included.
-    expect(screen.getByRole('button', { name: 'Range: Last week' })).toBeInTheDocument()
-    expect((Date.parse(first.to!) - Date.parse(first.from!)) / 86_400_000).toBe(6)
+    // Opens on the last 30 days, today included.
+    expect(screen.getByRole('button', { name: 'Range: Last month' })).toBeInTheDocument()
+    expect((Date.parse(first.to!) - Date.parse(first.from!)) / 86_400_000).toBe(29)
     await user.click(screen.getByRole('button', { name: /^Range:/ }))
-    await user.click(await screen.findByRole('menuitemradio', { name: 'Last month' }))
-    await vi.waitFor(() => expect(vi.mocked(endpoints.usage).mock.calls.at(-1)![0]).not.toEqual(first))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'Last week' }))
+    await vi.waitFor(() => expect(daily().at(-1)).not.toEqual(first))
+    expect(vi.mocked(endpoints.usage)).toHaveBeenCalledWith(expect.objectContaining(monthsRange(utcToday())))
+  })
+
+  it('opens Events on the last 7 days', async () => {
+    renderAt('/projects/4/settings/events')
+    expect(await screen.findByRole('button', { name: 'Range: Last week' })).toBeInTheDocument()
   })
 
   it('keeps "kept until restored" when the server names no purge window', async () => {
     const user = userEvent.setup()
     vi.spyOn(endpoints, 'dashboards').mockResolvedValue(dashboardsList())
-    renderAt('/projects/4/settings')
+    renderAt('/projects/4/settings/danger')
     await user.click(await screen.findByRole('button', { name: 'Archive' }))
     expect(screen.getByText(/It is kept until restored/)).toBeInTheDocument()
   })
@@ -329,7 +475,7 @@ describe('Project', () => {
 
   it('shows a skeleton, not "No keys", while keys load', async () => {
     vi.spyOn(endpoints, 'keys').mockReturnValue(new Promise(() => {}))
-    renderAt('/projects/4/settings')
+    renderAt('/projects/4/settings/overview')
     const keys = await screen.findByRole('region', { name: 'Ingest keys' })
     expect(within(keys).queryByText(/No keys/)).not.toBeInTheDocument()
   })
@@ -337,7 +483,7 @@ describe('Project', () => {
   it('says why keys did not load, with Retry, not "No keys"', async () => {
     const user = userEvent.setup()
     const keysSpy = vi.spyOn(endpoints, 'keys').mockRejectedValueOnce(new Error('keys exploded'))
-    renderAt('/projects/4/settings')
+    renderAt('/projects/4/settings/overview')
     const keys = await screen.findByRole('region', { name: 'Ingest keys' })
     expect(await within(keys).findByText(/Couldn't load keys\. keys exploded/)).toBeInTheDocument()
     expect(within(keys).queryByText(/No keys/)).not.toBeInTheDocument()
@@ -348,7 +494,7 @@ describe('Project', () => {
 
   it('says "No keys" only once loaded and empty', async () => {
     vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [] })
-    renderAt('/projects/4/settings')
+    renderAt('/projects/4/settings/overview')
     expect(await screen.findByText(/No keys: this project can receive nothing/)).toBeInTheDocument()
   })
 
@@ -360,7 +506,7 @@ describe('Project', () => {
 
   it('keeps the key label in the disable dialog while it closes', async () => {
     const user = userEvent.setup()
-    renderAt('/projects/4/settings')
+    renderAt('/projects/4/settings/overview')
     const keys = await screen.findByRole('region', { name: 'Ingest keys' })
     await user.click(await within(keys).findByRole('button', { name: 'Disable web' }))
     expect(await screen.findByText('Disable web?')).toBeInTheDocument()
@@ -435,9 +581,9 @@ describe('Project tabs', () => {
     expect(forms.compareDocumentPosition(screen.getByRole('link', { name: 'Settings' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
-  it('titles the Settings page Settings', async () => {
+  it('titles the Settings page with its first tab, Overview', async () => {
     renderAt('/projects/7/settings')
-    expect(await screen.findByRole('heading', { name: 'Settings', level: 1 })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Overview', level: 1 })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
   })
 
@@ -458,12 +604,12 @@ describe('Project tabs', () => {
     expect(endpoints.forms).toHaveBeenCalledWith(7, false)
   })
 
-  it('says a project with no events yet has none, and links to its Settings', async () => {
+  it('says a project with no events yet has none, and links to its Overview', async () => {
     vi.mocked(endpoints.projectActivity).mockResolvedValue({ projects: [{ project_id: 7, last_event_day: null, new_submissions: 0, forms: 0, draft_forms: 0 }] })
     renderAt('/projects/7/dashboards/1?range=30d')
     const notice = (await screen.findByText('No events received yet')).closest('[role=status]') as HTMLElement
     expect(notice).not.toBeNull()
-    expect(within(notice).getByRole('link', { name: 'Set up this project' })).toHaveAttribute('href', '/projects/7/settings?range=30d')
+    expect(within(notice).getByRole('link', { name: 'Set up this project' })).toHaveAttribute('href', '/projects/7/settings/overview?range=30d')
   })
 
   it('shows no notice on the Forms pages, where a forms-only project has its work', async () => {
@@ -573,7 +719,7 @@ describe('Project tabs', () => {
     const add = vi.spyOn(endpoints, 'addProjectTab').mockResolvedValue({
       tabs: [tabs[0], tabs[1], { dashboard_id: 3, title: 'Users', owner: 'system', group_id: 1 }, tabs[2]],
     })
-    renderAt('/projects/7/settings')
+    renderAt('/projects/7/dashboards/1')
     await user.click(await screen.findByRole('button', { name: 'Add tab' }))
     const builtin = await screen.findByRole('group', { name: 'Built-in' })
     expect(within(builtin).getAllByRole('button').map((b) => b.textContent)).toEqual(['Users', 'Groups', 'Retention'])
@@ -591,7 +737,7 @@ describe('Project tabs', () => {
     vi.mocked(endpoints.projectTabs).mockResolvedValue({
       tabs: all.map((d) => ({ dashboard_id: d.dashboard_id, title: d.title, owner: d.owner, group_id: d.group_id })),
     })
-    renderAt('/projects/7/settings')
+    renderAt('/projects/7/dashboards/1')
     await user.click(await screen.findByRole('button', { name: 'Add tab' }))
     expect(await screen.findByText('Every dashboard is already a tab of this project')).toBeInTheDocument()
   })

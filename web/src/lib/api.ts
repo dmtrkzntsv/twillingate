@@ -413,6 +413,8 @@ interface UsageResponse {
   /** The database file's size per day as the daily pass measured it; null on a day not measured. */
   database_series: { day: string; bytes: number | null }[]
   projects: ProjectUsage[]
+  /** QUOTA_CHECK_RATIO: the weight one availability check row counts toward the event totals shown (default 1, 0 leaves checks out). */
+  quota_check_ratio?: number
 }
 
 export interface CreateProjectBody {

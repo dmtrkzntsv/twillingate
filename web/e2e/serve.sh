@@ -33,6 +33,7 @@ GEO_DSN='none://'
 INGEST_ADDR='127.0.0.1:18080'
 CONSOLE_AUTH_DSN='token://e2e-token?password=e2e-pass&resource=http://127.0.0.1:18080'
 INGEST_URL='http://127.0.0.1:18080'
+QUOTA_CHECK_RATIO='0.1'
 EOF
 
 set -a

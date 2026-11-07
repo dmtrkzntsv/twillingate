@@ -1,11 +1,12 @@
-import { describe, expect, it, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
 import type { ProjectTab } from '@/lib/api'
-import { FORMS_ID, SETTINGS_ID } from '@/lib/project-tabs'
+import { readLastTab, writeLastTab } from '@/lib/last-tab'
+import { FORMS_ID, SETTINGS_ID, type SettingsSection } from '@/lib/project-tabs'
 import ProjectTabBar from './ProjectTabBar'
 
 const tabs: ProjectTab[] = [
@@ -16,19 +17,37 @@ const tabs: ProjectTab[] = [
 
 const actions: ProjectTabActions = { add: vi.fn(), create: vi.fn(), remove: vi.fn(), move: vi.fn(), pending: false }
 
-function renderBar({ currentId, newSubmissions, draftForms = 0, readOnly }: { currentId: number; newSubmissions: number; draftForms?: number; readOnly?: boolean }) {
+function renderBar({
+  currentId,
+  newSubmissions,
+  draftForms = 0,
+  readOnly,
+  section,
+  archived,
+  tabs: shown = tabs,
+}: {
+  currentId: number
+  newSubmissions: number
+  draftForms?: number
+  readOnly?: boolean
+  section?: SettingsSection
+  archived?: boolean
+  tabs?: ProjectTab[]
+}) {
   return render(
     <MemoryRouter initialEntries={['/projects/7/settings?range=30d']}>
       <TooltipProvider>
         <ProjectTabBar
           projectId={7}
           currentId={currentId}
-          tabs={tabs}
+          tabs={shown}
           dashboards={[]}
           actions={actions}
           newSubmissions={newSubmissions}
           draftForms={draftForms}
           readOnly={readOnly}
+          section={section}
+          archived={archived}
         />
       </TooltipProvider>
     </MemoryRouter>
@@ -41,6 +60,13 @@ describe('ProjectTabBar', () => {
     expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Views', 'Product', 'Mine'])
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/projects/7/settings?range=30d')
     expect(screen.getByRole('link', { name: 'Forms' })).toHaveAttribute('href', '/projects/7/forms?range=30d')
+  })
+
+  it('remembers a tab as soon as it is chosen, before it loads', async () => {
+    localStorage.clear()
+    renderBar({ currentId: 1, newSubmissions: 0 })
+    await userEvent.click(screen.getByRole('tab', { name: 'Product' }))
+    expect(readLastTab(7)).toBe(2)
   })
 
   it('drags the built-ins like the rest', () => {
@@ -78,14 +104,64 @@ describe('ProjectTabBar', () => {
     expect(screen.queryByRole('tab', { selected: true })).toBeNull()
   })
 
-  it('marks the inbox current on Forms', () => {
+  describe('on Settings', () => {
+    beforeEach(() => localStorage.clear())
+
+    it('swaps the dashboards for the Settings tabs alone, with Forms and the gear kept', () => {
+      renderBar({ currentId: SETTINGS_ID, newSubmissions: 0, section: 'events' })
+      expect(screen.queryByRole('tab')).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Add tab' })).toBeNull()
+      expect(screen.queryByRole('combobox', { name: 'Tab' })).toBeNull()
+      const nav = screen.getByRole('navigation', { name: 'Settings sections' })
+      const links = within(nav).getAllByRole('link')
+      expect(links.map((l) => l.textContent)).toEqual(['Overview', 'Domains', 'Events', 'Attributes', 'Danger'])
+      expect(links.map((l) => l.getAttribute('aria-current'))).toEqual([null, null, 'page', null, null])
+      expect(links[1]).toHaveAttribute('href', '/projects/7/settings/domains?range=30d')
+      // The way back is the page's title now (ProjectBackHeader), not the row.
+      expect(screen.queryByRole('link', { name: /Dashboards/ })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Add dashboard' })).toBeNull()
+      expect(screen.getByRole('link', { name: 'Forms' })).toHaveAttribute('href', '/projects/7/forms?range=30d')
+      expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
+    })
+
+    it('marks Overview current when no section is named', () => {
+      renderBar({ currentId: SETTINGS_ID, newSubmissions: 0 })
+      expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
+    })
+
+    it('leaves out Danger on an archived project', () => {
+      renderBar({ currentId: SETTINGS_ID, newSubmissions: 0, archived: true })
+      const nav = screen.getByRole('navigation', { name: 'Settings sections' })
+      expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Overview', 'Domains', 'Events', 'Attributes'])
+    })
+
+    it('sends the highlighted gear back to the remembered dashboard, else the first', () => {
+      writeLastTab(7, 9)
+      const { unmount } = renderBar({ currentId: SETTINGS_ID, newSubmissions: 0 })
+      expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/projects/7/dashboards/9?range=30d')
+      unmount()
+      writeLastTab(7, 404)
+      renderBar({ currentId: SETTINGS_ID, newSubmissions: 0 })
+      expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/projects/7/dashboards/1?range=30d')
+    })
+
+    it('keeps the gear on Settings when the project has no tabs', () => {
+      renderBar({ currentId: SETTINGS_ID, newSubmissions: 0, tabs: [], section: 'events' })
+      expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/projects/7/settings/events?range=30d')
+    })
+  })
+
+  it('marks the inbox current on Forms, with no dashboard tabs or "+" in the row', () => {
     renderBar({ currentId: FORMS_ID, newSubmissions: 0 })
     expect(screen.getByRole('link', { name: 'Forms' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('link', { name: 'Settings' })).not.toHaveAttribute('aria-current')
+    expect(screen.queryByRole('tab')).toBeNull()
+    expect(screen.queryByRole('combobox', { name: 'Tab' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add tab' })).toBeNull()
   })
 
-  it('shows the phone select placeholder when no tab is current', () => {
-    renderBar({ currentId: FORMS_ID, newSubmissions: 0 })
+  it('shows the phone select placeholder while the page lands, no tab current yet', () => {
+    renderBar({ currentId: -2, newSubmissions: 0, readOnly: true })
     expect(screen.getByRole('combobox', { name: 'Tab' })).toHaveTextContent('Tabs')
   })
 
@@ -116,7 +192,7 @@ describe('ProjectTabBar', () => {
       vi.mocked(actions.create).mockResolvedValue(true)
       const { user, field } = await openForm()
       await user.type(field, ' Launch {Enter}')
-      expect(actions.create).toHaveBeenCalledWith(7, 'Launch')
+      expect(actions.create).toHaveBeenCalledWith(7, 'Launch', 'range=30d')
       await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     })
 

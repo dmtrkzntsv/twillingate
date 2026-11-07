@@ -13,7 +13,7 @@ const TOKEN = 'e2e-token'
 const PHONE = { width: 360, height: 740 }
 
 // A registrable domain longer than a phone is wide on one line, which the
-// Domains section lists whole (the subdomains in front reduce to it).
+// Domain expiry section lists whole (the subdomains in front reduce to it).
 const LONG_DOMAIN = 'a-registrable-domain-name-longer-than-a-phone-is-wide.com'
 const MONITORED = `https://billing-test.another-long-subdomain.${LONG_DOMAIN}`
 
@@ -156,7 +156,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   })
 
   // Product events with names longer than a phone is wide, one renamed and
-  // one blocked: the Settings page's Events table and its alias chips wrap.
+  // one blocked: the Settings Events tab's table and its alias chips wrap.
   const longEvent = 'an_event_whose_name_is_longer_than_a_phone_is_wide_on_one_line'
   const renamedEvent = 'the_new_name_of_that_event_which_is_longer_than_a_phone_is_wide'
   const blockedEvent = 'another_event_that_is_blocked_with_a_name_longer_than_a_phone'
@@ -242,8 +242,8 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     '/app/projects',
     '/app/projects/1/settings',
     `/app/projects/${id}/settings`,
-    // Today, where the events above were received (the default range ends yesterday).
-    `/app/projects/${id}/settings?range=today`,
+    // Every Settings tab; today, where the events above were received (the default range ends yesterday).
+    ...['overview', 'domains', 'events', 'attributes', 'danger'].map((s) => `/app/projects/${id}/settings/${s}?range=today`),
     `/app/projects/${id}/forms`,
     `/app/projects/${id}/forms/${formName}`,
     `/app/projects/${id}/dashboards/1`,
@@ -258,22 +258,33 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     `/app/projects/${id}/dashboards/999999`,
   ]) {
     await check(page, path)
-    // The check above means nothing for the Events and Attributes sections unless they are drawn.
-    if (path.endsWith('?range=today')) {
-      await expect(page.getByRole('region', { name: 'Monitoring' }).getByText(/^each site is checked every/)).toBeVisible()
-      await expect(page.getByRole('region', { name: 'Domains' }).getByText(LONG_DOMAIN)).toBeVisible()
-      for (const [section, alias] of [['Events', longEvent], ['Attributes', longAttribute]]) {
-        const region = page.getByRole('region', { name: section })
-        await expect(region.getByRole('button', { name: `Remove alias ${alias}` })).toBeVisible()
-        await expect(region.getByText('Blocked', { exact: true })).toBeVisible()
-      }
+    // The check above means nothing for the Domains, Events and Attributes tabs' sections unless they are drawn.
+    if (path.endsWith('/settings/domains?range=today')) {
+      await expect(page.getByRole('region', { name: 'Monitoring' }).getByRole('switch').first()).toBeVisible()
+      await expect(page.getByRole('region', { name: 'Domain expiry' }).getByText(LONG_DOMAIN)).toBeVisible()
+    }
+    for (const [section, alias] of [['Events', longEvent], ['Attributes', longAttribute]]) {
+      if (!path.endsWith(`/settings/${section.toLowerCase()}?range=today`)) continue
+      const region = page.getByRole('region', { name: section })
+      await expect(region.getByRole('button', { name: `Remove alias ${alias}` })).toBeVisible()
+      await expect(region.getByText('Blocked', { exact: true })).toBeVisible()
     }
   }
   for (const d of await dashboardIds(request)) await check(page, `/app/dashboards/${d}`)
 
+  // On a phone the Settings tabs are a select, as the dashboard tabs are, which opens each tab's address.
+  await check(page, `/app/projects/${id}/settings?range=today`)
+  await page.getByRole('combobox', { name: 'Settings section' }).click()
+  await page.getByRole('option', { name: 'Domains' }).click()
+  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/settings/domains\\?range=today$`))
+  await expect(page.getByRole('region', { name: 'Allowed origins' })).toBeVisible()
+  expect(await sidewaysScroll(page), 'domains tab').toEqual([])
+  // The back button in the title: the long name truncates on its one line.
+  await expect(page.getByRole('link', { name: /^Back to the dashboards of phone-/ })).toBeInViewport({ ratio: 1 })
+
   // Check now, served by the live runner: the origin does not resolve here, so
   // its status line reads Down, with the long origin's error, and wraps too.
-  await check(page, `/app/projects/${id}/settings?range=today`)
+  await check(page, `/app/projects/${id}/settings/domains?range=today`)
   const monitoring = page.getByRole('region', { name: 'Monitoring' })
   const monitoredOrigin = MONITORED
   await monitoring.getByRole('button', { name: `Check ${monitoredOrigin} now` }).click()
@@ -303,7 +314,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     const wide = await page.evaluate(() => {
       const root = document.documentElement
       const out: string[] = root.scrollWidth > root.clientWidth ? ['page'] : []
-      for (const name of ['Monitoring', 'Domains']) {
+      for (const name of ['Monitoring', 'Domain expiry']) {
         for (const el of Array.from(document.querySelectorAll<HTMLElement>(`[aria-label="${name}"], [aria-label="${name}"] *`))) {
           // A text field scrolls a long value inside itself, as any does; it is open here.
           if (el.tagName !== 'INPUT' && el.scrollWidth > el.clientWidth + 1) out.push(`${name}: ${el.tagName.toLowerCase()} ${el.scrollWidth}px in ${el.clientWidth}px`)
@@ -316,7 +327,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await page.setViewportSize(PHONE)
 
   // The Attributes section's dialogs, over its long keys, fit the phone.
-  await check(page, `/app/projects/${id}/settings?range=today`)
+  await check(page, `/app/projects/${id}/settings/attributes?range=today`)
   const attributes = page.getByRole('region', { name: 'Attributes' })
   await attributes.getByRole('button', { name: `Actions for ${renamedAttribute}` }).click()
   await page.getByRole('menuitem', { name: 'Merge into…' }).click()
@@ -508,7 +519,7 @@ test('the empty Projects guide and the install dialog fit a phone', async ({ pag
   await page.getByRole('button', { name: 'Connect' }).click()
   await page.waitForURL(/\/app\/projects$/)
 
-  await page.goto(`/app/projects/${id}/settings`)
+  await page.goto(`/app/projects/${id}/settings/overview`)
   await page.getByRole('button', { name: 'Show install snippet' }).click()
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Copy snippet' })).toBeInViewport({ ratio: 1 })
   await expect(page.getByRole('dialog').getByText(/No allowed origins/)).toBeVisible()
@@ -521,4 +532,34 @@ test('the empty Projects guide and the install dialog fit a phone', async ({ pag
   const guide = page.getByRole('region', { name: 'Connect your AI agent' })
   await expect(guide.getByText('http://127.0.0.1:18080/mcp', { exact: true })).toBeVisible()
   expect(await sidewaysScroll(page)).toEqual([])
+})
+
+test('a project with no dashboard tabs fits its Settings row on a phone', async ({ page, request }) => {
+  const created = await request.post('/api/projects', {
+    headers: authHeaders(),
+    data: { name: `no-tabs-${Date.now()} - longer than a phone is wide on one line`, allowed_origins: [] },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { project_id: id } = (await created.json()) as { project_id: number }
+  try {
+    const listed = await request.get(`/api/projects/${id}/tabs`, { headers: authHeaders() })
+    for (const t of ((await listed.json()) as { tabs: { dashboard_id: number }[] }).tabs) {
+      const removed = await request.post(`/api/projects/${id}/tabs/${t.dashboard_id}/remove`, { headers: authHeaders(), data: {} })
+      expect(removed.ok(), await removed.text()).toBeTruthy()
+    }
+    await page.goto('/app/')
+    await page.waitForURL(/\/oauth\/authorize\?/)
+    await page.getByLabel('Password').fill(PASSWORD)
+    await page.getByRole('button', { name: 'Connect' }).click()
+    await page.waitForURL(/\/app\/projects$/)
+
+    // Add dashboard takes the title's place; the section select, Forms and the gear share the row.
+    await check(page, `/app/projects/${id}/settings`)
+    await expect(page.getByRole('button', { name: 'Add dashboard' })).toBeInViewport({ ratio: 1 })
+    await expect(page.getByRole('combobox', { name: 'Settings section' })).toBeInViewport({ ratio: 1 })
+    await expect(page.getByRole('link', { name: /^Forms/ })).toBeInViewport({ ratio: 1 })
+    await expect(page.getByRole('link', { name: 'Settings', exact: true })).toBeInViewport({ ratio: 1 })
+  } finally {
+    await request.post(`/api/projects/${id}/archive`, { headers: authHeaders() })
+  }
 })

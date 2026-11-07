@@ -13,7 +13,7 @@ import type { Monitor, MonitorBody } from '@/lib/api'
 import { formatExact } from '@/lib/format'
 import { monitorsQuery, projectTabsQuery } from '@/lib/queries'
 import { rangeParams, tabPath } from '@/lib/project-tabs'
-import { daysUntil, formatDaysLeft, formatInterval } from '@/lib/time'
+import { daysUntil, formatDaysLeft } from '@/lib/time'
 import { formatAgo } from '@/lib/units'
 
 interface Props {
@@ -332,7 +332,8 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
     return (
       <section aria-label="Monitoring" className="flex flex-col gap-3 rounded-lg border p-4">
         <h2 className="text-base font-semibold">Monitoring</h2>
-        <p className="text-sm text-muted-foreground">Add an exact http(s) origin above to monitor it.</p>
+        {/* Monitors check the allowed origins, which sit right above this section. */}
+        <p className="text-sm text-muted-foreground">To monitor your site, first add its address to Allowed origins above, as an exact http(s) origin such as https://example.com.</p>
       </section>
     )
   }
@@ -349,15 +350,10 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
     <section aria-label="Monitoring" className="flex flex-col gap-3 rounded-lg border p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-x-3">
         <h2 className="text-base font-semibold">Monitoring</h2>
-        {anyOn && (
-          <p className="flex flex-wrap items-baseline gap-x-3 text-sm text-muted-foreground">
-            <span>{`each site is checked every ${formatInterval(data.interval_seconds)}`}</span>
-            {availability && (
-              <Link className="underline underline-offset-4" to={tabPath(projectId, availability.dashboard_id, rangeParams(url).toString())}>
-                Open Availability
-              </Link>
-            )}
-          </p>
+        {anyOn && availability && (
+          <Link className="text-sm text-muted-foreground underline underline-offset-4" to={tabPath(projectId, availability.dashboard_id, rangeParams(url).toString())}>
+            Open Availability
+          </Link>
         )}
       </div>
       {data.paused && <p className="text-sm text-muted-foreground">Monitoring is paused on this install</p>}

@@ -104,6 +104,14 @@ function App() {
             }
           />
           <Route
+            path="/projects/:id/settings/:section"
+            element={
+              <OnlineOnly>
+                <Project />
+              </OnlineOnly>
+            }
+          />
+          <Route
             path="/projects/:id/dashboards/:dashId"
             element={
               <OnlineOnly>

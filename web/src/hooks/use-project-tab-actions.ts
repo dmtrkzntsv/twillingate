@@ -10,10 +10,11 @@ export interface ProjectTabActions {
   add(projectId: number, dashboardId: number, after?: number): Promise<boolean>
   /**
    * Makes a dashboard titled so, shows it as the project's last tab and
-   * opens it; resolves true when all of it happened, false after the toast.
-   * A dashboard made but not added stays in the lists, and the toast says so.
+   * opens it, with `search` (the page's range, D8); resolves true when all
+   * of it happened, false after the toast. A dashboard made but not added
+   * stays in the lists, and the toast says so.
    */
-  create(projectId: number, title: string): Promise<boolean>
+  create(projectId: number, title: string, search?: string): Promise<boolean>
   /** Takes a tab off the project's page; the toast "Removed 'X'" has an Undo that adds it back. */
   remove(projectId: number, tab: { dashboard_id: number; title: string }): Promise<boolean>
   /** Reorders a tab after another (0 first). */
@@ -61,7 +62,7 @@ export function useProjectTabActions(): ProjectTabActions {
   )
 
   const create = useCallback(
-    async (projectId: number, title: string) => {
+    async (projectId: number, title: string, search = '') => {
       let id = 0
       const ok = await run(projectId, async () => {
         id = (await endpoints.createDashboard({ title })).dashboard_id
@@ -76,7 +77,7 @@ export function useProjectTabActions(): ProjectTabActions {
       if (id) void queryClient.invalidateQueries({ queryKey: ['dashboards'] })
       if (!ok) return false
       void queryClient.invalidateQueries({ queryKey: ['project-tabs', projectId] })
-      navigate(tabPath(projectId, id))
+      navigate(tabPath(projectId, id, search))
       return true
     },
     [run, queryClient, navigate]
