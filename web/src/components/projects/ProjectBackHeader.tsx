@@ -15,7 +15,7 @@ interface Props {
   title: ReactNode
   /** The project's tabs, in order. */
   tabs: ProjectTab[]
-  /** False while the tabs load or after they failed: the title alone, with neither the back button nor Add dashboard. */
+  /** False while the tabs load or after they failed: the name alone, with neither the back button nor Add dashboard. */
   tabsLoaded: boolean
   /** Every dashboard, for the picker. */
   dashboards: DashboardInfo[]
@@ -27,16 +27,18 @@ interface Props {
  * tabs): in place of the name and its pencil, "← name", back to the
  * dashboard last opened here, else the first (D3), keeping the range. A
  * project with no dashboard keeps its name and pencil, the only place left
- * to rename it, with "Add dashboard" beside them, the "+" picker; so does a
- * project whose tabs are loading or failed. A long name truncates on its
- * one line.
+ * to rename it, with "Add dashboard" beside them, the "+" picker. While
+ * the tabs load, or after they failed, the name shows alone. A long name
+ * truncates on its one line.
  */
 export default function ProjectBackHeader({ projectId, name, title, tabs, tabsLoaded, dashboards, actions }: Props) {
   const navigate = useNavigate()
   const [url] = useSearchParams()
   const [adding, setAdding] = useState(false)
   const search = rangeParams(url).toString()
-  if (!tabsLoaded) return title
+  // While the tabs load or after they failed: the name, plain. Not the
+  // pencil, whose open editor would be lost when the back button replaces it.
+  if (!tabsLoaded) return <h1 className="truncate text-xl font-semibold tracking-tight">{name}</h1>
 
   const add = async (id: number) => {
     const ok = await actions.add(projectId, id)

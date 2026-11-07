@@ -2,9 +2,9 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { Bar, BarChart, CartesianGrid, XAxis, YAxis } from 'recharts'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
-import { ChartContainer, ChartTooltip, type ChartConfig } from '@/components/ui/chart'
-import { legend, tooltip } from '@/components/chart-parts'
-import { axis, formatTick, grid, MAX_BAR, niceTicks, seriesColor, valueAxis } from '@/lib/chart'
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
+import { legend } from '@/components/chart-parts'
+import { axis, formatHeading, formatTick, grid, MAX_BAR, niceTicks, seriesColor, valueAxis } from '@/lib/chart'
 import { formatValue } from '@/lib/format'
 import { usageQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
@@ -57,8 +57,8 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
   const empty = !!s && eventCount(s.totals, ratio) === 0
   const checks = s ? Math.round(s.totals.checks * ratio) : 0
   const keys = ratio > 0 ? [...FAMILIES, 'checks'] : FAMILIES
-  // Rounded like the monthly chart and the Events tile, so a count never reads 72.3.
-  const rows = s ? s.series.map((d) => ({ ...d, checks: Math.round(d.checks * ratio) })) : []
+  // Unrounded, so the bars add up to the Events tile; the tooltip rounds, as the monthly chart's does.
+  const rows = s ? s.series.map((d) => ({ ...d, checks: d.checks * ratio })) : []
   const ticks = niceTicks(rows.map((d) => d.views + d.events + d.measures + d.checks))
   return (
     <section aria-label="Usage" className="flex flex-col gap-3 rounded-lg border p-4">
@@ -89,7 +89,14 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
                 <CartesianGrid {...grid} />
                 <XAxis dataKey="day" {...axis} interval="preserveStartEnd" minTickGap={16} tickFormatter={formatTick} />
                 <YAxis {...valueAxis} ticks={ticks} domain={[ticks[0], ticks[ticks.length - 1]]} tickFormatter={(v) => formatValue(Number(v))} />
-                <ChartTooltip cursor={{ fill: 'var(--muted)', opacity: 0.6 }} content={tooltip('number', { heading: 'day', total: true })} />
+                <ChartTooltip cursor={{ fill: 'var(--muted)', opacity: 0.6 }} content={
+                  <ChartTooltipContent
+                    indicator="dot"
+                    total
+                    valueFormatter={(v) => formatValue(Math.round(v))}
+                    labelFormatter={(_, payload) => formatHeading(payload?.[0]?.payload?.day)}
+                  />
+                } />
                 {legend()}
                 {keys.map((key, i) => (
                   <Bar
