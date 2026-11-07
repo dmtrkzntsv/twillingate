@@ -13,18 +13,10 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
-
-func sharePNG(t *testing.T, w, h int) []byte {
-	t.Helper()
-	var b bytes.Buffer
-	if err := png.Encode(&b, image.NewRGBA(image.Rect(0, 0, w, h))); err != nil {
-		t.Fatal(err)
-	}
-	return b.Bytes()
-}
 
 // shareForm writes a multipart body with fields and files, in that order.
 func shareForm(t *testing.T, fields map[string]string, files map[string][]byte) (*bytes.Buffer, string) {
@@ -64,8 +56,24 @@ func shareFields(widgetID int64) map[string]string {
 	return map[string]string{"widget_id": fmt.Sprint(widgetID), "project_id": "1", "from": from, "to": to}
 }
 
+// sharePNGs are the two pictures every upload sends, encoded once: a
+// 2400×1260 PNG takes about a second to encode under -race.
+var sharePNGs = sync.OnceValues(func() ([]byte, []byte) {
+	enc := func(w, h int) []byte {
+		var b bytes.Buffer
+		if err := png.Encode(&b, image.NewRGBA(image.Rect(0, 0, w, h))); err != nil {
+			panic(err)
+		}
+		return b.Bytes()
+	}
+	return enc(1200, 630), enc(2400, 1260)
+})
+
+// shareFiles is a fresh map of the two pictures; tests replace its entries,
+// never change the bytes.
 func shareFiles(t *testing.T) map[string][]byte {
-	return map[string][]byte{"image": sharePNG(t, 1200, 630), "image_2x": sharePNG(t, 2400, 1260)}
+	img, img2x := sharePNGs()
+	return map[string][]byte{"image": img, "image_2x": img2x}
 }
 
 // call serves one request on h, with the fixture's token when auth is set.
@@ -258,7 +266,10 @@ func TestCreateWidgetShareRESTRefusals(t *testing.T) {
 			return with(func(f map[string]string, _ map[string][]byte) { f["project_id"] = "99999" })
 		}, 404, "not_found"},
 		{"project without one", func() (io.Reader, string) {
-			return with(func(f map[string]string, _ map[string][]byte) { delete(f, "project_id"); f["archive_after"] = "project" })
+			return with(func(f map[string]string, _ map[string][]byte) {
+				delete(f, "project_id")
+				f["archive_after"] = "project"
+			})
 		}, 400, "invalid"},
 		{"unknown widget", func() (io.Reader, string) {
 			return with(func(f map[string]string, _ map[string][]byte) { f["widget_id"] = "99999" })
