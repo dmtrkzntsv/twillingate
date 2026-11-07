@@ -973,3 +973,40 @@ func TestMonitorPause(t *testing.T) {
 		}
 	}
 }
+
+// TestBudget: the monthly event budget and the checks' weight, both display
+// only, read as set; unset or empty is no budget and a weight of 1.
+func TestBudget(t *testing.T) {
+	cases := []struct {
+		name   string
+		vars   map[string]string
+		budget int
+		ratio  float64
+	}{
+		{"unset", nil, 0, 1},
+		{"empty", map[string]string{"EVENTS_MONTHLY_BUDGET": "", "QUOTA_CHECK_RATIO": ""}, 0, 1},
+		{"set", map[string]string{"EVENTS_MONTHLY_BUDGET": "1000000", "QUOTA_CHECK_RATIO": "0.1"}, 1_000_000, 0.1},
+		{"checks left out", map[string]string{"EVENTS_MONTHLY_BUDGET": "500", "QUOTA_CHECK_RATIO": "0"}, 500, 0},
+	}
+	for _, tc := range cases {
+		c, err := load(t, tc.vars)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if c.Budget.EventsMonthly != tc.budget || c.Budget.CheckRatio != tc.ratio {
+			t.Errorf("%s: Budget = %+v, want %d and %g", tc.name, c.Budget, tc.budget, tc.ratio)
+		}
+	}
+	for name, vars := range map[string]map[string]string{
+		"negative budget":    {"EVENTS_MONTHLY_BUDGET": "-1"},
+		"garbage budget":     {"EVENTS_MONTHLY_BUDGET": "lots"},
+		"negative ratio":     {"QUOTA_CHECK_RATIO": "-0.5"},
+		"garbage ratio":      {"QUOTA_CHECK_RATIO": "half"},
+		"not-a-number ratio": {"QUOTA_CHECK_RATIO": "NaN"},
+		"infinite ratio":     {"QUOTA_CHECK_RATIO": "Inf"},
+	} {
+		if _, err := load(t, vars); err == nil {
+			t.Errorf("%s: expected an error", name)
+		}
+	}
+}

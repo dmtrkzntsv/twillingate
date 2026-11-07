@@ -7,6 +7,7 @@ package config
 
 import (
 	"fmt"
+	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -72,6 +73,21 @@ type MonitorConfig struct {
 	// is written. Editing monitors still works; a check on demand is refused.
 	Disabled bool
 }
+
+// BudgetConfig is a monthly event budget to show beside each project's
+// usage. It is display only: nothing is ever refused over it.
+type BudgetConfig struct {
+	// EventsMonthly (EVENTS_MONTHLY_BUDGET) is the events one project may
+	// count in a calendar month (UTC); 0, unset or empty, means none.
+	EventsMonthly int
+	// CheckRatio (QUOTA_CHECK_RATIO) is what one availability check row
+	// counts toward EventsMonthly: 1 by default, 0 leaves checks out.
+	CheckRatio float64
+}
+
+// DefaultQuotaCheckRatio is QUOTA_CHECK_RATIO's default: a check row
+// counts as one event.
+const DefaultQuotaCheckRatio = 1.0
 
 // retired are settings twillingate no longer reads, each with why. One
 // still set is ignored, and the start says so once (IgnoredWarning).
@@ -178,6 +194,7 @@ type Config struct {
 	Forms              FormsConfig
 	Reporting          ReportingConfig
 	Monitor            MonitorConfig
+	Budget             BudgetConfig
 	Console            ConsoleConfig
 	// Ignored lists the retired settings the environment still sets, in
 	// the order of retired.
@@ -230,6 +247,23 @@ func (e *env) dur(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
+}
+
+// float reads a decimal number (strconv.ParseFloat: 1, 0.1, 2.5e-1); NaN
+// and the infinities are refused, as no setting means them.
+func (e *env) float(key string, def float64) float64 {
+	v, ok := e.lookup(key)
+	if !ok || v == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		if e.err == nil {
+			e.err = fmt.Errorf("config: %s: invalid number %q", key, v)
+		}
+		return def
+	}
+	return f
 }
 
 // bool reads Go's boolean spellings (strconv.ParseBool: 1, t, true, TRUE,
@@ -296,6 +330,10 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			Interval: time.Duration(e.num("MONITOR_INTERVAL", 120)) * time.Second,
 			Timeout:  time.Duration(e.num("MONITOR_TIMEOUT", 5)) * time.Second,
 			Disabled: e.bool("MONITOR_DISABLED", false),
+		},
+		Budget: BudgetConfig{
+			EventsMonthly: e.num("EVENTS_MONTHLY_BUDGET", 0),
+			CheckRatio:    e.float("QUOTA_CHECK_RATIO", DefaultQuotaCheckRatio),
 		},
 	}
 	c.Console = ConsoleConfig{
@@ -451,6 +489,12 @@ func (c *Config) validate() error {
 	}
 	if c.Monitor.Timeout < time.Second || c.Monitor.Timeout > time.Minute {
 		return fmt.Errorf("config: MONITOR_TIMEOUT must be between 1 and 60 seconds: %d", int(c.Monitor.Timeout/time.Second))
+	}
+	if c.Budget.EventsMonthly < 0 {
+		return fmt.Errorf("config: EVENTS_MONTHLY_BUDGET must not be negative: %d", c.Budget.EventsMonthly)
+	}
+	if c.Budget.CheckRatio < 0 {
+		return fmt.Errorf("config: QUOTA_CHECK_RATIO must not be negative: %g", c.Budget.CheckRatio)
 	}
 	if c.Monitor.Timeout >= c.Monitor.Interval {
 		return fmt.Errorf("config: MONITOR_TIMEOUT (%d seconds) must be below MONITOR_INTERVAL (%d seconds)",

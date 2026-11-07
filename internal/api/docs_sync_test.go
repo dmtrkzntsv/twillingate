@@ -279,7 +279,7 @@ func spellOut(n int) string {
 // chasing a setting with no effect.
 func TestDeploymentDocumentsEveryEnvVar(t *testing.T) {
 	src := readSource(t, "../config/config.go")
-	re := regexp.MustCompile(`\.(?:str|num|dur|bool)\("([A-Z][A-Z0-9_]+)"`)
+	re := regexp.MustCompile(`\.(?:str|num|dur|bool|float)\("([A-Z][A-Z0-9_]+)"`)
 	inCode := map[string]bool{}
 	for _, m := range re.FindAllStringSubmatch(src, -1) {
 		inCode[m[1]] = true

@@ -163,6 +163,8 @@ The stream sends a keepalive every 15 seconds, well inside Cloudflare's
 | `MONITOR_INTERVAL` | Seconds between the availability checks of each enabled monitor, every site on its own schedule; fixed, 10 to 3600, default 120. At most 16 checks run at once, and a check that finds no free worker is skipped until its next slot. |
 | `MONITOR_TIMEOUT` | Seconds a site has to answer before the check counts as down; default 5, 1 to 60, below `MONITOR_INTERVAL`. Also the limit of the daily certificate read; the domain lookup keeps its own. |
 | `MONITOR_DISABLED` | `true` stops all monitoring: no check runs, no row is written, and a check on demand is refused (`list_monitors` says `paused`). Monitors can still be edited, and a manual check left pending is ended as one that did not run. Default `false`. |
+| `EVENTS_MONTHLY_BUDGET` | Events one project may count in a calendar month (UTC): views, product events and measure samples, plus availability checks weighted by `QUOTA_CHECK_RATIO`. Display only: a project's Settings → Overview draws it as a line over its monthly totals and marks a month above it, and `usage` answers it as `events_monthly_budget`; nothing is ever refused over it. At least 0; unset, empty or 0 means no budget. |
+| `QUOTA_CHECK_RATIO` | What one availability check row counts toward `EVENTS_MONTHLY_BUDGET`, a decimal such as `0.1`. 0 leaves checks out. At least 0. Default 1. |
 
 Day counts end in `_DAYS` and take a whole number; every other time
 (`BUFFER_FLUSH_INTERVAL`, `CONSOLE_QUERY_TIMEOUT`, `REPORTING_*_MAX_AGE`)

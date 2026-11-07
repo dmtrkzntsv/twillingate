@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -313,4 +314,37 @@ func TestUsageHistoryPastTheRowCap(t *testing.T) {
 	if _, err := h.usage(context.Background(), usageIn{usageRangeIn: usageRangeIn{From: days[0], To: days[len(days)-1]}}); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestUsageCarriesTheBudget: the usage answer names the monthly event
+// budget and the checks' weight it was configured with; with no budget,
+// events_monthly_budget is null (and the weight its default, 1).
+func TestUsageCarriesTheBudget(t *testing.T) {
+	h, _ := newTestHost(t)
+	ctx := context.Background()
+	in := usageIn{usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-22"}}
+	h.budget = config.BudgetConfig{CheckRatio: config.DefaultQuotaCheckRatio}
+	none, err := h.usage(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, _ := json.Marshal(none)
+	if !strings.Contains(string(raw), `"events_monthly_budget":null`) || !strings.Contains(string(raw), `"quota_check_ratio":1`) {
+		t.Errorf("no budget answered %s", raw)
+	}
+	h.budget = config.BudgetConfig{EventsMonthly: 50000, CheckRatio: 0.1}
+	set, err := h.usage(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.EventsMonthlyBudget == nil || *set.EventsMonthlyBudget != 50000 || set.QuotaCheckRatio != 0.1 {
+		t.Errorf("budget = %v, ratio = %g, want 50000 and 0.1", deref64(set.EventsMonthlyBudget), set.QuotaCheckRatio)
+	}
+}
+
+func deref64(p *int64) any {
+	if p == nil {
+		return nil
+	}
+	return *p
 }
