@@ -51,6 +51,13 @@ const (
 	// graceUnread is how long a certificate that cannot be read, or a
 	// domain whose lookups fail, waits before it is failing.
 	graceUnread = 24 * time.Hour
+	// A streak of failures not yet failing starts over after a gap
+	// without observations longer than these: two failures that far
+	// apart (a restart, a lost write) are not in a row. MONITOR_INTERVAL
+	// is at most an hour; certificate and domain reads that fail are
+	// retried hourly.
+	uptimeGap = 2 * time.Hour
+	unreadGap = 25 * time.Hour
 )
 
 // The days-left steps an expiry warns at, once each per expiry.
@@ -69,6 +76,8 @@ type key struct {
 type entry struct {
 	Fails      int       `json:"fails,omitempty"` // failed checks in a row (uptime)
 	Since      time.Time `json:"since,omitzero"`  // first failed observation
+	Last       time.Time `json:"last,omitzero"`   // latest failed observation
+	Ended      time.Time `json:"ended,omitzero"`  // recovered at; the row awaits its delete
 	Failing    bool      `json:"failing,omitempty"`
 	RemindedAt time.Time `json:"reminded_at,omitzero"`
 	Reason     string    `json:"reason,omitempty"`
@@ -113,17 +122,23 @@ func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up
 	k := key{projectID, kindUptime, origin}
 	e, ok := t.states[k]
 	if up {
-		if ok {
-			t.recover(ctx, k, e, store.NotifyUptimeUp, at)
+		if !ok {
+			return
+		}
+		t.recover(ctx, k, e, store.NotifyUptimeUp, at)
+		// The outage kept the certificate's reminders back; its next one
+		// is an interval from now, not at the next tick.
+		ck := key{projectID, kindCert, origin}
+		if c := t.states[ck]; e.Failing && c.Failing && c.RemindedAt.Before(at) {
+			c.RemindedAt = at
+			t.put(ctx, ck, c, nil)
 		}
 		return
 	}
 	if e.Failing {
 		return
 	}
-	if !ok {
-		e = entry{Since: at}
-	}
+	e = t.streak(k, at, uptimeGap)
 	e.Fails++
 	e.Reason, e.Error = reason, errText
 	if e.Fails < downAfter {
@@ -180,8 +195,8 @@ func (t *Tracker) Domain(ctx context.Context, projectID int64, domain string, ok
 	}
 }
 
-// Tick drops the states no enabled monitor has any more (without a
-// message), reminds of every failing state not reminded of for the
+// Tick drops the states no enabled monitor has any more, and ended ones
+// (without a message), reminds of every failing state not reminded of for the
 // remind interval (a certificate not while its origin is down), and
 // sends the form submission bursts whose window has ended.
 func (t *Tracker) Tick(ctx context.Context, now time.Time) {
@@ -244,7 +259,7 @@ func (t *Tracker) tick(ctx context.Context, now time.Time) {
 }
 
 // prune deletes the states whose origin, or main domain, no enabled
-// monitor of their project has.
+// monitor of their project has, and the ended rows a failed delete left.
 func (t *Tracker) prune(ctx context.Context) {
 	ms, err := t.st.ListEnabledMonitors(ctx)
 	if err != nil {
@@ -256,7 +271,12 @@ func (t *Tracker) prune(ctx context.Context) {
 		origins[key{projectID: m.ProjectID, subject: m.Origin}] = true
 		domains[key{projectID: m.ProjectID, subject: maindomain.OfOrigin(m.Origin)}] = true
 	}
-	for k := range t.states {
+	for k, e := range t.states {
+		failingKind := k.kind == kindUptime || k.kind == kindCert || k.kind == kindDomain
+		if failingKind && !e.Failing && e.Since.IsZero() { // an ended or empty row
+			t.del(ctx, k)
+			continue
+		}
 		live := origins
 		if k.kind == kindDomain || k.kind == kindDomainExpiry {
 			live = domains
@@ -270,25 +290,38 @@ func (t *Tracker) prune(ctx context.Context) {
 // failure records one failed certificate or domain observation: failing
 // at once when immediate, else once it has failed for graceUnread.
 func (t *Tracker) failure(ctx context.Context, k key, typ, errText string, immediate bool, at time.Time) {
-	e, ok := t.states[k]
-	if e.Failing {
+	if e := t.states[k]; e.Failing {
 		if errText != e.Error { // so a reminder says what fails now
 			e.Error = errText
 			t.put(ctx, k, e, nil)
 		}
 		return
 	}
-	if !ok {
-		e = entry{Since: at}
-	}
+	e := t.streak(k, at, unreadGap)
 	e.Error = errText
 	if immediate || at.Sub(e.Since) >= graceUnread {
 		t.announce(ctx, k, e, typ, at, map[string]string{"error": errText})
 		return
 	}
-	if !ok {
-		t.put(ctx, k, e, nil)
+	t.put(ctx, k, e, nil)
+}
+
+// streak is k's not-yet-failing state with at recorded as its latest
+// failure: the stored one when it is a streak still going, else a new
+// one from at. A row without a first failure (a recovery whose delete
+// did not happen, an unreadable one) or one whose latest failure is more
+// than gap ago does not continue.
+func (t *Tracker) streak(k key, at time.Time, gap time.Duration) entry {
+	e := t.states[k]
+	last := e.Last
+	if last.IsZero() {
+		last = e.Since
 	}
+	if e.Since.IsZero() || at.Sub(last) > gap {
+		e = entry{Since: at}
+	}
+	e.Last = at
+	return e
 }
 
 // announce makes e failing and sends typ with since and fields. The
@@ -305,12 +338,14 @@ func (t *Tracker) announce(ctx context.Context, k key, e entry, typ string, at t
 }
 
 // recover ends the state of k: with typ when it was failing, silently
-// when it was only counting failures. The message and a cleared state
-// are written together, then the state is deleted.
+// when it was only counting failures. The store cannot delete a state
+// and insert a notification in one step, so the message goes with a row
+// marked ended (which no failure continues, and Tick deletes), then the
+// row is deleted.
 func (t *Tracker) recover(ctx context.Context, k key, e entry, typ string, at time.Time) {
 	if e.Failing {
 		n := t.note(k, typ, map[string]string{"since": stampRFC(e.Since), "until": stampRFC(at)}, at)
-		if !t.put(ctx, k, entry{}, n) {
+		if !t.put(ctx, k, entry{Ended: at}, n) {
 			return
 		}
 	}
@@ -327,9 +362,10 @@ func (t *Tracker) expiry(ctx context.Context, k key, expires string, steps []int
 		t.logger.Warn("inbox: bad expiry", "kind", k.kind, "subject", k.subject, "expires", expires, "error", err)
 		return
 	}
+	norm := exp.UTC().Format(time.RFC3339) // Z and +00:00 are one expiry
 	e, ok := t.states[k]
-	if !ok || e.ExpiresAt != expires {
-		e = entry{ExpiresAt: expires}
+	if !ok || e.ExpiresAt != norm {
+		e = entry{ExpiresAt: norm}
 	}
 	left := daysLeft(exp, at)
 	step := 0

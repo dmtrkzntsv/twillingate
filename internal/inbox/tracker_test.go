@@ -22,6 +22,7 @@ type fakeStore struct {
 	monitors []store.Monitor
 	flushed  []time.Time
 	failPut  bool
+	failDel  bool
 }
 
 func newFake(monitors ...store.Monitor) *fakeStore {
@@ -58,6 +59,9 @@ func (f *fakeStore) PutNotifyState(_ context.Context, s store.NotifyState, n *st
 func (f *fakeStore) DeleteNotifyState(_ context.Context, projectID int64, kind, subject string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.failDel {
+		return errors.New("disk full")
+	}
 	delete(f.states, stateKey(projectID, kind, subject))
 	return nil
 }
@@ -464,4 +468,118 @@ func TestTrackerConcurrent(t *testing.T) {
 	if downs != 1 {
 		t.Fatalf("uptime_down sent %d times", downs)
 	}
+}
+
+func (f *fakeStore) row(projectID int64, kind, subject, data string) {
+	f.states[stateKey(projectID, kind, subject)] = store.NotifyState{ProjectID: projectID, Kind: kind, Subject: subject, Data: data}
+}
+
+func TestEmptyStateIsNew(t *testing.T) {
+	for _, data := range []string{`{}`, `{"ended":"2026-11-01T00:00:00Z"}`} {
+		f := newFake(monitor)
+		f.row(1, "uptime", origin, data)
+		f.row(1, "cert", origin, data)
+		f.row(1, "domain", domain, data)
+		tr := newTracker(f)
+		tr.Cert(ctx, 1, origin, inbox.CertReading{Error: "timeout"}, t0)
+		tr.Domain(ctx, 1, domain, false, "rdap: 503", "", t0)
+		tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
+		none(t, f)
+	}
+}
+
+func TestFailedDeleteAfterRecovery(t *testing.T) {
+	f := newFake(monitor)
+	tr := newTracker(f)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
+	tr.Domain(ctx, 1, domain, false, "rdap: 503", "", t0.Add(-24*time.Hour))
+	tr.Domain(ctx, 1, domain, false, "rdap: 503", "", t0)
+	f.take()
+	f.failDel = true
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(time.Hour))
+	tr.Domain(ctx, 1, domain, true, "", "", t0.Add(time.Hour))
+	if got := f.take(); len(got) != 2 {
+		t.Fatalf("sent %+v, want uptime_up and domain_recovered", got)
+	}
+	f.failDel = false
+
+	for _, tr := range []*inbox.Tracker{newTracker(f), tr} { // after a restart, and in memory
+		tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Hour))
+		tr.Domain(ctx, 1, domain, false, "rdap: 503", "", t0.Add(2*time.Hour))
+		none(t, f)
+	}
+
+	g := newFake(monitor)
+	tr = newTracker(g)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
+	g.failDel = true
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(time.Hour))
+	g.failDel = false
+	g.take()
+	tr.Tick(ctx, t0.Add(time.Hour+time.Minute)) // deletes the ended row
+	if g.has(1, "uptime", origin) {
+		t.Fatal("ended row kept by Tick")
+	}
+	none(t, g)
+}
+
+func TestPendingStreakGap(t *testing.T) {
+	f := newFake(monitor)
+	tr := newTracker(f)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(3*time.Hour))
+	none(t, f)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(4*time.Hour))
+	if n := one(t, f, store.NotifyUptimeDown); n.Fields["since"] != rfc(t0.Add(3*time.Hour)) {
+		t.Fatalf("since = %q, want the restarted streak", n.Fields["since"])
+	}
+
+	g := newFake(monitor)
+	tr = newTracker(g)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Hour))
+	one(t, g, store.NotifyUptimeDown)
+
+	h := newFake(monitor)
+	tr = newTracker(h)
+	tr.Cert(ctx, 1, origin, inbox.CertReading{Error: "timeout"}, t0)
+	tr.Cert(ctx, 1, origin, inbox.CertReading{Error: "timeout"}, t0.Add(30*time.Hour))
+	none(t, h)
+	tr.Cert(ctx, 1, origin, inbox.CertReading{Error: "timeout"}, t0.Add(54*time.Hour))
+	if n := one(t, h, store.NotifyCertFailing); n.Fields["since"] != rfc(t0.Add(30*time.Hour)) {
+		t.Fatalf("since = %q, want the restarted streak", n.Fields["since"])
+	}
+}
+
+func TestCertReminderAfterOutage(t *testing.T) {
+	f := newFake(monitor)
+	tr := newTracker(f)
+	tr.Cert(ctx, 1, origin, inbox.CertReading{Read: true, Error: "x509: expired"}, t0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Minute))
+	for h := 1; h <= 10; h++ {
+		tr.Tick(ctx, t0.Add(time.Duration(h)*time.Hour))
+	}
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(10*time.Hour+time.Minute))
+	f.take()
+	tr.Tick(ctx, t0.Add(10*time.Hour+2*time.Minute))
+	none(t, f)
+	tr = newTracker(f) // the postponed reminder survives a restart
+	tr.Tick(ctx, t0.Add(13*time.Hour))
+	none(t, f)
+	tr.Tick(ctx, t0.Add(14*time.Hour+time.Minute))
+	one(t, f, store.NotifyCertStillFailing)
+}
+
+func TestExpiryOffsetSpelling(t *testing.T) {
+	f := newFake(monitor)
+	tr := newTracker(f)
+	exp := t0.Add(20 * 24 * time.Hour)
+	tr.Cert(ctx, 1, origin, inbox.CertReading{Read: true, Valid: true, ExpiresAt: rfc(exp)}, exp.Add(-13*24*time.Hour))
+	one(t, f, store.NotifyCertExpiring)
+	plus := exp.Format("2006-01-02T15:04:05") + "+00:00"
+	tr.Cert(ctx, 1, origin, inbox.CertReading{Read: true, Valid: true, ExpiresAt: plus}, exp.Add(-12*24*time.Hour))
+	none(t, f)
 }
