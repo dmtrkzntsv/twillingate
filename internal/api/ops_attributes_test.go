@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"reflect"
 	"slices"
@@ -211,10 +210,12 @@ func TestListAttributesKeepsEveryRuleNamedKey(t *testing.T) {
 	at := time.Date(2026, 8, 21, 12, 0, 0, 0, time.UTC)
 	writeHostEvents(t, h, store.Event{ProjectID: 1, Family: store.FamilyProduct, EventName: "e", TS: at,
 		Attributes: map[string]string{"zz_last": "v"}})
-	for i := range native.MaxKeep {
-		if _, err := h.ops.BlockAttribute(ctx, "test", 1, fmt.Sprintf("k%04d", i)); err != nil {
-			t.Fatal(err)
-		}
+	// The blocked keys go in as one statement, not MaxKeep audited writes
+	// (a minute under -race); the merge below reloads the registry with them.
+	if _, err := rawExec(h.ops.St, `WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM n WHERE i + 1 < ?)
+		INSERT INTO rules (project_id, kind, family, name, action) SELECT 1, 'attribute', 'event', printf('k%04d', i), 'block' FROM n`,
+		native.MaxKeep); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := h.ops.MergeAttribute(ctx, "test", 1, "zz_old", "zz_last"); err != nil {
 		t.Fatal(err)
