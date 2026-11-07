@@ -456,7 +456,7 @@ func TestPurgeArchivedDeletesGroupNameWithLastDashboard(t *testing.T) {
 }
 
 func TestPurgeArchivedDeletesAgedFormsWithSubmissions(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mk := func(projectID int64, form, id string) {
 		n := newSub(id, map[string]string{"email": id + "@x.io"})
@@ -528,7 +528,7 @@ func TestPurgeArchivedDeletesAgedFormsWithSubmissions(t *testing.T) {
 // row per project counting them; an active or recently archived one
 // stays, and so does the form.
 func TestPurgeArchivedDeletesAgedSubmissions(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	for _, k := range []struct {
 		project int64
@@ -579,7 +579,7 @@ func TestPurgeArchivedDeletesAgedSubmissions(t *testing.T) {
 // $form_submit event still waits, to be attributed or to be logged, holds
 // its only copy, so the purge leaves it for a pass after the job.
 func TestPurgeArchivedKeepsAQueuedConversion(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s0", map[string]string{"email": "a@x.io"}))
 	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {

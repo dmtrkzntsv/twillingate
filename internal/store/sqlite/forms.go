@@ -16,7 +16,7 @@ import (
 
 // formColumns is the select list scanForm reads, in order.
 const formColumns = `project_id, name, status, purpose, return_url, fields, expected_fields,
-	created_at, draft_until, approved_at, closes_at, last_submitted_at, archived_at, seen_at`
+	created_at, draft_until, approved_at, closes_at, last_submitted_at, archived_at, seen_at, notify`
 
 // scanForm reads one forms row selected with formColumns; extra receives
 // any columns selected after them.
@@ -25,7 +25,7 @@ func scanForm(row rowScanner, extra ...any) (store.Form, error) {
 	var fields string
 	var expected, created, draft, approved, closes, last, archived, seen sql.NullString
 	dest := append([]any{&f.ProjectID, &f.Name, &f.Status, &f.Purpose, &f.ReturnURL, &fields, &expected,
-		&created, &draft, &approved, &closes, &last, &archived, &seen}, extra...)
+		&created, &draft, &approved, &closes, &last, &archived, &seen, &f.Notify}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		return store.Form{}, err
 	}
@@ -79,7 +79,10 @@ func closedReason(f store.Form, now time.Time) string {
 // decided before anything else is written, so neither changes the form; a
 // refusal returns the form beside ErrFormClosed. The event's id, ts and
 // project are the submission's, whatever n.Event carries, so a later delete
-// finds it by (family product, project_id, day, id).
+// finds it by (family product, project_id, day, id). An inserted
+// submission that created its form adds a form_draft_created
+// notification; one to an approved, active form with notify on goes
+// through notifySubmission's burst folding.
 func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.Form, bool, error) {
 	sub := n.Submission
 	var form store.Form
@@ -97,12 +100,16 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		case !errors.Is(err, sql.ErrNoRows):
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO forms (project_id, name, created_at, draft_until)
+		created, err := tx.ExecContext(ctx, `INSERT INTO forms (project_id, name, created_at, draft_until)
 			VALUES (?,?,?,?) ON CONFLICT DO NOTHING`,
-			sub.ProjectID, sub.Form, fmtTime(sub.ReceivedAt), fmtTime(n.DraftUntil)); err != nil {
+			sub.ProjectID, sub.Form, fmtTime(sub.ReceivedAt), fmtTime(n.DraftUntil))
+		if err != nil {
 			return err
 		}
-		var err error
+		newDraft, err := created.RowsAffected()
+		if err != nil {
+			return err
+		}
 		form, err = scanForm(tx.QueryRowContext(ctx, `SELECT `+formColumns+` FROM forms WHERE project_id=? AND name=?`,
 			sub.ProjectID, sub.Form))
 		if err != nil {
@@ -169,6 +176,16 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		last := sub.ReceivedAt.UTC().Truncate(time.Second)
 		form.LastSubmittedAt = &last
 
+		if newDraft == 1 {
+			if _, err := insertNotification(ctx, tx, store.NewNotification{Type: store.NotifyFormDraftCreated,
+				ProjectID: sub.ProjectID, Subject: sub.Form, Fields: map[string]string{"form": sub.Form},
+				At: sub.ReceivedAt}); err != nil {
+				return err
+			}
+		}
+		if form.Status == store.FormApproved && form.ArchivedAt == nil && form.Notify {
+			return notifySubmission(ctx, tx, sub.ProjectID, sub.Form, sub.ReceivedAt)
+		}
 		return nil
 	})
 	if errors.Is(err, store.ErrFormClosed) {
@@ -384,8 +401,8 @@ func (d *DB) GetForm(ctx context.Context, projectID int64, name string) (store.F
 }
 
 // ApproveForm makes a draft approved: expected_fields and approved_at
-// set, draft_until cleared, and an expected name nothing sent yet joins
-// fields.
+// set, draft_until cleared, notify on, and an expected name nothing sent
+// yet joins fields.
 func (d *DB) ApproveForm(ctx context.Context, projectID int64, name string, expected []string, now time.Time, a store.AuditEntry) error {
 	if expected == nil {
 		expected = []string{}
@@ -395,7 +412,7 @@ func (d *DB) ApproveForm(ctx context.Context, projectID int64, name string, expe
 		return err
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE forms SET status='approved', expected_fields=?, approved_at=?, draft_until=NULL
+		res, err := tx.ExecContext(ctx, `UPDATE forms SET status='approved', expected_fields=?, approved_at=?, draft_until=NULL, notify=1
 			WHERE project_id=? AND name=? AND status='draft'`, string(blob), fmtTime(now), projectID, name)
 		if err != nil {
 			return err
@@ -420,10 +437,10 @@ func (d *DB) ApproveForm(ctx context.Context, projectID int64, name string, expe
 	})
 }
 
-// UpdateForm writes the form's purpose, return URL and closing time as
-// given, and its expected fields when f.ExpectedFields is non-nil; nil
-// leaves the stored list alone, so a caller that read the form before an
-// approval cannot wipe the list the approval set. Every expected name and
+// UpdateForm writes the form's purpose, return URL, closing time and
+// notify setting as given, and its expected fields when f.ExpectedFields
+// is non-nil; nil leaves the stored list alone, so a caller that read
+// the form before an approval cannot wipe the list the approval set. Every expected name and
 // every name in add joins fields, and add joins an approved form's
 // expected fields, in the same transaction.
 func (d *DB) UpdateForm(ctx context.Context, f store.Form, add []string, a store.AuditEntry) error {
@@ -436,9 +453,10 @@ func (d *DB) UpdateForm(ctx context.Context, f store.Form, add []string, a store
 		expected = string(b)
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE forms SET purpose=?, return_url=?, closes_at=?, expected_fields=COALESCE(?, expected_fields)
+		res, err := tx.ExecContext(ctx, `UPDATE forms SET purpose=?, return_url=?, closes_at=?, notify=?,
+			expected_fields=COALESCE(?, expected_fields)
 			WHERE project_id=? AND name=?`,
-			f.Purpose, f.ReturnURL, nullTime(f.ClosesAt), expected, f.ProjectID, f.Name)
+			f.Purpose, f.ReturnURL, nullTime(f.ClosesAt), f.Notify, expected, f.ProjectID, f.Name)
 		if err != nil {
 			return err
 		}
@@ -531,7 +549,8 @@ func (d *DB) SetFormArchived(ctx context.Context, projectID int64, name string, 
 }
 
 // ExpireDrafts archives every active draft past its draft_until, in one
-// transaction, with one audit row each.
+// transaction, with one audit row and one form_draft_discarded
+// notification each.
 func (d *DB) ExpireDrafts(ctx context.Context, now time.Time) (int, error) {
 	var expired int
 	err := d.tx(ctx, func(tx *sql.Tx) error {
@@ -564,6 +583,10 @@ func (d *DB) ExpireDrafts(ctx context.Context, now time.Time) (int, error) {
 			}
 			if err := audit(ctx, tx, store.AuditEntry{
 				Actor: "retention", Action: "form.expire", Subject: formSubject(k.project, k.name)}); err != nil {
+				return err
+			}
+			if _, err := insertNotification(ctx, tx, store.NewNotification{Type: store.NotifyFormDraftDiscarded,
+				ProjectID: k.project, Subject: k.name, Fields: map[string]string{"form": k.name}, At: now}); err != nil {
 				return err
 			}
 		}
