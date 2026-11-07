@@ -260,7 +260,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     await check(page, path)
     // The check above means nothing for the Domains, Events and Attributes tabs' sections unless they are drawn.
     if (path.endsWith('/settings/domains?range=today')) {
-      await expect(page.getByRole('region', { name: 'Monitoring' }).getByText(/^each site is checked every/)).toBeVisible()
+      await expect(page.getByRole('region', { name: 'Monitoring' }).getByRole('switch').first()).toBeVisible()
       await expect(page.getByRole('region', { name: 'Domain expiry' }).getByText(LONG_DOMAIN)).toBeVisible()
     }
     for (const [section, alias] of [['Events', longEvent], ['Attributes', longAttribute]]) {
