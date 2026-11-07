@@ -2,6 +2,7 @@ package notify
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,6 +19,10 @@ func parseTelegram(u *url.URL, c *http.Client) (Sender, error) {
 	token := u.User.Username()
 	if token == "" {
 		return nil, invalid("telegram", "token is missing")
+	}
+	// A bot token is <id>:<secret>; url.User splits it at the colon.
+	if pass, ok := u.User.Password(); ok {
+		token += ":" + pass
 	}
 	var chats []string
 	for _, ch := range strings.Split(u.Query().Get("chats"), ",") {
@@ -38,6 +43,12 @@ func (t *telegram) Service() string { return "telegram" }
 func (t *telegram) Send(ctx context.Context, m Message) error {
 	var first error
 	for _, chat := range t.chats {
+		if ctx.Err() != nil {
+			if first == nil {
+				first = postJSONCtxErr(ctx)
+			}
+			break
+		}
 		err := postJSON(ctx, t.c, "telegram", t.base+"/bot"+t.token+"/sendMessage", map[string]any{
 			"chat_id":                  chat,
 			"text":                     m.Text(),
@@ -48,4 +59,8 @@ func (t *telegram) Send(ctx context.Context, m Message) error {
 		}
 	}
 	return first
+}
+
+func postJSONCtxErr(ctx context.Context) error {
+	return fmt.Errorf("%w: telegram: %v", ErrTemporary, ctx.Err())
 }

@@ -167,6 +167,35 @@ func TestTelegramPlainText(t *testing.T) {
 	}
 }
 
+func TestTelegramColonToken(t *testing.T) {
+	srv, rec := newServer(t, 200)
+	s := mustParse(t, "telegram://110201543:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw@telegram?chats=1", srv)
+	if err := s.Send(context.Background(), Message{Title: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := rec.all()[0].path; got != "/bot110201543:AAHdqTcvCH1vGWJxfSeofSAs0K5PALDsaw/sendMessage" {
+		t.Errorf("path = %q", got)
+	}
+	for _, raw := range []string{"telegram://123:ABC@telegram", "telegram://@telegram?chats=1"} {
+		if _, err := Parse(raw); !errors.Is(err, ErrInvalidURL) {
+			t.Errorf("Parse(%q) err = %v", raw, err)
+		}
+	}
+}
+
+func TestTelegramStopsOnCancel(t *testing.T) {
+	srv, rec := newServer(t, 200)
+	s := mustParse(t, "telegram://1:A@telegram?chats=1,2", srv)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := s.Send(ctx, Message{Title: "x"}); !errors.Is(err, ErrTemporary) {
+		t.Errorf("err = %v", err)
+	}
+	if n := len(rec.all()); n != 0 {
+		t.Errorf("%d requests after cancel", n)
+	}
+}
+
 func TestSendErrorsClassified(t *testing.T) {
 	for status, want := range map[int]error{
 		401: ErrPermanent, 404: ErrPermanent, 429: ErrTemporary,
@@ -207,6 +236,20 @@ func TestErrorsHideSecrets(t *testing.T) {
 	if err := s2.Send(context.Background(), Message{Title: "x"}); err == nil || strings.Contains(err.Error(), secret) {
 		t.Errorf("unreachable error = %v", err)
 	}
+	srv3, _ := newServer(t, 401)
+	s4 := mustParse(t, "telegram://HALFID:HALFSECRET@telegram?chats=1", srv3)
+	for _, e := range []error{
+		s4.Send(context.Background(), Message{Title: "x"}),
+		func() error { c, f := context.WithCancel(context.Background()); f(); return s4.Send(c, Message{}) }(),
+	} {
+		if e == nil || strings.Contains(e.Error(), "HALFID") || strings.Contains(e.Error(), "HALFSECRET") {
+			t.Errorf("colon token error = %v", e)
+		}
+	}
+	srv3.Close()
+	if e := s4.Send(context.Background(), Message{Title: "x"}); e == nil || strings.Contains(e.Error(), "HALF") {
+		t.Errorf("colon token unreachable error = %v", e)
+	}
 	// Default base, unreachable via a dialer that always fails.
 	s3, _ := ParseWith("discord://"+secret+"@999", &http.Client{Transport: &http.Transport{
 		DialContext: func(context.Context, string, string) (net.Conn, error) { return nil, errors.New("boom") },
@@ -218,6 +261,7 @@ func TestErrorsHideSecrets(t *testing.T) {
 		"smtp://u:" + secret + "@h:25/?from=a@b",
 		"slack://hook:" + secret + "-b@webhook",
 		"telegram://" + secret + "@telegram",
+		"telegram://x:" + secret + "@telegram",
 		"discord://" + secret + "@",
 	} {
 		_, err := Parse(raw)
