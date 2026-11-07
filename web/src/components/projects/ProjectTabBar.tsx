@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ArrowLeftIcon, InboxIcon, PlusIcon, SettingsIcon } from 'lucide-react'
+import { InboxIcon, PlusIcon, SettingsIcon } from 'lucide-react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import ReportTabs from '@/components/ReportTabs'
 import { Button } from '@/components/ui/button'
@@ -22,8 +22,6 @@ interface Props {
   currentId: number
   /** The project's tabs, in order. */
   tabs: ProjectTab[]
-  /** False while the tabs are still loading: Settings offers neither "← Dashboards" nor "Add dashboard" yet. */
-  tabsLoaded?: boolean
   /** Every dashboard, for the "+" picker. */
   dashboards: DashboardInfo[]
   actions: ProjectTabActions
@@ -46,18 +44,17 @@ interface Props {
  * submissions) and Settings. Switching keeps the range in the URL.
  *
  * On Settings the row holds the Settings tabs instead (project settings
- * tabs), after "← Dashboards", which goes back to the dashboard last opened
- * here, else the first, as the highlighted gear does; a project with no
- * dashboard offers "Add dashboard" there, the "+" picker.
+ * tabs), and on Forms none: the page's title goes back to the dashboards
+ * there (ProjectBackHeader), as the highlighted gear does on Settings.
  */
-export default function ProjectTabBar({ projectId, currentId, tabs, tabsLoaded = true, dashboards, actions, newSubmissions, draftForms, archived = false, section, readOnly = false }: Props) {
+export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, actions, newSubmissions, draftForms, archived = false, section, readOnly = false }: Props) {
   const navigate = useNavigate()
   const [url] = useSearchParams()
   const [adding, setAdding] = useState(false)
   const search = rangeParams(url).toString()
   const open = (id: number) => {
-    // Remembered on the choice, not only once the tab has loaded, so
-    // "← Dashboards" from a tab left while loading goes back to it.
+    // Remembered on the choice, not only once the tab has loaded, so the
+    // way back from Settings, from a tab left while loading, goes to it.
     if (tabs.some((t) => t.dashboard_id === id)) writeLastTab(projectId, id)
     navigate(tabPath(projectId, id, search))
   }
@@ -85,40 +82,25 @@ export default function ProjectTabBar({ projectId, currentId, tabs, tabsLoaded =
   return (
     <div className="flex h-10 min-w-0 items-center gap-1 border-b border-border/70">
       {onSettings ? (
-        <>
-          {dashboardsPath ? (
-            <Button asChild variant="ghost" size="sm" className="shrink-0 text-foreground/60 hover:text-foreground">
-              <Link to={dashboardsPath}>
-                <ArrowLeftIcon />
-                Dashboards
-              </Link>
-            </Button>
-          ) : (
-            tabsLoaded && (
-              // Its icon alone on a phone, where the row also holds the section select.
-              <Button variant="ghost" size="sm" className="shrink-0 max-sm:size-8 max-sm:px-0" aria-label="Add dashboard" onClick={() => setAdding(true)}>
-                <PlusIcon />
-                <span className="hidden sm:inline">Add dashboard</span>
-              </Button>
-            )
-          )}
-          <SettingsTabs projectId={projectId} archived={archived} current={section ?? 'overview'} search={search} />
-        </>
+        <SettingsTabs projectId={projectId} archived={archived} current={section ?? 'overview'} search={search} />
       ) : (
-        <ReportTabs
-          tabs={tabs}
-          currentId={currentId}
-          onSelect={open}
-          sortable={!readOnly}
-          onMove={readOnly ? undefined : (id, to) => actions.move(projectId, id, tabAfter(tabs, id, to))}
-          trailing={
-            !readOnly && (
-              <Button variant="ghost" size="icon" className="size-8 shrink-0" aria-label="Add tab" onClick={() => setAdding(true)}>
-                <PlusIcon />
-              </Button>
-            )
-          }
-        />
+        // The Forms pages show no dashboard tabs: their title goes back to them (ProjectBackHeader).
+        currentId !== FORMS_ID && (
+          <ReportTabs
+            tabs={tabs}
+            currentId={currentId}
+            onSelect={open}
+            sortable={!readOnly}
+            onMove={readOnly ? undefined : (id, to) => actions.move(projectId, id, tabAfter(tabs, id, to))}
+            trailing={
+              !readOnly && (
+                <Button variant="ghost" size="icon" className="size-8 shrink-0" aria-label="Add tab" onClick={() => setAdding(true)}>
+                  <PlusIcon />
+                </Button>
+              )
+            }
+          />
+        )
       )}
       <div className="ml-auto flex shrink-0 items-center gap-0.5">
         {!readOnly && (

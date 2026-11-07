@@ -279,6 +279,8 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/settings/domains\\?range=today$`))
   await expect(page.getByRole('region', { name: 'Allowed origins' })).toBeVisible()
   expect(await sidewaysScroll(page), 'domains tab').toEqual([])
+  // The back button in the title: the long name truncates on its one line.
+  await expect(page.getByRole('link', { name: /^Back to the dashboards of phone-/ })).toBeInViewport({ ratio: 1 })
 
   // Check now, served by the live runner: the origin does not resolve here, so
   // its status line reads Down, with the long origin's error, and wraps too.
@@ -551,7 +553,7 @@ test('a project with no dashboard tabs fits its Settings row on a phone', async 
     await page.getByRole('button', { name: 'Connect' }).click()
     await page.waitForURL(/\/app\/projects$/)
 
-    // Add dashboard (its icon alone here), the section select, Forms and the gear share one row.
+    // Add dashboard takes the title's place; the section select, Forms and the gear share the row.
     await check(page, `/app/projects/${id}/settings`)
     await expect(page.getByRole('button', { name: 'Add dashboard' })).toBeInViewport({ ratio: 1 })
     await expect(page.getByRole('combobox', { name: 'Settings section' })).toBeInViewport({ ratio: 1 })

@@ -25,7 +25,6 @@ function renderBar({
   section,
   archived,
   tabs: shown = tabs,
-  tabsLoaded,
 }: {
   currentId: number
   newSubmissions: number
@@ -34,7 +33,6 @@ function renderBar({
   section?: SettingsSection
   archived?: boolean
   tabs?: ProjectTab[]
-  tabsLoaded?: boolean
 }) {
   return render(
     <MemoryRouter initialEntries={['/projects/7/settings?range=30d']}>
@@ -43,7 +41,6 @@ function renderBar({
           projectId={7}
           currentId={currentId}
           tabs={shown}
-          tabsLoaded={tabsLoaded}
           dashboards={[]}
           actions={actions}
           newSubmissions={newSubmissions}
@@ -110,7 +107,7 @@ describe('ProjectTabBar', () => {
   describe('on Settings', () => {
     beforeEach(() => localStorage.clear())
 
-    it('swaps the dashboards for the Settings tabs, after "← Dashboards", with Forms and the gear kept', () => {
+    it('swaps the dashboards for the Settings tabs alone, with Forms and the gear kept', () => {
       renderBar({ currentId: SETTINGS_ID, newSubmissions: 0, section: 'events' })
       expect(screen.queryByRole('tab')).toBeNull()
       expect(screen.queryByRole('button', { name: 'Add tab' })).toBeNull()
@@ -120,8 +117,9 @@ describe('ProjectTabBar', () => {
       expect(links.map((l) => l.textContent)).toEqual(['Overview', 'Domains', 'Events', 'Attributes', 'Danger'])
       expect(links.map((l) => l.getAttribute('aria-current'))).toEqual([null, null, 'page', null, null])
       expect(links[1]).toHaveAttribute('href', '/projects/7/settings/domains?range=30d')
-      const back = screen.getByRole('link', { name: 'Dashboards' })
-      expect(back.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+      // The way back is the page's title now (ProjectBackHeader), not the row.
+      expect(screen.queryByRole('link', { name: /Dashboards/ })).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Add dashboard' })).toBeNull()
       expect(screen.getByRole('link', { name: 'Forms' })).toHaveAttribute('href', '/projects/7/forms?range=30d')
       expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
     })
@@ -137,41 +135,33 @@ describe('ProjectTabBar', () => {
       expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Overview', 'Domains', 'Events', 'Attributes'])
     })
 
-    it('goes back to the remembered dashboard from "← Dashboards" and the gear, else the first', () => {
+    it('sends the highlighted gear back to the remembered dashboard, else the first', () => {
       writeLastTab(7, 9)
       const { unmount } = renderBar({ currentId: SETTINGS_ID, newSubmissions: 0 })
-      expect(screen.getByRole('link', { name: 'Dashboards' })).toHaveAttribute('href', '/projects/7/dashboards/9?range=30d')
       expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/projects/7/dashboards/9?range=30d')
       unmount()
       writeLastTab(7, 404)
       renderBar({ currentId: SETTINGS_ID, newSubmissions: 0 })
-      expect(screen.getByRole('link', { name: 'Dashboards' })).toHaveAttribute('href', '/projects/7/dashboards/1?range=30d')
+      expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/projects/7/dashboards/1?range=30d')
     })
 
-    it('offers Add dashboard, the "+" picker, when the project has no tabs, and the gear stays on Settings', async () => {
-      const user = userEvent.setup()
+    it('keeps the gear on Settings when the project has no tabs', () => {
       renderBar({ currentId: SETTINGS_ID, newSubmissions: 0, tabs: [], section: 'events' })
-      expect(screen.queryByRole('link', { name: 'Dashboards' })).toBeNull()
       expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('href', '/projects/7/settings/events?range=30d')
-      await user.click(screen.getByRole('button', { name: 'Add dashboard' }))
-      expect(await screen.findByRole('button', { name: 'New dashboard…' })).toBeInTheDocument()
-    })
-
-    it('offers neither while the tabs load', () => {
-      renderBar({ currentId: SETTINGS_ID, newSubmissions: 0, tabs: [], tabsLoaded: false })
-      expect(screen.queryByRole('link', { name: 'Dashboards' })).toBeNull()
-      expect(screen.queryByRole('button', { name: 'Add dashboard' })).toBeNull()
     })
   })
 
-  it('marks the inbox current on Forms', () => {
+  it('marks the inbox current on Forms, with no dashboard tabs or "+" in the row', () => {
     renderBar({ currentId: FORMS_ID, newSubmissions: 0 })
     expect(screen.getByRole('link', { name: 'Forms' })).toHaveAttribute('aria-current', 'page')
     expect(screen.getByRole('link', { name: 'Settings' })).not.toHaveAttribute('aria-current')
+    expect(screen.queryByRole('tab')).toBeNull()
+    expect(screen.queryByRole('combobox', { name: 'Tab' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Add tab' })).toBeNull()
   })
 
-  it('shows the phone select placeholder when no tab is current', () => {
-    renderBar({ currentId: FORMS_ID, newSubmissions: 0 })
+  it('shows the phone select placeholder while the page lands, no tab current yet', () => {
+    renderBar({ currentId: -2, newSubmissions: 0, readOnly: true })
     expect(screen.getByRole('combobox', { name: 'Tab' })).toHaveTextContent('Tabs')
   })
 

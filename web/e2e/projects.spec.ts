@@ -32,17 +32,20 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await page.getByRole('article', { name }).getByRole('link', { name }).click()
   // A project opens on its first dashboard tab; its settings are behind the gear.
   await expect(page).toHaveURL(/\/projects\/\d+\/dashboards\/\d+$/)
-  await page.getByRole('link', { name: 'Settings', exact: true }).click()
-  await expect(page).toHaveURL(/\/projects\/\d+\/settings$/)
-  await expect(page.getByRole('heading', { name })).toBeVisible()
-  // Settings is tabs, each at its own address, in the dashboards' place.
-  const sections = page.getByRole('navigation', { name: 'Settings sections' })
-  await expect(page.getByRole('heading', { level: 1, name: 'Overview' })).toBeVisible()
-
+  // The name is renamed where it heads the page: on a dashboard.
   await page.getByRole('button', { name: 'Rename' }).click()
   await page.getByRole('textbox', { name: 'Project name' }).fill(`${name}-renamed`)
   await page.keyboard.press('Enter')
   await expect(page.getByRole('heading', { level: 1, name: `${name}-renamed` })).toBeVisible()
+
+  await page.getByRole('link', { name: 'Settings', exact: true }).click()
+  await expect(page).toHaveURL(/\/projects\/\d+\/settings$/)
+  // On Settings a back button to the dashboards takes the name's place, with no pencil.
+  await expect(page.getByRole('link', { name: `Back to the dashboards of ${name}-renamed` })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Rename' })).toHaveCount(0)
+  // Settings is tabs, each at its own address, in the dashboards' place.
+  const sections = page.getByRole('navigation', { name: 'Settings sections' })
+  await expect(page.getByRole('heading', { level: 1, name: 'Overview' })).toBeVisible()
 
   await sections.getByRole('link', { name: 'Domains' }).click()
   await expect(page).toHaveURL(/\/projects\/\d+\/settings\/domains$/)

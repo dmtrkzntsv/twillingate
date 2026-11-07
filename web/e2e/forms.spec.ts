@@ -41,6 +41,9 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   await page.goto(`/app/projects/${id}/settings`)
   await page.getByRole('link', { name: /^Forms/ }).click()
   await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms$`))
+  // The Forms pages show no dashboard tabs; the title goes back to them.
+  await expect(page.getByRole('tab')).toHaveCount(0)
+  await expect(page.getByRole('link', { name: /^Back to the dashboards of forms-/ })).toBeVisible()
   const row = page.getByRole('list', { name: 'Forms' }).getByRole('listitem').filter({ hasText: 'contact' })
   await expect(row.getByText(/^Draft · expires in \d+ days?$/)).toBeVisible()
   await expect(row.getByText(/^2 submissions/)).toBeVisible()

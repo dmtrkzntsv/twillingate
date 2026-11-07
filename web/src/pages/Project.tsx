@@ -6,6 +6,7 @@ import Crumbs from '@/components/Crumbs'
 import NotFound from '@/components/NotFound'
 import { GridSkeleton, PageError } from '@/components/PageStates'
 import ProjectDashboardTab from '@/components/projects/ProjectDashboardTab'
+import ProjectBackHeader from '@/components/projects/ProjectBackHeader'
 import ProjectName from '@/components/projects/ProjectName'
 import ProjectTabBar from '@/components/projects/ProjectTabBar'
 import SetupTab from '@/components/projects/SetupTab'
@@ -31,11 +32,13 @@ const LANDING = -2
  * `/projects/:id` (with `landing`), `/projects/:id/settings` (and
  * `/settings/:section` for each Settings tab), `/projects/:id/forms` (with
  * `tab="forms"`, and `/forms/:name` for one form) and
- * `/projects/:id/dashboards/:dashId`: one project, renamed in place, with its
- * dashboards as tabs (project tabs D1, D8) and Forms and Settings as buttons
- * beside them (project landing D4). On Settings the tab row holds the
- * Settings tabs instead (project settings tabs); a section the project does
- * not have goes to `/settings`, its first.
+ * `/projects/:id/dashboards/:dashId`: one project, with its dashboards as
+ * tabs (project tabs D1, D8) and Forms and Settings as buttons beside them
+ * (project landing D4). On a dashboard the name heads the page and is
+ * renamed in place. On Settings and Forms a back button to the dashboards
+ * takes its place (or Add dashboard, with none), and the tab row holds the
+ * Settings tabs on Settings (project settings tabs) and none on Forms; a
+ * section the project does not have goes to `/settings`, its first.
  *
  * With `landing`, the page goes to the last tab used here, else the first,
  * else Settings (project landing D3). It draws the page around a skeleton
@@ -113,7 +116,18 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
           // and no draft or open editor may carry over to the next project.
           <Fragment key={id}>
             <header className="flex min-w-0 items-center gap-2">
-              <ProjectName key={project.name} name={project.name} pending={actions.pending} onRename={(name) => actions.update(id, { name })} />
+              {dashId === SETTINGS_ID || dashId === FORMS_ID ? (
+                <ProjectBackHeader
+                  projectId={id}
+                  name={project.name}
+                  tabs={tabsQ.data?.tabs ?? []}
+                  tabsLoaded={tabsQ.data !== undefined}
+                  dashboards={dash?.dashboards ?? []}
+                  actions={tabActions}
+                />
+              ) : (
+                <ProjectName key={project.name} name={project.name} pending={actions.pending} onRename={(name) => actions.update(id, { name })} />
+              )}
               {project.archived && <Badge variant="outline">Archived</Badge>}
             </header>
             {/* Pinned under the top bar (h-12) on wide screens, and as wide as
@@ -131,7 +145,6 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
                 projectId={id}
                 currentId={dashId}
                 tabs={tabsQ.data?.tabs ?? []}
-                tabsLoaded={tabsQ.data !== undefined}
                 dashboards={dash?.dashboards ?? []}
                 actions={tabActions}
                 newSubmissions={mine?.new_submissions ?? 0}

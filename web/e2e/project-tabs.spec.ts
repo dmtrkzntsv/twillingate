@@ -150,8 +150,8 @@ test('a project opens on its first dashboard tab; tabs are removed and re-added 
     await expect(page).toHaveURL(/\/settings\/domains$/)
     await expect(page.getByRole('region', { name: 'Allowed origins' })).toBeVisible()
     await expect(page.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute('aria-current', 'page')
-    // "← Dashboards" goes back to the tab last opened, the one just added.
-    await page.getByRole('link', { name: 'Dashboards', exact: true }).click()
+    // The back button in the title goes back to the tab last opened, the one just added.
+    await page.getByRole('link', { name: /^Back to the dashboards of / }).click()
     await expect(page.getByRole('heading', { level: 1, name: title, exact: true })).toBeVisible()
     await expect(tabs.getByRole('tab')).toHaveText([...READDED, title])
     await page.getByRole('link', { name: 'Settings', exact: true }).click()
