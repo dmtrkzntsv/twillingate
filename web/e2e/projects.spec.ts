@@ -105,17 +105,12 @@ test('shows usage for the seeded project', async ({ page }) => {
   const usage = page.getByRole('region', { name: 'Usage' })
   await expect(usage.getByText('Events', { exact: true })).toBeVisible()
   await expect(usage.locator('.recharts-bar-rectangle').first()).toBeVisible()
-  // The monthly chart, against the budget serve.sh sets (EVENTS_MONTHLY_BUDGET=15000):
-  // a dashed line at it, the weighted checks stacked, the month under way so far.
+  // The monthly chart: the checks stacked at the weight serve.sh sets
+  // (QUOTA_CHECK_RATIO=0.1), the month under way so far, and no budget line.
   const monthly = usage.getByTestId('monthly-usage')
-  // A horizontal line has no height, which Playwright reads as hidden: check it is drawn, dashed.
-  await expect(monthly.locator('.recharts-reference-line line')).toHaveAttribute('stroke-dasharray', '4 4')
-  await expect(monthly.getByText('Budget 15K')).toBeVisible()
   await expect(monthly.getByText('so far')).toBeVisible()
   await expect(monthly.getByText('Checks', { exact: true })).toBeVisible()
-  // A month past the budget keeps its series' colours; a label over its bar says by how much.
-  await expect(monthly.locator('.recharts-bar-rectangle path[fill="var(--destructive)"]')).toHaveCount(0)
-  for (const label of await monthly.locator('.over-label').all()) await expect(label).toHaveText(/^\+[\d.,K]+ \(\d+%\)$/)
+  await expect(monthly.locator('.recharts-reference-line')).toHaveCount(0)
   // The daily chart stacks the weighted checks too.
   const daily = usage.locator('[data-slot="chart"]').nth(1)
   await expect(daily.getByText('Checks', { exact: true })).toBeVisible()

@@ -39,7 +39,7 @@ beforeEach(() => {
     stats(4),
     stats(5, { last_received_at: null, totals: { views: 0, events: 0, measures: 0, checks: 700 }, size: null }),
     stats(3),
-  ] })
+  ], quota_check_ratio: 0 })
   vi.spyOn(endpoints, 'projectActivity').mockResolvedValue({ projects: [
     { project_id: 4, last_event_day: '2026-10-02', new_submissions: 3, forms: 2, draft_forms: 1 },
     { project_id: 5, last_event_day: null, new_submissions: 0, forms: 0, draft_forms: 0 },
@@ -74,6 +74,17 @@ describe('Projects', () => {
     expect(line).toHaveTextContent('Events by month: Oct 21 so far')
     expect(within(line).getByTitle('21 events')).toBeInTheDocument()
     expect(usage).toHaveBeenCalledWith(expect.objectContaining({ from: expect.stringMatching(/^\d{4}-\d{2}-01$/) }))
+  })
+
+  it('counts the availability checks at their weight in the cards and the months, as the usage answer says', async () => {
+    vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: '2026-09-03', to: '2026-10-02', database_bytes: 0, database_series: [],
+      projects: [stats(4), stats(5), stats(3)], quota_check_ratio: 0.1 })
+    renderPage()
+    // 5 views and 2 product events, then 700 checks at 0.1 each.
+    const card = await screen.findByRole('article', { name: 'econumo.com' })
+    expect(within(card).getByText(/77 events/)).toBeInTheDocument()
+    const line = await screen.findByText(/^Events by month:/)
+    expect(line).toHaveTextContent('Events by month: Oct 231 so far')
   })
 
   it("links a project's forms, its drafts and new submissions to its Forms tab", async () => {

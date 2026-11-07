@@ -974,39 +974,24 @@ func TestMonitorPause(t *testing.T) {
 	}
 }
 
-// TestBudget: the monthly event budget and the checks' weight, both display
-// only, read as set; unset or empty is no budget and a weight of 1.
-func TestBudget(t *testing.T) {
-	cases := []struct {
-		name   string
-		vars   map[string]string
-		budget int
-		ratio  float64
-	}{
-		{"unset", nil, 0, 1},
-		{"empty", map[string]string{"EVENTS_MONTHLY_BUDGET": "", "QUOTA_CHECK_RATIO": ""}, 0, 1},
-		{"set", map[string]string{"EVENTS_MONTHLY_BUDGET": "1000000", "QUOTA_CHECK_RATIO": "0.1"}, 1_000_000, 0.1},
-		{"checks left out", map[string]string{"EVENTS_MONTHLY_BUDGET": "500", "QUOTA_CHECK_RATIO": "0"}, 500, 0},
-	}
-	for _, tc := range cases {
-		c, err := load(t, tc.vars)
+// TestQuotaCheckRatio: the weight of an availability check in the event
+// totals, display only, reads as set; unset or empty is 1.
+func TestQuotaCheckRatio(t *testing.T) {
+	for v, want := range map[string]float64{"": 1, "0.1": 0.1, "0": 0, "2": 2} {
+		c, err := load(t, map[string]string{"QUOTA_CHECK_RATIO": v})
 		if err != nil {
-			t.Fatalf("%s: %v", tc.name, err)
+			t.Fatalf("%q: %v", v, err)
 		}
-		if c.Budget.EventsMonthly != tc.budget || c.Budget.CheckRatio != tc.ratio {
-			t.Errorf("%s: Budget = %+v, want %d and %g", tc.name, c.Budget, tc.budget, tc.ratio)
+		if c.QuotaCheckRatio != want {
+			t.Errorf("%q: QuotaCheckRatio = %g, want %g", v, c.QuotaCheckRatio, want)
 		}
 	}
-	for name, vars := range map[string]map[string]string{
-		"negative budget":    {"EVENTS_MONTHLY_BUDGET": "-1"},
-		"garbage budget":     {"EVENTS_MONTHLY_BUDGET": "lots"},
-		"negative ratio":     {"QUOTA_CHECK_RATIO": "-0.5"},
-		"garbage ratio":      {"QUOTA_CHECK_RATIO": "half"},
-		"not-a-number ratio": {"QUOTA_CHECK_RATIO": "NaN"},
-		"infinite ratio":     {"QUOTA_CHECK_RATIO": "Inf"},
-	} {
-		if _, err := load(t, vars); err == nil {
-			t.Errorf("%s: expected an error", name)
+	if c, err := load(t, nil); err != nil || c.QuotaCheckRatio != 1 {
+		t.Errorf("unset: %v, %v", c, err)
+	}
+	for _, v := range []string{"-0.5", "half", "NaN", "Inf"} {
+		if _, err := load(t, map[string]string{"QUOTA_CHECK_RATIO": v}); err == nil {
+			t.Errorf("%q: expected an error", v)
 		}
 	}
 }

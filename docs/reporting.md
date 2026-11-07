@@ -1741,8 +1741,8 @@ a tab of a project's page (`/app/projects/{project_id}`).
   are buttons beside the tabs, Settings behind the gear. Settings has tabs of
   its own, which take the dashboards' place in the row while it is open, each
   at `/app/projects/{project_id}/settings/{section}`: Overview (the
-  project's events by month for the last six months, against
-  `EVENTS_MONTHLY_BUDGET` when it is set, and by day over the range, then
+  project's events by month for the last six months and by day over the
+  range, availability checks included at `QUOTA_CHECK_RATIO`'s weight, then
   the script and the ingest keys), Domains (allowed origins, monitoring and
   domain expiry), Events, Attributes (their rules), and Danger (Archive).
   **← Dashboards** goes back to the tab last used.

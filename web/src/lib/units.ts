@@ -25,17 +25,34 @@ export function monthStart(back: number, now: Date = new Date()): string {
   return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - back, 1)).toISOString().slice(0, 10)
 }
 
+/** A day's or a range's counts, as the usage answer gives them. */
+interface Counts {
+  views: number
+  events: number
+  measures: number
+  checks: number
+}
+
 /**
- * Every project's views, events and measures summed by UTC month, oldest
- * first, a month with none included: [{month: '2026-09', count: 47210}].
+ * The events the console counts: views, product events and measures, and
+ * the availability checks at `ratio` each (QUOTA_CHECK_RATIO; 0 leaves
+ * them out).
  */
-export function eventsByMonth(projects: { series: { day: string; views: number; events: number; measures: number }[] }[]): { month: string; count: number }[] {
+export function eventCount(c: Counts, ratio: number): number {
+  return c.views + c.events + c.measures + c.checks * ratio
+}
+
+/**
+ * Every project's events (`eventCount`) summed by UTC month, oldest first,
+ * rounded, a month with none included: [{month: '2026-09', count: 47210}].
+ */
+export function eventsByMonth(projects: { series: ({ day: string } & Counts)[] }[], ratio: number): { month: string; count: number }[] {
   const counts = new Map<string, number>()
   for (const p of projects) {
     for (const d of p.series) {
       const month = d.day.slice(0, 7)
-      counts.set(month, (counts.get(month) ?? 0) + d.views + d.events + d.measures)
+      counts.set(month, (counts.get(month) ?? 0) + eventCount(d, ratio))
     }
   }
-  return [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([month, count]) => ({ month, count }))
+  return [...counts].sort(([a], [b]) => a.localeCompare(b)).map(([month, count]) => ({ month, count: Math.round(count) }))
 }

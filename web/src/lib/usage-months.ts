@@ -1,4 +1,5 @@
 import type { UsageDay } from './api'
+import { eventCount } from './units'
 
 /** How many calendar months the Overview's monthly chart shows, the current one included. */
 export const MONTHS = 6
@@ -10,14 +11,12 @@ export interface MonthTotals {
   views: number
   events: number
   measures: number
-  /** The month's availability check rows times the budget's ratio; 0 without a budget. */
+  /** The month's availability check rows times QUOTA_CHECK_RATIO. */
   checks: number
-  /** What counts toward the budget: views, events, measures and the weighted checks. */
+  /** Views, events, measures and the weighted checks (`eventCount`). */
   total: number
   /** The month under way, counted only so far. */
   current: boolean
-  /** How far the total is past the budget; null when it is not, or there is none. */
-  over: number | null
 }
 
 /** Today's date in UTC, `YYYY-MM-DD`: the day usage ranges end on. */
@@ -42,15 +41,12 @@ export function monthsRange(today: string): { from: string; to: string } {
 
 /**
  * The daily series added up by calendar month, for the `MONTHS` months
- * ending with `today`'s. With a `budget`, checks count at `ratio` each and
- * a month past the budget says by how much; without one, checks are left
- * out, as on the daily chart.
+ * ending with `today`'s, the checks at `ratio` each (0 leaves them out).
  */
-export function monthlyTotals(series: UsageDay[], today: string, budget: number | null, ratio: number): MonthTotals[] {
+export function monthlyTotals(series: UsageDay[], today: string, ratio: number): MonthTotals[] {
   const keys = monthKeys(today)
-  const weight = budget !== null ? ratio : 0
   const months = new Map(
-    keys.map((month) => [month, { month, views: 0, events: 0, measures: 0, checks: 0, total: 0, current: month === keys[MONTHS - 1], over: null } as MonthTotals])
+    keys.map((month) => [month, { month, views: 0, events: 0, measures: 0, checks: 0, total: 0, current: month === keys[MONTHS - 1] } as MonthTotals])
   )
   for (const d of series) {
     const m = months.get(d.day.slice(0, 7))
@@ -58,12 +54,9 @@ export function monthlyTotals(series: UsageDay[], today: string, budget: number 
     m.views += d.views
     m.events += d.events
     m.measures += d.measures
-    m.checks += d.checks * weight
+    m.checks += d.checks * ratio
   }
-  for (const m of months.values()) {
-    m.total = m.views + m.events + m.measures + m.checks
-    if (budget !== null && m.total > budget) m.over = m.total - budget
-  }
+  for (const m of months.values()) m.total = eventCount(m, 1)
   return keys.map((k) => months.get(k)!)
 }
 

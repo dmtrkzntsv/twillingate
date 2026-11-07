@@ -413,9 +413,7 @@ interface UsageResponse {
   /** The database file's size per day as the daily pass measured it; null on a day not measured. */
   database_series: { day: string; bytes: number | null }[]
   projects: ProjectUsage[]
-  /** EVENTS_MONTHLY_BUDGET: events per project per calendar month (UTC), shown and never enforced; null when unset. */
-  events_monthly_budget?: number | null
-  /** QUOTA_CHECK_RATIO: what one availability check row counts toward the budget (default 1, 0 leaves checks out). */
+  /** QUOTA_CHECK_RATIO: the weight one availability check row counts toward the event totals shown (default 1, 0 leaves checks out). */
   quota_check_ratio?: number
 }
 

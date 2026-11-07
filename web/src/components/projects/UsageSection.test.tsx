@@ -23,7 +23,7 @@ describe('UsageSection', () => {
       last_received_at: new Date(Date.now() - 3 * 3600_000).toISOString(),
       first_day: '2026-08-01',
       size: { total_bytes: 2_262_000, measured_at: new Date(Date.now() - 86_400_000).toISOString().slice(0, 10) },
-    }] })
+    }], quota_check_ratio: 0 })
     renderWithProviders(<UsageSection projectId={4} range={{ from: '2026-09-01', to: '2026-09-02' }} />)
     expect(await screen.findByText('34')).toBeInTheDocument()
     expect(screen.getByText('3 h ago')).toBeInTheDocument()
@@ -39,7 +39,7 @@ describe('UsageSection', () => {
     vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
       project_id: 5, series: [{ day: 'a', views: 0, events: 0, measures: 0, checks: 720, total_bytes: null }, { day: 'b', views: 0, events: 0, measures: 0, checks: 720, total_bytes: null }], totals: { views: 0, events: 0, measures: 0, checks: 1440 }, last_received_at: null,
       first_day: null, size: null,
-    }] })
+    }], quota_check_ratio: 0 })
     renderWithProviders(<UsageSection projectId={5} range={{ from: 'a', to: 'b' }} />)
     expect(await screen.findByText('Nothing received yet')).toBeInTheDocument()
     expect(screen.getByText('No events in this range.')).toBeInTheDocument()
@@ -80,19 +80,22 @@ describe('UsageSection', () => {
     expect(await screen.findByText('99')).toBeInTheDocument()
   })
 
-  it('stacks the weighted checks by day only with a budget and a ratio above 0', async () => {
-    const answer = (budget: number | null, ratio: number) => ({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
+  it('stacks the weighted checks by day and counts them in the Events tile, unless the ratio is 0', async () => {
+    const answer = (ratio: number) => ({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
       project_id: 4, series: [{ day: '2026-09-01', views: 10, events: 0, measures: 0, checks: 100, total_bytes: null }], totals: { views: 10, events: 0, measures: 0, checks: 100 },
       last_received_at: null, first_day: null, size: null,
-    }], events_monthly_budget: budget, quota_check_ratio: ratio })
+    }], quota_check_ratio: ratio })
     const daily = (container: HTMLElement) => container.querySelector('[aria-label="Usage"] [data-slot="chart"]:not([data-testid="monthly-usage"])')!
-    for (const [budget, ratio, checks] of [[null, 1, false], [500, 0, false], [500, 0.5, true]] as const) {
-      vi.spyOn(endpoints, 'usage').mockResolvedValue(answer(budget, ratio))
+    for (const [ratio, total, hint] of [
+      [0, '10', '10 views · 0 product · 0 measures'],
+      [0.5, '60', '10 views · 0 product · 0 measures · 50 checks'],
+    ] as const) {
+      vi.spyOn(endpoints, 'usage').mockResolvedValue(answer(ratio))
       const { container, unmount } = renderWithProviders(<UsageSection projectId={4} range={{ from: '2026-09-01', to: '2026-09-01' }} />)
       await waitFor(() => expect(daily(container)?.querySelector('.recharts-bar-rectangle')).toBeTruthy())
-      expect(within(daily(container) as HTMLElement).queryByText('Checks') !== null).toBe(checks)
-      // The tiles count the site's own traffic, checks never.
-      expect(screen.getByText('10 views · 0 product · 0 measures')).toBeInTheDocument()
+      expect(within(daily(container) as HTMLElement).queryByText('Checks') !== null).toBe(ratio > 0)
+      // The Events tile: its value, then the hint that splits it.
+      expect(screen.getByText(hint).previousElementSibling).toHaveTextContent(total)
       unmount()
     }
   })

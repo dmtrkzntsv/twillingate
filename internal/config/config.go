@@ -74,17 +74,6 @@ type MonitorConfig struct {
 	Disabled bool
 }
 
-// BudgetConfig is a monthly event budget to show beside each project's
-// usage. It is display only: nothing is ever refused over it.
-type BudgetConfig struct {
-	// EventsMonthly (EVENTS_MONTHLY_BUDGET) is the events one project may
-	// count in a calendar month (UTC); 0, unset or empty, means none.
-	EventsMonthly int
-	// CheckRatio (QUOTA_CHECK_RATIO) is what one availability check row
-	// counts toward EventsMonthly: 1 by default, 0 leaves checks out.
-	CheckRatio float64
-}
-
 // DefaultQuotaCheckRatio is QUOTA_CHECK_RATIO's default: a check row
 // counts as one event.
 const DefaultQuotaCheckRatio = 1.0
@@ -194,8 +183,11 @@ type Config struct {
 	Forms              FormsConfig
 	Reporting          ReportingConfig
 	Monitor            MonitorConfig
-	Budget             BudgetConfig
-	Console            ConsoleConfig
+	// QuotaCheckRatio (QUOTA_CHECK_RATIO) is the weight one availability
+	// check row counts toward the event totals the console shows: 1 by
+	// default, 0 leaves checks out. Display only.
+	QuotaCheckRatio float64
+	Console         ConsoleConfig
 	// Ignored lists the retired settings the environment still sets, in
 	// the order of retired.
 	Ignored []string
@@ -331,10 +323,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			Timeout:  time.Duration(e.num("MONITOR_TIMEOUT", 5)) * time.Second,
 			Disabled: e.bool("MONITOR_DISABLED", false),
 		},
-		Budget: BudgetConfig{
-			EventsMonthly: e.num("EVENTS_MONTHLY_BUDGET", 0),
-			CheckRatio:    e.float("QUOTA_CHECK_RATIO", DefaultQuotaCheckRatio),
-		},
+		QuotaCheckRatio: e.float("QUOTA_CHECK_RATIO", DefaultQuotaCheckRatio),
 	}
 	c.Console = ConsoleConfig{
 		Addr: e.str("CONSOLE_ADDR", c.IngestAddr),
@@ -490,11 +479,8 @@ func (c *Config) validate() error {
 	if c.Monitor.Timeout < time.Second || c.Monitor.Timeout > time.Minute {
 		return fmt.Errorf("config: MONITOR_TIMEOUT must be between 1 and 60 seconds: %d", int(c.Monitor.Timeout/time.Second))
 	}
-	if c.Budget.EventsMonthly < 0 {
-		return fmt.Errorf("config: EVENTS_MONTHLY_BUDGET must not be negative: %d", c.Budget.EventsMonthly)
-	}
-	if c.Budget.CheckRatio < 0 {
-		return fmt.Errorf("config: QUOTA_CHECK_RATIO must not be negative: %g", c.Budget.CheckRatio)
+	if c.QuotaCheckRatio < 0 {
+		return fmt.Errorf("config: QUOTA_CHECK_RATIO must not be negative: %g", c.QuotaCheckRatio)
 	}
 	if c.Monitor.Timeout >= c.Monitor.Interval {
 		return fmt.Errorf("config: MONITOR_TIMEOUT (%d seconds) must be below MONITOR_INTERVAL (%d seconds)",

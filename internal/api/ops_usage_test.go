@@ -316,35 +316,27 @@ func TestUsageHistoryPastTheRowCap(t *testing.T) {
 	}
 }
 
-// TestUsageCarriesTheBudget: the usage answer names the monthly event
-// budget and the checks' weight it was configured with; with no budget,
-// events_monthly_budget is null (and the weight its default, 1).
-func TestUsageCarriesTheBudget(t *testing.T) {
+// TestUsageCarriesTheCheckRatio: the usage answer names the weight a check
+// row counts toward the console's event totals, as configured.
+func TestUsageCarriesTheCheckRatio(t *testing.T) {
 	h, _ := newTestHost(t)
 	ctx := context.Background()
 	in := usageIn{usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-22"}}
-	h.budget = config.BudgetConfig{CheckRatio: config.DefaultQuotaCheckRatio}
-	none, err := h.usage(ctx, in)
+	h.quotaCheckRatio = config.DefaultQuotaCheckRatio
+	one, err := h.usage(ctx, in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw, _ := json.Marshal(none)
-	if !strings.Contains(string(raw), `"events_monthly_budget":null`) || !strings.Contains(string(raw), `"quota_check_ratio":1`) {
-		t.Errorf("no budget answered %s", raw)
+	raw, _ := json.Marshal(one)
+	if !strings.Contains(string(raw), `"quota_check_ratio":1`) || strings.Contains(string(raw), "budget") {
+		t.Errorf("default answered %s", raw)
 	}
-	h.budget = config.BudgetConfig{EventsMonthly: 50000, CheckRatio: 0.1}
-	set, err := h.usage(ctx, in)
+	h.quotaCheckRatio = 0.1
+	tenth, err := h.usage(ctx, in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if set.EventsMonthlyBudget == nil || *set.EventsMonthlyBudget != 50000 || set.QuotaCheckRatio != 0.1 {
-		t.Errorf("budget = %v, ratio = %g, want 50000 and 0.1", deref64(set.EventsMonthlyBudget), set.QuotaCheckRatio)
+	if tenth.QuotaCheckRatio != 0.1 {
+		t.Errorf("ratio = %g, want 0.1", tenth.QuotaCheckRatio)
 	}
-}
-
-func deref64(p *int64) any {
-	if p == nil {
-		return nil
-	}
-	return *p
 }

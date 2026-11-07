@@ -8,7 +8,7 @@ import { axis, formatTick, grid, MAX_BAR, niceTicks, seriesColor, valueAxis } fr
 import { formatValue } from '@/lib/format'
 import { usageQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
-import { formatAgo } from '@/lib/units'
+import { eventCount, formatAgo } from '@/lib/units'
 import MonthlyUsageChart from './MonthlyUsageChart'
 
 /** One family per series key; labels only, the bars take the palette's colors directly. */
@@ -41,10 +41,10 @@ function Subheading({ title, hint }: { title: string; hint: string }) {
 }
 
 /**
- * A project's events by calendar month (the last six, against the monthly
- * budget when one is set), then per day over the page's range, by family
- * (with a budget, the checks too, at their weight), and tiles for the
- * range's total, freshness and the first day kept.
+ * A project's events by calendar month (the last six), then per day over
+ * the page's range, by family and the availability checks at their weight
+ * (QUOTA_CHECK_RATIO), and tiles for the range's total (the weighted checks in it), freshness and
+ * the first day kept.
  */
 export default function UsageSection({ projectId, range }: { projectId: number; range: { from: string; to: string } }) {
   const { data, error, isError, isPlaceholderData, refetch } = useQuery({
@@ -52,9 +52,10 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
     placeholderData: keepPreviousData,
   })
   const s = data?.projects[0]
-  const empty = !!s && s.totals.views + s.totals.events + s.totals.measures === 0
-  // With a budget, the checks count toward it at their weight, stacked as on the monthly chart.
-  const ratio = data?.events_monthly_budget != null ? (data.quota_check_ratio ?? 1) : 0
+  // The checks count at their weight (QUOTA_CHECK_RATIO), stacked as on the monthly chart; 0 leaves them out.
+  const ratio = data?.quota_check_ratio ?? 1
+  const empty = !!s && eventCount(s.totals, ratio) === 0
+  const checks = s ? Math.round(s.totals.checks * ratio) : 0
   const keys = ratio > 0 ? [...FAMILIES, 'checks'] : FAMILIES
   const rows = s ? s.series.map((d) => ({ ...d, checks: d.checks * ratio })) : []
   const ticks = niceTicks(rows.map((d) => d.views + d.events + d.measures + d.checks))
@@ -106,8 +107,8 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
             </ChartContainer>
           )}
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <Tile label="Events" value={(s.totals.views + s.totals.events + s.totals.measures).toLocaleString()}
-              hint={`${s.totals.views.toLocaleString()} views · ${s.totals.events.toLocaleString()} product · ${s.totals.measures.toLocaleString()} measures`} />
+            <Tile label="Events" value={Math.round(eventCount(s.totals, ratio)).toLocaleString()}
+              hint={`${s.totals.views.toLocaleString()} views · ${s.totals.events.toLocaleString()} product · ${s.totals.measures.toLocaleString()} measures${ratio > 0 ? ` · ${checks.toLocaleString()} checks` : ''}`} />
             <Tile label="Last received" value={s.last_received_at ? formatAgo(s.last_received_at) : 'Nothing received yet'} />
             <Tile label="First day" value={s.first_day ?? '—'} hint={s.first_day ? 'the oldest day the event files hold' : 'nothing kept yet'} />
           </div>
