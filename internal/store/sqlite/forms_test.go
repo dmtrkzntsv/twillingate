@@ -784,8 +784,8 @@ func TestListFormsOrderCountsAndArchivedSplit(t *testing.T) {
 		got = append(got, f.Name)
 		counts[f.Name] = f.Submissions
 	}
-	// Drafts first (alpha), then approved by name (mid, zeta).
-	if !reflect.DeepEqual(got, []string{"alpha", "mid", "zeta"}) {
+	// In the order the first submissions created them: approving moves none.
+	if !reflect.DeepEqual(got, []string{"zeta", "alpha", "mid"}) {
 		t.Fatalf("active order = %v", got)
 	}
 	if counts["alpha"] != 2 || counts["mid"] != 1 {

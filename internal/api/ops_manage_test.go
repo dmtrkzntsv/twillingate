@@ -173,8 +173,8 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 		"update_widget": true, "copy_widget": true, "archive_widget": true, "restore_widget": true,
 		"add_project_tab": true, "remove_project_tab": true, "move_project_tab": true,
 		"update_widget_share": true, "archive_widget_share": true, "restore_widget_share": true,
-		"approve_form": true, "update_form": true, "archive_form": true, "restore_form": true,
-		"archive_submissions": true, "restore_submissions": true,
+		"create_form": true, "approve_form": true, "update_form": true, "archive_form": true, "restore_form": true,
+		"move_form": true, "archive_submissions": true, "restore_submissions": true,
 		"rename_event": true, "merge_event": true, "block_event": true, "remove_event_rule": true,
 		"rename_attribute": true, "merge_attribute": true, "block_attribute": true, "remove_attribute_rule": true}
 	idempotent := map[string]bool{"archive_project": true, "restore_project": true, "move_project": true,
@@ -182,7 +182,7 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 		"archive_dashboard": true, "restore_dashboard": true, "archive_widget": true, "restore_widget": true,
 		"remove_project_tab":  true,
 		"update_widget_share": true, "archive_widget_share": true, "restore_widget_share": true,
-		"archive_form": true, "restore_form": true,
+		"archive_form": true, "restore_form": true, "move_form": true,
 		"archive_submissions": true, "restore_submissions": true,
 		"block_event": true, "remove_event_rule": true,
 		"block_attribute": true, "remove_attribute_rule": true}

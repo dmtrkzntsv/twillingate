@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -65,6 +66,20 @@ type approveFormIn struct {
 	ProjectID      int64    `json:"project_id" jsonschema:"project id; call list_projects first"`
 	Name           string   `json:"name" jsonschema:"a draft form's name"`
 	ExpectedFields []string `json:"expected_fields" jsonschema:"the fields to keep, one or more; pick them from list_forms' fields"`
+}
+
+type createFormIn struct {
+	ProjectID      int64    `json:"project_id" jsonschema:"project id; call list_projects first"`
+	Name           string   `json:"name" jsonschema:"the form's name: 1 to 64 of a-z, 0-9, _ and -; the page posts to /ingest/forms/<name>. A name the project already has, archived forms included, is a conflict"`
+	Purpose        string   `json:"purpose,omitempty" jsonschema:"what the form is for, shown in the console; may be empty"`
+	ExpectedFields []string `json:"expected_fields" jsonschema:"the fields to keep, one or more"`
+	ReturnURL      string   `json:"return_url,omitempty" jsonschema:"where a plain HTML form sends the visitor back when it sets no $redirect: an absolute http(s) URL whose origin is in the project's allowed_origins; omit for none"`
+}
+
+type moveFormIn struct {
+	ProjectID int64  `json:"project_id" jsonschema:"project id; call list_projects first"`
+	Name      string `json:"name" jsonschema:"a live form's name"`
+	After     string `json:"after" jsonschema:"the live form to go right after; empty first"`
 }
 
 type updateFormIn struct {
@@ -234,6 +249,21 @@ func (h *host) markFormSeen(ctx context.Context, in markSeenIn) (okOut, error) {
 	// Not projectErr: an unknown form is as likely as an unknown project,
 	// and the store's refusal names which.
 	return okWith("seen", h.ops.MarkFormSeen(ctx, in.ProjectID, in.Name, until))
+}
+
+func (h *host) createForm(ctx context.Context, in createFormIn) (formOut, error) {
+	f, err := h.ops.CreateForm(ctx, actorFrom(ctx), in.ProjectID, manage.NewForm{Name: in.Name, Purpose: in.Purpose,
+		ExpectedFields: in.ExpectedFields, ReturnURL: in.ReturnURL})
+	if err != nil {
+		return formOut{}, h.projectErr(ctx, in.ProjectID, err)
+	}
+	return toFormOut(f), nil
+}
+
+func (h *host) moveForm(ctx context.Context, in moveFormIn) (okOut, error) {
+	// Not projectErr: an unknown form is as likely as an unknown project,
+	// and the store's refusal names which.
+	return okWith("moved", h.ops.MoveForm(ctx, actorFrom(ctx), in.ProjectID, in.Name, in.After))
 }
 
 func (h *host) approveForm(ctx context.Context, in approveFormIn) (okOut, error) {
@@ -437,8 +467,14 @@ func (h *host) registerForms(r *registrar) {
 	const f = p + "/forms/{name}"
 
 	expose(r, spec{Name: "list_forms", Annotations: ro, Method: "GET", Path: p + "/forms",
-		Description: "A project's forms, drafts first (archived: true lists the archived ones instead): name, status (draft or approved), purpose, return_url, fields (every field name sent), expected_fields (what an approved form keeps), draft_until, approved_at, closes_at, submissions (count of active ones), last_submitted_at, new_submissions (active, received after seen_at), archived_submissions (count, purged RETENTION_ARCHIVED_DAYS after archiving), seen_at (how far the console has read the form; reading over MCP never moves it), archived; and action_base, INGEST_URL + /ingest/forms (empty when INGEST_URL is not configured), so a plain HTML form's action is <action_base>/<name>?key=<key>. A form is created as a draft by its first submission to POST /ingest/forms/{name}; a draft keeps every field for RETENTION_FORMS_DRAFT_DAYS, then is archived unless approved, and its submissions never count as conversions. Approve one with approve_form."},
+		Description: "A project's forms, in the project's order (move_form changes it; a new form comes last; archived: true lists the archived ones instead): name, status (draft or approved), purpose, return_url, fields (every field name sent), expected_fields (what an approved form keeps), draft_until, approved_at, closes_at, submissions (count of active ones), last_submitted_at, new_submissions (active, received after seen_at), archived_submissions (count, purged RETENTION_ARCHIVED_DAYS after archiving), seen_at (how far the console has read the form; reading over MCP never moves it), archived; and action_base, INGEST_URL + /ingest/forms (empty when INGEST_URL is not configured), so a plain HTML form's action is <action_base>/<name>?key=<key>. A form is created approved with create_form, or as a draft by its first submission to POST /ingest/forms/{name}; a draft keeps every field for RETENTION_FORMS_DRAFT_DAYS, then is archived unless approved, and its submissions never count as conversions. Approve one with approve_form."},
 		h.listForms)
+	expose(r, spec{Name: "create_form", Annotations: write, Method: "POST", Path: p + "/forms", Status: http.StatusCreated,
+		Description: "Create a form before anything is sent to it, already approved: name (1 to 64 of a-z, 0-9, _ and -; the page posts to /ingest/forms/<name>), purpose (may be empty), expected_fields (one or more: the fields its submissions keep, and its fields), return_url (optional; as update_form's). From its first submission on, each writes a $form_submit conversion, as on an approved draft. It comes last in list_forms. A name the project already has, archived forms included, is refused (conflict). Returns the form as list_forms shows it."},
+		h.createForm)
+	expose(r, spec{Name: "move_form", Annotations: idem, Method: "POST", Path: f + "/move",
+		Description: "Put a live form right after another live form of the project (after: its name; empty first) in the order list_forms and the console show. An unknown form is refused (not found), an archived one (either) is invalid: restore it first. An archived form keeps its place, behind the live ones once a move renumbers them, and a restore brings it back there."},
+		h.moveForm)
 	expose(r, spec{Name: "approve_form", Annotations: write, Method: "POST", Path: f + "/approve",
 		Description: "Approve a draft form with expected_fields (one or more, from list_forms' fields): from now on its submissions keep only those fields, and each writes a $form_submit product event (attribute form = the name), its conversion, about a minute after it arrives. Submissions taken while it was a draft never count as conversions. Approving an approved form is refused (conflict; change its fields with update_form), and approval does not reopen a closed form."},
 		h.approveForm)

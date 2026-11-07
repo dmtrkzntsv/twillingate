@@ -4,6 +4,7 @@
 package wire
 
 import (
+	"regexp"
 	"strings"
 	"time"
 )
@@ -34,6 +35,15 @@ const (
 	MaxFormFieldName = 64
 	MaxFormValue     = 8 << 10
 )
+
+// formName bounds a form's name, which is a path segment, the suffix of
+// the redirect fragments and a key in the console's URLs.
+var formName = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
+
+// ValidFormName reports whether name may name a form: 1 to 64 of a-z,
+// 0-9, _ and -. Ingest refuses a submission to any other name, and
+// create_form a form with one.
+func ValidFormName(name string) bool { return formName.MatchString(name) }
 
 // HasControl reports a C0 control character or DEL (U+0000 to U+001F,
 // U+007F) in s: a form field named with one is dropped. No real form

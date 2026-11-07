@@ -717,3 +717,147 @@ func TestMarkFormSeenRefusals(t *testing.T) {
 		}
 	}
 }
+
+// formOrder is the names list_forms answers, in order.
+func formOrder(t *testing.T, cs *mcp.ClientSession, archived bool) []string {
+	t.Helper()
+	out := callAs[struct {
+		Forms []listedForm `json:"forms"`
+	}](t, cs, "list_forms", map[string]any{"project_id": 1, "archived": archived})
+	names := []string{}
+	for _, f := range out.Forms {
+		names = append(names, f.Name)
+	}
+	return names
+}
+
+// create_form makes an approved form before any submission: 201 with the
+// form as list_forms shows it, last in the order; its refusals are typed.
+func TestCreateForm(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	seed := newFormSeeder(t, h)
+	seed.add("contact", "s1", map[string]string{"email": "a@x.io"}, nil)
+	callAs[okOut](t, cs, "update_project", map[string]any{"project_id": 1, "allowed_origins": []string{"https://example.com"}})
+
+	rec := serveREST(t, r, "POST", "/api/projects/1/forms", `{"name":"signup","purpose":"Beta list",
+		"expected_fields":["email","name","email"],"return_url":"https://example.com/thanks"}`)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create = %d %s", rec.Code, rec.Body)
+	}
+	var got listedForm
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "signup" || got.Status != "approved" || got.Purpose != "Beta list" ||
+		got.ReturnURL != "https://example.com/thanks" || got.ApprovedAt == "" || got.DraftUntil != "" ||
+		!reflect.DeepEqual(got.ExpectedFields, []string{"email", "name"}) ||
+		!reflect.DeepEqual(got.Fields, []string{"email", "name"}) || got.Submissions != 0 || got.Archived {
+		t.Fatalf("created = %+v", got)
+	}
+	if listed := listForms(t, cs, false)["signup"]; !reflect.DeepEqual(listed, got) {
+		t.Errorf("list_forms = %+v, create answered %+v", listed, got)
+	}
+	// Over MCP too, with no purpose and no return_url; each new form comes last.
+	created := callAs[listedForm](t, cs, "create_form", map[string]any{"project_id": 1, "name": "a-1_z",
+		"expected_fields": []string{"msg"}})
+	if created.Purpose != "" || created.ReturnURL != "" || created.Status != "approved" {
+		t.Fatalf("created over MCP = %+v", created)
+	}
+	if got := formOrder(t, cs, false); !reflect.DeepEqual(got, []string{"contact", "signup", "a-1_z"}) {
+		t.Errorf("order = %q", got)
+	}
+	// A submission to it keeps only the expected fields, as on any approved form.
+	seed.add("signup", "s2", map[string]string{"email": "b@x.io", "extra": "x"}, nil)
+	if f := listForms(t, cs, false)["signup"]; f.Submissions != 1 || !reflect.DeepEqual(f.Fields, []string{"email", "extra", "name"}) {
+		t.Errorf("after a submission = %+v", f)
+	}
+
+	callAs[okOut](t, cs, "archive_form", map[string]any{"project_id": 1, "name": "contact"})
+	for _, c := range []struct {
+		why, body string
+		want      int
+	}{
+		{"live name", `{"name":"signup","expected_fields":["email"]}`, http.StatusConflict},
+		{"archived name", `{"name":"contact","expected_fields":["email"]}`, http.StatusConflict},
+		{"uppercase name", `{"name":"Signup","expected_fields":["email"]}`, http.StatusBadRequest},
+		{"empty name", `{"name":"","expected_fields":["email"]}`, http.StatusBadRequest},
+		{"long name", `{"name":"` + strings.Repeat("a", 65) + `","expected_fields":["email"]}`, http.StatusBadRequest},
+		{"slash in name", `{"name":"a/b","expected_fields":["email"]}`, http.StatusBadRequest},
+		{"no fields", `{"name":"x1"}`, http.StatusBadRequest},
+		{"empty fields", `{"name":"x2","expected_fields":[]}`, http.StatusBadRequest},
+		{"reserved field", `{"name":"x3","expected_fields":["$email"]}`, http.StatusBadRequest},
+		{"foreign return_url", `{"name":"x4","expected_fields":["email"],"return_url":"https://evil.example/"}`, http.StatusBadRequest},
+		{"relative return_url", `{"name":"x5","expected_fields":["email"],"return_url":"/thanks"}`, http.StatusBadRequest},
+	} {
+		if rec := serveREST(t, r, "POST", "/api/projects/1/forms", c.body); rec.Code != c.want {
+			t.Errorf("%s: %d %s, want %d", c.why, rec.Code, rec.Body, c.want)
+		}
+	}
+	if rec := serveREST(t, r, "POST", "/api/projects/99/forms", `{"name":"x","expected_fields":["email"]}`); rec.Code != http.StatusNotFound {
+		t.Errorf("unknown project: %d %s", rec.Code, rec.Body)
+	}
+	if got := formOrder(t, cs, false); !reflect.DeepEqual(got, []string{"signup", "a-1_z"}) {
+		t.Errorf("refusals changed the forms: %q", got)
+	}
+}
+
+// move_form places a live form first or after another; unknown and
+// archived forms are refused, typed; a restore keeps the form's place.
+func TestMoveForm(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	for _, name := range []string{"a", "b", "c", "d"} {
+		callAs[listedForm](t, cs, "create_form", map[string]any{"project_id": 1, "name": name, "expected_fields": []string{"email"}})
+	}
+	move := func(name, after string) okOut {
+		t.Helper()
+		return callAs[okOut](t, cs, "move_form", map[string]any{"project_id": 1, "name": name, "after": after})
+	}
+	if out := move("c", ""); out.Status != "moved" {
+		t.Fatalf("move = %+v", out)
+	}
+	if got := formOrder(t, cs, false); !reflect.DeepEqual(got, []string{"c", "a", "b", "d"}) {
+		t.Fatalf("c first: %q", got)
+	}
+	move("c", "b")
+	if got := formOrder(t, cs, false); !reflect.DeepEqual(got, []string{"a", "b", "c", "d"}) {
+		t.Fatalf("c after b: %q", got)
+	}
+	move("a", "d")
+	move("b", "b") // after itself: nothing moves
+	if got := formOrder(t, cs, false); !reflect.DeepEqual(got, []string{"b", "c", "d", "a"}) {
+		t.Fatalf("a after d: %q", got)
+	}
+	// Over REST, with the name in the path.
+	if rec := serveREST(t, r, "POST", "/api/projects/1/forms/d/move", `{"after":""}`); rec.Code != http.StatusOK {
+		t.Fatalf("REST move = %d %s", rec.Code, rec.Body)
+	}
+	if got := formOrder(t, cs, false); !reflect.DeepEqual(got, []string{"d", "b", "c", "a"}) {
+		t.Fatalf("d first over REST: %q", got)
+	}
+
+	callAs[okOut](t, cs, "archive_form", map[string]any{"project_id": 1, "name": "c"})
+	for _, c := range []struct {
+		why, path, body string
+		want            int
+	}{
+		{"unknown form", "/api/projects/1/forms/nope/move", `{"after":""}`, http.StatusNotFound},
+		{"unknown after", "/api/projects/1/forms/a/move", `{"after":"nope"}`, http.StatusNotFound},
+		{"archived form", "/api/projects/1/forms/c/move", `{"after":""}`, http.StatusBadRequest},
+		{"archived after", "/api/projects/1/forms/a/move", `{"after":"c"}`, http.StatusBadRequest},
+		{"unknown project", "/api/projects/99/forms/a/move", `{"after":""}`, http.StatusNotFound},
+	} {
+		if rec := serveREST(t, r, "POST", c.path, c.body); rec.Code != c.want {
+			t.Errorf("%s: %d %s, want %d", c.why, rec.Code, rec.Body, c.want)
+		}
+	}
+	if got := formOrder(t, cs, false); !reflect.DeepEqual(got, []string{"d", "b", "a"}) {
+		t.Fatalf("refusals moved something: %q", got)
+	}
+	// A restore puts the form back where it was.
+	callAs[okOut](t, cs, "restore_form", map[string]any{"project_id": 1, "name": "c"})
+	if got := formOrder(t, cs, false); !reflect.DeepEqual(got, []string{"d", "b", "c", "a"}) {
+		t.Fatalf("after restore: %q", got)
+	}
+}
