@@ -57,7 +57,8 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
   const empty = !!s && eventCount(s.totals, ratio) === 0
   const checks = s ? Math.round(s.totals.checks * ratio) : 0
   const keys = ratio > 0 ? [...FAMILIES, 'checks'] : FAMILIES
-  const rows = s ? s.series.map((d) => ({ ...d, checks: d.checks * ratio })) : []
+  // Rounded like the monthly chart and the Events tile, so a count never reads 72.3.
+  const rows = s ? s.series.map((d) => ({ ...d, checks: Math.round(d.checks * ratio) })) : []
   const ticks = niceTicks(rows.map((d) => d.views + d.events + d.measures + d.checks))
   return (
     <section aria-label="Usage" className="flex flex-col gap-3 rounded-lg border p-4">

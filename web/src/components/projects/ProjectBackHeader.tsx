@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ArrowLeftIcon, PlusIcon } from 'lucide-react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { Button } from '@/components/ui/button'
@@ -11,9 +11,11 @@ import AddTabDialog from './AddTabDialog'
 interface Props {
   projectId: number
   name: string
+  /** The name with its pencil: shown when there is no dashboard to go back to (yet), so the project can still be renamed. */
+  title: ReactNode
   /** The project's tabs, in order. */
   tabs: ProjectTab[]
-  /** False while the tabs load or after they failed: neither the back button nor Add dashboard yet. */
+  /** False while the tabs load or after they failed: the title alone, with neither the back button nor Add dashboard. */
   tabsLoaded: boolean
   /** Every dashboard, for the picker. */
   dashboards: DashboardInfo[]
@@ -24,15 +26,17 @@ interface Props {
  * The title of a project's Settings and Forms pages (project settings
  * tabs): in place of the name and its pencil, "← name", back to the
  * dashboard last opened here, else the first (D3), keeping the range. A
- * project with no dashboard offers "Add dashboard" there instead, the "+"
- * picker. A long name truncates on its one line.
+ * project with no dashboard keeps its name and pencil, the only place left
+ * to rename it, with "Add dashboard" beside them, the "+" picker; so does a
+ * project whose tabs are loading or failed. A long name truncates on its
+ * one line.
  */
-export default function ProjectBackHeader({ projectId, name, tabs, tabsLoaded, dashboards, actions }: Props) {
+export default function ProjectBackHeader({ projectId, name, title, tabs, tabsLoaded, dashboards, actions }: Props) {
   const navigate = useNavigate()
   const [url] = useSearchParams()
   const [adding, setAdding] = useState(false)
   const search = rangeParams(url).toString()
-  if (!tabsLoaded) return null
+  if (!tabsLoaded) return title
 
   const add = async (id: number) => {
     const ok = await actions.add(projectId, id)
@@ -46,7 +50,8 @@ export default function ProjectBackHeader({ projectId, name, tabs, tabsLoaded, d
   if (tabs.length === 0) {
     return (
       <>
-        <Button variant="outline" size="sm" onClick={() => setAdding(true)}>
+        {title}
+        <Button variant="outline" size="sm" className="shrink-0" onClick={() => setAdding(true)}>
           <PlusIcon />
           Add dashboard
         </Button>
