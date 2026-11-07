@@ -225,8 +225,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 			logger.Info("notifications are sent to a channel", "service", sender.Service())
 		}
 		mon := monitor.New(st, monitorOrigins{reg}, archiveLog, cfg.Monitor.Interval, cfg.Monitor.Timeout, logger)
-		// TODO: hand the monitor's observations to the tracker with
-		// mon.WithAlerts(tracker).
+		mon.WithAlerts(tracker)
 		if cfg.Monitor.Disabled {
 			logger.Warn("monitoring is paused (MONITOR_DISABLED): no check runs and no row is written")
 			mon.Pause()

@@ -9,6 +9,11 @@
 // availability check back. A read that fails says nothing about either: the last
 // reading stands, unrecorded, and is tried again after an hour.
 //
+// Each result is also reported to the alerts (inbox's Tracker), which decides
+// when to notify: every availability check, every certificate reading and
+// every domain lookup, failed ones included. A certificate that reads as
+// invalid is read again hourly, not daily, so its recovery shows soon.
+//
 // Every availability check, scheduled or manual, keeps its result on the monitor's
 // row, which Settings shows. A manual check is a request on that row, since the API
 // that takes it may be another process: the next tick runs all three for that
@@ -35,6 +40,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/dmtrkzntsv/twillingate/internal/inbox"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/maindomain"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -55,6 +61,21 @@ type Store interface {
 type EventLog interface {
 	WriteEvents(ctx context.Context, evs []store.Event) error
 }
+
+// Alerts takes what the monitor observes (inbox.Tracker). It is called only
+// for results shutdown did not cut short.
+type Alerts interface {
+	Uptime(ctx context.Context, projectID int64, origin string, up bool, reason, errText string, at time.Time)
+	Cert(ctx context.Context, projectID int64, origin string, c inbox.CertReading, at time.Time)
+	Domain(ctx context.Context, projectID int64, domain string, ok bool, errText, expiresAt string, at time.Time)
+}
+
+// noAlerts is the default: nobody is told.
+type noAlerts struct{}
+
+func (noAlerts) Uptime(context.Context, int64, string, bool, string, string, time.Time) {}
+func (noAlerts) Cert(context.Context, int64, string, inbox.CertReading, time.Time)      {}
+func (noAlerts) Domain(context.Context, int64, string, bool, string, string, time.Time) {}
 
 // Origins says whether a redirect target is one of the project's origins
 // (manage's snapshot, MonitorRedirectAllowed; a bare "*" counts only for
@@ -97,6 +118,7 @@ type Runner struct {
 	roots  *x509.CertPool
 	client *http.Client
 	rdap   *rdap
+	alerts Alerts
 
 	// job runs one slot's availability check and returns its row; a seam for
 	// tests, as are the two below it.
@@ -180,7 +202,8 @@ func newRunner(st Store, origins Origins, log EventLog, interval time.Duration, 
 	r := &Runner{
 		st: st, origins: origins, log: log, logger: logger,
 		interval: interval, timeout: o.timeout, step: tickStep, now: o.now,
-		guard: g, roots: o.roots, client: client,
+		alerts: noAlerts{},
+		guard:  g, roots: o.roots, client: client,
 		rdap:    &rdap{client: newClient(&guard{resolver: o.resolver, allowLoopback: o.allowLoopback, budget: rdapTimeout}, o.roots), bootstrapURL: o.bootstrapURL, now: o.now},
 		sem:     make(chan struct{}, workers),
 		readSem: make(chan struct{}, readWorkers),
@@ -255,6 +278,14 @@ func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 	}
 }
 
+// WithAlerts has the runner report every result to a. Call it before Run.
+func (r *Runner) WithAlerts(a Alerts) {
+	if a == nil {
+		a = noAlerts{}
+	}
+	r.alerts = a
+}
+
 // Pause makes the runner run nothing and write no row: each tick only ends the
 // manual checks found pending as ones that did not run, so no client waits for
 // them. Call it before Run (MONITOR_DISABLED).
@@ -318,7 +349,7 @@ func (r *Runner) startSlot(ctx context.Context, m store.Monitor) {
 func (r *Runner) startReads(ctx context.Context, m store.Monitor) {
 	id := m.ProjectID
 	now := r.now().UTC()
-	if stale(m.CertCheckedAt, now) {
+	if certDue(m, now) {
 		r.startRead(ctx, certKey(m), now, func(ctx context.Context, at time.Time) []store.Event {
 			return r.readCert(ctx, m, at)
 		})
@@ -625,6 +656,7 @@ func (r *Runner) availability(ctx context.Context, m store.Monitor) store.Event 
 		}); err != nil {
 			r.logger.Warn("monitor: store last result", "project_id", m.ProjectID, "error", err)
 		}
+		r.alerts.Uptime(ctx, m.ProjectID, m.Origin, res.Up, res.Reason, res.Error, start)
 	}
 	return uptimeRow(m.ProjectID, m.Origin, start, res)
 }
@@ -673,6 +705,17 @@ func stale(checkedAt string, now time.Time) bool {
 	return err != nil || now.Sub(t) >= dailyEvery
 }
 
+// certDue reports whether m's certificate is to be read again: daily, but
+// hourly while the last reading has an expiry and is not valid, so that a
+// renewed certificate is noticed soon.
+func certDue(m store.Monitor, now time.Time) bool {
+	if m.CertExpiresAt != "" && !m.CertValid {
+		t, err := time.Parse(time.RFC3339, m.CertCheckedAt)
+		return err != nil || now.Sub(t) >= dailyRetry
+	}
+	return stale(m.CertCheckedAt, now)
+}
+
 // cert reads and stores the certificate. An http:// origin has none: it
 // stores only the check time and writes a row with no value, so a reading
 // from before a move to it stops showing. A read that got no certificate
@@ -697,6 +740,7 @@ func (r *Runner) cert(ctx context.Context, m store.Monitor, now time.Time) []sto
 		if err := r.st.SetMonitorCertError(ctx, m.ProjectID, m.Origin, st.Error); err != nil {
 			r.logger.Warn("monitor: store certificate error", "project_id", m.ProjectID, "error", err)
 		}
+		r.alerts.Cert(ctx, m.ProjectID, m.Origin, inbox.CertReading{Error: st.Error}, now)
 		return nil
 	}
 	if err := r.st.SetMonitorCert(ctx, m.ProjectID, m.Origin, st); err != nil {
@@ -705,6 +749,7 @@ func (r *Runner) cert(ctx context.Context, m store.Monitor, now time.Time) []sto
 	if !https {
 		return []store.Event{row(m.ProjectID, "cert", now, nil, map[string]string{"origin": m.Origin})}
 	}
+	r.alerts.Cert(ctx, m.ProjectID, m.Origin, inbox.CertReading{Read: true, Valid: st.Valid, Error: st.Error, ExpiresAt: st.ExpiresAt}, now)
 	attrs := map[string]string{"origin": m.Origin, "valid": "0", "issuer": st.Issuer, "error": st.Error}
 	if st.Valid {
 		attrs["valid"] = "1"
@@ -735,14 +780,19 @@ func (r *Runner) domain(ctx context.Context, projectID int64, domain string, now
 	switch {
 	case errors.Is(err, errUnknown):
 		r.logger.Debug("monitor: domain expiry unknown", "project_id", projectID, "domain", domain, "error", err)
+		r.alerts.Domain(ctx, projectID, domain, true, "", "", now)
 	case err != nil:
 		// The lookup failed, which says nothing about the domain: the last
 		// reading stands, unrecorded, and is retried after dailyRetry.
 		r.logger.Debug("monitor: domain expiry lookup failed", "project_id", projectID, "domain", domain, "error", err)
+		r.alerts.Domain(ctx, projectID, domain, false, err.Error(), "", now)
 		return nil
 	}
 	if err := r.st.SetMonitorDomain(ctx, projectID, domain, store.DomainState{ExpiresAt: exp, CheckedAt: now.Format(time.RFC3339)}); err != nil {
 		r.logger.Warn("monitor: store domain expiry", "project_id", projectID, "error", err)
+	}
+	if err == nil {
+		r.alerts.Domain(ctx, projectID, domain, true, "", exp, now)
 	}
 	attrs := map[string]string{"domain": domain}
 	var value *float64

@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/inbox"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/google/uuid"
 )
@@ -1888,5 +1889,190 @@ func TestManualReadWaitsForTheScheduledReadOfTheSameKey(t *testing.T) {
 	want := []string{"scheduled start", "scheduled end", "manual start", "manual end"}
 	if !slices.Equal(order, want) {
 		t.Errorf("order = %v, want %v", order, want)
+	}
+}
+
+// alertCalls records what the runner reports to the alerts.
+type alertCalls struct {
+	mu      sync.Mutex
+	uptimes []alertUptime
+	certs   []inbox.CertReading
+	domains []alertDomain
+}
+
+type alertUptime struct {
+	origin, reason, errText string
+	up                      bool
+}
+
+type alertDomain struct {
+	domain, errText, expiresAt string
+	ok                         bool
+}
+
+func (a *alertCalls) Uptime(_ context.Context, _ int64, origin string, up bool, reason, errText string, _ time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.uptimes = append(a.uptimes, alertUptime{origin, reason, errText, up})
+}
+
+func (a *alertCalls) Cert(_ context.Context, _ int64, _ string, c inbox.CertReading, _ time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.certs = append(a.certs, c)
+}
+
+func (a *alertCalls) Domain(_ context.Context, _ int64, domain string, ok bool, errText, expiresAt string, _ time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.domains = append(a.domains, alertDomain{domain, errText, expiresAt, ok})
+}
+
+func TestAlertsUptime(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer site.Close()
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "no", http.StatusInternalServerError)
+	}))
+	defer broken.Close()
+	for _, tc := range []struct {
+		name, origin string
+		up           bool
+	}{{"up", site.URL, true}, {"down", broken.URL, false}} {
+		st := &fakeStore{}
+		al := &alertCalls{}
+		r := redirectsRunner(st)
+		r.WithAlerts(al)
+		m := store.Monitor{ProjectID: 3, Enabled: true, Origin: tc.origin}
+		r.availability(context.Background(), m)
+		if len(al.uptimes) != 1 {
+			t.Fatalf("%s: %d Uptime calls, want 1", tc.name, len(al.uptimes))
+		}
+		got, last := al.uptimes[0], st.lasts(3, m.Origin)
+		if got.up != tc.up || len(last) != 1 || got.reason != last[0].Reason || got.errText != last[0].Error {
+			t.Errorf("%s: Uptime %+v, stored %+v", tc.name, got, last)
+		}
+		if !tc.up && got.reason == "" {
+			t.Errorf("%s: down with no reason", tc.name)
+		}
+	}
+}
+
+func TestAlertsNotCalledOnShutdown(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer site.Close()
+	al := &alertCalls{}
+	r := redirectsRunner(&fakeStore{})
+	r.WithAlerts(al)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r.availability(ctx, store.Monitor{ProjectID: 3, Origin: site.URL})
+	if len(al.uptimes) != 0 {
+		t.Errorf("%d Uptime calls after shutdown", len(al.uptimes))
+	}
+}
+
+func TestAlertsCert(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+
+	// No certificate at all: nothing listens.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := "https://" + ln.Addr().String()
+	ln.Close()
+	al := &alertCalls{}
+	r := redirectsRunner(&fakeStore{})
+	r.WithAlerts(al)
+	r.cert(context.Background(), store.Monitor{ProjectID: 3, Origin: closed}, now)
+	if len(al.certs) != 1 || al.certs[0].Read || al.certs[0].Error == "" {
+		t.Errorf("no certificate: %+v", al.certs)
+	}
+
+	// A certificate the runner does not trust: read, not valid.
+	tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer tls.Close()
+	al = &alertCalls{}
+	r = redirectsRunner(&fakeStore{})
+	r.WithAlerts(al)
+	r.cert(context.Background(), store.Monitor{ProjectID: 3, Origin: tls.URL}, time.Now())
+	if len(al.certs) != 1 || !al.certs[0].Read || al.certs[0].Valid || al.certs[0].ExpiresAt == "" {
+		t.Errorf("invalid certificate: %+v", al.certs)
+	}
+
+	// An http origin has no certificate to report.
+	al = &alertCalls{}
+	r = redirectsRunner(&fakeStore{})
+	r.WithAlerts(al)
+	r.cert(context.Background(), store.Monitor{ProjectID: 3, Origin: "http://example.com"}, now)
+	if len(al.certs) != 0 {
+		t.Errorf("http origin: %+v", al.certs)
+	}
+}
+
+func TestAlertsDomain(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	rd, _ := fakeRDAP(t, map[string]string{
+		"example.com": `{"events":[{"eventAction":"expiration","eventDate":"2027-03-14T04:00:00Z"}]}`,
+	})
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	}))
+	defer failing.Close()
+	newR := func(bootstrap string) (*Runner, *alertCalls) {
+		al := &alertCalls{}
+		r := newRunner(&fakeStore{}, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{
+			allowLoopback: true, bootstrapURL: bootstrap, now: func() time.Time { return now },
+		})
+		r.WithAlerts(al)
+		return r, al
+	}
+
+	r, al := newR(rd.URL + "/dns.json")
+	r.domain(context.Background(), 3, "example.com", now)
+	if len(al.domains) != 1 || !al.domains[0].ok || al.domains[0].expiresAt != "2027-03-14" || al.domains[0].domain != "example.com" {
+		t.Errorf("success: %+v", al.domains)
+	}
+
+	// An address has no RDAP: unknown, which is no failure.
+	r, al = newR(rd.URL + "/dns.json")
+	r.domain(context.Background(), 3, "127.0.0.1", now)
+	if len(al.domains) != 1 || !al.domains[0].ok || al.domains[0].errText != "" || al.domains[0].expiresAt != "" {
+		t.Errorf("unknown: %+v", al.domains)
+	}
+
+	// A failed lookup.
+	r, al = newR(failing.URL + "/dns.json")
+	r.domain(context.Background(), 3, "example.com", now)
+	if len(al.domains) != 1 || al.domains[0].ok || al.domains[0].errText == "" {
+		t.Errorf("failure: %+v", al.domains)
+	}
+}
+
+func TestCertDueHourlyWhenInvalid(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) string { return now.Add(-d).Format(time.RFC3339) }
+	invalid := func(d time.Duration) store.Monitor {
+		return store.Monitor{CertExpiresAt: "2027-03-14T00:00:00Z", CertValid: false, CertCheckedAt: at(d)}
+	}
+	valid := func(d time.Duration) store.Monitor {
+		return store.Monitor{CertExpiresAt: "2027-03-14T00:00:00Z", CertValid: true, CertCheckedAt: at(d)}
+	}
+	for _, tc := range []struct {
+		name string
+		m    store.Monitor
+		want bool
+	}{
+		{"invalid, 30m", invalid(30 * time.Minute), false},
+		{"invalid, 1h", invalid(time.Hour), true},
+		{"valid, 1h", valid(time.Hour), false},
+		{"valid, 24h", valid(24 * time.Hour), true},
+		{"never read", store.Monitor{}, true},
+		{"no expiry, 1h", store.Monitor{CertCheckedAt: at(time.Hour)}, false},
+	} {
+		if got := certDue(tc.m, now); got != tc.want {
+			t.Errorf("%s: certDue = %v, want %v", tc.name, got, tc.want)
+		}
 	}
 }
