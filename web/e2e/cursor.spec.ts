@@ -99,7 +99,7 @@ test('every link and button shows the pointer', async ({ page, request }) => {
     '/app/projects',
     '/app/projects/1/settings',
     // Every Settings tab; today, where the attributes above were received (the default range ends yesterday).
-    ...['usage', 'install', 'domains', 'events', 'attributes', 'danger'].map((s) => `/app/projects/${attrs.id}/settings/${s}?range=today`),
+    ...['overview', 'domains', 'events', 'attributes', 'danger'].map((s) => `/app/projects/${attrs.id}/settings/${s}?range=today`),
     `/app/projects/${forms.id}/forms`,
     `/app/projects/${forms.id}/forms/contact`,
     '/app/dashboards',

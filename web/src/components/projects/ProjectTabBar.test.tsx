@@ -117,24 +117,24 @@ describe('ProjectTabBar', () => {
       expect(screen.queryByRole('combobox', { name: 'Tab' })).toBeNull()
       const nav = screen.getByRole('navigation', { name: 'Settings sections' })
       const links = within(nav).getAllByRole('link')
-      expect(links.map((l) => l.textContent)).toEqual(['Usage', 'Install', 'Domains', 'Events', 'Attributes', 'Danger'])
-      expect(links.map((l) => l.getAttribute('aria-current'))).toEqual([null, null, null, 'page', null, null])
-      expect(links[1]).toHaveAttribute('href', '/projects/7/settings/install?range=30d')
+      expect(links.map((l) => l.textContent)).toEqual(['Overview', 'Domains', 'Events', 'Attributes', 'Danger'])
+      expect(links.map((l) => l.getAttribute('aria-current'))).toEqual([null, null, 'page', null, null])
+      expect(links[1]).toHaveAttribute('href', '/projects/7/settings/domains?range=30d')
       const back = screen.getByRole('link', { name: 'Dashboards' })
       expect(back.compareDocumentPosition(nav) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
       expect(screen.getByRole('link', { name: 'Forms' })).toHaveAttribute('href', '/projects/7/forms?range=30d')
       expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
     })
 
-    it('marks Usage current when no section is named', () => {
+    it('marks Overview current when no section is named', () => {
       renderBar({ currentId: SETTINGS_ID, newSubmissions: 0 })
-      expect(screen.getByRole('link', { name: 'Usage' })).toHaveAttribute('aria-current', 'page')
+      expect(screen.getByRole('link', { name: 'Overview' })).toHaveAttribute('aria-current', 'page')
     })
 
-    it('leaves out Install and Danger on an archived project', () => {
+    it('leaves out Danger on an archived project', () => {
       renderBar({ currentId: SETTINGS_ID, newSubmissions: 0, archived: true })
       const nav = screen.getByRole('navigation', { name: 'Settings sections' })
-      expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Usage', 'Domains', 'Events', 'Attributes'])
+      expect(within(nav).getAllByRole('link').map((l) => l.textContent)).toEqual(['Overview', 'Domains', 'Events', 'Attributes'])
     })
 
     it('goes back to the remembered dashboard from "← Dashboards" and the gear, else the first', () => {

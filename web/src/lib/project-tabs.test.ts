@@ -12,16 +12,19 @@ const tabs: ProjectTab[] = [
 ]
 
 describe('settings tabs', () => {
-  it('lists every tab in order, and no Install or Danger on an archived project', () => {
-    expect(settingsSections(false).map((s) => s.id)).toEqual(['usage', 'install', 'domains', 'events', 'attributes', 'danger'])
-    expect(settingsSections(true).map((s) => s.id)).toEqual(['usage', 'domains', 'events', 'attributes'])
+  it('lists every tab in order, and no Danger on an archived project', () => {
+    expect(settingsSections(false).map((s) => s.id)).toEqual(['overview', 'domains', 'events', 'attributes', 'danger'])
+    expect(settingsSections(true).map((s) => s.id)).toEqual(['overview', 'domains', 'events', 'attributes'])
   })
 
   it('reads the section from the URL: the first when none, null when not one of the project\'s', () => {
-    expect(settingsSection(false, undefined)).toBe('usage')
-    expect(settingsSection(false, 'install')).toBe('install')
-    expect(settingsSection(true, 'install')).toBeNull()
+    expect(settingsSection(false, undefined)).toBe('overview')
+    expect(settingsSection(false, 'domains')).toBe('domains')
+    expect(settingsSection(false, 'danger')).toBe('danger')
     expect(settingsSection(true, 'danger')).toBeNull()
+    // The first version's tabs, merged into Overview.
+    expect(settingsSection(false, 'usage')).toBeNull()
+    expect(settingsSection(false, 'install')).toBeNull()
     expect(settingsSection(false, 'keys')).toBeNull()
   })
 

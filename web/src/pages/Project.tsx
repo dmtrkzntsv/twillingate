@@ -145,7 +145,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
             {mine && mine.last_event_day === null && dashId !== SETTINGS_ID && dashId !== FORMS_ID && dashId !== LANDING && (
               <div role="status" className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-dashed p-3 text-sm">
                 <span>No events received yet</span>
-                <Link to={settingsPath(id, project.archived ? undefined : 'install', rangeSearch)} className="font-medium underline-offset-2 hover:underline">
+                <Link to={settingsPath(id, 'overview', rangeSearch)} className="font-medium underline-offset-2 hover:underline">
                   Set up this project
                 </Link>
               </div>

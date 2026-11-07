@@ -102,7 +102,7 @@ export default function ProjectTabBar({ projectId, currentId, tabs, tabsLoaded =
               </Button>
             )
           )}
-          <SettingsTabs projectId={projectId} archived={archived} current={section ?? 'usage'} search={search} />
+          <SettingsTabs projectId={projectId} archived={archived} current={section ?? 'overview'} search={search} />
         </>
       ) : (
         <ReportTabs

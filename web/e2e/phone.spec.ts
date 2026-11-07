@@ -243,7 +243,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     '/app/projects/1/settings',
     `/app/projects/${id}/settings`,
     // Every Settings tab; today, where the events above were received (the default range ends yesterday).
-    ...['usage', 'install', 'domains', 'events', 'attributes', 'danger'].map((s) => `/app/projects/${id}/settings/${s}?range=today`),
+    ...['overview', 'domains', 'events', 'attributes', 'danger'].map((s) => `/app/projects/${id}/settings/${s}?range=today`),
     `/app/projects/${id}/forms`,
     `/app/projects/${id}/forms/${formName}`,
     `/app/projects/${id}/dashboards/1`,
@@ -275,10 +275,10 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   // On a phone the Settings tabs are a select, as the dashboard tabs are, which opens each tab's address.
   await check(page, `/app/projects/${id}/settings?range=today`)
   await page.getByRole('combobox', { name: 'Settings section' }).click()
-  await page.getByRole('option', { name: 'Install' }).click()
-  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/settings/install\\?range=today$`))
-  await expect(page.getByRole('region', { name: 'Ingest keys' })).toBeVisible()
-  expect(await sidewaysScroll(page), 'install tab').toEqual([])
+  await page.getByRole('option', { name: 'Domains' }).click()
+  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/settings/domains\\?range=today$`))
+  await expect(page.getByRole('region', { name: 'Allowed origins' })).toBeVisible()
+  expect(await sidewaysScroll(page), 'domains tab').toEqual([])
 
   // Check now, served by the live runner: the origin does not resolve here, so
   // its status line reads Down, with the long origin's error, and wraps too.
@@ -517,7 +517,7 @@ test('the empty Projects guide and the install dialog fit a phone', async ({ pag
   await page.getByRole('button', { name: 'Connect' }).click()
   await page.waitForURL(/\/app\/projects$/)
 
-  await page.goto(`/app/projects/${id}/settings/install`)
+  await page.goto(`/app/projects/${id}/settings/overview`)
   await page.getByRole('button', { name: 'Show install snippet' }).click()
   await expect(page.getByRole('dialog').getByRole('button', { name: 'Copy snippet' })).toBeInViewport({ ratio: 1 })
   await expect(page.getByRole('dialog').getByText(/No allowed origins/)).toBeVisible()

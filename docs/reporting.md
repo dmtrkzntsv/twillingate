@@ -1740,11 +1740,12 @@ a tab of a project's page (`/app/projects/{project_id}`).
   first. Settings and Forms are not dashboards and are never listed: they
   are buttons beside the tabs, Settings behind the gear. Settings has tabs of
   its own, which take the dashboards' place in the row while it is open, each
-  at `/app/projects/{project_id}/settings/{section}`: Usage (the project's
-  usage and file size), Install (the script and the ingest keys), Domains
-  (allowed origins, monitoring and domain expiry), Events, Attributes (their
-  rules), and Danger (Archive). **← Dashboards** goes back to the tab last
-  used.
+  at `/app/projects/{project_id}/settings/{section}`: Overview (the
+  project's events by month for the last six months, against
+  `EVENTS_MONTHLY_BUDGET` when it is set, and by day over the range, then
+  the script and the ingest keys), Domains (allowed origins, monitoring and
+  domain expiry), Events, Attributes (their rules), and Danger (Archive).
+  **← Dashboards** goes back to the tab last used.
   - Each project keeps its own list: `add_project_tab`,
     `remove_project_tab` and `move_project_tab` change one project's page
     and no other.

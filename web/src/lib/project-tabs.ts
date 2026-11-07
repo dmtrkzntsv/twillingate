@@ -8,11 +8,11 @@ export const FORMS_ID = -1
 
 /**
  * A project's Settings tabs, in order (project settings tabs), each at
- * `/settings/:section`; plain `/settings` shows the first.
+ * `/settings/:section`; plain `/settings` shows the first. Overview took
+ * the place of Usage and Install, whose addresses now go to `/settings`.
  */
 export const SETTINGS_SECTIONS = [
-  { id: 'usage', title: 'Usage' },
-  { id: 'install', title: 'Install' },
+  { id: 'overview', title: 'Overview' },
   { id: 'domains', title: 'Domains' },
   { id: 'events', title: 'Events' },
   { id: 'attributes', title: 'Attributes' },
@@ -21,9 +21,9 @@ export const SETTINGS_SECTIONS = [
 
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number]['id']
 
-/** The Settings tabs a project has: an archived one, which takes nothing and is not archived again, has no Install and no Danger. */
+/** The Settings tabs a project has: an archived one, which is not archived again, has no Danger. */
 export function settingsSections(archived: boolean): (typeof SETTINGS_SECTIONS)[number][] {
-  return SETTINGS_SECTIONS.filter((s) => !archived || (s.id !== 'install' && s.id !== 'danger'))
+  return SETTINGS_SECTIONS.filter((s) => !archived || s.id !== 'danger')
 }
 
 /** The Settings tab `param` names on a project, the first when it names none, or null when it is not one of the project's. */

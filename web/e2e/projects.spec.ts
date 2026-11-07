@@ -37,7 +37,7 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await expect(page.getByRole('heading', { name })).toBeVisible()
   // Settings is tabs, each at its own address, in the dashboards' place.
   const sections = page.getByRole('navigation', { name: 'Settings sections' })
-  await expect(page.getByRole('heading', { level: 1, name: 'Usage' })).toBeVisible()
+  await expect(page.getByRole('heading', { level: 1, name: 'Overview' })).toBeVisible()
 
   await page.getByRole('button', { name: 'Rename' }).click()
   await page.getByRole('textbox', { name: 'Project name' }).fill(`${name}-renamed`)
@@ -59,7 +59,7 @@ test('creates a project, edits it, manages a key, archives and restores it', asy
   await page.getByRole('button', { name: 'Remove origin' }).click()
   await expect(origins.getByText('https://e2e.example', { exact: true })).toHaveCount(0)
 
-  await sections.getByRole('link', { name: 'Install' }).click()
+  await sections.getByRole('link', { name: 'Overview' }).click()
   const keys = page.getByRole('region', { name: 'Ingest keys' })
   await keys.getByRole('button', { name: 'Issue key' }).click()
   await page.getByLabel('Label').fill('ios app')
@@ -105,6 +105,14 @@ test('shows usage for the seeded project', async ({ page }) => {
   const usage = page.getByRole('region', { name: 'Usage' })
   await expect(usage.getByText('Events', { exact: true })).toBeVisible()
   await expect(usage.locator('.recharts-bar-rectangle').first()).toBeVisible()
+  // The monthly chart, against the budget serve.sh sets (EVENTS_MONTHLY_BUDGET=15000):
+  // a dashed line at it, the weighted checks stacked, the month under way so far.
+  const monthly = usage.getByTestId('monthly-usage')
+  // A horizontal line has no height, which Playwright reads as hidden: check it is drawn, dashed.
+  await expect(monthly.locator('.recharts-reference-line line')).toHaveAttribute('stroke-dasharray', '4 4')
+  await expect(monthly.getByText('Budget 15K')).toBeVisible()
+  await expect(monthly.getByText('so far')).toBeVisible()
+  await expect(monthly.getByText('Checks', { exact: true })).toBeVisible()
 })
 
 test('lists Projects first in the sidebar, with the projects under it, closed state remembered', async ({ page }) => {

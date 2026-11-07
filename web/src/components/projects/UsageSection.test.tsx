@@ -5,7 +5,12 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { ApiError, endpoints } from '@/lib/api'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { renderWithProviders } from '@/test/render'
+import { monthsRange, utcToday } from '@/lib/usage-months'
 import UsageSection from './UsageSection'
+
+const empty = { from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
+  project_id: 4, series: [], totals: { views: 0, events: 0, measures: 0, checks: 0 }, last_received_at: null, first_day: null, size: null,
+}] }
 
 beforeEach(() => vi.restoreAllMocks())
 
@@ -43,11 +48,14 @@ describe('UsageSection', () => {
 
   it('offers a retry when the stats fail', async () => {
     const user = userEvent.setup()
-    const spy = vi.spyOn(endpoints, 'usage').mockRejectedValue(new ApiError(400, 'range over 400 days; narrow the date range'))
+    const spy = vi.spyOn(endpoints, 'usage').mockImplementation(async (q) => {
+      if (q.from === 'a') throw new ApiError(400, 'range over 400 days; narrow the date range')
+      return empty
+    })
     renderWithProviders(<UsageSection projectId={4} range={{ from: 'a', to: 'b' }} />)
     expect(await screen.findByText('range over 400 days; narrow the date range')).toBeInTheDocument()
     await user.click(await screen.findByRole('button', { name: 'Retry' }))
-    expect(spy).toHaveBeenCalledTimes(2)
+    expect(spy.mock.calls.filter(([q]) => q.from === 'a')).toHaveLength(2)
   })
 
   it('shows a skeleton on the first load, then keeps the previous numbers while a new range loads', async () => {
@@ -57,14 +65,16 @@ describe('UsageSection', () => {
     }] })
     let release!: () => void
     const second = new Promise<ReturnType<typeof mk>>((res) => { release = () => res(mk(99)) })
-    vi.spyOn(endpoints, 'usage').mockResolvedValueOnce(mk(11)).mockReturnValueOnce(second)
+    // The monthly chart reads its own range, from the 1st of its oldest month.
+    const daily = vi.fn().mockResolvedValueOnce(mk(11)).mockReturnValueOnce(second)
+    vi.spyOn(endpoints, 'usage').mockImplementation((q) => (q.from === monthsRange(utcToday()).from ? Promise.resolve(mk(0)) : daily(q)))
     const { client, rerender } = renderWithProviders(<UsageSection projectId={4} range={{ from: '2026-09-01', to: '2026-09-01' }} />)
     expect(screen.getByRole('region', { name: 'Usage' }).querySelector('[data-slot="skeleton"]')).not.toBeNull()
     expect(screen.queryByText(/Couldn't load/)).not.toBeInTheDocument()
     expect(await screen.findByText('11')).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'Usage' }).querySelector('[data-slot="skeleton"]')).toBeNull()
     rerender(<QueryClientProvider client={client}><TooltipProvider><UsageSection projectId={4} range={{ from: '2026-09-02', to: '2026-09-02' }} /></TooltipProvider></QueryClientProvider>)
-    await waitFor(() => expect(endpoints.usage).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(daily).toHaveBeenCalledTimes(2))
     expect(screen.getByText('11')).toBeInTheDocument()
     release()
     expect(await screen.findByText('99')).toBeInTheDocument()

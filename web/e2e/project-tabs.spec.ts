@@ -144,7 +144,7 @@ test('a project opens on its first dashboard tab; tabs are removed and re-added 
     await expect(page).toHaveURL(/\/settings$/)
     await expect(page.getByRole('link', { name: 'Settings', exact: true })).toHaveAttribute('aria-current', 'page')
     const sections = page.getByRole('navigation', { name: 'Settings sections' })
-    await expect(sections.getByRole('link')).toHaveText(['Usage', 'Install', 'Domains', 'Events', 'Attributes', 'Danger'])
+    await expect(sections.getByRole('link')).toHaveText(['Overview', 'Domains', 'Events', 'Attributes', 'Danger'])
     await expect(page.getByRole('tab')).toHaveCount(0)
     await sections.getByRole('link', { name: 'Domains' }).click()
     await expect(page).toHaveURL(/\/settings\/domains$/)

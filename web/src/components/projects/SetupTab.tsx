@@ -30,24 +30,28 @@ interface Props {
 }
 
 /** The tabs whose figures cover a range, and so show the range switcher. */
-const RANGED: ReadonlySet<SettingsSection> = new Set(['usage', 'events', 'attributes'])
+const RANGED: ReadonlySet<SettingsSection> = new Set(['overview', 'events', 'attributes'])
+
+/** The range a tab opens on when the URL names none: a month of usage on Overview, a week elsewhere. */
+const defaultRange = (section: SettingsSection) => (section === 'overview' ? '30d' : '7d')
 
 /**
  * A project's Settings page (project landing D4), one tab at a time
- * (project settings tabs): Usage; Install, how to install the script, then
- * the ingest keys; Domains, the allowed origins, then the monitors that
- * check them and when their domains expire; Events; Attributes; and Danger,
- * with Archive. An archived project, which takes nothing and refuses every
- * change, has no Install or Danger tab and only its origins under Domains,
- * and Restore in the header instead. The range is the URL's, which every
- * tab of the project shares (D8), else 7 days; only the tabs that count
- * something over it show the switcher.
+ * (project settings tabs): Overview, its usage by month and by day, then
+ * how to install the script and the ingest keys; Domains, the allowed
+ * origins, then the monitors that check them and when their domains
+ * expire; Events; Attributes; and Danger, with Archive. An archived
+ * project, which takes nothing and refuses every change, has no install or
+ * keys on Overview, no Danger tab and only its origins under Domains, and
+ * Restore in the header instead. The range is the URL's, which every tab
+ * of the project shares (D8), else 30 days on Overview and 7 elsewhere;
+ * only the tabs that count something over it show the switcher.
  */
 export default function SetupTab({ project, dash, actions, section }: Props) {
   const id = project.project_id
-  const keysQ = useQuery({ ...keysQuery(id), enabled: section === 'install' })
+  const keysQ = useQuery({ ...keysQuery(id), enabled: section === 'overview' && !project.archived })
   const [url, setURL] = useSearchParams()
-  const sel = chooseSelection(url, { range: '7d' }, [], { project: false, range: true })
+  const sel = chooseSelection(url, { range: defaultRange(section) }, [], { project: false, range: true })
   const tz = dash?.timezone ?? 'UTC'
   const range = resolve(sel.range!, tz, new Date(), sel.from && sel.to ? { from: sel.from, to: sel.to } : undefined)
   const title = SETTINGS_SECTIONS.find((s) => s.id === section)!.title
@@ -63,8 +67,8 @@ export default function SetupTab({ project, dash, actions, section }: Props) {
           <Button variant="outline" size="sm" disabled={actions.pending} onClick={() => void actions.restore(id)}>Restore</Button>
         )}
       </DashboardHeader>
-      {section === 'usage' && <UsageSection projectId={id} range={range} />}
-      {section === 'install' && !project.archived && (
+      {section === 'overview' && <UsageSection projectId={id} range={range} />}
+      {section === 'overview' && !project.archived && (
         <>
           <InstallSection project={project} keys={keysQ.data?.keys} error={keysQ.error} onRetry={() => void keysQ.refetch()} note={keysQ.data?.note} domainsPath={settingsPath(id, 'domains', rangeParams(url).toString())} />
           <KeysSection

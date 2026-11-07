@@ -9,6 +9,7 @@ import { formatValue } from '@/lib/format'
 import { usageQuery } from '@/lib/queries'
 import { cn } from '@/lib/utils'
 import { formatAgo } from '@/lib/units'
+import MonthlyUsageChart from './MonthlyUsageChart'
 
 /** One family per series key; labels only, the bars take the palette's colors directly. */
 const FAMILIES = ['views', 'events', 'measures']
@@ -28,7 +29,21 @@ function Tile({ label, value, hint }: { label: string; value: string; hint?: str
   )
 }
 
-/** Events per day by family, and tiles for total, freshness and the first day kept. */
+/** A chart's subheading, with what it covers beneath. */
+function Subheading({ title, hint }: { title: string; hint: string }) {
+  return (
+    <div className="flex flex-col">
+      <h3 className="text-sm font-medium">{title}</h3>
+      <p className="text-xs text-muted-foreground">{hint}</p>
+    </div>
+  )
+}
+
+/**
+ * A project's events by calendar month (the last six, against the monthly
+ * budget when one is set), then per day over the page's range, by family,
+ * and tiles for the range's total, freshness and the first day kept.
+ */
 export default function UsageSection({ projectId, range }: { projectId: number; range: { from: string; to: string } }) {
   const { data, error, isError, isPlaceholderData, refetch } = useQuery({
     ...usageQuery({ project_id: projectId, from: range.from, to: range.to }),
@@ -40,6 +55,9 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
   return (
     <section aria-label="Usage" className="flex flex-col gap-3 rounded-lg border p-4">
       <h2 className="text-base font-semibold">Usage</h2>
+      <Subheading title="By month" hint="The last six calendar months (UTC), this one so far" />
+      <MonthlyUsageChart projectId={projectId} />
+      <Subheading title="By day" hint="Over the range above" />
       {isError ? (
         <div className="flex flex-col gap-2 text-sm text-muted-foreground">
           <p>Couldn't load usage.</p>
