@@ -99,4 +99,19 @@ describe('UsageSection', () => {
       unmount()
     }
   })
+
+  it('draws a range whose only rows are checks when they count, and calls it empty when they do not', async () => {
+    const answer = (ratio: number) => ({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
+      project_id: 4, series: [{ day: '2026-09-01', views: 0, events: 0, measures: 0, checks: 720, total_bytes: null }], totals: { views: 0, events: 0, measures: 0, checks: 720 },
+      last_received_at: null, first_day: null, size: null,
+    }], quota_check_ratio: ratio })
+    vi.spyOn(endpoints, 'usage').mockResolvedValue(answer(0.5))
+    const first = renderWithProviders(<UsageSection projectId={4} range={{ from: '2026-09-01', to: '2026-09-01' }} />)
+    expect(await screen.findByText('0 views · 0 product · 0 measures · 360 checks')).toBeInTheDocument()
+    expect(screen.queryByText('No events in this range.')).not.toBeInTheDocument()
+    first.unmount()
+    vi.spyOn(endpoints, 'usage').mockResolvedValue(answer(0))
+    renderWithProviders(<UsageSection projectId={4} range={{ from: '2026-09-01', to: '2026-09-01' }} />)
+    expect(await screen.findByText('No events in this range.')).toBeInTheDocument()
+  })
 })
