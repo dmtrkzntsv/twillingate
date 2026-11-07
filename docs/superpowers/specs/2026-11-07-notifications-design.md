@@ -131,14 +131,24 @@ spam run is at most a few sends per form per hour.
 
 ## The inbox
 
-- An item has: project (or none), kind, title, body, link (into the console:
-  the monitor's settings, the submission), created time, and archived time.
-- A first failure, a recovery and each info notification create an item. My
-  call: a reminder does not create a new item but bumps the open failure's item
-  (updated time, reminder count, "still down, 8h") so a long outage is one item,
-  and the recovery is a new item. A builder may decide otherwise if the
-  timeline reads better as separate items, as long as a long outage does not
-  flood the inbox.
+- **One notification, one message, everywhere.** The inbox item and what goes
+  to the channel are the same notification with the same title, body and link.
+  Every send (first failure, each reminder, recovery, each info notification,
+  a burst follow-up) is its own inbox item and its own channel message; the
+  inbox never merges or rewrites what the channel got (the owner asked for
+  this explicitly).
+- **Every notification has its own type**, from a closed vocabulary stored on
+  the item and returned by the API, so the console (and later the channels)
+  can render each type differently. The first set (names are the builder's
+  call, the split is the owner's): availability down, still down, up;
+  certificate failing, still failing, recovered; domain lookup failing, still
+  failing, recovered; certificate expiring; domain expiring; form draft
+  created; form draft discarded; form submission. The vocabulary is
+  documented in `docs/twillingate.md` like the other closed vocabularies.
+- An item has: type, project, subject (origin, domain or form), title, body,
+  link (into the console), the type's structured fields (since, duration, days
+  left, count) for rendering, created time, archived time, and its delivery
+  outcome on the channel.
 - Active and Archived views, newest first. Archive and restore one item, and
   **Archive all** for every active item (the owner asked for this explicitly).
 - Archived items are purged after `RETENTION_ARCHIVED_DAYS`, by the daily jobs
