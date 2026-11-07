@@ -39,6 +39,7 @@ var rank = map[string]int{
 	"internal/shared/golden":       0,
 	"internal/shared/hll":          0,
 	"internal/shared/maindomain":   0,
+	"internal/shared/notify":       0,
 	"internal/shared/readsql":      0,
 	"internal/shared/sortkey":      0,
 	"internal/shared/version":      0,
