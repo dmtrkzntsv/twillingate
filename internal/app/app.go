@@ -4,12 +4,14 @@ package app
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/api"
@@ -17,6 +19,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/geo"
 	"github.com/dmtrkzntsv/twillingate/internal/identity"
+	"github.com/dmtrkzntsv/twillingate/internal/inbox"
 	"github.com/dmtrkzntsv/twillingate/internal/jobs"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/monitor"
@@ -24,6 +27,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/pipeline"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
 	"github.com/dmtrkzntsv/twillingate/internal/server"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/notify"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	_ "github.com/dmtrkzntsv/twillingate/internal/store/sqlite"
 )
@@ -134,6 +138,14 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	if err := migrate(ctx, cfg, st, sql); err != nil {
 		return err
 	}
+	// The notification channel (NOTIFY_URL), already validated; nil means
+	// the inbox only. Parse's errors never carry the URL's secrets.
+	var sender notify.Sender
+	if cfg.Notify.URL != "" {
+		if sender, err = notify.Parse(cfg.Notify.URL); err != nil {
+			return fmt.Errorf("config: NOTIFY_URL: %w", err)
+		}
+	}
 	ops, err := NewOps(ctx, cfg, st, logger)
 	if err != nil {
 		return err
@@ -200,16 +212,30 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	go func() { runner.Run(jobsCtx); close(jobsDone) }()
 
 	// The availability monitor runs in the process that writes the event
-	// files, beside jobs, and stops before the archive log closes.
+	// files, beside jobs, and stops before the archive log closes. The
+	// notification tracker and dispatcher run beside it, on its context,
+	// also when monitoring is paused: forms still notify. monDone closes
+	// once all three have returned.
 	monCtx, stopMonitor := context.WithCancel(context.Background())
 	monDone := make(chan struct{})
 	if archiveLog != nil {
+		tracker := inbox.NewTracker(st, cfg.Notify.Remind, logger)
+		disp := inbox.NewDispatcher(st, sender, cfg.Console.URL, logger)
+		if sender != nil {
+			logger.Info("notifications are sent to a channel", "service", sender.Service())
+		}
 		mon := monitor.New(st, monitorOrigins{reg}, archiveLog, cfg.Monitor.Interval, cfg.Monitor.Timeout, logger)
+		// TODO: hand the monitor's observations to the tracker with
+		// mon.WithAlerts(tracker).
 		if cfg.Monitor.Disabled {
 			logger.Warn("monitoring is paused (MONITOR_DISABLED): no check runs and no row is written")
 			mon.Pause()
 		}
-		go func() { mon.Run(monCtx); close(monDone) }()
+		var wg sync.WaitGroup
+		wg.Go(func() { mon.Run(monCtx) })
+		wg.Go(func() { tracker.Run(monCtx) })
+		wg.Go(func() { disp.Run(monCtx) })
+		go func() { wg.Wait(); close(monDone) }()
 	} else {
 		close(monDone)
 	}

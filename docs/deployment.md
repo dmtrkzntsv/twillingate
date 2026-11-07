@@ -163,6 +163,8 @@ The stream sends a keepalive every 15 seconds, well inside Cloudflare's
 | `MONITOR_INTERVAL` | Seconds between the availability checks of each enabled monitor, every site on its own schedule; fixed, 10 to 3600, default 120. At most 16 checks run at once, and a check that finds no free worker is skipped until its next slot. |
 | `MONITOR_TIMEOUT` | Seconds a site has to answer before the check counts as down; default 5, 1 to 60, below `MONITOR_INTERVAL`. Also the limit of the daily certificate read; the domain lookup keeps its own. |
 | `MONITOR_DISABLED` | `true` stops all monitoring: no check runs, no row is written, and a check on demand is refused (`list_monitors` says `paused`). Monitors can still be edited, and a manual check left pending is ended as one that did not run. Default `false`. |
+| `NOTIFY_URL` | The one channel [notifications](#notifications) are sent to, as a URL in one of the formats below. Unset, they stay in the console's inbox only. A URL that does not parse refuses the boot; the error names the problem, never the URL. It holds secrets: keep it in `twillingate.env`, not in a unit file or a shell history. Default empty. |
+| `NOTIFY_REMIND_HOURS` | Hours between the reminders of a site still down, or a certificate or domain still failing; whole hours, 1 to 168, default 4. |
 | `QUOTA_CHECK_RATIO` | The weight one availability check row counts toward the event totals the console shows (a project's Settings → Overview charts and tile, its card and the Projects page's events by month), a decimal such as `0.1`. 0 leaves checks out of them. Display only: the checks are stored and counted the same either way, and `usage` answers it as `quota_check_ratio`. At least 0. Default 1. Meant for hosted provisioning; a self-hosted install leaves it unset. |
 
 Day counts end in `_DAYS` and take a whole number; every other time
@@ -175,6 +177,33 @@ The old names refuse the boot, naming their replacement: `LISTEN_ADDR`
 `REPORTING_CACHE_SECONDS` and `REPORTING_REFRESH_SECONDS` (see
 `deploy/UPGRADES.md`). The older `MCP_*` names are no longer checked; a
 leftover one is ignored, so rename any still in `twillingate.env`.
+
+### Notifications
+
+The process that ingests notices a site that goes down and comes back, a
+certificate or domain that fails or recovers, a certificate or domain
+about to expire, and form drafts and submissions. Each becomes one item in
+the console's inbox and, with `NOTIFY_URL` set, the same message in one
+channel, its link built on `CONSOLE_URL`. This runs also under
+`MONITOR_DISABLED` (forms still notify). Form field values are never sent.
+
+| Channel | `NOTIFY_URL` |
+| --- | --- |
+| Telegram | `telegram://<bot-token>@telegram?chats=<chat-id>[,<chat-id>…]` |
+| ntfy | `ntfy://[<user>:<password>@]<host>/<topic>`; `?scheme=http` for a server without TLS |
+| Slack | `slack://hook:<a>-<b>-<c>@webhook`, from the webhook URL `https://hooks.slack.com/services/<a>/<b>/<c>` |
+| Discord | `discord://<token>@<webhook-id>`, from the webhook URL `https://discord.com/api/webhooks/<webhook-id>/<token>` |
+| JSON webhook | `generic://<host>[:<port>]/<path>[?<query>]` (HTTPS) or `generic+http://…`: a POST of `{"title","body","link"}` |
+| Email | `smtp://[<user>:<password>@]<host>[:<port>]?from=<address>&to=<address>[,<address>…]`; port 587 by default, STARTTLS required unless `&starttls=no` |
+
+A send is tried within seconds. A temporary failure (a network error, a
+timeout, a 5xx, 408 or 429, an SMTP 4xx) is retried after 1, 5 and 15
+minutes, then hourly, until the notification is 6 hours old; any other
+failure is final. A notification never tried within an hour of its
+creation (the process was down, say) is skipped rather than sent late.
+The inbox shows each item's delivery: sent, failed (with the reason),
+skipped, or none when no channel is set. Failures are logged with the
+service and host, never the URL.
 
 ### Raspberry Pi and low-resource hosts
 

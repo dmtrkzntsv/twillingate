@@ -995,3 +995,38 @@ func TestQuotaCheckRatio(t *testing.T) {
 		}
 	}
 }
+
+// TestNotifyConfig: NOTIFY_URL is optional and must parse; a bad one fails
+// without echoing it. NOTIFY_REMIND_HOURS is whole hours, 1 to 168, 4 unset.
+func TestNotifyConfig(t *testing.T) {
+	c, err := load(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Notify.URL != "" || c.Notify.Remind != 4*time.Hour {
+		t.Errorf("default Notify = %+v, want URL \"\" and 4h", c.Notify)
+	}
+	c, err = load(t, map[string]string{"NOTIFY_URL": "ntfy://ntfy.sh/topic", "NOTIFY_REMIND_HOURS": "168"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Notify.URL != "ntfy://ntfy.sh/topic" || c.Notify.Remind != 168*time.Hour {
+		t.Errorf("Notify = %+v", c.Notify)
+	}
+	_, err = load(t, map[string]string{"NOTIFY_URL": "bogus://secret-token@host"})
+	if err == nil || !strings.HasPrefix(err.Error(), "config: NOTIFY_URL") {
+		t.Errorf("bad NOTIFY_URL: err = %v, want config: NOTIFY_URL…", err)
+	}
+	if err != nil && strings.Contains(err.Error(), "secret-token") {
+		t.Errorf("error leaks the URL: %v", err)
+	}
+	for _, v := range []string{"0", "169", "abc", "-1"} {
+		if _, err := load(t, map[string]string{"NOTIFY_REMIND_HOURS": v}); err == nil {
+			t.Errorf("NOTIFY_REMIND_HOURS=%s accepted", v)
+		}
+	}
+	_, err = load(t, map[string]string{"NOTIFY_REMIND_HOURS": "169"})
+	if err == nil || !strings.Contains(err.Error(), "config: NOTIFY_REMIND_HOURS must be between 1 and 168: 169") {
+		t.Errorf("err = %v", err)
+	}
+}
