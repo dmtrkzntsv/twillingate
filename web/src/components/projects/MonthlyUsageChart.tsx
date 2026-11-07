@@ -1,5 +1,5 @@
 import { useQuery } from '@tanstack/react-query'
-import { Bar, BarChart, CartesianGrid, Cell, ReferenceLine, XAxis, YAxis } from 'recharts'
+import { Bar, BarChart, CartesianGrid, ReferenceDot, ReferenceLine, XAxis, YAxis } from 'recharts'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from '@/components/ui/chart'
@@ -17,8 +17,10 @@ const config: ChartConfig = {
   checks: { label: 'Checks' },
 }
 
-/** A month past the budget: each family in the warning colour, lighter up the stack so the families still part. */
-const OVER_OPACITY = [1, 0.75, 0.55, 0.4]
+/** How far a month is past the budget, as its tooltip and the label over its bar say it: "+5,200 (26%)". */
+export function overText(over: number, budget: number): string {
+  return `+${formatValue(Math.round(over))} (${Math.round((over / budget) * 100)}%)`
+}
 
 /** The month on the axis; under the current one "so far", and in the warning colour when it is past the budget. */
 function MonthTick({ x, y, payload, months }: { x?: number; y?: number; payload?: { value: string }; months: MonthTotals[] }) {
@@ -37,8 +39,8 @@ function MonthTick({ x, y, payload, months }: { x?: number; y?: number; payload?
  * current one so far: one usage query from the 1st of the oldest month,
  * added up here. With a budget (EVENTS_MONTHLY_BUDGET), a dashed line at
  * it, the checks stacked at their weight (QUOTA_CHECK_RATIO) when that is
- * above 0, and a month past it in the warning colour, its tooltip saying
- * by how much. Display only: nothing is refused over the budget.
+ * above 0, and a month past it marked, its series in their usual colours:
+ * its axis label in the warning colour and, over its bar, by how much. Display only: nothing is refused over the budget.
  */
 export default function MonthlyUsageChart({ projectId }: { projectId: number }) {
   const today = utcToday()
@@ -61,7 +63,8 @@ export default function MonthlyUsageChart({ projectId }: { projectId: number }) 
 
   return (
     <ChartContainer config={config} className="aspect-auto h-60 w-full" data-testid="monthly-usage">
-      <BarChart data={months} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barCategoryGap="24%">
+      {/* Room at the top for the over-budget label above the tallest bar. */}
+      <BarChart data={months} margin={{ top: budget !== null ? 22 : 8, right: 8, bottom: 0, left: 0 }} barCategoryGap="24%">
         <CartesianGrid {...grid} />
         <XAxis dataKey="month" {...axis} interval={0} height={36} tick={<MonthTick months={months} />} />
         <YAxis {...valueAxis} ticks={ticks} domain={[ticks[0], ticks[ticks.length - 1]]} tickFormatter={(v) => formatValue(Number(v))} />
@@ -80,7 +83,7 @@ export default function MonthlyUsageChart({ projectId }: { projectId: number }) 
                     <span>{monthHeading(m.month)}{m.current ? ', so far' : ''}</span>
                     {m.over !== null && budget !== null && (
                       <span className="font-normal text-destructive">
-                        {formatValue(Math.round(m.over))} over the budget of {formatValue(budget)} ({Math.round((m.total / budget) * 100)}%)
+                        {overText(m.over, budget)} over the budget of {formatValue(budget)}
                       </span>
                     )}
                   </div>
@@ -111,16 +114,22 @@ export default function MonthlyUsageChart({ projectId }: { projectId: number }) 
             strokeWidth={1.5}
             isAnimationActive={false}
           >
-            {months.map((m) => (
-              <Cell
-                key={m.month}
-                data-over={m.over !== null ? '' : undefined}
-                fill={m.over !== null ? 'var(--destructive)' : seriesColor(i)}
-                fillOpacity={m.over !== null ? OVER_OPACITY[i] : 1}
-              />
-            ))}
           </Bar>
         ))}
+        {/* Over a month past the budget, by how much: drawn after the bars, at the top of its stack whichever series is on top. */}
+        {budget !== null &&
+          months.map((m) =>
+            m.over === null ? null : (
+              <ReferenceDot
+                key={m.month}
+                x={m.month}
+                y={m.total}
+                r={0}
+                ifOverflow="visible"
+                label={{ value: overText(m.over, budget), position: 'top', offset: 6, fontSize: 11, fill: 'var(--destructive)', className: 'over-label' }}
+              />
+            )
+          )}
       </BarChart>
     </ChartContainer>
   )

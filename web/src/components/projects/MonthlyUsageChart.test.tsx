@@ -3,7 +3,7 @@ import { screen, waitFor } from '@testing-library/react'
 import { endpoints, type UsageDay } from '@/lib/api'
 import { renderWithProviders } from '@/test/render'
 import { monthKeys, monthsRange, utcToday } from '@/lib/usage-months'
-import MonthlyUsageChart from './MonthlyUsageChart'
+import MonthlyUsageChart, { overText } from './MonthlyUsageChart'
 
 beforeEach(() => vi.restoreAllMocks())
 
@@ -38,10 +38,10 @@ describe('MonthlyUsageChart', () => {
     expect(screen.getByText('so far')).toBeInTheDocument()
     expect(container.querySelector('.recharts-reference-line')).toBeNull()
     expect(screen.queryByText('Checks')).not.toBeInTheDocument()
-    expect(container.querySelector('.recharts-bar-rectangle path[fill="var(--destructive)"]')).toBeNull()
+    expect(container.querySelector('.over-label')).toBeNull()
   })
 
-  it('draws the budget as a dashed line, stacks the weighted checks, and marks a month over it', async () => {
+  it('draws the budget as a dashed line, stacks the weighted checks, and labels a month over it in its usual colours', async () => {
     answer([day(`${last}-02`, 50, 100), day(`${current}-01`, 5)], 40, 0.5)
     const container = await draw()
     const line = container.querySelector('.recharts-reference-line line')
@@ -49,8 +49,12 @@ describe('MonthlyUsageChart', () => {
     expect(line).toHaveAttribute('stroke-dasharray', '4 4')
     expect(screen.getByText('Budget 40')).toBeInTheDocument()
     expect(screen.getByText('Checks')).toBeInTheDocument()
-    // Last month: 50 views and 100 checks at 0.5, over 40, in the warning colour on every family.
-    expect(container.querySelectorAll('.recharts-bar-rectangle path[fill="var(--destructive)"]').length).toBeGreaterThanOrEqual(2)
+    // Last month: 50 views and 100 checks at 0.5 make 100, 60 over 40: labelled above its bar, the series keep their colours.
+    const labels = container.querySelectorAll('.over-label')
+    expect([...labels].map((l) => l.textContent)).toEqual(['+60 (150%)'])
+    expect(labels[0]).toHaveAttribute('fill', 'var(--destructive)')
+    expect(container.querySelector('.recharts-bar-rectangle path[fill="var(--destructive)"]')).toBeNull()
+    expect(container.querySelector('.recharts-bar-rectangle path[fill="var(--chart-1)"]')).not.toBeNull()
   })
 
   it('leaves the checks out at a ratio of 0, budget or not', async () => {
@@ -58,5 +62,10 @@ describe('MonthlyUsageChart', () => {
     const container = await draw()
     expect(container.querySelector('.recharts-reference-line')).not.toBeNull()
     expect(screen.queryByText('Checks')).not.toBeInTheDocument()
+  })
+
+  it('says how far over in the tooltip\'s numbers', () => {
+    expect(overText(5_200, 20_000)).toBe('+5,200 (26%)')
+    expect(overText(12_345.4, 10_000)).toBe('+12.3K (123%)')
   })
 })

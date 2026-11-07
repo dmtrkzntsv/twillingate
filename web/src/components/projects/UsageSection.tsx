@@ -17,6 +17,7 @@ const config: ChartConfig = {
   views: { label: 'Views' },
   events: { label: 'Product events' },
   measures: { label: 'Measures' },
+  checks: { label: 'Checks' },
 }
 
 function Tile({ label, value, hint }: { label: string; value: string; hint?: string }) {
@@ -41,8 +42,9 @@ function Subheading({ title, hint }: { title: string; hint: string }) {
 
 /**
  * A project's events by calendar month (the last six, against the monthly
- * budget when one is set), then per day over the page's range, by family,
- * and tiles for the range's total, freshness and the first day kept.
+ * budget when one is set), then per day over the page's range, by family
+ * (with a budget, the checks too, at their weight), and tiles for the
+ * range's total, freshness and the first day kept.
  */
 export default function UsageSection({ projectId, range }: { projectId: number; range: { from: string; to: string } }) {
   const { data, error, isError, isPlaceholderData, refetch } = useQuery({
@@ -51,7 +53,11 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
   })
   const s = data?.projects[0]
   const empty = !!s && s.totals.views + s.totals.events + s.totals.measures === 0
-  const ticks = s ? niceTicks(s.series.map((d) => d.views + d.events + d.measures)) : []
+  // With a budget, the checks count toward it at their weight, stacked as on the monthly chart.
+  const ratio = data?.events_monthly_budget != null ? (data.quota_check_ratio ?? 1) : 0
+  const keys = ratio > 0 ? [...FAMILIES, 'checks'] : FAMILIES
+  const rows = s ? s.series.map((d) => ({ ...d, checks: d.checks * ratio })) : []
+  const ticks = niceTicks(rows.map((d) => d.views + d.events + d.measures + d.checks))
   return (
     <section aria-label="Usage" className="flex flex-col gap-3 rounded-lg border p-4">
       <h2 className="text-base font-semibold">Usage</h2>
@@ -77,19 +83,19 @@ export default function UsageSection({ projectId, range }: { projectId: number; 
             <p className="text-sm text-muted-foreground">No events in this range.</p>
           ) : (
             <ChartContainer config={config} className="aspect-auto h-56 w-full">
-              <BarChart data={s.series} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barCategoryGap="24%">
+              <BarChart data={rows} margin={{ top: 8, right: 8, bottom: 0, left: 0 }} barCategoryGap="24%">
                 <CartesianGrid {...grid} />
                 <XAxis dataKey="day" {...axis} interval="preserveStartEnd" minTickGap={16} tickFormatter={formatTick} />
                 <YAxis {...valueAxis} ticks={ticks} domain={[ticks[0], ticks[ticks.length - 1]]} tickFormatter={(v) => formatValue(Number(v))} />
                 <ChartTooltip cursor={{ fill: 'var(--muted)', opacity: 0.6 }} content={tooltip('number', { heading: 'day', total: true })} />
                 {legend()}
-                {FAMILIES.map((key, i) => (
+                {keys.map((key, i) => (
                   <Bar
                     key={key}
                     dataKey={key}
                     stackId="stack"
                     fill={seriesColor(i)}
-                    radius={i === FAMILIES.length - 1 ? [4, 4, 0, 0] : 0}
+                    radius={i === keys.length - 1 ? [4, 4, 0, 0] : 0}
                     maxBarSize={MAX_BAR}
                     stroke="var(--card)"
                     strokeWidth={1.5}

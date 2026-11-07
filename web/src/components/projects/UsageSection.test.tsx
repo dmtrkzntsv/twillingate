@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { screen, waitFor } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { ApiError, endpoints } from '@/lib/api'
@@ -78,5 +78,22 @@ describe('UsageSection', () => {
     expect(screen.getByText('11')).toBeInTheDocument()
     release()
     expect(await screen.findByText('99')).toBeInTheDocument()
+  })
+
+  it('stacks the weighted checks by day only with a budget and a ratio above 0', async () => {
+    const answer = (budget: number | null, ratio: number) => ({ from: 'a', to: 'b', database_bytes: 0, database_series: [], projects: [{
+      project_id: 4, series: [{ day: '2026-09-01', views: 10, events: 0, measures: 0, checks: 100, total_bytes: null }], totals: { views: 10, events: 0, measures: 0, checks: 100 },
+      last_received_at: null, first_day: null, size: null,
+    }], events_monthly_budget: budget, quota_check_ratio: ratio })
+    const daily = (container: HTMLElement) => container.querySelector('[aria-label="Usage"] [data-slot="chart"]:not([data-testid="monthly-usage"])')!
+    for (const [budget, ratio, checks] of [[null, 1, false], [500, 0, false], [500, 0.5, true]] as const) {
+      vi.spyOn(endpoints, 'usage').mockResolvedValue(answer(budget, ratio))
+      const { container, unmount } = renderWithProviders(<UsageSection projectId={4} range={{ from: '2026-09-01', to: '2026-09-01' }} />)
+      await waitFor(() => expect(daily(container)?.querySelector('.recharts-bar-rectangle')).toBeTruthy())
+      expect(within(daily(container) as HTMLElement).queryByText('Checks') !== null).toBe(checks)
+      // The tiles count the site's own traffic, checks never.
+      expect(screen.getByText('10 views · 0 product · 0 measures')).toBeInTheDocument()
+      unmount()
+    }
   })
 })

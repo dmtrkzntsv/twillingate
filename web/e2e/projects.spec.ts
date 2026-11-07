@@ -113,6 +113,12 @@ test('shows usage for the seeded project', async ({ page }) => {
   await expect(monthly.getByText('Budget 15K')).toBeVisible()
   await expect(monthly.getByText('so far')).toBeVisible()
   await expect(monthly.getByText('Checks', { exact: true })).toBeVisible()
+  // A month past the budget keeps its series' colours; a label over its bar says by how much.
+  await expect(monthly.locator('.recharts-bar-rectangle path[fill="var(--destructive)"]')).toHaveCount(0)
+  for (const label of await monthly.locator('.over-label').all()) await expect(label).toHaveText(/^\+[\d.,K]+ \(\d+%\)$/)
+  // The daily chart stacks the weighted checks too.
+  const daily = usage.locator('[data-slot="chart"]').nth(1)
+  await expect(daily.getByText('Checks', { exact: true })).toBeVisible()
 })
 
 test('lists Projects first in the sidebar, with the projects under it, closed state remembered', async ({ page }) => {
