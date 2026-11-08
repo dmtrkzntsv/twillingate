@@ -77,7 +77,16 @@ function Item({ n, archived, pending, onMove }: { n: Notification; archived: boo
         )}
         {n.body && <p className="text-sm break-words whitespace-pre-line text-muted-foreground">{n.body}</p>}
         <p className="text-xs break-words text-muted-foreground">
-          {n.project && `${n.project} · `}
+          {n.project && n.project_id ? (
+            <>
+              <Link to={`/projects/${n.project_id}`} className="hover:text-foreground hover:underline hover:underline-offset-2">
+                {n.project}
+              </Link>
+              {' · '}
+            </>
+          ) : (
+            n.project && `${n.project} · `
+          )}
           <time dateTime={n.created_at} title={fullTime(n.created_at)}>
             {formatAgo(n.created_at)}
           </time>

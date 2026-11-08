@@ -90,7 +90,7 @@ describe('Inbox', () => {
     renderInbox()
     const first = await item(down.title)
     expect(within(first).getByText(down.body)).toBeInTheDocument()
-    expect(within(first).getByText(/econumo\.com ·/)).toBeInTheDocument()
+    expect(within(first).getByRole('link', { name: 'econumo.com' })).toHaveAttribute('href', '/projects/3')
     const when = within(first).getByText('1 h ago')
     expect(when).toHaveAttribute('title')
     expect(when.getAttribute('title')).not.toBe('')
