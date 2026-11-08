@@ -335,6 +335,23 @@ func TestDomainLookupFailingAfter24h(t *testing.T) {
 	}
 }
 
+// A state announced a day after its first failure is reminded of a whole
+// interval after the announcement, not at the next multiple of the
+// interval after its first failure (with 5h: 25h, an hour after it).
+func TestDomainLookupReminderAfterAnnouncement(t *testing.T) {
+	f := newFake(monitor)
+	tr := inbox.NewTracker(f, 5*time.Hour, quiet())
+	for h := 0; h <= 24; h++ {
+		tr.Domain(ctx, 1, domain, false, "rdap: 503", "", t0.Add(time.Duration(h)*time.Hour))
+	}
+	one(t, f, store.NotifyDomainFailing)
+	tr.Tick(ctx, t0.Add(25*time.Hour))
+	tr.Tick(ctx, t0.Add(29*time.Hour-time.Minute))
+	none(t, f)
+	tr.Tick(ctx, t0.Add(29*time.Hour))
+	one(t, f, store.NotifyDomainStillFailing)
+}
+
 func TestExpirySteps(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)

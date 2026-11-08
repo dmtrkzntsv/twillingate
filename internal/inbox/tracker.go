@@ -59,6 +59,9 @@ const (
 	// retried hourly.
 	uptimeGap = 2 * time.Hour
 	unreadGap = 25 * time.Hour
+	// alignSlack is how long after the remind multiple before it an
+	// announcement may come and still have its first reminder there.
+	alignSlack = time.Hour
 )
 
 // The days-left steps an expiry warns at, once each per expiry.
@@ -372,14 +375,20 @@ func (t *Tracker) streak(k key, at time.Time, gap time.Duration) entry {
 	return e
 }
 
-// announce makes e failing and sends typ with since and fields. The
-// first reminder falls on a multiple of the remind interval after since,
-// so it reads "still down since 14:02 (4h)" and never comes at once.
+// announce makes e failing and sends typ with since and fields. When
+// the announcement comes soon after since (an outage, debounced for
+// minutes), the first reminder falls on a multiple of the remind interval
+// after since, so it reads "still down since 14:02 (4h)". When it comes
+// later (a certificate or a lookup failing for a day), that multiple can
+// be minutes after the announcement, so the first reminder comes a whole
+// interval after it instead. Either way it never comes at once.
 func (t *Tracker) announce(ctx context.Context, k key, e entry, typ string, at time.Time, fields map[string]string) {
 	e.Failing = true
 	e.RemindedAt = at
 	if t.remind > 0 {
-		e.RemindedAt = e.Since.Add(at.Sub(e.Since) / t.remind * t.remind)
+		if aligned := e.Since.Add(at.Sub(e.Since) / t.remind * t.remind); at.Sub(aligned) <= alignSlack {
+			e.RemindedAt = aligned
+		}
 	}
 	fields["since"] = stampRFC(e.Since)
 	t.put(ctx, k, e, t.note(k, typ, fields, at))
