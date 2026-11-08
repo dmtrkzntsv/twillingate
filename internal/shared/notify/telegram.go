@@ -38,10 +38,13 @@ func parseTelegram(u *url.URL, c *http.Client) (Sender, error) {
 
 func (t *telegram) Service() string { return "telegram" }
 
-// Send posts the text to every chat and returns the first failure, after
-// trying them all.
+// Send posts the text to every chat. A partial failure is reported as
+// success: once one chat has accepted, a retry would send it there again, so
+// the notification counts as sent. Only when every chat failed is the first
+// failure returned.
 func (t *telegram) Send(ctx context.Context, m Message) error {
 	var first error
+	sent := false
 	for _, chat := range t.chats {
 		if ctx.Err() != nil {
 			if first == nil {
@@ -54,9 +57,14 @@ func (t *telegram) Send(ctx context.Context, m Message) error {
 			"text":                     m.Text(),
 			"disable_web_page_preview": true,
 		})
-		if err != nil && first == nil {
+		if err == nil {
+			sent = true
+		} else if first == nil {
 			first = err
 		}
+	}
+	if sent {
+		return nil
 	}
 	return first
 }

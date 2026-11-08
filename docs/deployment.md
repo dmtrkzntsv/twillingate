@@ -207,6 +207,12 @@ The inbox shows each item's delivery: sent, failed (with the reason),
 skipped, or none when no channel is set. Failures are logged with the
 service and host, never the URL.
 
+The channel shows the inbox's text verbatim: Slack gets it escaped with
+formatting off, Discord with its Markdown escaped and no mentions, so a
+`*name*` or an `@everyone` in a form's name neither formats nor pings.
+With several Telegram chats, a send that one chat accepted counts as sent
+and is not retried, so no chat gets it twice.
+
 ### Raspberry Pi and low-resource hosts
 
 - A 64-bit OS (Raspberry Pi OS 64-bit on a Pi 3, 4, 5 or Zero 2 W); 32-bit ARM is not built. twillingate runs as one process: SQL goes to the external SQL engine, if you run one, and the built-in dashboards need none.

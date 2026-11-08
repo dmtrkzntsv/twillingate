@@ -317,11 +317,73 @@ func TestSlackAndDiscordBodies(t *testing.T) {
 		t.Fatal(err)
 	}
 	reqs := rec.all()
-	if reqs[0].path != "/services/aa/bb/cc" || reqs[0].body != `{"text":"T\nB\nL"}` {
+	if reqs[0].path != "/services/aa/bb/cc" || reqs[0].body != `{"text":"T\nB\nL","mrkdwn":false}` {
 		t.Errorf("slack %+v", reqs[0])
 	}
-	if reqs[1].path != "/api/webhooks/123/tok" || reqs[1].body != `{"content":"T\nB\nL"}` {
+	if reqs[1].path != "/api/webhooks/123/tok" || reqs[1].body != `{"content":"T\nB\nL","allowed_mentions":{"parse":[]}}` {
 		t.Errorf("discord %+v", reqs[1])
+	}
+}
+
+// The inbox and the channel show the same text: Slack's control sequences are
+// escaped and mrkdwn is off, so nothing is bolded and nobody is pinged.
+func TestSlackVerbatim(t *testing.T) {
+	srv, rec := newServer(t, 200)
+	m := Message{Title: "*shop* <!channel> & co", Link: "https://x/?a=1&b=2"}
+	if err := mustParse(t, "slack://hook:aa-bb-cc@webhook", srv).Send(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"text":"*shop* \u0026lt;!channel\u0026gt; \u0026amp; co\nhttps://x/?a=1\u0026amp;b=2","mrkdwn":false}`
+	if got := rec.all()[0].body; got != want {
+		t.Errorf("body = %s\nwant   %s", got, want)
+	}
+}
+
+// Discord gets Markdown escaped in the title and body, the link untouched,
+// and no mentions parsed.
+func TestDiscordVerbatim(t *testing.T) {
+	srv, rec := newServer(t, 200)
+	m := Message{Title: "*shop* @everyone", Body: "a_b ~c~ `d` |e| > f \\ g", Link: "https://x/a_b"}
+	if err := mustParse(t, "discord://tok@123", srv).Send(context.Background(), m); err != nil {
+		t.Fatal(err)
+	}
+	want := `{"content":"\\*shop\\* @everyone\na\\_b \\~c\\~ \\` + "`" + `d\\` + "`" + ` \\|e\\| \\\u003e f \\\\ g\nhttps://x/a_b","allowed_mentions":{"parse":[]}}`
+	if got := rec.all()[0].body; got != want {
+		t.Errorf("body = %s\nwant   %s", got, want)
+	}
+}
+
+// A chat that accepted is not sent to again on a retry, so a partial failure
+// counts as sent; only when every chat failed is the first error returned.
+func TestTelegramPartialFailure(t *testing.T) {
+	newTG := func(fail map[string]bool) (*httptest.Server, *recorder) {
+		rec := &recorder{}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			b, _ := io.ReadAll(r.Body)
+			rec.mu.Lock()
+			rec.reqs = append(rec.reqs, captured{r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Clone(), string(b)})
+			rec.mu.Unlock()
+			var body struct {
+				ChatID string `json:"chat_id"`
+			}
+			_ = json.Unmarshal(b, &body)
+			if fail[body.ChatID] {
+				w.WriteHeader(503)
+			}
+		}))
+		t.Cleanup(srv.Close)
+		return srv, rec
+	}
+	srv, rec := newTG(map[string]bool{"B": true})
+	if err := mustParse(t, "telegram://1:A@telegram?chats=A,B", srv).Send(context.Background(), Message{Title: "x"}); err != nil {
+		t.Errorf("A accepted, B 503: err = %v, want nil", err)
+	}
+	if n := len(rec.all()); n != 2 {
+		t.Errorf("%d requests, want 2", n)
+	}
+	srv2, _ := newTG(map[string]bool{"A": true, "B": true})
+	if err := mustParse(t, "telegram://1:A@telegram?chats=A,B", srv2).Send(context.Background(), Message{Title: "x"}); !errors.Is(err, ErrTemporary) {
+		t.Errorf("both 503: err = %v, want ErrTemporary", err)
 	}
 }
 
