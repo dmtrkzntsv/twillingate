@@ -313,10 +313,11 @@ func notifySubmission(ctx context.Context, tx *sql.Tx, projectID int64, form str
 // FlushFormBursts sends every burst whose window ended at now with
 // submissions pending: one form_submission notification each, count the
 // pending number, stamped now, and a new window from now with nothing
-// pending. A row whose form no longer exists sends nothing. Rows with
-// nothing pending whose window started over a day before now, and rows
-// whose form no longer exists, are deleted. One transaction; returns the notifications
-// added.
+// pending. A row whose form no longer notifies (gone, a draft, archived
+// or with notify off) sends nothing. Rows with nothing pending whose
+// window started over a day before now, and rows whose form no longer
+// notifies, pending count and all, are deleted. One transaction; returns
+// the notifications added.
 func (d *DB) FlushFormBursts(ctx context.Context, now time.Time) (int, error) {
 	type burst struct {
 		project int64
@@ -327,7 +328,8 @@ func (d *DB) FlushFormBursts(ctx context.Context, now time.Time) (int, error) {
 	err := d.tx(ctx, func(tx *sql.Tx) error {
 		rows, err := tx.QueryContext(ctx, `SELECT b.project_id, b.form, b.pending FROM form_bursts b
 			WHERE b.pending > 0 AND b.window_start <= ?
-			  AND EXISTS (SELECT 1 FROM forms f WHERE f.project_id=b.project_id AND f.name=b.form)
+			  AND EXISTS (SELECT 1 FROM forms f WHERE f.project_id=b.project_id AND f.name=b.form
+			    AND f.status='approved' AND f.archived_at IS NULL AND f.notify=1)
 			ORDER BY b.project_id, b.form`,
 			fmtTime(now.Add(-store.FormBurstWindow)))
 		if err != nil {
@@ -358,7 +360,8 @@ func (d *DB) FlushFormBursts(ctx context.Context, now time.Time) (int, error) {
 		}
 		sent = len(due)
 		_, err = tx.ExecContext(ctx, `DELETE FROM form_bursts WHERE (pending = 0 AND window_start < ?)
-			OR NOT EXISTS (SELECT 1 FROM forms f WHERE f.project_id=form_bursts.project_id AND f.name=form_bursts.form)`,
+			OR NOT EXISTS (SELECT 1 FROM forms f WHERE f.project_id=form_bursts.project_id AND f.name=form_bursts.form
+			  AND f.status='approved' AND f.archived_at IS NULL AND f.notify=1)`,
 			fmtTime(now.Add(-24*time.Hour)))
 		return err
 	})

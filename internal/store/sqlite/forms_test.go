@@ -1477,6 +1477,53 @@ func TestSubmissionBurstGoesWithForm(t *testing.T) {
 	}
 }
 
+// A burst pending when its form stops notifying (notify turned off, or
+// the form archived) is dropped at the flush, not sent.
+func TestSubmissionBurstDroppedWhenFormStopsNotifying(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stop func(t *testing.T, db *DB)
+	}{
+		{"notify off", func(t *testing.T, db *DB) {
+			f, err := db.GetForm(context.Background(), 1, "contact")
+			if err != nil {
+				t.Fatal(err)
+			}
+			off := false
+			f.ExpectedFields = nil
+			if err := db.UpdateForm(context.Background(), f, &off, nil, formAudit); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"archived", func(t *testing.T, db *DB) {
+			if err := db.SetFormArchived(context.Background(), 1, "contact", true, time.Time{}, formAudit); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := newFormsDB(t)
+			ctx := context.Background()
+			mustWrite(t, db, subAt("s0", formsNow.Add(-time.Hour)))
+			if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow.Add(-time.Hour), formAudit); err != nil {
+				t.Fatal(err)
+			}
+			mustWrite(t, db, subAt("s1", formsNow))
+			mustWrite(t, db, subAt("s2", formsNow.Add(time.Minute)))
+			tc.stop(t, db)
+			if n, err := db.FlushFormBursts(ctx, formsNow.Add(16*time.Minute)); err != nil || n != 0 {
+				t.Fatalf("flush: n=%d err=%v, want 0", n, err)
+			}
+			if ns := notificationsOf(t, db, store.NotifyFormSubmission); len(ns) != 1 {
+				t.Errorf("notifications = %+v, want only the first", ns)
+			}
+			if c := countRows(t, db, `SELECT COUNT(*) FROM form_bursts WHERE pending > 0`); c != 0 {
+				t.Errorf("pending bursts after flush = %d, want 0", c)
+			}
+		})
+	}
+}
+
 func TestSubmissionNotifyOff(t *testing.T) {
 	db := newFormsDB(t)
 	ctx := context.Background()
