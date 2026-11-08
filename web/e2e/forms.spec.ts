@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { expect, test, type APIRequestContext, type Page } from '@playwright/test'
-import { createProject } from './forms'
+import { createProject, submitJSON } from './forms'
 
 // Matches web/e2e/serve.sh's CONSOLE_AUTH_DSN (token://e2e-token?password=e2e-pass&...).
 const PASSWORD = 'e2e-pass'
@@ -40,19 +40,17 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   await login(page)
   await page.goto(`/app/projects/${id}/settings`)
   await page.getByRole('link', { name: /^Forms/ }).click()
-  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms$`))
-  // The Forms pages show no dashboard tabs; the title goes back to them.
-  await expect(page.getByRole('tab')).toHaveCount(0)
+  // Forms lands on the project's one form, a tab, with a draft's mark.
+  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms/contact$`))
+  const tabs = page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab')
+  await expect(tabs).toHaveCount(1)
+  await expect(tabs.first()).toHaveAccessibleName(/^contact \(draft/)
+  await expect(tabs.first()).toHaveAttribute('aria-selected', 'true')
   await expect(page.getByRole('link', { name: /^Back to the dashboards of forms-/ })).toBeVisible()
-  const row = page.getByRole('list', { name: 'Forms' }).getByRole('listitem').filter({ hasText: 'contact' })
-  await expect(row.getByText(/^Draft · expires in \d+ days?$/)).toBeVisible()
-  await expect(row.getByText(/^2 submissions/)).toBeVisible()
+  await expect(page.getByText(/^Draft · expires in \d+ days?$/)).toBeVisible()
 
   // The draft's page: its banner, and every field it saw as a column.
-  await row.getByRole('link').click()
-  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms/contact$`))
-  // The Forms button leads the page; the form's own "Forms" back link follows it.
-  await expect(page.getByRole('link', { name: /^Forms/ }).first()).toHaveAttribute('aria-current', 'page')
+  await expect(page.getByRole('link', { name: /^Forms/ })).toHaveAttribute('aria-current', 'page')
   await expect(page.getByText(/^Draft: accepting until .+, then archived$/)).toBeVisible()
   const table = page.getByRole('region', { name: 'Submissions' })
   await expect(table.getByRole('columnheader', { name: 'phone' })).toBeVisible()
@@ -131,21 +129,25 @@ test('a form arrives as a draft, is approved, filtered, closed, exported, and a 
   await expect(page.getByRole('menuitem', { name: 'Stop accepting…' })).toHaveCount(0)
   await page.keyboard.press('Escape')
 
-  // Find a person across the forms, and archive everything found.
-  await page.getByRole('link', { name: /^Forms(, \d+ new)?$/ }).last().click()
-  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms$`))
-  await page.getByRole('searchbox', { name: 'Find a person' }).fill('bob@')
-  await page.getByRole('button', { name: 'Find', exact: true }).click()
-  const found = page.getByRole('region', { name: 'Found submissions' })
+  // Find a person across the forms, from the tab row, and archive everything found.
+  await page.getByRole('button', { name: 'Find a person' }).click()
+  const finder = page.getByRole('dialog', { name: 'Find a person' })
+  await finder.getByRole('searchbox', { name: 'Find a person' }).fill('bob@')
+  await finder.getByRole('button', { name: 'Find', exact: true }).click()
+  const found = finder.getByRole('region', { name: 'Found submissions' })
   await expect(found.getByText(/^1 submission contains/)).toBeVisible()
   await expect(found.getByRole('heading', { name: 'contact' })).toBeVisible()
   await found.getByRole('button', { name: 'Archive all' }).click()
   await page.getByRole('alertdialog').getByRole('button', { name: 'Archive submissions' }).click()
   await expect(page.getByText('Archived 1 submission')).toBeVisible()
-  await expect(row.getByText(/^1 submission\b/)).toBeVisible()
+  // The confirm closes first: while it is open the finder is hidden from the tree, not gone.
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
+  await expect(finder.getByRole('searchbox', { name: 'Find a person' })).toHaveValue('')
+  await page.keyboard.press('Escape')
+  await expect(finder).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Submissions 1' })).toBeVisible()
 
   // The archived submission waits behind the form's archived link, and comes back.
-  await row.getByRole('link').click()
   await page.getByRole('button', { name: '1 archived', exact: true }).click()
   await page.getByRole('button', { name: /bob@example\.com/ }).click()
   await page.getByRole('dialog', { name: 'Submission' }).getByRole('button', { name: 'Restore' }).click()
@@ -167,8 +169,6 @@ test('the Forms button counts new submissions until a form is opened, then dots 
   await expect(forms).toHaveAccessibleName('Forms, 1 new, 1 draft')
 
   await forms.click()
-  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms$`))
-  await page.getByRole('list', { name: 'Forms' }).getByRole('listitem').filter({ hasText: 'contact' }).getByRole('link').click()
   await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms/contact$`))
   await expect(page.getByRole('region', { name: 'Submissions' })).toBeVisible()
 
@@ -180,4 +180,77 @@ test('the Forms button counts new submissions until a form is opened, then dots 
   // in a transition), and that page has a second link named Forms.
   await expect(page.getByRole('region', { name: 'Submissions' })).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'Forms, 1 draft', exact: true })).toBeVisible()
+})
+
+test('a form is created from the console, opens as a tab with its setup, and its tab is dragged first', async ({ page, request }) => {
+  test.setTimeout(120_000)
+  const { id, key } = await createProject(request, `forms-new-${Date.now()}`, [SITE])
+  // A draft first, so the new form comes second.
+  await submitJSON(request, key, 'contact', { email: 'ann@example.com' })
+
+  await login(page)
+  await page.goto(`/app/projects/${id}/forms`)
+  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms/contact$`))
+  const tabs = page.getByRole('tablist', { name: 'Tabs' }).getByRole('tab')
+  await expect(tabs).toHaveCount(1)
+
+  // New form, from "+": the name is checked as it is typed.
+  await page.getByRole('button', { name: 'New form' }).click()
+  const dialog = page.getByRole('dialog', { name: 'New form' })
+  await dialog.getByLabel('Name').fill('Sign Up')
+  await expect(dialog.getByText('Use 1 to 64 lower-case letters, digits, _ and -.')).toBeVisible()
+  await dialog.getByLabel('Name').fill('signup')
+  await dialog.getByLabel('Purpose').fill('Beta list')
+  await dialog.getByRole('textbox', { name: 'New field' }).fill('email')
+  await dialog.getByRole('button', { name: 'Add field' }).click()
+  await dialog.getByRole('textbox', { name: 'New field' }).fill('company')
+  await dialog.getByRole('button', { name: 'Add field' }).click()
+  await dialog.getByLabel('Return address').fill(`${SITE}/thanks`)
+  await dialog.getByRole('button', { name: 'Create' }).click()
+  await expect(dialog).toHaveCount(0)
+
+  // Its tab, last; approved, with no submissions yet, so Setup is open on its own snippet.
+  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms/signup$`))
+  await expect(tabs).toHaveCount(2)
+  await expect(tabs.nth(1)).toHaveAccessibleName('signup')
+  await expect(tabs.nth(1)).toHaveAttribute('aria-selected', 'true')
+  await expect(page.getByText('Approved', { exact: true })).toBeVisible()
+  const setup = page.getByRole('region', { name: 'Setup' })
+  await expect(setup.getByRole('button', { name: 'Setup' })).toHaveAttribute('aria-expanded', 'true')
+  await expect(setup.getByText(/<form data-twillingate-form="signup">/)).toContainText('<input name="company">')
+  await expect(setup.getByText(new RegExp(`/ingest/forms/signup\\?key=${key}$`))).toBeVisible()
+
+  // A name the project has is said on the name.
+  await page.getByRole('button', { name: 'New form' }).click()
+  await dialog.getByLabel('Name').fill('contact')
+  await dialog.getByRole('textbox', { name: 'New field' }).fill('email')
+  await dialog.getByRole('button', { name: 'Add field' }).click()
+  await dialog.getByRole('button', { name: 'Create' }).click()
+  await expect(dialog.getByText('A form named contact already exists (it may be archived).')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+
+  // Drag signup before contact: the order is the project's, after a reload too.
+  const from = await tabs.nth(1).boundingBox()
+  const to = await tabs.first().boundingBox()
+  if (!from || !to) throw new Error('a tab has no bounding box')
+  // Raw mouse moves: dnd-kit reads pointer events, and the first move must clear its activation distance.
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2)
+  const moved = page.waitForResponse((r) => /\/forms\/signup\/move$/.test(r.url()) && r.request().method() === 'POST')
+  await page.mouse.down()
+  await page.mouse.move(from.x + from.width / 2 - 15, from.y + from.height / 2, { steps: 5 })
+  await page.mouse.move(to.x + 4, to.y + to.height / 2, { steps: 10 })
+  await page.mouse.up()
+  expect((await moved).ok()).toBeTruthy()
+  await expect(tabs.first()).toHaveAccessibleName('signup')
+  await page.reload()
+  await expect(tabs.first()).toHaveAccessibleName('signup')
+  await expect(tabs.nth(1)).toHaveAccessibleName(/^contact \(draft/)
+
+  // /forms lands back on the form last opened.
+  await tabs.nth(1).click()
+  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms/contact$`))
+  await expect(page.getByRole('heading', { name: 'contact', level: 2 })).toBeVisible()
+  await page.goto(`/app/projects/${id}/forms`)
+  await expect(page).toHaveURL(new RegExp(`/app/projects/${id}/forms/contact$`))
 })

@@ -1594,7 +1594,7 @@ Nothing to check before the upgrade: the migration adds three tables
 
 - **On the day:** every form that exists at the upgrade has notify on
   submission off, approved or not, so none starts sending. A form approved
-  after the upgrade has it on. Turn it on for an older form by editing the
+  or created after the upgrade has it on. Turn it on for an older form by editing the
   form.
 - **After the upgrade:** a new draft form, and a draft discarded by
   retention, adds an item to the inbox. Archived items are deleted

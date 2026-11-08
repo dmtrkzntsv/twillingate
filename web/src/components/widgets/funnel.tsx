@@ -77,7 +77,7 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
 
   return (
     <>
-      <ol className="flex h-full flex-col justify-center px-1 py-1">
+      <ol className="flex h-full flex-col justify-center px-1.5 py-1">
         {records.map((r, i) => {
           const value = values[i]
           const share = value / first

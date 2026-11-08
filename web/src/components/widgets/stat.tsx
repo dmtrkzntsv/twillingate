@@ -104,7 +104,7 @@ export default function Stat({ data, props }: WidgetProps<StatProps>) {
     return (
       <div className={`flex h-full flex-col justify-between gap-1 pt-1 ${card ? 'items-center gap-6' : ''}`}>
         <Figure card={card}>{show(value)}</Figure>
-        <div className={`-mx-1 min-h-8 flex-1 ${card ? 'w-full' : ''}`}>
+        <div className={`min-h-8 flex-1 ${card ? 'w-full' : ''}`}>
           <ResponsiveContainer width="100%" height="100%">
             <AreaChart data={series} margin={{ top: 4, right: 4, bottom: 2, left: 4 }}>
               <defs>

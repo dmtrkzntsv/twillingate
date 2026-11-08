@@ -551,6 +551,16 @@ interface FormsResponse {
   action_base: string
 }
 
+/** create_form's body: a form made up front, approved, keeping `expected_fields` (one or more). */
+export interface NewForm {
+  /** `^[a-z0-9_-]{1,64}$`; a name the project already has, archived forms included, is a 409. */
+  name: string
+  purpose?: string
+  expected_fields: string[]
+  /** Absolute http(s), its origin among the project's allowed origins. */
+  return_url?: string
+}
+
 /** update_form's body: an omitted field is kept; `closes_at` null reopens. */
 export interface FormUpdate {
   purpose?: string
@@ -811,9 +821,14 @@ export const endpoints = {
     api<WidgetShare>(`/api/widget-shares/${id}/restore`, json('POST', { archive_after })),
   /** A share's 1x PNG in any state; the public image URL answers 404 once the share is archived. */
   widgetShareImage: (id: string) => apiBlob(`/api/widget-shares/${id}/image`),
-  /** A project's forms, drafts first; `archived` lists the archived ones instead. */
+  /** A project's forms, in the project's order (move_form; a new one last); `archived` lists the archived ones instead. */
   forms: (projectId: number, archived = false) =>
     api<FormsResponse>(`/api/projects/${projectId}/forms${toQuery({ archived: archived || undefined })}`),
+  /** Creates a form up front, approved and last in the order; answers it as list_forms does. */
+  createForm: (projectId: number, body: NewForm) => api<Form>(`/api/projects/${projectId}/forms`, json('POST', body)),
+  /** Puts a live form right after the live form `after` (`''` first). */
+  moveForm: (projectId: number, name: string, after: string) =>
+    api<{ status: string }>(`${formPath(projectId, name)}/move`, json('POST', { after })),
   approveForm: (projectId: number, name: string, expected_fields: string[]) =>
     api<{ status: string }>(`${formPath(projectId, name)}/approve`, json('POST', { expected_fields })),
   updateForm: (projectId: number, name: string, body: FormUpdate) =>

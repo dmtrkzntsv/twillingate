@@ -117,7 +117,8 @@ export default function SubmissionDrawer({ projectId, form, id, purgeDays, onClo
           )}
         </div>
         <SheetFooter className="mt-auto">
-          <Button type="button" variant="outline" disabled={actions.pending || !q.data} onClick={() => void toggle()}>
+          {/* Archive is red, as the app's other destructive actions are; Restore stays outlined. */}
+          <Button type="button" variant={archived ? 'outline' : 'destructive'} disabled={actions.pending || !q.data} onClick={() => void toggle()}>
             {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
             {archived ? 'Restore' : 'Archive'}
           </Button>

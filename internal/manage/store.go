@@ -42,9 +42,11 @@ type Store interface {
 	ListForms(ctx context.Context, projectID int64, archived bool) ([]store.Form, error)
 	GetForm(ctx context.Context, projectID int64, name string) (store.Form, error)
 	MarkFormSeen(ctx context.Context, projectID int64, name string, until time.Time) error
+	CreateForm(ctx context.Context, f store.Form, a store.AuditEntry) (store.Form, error)
 	ApproveForm(ctx context.Context, projectID int64, name string, expected []string, now time.Time, a store.AuditEntry) error
 	UpdateForm(ctx context.Context, f store.Form, notify *bool, add []string, a store.AuditEntry) error
 	SetFormArchived(ctx context.Context, projectID int64, name string, archived bool, draftUntil time.Time, a store.AuditEntry) error
+	MoveForm(ctx context.Context, projectID int64, name, after string, a store.AuditEntry) error
 	SetSubmissionsArchived(ctx context.Context, projectID int64, ids []string, archived bool, a store.AuditEntry) (int, error)
 	FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]store.Submission, string, error)
 	SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error)

@@ -85,6 +85,13 @@ for (const scheme of ['light', 'dark'] as const) {
         }))
         expect(drawn.children, label).toBeGreaterThan(3)
         expect(drawn.height, label).toBeGreaterThan(0)
+        // At its default size the body fits its card: no scrollbars (a
+        // negative margin once pushed the stat's sparkline 4px past it).
+        const spill = await body.evaluate((el) => ({
+          x: el.scrollWidth - el.clientWidth,
+          y: el.scrollHeight - el.clientHeight,
+        }))
+        expect(spill, label).toEqual({ x: 0, y: 0 })
       }
     }
     await testInfo.attach(`gallery-${scheme}.png`, {
