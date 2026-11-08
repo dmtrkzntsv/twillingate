@@ -319,7 +319,7 @@ type Store interface {
 	// it stands, and writes nothing.
 	WriteSubmission(ctx context.Context, n NewSubmission) (Form, bool, error)
 	// ListForms lists a project's active forms (archived false) or its
-	// archived ones (true) in their position order (see MoveForm), each
+	// archived ones (true) by sort key (see MoveForm), each
 	// with its submission count.
 	ListForms(ctx context.Context, projectID int64, archived bool) ([]Form, error)
 	// CreateForm writes f (its ProjectID, Name, Status, Purpose,
@@ -329,8 +329,8 @@ type Store interface {
 	// not.
 	CreateForm(ctx context.Context, f Form, a AuditEntry) (Form, error)
 	// MoveForm places a live form right after the live form after, or
-	// first when after is "", and renumbers the project's forms: the live
-	// ones in their new order, then the archived ones in theirs. Moving a
+	// first when after is "", with one new sort key between its
+	// neighbours (archived forms keep theirs, and their place). Moving a
 	// form after itself changes nothing and writes no audit row.
 	// ErrNotFound for an unknown form or after, ErrInvalid when either is
 	// archived.
@@ -355,7 +355,7 @@ type Store interface {
 	UpdateForm(ctx context.Context, f Form, add []string, a AuditEntry) error
 	// SetFormArchived archives or restores a form. Archiving an archived
 	// form and restoring an active one change nothing and write no audit
-	// row. Either keeps the form's position. Restoring a draft sets
+	// row. Either keeps the form's sort key. Restoring a draft sets
 	// draft_until to draftUntil; an approved form ignores it.
 	SetFormArchived(ctx context.Context, projectID int64, name string, archived bool, draftUntil time.Time, a AuditEntry) error
 	// ExpireDrafts archives every active draft whose draft_until is at or

@@ -10,10 +10,16 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// formPositions is project 1's forms as name:position, by position.
-func formPositions(t *testing.T, db *DB) []string {
+// formKeys is project 1's forms as name:sort_key, by key.
+func formKeys(t *testing.T, db *DB) []string {
 	t.Helper()
-	return queryStrings(t, db, `SELECT name || ':' || position FROM forms WHERE project_id=1 ORDER BY position, name`)
+	return queryStrings(t, db, `SELECT name || ':' || sort_key FROM forms WHERE project_id=1 ORDER BY sort_key, name`)
+}
+
+// formOrder is project 1's forms by key, archived ones included.
+func formOrder(t *testing.T, db *DB) []string {
+	t.Helper()
+	return queryStrings(t, db, `SELECT name FROM forms WHERE project_id=1 ORDER BY sort_key, name`)
 }
 
 func activeFormNames(t *testing.T, db *DB) []string {
@@ -35,8 +41,9 @@ func newApprovedForm(name string) store.Form {
 		Fields: []string{"email"}, ExpectedFields: []string{"email"}, CreatedAt: formsNow, ApprovedAt: &at}
 }
 
-// Migration 046 numbers every project's forms in the order list_forms
-// showed them: live before archived, each drafts first, then by name.
+// Migration 046 keys every project's forms in the order list_forms showed
+// them (live before archived, each drafts first, then by name), with the
+// keys sortkey hands out when appending, as 034 keyed the projects.
 func TestMigration046KeepsTheListOrder(t *testing.T) {
 	db := newTestDBAt(t, 45)
 	ctx := context.Background()
@@ -52,11 +59,11 @@ func TestMigration046KeepsTheListOrder(t *testing.T) {
 	if err := db.migrateThrough(ctx, 46); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"beta:1", "yank:2", "alpha:3", "zeta:4", "gone:5", "old:6"}
-	if got := formPositions(t, db); !reflect.DeepEqual(got, want) {
-		t.Errorf("positions = %q, want %q", got, want)
+	want := []string{"beta:a0", "yank:a1", "alpha:a2", "zeta:a3", "gone:a4", "old:a5"}
+	if got := formKeys(t, db); !reflect.DeepEqual(got, want) {
+		t.Errorf("keys = %q, want %q", got, want)
 	}
-	if got := queryStrings(t, db, `SELECT name || ':' || position FROM forms WHERE project_id=2`); !reflect.DeepEqual(got, []string{"other:1"}) {
+	if got := queryStrings(t, db, `SELECT name || ':' || sort_key FROM forms WHERE project_id=2`); !reflect.DeepEqual(got, []string{"other:a0"}) {
 		t.Errorf("project 2 = %q", got)
 	}
 	if got := activeFormNames(t, db); !reflect.DeepEqual(got, []string{"beta", "yank", "alpha", "zeta"}) {
@@ -79,8 +86,8 @@ func TestWriteSubmissionAppendsTheDraftLast(t *testing.T) {
 		t.Fatal(err)
 	}
 	mustWrite(t, db, newSub("s1", map[string]string{"email": "a@x.io"}))
-	if got := formPositions(t, db); !reflect.DeepEqual(got, []string{"first:1", "aside:2", "contact:3"}) {
-		t.Errorf("positions = %q", got)
+	if got := formKeys(t, db); !reflect.DeepEqual(got, []string{"first:a0", "aside:a1", "contact:a2"}) {
+		t.Errorf("keys = %q", got)
 	}
 	// Another submission leaves the position alone.
 	n := newSub("s2", map[string]string{"email": "b@x.io"})
@@ -92,8 +99,8 @@ func TestWriteSubmissionAppendsTheDraftLast(t *testing.T) {
 	other := newSub("o1", map[string]string{"k": "v"})
 	other.Submission.ProjectID, other.Event.ProjectID = 2, 2
 	mustWrite(t, db, other)
-	if got := queryStrings(t, db, `SELECT position FROM forms WHERE project_id=2`); !reflect.DeepEqual(got, []string{"1"}) {
-		t.Errorf("project 2 position = %q", got)
+	if got := queryStrings(t, db, `SELECT sort_key FROM forms WHERE project_id=2`); !reflect.DeepEqual(got, []string{"a0"}) {
+		t.Errorf("project 2 key = %q", got)
 	}
 }
 
@@ -131,7 +138,7 @@ func TestCreateFormStoresAndAudits(t *testing.T) {
 	}
 }
 
-func TestMoveFormRenumbers(t *testing.T) {
+func TestMoveFormWritesOneKey(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	for _, name := range []string{"a", "b", "c", "d"} {
@@ -146,21 +153,28 @@ func TestMoveFormRenumbers(t *testing.T) {
 	if err := db.MoveForm(ctx, 1, "d", "", move); err != nil {
 		t.Fatal(err)
 	}
-	// The live forms in their new order, then the archived one.
-	if got := formPositions(t, db); !reflect.DeepEqual(got, []string{"d:1", "a:2", "c:3", "b:4"}) {
+	// Only d's key changes; the archived b keeps its place.
+	if got := formKeys(t, db); !reflect.DeepEqual(got, []string{"d:Zz", "a:a0", "b:a1", "c:a2"}) {
 		t.Errorf("d first: %q", got)
 	}
-	if err := db.MoveForm(ctx, 1, "d", "c", move); err != nil {
+	if err := db.MoveForm(ctx, 1, "d", "a", move); err != nil {
 		t.Fatal(err)
 	}
-	if got := formPositions(t, db); !reflect.DeepEqual(got, []string{"a:1", "c:2", "d:3", "b:4"}) {
-		t.Errorf("d after c: %q", got)
+	// Right after a, before the archived b.
+	if got := formKeys(t, db); !reflect.DeepEqual(got, []string{"a:a0", "d:a0V", "b:a1", "c:a2"}) {
+		t.Errorf("d after a: %q", got)
+	}
+	if err := db.MoveForm(ctx, 1, "a", "c", move); err != nil {
+		t.Fatal(err)
+	}
+	if got := formOrder(t, db); !reflect.DeepEqual(got, []string{"d", "b", "c", "a"}) {
+		t.Errorf("a after c: %q", got)
 	}
 	if err := db.MoveForm(ctx, 1, "a", "a", move); err != nil {
 		t.Fatal(err)
 	}
-	if n := countRows(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='form.move'`); n != 2 {
-		t.Errorf("audit rows = %d, want 2 (a move after itself writes none)", n)
+	if n := countRows(t, db, `SELECT COUNT(*) FROM audit_log WHERE action='form.move'`); n != 3 {
+		t.Errorf("audit rows = %d, want 3 (a move after itself writes none)", n)
 	}
 	for _, c := range []struct {
 		name, after string
@@ -178,11 +192,37 @@ func TestMoveFormRenumbers(t *testing.T) {
 	if err := db.MoveForm(ctx, 2, "a", "", move); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("another project's form: %v", err)
 	}
-	// A restore keeps the position.
+	// A restore keeps the key, so b comes back where it was.
 	if err := db.SetFormArchived(ctx, 1, "b", false, formsNow, formAudit); err != nil {
 		t.Fatal(err)
 	}
-	if got := activeFormNames(t, db); !reflect.DeepEqual(got, []string{"a", "c", "d", "b"}) {
+	if got := activeFormNames(t, db); !reflect.DeepEqual(got, []string{"d", "b", "c", "a"}) {
 		t.Errorf("after restore: %q", got)
+	}
+}
+
+// Neighbours that share a key (written by hand, or by two processes at
+// once) leave none between them: every form then gets a fresh key, in the
+// new order.
+func TestMoveFormRespreadsEqualNeighbours(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	for _, name := range []string{"a", "b", "c"} {
+		if _, err := db.CreateForm(ctx, newApprovedForm(name), formAudit); err != nil {
+			t.Fatal(err)
+		}
+	}
+	execAll(t, db, `UPDATE forms SET sort_key='a0' WHERE project_id=1`)
+	if err := db.MoveForm(ctx, 1, "c", "a", formAudit); err != nil {
+		t.Fatal(err)
+	}
+	keys := queryStrings(t, db, `SELECT sort_key FROM forms WHERE project_id=1 ORDER BY sort_key`)
+	if got := formOrder(t, db); !reflect.DeepEqual(got, []string{"a", "c", "b"}) {
+		t.Errorf("order = %q", got)
+	}
+	for i := 1; i < len(keys); i++ {
+		if keys[i-1] == keys[i] {
+			t.Errorf("keys still shared: %q", keys)
+		}
 	}
 }
