@@ -180,6 +180,9 @@ func expiresIn(n store.Notification) string {
 	case days == 0:
 		return " expires today"
 	}
+	if days == 1 {
+		return " expires in 1 day"
+	}
 	return fmt.Sprintf(" expires in %d days", days)
 }
 

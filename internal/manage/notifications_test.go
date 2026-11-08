@@ -76,9 +76,10 @@ func TestListNotifications(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if active != 3 || len(ns) != 2 || ns[0].ID != ids[2] {
+	if active != 3 || len(ns) != 3 || ns[0].ID != ids[2] {
 		t.Fatalf("list: active=%d %+v", active, ns)
 	}
+	// The store is asked for one row past the page; the caller trims it.
 	// An unset limit is the default, one past the maximum is clamped.
 	for _, c := range []struct{ limit, want int }{{0, defaultNotificationLimit}, {1000, maxNotificationLimit}} {
 		f := store.NotificationFilter{Limit: c.limit}

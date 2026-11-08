@@ -77,11 +77,17 @@ func (h *host) listNotifications(ctx context.Context, in listNotificationsIn) (l
 		return listNotificationsOut{}, err
 	}
 	out := listNotificationsOut{Notifications: []notificationOut{}, Active: active}
+	limit := manage.NotificationLimit(in.Limit)
+	more := len(ns) > limit
+	if more {
+		ns = ns[:limit]
+	}
 	for _, n := range ns {
 		out.Notifications = append(out.Notifications, toNotificationOut(n))
 	}
-	// A full page may have a next one; the last id is where it starts.
-	if len(ns) > 0 && len(ns) == manage.NotificationLimit(in.Limit) {
+	// The store was asked for one row past the page: it is there only when
+	// a next page is; the last id of this one is where that starts.
+	if more {
 		out.NextCursor = strconv.FormatInt(ns[len(ns)-1].ID, 10)
 	}
 	return out, nil

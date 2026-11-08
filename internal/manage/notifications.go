@@ -24,8 +24,10 @@ func NotificationLimit(limit int) int {
 }
 
 // ListNotifications pages the inbox, newest first, as f selects it (the
-// limit clamped to 1..200, 50 when unset), with the count of active
-// notifications across every project. Console state, like MarkFormSeen:
+// limit clamped to 1..200, 50 when unset, and one row more asked of the
+// store than that, so the caller can tell a last page from a full one and
+// trims the extra), with the count of active notifications across every
+// project. Console state, like MarkFormSeen:
 // not audited. A ProjectID must name a project that exists.
 func (o *Ops) ListNotifications(ctx context.Context, f store.NotificationFilter) ([]store.Notification, int, error) {
 	if f.ProjectID != 0 {
@@ -33,7 +35,7 @@ func (o *Ops) ListNotifications(ctx context.Context, f store.NotificationFilter)
 			return nil, 0, err
 		}
 	}
-	f.Limit = NotificationLimit(f.Limit)
+	f.Limit = NotificationLimit(f.Limit) + 1
 	ns, err := o.St.ListNotifications(ctx, f)
 	if err != nil {
 		return nil, 0, err

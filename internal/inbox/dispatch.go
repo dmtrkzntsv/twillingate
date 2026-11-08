@@ -26,6 +26,8 @@ const (
 	// staleAfter: a row never tried and older than this (the process was
 	// down, or NOTIFY_URL was just set) is skipped, not sent late.
 	staleAfter = time.Hour
+	// recordTimeout bounds the write of a "sent" outcome.
+	recordTimeout = 5 * time.Second
 	// giveUpAfter: a temporary failure of a row older than this fails it.
 	giveUpAfter = 6 * time.Hour
 )
@@ -51,12 +53,17 @@ type Dispatcher struct {
 	sender     notify.Sender
 	consoleURL string
 	logger     *slog.Logger
+
+	// unrecorded holds the ids of rows sent whose "sent" write failed, with
+	// the attempts count to record: they are never sent again by this
+	// process, only recorded.
+	unrecorded map[int64]int
 }
 
 // NewDispatcher returns a Dispatcher sending through s; a nil s means no
 // channel: every pending row becomes none and stays in the inbox only.
 func NewDispatcher(st DeliveryStore, s notify.Sender, consoleURL string, logger *slog.Logger) *Dispatcher {
-	return &Dispatcher{st: st, sender: s, consoleURL: consoleURL, logger: logger}
+	return &Dispatcher{st: st, sender: s, consoleURL: consoleURL, logger: logger, unrecorded: map[int64]int{}}
 }
 
 // Run delivers every 5s until ctx ends.
@@ -91,6 +98,11 @@ func (d *Dispatcher) Deliver(ctx context.Context, now time.Time) {
 }
 
 func (d *Dispatcher) deliver(ctx context.Context, now time.Time, n store.Notification) {
+	if attempts, ok := d.unrecorded[n.ID]; ok {
+		// Sent already; only the record is missing.
+		d.recordSent(ctx, n.ID, attempts)
+		return
+	}
 	switch {
 	case d.sender == nil:
 		d.set(ctx, n.ID, store.DeliveryNone, "", n.Attempts, nil)
@@ -105,7 +117,7 @@ func (d *Dispatcher) deliver(ctx context.Context, now time.Time, n store.Notific
 	attempts := n.Attempts + 1
 	switch {
 	case err == nil:
-		d.set(ctx, n.ID, store.DeliverySent, "", attempts, nil)
+		d.recordSent(ctx, n.ID, attempts)
 	case ctx.Err() != nil:
 		// Shutting down: the row stays pending, untouched, for the next start.
 	case errors.Is(err, notify.ErrTemporary) && now.Sub(n.CreatedAt) <= giveUpAfter:
@@ -126,4 +138,19 @@ func (d *Dispatcher) set(ctx context.Context, id int64, delivery, errText string
 	if err := d.st.SetDelivery(ctx, id, delivery, errText, attempts, next); err != nil && ctx.Err() == nil {
 		d.logger.Error("notifications: record delivery", "id", id, "delivery", delivery, "err", err)
 	}
+}
+
+// recordSent writes that id was sent. It does so on a context that outlives
+// a cancelled ctx (shutdown must not drop the write and so resend the row on
+// the next start), bounded by recordTimeout. When the write fails the id is
+// remembered, and later passes retry only the write, never the send.
+func (d *Dispatcher) recordSent(ctx context.Context, id int64, attempts int) {
+	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordTimeout)
+	defer cancel()
+	if err := d.st.SetDelivery(rctx, id, store.DeliverySent, "", attempts, nil); err != nil {
+		d.unrecorded[id] = attempts
+		d.logger.Error("notifications: record delivery; not sending it again until recorded", "id", id, "delivery", store.DeliverySent, "err", err)
+		return
+	}
+	delete(d.unrecorded, id)
 }

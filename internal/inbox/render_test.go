@@ -135,3 +135,17 @@ func TestPathEscapesForm(t *testing.T) {
 		t.Errorf("path %q", p)
 	}
 }
+
+func TestExpiryTitlePlural(t *testing.T) {
+	for _, c := range []struct{ days, want string }{
+		{"1", "Certificate for https://blog.example expires in 1 day"},
+		{"2", "Certificate for https://blog.example expires in 2 days"},
+		{"0", "Certificate for https://blog.example expires today"},
+	} {
+		n := sample(store.NotifyCertExpiring)
+		n.Fields["days"] = c.days
+		if got := inbox.Render(n).Title; got != c.want {
+			t.Errorf("days %s: title %q, want %q", c.days, got, c.want)
+		}
+	}
+}

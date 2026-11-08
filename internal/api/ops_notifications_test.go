@@ -90,6 +90,11 @@ func TestNotificationsREST(t *testing.T) {
 		t.Fatalf("second page = %+v", page)
 	}
 
+	// A page of exactly limit items is the last one: no cursor.
+	if page = getNotifications(t, r, "?limit=2"); len(page.Notifications) != 2 || page.NextCursor != "" {
+		t.Fatalf("exact last page = %+v", page)
+	}
+
 	rec := serveREST(t, r, "POST", "/api/notifications/archive", `{"all":true}`)
 	if rec.Code != http.StatusOK || rec.Body.String() == "" {
 		t.Fatalf("archive all = %d %s", rec.Code, rec.Body)

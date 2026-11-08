@@ -206,3 +206,53 @@ func TestDispatcherBatch(t *testing.T) {
 		t.Errorf("one pass sent %d, want 50", len(s.sent))
 	}
 }
+
+// failingOnce wraps a deliveryStore whose first SetDelivery to "sent" fails.
+type failingOnce struct {
+	*deliveryStore
+	failed bool
+}
+
+func (f *failingOnce) SetDelivery(ctx context.Context, id int64, delivery, errText string, attempts int, next *time.Time) error {
+	if delivery == store.DeliverySent && !f.failed {
+		f.failed = true
+		return fmt.Errorf("disk full")
+	}
+	return f.deliveryStore.SetDelivery(ctx, id, delivery, errText, attempts, next)
+}
+
+func TestDispatcherNeverResendsWhenRecordFails(t *testing.T) {
+	st := &failingOnce{deliveryStore: &deliveryStore{rows: []store.Notification{pending(1, dispNow.Add(-time.Minute), 0)}}}
+	s := &fakeSender{}
+	d := inbox.NewDispatcher(st, s, "https://console.example.com/", quiet())
+	d.Deliver(context.Background(), dispNow)
+	if got := st.row(1); got.Delivery != store.DeliveryPending {
+		t.Fatalf("after the failed write: %s, want pending", got.Delivery)
+	}
+	d.Deliver(context.Background(), dispNow.Add(5*time.Second))
+	if len(s.sent) != 1 {
+		t.Errorf("sender called %d times, want 1", len(s.sent))
+	}
+	if got := st.row(1); got.Delivery != store.DeliverySent || got.Attempts != 1 {
+		t.Errorf("row = %s attempts %d, want sent 1", got.Delivery, got.Attempts)
+	}
+}
+
+func TestDispatcherRecordsSentAfterCancel(t *testing.T) {
+	st := &deliveryStore{rows: []store.Notification{pending(1, dispNow.Add(-time.Minute), 0)}}
+	ctx, cancel := context.WithCancel(context.Background())
+	s := &cancelingSender{cancel: cancel}
+	inbox.NewDispatcher(st, s, "https://console.example.com/", quiet()).Deliver(ctx, dispNow)
+	if got := st.row(1); got.Delivery != store.DeliverySent {
+		t.Errorf("row = %s, want sent although ctx was cancelled during the send", got.Delivery)
+	}
+}
+
+// cancelingSender cancels the pass's context and then reports success.
+type cancelingSender struct{ cancel func() }
+
+func (s *cancelingSender) Service() string { return "fake" }
+func (s *cancelingSender) Send(context.Context, notify.Message) error {
+	s.cancel()
+	return nil
+}
