@@ -195,6 +195,14 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
               </Link>
             </SidebarMenuButton>
             {active > 0 && (
+              // The badge hides itself when the sidebar is collapsed to icons; a dot stands in.
+              <span
+                aria-hidden="true"
+                data-testid="inbox-dot"
+                className="pointer-events-none absolute right-1 top-1 hidden size-2 rounded-full bg-sidebar-primary group-data-[collapsible=icon]:block"
+              />
+            )}
+            {active > 0 && (
               <SidebarMenuBadge title={`${active} active ${active === 1 ? 'notification' : 'notifications'}`}>
                 {active > 99 ? '99+' : active}
               </SidebarMenuBadge>

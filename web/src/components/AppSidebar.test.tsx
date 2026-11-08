@@ -443,10 +443,19 @@ describe('AppSidebar inbox', () => {
     expect(await screen.findByTitle('3 active notifications')).toHaveTextContent('3')
   })
 
+  it('has a dot for the collapsed icon rail, shown by CSS only in that mode, when something is active', async () => {
+    vi.spyOn(endpoints, 'listNotifications').mockResolvedValue({ notifications: [], active: 3 })
+    renderAt('/')
+    await screen.findByTitle('3 active notifications')
+    const dot = screen.getByTestId('inbox-dot')
+    expect(dot).toHaveClass('hidden', 'group-data-[collapsible=icon]:block')
+  })
+
   it('shows no count with nothing active', async () => {
     vi.spyOn(endpoints, 'listNotifications').mockResolvedValue({ notifications: [], active: 0 })
     renderAt('/')
     await waitFor(() => expect(endpoints.listNotifications).toHaveBeenCalled())
     expect(screen.queryByTitle(/active notification/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('inbox-dot')).not.toBeInTheDocument()
   })
 })
