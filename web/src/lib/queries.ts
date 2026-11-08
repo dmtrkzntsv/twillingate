@@ -1,4 +1,4 @@
-import { queryOptions, replaceEqualDeep } from '@tanstack/react-query'
+import { infiniteQueryOptions, queryOptions, replaceEqualDeep } from '@tanstack/react-query'
 import { endpoints, type DashboardDetail, type RangeQuery, type ShareState, type SubmissionsQuery } from './api'
 
 /** The dashboards list: the sidebar, the timezone. */
@@ -39,6 +39,27 @@ export const projectActivityQuery = {
   staleTime: 60_000,
   refetchInterval: 60_000,
 }
+
+/**
+ * The inbox's active items across every project, for the sidebar's badge:
+ * one item is read, for its page's `active`. Every query under
+ * `['notifications']` refetches after an archive or a restore.
+ */
+export const inboxCountQuery = {
+  queryKey: ['notifications', 'count'],
+  queryFn: async () => (await endpoints.listNotifications({ limit: 1 })).active,
+  staleTime: 60_000,
+  refetchInterval: 60_000,
+}
+
+/** The inbox's pages, the active items or the archived ones, newest first, each page after the last one's `next_cursor`. */
+export const notificationsQuery = (archived: boolean) =>
+  infiniteQueryOptions({
+    queryKey: ['notifications', 'list', archived],
+    queryFn: ({ pageParam }) => endpoints.listNotifications({ ...(archived ? { archived: true } : {}), ...(pageParam ? { cursor: pageParam } : {}) }),
+    initialPageParam: '',
+    getNextPageParam: (last) => last.next_cursor,
+  })
 
 /** A project page's tabs, in order. */
 export const projectTabsQuery = (projectId: number) => ({

@@ -12,6 +12,7 @@ import Dashboard from '@/pages/Dashboard'
 import ComponentsGallery from '@/pages/gallery/ComponentsGallery'
 import DashboardsGallery from '@/pages/gallery/DashboardsGallery'
 import Home from '@/pages/Home'
+import Inbox from '@/pages/Inbox'
 import Login from '@/pages/Login'
 import NoSuchPage from '@/pages/NoSuchPage'
 import Project from '@/pages/Project'
@@ -132,6 +133,14 @@ function App() {
             element={
               <OnlineOnly>
                 <Project tab="forms" />
+              </OnlineOnly>
+            }
+          />
+          <Route
+            path="/inbox"
+            element={
+              <OnlineOnly>
+                <Inbox />
               </OnlineOnly>
             }
           />

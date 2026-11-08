@@ -3,6 +3,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogClose, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { Switch } from '@/components/ui/switch'
 import type { Form, FormUpdate } from '@/lib/api'
 import { FieldPicker } from './ApproveDialog'
 
@@ -16,18 +17,20 @@ interface Props {
 }
 
 /**
- * A form's settings (D12): purpose, return URL and an approved form's
- * expected fields, saved together with only what changed sent.
+ * A form's settings (D12): purpose, return URL and, on an approved form,
+ * whether each submission notifies and the expected fields, saved together
+ * with only what changed sent.
  */
 export default function SettingsDialog({ open, onOpenChange, form, pending, onSave }: Props) {
   const id = useId()
   const approved = form.status === 'approved'
   // What was saved when the dialog opened: edits are measured against it,
   // so a change made elsewhere meanwhile is never sent back over.
-  const saved = () => ({ purpose: form.purpose, returnURL: form.return_url, expected: form.expected_fields ?? [] })
+  const saved = () => ({ purpose: form.purpose, returnURL: form.return_url, notify: form.notify_submissions, expected: form.expected_fields ?? [] })
   const [base, setBase] = useState(saved)
   const [purpose, setPurpose] = useState(base.purpose)
   const [returnURL, setReturnURL] = useState(base.returnURL)
+  const [notify, setNotify] = useState(base.notify)
   const [checked, setChecked] = useState(base.expected)
   // Each opening starts from what is saved, not a refetch while it is open.
   useEffect(() => {
@@ -36,12 +39,14 @@ export default function SettingsDialog({ open, onOpenChange, form, pending, onSa
     setBase(now)
     setPurpose(now.purpose)
     setReturnURL(now.returnURL)
+    setNotify(now.notify)
     setChecked(now.expected)
   }, [open])
 
   const body: FormUpdate = {}
   if (purpose.trim() !== base.purpose) body.purpose = purpose.trim()
   if (returnURL.trim() !== base.returnURL) body.return_url = returnURL.trim()
+  if (approved && notify !== base.notify) body.notify_submissions = notify
   if (approved && JSON.stringify(checked) !== JSON.stringify(base.expected)) body.expected_fields = checked
   const changed = Object.keys(body).length > 0
   const savable = !pending && changed && (!approved || checked.length > 0)
@@ -77,6 +82,18 @@ export default function SettingsDialog({ open, onOpenChange, form, pending, onSa
               be one of the project's allowed origins.
             </p>
           </div>
+          {approved && (
+            <div className="flex items-start gap-3 border-t pt-4">
+              <Switch id={`${id}-notify`} className="mt-0.5" checked={notify} disabled={pending} onCheckedChange={setNotify} />
+              <div className="flex min-w-0 flex-col gap-1">
+                <Label htmlFor={`${id}-notify`}>Notify on each submission</Label>
+                <p className="text-xs text-muted-foreground">
+                  In the inbox and on the notification channel, never with the field values. Submissions within 15 minutes of one
+                  arrive as a single follow-up.
+                </p>
+              </div>
+            </div>
+          )}
           {approved && (
             <div role="group" aria-labelledby={`${id}-fields`} className="flex min-w-0 flex-col gap-2 border-t pt-4">
               <h3 id={`${id}-fields`} className="text-sm font-medium">

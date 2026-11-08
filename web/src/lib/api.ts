@@ -527,6 +527,8 @@ export interface Form {
   archived_submissions: number
   /** The time up to which the console marked this form read; absent until it has. */
   seen_at?: string
+  /** An approved, active form raises a form_submission notification for each submission; approval turns it on. */
+  notify_submissions: boolean
   archived: boolean
   archived_at?: string
 }
@@ -555,6 +557,8 @@ export interface FormUpdate {
   return_url?: string
   closes_at?: string | null
   expected_fields?: string[]
+  /** Whether each submission to the approved, active form raises a notification. */
+  notify_submissions?: boolean
 }
 
 /** One page of a form's submissions table (D12a); `ids` holds each row's submission id, in row order. */
@@ -614,6 +618,65 @@ export interface FoundSubmission extends Submission {
  * ids, a form's table filters (its archived table to restore), or a search.
  */
 export type SubmissionsSelector = { ids: string[] } | { form: string; filters: string } | { search: string }
+
+/** The closed list of notification types (docs/twillingate.md, Notification types). */
+export type NotificationType =
+  | 'uptime_down'
+  | 'uptime_still_down'
+  | 'uptime_up'
+  | 'cert_failing'
+  | 'cert_still_failing'
+  | 'cert_recovered'
+  | 'domain_failing'
+  | 'domain_still_failing'
+  | 'domain_recovered'
+  | 'cert_expiring'
+  | 'domain_expiring'
+  | 'form_draft_created'
+  | 'form_draft_discarded'
+  | 'form_submission'
+
+/** How the send to NOTIFY_URL went: `none` with no NOTIFY_URL configured. */
+export type Delivery = 'pending' | 'sent' | 'failed' | 'none' | 'skipped'
+
+/** One inbox item as list_notifications answers it: the message exactly as the channel got it. */
+export interface Notification {
+  id: number
+  type: NotificationType
+  /** Both absent when it belongs to no project. */
+  project_id?: number
+  /** The project's name when the notification was created. */
+  project?: string
+  /** What it is about: an origin, a domain or a form. */
+  subject: string
+  title: string
+  body: string
+  /** The console page it leads to, inside the app (`/projects/3/forms/contact`). */
+  path: string
+  /** The facts it was rendered from; never a form field value. */
+  fields: Record<string, string>
+  created_at: string
+  /** Absent while active. */
+  archived_at?: string
+  delivery: Delivery
+  /** Why the last send failed. */
+  delivery_error?: string
+}
+
+/** One page of the inbox; `active` counts the active items across every project. */
+export interface NotificationsPage {
+  notifications: Notification[]
+  active: number
+  next_cursor?: string
+}
+
+/** list_notifications' arguments, all optional: the active items of every project, newest first. */
+export interface NotificationsQuery {
+  archived?: boolean
+  project_id?: number
+  limit?: number
+  cursor?: string
+}
 
 interface ComponentsResponse {
   source_types: ('md' | 'query' | 'sql')[]
@@ -771,6 +834,12 @@ export const endpoints = {
     api<{ archived: number }>(`/api/projects/${projectId}/submissions/archive`, json('POST', body)),
   restoreSubmissions: (projectId: number, body: SubmissionsSelector) =>
     api<{ restored: number }>(`/api/projects/${projectId}/submissions/restore`, json('POST', body)),
+  /** The inbox, a page at a time; `archived` reads the archived items instead. */
+  listNotifications: (q: NotificationsQuery) => api<NotificationsPage>(`/api/notifications${toQuery(q)}`),
+  /** Archives the items with these ids, or every active one. */
+  archiveNotifications: (body: { ids: number[] } | { all: true }) =>
+    api<{ archived: number }>('/api/notifications/archive', json('POST', body)),
+  restoreNotifications: (ids: number[]) => api<{ restored: number }>('/api/notifications/restore', json('POST', { ids })),
   /** The submissions table as CSV, every row the filters match, read with the console's auth. */
   exportSubmissions: (projectId: number, name: string, q: { archived?: boolean; filters?: string; sort?: string }) =>
     apiBlob(`${formPath(projectId, name)}/submissions.csv${toQuery(q)}`),

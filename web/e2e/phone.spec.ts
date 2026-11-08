@@ -369,6 +369,11 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   const archivedDash = await request.post(`/api/dashboards/${longId}/archive`, { headers: authHeaders(), data: {} })
   expect(archivedDash.ok(), await archivedDash.text()).toBeTruthy()
 
+  // The inbox, with the long form's draft item on it: its title and the
+  // project's long name wrap rather than widen the page.
+  await check(page, '/app/inbox')
+  await expect(page.getByRole('listitem', { name: `New form ${formName} is waiting for approval` })).toBeVisible()
+
   // The Shares page, with the long-title share's row on it: at the phone and,
   // since the table folds below xl, beside the 256px sidebar at 1024 and 1280 too.
   for (const width of [PHONE.width, 1024, 1280]) {

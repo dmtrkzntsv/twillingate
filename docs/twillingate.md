@@ -944,7 +944,8 @@ tools below do.
    but is dropped until it is in `expected_fields`; `add_fields` records a
    field before anything sends it, and an approved form keeps it.
    `notify_submissions` turns [notifications](#notifications) of its
-   submissions off or on; approving a form turns them on.
+   submissions off or on; approving a form turns them on. In the console it
+   is the form's Settings switch, Notify on each submission.
 5. **Read the submissions** as a table with `list_submissions`, one in full
    with `get_submission`, or as CSV from the export route.
 6. **Set submissions aside** with `archive_submissions`: they leave the
@@ -1074,6 +1075,9 @@ field values are never in a notification.
   pass purges archived items `RETENTION_ARCHIVED_DAYS` (default 30; 0 never
   purges) after archiving; active ones stay until archived. Archiving is
   console state: it is not audited and stops no reminder.
+- **In the console** the inbox is the sidebar's Inbox, beside the count of
+  active items: Active and Archived tabs, each item with its project, a link
+  to the page it is about, and why a failed send failed.
 
 | Operation | CLI | MCP tool | Tool arguments |
 | --- | --- | --- | --- |

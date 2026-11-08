@@ -21,6 +21,7 @@ export function form(name: string, over: Partial<Form> = {}): Form {
     submissions: 0,
     new_submissions: 0,
     archived_submissions: 0,
+    notify_submissions: true,
     archived: false,
     ...over,
   }
@@ -28,7 +29,7 @@ export function form(name: string, over: Partial<Form> = {}): Form {
 
 /** A draft whose window ends `days` from now. */
 export function draft(name: string, days: number, over: Partial<Form> = {}): Form {
-  return form(name, { status: 'draft', expected_fields: undefined, approved_at: undefined, draft_until: fromNow(days), ...over })
+  return form(name, { status: 'draft', expected_fields: undefined, approved_at: undefined, notify_submissions: false, draft_until: fromNow(days), ...over })
 }
 
 /** Two submissions of an approved contact form (expected email, message), newest first. */
