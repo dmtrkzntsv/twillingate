@@ -1,4 +1,4 @@
--- 046: notifications (spec 2026-11-07-notifications-design). notifications
+-- 047: notifications (spec 2026-11-07-notifications-design). notifications
 -- holds one row per inbox item, which is also what goes to the channel: its
 -- type from a closed vocabulary, its project (NULL: none), its subject (an
 -- origin, a domain or a form), the facts it renders from as a JSON object

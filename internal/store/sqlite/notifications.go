@@ -1,5 +1,5 @@
 // Notifications, the tracker's states and the form submission bursts
-// (migration 046, spec 2026-11-07-notifications-design). Every row of
+// (migration 047, spec 2026-11-07-notifications-design). Every row of
 // notifications is written by insertNotification.
 package sqlite
 

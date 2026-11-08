@@ -70,11 +70,11 @@ Text-only services render one text: `Title + "\n" + Body + "\n" + Link`, empty p
 - [ ] **Step 4: Add** `"internal/shared/notify": 0,` to the rank table; run `go test ./internal/shared/notify/ ./internal/archtest/` — PASS.
 - [ ] **Step 5: Commit** `feat(shared): add a notify package sending to telegram, ntfy, slack, discord, webhooks and smtp`
 
-### Task 2: Store — notifications, states, bursts; form hooks; migration 046
+### Task 2: Store — notifications, states, bursts; form hooks; migration 047
 
 **Files:**
-- Create: `internal/store/sqlite/migrations/046_notifications.sql`, `internal/store/notifications.go`, `internal/store/sqlite/notifications.go`, `internal/store/sqlite/notifications_test.go`
-- Modify: `internal/store/forms.go` (`Form.Notify`), `internal/store/store.go` (interface), `internal/store/sqlite/forms.go` (`formColumns`, `scanForm`, `WriteSubmission`, `ApproveForm`, `UpdateForm`, `ExpireDrafts`), `internal/store/sqlite/registry.go:279` (tables list), `internal/store/sqlite/forms_test.go`, `deploy/UPGRADES.md` (046: new tables, existing forms get notify off)
+- Create: `internal/store/sqlite/migrations/047_notifications.sql`, `internal/store/notifications.go`, `internal/store/sqlite/notifications.go`, `internal/store/sqlite/notifications_test.go`
+- Modify: `internal/store/forms.go` (`Form.Notify`), `internal/store/store.go` (interface), `internal/store/sqlite/forms.go` (`formColumns`, `scanForm`, `WriteSubmission`, `ApproveForm`, `UpdateForm`, `ExpireDrafts`), `internal/store/sqlite/registry.go:279` (tables list), `internal/store/sqlite/forms_test.go`, `deploy/UPGRADES.md` (047: new tables, existing forms get notify off)
 
 **Interfaces:**
 - Produces (package `store`):
@@ -115,7 +115,7 @@ Text-only services render one text: `Title + "\n" + Body + "\n" + Link`, empty p
   - `FlushFormBursts(ctx, now time.Time) (int, error)` — see below
   - `UpdateForm` honours `f.Notify` (always written; manage reads before writing)
 
-Migration 046 (constant SQL file, style of 044 with a header comment):
+Migration 047 (constant SQL file, style of 044 with a header comment):
 ```sql
 CREATE TABLE notifications (
     id INTEGER PRIMARY KEY,
@@ -156,7 +156,7 @@ Form hooks, inside the existing transactions:
   - `TestPendingDeliveriesAndSetDelivery`: next_attempt in the future is not listed; SetDelivery sent removes it from pending.
   - `TestPurgeArchivedNotifications`: archived 31 days ago purged with days 30; archived 29 days ago and active ones kept.
   - `TestDeleteProjectDataNotifications`: rows in all three tables for a project are gone after `DeleteProjectData`.
-  - In `forms_test.go`: `TestWriteSubmissionDraftCreatedNotification` (first submission to a new form → one `form_draft_created`; second → none); `TestSubmissionNotificationBurst` (approved form, notify on: submissions at t, t+1m, t+2m → one `form_submission` count 1; `FlushFormBursts(t+16m)` → one more with `count == "2"`; a submission at t+40m → a new immediate one); `TestSubmissionNotifyOff` (approved, `UpdateForm` notify false → none); `TestApproveSetsNotify`; `TestExpireDraftsNotifies` (one `form_draft_discarded` per expired draft); `TestMigration046ExistingFormsNotifyOff` (a form present before 046 reads `Notify == false`) — follow the `migrationNNN_test.go` pattern with `snapshotAt`.
+  - In `forms_test.go`: `TestWriteSubmissionDraftCreatedNotification` (first submission to a new form → one `form_draft_created`; second → none); `TestSubmissionNotificationBurst` (approved form, notify on: submissions at t, t+1m, t+2m → one `form_submission` count 1; `FlushFormBursts(t+16m)` → one more with `count == "2"`; a submission at t+40m → a new immediate one); `TestSubmissionNotifyOff` (approved, `UpdateForm` notify false → none); `TestApproveSetsNotify`; `TestExpireDraftsNotifies` (one `form_draft_discarded` per expired draft); `TestMigration047ExistingFormsNotifyOff` (a form present before 047 reads `Notify == false`) — follow the `migrationNNN_test.go` pattern with `snapshotAt`.
 - [ ] **Step 2: Run** `go test ./internal/store/... ./internal/sqlcheck/` — FAIL.
 - [ ] **Step 3: Implement** migration, types, methods and hooks; add the three tables to the `registry.go` delete list (before `projects`).
 - [ ] **Step 4: Run** `go test ./internal/store/... ./internal/sqlcheck/ ./internal/archtest/` — PASS. Fix any fake store elsewhere that must implement the widened `store.Store` (`go build ./... && go vet ./...`).

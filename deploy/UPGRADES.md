@@ -1586,7 +1586,7 @@ project and waiting for the purge, or deleting them: the previous release
 cannot read a share with no project, and the Shares and Archive pages fail
 while one is there. Shares with a project are untouched.
 
-### Upgrading to notifications (migration 046)
+### Upgrading to notifications (migration 047)
 
 Nothing to check before the upgrade: the migration adds three tables
 (`notifications`, `notify_states`, `form_bursts`) and a `notify` column to

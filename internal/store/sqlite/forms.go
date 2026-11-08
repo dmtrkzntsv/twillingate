@@ -112,14 +112,14 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 			if kerr != nil {
 				return kerr
 			}
-			created, err := tx.ExecContext(ctx, `INSERT INTO forms (project_id, name, created_at, draft_until, sort_key)
+			created, ierr := tx.ExecContext(ctx, `INSERT INTO forms (project_id, name, created_at, draft_until, sort_key)
 				VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING`,
 				sub.ProjectID, sub.Form, fmtTime(sub.ReceivedAt), fmtTime(n.DraftUntil), key)
-			if err != nil {
-				return err
+			if ierr != nil {
+				return ierr
 			}
-			if newDraft, err = created.RowsAffected(); err != nil {
-				return err
+			if newDraft, ierr = created.RowsAffected(); ierr != nil {
+				return ierr
 			}
 			form, err = scanForm(tx.QueryRowContext(ctx, `SELECT `+formColumns+` FROM forms WHERE project_id=? AND name=?`,
 				sub.ProjectID, sub.Form))
