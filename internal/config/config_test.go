@@ -974,28 +974,6 @@ func TestMonitorPause(t *testing.T) {
 	}
 }
 
-// TestQuotaCheckRatio: the weight of an availability check in the event
-// totals, display only, reads as set; unset or empty is 1.
-func TestQuotaCheckRatio(t *testing.T) {
-	for v, want := range map[string]float64{"": 1, "0.1": 0.1, "0": 0, "2": 2} {
-		c, err := load(t, map[string]string{"QUOTA_CHECK_RATIO": v})
-		if err != nil {
-			t.Fatalf("%q: %v", v, err)
-		}
-		if c.QuotaCheckRatio != want {
-			t.Errorf("%q: QuotaCheckRatio = %g, want %g", v, c.QuotaCheckRatio, want)
-		}
-	}
-	if c, err := load(t, nil); err != nil || c.QuotaCheckRatio != 1 {
-		t.Errorf("unset: %v, %v", c, err)
-	}
-	for _, v := range []string{"-0.5", "half", "NaN", "Inf"} {
-		if _, err := load(t, map[string]string{"QUOTA_CHECK_RATIO": v}); err == nil {
-			t.Errorf("%q: expected an error", v)
-		}
-	}
-}
-
 // TestNotifyConfig: NOTIFY_URL is optional and must parse; a bad one fails
 // without echoing it. NOTIFY_REMIND_HOURS is whole hours, 1 to 168, 4 unset.
 func TestNotifyConfig(t *testing.T) {

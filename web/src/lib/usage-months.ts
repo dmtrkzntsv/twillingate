@@ -11,9 +11,7 @@ export interface MonthTotals {
   views: number
   events: number
   measures: number
-  /** The month's availability check rows times QUOTA_CHECK_RATIO. */
-  checks: number
-  /** Views, events, measures and the weighted checks (`eventCount`). */
+  /** Views, events and measures (`eventCount`). */
   total: number
   /** The month under way, counted only so far. */
   current: boolean
@@ -41,12 +39,12 @@ export function monthsRange(today: string): { from: string; to: string } {
 
 /**
  * The daily series added up by calendar month, for the `MONTHS` months
- * ending with `today`'s, the checks at `ratio` each (0 leaves them out).
+ * ending with `today`'s.
  */
-export function monthlyTotals(series: UsageDay[], today: string, ratio: number): MonthTotals[] {
+export function monthlyTotals(series: UsageDay[], today: string): MonthTotals[] {
   const keys = monthKeys(today)
   const months = new Map(
-    keys.map((month) => [month, { month, views: 0, events: 0, measures: 0, checks: 0, total: 0, current: month === keys[MONTHS - 1] } as MonthTotals])
+    keys.map((month) => [month, { month, views: 0, events: 0, measures: 0, total: 0, current: month === keys[MONTHS - 1] } as MonthTotals])
   )
   for (const d of series) {
     const m = months.get(d.day.slice(0, 7))
@@ -54,9 +52,8 @@ export function monthlyTotals(series: UsageDay[], today: string, ratio: number):
     m.views += d.views
     m.events += d.events
     m.measures += d.measures
-    m.checks += d.checks * ratio
   }
-  for (const m of months.values()) m.total = eventCount(m, 1)
+  for (const m of months.values()) m.total = eventCount(m)
   return keys.map((k) => months.get(k)!)
 }
 

@@ -133,6 +133,12 @@ func (l MonitorList) Enabled() int {
 	return n
 }
 
+// CheckEvery is how often each enabled monitor is checked, given
+// MONITOR_INTERVAL: the project's one check per interval goes round them.
+func (l MonitorList) CheckEvery(interval time.Duration) time.Duration {
+	return interval * time.Duration(max(l.Enabled(), 1))
+}
+
 // Monitor is origin's entry in the list (an exact match).
 func (l MonitorList) Monitor(origin string) (store.Monitor, bool) {
 	for _, m := range l.Monitors {

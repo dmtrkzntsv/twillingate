@@ -2,9 +2,9 @@ import { Area, AreaChart, ResponsiveContainer } from 'recharts'
 import type { UsageDay } from '@/lib/api'
 import { eventCount } from '@/lib/units'
 
-/** Events per day (`eventCount`, checks at `ratio` each), as a small area with no axes. */
-export default function Sparkline({ series, ratio }: { series: UsageDay[]; ratio: number }) {
-  const data = series.map((d) => ({ day: d.day, n: eventCount(d, ratio) }))
+/** Events per day (`eventCount`), as a small area with no axes. */
+export default function Sparkline({ series }: { series: UsageDay[] }) {
+  const data = series.map((d) => ({ day: d.day, n: eventCount(d) }))
   return (
     <div className="h-10 w-full" aria-hidden>
       <ResponsiveContainer>

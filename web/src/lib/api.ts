@@ -275,6 +275,8 @@ export interface Project {
 export interface Monitor {
   origin: string
   enabled: boolean
+  /** How often it is actually checked: the project's one check per interval goes round its enabled monitors. 0 when off. */
+  check_every_seconds: number
   contains: string
   /** Redirect hops the last answered check followed. */
   redirects: number
@@ -413,8 +415,6 @@ interface UsageResponse {
   /** The database file's size per day as the daily pass measured it; null on a day not measured. */
   database_series: { day: string; bytes: number | null }[]
   projects: ProjectUsage[]
-  /** QUOTA_CHECK_RATIO: the weight one availability check row counts toward the event totals shown (default 1, 0 leaves checks out). */
-  quota_check_ratio?: number
 }
 
 export interface CreateProjectBody {

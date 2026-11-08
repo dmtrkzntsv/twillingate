@@ -30,6 +30,7 @@ function monitor(origin: string, over: Partial<Monitor> = {}): Monitor {
   return {
     origin,
     enabled: false,
+    check_every_seconds: 0,
     contains: '',
     redirects: 0,
     cert: { expires_at: '', issuer: '', valid: false, error: '', checked_at: '' },
@@ -38,7 +39,7 @@ function monitor(origin: string, over: Partial<Monitor> = {}): Monitor {
     ...over,
   }
 }
-const on = (origin: string, over: Partial<Monitor> = {}) => monitor(origin, { enabled: true, ...over })
+const on = (origin: string, over: Partial<Monitor> = {}) => monitor(origin, { enabled: true, check_every_seconds: 120, ...over })
 
 function list(monitors: Monitor[], over: Partial<Monitors> = {}): Monitors {
   return { interval_seconds: 60, timeout_seconds: 5, paused: false, monitors, domains: [], ...over }
@@ -101,11 +102,20 @@ describe('MonitoringSection', () => {
     expect(c.getByRole('switch')).not.toBeChecked()
     expect(c.queryAllByRole('button')).toEqual([])
     expect(c.queryByText(/cert/i)).not.toBeInTheDocument()
-    // The header is the link alone, no interval; the domains are another section's.
-    expect(screen.queryByText(/checked every/)).not.toBeInTheDocument()
+    // The header is the link alone; the domains are another section's.
     expect(screen.queryByText(SENTENCE)).not.toBeInTheDocument()
     expect(screen.queryByText(/^Domain:/)).not.toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Open Availability' })).toHaveAttribute('href', '/projects/4/dashboards/8')
+  })
+
+  it('shows how often each monitor on is really checked, and nothing for one off or while paused', async () => {
+    show(list([on(A, { check_every_seconds: 600 }), on(B, { check_every_seconds: 600 }), monitor(C)]))
+    expect((await row(A)).getByText(', checked every 10 min')).toBeInTheDocument()
+    expect((await row(B)).getByText(', checked every 10 min')).toBeInTheDocument()
+    expect((await row(C)).queryByText(/checked every/)).not.toBeInTheDocument()
+    cleanup()
+    show(list([on(A, { check_every_seconds: 600 })], { paused: true }))
+    expect((await row(A)).queryByText(/checked every/)).not.toBeInTheDocument()
   })
 
   it('lists the rows in the order given, off rows muted and bare, on rows with their switch first', async () => {
@@ -488,7 +498,7 @@ describe('MonitoringSection', () => {
       const down = (await row(A)).getByText('Down')
       expect(down).toHaveClass('text-destructive')
       const p = line(down)
-      expect(p).toHaveTextContent(/^Down, no such host, 1 min ago$/)
+      expect(p).toHaveTextContent(/^Down, no such host, 1 min ago, checked every 2 min$/)
       expect(p.querySelector('[aria-hidden]')).toHaveClass('bg-destructive')
       expect(down.parentElement).toHaveClass('break-words')
     })

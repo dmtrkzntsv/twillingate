@@ -1,7 +1,8 @@
 // Package monitor runs a project's availability monitors, one per origin.
-// Every enabled monitor is checked once per interval, independently of the
-// others: its slot GETs the origin and writes the result to the project's event
-// log as a checks/uptime row. Once a day (and right
+// A project gets one availability check per interval, however many monitors it
+// has: its enabled monitors take turns, in origin order, so n of them are each
+// checked every n intervals. The turn's slot GETs the origin and writes the
+// result to the project's event log as a checks/uptime row. Once a day (and right
 // after a monitor is enabled) it reads each origin's certificate, and once a day
 // each main domain's registration expiry, shared by the project's origins on it;
 // it keeps them in the store and writes them as checks/cert and checks/domain
@@ -101,10 +102,11 @@ const (
 	finishTimeout = 5 * time.Second
 )
 
-// Runner schedules the checks. Each monitor has a fixed offset within the
-// interval, from its project and origin, so checks spread across it. A monitor
-// whose last check is still running skips its slot, and so does one that finds
-// no free worker: slots are never queued.
+// Runner schedules the checks. Each project has a fixed offset within the
+// interval, so checks spread across it, and each slot goes to one of its
+// enabled monitors in turn. A monitor whose last check is still running skips
+// its turn, and so does one that finds no free worker: slots are never queued.
+// The daily reads keep a slot per monitor, so a long rotation never delays them.
 type Runner struct {
 	st       Store
 	origins  Origins
@@ -178,7 +180,7 @@ type options struct {
 	now           func() time.Time
 }
 
-// New builds a Runner giving each monitor one check per interval, each check
+// New builds a Runner giving each project one check per interval, each check
 // (the availability request and the certificate read) given timeout (config's MONITOR_TIMEOUT,
 // below interval).
 func New(st Store, origins Origins, log EventLog, interval, timeout time.Duration, logger *slog.Logger) *Runner {
@@ -242,8 +244,9 @@ func (r *Runner) Run(ctx context.Context) {
 }
 
 // tick writes the rows finished since the last tick in one batch, then reloads
-// the enabled monitors, starts each with a manual check pending, and serves each
-// monitor whose slot falls in (prev, now].
+// the enabled monitors, starts each with a manual check pending, starts the
+// daily reads of each monitor whose slot falls in (prev, now], and checks the
+// monitor whose turn it is in each project whose slot does.
 func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 	r.flush(ctx)
 	// Taken before the list: a check that finishes while the list is read
@@ -274,7 +277,15 @@ func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 	for _, m := range ms {
 		if due(prev, now, r.interval, offset(m.ProjectID, m.Origin, r.interval)) {
 			r.startReads(ctx, m)
-			r.startSlot(ctx, m)
+		}
+	}
+	// The list is ordered by project, then origin.
+	for start, end := 0, 0; start < len(ms); start = end {
+		for end < len(ms) && ms[end].ProjectID == ms[start].ProjectID {
+			end++
+		}
+		if due(prev, now, r.interval, offset(ms[start].ProjectID, "", r.interval)) {
+			r.startSlot(ctx, turnOf(ms[start:end], now, r.interval))
 		}
 	}
 }
@@ -574,7 +585,8 @@ func (r *Runner) inflight() int {
 	return len(r.slots) + len(r.manuals) + len(r.reads)
 }
 
-// offset is a monitor's fixed place within the interval, in whole ticks.
+// offset is a fixed place within the interval, in whole ticks: a monitor's for
+// its daily reads, a project's (no origin) for its availability check.
 func offset(projectID int64, origin string, interval time.Duration) time.Duration {
 	h := fnv.New64a()
 	h.Write([]byte(strconv.FormatInt(projectID, 10) + "|" + origin))
@@ -585,13 +597,29 @@ func offset(projectID int64, origin string, interval time.Duration) time.Duratio
 // due reports whether a slot (a time ≡ off modulo interval, counted from
 // the Unix epoch) falls in (prev, now].
 func due(prev, now time.Time, interval, off time.Duration) bool {
-	n, iv := now.UnixNano()-int64(off), int64(interval)
+	return slotAt(now, interval, off)*int64(interval)+int64(off) > prev.UnixNano()
+}
+
+// slotAt numbers the latest slot at or before t, counted from the Unix epoch.
+func slotAt(t time.Time, interval, off time.Duration) int64 {
+	n, iv := t.UnixNano()-int64(off), int64(interval)
 	k := n / iv
 	if n < 0 && n%iv != 0 {
 		k--
 	}
-	slot := k*iv + int64(off)
-	return slot > prev.UnixNano()
+	return k
+}
+
+// turnOf is the monitor of one project whose turn it is at now, from the
+// project's monitors in origin order. It is worked out from the clock, so a
+// restart keeps the rotation; adding or removing a monitor reshuffles it once.
+func turnOf(ms []store.Monitor, now time.Time, interval time.Duration) store.Monitor {
+	n := int64(len(ms))
+	i := slotAt(now, interval, offset(ms[0].ProjectID, "", interval)) % n
+	if i < 0 {
+		i += n
+	}
+	return ms[i]
 }
 
 // runSlot is one slot's check: the availability of its monitor.

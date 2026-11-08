@@ -294,8 +294,8 @@ func TestSchedulerSpreadsAndSkipsOverlap(t *testing.T) {
 		if d := got[1].Sub(got[0]); d != interval {
 			t.Errorf("monitor %d: %v between checks, want %v", id, d, interval)
 		}
-		if off := got[0].Sub(t0) % interval; off != offset(id, "https://x.example", interval) {
-			t.Errorf("monitor %d at offset %v, want %v", id, off, offset(id, "https://x.example", interval))
+		if off := got[0].Sub(t0) % interval; off != offset(id, "", interval) {
+			t.Errorf("monitor %d at offset %v, want %v", id, off, offset(id, "", interval))
 		}
 		seconds[got[0].Second()] = true
 	}
@@ -1208,24 +1208,87 @@ func TestOneMonitorIsCheckedEveryInterval(t *testing.T) {
 	}
 }
 
-// Three monitors of one project are each checked every interval.
-func TestEveryMonitorOfAProjectIsCheckedEveryInterval(t *testing.T) {
+// A project's monitors take turns, in origin order, one per interval.
+func TestAProjectsMonitorsTakeTurns(t *testing.T) {
 	st := &fakeStore{monitors: []store.Monitor{on(1, originA), on(1, originB), on(1, originC)}}
 	r, c := slotRunner(st, time.Minute)
 	checks := recordJob(r)
-	for range 3 {
+	var got []string
+	for range 6 {
 		c.next(t, r)
+		all := checks(1)
+		got = append(got, all[len(all)-1])
 	}
-	got := checks(1)
-	slices.Sort(got)
-	want := []string{originA, originA, originA, originB, originB, originB, originC, originC, originC}
-	if !slices.Equal(got, want) {
-		t.Errorf("checks = %v, want each origin three times", got)
+	for i, origin := range got[:3] {
+		if got[i+3] != origin {
+			t.Errorf("turns = %v, want a repeating cycle of three", got)
+			break
+		}
+	}
+	sorted := slices.Clone(got[:3])
+	slices.Sort(sorted)
+	if want := []string{originA, originB, originC}; !slices.Equal(sorted, want) {
+		t.Errorf("one round = %v, want each of %v once", got[:3], want)
+	}
+	if all := checks(1); len(all) != 6 {
+		t.Errorf("%d checks in 6 intervals, want 6", len(all))
 	}
 }
 
-// Every monitor writes a row per interval: rows grow with the monitors.
-func TestRowsPerIntervalGrowWithMonitors(t *testing.T) {
+// Each project has its own turn: one project's monitors do not slow another's.
+func TestEachProjectHasItsOwnTurn(t *testing.T) {
+	st := &fakeStore{monitors: []store.Monitor{on(1, originA), on(1, originB), on(2, originA)}}
+	r, c := slotRunner(st, time.Minute)
+	checks := recordJob(r)
+	for range 4 {
+		c.next(t, r)
+	}
+	if n := len(checks(1)); n != 4 {
+		t.Errorf("project 1: %d checks in 4 intervals, want 4", n)
+	}
+	if got := checks(2); !slices.Equal(got, []string{originA, originA, originA, originA}) {
+		t.Errorf("project 2: checks = %v, want its one monitor every interval", got)
+	}
+}
+
+// turnOf never indexes out of the list, whatever the clock says: a host with
+// no battery clock can start at the epoch, and a slot before it is negative.
+func TestTurnOfAClockBeforeTheEpoch(t *testing.T) {
+	ms := []store.Monitor{on(1, originA), on(1, originB), on(1, originC)}
+	for _, at := range []time.Time{time.Unix(0, 0), time.Unix(-1, 0), time.Unix(-7200, 0)} {
+		got := turnOf(ms, at, time.Minute)
+		if !slices.ContainsFunc(ms, func(m store.Monitor) bool { return m.Origin == got.Origin }) {
+			t.Errorf("turnOf at %v = %q", at, got.Origin)
+		}
+	}
+}
+
+// The daily reads follow each monitor's own slot, not the rotation: a project
+// with many sites still reads each certificate on time.
+func TestReadsDoNotWaitForATurn(t *testing.T) {
+	st := &fakeStore{monitors: []store.Monitor{on(1, originA), on(1, originB), on(1, originC)}}
+	c := newSlotClock(time.Minute)
+	r := newRunner(st, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{now: c.now})
+	r.job = func(context.Context, store.Monitor) []store.Event { return nil }
+	r.readDomain = func(context.Context, int64, string, time.Time) []store.Event { return nil }
+	var mu sync.Mutex
+	read := map[string]bool{}
+	r.readCert = func(_ context.Context, m store.Monitor, _ time.Time) []store.Event {
+		mu.Lock()
+		defer mu.Unlock()
+		read[m.Origin] = true
+		return nil
+	}
+	c.next(t, r) // one interval: one availability check, three certificates
+	mu.Lock()
+	defer mu.Unlock()
+	if len(read) != 3 {
+		t.Errorf("certificates read in one interval: %v, want all three", read)
+	}
+}
+
+// The rows of an interval do not grow with the monitors: one per project.
+func TestRowsPerIntervalDoNotGrowWithMonitors(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
 	defer srv.Close()
 	u, _ := url.Parse(srv.URL)
@@ -1240,13 +1303,13 @@ func TestRowsPerIntervalGrowWithMonitors(t *testing.T) {
 	lg := &fakeLog{}
 	c := newSlotClock(time.Minute)
 	r := noReads(newRunner(st, allowAll{}, lg, time.Minute, quietLogger(), options{resolver: resolver, allowLoopback: true, now: c.now}))
-	for range 2 {
+	for range 10 {
 		c.next(t, r)
 	}
 	tickOnce(t, r, c.now())
 	rows := lg.all()
 	if len(rows) != 10 {
-		t.Fatalf("%d rows in 2 intervals of 5 monitors, want 10", len(rows))
+		t.Fatalf("%d rows in 10 intervals of 5 monitors, want 10", len(rows))
 	}
 	seen := map[string]int{}
 	for _, e := range rows {
@@ -1262,22 +1325,22 @@ func TestRowsPerIntervalGrowWithMonitors(t *testing.T) {
 	}
 }
 
+// A monitor switched off leaves the rotation, so the others come round sooner.
 func TestDisabledMonitorIsNotChecked(t *testing.T) {
 	st := &fakeStore{monitors: []store.Monitor{on(1, originA), on(1, originB)}}
 	r, c := slotRunner(st, time.Minute)
 	checks := recordJob(r)
 	c.next(t, r)
+	before := len(checks(1))
 	st.setEnabled(on(1, originA))
 	c.next(t, r)
 	c.next(t, r)
-	got := checks(1)
-	slices.Sort(got)
-	if want := []string{originA, originA, originA, originB}; !slices.Equal(got, want) {
+	if got, want := checks(1)[before:], []string{originA, originA}; !slices.Equal(got, want) {
 		t.Errorf("checks = %v, want %v", got, want)
 	}
 }
 
-// A monitor whose check is still running skips its own slot; a hanging site
+// A monitor whose check is still running skips its own turn; a hanging site
 // delays no other monitor, in its project or another.
 func TestHangingSiteDelaysNoOtherMonitor(t *testing.T) {
 	st := &fakeStore{monitors: []store.Monitor{on(1, originA), on(1, originB), on(2, originA)}}
@@ -1294,24 +1357,31 @@ func TestHangingSiteDelaysNoOtherMonitor(t *testing.T) {
 		}
 		return nil
 	}
-	for range 3 {
+	for range 4 {
 		c.tick(r)
 		// Everything but the hanging check ends before the next slot.
-		waitIdle(t, r, 1)
+		deadline := time.Now().Add(5 * time.Second)
+		for r.inflight() > 1 {
+			if time.Now().After(deadline) {
+				t.Fatal("a check other than the hanging one did not finish")
+			}
+			time.Sleep(time.Millisecond)
+		}
 	}
 	close(release)
 	waitIdle(t, r, 0)
 	c.next(t, r)
+	c.next(t, r)
 	mu.Lock()
 	defer mu.Unlock()
 	if n := got[monitorKey{1, originA}]; n != 2 {
-		t.Errorf("the hanging monitor ran %d times, want 2 (one skipped slot run, the rest after it finished)", n)
+		t.Errorf("the hanging monitor ran %d times, want 2 (its second turn skipped while it hung)", n)
 	}
-	if n := got[monitorKey{1, originB}]; n != 4 {
-		t.Errorf("project 1's other monitor ran %d times, want 4", n)
+	if n := got[monitorKey{1, originB}]; n != 3 {
+		t.Errorf("project 1's other monitor ran %d times, want 3, every turn it had", n)
 	}
-	if n := got[monitorKey{2, originA}]; n != 4 {
-		t.Errorf("project 2's monitor ran %d times, want 4", n)
+	if n := got[monitorKey{2, originA}]; n != 6 {
+		t.Errorf("project 2's monitor ran %d times, want 6", n)
 	}
 }
 
@@ -1326,7 +1396,6 @@ func TestDailyReadsDoNotDelayAvailability(t *testing.T) {
 	st := &fakeStore{monitors: ms}
 	c := newSlotClock(time.Minute)
 	r := newRunner(st, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{now: c.now})
-	r.sem = make(chan struct{}, 64) // room for every monitor of the slot at once
 	checks := recordJob(r)
 	release := make(chan struct{})
 	var active, peak, reads atomic.Int32
@@ -1362,8 +1431,8 @@ func TestDailyReadsDoNotDelayAvailability(t *testing.T) {
 			time.Sleep(time.Millisecond)
 		}
 	}
-	if got := checks(1); len(got) != 90 {
-		t.Errorf("project 1's checks = %d, want every one of its 30 monitors in each of 3 slots", len(got))
+	if got := checks(1); len(got) != 3 {
+		t.Errorf("project 1's checks = %d, want one of its 30 monitors in each of 3 slots", len(got))
 	}
 	if got := checks(2); len(got) != 3 {
 		t.Errorf("project 2's checks = %v, want one per slot", got)
@@ -1509,7 +1578,7 @@ func TestDomainRetryWaitForgottenWithItsLastMonitor(t *testing.T) {
 	}
 }
 
-// A manual check does not move the slots: the monitor's next slot still comes.
+// A manual check does not move the rotation: the next turn still comes.
 func TestManualCheckLeavesTheSlotAlone(t *testing.T) {
 	st := &fakeStore{monitors: []store.Monitor{on(1, originA), on(1, originB), on(1, originC)}}
 	r, c := slotRunner(st, time.Hour)
@@ -1528,14 +1597,12 @@ func TestManualCheckLeavesTheSlotAlone(t *testing.T) {
 	if _, ok := manual.Load(originC); !ok {
 		t.Fatal("the manual check did not run")
 	}
-	if got := checks(1); len(got) != 3 {
-		t.Fatalf("slots = %v, want one each so far", got)
+	if got := checks(1); len(got) != 1 {
+		t.Fatalf("slots = %v, want the one so far", got)
 	}
 	c.next(t, r)
-	got := checks(1)
-	slices.Sort(got)
-	if want := []string{originA, originA, originB, originB, originC, originC}; !slices.Equal(got, want) {
-		t.Errorf("slots = %v, want %v", got, want)
+	if got := checks(1); len(got) != 2 || got[0] == got[1] {
+		t.Errorf("slots = %v, want two turns, on two monitors", got)
 	}
 }
 

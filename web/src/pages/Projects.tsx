@@ -46,7 +46,7 @@ export default function Projects() {
   const [created, setCreated] = useState<CreatedProject | null>(null)
 
   const projects = projectsData?.projects ?? []
-  const months = eventsByMonth(monthsData?.projects ?? [], monthsData?.quota_check_ratio ?? 1)
+  const months = eventsByMonth(monthsData?.projects ?? [])
   const active = projects.filter((p) => !p.archived)
   const activeIds = active.map((p) => p.project_id)
   const { order, busy, context } = useReorder(
@@ -117,7 +117,7 @@ export default function Projects() {
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
               {order.map((id) => byId.get(id)).filter((p) => p !== undefined).map((p) => (
                 <SortableProjectCard key={p.project_id} id={p.project_id} disabled={busy}>
-                  <ProjectCard project={p} stats={statsOf(p.project_id)} checkRatio={statsData?.quota_check_ratio ?? 1} keys={keysOf(p.project_id)} statsFailed={statsFailed} activity={activityOf(p.project_id)} />
+                  <ProjectCard project={p} stats={statsOf(p.project_id)} keys={keysOf(p.project_id)} statsFailed={statsFailed} activity={activityOf(p.project_id)} />
                 </SortableProjectCard>
               ))}
             </div>
