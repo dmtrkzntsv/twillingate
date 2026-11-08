@@ -35,8 +35,12 @@ type Form struct {
 	LastSubmittedAt *time.Time
 	ArchivedAt      *time.Time
 	SeenAt          *time.Time // how far the console has read; nil: never
-	Submissions     int        // active ones; filled by ListForms only
-	NewSubmissions  int        // active, received after SeenAt; filled by ListForms only
+	// Notify is the notify-on-submission setting: an approved, active
+	// form with it on adds a form_submission notification per submission
+	// (folded into bursts, FormBurstWindow). ApproveForm turns it on.
+	Notify         bool
+	Submissions    int // active ones; filled by ListForms only
+	NewSubmissions int // active, received after SeenAt; filled by ListForms only
 	// ArchivedSubmissions counts the archived ones, purged
 	// RETENTION_ARCHIVED_DAYS after archiving; filled by ListForms only.
 	ArchivedSubmissions int

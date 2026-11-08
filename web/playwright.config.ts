@@ -20,7 +20,9 @@ const BASE_URL = `http://127.0.0.1:${PORT}`
  * starting the dependent one, even under `fullyParallel` — so
  * arrange.spec.ts only runs once nothing else is touching the server;
  * `chromium` excludes it via `testIgnore` so it is not also run there.
- * `npm run e2e` still exercises both projects.
+ * `npm run e2e` still exercises every project. e2e/inbox.spec.ts runs
+ * Archive all, which empties every spec's inbox items, so its `inbox`
+ * project waits for `chromium` the same way.
  */
 export default defineConfig({
   testDir: './e2e',
@@ -35,8 +37,9 @@ export default defineConfig({
     screenshot: 'only-on-failure',
   },
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] }, testIgnore: 'e2e/arrange.spec.ts' },
+    { name: 'chromium', use: { ...devices['Desktop Chrome'] }, testIgnore: ['e2e/arrange.spec.ts', 'e2e/inbox.spec.ts'] },
     { name: 'arrange', use: { ...devices['Desktop Chrome'] }, testMatch: 'e2e/arrange.spec.ts', dependencies: ['chromium'] },
+    { name: 'inbox', use: { ...devices['Desktop Chrome'] }, testMatch: 'e2e/inbox.spec.ts', dependencies: ['chromium'] },
   ],
   webServer: {
     command: './e2e/serve.sh',

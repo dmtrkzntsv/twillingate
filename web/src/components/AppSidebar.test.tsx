@@ -415,3 +415,47 @@ describe('AppSidebar footer', () => {
   })
 
 })
+
+describe('AppSidebar inbox', () => {
+  function renderAt(path: string) {
+    renderWithProviders(
+      <MemoryRouter initialEntries={[path]}>
+        <SidebarProvider>
+          <AppSidebar dashboards={[]} currentId={0} />
+        </SidebarProvider>
+      </MemoryRouter>
+    )
+  }
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('links to the inbox above Shares, with the active count beside it, active on /inbox', async () => {
+    vi.spyOn(endpoints, 'listNotifications').mockResolvedValue({ notifications: [], active: 3 })
+    renderAt('/inbox')
+    const link = screen.getByRole('link', { name: 'Inbox' })
+    expect(link).toHaveAttribute('href', '/inbox')
+    expect(link).toHaveAttribute('data-active', 'true')
+    const footer = document.querySelector('[data-sidebar="footer"]') as HTMLElement
+    const names = within(footer).getAllByRole('link').map((a) => a.textContent)
+    expect(names.indexOf('Inbox')).toBe(names.indexOf('Shares') - 1)
+    expect(await screen.findByTitle('3 active notifications')).toHaveTextContent('3')
+  })
+
+  it('has a dot for the collapsed icon rail, shown by CSS only in that mode, when something is active', async () => {
+    vi.spyOn(endpoints, 'listNotifications').mockResolvedValue({ notifications: [], active: 3 })
+    renderAt('/')
+    await screen.findByTitle('3 active notifications')
+    const dot = screen.getByTestId('inbox-dot')
+    expect(dot).toHaveClass('hidden', 'group-data-[collapsible=icon]:block')
+  })
+
+  it('shows no count with nothing active', async () => {
+    vi.spyOn(endpoints, 'listNotifications').mockResolvedValue({ notifications: [], active: 0 })
+    renderAt('/')
+    await waitFor(() => expect(endpoints.listNotifications).toHaveBeenCalled())
+    expect(screen.queryByTitle(/active notification/)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('inbox-dot')).not.toBeInTheDocument()
+  })
+})

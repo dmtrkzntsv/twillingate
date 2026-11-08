@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/inbox"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/google/uuid"
 )
@@ -1888,5 +1889,308 @@ func TestManualReadWaitsForTheScheduledReadOfTheSameKey(t *testing.T) {
 	want := []string{"scheduled start", "scheduled end", "manual start", "manual end"}
 	if !slices.Equal(order, want) {
 		t.Errorf("order = %v, want %v", order, want)
+	}
+}
+
+// alertCalls records what the runner reports to the alerts.
+type alertCalls struct {
+	mu      sync.Mutex
+	uptimes []alertUptime
+	certs   []inbox.CertReading
+	domains []alertDomain
+}
+
+type alertUptime struct {
+	origin, reason, errText string
+	up                      bool
+	at                      time.Time
+}
+
+type alertDomain struct {
+	domain, errText, expiresAt string
+	ok                         bool
+}
+
+func (a *alertCalls) Uptime(_ context.Context, _ int64, origin string, up bool, reason, errText string, at time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.uptimes = append(a.uptimes, alertUptime{origin, reason, errText, up, at})
+}
+
+func (a *alertCalls) Cert(_ context.Context, _ int64, _ string, c inbox.CertReading, _ time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.certs = append(a.certs, c)
+}
+
+func (a *alertCalls) Domain(_ context.Context, _ int64, domain string, ok bool, errText, expiresAt string, _ time.Time) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.domains = append(a.domains, alertDomain{domain, errText, expiresAt, ok})
+}
+
+func TestAlertsUptime(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer site.Close()
+	broken := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "no", http.StatusInternalServerError)
+	}))
+	defer broken.Close()
+	for _, tc := range []struct {
+		name, origin string
+		up           bool
+	}{{"up", site.URL, true}, {"down", broken.URL, false}} {
+		m := store.Monitor{ProjectID: 3, Enabled: true, Origin: tc.origin}
+		st := &fakeStore{monitors: []store.Monitor{m}}
+		al := &alertCalls{}
+		r := redirectsRunner(st)
+		r.WithAlerts(al)
+		r.availability(context.Background(), m)
+		if len(al.uptimes) != 1 {
+			t.Fatalf("%s: %d Uptime calls, want 1", tc.name, len(al.uptimes))
+		}
+		got, last := al.uptimes[0], st.lasts(3, m.Origin)
+		if got.up != tc.up || len(last) != 1 || got.reason != last[0].Reason || got.errText != last[0].Error {
+			t.Errorf("%s: Uptime %+v, stored %+v", tc.name, got, last)
+		}
+		if !tc.up && got.reason == "" {
+			t.Errorf("%s: down with no reason", tc.name)
+		}
+	}
+}
+
+// A check that ends after its monitor was disabled, removed or its project
+// archived reports nothing: the notification could not be taken back.
+func TestAlertsSkippedWhenMonitorNotLive(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer site.Close()
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer tlsSrv.Close()
+	rd, _ := fakeRDAP(t, map[string]string{
+		"example.com": `{"events":[{"eventAction":"expiration","eventDate":"2027-03-14T04:00:00Z"}]}`,
+	})
+	al := &alertCalls{}
+	st := &fakeStore{} // the monitor was disabled while the checks ran
+	r := newRunner(st, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{
+		allowLoopback: true, bootstrapURL: rd.URL + "/dns.json", now: func() time.Time { return now },
+	})
+	r.WithAlerts(al)
+	r.availability(context.Background(), store.Monitor{ProjectID: 3, Enabled: true, Origin: site.URL})
+	r.cert(context.Background(), store.Monitor{ProjectID: 3, Enabled: true, Origin: tlsSrv.URL}, now)
+	r.domain(context.Background(), 3, "example.com", now)
+	if len(al.uptimes)+len(al.certs)+len(al.domains) != 0 {
+		t.Errorf("alerts after disable: %+v", al)
+	}
+	// Another project's monitor on the same domain does not keep it live.
+	st.monitors = []store.Monitor{{ProjectID: 4, Enabled: true, Origin: "https://example.com"}}
+	r.domain(context.Background(), 3, "example.com", now)
+	if len(al.domains) != 0 {
+		t.Errorf("domain alert for a project with no monitor on it: %+v", al.domains)
+	}
+}
+
+func TestAlertsNotCalledOnShutdown(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer site.Close()
+	al := &alertCalls{}
+	r := redirectsRunner(&fakeStore{})
+	r.WithAlerts(al)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	r.availability(ctx, store.Monitor{ProjectID: 3, Origin: site.URL})
+	if len(al.uptimes) != 0 {
+		t.Errorf("%d Uptime calls after shutdown", len(al.uptimes))
+	}
+}
+
+func TestAlertsCert(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+
+	// No certificate at all: nothing listens.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	closed := "https://" + ln.Addr().String()
+	ln.Close()
+	al := &alertCalls{}
+	r := redirectsRunner(&fakeStore{monitors: []store.Monitor{{ProjectID: 3, Enabled: true, Origin: closed}}})
+	r.WithAlerts(al)
+	r.cert(context.Background(), store.Monitor{ProjectID: 3, Origin: closed}, now)
+	if len(al.certs) != 1 || al.certs[0].Read || al.certs[0].Error == "" {
+		t.Errorf("no certificate: %+v", al.certs)
+	}
+
+	// A certificate the runner does not trust: read, not valid.
+	tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer tls.Close()
+	al = &alertCalls{}
+	r = redirectsRunner(&fakeStore{monitors: []store.Monitor{{ProjectID: 3, Enabled: true, Origin: tls.URL}}})
+	r.WithAlerts(al)
+	r.cert(context.Background(), store.Monitor{ProjectID: 3, Origin: tls.URL}, time.Now())
+	if len(al.certs) != 1 || !al.certs[0].Read || al.certs[0].Valid || al.certs[0].ExpiresAt == "" {
+		t.Errorf("invalid certificate: %+v", al.certs)
+	}
+
+	// An http origin has no certificate to report.
+	al = &alertCalls{}
+	r = redirectsRunner(&fakeStore{})
+	r.WithAlerts(al)
+	r.cert(context.Background(), store.Monitor{ProjectID: 3, Origin: "http://example.com"}, now)
+	if len(al.certs) != 0 {
+		t.Errorf("http origin: %+v", al.certs)
+	}
+}
+
+func TestAlertsDomain(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	rd, _ := fakeRDAP(t, map[string]string{
+		"example.com": `{"events":[{"eventAction":"expiration","eventDate":"2027-03-14T04:00:00Z"}]}`,
+	})
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "down", http.StatusServiceUnavailable)
+	}))
+	defer failing.Close()
+	newR := func(bootstrap string) (*Runner, *alertCalls) {
+		al := &alertCalls{}
+		st := &fakeStore{monitors: []store.Monitor{
+			{ProjectID: 3, Enabled: true, Origin: "https://example.com"},
+			{ProjectID: 3, Enabled: true, Origin: "http://127.0.0.1"},
+		}}
+		r := newRunner(st, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{
+			allowLoopback: true, bootstrapURL: bootstrap, now: func() time.Time { return now },
+		})
+		r.WithAlerts(al)
+		return r, al
+	}
+
+	r, al := newR(rd.URL + "/dns.json")
+	r.domain(context.Background(), 3, "example.com", now)
+	if len(al.domains) != 1 || !al.domains[0].ok || al.domains[0].expiresAt != "2027-03-14" || al.domains[0].domain != "example.com" {
+		t.Errorf("success: %+v", al.domains)
+	}
+
+	// An address has no RDAP: unknown, which is no failure.
+	r, al = newR(rd.URL + "/dns.json")
+	r.domain(context.Background(), 3, "127.0.0.1", now)
+	if len(al.domains) != 1 || !al.domains[0].ok || al.domains[0].errText != "" || al.domains[0].expiresAt != "" {
+		t.Errorf("unknown: %+v", al.domains)
+	}
+
+	// A failed lookup.
+	r, al = newR(failing.URL + "/dns.json")
+	r.domain(context.Background(), 3, "example.com", now)
+	if len(al.domains) != 1 || al.domains[0].ok || al.domains[0].errText == "" {
+		t.Errorf("failure: %+v", al.domains)
+	}
+}
+
+func TestCertDueHourlyWhenInvalid(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	at := func(d time.Duration) string { return now.Add(-d).Format(time.RFC3339) }
+	invalid := func(d time.Duration) store.Monitor {
+		return store.Monitor{CertExpiresAt: "2027-03-14T00:00:00Z", CertValid: false, CertCheckedAt: at(d)}
+	}
+	valid := func(d time.Duration) store.Monitor {
+		return store.Monitor{CertExpiresAt: "2027-03-14T00:00:00Z", CertValid: true, CertCheckedAt: at(d)}
+	}
+	for _, tc := range []struct {
+		name string
+		m    store.Monitor
+		want bool
+	}{
+		{"invalid, 30m", invalid(30 * time.Minute), false},
+		{"invalid, 1h", invalid(time.Hour), true},
+		{"valid, 1h", valid(time.Hour), false},
+		{"valid, 24h", valid(24 * time.Hour), true},
+		{"never read", store.Monitor{}, true},
+		{"no expiry, 1h", store.Monitor{CertCheckedAt: at(time.Hour)}, false},
+	} {
+		if got := certDue(tc.m, now); got != tc.want {
+			t.Errorf("%s: certDue = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// notifyStore is an in-memory inbox.TrackerStore that keeps what the
+// Tracker sends.
+type notifyStore struct {
+	mu     sync.Mutex
+	states map[string]store.NotifyState
+	sent   []store.NewNotification
+}
+
+func (n *notifyStore) ListNotifyStates(context.Context) ([]store.NotifyState, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]store.NotifyState, 0, len(n.states))
+	for _, s := range n.states {
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func (n *notifyStore) PutNotifyState(_ context.Context, s store.NotifyState, nn *store.NewNotification) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.states == nil {
+		n.states = map[string]store.NotifyState{}
+	}
+	n.states[fmt.Sprint(s.ProjectID, s.Kind, s.Subject)] = s
+	if nn != nil {
+		n.sent = append(n.sent, *nn)
+	}
+	return nil
+}
+
+func (n *notifyStore) DeleteNotifyState(_ context.Context, projectID int64, kind, subject string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.states, fmt.Sprint(projectID, kind, subject))
+	return nil
+}
+
+func (n *notifyStore) FlushFormBursts(context.Context, time.Time) (int, error) { return 0, nil }
+
+func (n *notifyStore) ListEnabledMonitors(context.Context) ([]store.Monitor, error) { return nil, nil }
+
+// A domain expiry read over RDAP, in the format the runner reports it,
+// reaches the real Tracker and warns.
+func TestDomainExpiryReachesTracker(t *testing.T) {
+	now := time.Date(2027, 3, 7, 10, 0, 0, 0, time.UTC) // 7 days before
+	rd, _ := fakeRDAP(t, map[string]string{
+		"example.com": `{"events":[{"eventAction":"expiration","eventDate":"2027-03-14T04:00:00Z"}]}`,
+	})
+	ns := &notifyStore{}
+	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 3, Enabled: true, Origin: "https://example.com"}}}
+	r := newRunner(st, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{
+		allowLoopback: true, bootstrapURL: rd.URL + "/dns.json", now: func() time.Time { return now },
+	})
+	r.WithAlerts(inbox.NewTracker(ns, 4*time.Hour, quietLogger()))
+	r.domain(context.Background(), 3, "example.com", now)
+	if len(ns.sent) != 1 || ns.sent[0].Type != store.NotifyDomainExpiring || ns.sent[0].Fields["days"] != "7" {
+		t.Fatalf("sent %+v, want one domain_expiring at 7 days", ns.sent)
+	}
+}
+
+// The alerts get the time a check ended, not when it started, so of two
+// overlapping checks of one origin the later answer is the later one.
+func TestAlertsUptimeAtCompletion(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer site.Close()
+	start := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	var calls atomic.Int32
+	clock := func() time.Time { return start.Add(time.Duration(calls.Add(1)-1) * time.Minute) }
+	al := &alertCalls{}
+	m := store.Monitor{ProjectID: 3, Enabled: true, Origin: site.URL}
+	r := newRunner(&fakeStore{monitors: []store.Monitor{m}}, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{allowLoopback: true, now: clock})
+	r.WithAlerts(al)
+	ev := r.availability(context.Background(), m)
+	if !ev.TS.Equal(start) {
+		t.Errorf("row at %v, want the start %v", ev.TS, start)
+	}
+	if len(al.uptimes) != 1 || !al.uptimes[0].at.After(start) {
+		t.Errorf("Uptime %+v, want one after the start %v", al.uptimes, start)
 	}
 }

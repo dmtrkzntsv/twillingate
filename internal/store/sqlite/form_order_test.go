@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -66,6 +67,10 @@ func TestMigration046KeepsTheListOrder(t *testing.T) {
 	if got := queryStrings(t, db, `SELECT name || ':' || sort_key FROM forms WHERE project_id=2`); !reflect.DeepEqual(got, []string{"other:a0"}) {
 		t.Errorf("project 2 = %q", got)
 	}
+	// ListForms reads columns later migrations add.
+	if err := db.migrateThrough(ctx, math.MaxInt); err != nil {
+		t.Fatal(err)
+	}
 	if got := activeFormNames(t, db); !reflect.DeepEqual(got, []string{"beta", "yank", "alpha", "zeta"}) {
 		t.Errorf("ListForms = %q", got)
 	}
@@ -74,7 +79,7 @@ func TestMigration046KeepsTheListOrder(t *testing.T) {
 // A draft a first submission creates comes after every form of its
 // project, archived ones included.
 func TestWriteSubmissionAppendsTheDraftLast(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	if _, err := db.CreateForm(ctx, newApprovedForm("first"), formAudit); err != nil {
 		t.Fatal(err)
@@ -105,7 +110,7 @@ func TestWriteSubmissionAppendsTheDraftLast(t *testing.T) {
 }
 
 func TestCreateFormStoresAndAudits(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	in := newApprovedForm("signup")
 	in.ReturnURL = "https://example.com/thanks"
@@ -139,7 +144,7 @@ func TestCreateFormStoresAndAudits(t *testing.T) {
 }
 
 func TestMoveFormWritesOneKey(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	for _, name := range []string{"a", "b", "c", "d"} {
 		if _, err := db.CreateForm(ctx, newApprovedForm(name), formAudit); err != nil {
@@ -205,7 +210,7 @@ func TestMoveFormWritesOneKey(t *testing.T) {
 // once) leave none between them: every form then gets a fresh key, in the
 // new order.
 func TestMoveFormRespreadsEqualNeighbours(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	for _, name := range []string{"a", "b", "c"} {
 		if _, err := db.CreateForm(ctx, newApprovedForm(name), formAudit); err != nil {
@@ -230,7 +235,7 @@ func TestMoveFormRespreadsEqualNeighbours(t *testing.T) {
 // A submission to an existing form never reads the order, so a key that
 // sortkey cannot step past elsewhere in the project refuses only new drafts.
 func TestWriteSubmissionToAnExistingFormIgnoresABadKey(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s1", map[string]string{"email": "a@x.io"}))
 	if _, err := db.CreateForm(ctx, newApprovedForm("odd"), formAudit); err != nil {

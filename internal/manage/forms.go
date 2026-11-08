@@ -30,6 +30,9 @@ type FormSpec struct {
 	// AddFields are field names to record before any submission sends
 	// them; an approved form also keeps them, after ExpectedFields.
 	AddFields []string
+	// Notify turns submission notifications on or off; nil keeps the
+	// stored setting (approval turns it on).
+	Notify *bool
 }
 
 func formSubject(projectID int64, name string) string {
@@ -76,7 +79,8 @@ type NewForm struct {
 }
 
 // CreateForm creates an approved form before anything is sent to it:
-// approved_at now, no draft_until, fields and expected_fields both the
+// approved_at now, no draft_until, notify on (as an approval sets it),
+// fields and expected_fields both the
 // expected fields (deduplicated, in the order given; fields sorted). It
 // comes last in the project's order. The name follows ingest's rule
 // (wire.ValidFormName); one the project already has, on an archived form
@@ -103,7 +107,7 @@ func (o *Ops) CreateForm(ctx context.Context, actor string, projectID int64, in 
 	fields := slices.Sorted(slices.Values(expected))
 	return o.St.CreateForm(ctx, store.Form{ProjectID: projectID, Name: in.Name, Status: store.FormApproved,
 		Purpose: in.Purpose, ReturnURL: in.ReturnURL, Fields: fields, ExpectedFields: expected,
-		CreatedAt: now, ApprovedAt: &now}, store.AuditEntry{
+		CreatedAt: now, ApprovedAt: &now, Notify: true}, store.AuditEntry{
 		Actor: actor, Action: "form.create", Subject: formSubject(projectID, in.Name),
 		Detail: "expected: " + strings.Join(expected, ", ")})
 }
@@ -177,8 +181,9 @@ func (o *Ops) UpdateForm(ctx context.Context, actor string, projectID int64, nam
 	if err != nil {
 		return err
 	}
-	// Nil leaves the stored list alone, so an approval that lands between
-	// the read above and the write below is not overwritten.
+	// Nil leaves the stored list alone (as a nil spec.Notify leaves the
+	// notify setting), so an approval that lands between the read above
+	// and the write below is not overwritten.
 	f.ExpectedFields = nil
 	var changed []string
 	if spec.Purpose != nil {
@@ -210,6 +215,9 @@ func (o *Ops) UpdateForm(ctx context.Context, actor string, projectID int64, nam
 		f.ExpectedFields = exp
 		changed = append(changed, "expected_fields")
 	}
+	if spec.Notify != nil {
+		changed = append(changed, "notify_submissions")
+	}
 	var add []string
 	if len(spec.AddFields) > 0 {
 		if add, err = checkExpected(spec.AddFields); err != nil {
@@ -217,7 +225,7 @@ func (o *Ops) UpdateForm(ctx context.Context, actor string, projectID int64, nam
 		}
 		changed = append(changed, "added: "+strings.Join(add, ", "))
 	}
-	return o.St.UpdateForm(ctx, f, add, store.AuditEntry{
+	return o.St.UpdateForm(ctx, f, spec.Notify, add, store.AuditEntry{
 		Actor: actor, Action: "form.update", Subject: formSubject(projectID, name),
 		Detail: strings.Join(changed, ", ")})
 }

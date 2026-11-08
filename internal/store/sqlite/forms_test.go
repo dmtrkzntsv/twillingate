@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -28,6 +29,15 @@ func newSub(id string, fields map[string]string) store.NewSubmission {
 			Attributes: map[string]string{"form": "contact"},
 		},
 	}
+}
+
+// newFormsDB is a migrated database with projects 1 "site" and 2
+// "other": a form's notifications reference their project.
+func newFormsDB(t *testing.T) *DB {
+	t.Helper()
+	db := newTestDB(t)
+	execAll(t, db, `INSERT INTO projects (id, name, allowed_origins) VALUES (1, 'site', '[]'), (2, 'other', '[]')`)
+	return db
 }
 
 func countRows(t *testing.T, db *DB, q string, args ...any) int {
@@ -72,7 +82,7 @@ func approve(t *testing.T, db *DB, expected string) {
 }
 
 func TestWriteSubmissionFirstCreatesDraft(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	form, inserted, err := db.WriteSubmission(ctx, newSub("s1", map[string]string{"name": "Ann", "email": "a@x.io"}))
 	if err != nil || !inserted {
@@ -110,7 +120,7 @@ func TestWriteSubmissionFirstCreatesDraft(t *testing.T) {
 // TestWriteSubmissionStoresAttribution: the attribution is a JSON object
 // that leaves empty values out.
 func TestWriteSubmissionStoresAttribution(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	n := newSub("s1", map[string]string{"a": "1"})
 	n.Submission.Attribution = store.Attribution{Referrer: "google", UTMSource: "x", UTMCampaign: "oct"}
 	if _, _, err := db.WriteSubmission(context.Background(), n); err != nil {
@@ -126,7 +136,7 @@ func TestWriteSubmissionStoresAttribution(t *testing.T) {
 }
 
 func TestWriteSubmissionMergesFieldNames(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	if _, _, err := db.WriteSubmission(ctx, newSub("s1", map[string]string{"name": "Ann"})); err != nil {
 		t.Fatal(err)
@@ -151,7 +161,7 @@ func TestWriteSubmissionMergesFieldNames(t *testing.T) {
 }
 
 func TestWriteSubmissionDuplicateIDIsNoOp(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	if _, inserted, err := db.WriteSubmission(ctx, newSub("s1", map[string]string{"a": "1"})); err != nil || !inserted {
 		t.Fatalf("first: inserted=%v err=%v", inserted, err)
@@ -173,7 +183,7 @@ func TestWriteSubmissionDuplicateIDIsNoOp(t *testing.T) {
 }
 
 func TestWriteSubmissionApprovedKeepsExpectedAndQueuesItsEvent(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	if _, _, err := db.WriteSubmission(ctx, newSub("s0", map[string]string{"name": "Ann"})); err != nil {
 		t.Fatal(err)
@@ -227,7 +237,7 @@ func TestWriteSubmissionApprovedKeepsExpectedAndQueuesItsEvent(t *testing.T) {
 // TestWriteSubmissionRetryAfterApprovalWritesNoEvent covers a JSON retry
 // whose first attempt was stored as a draft: one row, still no event.
 func TestWriteSubmissionRetryAfterApprovalWritesNoEvent(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	n := newSub("s1", map[string]string{"name": "Ann"})
 	if _, _, err := db.WriteSubmission(ctx, n); err != nil {
@@ -251,7 +261,7 @@ func TestWriteSubmissionRefusedWhenClosed(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			db := newTestDB(t)
+			db := newFormsDB(t)
 			ctx := context.Background()
 			if _, _, err := db.WriteSubmission(ctx, newSub("s0", map[string]string{"a": "1"})); err != nil {
 				t.Fatal(err)
@@ -291,7 +301,7 @@ func TestWriteSubmissionRefusedWhenClosed(t *testing.T) {
 // is never refused (its draft_until is in the future), but a refusal must
 // not leave a half-created row either way: the transaction rolls back.
 func TestWriteSubmissionDraftUntilInPastRefusesAndRollsBack(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	n := newSub("s1", map[string]string{"a": "1"})
 	n.DraftUntil = formsNow.Add(-time.Hour)
 	_, _, err := db.WriteSubmission(context.Background(), n)
@@ -304,7 +314,7 @@ func TestWriteSubmissionDraftUntilInPastRefusesAndRollsBack(t *testing.T) {
 }
 
 func TestWriteSubmissionIsPerProject(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	other := newSub("s1", map[string]string{"a": "1"})
 	other.Submission.ProjectID = 2
@@ -342,7 +352,7 @@ func attributeAll(t *testing.T, db *DB, found func(store.Event) store.Event) {
 // AttributeSubmission fills the outbox: the event reaches the files from
 // there (raw-first PR 6).
 func TestAttributeSubmissionFillsTheOutbox(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s0", map[string]string{"name": "Ann"}))
 	approve(t, db, `["name"]`)
@@ -366,7 +376,7 @@ func TestAttributeSubmissionFillsTheOutbox(t *testing.T) {
 // form's gets written by AttributeSubmission, with the attribution, and
 // only once.
 func TestSubmissionWaitsForItsAttribution(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	if _, _, err := db.WriteSubmission(ctx, newSub("s0", map[string]string{"name": "Ann"})); err != nil {
 		t.Fatal(err)
@@ -410,7 +420,7 @@ func TestSubmissionWaitsForItsAttribution(t *testing.T) {
 // The connection hash ingest computed waits with the submission; a
 // submission without one reads back "".
 func TestPendingSubmissionKeepsItsConnection(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	n := newSub("s0", nil)
 	n.ConnectionID = "h1"
@@ -434,7 +444,7 @@ func TestPendingSubmissionKeepsItsConnection(t *testing.T) {
 // with what else it read, so the job can clear it; it counts toward the
 // limit like any other row, and is no error of the call.
 func TestPendingSubmissionsReturnsAnUnreadableEventWithItsError(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	for _, id := range []string{"s0", "s1", "s2"} {
 		n := newSub(id, nil)
@@ -485,7 +495,7 @@ func TestPendingSubmissionsReturnsAnUnreadableEventWithItsError(t *testing.T) {
 // Erasure before the job: the submission is gone, and its event is never
 // written.
 func TestAttributeSubmissionAfterDeleteWritesNothing(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	if _, _, err := db.WriteSubmission(ctx, newSub("s0", nil)); err != nil {
 		t.Fatal(err)
@@ -508,7 +518,7 @@ func TestAttributeSubmissionAfterDeleteWritesNothing(t *testing.T) {
 // (unlogged_event) until the job has written it to the event files;
 // MarkLogged takes it out. A draft's submission never reaches it.
 func TestAttributedEventWaitsUnloggedUntilMarked(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	if _, _, err := db.WriteSubmission(ctx, newSub("s0", nil)); err != nil {
 		t.Fatal(err)
@@ -557,7 +567,7 @@ func TestAttributedEventWaitsUnloggedUntilMarked(t *testing.T) {
 // Archiving a submission leaves its unlogged event queued: the conversion
 // happened, and the event holds no field.
 func TestArchivedSubmissionKeepsItsOutbox(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	if _, _, err := db.WriteSubmission(ctx, newSub("s0", nil)); err != nil {
 		t.Fatal(err)
@@ -581,7 +591,7 @@ func TestArchivedSubmissionKeepsItsOutbox(t *testing.T) {
 // An outbox row that does not read comes back with its error and a zero
 // event, so the job can mark it rather than meet it every minute.
 func TestUnloggedEventsReturnsAnUnreadableRowWithItsError(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	if _, _, err := db.WriteSubmission(ctx, newSub("s0", nil)); err != nil {
 		t.Fatal(err)
@@ -614,7 +624,7 @@ func TestUnloggedEventsReturnsAnUnreadableRowWithItsError(t *testing.T) {
 
 // A row as migration 041 finds it (pending_event NULL) is attributed.
 func TestSubmissionsFromBeforeTheMigrationAreNotPending(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	if _, _, err := db.WriteSubmission(context.Background(), newSub("old", nil)); err != nil {
 		t.Fatal(err)
 	}
@@ -625,7 +635,7 @@ func TestSubmissionsFromBeforeTheMigrationAreNotPending(t *testing.T) {
 }
 
 func TestWriteSubmissionNilFieldsStoreAnObject(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	if _, _, err := db.WriteSubmission(context.Background(), newSub("s1", nil)); err != nil {
 		t.Fatal(err)
 	}
@@ -645,7 +655,7 @@ func TestWriteSubmissionNilFieldsStoreAnObject(t *testing.T) {
 // attributes, id, project and ts the caller put on the event, the one
 // written is the submission's $form_submit.
 func TestWriteSubmissionEventShapeIsTheStores(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	if _, _, err := db.WriteSubmission(ctx, newSub("s0", map[string]string{"name": "Ann"})); err != nil {
 		t.Fatal(err)
@@ -674,7 +684,7 @@ func TestWriteSubmissionEventShapeIsTheStores(t *testing.T) {
 // TestWriteSubmissionRetryOfStoredIDSucceedsAfterClose: the retry of an
 // id already stored is a success, not a refusal, once the form has closed.
 func TestWriteSubmissionRetryOfStoredIDSucceedsAfterClose(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	n := newSub("s1", map[string]string{"a": "1"})
 	if _, _, err := db.WriteSubmission(ctx, n); err != nil {
@@ -710,7 +720,7 @@ func mustWrite(t *testing.T, db *DB, n store.NewSubmission) {
 }
 
 func TestApproveForm(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s1", map[string]string{"name": "Ann", "email": "a@x.io"}))
 
@@ -743,14 +753,14 @@ func TestApproveForm(t *testing.T) {
 }
 
 func TestGetFormUnknown(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	if _, err := db.GetForm(context.Background(), 1, "nope"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("err = %v", err)
 	}
 }
 
 func TestListFormsOrderCountsAndArchivedSplit(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	for _, name := range []string{"zeta", "alpha", "mid", "gone"} {
 		n := newSub("s-"+name, map[string]string{"k": "v"})
@@ -805,7 +815,7 @@ func TestListFormsOrderCountsAndArchivedSplit(t *testing.T) {
 }
 
 func TestUpdateFormWritesAsGiven(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s1", map[string]string{"email": "a@x.io"}))
 	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
@@ -817,7 +827,7 @@ func TestUpdateFormWritesAsGiven(t *testing.T) {
 	}
 	closes := formsNow.Add(48 * time.Hour)
 	f.Purpose, f.ReturnURL, f.ClosesAt, f.ExpectedFields = "leads", "https://example.com/thanks", &closes, []string{"email", "name"}
-	if err := db.UpdateForm(ctx, f, nil, store.AuditEntry{Actor: "agent", Action: "form.update", Subject: "form/1/contact"}); err != nil {
+	if err := db.UpdateForm(ctx, f, nil, nil, store.AuditEntry{Actor: "agent", Action: "form.update", Subject: "form/1/contact"}); err != nil {
 		t.Fatal(err)
 	}
 	g, err := db.GetForm(ctx, 1, "contact")
@@ -834,7 +844,7 @@ func TestUpdateFormWritesAsGiven(t *testing.T) {
 	}
 	// nil clears closes_at.
 	g.ClosesAt = nil
-	if err := db.UpdateForm(ctx, g, nil, formAudit); err != nil {
+	if err := db.UpdateForm(ctx, g, nil, nil, formAudit); err != nil {
 		t.Fatal(err)
 	}
 	if h, _ := db.GetForm(ctx, 1, "contact"); h.ClosesAt != nil {
@@ -844,13 +854,13 @@ func TestUpdateFormWritesAsGiven(t *testing.T) {
 		t.Fatalf("%d update audit rows", n)
 	}
 	g.Name = "nope"
-	if err := db.UpdateForm(ctx, g, nil, formAudit); !errors.Is(err, store.ErrNotFound) {
+	if err := db.UpdateForm(ctx, g, nil, nil, formAudit); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("unknown update = %v", err)
 	}
 }
 
 func TestUpdateFormNilExpectedKeepsList(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s1", map[string]string{"email": "a@x.io"}))
 	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
@@ -858,7 +868,7 @@ func TestUpdateFormNilExpectedKeepsList(t *testing.T) {
 	}
 	// A caller holding a stale draft read: no expected list.
 	stale := store.Form{ProjectID: 1, Name: "contact", Purpose: "leads"}
-	if err := db.UpdateForm(ctx, stale, nil, formAudit); err != nil {
+	if err := db.UpdateForm(ctx, stale, nil, nil, formAudit); err != nil {
 		t.Fatal(err)
 	}
 	g, err := db.GetForm(ctx, 1, "contact")
@@ -871,7 +881,7 @@ func TestUpdateFormNilExpectedKeepsList(t *testing.T) {
 }
 
 func TestUpdateFormAddsFields(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s1", map[string]string{"email": "a@x.io"}))
 	draft, err := db.GetForm(ctx, 1, "contact")
@@ -879,7 +889,7 @@ func TestUpdateFormAddsFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A draft records the names; it keeps everything anyway.
-	if err := db.UpdateForm(ctx, draft, []string{"name", "email"}, formAudit); err != nil {
+	if err := db.UpdateForm(ctx, draft, nil, []string{"name", "email"}, formAudit); err != nil {
 		t.Fatal(err)
 	}
 	if g, _ := db.GetForm(ctx, 1, "contact"); !reflect.DeepEqual(g.Fields, []string{"email", "name"}) || g.ExpectedFields != nil {
@@ -899,7 +909,7 @@ func TestUpdateFormAddsFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.ExpectedFields = []string{"name"}
-	if err := db.UpdateForm(ctx, f, []string{"phone", "name", "company"}, formAudit); err != nil {
+	if err := db.UpdateForm(ctx, f, nil, []string{"phone", "name", "company"}, formAudit); err != nil {
 		t.Fatal(err)
 	}
 	g, err := db.GetForm(ctx, 1, "contact")
@@ -918,7 +928,7 @@ func TestUpdateFormAddsFields(t *testing.T) {
 }
 
 func TestSetFormArchived(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s1", map[string]string{"email": "a@x.io"}))
 	fresh := formsNow.Add(30 * 24 * time.Hour)
@@ -973,7 +983,7 @@ func TestSetFormArchived(t *testing.T) {
 }
 
 func TestExpireDrafts(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mk := func(name string, created time.Time, draftDays int) {
 		n := newSub("s-"+name, map[string]string{"k": "v"})
@@ -1026,7 +1036,7 @@ func TestExpireDrafts(t *testing.T) {
 }
 
 func TestSetSubmissionsArchived(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	mustWrite(t, db, newSub("s0", map[string]string{"email": "draft@x.io"})) // draft: no event
 	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
@@ -1129,7 +1139,7 @@ func TestSetSubmissionsArchived(t *testing.T) {
 }
 
 func TestFindSubmissions(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	add := func(form, id string, at time.Time, fields map[string]string) {
 		n := newSub(id, fields)
@@ -1220,7 +1230,7 @@ func TestFindSubmissions(t *testing.T) {
 }
 
 func TestGetSubmission(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	n := newSub("s1", map[string]string{"email": "a@x.io", "note": "hi"})
 	n.Submission.Attribution = store.Attribution{Referrer: "news.example", UTMSource: "nl"}
@@ -1264,7 +1274,7 @@ func submitAt(t *testing.T, db *DB, id string, at time.Time) {
 }
 
 func TestListFormsNewSubmissions(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	t0 := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
 	submitAt(t, db, "s1", t0)
@@ -1286,7 +1296,7 @@ func TestListFormsNewSubmissions(t *testing.T) {
 }
 
 func TestMarkFormSeenNeverMovesBack(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	ctx := context.Background()
 	t0 := time.Date(2026, 10, 8, 10, 0, 0, 0, time.UTC)
 	submitAt(t, db, "s1", t0)
@@ -1306,7 +1316,7 @@ func TestMarkFormSeenNeverMovesBack(t *testing.T) {
 }
 
 func TestMarkFormSeenOnClosedDB(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	if err := db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -1316,9 +1326,322 @@ func TestMarkFormSeenOnClosedDB(t *testing.T) {
 }
 
 func TestMarkFormSeenUnknownForm(t *testing.T) {
-	db := newTestDB(t)
+	db := newFormsDB(t)
 	err := db.MarkFormSeen(context.Background(), 1, "nope", time.Now())
 	if !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+// notificationsOf lists every notification of type typ, oldest first.
+func notificationsOf(t *testing.T, db *DB, typ string) []store.Notification {
+	t.Helper()
+	all, err := db.ListNotifications(context.Background(), store.NotificationFilter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out []store.Notification
+	for i := len(all) - 1; i >= 0; i-- {
+		if all[i].Type == typ {
+			out = append(out, all[i])
+		}
+	}
+	return out
+}
+
+// subAt is newSub received at at.
+func subAt(id string, at time.Time) store.NewSubmission {
+	n := newSub(id, map[string]string{"email": id + "@x.io"})
+	n.Submission.ReceivedAt, n.Event.TS, n.Event.ReceivedAt = at, at, at
+	return n
+}
+
+func TestWriteSubmissionDraftCreatedNotification(t *testing.T) {
+	db := newFormsDB(t)
+	mustWrite(t, db, subAt("s1", formsNow))
+	mustWrite(t, db, subAt("s1", formsNow)) // a retry
+	mustWrite(t, db, subAt("s2", formsNow.Add(time.Minute)))
+	ns := notificationsOf(t, db, store.NotifyFormDraftCreated)
+	if len(ns) != 1 {
+		t.Fatalf("draft created = %+v, want one", ns)
+	}
+	if n := ns[0]; n.ProjectID != 1 || n.Subject != "contact" || n.Fields["form"] != "contact" ||
+		n.Fields["project"] != "site" || !n.CreatedAt.Equal(formsNow) {
+		t.Errorf("notification = %+v", n)
+	}
+	if ns := notificationsOf(t, db, store.NotifyFormSubmission); len(ns) != 0 {
+		t.Errorf("a draft's submissions notified: %+v", ns)
+	}
+}
+
+func TestSubmissionNotificationBurst(t *testing.T) {
+	db := newFormsDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, subAt("s0", formsNow.Add(-time.Hour)))
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow.Add(-time.Hour), formAudit); err != nil {
+		t.Fatal(err)
+	}
+	for i, id := range []string{"s1", "s2", "s3"} {
+		mustWrite(t, db, subAt(id, formsNow.Add(time.Duration(i)*time.Minute)))
+	}
+	ns := notificationsOf(t, db, store.NotifyFormSubmission)
+	if len(ns) != 1 || ns[0].Fields["count"] != "1" || ns[0].Fields["form"] != "contact" ||
+		ns[0].Subject != "contact" || !ns[0].CreatedAt.Equal(formsNow) {
+		t.Fatalf("after three = %+v", ns)
+	}
+	// Before the window ends nothing flushes.
+	if n, err := db.FlushFormBursts(ctx, formsNow.Add(10*time.Minute)); err != nil || n != 0 {
+		t.Fatalf("early flush: n=%d err=%v", n, err)
+	}
+	flushAt := formsNow.Add(16 * time.Minute)
+	if n, err := db.FlushFormBursts(ctx, flushAt); err != nil || n != 1 {
+		t.Fatalf("flush: n=%d err=%v", n, err)
+	}
+	ns = notificationsOf(t, db, store.NotifyFormSubmission)
+	if len(ns) != 2 || ns[1].Fields["count"] != "2" || !ns[1].CreatedAt.Equal(flushAt) {
+		t.Fatalf("after flush = %+v", ns)
+	}
+	if n, err := db.FlushFormBursts(ctx, flushAt.Add(time.Hour)); err != nil || n != 0 {
+		t.Fatalf("second flush: n=%d err=%v", n, err)
+	}
+	mustWrite(t, db, subAt("s4", formsNow.Add(40*time.Minute)))
+	ns = notificationsOf(t, db, store.NotifyFormSubmission)
+	if len(ns) != 3 || ns[2].Fields["count"] != "1" {
+		t.Fatalf("after a later one = %+v", ns)
+	}
+	// A quiet row is dropped a day on.
+	if _, err := db.FlushFormBursts(ctx, formsNow.Add(48*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM form_bursts`); c != 0 {
+		t.Errorf("form_bursts rows = %d, want 0", c)
+	}
+}
+
+// The window passed but the flush has not run yet: the submission joins
+// the pending count rather than notifying at once.
+func TestSubmissionBurstWaitsForFlush(t *testing.T) {
+	db := newFormsDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, subAt("s0", formsNow.Add(-time.Hour)))
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow.Add(-time.Hour), formAudit); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, db, subAt("s1", formsNow))
+	mustWrite(t, db, subAt("s2", formsNow.Add(time.Minute)))
+	mustWrite(t, db, subAt("s3", formsNow.Add(20*time.Minute)))
+	if ns := notificationsOf(t, db, store.NotifyFormSubmission); len(ns) != 1 {
+		t.Fatalf("before flush = %+v", ns)
+	}
+	if n, err := db.FlushFormBursts(ctx, formsNow.Add(21*time.Minute)); err != nil || n != 1 {
+		t.Fatalf("flush: n=%d err=%v", n, err)
+	}
+	if ns := notificationsOf(t, db, store.NotifyFormSubmission); len(ns) != 2 || ns[1].Fields["count"] != "2" {
+		t.Fatalf("after flush = %+v", ns)
+	}
+}
+
+// A form deleted with a burst pending takes its form_bursts row with it, and
+// a flush never notifies for a form that no longer exists.
+func TestSubmissionBurstGoesWithForm(t *testing.T) {
+	db := newFormsDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, subAt("s0", formsNow.Add(-time.Hour)))
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow.Add(-time.Hour), formAudit); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, db, subAt("s1", formsNow))
+	mustWrite(t, db, subAt("s2", formsNow.Add(time.Minute)))
+	if c := countRows(t, db, `SELECT COUNT(*) FROM form_bursts WHERE pending > 0`); c != 1 {
+		t.Fatalf("pending bursts = %d, want 1", c)
+	}
+	if err := db.tx(ctx, func(tx *sql.Tx) error { return deleteFormData(ctx, tx, 1, "contact") }); err != nil {
+		t.Fatal(err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM form_bursts`); c != 0 {
+		t.Errorf("form_bursts rows after delete = %d, want 0", c)
+	}
+	// A row left behind by an older build: still no notification.
+	if _, err := db.db.ExecContext(ctx, `INSERT INTO form_bursts (project_id, form, window_start, pending) VALUES (1, 'gone', ?, 3)`,
+		fmtTime(formsNow)); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := db.FlushFormBursts(ctx, formsNow.Add(time.Hour)); err != nil || n != 0 {
+		t.Fatalf("flush: n=%d err=%v, want 0", n, err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM form_bursts`); c != 0 {
+		t.Errorf("orphan form_bursts rows after flush = %d, want 0", c)
+	}
+	if ns := notificationsOf(t, db, store.NotifyFormSubmission); len(ns) != 1 {
+		t.Errorf("notifications = %+v, want only the first", ns)
+	}
+}
+
+// A burst pending when its form stops notifying (notify turned off, or
+// the form archived) is dropped at the flush, not sent.
+func TestSubmissionBurstDroppedWhenFormStopsNotifying(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		stop func(t *testing.T, db *DB)
+	}{
+		{"notify off", func(t *testing.T, db *DB) {
+			f, err := db.GetForm(context.Background(), 1, "contact")
+			if err != nil {
+				t.Fatal(err)
+			}
+			off := false
+			f.ExpectedFields = nil
+			if err := db.UpdateForm(context.Background(), f, &off, nil, formAudit); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{"archived", func(t *testing.T, db *DB) {
+			if err := db.SetFormArchived(context.Background(), 1, "contact", true, time.Time{}, formAudit); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := newFormsDB(t)
+			ctx := context.Background()
+			mustWrite(t, db, subAt("s0", formsNow.Add(-time.Hour)))
+			if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow.Add(-time.Hour), formAudit); err != nil {
+				t.Fatal(err)
+			}
+			mustWrite(t, db, subAt("s1", formsNow))
+			mustWrite(t, db, subAt("s2", formsNow.Add(time.Minute)))
+			tc.stop(t, db)
+			if n, err := db.FlushFormBursts(ctx, formsNow.Add(16*time.Minute)); err != nil || n != 0 {
+				t.Fatalf("flush: n=%d err=%v, want 0", n, err)
+			}
+			if ns := notificationsOf(t, db, store.NotifyFormSubmission); len(ns) != 1 {
+				t.Errorf("notifications = %+v, want only the first", ns)
+			}
+			if c := countRows(t, db, `SELECT COUNT(*) FROM form_bursts WHERE pending > 0`); c != 0 {
+				t.Errorf("pending bursts after flush = %d, want 0", c)
+			}
+		})
+	}
+}
+
+func TestSubmissionNotifyOff(t *testing.T) {
+	db := newFormsDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, subAt("s0", formsNow.Add(-time.Hour)))
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow.Add(-time.Hour), formAudit); err != nil {
+		t.Fatal(err)
+	}
+	f, err := db.GetForm(ctx, 1, "contact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	off, on := false, true
+	f.ExpectedFields = nil
+	if err := db.UpdateForm(ctx, f, &off, nil, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := db.GetForm(ctx, 1, "contact"); f.Notify {
+		t.Fatal("notify still on after UpdateForm")
+	}
+	mustWrite(t, db, subAt("s1", formsNow))
+	if ns := notificationsOf(t, db, store.NotifyFormSubmission); len(ns) != 0 {
+		t.Fatalf("notify off: %+v", ns)
+	}
+	// An archived form with notify on does not notify either.
+	if err := db.UpdateForm(ctx, f, &on, nil, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetFormArchived(ctx, 1, "contact", true, time.Time{}, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.WriteSubmission(ctx, subAt("s2", formsNow.Add(time.Minute))); !errors.Is(err, store.ErrFormClosed) {
+		t.Fatalf("archived: err = %v", err)
+	}
+	if ns := notificationsOf(t, db, store.NotifyFormSubmission); len(ns) != 0 {
+		t.Fatalf("archived form: %+v", ns)
+	}
+}
+
+func TestApproveSetsNotify(t *testing.T) {
+	db := newFormsDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, subAt("s0", formsNow))
+	if f, _ := db.GetForm(ctx, 1, "contact"); f.Notify {
+		t.Fatal("a draft has notify on")
+	}
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := db.GetForm(ctx, 1, "contact"); !f.Notify {
+		t.Fatal("approved form has notify off")
+	}
+	// UpdateForm without a notify change keeps it.
+	f, _ := db.GetForm(ctx, 1, "contact")
+	f.Purpose, f.ExpectedFields = "leads", nil
+	if err := db.UpdateForm(ctx, f, nil, nil, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := db.GetForm(ctx, 1, "contact"); !f.Notify || f.Purpose != "leads" {
+		t.Fatalf("after UpdateForm: %+v", f)
+	}
+}
+
+// An approval landing between a caller's read of a draft (notify off) and
+// its UpdateForm must not be undone: without a notify change the store
+// keeps the stored value, whatever the stale form says.
+func TestUpdateFormNilNotifyKeepsApproval(t *testing.T) {
+	db := newFormsDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, subAt("s0", formsNow))
+	stale, err := db.GetForm(ctx, 1, "contact")
+	if err != nil || stale.Notify {
+		t.Fatalf("draft: %+v, %v", stale, err)
+	}
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	stale.Purpose, stale.ExpectedFields = "leads", nil
+	if err := db.UpdateForm(ctx, stale, nil, nil, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := db.GetForm(ctx, 1, "contact"); !f.Notify || f.Purpose != "leads" {
+		t.Fatalf("after a stale UpdateForm: %+v, want notify kept on", f)
+	}
+	off := false
+	if err := db.UpdateForm(ctx, stale, &off, nil, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := db.GetForm(ctx, 1, "contact"); f.Notify {
+		t.Fatal("notify still on after an explicit change to off")
+	}
+}
+
+func TestExpireDraftsNotifies(t *testing.T) {
+	db := newFormsDB(t)
+	ctx := context.Background()
+	old := formsNow.Add(-10 * 24 * time.Hour)
+	for _, name := range []string{"a", "b", "kept"} {
+		n := subAt("s-"+name, old)
+		n.Submission.Form = name
+		n.DraftUntil = old.Add(7 * 24 * time.Hour)
+		if name == "kept" {
+			n.DraftUntil = formsNow.Add(time.Hour)
+		}
+		mustWrite(t, db, n)
+	}
+	if n, err := db.ExpireDrafts(ctx, formsNow); err != nil || n != 2 {
+		t.Fatalf("expired %d, err %v", n, err)
+	}
+	ns := notificationsOf(t, db, store.NotifyFormDraftDiscarded)
+	if len(ns) != 2 || ns[0].Subject != "a" || ns[0].Fields["form"] != "a" || ns[1].Subject != "b" ||
+		ns[0].Fields["project"] != "site" || !ns[0].CreatedAt.Equal(formsNow) {
+		t.Fatalf("discarded = %+v", ns)
+	}
+	// Archiving by hand notifies nothing.
+	if err := db.SetFormArchived(ctx, 1, "kept", true, time.Time{}, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if ns := notificationsOf(t, db, store.NotifyFormDraftDiscarded); len(ns) != 2 {
+		t.Fatalf("after a manual archive = %+v", ns)
 	}
 }

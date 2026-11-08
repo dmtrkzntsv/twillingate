@@ -1585,3 +1585,23 @@ Rollback: install the previous release, after archiving every share with no
 project and waiting for the purge, or deleting them: the previous release
 cannot read a share with no project, and the Shares and Archive pages fail
 while one is there. Shares with a project are untouched.
+
+### Upgrading to notifications (migration 047)
+
+Nothing to check before the upgrade: the migration adds three tables
+(`notifications`, `notify_states`, `form_bursts`) and a `notify` column to
+`forms`.
+
+- **On the day:** every form that exists at the upgrade has notify on
+  submission off, approved or not, so none starts sending. A form approved
+  or created after the upgrade has it on. Turn it on for an older form by editing the
+  form.
+- **After the upgrade:** a new draft form, and a draft discarded by
+  retention, adds an item to the inbox. Archived items are deleted
+  `RETENTION_ARCHIVED_DAYS` after archiving; active ones are kept.
+
+Rollback: install the previous release; the tables and the column it does
+not know are ignored. It cannot delete a project that has rows in them
+(their `project_id` references the project): delete those rows first, for
+example `DELETE FROM notifications WHERE project_id = <id>;` and the same
+for `notify_states` and `form_bursts`.

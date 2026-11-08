@@ -105,6 +105,8 @@ test('every link and button shows the pointer', async ({ page, request }) => {
     '/app/dashboards',
     '/app/archive',
     '/app/shares',
+    // The forms project's new draft is an item here: its Open link and Archive button.
+    '/app/inbox',
     '/app/gallery/components',
     '/app/gallery/dashboards',
   ]) {

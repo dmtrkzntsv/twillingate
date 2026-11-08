@@ -15,6 +15,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/shared/notify"
 )
 
 type LogConfig struct {
@@ -72,6 +74,17 @@ type MonitorConfig struct {
 	// Disabled (MONITOR_DISABLED) stops the runner: no check runs and no row
 	// is written. Editing monitors still works; a check on demand is refused.
 	Disabled bool
+}
+
+// NotifyConfig is the notification channel's settings.
+type NotifyConfig struct {
+	// URL (NOTIFY_URL) is the one channel notifications are sent to, in
+	// one of internal/shared/notify's formats; "" means the inbox only.
+	// It holds secrets: never log it.
+	URL string
+	// Remind (NOTIFY_REMIND_HOURS, whole hours) is how often a state still
+	// failing is reminded of: 1 to 168, 4 unset.
+	Remind time.Duration
 }
 
 // DefaultQuotaCheckRatio is QUOTA_CHECK_RATIO's default: a check row
@@ -183,6 +196,7 @@ type Config struct {
 	Forms              FormsConfig
 	Reporting          ReportingConfig
 	Monitor            MonitorConfig
+	Notify             NotifyConfig
 	// QuotaCheckRatio (QUOTA_CHECK_RATIO) is the weight one availability
 	// check row counts toward the event totals the console shows: 1 by
 	// default, 0 leaves checks out. Display only.
@@ -322,6 +336,10 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			Interval: time.Duration(e.num("MONITOR_INTERVAL", 120)) * time.Second,
 			Timeout:  time.Duration(e.num("MONITOR_TIMEOUT", 5)) * time.Second,
 			Disabled: e.bool("MONITOR_DISABLED", false),
+		},
+		Notify: NotifyConfig{
+			URL:    e.str("NOTIFY_URL", ""),
+			Remind: time.Duration(e.num("NOTIFY_REMIND_HOURS", 4)) * time.Hour,
 		},
 		QuotaCheckRatio: e.float("QUOTA_CHECK_RATIO", DefaultQuotaCheckRatio),
 	}
@@ -478,6 +496,15 @@ func (c *Config) validate() error {
 	}
 	if c.Monitor.Timeout < time.Second || c.Monitor.Timeout > time.Minute {
 		return fmt.Errorf("config: MONITOR_TIMEOUT must be between 1 and 60 seconds: %d", int(c.Monitor.Timeout/time.Second))
+	}
+	if c.Notify.URL != "" {
+		// Parse's errors never carry the URL or its secrets.
+		if _, err := notify.Parse(c.Notify.URL); err != nil {
+			return fmt.Errorf("config: NOTIFY_URL: %w", err)
+		}
+	}
+	if c.Notify.Remind < time.Hour || c.Notify.Remind > 168*time.Hour {
+		return fmt.Errorf("config: NOTIFY_REMIND_HOURS must be between 1 and 168: %d", int(c.Notify.Remind/time.Hour))
 	}
 	if c.QuotaCheckRatio < 0 {
 		return fmt.Errorf("config: QUOTA_CHECK_RATIO must not be negative: %g", c.QuotaCheckRatio)

@@ -13,6 +13,7 @@ internal/api/        private API: MCP endpoint and REST routes, one auth
 internal/jobs/       daily pass: salt rotation, aggregation, prune, view rebuild
 internal/monitor/    availability checks, certificate and domain expiry, written as checks rows
 internal/pipeline/   write buffer between ingest and the store
+internal/inbox/      notifications: the type vocabulary's rendering, failing-state tracking for the monitor, delivery to NOTIFY_URL
 internal/manage/     project registry snapshot and its audited operations
 internal/reporting/  dashboards, widgets and components: validation, operations, system dashboards, cache; embeds the web app
 internal/reporting/sqlbind/ the :name parameters of SQL sent to the external SQL engine, and the advice that follows its failures
@@ -24,7 +25,7 @@ internal/geo/        MaxMind lookup
 internal/wire/       the ingest wire format's fixed limits, shared by server and api
 internal/native/     structured queries (stat, trend, breakdown) answered in Go over the event files
 internal/archive/    raw events as files under data/: the per-day NDJSON log, the dump to Parquet, the month merge, retention by file, the derived sessions, identities and aliases, and the table spec the external SQL engine reads
-internal/shared/     small generic leaf packages: civil (calendar dates), golden (tests' expected answers under testdata/), maindomain (a host's registrable domain), readsql, sortkey, version
+internal/shared/     small generic leaf packages: civil (calendar dates), golden (tests' expected answers under testdata/), maindomain (a host's registrable domain), notify (sending to a channel by URL), readsql, sortkey, version
 internal/shared/hll/ distinct counts, exact up to 1,024 ids then a HyperLogLog sketch (about ±2%), for internal/native
 internal/sqlcheck/   tests only: prepares every SQL string the code hands database/sql against a migrated database
 sqlengine/           public protocol and client for an external SQL engine over a Unix socket; stdlib only, importable by other modules
@@ -45,7 +46,7 @@ into the rank table in `internal/archtest/archtest_test.go`.
 A small generic helper (no twillingate domain in it) is our own code in its
 own leaf package under `internal/shared/`, rank 0, rather than a third-party
 Go dependency; only a very reputable vendor justifies one. Domain leaves
-(`enrich`, `identity`, `geo`, `config`) stay at the top of `internal/`.
+(`enrich`, `identity`, `geo`, `config`, `inbox`) stay at the top of `internal/`.
 
 Refusals are typed (`manage.ErrNotFound`, `manage.ErrConflict`,
 `manage.ErrInvalid`, `manage.ErrBusy`, `manage.ErrTimeout`; all the

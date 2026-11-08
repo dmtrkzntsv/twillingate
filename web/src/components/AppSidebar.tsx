@@ -1,6 +1,7 @@
 import { DndContext, closestCenter } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable'
-import { ArchiveIcon, ChartColumnIcon, LayoutDashboardIcon, LogOutIcon, Share2Icon } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { ArchiveIcon, BellIcon, ChartColumnIcon, LayoutDashboardIcon, LogOutIcon, Share2Icon } from 'lucide-react'
 import { useState } from 'react'
 import { Link, useLocation } from 'react-router'
 import {
@@ -12,6 +13,7 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
@@ -22,6 +24,7 @@ import { useReorder } from '@/hooks/use-reorder'
 import { groupName, isLoneGroup, liveGroups, moveGroupBody, type Group } from '@/lib/arrange'
 import type { DashboardInfo } from '@/lib/api'
 import { logout } from '@/lib/auth'
+import { inboxCountQuery } from '@/lib/queries'
 import GroupNameField from './GroupNameField'
 import IcebergLogo from './IcebergLogo'
 import SidebarGallery from './SidebarGallery'
@@ -39,7 +42,8 @@ interface Props {
  * Projects (a link to the list, opening to every live project, see
  * `SidebarProjects`) first, then "Dashboards": one entry per
  * dashboard group in the sidebar (`sidebar`, tabs D20), the system groups first with a "Built-in"
- * badge, then the user's. At the bottom, Shares,
+ * badge, then the user's. At the bottom, Inbox (with its active count,
+ * polled every minute, hidden at 0), Shares,
  * Gallery (a menu of the components playground and the Dashboards gallery
  * of templates, D17, see `SidebarGallery`), then Archive (every user group
  * with an archived dashboard, D17a), above Log out. Each entry links to its group's first live
@@ -52,6 +56,7 @@ interface Props {
 export default function AppSidebar({ dashboards, currentId }: Props) {
   const { isMobile, setOpenMobile, state } = useSidebar()
   const { pathname } = useLocation()
+  const { data: active = 0 } = useQuery(inboxCountQuery)
   const groups = liveGroups(dashboards.filter((d) => d.sidebar))
   const system = groups.filter((g) => g.owner === 'system')
   const serverYours = groups.filter((g) => g.owner === 'user')
@@ -182,6 +187,27 @@ export default function AppSidebar({ dashboards, currentId }: Props) {
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton asChild isActive={pathname === '/inbox'} tooltip="Inbox" className={item}>
+              <Link to="/inbox" onClick={close}>
+                <BellIcon />
+                <span>Inbox</span>
+              </Link>
+            </SidebarMenuButton>
+            {active > 0 && (
+              // The badge hides itself when the sidebar is collapsed to icons; a dot stands in.
+              <span
+                aria-hidden="true"
+                data-testid="inbox-dot"
+                className="pointer-events-none absolute right-1 top-1 hidden size-2 rounded-full bg-sidebar-primary group-data-[collapsible=icon]:block"
+              />
+            )}
+            {active > 0 && (
+              <SidebarMenuBadge title={`${active} active ${active === 1 ? 'notification' : 'notifications'}`}>
+                {active > 99 ? '99+' : active}
+              </SidebarMenuBadge>
+            )}
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton asChild isActive={pathname.startsWith('/shares')} tooltip="Shares" className={item}>
               <Link to="/shares" onClick={close}>

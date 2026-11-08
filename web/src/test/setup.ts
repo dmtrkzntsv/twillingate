@@ -75,3 +75,8 @@ Object.defineProperty(window, 'matchMedia', {
 // so each widget falls back to the GET the test mocks.
 import { endpoints } from '@/lib/api'
 endpoints.widgetStream = () => Promise.reject(new TypeError('no widget stream in tests'))
+
+// The sidebar polls the inbox's active count: a test that renders it
+// without mocking listNotifications itself (App.test.tsx stubs fetch for
+// other routes) sees an empty inbox, not a stray request.
+endpoints.listNotifications = () => Promise.resolve({ notifications: [], active: 0 })

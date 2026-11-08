@@ -342,17 +342,19 @@ type Store interface {
 	// ErrNotFound for an unknown form. Not audited.
 	MarkFormSeen(ctx context.Context, projectID int64, name string, until time.Time) error
 	// ApproveForm turns a draft into an approved form keeping expected,
-	// stamped now, and clears draft_until. ErrConflict when it is already
+	// stamped now, with notify on, and clears draft_until. ErrConflict when it is already
 	// approved, ErrNotFound when unknown.
 	ApproveForm(ctx context.Context, projectID int64, name string, expected []string, now time.Time, a AuditEntry) error
 	// UpdateForm writes f's Purpose, ReturnURL and ClosesAt exactly as
-	// given (merging is the caller's), and ExpectedFields when non-nil
-	// (nil keeps the stored list); ErrNotFound when the row is absent.
+	// given (merging is the caller's), notify when non-nil and
+	// ExpectedFields when non-nil (nil keeps the stored value, so an
+	// approval between the caller's read and this write stands; f.Notify is
+	// ignored); ErrNotFound when the row is absent.
 	// add are field names recorded as if a submission had sent them; on an
 	// approved form each one not yet kept is appended to the expected
 	// fields, after ExpectedFields is written. Expected names always join
 	// Fields, here and in ApproveForm.
-	UpdateForm(ctx context.Context, f Form, add []string, a AuditEntry) error
+	UpdateForm(ctx context.Context, f Form, notify *bool, add []string, a AuditEntry) error
 	// SetFormArchived archives or restores a form. Archiving an archived
 	// form and restoring an active one change nothing and write no audit
 	// row. Either keeps the form's sort key. Restoring a draft sets
@@ -447,6 +449,40 @@ type Store interface {
 	// dashboards (with their widgets) match s in one transaction.
 	ReportingHash(ctx context.Context) (string, error)
 	SyncReporting(ctx context.Context, s ReportingSync) error
+	// AddNotification inserts one notification, pending delivery, with
+	// Fields["project"] the project's name when ProjectID != 0 and the
+	// caller set none; ErrNotFound for an unknown project.
+	AddNotification(ctx context.Context, n NewNotification) (int64, error)
+	// ListNotifyStates reads every tracker state. PutNotifyState upserts
+	// s and, when n is not nil, inserts n, in one transaction.
+	// DeleteNotifyState deletes one; an absent one is not an error.
+	ListNotifyStates(ctx context.Context) ([]NotifyState, error)
+	PutNotifyState(ctx context.Context, s NotifyState, n *NewNotification) error
+	DeleteNotifyState(ctx context.Context, projectID int64, kind, subject string) error
+	// ListNotifications lists the active (f.Archived false) or archived
+	// notifications f selects, newest (highest id) first.
+	// CountActiveNotifications counts the active ones.
+	ListNotifications(ctx context.Context, f NotificationFilter) ([]Notification, error)
+	CountActiveNotifications(ctx context.Context) (int, error)
+	// SetNotificationsArchived archives (stamped at) or restores the
+	// notifications with these ids, or with all every active one, and
+	// returns how many changed; ids matching nothing or already in the
+	// target state are skipped. all with archived false is ErrInvalid.
+	SetNotificationsArchived(ctx context.Context, ids []int64, all, archived bool, at time.Time) (int, error)
+	// PendingDeliveries lists up to limit notifications pending delivery
+	// whose next attempt is due at now (or unset), oldest first.
+	// SetDelivery records an attempt's outcome (ErrInvalid for an unknown
+	// delivery, ErrNotFound for an unknown id).
+	PendingDeliveries(ctx context.Context, now time.Time, limit int) ([]Notification, error)
+	SetDelivery(ctx context.Context, id int64, delivery, errText string, attempts int, next *time.Time) error
+	// PurgeArchivedNotifications deletes the notifications archived before
+	// now - days (days <= 0: none) and returns how many went.
+	PurgeArchivedNotifications(ctx context.Context, now time.Time, days int) (int, error)
+	// FlushFormBursts adds one form_submission notification (count the
+	// pending number, at now) per form whose burst window ended at now
+	// with submissions pending, and drops quiet rows over a day old;
+	// returns the notifications added.
+	FlushFormBursts(ctx context.Context, now time.Time) (int, error)
 	// PurgeArchived deletes every project, dashboard, widget and widget
 	// share archived more than days ago, each in its own transaction with
 	// an audit row (actor "retention"). days <= 0 purges nothing. An

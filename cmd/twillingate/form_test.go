@@ -152,6 +152,23 @@ func TestFormUpdate(t *testing.T) {
 	if f = getForm(t); strings.Join(f.ExpectedFields, ",") != "email,message,company" || !slices.Contains(f.Fields, "company") {
 		t.Fatalf("after -add-fields: fields %v, expected %v", f.Fields, f.ExpectedFields)
 	}
+	// Approval turned submission notifications on; -notify turns them off
+	// and on, and nothing else changes them.
+	if !f.Notify {
+		t.Fatal("approved form has notify off")
+	}
+	runForm(t, 0, "update", "-project-id", "1", "-name", "contact", "-notify", "false")
+	if f = getForm(t); f.Notify {
+		t.Fatal("-notify false left notify on")
+	}
+	runForm(t, 0, "update", "-project-id", "1", "-name", "contact", "-purpose", "Leads")
+	if f = getForm(t); f.Notify {
+		t.Fatal("an update without -notify turned notify back on")
+	}
+	runForm(t, 0, "update", "-project-id", "1", "-name", "contact", "-notify", "true")
+	if f = getForm(t); !f.Notify {
+		t.Fatal("-notify true left notify off")
+	}
 }
 
 func TestFormUpdateRefusals(t *testing.T) {
@@ -165,6 +182,9 @@ func TestFormUpdateRefusals(t *testing.T) {
 	}
 	if out := runForm(t, 2, "update", "-project-id", "1", "-name", "contact", "-closes-at", "tomorrow"); !strings.Contains(out, "-closes-at") {
 		t.Fatalf("bad -closes-at: %q", out)
+	}
+	if out := runForm(t, 2, "update", "-project-id", "1", "-name", "contact", "-notify", "maybe"); !strings.Contains(out, "-notify") {
+		t.Fatalf("bad -notify: %q", out)
 	}
 	if out := runForm(t, 2, "update", "-project-id", "1", "-name", "contact"); !strings.Contains(out, "nothing to update") {
 		t.Fatalf("no changes: %q", out)

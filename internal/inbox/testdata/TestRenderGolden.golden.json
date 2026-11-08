@@ -1,0 +1,230 @@
+{
+  "cert_expiring": {
+    "Absolute": {
+      "Body": "Blog <&>: expires 2026-11-16 00:00 UTC",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "Certificate for https://blog.example expires in 9 days"
+    },
+    "Relative": {
+      "Body": "Blog <&>: expires 2026-11-16 00:00 UTC",
+      "Link": "/projects/3/settings/domains",
+      "Title": "Certificate for https://blog.example expires in 9 days"
+    }
+  },
+  "cert_expiring_today": {
+    "Absolute": {
+      "Body": "Blog <&>: expires today",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "Certificate for https://blog.example expires today"
+    },
+    "Relative": {
+      "Body": "Blog <&>: expires today",
+      "Link": "/projects/3/settings/domains",
+      "Title": "Certificate for https://blog.example expires today"
+    }
+  },
+  "cert_failing": {
+    "Absolute": {
+      "Body": "Blog <&>: x509: certificate has expired (since 2026-11-07 08:00 UTC)",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "Certificate problem on https://blog.example"
+    },
+    "Relative": {
+      "Body": "Blog <&>: x509: certificate has expired (since 2026-11-07 08:00 UTC)",
+      "Link": "/projects/3/settings/domains",
+      "Title": "Certificate problem on https://blog.example"
+    }
+  },
+  "cert_recovered": {
+    "Absolute": {
+      "Body": "Blog <&>: failing since 2026-11-07 08:00 UTC (4h 12m)",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "Certificate fixed on https://blog.example"
+    },
+    "Relative": {
+      "Body": "Blog <&>: failing since 2026-11-07 08:00 UTC (4h 12m)",
+      "Link": "/projects/3/settings/domains",
+      "Title": "Certificate fixed on https://blog.example"
+    }
+  },
+  "cert_still_failing": {
+    "Absolute": {
+      "Body": "Blog <&>: x509: certificate has expired, since 2026-11-07 08:00 UTC, 4h 12m",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "Certificate still failing on https://blog.example"
+    },
+    "Relative": {
+      "Body": "Blog <&>: x509: certificate has expired, since 2026-11-07 08:00 UTC, 4h 12m",
+      "Link": "/projects/3/settings/domains",
+      "Title": "Certificate still failing on https://blog.example"
+    }
+  },
+  "domain_expired": {
+    "Absolute": {
+      "Body": "Blog <&>: expired",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "Domain blog.example has expired"
+    },
+    "Relative": {
+      "Body": "Blog <&>: expired",
+      "Link": "/projects/3/settings/domains",
+      "Title": "Domain blog.example has expired"
+    }
+  },
+  "domain_expiring": {
+    "Absolute": {
+      "Body": "Blog <&>: expires 2026-12-07 00:00 UTC",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "Domain blog.example expires in 30 days"
+    },
+    "Relative": {
+      "Body": "Blog <&>: expires 2026-12-07 00:00 UTC",
+      "Link": "/projects/3/settings/domains",
+      "Title": "Domain blog.example expires in 30 days"
+    }
+  },
+  "domain_failing": {
+    "Absolute": {
+      "Body": "Blog <&>: no such host (since 2026-11-07 08:00 UTC)",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "Domain lookup failing for blog.example"
+    },
+    "Relative": {
+      "Body": "Blog <&>: no such host (since 2026-11-07 08:00 UTC)",
+      "Link": "/projects/3/settings/domains",
+      "Title": "Domain lookup failing for blog.example"
+    }
+  },
+  "domain_recovered": {
+    "Absolute": {
+      "Body": "Blog <&>: failing since 2026-11-07 08:00 UTC (4h 12m)",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "Domain lookup works again for blog.example"
+    },
+    "Relative": {
+      "Body": "Blog <&>: failing since 2026-11-07 08:00 UTC (4h 12m)",
+      "Link": "/projects/3/settings/domains",
+      "Title": "Domain lookup works again for blog.example"
+    }
+  },
+  "domain_still_failing": {
+    "Absolute": {
+      "Body": "Blog <&>: since 2026-11-07 08:00 UTC, 4h 12m",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "Domain lookup still failing for blog.example"
+    },
+    "Relative": {
+      "Body": "Blog <&>: since 2026-11-07 08:00 UTC, 4h 12m",
+      "Link": "/projects/3/settings/domains",
+      "Title": "Domain lookup still failing for blog.example"
+    }
+  },
+  "form_draft_created": {
+    "Absolute": {
+      "Body": "Blog <&>",
+      "Link": "https://c.example/app/projects/3/forms/contact%20us",
+      "Title": "New form contact us is waiting for approval"
+    },
+    "Relative": {
+      "Body": "Blog <&>",
+      "Link": "/projects/3/forms/contact%20us",
+      "Title": "New form contact us is waiting for approval"
+    }
+  },
+  "form_draft_discarded": {
+    "Absolute": {
+      "Body": "Blog <&>",
+      "Link": "https://c.example/app/projects/3/forms/contact%20us",
+      "Title": "Form contact us was discarded unapproved"
+    },
+    "Relative": {
+      "Body": "Blog <&>",
+      "Link": "/projects/3/forms/contact%20us",
+      "Title": "Form contact us was discarded unapproved"
+    }
+  },
+  "form_submission": {
+    "Absolute": {
+      "Body": "",
+      "Link": "https://c.example/app/projects/3/forms/contact%20us",
+      "Title": "A new form submission in Blog <&> / contact us"
+    },
+    "Relative": {
+      "Body": "",
+      "Link": "/projects/3/forms/contact%20us",
+      "Title": "A new form submission in Blog <&> / contact us"
+    }
+  },
+  "form_submission_many": {
+    "Absolute": {
+      "Body": "",
+      "Link": "https://c.example/app/projects/3/forms/contact%20us",
+      "Title": "7 new form submissions in Blog <&> / contact us"
+    },
+    "Relative": {
+      "Body": "",
+      "Link": "/projects/3/forms/contact%20us",
+      "Title": "7 new form submissions in Blog <&> / contact us"
+    }
+  },
+  "uptime_down": {
+    "Absolute": {
+      "Body": "Blog <&>: down since 2026-11-07 08:00 UTC (HTTP 503)",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "https://blog.example is down"
+    },
+    "Relative": {
+      "Body": "Blog <&>: down since 2026-11-07 08:00 UTC (HTTP 503)",
+      "Link": "/projects/3/settings/domains",
+      "Title": "https://blog.example is down"
+    }
+  },
+  "uptime_still_down": {
+    "Absolute": {
+      "Body": "Blog <&>: down since 2026-11-07 08:00 UTC, 4h 12m",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "https://blog.example is still down"
+    },
+    "Relative": {
+      "Body": "Blog <&>: down since 2026-11-07 08:00 UTC, 4h 12m",
+      "Link": "/projects/3/settings/domains",
+      "Title": "https://blog.example is still down"
+    }
+  },
+  "uptime_still_down_2d3h": {
+    "Absolute": {
+      "Body": "Blog <&>: down since 2026-11-07 08:00 UTC, 2d 3h",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "https://blog.example is still down"
+    },
+    "Relative": {
+      "Body": "Blog <&>: down since 2026-11-07 08:00 UTC, 2d 3h",
+      "Link": "/projects/3/settings/domains",
+      "Title": "https://blog.example is still down"
+    }
+  },
+  "uptime_still_down_35m": {
+    "Absolute": {
+      "Body": "Blog <&>: down since 2026-11-07 08:00 UTC, 35m",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "https://blog.example is still down"
+    },
+    "Relative": {
+      "Body": "Blog <&>: down since 2026-11-07 08:00 UTC, 35m",
+      "Link": "/projects/3/settings/domains",
+      "Title": "https://blog.example is still down"
+    }
+  },
+  "uptime_up": {
+    "Absolute": {
+      "Body": "Blog <&>: was down since 2026-11-07 08:00 UTC (4h 12m)",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "https://blog.example is up"
+    },
+    "Relative": {
+      "Body": "Blog <&>: was down since 2026-11-07 08:00 UTC (4h 12m)",
+      "Link": "/projects/3/settings/domains",
+      "Title": "https://blog.example is up"
+    }
+  }
+}

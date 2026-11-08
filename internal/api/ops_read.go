@@ -503,6 +503,7 @@ func (h *host) register(r *registrar) {
 		h.integrationGuide)
 
 	h.registerForms(r)
+	h.registerNotifications(r)
 	h.registerReporting(r)
 	registerSchemaRoute(r)
 }

@@ -35,6 +35,9 @@ type Store interface {
 	// PurgeArchived deletes every project, dashboard, widget and widget
 	// share archived more than days ago. days <= 0 purges nothing.
 	PurgeArchived(ctx context.Context, days int) (store.PurgeResult, error)
+	// PurgeArchivedNotifications deletes the notifications archived more
+	// than days before now and returns how many. days <= 0 purges nothing.
+	PurgeArchivedNotifications(ctx context.Context, now time.Time, days int) (int, error)
 	// ArchiveDueWidgetShares archives every live share whose archive_at is
 	// at or before now and returns how many.
 	ArchiveDueWidgetShares(ctx context.Context, now time.Time) (int, error)
@@ -179,6 +182,13 @@ func (r *Runner) RunDailyPass(ctx context.Context) {
 					}
 				}
 			}
+		}
+		// Archived notifications age out with the rest; the active ones
+		// stay until someone archives them.
+		if n, err := r.store.PurgeArchivedNotifications(ctx, r.now(), ret.ArchivedDays); err != nil {
+			r.logger.Error("purge archived notifications failed", "error", err)
+		} else {
+			r.logger.Info("purge archived notifications", "notifications", n)
 		}
 	}
 	r.removeOrphanedArchives(ctx)
