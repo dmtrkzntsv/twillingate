@@ -583,3 +583,58 @@ func TestExpiryOffsetSpelling(t *testing.T) {
 	tr.Cert(ctx, 1, origin, inbox.CertReading{Read: true, Valid: true, ExpiresAt: plus}, exp.Add(-12*24*time.Hour))
 	none(t, f)
 }
+
+// The monitor reports a domain's expiry as a bare date (RDAP's, in UTC);
+// its days left count calendar days from the observation's UTC date, as
+// the monitor's own daysLeft does, so the steps land on 30, 7 and 1.
+func TestDomainExpiryBareDate(t *testing.T) {
+	f := newFake(monitor)
+	tr := newTracker(f)
+	const exp = "2027-03-14"
+	day := func(s string, hour int) time.Time {
+		d, err := time.Parse(time.DateOnly, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return d.Add(time.Duration(hour) * time.Hour)
+	}
+	tr.Domain(ctx, 1, domain, true, "", exp, day("2027-02-01", 10)) // 41 days
+	none(t, f)
+	tr.Domain(ctx, 1, domain, true, "", exp, day("2027-02-11", 23)) // 31 days
+	none(t, f)
+	tr.Domain(ctx, 1, domain, true, "", exp, day("2027-02-12", 0)) // 30 days
+	n := one(t, f, store.NotifyDomainExpiring)
+	if n.Fields["days"] != "30" || n.Fields["expires"] != exp || n.Subject != domain {
+		t.Fatalf("domain_expiring = %+v", n)
+	}
+	tr.Domain(ctx, 1, domain, true, "", exp, day("2027-03-06", 23)) // 8 days
+	none(t, f)
+	tr.Domain(ctx, 1, domain, true, "", exp, day("2027-03-07", 1)) // 7 days
+	if n := one(t, f, store.NotifyDomainExpiring); n.Fields["days"] != "7" {
+		t.Fatalf("days = %q, want 7", n.Fields["days"])
+	}
+	tr.Domain(ctx, 1, domain, true, "", exp, day("2027-03-12", 23)) // 2 days
+	none(t, f)
+	tr.Domain(ctx, 1, domain, true, "", exp, day("2027-03-13", 20)) // 1 day
+	if n := one(t, f, store.NotifyDomainExpiring); n.Fields["days"] != "1" {
+		t.Fatalf("days = %q, want 1", n.Fields["days"])
+	}
+	tr.Domain(ctx, 1, domain, true, "", exp, day("2027-03-14", 12)) // the day itself: step 1 sent
+	none(t, f)
+
+	// A renewal, also a bare date, starts over.
+	tr.Domain(ctx, 1, domain, true, "", "2028-03-14", day("2027-03-14", 13))
+	none(t, f)
+	tr.Domain(ctx, 1, domain, true, "", "2028-03-14", day("2028-03-13", 0))
+	if n := one(t, f, store.NotifyDomainExpiring); n.Fields["days"] != "1" {
+		t.Fatalf("days after renewal = %q, want 1", n.Fields["days"])
+	}
+
+	// Already past: negative calendar days.
+	g := newFake(monitor)
+	tr = newTracker(g)
+	tr.Domain(ctx, 1, domain, true, "", exp, day("2027-03-16", 1))
+	if n := one(t, g, store.NotifyDomainExpiring); n.Fields["days"] != "-2" {
+		t.Fatalf("days = %q, want -2", n.Fields["days"])
+	}
+}

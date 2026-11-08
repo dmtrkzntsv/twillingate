@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"math"
 	"slices"
 	"strconv"
 	"sync"
@@ -174,7 +175,7 @@ func (t *Tracker) Cert(ctx context.Context, projectID int64, origin string, c Ce
 
 // Domain records one RDAP lookup of a main domain: failing once lookups
 // have failed for 24 hours, recovered by one that works, whose expiry
-// (expiresAt, RFC 3339, "" unknown) warns at 30, 7 and 1 days.
+// (expiresAt, YYYY-MM-DD or RFC 3339, "" unknown) warns at 30, 7 and 1 days.
 func (t *Tracker) Domain(ctx context.Context, projectID int64, domain string, ok bool, errText, expiresAt string, at time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -357,17 +358,15 @@ func (t *Tracker) recover(ctx context.Context, k key, e entry, typ string, at ti
 // tighter than the last one sent for this expiry. Another expiry
 // (a renewal) starts over.
 func (t *Tracker) expiry(ctx context.Context, k key, expires string, steps []int, typ string, at time.Time) {
-	exp, err := time.Parse(time.RFC3339, expires)
-	if err != nil {
-		t.logger.Warn("inbox: bad expiry", "kind", k.kind, "subject", k.subject, "expires", expires, "error", err)
+	norm, left, ok := readExpiry(expires, at)
+	if !ok {
+		t.logger.Warn("inbox: bad expiry", "kind", k.kind, "subject", k.subject, "expires", expires)
 		return
 	}
-	norm := exp.UTC().Format(time.RFC3339) // Z and +00:00 are one expiry
-	e, ok := t.states[k]
-	if !ok || e.ExpiresAt != norm {
+	e, had := t.states[k]
+	if !had || e.ExpiresAt != norm {
 		e = entry{ExpiresAt: norm}
 	}
-	left := daysLeft(exp, at)
 	step := 0
 	for _, s := range steps {
 		if left <= s && (step == 0 || s < step) {
@@ -375,7 +374,7 @@ func (t *Tracker) expiry(ctx context.Context, k key, expires string, steps []int
 		}
 	}
 	if step == 0 || (e.Step != 0 && step >= e.Step) {
-		if !ok || e != t.states[k] {
+		if !had || e != t.states[k] {
 			t.put(ctx, k, e, nil) // first sight, or a renewal: remember the expiry
 		}
 		return
@@ -384,14 +383,22 @@ func (t *Tracker) expiry(ctx context.Context, k key, expires string, steps []int
 	t.put(ctx, k, e, t.note(k, typ, map[string]string{"days": strconv.Itoa(left), "expires": expires}, at))
 }
 
-// daysLeft is floor((exp − at) / 24h), negative once expired.
-func daysLeft(exp, at time.Time) int {
-	d := exp.Sub(at)
-	days := d / (24 * time.Hour)
-	if d < 0 && d%(24*time.Hour) != 0 {
-		days--
+// readExpiry reads an expiry as the monitor writes it (RFC 3339 for a
+// certificate, a bare YYYY-MM-DD for a domain) and returns it normalized
+// (Z and +00:00 are one expiry) with the days left at at, counted as the
+// monitor's daysLeft counts them: for RFC 3339 the whole days, rounded
+// down (negative once expired); for a date the calendar days from at's UTC
+// date, 0 on the day itself. False when expires is neither.
+func readExpiry(expires string, at time.Time) (norm string, left int, ok bool) {
+	if exp, err := time.Parse(time.RFC3339, expires); err == nil {
+		return exp.UTC().Format(time.RFC3339), int(math.Floor(exp.Sub(at).Hours() / 24)), true
 	}
-	return int(days)
+	exp, err := time.Parse(time.DateOnly, expires)
+	if err != nil {
+		return "", 0, false
+	}
+	y, m, d := at.UTC().Date()
+	return exp.Format(time.DateOnly), int(math.Round(exp.Sub(time.Date(y, m, d, 0, 0, 0, 0, time.UTC)).Hours() / 24)), true
 }
 
 // down reports whether origin's availability is failing in projectID.

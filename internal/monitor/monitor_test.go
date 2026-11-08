@@ -2076,3 +2076,63 @@ func TestCertDueHourlyWhenInvalid(t *testing.T) {
 		}
 	}
 }
+
+// notifyStore is an in-memory inbox.TrackerStore that keeps what the
+// Tracker sends.
+type notifyStore struct {
+	mu     sync.Mutex
+	states map[string]store.NotifyState
+	sent   []store.NewNotification
+}
+
+func (n *notifyStore) ListNotifyStates(context.Context) ([]store.NotifyState, error) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	out := make([]store.NotifyState, 0, len(n.states))
+	for _, s := range n.states {
+		out = append(out, s)
+	}
+	return out, nil
+}
+
+func (n *notifyStore) PutNotifyState(_ context.Context, s store.NotifyState, nn *store.NewNotification) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if n.states == nil {
+		n.states = map[string]store.NotifyState{}
+	}
+	n.states[fmt.Sprint(s.ProjectID, s.Kind, s.Subject)] = s
+	if nn != nil {
+		n.sent = append(n.sent, *nn)
+	}
+	return nil
+}
+
+func (n *notifyStore) DeleteNotifyState(_ context.Context, projectID int64, kind, subject string) error {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.states, fmt.Sprint(projectID, kind, subject))
+	return nil
+}
+
+func (n *notifyStore) FlushFormBursts(context.Context, time.Time) (int, error) { return 0, nil }
+
+func (n *notifyStore) ListEnabledMonitors(context.Context) ([]store.Monitor, error) { return nil, nil }
+
+// A domain expiry read over RDAP, in the format the runner reports it,
+// reaches the real Tracker and warns.
+func TestDomainExpiryReachesTracker(t *testing.T) {
+	now := time.Date(2027, 3, 7, 10, 0, 0, 0, time.UTC) // 7 days before
+	rd, _ := fakeRDAP(t, map[string]string{
+		"example.com": `{"events":[{"eventAction":"expiration","eventDate":"2027-03-14T04:00:00Z"}]}`,
+	})
+	ns := &notifyStore{}
+	r := newRunner(&fakeStore{}, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{
+		allowLoopback: true, bootstrapURL: rd.URL + "/dns.json", now: func() time.Time { return now },
+	})
+	r.WithAlerts(inbox.NewTracker(ns, 4*time.Hour, quietLogger()))
+	r.domain(context.Background(), 3, "example.com", now)
+	if len(ns.sent) != 1 || ns.sent[0].Type != store.NotifyDomainExpiring || ns.sent[0].Fields["days"] != "7" {
+		t.Fatalf("sent %+v, want one domain_expiring at 7 days", ns.sent)
+	}
+}
