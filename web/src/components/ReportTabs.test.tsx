@@ -1,14 +1,21 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeAll, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { DashboardTab } from '@/lib/api'
-import ReportTabs from './ReportTabs'
+import ReportTabs, { dashboardTabs } from './ReportTabs'
 
-const tabs: DashboardTab[] = [
+const tabs = dashboardTabs([
   { dashboard_id: 13, title: 'Marketing' },
   { dashboard_id: 14, title: 'Funnel' },
   { dashboard_id: 15, title: 'Spend' },
-]
+])
+
+// jsdom lacks the pointer-capture and scrolling calls Radix Select makes when it opens.
+beforeAll(() => {
+  Element.prototype.hasPointerCapture ??= () => false
+  Element.prototype.releasePointerCapture ??= () => {}
+  Element.prototype.scrollIntoView ??= () => {}
+})
 
 describe('ReportTabs', () => {
   it('renders plain tabs without onMove', () => {
@@ -76,7 +83,7 @@ describe('ReportTabs', () => {
     ]
     render(
       <ReportTabs
-        tabs={projectTabs}
+        tabs={dashboardTabs(projectTabs)}
         currentId={1}
         onSelect={() => {}}
         sortable
@@ -100,6 +107,34 @@ describe('ReportTabs', () => {
     render(<ReportTabs tabs={[]} currentId={0} onSelect={() => {}} trailing={<button type="button">Add tab</button>} />)
     expect(screen.queryByRole('combobox', { name: 'Tab' })).toBeNull()
     expect(screen.getByRole('button', { name: 'Add tab' })).toBeInTheDocument()
+  })
+
+  it("shows a tab's icon and badge, names it by its label, and lists the label in the phone select", async () => {
+    const user = userEvent.setup()
+    render(
+      <ReportTabs
+        tabs={[
+          {
+            id: 1,
+            title: 'contact',
+            icon: <svg data-testid="draft" />,
+            badge: <span data-testid="new">3</span>,
+            label: 'contact (draft, 3 new)',
+          },
+          { id: 2, title: 'survey' },
+        ]}
+        currentId={2}
+        onSelect={() => {}}
+        sortable
+        onMove={async () => true}
+      />
+    )
+    const tab = screen.getByRole('tab', { name: 'contact (draft, 3 new)' })
+    expect(tab).toContainElement(screen.getByTestId('draft'))
+    expect(tab).toContainElement(screen.getByTestId('new'))
+    expect(screen.getByRole('tab', { name: 'survey' })).toBeInTheDocument()
+    await user.click(screen.getByRole('combobox', { name: 'Tab' }))
+    expect(await screen.findByRole('option', { name: 'contact (draft, 3 new)' })).toBeInTheDocument()
   })
 
   it('still selects on a virtual click after Space picked a tab up and Escape put it back', async () => {

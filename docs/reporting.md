@@ -1745,9 +1745,10 @@ a tab of a project's page (`/app/projects/{project_id}`).
   range, availability checks included at `QUOTA_CHECK_RATIO`'s weight, then
   the script and the ingest keys), Domains (allowed origins, monitoring and
   domain expiry), Events, Attributes (their rules), and Danger (Archive).
-  On Settings and Forms the dashboards' tabs are not shown, and the
-  project's name at the top is a back button (**← name**) to the tab last
-  used; the name is renamed from a dashboard tab.
+  On Settings and Forms the dashboards' tabs are not shown (Forms has one
+  tab per form instead), and the project's name at the top is a back
+  button (**← name**) to the tab last used; the name is renamed from a
+  dashboard tab.
   - Each project keeps its own list: `add_project_tab`,
     `remove_project_tab` and `move_project_tab` change one project's page
     and no other.

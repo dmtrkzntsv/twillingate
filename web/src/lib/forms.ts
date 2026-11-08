@@ -106,7 +106,48 @@ export function purgeNote(days: PurgeDays): string {
   return `Archived submissions are deleted for good ${plural(days, 'day')} after archiving unless restored.`
 }
 
-/** Where a form lives under a project, as a link from the Forms tab. */
+/** A form's name as the ingest path takes it (create_form's rule). */
+export const FORM_NAME = /^[a-z0-9_-]{1,64}$/
+
+/** Why `name` cannot be a new form's name, `''` when it can or is still empty. */
+export function formNameProblem(name: string): string {
+  if (name === '' || FORM_NAME.test(name)) return ''
+  return 'Use 1 to 64 lower-case letters, digits, _ and -.'
+}
+
+/**
+ * The `after` that moves form `name` to index `to` among a project's forms
+ * (move_form's): `''` for first, else the form before that place once
+ * `name` is taken out.
+ */
+export function formAfter(names: string[], name: string, to: number): string {
+  const rest = names.filter((n) => n !== name)
+  return to <= 0 ? '' : (rest[Math.min(to, rest.length) - 1] ?? '')
+}
+
+function attr(v: string): string {
+  return v.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+}
+
+/**
+ * A tagged form for a page with the SDK, posting to form `name`: one
+ * control per field (an email input for `email`, a text area for
+ * `message`, a plain input for the rest), `email` and `message` when it
+ * names none.
+ */
+export function formSnippet(name: string, fields: string[] = []): string {
+  const shown = fields.length > 0 ? fields : ['email', 'message']
+  const controls = shown.map((f) =>
+    f === 'email'
+      ? '  <input name="email" type="email" required>'
+      : f === 'message'
+        ? '  <textarea name="message"></textarea>'
+        : `  <input name="${attr(f)}">`
+  )
+  return [`<form data-twillingate-form="${attr(name)}">`, ...controls, '  <button>Send</button>', '</form>'].join('\n')
+}
+
+/** Where a form lives under a project: its tab on the Forms page. */
 export function formPath(projectId: number, name: string, search = ''): string {
   const path = `/projects/${projectId}/forms/${encodeURIComponent(name)}`
   return search ? `${path}?${search}` : path

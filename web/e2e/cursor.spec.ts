@@ -70,7 +70,7 @@ test('every link and button shows the pointer', async ({ page, request }) => {
   const from = new Date(Date.now() - 6 * 86_400_000).toISOString().slice(0, 10)
   await createShare(request, { widgetId: widgets[0].widget_id, projectId: 1, from, to })
 
-  // A project with a draft form, for the Forms tab's rows and a form's page and table.
+  // A project with a draft form, for the Forms page's tabs and a form's page and table.
   const forms = await createProject(request, `cursor-forms-${Date.now()}`, [])
   await submitJSON(request, forms.key, 'contact', { email: 'ann@example.com', message: 'Hello' })
 
@@ -152,8 +152,9 @@ test('every link and button shows the pointer', async ({ page, request }) => {
   expect(await withoutPointer(page), 'blocked attribute menu').toEqual([])
   await page.keyboard.press('Escape')
 
-  // The empty Forms tab's copy buttons, a form row's menu, the Approve
-  // dialog's checkboxes, and a submission's drawer.
+  // The empty Forms page's New form and copy buttons, a form's menu, the
+  // Approve dialog's checkboxes, the New form and Find a person dialogs,
+  // Setup unfolded, and a submission's drawer.
   const empty = await createProject(request, `cursor-no-forms-${Date.now()}`, [])
   await page.goto(`/app/projects/${empty.id}/forms`)
   await expect(page.getByRole('region', { name: 'Add a form' })).toBeVisible()
@@ -166,6 +167,20 @@ test('every link and button shows the pointer', async ({ page, request }) => {
   await expect(page.getByRole('dialog', { name: 'Approve contact' }).getByRole('checkbox', { name: 'email' })).toBeVisible()
   expect(await withoutPointer(page), 'approve dialog').toEqual([])
   await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'New form' }).click()
+  const newForm = page.getByRole('dialog', { name: 'New form' })
+  await newForm.getByRole('textbox', { name: 'New field' }).fill('email')
+  await newForm.getByRole('button', { name: 'Add field' }).click()
+  await expect(newForm.getByRole('checkbox', { name: 'email' })).toBeVisible()
+  expect(await withoutPointer(page), 'new form dialog').toEqual([])
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Find a person' }).click()
+  await expect(page.getByRole('dialog', { name: 'Find a person' }).getByRole('searchbox')).toBeVisible()
+  expect(await withoutPointer(page), 'find a person dialog').toEqual([])
+  await page.keyboard.press('Escape')
+  await page.getByRole('region', { name: 'Setup' }).getByRole('button', { name: 'Setup' }).click()
+  await expect(page.getByRole('button', { name: 'Copy form snippet' })).toBeVisible()
+  expect(await withoutPointer(page), 'setup').toEqual([])
   await page.goto(`/app/projects/${forms.id}/forms/contact`)
   await page.locator('tbody tr').first().click()
   await expect(page.getByRole('dialog', { name: 'Submission' }).getByText('ann@example.com')).toBeVisible()

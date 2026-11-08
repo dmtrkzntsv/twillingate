@@ -1,11 +1,12 @@
 import { useState } from 'react'
 import { InboxIcon, PlusIcon, SettingsIcon } from 'lucide-react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
-import ReportTabs from '@/components/ReportTabs'
+import FormTabs from '@/components/forms/FormTabs'
+import ReportTabs, { dashboardTabs } from '@/components/ReportTabs'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
-import type { DashboardInfo, ProjectTab } from '@/lib/api'
+import type { DashboardInfo, Project, ProjectTab } from '@/lib/api'
 import { plural } from '@/lib/format'
 import { readLastTab, writeLastTab } from '@/lib/last-tab'
 import { FORMS_ID, landingPath, rangeParams, SETTINGS_ID, settingsPath, tabAfter, tabPath, type SettingsSection } from '@/lib/project-tabs'
@@ -18,6 +19,10 @@ const current = 'aria-[current=page]:bg-accent aria-[current=page]:text-foregrou
 
 interface Props {
   projectId: number
+  /** On Forms (`currentId` is `FORMS_ID`): the project, whose forms are the tabs there. */
+  project?: Project
+  /** On Forms: the form on screen, none on `/forms` itself. */
+  form?: string
   /** The tab on screen: `SETTINGS_ID`, `FORMS_ID` or a dashboard id. */
   currentId: number
   /** The project's tabs, in order. */
@@ -44,10 +49,11 @@ interface Props {
  * submissions) and Settings. Switching keeps the range in the URL.
  *
  * On Settings the row holds the Settings tabs instead (project settings
- * tabs), and on Forms none: the page's title goes back to the dashboards
- * there (ProjectBackHeader), as the highlighted gear does on Settings.
+ * tabs), and on Forms the project's forms (`FormTabs`): the page's title
+ * goes back to the dashboards there (ProjectBackHeader), as the
+ * highlighted gear does on Settings.
  */
-export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, actions, newSubmissions, draftForms, archived = false, section, readOnly = false }: Props) {
+export default function ProjectTabBar({ projectId, project, form, currentId, tabs, dashboards, actions, newSubmissions, draftForms, archived = false, section, readOnly = false }: Props) {
   const navigate = useNavigate()
   const [url] = useSearchParams()
   const [adding, setAdding] = useState(false)
@@ -83,24 +89,24 @@ export default function ProjectTabBar({ projectId, currentId, tabs, dashboards, 
     <div className="flex h-10 min-w-0 items-center gap-1 border-b border-border/70">
       {onSettings ? (
         <SettingsTabs projectId={projectId} archived={archived} current={section ?? 'overview'} search={search} />
+      ) : currentId === FORMS_ID ? (
+        // The Forms pages show the forms instead: their title goes back to the dashboards (ProjectBackHeader).
+        project && <FormTabs project={project} current={form} search={search} />
       ) : (
-        // The Forms pages show no dashboard tabs: their title goes back to them (ProjectBackHeader).
-        currentId !== FORMS_ID && (
-          <ReportTabs
-            tabs={tabs}
-            currentId={currentId}
-            onSelect={open}
-            sortable={!readOnly}
-            onMove={readOnly ? undefined : (id, to) => actions.move(projectId, id, tabAfter(tabs, id, to))}
-            trailing={
-              !readOnly && (
-                <Button variant="ghost" size="icon" className="size-8 shrink-0" aria-label="Add tab" onClick={() => setAdding(true)}>
-                  <PlusIcon />
-                </Button>
-              )
-            }
-          />
-        )
+        <ReportTabs
+          tabs={dashboardTabs(tabs)}
+          currentId={currentId}
+          onSelect={open}
+          sortable={!readOnly}
+          onMove={readOnly ? undefined : (id, to) => actions.move(projectId, id, tabAfter(tabs, id, to))}
+          trailing={
+            !readOnly && (
+              <Button variant="ghost" size="icon" className="size-8 shrink-0" aria-label="Add tab" onClick={() => setAdding(true)}>
+                <PlusIcon />
+              </Button>
+            )
+          }
+        />
       )}
       <div className="ml-auto flex shrink-0 items-center gap-0.5">
         {!readOnly && (

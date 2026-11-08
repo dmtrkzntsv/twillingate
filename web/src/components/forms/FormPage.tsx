@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
-import { ArchiveIcon, ArchiveRestoreIcon, ArrowLeftIcon, DownloadIcon, InboxIcon, XIcon } from 'lucide-react'
-import { Link, useNavigate, useSearchParams } from 'react-router'
+import { ArchiveIcon, ArchiveRestoreIcon, ArrowLeftIcon, ChevronDownIcon, DownloadIcon, InboxIcon, XIcon } from 'lucide-react'
+import { useNavigate, useSearchParams } from 'react-router'
 import { toast } from 'sonner'
 import WidgetFrame from '@/components/WidgetFrame'
 import LoadError from '@/components/projects/LoadError'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Skeleton } from '@/components/ui/skeleton'
 import Table from '@/components/widgets/table'
 import { useFormActions } from '@/hooks/use-form-actions'
@@ -15,11 +16,13 @@ import { useStoredState } from '@/hooks/use-stored-state'
 import { ApiError, endpoints, type Form, type Project, type SubmissionsPage, type SubmissionsQuery } from '@/lib/api'
 import { downloadBlob } from '@/lib/capture'
 import { closingDone, formatDay, formStatus, purgeDays as purgeDaysOf, purgeNote as purgeNoteFor, toCSV, type PurgeDays } from '@/lib/forms'
+import { writeLastForm } from '@/lib/last-form'
 import { FORMS_ID, rangeParams, tabPath } from '@/lib/project-tabs'
 import { dashboardsQuery, formsQuery, submissionsQuery } from '@/lib/queries'
 import { liveFilters, parseView, remoteArgs, valueOptions, viewChanged, type Filter, type TableView } from '@/lib/table-view'
 import ApproveDialog from './ApproveDialog'
 import FormMenu from './FormMenu'
+import FormSnippets from './FormSnippets'
 import SettingsDialog from './SettingsDialog'
 import SubmissionDrawer from './SubmissionDrawer'
 
@@ -243,9 +246,33 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
 }
 
 /**
- * `/projects/:id/forms/:name` (D12), inside the Forms tab: a crumb back to
- * the list, a draft's banner with **Approve**, the submissions table, and
- * the form's menu, whose **Settings…** opens its settings dialog.
+ * How a page sends to the form: open while it has no submission, active
+ * or archived, folded once it has one.
+ */
+function Setup({ projectId, form, actionBase }: { projectId: number; form: Form; actionBase: string }) {
+  const fresh = form.submissions + form.archived_submissions === 0
+  return (
+    <Collapsible defaultOpen={fresh} asChild>
+      <section aria-label="Setup" className="group/setup flex min-w-0 flex-col rounded-lg border">
+        <CollapsibleTrigger asChild>
+          <button type="button" className="flex items-center justify-between gap-2 rounded-lg p-3 text-left text-base font-semibold">
+            Setup
+            <ChevronDownIcon aria-hidden className="size-4 text-muted-foreground transition-transform group-data-[state=open]/setup:rotate-180" />
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent className="px-3 pb-3">
+          <FormSnippets projectId={projectId} actionBase={actionBase} name={form.name} fields={form.expected_fields ?? form.fields} />
+        </CollapsibleContent>
+      </section>
+    </Collapsible>
+  )
+}
+
+/**
+ * `/projects/:id/forms/:name` (D12), a tab of the Forms page: the name,
+ * status and menu (whose **Settings…** opens the settings dialog), a
+ * draft's banner with **Approve**, the submissions table, then Setup.
+ * Opening a form remembers it as the project's last (`/forms` lands there).
  */
 export default function FormPage({ project, name }: { project: Project; name: string }) {
   const id = project.project_id
@@ -256,13 +283,17 @@ export default function FormPage({ project, name }: { project: Project; name: st
   const [approving, setApproving] = useState(false)
   const [setting, setSetting] = useState(false)
   const navigate = useNavigate()
-  // An archived form leaves this page for the list it left.
+  // An archived form leaves its tab: `/forms` lands on another, or says there are none.
   const archive = async () => {
     if (await actions.archive(id, name)) void navigate(back)
   }
   const [shown, setShown] = useState<Shown>('active')
   const purgeDays = purgeDaysOf(useQuery(dashboardsQuery).data)
   const form = q.data?.forms.find((f) => f.name === name)
+  const found = form !== undefined
+  useEffect(() => {
+    if (found) writeLastForm(id, name)
+  }, [found, id, name])
 
   // Opening a form reads it: up to the last submission the list showed, so
   // one that arrives meanwhile stays new. Once per value, not per refetch.
@@ -275,10 +306,6 @@ export default function FormPage({ project, name }: { project: Project; name: st
 
   return (
     <div className="flex min-w-0 flex-col gap-4">
-      <Link to={back} className="inline-flex items-center gap-1 self-start text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeftIcon className="size-4" />
-        Forms
-      </Link>
       {q.error && !q.data ? (
         <LoadError what="the form" error={q.error} onRetry={() => void q.refetch()} />
       ) : !q.data ? (
@@ -313,6 +340,7 @@ export default function FormPage({ project, name }: { project: Project; name: st
           )}
           {/* Keyed by what it shows: each table keeps its own view and last answer. */}
           <Submissions key={shown} projectId={id} form={form} shown={shown} onShown={setShown} purgeDays={purgeDays} />
+          <Setup projectId={id} form={form} actionBase={q.data.action_base} />
           <SettingsDialog
             open={setting}
             onOpenChange={setSetting}

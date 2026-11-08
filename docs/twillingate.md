@@ -957,6 +957,18 @@ tools below do.
    you set with `move_form`, the same in the console. A new form, created
    up front or by its first submission, comes last; an archived form keeps
    its place and a restore brings it back there.
+
+   In the console, a project's Forms page (`/app/projects/{project_id}/forms`)
+   has one tab per live form in that order, dragged to a new place like a
+   dashboard tab (a select on a phone); a draft's tab carries a pencil mark,
+   and a tab shows its form's count of new submissions. The page opens on
+   the form last opened on that project in the browser, else the first; a
+   form is at `/app/projects/{project_id}/forms/{name}`. **+** creates a form
+   (`create_form`: a name, a purpose, the fields to keep, a return address),
+   the search button finds a person across every form, and a form's
+   **Setup** section gives the tagged form and the plain form's action URL
+   for that form, open until its first submission. With no forms, the page
+   offers **New form** and the same two snippets.
 8. **Erase a person** on request: `find_submissions` with their email (or any
    text a field holds) lists what every form has of them, archived ones
    included, and `archive_submissions` with the same `search` archives

@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router'
 import { endpoints, type Project } from '@/lib/api'
 import { formatDay } from '@/lib/forms'
+import { readLastForm } from '@/lib/last-form'
 import { contactPage, draft, form, submission } from '@/test/forms'
 import { renderWithProviders } from '@/test/render'
 import FormPage from './FormPage'
@@ -19,6 +20,7 @@ beforeEach(() => {
   })
   vi.spyOn(endpoints, 'submissions').mockResolvedValue(contactPage)
   vi.spyOn(endpoints, 'submission').mockResolvedValue(submission('s2'))
+  vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [{ project_id: 4, label: 'web', key: 'ak_web_123', state: 'active' }] })
 })
 
 function renderPage(name = 'contact') {
@@ -64,9 +66,46 @@ describe('FormPage', () => {
     expect(seen).not.toHaveBeenCalled()
   })
 
-  it('links back to the forms, keeping the range', async () => {
+  it('is a tab of the Forms page, with no link back to a list', async () => {
     renderPage()
-    expect(await screen.findByRole('link', { name: /Forms/ })).toHaveAttribute('href', '/projects/4/forms?range=7d')
+    await screen.findByRole('heading', { name: 'contact' })
+    expect(screen.queryByRole('link', { name: /Forms/ })).toBeNull()
+  })
+
+  it('remembers the form as the last opened on the project, and not one that is not there', async () => {
+    const { unmount } = renderPage()
+    await screen.findByRole('heading', { name: 'contact' })
+    expect(readLastForm(4)).toBe('contact')
+    unmount()
+    renderPage('gone')
+    await screen.findByText(/No form gone/)
+    expect(readLastForm(4)).toBe('contact')
+  })
+
+  it('folds Setup on a form with submissions, and opens it on its snippets with the real name and fields', async () => {
+    const user = userEvent.setup()
+    renderPage()
+    const setup = await screen.findByRole('region', { name: 'Setup' })
+    const toggle = within(setup).getByRole('button', { name: 'Setup' })
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(within(setup).queryByText(/data-twillingate-form/)).toBeNull()
+    await user.click(toggle)
+    expect(toggle).toHaveAttribute('aria-expanded', 'true')
+    expect(within(setup).getByText(/<form data-twillingate-form="contact">/)).toHaveTextContent('<input name="email" type="email" required>')
+    expect(await within(setup).findByText('https://<collector>/ingest/forms/contact?key=ak_web_123')).toBeInTheDocument()
+  })
+
+  it('opens Setup on a form with no submissions yet', async () => {
+    vi.mocked(endpoints.forms).mockResolvedValue({
+      action_base: 'https://t.example.com/ingest/forms',
+      forms: [form('lead', { fields: ['email', 'company'], expected_fields: ['email', 'company'] })],
+    })
+    vi.mocked(endpoints.submissions).mockResolvedValue({ ...contactPage, columns: ['Received', 'email', 'company'], rows: [], ids: [], matched: 0, total: 0 })
+    renderPage('lead')
+    const setup = await screen.findByRole('region', { name: 'Setup' })
+    expect(within(setup).getByRole('button', { name: 'Setup' })).toHaveAttribute('aria-expanded', 'true')
+    expect(within(setup).getByText(/<form data-twillingate-form="lead">/)).toHaveTextContent('<input name="company">')
+    expect(await within(setup).findByText('https://t.example.com/ingest/forms/lead?key=ak_web_123')).toBeInTheDocument()
   })
 
   it('builds the submissions table from the page the API answers', async () => {

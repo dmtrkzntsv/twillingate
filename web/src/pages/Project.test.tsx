@@ -293,9 +293,15 @@ describe('Project', () => {
     vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [] })
     renderAt('/projects/4/forms?range=30d')
     await vi.waitFor(() => expect(screen.getByRole('link', { name: 'Back to the dashboards of econumo.com' })).toHaveAttribute('href', '/projects/4/dashboards/1?range=30d'))
+    // No forms: no tabs, the empty state, and New form and Find a person in the row.
+    expect(await screen.findByRole('region', { name: 'Add a form' })).toBeInTheDocument()
     expect(screen.queryByRole('tab')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Add tab' })).toBeNull()
+    // "+" in the row, and the empty state's own.
+    expect(screen.getAllByRole('button', { name: 'New form' })).toHaveLength(2)
+    expect(screen.getByRole('button', { name: 'Find a person' })).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /^Forms/ })).toHaveAttribute('aria-current', 'page')
+    expect(location()).toBe('/projects/4/forms?range=30d')
   })
 
   it('keeps the Archived badge beside the back button', async () => {
@@ -591,21 +597,38 @@ describe('Project tabs', () => {
     expect(screen.getByRole('link', { name: 'Settings' })).toHaveAttribute('aria-current', 'page')
   })
 
-  it('opens the Forms page at /forms, keeping the range, and a form inside it', async () => {
+  it('opens the Forms page at /forms on its first form, keeping the range, with the forms as tabs', async () => {
     const user = userEvent.setup()
-    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact'), form('survey')] })
     vi.spyOn(endpoints, 'submissions').mockResolvedValue(contactPage)
     renderAt('/projects/7/settings?range=30d')
     await user.click(await screen.findByRole('link', { name: /^Forms/ }))
-    expect(location()).toBe('/projects/7/forms?range=30d')
-    expect(await screen.findByRole('list', { name: 'Forms' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /^Forms/ })).toHaveAttribute('aria-current', 'page')
-    expect(screen.queryByRole('tab', { selected: true })).toBeNull()
-    await user.click(screen.getByRole('link', { name: /contact/ }))
-    expect(location()).toBe('/projects/7/forms/contact?range=30d')
+    await vi.waitFor(() => expect(location()).toBe('/projects/7/forms/contact?range=30d'))
     expect(await screen.findByRole('table')).toBeInTheDocument()
-    expect(screen.getAllByRole('link', { name: /^Forms/ }).some((l) => l.getAttribute('aria-current') === 'page')).toBe(true)
+    expect(screen.getByRole('link', { name: /^Forms/ })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['contact', 'survey'])
+    expect(screen.getByRole('tab', { name: 'contact' })).toHaveAttribute('aria-selected', 'true')
+    await user.click(screen.getByRole('tab', { name: 'survey' }))
+    expect(location()).toBe('/projects/7/forms/survey?range=30d')
+    expect(await screen.findByRole('heading', { name: 'survey' })).toBeInTheDocument()
     expect(endpoints.forms).toHaveBeenCalledWith(7, false)
+  })
+
+  it('lands /forms on the form last opened on the project', async () => {
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact'), form('survey')] })
+    vi.spyOn(endpoints, 'submissions').mockResolvedValue(contactPage)
+    const { unmount } = renderAt('/projects/7/forms/survey')
+    await screen.findByRole('heading', { name: 'survey' })
+    unmount()
+    renderAt('/projects/7/forms?range=7d')
+    await vi.waitFor(() => expect(location()).toBe('/projects/7/forms/survey?range=7d'))
+  })
+
+  it("keeps the notice for a form name that is not among the project's forms", async () => {
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
+    renderAt('/projects/7/forms/gone')
+    expect(await screen.findByText(/No form gone among this project's active forms/)).toBeInTheDocument()
+    expect(screen.queryByRole('tab', { selected: true })).toBeNull()
   })
 
   it('says a project with no events yet has none, and links to its Overview', async () => {
@@ -619,8 +642,10 @@ describe('Project tabs', () => {
   it('shows no notice on the Forms pages, where a forms-only project has its work', async () => {
     vi.mocked(endpoints.projectActivity).mockResolvedValue({ projects: [{ project_id: 7, last_event_day: null, new_submissions: 0, forms: 0, draft_forms: 0 }] })
     vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
+    vi.spyOn(endpoints, 'submissions').mockResolvedValue(contactPage)
     renderAt('/projects/7/forms')
-    await screen.findByRole('list', { name: 'Forms' })
+    // Lands on the form, then loads its table.
+    await screen.findByRole('table', {}, { timeout: 5000 })
     await vi.waitFor(() => expect(endpoints.projectActivity).toHaveBeenCalled())
     expect(screen.queryByText('No events received yet')).not.toBeInTheDocument()
   })

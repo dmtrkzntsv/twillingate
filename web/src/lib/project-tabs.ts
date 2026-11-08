@@ -3,7 +3,7 @@ import type { DashboardInfo, ProjectTab } from './api'
 /** Settings, behind the gear; no dashboard has id 0. */
 export const SETTINGS_ID = 0
 
-/** The Forms tab's id in `ReportTabs`: never a dashboard's (forms D12). */
+/** The Forms page's id in the project's tab row: never a dashboard's (forms D12). */
 export const FORMS_ID = -1
 
 /**
