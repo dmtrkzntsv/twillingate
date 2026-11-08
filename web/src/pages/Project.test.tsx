@@ -304,7 +304,7 @@ describe('Project', () => {
     expect(back.parentElement).toHaveTextContent('Archived')
   })
 
-  it('offers neither the back button nor Add dashboard when the tabs cannot be read', async () => {
+  it('shows the name, with neither the back button nor Add dashboard, when the tabs cannot be read', async () => {
     vi.mocked(endpoints.projectTabs).mockRejectedValue(new ApiError(500, 'database is locked', 'internal'))
     renderAt('/projects/7/settings')
     expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
@@ -312,6 +312,7 @@ describe('Project', () => {
     await new Promise((r) => setTimeout(r, 50))
     expect(screen.queryByRole('button', { name: 'Add dashboard' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Back to the dashboards/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'shop' })).toBeInTheDocument()
   })
 
   it('offers Add dashboard in place of the back button on a project with no tabs, and opens the one added', async () => {
@@ -319,7 +320,10 @@ describe('Project', () => {
     vi.mocked(endpoints.projectTabs).mockResolvedValue({ tabs: [] })
     const add = vi.spyOn(endpoints, 'addProjectTab').mockResolvedValue({ tabs: [{ dashboard_id: 3, title: 'Users', owner: 'system', group_id: 1 }] })
     renderAt('/projects/7/settings?range=30d')
-    await user.click(await screen.findByRole('button', { name: 'Add dashboard' }))
+    const addButton = await screen.findByRole('button', { name: 'Add dashboard' })
+    // The name stays renamable: with no dashboard, Settings is the only page left to do it.
+    expect(screen.getByRole('button', { name: 'Rename' })).toBeInTheDocument()
+    await user.click(addButton)
     expect(screen.queryByRole('link', { name: /Back to the dashboards/ })).not.toBeInTheDocument()
     const builtin = await screen.findByRole('group', { name: 'Built-in' })
     await user.click(within(builtin).getByRole('button', { name: 'Users' }))
