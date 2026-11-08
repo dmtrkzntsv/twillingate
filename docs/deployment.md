@@ -184,7 +184,7 @@ The process that ingests notices a site that goes down and comes back, a
 certificate or domain that fails or recovers, a certificate or domain
 about to expire, and form drafts and submissions. Each becomes one item in
 the console's inbox and, with `NOTIFY_URL` set, the same message in one
-channel, its link built on `CONSOLE_URL`. This runs also under
+channel, its link the console page under `CONSOLE_URL` (`<CONSOLE_URL>/app/…`). This runs also under
 `MONITOR_DISABLED` (forms still notify). Form field values are never sent.
 
 | Channel | `NOTIFY_URL` |

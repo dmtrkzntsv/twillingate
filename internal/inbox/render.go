@@ -77,13 +77,14 @@ func Render(n store.Notification) notify.Message {
 	return m
 }
 
-// Absolute is m with its Link made a URL under consoleURL; unchanged when
-// consoleURL is empty.
+// Absolute is m with its Link made a URL of the console page: the web app
+// under consoleURL's /app (Link, a path the web router reads, has no
+// /app of its own); unchanged when consoleURL is empty.
 func Absolute(m notify.Message, consoleURL string) notify.Message {
 	if consoleURL == "" {
 		return m
 	}
-	m.Link = strings.TrimRight(consoleURL, "/") + "/" + strings.TrimLeft(m.Link, "/")
+	m.Link = strings.TrimRight(consoleURL, "/") + "/app/" + strings.TrimLeft(m.Link, "/")
 	return m
 }
 

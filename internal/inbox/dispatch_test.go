@@ -98,8 +98,8 @@ func TestDispatcherSends(t *testing.T) {
 	if len(s.sent) != 1 || s.sent[0] != want {
 		t.Fatalf("sent %+v, want [%+v]", s.sent, want)
 	}
-	if want.Link == inbox.Render(n).Link || want.Link[:8] != "https://" {
-		t.Errorf("link %q is not absolute", want.Link)
+	if want.Link != "https://console.example.com/app/projects/1/settings/domains" {
+		t.Errorf("link %q is not the console page under /app", want.Link)
 	}
 	if len(s.deadlines) != 1 || s.deadlines[0] > 30*time.Second || s.deadlines[0] < 25*time.Second {
 		t.Errorf("send deadlines %v, want about 30s", s.deadlines)

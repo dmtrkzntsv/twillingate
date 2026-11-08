@@ -1046,8 +1046,9 @@ and comes back, a certificate or a domain lookup that fails and recovers, a
 certificate or a domain about to expire, a new form waiting for approval or
 a draft dropped unapproved, and submissions to a form. Each is one item in
 the inbox (the console's, and `list_notifications`) and, with `NOTIFY_URL`
-set, the same title, body and link sent to one channel: Telegram, ntfy,
-Slack, Discord, a JSON webhook or email, set up as in
+set, the same title, body and link (the console page, `<CONSOLE_URL>/app/…`)
+sent to one channel: Telegram, ntfy, Slack, Discord, a JSON webhook or
+email, set up as in
 [deployment.md](deployment.md#notifications) (`docs://deployment`). Form
 field values are never in a notification.
 

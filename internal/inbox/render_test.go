@@ -121,7 +121,7 @@ func TestRenderUnknownType(t *testing.T) {
 func TestAbsolute(t *testing.T) {
 	m := notify.Message{Title: "t", Link: "/inbox"}
 	for _, base := range []string{"https://c.example", "https://c.example/"} {
-		if got := inbox.Absolute(m, base).Link; got != "https://c.example/inbox" {
+		if got := inbox.Absolute(m, base).Link; got != "https://c.example/app/inbox" {
 			t.Errorf("%q: %q", base, got)
 		}
 	}
