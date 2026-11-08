@@ -229,6 +229,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 		if cfg.Monitor.Disabled {
 			logger.Warn("monitoring is paused (MONITOR_DISABLED): no check runs and no row is written")
 			mon.Pause()
+			tracker.PauseMonitoring()
 		}
 		var wg sync.WaitGroup
 		wg.Go(func() { mon.Run(monCtx) })

@@ -638,3 +638,33 @@ func TestDomainExpiryBareDate(t *testing.T) {
 		t.Fatalf("days = %q, want -2", n.Fields["days"])
 	}
 }
+
+// With monitoring paused nothing observes a failing state any more, so no
+// reminder goes; the state stays for a later run, and bursts still flush.
+func TestPausedMonitoringSendsNoReminders(t *testing.T) {
+	f := newFake(monitor)
+	tr := newTracker(f)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
+	one(t, f, store.NotifyUptimeDown)
+
+	tr.PauseMonitoring()
+	now := t0.Add(9 * time.Hour)
+	tr.Tick(ctx, now) // two intervals past: no reminder
+	none(t, f)
+	if len(f.flushed) != 1 || !f.flushed[0].Equal(now) {
+		t.Fatalf("flushed = %v, want one at %v", f.flushed, now)
+	}
+	f.monitors = nil // a monitor switched off meanwhile: not pruned while paused
+	tr.Tick(ctx, now)
+	if !f.has(1, "uptime", origin) {
+		t.Fatal("failing state dropped while paused")
+	}
+
+	// A later run with monitoring on continues the state.
+	g := newFake(monitor)
+	g.states = f.states
+	tr = newTracker(g)
+	tr.Tick(ctx, now)
+	one(t, g, store.NotifyUptimeStillDown)
+}

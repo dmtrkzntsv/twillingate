@@ -100,6 +100,7 @@ type Tracker struct {
 
 	mu     sync.Mutex
 	loaded bool
+	paused bool
 	states map[key]entry
 }
 
@@ -107,6 +108,17 @@ type Tracker struct {
 // remind (<= 0: never).
 func NewTracker(st TrackerStore, remind time.Duration, logger *slog.Logger) *Tracker {
 	return &Tracker{st: st, remind: remind, logger: logger, states: map[key]entry{}}
+}
+
+// PauseMonitoring makes Tick leave the monitor states alone, for an
+// install whose monitoring is paused: no observation comes to end them, so
+// it neither reminds of a failing one nor prunes any. They stay as they
+// are, and a later run with monitoring on continues them. Form bursts
+// still flush. Call it before Run.
+func (t *Tracker) PauseMonitoring() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.paused = true
 }
 
 // Uptime records one availability check of origin: down after two
@@ -199,7 +211,8 @@ func (t *Tracker) Domain(ctx context.Context, projectID int64, domain string, ok
 // Tick drops the states no enabled monitor has any more, and ended ones
 // (without a message), reminds of every failing state not reminded of for the
 // remind interval (a certificate not while its origin is down), and
-// sends the form submission bursts whose window has ended.
+// sends the form submission bursts whose window has ended. After
+// PauseMonitoring it only sends the bursts.
 func (t *Tracker) Tick(ctx context.Context, now time.Time) {
 	now = now.UTC()
 	t.tick(ctx, now)
@@ -225,7 +238,7 @@ func (t *Tracker) Run(ctx context.Context) {
 func (t *Tracker) tick(ctx context.Context, now time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.load(ctx) {
+	if t.paused || !t.load(ctx) {
 		return
 	}
 	t.prune(ctx)

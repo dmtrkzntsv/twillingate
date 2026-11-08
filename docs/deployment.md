@@ -185,7 +185,9 @@ certificate or domain that fails or recovers, a certificate or domain
 about to expire, and form drafts and submissions. Each becomes one item in
 the console's inbox and, with `NOTIFY_URL` set, the same message in one
 channel, its link the console page under `CONSOLE_URL` (`<CONSOLE_URL>/app/…`). This runs also under
-`MONITOR_DISABLED` (forms still notify). Form field values are never sent.
+`MONITOR_DISABLED` (forms still notify), but a paused install sends no
+monitor reminders: a state failing when monitoring was paused stays as it
+is, without reminders, until a run with monitoring on continues it. Form field values are never sent.
 
 | Channel | `NOTIFY_URL` |
 | --- | --- |
