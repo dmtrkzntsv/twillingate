@@ -256,3 +256,32 @@ func (s *cancelingSender) Send(context.Context, notify.Message) error {
 	s.cancel()
 	return nil
 }
+
+// failingOutcome wraps a deliveryStore whose first SetDelivery to pending fails.
+type failingOutcome struct {
+	*deliveryStore
+	failed bool
+}
+
+func (f *failingOutcome) SetDelivery(ctx context.Context, id int64, delivery, errText string, attempts int, next *time.Time) error {
+	if delivery == store.DeliveryPending && !f.failed {
+		f.failed = true
+		return fmt.Errorf("disk full")
+	}
+	return f.deliveryStore.SetDelivery(ctx, id, delivery, errText, attempts, next)
+}
+
+func TestDispatcherKeepsBackoffWhenOutcomeWriteFails(t *testing.T) {
+	st := &failingOutcome{deliveryStore: &deliveryStore{rows: []store.Notification{pending(1, dispNow, 0)}}}
+	s := &fakeSender{errs: []error{fmt.Errorf("fake: 503: %w", notify.ErrTemporary)}}
+	d := inbox.NewDispatcher(st, s, "", quiet())
+	d.Deliver(context.Background(), dispNow)
+	d.Deliver(context.Background(), dispNow.Add(5*time.Second))
+	if len(s.sent) != 1 {
+		t.Errorf("sender called %d times, want 1", len(s.sent))
+	}
+	got := st.row(1)
+	if got.Delivery != store.DeliveryPending || got.Attempts != 1 || got.NextAttemptAt == nil || !got.NextAttemptAt.Equal(dispNow.Add(time.Minute)) {
+		t.Errorf("row = %s attempts %d next %v, want pending 1 at +1m", got.Delivery, got.Attempts, got.NextAttemptAt)
+	}
+}

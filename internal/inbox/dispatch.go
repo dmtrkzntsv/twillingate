@@ -58,12 +58,21 @@ type Dispatcher struct {
 	// the attempts count to record: they are never sent again by this
 	// process, only recorded.
 	unrecorded map[int64]int
+	// unwritten holds failure outcomes whose write failed: later passes
+	// retry only the write, so the backoff holds and nothing is re-sent.
+	unwritten map[int64]outcome
+}
+
+type outcome struct {
+	delivery, errText string
+	attempts          int
+	next              *time.Time
 }
 
 // NewDispatcher returns a Dispatcher sending through s; a nil s means no
 // channel: every pending row becomes none and stays in the inbox only.
 func NewDispatcher(st DeliveryStore, s notify.Sender, consoleURL string, logger *slog.Logger) *Dispatcher {
-	return &Dispatcher{st: st, sender: s, consoleURL: consoleURL, logger: logger, unrecorded: map[int64]int{}}
+	return &Dispatcher{st: st, sender: s, consoleURL: consoleURL, logger: logger, unrecorded: map[int64]int{}, unwritten: map[int64]outcome{}}
 }
 
 // Run delivers every 5s until ctx ends.
@@ -103,6 +112,11 @@ func (d *Dispatcher) deliver(ctx context.Context, now time.Time, n store.Notific
 		d.recordSent(ctx, n.ID, attempts)
 		return
 	}
+	if o, ok := d.unwritten[n.ID]; ok {
+		// Failed already; only the outcome is missing.
+		d.set(ctx, n.ID, o.delivery, o.errText, o.attempts, o.next)
+		return
+	}
 	switch {
 	case d.sender == nil:
 		d.set(ctx, n.ID, store.DeliveryNone, "", n.Attempts, nil)
@@ -137,7 +151,12 @@ func (d *Dispatcher) deliver(ctx context.Context, now time.Time, n store.Notific
 func (d *Dispatcher) set(ctx context.Context, id int64, delivery, errText string, attempts int, next *time.Time) {
 	if err := d.st.SetDelivery(ctx, id, delivery, errText, attempts, next); err != nil && ctx.Err() == nil {
 		d.logger.Error("notifications: record delivery", "id", id, "delivery", delivery, "err", err)
+		if delivery == store.DeliveryPending || delivery == store.DeliveryFailed {
+			d.unwritten[id] = outcome{delivery, errText, attempts, next}
+		}
+		return
 	}
+	delete(d.unwritten, id)
 }
 
 // recordSent writes that id was sent. It does so on a context that outlives

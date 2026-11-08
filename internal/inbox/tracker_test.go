@@ -738,3 +738,16 @@ func TestUptimeFailuresOutOfOrderCount(t *testing.T) {
 		t.Fatalf("uptime_down = %+v", n)
 	}
 }
+
+// A success that ends a pending streak resets it in memory even when the
+// delete fails, so the next failure does not continue the old count.
+func TestFailedDeleteEndsPendingStreak(t *testing.T) {
+	f := newFake(monitor)
+	tr := newTracker(f)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
+	f.failDel = true
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(10*time.Second))
+	f.failDel = false
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(20*time.Second))
+	none(t, f)
+}

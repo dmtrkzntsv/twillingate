@@ -407,6 +407,11 @@ func (t *Tracker) recover(ctx context.Context, k key, e entry, typ string, at ti
 		}
 	}
 	t.del(ctx, k)
+	if !e.Failing {
+		// A pending streak ends here even when the delete failed: the
+		// stale row must not be continued by the next failure.
+		delete(t.states, k)
+	}
 }
 
 // expiry warns once per step of steps (days left, descending) for the
