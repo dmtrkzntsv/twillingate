@@ -17,6 +17,8 @@ interface Props {
   tabs: ProjectTab[]
   /** False while the tabs load or after they failed: the name alone, with neither the back button nor Add dashboard. */
   tabsLoaded: boolean
+  /** The tabs could not be read: the name with its pencil, so the project stays renamable. */
+  tabsFailed?: boolean
   /** Every dashboard, for the picker. */
   dashboards: DashboardInfo[]
   actions: ProjectTabActions
@@ -28,16 +30,18 @@ interface Props {
  * dashboard last opened here, else the first (D3), keeping the range. A
  * project with no dashboard keeps its name and pencil, the only place left
  * to rename it, with "Add dashboard" beside them, the "+" picker. While
- * the tabs load, or after they failed, the name shows alone. A long name
+ * the tabs load the name shows alone, and after they failed with its pencil. A long name
  * truncates on its one line.
  */
-export default function ProjectBackHeader({ projectId, name, title, tabs, tabsLoaded, dashboards, actions }: Props) {
+export default function ProjectBackHeader({ projectId, name, title, tabs, tabsLoaded, tabsFailed = false, dashboards, actions }: Props) {
   const navigate = useNavigate()
   const [url] = useSearchParams()
   const [adding, setAdding] = useState(false)
   const search = rangeParams(url).toString()
-  // While the tabs load or after they failed: the name, plain. Not the
-  // pencil, whose open editor would be lost when the back button replaces it.
+  // After the tabs failed: the name with its pencil, the only rename left.
+  // While they load: the name, plain; not the pencil, whose open editor
+  // would be lost when the back button replaces it.
+  if (tabsFailed) return title
   if (!tabsLoaded) return <h1 className="truncate text-xl font-semibold tracking-tight">{name}</h1>
 
   const add = async (id: number) => {

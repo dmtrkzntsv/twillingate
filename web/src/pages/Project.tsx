@@ -124,6 +124,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
                   title={<ProjectName key={project.name} name={project.name} pending={actions.pending} onRename={(name) => actions.update(id, { name })} />}
                   tabs={tabsQ.data?.tabs ?? []}
                   tabsLoaded={tabsQ.data !== undefined}
+                  tabsFailed={tabsQ.data === undefined && tabsQ.isError}
                   dashboards={dash?.dashboards ?? []}
                   actions={tabActions}
                 />

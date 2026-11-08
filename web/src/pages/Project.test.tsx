@@ -310,7 +310,7 @@ describe('Project', () => {
     expect(back.parentElement).toHaveTextContent('Archived')
   })
 
-  it('shows the name, with neither the back button nor Add dashboard, when the tabs cannot be read', async () => {
+  it('keeps the name and its pencil, with neither the back button nor Add dashboard, when the tabs cannot be read', async () => {
     vi.mocked(endpoints.projectTabs).mockRejectedValue(new ApiError(500, 'database is locked', 'internal'))
     renderAt('/projects/7/settings')
     expect(await screen.findByRole('region', { name: 'Usage' })).toBeInTheDocument()
@@ -319,6 +319,7 @@ describe('Project', () => {
     expect(screen.queryByRole('button', { name: 'Add dashboard' })).not.toBeInTheDocument()
     expect(screen.queryByRole('link', { name: /Back to the dashboards/ })).not.toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'shop' })).toBeInTheDocument()
+    expect(await screen.findByRole('button', { name: 'Rename' })).toBeInTheDocument()
   })
 
   it('offers Add dashboard in place of the back button on a project with no tabs, and opens the one added', async () => {
