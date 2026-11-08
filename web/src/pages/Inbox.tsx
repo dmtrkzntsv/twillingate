@@ -1,10 +1,5 @@
-import { useState } from "react";
-import {
-  useInfiniteQuery,
-  useQuery,
-  useQueryClient,
-  type InfiniteData,
-} from "@tanstack/react-query";
+import { useState } from 'react'
+import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from '@tanstack/react-query'
 import {
   ArchiveIcon,
   ArchiveRestoreIcon,
@@ -19,29 +14,24 @@ import {
   ShieldAlertIcon,
   ShieldCheckIcon,
   type LucideIcon,
-} from "lucide-react";
-import { Link, useSearchParams } from "react-router";
-import AppShell, { TopBar } from "@/components/AppShell";
-import ConfirmDialog from "@/components/ConfirmDialog";
-import Crumbs from "@/components/Crumbs";
-import LoadError from "@/components/projects/LoadError";
-import { Button } from "@/components/ui/button";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import {
-  endpoints,
-  type Notification,
-  type NotificationsPage,
-  type NotificationType,
-} from "@/lib/api";
-import { dashboardsQuery, notificationsQuery } from "@/lib/queries";
-import { toastError } from "@/lib/toast-error";
-import { formatAgo } from "@/lib/units";
-import { cn } from "@/lib/utils";
+} from 'lucide-react'
+import { Link, useSearchParams } from 'react-router'
+import AppShell, { TopBar } from '@/components/AppShell'
+import ConfirmDialog from '@/components/ConfirmDialog'
+import Crumbs from '@/components/Crumbs'
+import LoadError from '@/components/projects/LoadError'
+import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { endpoints, type Notification, type NotificationsPage, type NotificationType } from '@/lib/api'
+import { dashboardsQuery, notificationsQuery } from '@/lib/queries'
+import { toastError } from '@/lib/toast-error'
+import { formatAgo } from '@/lib/units'
+import { cn } from '@/lib/utils'
 
-const FAILING = "text-destructive";
-const RECOVERED = "text-emerald-600 dark:text-emerald-400";
-const EXPIRING = "text-amber-600 dark:text-amber-400";
-const NEUTRAL = "text-muted-foreground";
+const FAILING = 'text-destructive'
+const RECOVERED = 'text-emerald-600 dark:text-emerald-400'
+const EXPIRING = 'text-amber-600 dark:text-amber-400'
+const NEUTRAL = 'text-muted-foreground'
 
 /** Each type's icon and tone: failing red, recovered green, expiring amber, forms neutral. */
 const LOOK: Record<NotificationType, { icon: LucideIcon; tone: string }> = {
@@ -59,67 +49,42 @@ const LOOK: Record<NotificationType, { icon: LucideIcon; tone: string }> = {
   form_draft_created: { icon: FilePlusIcon, tone: NEUTRAL },
   form_draft_discarded: { icon: FileXIcon, tone: NEUTRAL },
   form_submission: { icon: FileTextIcon, tone: NEUTRAL },
-};
+}
 
 /** A type this console does not know yet (a newer server's) still shows, plainly. */
-const UNKNOWN = { icon: BellIcon, tone: NEUTRAL };
+const UNKNOWN = { icon: BellIcon, tone: NEUTRAL }
 
 /** When it arrived, in full and in the browser's own time, for the relative time's hover. */
 function fullTime(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+  return new Date(iso).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
-function Item({
-  n,
-  archived,
-  pending,
-  onMove,
-}: {
-  n: Notification;
-  archived: boolean;
-  pending: boolean;
-  onMove: () => void;
-}) {
-  const { icon: Icon, tone } = LOOK[n.type] ?? UNKNOWN;
+function Item({ n, archived, pending, onMove }: { n: Notification; archived: boolean; pending: boolean; onMove: () => void }) {
+  const { icon: Icon, tone } = LOOK[n.type] ?? UNKNOWN
   // An item about nothing else leads here: its title is no link to the page it is on.
-  const to = n.path && n.path !== "/inbox" ? n.path : "";
-  const action = archived ? "Restore" : "Archive";
+  const to = n.path && n.path !== '/inbox' ? n.path : ''
+  const action = archived ? 'Restore' : 'Archive'
   return (
-    <li
-      aria-label={n.title}
-      className="flex min-w-0 items-start gap-3 border-b px-1 py-3 last:border-b-0"
-    >
-      <Icon aria-hidden className={cn("mt-0.5 size-4 shrink-0", tone)} />
+    <li aria-label={n.title} className="flex min-w-0 items-start gap-3 border-b px-1 py-3 last:border-b-0">
+      <Icon aria-hidden className={cn('mt-0.5 size-4 shrink-0', tone)} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         {to ? (
-          <Link
-            to={to}
-            className="font-medium break-words hover:underline hover:underline-offset-2"
-          >
+          <Link to={to} className="font-medium break-words hover:underline hover:underline-offset-2">
             {n.title}
           </Link>
         ) : (
           <p className="font-medium break-words">{n.title}</p>
         )}
-        {n.body && (
-          <p className="text-sm break-words whitespace-pre-line text-muted-foreground">
-            {n.body}
-          </p>
-        )}
+        {n.body && <p className="text-sm break-words whitespace-pre-line text-muted-foreground">{n.body}</p>}
         <p className="text-xs break-words text-muted-foreground">
           {n.project && `${n.project} · `}
           <time dateTime={n.created_at} title={fullTime(n.created_at)}>
             {formatAgo(n.created_at)}
           </time>
-          {n.delivery === "failed" && (
+          {n.delivery === 'failed' && (
             <>
-              {" · "}
-              <span className="text-destructive">
-                Not delivered: {n.delivery_error || "the channel refused it"}
-              </span>
+              {' · '}
+              <span className="text-destructive">Not delivered: {n.delivery_error || 'the channel refused it'}</span>
             </>
           )}
         </p>
@@ -137,7 +102,7 @@ function Item({
         {archived ? <ArchiveRestoreIcon /> : <ArchiveIcon />}
       </Button>
     </li>
-  );
+  )
 }
 
 /**
@@ -149,144 +114,84 @@ function Item({
  * with them. Pages of 50, the next one on Load more.
  */
 export default function Inbox() {
-  const { data: dash } = useQuery(dashboardsQuery);
-  const [params, setParams] = useSearchParams();
-  const archived = params.get("show") === "archived";
-  const query = notificationsQuery(archived);
-  const listQ = useInfiniteQuery(query);
-  const client = useQueryClient();
-  const [pending, setPending] = useState(false);
-  const [confirming, setConfirming] = useState(false);
-  const items = listQ.data?.pages.flatMap((p) => p.notifications);
+  const { data: dash } = useQuery(dashboardsQuery)
+  const [params, setParams] = useSearchParams()
+  const archived = params.get('show') === 'archived'
+  const query = notificationsQuery(archived)
+  const listQ = useInfiniteQuery(query)
+  const client = useQueryClient()
+  const [pending, setPending] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const items = listQ.data?.pages.flatMap((p) => p.notifications)
 
   /** Runs an archive or a restore; on success drops `ids` (every row when absent) from the list at once, then refetches. */
   const move = async (send: () => Promise<unknown>, ids?: number[]) => {
-    setPending(true);
+    setPending(true)
     try {
-      await send();
-      client.setQueryData<InfiniteData<NotificationsPage, string>>(
-        query.queryKey,
-        (data) =>
-          data && {
-            ...data,
-            pages: data.pages.map((p) => ({
-              ...p,
-              notifications: ids
-                ? p.notifications.filter((n) => !ids.includes(n.id))
-                : [],
-            })),
-          },
-      );
-      await client.invalidateQueries({ queryKey: ["notifications"] });
+      await send()
+      client.setQueryData<InfiniteData<NotificationsPage, string>>(query.queryKey, (data) =>
+        data && {
+          ...data,
+          pages: data.pages.map((p) => ({ ...p, notifications: ids ? p.notifications.filter((n) => !ids.includes(n.id)) : [] })),
+        }
+      )
+      await client.invalidateQueries({ queryKey: ['notifications'] })
     } catch (err) {
-      toastError(err);
+      toastError(err)
     } finally {
-      setPending(false);
+      setPending(false)
     }
-  };
+  }
   const moveOne = (n: Notification) =>
-    void move(
-      () =>
-        archived
-          ? endpoints.restoreNotifications([n.id])
-          : endpoints.archiveNotifications({ ids: [n.id] }),
-      [n.id],
-    );
+    void move(() => (archived ? endpoints.restoreNotifications([n.id]) : endpoints.archiveNotifications({ ids: [n.id] })), [n.id])
 
   return (
     <AppShell dashboards={dash?.dashboards ?? []} currentId={0}>
       <TopBar>
-        <Crumbs items={[{ label: "Inbox" }]} />
+        <Crumbs items={[{ label: 'Inbox' }]} />
       </TopBar>
-      <div className="flex w-full max-w-4xl flex-1 flex-col gap-6 p-3 sm:p-4 lg:p-6">
+      <div className="mx-auto flex w-full max-w-[1600px] flex-1 flex-col gap-6 p-3 sm:p-4 lg:p-6">
         <header className="flex flex-col gap-2">
           <h1 className="text-xl font-semibold tracking-tight">Inbox</h1>
           <p className="max-w-prose text-sm text-muted-foreground">
-            Sites down and back up, certificates and domains failing or about to
-            expire, and forms. Archive an item once it is handled.
+            Sites down and back up, certificates and domains failing or about to expire, and forms. Archive an item once it is handled.
           </p>
         </header>
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <Tabs
-            value={archived ? "archived" : "active"}
-            onValueChange={(v) =>
-              setParams(v === "archived" ? { show: "archived" } : {})
-            }
-          >
+        <div className="flex max-w-4xl flex-wrap items-center justify-between gap-2">
+          <Tabs value={archived ? 'archived' : 'active'} onValueChange={(v) => setParams(v === 'archived' ? { show: 'archived' } : {})}>
             <TabsList aria-label="Notifications shown">
               <TabsTrigger value="active">Active</TabsTrigger>
               <TabsTrigger value="archived">Archived</TabsTrigger>
             </TabsList>
           </Tabs>
           {!archived && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={pending || !items || items.length === 0}
-              onClick={() => setConfirming(true)}
-            >
+            <Button type="button" variant="outline" size="sm" disabled={pending || !items || items.length === 0} onClick={() => setConfirming(true)}>
               <ArchiveIcon />
               Archive all
             </Button>
           )}
         </div>
-        {listQ.isError && !items && (
-          <LoadError
-            what="the inbox"
-            error={listQ.error}
-            onRetry={() => void listQ.refetch()}
-          />
-        )}
+        {listQ.isError && !items && <LoadError what="the inbox" error={listQ.error} onRetry={() => void listQ.refetch()} />}
         {items && items.length === 0 && (
-          <p className="text-sm text-muted-foreground">
-            {archived ? "Nothing archived" : "Nothing in your inbox"}
-          </p>
+          <p className="text-sm text-muted-foreground">{archived ? 'Nothing archived' : 'Nothing in your inbox'}</p>
         )}
         {items && items.length > 0 && (
-          <ul aria-label="Notifications" className="flex min-w-0 flex-col">
+          <ul aria-label="Notifications" className="flex max-w-4xl min-w-0 flex-col">
             {items.map((n) => (
-              <Item
-                key={n.id}
-                n={n}
-                archived={archived}
-                pending={pending}
-                onMove={() => moveOne(n)}
-              />
+              <Item key={n.id} n={n} archived={archived} pending={pending} onMove={() => moveOne(n)} />
             ))}
           </ul>
         )}
         {listQ.isFetchNextPageError && (
-          <div
-            role="alert"
-            className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-destructive"
-          >
-            <span className="min-w-0 break-words">
-              Could not load more:{" "}
-              {listQ.error instanceof Error
-                ? listQ.error.message
-                : "request failed"}
-            </span>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={listQ.isFetchingNextPage}
-              onClick={() => void listQ.fetchNextPage()}
-            >
+          <div role="alert" className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-destructive">
+            <span className="min-w-0 break-words">Could not load more: {listQ.error instanceof Error ? listQ.error.message : 'request failed'}</span>
+            <Button type="button" variant="outline" size="sm" disabled={listQ.isFetchingNextPage} onClick={() => void listQ.fetchNextPage()}>
               Retry
             </Button>
           </div>
         )}
         {listQ.hasNextPage && (
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="self-start"
-            disabled={listQ.isFetchingNextPage}
-            onClick={() => void listQ.fetchNextPage()}
-          >
+          <Button type="button" variant="outline" size="sm" className="self-start" disabled={listQ.isFetchingNextPage} onClick={() => void listQ.fetchNextPage()}>
             Load more
           </Button>
         )}
@@ -297,10 +202,8 @@ export default function Inbox() {
         title="Archive every item?"
         description="Every active item, of every project, moves to Archived, where you can restore it until it is purged."
         action="Archive all"
-        onAction={() =>
-          void move(() => endpoints.archiveNotifications({ all: true }))
-        }
+        onAction={() => void move(() => endpoints.archiveNotifications({ all: true }))}
       />
     </AppShell>
-  );
+  )
 }
