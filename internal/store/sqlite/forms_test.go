@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -1437,6 +1438,42 @@ func TestSubmissionBurstWaitsForFlush(t *testing.T) {
 	}
 	if ns := notificationsOf(t, db, store.NotifyFormSubmission); len(ns) != 2 || ns[1].Fields["count"] != "2" {
 		t.Fatalf("after flush = %+v", ns)
+	}
+}
+
+// A form deleted with a burst pending takes its form_bursts row with it, and
+// a flush never notifies for a form that no longer exists.
+func TestSubmissionBurstGoesWithForm(t *testing.T) {
+	db := newFormsDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, subAt("s0", formsNow.Add(-time.Hour)))
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow.Add(-time.Hour), formAudit); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, db, subAt("s1", formsNow))
+	mustWrite(t, db, subAt("s2", formsNow.Add(time.Minute)))
+	if c := countRows(t, db, `SELECT COUNT(*) FROM form_bursts WHERE pending > 0`); c != 1 {
+		t.Fatalf("pending bursts = %d, want 1", c)
+	}
+	if err := db.tx(ctx, func(tx *sql.Tx) error { return deleteFormData(ctx, tx, 1, "contact") }); err != nil {
+		t.Fatal(err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM form_bursts`); c != 0 {
+		t.Errorf("form_bursts rows after delete = %d, want 0", c)
+	}
+	// A row left behind by an older build: still no notification.
+	if _, err := db.db.ExecContext(ctx, `INSERT INTO form_bursts (project_id, form, window_start, pending) VALUES (1, 'gone', ?, 3)`,
+		fmtTime(formsNow)); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := db.FlushFormBursts(ctx, formsNow.Add(time.Hour)); err != nil || n != 0 {
+		t.Fatalf("flush: n=%d err=%v, want 0", n, err)
+	}
+	if c := countRows(t, db, `SELECT COUNT(*) FROM form_bursts`); c != 0 {
+		t.Errorf("orphan form_bursts rows after flush = %d, want 0", c)
+	}
+	if ns := notificationsOf(t, db, store.NotifyFormSubmission); len(ns) != 1 {
+		t.Errorf("notifications = %+v, want only the first", ns)
 	}
 }
 

@@ -632,11 +632,14 @@ func (d *DB) SetSubmissionsArchived(ctx context.Context, projectID int64, ids []
 	return changed, nil
 }
 
-// deleteFormData deletes the form's submissions, then the form row,
-// within tx. The caller audits.
+// deleteFormData deletes the form's submissions and its burst row, then
+// the form row, within tx. The caller audits.
 func deleteFormData(ctx context.Context, tx *sql.Tx, projectID int64, name string) error {
 	if _, err := tx.ExecContext(ctx, `DELETE FROM submissions WHERE project_id=? AND form=?`, projectID, name); err != nil {
 		return fmt.Errorf("delete submissions: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM form_bursts WHERE project_id=? AND form=?`, projectID, name); err != nil {
+		return fmt.Errorf("delete form burst: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM forms WHERE project_id=? AND name=?`, projectID, name); err != nil {
 		return fmt.Errorf("delete form: %w", err)
