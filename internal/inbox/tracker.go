@@ -189,17 +189,26 @@ func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up
 }
 
 // Cert records one certificate reading of origin. While the origin is
-// down it is ignored, so one outage pages once. A certificate that fails
+// down it is ignored, so one outage pages once; only a valid reading then
+// clears a failing state, silently. A certificate that fails
 // verification is failing at once, one that cannot be read after 24
 // hours; a valid one recovers, and its expiry warns at 14, 7 and 1 days.
 func (t *Tracker) Cert(ctx context.Context, projectID int64, origin string, c CertReading, at time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if !t.load(ctx) || t.down(projectID, origin) {
+	if !t.load(ctx) {
+		return
+	}
+	k := key{projectID, kindCert, origin}
+	if t.down(projectID, origin) {
+		// A renewal during the outage ends a failing state without a
+		// message, so no reminder follows for a certificate known valid.
+		if e, ok := t.states[k]; ok && e.Failing && c.Read && c.Valid {
+			t.del(ctx, k)
+		}
 		return
 	}
 	at = at.UTC()
-	k := key{projectID, kindCert, origin}
 	if c.Read && c.Valid {
 		if e, ok := t.states[k]; ok {
 			t.recover(ctx, k, e, store.NotifyCertRecovered, at)

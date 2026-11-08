@@ -310,6 +310,27 @@ func TestCertSilentWhileDown(t *testing.T) {
 	}
 }
 
+// A valid reading during an outage is a renewal: it clears the failing
+// certificate silently, so no reminder follows for a certificate known valid.
+func TestCertRenewedDuringOutageClearsSilently(t *testing.T) {
+	f := newFake(monitor)
+	tr := newTracker(f)
+	tr.Cert(ctx, 1, origin, inbox.CertReading{Read: true, Error: "x509: expired"}, t0)
+	one(t, f, store.NotifyCertFailing)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Minute))
+	one(t, f, store.NotifyUptimeDown)
+	tr.Cert(ctx, 1, origin, inbox.CertReading{Read: true, Valid: true}, t0.Add(time.Hour))
+	none(t, f)
+	if f.has(1, "cert", origin) {
+		t.Fatal("failing cert state kept after a valid reading")
+	}
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(2*time.Hour))
+	one(t, f, store.NotifyUptimeUp)
+	tr.Tick(ctx, t0.Add(12*time.Hour))
+	none(t, f)
+}
+
 func TestDomainLookupFailingAfter24h(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
