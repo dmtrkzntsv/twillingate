@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { PlusIcon } from 'lucide-react'
 import { Navigate, useSearchParams } from 'react-router'
@@ -24,10 +24,19 @@ export default function FormsLanding({ project }: { project: Project }) {
   const q = useQuery(formsQuery(id))
   const [url] = useSearchParams()
   const [creating, setCreating] = useState(false)
+  // Lands on a list fetched for this visit, not one cached from earlier: a
+  // form archived since (elsewhere, or by draft retention) would otherwise
+  // land on its "No form" notice.
+  const [visited] = useState(() => Date.now())
+  const { refetch } = q
+  useEffect(() => {
+    void refetch()
+  }, [refetch])
+  const fresh = q.dataUpdatedAt >= visited
   const forms = q.data?.forms
 
-  if (q.error && !forms) return <LoadError what="the forms" error={q.error} onRetry={() => void q.refetch()} />
-  if (!forms) return <Skeleton aria-hidden className="h-24 w-full" />
+  if (q.error && !(forms && fresh)) return <LoadError what="the forms" error={q.error} onRetry={() => void q.refetch()} />
+  if (!forms || !fresh) return <Skeleton aria-hidden className="h-24 w-full" />
   if (forms.length > 0) {
     const last = readLastForm(id)
     const to = forms.find((f) => f.name === last) ?? forms[0]

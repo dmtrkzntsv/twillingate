@@ -5,7 +5,8 @@ import { MemoryRouter, Route, Routes, useLocation } from 'react-router'
 import { endpoints, type Project } from '@/lib/api'
 import { writeLastForm } from '@/lib/last-form'
 import { draft, form } from '@/test/forms'
-import { renderWithProviders } from '@/test/render'
+import { renderWithProviders, testClient } from '@/test/render'
+import { formsQuery } from '@/lib/queries'
 import FormsLanding from './FormsLanding'
 
 const project: Project = { project_id: 4, name: 'shop', allowed_origins: ['https://shop.example'] }
@@ -21,7 +22,7 @@ function Where() {
   return <output data-testid="location">{location.pathname + location.search}</output>
 }
 
-function renderLanding() {
+function renderLanding(client = testClient()) {
   return renderWithProviders(
     <MemoryRouter initialEntries={['/projects/1', '/projects/4/forms?range=7d&x=1']} initialIndex={1}>
       <Routes>
@@ -29,7 +30,8 @@ function renderLanding() {
         <Route path="*" element={null} />
       </Routes>
       <Where />
-    </MemoryRouter>
+    </MemoryRouter>,
+    client
   )
 }
 
@@ -52,6 +54,15 @@ describe('FormsLanding', () => {
     writeLastForm(4, 'archived-one')
     vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact'), form('survey')] })
     renderLanding()
+    expect(await screen.findByText('/projects/4/forms/contact?range=7d')).toBeInTheDocument()
+  })
+
+  it('lands on a list fetched afresh, not a cached one holding a form archived since', async () => {
+    const client = testClient()
+    client.setQueryData(formsQuery(4).queryKey, { action_base: '', forms: [form('gone'), form('contact')] })
+    writeLastForm(4, 'gone')
+    vi.spyOn(endpoints, 'forms').mockResolvedValue({ action_base: '', forms: [form('contact')] })
+    renderLanding(client)
     expect(await screen.findByText('/projects/4/forms/contact?range=7d')).toBeInTheDocument()
   })
 
