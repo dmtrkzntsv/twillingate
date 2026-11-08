@@ -98,18 +98,24 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		case !errors.Is(err, sql.ErrNoRows):
 			return err
 		}
-		// A new draft comes last in the project's order.
-		key, err := nextFormKey(ctx, tx, sub.ProjectID)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO forms (project_id, name, created_at, draft_until, sort_key)
-			VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING`,
-			sub.ProjectID, sub.Form, fmtTime(sub.ReceivedAt), fmtTime(n.DraftUntil), key); err != nil {
-			return err
-		}
+		// An existing form never reads the order: a bad key elsewhere in the
+		// project must not refuse its submissions. A new draft comes last.
+		var err error
 		form, err = scanForm(tx.QueryRowContext(ctx, `SELECT `+formColumns+` FROM forms WHERE project_id=? AND name=?`,
 			sub.ProjectID, sub.Form))
+		if errors.Is(err, sql.ErrNoRows) {
+			key, kerr := nextFormKey(ctx, tx, sub.ProjectID)
+			if kerr != nil {
+				return kerr
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO forms (project_id, name, created_at, draft_until, sort_key)
+				VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING`,
+				sub.ProjectID, sub.Form, fmtTime(sub.ReceivedAt), fmtTime(n.DraftUntil), key); err != nil {
+				return err
+			}
+			form, err = scanForm(tx.QueryRowContext(ctx, `SELECT `+formColumns+` FROM forms WHERE project_id=? AND name=?`,
+				sub.ProjectID, sub.Form))
+		}
 		if err != nil {
 			return err
 		}

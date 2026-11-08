@@ -226,3 +226,18 @@ func TestMoveFormRespreadsEqualNeighbours(t *testing.T) {
 		}
 	}
 }
+
+// A submission to an existing form never reads the order, so a key that
+// sortkey cannot step past elsewhere in the project refuses only new drafts.
+func TestWriteSubmissionToAnExistingFormIgnoresABadKey(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, newSub("s1", map[string]string{"email": "a@x.io"}))
+	if _, err := db.CreateForm(ctx, newApprovedForm("odd"), formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.db.ExecContext(ctx, `UPDATE forms SET sort_key='x' WHERE name='odd'`); err != nil {
+		t.Fatal(err)
+	}
+	mustWrite(t, db, newSub("s2", map[string]string{"email": "b@x.io"}))
+}
