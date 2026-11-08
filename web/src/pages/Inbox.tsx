@@ -66,7 +66,7 @@ function Item({ n, archived, pending, onMove }: { n: Notification; archived: boo
   const action = archived ? 'Restore' : 'Archive'
   return (
     <li aria-label={n.title} className="flex min-w-0 items-start gap-3 border-b px-1 py-3 last:border-b-0">
-      <Icon aria-hidden className={cn('mt-0.5 size-4 shrink-0', tone)} />
+      <Icon aria-hidden className={cn('mt-1 size-4 shrink-0', tone)} />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         {to ? (
           <Link to={to} className="font-medium break-words hover:underline hover:underline-offset-2">
@@ -102,7 +102,7 @@ function Item({ n, archived, pending, onMove }: { n: Notification; archived: boo
         type="button"
         variant="ghost"
         size="icon"
-        className="size-8 shrink-0 text-muted-foreground"
+        className="-mt-1 size-8 shrink-0 text-muted-foreground"
         aria-label={action}
         title={action}
         disabled={pending}
