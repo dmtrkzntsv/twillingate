@@ -265,6 +265,31 @@ func TestUpdateProjectRemovesMonitorOnOriginRemoval(t *testing.T) {
 	}
 }
 
+// An archived project is not checked, so its monitors claim no frequency.
+func TestCheckEveryOfAnArchivedProject(t *testing.T) {
+	ops, _, _, p, _ := ruleOps(t)
+	ctx := context.Background()
+	if _, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: p, AllowedOrigins: []string{"https://a.example.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	l, err := ops.SetMonitor(ctx, "alice", p, monA, MonitorSpec{Enabled: boolp(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := l.CheckEvery(time.Minute); got != time.Minute {
+		t.Errorf("live project: every %v, want 1m", got)
+	}
+	if err := ops.ArchiveProject(ctx, "alice", p); err != nil {
+		t.Fatal(err)
+	}
+	if l, err = ops.ListMonitors(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if got := l.CheckEvery(time.Minute); got != 0 {
+		t.Errorf("archived project: every %v, want 0", got)
+	}
+}
+
 func TestMonitorAuditTrail(t *testing.T) {
 	ops, _, _, p, path := ruleOps(t)
 	ctx := context.Background()

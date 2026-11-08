@@ -92,6 +92,7 @@ var retired = []struct{ key, why string }{
 	{"ENGINE_MEMORY_LIMIT", "SQL runs in an external SQL engine"},
 	{"ENGINE_MAX_CHILDREN", "SQL runs in an external SQL engine"},
 	{"EVENTS_DIR", "the event files' directory is DATA_DIR"},
+	{"QUOTA_CHECK_RATIO", "availability checks no longer count toward event totals"},
 }
 
 // ConsoleConfig carries the console surface settings (serve -console). Authentication comes from

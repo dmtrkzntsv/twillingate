@@ -132,9 +132,9 @@ func none(t *testing.T, f *fakeStore) {
 func TestUptimeDebounce(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "dial tcp: i/o timeout", t0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "dial tcp: i/o timeout", t0, 0)
 	none(t, f)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "dial tcp: i/o timeout", t0.Add(time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "dial tcp: i/o timeout", t0.Add(time.Minute), 0)
 	n := one(t, f, store.NotifyUptimeDown)
 	if n.ProjectID != 1 || n.Subject != origin || n.Fields["since"] != rfc(t0) || n.Fields["reason"] != "timeout" {
 		t.Fatalf("uptime_down = %+v", n)
@@ -142,16 +142,35 @@ func TestUptimeDebounce(t *testing.T) {
 	if !n.At.Equal(t0.Add(time.Minute)) {
 		t.Fatalf("At = %v", n.At)
 	}
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Minute), 0)
+	none(t, f)
+}
+
+// A monitor on a long rotation is checked hours apart, and those are still
+// checks in a row; without the spacing the gap would restart the streak.
+func TestUptimeDownAcrossALongRotation(t *testing.T) {
+	every := 3 * time.Hour
+	f := newFake(monitor)
+	tr := newTracker(f)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "slow", t0, every)
+	none(t, f)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "slow", t0.Add(every), every)
+	one(t, f, store.NotifyUptimeDown)
+
+	// Without that spacing the same two failures are too far apart.
+	f = newFake(monitor)
+	tr = newTracker(f)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "slow", t0, 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "slow", t0.Add(every), 0)
 	none(t, f)
 }
 
 func TestUptimeSuccessResetsCount(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
-	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(time.Minute))
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0, 0)
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(time.Minute), 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Minute), 0)
 	none(t, f)
 	if !f.has(1, "uptime", origin) {
 		t.Fatal("pending failure not stored")
@@ -161,8 +180,8 @@ func TestUptimeSuccessResetsCount(t *testing.T) {
 func TestUptimeReminderAndRecovery(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
-	tr.Uptime(ctx, 1, origin, false, "status", "", t0)
-	tr.Uptime(ctx, 1, origin, false, "status", "", t0.Add(time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "status", "", t0, 0)
+	tr.Uptime(ctx, 1, origin, false, "status", "", t0.Add(time.Minute), 0)
 	one(t, f, store.NotifyUptimeDown)
 
 	tr.Tick(ctx, t0.Add(4*time.Hour))
@@ -175,7 +194,7 @@ func TestUptimeReminderAndRecovery(t *testing.T) {
 	tr.Tick(ctx, t0.Add(8*time.Hour+time.Minute))
 	one(t, f, store.NotifyUptimeStillDown)
 
-	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(9*time.Hour))
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(9*time.Hour), 0)
 	n = one(t, f, store.NotifyUptimeUp)
 	if n.Fields["since"] != rfc(t0) || n.Fields["until"] != rfc(t0.Add(9*time.Hour)) {
 		t.Fatalf("uptime_up = %+v", n)
@@ -190,14 +209,14 @@ func TestUptimeReminderAndRecovery(t *testing.T) {
 func TestTrackerSurvivesRestart(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
-	tr.Uptime(ctx, 1, origin, false, "status", "", t0)
-	tr.Uptime(ctx, 1, origin, false, "status", "", t0.Add(time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "status", "", t0, 0)
+	tr.Uptime(ctx, 1, origin, false, "status", "", t0.Add(time.Minute), 0)
 	one(t, f, store.NotifyUptimeDown)
 	tr.Tick(ctx, t0.Add(4*time.Hour))
 	one(t, f, store.NotifyUptimeStillDown)
 
 	tr = newTracker(f)
-	tr.Uptime(ctx, 1, origin, false, "status", "", t0.Add(4*time.Hour+time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "status", "", t0.Add(4*time.Hour+time.Minute), 0)
 	none(t, f)
 	tr.Tick(ctx, t0.Add(7*time.Hour))
 	none(t, f)
@@ -211,12 +230,12 @@ func TestTrackerSurvivesRestart(t *testing.T) {
 func TestStoreFailureRetries(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
-	tr.Uptime(ctx, 1, origin, false, "status", "", t0)
+	tr.Uptime(ctx, 1, origin, false, "status", "", t0, 0)
 	f.failPut = true
-	tr.Uptime(ctx, 1, origin, false, "status", "", t0.Add(time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "status", "", t0.Add(time.Minute), 0)
 	none(t, f)
 	f.failPut = false
-	tr.Uptime(ctx, 1, origin, false, "status", "", t0.Add(2*time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "status", "", t0.Add(2*time.Minute), 0)
 	if n := one(t, f, store.NotifyUptimeDown); n.Fields["since"] != rfc(t0) {
 		t.Fatalf("since = %q", n.Fields["since"])
 	}
@@ -287,8 +306,8 @@ func TestCertSilentWhileDown(t *testing.T) {
 	tr := newTracker(f)
 	tr.Cert(ctx, 1, origin, inbox.CertReading{Read: true, Error: "x509: expired"}, t0)
 	one(t, f, store.NotifyCertFailing)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute), 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Minute), 0)
 	one(t, f, store.NotifyUptimeDown)
 
 	tr.Cert(ctx, 1, origin, inbox.CertReading{Read: true, Error: "x509: unknown authority"}, t0.Add(time.Hour))
@@ -300,8 +319,8 @@ func TestCertSilentWhileDown(t *testing.T) {
 	// A fresh origin's invalid certificate during an outage pages nothing.
 	g := newFake(monitor)
 	tr = newTracker(g)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0, 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute), 0)
 	one(t, g, store.NotifyUptimeDown)
 	tr.Cert(ctx, 1, origin, inbox.CertReading{Read: true, Error: "x509: expired"}, t0.Add(time.Hour))
 	none(t, g)
@@ -317,15 +336,15 @@ func TestCertRenewedDuringOutageClearsSilently(t *testing.T) {
 	tr := newTracker(f)
 	tr.Cert(ctx, 1, origin, inbox.CertReading{Read: true, Error: "x509: expired"}, t0)
 	one(t, f, store.NotifyCertFailing)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute), 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Minute), 0)
 	one(t, f, store.NotifyUptimeDown)
 	tr.Cert(ctx, 1, origin, inbox.CertReading{Read: true, Valid: true}, t0.Add(time.Hour))
 	none(t, f)
 	if f.has(1, "cert", origin) {
 		t.Fatal("failing cert state kept after a valid reading")
 	}
-	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(2*time.Hour))
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(2*time.Hour), 0)
 	one(t, f, store.NotifyUptimeUp)
 	tr.Tick(ctx, t0.Add(12*time.Hour))
 	none(t, f)
@@ -453,8 +472,8 @@ func TestTickPrunesDisabled(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
 	for _, o := range []string{origin, other} {
-		tr.Uptime(ctx, 1, o, false, "timeout", "", t0)
-		tr.Uptime(ctx, 1, o, false, "timeout", "", t0.Add(time.Minute))
+		tr.Uptime(ctx, 1, o, false, "timeout", "", t0, 0)
+		tr.Uptime(ctx, 1, o, false, "timeout", "", t0.Add(time.Minute), 0)
 	}
 	tr.Domain(ctx, 1, "example.org", false, "rdap", "", t0)
 	tr.Cert(ctx, 2, origin, inbox.CertReading{Read: true, Error: "x"}, t0) // same origin, other project
@@ -491,7 +510,7 @@ func TestTrackerConcurrent(t *testing.T) {
 		go func(i int) {
 			defer wg.Done()
 			at := t0.Add(time.Duration(i) * time.Minute)
-			tr.Uptime(ctx, 1, origin, false, "timeout", "", at)
+			tr.Uptime(ctx, 1, origin, false, "timeout", "", at, 0)
 			tr.Cert(ctx, 1, origin, inbox.CertReading{Error: "timeout"}, at)
 			tr.Tick(ctx, at)
 		}(i)
@@ -521,7 +540,7 @@ func TestEmptyStateIsNew(t *testing.T) {
 		tr := newTracker(f)
 		tr.Cert(ctx, 1, origin, inbox.CertReading{Error: "timeout"}, t0)
 		tr.Domain(ctx, 1, domain, false, "rdap: 503", "", t0)
-		tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
+		tr.Uptime(ctx, 1, origin, false, "timeout", "", t0, 0)
 		none(t, f)
 	}
 }
@@ -529,13 +548,13 @@ func TestEmptyStateIsNew(t *testing.T) {
 func TestFailedDeleteAfterRecovery(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0, 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute), 0)
 	tr.Domain(ctx, 1, domain, false, "rdap: 503", "", t0.Add(-24*time.Hour))
 	tr.Domain(ctx, 1, domain, false, "rdap: 503", "", t0)
 	f.take()
 	f.failDel = true
-	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(time.Hour))
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(time.Hour), 0)
 	tr.Domain(ctx, 1, domain, true, "", "", t0.Add(time.Hour))
 	if got := f.take(); len(got) != 2 {
 		t.Fatalf("sent %+v, want uptime_up and domain_recovered", got)
@@ -543,17 +562,17 @@ func TestFailedDeleteAfterRecovery(t *testing.T) {
 	f.failDel = false
 
 	for _, tr := range []*inbox.Tracker{newTracker(f), tr} { // after a restart, and in memory
-		tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Hour))
+		tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Hour), 0)
 		tr.Domain(ctx, 1, domain, false, "rdap: 503", "", t0.Add(2*time.Hour))
 		none(t, f)
 	}
 
 	g := newFake(monitor)
 	tr = newTracker(g)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0, 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute), 0)
 	g.failDel = true
-	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(time.Hour))
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(time.Hour), 0)
 	g.failDel = false
 	g.take()
 	tr.Tick(ctx, t0.Add(time.Hour+time.Minute)) // deletes the ended row
@@ -566,18 +585,18 @@ func TestFailedDeleteAfterRecovery(t *testing.T) {
 func TestPendingStreakGap(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(3*time.Hour))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0, 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(3*time.Hour), 0)
 	none(t, f)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(4*time.Hour))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(4*time.Hour), 0)
 	if n := one(t, f, store.NotifyUptimeDown); n.Fields["since"] != rfc(t0.Add(3*time.Hour)) {
 		t.Fatalf("since = %q, want the restarted streak", n.Fields["since"])
 	}
 
 	g := newFake(monitor)
 	tr = newTracker(g)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Hour))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0, 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Hour), 0)
 	one(t, g, store.NotifyUptimeDown)
 
 	h := newFake(monitor)
@@ -595,12 +614,12 @@ func TestCertReminderAfterOutage(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
 	tr.Cert(ctx, 1, origin, inbox.CertReading{Read: true, Error: "x509: expired"}, t0)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute), 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(2*time.Minute), 0)
 	for h := 1; h <= 10; h++ {
 		tr.Tick(ctx, t0.Add(time.Duration(h)*time.Hour))
 	}
-	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(10*time.Hour+time.Minute))
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(10*time.Hour+time.Minute), 0)
 	f.take()
 	tr.Tick(ctx, t0.Add(10*time.Hour+2*time.Minute))
 	none(t, f)
@@ -682,8 +701,8 @@ func TestDomainExpiryBareDate(t *testing.T) {
 func TestPausedMonitoringSendsNoReminders(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0, 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute), 0)
 	one(t, f, store.NotifyUptimeDown)
 
 	tr.PauseMonitoring()
@@ -713,17 +732,17 @@ func TestPausedMonitoringSendsNoReminders(t *testing.T) {
 func TestUptimeOutOfOrderIgnored(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0, 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute), 0)
 	one(t, f, store.NotifyUptimeDown)
-	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(-time.Minute))
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(-time.Minute), 0)
 	none(t, f)
-	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(30*time.Second)) // before the latest failure
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(30*time.Second), 0) // before the latest failure
 	none(t, f)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(5*time.Minute))
-	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(3*time.Minute)) // before the latest failure
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(5*time.Minute), 0)
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(3*time.Minute), 0) // before the latest failure
 	none(t, f)
-	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(6*time.Minute))
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(6*time.Minute), 0)
 	n := one(t, f, store.NotifyUptimeUp)
 	if n.Fields["since"] != rfc(t0) || n.Fields["until"] != rfc(t0.Add(6*time.Minute)) {
 		t.Fatalf("uptime_up = %+v", n)
@@ -735,16 +754,16 @@ func TestUptimeOutOfOrderIgnored(t *testing.T) {
 func TestUptimeLateFailureAfterRecoveryIgnored(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0, 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute), 0)
 	one(t, f, store.NotifyUptimeDown)
-	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(5*time.Minute))
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(5*time.Minute), 0)
 	one(t, f, store.NotifyUptimeUp)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(4*time.Minute)) // before the recovery
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(4*time.Minute), 0) // before the recovery
 	none(t, f)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(10*time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(10*time.Minute), 0)
 	none(t, f)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(11*time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(11*time.Minute), 0)
 	one(t, f, store.NotifyUptimeDown)
 }
 
@@ -752,8 +771,8 @@ func TestUptimeLateFailureAfterRecoveryIgnored(t *testing.T) {
 func TestUptimeFailuresOutOfOrderCount(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute), 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0, 0)
 	n := one(t, f, store.NotifyUptimeDown)
 	if n.Fields["since"] != rfc(t0) {
 		t.Fatalf("uptime_down = %+v", n)
@@ -765,10 +784,10 @@ func TestUptimeFailuresOutOfOrderCount(t *testing.T) {
 func TestFailedDeleteEndsPendingStreak(t *testing.T) {
 	f := newFake(monitor)
 	tr := newTracker(f)
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0, 0)
 	f.failDel = true
-	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(10*time.Second))
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(10*time.Second), 0)
 	f.failDel = false
-	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(20*time.Second))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(20*time.Second), 0)
 	none(t, f)
 }

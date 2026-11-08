@@ -120,6 +120,8 @@ type MonitorList struct {
 	Monitors []store.Monitor
 	// Domains holds the main domains of the enabled monitors, by name.
 	Domains []MonitorDomain
+	// Archived is whether the project is archived: nothing of it is checked.
+	Archived bool
 }
 
 // Enabled counts the monitors that are on.
@@ -135,7 +137,11 @@ func (l MonitorList) Enabled() int {
 
 // CheckEvery is how often each enabled monitor is checked, given
 // MONITOR_INTERVAL: the project's one check per interval goes round them.
+// It is 0 for an archived project, which is not checked.
 func (l MonitorList) CheckEvery(interval time.Duration) time.Duration {
+	if l.Archived {
+		return 0
+	}
 	return interval * time.Duration(max(l.Enabled(), 1))
 }
 
@@ -163,7 +169,7 @@ func (o *Ops) ListMonitors(ctx context.Context, projectID int64) (MonitorList, e
 	if err != nil {
 		return MonitorList{}, err
 	}
-	var l MonitorList
+	l := MonitorList{Archived: p.Archived}
 	byDomain := map[string]*MonitorDomain{}
 	for _, origin := range MonitorOrigins(p.AllowedOrigins) {
 		m := store.Monitor{ProjectID: projectID, Origin: origin}

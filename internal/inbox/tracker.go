@@ -54,9 +54,10 @@ const (
 	graceUnread = 24 * time.Hour
 	// A streak of failures not yet failing starts over after a gap
 	// without observations longer than these: two failures that far
-	// apart (a restart, a lost write) are not in a row. MONITOR_INTERVAL
-	// is at most an hour; certificate and domain reads that fail are
-	// retried hourly.
+	// apart (a restart, a lost write) are not in a row. uptimeGap is the
+	// least for availability checks, which a long rotation spaces further
+	// (see Uptime); certificate and domain reads that fail are retried
+	// hourly.
 	uptimeGap = 2 * time.Hour
 	unreadGap = 25 * time.Hour
 	// alignSlack is how long after the remind multiple before it an
@@ -137,7 +138,7 @@ func (t *Tracker) PauseMonitoring() {
 // so is a failure dated before the latest success, so a late failure from
 // before a recovery starts no new streak. Other failures count in any
 // order.
-func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up bool, reason, errText string, at time.Time) {
+func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up bool, reason, errText string, at time.Time, every time.Duration) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if !t.load(ctx) {
@@ -178,7 +179,8 @@ func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up
 		}
 		return
 	}
-	e = t.streak(k, at, uptimeGap)
+	// Twice the spacing, so one skipped turn still counts as in a row.
+	e = t.streak(k, at, max(uptimeGap, 2*every))
 	e.Fails++
 	e.Reason, e.Error = reason, errText
 	if e.Fails < downAfter {

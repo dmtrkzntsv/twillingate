@@ -67,7 +67,8 @@ type EventLog interface {
 // Alerts takes what the monitor observes (inbox.Tracker). It is called only
 // for results shutdown did not cut short.
 type Alerts interface {
-	Uptime(ctx context.Context, projectID int64, origin string, up bool, reason, errText string, at time.Time)
+	// every is how far apart the origin's scheduled checks are.
+	Uptime(ctx context.Context, projectID int64, origin string, up bool, reason, errText string, at time.Time, every time.Duration)
 	Cert(ctx context.Context, projectID int64, origin string, c inbox.CertReading, at time.Time)
 	Domain(ctx context.Context, projectID int64, domain string, ok bool, errText, expiresAt string, at time.Time)
 }
@@ -75,7 +76,8 @@ type Alerts interface {
 // noAlerts is the default: nobody is told.
 type noAlerts struct{}
 
-func (noAlerts) Uptime(context.Context, int64, string, bool, string, string, time.Time) {}
+func (noAlerts) Uptime(context.Context, int64, string, bool, string, string, time.Time, time.Duration) {
+}
 func (noAlerts) Cert(context.Context, int64, string, inbox.CertReading, time.Time)      {}
 func (noAlerts) Domain(context.Context, int64, string, bool, string, string, time.Time) {}
 
@@ -137,8 +139,10 @@ type Runner struct {
 	wg      sync.WaitGroup
 	mu      sync.Mutex
 	slots   map[monitorKey]bool // monitors whose slot check is running
-	manuals map[monitorKey]bool // monitors whose manual check is running
-	reads   map[readKey]bool    // daily reads queued or running
+	// rotations is how many monitors each project's turns go round, as of the last tick.
+	rotations map[int64]int
+	manuals   map[monitorKey]bool // monitors whose manual check is running
+	reads     map[readKey]bool    // daily reads queued or running
 	// readLocks orders the reads of one reading, scheduled or manual: one at a
 	// time, so the one that ran last holds the newest result. Kept for good (one
 	// small channel per origin and main domain).
@@ -263,6 +267,7 @@ func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 		return
 	}
 	r.forgetDisabled(ms)
+	r.setRotations(ms)
 	if r.paused {
 		r.finishPending(ctx, ms)
 		return
@@ -288,6 +293,24 @@ func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 			r.startSlot(ctx, turnOf(ms[start:end], now, r.interval))
 		}
 	}
+}
+
+// setRotations notes how many monitors each project's turns go round.
+func (r *Runner) setRotations(ms []store.Monitor) {
+	n := make(map[int64]int, len(ms))
+	for _, m := range ms {
+		n[m.ProjectID]++
+	}
+	r.mu.Lock()
+	r.rotations = n
+	r.mu.Unlock()
+}
+
+// checkSpacing is how far apart a project's monitors' scheduled checks are.
+func (r *Runner) checkSpacing(projectID int64) time.Duration {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.interval * time.Duration(max(r.rotations[projectID], 1))
 }
 
 // WithAlerts has the runner report every result to a. Call it before Run.
@@ -713,7 +736,7 @@ func (r *Runner) availability(ctx context.Context, m store.Monitor) store.Event 
 			r.logger.Warn("monitor: store last result", "project_id", m.ProjectID, "error", err)
 		}
 		if r.live(ctx, m.ProjectID, m.Origin) {
-			r.alerts.Uptime(ctx, m.ProjectID, m.Origin, res.Up, res.Reason, res.Error, done)
+			r.alerts.Uptime(ctx, m.ProjectID, m.Origin, res.Up, res.Reason, res.Error, done, r.checkSpacing(m.ProjectID))
 		}
 	}
 	return uptimeRow(m.ProjectID, m.Origin, start, res)

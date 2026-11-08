@@ -867,6 +867,7 @@ func TestRetiredEngineSettingsAreIgnored(t *testing.T) {
 		{map[string]string{"ENGINE_MEMORY_LIMIT": "512MB"}, "ENGINE_MEMORY_LIMIT is ignored: SQL runs in an external SQL engine"},
 		{map[string]string{"ENGINE_MAX_CHILDREN": "2"}, "ENGINE_MAX_CHILDREN is ignored: SQL runs in an external SQL engine"},
 		{map[string]string{"ENGINE_MAX_CHILDREN": ""}, ""},
+		{map[string]string{"QUOTA_CHECK_RATIO": "0.1"}, "QUOTA_CHECK_RATIO is ignored: availability checks no longer count toward event totals"},
 		{map[string]string{"ENGINE_MAX_CHILDREN": "2", "EVENTS_DIR": "/srv/events"},
 			"ENGINE_MAX_CHILDREN is ignored: SQL runs in an external SQL engine; EVENTS_DIR is ignored: the event files' directory is DATA_DIR"},
 	} {

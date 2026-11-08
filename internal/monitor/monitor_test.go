@@ -1251,6 +1251,26 @@ func TestEachProjectHasItsOwnTurn(t *testing.T) {
 	}
 }
 
+// The alerts are told how far apart a rotation really spaces the checks.
+func TestAlertsGetTheRealSpacing(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer site.Close()
+	m := store.Monitor{ProjectID: 3, Enabled: true, Origin: site.URL}
+	st := &fakeStore{monitors: []store.Monitor{m, on(3, originB), on(3, originC)}}
+	r := redirectsRunner(st)
+	calls := &alertCalls{}
+	r.WithAlerts(calls)
+	ms, err := st.ListEnabledMonitors(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.setRotations(ms)
+	r.availability(context.Background(), m)
+	if want := 3 * r.interval; calls.every != want {
+		t.Errorf("spacing = %v, want %v for three monitors", calls.every, want)
+	}
+}
+
 // turnOf never indexes out of the list, whatever the clock says: a host with
 // no battery clock can start at the epoch, and a slot before it is negative.
 func TestTurnOfAClockBeforeTheEpoch(t *testing.T) {
@@ -1965,6 +1985,7 @@ type alertCalls struct {
 	uptimes []alertUptime
 	certs   []inbox.CertReading
 	domains []alertDomain
+	every   time.Duration
 }
 
 type alertUptime struct {
@@ -1978,7 +1999,10 @@ type alertDomain struct {
 	ok                         bool
 }
 
-func (a *alertCalls) Uptime(_ context.Context, _ int64, origin string, up bool, reason, errText string, at time.Time) {
+func (a *alertCalls) Uptime(_ context.Context, _ int64, origin string, up bool, reason, errText string, at time.Time, every time.Duration) {
+	a.mu.Lock()
+	a.every = every
+	a.mu.Unlock()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.uptimes = append(a.uptimes, alertUptime{origin, reason, errText, up, at})
