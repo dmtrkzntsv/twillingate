@@ -157,6 +157,13 @@ func TestUptimeDownAcrossALongRotation(t *testing.T) {
 	tr.Uptime(ctx, 1, origin, false, "timeout", "slow", t0.Add(every), every)
 	one(t, f, store.NotifyUptimeDown)
 
+	// A skipped turn between them, the later check slower: still in a row.
+	f = newFake(monitor)
+	tr = newTracker(f)
+	tr.Uptime(ctx, 1, origin, false, "refused", "", t0, every)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "slow", t0.Add(2*every+5*time.Second), every)
+	one(t, f, store.NotifyUptimeDown)
+
 	// Without that spacing the same two failures are too far apart.
 	f = newFake(monitor)
 	tr = newTracker(f)

@@ -49,7 +49,7 @@ type monitorLastOut struct {
 type monitorOut struct {
 	Origin     string          `json:"origin"`
 	Enabled    bool            `json:"enabled"`
-	CheckEvery int             `json:"check_every_seconds" jsonschema:"how often this monitor is actually checked: interval_seconds times the project's enabled monitors; 0 when off or the project is archived"`
+	CheckEvery int             `json:"check_every_seconds" jsonschema:"how often this monitor is actually checked: interval_seconds times the project's enabled monitors; 0 when off, the project is archived or monitoring is paused"`
 	Contains   string          `json:"contains"`
 	Redirects  int             `json:"redirects" jsonschema:"redirect hops the last check that got an answer followed; 0 when none or not checked yet"`
 	Cert       monitorCertOut  `json:"cert"`

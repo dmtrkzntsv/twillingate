@@ -390,3 +390,14 @@ func TestPrintMonitorsShowsTheRealFrequency(t *testing.T) {
 		t.Errorf("want the disabled monitor last and bare, %q, in:\n%s", want, got)
 	}
 }
+
+// Nothing is checked on a paused install or an archived project, so neither
+// line claims a frequency.
+func TestPrintMonitorsWhenIdleShowsNoFrequency(t *testing.T) {
+	l := manage.MonitorList{Idle: true, Monitors: []store.Monitor{{Origin: "https://a.example", Enabled: true}}}
+	var b bytes.Buffer
+	printMonitors(&b, 1, l, 2*time.Minute, 5*time.Second)
+	if got := b.String(); strings.Contains(got, "every") {
+		t.Errorf("idle monitors claim a frequency:\n%s", got)
+	}
+}

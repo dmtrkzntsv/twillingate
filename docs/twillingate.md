@@ -383,7 +383,7 @@ between the project's checks), `timeout_seconds` (`MONITOR_TIMEOUT`), `paused` (
 monitoring is off on this install), `monitors`, one per eligible origin in the project's order,
 and `domains`, the main domains of the enabled monitors, by name. A monitor has
 `origin`, `enabled`, `check_every_seconds` (how often it is really checked:
-`interval_seconds` times the project's enabled monitors, 0 when off or the project is archived), `contains`, its last certificate reading in `cert`
+`interval_seconds` times the project's enabled monitors, 0 when off, the project is archived or monitoring is paused), `contains`, its last certificate reading in `cert`
 (`expires_at`, `issuer`, `valid`, `error`, `checked_at`), `redirects`, the hops the
 last check that got an answer followed (a check that got no response, such as a
 refused connection or a timeout before any answer, leaves it as it was), the

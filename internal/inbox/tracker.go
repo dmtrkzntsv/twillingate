@@ -179,8 +179,9 @@ func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up
 		}
 		return
 	}
-	// Twice the spacing, so one skipped turn still counts as in a row.
-	e = t.streak(k, at, max(uptimeGap, 2*every))
+	// Three spacings: a skipped turn is two, and the checks' own durations
+	// come on top, since at is when a check ended.
+	e = t.streak(k, at, max(uptimeGap, 3*every))
 	e.Fails++
 	e.Reason, e.Error = reason, errText
 	if e.Fails < downAfter {

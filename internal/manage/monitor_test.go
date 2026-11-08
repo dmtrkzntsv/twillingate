@@ -265,8 +265,8 @@ func TestUpdateProjectRemovesMonitorOnOriginRemoval(t *testing.T) {
 	}
 }
 
-// An archived project is not checked, so its monitors claim no frequency.
-func TestCheckEveryOfAnArchivedProject(t *testing.T) {
+// A project that is not being checked claims no frequency.
+func TestCheckEveryWhenNothingIsChecked(t *testing.T) {
 	ops, _, _, p, _ := ruleOps(t)
 	ctx := context.Background()
 	if _, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: p, AllowedOrigins: []string{"https://a.example.com"}}); err != nil {
@@ -279,6 +279,14 @@ func TestCheckEveryOfAnArchivedProject(t *testing.T) {
 	if got := l.CheckEvery(time.Minute); got != time.Minute {
 		t.Errorf("live project: every %v, want 1m", got)
 	}
+	ops.MonitorPaused = true
+	if l, err = ops.ListMonitors(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if got := l.CheckEvery(time.Minute); got != 0 {
+		t.Errorf("paused install: every %v, want 0", got)
+	}
+	ops.MonitorPaused = false
 	if err := ops.ArchiveProject(ctx, "alice", p); err != nil {
 		t.Fatal(err)
 	}

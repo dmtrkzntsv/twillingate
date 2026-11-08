@@ -163,7 +163,7 @@ func monitorResultText(r store.MonitorResult) string {
 // printMonitors prints a project's monitors and the domains they share.
 func printMonitors(w io.Writer, project int64, l manage.MonitorList, interval, timeout time.Duration) {
 	fmt.Fprintf(w, "project %d monitors\n", project)
-	if interval > 0 {
+	if interval > 0 && !l.Idle {
 		fmt.Fprintf(w, "one check every\t%d seconds, the enabled sites taking turns\n", int(interval/time.Second))
 	}
 	if timeout > 0 {
