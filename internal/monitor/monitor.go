@@ -34,6 +34,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -414,6 +415,30 @@ func (r *Runner) startRead(ctx context.Context, k readKey, now time.Time, read f
 	}()
 }
 
+// live reports whether (projectID, origin) is still an enabled monitor. A
+// read that started while it was enabled may end after it was disabled, removed
+// or its project archived; reporting then would leave a notification no later
+// prune takes back. When the list cannot be read, the monitor counts as live.
+func (r *Runner) live(ctx context.Context, projectID int64, origin string) bool {
+	ms, err := r.st.ListEnabledMonitors(ctx)
+	if err != nil {
+		return true
+	}
+	return slices.ContainsFunc(ms, func(m store.Monitor) bool { return m.ProjectID == projectID && m.Origin == origin })
+}
+
+// alertDomain reports a domain lookup unless no enabled monitor of the
+// project has an origin on that main domain any more.
+func (r *Runner) alertDomain(ctx context.Context, projectID int64, domain string, ok bool, errText, expiresAt string, at time.Time) {
+	ms, err := r.st.ListEnabledMonitors(ctx)
+	if err == nil && !slices.ContainsFunc(ms, func(m store.Monitor) bool {
+		return m.ProjectID == projectID && r.domainOf(m.Origin) == domain
+	}) {
+		return
+	}
+	r.alerts.Domain(ctx, projectID, domain, ok, errText, expiresAt, at)
+}
+
 // domainOf is origin's main domain, worked out once while it is enabled.
 func (r *Runner) domainOf(origin string) string {
 	r.mu.Lock()
@@ -659,7 +684,9 @@ func (r *Runner) availability(ctx context.Context, m store.Monitor) store.Event 
 		}); err != nil {
 			r.logger.Warn("monitor: store last result", "project_id", m.ProjectID, "error", err)
 		}
-		r.alerts.Uptime(ctx, m.ProjectID, m.Origin, res.Up, res.Reason, res.Error, done)
+		if r.live(ctx, m.ProjectID, m.Origin) {
+			r.alerts.Uptime(ctx, m.ProjectID, m.Origin, res.Up, res.Reason, res.Error, done)
+		}
 	}
 	return uptimeRow(m.ProjectID, m.Origin, start, res)
 }
@@ -743,7 +770,9 @@ func (r *Runner) cert(ctx context.Context, m store.Monitor, now time.Time) []sto
 		if err := r.st.SetMonitorCertError(ctx, m.ProjectID, m.Origin, st.Error); err != nil {
 			r.logger.Warn("monitor: store certificate error", "project_id", m.ProjectID, "error", err)
 		}
-		r.alerts.Cert(ctx, m.ProjectID, m.Origin, inbox.CertReading{Error: st.Error}, now)
+		if r.live(ctx, m.ProjectID, m.Origin) {
+			r.alerts.Cert(ctx, m.ProjectID, m.Origin, inbox.CertReading{Error: st.Error}, now)
+		}
 		return nil
 	}
 	if err := r.st.SetMonitorCert(ctx, m.ProjectID, m.Origin, st); err != nil {
@@ -752,7 +781,9 @@ func (r *Runner) cert(ctx context.Context, m store.Monitor, now time.Time) []sto
 	if !https {
 		return []store.Event{row(m.ProjectID, "cert", now, nil, map[string]string{"origin": m.Origin})}
 	}
-	r.alerts.Cert(ctx, m.ProjectID, m.Origin, inbox.CertReading{Read: true, Valid: st.Valid, Error: st.Error, ExpiresAt: st.ExpiresAt}, now)
+	if r.live(ctx, m.ProjectID, m.Origin) {
+		r.alerts.Cert(ctx, m.ProjectID, m.Origin, inbox.CertReading{Read: true, Valid: st.Valid, Error: st.Error, ExpiresAt: st.ExpiresAt}, now)
+	}
 	attrs := map[string]string{"origin": m.Origin, "valid": "0", "issuer": st.Issuer, "error": st.Error}
 	if st.Valid {
 		attrs["valid"] = "1"
@@ -783,19 +814,19 @@ func (r *Runner) domain(ctx context.Context, projectID int64, domain string, now
 	switch {
 	case errors.Is(err, errUnknown):
 		r.logger.Debug("monitor: domain expiry unknown", "project_id", projectID, "domain", domain, "error", err)
-		r.alerts.Domain(ctx, projectID, domain, true, "", "", now)
+		r.alertDomain(ctx, projectID, domain, true, "", "", now)
 	case err != nil:
 		// The lookup failed, which says nothing about the domain: the last
 		// reading stands, unrecorded, and is retried after dailyRetry.
 		r.logger.Debug("monitor: domain expiry lookup failed", "project_id", projectID, "domain", domain, "error", err)
-		r.alerts.Domain(ctx, projectID, domain, false, err.Error(), "", now)
+		r.alertDomain(ctx, projectID, domain, false, err.Error(), "", now)
 		return nil
 	}
 	if err := r.st.SetMonitorDomain(ctx, projectID, domain, store.DomainState{ExpiresAt: exp, CheckedAt: now.Format(time.RFC3339)}); err != nil {
 		r.logger.Warn("monitor: store domain expiry", "project_id", projectID, "error", err)
 	}
 	if err == nil {
-		r.alerts.Domain(ctx, projectID, domain, true, "", exp, now)
+		r.alertDomain(ctx, projectID, domain, true, "", exp, now)
 	}
 	attrs := map[string]string{"domain": domain}
 	var value *float64

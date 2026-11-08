@@ -1940,11 +1940,11 @@ func TestAlertsUptime(t *testing.T) {
 		name, origin string
 		up           bool
 	}{{"up", site.URL, true}, {"down", broken.URL, false}} {
-		st := &fakeStore{}
+		m := store.Monitor{ProjectID: 3, Enabled: true, Origin: tc.origin}
+		st := &fakeStore{monitors: []store.Monitor{m}}
 		al := &alertCalls{}
 		r := redirectsRunner(st)
 		r.WithAlerts(al)
-		m := store.Monitor{ProjectID: 3, Enabled: true, Origin: tc.origin}
 		r.availability(context.Background(), m)
 		if len(al.uptimes) != 1 {
 			t.Fatalf("%s: %d Uptime calls, want 1", tc.name, len(al.uptimes))
@@ -1956,6 +1956,37 @@ func TestAlertsUptime(t *testing.T) {
 		if !tc.up && got.reason == "" {
 			t.Errorf("%s: down with no reason", tc.name)
 		}
+	}
+}
+
+// A check that ends after its monitor was disabled, removed or its project
+// archived reports nothing: the notification could not be taken back.
+func TestAlertsSkippedWhenMonitorNotLive(t *testing.T) {
+	now := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer site.Close()
+	tlsSrv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer tlsSrv.Close()
+	rd, _ := fakeRDAP(t, map[string]string{
+		"example.com": `{"events":[{"eventAction":"expiration","eventDate":"2027-03-14T04:00:00Z"}]}`,
+	})
+	al := &alertCalls{}
+	st := &fakeStore{} // the monitor was disabled while the checks ran
+	r := newRunner(st, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{
+		allowLoopback: true, bootstrapURL: rd.URL + "/dns.json", now: func() time.Time { return now },
+	})
+	r.WithAlerts(al)
+	r.availability(context.Background(), store.Monitor{ProjectID: 3, Enabled: true, Origin: site.URL})
+	r.cert(context.Background(), store.Monitor{ProjectID: 3, Enabled: true, Origin: tlsSrv.URL}, now)
+	r.domain(context.Background(), 3, "example.com", now)
+	if len(al.uptimes)+len(al.certs)+len(al.domains) != 0 {
+		t.Errorf("alerts after disable: %+v", al)
+	}
+	// Another project's monitor on the same domain does not keep it live.
+	st.monitors = []store.Monitor{{ProjectID: 4, Enabled: true, Origin: "https://example.com"}}
+	r.domain(context.Background(), 3, "example.com", now)
+	if len(al.domains) != 0 {
+		t.Errorf("domain alert for a project with no monitor on it: %+v", al.domains)
 	}
 }
 
@@ -1984,7 +2015,7 @@ func TestAlertsCert(t *testing.T) {
 	closed := "https://" + ln.Addr().String()
 	ln.Close()
 	al := &alertCalls{}
-	r := redirectsRunner(&fakeStore{})
+	r := redirectsRunner(&fakeStore{monitors: []store.Monitor{{ProjectID: 3, Enabled: true, Origin: closed}}})
 	r.WithAlerts(al)
 	r.cert(context.Background(), store.Monitor{ProjectID: 3, Origin: closed}, now)
 	if len(al.certs) != 1 || al.certs[0].Read || al.certs[0].Error == "" {
@@ -1995,7 +2026,7 @@ func TestAlertsCert(t *testing.T) {
 	tls := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	defer tls.Close()
 	al = &alertCalls{}
-	r = redirectsRunner(&fakeStore{})
+	r = redirectsRunner(&fakeStore{monitors: []store.Monitor{{ProjectID: 3, Enabled: true, Origin: tls.URL}}})
 	r.WithAlerts(al)
 	r.cert(context.Background(), store.Monitor{ProjectID: 3, Origin: tls.URL}, time.Now())
 	if len(al.certs) != 1 || !al.certs[0].Read || al.certs[0].Valid || al.certs[0].ExpiresAt == "" {
@@ -2023,7 +2054,11 @@ func TestAlertsDomain(t *testing.T) {
 	defer failing.Close()
 	newR := func(bootstrap string) (*Runner, *alertCalls) {
 		al := &alertCalls{}
-		r := newRunner(&fakeStore{}, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{
+		st := &fakeStore{monitors: []store.Monitor{
+			{ProjectID: 3, Enabled: true, Origin: "https://example.com"},
+			{ProjectID: 3, Enabled: true, Origin: "http://127.0.0.1"},
+		}}
+		r := newRunner(st, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{
 			allowLoopback: true, bootstrapURL: bootstrap, now: func() time.Time { return now },
 		})
 		r.WithAlerts(al)
@@ -2128,7 +2163,8 @@ func TestDomainExpiryReachesTracker(t *testing.T) {
 		"example.com": `{"events":[{"eventAction":"expiration","eventDate":"2027-03-14T04:00:00Z"}]}`,
 	})
 	ns := &notifyStore{}
-	r := newRunner(&fakeStore{}, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{
+	st := &fakeStore{monitors: []store.Monitor{{ProjectID: 3, Enabled: true, Origin: "https://example.com"}}}
+	r := newRunner(st, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{
 		allowLoopback: true, bootstrapURL: rd.URL + "/dns.json", now: func() time.Time { return now },
 	})
 	r.WithAlerts(inbox.NewTracker(ns, 4*time.Hour, quietLogger()))
@@ -2147,9 +2183,10 @@ func TestAlertsUptimeAtCompletion(t *testing.T) {
 	var calls atomic.Int32
 	clock := func() time.Time { return start.Add(time.Duration(calls.Add(1)-1) * time.Minute) }
 	al := &alertCalls{}
-	r := newRunner(&fakeStore{}, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{allowLoopback: true, now: clock})
+	m := store.Monitor{ProjectID: 3, Enabled: true, Origin: site.URL}
+	r := newRunner(&fakeStore{monitors: []store.Monitor{m}}, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{allowLoopback: true, now: clock})
 	r.WithAlerts(al)
-	ev := r.availability(context.Background(), store.Monitor{ProjectID: 3, Enabled: true, Origin: site.URL})
+	ev := r.availability(context.Background(), m)
 	if !ev.TS.Equal(start) {
 		t.Errorf("row at %v, want the start %v", ev.TS, start)
 	}
