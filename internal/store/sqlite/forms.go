@@ -437,13 +437,14 @@ func (d *DB) ApproveForm(ctx context.Context, projectID int64, name string, expe
 	})
 }
 
-// UpdateForm writes the form's purpose, return URL, closing time and
-// notify setting as given, and its expected fields when f.ExpectedFields
-// is non-nil; nil leaves the stored list alone, so a caller that read
-// the form before an approval cannot wipe the list the approval set. Every expected name and
+// UpdateForm writes the form's purpose, return URL and closing time as
+// given, its notify setting when notify is non-nil, and its expected
+// fields when f.ExpectedFields is non-nil; nil leaves the stored value
+// alone, so a caller that read the form before an approval cannot wipe
+// the list or the notify setting the approval set. Every expected name and
 // every name in add joins fields, and add joins an approved form's
 // expected fields, in the same transaction.
-func (d *DB) UpdateForm(ctx context.Context, f store.Form, add []string, a store.AuditEntry) error {
+func (d *DB) UpdateForm(ctx context.Context, f store.Form, notify *bool, add []string, a store.AuditEntry) error {
 	var expected any
 	if f.ExpectedFields != nil {
 		b, err := json.Marshal(f.ExpectedFields)
@@ -453,10 +454,10 @@ func (d *DB) UpdateForm(ctx context.Context, f store.Form, add []string, a store
 		expected = string(b)
 	}
 	return d.tx(ctx, func(tx *sql.Tx) error {
-		res, err := tx.ExecContext(ctx, `UPDATE forms SET purpose=?, return_url=?, closes_at=?, notify=?,
-			expected_fields=COALESCE(?, expected_fields)
+		res, err := tx.ExecContext(ctx, `UPDATE forms SET purpose=?, return_url=?, closes_at=?,
+			notify=COALESCE(?, notify), expected_fields=COALESCE(?, expected_fields)
 			WHERE project_id=? AND name=?`,
-			f.Purpose, f.ReturnURL, nullTime(f.ClosesAt), f.Notify, expected, f.ProjectID, f.Name)
+			f.Purpose, f.ReturnURL, nullTime(f.ClosesAt), notify, expected, f.ProjectID, f.Name)
 		if err != nil {
 			return err
 		}

@@ -20,6 +20,7 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/enrich"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -610,6 +611,30 @@ func precheckOSVocabulary(t *testing.T) []string {
 		values = append(values, m[1])
 	}
 	return values
+}
+
+// TestDocumentMatchesNotificationVocabularies binds the notification type
+// and delivery tables in docs/twillingate.md to the store's closed
+// vocabularies, in order: the API returns these values, and a client
+// renders each type its own way.
+func TestDocumentMatchesNotificationVocabularies(t *testing.T) {
+	row := regexp.MustCompile("^\\| `([a-z_]+)` \\|")
+	firstCells := func(heading string) []string {
+		var out []string
+		for _, line := range strings.Split(docSection(t, docs.Twillingate, heading), "\n") {
+			if m := row.FindStringSubmatch(line); m != nil {
+				out = append(out, m[1])
+			}
+		}
+		return out
+	}
+	if got := firstCells("### Notification types"); !slices.Equal(got, store.NotificationTypes) {
+		t.Errorf("the notification types table lists\n%v\nstore.NotificationTypes is\n%v", got, store.NotificationTypes)
+	}
+	want := []string{store.DeliveryPending, store.DeliverySent, store.DeliveryFailed, store.DeliveryNone, store.DeliverySkipped}
+	if got := firstCells("### Delivery"); !slices.Equal(got, want) {
+		t.Errorf("the delivery table lists\n%v\nwant\n%v", got, want)
+	}
 }
 
 // docSection returns the text under a heading, up to the next one at the

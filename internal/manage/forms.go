@@ -29,6 +29,9 @@ type FormSpec struct {
 	// AddFields are field names to record before any submission sends
 	// them; an approved form also keeps them, after ExpectedFields.
 	AddFields []string
+	// Notify turns submission notifications on or off; nil keeps the
+	// stored setting (approval turns it on).
+	Notify *bool
 }
 
 func formSubject(projectID int64, name string) string {
@@ -108,8 +111,9 @@ func (o *Ops) UpdateForm(ctx context.Context, actor string, projectID int64, nam
 	if err != nil {
 		return err
 	}
-	// Nil leaves the stored list alone, so an approval that lands between
-	// the read above and the write below is not overwritten.
+	// Nil leaves the stored list alone (as a nil spec.Notify leaves the
+	// notify setting), so an approval that lands between the read above
+	// and the write below is not overwritten.
 	f.ExpectedFields = nil
 	var changed []string
 	if spec.Purpose != nil {
@@ -141,6 +145,9 @@ func (o *Ops) UpdateForm(ctx context.Context, actor string, projectID int64, nam
 		f.ExpectedFields = exp
 		changed = append(changed, "expected_fields")
 	}
+	if spec.Notify != nil {
+		changed = append(changed, "notify_submissions")
+	}
 	var add []string
 	if len(spec.AddFields) > 0 {
 		if add, err = checkExpected(spec.AddFields); err != nil {
@@ -148,7 +155,7 @@ func (o *Ops) UpdateForm(ctx context.Context, actor string, projectID int64, nam
 		}
 		changed = append(changed, "added: "+strings.Join(add, ", "))
 	}
-	return o.St.UpdateForm(ctx, f, add, store.AuditEntry{
+	return o.St.UpdateForm(ctx, f, spec.Notify, add, store.AuditEntry{
 		Actor: actor, Action: "form.update", Subject: formSubject(projectID, name),
 		Detail: strings.Join(changed, ", ")})
 }

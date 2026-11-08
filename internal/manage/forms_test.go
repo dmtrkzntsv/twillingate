@@ -22,6 +22,7 @@ type formCalls struct {
 	expected [][]string
 	added    [][]string
 	updated  []store.Form
+	notify   []*bool
 	draftArg time.Time
 	archArg  []bool
 	archived [][]string
@@ -82,8 +83,9 @@ func (f *formCalls) ApproveForm(_ context.Context, pid int64, name string, expec
 	return nil
 }
 
-func (f *formCalls) UpdateForm(_ context.Context, fm store.Form, add []string, a store.AuditEntry) error {
+func (f *formCalls) UpdateForm(_ context.Context, fm store.Form, notify *bool, add []string, a store.AuditEntry) error {
 	f.updated = append(f.updated, fm) // as passed
+	f.notify = append(f.notify, notify)
 	f.added = append(f.added, add)
 	if fm.ExpectedFields == nil { // as the store: nil keeps the stored list
 		fm.ExpectedFields = f.forms[fm.Name].ExpectedFields
@@ -268,6 +270,9 @@ func TestUpdateFormMergesAndValidates(t *testing.T) {
 	if got.Purpose != "Contact us" || len(got.ExpectedFields) != 1 || got.ExpectedFields[0] != "email" {
 		t.Fatalf("after purpose update: %+v", got)
 	}
+	if fc.notify[0] != nil {
+		t.Fatalf("a purpose-only update passed notify %v to the store, want nil (keep)", *fc.notify[0])
+	}
 	if fc.updated[0].ExpectedFields != nil {
 		t.Fatalf("a purpose-only update passed expected_fields %v to the store, want nil (keep)", fc.updated[0].ExpectedFields)
 	}
@@ -316,6 +321,23 @@ func TestUpdateFormMergesAndValidates(t *testing.T) {
 }
 
 func ptrTime(t *time.Time) **time.Time { return &t }
+
+// A notify change reaches the store as given and the audit names it, never
+// the value; nil (no change) is the purpose-only case above.
+func TestUpdateFormNotify(t *testing.T) {
+	ops, fc, pid := newFormOps(t)
+	fc.seed(pid, "live", store.FormApproved)
+	off := false
+	if err := ops.UpdateForm(context.Background(), "api", pid, "live", FormSpec{Notify: &off}); err != nil {
+		t.Fatal(err)
+	}
+	if n := fc.notify[0]; n == nil || *n {
+		t.Fatalf("notify passed = %v, want false", n)
+	}
+	if d := fc.audits[0].Detail; d != "notify_submissions" {
+		t.Fatalf("audit detail = %q", d)
+	}
+}
 
 func TestArchiveRestoreForm(t *testing.T) {
 	ctx := context.Background()

@@ -826,7 +826,7 @@ func TestUpdateFormWritesAsGiven(t *testing.T) {
 	}
 	closes := formsNow.Add(48 * time.Hour)
 	f.Purpose, f.ReturnURL, f.ClosesAt, f.ExpectedFields = "leads", "https://example.com/thanks", &closes, []string{"email", "name"}
-	if err := db.UpdateForm(ctx, f, nil, store.AuditEntry{Actor: "agent", Action: "form.update", Subject: "form/1/contact"}); err != nil {
+	if err := db.UpdateForm(ctx, f, nil, nil, store.AuditEntry{Actor: "agent", Action: "form.update", Subject: "form/1/contact"}); err != nil {
 		t.Fatal(err)
 	}
 	g, err := db.GetForm(ctx, 1, "contact")
@@ -843,7 +843,7 @@ func TestUpdateFormWritesAsGiven(t *testing.T) {
 	}
 	// nil clears closes_at.
 	g.ClosesAt = nil
-	if err := db.UpdateForm(ctx, g, nil, formAudit); err != nil {
+	if err := db.UpdateForm(ctx, g, nil, nil, formAudit); err != nil {
 		t.Fatal(err)
 	}
 	if h, _ := db.GetForm(ctx, 1, "contact"); h.ClosesAt != nil {
@@ -853,7 +853,7 @@ func TestUpdateFormWritesAsGiven(t *testing.T) {
 		t.Fatalf("%d update audit rows", n)
 	}
 	g.Name = "nope"
-	if err := db.UpdateForm(ctx, g, nil, formAudit); !errors.Is(err, store.ErrNotFound) {
+	if err := db.UpdateForm(ctx, g, nil, nil, formAudit); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("unknown update = %v", err)
 	}
 }
@@ -867,7 +867,7 @@ func TestUpdateFormNilExpectedKeepsList(t *testing.T) {
 	}
 	// A caller holding a stale draft read: no expected list.
 	stale := store.Form{ProjectID: 1, Name: "contact", Purpose: "leads"}
-	if err := db.UpdateForm(ctx, stale, nil, formAudit); err != nil {
+	if err := db.UpdateForm(ctx, stale, nil, nil, formAudit); err != nil {
 		t.Fatal(err)
 	}
 	g, err := db.GetForm(ctx, 1, "contact")
@@ -888,7 +888,7 @@ func TestUpdateFormAddsFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A draft records the names; it keeps everything anyway.
-	if err := db.UpdateForm(ctx, draft, []string{"name", "email"}, formAudit); err != nil {
+	if err := db.UpdateForm(ctx, draft, nil, []string{"name", "email"}, formAudit); err != nil {
 		t.Fatal(err)
 	}
 	if g, _ := db.GetForm(ctx, 1, "contact"); !reflect.DeepEqual(g.Fields, []string{"email", "name"}) || g.ExpectedFields != nil {
@@ -908,7 +908,7 @@ func TestUpdateFormAddsFields(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.ExpectedFields = []string{"name"}
-	if err := db.UpdateForm(ctx, f, []string{"phone", "name", "company"}, formAudit); err != nil {
+	if err := db.UpdateForm(ctx, f, nil, []string{"phone", "name", "company"}, formAudit); err != nil {
 		t.Fatal(err)
 	}
 	g, err := db.GetForm(ctx, 1, "contact")
@@ -1451,8 +1451,9 @@ func TestSubmissionNotifyOff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f.Notify, f.ExpectedFields = false, nil
-	if err := db.UpdateForm(ctx, f, nil, formAudit); err != nil {
+	off, on := false, true
+	f.ExpectedFields = nil
+	if err := db.UpdateForm(ctx, f, &off, nil, formAudit); err != nil {
 		t.Fatal(err)
 	}
 	if f, _ := db.GetForm(ctx, 1, "contact"); f.Notify {
@@ -1463,8 +1464,7 @@ func TestSubmissionNotifyOff(t *testing.T) {
 		t.Fatalf("notify off: %+v", ns)
 	}
 	// An archived form with notify on does not notify either.
-	f.Notify = true
-	if err := db.UpdateForm(ctx, f, nil, formAudit); err != nil {
+	if err := db.UpdateForm(ctx, f, &on, nil, formAudit); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.SetFormArchived(ctx, 1, "contact", true, time.Time{}, formAudit); err != nil {
@@ -1491,14 +1491,44 @@ func TestApproveSetsNotify(t *testing.T) {
 	if f, _ := db.GetForm(ctx, 1, "contact"); !f.Notify {
 		t.Fatal("approved form has notify off")
 	}
-	// UpdateForm keeps what it is given.
+	// UpdateForm without a notify change keeps it.
 	f, _ := db.GetForm(ctx, 1, "contact")
 	f.Purpose, f.ExpectedFields = "leads", nil
-	if err := db.UpdateForm(ctx, f, nil, formAudit); err != nil {
+	if err := db.UpdateForm(ctx, f, nil, nil, formAudit); err != nil {
 		t.Fatal(err)
 	}
 	if f, _ := db.GetForm(ctx, 1, "contact"); !f.Notify || f.Purpose != "leads" {
 		t.Fatalf("after UpdateForm: %+v", f)
+	}
+}
+
+// An approval landing between a caller's read of a draft (notify off) and
+// its UpdateForm must not be undone: without a notify change the store
+// keeps the stored value, whatever the stale form says.
+func TestUpdateFormNilNotifyKeepsApproval(t *testing.T) {
+	db := newFormsDB(t)
+	ctx := context.Background()
+	mustWrite(t, db, subAt("s0", formsNow))
+	stale, err := db.GetForm(ctx, 1, "contact")
+	if err != nil || stale.Notify {
+		t.Fatalf("draft: %+v, %v", stale, err)
+	}
+	if err := db.ApproveForm(ctx, 1, "contact", []string{"email"}, formsNow, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	stale.Purpose, stale.ExpectedFields = "leads", nil
+	if err := db.UpdateForm(ctx, stale, nil, nil, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := db.GetForm(ctx, 1, "contact"); !f.Notify || f.Purpose != "leads" {
+		t.Fatalf("after a stale UpdateForm: %+v, want notify kept on", f)
+	}
+	off := false
+	if err := db.UpdateForm(ctx, stale, &off, nil, formAudit); err != nil {
+		t.Fatal(err)
+	}
+	if f, _ := db.GetForm(ctx, 1, "contact"); f.Notify {
+		t.Fatal("notify still on after an explicit change to off")
 	}
 }
 

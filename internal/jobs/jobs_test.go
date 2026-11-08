@@ -711,6 +711,11 @@ func (s *passOnlyStore) PurgeArchived(context.Context, int) (store.PurgeResult, 
 	return store.PurgeResult{}, nil
 }
 
+func (s *passOnlyStore) PurgeArchivedNotifications(context.Context, time.Time, int) (int, error) {
+	s.call("PurgeArchivedNotifications")
+	return 0, nil
+}
+
 func (s *passOnlyStore) ArchiveDueWidgetShares(context.Context, time.Time) (int, error) {
 	s.call("ArchiveDueWidgetShares")
 	return 0, nil
@@ -738,7 +743,7 @@ func (s *passOnlyStore) UnloggedCount(context.Context) (int, error) { return 0, 
 func (s *passOnlyStore) MarkLogged(context.Context, []store.UnloggedEvent) error { return nil }
 
 // TestPassRunsNoEventWork: the pass needs nothing of the store but the
-// shares, drafts, purge, vacuum and usage history, and it maintains the
+// shares, drafts, purges, vacuum and usage history, and it maintains the
 // archive before measuring.
 func TestPassRunsNoEventWork(t *testing.T) {
 	_, reg, r := setup(t, jobsVars, jobsProjectSpecs)
@@ -747,11 +752,46 @@ func TestPassRunsNoEventWork(t *testing.T) {
 	a := &fakeArchive{sizes: map[int64]int64{1: 7}}
 	r.WithArchive(a)
 	r.RunDailyPass(context.Background())
-	want := []string{"ArchiveDueWidgetShares", "ExpireDrafts", "PurgeArchived", "IncrementalVacuum", "RecordUsageHistory map[1:7]"}
+	want := []string{"ArchiveDueWidgetShares", "ExpireDrafts", "PurgeArchived", "PurgeArchivedNotifications", "IncrementalVacuum", "RecordUsageHistory map[1:7]"}
 	if !slices.Equal(st.calls, want) {
 		t.Errorf("store calls = %v, want %v", st.calls, want)
 	}
 	if want := []string{"2026-08-22 late=1 keep=400", "sizes"}; !slices.Equal(a.calls, want) {
 		t.Errorf("archive calls = %v, want %v", a.calls, want)
+	}
+}
+
+// TestDailyPassPurgesNotifications: notifications archived more than
+// RETENTION_ARCHIVED_DAYS before the pass's clock go; a newer archived
+// one and an active one stay.
+func TestDailyPassPurgesNotifications(t *testing.T) {
+	st, _, r := setup(t, map[string]string{"RETENTION_ARCHIVED_DAYS": "30"}, jobsProjectSpecs)
+	ctx := context.Background()
+	now := r.now()
+	var ids []int64
+	for range 3 {
+		id, err := st.AddNotification(ctx, store.NewNotification{Type: store.NotifyUptimeDown, ProjectID: 1,
+			Subject: "https://a.com", Fields: map[string]string{"error": "timeout"}, At: now.Add(-40 * 24 * time.Hour)})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, id)
+	}
+	if _, err := st.SetNotificationsArchived(ctx, ids[:1], false, true, now.Add(-31*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := st.SetNotificationsArchived(ctx, ids[1:2], false, true, now.Add(-29*24*time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	r.RunDailyPass(ctx)
+	archived, err := st.ListNotifications(ctx, store.NotificationFilter{Archived: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archived) != 1 || archived[0].ID != ids[1] {
+		t.Fatalf("archived after the pass = %+v, want only %d", archived, ids[1])
+	}
+	if n, err := st.CountActiveNotifications(ctx); err != nil || n != 1 {
+		t.Fatalf("active = %d, %v; want 1", n, err)
 	}
 }

@@ -943,6 +943,8 @@ tools below do.
    `expected_fields`. A field the page starts sending later joins `fields`
    but is dropped until it is in `expected_fields`; `add_fields` records a
    field before anything sends it, and an approved form keeps it.
+   `notify_submissions` turns [notifications](#notifications) of its
+   submissions off or on; approving a form turns them on.
 5. **Read the submissions** as a table with `list_submissions`, one in full
    with `get_submission`, or as CSV from the export route.
 6. **Set submissions aside** with `archive_submissions`: they leave the
@@ -956,9 +958,9 @@ tools below do.
 
 | Operation | CLI | MCP tool | Tool arguments |
 | --- | --- | --- | --- |
-| List forms | `twillingate form list` | `list_forms` | `{project_id, archived}`; drafts first; each with `status` (`draft` or `approved`), `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, `submissions` (count of active ones), `last_submitted_at`, `new_submissions` (active, received after `seen_at`), `archived_submissions` (count), `seen_at` (how far the console has read the form; reading over MCP never moves it), `archived`. `archived: true` lists the archived forms instead. Beside `forms`, `action_base` is `INGEST_URL` + `/ingest/forms` (empty without `INGEST_URL`), so a plain form's action is `<action_base>/{name}?key=…` |
+| List forms | `twillingate form list` | `list_forms` | `{project_id, archived}`; drafts first; each with `status` (`draft` or `approved`), `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, `submissions` (count of active ones), `last_submitted_at`, `new_submissions` (active, received after `seen_at`), `archived_submissions` (count), `seen_at` (how far the console has read the form; reading over MCP never moves it), `notify_submissions` (whether each submission raises a `form_submission` notification), `archived`. `archived: true` lists the archived forms instead. Beside `forms`, `action_base` is `INGEST_URL` + `/ingest/forms` (empty without `INGEST_URL`), so a plain form's action is `<action_base>/{name}?key=…` |
 | Approve a draft | `twillingate form approve` | `approve_form` | `{project_id, name, expected_fields}`; one or more fields; an approved form is a `conflict` |
-| Change one | `twillingate form update` | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields, add_fields}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty; `add_fields` join `fields`, and an approved form keeps them, after `expected_fields` |
+| Change one | `twillingate form update` | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields, add_fields, notify_submissions}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty; `add_fields` join `fields`, and an approved form keeps them, after `expected_fields`; `notify_submissions` `true` or `false` |
 | Archive / restore | `twillingate form archive` / `restore` | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions from every list, table and export (a search still finds them); a restored draft gets another `RETENTION_FORMS_DRAFT_DAYS` |
 | Read a form's table | `twillingate form export` (CSV) | `list_submissions` | `{project_id, name, archived, filters, sort, distinct, offset, limit}`; `archived: true` reads the archived submissions instead; returns `columns`, `rows`, `ids`, `matched`, `total`, `offset`, `limit` |
 | Read one submission | — | `get_submission` | `{project_id, name, id}`; archived or not; every stored field (ones no longer expected too), `received_at`, `archived_at` (absent while active), `attribution` (`referrer`, `utm_source`, `utm_medium`, `utm_campaign`, each left out when empty; the last non-direct visit within `ATTRIBUTION_DAYS`, or what the submission sent; `{}` until the job has run, about a minute after arrival, and when the visit was direct) |
@@ -971,8 +973,9 @@ The CLI works on the database directly, with every flag naming a project by
 prints one tab-separated line per form (name, status, submissions, `closes_at`
 or `-`, fields). `form approve -fields a,b` keeps those fields; `form update`
 takes `-purpose`, `-return-url` (empty clears it), `-closes-at` (an RFC 3339
-time, `now` to close it at once, or `never` to reopen it) and, on an approved
-form, `-fields`; a flag left out keeps the value. `form export` writes the
+time, `now` to close it at once, or `never` to reopen it), `-notify true` or
+`-notify false` and, on an approved form, `-fields`; a flag left out keeps the
+value. `form export` writes the
 form's whole table as CSV to standard output (see below), its archived
 submissions with `-archived`. `form erase -project-id N`
 takes `-id` (repeatable) or `-search`, never both, archives exactly as
@@ -1032,6 +1035,85 @@ export (so of an archive or restore by filters too) until it is restored, and
 are purged with it `RETENTION_ARCHIVED_DAYS` after archiving, with their
 events still in the raw window. Deleting the project deletes its forms and
 submissions.
+
+---
+
+## Notifications
+
+twillingate tells you when something needs a look: a site that goes down
+and comes back, a certificate or a domain lookup that fails and recovers, a
+certificate or a domain about to expire, a new form waiting for approval or
+a draft dropped unapproved, and submissions to a form. Each is one item in
+the inbox (the console's, and `list_notifications`) and, with `NOTIFY_URL`
+set, the same title, body and link sent to one channel: Telegram, ntfy,
+Slack, Discord, a JSON webhook or email, set up as in
+[deployment.md](deployment.md#notifications) (`docs://deployment`). Form
+field values are never in a notification.
+
+- **Failing states page once.** A site is down after 2 failed checks in a
+  row and up after 1 good one. A certificate fails when one was read and does
+  not verify, or none could be read for 24 hours; a domain lookup fails after
+  24 hours of failed RDAP lookups. While a state fails, a reminder goes every
+  `NOTIFY_REMIND_HOURS` (default 4), and the recovery says how long it lasted.
+  While a site is down, its certificate neither fails nor reminds. Switching
+  a monitor off or archiving the project ends the state without a recovery.
+- **Expiry warnings** go at 14, 7 and 1 days before a certificate expires
+  and 30, 7 and 1 days before a domain does, once per step; a renewal starts
+  the steps again.
+- **Forms.** The first submission to an unknown form announces the new
+  draft; a draft archived by `RETENTION_FORMS_DRAFT_DAYS` without approval is
+  announced too (one you archive yourself is not). An approved, active form
+  with `notify_submissions` on (approval turns it on; forms approved before
+  notifications existed have it off) notifies on each submission: the first
+  at once, and the ones within 15 minutes after it in one follow-up at the
+  end of that window, so a spam run is a few messages, not hundreds.
+- **Every send is its own item.** A reminder, a recovery and a follow-up
+  each add one; the inbox never merges or rewrites what the channel got.
+- **Archive** an item to take it out of the inbox, one by one or all
+  active ones at once; `restore_notifications` brings it back. The daily
+  pass purges archived items `RETENTION_ARCHIVED_DAYS` (default 30; 0 never
+  purges) after archiving; active ones stay until archived. Archiving is
+  console state: it is not audited and stops no reminder.
+
+| Operation | CLI | MCP tool | Tool arguments |
+| --- | --- | --- | --- |
+| Read the inbox | — | `list_notifications` | `{archived, project_id, limit, cursor}`, all optional; newest first, the active ones (`archived: true` the archived ones), of every project or of `project_id`; returns `notifications`, each with `id`, `type` (below), `project_id` and `project` (the name when it was created; both absent for none), `subject` (the origin, domain or form), `title`, `body`, `path` (the console page it leads to), `fields` (what it was rendered from), `created_at`, `archived_at` (absent while active), `delivery` (below) and `delivery_error` (after a failed send); `active`, the active items across every project; and `next_cursor`. Pages of `limit` (default 50, at most 200) |
+| Archive | — | `archive_notifications` | exactly one of `{ids}` or `{all: true}` (every active item); returns `archived` |
+| Restore | — | `restore_notifications` | `{ids}`; returns `restored` |
+
+### Notification types
+
+Every item has one type, from this closed list, so a client can show each
+its own way. The examples are titles.
+
+| Type | Raised when |
+| --- | --- |
+| `uptime_down` | a site fails 2 checks in a row: `https://example.com is down` |
+| `uptime_still_down` | a reminder, every `NOTIFY_REMIND_HOURS`, while it stays down |
+| `uptime_up` | it answers again: `https://example.com is up`, with how long it was down |
+| `cert_failing` | its certificate does not verify, or none could be read for 24 hours |
+| `cert_still_failing` | a reminder while the certificate keeps failing |
+| `cert_recovered` | a certificate reads without error again |
+| `domain_failing` | RDAP lookups of a domain have failed for 24 hours |
+| `domain_still_failing` | a reminder while the lookups keep failing |
+| `domain_recovered` | a lookup succeeds again |
+| `cert_expiring` | a certificate is 14, 7 or 1 days from expiry, once per step; first seen closer than a step, one item for the tightest step it falls in |
+| `domain_expiring` | a domain is 30, 7 or 1 days from expiry, as `cert_expiring` |
+| `form_draft_created` | the first submission to an unknown form created a draft waiting for approval |
+| `form_draft_discarded` | a draft passed `RETENTION_FORMS_DRAFT_DAYS` without approval and was archived |
+| `form_submission` | a submission to an approved form with `notify_submissions` on; a burst follow-up has `fields.count` |
+
+### Delivery
+
+`delivery` is what happened on the `NOTIFY_URL` channel:
+
+| Value | Meaning |
+| --- | --- |
+| `pending` | not tried yet, or waiting for a retry after a temporary failure |
+| `sent` | the channel accepted it |
+| `failed` | a final failure, or still failing 6 hours after creation; `delivery_error` says why |
+| `none` | no channel was configured: the inbox holds it alone |
+| `skipped` | not tried within an hour of its creation (the process was down), so not sent late |
 
 ---
 
@@ -1592,8 +1674,9 @@ form submissions](#collect-form-submissions).
 
 ## Answer questions with the data
 
-A connected session gets sixty-eight tools: the thirty-four below, the ten
-in [Collect form submissions](#collect-form-submissions), and twenty-four
+A connected session gets seventy-one tools: the thirty-four below, the ten
+in [Collect form submissions](#collect-form-submissions), the three in
+[Notifications](#notifications), and twenty-four
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
 dashboard, call `reporting_guide` first.
@@ -1744,6 +1827,9 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/submissions` | `find_submissions` | query: `search`, `limit`, `cursor` |
 | `POST` | `/api/projects/{project_id}/submissions/archive` | `archive_submissions` | body: one of `ids`, `form` with `filters`, `search` → `{"archived": n}` |
 | `POST` | `/api/projects/{project_id}/submissions/restore` | `restore_submissions` | body: one of `ids`, `form` with `filters` (archived table), `search` → `{"restored": n}` |
+| `GET` | `/api/notifications` | `list_notifications` | query: `archived`, `project_id`, `limit`, `cursor` |
+| `POST` | `/api/notifications/archive` | `archive_notifications` | body: one of `ids`, `all: true` → `{"archived": n}` |
+| `POST` | `/api/notifications/restore` | `restore_notifications` | body: `ids` → `{"restored": n}` |
 | `GET` | `/api/projects/{project_id}/views/overview` | `views_overview` | query: `from`, `to`, `kind` |
 | `GET` | `/api/projects/{project_id}/views/breakdown` | `views_breakdown` | query: `from`, `to`, `dimension`, `limit` |
 | `GET` | `/api/projects/{project_id}/product/events` | `product_events` | query: `from`, `to`, `event` |

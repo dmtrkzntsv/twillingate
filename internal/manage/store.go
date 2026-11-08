@@ -43,12 +43,17 @@ type Store interface {
 	GetForm(ctx context.Context, projectID int64, name string) (store.Form, error)
 	MarkFormSeen(ctx context.Context, projectID int64, name string, until time.Time) error
 	ApproveForm(ctx context.Context, projectID int64, name string, expected []string, now time.Time, a store.AuditEntry) error
-	UpdateForm(ctx context.Context, f store.Form, add []string, a store.AuditEntry) error
+	UpdateForm(ctx context.Context, f store.Form, notify *bool, add []string, a store.AuditEntry) error
 	SetFormArchived(ctx context.Context, projectID int64, name string, archived bool, draftUntil time.Time, a store.AuditEntry) error
 	SetSubmissionsArchived(ctx context.Context, projectID int64, ids []string, archived bool, a store.AuditEntry) (int, error)
 	FindSubmissions(ctx context.Context, projectID int64, search string, limit int, after string) ([]store.Submission, string, error)
 	SubmissionIDsMatching(ctx context.Context, projectID int64, search string) ([]string, error)
 	GetSubmission(ctx context.Context, projectID int64, form, id string) (store.Submission, error)
+
+	// Notifications: console state, not audited.
+	ListNotifications(ctx context.Context, f store.NotificationFilter) ([]store.Notification, error)
+	CountActiveNotifications(ctx context.Context) (int, error)
+	SetNotificationsArchived(ctx context.Context, ids []int64, all, archived bool, at time.Time) (int, error)
 
 	// Availability monitors: settings are audited by the store from the
 	// AuditEntry passed, no config bump (monitors are not in the snapshot).

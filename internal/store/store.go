@@ -332,14 +332,16 @@ type Store interface {
 	// stamped now, with notify on, and clears draft_until. ErrConflict when it is already
 	// approved, ErrNotFound when unknown.
 	ApproveForm(ctx context.Context, projectID int64, name string, expected []string, now time.Time, a AuditEntry) error
-	// UpdateForm writes f's Purpose, ReturnURL, ClosesAt and Notify
-	// exactly as given (merging is the caller's), and ExpectedFields when
-	// non-nil (nil keeps the stored list); ErrNotFound when the row is absent.
+	// UpdateForm writes f's Purpose, ReturnURL and ClosesAt exactly as
+	// given (merging is the caller's), notify when non-nil and
+	// ExpectedFields when non-nil (nil keeps the stored value, so an
+	// approval between the caller's read and this write stands; f.Notify is
+	// ignored); ErrNotFound when the row is absent.
 	// add are field names recorded as if a submission had sent them; on an
 	// approved form each one not yet kept is appended to the expected
 	// fields, after ExpectedFields is written. Expected names always join
 	// Fields, here and in ApproveForm.
-	UpdateForm(ctx context.Context, f Form, add []string, a AuditEntry) error
+	UpdateForm(ctx context.Context, f Form, notify *bool, add []string, a AuditEntry) error
 	// SetFormArchived archives or restores a form. Archiving an archived
 	// form and restoring an active one change nothing and write no audit
 	// row. Restoring a draft sets draft_until to draftUntil; an approved
