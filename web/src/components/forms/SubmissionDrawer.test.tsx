@@ -44,6 +44,8 @@ describe('SubmissionDrawer', () => {
     const drawer = await screen.findByRole('dialog', { name: 'Submission' })
     await within(drawer).findByText('bob@example.com')
     expect(within(drawer).queryByRole('button', { name: 'Restore' })).toBeNull()
+    // Red, as the app's other destructive actions are.
+    expect(within(drawer).getByRole('button', { name: 'Archive' })).toHaveAttribute('data-variant', 'destructive')
     await user.click(within(drawer).getByRole('button', { name: 'Archive' }))
     await waitFor(() => expect(archive).toHaveBeenCalledWith(4, { ids: ['s2'] }))
     await waitFor(() => expect(onClose).toHaveBeenCalled())
@@ -58,6 +60,7 @@ describe('SubmissionDrawer', () => {
     const arrival = await screen.findByRole('region', { name: 'Arrival' })
     expect(within(arrival).getByText(/deleted for good on 4 Nov unless restored/)).toBeInTheDocument()
     const drawer = screen.getByRole('dialog', { name: 'Submission' })
+    expect(within(drawer).getByRole('button', { name: 'Restore' })).toHaveAttribute('data-variant', 'outline')
     await user.click(within(drawer).getByRole('button', { name: 'Restore' }))
     await waitFor(() => expect(restore).toHaveBeenCalledWith(4, { ids: ['s2'] }))
     await waitFor(() => expect(onClose).toHaveBeenCalled())

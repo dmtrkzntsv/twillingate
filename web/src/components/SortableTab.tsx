@@ -1,4 +1,4 @@
-import { useRef, type KeyboardEvent, type MouseEvent } from 'react'
+import { useRef, type KeyboardEvent, type MouseEvent, type ReactNode } from 'react'
 import { useSortable } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import { TabsTrigger } from '@/components/ui/tabs'
@@ -6,7 +6,10 @@ import { cn } from '@/lib/utils'
 
 interface Props {
   id: number
-  title: string
+  /** What the tab shows: its title, with any icon or badge. */
+  children: ReactNode
+  /** The tab's accessible name, when its content does not read as one (an icon, a count). */
+  label?: string
   className: string
   /**
    * False while the page may not move tabs (frozen on a dashboard being
@@ -34,7 +37,7 @@ interface Props {
  * after the key comes up, so a screen reader's later click still selects.
  * A modified click (Ctrl, Cmd, Shift, Alt) selects nothing, as in Radix.
  */
-export default function SortableTab({ id, title, className, movable, disabled, onSelect }: Props) {
+export default function SortableTab({ id, children, label, className, movable, disabled, onSelect }: Props) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id,
     disabled: disabled || !movable,
@@ -67,6 +70,7 @@ export default function SortableTab({ id, title, className, movable, disabled, o
     <TabsTrigger
       ref={setNodeRef}
       value={String(id)}
+      aria-label={label}
       aria-roledescription={movable ? attributes['aria-roledescription'] : undefined}
       aria-describedby={movable ? attributes['aria-describedby'] : undefined}
       onPointerDown={(e) => {
@@ -80,7 +84,7 @@ export default function SortableTab({ id, title, className, movable, disabled, o
       style={{ transform: CSS.Translate.toString(transform), transition }}
       className={cn(className, isDragging && 'z-10')}
     >
-      {title}
+      {children}
     </TabsTrigger>
   )
 }

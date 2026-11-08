@@ -9,7 +9,6 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -22,10 +21,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 	"github.com/dmtrkzntsv/twillingate/internal/wire"
 )
-
-// formName bounds a form's name, which is a path segment, the suffix of
-// the redirect fragments and a key in the console's URLs.
-var formName = regexp.MustCompile(`^[a-z0-9_-]{1,64}$`)
 
 // How a submission arrived, which decides how it is answered.
 const (
@@ -297,7 +292,7 @@ func pageOf(ctx formContext, referer string) (host, path string) {
 // allowed, else answers its plain status. Field values are never logged.
 func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !formName.MatchString(name) {
+	if !wire.ValidFormName(name) {
 		http.Error(w, "bad form name", http.StatusBadRequest)
 		return
 	}

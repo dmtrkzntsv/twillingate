@@ -920,12 +920,16 @@ tools below do.
 1. **Point the form at the collector.** A plain HTML form posts to
    `https://t.example.com/ingest/forms/{name}?key=ak_…`, the SDK sends a
    [tagged form](#tagged-forms), a backend posts JSON there. The page picks the name (`^[a-z0-9_-]{1,64}$`); the first
-   submission creates the form.
+   submission creates the form, unless `create_form` made it up front.
 2. **It starts as a draft.** A draft keeps every field it is sent and
    accepts submissions for `RETENTION_FORMS_DRAFT_DAYS` (default 7), after which the
    daily pass archives it. Its submissions **never count as conversions**,
    not even once the form is approved. `list_forms` shows its `fields`, every
    name submissions sent.
+
+   Or skip the draft: `create_form {project_id, name, purpose,
+   expected_fields, return_url}` creates the form before anything is sent
+   to it, already approved, as if approved in step 3.
 3. **Approve it** with the fields to keep: `approve_form {project_id, name,
    expected_fields}`. From then on a field outside the list is dropped on
    arrival, and every submission writes a `$form_submit` product event about
@@ -949,17 +953,35 @@ tools below do.
    table and are purged `RETENTION_ARCHIVED_DAYS` later unless
    `restore_submissions` brings them back. Nothing deletes a submission
    at once.
-7. **Erase a person** on request: `find_submissions` with their email (or any
+7. **Order the list**: `list_forms` shows a project's forms in an order
+   you set with `move_form`, the same in the console. A new form, created
+   up front or by its first submission, comes last; an archived form keeps
+   its place and a restore brings it back there.
+
+   In the console, a project's Forms page (`/app/projects/{project_id}/forms`)
+   has one tab per live form in that order, dragged to a new place like a
+   dashboard tab (a select on a phone); a draft's tab carries a pencil mark,
+   and a tab shows its form's count of new submissions. The page opens on
+   the form last opened on that project in the browser, else the first; a
+   form is at `/app/projects/{project_id}/forms/{name}`. **+** creates a form
+   (`create_form`: a name, a purpose, the fields to keep, a return address),
+   the search button finds a person across every form, and a form's
+   **Setup** section gives the tagged form and the plain form's action URL
+   for that form, open until its first submission. With no forms, the page
+   offers **New form** and the same two snippets.
+8. **Erase a person** on request: `find_submissions` with their email (or any
    text a field holds) lists what every form has of them, archived ones
    included, and `archive_submissions` with the same `search` archives
    exactly that; the daily pass purges it `RETENTION_ARCHIVED_DAYS` later.
 
 | Operation | CLI | MCP tool | Tool arguments |
 | --- | --- | --- | --- |
-| List forms | `twillingate form list` | `list_forms` | `{project_id, archived}`; drafts first; each with `status` (`draft` or `approved`), `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, `submissions` (count of active ones), `last_submitted_at`, `new_submissions` (active, received after `seen_at`), `archived_submissions` (count), `seen_at` (how far the console has read the form; reading over MCP never moves it), `archived`. `archived: true` lists the archived forms instead. Beside `forms`, `action_base` is `INGEST_URL` + `/ingest/forms` (empty without `INGEST_URL`), so a plain form's action is `<action_base>/{name}?key=…` |
+| List forms | `twillingate form list` | `list_forms` | `{project_id, archived}`; in the project's order (`move_form`; a new form comes last); each with `status` (`draft` or `approved`), `purpose`, `return_url`, `fields`, `expected_fields`, `draft_until`, `approved_at`, `closes_at`, `submissions` (count of active ones), `last_submitted_at`, `new_submissions` (active, received after `seen_at`), `archived_submissions` (count), `seen_at` (how far the console has read the form; reading over MCP never moves it), `archived`. `archived: true` lists the archived forms instead. Beside `forms`, `action_base` is `INGEST_URL` + `/ingest/forms` (empty without `INGEST_URL`), so a plain form's action is `<action_base>/{name}?key=…` |
+| Create one up front | — | `create_form` | `{project_id, name, purpose, expected_fields, return_url}`; `name` as the ingest path takes it (`^[a-z0-9_-]{1,64}$`); one or more `expected_fields`, deduplicated; `return_url` optional, as `update_form`'s; created approved (`approved_at` now, no `draft_until`, `fields` = `expected_fields`), last in the order; a name the project already has, archived forms included, is a `conflict`; returns the form as `list_forms` shows it |
 | Approve a draft | `twillingate form approve` | `approve_form` | `{project_id, name, expected_fields}`; one or more fields; an approved form is a `conflict` |
 | Change one | `twillingate form update` | `update_form` | `{project_id, name, purpose, return_url, closes_at, expected_fields, add_fields}`; merges; `closes_at: null` reopens; `expected_fields` only on an approved form, never empty; `add_fields` join `fields`, and an approved form keeps them, after `expected_fields` |
-| Archive / restore | `twillingate form archive` / `restore` | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions from every list, table and export (a search still finds them); a restored draft gets another `RETENTION_FORMS_DRAFT_DAYS` |
+| Archive / restore | `twillingate form archive` / `restore` | `archive_form` / `restore_form` | `{project_id, name}`; archiving refuses submissions and hides the form and its submissions from every list, table and export (a search still finds them); a restored draft gets another `RETENTION_FORMS_DRAFT_DAYS`; a restored form goes back to its place in the order |
+| Reorder | — | `move_form` | `{project_id, name, after}`; puts a live form right after the live form `after` (`""` first); an unknown form is `not_found`, an archived one (either) `invalid`; an archived form keeps its place, and a restore brings it back there |
 | Read a form's table | `twillingate form export` (CSV) | `list_submissions` | `{project_id, name, archived, filters, sort, distinct, offset, limit}`; `archived: true` reads the archived submissions instead; returns `columns`, `rows`, `ids`, `matched`, `total`, `offset`, `limit` |
 | Read one submission | — | `get_submission` | `{project_id, name, id}`; archived or not; every stored field (ones no longer expected too), `received_at`, `archived_at` (absent while active), `attribution` (`referrer`, `utm_source`, `utm_medium`, `utm_campaign`, each left out when empty; the last non-direct visit within `ATTRIBUTION_DAYS`, or what the submission sent; `{}` until the job has run, about a minute after arrival, and when the visit was direct) |
 | Find a person | — | `find_submissions` | `{project_id, search, limit, cursor}`; `search` at least 2 characters; returns `submissions` (each as `get_submission` answers it, with its `form` and `archived`, true when it or its form is archived) and `next_cursor` |
@@ -1456,7 +1478,9 @@ CORS-simple.
 
 `POST /ingest/forms/{name}` takes one submission to the project's form
 `{name}`, which matches `^[a-z0-9_-]{1,64}$` (anything else is a plain
-`400`). The first submission creates the form as a draft: it accepts
+`400`). The first submission to a form that does not exist yet (one
+`create_form` did not make up front, approved) creates it as a draft, last
+in the project's order: it accepts
 submissions for `RETENTION_FORMS_DRAFT_DAYS` (default 7) and keeps every field they
 send. An approved form keeps only its expected fields and writes, beside each
 submission, a `$form_submit` product event with the submission's `id`, its
@@ -1592,7 +1616,7 @@ form submissions](#collect-form-submissions).
 
 ## Answer questions with the data
 
-A connected session gets sixty-eight tools: the thirty-four below, the ten
+A connected session gets seventy tools: the thirty-four below, the twelve
 in [Collect form submissions](#collect-form-submissions), and twenty-four
 that build the dashboards served at `/app/`, which are documented in
 `docs://reporting` ([reporting.md](reporting.md)). To build or change a
@@ -1733,10 +1757,12 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `POST` | `/api/projects/{project_id}/attribute-rules/remove` | `remove_attribute_rule` | body: `key` → `{"status":"removed"}`; a body because keys may contain `/` |
 | `GET` | `/api/projects/{project_id}/event-names` | `event_names`, REST only: no MCP tool | query: `from`, `to` → `{"events":[{"family","name","events"}]}`: product events and measure samples in the range, the busiest 200, busiest first, ties by name; `$` names, which take no rule, are left out |
 | `GET` | `/api/projects/{project_id}/forms` | `list_forms` | query: `archived` |
+| `POST` | `/api/projects/{project_id}/forms` | `create_form` | body: `name`, `purpose`, `expected_fields`, `return_url` → 201, the form as `list_forms` shows it |
 | `POST` | `/api/projects/{project_id}/forms/{name}/approve` | `approve_form` | body: `expected_fields` |
 | `PATCH` | `/api/projects/{project_id}/forms/{name}` | `update_form` | body: fields to change (merge); `closes_at: null` reopens |
 | `POST` | `/api/projects/{project_id}/forms/{name}/archive` | `archive_form` | — |
 | `POST` | `/api/projects/{project_id}/forms/{name}/restore` | `restore_form` | — |
+| `POST` | `/api/projects/{project_id}/forms/{name}/move` | `move_form` | body: `after` (a live form's name, `""` first) → `{"status":"moved"}` |
 | `POST` | `/api/projects/{project_id}/forms/{name}/seen` | `mark_form_seen`, REST only: no MCP tool | body: `until` (RFC 3339, the form's `last_submitted_at` as the page loaded it) → `{"status":"seen"}`; moves `seen_at` forward only |
 | `GET` | `/api/projects/{project_id}/forms/{name}/submissions` | `list_submissions` | query: `archived`, `filters`, `sort`, `distinct`, `offset`, `limit` |
 | `GET` | `/api/projects/{project_id}/forms/{name}/submissions/{id}` | `get_submission` | — |

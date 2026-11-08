@@ -233,12 +233,11 @@ test("shows a project's forms on its card and a dot in the sidebar until they ar
     await expect(sidebar.getByRole('link', { name: `${name}, new in Forms`, exact: true })).toBeVisible()
 
     const line = page.getByRole('article', { name }).getByRole('link', { name: '1 form · 1 draft · 1 new submission', exact: true })
-    await line.click()
-    await expect(page).toHaveURL(new RegExp(`/projects/${project.id}/forms$`))
-
-    // Reading the form clears the new submission; the draft still waits, so the dot stays.
+    // Forms lands on the project's one form, which reads it: the new
+    // submission clears; the draft still waits, so the dot stays.
     const seen = page.waitForResponse((r) => r.url().endsWith('/forms/contact/seen') && r.ok())
-    await page.getByRole('list', { name: 'Forms' }).getByRole('link').filter({ hasText: 'contact' }).click()
+    await line.click()
+    await expect(page).toHaveURL(new RegExp(`/projects/${project.id}/forms/contact$`))
     await seen
     await page.goto('/app/projects')
     await expect(page.getByRole('article', { name }).getByRole('link', { name: '1 form · 1 draft', exact: true })).toBeVisible()

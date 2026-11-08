@@ -366,6 +366,24 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await expect.poll(() => dialogOverflow(page), { message: 'submission drawer' }).toEqual([])
   expect(await sidewaysScroll(page), 'submission drawer').toEqual([])
   await page.keyboard.press('Escape')
+  // The Forms row on a phone: the form select (the long draft's name), "+"
+  // and Find a person share it with Forms and the gear; New form and Find a
+  // person open dialogs that fit.
+  await expect(page.getByRole('combobox', { name: 'Tab' })).toContainText(formName.slice(0, 10))
+  for (const name of ['New form', 'Find a person']) await expect(page.getByRole('button', { name })).toBeInViewport({ ratio: 1 })
+  await expect(page.getByRole('link', { name: 'Settings', exact: true })).toBeInViewport({ ratio: 1 })
+  await page.getByRole('button', { name: 'New form' }).click()
+  const newForm = page.getByRole('dialog', { name: 'New form' })
+  await newForm.getByRole('textbox', { name: 'New field' }).fill('a_field_with_a_long_name_that_does_not_fit_on_one_line_x')
+  await newForm.getByRole('button', { name: 'Add field' }).click()
+  await expect.poll(() => dialogOverflow(page), { message: 'New form dialog' }).toEqual([])
+  expect(await sidewaysScroll(page), 'New form dialog').toEqual([])
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'Find a person' }).click()
+  await expect(page.getByRole('dialog', { name: 'Find a person' })).toBeVisible()
+  await expect.poll(() => dialogOverflow(page), { message: 'Find a person dialog' }).toEqual([])
+  expect(await sidewaysScroll(page), 'Find a person dialog').toEqual([])
+  await page.keyboard.press('Escape')
   const archivedDash = await request.post(`/api/dashboards/${longId}/archive`, { headers: authHeaders(), data: {} })
   expect(archivedDash.ok(), await archivedDash.text()).toBeTruthy()
 

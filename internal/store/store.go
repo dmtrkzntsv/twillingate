@@ -319,9 +319,22 @@ type Store interface {
 	// it stands, and writes nothing.
 	WriteSubmission(ctx context.Context, n NewSubmission) (Form, bool, error)
 	// ListForms lists a project's active forms (archived false) or its
-	// archived ones (true), drafts first, then by name, each with its
-	// submission count.
+	// archived ones (true) by sort key (see MoveForm), each
+	// with its submission count.
 	ListForms(ctx context.Context, projectID int64, archived bool) ([]Form, error)
+	// CreateForm writes f (its ProjectID, Name, Status, Purpose,
+	// ReturnURL, Fields, ExpectedFields, CreatedAt, ApprovedAt) as a new
+	// form, last in the project's order, and returns it as stored.
+	// ErrConflict when the project has a form of that name, archived or
+	// not.
+	CreateForm(ctx context.Context, f Form, a AuditEntry) (Form, error)
+	// MoveForm places a live form right after the live form after, or
+	// first when after is "", with one new sort key between its
+	// neighbours (archived forms keep theirs, and their place). Moving a
+	// form after itself changes nothing and writes no audit row.
+	// ErrNotFound for an unknown form or after, ErrInvalid when either is
+	// archived.
+	MoveForm(ctx context.Context, projectID int64, name, after string, a AuditEntry) error
 	// GetForm reads one form (Submissions is not filled); ErrNotFound for
 	// an unknown (project, name).
 	GetForm(ctx context.Context, projectID int64, name string) (Form, error)
@@ -342,8 +355,8 @@ type Store interface {
 	UpdateForm(ctx context.Context, f Form, add []string, a AuditEntry) error
 	// SetFormArchived archives or restores a form. Archiving an archived
 	// form and restoring an active one change nothing and write no audit
-	// row. Restoring a draft sets draft_until to draftUntil; an approved
-	// form ignores it.
+	// row. Either keeps the form's sort key. Restoring a draft sets
+	// draft_until to draftUntil; an approved form ignores it.
 	SetFormArchived(ctx context.Context, projectID int64, name string, archived bool, draftUntil time.Time, a AuditEntry) error
 	// ExpireDrafts archives every active draft whose draft_until is at or
 	// before now, one audit row each (actor "retention", action

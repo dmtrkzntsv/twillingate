@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/sortkey"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -97,14 +98,24 @@ func (d *DB) WriteSubmission(ctx context.Context, n store.NewSubmission) (store.
 		case !errors.Is(err, sql.ErrNoRows):
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO forms (project_id, name, created_at, draft_until)
-			VALUES (?,?,?,?) ON CONFLICT DO NOTHING`,
-			sub.ProjectID, sub.Form, fmtTime(sub.ReceivedAt), fmtTime(n.DraftUntil)); err != nil {
-			return err
-		}
+		// An existing form never reads the order: a bad key elsewhere in the
+		// project must not refuse its submissions. A new draft comes last.
 		var err error
 		form, err = scanForm(tx.QueryRowContext(ctx, `SELECT `+formColumns+` FROM forms WHERE project_id=? AND name=?`,
 			sub.ProjectID, sub.Form))
+		if errors.Is(err, sql.ErrNoRows) {
+			key, kerr := nextFormKey(ctx, tx, sub.ProjectID)
+			if kerr != nil {
+				return kerr
+			}
+			if _, err := tx.ExecContext(ctx, `INSERT INTO forms (project_id, name, created_at, draft_until, sort_key)
+				VALUES (?,?,?,?,?) ON CONFLICT DO NOTHING`,
+				sub.ProjectID, sub.Form, fmtTime(sub.ReceivedAt), fmtTime(n.DraftUntil), key); err != nil {
+				return err
+			}
+			form, err = scanForm(tx.QueryRowContext(ctx, `SELECT `+formColumns+` FROM forms WHERE project_id=? AND name=?`,
+				sub.ProjectID, sub.Form))
+		}
 		if err != nil {
 			return err
 		}
@@ -323,8 +334,26 @@ func formSubject(projectID int64, name string) string {
 	return fmt.Sprintf("form/%d/%s", projectID, name)
 }
 
-// ListForms lists the project's active or archived forms, drafts first,
-// then by name, with their active, new and archived submission counts.
+// nextFormKey is the sort key after the largest of a project's forms,
+// archived ones included, read in tx, so a new form comes last. The store
+// has one connection (openAt), so no other write lands between the read
+// and the caller's insert.
+func nextFormKey(ctx context.Context, tx *sql.Tx, projectID int64) (string, error) {
+	var last string
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(sort_key), '') FROM forms WHERE project_id=?`,
+		projectID).Scan(&last); err != nil {
+		return "", err
+	}
+	key, err := sortkey.Between(last, "")
+	if err != nil {
+		return "", fmt.Errorf("form order of project %d: %w", projectID, err)
+	}
+	return key, nil
+}
+
+// ListForms lists the project's active or archived forms by sort key
+// (name breaks a tie, which only a hand-written key leaves), with their active, new and
+// archived submission counts.
 func (d *DB) ListForms(ctx context.Context, projectID int64, archived bool) ([]store.Form, error) {
 	where := `f.archived_at IS NULL`
 	if archived {
@@ -338,7 +367,7 @@ func (d *DB) ListForms(ctx context.Context, projectID int64, archived bool) ([]s
 		(SELECT COUNT(*) FROM submissions s WHERE s.project_id=f.project_id AND s.form=f.name
 		   AND s.archived_at IS NOT NULL)
 		FROM forms f WHERE f.project_id=? AND `+where+`
-		ORDER BY f.status='draft' DESC, f.name`, projectID)
+		ORDER BY f.sort_key, f.name`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -354,6 +383,140 @@ func (d *DB) ListForms(ctx context.Context, projectID int64, archived bool) ([]s
 		out = append(out, f)
 	}
 	return out, rows.Err()
+}
+
+// CreateForm inserts f as a new form, last in its project's order, and
+// returns the row as stored. A name the project already has, on an
+// archived form too, is ErrConflict.
+func (d *DB) CreateForm(ctx context.Context, f store.Form, a store.AuditEntry) (store.Form, error) {
+	fields, err := json.Marshal(f.Fields)
+	if err != nil {
+		return store.Form{}, err
+	}
+	var expected any // NULL while draft
+	if f.ExpectedFields != nil {
+		b, err := json.Marshal(f.ExpectedFields)
+		if err != nil {
+			return store.Form{}, err
+		}
+		expected = string(b)
+	}
+	var out store.Form
+	err = d.tx(ctx, func(tx *sql.Tx) error {
+		key, err := nextFormKey(ctx, tx, f.ProjectID)
+		if err != nil {
+			return err
+		}
+		res, err := tx.ExecContext(ctx, `INSERT INTO forms
+			(project_id, name, status, purpose, return_url, fields, expected_fields, created_at, approved_at, sort_key)
+			VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT DO NOTHING`,
+			f.ProjectID, f.Name, f.Status, f.Purpose, f.ReturnURL, string(fields), expected,
+			fmtTime(f.CreatedAt), nullTime(f.ApprovedAt), key)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return store.Refuse(store.ErrConflict, "project %d already has a form named %q (list_forms with archived: true shows archived ones)", f.ProjectID, f.Name)
+		}
+		if out, err = scanForm(tx.QueryRowContext(ctx, `SELECT `+formColumns+` FROM forms WHERE project_id=? AND name=?`,
+			f.ProjectID, f.Name)); err != nil {
+			return err
+		}
+		return audit(ctx, tx, a)
+	})
+	if err != nil {
+		return store.Form{}, err
+	}
+	return out, nil
+}
+
+// MoveForm places a live form right after the live form after ("" first)
+// by giving it one key between its new neighbours, read in the same
+// transaction (the store has one connection, so no other write lands in
+// between). The neighbours are taken among every form of the project,
+// archived ones included at their place, so a restore puts one back where
+// it was. When the neighbours leave no key between them (equal keys,
+// written by hand or by two processes at once), every form of the project
+// gets a fresh key in the new order instead, as a project move does.
+func (d *DB) MoveForm(ctx context.Context, projectID int64, name, after string, a store.AuditEntry) error {
+	type row struct {
+		name, key string
+		archived  bool
+	}
+	return d.tx(ctx, func(tx *sql.Tx) error {
+		rs, err := tx.QueryContext(ctx, `SELECT name, sort_key, archived_at IS NOT NULL FROM forms
+			WHERE project_id=? ORDER BY sort_key, name`, projectID)
+		if err != nil {
+			return err
+		}
+		var rows []row
+		for rs.Next() {
+			var r row
+			if err := rs.Scan(&r.name, &r.key, &r.archived); err != nil {
+				rs.Close()
+				return err
+			}
+			rows = append(rows, r)
+		}
+		if err := errors.Join(rs.Err(), rs.Close()); err != nil {
+			return err
+		}
+		place := func(n, role string) error {
+			i := slices.IndexFunc(rows, func(r row) bool { return r.name == n })
+			switch {
+			case i < 0:
+				return store.Refuse(store.ErrNotFound, "%sform %d/%s: not found", role, projectID, n)
+			case rows[i].archived:
+				return store.Refuse(store.ErrInvalid, "%sform %q is archived; restore it first", role, n)
+			}
+			return nil
+		}
+		if err := place(name, ""); err != nil {
+			return err
+		}
+		if after == name {
+			return nil
+		}
+		if after != "" {
+			if err := place(after, "after: "); err != nil {
+				return err
+			}
+		}
+		rest := slices.DeleteFunc(rows, func(r row) bool { return r.name == name })
+		i := 0 // name goes before rest[i]
+		if after != "" {
+			i = slices.IndexFunc(rest, func(r row) bool { return r.name == after }) + 1
+		}
+		var prev, next string
+		if i > 0 {
+			prev = rest[i-1].key
+		}
+		if i < len(rest) {
+			next = rest[i].key
+		}
+		keys := map[string]string{}
+		if k, err := sortkey.Between(prev, next); err == nil {
+			keys[name] = k
+		} else {
+			order := slices.Insert(rest, i, row{name: name})
+			fresh, err := sortkey.Spread("", "", len(order))
+			if err != nil {
+				return err
+			}
+			for j, r := range order {
+				keys[r.name] = fresh[j]
+			}
+		}
+		for n, k := range keys {
+			if _, err := tx.ExecContext(ctx, `UPDATE forms SET sort_key=? WHERE project_id=? AND name=?`,
+				k, projectID, n); err != nil {
+				return err
+			}
+		}
+		return audit(ctx, tx, a)
+	})
 }
 
 // MarkFormSeen records that the console has read a form's submissions up

@@ -8,7 +8,7 @@ import { AddWidgetButton, WidgetEditingProvider } from '@/components/editor/Widg
 import { GridSkeleton, NoProjects, NoWidgets, PageError, PageLoading } from '@/components/PageStates'
 import ProjectSwitcher from '@/components/ProjectSwitcher'
 import RangeSwitcher from '@/components/RangeSwitcher'
-import ReportTabs from '@/components/ReportTabs'
+import ReportTabs, { dashboardTabs } from '@/components/ReportTabs'
 import { Button } from '@/components/ui/button'
 import WidgetGrid from '@/components/WidgetGrid'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
@@ -151,7 +151,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
     <>
       <TopBar>
         <ReportTabs
-          tabs={tabs}
+          tabs={dashboardTabs(tabs)}
           currentId={dashboard.dashboard_id}
           onSelect={openTab}
           sortable={userGroup}

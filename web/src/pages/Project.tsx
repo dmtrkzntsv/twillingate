@@ -16,7 +16,7 @@ import { useProjectActions } from '@/hooks/use-project-actions'
 import { useProjectTabActions } from '@/hooks/use-project-tab-actions'
 import { useStuck } from '@/hooks/use-stuck'
 import FormPage from '@/components/forms/FormPage'
-import FormsTab from '@/components/forms/FormsTab'
+import FormsLanding from '@/components/forms/FormsLanding'
 import { readLastTab } from '@/lib/last-tab'
 import { FORMS_ID, landingPath, rangeParams, SETTINGS_ID, settingsPath, settingsSection } from '@/lib/project-tabs'
 import { dashboardsQuery, projectActivityQuery, projectsQuery, projectTabsQuery } from '@/lib/queries'
@@ -37,7 +37,8 @@ const LANDING = -2
  * (project landing D4). On a dashboard the name heads the page and is
  * renamed in place. On Settings and Forms a back button to the dashboards
  * takes its place (or Add dashboard, with none), and the tab row holds the
- * Settings tabs on Settings (project settings tabs) and none on Forms; a
+ * Settings tabs on Settings (project settings tabs) and the project's forms
+ * on Forms, where `/forms` lands on the last form opened, else the first; a
  * section the project does not have goes to `/settings`, its first.
  *
  * With `landing`, the page goes to the last tab used here, else the first,
@@ -123,6 +124,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
                   title={<ProjectName key={project.name} name={project.name} pending={actions.pending} onRename={(name) => actions.update(id, { name })} />}
                   tabs={tabsQ.data?.tabs ?? []}
                   tabsLoaded={tabsQ.data !== undefined}
+                  tabsFailed={tabsQ.data === undefined && tabsQ.isError}
                   dashboards={dash?.dashboards ?? []}
                   actions={tabActions}
                 />
@@ -144,6 +146,8 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
             >
               <ProjectTabBar
                 projectId={id}
+                project={project}
+                form={params.name}
                 currentId={dashId}
                 tabs={tabsQ.data?.tabs ?? []}
                 dashboards={dash?.dashboards ?? []}
@@ -174,7 +178,7 @@ export default function Project({ tab, landing = false }: { tab?: 'forms'; landi
               )
             ) : dashId === FORMS_ID ? (
               params.name === undefined ? (
-                <FormsTab project={project} />
+                <FormsLanding project={project} />
               ) : (
                 <FormPage key={params.name} project={project} name={params.name} />
               )

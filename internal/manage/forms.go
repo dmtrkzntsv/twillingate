@@ -3,6 +3,7 @@ package manage
 import (
 	"context"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -53,6 +54,74 @@ func checkExpected(expected []string) ([]string, error) {
 		}
 	}
 	return dedupe(expected), nil
+}
+
+// checkReturnURL refuses a form's return_url unless it is empty (none)
+// or an absolute http(s) URL whose origin the project allows, as a
+// redirect target with no request Origin to match a bare "*".
+func checkReturnURL(snap *Snapshot, projectID int64, u string) error {
+	if u != "" && !snap.RedirectAllowed(projectID, u, "") {
+		return fmt.Errorf("%w: return_url must be an absolute http(s) URL whose origin is in the project's allowed_origins (a bare * does not count)", ErrInvalid)
+	}
+	return nil
+}
+
+// NewForm is a form created up front, before any submission: approved
+// at once, keeping ExpectedFields.
+type NewForm struct {
+	Name           string
+	Purpose        string
+	ExpectedFields []string
+	ReturnURL      string
+}
+
+// CreateForm creates an approved form before anything is sent to it:
+// approved_at now, no draft_until, fields and expected_fields both the
+// expected fields (deduplicated, in the order given; fields sorted). It
+// comes last in the project's order. The name follows ingest's rule
+// (wire.ValidFormName); one the project already has, on an archived form
+// too, is ErrConflict.
+func (o *Ops) CreateForm(ctx context.Context, actor string, projectID int64, in NewForm) (store.Form, error) {
+	snap := o.Reg.Snapshot(ctx)
+	if snap.Project(projectID) == nil {
+		return store.Form{}, unknownProject(projectID)
+	}
+	if !wire.ValidFormName(in.Name) {
+		return store.Form{}, fmt.Errorf("%w: form name %q must be 1 to 64 of a-z, 0-9, _ and -, as the ingest path takes it", ErrInvalid, in.Name)
+	}
+	if len(in.ExpectedFields) == 0 {
+		return store.Form{}, fmt.Errorf("%w: expected_fields must name at least one field to keep", ErrInvalid)
+	}
+	expected, err := checkExpected(in.ExpectedFields)
+	if err != nil {
+		return store.Form{}, err
+	}
+	if err := checkReturnURL(snap, projectID, in.ReturnURL); err != nil {
+		return store.Form{}, err
+	}
+	now := o.now().UTC().Truncate(time.Second)
+	fields := slices.Sorted(slices.Values(expected))
+	return o.St.CreateForm(ctx, store.Form{ProjectID: projectID, Name: in.Name, Status: store.FormApproved,
+		Purpose: in.Purpose, ReturnURL: in.ReturnURL, Fields: fields, ExpectedFields: expected,
+		CreatedAt: now, ApprovedAt: &now}, store.AuditEntry{
+		Actor: actor, Action: "form.create", Subject: formSubject(projectID, in.Name),
+		Detail: "expected: " + strings.Join(expected, ", ")})
+}
+
+// MoveForm puts a live form right after the live form after in the
+// project's order, or first when after is "". Moving a form after itself
+// changes nothing. An unknown form (either one) is ErrNotFound, an
+// archived one ErrInvalid.
+func (o *Ops) MoveForm(ctx context.Context, actor string, projectID int64, name, after string) error {
+	if err := o.requireProject(ctx, projectID); err != nil {
+		return err
+	}
+	detail := "first"
+	if after != "" {
+		detail = "after " + after
+	}
+	return o.St.MoveForm(ctx, projectID, name, after, store.AuditEntry{
+		Actor: actor, Action: "form.move", Subject: formSubject(projectID, name), Detail: detail})
 }
 
 // draftDays is Ops.FormDraftDays, or RETENTION_FORMS_DRAFT_DAYS' default
@@ -117,8 +186,8 @@ func (o *Ops) UpdateForm(ctx context.Context, actor string, projectID int64, nam
 		changed = append(changed, "purpose")
 	}
 	if spec.ReturnURL != nil {
-		if u := *spec.ReturnURL; u != "" && !snap.RedirectAllowed(projectID, u, "") {
-			return fmt.Errorf("%w: return_url must be an absolute http(s) URL whose origin is in the project's allowed_origins (a bare * does not count)", ErrInvalid)
+		if err := checkReturnURL(snap, projectID, *spec.ReturnURL); err != nil {
+			return err
 		}
 		f.ReturnURL = *spec.ReturnURL
 		changed = append(changed, "return_url")
