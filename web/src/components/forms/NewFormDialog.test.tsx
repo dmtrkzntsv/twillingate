@@ -112,9 +112,12 @@ describe('NewFormDialog', () => {
     expect(await within(dialog).findByText('A form named contact already exists (it may be archived).')).toBeInTheDocument()
     expect(name).toHaveAttribute('aria-invalid', 'true')
     expect(onOpenChange).not.toHaveBeenCalled()
+    // Create waits for another name rather than send the same one again.
+    expect(within(dialog).getByRole('button', { name: 'Create' })).toBeDisabled()
     // Editing the name clears it.
     await user.type(name, '2')
     expect(within(dialog).queryByText(/already exists/)).toBeNull()
+    expect(within(dialog).getByRole('button', { name: 'Create' })).toBeEnabled()
   })
 
   it("shows any other refusal's message", async () => {

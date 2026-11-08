@@ -246,11 +246,11 @@ function Submissions({ projectId, form, shown, onShown, purgeDays }: Submissions
 }
 
 /**
- * How a page sends to the form: open while it has no submission, active
- * or archived, folded once it has one.
+ * How a page sends to the form: open until its first submission, folded
+ * from then on, even once every submission is purged.
  */
 function Setup({ projectId, form, actionBase }: { projectId: number; form: Form; actionBase: string }) {
-  const fresh = form.submissions + form.archived_submissions === 0
+  const fresh = !form.last_submitted_at
   return (
     <Collapsible defaultOpen={fresh} asChild>
       <section aria-label="Setup" className="group/setup flex min-w-0 flex-col rounded-lg border">

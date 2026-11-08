@@ -16,7 +16,7 @@ beforeEach(() => {
   localStorage.clear()
   vi.spyOn(endpoints, 'forms').mockResolvedValue({
     action_base: '',
-    forms: [form('contact', { fields: ['email', 'message', 'phone'], expected_fields: ['email', 'message'], submissions: 2, purpose: 'Sales' })],
+    forms: [form('contact', { fields: ['email', 'message', 'phone'], expected_fields: ['email', 'message'], submissions: 2, last_submitted_at: '2026-10-05T10:00:00Z', purpose: 'Sales' })],
   })
   vi.spyOn(endpoints, 'submissions').mockResolvedValue(contactPage)
   vi.spyOn(endpoints, 'submission').mockResolvedValue(submission('s2'))
@@ -93,6 +93,16 @@ describe('FormPage', () => {
     expect(toggle).toHaveAttribute('aria-expanded', 'true')
     expect(within(setup).getByText(/<form data-twillingate-form="contact">/)).toHaveTextContent('<input name="email" type="email" required>')
     expect(await within(setup).findByText('https://<collector>/ingest/forms/contact?key=ak_web_123')).toBeInTheDocument()
+  })
+
+  it('keeps Setup folded on a form whose submissions were all purged', async () => {
+    vi.mocked(endpoints.forms).mockResolvedValue({
+      action_base: '',
+      forms: [form('contact', { submissions: 0, archived_submissions: 0, last_submitted_at: '2026-10-05T10:00:00Z' })],
+    })
+    renderPage()
+    const setup = await screen.findByRole('region', { name: 'Setup' })
+    expect(within(setup).getByRole('button', { name: 'Setup' })).toHaveAttribute('aria-expanded', 'false')
   })
 
   it('opens Setup on a form with no submissions yet', async () => {

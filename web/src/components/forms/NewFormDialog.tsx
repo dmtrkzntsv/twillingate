@@ -53,7 +53,7 @@ export default function NewFormDialog({ open, onOpenChange, project }: Props) {
 
   const problem = formNameProblem(name)
   const nameError = problem || taken
-  const ready = !pending && name !== '' && problem === '' && fields.length > 0
+  const ready = !pending && name !== '' && problem === '' && taken === '' && fields.length > 0
   const origins = project.allowed_origins ?? []
 
   const create = async (e: FormEvent) => {

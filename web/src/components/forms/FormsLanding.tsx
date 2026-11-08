@@ -27,12 +27,17 @@ export default function FormsLanding({ project }: { project: Project }) {
   // Lands on a list fetched for this visit, not one cached from earlier: a
   // form archived since (elsewhere, or by draft retention) would otherwise
   // land on its "No form" notice.
-  const [visited] = useState(() => Date.now())
+  // Settled by the refetch itself, not a timestamp: New form writes the
+  // cached list too, which says nothing of what the server holds now.
+  const [fresh, setFresh] = useState(false)
   const { refetch } = q
   useEffect(() => {
-    void refetch()
+    let live = true
+    void refetch().finally(() => live && setFresh(true))
+    return () => {
+      live = false
+    }
   }, [refetch])
-  const fresh = q.dataUpdatedAt >= visited
   const forms = q.data?.forms
 
   if (q.error && !(forms && fresh)) return <LoadError what="the forms" error={q.error} onRetry={() => void q.refetch()} />
