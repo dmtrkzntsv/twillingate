@@ -154,4 +154,23 @@ describe('Inbox', () => {
     expect(endpoints.listNotifications).toHaveBeenCalledWith(expect.objectContaining({ cursor: 'c2' }))
     expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
   })
+
+  it('shows an error with Retry when loading more fails, and loads on retry', async () => {
+    const older = note(5, { title: 'An older one' })
+    let failing = true
+    vi.mocked(endpoints.listNotifications).mockImplementation(async (q) => {
+      if (q.cursor !== 'c2') return { notifications: [down, draft], active: 3, next_cursor: 'c2' }
+      if (failing) throw new Error('boom')
+      return { notifications: [older], active: 3 }
+    })
+    const user = userEvent.setup()
+    renderInbox()
+    await item(down.title)
+    await user.click(screen.getByRole('button', { name: 'Load more' }))
+    expect(await screen.findByRole('alert')).toHaveTextContent('boom')
+    failing = false
+    await user.click(screen.getByRole('button', { name: 'Retry' }))
+    expect(await item('An older one')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
 })

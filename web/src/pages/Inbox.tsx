@@ -170,6 +170,14 @@ export default function Inbox() {
             ))}
           </ul>
         )}
+        {listQ.isFetchNextPageError && (
+          <div role="alert" className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-destructive">
+            <span className="min-w-0 break-words">Could not load more: {listQ.error instanceof Error ? listQ.error.message : 'request failed'}</span>
+            <Button type="button" variant="outline" size="sm" disabled={listQ.isFetchingNextPage} onClick={() => void listQ.fetchNextPage()}>
+              Retry
+            </Button>
+          </div>
+        )}
         {listQ.hasNextPage && (
           <Button type="button" variant="outline" size="sm" className="self-start" disabled={listQ.isFetchingNextPage} onClick={() => void listQ.fetchNextPage()}>
             Load more
