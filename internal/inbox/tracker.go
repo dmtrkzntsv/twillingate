@@ -102,12 +102,16 @@ type Tracker struct {
 	loaded bool
 	paused bool
 	states map[key]entry
+	// lastUp is each origin's latest success, in memory only: a failure
+	// dated before it is stale, so a check that reports late cannot start
+	// a streak the recovery already ended.
+	lastUp map[key]time.Time
 }
 
 // NewTracker is a Tracker over st that reminds of a failing state every
 // remind (<= 0: never).
 func NewTracker(st TrackerStore, remind time.Duration, logger *slog.Logger) *Tracker {
-	return &Tracker{st: st, remind: remind, logger: logger, states: map[key]entry{}}
+	return &Tracker{st: st, remind: remind, logger: logger, states: map[key]entry{}, lastUp: map[key]time.Time{}}
 }
 
 // PauseMonitoring makes Tick leave the monitor states alone, for an
@@ -125,8 +129,11 @@ func (t *Tracker) PauseMonitoring() {
 // failures in a row (reason from the check's closed vocabulary), up
 // again after one success. errText, the check's error, is kept in the
 // state only. Overlapping checks (a manual one beside a slot) can report
-// out of order: one dated before the state's latest observation is stale
-// and ignored, so a recovery never ends before its outage began.
+// out of order: a success dated before the state's latest observation is
+// stale and ignored, so a recovery never ends before its outage began, and
+// so is a failure dated before the latest success, so a late failure from
+// before a recovery starts no new streak. Other failures count in any
+// order.
 func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up bool, reason, errText string, at time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -136,10 +143,13 @@ func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up
 	at = at.UTC()
 	k := key{projectID, kindUptime, origin}
 	e, ok := t.states[k]
-	if ok && at.Before(latest(e)) {
-		return
-	}
 	if up {
+		if ok && at.Before(latest(e)) {
+			return
+		}
+		if at.After(t.lastUp[k]) {
+			t.lastUp[k] = at
+		}
 		if !ok {
 			return
 		}
@@ -153,11 +163,16 @@ func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up
 		}
 		return
 	}
+	if at.Before(t.lastUp[k]) {
+		return
+	}
 	if e.Failing {
 		// Kept in memory only, not worth a write per check: a stale success
 		// from before this failure is then ignored too.
-		e.Last = at
-		t.states[k] = e
+		if at.After(e.Last) {
+			e.Last = at
+			t.states[k] = e
+		}
 		return
 	}
 	e = t.streak(k, at, uptimeGap)
@@ -294,6 +309,11 @@ func (t *Tracker) prune(ctx context.Context) {
 		origins[key{projectID: m.ProjectID, subject: m.Origin}] = true
 		domains[key{projectID: m.ProjectID, subject: maindomain.OfOrigin(m.Origin)}] = true
 	}
+	for k := range t.lastUp {
+		if !origins[key{projectID: k.projectID, subject: k.subject}] {
+			delete(t.lastUp, k)
+		}
+	}
 	for k, e := range t.states {
 		failingKind := k.kind == kindUptime || k.kind == kindCert || k.kind == kindDomain
 		if failingKind && !e.Failing && e.Since.IsZero() { // an ended or empty row
@@ -329,9 +349,9 @@ func (t *Tracker) failure(ctx context.Context, k key, typ, errText string, immed
 	t.put(ctx, k, e, nil)
 }
 
-// streak is k's not-yet-failing state with at recorded as its latest
-// failure: the stored one when it is a streak still going, else a new
-// one from at. A row without a first failure (a recovery whose delete
+// streak is k's not-yet-failing state with at recorded among its
+// failures (the first or latest when it is earlier or later than those):
+// the stored one when it is a streak still going, else a new one from at. A row without a first failure (a recovery whose delete
 // did not happen, an unreadable one) or one whose latest failure is more
 // than gap ago does not continue.
 func (t *Tracker) streak(k key, at time.Time, gap time.Duration) entry {
@@ -340,10 +360,15 @@ func (t *Tracker) streak(k key, at time.Time, gap time.Duration) entry {
 	if last.IsZero() {
 		last = e.Since
 	}
-	if e.Since.IsZero() || at.Sub(last) > gap {
+	if e.Since.IsZero() || at.Sub(last) > gap || e.Since.Sub(at) > gap {
 		e = entry{Since: at}
 	}
-	e.Last = at
+	if at.Before(e.Since) {
+		e.Since = at
+	}
+	if at.After(e.Last) {
+		e.Last = at
+	}
 	return e
 }
 

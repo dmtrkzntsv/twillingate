@@ -691,3 +691,33 @@ func TestUptimeOutOfOrderIgnored(t *testing.T) {
 		t.Fatalf("uptime_up = %+v", n)
 	}
 }
+
+// A failure that started before a recovery but reports after it is stale:
+// it starts no streak, so the next real failure alone does not page.
+func TestUptimeLateFailureAfterRecoveryIgnored(t *testing.T) {
+	f := newFake(monitor)
+	tr := newTracker(f)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
+	one(t, f, store.NotifyUptimeDown)
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(5*time.Minute))
+	one(t, f, store.NotifyUptimeUp)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(4*time.Minute)) // before the recovery
+	none(t, f)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(10*time.Minute))
+	none(t, f)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(11*time.Minute))
+	one(t, f, store.NotifyUptimeDown)
+}
+
+// Failures that report out of order still count as in a row.
+func TestUptimeFailuresOutOfOrderCount(t *testing.T) {
+	f := newFake(monitor)
+	tr := newTracker(f)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
+	n := one(t, f, store.NotifyUptimeDown)
+	if n.Fields["since"] != rfc(t0) {
+		t.Fatalf("uptime_down = %+v", n)
+	}
+}
