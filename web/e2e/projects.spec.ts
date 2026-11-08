@@ -108,15 +108,13 @@ test('shows usage for the seeded project', async ({ page }) => {
   const usage = page.getByRole('region', { name: 'Usage' })
   await expect(usage.getByText('Events', { exact: true })).toBeVisible()
   await expect(usage.locator('.recharts-bar-rectangle').first()).toBeVisible()
-  // The monthly chart: the checks stacked at the weight serve.sh sets
-  // (QUOTA_CHECK_RATIO=0.1), the month under way so far, and no budget line.
+  // The monthly chart: the month under way so far, no checks and no budget line.
   const monthly = usage.getByTestId('monthly-usage')
   await expect(monthly.getByText('so far')).toBeVisible()
-  await expect(monthly.getByText('Checks', { exact: true })).toBeVisible()
+  await expect(monthly.getByText('Checks', { exact: true })).toHaveCount(0)
   await expect(monthly.locator('.recharts-reference-line')).toHaveCount(0)
-  // The daily chart stacks the weighted checks too.
-  const daily = usage.locator('[data-slot="chart"]').nth(1)
-  await expect(daily.getByText('Checks', { exact: true })).toBeVisible()
+  // The Events tile splits the families, with no checks among them.
+  await expect(usage.getByText(/ checks$/)).toHaveCount(0)
 })
 
 test('lists Projects first in the sidebar, with the projects under it, closed state remembered', async ({ page }) => {

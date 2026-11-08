@@ -73,6 +73,10 @@ func TestMonitorToolsAndRoutesAgree(t *testing.T) {
 	if m := got.Monitors[0]; !m.Enabled || m.Origin != monBlog || m.Contains != "Welcome" {
 		t.Errorf("PATCH = %+v", m)
 	}
+	// The real frequency: one check per interval, going round what is on.
+	if every := got.Monitors[0].CheckEvery; every != 120 || got.Monitors[1].CheckEvery != 0 {
+		t.Errorf("one on: check_every_seconds = %d and %d, want 120 and 0", every, got.Monitors[1].CheckEvery)
+	}
 	if got.Monitors[1].Enabled {
 		t.Errorf("PATCH turned another on: %+v", got.Monitors[1])
 	}
@@ -91,8 +95,8 @@ func TestMonitorToolsAndRoutesAgree(t *testing.T) {
 		t.Errorf("audit actors = %v, want REST's then mcp", out.Rows)
 	}
 
-	// Two more on: each site is still checked every interval, and the domains
-	// list what they use, with their origins.
+	// Two more on: the project's one check per interval goes round all three,
+	// and the domains list what they use, with their origins.
 	for _, o := range []string{monShop, monLand} {
 		if rec := serveREST(t, r, "PATCH", "/api/projects/1/monitors", `{"origin":"`+o+`","enabled":true}`); rec.Code != http.StatusOK {
 			t.Fatalf("PATCH %s = %d %s", o, rec.Code, rec.Body)
@@ -100,7 +104,12 @@ func TestMonitorToolsAndRoutesAgree(t *testing.T) {
 	}
 	got = decodeMonitors(t, serveREST(t, r, "GET", "/api/projects/1/monitors", "").Body.Bytes())
 	if got.IntervalSeconds != 120 {
-		t.Errorf("three on: interval %d, want 120: each site comes round every interval", got.IntervalSeconds)
+		t.Errorf("three on: interval %d, want MONITOR_INTERVAL's 120", got.IntervalSeconds)
+	}
+	for _, m := range got.Monitors {
+		if m.CheckEvery != 360 {
+			t.Errorf("three on: %s check_every_seconds = %d, want 360", m.Origin, m.CheckEvery)
+		}
 	}
 	want := []monitorDomainOut{
 		{Domain: "example.com", Origins: []string{monBlog, monShop}},
@@ -367,7 +376,7 @@ func TestMonitorsReportPause(t *testing.T) {
 		return decodeMonitors(t, rec.Body.Bytes()), rec.Body.String()
 	}
 	got, body := read()
-	if got.Paused || strings.Contains(body, "check_every_seconds") {
+	if got.Paused {
 		t.Errorf("unset: %+v in %s", got, body)
 	}
 	h.ops.MonitorPaused = true

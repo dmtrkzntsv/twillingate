@@ -49,7 +49,7 @@ func TestMonitorRoundTrip(t *testing.T) {
 		t.Fatal(out.String())
 	}
 	got := runMonitor(t, 0, "list", "-project-id", "1")
-	for _, want := range []string{shopOrigin + " disabled\n", blogOrigin + " disabled\n", "timeout\t5 seconds\n", "each site checked every\t120 seconds\n"} {
+	for _, want := range []string{shopOrigin + " disabled\n", blogOrigin + " disabled\n", "timeout\t5 seconds\n", "one check every\t120 seconds, the enabled sites taking turns\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("list = %q, missing %q", got, want)
 		}
@@ -64,7 +64,7 @@ func TestMonitorRoundTrip(t *testing.T) {
 		}
 	}
 	got = runMonitor(t, 0, "set", "-project-id", "1", "-origin", blogOrigin, "-enable")
-	for _, want := range []string{"each site checked every\t120 seconds\n", "origins " + shopOrigin + ", " + blogOrigin + "\n"} {
+	for _, want := range []string{"one check every\t120 seconds, the enabled sites taking turns\n", "origins " + shopOrigin + ", " + blogOrigin + "\n"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("second set = %q, missing %q", got, want)
 		}
@@ -134,7 +134,7 @@ func TestPrintMonitorCertificate(t *testing.T) {
 		{"plain http", store.Monitor{Origin: "http://a.example", CertCheckedAt: at}, ""},
 	} {
 		var out bytes.Buffer
-		printMonitor(&out, c.m)
+		printMonitor(&out, c.m, 0)
 		got := out.String()
 		if c.want == "" {
 			if strings.Contains(got, "certificate") {
@@ -162,7 +162,7 @@ func TestPrintMonitorLast(t *testing.T) {
 		{"down", store.MonitorResult{CheckedAt: at, Reason: "dns", Error: "no such host", MS: 3}, "last check\tdown, dns: no such host (" + at + ")\n"},
 	} {
 		var out bytes.Buffer
-		printMonitor(&out, store.Monitor{Origin: "https://a.example", Enabled: true, Last: c.last})
+		printMonitor(&out, store.Monitor{Origin: "https://a.example", Enabled: true, Last: c.last}, 0)
 		got := out.String()
 		if c.want == "" && strings.Contains(got, "last check") {
 			t.Errorf("%s: printed %q, want no last line", c.name, got)
@@ -179,7 +179,7 @@ func TestPrintMonitorRedirects(t *testing.T) {
 		want string
 	}{{0, ""}, {2, "redirects\t2\n"}} {
 		var out bytes.Buffer
-		printMonitor(&out, store.Monitor{Origin: "https://a.example", Redirects: c.n})
+		printMonitor(&out, store.Monitor{Origin: "https://a.example", Redirects: c.n}, 0)
 		got := out.String()
 		if c.want == "" && strings.Contains(got, "redirects") {
 			t.Errorf("%d: printed %q, want no redirects line", c.n, got)
@@ -370,5 +370,34 @@ func TestMonitorCheckOriginRemovedWhileWaiting(t *testing.T) {
 	}
 	if got := out.String(); !strings.Contains(got, "removed") {
 		t.Errorf("out = %q, want it to say the monitor was removed", got)
+	}
+}
+
+// Each enabled monitor prints how often it is really checked.
+func TestPrintMonitorsShowsTheRealFrequency(t *testing.T) {
+	l := manage.MonitorList{Monitors: []store.Monitor{
+		{Origin: "https://a.example", Enabled: true},
+		{Origin: "https://b.example", Enabled: true},
+		{Origin: "https://c.example"},
+	}}
+	var b bytes.Buffer
+	printMonitors(&b, 1, l, 2*time.Minute, 5*time.Second)
+	got := b.String()
+	if want := "https://a.example enabled\n  checked every\t240 seconds\n"; !strings.Contains(got, want) {
+		t.Errorf("no %q in:\n%s", want, got)
+	}
+	if want := "https://c.example disabled\n"; !strings.HasSuffix(got, want) {
+		t.Errorf("want the disabled monitor last and bare, %q, in:\n%s", want, got)
+	}
+}
+
+// Nothing is checked on a paused install or an archived project, so neither
+// line claims a frequency.
+func TestPrintMonitorsWhenIdleShowsNoFrequency(t *testing.T) {
+	l := manage.MonitorList{Idle: true, Monitors: []store.Monitor{{Origin: "https://a.example", Enabled: true}}}
+	var b bytes.Buffer
+	printMonitors(&b, 1, l, 2*time.Minute, 5*time.Second)
+	if got := b.String(); strings.Contains(got, "every") {
+		t.Errorf("idle monitors claim a frequency:\n%s", got)
 	}
 }

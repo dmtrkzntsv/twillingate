@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/dmtrkzntsv/twillingate/internal/config"
 	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
@@ -313,30 +312,5 @@ func TestUsageHistoryPastTheRowCap(t *testing.T) {
 	// The whole answer stands too, past the cap in its days.
 	if _, err := h.usage(context.Background(), usageIn{usageRangeIn: usageRangeIn{From: days[0], To: days[len(days)-1]}}); err != nil {
 		t.Fatal(err)
-	}
-}
-
-// TestUsageCarriesTheCheckRatio: the usage answer names the weight a check
-// row counts toward the console's event totals, as configured.
-func TestUsageCarriesTheCheckRatio(t *testing.T) {
-	h, _ := newTestHost(t)
-	ctx := context.Background()
-	in := usageIn{usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-22"}}
-	h.quotaCheckRatio = config.DefaultQuotaCheckRatio
-	one, err := h.usage(ctx, in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, _ := json.Marshal(one)
-	if !strings.Contains(string(raw), `"quota_check_ratio":1`) || strings.Contains(string(raw), "budget") {
-		t.Errorf("default answered %s", raw)
-	}
-	h.quotaCheckRatio = 0.1
-	tenth, err := h.usage(ctx, in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if tenth.QuotaCheckRatio != 0.1 {
-		t.Errorf("ratio = %g, want 0.1", tenth.QuotaCheckRatio)
 	}
 }

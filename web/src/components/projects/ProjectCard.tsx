@@ -21,8 +21,6 @@ interface Props {
   statsFailed?: boolean
   /** Undefined while activity loads. */
   activity?: ProjectActivity
-  /** QUOTA_CHECK_RATIO: what one availability check counts toward its events (0 leaves them out). */
-  checkRatio?: number
 }
 
 /**
@@ -30,10 +28,10 @@ interface Props {
  * and, when it has forms, how many, the drafts among them and
  * the submissions not read yet, a link to its Forms tab.
  */
-export default function ProjectCard({ project, stats, keys, statsFailed, activity, checkRatio = 1 }: Props) {
+export default function ProjectCard({ project, stats, keys, statsFailed, activity }: Props) {
   const last = stats?.last_received_at
   const live = last !== null && last !== undefined && Date.now() - new Date(last).getTime() < DAY
-  const total = stats ? Math.round(eventCount(stats.totals, checkRatio)) : undefined
+  const total = stats ? Math.round(eventCount(stats.totals)) : undefined
   const active = keys?.filter((k) => k.state === 'active').length
   return (
     <Card role="article" aria-label={project.name} className="relative gap-3 py-4 transition-colors hover:border-primary/40">
@@ -47,7 +45,7 @@ export default function ProjectCard({ project, stats, keys, statsFailed, activit
         </span>
       </CardHeader>
       <CardContent className="flex flex-col gap-2 px-4">
-        {stats ? <Sparkline series={stats.series} ratio={checkRatio} /> : !statsFailed && <Skeleton className="h-10 w-full" />}
+        {stats ? <Sparkline series={stats.series} /> : !statsFailed && <Skeleton className="h-10 w-full" />}
         <p className="text-sm">
           <span className="font-medium">{total === undefined ? '—' : `${formatValue(total)} events`}</span>
           <span className="text-muted-foreground"> · 30 days</span>

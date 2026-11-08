@@ -7,7 +7,6 @@ package config
 
 import (
 	"fmt"
-	"math"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -65,8 +64,8 @@ type ReportingConfig struct {
 
 // MonitorConfig is the availability monitor's settings.
 type MonitorConfig struct {
-	// Interval (MONITOR_INTERVAL, whole seconds) is the time between the
-	// availability checks of each enabled monitor: fixed, 10 to 3600.
+	// Interval (MONITOR_INTERVAL, whole seconds) is the time between a
+	// project's availability checks: fixed, 10 to 3600.
 	Interval time.Duration
 	// Timeout (MONITOR_TIMEOUT, whole seconds) is how long a site has to
 	// answer a check before it counts as down: 1 to 60, below Interval.
@@ -87,16 +86,13 @@ type NotifyConfig struct {
 	Remind time.Duration
 }
 
-// DefaultQuotaCheckRatio is QUOTA_CHECK_RATIO's default: a check row
-// counts as one event.
-const DefaultQuotaCheckRatio = 1.0
-
 // retired are settings twillingate no longer reads, each with why. One
 // still set is ignored, and the start says so once (IgnoredWarning).
 var retired = []struct{ key, why string }{
 	{"ENGINE_MEMORY_LIMIT", "SQL runs in an external SQL engine"},
 	{"ENGINE_MAX_CHILDREN", "SQL runs in an external SQL engine"},
 	{"EVENTS_DIR", "the event files' directory is DATA_DIR"},
+	{"QUOTA_CHECK_RATIO", "availability checks no longer count toward event totals"},
 }
 
 // ConsoleConfig carries the console surface settings (serve -console). Authentication comes from
@@ -197,11 +193,7 @@ type Config struct {
 	Reporting          ReportingConfig
 	Monitor            MonitorConfig
 	Notify             NotifyConfig
-	// QuotaCheckRatio (QUOTA_CHECK_RATIO) is the weight one availability
-	// check row counts toward the event totals the console shows: 1 by
-	// default, 0 leaves checks out. Display only.
-	QuotaCheckRatio float64
-	Console         ConsoleConfig
+	Console            ConsoleConfig
 	// Ignored lists the retired settings the environment still sets, in
 	// the order of retired.
 	Ignored []string
@@ -253,23 +245,6 @@ func (e *env) dur(key string, def time.Duration) time.Duration {
 		return def
 	}
 	return d
-}
-
-// float reads a decimal number (strconv.ParseFloat: 1, 0.1, 2.5e-1); NaN
-// and the infinities are refused, as no setting means them.
-func (e *env) float(key string, def float64) float64 {
-	v, ok := e.lookup(key)
-	if !ok || v == "" {
-		return def
-	}
-	f, err := strconv.ParseFloat(v, 64)
-	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
-		if e.err == nil {
-			e.err = fmt.Errorf("config: %s: invalid number %q", key, v)
-		}
-		return def
-	}
-	return f
 }
 
 // bool reads Go's boolean spellings (strconv.ParseBool: 1, t, true, TRUE,
@@ -341,7 +316,6 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 			URL:    e.str("NOTIFY_URL", ""),
 			Remind: time.Duration(e.num("NOTIFY_REMIND_HOURS", 4)) * time.Hour,
 		},
-		QuotaCheckRatio: e.float("QUOTA_CHECK_RATIO", DefaultQuotaCheckRatio),
 	}
 	c.Console = ConsoleConfig{
 		Addr: e.str("CONSOLE_ADDR", c.IngestAddr),
@@ -505,9 +479,6 @@ func (c *Config) validate() error {
 	}
 	if c.Notify.Remind < time.Hour || c.Notify.Remind > 168*time.Hour {
 		return fmt.Errorf("config: NOTIFY_REMIND_HOURS must be between 1 and 168: %d", int(c.Notify.Remind/time.Hour))
-	}
-	if c.QuotaCheckRatio < 0 {
-		return fmt.Errorf("config: QUOTA_CHECK_RATIO must not be negative: %g", c.QuotaCheckRatio)
 	}
 	if c.Monitor.Timeout >= c.Monitor.Interval {
 		return fmt.Errorf("config: MONITOR_TIMEOUT (%d seconds) must be below MONITOR_INTERVAL (%d seconds)",

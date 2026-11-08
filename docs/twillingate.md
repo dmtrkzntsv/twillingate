@@ -296,11 +296,14 @@ lined up with an outage in the same [structured queries](#structured-queries)
 and dashboards.
 
 `MONITOR_INTERVAL` (a per-install setting, default 120 seconds;
-[deployment.md](deployment.md#configure-the-collector)) is the time between the
-checks of **each** enabled monitor: every one has its own slot in the interval,
-so a project's rows grow with its monitors, and a site that hangs delays no other.
-A monitor whose check is still running skips its slot, and so does one that finds
-all 16 workers busy.
+[deployment.md](deployment.md#configure-the-collector)) is the time between a
+project's availability checks: **one per interval, however many monitors it
+has**. Its enabled monitors take turns in origin order, so five of them are each
+checked every 10 minutes at the default. `list_monitors` answers the real
+frequency of each as `check_every_seconds`. A site that hangs delays no other
+project, and takes only its own turn. A monitor whose check is still running
+skips its turn, and so does one that finds all 16 workers busy. "Check now" and
+the daily certificate and domain reads stay outside the rotation.
 `MONITOR_DISABLED=true` stops all of it: nothing runs and no row is written,
 monitors can still be edited, and `check_monitor` is refused.
 
@@ -352,9 +355,9 @@ project's event files, read through the `checks` table, in structured queries
 alike, and left out of `limits`'
 `events_30d`, `events` and everything that counts the site's own traffic: `usage`
 reports them as `checks`, apart from the traffic counts, every row of the table.
-They still take disk, about
-21,600 small `uptime` rows a month per monitor at the default interval (every
-monitor is checked every interval).
+They count toward no event total the console shows, and still take disk, about
+21,600 small `uptime` rows a month per project at the default interval, however
+many monitors it has.
 
 | Row | Written | `value` | Attributes |
 | --- | --- | --- | --- |
@@ -375,11 +378,12 @@ again at its next slot, the known date kept until then. These daily reads
 run on a small pool of their own (4 at once across the server), so however many
 there are they do not delay an availability check.
 
-`list_monitors` returns `interval_seconds` (how often each enabled monitor is
-checked), `timeout_seconds` (`MONITOR_TIMEOUT`), `paused` (`MONITOR_DISABLED`:
+`list_monitors` returns `interval_seconds` (`MONITOR_INTERVAL`, the time
+between the project's checks), `timeout_seconds` (`MONITOR_TIMEOUT`), `paused` (`MONITOR_DISABLED`:
 monitoring is off on this install), `monitors`, one per eligible origin in the project's order,
 and `domains`, the main domains of the enabled monitors, by name. A monitor has
-`origin`, `enabled`, `contains`, its last certificate reading in `cert`
+`origin`, `enabled`, `check_every_seconds` (how often it is really checked:
+`interval_seconds` times the project's enabled monitors, 0 when off, the project is archived or monitoring is paused), `contains`, its last certificate reading in `cert`
 (`expires_at`, `issuer`, `valid`, `error`, `checked_at`), `redirects`, the hops the
 last check that got an answer followed (a check that got no response, such as a
 refused connection or a timeout before any answer, leaves it as it was), the
@@ -1724,7 +1728,7 @@ history starts where the files' does. `query`, the count of events in
 | `list_projects` | none | Every project with its `project_id`, name, `archived` and `archived_at` (RFC 3339, only when archived), and `allowed_origins`, in the order `move_project` sets. Call this first — every other tool needs a `project_id` |
 | `limits` | none (no `project_id`) | The limits in force, each with a `group`, `name`, `value`, `unit` (`days`, `bytes`, `characters`, `seconds`; absent for a count) and `description`, in two groups: `retention` (`RETENTION_DAYS`, `RETENTION_ARCHIVED_DAYS`, `RETENTION_FORMS_DRAFT_DAYS`) and `ingest`: `INGEST_LATE_DAYS`, then the wire format's fixed [limits](#limits) and [form limits](#form-submissions). A setting carries its `setting` and `default`; a fixed limit neither. `zero` says what 0 means where it is not the number (`kept forever`). Nothing is capped. The output also carries `events_30d`, `{count, from, to}`: the events in the event files from `from` through `to` (the 30 days ending today, UTC), of every project and every family but the availability checks, rules applied (what the server's disk and its dashboards' scans of a month follow), counted at most every 5 minutes: a call past the 5 minutes answers the previous count and starts the next, one past 10 waits for it, so the count is never more than 10 minutes old. Absent when the last count failed, `CONSOLE_QUERY_TIMEOUT` included (a failure is logged once and kept for the same 5 minutes), and on a server that cannot read the files. And `ingest_disabled`, `true` when `INGEST_DISABLED` is set and every ingest route refuses with `429` |
 | `list_attributes` | `from`, `to` (optional: the last 30 days; at most 400 days) | The project's attributes from the event files, rules applied, busiest first: each key's `events` (the product events and measures of the range that carried it) and `values` (its distinct values over the range), `received`, `blocked` and `aliases` (the keys renamed or merged into it; absent when none) — for the 500 busiest keys plus every key a rule names (`received` false when none carried it: a blocked key always, its values hidden from every read); a key renamed away reads as its target and is listed only in its target's `aliases`. Also `keys_total`, the distinct keys received. A key's `values` past 1,024 are estimated (about ±2%). A range with more keys than the engine counts in one pass is refused: narrow it |
-| `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project, from the event files: `views`, product `events` and measure `samples` per day and in total, and apart from those the availability `checks` (every row of the `checks` table, see [Monitoring](#monitoring)), `last_received_at` (when the newest event arrived, availability checks aside, whatever the range; `null` for an archived project unless `project_id` names it), `first_day` (the oldest day the files hold; a month's file counts from its first day), and `size` (`{total_bytes, measured_at}`: the project's event file bytes as the daily pass of the process that keeps the files last measured them, at 03:00 UTC and at start; `null` until the first measurement), with each day's measured `total_bytes` in the series (`null` on days not measured); plus the database's size on disk now and per day (`database_series`), and what the server keeps on disk, the database file and every project's event files (Parquet, logs and derived tables, as the daily pass last measured them), now (`disk_bytes`) and per day (`disk_series`, `null` on days the database was not measured); and `quota_check_ratio` (`QUOTA_CHECK_RATIO`, default 1): the weight one check row counts toward the event totals the console shows, `checks` above staying the plain count |
+| `usage` | `project_id` (optional: every project), `from`, `to` (optional: the last 30 days) | Per project, from the event files: `views`, product `events` and measure `samples` per day and in total, and apart from those the availability `checks` (every row of the `checks` table, see [Monitoring](#monitoring)), `last_received_at` (when the newest event arrived, availability checks aside, whatever the range; `null` for an archived project unless `project_id` names it), `first_day` (the oldest day the files hold; a month's file counts from its first day), and `size` (`{total_bytes, measured_at}`: the project's event file bytes as the daily pass of the process that keeps the files last measured them, at 03:00 UTC and at start; `null` until the first measurement), with each day's measured `total_bytes` in the series (`null` on days not measured); plus the database's size on disk now and per day (`database_series`), and what the server keeps on disk, the database file and every project's event files (Parquet, logs and derived tables, as the daily pass last measured them), now (`disk_bytes`) and per day (`disk_series`, `null` on days the database was not measured) |
 | `views_overview` | `kind` (optional) | Per day: visitors (distinct per day: an actor seen under two kinds on one day counts once), views, and the `sessions` table's sessions, bounces, `duration_sec`, `bounce_rate` and `avg_session_sec` (a day with views but no session reads `0` for each), over every kind unless `kind` filters one. Today included. At most 1,000 days, the earliest |
 | `views_breakdown` | `dimension`, `limit` (default 20, at most 1,000) | Top rows of one dimension (the table below), busiest by visitors (distinct per day and value, added up over the range), then by views, then by the values. Two-key dimensions return both columns. A value not sent reads as empty |
 | `product_events` | `event` (optional filter) | Count and unique users (distinct per day) per event name and day, by day, the most events first, then by name; plus daily totals. At most 1,000 rows each, the earliest days': a cut inside a day keeps that day's names alphabetically, not the busiest |
@@ -1825,7 +1829,7 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","values","received","blocked","aliases"}],"keys_total"}`; `aliases` is absent when empty |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
-| `GET` | `/api/projects/{project_id}/monitors` | `list_monitors` | — → `{"interval_seconds","timeout_seconds","paused","monitors":[{"origin","enabled","contains","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"last":{"checked_at","up","status","reason","error","ms"},"check":{"requested_at","finished_at"}}],"domains":[{"domain","origins","expires_at","checked_at"}]}`; empty strings are unknown |
+| `GET` | `/api/projects/{project_id}/monitors` | `list_monitors` | — → `{"interval_seconds","timeout_seconds","paused","monitors":[{"origin","enabled","check_every_seconds","contains","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"last":{"checked_at","up","status","reason","error","ms"},"check":{"requested_at","finished_at"}}],"domains":[{"domain","origins","expires_at","checked_at"}]}`; empty strings are unknown |
 | `PATCH` | `/api/projects/{project_id}/monitors` | `update_monitor` | body: `origin`, required, and `enabled`, `contains`, each optional (merge); a foreign origin is `400` → as `list_monitors` |
 | `POST` | `/api/projects/{project_id}/monitors/check` | `check_monitor` | body: `origin` → as `list_monitors`, right away, before the check ran; a monitor that is not on or a foreign origin is `400`, a check pending on it or within 60 s of its last request `429` |
 | `POST` | `/api/projects/{project_id}/move` | `move_project` | body: `after` |

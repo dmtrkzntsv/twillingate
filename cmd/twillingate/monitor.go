@@ -163,8 +163,8 @@ func monitorResultText(r store.MonitorResult) string {
 // printMonitors prints a project's monitors and the domains they share.
 func printMonitors(w io.Writer, project int64, l manage.MonitorList, interval, timeout time.Duration) {
 	fmt.Fprintf(w, "project %d monitors\n", project)
-	if interval > 0 {
-		fmt.Fprintf(w, "each site checked every\t%d seconds\n", int(interval/time.Second))
+	if interval > 0 && !l.Idle {
+		fmt.Fprintf(w, "one check every\t%d seconds, the enabled sites taking turns\n", int(interval/time.Second))
 	}
 	if timeout > 0 {
 		fmt.Fprintf(w, "timeout\t%d seconds\n", int(timeout/time.Second))
@@ -173,7 +173,7 @@ func printMonitors(w io.Writer, project int64, l manage.MonitorList, interval, t
 		fmt.Fprintln(w, "no exact http(s) origin to monitor")
 	}
 	for _, m := range l.Monitors {
-		printMonitor(w, m)
+		printMonitor(w, m, l.CheckEvery(interval))
 	}
 	for _, d := range l.Domains {
 		fmt.Fprintf(w, "domain %s\texpires %s, checked %s, origins %s\n", d.Domain, orUnknown(d.ExpiresAt), orUnknown(d.CheckedAt), strings.Join(d.Origins, ", "))
@@ -181,12 +181,15 @@ func printMonitors(w io.Writer, project int64, l manage.MonitorList, interval, t
 }
 
 // printMonitor prints one monitor: a line for it, and what it holds under it.
-func printMonitor(w io.Writer, m store.Monitor) {
+func printMonitor(w io.Writer, m store.Monitor, every time.Duration) {
 	state := "disabled"
 	if m.Enabled {
 		state = "enabled"
 	}
 	fmt.Fprintf(w, "%s %s\n", m.Origin, state)
+	if m.Enabled && every > 0 {
+		fmt.Fprintf(w, "  checked every\t%d seconds\n", int(every/time.Second))
+	}
 	if m.Contains != "" {
 		fmt.Fprintf(w, "  contains\t%s\n", m.Contains)
 	}

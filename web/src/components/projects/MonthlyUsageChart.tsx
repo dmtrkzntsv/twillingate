@@ -9,12 +9,11 @@ import { formatValue } from '@/lib/format'
 import { usageQuery } from '@/lib/queries'
 import { monthHeading, monthLabel, monthlyTotals, monthsRange, utcToday, type MonthTotals } from '@/lib/usage-months'
 
-/** The daily chart's families, in its colors, then the weighted checks. */
+/** The daily chart's families, in its colors. */
 const config: ChartConfig = {
   views: { label: 'Views' },
   events: { label: 'Product events' },
   measures: { label: 'Measures' },
-  checks: { label: 'Checks' },
 }
 
 /** The month on the axis, and under the current one "so far". */
@@ -32,8 +31,7 @@ function MonthTick({ x, y, payload, months }: { x?: number; y?: number; payload?
 /**
  * A project's events by calendar month (UTC), the last six with the
  * current one so far: one usage query from the 1st of the oldest month,
- * added up here. The availability checks stack on top at their weight
- * (QUOTA_CHECK_RATIO) when that is above 0.
+ * added up here.
  */
 export default function MonthlyUsageChart({ projectId }: { projectId: number }) {
   const today = utcToday()
@@ -49,9 +47,8 @@ export default function MonthlyUsageChart({ projectId }: { projectId: number }) 
   }
   const s = data?.projects[0]
   if (!data || !s) return <Skeleton aria-hidden className="h-56 w-full" />
-  const ratio = data.quota_check_ratio ?? 1
-  const months = monthlyTotals(s.series, today, ratio)
-  const keys = ['views', 'events', 'measures', ...(ratio > 0 ? ['checks'] : [])]
+  const months = monthlyTotals(s.series, today)
+  const keys = ['views', 'events', 'measures']
   const ticks = niceTicks(months.map((m) => m.total))
 
   return (

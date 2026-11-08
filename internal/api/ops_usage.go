@@ -65,14 +65,13 @@ type dbDay struct {
 }
 
 type usageOut struct {
-	From            string         `json:"from"`
-	To              string         `json:"to"`
-	DatabaseBytes   int64          `json:"database_bytes"`
-	DatabaseSeries  []dbDay        `json:"database_series" jsonschema:"the database file's size per day of the range as the daily pass measured it, null on days not measured"`
-	DiskBytes       int64          `json:"disk_bytes" jsonschema:"what the server keeps on disk: the database file now plus every project's event files as the daily pass last measured them"`
-	DiskSeries      []dbDay        `json:"disk_series" jsonschema:"disk_bytes per day of the range: the database and every project's event files as the daily pass measured them, null on days the database was not measured"`
-	Projects        []projectUsage `json:"projects"`
-	QuotaCheckRatio float64        `json:"quota_check_ratio" jsonschema:"QUOTA_CHECK_RATIO: the weight one availability check row counts toward the event totals the console shows (default 1; 0 leaves checks out); checks above stays the plain count"`
+	From           string         `json:"from"`
+	To             string         `json:"to"`
+	DatabaseBytes  int64          `json:"database_bytes"`
+	DatabaseSeries []dbDay        `json:"database_series" jsonschema:"the database file's size per day of the range as the daily pass measured it, null on days not measured"`
+	DiskBytes      int64          `json:"disk_bytes" jsonschema:"what the server keeps on disk: the database file now plus every project's event files as the daily pass last measured them"`
+	DiskSeries     []dbDay        `json:"disk_series" jsonschema:"disk_bytes per day of the range: the database and every project's event files as the daily pass measured them, null on days the database was not measured"`
+	Projects       []projectUsage `json:"projects"`
 }
 
 func (h *host) usage(ctx context.Context, in usageIn) (usageOut, error) {
@@ -94,7 +93,7 @@ func (h *host) usage(ctx context.Context, in usageIn) (usageOut, error) {
 	// Each query has a CONSOLE_QUERY_TIMEOUT of its own (the database's
 	// through h.db, the event files' through answerEach), so many projects
 	// do not share one.
-	out := usageOut{From: fromD.String(), To: toD.String(), Projects: []projectUsage{}, QuotaCheckRatio: h.quotaCheckRatio}
+	out := usageOut{From: fromD.String(), To: toD.String(), Projects: []projectUsage{}}
 	if res, err := h.db.Run(ctx, `SELECT page_count * page_size FROM pragma_page_count(), pragma_page_size()`); err == nil && len(res.Rows) == 1 {
 		out.DatabaseBytes, _ = strconv.ParseInt(res.Rows[0][0], 10, 64)
 	}

@@ -1742,7 +1742,7 @@ a tab of a project's page (`/app/projects/{project_id}`).
   its own, which take the dashboards' place in the row while it is open, each
   at `/app/projects/{project_id}/settings/{section}`: Overview (the
   project's events by month for the last six months and by day over the
-  range, availability checks included at `QUOTA_CHECK_RATIO`'s weight, then
+  range, availability checks left out, then
   the script and the ingest keys), Domains (allowed origins, monitoring and
   domain expiry), Events, Attributes (their rules), and Danger (Archive).
   On Settings and Forms the dashboards' tabs are not shown (Forms has one

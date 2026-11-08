@@ -13,7 +13,7 @@ import type { Monitor, MonitorBody } from '@/lib/api'
 import { formatExact } from '@/lib/format'
 import { monitorsQuery, projectTabsQuery } from '@/lib/queries'
 import { rangeParams, tabPath } from '@/lib/project-tabs'
-import { daysUntil, formatDaysLeft } from '@/lib/time'
+import { daysUntil, formatDaysLeft, formatInterval } from '@/lib/time'
 import { formatAgo } from '@/lib/units'
 
 interface Props {
@@ -72,7 +72,10 @@ function StatusLine({ m, now, checking, paused }: { m: Monitor; now: Date; check
   return (
     <p className="flex min-w-0 items-start gap-1.5 text-sm text-muted-foreground" title={checkedTitle(last)}>
       <span aria-hidden className={`mt-1.5 size-2 shrink-0 rounded-full ${dot}`} />
-      <span className="min-w-0 break-words">{words}</span>
+      <span className="min-w-0 break-words">
+        {words}
+        {!paused && m.check_every_seconds > 0 && <span>{`, checked every ${formatInterval(m.check_every_seconds)}`}</span>}
+      </span>
     </p>
   )
 }

@@ -265,6 +265,39 @@ func TestUpdateProjectRemovesMonitorOnOriginRemoval(t *testing.T) {
 	}
 }
 
+// A project that is not being checked claims no frequency.
+func TestCheckEveryWhenNothingIsChecked(t *testing.T) {
+	ops, _, _, p, _ := ruleOps(t)
+	ctx := context.Background()
+	if _, err := ops.UpdateProject(ctx, "cli", ProjectSpec{ID: p, AllowedOrigins: []string{"https://a.example.com"}}); err != nil {
+		t.Fatal(err)
+	}
+	l, err := ops.SetMonitor(ctx, "alice", p, monA, MonitorSpec{Enabled: boolp(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := l.CheckEvery(time.Minute); got != time.Minute {
+		t.Errorf("live project: every %v, want 1m", got)
+	}
+	ops.MonitorPaused = true
+	if l, err = ops.ListMonitors(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if got := l.CheckEvery(time.Minute); got != 0 {
+		t.Errorf("paused install: every %v, want 0", got)
+	}
+	ops.MonitorPaused = false
+	if err := ops.ArchiveProject(ctx, "alice", p); err != nil {
+		t.Fatal(err)
+	}
+	if l, err = ops.ListMonitors(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	if got := l.CheckEvery(time.Minute); got != 0 {
+		t.Errorf("archived project: every %v, want 0", got)
+	}
+}
+
 func TestMonitorAuditTrail(t *testing.T) {
 	ops, _, _, p, path := ruleOps(t)
 	ctx := context.Background()

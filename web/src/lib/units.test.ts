@@ -36,11 +36,7 @@ describe('eventsByMonth', () => {
     { series: [day('2026-09-01', 0, 0, 0, 10), day('2026-10-02', 10)] },
   ]
 
-  it('sums every family of every project by month, oldest first, the checks at their weight', () => {
-    expect(eventsByMonth(projects, 0.5)).toEqual([{ month: '2026-09', count: 9 }, { month: '2026-10', count: 26 }])
-  })
-
-  it('leaves the checks out at a ratio of 0', () => {
-    expect(eventsByMonth(projects, 0)).toEqual([{ month: '2026-09', count: 4 }, { month: '2026-10', count: 16 }])
+  it('sums every family of every project by month, oldest first, and never the checks', () => {
+    expect(eventsByMonth(projects)).toEqual([{ month: '2026-09', count: 4 }, { month: '2026-10', count: 16 }])
   })
 })

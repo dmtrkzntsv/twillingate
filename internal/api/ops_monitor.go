@@ -47,13 +47,14 @@ type monitorLastOut struct {
 }
 
 type monitorOut struct {
-	Origin    string          `json:"origin"`
-	Enabled   bool            `json:"enabled"`
-	Contains  string          `json:"contains"`
-	Redirects int             `json:"redirects" jsonschema:"redirect hops the last check that got an answer followed; 0 when none or not checked yet"`
-	Cert      monitorCertOut  `json:"cert"`
-	Last      monitorLastOut  `json:"last" jsonschema:"the latest availability check, scheduled or manual"`
-	Check     monitorCheckOut `json:"check" jsonschema:"the last manual check's request (check_monitor); its result is in last"`
+	Origin     string          `json:"origin"`
+	Enabled    bool            `json:"enabled"`
+	CheckEvery int             `json:"check_every_seconds" jsonschema:"how often this monitor is actually checked: interval_seconds times the project's enabled monitors; 0 when off, the project is archived or monitoring is paused"`
+	Contains   string          `json:"contains"`
+	Redirects  int             `json:"redirects" jsonschema:"redirect hops the last check that got an answer followed; 0 when none or not checked yet"`
+	Cert       monitorCertOut  `json:"cert"`
+	Last       monitorLastOut  `json:"last" jsonschema:"the latest availability check, scheduled or manual"`
+	Check      monitorCheckOut `json:"check" jsonschema:"the last manual check's request (check_monitor); its result is in last"`
 }
 
 type monitorDomainOut struct {
@@ -64,7 +65,7 @@ type monitorDomainOut struct {
 }
 
 type monitorsOut struct {
-	IntervalSeconds int                `json:"interval_seconds" jsonschema:"seconds between the checks of each enabled monitor, set by MONITOR_INTERVAL"`
+	IntervalSeconds int                `json:"interval_seconds" jsonschema:"seconds between the project's availability checks, set by MONITOR_INTERVAL; its enabled monitors take turns, see check_every_seconds"`
 	TimeoutSeconds  int                `json:"timeout_seconds" jsonschema:"seconds a site has to answer a check before it counts as down, set by MONITOR_TIMEOUT"`
 	Paused          bool               `json:"paused" jsonschema:"true when MONITOR_DISABLED has monitoring off: no check runs, and check_monitor is refused"`
 	Monitors        []monitorOut       `json:"monitors" jsonschema:"every origin a monitor may use, in the project's order; one without settings reads as off"`
@@ -73,11 +74,16 @@ type monitorsOut struct {
 
 func (h *host) monitorsOut(l manage.MonitorList) monitorsOut {
 	interval := int(h.monitorInterval.Seconds())
+	every := int(l.CheckEvery(h.monitorInterval).Seconds())
 	out := monitorsOut{IntervalSeconds: interval, TimeoutSeconds: int(h.monitorTimeout.Seconds()),
 		Paused:   h.ops.MonitorPaused,
 		Monitors: make([]monitorOut, 0, len(l.Monitors)), Domains: make([]monitorDomainOut, 0, len(l.Domains))}
 	for _, m := range l.Monitors {
-		out.Monitors = append(out.Monitors, monitorOut{Origin: m.Origin, Enabled: m.Enabled, Contains: m.Contains, Redirects: m.Redirects,
+		checkEvery := 0
+		if m.Enabled {
+			checkEvery = every
+		}
+		out.Monitors = append(out.Monitors, monitorOut{Origin: m.Origin, Enabled: m.Enabled, CheckEvery: checkEvery, Contains: m.Contains, Redirects: m.Redirects,
 			Cert: monitorCertOut{ExpiresAt: m.CertExpiresAt, Issuer: m.CertIssuer, Valid: m.CertValid,
 				Error: m.CertError, CheckedAt: m.CertCheckedAt},
 			Last: monitorLastOut{CheckedAt: m.Last.CheckedAt, Up: m.Last.Up, Status: m.Last.Status,
@@ -117,7 +123,7 @@ func (h *host) checkMonitor(ctx context.Context, in checkMonitorIn) (monitorsOut
 
 func (h *host) registerMonitor(r *registrar) {
 	expose(r, spec{Name: "list_monitors", Annotations: ro, Method: "GET", Path: "/api/projects/{project_id}/monitors",
-		Description: "A project's availability monitors, one per origin: every exact http(s) origin of the project, on or off (origin, enabled, the text the page must contain, redirects, the last certificate reading in cert: expires_at, issuer, valid, error, checked_at, the latest availability check, scheduled or manual, in last: checked_at, up, status, reason, error, ms, and the last manual check's request in check: requested_at, finished_at); domains, the renewal date of each enabled monitor's main domain (domain, origins, expires_at, checked_at); interval_seconds (MONITOR_INTERVAL, how often each enabled monitor is checked), timeout_seconds (MONITOR_TIMEOUT) and paused (monitoring is off on this install). Empty strings are unknown. The checks themselves are read from the checks table of query."},
+		Description: "A project's availability monitors, one per origin: every exact http(s) origin of the project, on or off (origin, enabled, check_every_seconds, how often it is actually checked, the text the page must contain, redirects, the last certificate reading in cert: expires_at, issuer, valid, error, checked_at, the latest availability check, scheduled or manual, in last: checked_at, up, status, reason, error, ms, and the last manual check's request in check: requested_at, finished_at); domains, the renewal date of each enabled monitor's main domain (domain, origins, expires_at, checked_at); interval_seconds (MONITOR_INTERVAL: the project gets one availability check per interval, its enabled monitors taking turns), timeout_seconds (MONITOR_TIMEOUT) and paused (monitoring is off on this install). Empty strings are unknown. The checks themselves are read from the checks table of query."},
 		h.listMonitors)
 	expose(r, spec{Name: "update_monitor", Annotations: idem, Method: "PATCH", Path: "/api/projects/{project_id}/monitors",
 		Description: "Change one origin's availability monitor: enabled and contains (text the page must contain). origin is required, one of the project's exact http(s) origins; fields you omit are left unchanged. Returns the same as list_monitors."},

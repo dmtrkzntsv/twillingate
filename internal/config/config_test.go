@@ -867,6 +867,7 @@ func TestRetiredEngineSettingsAreIgnored(t *testing.T) {
 		{map[string]string{"ENGINE_MEMORY_LIMIT": "512MB"}, "ENGINE_MEMORY_LIMIT is ignored: SQL runs in an external SQL engine"},
 		{map[string]string{"ENGINE_MAX_CHILDREN": "2"}, "ENGINE_MAX_CHILDREN is ignored: SQL runs in an external SQL engine"},
 		{map[string]string{"ENGINE_MAX_CHILDREN": ""}, ""},
+		{map[string]string{"QUOTA_CHECK_RATIO": "0.1"}, "QUOTA_CHECK_RATIO is ignored: availability checks no longer count toward event totals"},
 		{map[string]string{"ENGINE_MAX_CHILDREN": "2", "EVENTS_DIR": "/srv/events"},
 			"ENGINE_MAX_CHILDREN is ignored: SQL runs in an external SQL engine; EVENTS_DIR is ignored: the event files' directory is DATA_DIR"},
 	} {
@@ -970,28 +971,6 @@ func TestMonitorPause(t *testing.T) {
 	for _, env := range []map[string]string{{"MONITOR_DISABLED": "maybe"}} {
 		if _, err := load(t, env); err == nil {
 			t.Errorf("%v accepted", env)
-		}
-	}
-}
-
-// TestQuotaCheckRatio: the weight of an availability check in the event
-// totals, display only, reads as set; unset or empty is 1.
-func TestQuotaCheckRatio(t *testing.T) {
-	for v, want := range map[string]float64{"": 1, "0.1": 0.1, "0": 0, "2": 2} {
-		c, err := load(t, map[string]string{"QUOTA_CHECK_RATIO": v})
-		if err != nil {
-			t.Fatalf("%q: %v", v, err)
-		}
-		if c.QuotaCheckRatio != want {
-			t.Errorf("%q: QuotaCheckRatio = %g, want %g", v, c.QuotaCheckRatio, want)
-		}
-	}
-	if c, err := load(t, nil); err != nil || c.QuotaCheckRatio != 1 {
-		t.Errorf("unset: %v, %v", c, err)
-	}
-	for _, v := range []string{"-0.5", "half", "NaN", "Inf"} {
-		if _, err := load(t, map[string]string{"QUOTA_CHECK_RATIO": v}); err == nil {
-			t.Errorf("%q: expected an error", v)
 		}
 	}
 }
