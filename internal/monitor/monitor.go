@@ -639,6 +639,9 @@ func (r *Runner) availability(ctx context.Context, m store.Monitor) store.Event 
 		return r.origins.RedirectAllowed(m.ProjectID, target, m.Origin)
 	})
 	cancel()
+	// The alerts get the time the check ended: a manual check and a slot of
+	// the same origin can overlap, and the one that ends later saw later.
+	done := r.now().UTC()
 	// Keep the count Settings shows, from every check that got an answer (a
 	// blip must not hide the warning). m is a snapshot an overlapping check
 	// may have outdated, so no comparison is made here: the store writes
@@ -656,7 +659,7 @@ func (r *Runner) availability(ctx context.Context, m store.Monitor) store.Event 
 		}); err != nil {
 			r.logger.Warn("monitor: store last result", "project_id", m.ProjectID, "error", err)
 		}
-		r.alerts.Uptime(ctx, m.ProjectID, m.Origin, res.Up, res.Reason, res.Error, start)
+		r.alerts.Uptime(ctx, m.ProjectID, m.Origin, res.Up, res.Reason, res.Error, done)
 	}
 	return uptimeRow(m.ProjectID, m.Origin, start, res)
 }

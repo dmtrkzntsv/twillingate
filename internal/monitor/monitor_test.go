@@ -1903,6 +1903,7 @@ type alertCalls struct {
 type alertUptime struct {
 	origin, reason, errText string
 	up                      bool
+	at                      time.Time
 }
 
 type alertDomain struct {
@@ -1910,10 +1911,10 @@ type alertDomain struct {
 	ok                         bool
 }
 
-func (a *alertCalls) Uptime(_ context.Context, _ int64, origin string, up bool, reason, errText string, _ time.Time) {
+func (a *alertCalls) Uptime(_ context.Context, _ int64, origin string, up bool, reason, errText string, at time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.uptimes = append(a.uptimes, alertUptime{origin, reason, errText, up})
+	a.uptimes = append(a.uptimes, alertUptime{origin, reason, errText, up, at})
 }
 
 func (a *alertCalls) Cert(_ context.Context, _ int64, _ string, c inbox.CertReading, _ time.Time) {
@@ -2134,5 +2135,25 @@ func TestDomainExpiryReachesTracker(t *testing.T) {
 	r.domain(context.Background(), 3, "example.com", now)
 	if len(ns.sent) != 1 || ns.sent[0].Type != store.NotifyDomainExpiring || ns.sent[0].Fields["days"] != "7" {
 		t.Fatalf("sent %+v, want one domain_expiring at 7 days", ns.sent)
+	}
+}
+
+// The alerts get the time a check ended, not when it started, so of two
+// overlapping checks of one origin the later answer is the later one.
+func TestAlertsUptimeAtCompletion(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	defer site.Close()
+	start := time.Date(2026, 11, 1, 10, 0, 0, 0, time.UTC)
+	var calls atomic.Int32
+	clock := func() time.Time { return start.Add(time.Duration(calls.Add(1)-1) * time.Minute) }
+	al := &alertCalls{}
+	r := newRunner(&fakeStore{}, allowAll{}, &fakeLog{}, time.Minute, quietLogger(), options{allowLoopback: true, now: clock})
+	r.WithAlerts(al)
+	ev := r.availability(context.Background(), store.Monitor{ProjectID: 3, Enabled: true, Origin: site.URL})
+	if !ev.TS.Equal(start) {
+		t.Errorf("row at %v, want the start %v", ev.TS, start)
+	}
+	if len(al.uptimes) != 1 || !al.uptimes[0].at.After(start) {
+		t.Errorf("Uptime %+v, want one after the start %v", al.uptimes, start)
 	}
 }
