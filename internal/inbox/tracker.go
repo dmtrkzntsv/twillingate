@@ -124,7 +124,9 @@ func (t *Tracker) PauseMonitoring() {
 // Uptime records one availability check of origin: down after two
 // failures in a row (reason from the check's closed vocabulary), up
 // again after one success. errText, the check's error, is kept in the
-// state only.
+// state only. Overlapping checks (a manual one beside a slot) can report
+// out of order: one dated before the state's latest observation is stale
+// and ignored, so a recovery never ends before its outage began.
 func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up bool, reason, errText string, at time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -134,6 +136,9 @@ func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up
 	at = at.UTC()
 	k := key{projectID, kindUptime, origin}
 	e, ok := t.states[k]
+	if ok && at.Before(latest(e)) {
+		return
+	}
 	if up {
 		if !ok {
 			return
@@ -149,6 +154,10 @@ func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up
 		return
 	}
 	if e.Failing {
+		// Kept in memory only, not worth a write per check: a stale success
+		// from before this failure is then ignored too.
+		e.Last = at
+		t.states[k] = e
 		return
 	}
 	e = t.streak(k, at, uptimeGap)
@@ -412,6 +421,18 @@ func readExpiry(expires string, at time.Time) (norm string, left int, ok bool) {
 	}
 	y, m, d := at.UTC().Date()
 	return exp.Format(time.DateOnly), int(math.Round(exp.Sub(time.Date(y, m, d, 0, 0, 0, 0, time.UTC)).Hours() / 24)), true
+}
+
+// latest is the time of e's latest observation: its latest failure, its
+// first, or its recovery.
+func latest(e entry) time.Time {
+	l := e.Since
+	for _, at := range []time.Time{e.Last, e.Ended} {
+		if at.After(l) {
+			l = at
+		}
+	}
+	return l
 }
 
 // down reports whether origin's availability is failing in projectID.

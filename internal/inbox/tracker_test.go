@@ -668,3 +668,26 @@ func TestPausedMonitoringSendsNoReminders(t *testing.T) {
 	tr.Tick(ctx, now)
 	one(t, g, store.NotifyUptimeStillDown)
 }
+
+// A check that started earlier but reported later (a manual check beside a
+// slot) is stale: it neither recovers the outage nor dates its end before
+// its start.
+func TestUptimeOutOfOrderIgnored(t *testing.T) {
+	f := newFake(monitor)
+	tr := newTracker(f)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(time.Minute))
+	one(t, f, store.NotifyUptimeDown)
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(-time.Minute))
+	none(t, f)
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(30*time.Second)) // before the latest failure
+	none(t, f)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(5*time.Minute))
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(3*time.Minute)) // before the latest failure
+	none(t, f)
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(6*time.Minute))
+	n := one(t, f, store.NotifyUptimeUp)
+	if n.Fields["since"] != rfc(t0) || n.Fields["until"] != rfc(t0.Add(6*time.Minute)) {
+		t.Fatalf("uptime_up = %+v", n)
+	}
+}
