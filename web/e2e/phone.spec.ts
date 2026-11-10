@@ -143,6 +143,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
       enabled: true,
       origin: MONITORED,
       contains: 'a text the page must hold that is longer than a phone is wide on one line',
+      redirect_to: 'https://www.a-long-subdomain.example.com',
     },
   })
   expect(monitored.ok(), await monitored.text()).toBeTruthy()
@@ -297,6 +298,10 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   await page.getByRole('menuitem', { name: 'Look for text on the page' }).click()
   await expect(monitoring.getByLabel('Page must contain')).toBeVisible()
   expect(await sidewaysScroll(page), 'monitoring text field').toEqual([])
+  // The saved redirect, then its field: a choice of the long origins.
+  await monitoring.getByRole('button', { name: /^must redirect to / }).click()
+  await expect(monitoring.getByLabel('Must redirect to')).toBeVisible()
+  expect(await sidewaysScroll(page), 'monitoring redirect field').toEqual([])
   expect(await sidewaysScroll(page), 'monitoring after a check').toEqual([])
   expect(await sidewaysScroll(page), 'domains').toEqual([])
 

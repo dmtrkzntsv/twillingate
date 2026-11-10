@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Label } from '@/components/ui/label'
+import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Monitor, MonitorBody } from '@/lib/api'
@@ -102,6 +103,8 @@ function certificateShort(m: Monitor, now: Date): { text: string; bad: boolean }
 
 interface RowProps {
   m: Monitor
+  /** The project's other monitor origins, which the check may be told to be redirected to. */
+  others: string[]
   now: Date
   pending?: boolean
   /** The check the page stopped waiting for on this row, by when it was asked for. */
@@ -115,12 +118,12 @@ interface RowProps {
 
 /**
  * One origin: a switch that saves at once, then a stacked block of the origin,
- * its page text, the status line and any notes, and to the right the certificate
- * and two buttons (Check now; a menu with the page text). An off row is the switch
- * and the origin alone. On a phone the certificate is a line of the block: the
+ * its page text and expected redirect, the status line and any notes, and to the
+ * right the certificate and two buttons (Check now; a menu with the page text and
+ * the redirect). An off row is the switch and the origin alone. On a phone the certificate is a line of the block: the
  * grid places the one element either way.
  */
-function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused }: RowProps) {
+function MonitorRow({ m, others, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused }: RowProps) {
   // Where the switch goes while its save is out; a failed one drops back.
   const [switching, setSwitching] = useState<boolean | null>(null)
   const [contains, setContains] = useState(m.contains)
@@ -134,8 +137,15 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
   const closing = useRef(false)
   const menuRef = useRef<HTMLButtonElement>(null)
   const savedRef = useRef<HTMLButtonElement>(null)
-  // The menu's item opened the field, so closing the menu focuses it.
-  const opening = useRef(false)
+  // The menu item that opened a field, so closing the menu focuses that field.
+  const opening = useRef<'text' | 'redirect' | null>(null)
+  // The expected redirect: its own field, a choice of the other origins.
+  const [redirectTo, setRedirectTo] = useState(m.redirect_to)
+  const [editingRedirect, setEditingRedirect] = useState(false)
+  const redirectId = useId()
+  const selectRef = useRef<HTMLSelectElement>(null)
+  const redirectSavedRef = useRef<HTMLButtonElement>(null)
+  const closingRedirect = useRef(false)
 
   // Start from what is saved, again after each save; a real edit stays.
   useEffect(() => {
@@ -143,6 +153,11 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
     followed.current = m.contains
     setContains((c) => (c === was ? m.contains : c))
   }, [m.contains])
+
+  // A field left closed follows what is saved; an open one keeps its choice.
+  useEffect(() => {
+    if (!editingRedirect) setRedirectTo(m.redirect_to)
+  }, [m.redirect_to, editingRedirect])
 
   const waiting = pendingCheck(m)
   useEffect(() => {
@@ -170,6 +185,31 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
     })
   }
 
+  const redirectEdited = redirectTo !== m.redirect_to
+  const saveRedirect = (e: FormEvent) => {
+    e.preventDefault()
+    if (!redirectEdited) return
+    const to = redirectTo
+    void onSave({ origin: m.origin, redirect_to: to }).then((saved) => {
+      if (saved) {
+        closingRedirect.current = true
+        setEditingRedirect(false)
+      }
+    })
+  }
+  const cancelRedirect = () => {
+    closingRedirect.current = true
+    setRedirectTo(m.redirect_to)
+    setEditingRedirect(false)
+  }
+  useEffect(() => {
+    if (!closingRedirect.current || editingRedirect) return
+    closingRedirect.current = false
+    ;(redirectSavedRef.current ?? menuRef.current)?.focus()
+  }, [editingRedirect])
+  // The saved choice stays offered when it is no longer an origin of the project.
+  const choices = m.redirect_to !== '' && !others.includes(m.redirect_to) ? [...others, m.redirect_to] : others
+
   const checking = waiting !== null && waiting !== gaveUp
   const certFull = certificateText(m.origin, m.cert, now)
   // A site that is down fails its certificate read the same way: the status line says it already.
@@ -190,7 +230,7 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
   }, [showField])
   const label = `Check ${m.origin} now`
   const notRun = !checking && !paused && checkNotRun(m)
-  const hasNotes = notRun || certProblem || m.redirects >= LONG_CHAIN || (waiting !== null && waiting === gaveUp) || showField
+  const hasNotes = notRun || certProblem || m.redirects >= LONG_CHAIN || (waiting !== null && waiting === gaveUp) || showField || editingRedirect
 
   return (
     <li aria-label={m.origin} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 sm:grid-cols-[auto_minmax(0,1fr)_6rem_auto]">
@@ -206,6 +246,17 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
             onClick={() => setEditing(true)}
           >
             {`must contain "${m.contains}"`}
+          </button>
+        )}
+        {m.enabled && m.redirect_to !== '' && !editingRedirect && (
+          <button
+            type="button"
+            ref={redirectSavedRef}
+            className="w-fit max-w-full text-left text-sm break-all text-muted-foreground underline-offset-2 hover:underline"
+            disabled={pending}
+            onClick={() => setEditingRedirect(true)}
+          >
+            {`must redirect to ${m.redirect_to}`}
           </button>
         )}
         {m.enabled && <StatusLine m={m} now={now} checking={checking} paused={paused} />}
@@ -238,15 +289,22 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
               <DropdownMenuContent align="end" // Focus goes to the field the item opened, not back to the trigger.
               onCloseAutoFocus={(e) => {
                 // Escape or a click away leaves focus to the trigger.
-                if (!opening.current) return
-                opening.current = false
+                const field = opening.current
+                if (!field) return
+                opening.current = null
                 e.preventDefault()
-                inputRef.current?.focus()
+                ;(field === 'text' ? inputRef.current : selectRef.current)?.focus()
               }}>
                 <DropdownMenuItem onSelect={() => {
-                  opening.current = true
+                  opening.current = 'text'
                   setEditing(true)
                 }}>Look for text on the page</DropdownMenuItem>
+                {choices.length > 0 && (
+                  <DropdownMenuItem onSelect={() => {
+                    opening.current = 'redirect'
+                    setEditingRedirect(true)
+                  }}>Expect a redirect</DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -277,6 +335,35 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
                   />
                   {textEdited && <Button type="submit" size="sm" disabled={pending}>Save</Button>}
                   <Button type="button" size="sm" variant="ghost" onClick={cancel}>Cancel</Button>
+                </div>
+              </form>
+            )}
+            {editingRedirect && (
+              <form onSubmit={saveRedirect} className="mt-1 flex min-w-0 flex-col gap-1.5">
+                <Label htmlFor={redirectId}>Must redirect to</Label>
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <div className="min-w-0 max-w-full">
+                    <NativeSelect
+                      id={redirectId}
+                      ref={selectRef}
+                      className="max-w-full"
+                      value={redirectTo}
+                      disabled={pending}
+                      // Mounted by the menu or the saved redirect, the only time the field is new.
+                      autoFocus
+                      onChange={(e) => setRedirectTo(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== 'Escape') return
+                        e.preventDefault()
+                        cancelRedirect()
+                      }}
+                    >
+                      <NativeSelectOption value="">No redirect: the site answers itself</NativeSelectOption>
+                      {choices.map((o) => <NativeSelectOption key={o} value={o}>{o}</NativeSelectOption>)}
+                    </NativeSelect>
+                  </div>
+                  {redirectEdited && <Button type="submit" size="sm" disabled={pending}>Save</Button>}
+                  <Button type="button" size="sm" variant="ghost" onClick={cancelRedirect}>Cancel</Button>
                 </div>
               </form>
             )}
@@ -372,6 +459,7 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
           <MonitorRow
             key={`${projectId}:${m.origin}`}
             m={m}
+            others={data.monitors.filter((o) => o.origin !== m.origin).map((o) => o.origin)}
             now={now}
             pending={pending}
             gaveUp={gaveUp[m.origin]}

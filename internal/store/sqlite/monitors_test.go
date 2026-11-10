@@ -741,8 +741,18 @@ func TestSetMonitorMergesOnlyTheFieldsGiven(t *testing.T) {
 	if m := set(store.MonitorSettings{Contains: &y}); m.Enabled || m.Contains != "y" {
 		t.Fatalf("contains only: %+v", m)
 	}
+	to := monB
+	if m := set(store.MonitorSettings{RedirectTo: &to}); m.Enabled || m.Contains != "y" || m.RedirectTo != monB {
+		t.Fatalf("redirect_to only: %+v", m)
+	}
+	if m := set(store.MonitorSettings{Enabled: &on}); m.RedirectTo != monB {
+		t.Fatalf("enabled kept no redirect_to: %+v", m)
+	}
+	if ms, _ := d.ListEnabledMonitors(ctx); len(ms) != 1 || ms[0].RedirectTo != monB {
+		t.Fatalf("enabled monitors: %+v", ms)
+	}
 	n := auditCount(t, d, monAudit.Action)
-	set(store.MonitorSettings{Enabled: &off, Contains: &y}) // no change
+	set(store.MonitorSettings{Enabled: &on, Contains: &y, RedirectTo: &to}) // no change
 	if after := auditCount(t, d, monAudit.Action); after != n {
 		t.Fatalf("a no-op audited: %d -> %d", n, after)
 	}

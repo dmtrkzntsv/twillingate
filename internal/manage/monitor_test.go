@@ -505,3 +505,49 @@ func TestSetMonitorConcurrentEditsOfDifferentFieldsBothLand(t *testing.T) {
 		}
 	}
 }
+
+func TestSetMonitorRedirectTo(t *testing.T) {
+	ops, _, _ := newOps(t)
+	ctx := context.Background()
+	p, _ := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "A",
+		AllowedOrigins: []string{"https://*.x.com", monA, monB}})
+	// Normalized: spaces, a capital and the default port go.
+	l, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Enabled: boolp(true), RedirectTo: strp(" HTTPS://" + strings.TrimPrefix(monB, "https://") + ":443 ")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := l.Monitor(monA); m.RedirectTo != monB {
+		t.Fatalf("redirect_to = %q, want %q", m.RedirectTo, monB)
+	}
+	// Leaving it out keeps it; an empty string clears it.
+	if l, _ = ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Contains: strp("hi")}); func() bool { m, _ := l.Monitor(monA); return m.RedirectTo != monB }() {
+		t.Fatalf("omitted redirect_to changed: %+v", l.Monitors)
+	}
+	if l, _ = ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{RedirectTo: strp("")}); func() bool { m, _ := l.Monitor(monA); return m.RedirectTo != "" }() {
+		t.Fatalf("empty redirect_to kept: %+v", l.Monitors)
+	}
+	for _, to := range []string{monA, "https://*.x.com", "https://a.x.com", "https://other.example", monB + "/path", "ftp://" + strings.TrimPrefix(monB, "https://")} {
+		if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{RedirectTo: strp(to)}); !errors.Is(err, ErrInvalid) {
+			t.Errorf("redirect_to %q: err = %v, want ErrInvalid", to, err)
+		}
+	}
+}
+
+func TestSameOrigin(t *testing.T) {
+	for _, c := range []struct {
+		target, origin string
+		want           bool
+	}{
+		{"https://example.com/", "https://example.com", true},
+		{"https://EXAMPLE.com:443/a?b", "https://example.com/", true},
+		{"https://bücher.example/", "https://xn--bcher-kva.example", true},
+		{"http://example.com/", "https://example.com", false},
+		{"https://www.example.com/", "https://example.com", false},
+		{"https://example.com:8443/", "https://example.com", false},
+		{"not a url", "https://example.com", false},
+	} {
+		if got := SameOrigin(c.target, c.origin); got != c.want {
+			t.Errorf("SameOrigin(%q, %q) = %v, want %v", c.target, c.origin, got, c.want)
+		}
+	}
+}

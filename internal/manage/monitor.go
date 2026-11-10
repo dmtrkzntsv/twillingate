@@ -79,6 +79,18 @@ func (s *Snapshot) MonitorRedirectAllowed(projectID int64, target, reqOrigin str
 	return false
 }
 
+// SameOrigin reports whether URL target is at origin: the same scheme, host
+// and port, however either is spelled (a capital, the default port, the
+// Unicode or the xn-- form of the host).
+func SameOrigin(target, origin string) bool {
+	a, ok := urlOrigin(target)
+	if !ok {
+		return false
+	}
+	b, ok := urlOrigin(origin)
+	return ok && asciiOrigin(a) == asciiOrigin(b)
+}
+
 // asciiOrigin is a normalized origin (see urlOrigin) with its host in
 // A-label form; one idna cannot convert is returned as it is.
 func asciiOrigin(origin string) string {
@@ -103,6 +115,9 @@ func asciiOrigin(origin string) string {
 type MonitorSpec struct {
 	Enabled  *bool
 	Contains *string
+	// RedirectTo is the origin the check must end up at: another of the
+	// project's monitor origins, "" for none.
+	RedirectTo *string
 }
 
 // MonitorDomain is the last reading of a main domain, and the enabled monitors'
@@ -244,6 +259,13 @@ func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, ori
 		}
 		next.Contains = &c
 	}
+	if spec.RedirectTo != nil {
+		to, err := o.monitorRedirectTo(ctx, projectID, origin, *spec.RedirectTo)
+		if err != nil {
+			return MonitorList{}, err
+		}
+		next.RedirectTo = &to
+	}
 	// The store merges next over the row inside its transaction, builds the
 	// audit detail from what changed and writes nothing when nothing does.
 	if _, err := o.St.SetMonitor(ctx, projectID, origin, next, MonitorOrigins, store.AuditEntry{
@@ -251,6 +273,27 @@ func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, ori
 		return MonitorList{}, err
 	}
 	return o.ListMonitors(ctx, projectID)
+}
+
+// monitorRedirectTo is to in its normalized form, "" for none, refused unless
+// it is one of the project's monitor origins other than origin itself.
+func (o *Ops) monitorRedirectTo(ctx context.Context, projectID int64, origin, to string) (string, error) {
+	to = strings.TrimSpace(to)
+	if to == "" {
+		return "", nil
+	}
+	p := o.Reg.Snapshot(ctx).Project(projectID)
+	if p == nil {
+		return "", fmt.Errorf("unknown project %d: %w", projectID, ErrNotFound)
+	}
+	n := MonitorOrigins([]string{to})
+	if len(n) != 1 || !slices.Contains(MonitorOrigins(p.AllowedOrigins), n[0]) {
+		return "", fmt.Errorf("%w: redirect_to %q is not an exact http(s) origin in the project's allowed_origins", ErrInvalid, to)
+	}
+	if n[0] == origin {
+		return "", fmt.Errorf("%w: redirect_to is the monitor's own origin; leave it empty for a site that answers itself", ErrInvalid)
+	}
+	return n[0], nil
 }
 
 // CheckMonitor asks for a check of origin's monitor now, all three readings,

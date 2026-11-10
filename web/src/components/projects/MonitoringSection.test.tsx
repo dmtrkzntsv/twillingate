@@ -32,6 +32,7 @@ function monitor(origin: string, over: Partial<Monitor> = {}): Monitor {
     enabled: false,
     check_every_seconds: 0,
     contains: '',
+    redirect_to: '',
     redirects: 0,
     cert: { expires_at: '', issuer: '', valid: false, error: '', checked_at: '' },
     last: { checked_at: '', up: false, status: 0, reason: '', error: '', ms: 0 },
@@ -392,6 +393,80 @@ describe('MonitoringSection', () => {
       read.mockResolvedValue(list([on(A, { contains: 'second' })]))
       await client.invalidateQueries({ queryKey: ['monitor'] })
       await waitFor(() => expect(input).toHaveValue('second'))
+    })
+  })
+
+  describe('the redirect', () => {
+    const REDIRECT = 'Expect a redirect'
+    const FIELD = 'Must redirect to'
+
+    it('offers the other origins behind the menu, focuses the choice, and saves it', async () => {
+      const user = userEvent.setup()
+      const { onSave } = show(list([on(A), on(B), monitor(C)]))
+      const a = await row(A)
+      expect(a.queryByLabelText(FIELD)).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: `More for ${A}` }))
+      await user.click(await screen.findByRole('menuitem', { name: REDIRECT }))
+      const select = a.getByLabelText(FIELD)
+      await waitFor(() => expect(select).toHaveFocus())
+      // The other origins, on or off, and none; never the row's own.
+      expect(within(select).getAllByRole('option').map((o) => o.getAttribute('value'))).toEqual(['', B, C])
+      expect(a.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
+      await user.selectOptions(select, B)
+      await user.click(a.getByRole('button', { name: 'Save' }))
+      expect(onSave).toHaveBeenCalledWith({ origin: A, redirect_to: B })
+    })
+
+    it('shows a saved redirect under the origin, which opens the field; choosing none clears it', async () => {
+      const user = userEvent.setup()
+      const { onSave } = show(list([on(A, { redirect_to: B }), on(B)]))
+      const a = await row(A)
+      await user.click(a.getByRole('button', { name: `must redirect to ${B}` }))
+      const select = a.getByLabelText(FIELD)
+      expect(select).toHaveValue(B)
+      await user.selectOptions(select, '')
+      await user.click(a.getByRole('button', { name: 'Save' }))
+      expect(onSave).toHaveBeenCalledWith({ origin: A, redirect_to: '' })
+    })
+
+    it('Cancel and Escape close the field without saving, focusing what opened it', async () => {
+      const user = userEvent.setup()
+      const { onSave } = show(list([on(A, { redirect_to: B }), on(B)]))
+      const a = await row(A)
+      await user.click(a.getByRole('button', { name: `must redirect to ${B}` }))
+      await user.selectOptions(a.getByLabelText(FIELD), '')
+      await user.click(a.getByRole('button', { name: 'Cancel' }))
+      expect(a.queryByLabelText(FIELD)).not.toBeInTheDocument()
+      const saved = a.getByRole('button', { name: `must redirect to ${B}` })
+      expect(saved).toHaveFocus()
+      await user.click(saved)
+      expect(a.getByLabelText(FIELD)).toHaveValue(B)
+      await user.keyboard('{Escape}')
+      expect(a.queryByLabelText(FIELD)).not.toBeInTheDocument()
+      expect(onSave).not.toHaveBeenCalled()
+    })
+
+    it('keeps offering a saved redirect to an origin the project no longer has', async () => {
+      const user = userEvent.setup()
+      show(list([on(A, { redirect_to: C })]))
+      const a = await row(A)
+      await user.click(a.getByRole('button', { name: `must redirect to ${C}` }))
+      expect(a.getByLabelText(FIELD)).toHaveValue(C)
+    })
+
+    it('is not offered with no other origin, and not shown on an off row', async () => {
+      const user = userEvent.setup()
+      show(list([on(A), monitor(B, { redirect_to: A })]))
+      // B, off, shows nothing; it is A's other origin, so A has the item.
+      expect((await row(B)).queryByText(/must redirect/)).not.toBeInTheDocument()
+      await user.click(await screen.findByRole('button', { name: `More for ${A}` }))
+      await screen.findByRole('menuitem', { name: ITEM })
+      expect(screen.getByRole('menuitem', { name: REDIRECT })).toBeInTheDocument()
+      cleanup()
+      show(list([on(A)]))
+      await user.click(await screen.findByRole('button', { name: `More for ${A}` }))
+      await screen.findByRole('menuitem', { name: ITEM })
+      expect(screen.queryByRole('menuitem', { name: REDIRECT })).not.toBeInTheDocument()
     })
   })
 

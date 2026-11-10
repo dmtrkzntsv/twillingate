@@ -4,10 +4,13 @@ package store
 // settings and its last certificate reading. An origin with no row reads as a
 // Monitor that is off.
 type Monitor struct {
-	ProjectID     int64
-	Origin        string
-	Enabled       bool
-	Contains      string
+	ProjectID int64
+	Origin    string
+	Enabled   bool
+	Contains  string
+	// RedirectTo is the origin the check must end up at, one of the project's
+	// other exact origins; "" when the origin itself may answer.
+	RedirectTo    string
 	CertExpiresAt string // RFC 3339 UTC, "" unknown
 	CertIssuer    string
 	CertValid     bool
@@ -28,8 +31,9 @@ type Monitor struct {
 // inside its transaction, so two edits of different fields cannot overwrite
 // each other.
 type MonitorSettings struct {
-	Enabled  *bool
-	Contains *string
+	Enabled    *bool
+	Contains   *string
+	RedirectTo *string
 }
 
 // MonitorDomain is the last registration-expiry reading of a main domain, which

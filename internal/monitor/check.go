@@ -18,6 +18,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/version"
 )
 
@@ -57,6 +58,15 @@ type Result struct {
 	Answered  bool
 }
 
+// Want is what a check expects of the site beyond a 2xx answer.
+type Want struct {
+	// Contains is text the page must contain (case-sensitive; "" any page).
+	Contains string
+	// RedirectTo is the origin the redirects must end at; "" when the origin
+	// may answer itself or redirect within the project's origins.
+	RedirectTo string
+}
+
 // redirectError stops a redirect without following it.
 type redirectError struct{ msg string }
 
@@ -64,14 +74,13 @@ func (e *redirectError) Error() string { return e.msg }
 
 // Check GETs origin + "/" with c, following a redirect only when
 // allowed(target) says its target is one of the project's own origins,
-// and at most maxHops of them. Up means a 2xx whose first MB contains
-// contains (case-sensitive; any page when contains is empty). Elapsed runs
-// to the end of the body read or to the failure. ctx bounds the whole
-// check.
-func Check(ctx context.Context, c *http.Client, origin, contains string, allowed func(target string) bool) Result {
+// and at most maxHops of them. Up means a 2xx, from want.RedirectTo when
+// set, whose first MB contains want.Contains. Elapsed runs to the end of
+// the body read or to the failure. ctx bounds the whole check.
+func Check(ctx context.Context, c *http.Client, origin string, want Want, allowed func(target string) bool) Result {
 	start := time.Now()
 	var t tally
-	res := check(ctx, c, origin, contains, allowed, &t)
+	res := check(ctx, c, origin, want, allowed, &t)
 	res.Redirects, res.Answered = t.hops, t.answered || res.Status > 0
 	res.Elapsed = time.Since(start)
 	res.Error = truncate(res.Error)
@@ -86,7 +95,7 @@ type tally struct {
 	tlsFailed atomic.Bool // a TLS handshake ended in an error
 }
 
-func check(ctx context.Context, c *http.Client, origin, contains string, allowed func(string) bool, t *tally) Result {
+func check(ctx context.Context, c *http.Client, origin string, want Want, allowed func(string) bool, t *tally) Result {
 	cc := *c
 	cc.Jar = nil
 	cc.CheckRedirect = func(req *http.Request, via []*http.Request) error {
@@ -132,6 +141,17 @@ func check(ctx context.Context, c *http.Client, origin, contains string, allowed
 		r.Status = resp.StatusCode
 		return r
 	}
+	// Before the status: a site that answers itself, whatever it says, has
+	// not redirected, which is what is wrong with it.
+	if want.RedirectTo != "" {
+		if at := resp.Request.URL; !manage.SameOrigin(at.String(), want.RedirectTo) {
+			msg := "not redirected to " + want.RedirectTo
+			if t.hops > 0 {
+				msg += "; the redirects ended at " + at.Scheme + "://" + at.Host
+			}
+			return Result{Status: resp.StatusCode, Reason: ReasonRedirect, Error: msg}
+		}
+	}
 	switch s := resp.StatusCode; {
 	case s >= 200 && s < 300:
 	case s >= 400 && s < 500:
@@ -139,7 +159,7 @@ func check(ctx context.Context, c *http.Client, origin, contains string, allowed
 	default:
 		return Result{Status: s, Reason: ReasonHTTP5xx, Error: "HTTP " + statusText(s)}
 	}
-	if contains != "" && !bytes.Contains(body, []byte(contains)) {
+	if want.Contains != "" && !bytes.Contains(body, []byte(want.Contains)) {
 		return Result{Status: resp.StatusCode, Reason: ReasonContent,
 			Error: "the page does not contain the expected text"}
 	}

@@ -45,7 +45,7 @@ func checkURL(t *testing.T, c *http.Client, url, contains string, allowed func(s
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	return Check(ctx, c, url, contains, allowed)
+	return Check(ctx, c, url, Want{Contains: contains}, allowed)
 }
 
 func TestCheckUp(t *testing.T) {
@@ -108,7 +108,7 @@ func TestReasonTimeout(t *testing.T) {
 	defer close(release)
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
-	res := Check(ctx, loopbackClient(t), srv.URL, "", anyOrigin)
+	res := Check(ctx, loopbackClient(t), srv.URL, Want{}, anyOrigin)
 	if res.Up || res.Reason != "timeout" {
 		t.Fatalf("got %+v, want timeout", res)
 	}
@@ -484,7 +484,7 @@ func TestSilentHostIsClosedByTheClient(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second) // the dial is detached from it anyway
 			defer cancel()
 			start := time.Now()
-			res := Check(ctx, newClient(g, nil), scheme+"://"+addr, "", anyOrigin)
+			res := Check(ctx, newClient(g, nil), scheme+"://"+addr, Want{}, anyOrigin)
 			if res.Up || res.Reason != "timeout" {
 				t.Fatalf("got %+v, want timeout", res)
 			}
@@ -682,7 +682,7 @@ func TestCheckErrorsNameNoServerDetails(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			g := &guard{resolver: c.resolver, allowLoopback: true}
-			res := Check(context.Background(), newClient(g, nil), c.origin, "", func(string) bool { return true })
+			res := Check(context.Background(), newClient(g, nil), c.origin, Want{}, func(string) bool { return true })
 			if res.Reason != c.reason || res.Error != c.want {
 				t.Errorf("check = %q %q, want %q %q", res.Reason, res.Error, c.reason, c.want)
 			}
@@ -698,5 +698,45 @@ func TestCheckErrorsNameNoServerDetails(t *testing.T) {
 				t.Errorf("certificate error %q names %q", st.Error, m)
 			}
 		})
+	}
+}
+
+func TestRedirectToExpected(t *testing.T) {
+	apex := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "home") }))
+	defer apex.Close()
+	other := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, "home") }))
+	defer other.Close()
+	to := func(target string) *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, target+"/", http.StatusMovedPermanently)
+		}))
+	}
+	toApex, toOther := to(apex.URL), to(other.URL)
+	defer toApex.Close()
+	defer toOther.Close()
+	// Answers itself with a 404: the missing redirect is the news, not the status.
+	itself := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	defer itself.Close()
+	check := func(origin string, want Want) Result {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return Check(ctx, loopbackClient(t), origin, want, anyOrigin)
+	}
+
+	// Spelled with a capital and the trailing slash, still the same origin.
+	if res := check(toApex.URL, Want{RedirectTo: strings.ToUpper(apex.URL[:4]) + apex.URL[4:] + "/", Contains: "home"}); !res.Up || res.Redirects != 1 {
+		t.Errorf("redirected as expected: got %+v, want up after 1 hop", res)
+	}
+	if res := check(toOther.URL, Want{RedirectTo: apex.URL}); res.Up || res.Reason != ReasonRedirect || res.Status != 200 ||
+		res.Error != "not redirected to "+apex.URL+"; the redirects ended at "+other.URL {
+		t.Errorf("redirected elsewhere: got %+v", res)
+	}
+	if res := check(itself.URL, Want{RedirectTo: apex.URL}); res.Up || res.Reason != ReasonRedirect || res.Status != 404 ||
+		res.Error != "not redirected to "+apex.URL {
+		t.Errorf("answered itself: got %+v", res)
+	}
+	// Without the expectation, the same redirect elsewhere is up.
+	if res := check(toOther.URL, Want{}); !res.Up {
+		t.Errorf("no expectation: got %+v, want up", res)
 	}
 }

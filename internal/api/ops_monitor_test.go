@@ -87,12 +87,25 @@ func TestMonitorToolsAndRoutesAgree(t *testing.T) {
 	if m := decodeMonitors(t, []byte(textOf(res))).Monitors[0]; !m.Enabled || m.Contains != "" {
 		t.Errorf("MCP update = %+v, want still enabled, contains cleared", m)
 	}
+	res = callTool(t, cs, "update_monitor", map[string]any{"project_id": 1, "origin": monBlog, "redirect_to": monShop})
+	if res.IsError {
+		t.Fatalf("update_monitor redirect_to: %s", textOf(res))
+	}
+	if m := decodeMonitors(t, []byte(textOf(res))).Monitors[0]; m.RedirectTo != monShop {
+		t.Errorf("MCP redirect_to = %+v, want %s", m, monShop)
+	}
+	if rec := serveREST(t, r, "PATCH", "/api/projects/1/monitors", `{"origin":"`+monBlog+`","redirect_to":"`+monBlog+`"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("redirect_to itself = %d, want 400", rec.Code)
+	}
+	if rec := serveREST(t, r, "PATCH", "/api/projects/1/monitors", `{"origin":"`+monBlog+`","redirect_to":""}`); rec.Code != http.StatusOK || decodeMonitors(t, rec.Body.Bytes()).Monitors[0].RedirectTo != "" {
+		t.Errorf("clear redirect_to = %d %s", rec.Code, rec.Body)
+	}
 	out, err := h.db.Run(ctx, "SELECT actor FROM audit_log WHERE action='monitor.update' AND subject=? ORDER BY rowid", "1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Rows) != 2 || out.Rows[0][0] == "mcp" || out.Rows[1][0] != "mcp" {
-		t.Errorf("audit actors = %v, want REST's then mcp", out.Rows)
+	if len(out.Rows) != 4 || out.Rows[0][0] == "mcp" || out.Rows[1][0] != "mcp" || out.Rows[2][0] != "mcp" || out.Rows[3][0] == "mcp" {
+		t.Errorf("audit actors = %v, want REST's, mcp's twice, then REST's", out.Rows)
 	}
 
 	// Two more on: the project's one check per interval goes round all three,
