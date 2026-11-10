@@ -286,14 +286,22 @@ func (o *Ops) monitorRedirectTo(ctx context.Context, projectID int64, origin, to
 	if p == nil {
 		return "", fmt.Errorf("unknown project %d: %w", projectID, ErrNotFound)
 	}
+	// Compared as the check compares, so the Unicode and the xn-- spelling of
+	// a host are one origin; stored as the project lists it.
 	n := MonitorOrigins([]string{to})
-	if len(n) != 1 || !slices.Contains(MonitorOrigins(p.AllowedOrigins), n[0]) {
+	var listed string
+	if len(n) == 1 {
+		if i := slices.IndexFunc(MonitorOrigins(p.AllowedOrigins), func(o string) bool { return SameOrigin(o, n[0]) }); i >= 0 {
+			listed = MonitorOrigins(p.AllowedOrigins)[i]
+		}
+	}
+	if listed == "" {
 		return "", fmt.Errorf("%w: redirect_to %q is not an exact http(s) origin in the project's allowed_origins", ErrInvalid, to)
 	}
-	if n[0] == origin {
+	if SameOrigin(listed, origin) {
 		return "", fmt.Errorf("%w: redirect_to is the monitor's own origin; leave it empty for a site that answers itself", ErrInvalid)
 	}
-	return n[0], nil
+	return listed, nil
 }
 
 // CheckMonitor asks for a check of origin's monitor now, all three readings,

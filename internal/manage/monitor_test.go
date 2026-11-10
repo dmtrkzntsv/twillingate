@@ -533,6 +533,25 @@ func TestSetMonitorRedirectTo(t *testing.T) {
 	}
 }
 
+func TestSetMonitorRedirectToIDN(t *testing.T) {
+	ops, _, _ := newOps(t)
+	ctx := context.Background()
+	const uni, ascii, other = "https://bücher.example", "https://xn--bcher-kva.example", "https://xn--bcher-kva.other"
+	p, _ := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "A", AllowedOrigins: []string{uni, ascii, "https://bücher.other"}})
+	// Its own origin in the other spelling is still itself.
+	if _, err := ops.SetMonitor(ctx, "cli", p.ID, uni, MonitorSpec{RedirectTo: strp(ascii)}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("own origin in xn-- form: err = %v, want ErrInvalid", err)
+	}
+	// Another origin in the other spelling is accepted, stored as listed.
+	l, err := ops.SetMonitor(ctx, "cli", p.ID, uni, MonitorSpec{RedirectTo: strp(other)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := l.Monitor(uni); m.RedirectTo != "https://bücher.other" {
+		t.Fatalf("redirect_to = %q, want the listed spelling", m.RedirectTo)
+	}
+}
+
 func TestSameOrigin(t *testing.T) {
 	for _, c := range []struct {
 		target, origin string
