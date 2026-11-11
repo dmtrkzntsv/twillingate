@@ -62,7 +62,7 @@ Projects live in a registry table, managed through the CLI or, over the API
 | List keys | `twillingate key list` | `list_ingest_keys` | `{project_id}` |
 | Disable / enable a key | `twillingate key disable` / `enable` | `disable_ingest_key` / `enable_ingest_key` | `{project_id, label}` |
 | Read a project's monitors | `twillingate monitor list` | `list_monitors` | `{project_id}`; returns every eligible origin's monitor and the domains, see [Monitoring](#monitoring) |
-| Change one | `twillingate monitor set` | `update_monitor` | `{project_id, origin, enabled, contains}`, `origin` required; merges, so an omitted field keeps its value and `contains: ""` clears the text; returns the same as `list_monitors` |
+| Change one | `twillingate monitor set` | `update_monitor` | `{project_id, origin, enabled, contains, redirect_to}`, `origin` required; merges, so an omitted field keeps its value, `contains: ""` clears the text and `redirect_to: ""` the redirect; returns the same as `list_monitors` |
 | Check one now | `twillingate monitor check` | `check_monitor` | `{project_id, origin}`; asks for a check of all three and returns the same as `list_monitors` right away, see [Monitoring](#monitoring). `monitor check` waits for the result, up to twice `MONITOR_TIMEOUT` plus 20 s, and prints `last`; exit 1 if it did not finish or did not run |
 | Rename an event | — | `rename_event` | `{project_id, family, from, to}`; `family` is `product` or `measures`; returns the rule. See [Event rules](#event-rules) |
 | Merge an event into another | — | `merge_event` | `{project_id, family, from, to}`; returns what `rename_event` does |
@@ -310,16 +310,25 @@ monitors can still be edited, and `check_monitor` is refused.
 An origin has a monitor when it is one of the project's `allowed_origins`, an
 exact `http://` or `https://` one: no wildcard, no bare `*`, no `tauri://` or
 `app://`. A non-default port is allowed as listed. Anything but an origin
-(`https://myapp.com/status`) is refused rather than cut down to one. Each has two
-settings: `enabled`, and an optional `contains`, a text of at most 200 characters
-the page must contain (case-sensitive, in the first 1 MB of the body); `""` clears
-it. `list_monitors` reads every eligible origin, one with no settings as off.
+(`https://myapp.com/status`) is refused rather than cut down to one. Each has three
+settings: `enabled`; an optional `contains`, a text of at most 200 characters
+the page must contain (case-sensitive, in the first 1 MB of the body); and an
+optional `redirect_to`, another of the project's monitor origins the check must
+end up at, such as `https://example.com` on the monitor of
+`https://www.example.com`. `""` clears either. With `redirect_to`, the site is up
+only when its redirects end at that origin and it answers there; one that
+answers on its own origin, or ends elsewhere, is down with `reason` `redirect`.
+`contains` then applies to the page at the end. An origin removed from
+`allowed_origins` stays the `redirect_to` of the monitors naming it; their
+checks fail with `redirect` unless another entry, a wildcard included, still
+covers it, since the hop to it is then off the project's origins. `list_monitors` reads every eligible origin, one with no settings as off.
 Removing an origin from `allowed_origins` removes its monitor (audited
 `monitor.remove`), and the domain reading no other monitor uses.
 
 ```bash
 twillingate monitor list -project-id 1
 twillingate monitor set -project-id 1 -origin https://myapp.com -enable -contains "Sign in"
+twillingate monitor set -project-id 1 -origin https://www.myapp.com -enable -redirect-to https://myapp.com
 twillingate monitor set -project-id 1 -origin https://myapp.com -disable
 twillingate monitor check -project-id 1 -origin https://myapp.com
 ```
@@ -327,7 +336,8 @@ twillingate monitor check -project-id 1 -origin https://myapp.com
 **What is checked.** One `GET` of the origin itself (`https://host/`), nothing
 else, with a limit of `MONITOR_TIMEOUT` seconds (default 5) and no
 retries; each check is one row. The site is up when the final status is 2xx and,
-with `contains`, the text is on the page. The request sends no cookies and
+with `contains`, the text is on the page; with `redirect_to`, that final answer
+came from that origin. The request sends no cookies and
 identifies itself as
 `User-Agent: twillingate-monitor/<version> (+https://github.com/dmtrkzntsv/twillingate)`.
 
@@ -383,7 +393,7 @@ between the project's checks), `timeout_seconds` (`MONITOR_TIMEOUT`), `paused` (
 monitoring is off on this install), `monitors`, one per eligible origin in the project's order,
 and `domains`, the main domains of the enabled monitors, by name. A monitor has
 `origin`, `enabled`, `check_every_seconds` (how often it is really checked:
-`interval_seconds` times the project's enabled monitors, 0 when off, the project is archived or monitoring is paused), `contains`, its last certificate reading in `cert`
+`interval_seconds` times the project's enabled monitors, 0 when off, the project is archived or monitoring is paused), `contains`, `redirect_to`, its last certificate reading in `cert`
 (`expires_at`, `issuer`, `valid`, `error`, `checked_at`), `redirects`, the hops the
 last check that got an answer followed (a check that got no response, such as a
 refused connection or a timeout before any answer, leaves it as it was), the
@@ -429,7 +439,7 @@ server's own (`no such host`, `DNS lookup failed`, `connection refused`,
 | `tls` | certificate invalid, expired, or for another name |
 | `http_4xx` | final status 400 to 499 |
 | `http_5xx` | final status 500 to 599, and any other non-2xx |
-| `redirect` | a redirect off the project's origins, or more than 5 hops |
+| `redirect` | a redirect off the project's origins, more than 5 hops, or, with `redirect_to`, an answer from any other origin |
 | `content` | the `contains` text is missing |
 | `blocked` | resolves to a private address |
 
@@ -1829,8 +1839,8 @@ curl -H "Authorization: Bearer $TOKEN" \
 | `GET` | `/api/projects/{project_id}/attributes` | `list_attributes` | query: `from`, `to` → `{"project_id","from","to","attributes":[{"key","events","values","received","blocked","aliases"}],"keys_total"}`; `aliases` is absent when empty |
 | `POST` | `/api/projects` | `create_project` | body: `name`, `allowed_origins`, `attributes`, `skip_key` → 201 |
 | `PATCH` | `/api/projects/{project_id}` | `update_project` | body: fields to change (merge); `allowed_origins: []` clears |
-| `GET` | `/api/projects/{project_id}/monitors` | `list_monitors` | — → `{"interval_seconds","timeout_seconds","paused","monitors":[{"origin","enabled","check_every_seconds","contains","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"last":{"checked_at","up","status","reason","error","ms"},"check":{"requested_at","finished_at"}}],"domains":[{"domain","origins","expires_at","checked_at"}]}`; empty strings are unknown |
-| `PATCH` | `/api/projects/{project_id}/monitors` | `update_monitor` | body: `origin`, required, and `enabled`, `contains`, each optional (merge); a foreign origin is `400` → as `list_monitors` |
+| `GET` | `/api/projects/{project_id}/monitors` | `list_monitors` | — → `{"interval_seconds","timeout_seconds","paused","monitors":[{"origin","enabled","check_every_seconds","contains","redirect_to","redirects","cert":{"expires_at","issuer","valid","error","checked_at"},"last":{"checked_at","up","status","reason","error","ms"},"check":{"requested_at","finished_at"}}],"domains":[{"domain","origins","expires_at","checked_at"}]}`; empty strings are unknown |
+| `PATCH` | `/api/projects/{project_id}/monitors` | `update_monitor` | body: `origin`, required, and `enabled`, `contains`, `redirect_to`, each optional (merge); a foreign origin, or a `redirect_to` that is not another of the project's monitor origins, is `400` → as `list_monitors` |
 | `POST` | `/api/projects/{project_id}/monitors/check` | `check_monitor` | body: `origin` → as `list_monitors`, right away, before the check ran; a monitor that is not on or a foreign origin is `400`, a check pending on it or within 60 s of its last request `429` |
 | `POST` | `/api/projects/{project_id}/move` | `move_project` | body: `after` |
 | `POST` | `/api/projects/{project_id}/archive` | `archive_project` | — |

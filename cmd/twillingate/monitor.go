@@ -56,23 +56,24 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 		origin = sf.String("origin", "", "the monitor's origin, one of the project's exact http(s) origins (required)")
 	}
 	var enable, disable *bool
-	var contains *string
+	var contains, redirectTo *string
 	if sub == "set" {
 		enable = sf.Bool("enable", false, "turn the monitor on")
 		disable = sf.Bool("disable", false, "turn the monitor off")
 		contains = sf.String("contains", "", "text the page must contain; empty clears it")
+		redirectTo = sf.String("redirect-to", "", "another of the project's origins the check must be redirected to; empty clears it")
 	}
 	if err := sf.Parse(subArgs); err != nil {
 		return 2
 	}
 	if *project == 0 || (origin != nil && *origin == "") {
 		fmt.Fprintln(stdout, "usage: twillingate monitor "+sub+" -project-id <id>"+
-			map[string]string{"list": "", "set": " -origin URL [-enable|-disable] [-contains TEXT]", "check": " -origin URL"}[sub])
+			map[string]string{"list": "", "set": " -origin URL [-enable|-disable] [-contains TEXT] [-redirect-to URL]", "check": " -origin URL"}[sub])
 		return 2
 	}
 	var spec manage.MonitorSpec
 	if sub == "set" {
-		// A flag left out keeps the value; an empty -contains clears it.
+		// A flag left out keeps the value; an empty -contains or -redirect-to clears it.
 		given := map[string]bool{}
 		sf.Visit(func(f *flag.Flag) { given[f.Name] = true })
 		if given["enable"] && given["disable"] {
@@ -87,7 +88,10 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 			spec.Enabled = &on
 		}
 		if given["contains"] {
-			spec.Contains = contains
+			spec.Expect.Contains = contains
+		}
+		if given["redirect-to"] {
+			spec.Expect.RedirectTo = redirectTo
 		}
 	}
 	ops, cfg, closeStore, err := openOps(envFile)
@@ -190,8 +194,11 @@ func printMonitor(w io.Writer, m store.Monitor, every time.Duration) {
 	if m.Enabled && every > 0 {
 		fmt.Fprintf(w, "  checked every\t%d seconds\n", int(every/time.Second))
 	}
-	if m.Contains != "" {
-		fmt.Fprintf(w, "  contains\t%s\n", m.Contains)
+	if m.Expect.Contains != "" {
+		fmt.Fprintf(w, "  contains\t%s\n", m.Expect.Contains)
+	}
+	if m.Expect.RedirectTo != "" {
+		fmt.Fprintf(w, "  redirect to\t%s\n", m.Expect.RedirectTo)
 	}
 	if !strings.HasPrefix(m.Origin, "http://") && (m.CertCheckedAt != "" || m.CertError != "") {
 		fmt.Fprintf(w, "  certificate\texpires %s, issuer %s, valid %t, checked %s", orUnknown(m.CertExpiresAt), orUnknown(m.CertIssuer), m.CertValid, orUnknown(m.CertCheckedAt))

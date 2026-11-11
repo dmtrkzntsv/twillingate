@@ -13,10 +13,11 @@ import (
 // runner serves.
 
 type updateMonitorIn struct {
-	ProjectID int64   `json:"project_id" jsonschema:"project id; call list_projects first"`
-	Origin    string  `json:"origin" jsonschema:"the monitor's origin: one of list_monitors' origins, the project's exact http:// or https:// allowed origins"`
-	Enabled   *bool   `json:"enabled,omitempty" jsonschema:"turn this origin's monitor on or off; omit to keep"`
-	Contains  *string `json:"contains,omitempty" jsonschema:"text the page must contain (at most 200 characters, case-sensitive); an empty string clears it; omit to keep"`
+	ProjectID  int64   `json:"project_id" jsonschema:"project id; call list_projects first"`
+	Origin     string  `json:"origin" jsonschema:"the monitor's origin: one of list_monitors' origins, the project's exact http:// or https:// allowed origins"`
+	Enabled    *bool   `json:"enabled,omitempty" jsonschema:"turn this origin's monitor on or off; omit to keep"`
+	Contains   *string `json:"contains,omitempty" jsonschema:"text the page must contain (at most 200 characters, case-sensitive); an empty string clears it; omit to keep"`
+	RedirectTo *string `json:"redirect_to,omitempty" jsonschema:"another of the project's exact http(s) origins the check must be redirected to (https://www.example.com expecting https://example.com); an empty string clears it; omit to keep"`
 }
 
 type checkMonitorIn struct {
@@ -51,6 +52,7 @@ type monitorOut struct {
 	Enabled    bool            `json:"enabled"`
 	CheckEvery int             `json:"check_every_seconds" jsonschema:"how often this monitor is actually checked: interval_seconds times the project's enabled monitors; 0 when off, the project is archived or monitoring is paused"`
 	Contains   string          `json:"contains"`
+	RedirectTo string          `json:"redirect_to" jsonschema:"the origin the check must be redirected to; empty when the origin may answer itself"`
 	Redirects  int             `json:"redirects" jsonschema:"redirect hops the last check that got an answer followed; 0 when none or not checked yet"`
 	Cert       monitorCertOut  `json:"cert"`
 	Last       monitorLastOut  `json:"last" jsonschema:"the latest availability check, scheduled or manual"`
@@ -83,7 +85,7 @@ func (h *host) monitorsOut(l manage.MonitorList) monitorsOut {
 		if m.Enabled {
 			checkEvery = every
 		}
-		out.Monitors = append(out.Monitors, monitorOut{Origin: m.Origin, Enabled: m.Enabled, CheckEvery: checkEvery, Contains: m.Contains, Redirects: m.Redirects,
+		out.Monitors = append(out.Monitors, monitorOut{Origin: m.Origin, Enabled: m.Enabled, CheckEvery: checkEvery, Contains: m.Expect.Contains, RedirectTo: m.Expect.RedirectTo, Redirects: m.Redirects,
 			Cert: monitorCertOut{ExpiresAt: m.CertExpiresAt, Issuer: m.CertIssuer, Valid: m.CertValid,
 				Error: m.CertError, CheckedAt: m.CertCheckedAt},
 			Last: monitorLastOut{CheckedAt: m.Last.CheckedAt, Up: m.Last.Up, Status: m.Last.Status,
@@ -106,7 +108,7 @@ func (h *host) listMonitors(ctx context.Context, in idIn) (monitorsOut, error) {
 
 func (h *host) updateMonitor(ctx context.Context, in updateMonitorIn) (monitorsOut, error) {
 	l, err := h.ops.SetMonitor(ctx, actorFrom(ctx), in.ProjectID, in.Origin,
-		manage.MonitorSpec{Enabled: in.Enabled, Contains: in.Contains})
+		manage.MonitorSpec{Enabled: in.Enabled, Expect: manage.ExpectSpec{Contains: in.Contains, RedirectTo: in.RedirectTo}})
 	if err != nil {
 		return monitorsOut{}, h.projectErr(ctx, in.ProjectID, err)
 	}
@@ -123,10 +125,10 @@ func (h *host) checkMonitor(ctx context.Context, in checkMonitorIn) (monitorsOut
 
 func (h *host) registerMonitor(r *registrar) {
 	expose(r, spec{Name: "list_monitors", Annotations: ro, Method: "GET", Path: "/api/projects/{project_id}/monitors",
-		Description: "A project's availability monitors, one per origin: every exact http(s) origin of the project, on or off (origin, enabled, check_every_seconds, how often it is actually checked, the text the page must contain, redirects, the last certificate reading in cert: expires_at, issuer, valid, error, checked_at, the latest availability check, scheduled or manual, in last: checked_at, up, status, reason, error, ms, and the last manual check's request in check: requested_at, finished_at); domains, the renewal date of each enabled monitor's main domain (domain, origins, expires_at, checked_at); interval_seconds (MONITOR_INTERVAL: the project gets one availability check per interval, its enabled monitors taking turns), timeout_seconds (MONITOR_TIMEOUT) and paused (monitoring is off on this install). Empty strings are unknown. The checks themselves are read from the checks table of query."},
+		Description: "A project's availability monitors, one per origin: every exact http(s) origin of the project, on or off (origin, enabled, check_every_seconds, how often it is actually checked, contains, the text the page must contain, redirect_to, the origin the check must be redirected to, redirects, the last certificate reading in cert: expires_at, issuer, valid, error, checked_at, the latest availability check, scheduled or manual, in last: checked_at, up, status, reason, error, ms, and the last manual check's request in check: requested_at, finished_at); domains, the renewal date of each enabled monitor's main domain (domain, origins, expires_at, checked_at); interval_seconds (MONITOR_INTERVAL: the project gets one availability check per interval, its enabled monitors taking turns), timeout_seconds (MONITOR_TIMEOUT) and paused (monitoring is off on this install). Empty strings are unknown. The checks themselves are read from the checks table of query."},
 		h.listMonitors)
 	expose(r, spec{Name: "update_monitor", Annotations: idem, Method: "PATCH", Path: "/api/projects/{project_id}/monitors",
-		Description: "Change one origin's availability monitor: enabled and contains (text the page must contain). origin is required, one of the project's exact http(s) origins; fields you omit are left unchanged. Returns the same as list_monitors."},
+		Description: "Change one origin's availability monitor: enabled, contains (text the page must contain) and redirect_to (another of the project's exact origins the check must end at, for a www origin that should redirect to the bare domain, or the other way round). origin is required, one of the project's exact http(s) origins; fields you omit are left unchanged. Returns the same as list_monitors."},
 		h.updateMonitor)
 	expose(r, spec{Name: "check_monitor", Annotations: write, Method: "POST", Path: "/api/projects/{project_id}/monitors/check",
 		Description: "Ask for a check of one enabled monitor now: its origin's availability, certificate and main domain together, outside the schedule. Returns the same as list_monitors right away, before the check ran; call list_monitors until that monitor's check.finished_at is not empty and at or past check.requested_at (it is empty while the check runs, and last holds the previous result until then), then read last.up, status, reason, error and ms, and the fresh cert and domain; last.checked_at still before check.requested_at means the check did not run. Refused while one is pending on that monitor and within 60 seconds of its last request."},

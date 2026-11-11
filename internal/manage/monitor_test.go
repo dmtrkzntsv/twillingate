@@ -50,10 +50,10 @@ func TestListMonitorsReadsEveryEligibleOrigin(t *testing.T) {
 	if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Enabled: boolp(true)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ops.SetMonitor(ctx, "cli", p.ID, monB, MonitorSpec{Enabled: boolp(true), Contains: strp("  hi  ")}); err != nil {
+	if _, err := ops.SetMonitor(ctx, "cli", p.ID, monB, MonitorSpec{Enabled: boolp(true), Expect: ExpectSpec{Contains: strp("  hi  ")}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ops.SetMonitor(ctx, "cli", p.ID, monC, MonitorSpec{Contains: strp("off")}); err != nil {
+	if _, err := ops.SetMonitor(ctx, "cli", p.ID, monC, MonitorSpec{Expect: ExpectSpec{Contains: strp("off")}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := st.SetMonitorDomain(ctx, p.ID, "example.com", store.DomainState{ExpiresAt: "2027-08-13", CheckedAt: "2026-11-01T00:00:00Z"}); err != nil {
@@ -66,8 +66,8 @@ func TestListMonitorsReadsEveryEligibleOrigin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(l.Monitors) != 3 || l.Monitors[0].Origin != monB || l.Monitors[0].Contains != "hi" || !l.Monitors[0].Enabled ||
-		l.Monitors[2].Enabled || l.Monitors[2].Contains != "off" || l.Enabled() != 2 {
+	if len(l.Monitors) != 3 || l.Monitors[0].Origin != monB || l.Monitors[0].Expect.Contains != "hi" || !l.Monitors[0].Enabled ||
+		l.Monitors[2].Enabled || l.Monitors[2].Expect.Contains != "off" || l.Enabled() != 2 {
 		t.Errorf("monitors = %+v", l.Monitors)
 	}
 	// The main domains of the enabled monitors only, each with its origins.
@@ -108,7 +108,7 @@ func TestSetMonitorRefusesForeignOrigins(t *testing.T) {
 	if l, _ := ops.ListMonitors(ctx, p.ID); l.Enabled() != 0 {
 		t.Errorf("a refused origin was set: %+v", l)
 	}
-	if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Contains: strp(strings.Repeat("x", 201))}); !errors.Is(err, ErrInvalid) {
+	if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Expect: ExpectSpec{Contains: strp(strings.Repeat("x", 201))}}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("long contains: %v", err)
 	}
 	if _, err := ops.SetMonitor(ctx, "cli", 999, monA, MonitorSpec{}); !errors.Is(err, ErrNotFound) {
@@ -196,14 +196,14 @@ func TestSetMonitorNoChangeWritesNoAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	// An origin with no row, staying off: no row is made.
-	if _, err := ops.SetMonitor(ctx, "alice", p, monB, MonitorSpec{Enabled: boolp(false), Contains: strp("")}); err != nil {
+	if _, err := ops.SetMonitor(ctx, "alice", p, monB, MonitorSpec{Enabled: boolp(false), Expect: ExpectSpec{Contains: strp("")}}); err != nil {
 		t.Fatal(err)
 	}
 	first, err := ops.SetMonitor(ctx, "alice", p, monA, MonitorSpec{Enabled: boolp(true)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	again, err := ops.SetMonitor(ctx, "alice", p, monA, MonitorSpec{Enabled: boolp(true), Contains: strp("")})
+	again, err := ops.SetMonitor(ctx, "alice", p, monA, MonitorSpec{Enabled: boolp(true), Expect: ExpectSpec{Contains: strp("")}})
 	if err != nil || !reflect.DeepEqual(again, first) {
 		t.Fatalf("no-op = %+v, %v, want %+v", again, err, first)
 	}
@@ -357,7 +357,7 @@ func TestCheckMonitor(t *testing.T) {
 	if _, err := ops.CheckMonitor(ctx, "cli", p.ID, "https://elsewhere.example"); !errors.Is(err, ErrInvalid) || !strings.Contains(err.Error(), "allowed_origins") {
 		t.Fatalf("foreign origin: %v", err)
 	}
-	if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Enabled: boolp(false), Contains: strp("x")}); err != nil {
+	if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Enabled: boolp(false), Expect: ExpectSpec{Contains: strp("x")}}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ops.CheckMonitor(ctx, "cli", p.ID, monA); !errors.Is(err, ErrInvalid) {
@@ -467,7 +467,7 @@ func TestCheckMonitorRefusedWhilePaused(t *testing.T) {
 		t.Errorf("a request was stored: %+v", ms)
 	}
 	// Editing still works.
-	if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Contains: strp("x")}); err != nil {
+	if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Expect: ExpectSpec{Contains: strp("x")}}); err != nil {
 		t.Errorf("edit while paused: %v", err)
 	}
 }
@@ -482,11 +482,11 @@ func TestSetMonitorConcurrentEditsOfDifferentFieldsBothLand(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range 25 {
-		if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Enabled: boolp(true), Contains: strp("")}); err != nil {
+		if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Enabled: boolp(true), Expect: ExpectSpec{Contains: strp("")}}); err != nil {
 			t.Fatal(err)
 		}
 		errs := make(chan error, 2)
-		go func() { _, err := ops.SetMonitor(ctx, "a", p.ID, monA, MonitorSpec{Contains: strp("c")}); errs <- err }()
+		go func() { _, err := ops.SetMonitor(ctx, "a", p.ID, monA, MonitorSpec{Expect: ExpectSpec{Contains: strp("c")}}); errs <- err }()
 		go func() {
 			_, err := ops.SetMonitor(ctx, "b", p.ID, monA, MonitorSpec{Enabled: boolp(false)})
 			errs <- err
@@ -500,8 +500,73 @@ func TestSetMonitorConcurrentEditsOfDifferentFieldsBothLand(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if m, _ := l.Monitor(monA); m.Enabled || m.Contains != "c" {
+		if m, _ := l.Monitor(monA); m.Enabled || m.Expect.Contains != "c" {
 			t.Fatalf("round %d: %+v, want off with contains c", i, m)
+		}
+	}
+}
+
+func TestSetMonitorRedirectTo(t *testing.T) {
+	ops, _, _ := newOps(t)
+	ctx := context.Background()
+	p, _ := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "A",
+		AllowedOrigins: []string{"https://*.x.com", monA, monB}})
+	// Normalized: spaces, a capital and the default port go.
+	l, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Enabled: boolp(true), Expect: ExpectSpec{RedirectTo: strp(" HTTPS://" + strings.TrimPrefix(monB, "https://") + ":443 ")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := l.Monitor(monA); m.Expect.RedirectTo != monB {
+		t.Fatalf("redirect_to = %q, want %q", m.Expect.RedirectTo, monB)
+	}
+	// Leaving it out keeps it; an empty string clears it.
+	if l, _ = ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Expect: ExpectSpec{Contains: strp("hi")}}); func() bool { m, _ := l.Monitor(monA); return m.Expect.RedirectTo != monB }() {
+		t.Fatalf("omitted redirect_to changed: %+v", l.Monitors)
+	}
+	if l, _ = ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Expect: ExpectSpec{RedirectTo: strp("")}}); func() bool { m, _ := l.Monitor(monA); return m.Expect.RedirectTo != "" }() {
+		t.Fatalf("empty redirect_to kept: %+v", l.Monitors)
+	}
+	for _, to := range []string{monA, "https://*.x.com", "https://a.x.com", "https://other.example", monB + "/path", "ftp://" + strings.TrimPrefix(monB, "https://")} {
+		if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Expect: ExpectSpec{RedirectTo: strp(to)}}); !errors.Is(err, ErrInvalid) {
+			t.Errorf("redirect_to %q: err = %v, want ErrInvalid", to, err)
+		}
+	}
+}
+
+func TestSetMonitorRedirectToIDN(t *testing.T) {
+	ops, _, _ := newOps(t)
+	ctx := context.Background()
+	const uni, ascii, other = "https://bücher.example", "https://xn--bcher-kva.example", "https://xn--bcher-kva.other"
+	p, _ := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "A", AllowedOrigins: []string{uni, ascii, "https://bücher.other"}})
+	// Its own origin in the other spelling is still itself.
+	if _, err := ops.SetMonitor(ctx, "cli", p.ID, uni, MonitorSpec{Expect: ExpectSpec{RedirectTo: strp(ascii)}}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("own origin in xn-- form: err = %v, want ErrInvalid", err)
+	}
+	// Another origin in the other spelling is accepted, stored as listed.
+	l, err := ops.SetMonitor(ctx, "cli", p.ID, uni, MonitorSpec{Expect: ExpectSpec{RedirectTo: strp(other)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m, _ := l.Monitor(uni); m.Expect.RedirectTo != "https://bücher.other" {
+		t.Fatalf("redirect_to = %q, want the listed spelling", m.Expect.RedirectTo)
+	}
+}
+
+func TestSameOrigin(t *testing.T) {
+	for _, c := range []struct {
+		target, origin string
+		want           bool
+	}{
+		{"https://example.com/", "https://example.com", true},
+		{"https://EXAMPLE.com:443/a?b", "https://example.com/", true},
+		{"https://bücher.example/", "https://xn--bcher-kva.example", true},
+		{"http://example.com/", "https://example.com", false},
+		{"https://www.example.com/", "https://example.com", false},
+		{"https://example.com:8443/", "https://example.com", false},
+		{"not a url", "https://example.com", false},
+	} {
+		if got := SameOrigin(c.target, c.origin); got != c.want {
+			t.Errorf("SameOrigin(%q, %q) = %v, want %v", c.target, c.origin, got, c.want)
 		}
 	}
 }

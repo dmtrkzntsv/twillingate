@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 
@@ -38,7 +39,12 @@ type ms struct {
 }
 
 func (s ms) patch() store.MonitorSettings {
-	return store.MonitorSettings{Enabled: &s.Enabled, Contains: &s.Contains}
+	return store.MonitorSettings{Enabled: &s.Enabled, Expect: setContains(s.Contains)}
+}
+
+// setContains is an edit of the expectations that sets contains alone.
+func setContains(c string) func(store.MonitorExpect) store.MonitorExpect {
+	return func(e store.MonitorExpect) store.MonitorExpect { e.Contains = c; return e }
 }
 
 func setMon(t *testing.T, d *DB, id int64, origin string, s ms) store.Monitor {
@@ -82,7 +88,7 @@ func TestMonitorRoundTrip(t *testing.T) {
 		t.Fatalf("no rows: %+v, %v", ms, err)
 	}
 	got := setMon(t, d, id, monA, ms{Enabled: true, Contains: "ok"})
-	want := store.Monitor{ProjectID: id, Origin: monA, Enabled: true, Contains: "ok"}
+	want := store.Monitor{ProjectID: id, Origin: monA, Enabled: true, Expect: store.MonitorExpect{Contains: "ok"}}
 	if got != want {
 		t.Fatalf("SetMonitor = %+v, want %+v", got, want)
 	}
@@ -113,10 +119,10 @@ func TestMonitorsAreKeyedByProjectAndOrigin(t *testing.T) {
 	if len(ms) != 2 || ms[0].Origin != monA || ms[1].Origin != monB {
 		t.Fatalf("ListMonitors = %+v, want a project's two, by origin", ms)
 	}
-	if ms[0].Enabled || ms[0].Contains != "x" || !ms[1].Enabled || ms[1].Contains != "y" {
+	if ms[0].Enabled || ms[0].Expect.Contains != "x" || !ms[1].Enabled || ms[1].Expect.Contains != "y" {
 		t.Errorf("rows mixed up: %+v", ms)
 	}
-	if ms, _ := d.ListMonitors(ctx, b); len(ms) != 1 || ms[0].Contains != "" {
+	if ms, _ := d.ListMonitors(ctx, b); len(ms) != 1 || ms[0].Expect.Contains != "" {
 		t.Errorf("the other project's: %+v", ms)
 	}
 }
@@ -724,7 +730,7 @@ func TestSetMonitorMergesOnlyTheFieldsGiven(t *testing.T) {
 	d := newTestDB(t)
 	ctx := context.Background()
 	id := monitorProject(t, d, "a")
-	off, on, x, y := false, true, "x", "y"
+	off, on := false, true
 	set := func(p store.MonitorSettings) store.Monitor {
 		t.Helper()
 		m, err := d.SetMonitor(ctx, id, monA, p, monEligible, monAudit)
@@ -733,18 +739,60 @@ func TestSetMonitorMergesOnlyTheFieldsGiven(t *testing.T) {
 		}
 		return m
 	}
-	set(store.MonitorSettings{Enabled: &on, Contains: &x})
+	set(store.MonitorSettings{Enabled: &on, Expect: setContains("x")})
 	// Each edit keeps the field it does not name, as the row stands now.
-	if m := set(store.MonitorSettings{Enabled: &off}); m.Enabled || m.Contains != "x" {
+	if m := set(store.MonitorSettings{Enabled: &off}); m.Enabled || m.Expect.Contains != "x" {
 		t.Fatalf("enabled only: %+v", m)
 	}
-	if m := set(store.MonitorSettings{Contains: &y}); m.Enabled || m.Contains != "y" {
+	if m := set(store.MonitorSettings{Expect: setContains("y")}); m.Enabled || m.Expect.Contains != "y" {
 		t.Fatalf("contains only: %+v", m)
 	}
+	to := func(e store.MonitorExpect) store.MonitorExpect { e.RedirectTo = monB; return e }
+	if m := set(store.MonitorSettings{Expect: to}); m.Enabled || m.Expect != (store.MonitorExpect{Contains: "y", RedirectTo: monB}) {
+		t.Fatalf("redirect_to only: %+v", m)
+	}
+	if m := set(store.MonitorSettings{Enabled: &on}); m.Expect.RedirectTo != monB {
+		t.Fatalf("enabled kept no redirect_to: %+v", m)
+	}
+	if ms, _ := d.ListEnabledMonitors(ctx); len(ms) != 1 || ms[0].Expect.RedirectTo != monB {
+		t.Fatalf("enabled monitors: %+v", ms)
+	}
 	n := auditCount(t, d, monAudit.Action)
-	set(store.MonitorSettings{Enabled: &off, Contains: &y}) // no change
+	set(store.MonitorSettings{Enabled: &on, Expect: to}) // no change
 	if after := auditCount(t, d, monAudit.Action); after != n {
 		t.Fatalf("a no-op audited: %d -> %d", n, after)
+	}
+}
+
+// The audit names the expectations an edit changed, by key, and not their
+// values: the page text may be anything.
+func TestSetMonitorAuditsTheExpectationsChanged(t *testing.T) {
+	d := newTestDB(t)
+	ctx := context.Background()
+	id := monitorProject(t, d, "a")
+	both := func(e store.MonitorExpect) store.MonitorExpect { return store.MonitorExpect{Contains: "secret", RedirectTo: monB} }
+	if _, err := d.SetMonitor(ctx, id, monA, store.MonitorSettings{Expect: both}, monEligible, monAudit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.SetMonitor(ctx, id, monA, store.MonitorSettings{Expect: setContains("")}, monEligible, monAudit); err != nil {
+		t.Fatal(err)
+	}
+	var details []string
+	rows, err := d.db.QueryContext(ctx, `SELECT detail FROM audit_log WHERE action=? ORDER BY rowid`, monAudit.Action)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			t.Fatal(err)
+		}
+		details = append(details, s)
+	}
+	want := []string{"origin=" + monA + " contains redirect_to", "origin=" + monA + " contains"}
+	if !slices.Equal(details, want) {
+		t.Fatalf("audit details = %q, want %q", details, want)
 	}
 }
 

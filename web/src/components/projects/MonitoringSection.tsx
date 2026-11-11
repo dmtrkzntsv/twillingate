@@ -1,12 +1,11 @@
-import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { MoreHorizontalIcon, RefreshCwIcon } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
+import ExpectField, { choicesOf, EXPECT_OPTIONS, type ExpectFieldHandle, type ExpectKey } from '@/components/projects/ExpectField'
 import LoadError from '@/components/projects/LoadError'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
-import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Monitor, MonitorBody } from '@/lib/api'
@@ -102,6 +101,8 @@ function certificateShort(m: Monitor, now: Date): { text: string; bad: boolean }
 
 interface RowProps {
   m: Monitor
+  /** The project's other monitor origins, which the check may be told to be redirected to. */
+  others: string[]
   now: Date
   pending?: boolean
   /** The check the page stopped waiting for on this row, by when it was asked for. */
@@ -115,34 +116,19 @@ interface RowProps {
 
 /**
  * One origin: a switch that saves at once, then a stacked block of the origin,
- * its page text, the status line and any notes, and to the right the certificate
- * and two buttons (Check now; a menu with the page text). An off row is the switch
+ * its expectations (EXPECT_OPTIONS, each a saved line or its open field), the
+ * status line and any notes, and to the right the certificate and two buttons
+ * (Check now; a menu with an item per expectation). An off row is the switch
  * and the origin alone. On a phone the certificate is a line of the block: the
  * grid places the one element either way.
  */
-function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused }: RowProps) {
+function MonitorRow({ m, others, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused }: RowProps) {
   // Where the switch goes while its save is out; a failed one drops back.
   const [switching, setSwitching] = useState<boolean | null>(null)
-  const [contains, setContains] = useState(m.contains)
-  const containsId = useId()
-  // The text field, asked for from the menu or the saved text, stays open until saved.
-  const [editing, setEditing] = useState(false)
-  // The text the server had when the field last followed it: a refetch (polling,
-  // window focus, another row's save) moves the field only while it still shows that.
-  const followed = useRef(m.contains)
-  // Closing the field hands focus back, once it is gone.
-  const closing = useRef(false)
   const menuRef = useRef<HTMLButtonElement>(null)
-  const savedRef = useRef<HTMLButtonElement>(null)
-  // The menu's item opened the field, so closing the menu focuses it.
-  const opening = useRef(false)
-
-  // Start from what is saved, again after each save; a real edit stays.
-  useEffect(() => {
-    const was = followed.current
-    followed.current = m.contains
-    setContains((c) => (c === was ? m.contains : c))
-  }, [m.contains])
+  const fields = useRef<Partial<Record<ExpectKey, ExpectFieldHandle | null>>>({})
+  // The menu item that opened a field, so closing the menu focuses that field.
+  const opening = useRef<ExpectKey | null>(null)
 
   const waiting = pendingCheck(m)
   useEffect(() => {
@@ -155,20 +141,9 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
     setSwitching(on)
     void onSave({ origin: m.origin, enabled: on }).finally(() => setSwitching(null))
   }
-  const textEdited = contains.trim() !== m.contains
-  const save = (e: FormEvent) => {
-    e.preventDefault()
-    if (!textEdited) return // Enter in the text field, with nothing to save
-    const text = contains.trim()
-    void onSave({ origin: m.origin, contains: text }).then((saved) => {
-      if (saved) {
-        // What was saved is what the field follows from here on.
-        followed.current = text
-        setEditing(false)
-        setContains(text)
-      }
-    })
-  }
+  // A choice with nothing to choose from has no menu item, unless one is saved.
+  const options = EXPECT_OPTIONS.map((option) => ({ option, choices: choicesOf(option, m, others) }))
+    .filter(({ option, choices }) => option.editor.kind !== 'choice' || choices.length > 0)
 
   const checking = waiting !== null && waiting !== gaveUp
   const certFull = certificateText(m.origin, m.cert, now)
@@ -176,38 +151,27 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
   const sameAsDown = !paused && !checking && m.last.checked_at !== '' && !m.last.up && m.cert.error === m.last.error
   const certProblem = !m.origin.startsWith('http://') && !sameAsDown && (m.cert.error !== '' || (m.cert.expires_at !== '' && !m.cert.valid))
   const cert = certificateShort(m, now)
-  const inputRef = useRef<HTMLInputElement>(null)
-  const showField = editing || contains !== m.contains
-  const cancel = () => {
-    closing.current = true
-    setContains(m.contains)
-    setEditing(false)
-  }
-  useEffect(() => {
-    if (!closing.current || showField) return
-    closing.current = false
-    ;(savedRef.current ?? menuRef.current)?.focus()
-  }, [showField])
   const label = `Check ${m.origin} now`
   const notRun = !checking && !paused && checkNotRun(m)
-  const hasNotes = notRun || certProblem || m.redirects >= LONG_CHAIN || (waiting !== null && waiting === gaveUp) || showField
+  const hasNotes = notRun || certProblem || m.redirects >= LONG_CHAIN || (waiting !== null && waiting === gaveUp)
 
   return (
     <li aria-label={m.origin} className="grid grid-cols-[auto_minmax(0,1fr)_auto] items-start gap-x-3 sm:grid-cols-[auto_minmax(0,1fr)_6rem_auto]">
       <Switch aria-label={`Monitor ${m.origin}`} className="col-start-1 row-start-1 mt-px" checked={switching ?? m.enabled} disabled={pending} onCheckedChange={toggle} />
       <div className="col-start-2 row-start-1 flex min-w-0 flex-col gap-0.5">
         <span className={`min-w-0 text-sm font-medium break-all ${m.enabled ? '' : 'text-muted-foreground'}`}>{m.origin}</span>
-        {m.enabled && m.contains !== '' && !showField && (
-          <button
-            type="button"
-            ref={savedRef}
-            className="w-fit max-w-full text-left text-sm break-words text-muted-foreground underline-offset-2 hover:underline"
-            disabled={pending}
-            onClick={() => setEditing(true)}
-          >
-            {`must contain "${m.contains}"`}
-          </button>
-        )}
+        {m.enabled && options.map(({ option, choices }) => (
+          <ExpectField
+            key={option.key}
+            ref={(h) => { fields.current[option.key] = h }}
+            option={option}
+            saved={m[option.key]}
+            choices={choices}
+            pending={pending}
+            menuRef={menuRef}
+            onSave={(value) => onSave({ origin: m.origin, [option.key]: value })}
+          />
+        ))}
         {m.enabled && <StatusLine m={m} now={now} checking={checking} paused={paused} />}
       </div>
       {m.enabled && (
@@ -238,15 +202,18 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
               <DropdownMenuContent align="end" // Focus goes to the field the item opened, not back to the trigger.
               onCloseAutoFocus={(e) => {
                 // Escape or a click away leaves focus to the trigger.
-                if (!opening.current) return
-                opening.current = false
+                const key = opening.current
+                if (!key) return
+                opening.current = null
                 e.preventDefault()
-                inputRef.current?.focus()
+                fields.current[key]?.focus()
               }}>
-                <DropdownMenuItem onSelect={() => {
-                  opening.current = true
-                  setEditing(true)
-                }}>Look for text on the page</DropdownMenuItem>
+                {options.map(({ option }) => (
+                  <DropdownMenuItem key={option.key} onSelect={() => {
+                    opening.current = option.key
+                    fields.current[option.key]?.open()
+                  }}>{option.menuLabel}</DropdownMenuItem>
+                ))}
               </DropdownMenuContent>
             </DropdownMenu>
           </div>
@@ -255,31 +222,6 @@ function MonitorRow({ m, now, pending, gaveUp, onGiveUp, onSave, onCheck, paused
             {certProblem && <p className="min-w-0 text-sm break-words text-muted-foreground">{`Certificate: ${certFull}`}</p>}
             {m.redirects >= LONG_CHAIN && <p className="text-sm text-muted-foreground">{`Redirects ${m.redirects} times before answering, which slows every visit`}</p>}
             {waiting && waiting === gaveUp && <p role="status" className="text-sm text-muted-foreground">The check has not finished yet: its result will show here when the server has run it</p>}
-            {showField && (
-              <form onSubmit={save} className="mt-1 flex min-w-0 flex-col gap-1.5">
-                <Label htmlFor={containsId}>Page must contain</Label>
-                <div className="flex min-w-0 items-center gap-2">
-                  <Input
-                    id={containsId}
-                    ref={inputRef}
-                    className="min-w-0"
-                    value={contains}
-                    disabled={pending}
-                    maxLength={200}
-                    // Mounted by the menu or the saved text, the only time the field is new.
-                    autoFocus={editing && contains === m.contains}
-                    onChange={(e) => setContains(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key !== 'Escape') return
-                      e.preventDefault()
-                      cancel()
-                    }}
-                  />
-                  {textEdited && <Button type="submit" size="sm" disabled={pending}>Save</Button>}
-                  <Button type="button" size="sm" variant="ghost" onClick={cancel}>Cancel</Button>
-                </div>
-              </form>
-            )}
           </div>}
         </>
       )}
@@ -372,6 +314,7 @@ export default function MonitoringSection({ projectId, pending, onSave, onCheck 
           <MonitorRow
             key={`${projectId}:${m.origin}`}
             m={m}
+            others={data.monitors.filter((o) => o.origin !== m.origin).map((o) => o.origin)}
             now={now}
             pending={pending}
             gaveUp={gaveUp[m.origin]}

@@ -18,7 +18,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/dmtrkzntsv/twillingate/internal/manage"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/version"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
 // Failure reasons, the closed vocabulary docs/twillingate.md lists.
@@ -64,14 +66,13 @@ func (e *redirectError) Error() string { return e.msg }
 
 // Check GETs origin + "/" with c, following a redirect only when
 // allowed(target) says its target is one of the project's own origins,
-// and at most maxHops of them. Up means a 2xx whose first MB contains
-// contains (case-sensitive; any page when contains is empty). Elapsed runs
-// to the end of the body read or to the failure. ctx bounds the whole
-// check.
-func Check(ctx context.Context, c *http.Client, origin, contains string, allowed func(target string) bool) Result {
+// and at most maxHops of them. Up means the final answer passes every
+// assertion: a 2xx, and what want expects. Elapsed runs to the end of the
+// body read or to the failure. ctx bounds the whole check.
+func Check(ctx context.Context, c *http.Client, origin string, want store.MonitorExpect, allowed func(target string) bool) Result {
 	start := time.Now()
 	var t tally
-	res := check(ctx, c, origin, contains, allowed, &t)
+	res := check(ctx, c, origin, want, allowed, &t)
 	res.Redirects, res.Answered = t.hops, t.answered || res.Status > 0
 	res.Elapsed = time.Since(start)
 	res.Error = truncate(res.Error)
@@ -86,7 +87,7 @@ type tally struct {
 	tlsFailed atomic.Bool // a TLS handshake ended in an error
 }
 
-func check(ctx context.Context, c *http.Client, origin, contains string, allowed func(string) bool, t *tally) Result {
+func check(ctx context.Context, c *http.Client, origin string, want store.MonitorExpect, allowed func(string) bool, t *tally) Result {
 	cc := *c
 	cc.Jar = nil
 	cc.CheckRedirect = func(req *http.Request, via []*http.Request) error {
@@ -132,18 +133,64 @@ func check(ctx context.Context, c *http.Client, origin, contains string, allowed
 		r.Status = resp.StatusCode
 		return r
 	}
-	switch s := resp.StatusCode; {
+	a := answer{url: resp.Request.URL, status: resp.StatusCode, body: body, hops: t.hops}
+	for _, assert := range assertions {
+		if reason, msg := assert(want, a); reason != "" {
+			return Result{Status: a.status, Reason: reason, Error: msg}
+		}
+	}
+	return Result{Up: true, Status: a.status}
+}
+
+// answer is the final response a check's assertions judge.
+type answer struct {
+	url    *url.URL // where the redirects ended
+	status int
+	body   []byte // the first bodyLimit bytes
+	hops   int
+}
+
+// assertions judge the final answer in order, the first failure being the
+// check's: a reason from the closed vocabulary and the text that says why,
+// both empty when it passes. An expectation that has its zero value in want
+// passes. A new expectation is an assertion here, placed where its failure
+// is the most telling.
+var assertions = []func(want store.MonitorExpect, a answer) (reason, msg string){
+	expectRedirect,
+	expectStatus,
+	expectContains,
+}
+
+// expectRedirect comes before the status: a site that answers itself,
+// whatever it says, has not redirected, which is what is wrong with it.
+func expectRedirect(want store.MonitorExpect, a answer) (string, string) {
+	if want.RedirectTo == "" || manage.SameOrigin(a.url.String(), want.RedirectTo) {
+		return "", ""
+	}
+	msg := "not redirected to " + want.RedirectTo
+	if a.hops > 0 {
+		msg += "; the redirects ended at " + a.url.Scheme + "://" + a.url.Host
+	}
+	return ReasonRedirect, msg
+}
+
+// expectStatus wants a 2xx.
+func expectStatus(_ store.MonitorExpect, a answer) (string, string) {
+	switch s := a.status; {
 	case s >= 200 && s < 300:
+		return "", ""
 	case s >= 400 && s < 500:
-		return Result{Status: s, Reason: ReasonHTTP4xx, Error: "HTTP " + statusText(s)}
+		return ReasonHTTP4xx, "HTTP " + statusText(s)
 	default:
-		return Result{Status: s, Reason: ReasonHTTP5xx, Error: "HTTP " + statusText(s)}
+		return ReasonHTTP5xx, "HTTP " + statusText(s)
 	}
-	if contains != "" && !bytes.Contains(body, []byte(contains)) {
-		return Result{Status: resp.StatusCode, Reason: ReasonContent,
-			Error: "the page does not contain the expected text"}
+}
+
+func expectContains(want store.MonitorExpect, a answer) (string, string) {
+	if want.Contains == "" || bytes.Contains(a.body, []byte(want.Contains)) {
+		return "", ""
 	}
-	return Result{Up: true, Status: resp.StatusCode}
+	return ReasonContent, "the page does not contain the expected text"
 }
 
 func statusText(s int) string {
