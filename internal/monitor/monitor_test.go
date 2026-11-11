@@ -1377,11 +1377,24 @@ func TestHangingSiteDelaysNoOtherMonitor(t *testing.T) {
 		}
 		return nil
 	}
+	// hanging is how many of the running checks are the hanging site's: 0
+	// before its first turn, 1 from then on.
+	hanging := func() int {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		if r.slots[monitorKey{1, originA}] {
+			return 1
+		}
+		return 0
+	}
 	for range 4 {
 		c.tick(r)
-		// Everything but the hanging check ends before the next slot.
+		// Everything but the hanging check ends before the next slot. Counted
+		// apart: the first turn may be the other monitor's, and waiting for
+		// one check left would then leave project 2's running into its next
+		// slot, which it skips.
 		deadline := time.Now().Add(5 * time.Second)
-		for r.inflight() > 1 {
+		for r.inflight() > hanging() {
 			if time.Now().After(deadline) {
 				t.Fatal("a check other than the hanging one did not finish")
 			}
