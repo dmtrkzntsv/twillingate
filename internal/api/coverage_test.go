@@ -18,7 +18,7 @@ import (
 // reaches the caller as the query tool words it, kind by kind, and a
 // truncated answer carries its note.
 func TestFilesTableTruncatesErrorsAndTimesOut(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := context.Background()
 	blog := rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}
 	eng := archivetest.NewFakeSQL(t)

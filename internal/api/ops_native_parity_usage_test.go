@@ -224,7 +224,7 @@ func writeRetentionEdges(t *testing.T, h *host) {
 // SQL's acts also kept an actor's days as a connection; a connection's id
 // is a daily hash, never an install's or a user's, so no file shows that.
 func TestRetentionAndUsageMatchTheirOldSQL(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	writeRetentionEdges(t, h)
 	ctx := context.Background()
 
@@ -397,7 +397,7 @@ func (n slowNative) Answer(ctx context.Context, q native.Query, p native.Params,
 // usage gives each query its own: two that each fit it answer, one that
 // does not is refused with the timeout's words.
 func TestAnalyticsToolsShareOneDeadline(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	h.queryTimeout = 400 * time.Millisecond
 	h.native = slowNative{Native: h.native, delay: 250 * time.Millisecond}
 	want := sqlbind.Timeout(h.queryTimeout)
@@ -434,7 +434,7 @@ const oldEventsSQL = `SELECT count(*) FROM events WHERE day >= CAST($from AS DAT
 // with files (the archived one too), rules applied (a blocked event left
 // out, a renamed one kept), from the 30th day back on, today included.
 func TestCountEventsMatchesItsOldSQL(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := context.Background()
 	today := civil.Today(time.Now())
 	at := func(daysBack int) time.Time { return today.AddDays(-daysBack).Time().Add(time.Hour) }

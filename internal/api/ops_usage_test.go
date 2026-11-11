@@ -18,7 +18,7 @@ import (
 // counts and first_day but has no last_received_at, unless it is the
 // project asked for.
 func TestUsageNewestArrivalOfLiveProjects(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := context.Background()
 	writeHostEvents(t, h, store.Event{ProjectID: 2, Family: store.FamilyViews, EventName: "$page_view", Kind: "web", Path: "/",
 		TS: time.Date(2026, 8, 21, 9, 0, 0, 0, time.UTC)})
@@ -62,7 +62,7 @@ func TestUsageNewestArrivalOfLiveProjects(t *testing.T) {
 // signup x5 on 08-20 and x2 on 08-21, and measures x5 on 08-20 and x2 on
 // 08-21, all merged into August's file.
 func TestUsageReadsTheFiles(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := context.Background()
 	value := 1.0
 	writeHostEvents(t, h,
@@ -147,7 +147,7 @@ func TestUsageReadsTheFiles(t *testing.T) {
 // A project with nothing in the files has a full series of zeros and no
 // days.
 func TestUsageOfAProjectWithNoFiles(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	out, err := h.usage(context.Background(), usageIn{ProjectID: 2, usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-22"}})
 	if err != nil {
 		t.Fatal(err)
@@ -163,7 +163,7 @@ func TestUsageOfAProjectWithNoFiles(t *testing.T) {
 // and the database's size live, also once a pass with no files (the
 // console's, in a split install) has measured the database.
 func TestUsageSizeIsNullUntilMeasured(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	putStat(t, h, store.StatDatabaseBytes, 0, "2026-08-21", 5000)
 	out, err := h.usage(context.Background(), usageIn{usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-21"}})
 	if err != nil {
@@ -205,7 +205,7 @@ func putStat(t *testing.T, h *host, key string, project int64, day string, v int
 // measured (also in the JSON), and the database's size per day is a
 // series of its own. A stat this answer does not know is left alone.
 func TestUsageSeriesCarriesTheFileBytes(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	putStat(t, h, store.StatFileBytes, 1, "2026-08-19", 1) // before the range
 	putStat(t, h, store.StatFileBytes, 1, "2026-08-20", 100)
 	putStat(t, h, store.StatFileBytes, 2, "2026-08-20", 20)
@@ -290,7 +290,7 @@ func numOf(p *int64) any {
 // TestUsageHistoryPastTheRowCap: the stored sizes are read a page at a
 // time, so months of them outgrow CONSOLE_QUERY_ROWS_MAX without failing.
 func TestUsageHistoryPastTheRowCap(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	setGuards(t, h, 30*time.Second, 3)
 	days := []string{"2026-08-20", "2026-08-21", "2026-08-22", "2026-08-23"}
 	for i, day := range days {

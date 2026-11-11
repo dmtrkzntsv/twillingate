@@ -20,7 +20,7 @@ func TestRefusalKeepsMessage(t *testing.T) {
 }
 
 func TestOperationRefusalsAreTyped(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := context.Background()
 	rangeErr := func(in rangeIn) error {
 		_, _, err := h.rangeOf(ctx, in)

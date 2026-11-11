@@ -31,7 +31,7 @@ func TestListProjects(t *testing.T) {
 // An empty registry answers {"projects":[]}, never null: the console calls
 // .projects.filter on it.
 func TestListProjectsEmptyRegistryIsAnArray(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	st := storetest.Open(t, t.TempDir()+"/empty.db")
 	h.reg = manage.New(st, h.logger)
 	if err := h.reg.Reload(context.Background()); err != nil {

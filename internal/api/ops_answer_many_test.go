@@ -50,7 +50,7 @@ func (n answerOnly) Answer(ctx context.Context, q native.Query, p native.Params,
 // AnswerMany, and answers what it answers one query at a time, byte for
 // byte.
 func TestAnalyticsToolsAnswerFromOneCall(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	eng := h.native.(*native.Engine)
 	ctx := context.Background()
 	month := rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}
@@ -134,7 +134,7 @@ func (n failingNative) AnswerMany(ctx context.Context, reqs []native.Request, do
 // A tool whose queries fail in one call fails with the first query's
 // error, worded as answer words it, as it did one query at a time.
 func TestAnswerAllFailsWithTheFirstError(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	eng := h.native.(*native.Engine)
 	ctx := context.Background()
 	in := overviewIn{rangeIn: rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}}
@@ -181,7 +181,7 @@ func (n *groupedNative) AnswerMany(ctx context.Context, reqs []native.Request, d
 // usage asks for at most usageProjectsPerCall projects a call, in order,
 // and a failure in one call leaves the later calls unasked.
 func TestUsageAsksInGroupsOfProjects(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	eng := h.native.(*native.Engine)
 	ctx := context.Background()
 	var projects []*manage.Project
@@ -238,7 +238,7 @@ func (n *ctxNative) AnswerMany(ctx context.Context, reqs []native.Request, done 
 // call's context, which has none: projects waiting for the engine's
 // turns do not share one.
 func TestUsageTimesEachRequest(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	eng := h.native.(*native.Engine)
 	ctx := context.Background()
 	var projects []*manage.Project

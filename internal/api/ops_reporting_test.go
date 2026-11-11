@@ -149,7 +149,7 @@ func TestReportingRoundTrip(t *testing.T) {
 // TestReportingRESTStatuses: creations answer 201, the rest 200, and the
 // shapes are what the web app reads.
 func TestReportingRESTStatuses(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	must := func(method, target, body string, want int) map[string]any {
 		t.Helper()
@@ -897,7 +897,7 @@ func TestDuplicateNarrowed(t *testing.T) {
 // TestNarrowSchemaListsTheFilterOps: duplicate_dashboard's and
 // copy_widget's where carry the filter vocabulary, as query's does.
 func TestNarrowSchemaListsTheFilterOps(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	for _, name := range []string{"duplicate_dashboard", "copy_widget"} {
 		i := slices.IndexFunc(r.specs, func(s spec) bool { return s.Name == name })

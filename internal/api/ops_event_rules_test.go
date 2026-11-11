@@ -42,7 +42,7 @@ func listRulesREST(t *testing.T, r *registrar, project string) []ruleRow {
 // and remove as the body carries it: remove takes a body because a path
 // segment could not.
 func TestEventRulesRenameAndRemoveOverREST(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 
 	const name = "checkout/v2 é"
@@ -143,7 +143,7 @@ func TestEventRulesAuditedByTransport(t *testing.T) {
 }
 
 func TestEventRulesRefusalsOverREST(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	for _, c := range []struct {
 		name, path, body string
@@ -194,7 +194,7 @@ type nameRow struct {
 // is left out and a renamed one counts under its new name. SQLite's
 // events are not read.
 func TestEventNamesReadTheFiles(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	ctx := t.Context()
 	if _, err := h.ops.CreateProject(ctx, "test", manage.ProjectSpec{Name: "events"}); err != nil {
@@ -264,7 +264,7 @@ func TestEventNamesReadTheFiles(t *testing.T) {
 // A project sending generated names must not turn the Settings → Events tab into a
 // 400 at the row cap: the busiest 200 come back, the rest are left out.
 func TestEventNamesKeepsTheBusiest200(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	if _, err := h.ops.CreateProject(t.Context(), "test", manage.ProjectSpec{Name: "events"}); err != nil {
 		t.Fatal(err)

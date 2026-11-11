@@ -38,7 +38,7 @@ func aliasesREST(t *testing.T, r *registrar, key string) ([]string, bool) {
 // and remove as the body carries it: remove takes a body because a path
 // segment could not.
 func TestAttributeRulesRenameAndRemoveOverREST(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 
 	const key = "checkout/v2 é"
@@ -161,7 +161,7 @@ func TestAttributeRulesAuditedByTransport(t *testing.T) {
 }
 
 func TestAttributeRulesRefusalsOverREST(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	for _, c := range []struct {
 		name, path, body string

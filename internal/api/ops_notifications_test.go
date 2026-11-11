@@ -63,7 +63,7 @@ func getNotifications(t *testing.T, r *registrar, query string) notificationsPag
 }
 
 func TestNotificationsREST(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	first := seedNotification(t, h, "https://a.example")
 	second := seedNotification(t, h, "https://b.example")

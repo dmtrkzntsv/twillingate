@@ -166,7 +166,7 @@ func TestMonitorRefusals(t *testing.T) {
 // samples and last_received_at and limits' events_30d stay as they were. They
 // are reported apart, as checks, every row of the table, per day and in total.
 func TestUsageIgnoresChecks(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := context.Background()
 	in := usageIn{ProjectID: 1, usageRangeIn: usageRangeIn{From: "2026-08-20", To: "2026-08-30"}}
 	before, err := h.usage(ctx, in)
@@ -378,7 +378,7 @@ func TestCheckMonitor(t *testing.T) {
 
 // paused says the runner is off.
 func TestMonitorsReportPause(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	h.monitorInterval = 2 * time.Minute
 	r := newTestRegistrar(t, h)
 	read := func() (monitorsOut, string) {

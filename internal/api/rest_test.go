@@ -82,7 +82,7 @@ func TestDecodeRequestRefusals(t *testing.T) {
 // TestRESTRefusesMalformedFilter: a filter that does not parse is a 400,
 // never an unfiltered 200 that looks like a real answer.
 func TestRESTRefusesMalformedFilter(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	rec := serveREST(t, r, "GET", "/api/projects/1/product/events?from=2026-08-20&to=2026-08-21&event=signup%ZZ", "")
 	if rec.Code != http.StatusBadRequest || errorCode(t, rec) != "invalid" {
@@ -93,7 +93,7 @@ func TestRESTRefusesMalformedFilter(t *testing.T) {
 // TestDecodeRequestPathOverridesBody: the path is authoritative. A PATCH
 // on project 1 whose body names project 2 renames 1 and leaves 2 alone.
 func TestDecodeRequestPathOverridesBody(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	if rec := serveREST(t, r, "PATCH", "/api/projects/1", `{"project_id":2,"name":"Blog"}`); rec.Code != 200 {
 		t.Fatalf("patch = %d %s", rec.Code, rec.Body.String())
@@ -229,7 +229,7 @@ func TestRESTMatchesMCP(t *testing.T) {
 }
 
 func TestRESTWritesAndRefusals(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 
 	rec := serveREST(t, r, "POST", "/api/projects", `{"name":"shop","allowed_origins":["https://shop.example.com"]}`)
@@ -302,7 +302,7 @@ func TestRESTWritesAndRefusals(t *testing.T) {
 // TestPathProjectIdBindsAsInt64: the {project_id} wildcard must land in
 // an int64 field, and a non-integer must be a 400, not a 404.
 func TestPathProjectIdBindsAsInt64(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	if rec := serveREST(t, r, "GET", "/api/projects/1/views/overview?from=2026-08-20&to=2026-08-21", ""); rec.Code != 200 {
 		t.Fatalf("id 1: %d %s", rec.Code, rec.Body.String())
@@ -316,7 +316,7 @@ func TestPathProjectIdBindsAsInt64(t *testing.T) {
 // TestProjectTabRoutes: each project tab route answers with the project's
 // tabs, in order, after the write.
 func TestProjectTabRoutes(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	newDashboard := func() int64 {
 		t.Helper()

@@ -208,7 +208,7 @@ func TestDocumentCoversEveryViewsDimension(t *testing.T) {
 // documents is one an agent never reaches for; a documented tool that does
 // not exist is a failed call.
 func TestDocumentNamesEveryTool(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	registered := map[string]bool{}
 	for _, s := range newTestRegistrar(t, h).specs {
 		if !s.RESTOnly { // a route with no tool is bound by TestDocumentMatchesRoutes
@@ -361,7 +361,7 @@ func TestDeploymentResourceServed(t *testing.T) {
 // and docs/reporting.md to the registered routes, in both directions:
 // method, path and the tool each route mirrors.
 func TestDocumentMatchesRoutes(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	inCode := map[string]string{} // "GET /api/projects" -> tool
 	for _, s := range newTestRegistrar(t, h).specs {
 		if s.Method != "" {

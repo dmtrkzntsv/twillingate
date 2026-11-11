@@ -113,6 +113,29 @@ func hostTemplate(t *testing.T) string {
 // creates on top is id 3.
 func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	t.Helper()
+	h := newBareHost(t)
+	ctx := context.Background()
+	srv := mcp.NewServer(&mcp.Implementation{Name: "analytics", Version: "test"},
+		&mcp.ServerOptions{Instructions: serverInstructions, SchemaCache: mcpSchemas})
+	h.register(&registrar{mcp: srv, logger: h.logger})
+	h.registerResources(srv)
+	ct, stEnd := mcp.NewInMemoryTransports()
+	if _, err := srv.Connect(ctx, stEnd, nil); err != nil {
+		t.Fatal(err)
+	}
+	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cs.Close() })
+	return h, cs
+}
+
+// newBareHost is newTestHost's host with no MCP server: registering the
+// tools takes about a second under -race, which a test that calls the
+// host's methods, or builds its own registrar, does not need.
+func newBareHost(t *testing.T) *host {
+	t.Helper()
 	path := t.TempDir() + "/mcp.db"
 	data, err := os.ReadFile(hostTemplate(t))
 	if err != nil {
@@ -156,21 +179,7 @@ func newTestHost(t *testing.T) (*host, *mcp.ClientSession) {
 	testDBPaths[h] = path
 	h.events = h.newHostEventCount()
 	h.ops.Presence = hostPresence{files, nat}
-
-	srv := mcp.NewServer(&mcp.Implementation{Name: "analytics", Version: "test"},
-		&mcp.ServerOptions{Instructions: serverInstructions})
-	h.register(&registrar{mcp: srv, logger: logger})
-	h.registerResources(srv)
-	ct, stEnd := mcp.NewInMemoryTransports()
-	if _, err := srv.Connect(ctx, stEnd, nil); err != nil {
-		t.Fatal(err)
-	}
-	cs, err := mcp.NewClient(&mcp.Implementation{Name: "t", Version: "0"}, nil).Connect(ctx, ct, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { cs.Close() })
-	return h, cs
+	return h
 }
 
 // seedDB copies a migrated database (see storetest) and returns its
@@ -222,7 +231,7 @@ func setGuards(t *testing.T, h *host, timeout time.Duration, maxRows int) {
 func newTestRegistrar(t *testing.T, h *host) *registrar {
 	t.Helper()
 	r := &registrar{
-		mcp:    mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "test"}, nil),
+		mcp:    mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "test"}, &mcp.ServerOptions{SchemaCache: mcpSchemas}),
 		rest:   http.NewServeMux(),
 		logger: slog.New(slog.DiscardHandler),
 	}

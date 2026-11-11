@@ -89,7 +89,7 @@ func tableLines(text string) map[string][]string {
 // fixed columns in order (the attr_<key> columns, which vary, aside), and
 // no other table before the deprecated part.
 func TestSchemaViewsMatchesTheFiles(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	listed := tableLines(schemaFiles)
 	tables := []string{"events", "views", "product", "measures", "checks", "sessions", "identities", "aliases"}
 	if len(listed) != len(tables) {

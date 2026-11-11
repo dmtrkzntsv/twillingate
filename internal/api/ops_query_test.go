@@ -95,7 +95,7 @@ func TestQueryStructuredRuns(t *testing.T) {
 }
 
 func TestQueryRefusesBoth(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	for _, body := range []string{
 		`{"sql":"SELECT 1","project_id":1,"query":{"kind":"stat","table":"views","metrics":[{"op":"count"}]}}`,
@@ -109,7 +109,7 @@ func TestQueryRefusesBoth(t *testing.T) {
 }
 
 func TestQueryStructuredInvalid(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	for body, field := range map[string]string{
 		`{"project_id":1,"query":{"kind":"breakdown","table":"views","metrics":[{"op":"count"}]}}`:                                  "dimensions",
@@ -127,7 +127,7 @@ func TestQueryStructuredInvalid(t *testing.T) {
 }
 
 func TestQueryStructuredNeedsProject(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	q := `"query":{"kind":"stat","table":"views","metrics":[{"op":"count"}]}`
 	if rec := serveREST(t, r, "POST", "/api/query", `{`+q+`}`); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "project_id") {
@@ -146,7 +146,7 @@ func TestQueryStructuredNeedsProject(t *testing.T) {
 // registry's rules for every project, runs under the timeout, and caps the
 // rows at queryRows, passing approximate through.
 func TestQueryStructuredDefaultsAndCaps(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	fake := &fakeNative{res: native.Result{Columns: []string{"kind", "actors"},
 		Rows: [][]string{{"a", "1"}, {"b", "2"}, {"c", "3"}}, Approximate: []string{"actors"}}}
 	h.native = fake
@@ -198,7 +198,7 @@ func TestQueryStructuredDefaultsAndCaps(t *testing.T) {
 // The tool's input schema describes the structured query inline for an
 // agent: the kinds, tables, metric and filter operators as enums.
 func TestQuerySchemaDescribesStructured(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	i := slices.IndexFunc(r.specs, func(s spec) bool { return s.Name == "query" })
 	if i < 0 {
@@ -402,7 +402,7 @@ func TestQueryStructuredBounds(t *testing.T) {
 // field, no as, round or num and den of their own, an op that is neither
 // ratio nor share, and a column that is a number.
 func TestQuerySchemaRatioSides(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	i := slices.IndexFunc(r.specs, func(s spec) bool { return s.Name == "query" })
 	if i < 0 {

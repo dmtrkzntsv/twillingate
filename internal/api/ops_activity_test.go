@@ -51,7 +51,7 @@ func dayPtr(s string) *string { return &s }
 // been read past, and how many live forms it has, drafts among them.
 // Archived projects are left out.
 func TestProjectActivityReadsTheFiles(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := t.Context()
 	// Project 1: a view newer than the template's files, and a form with
 	// two unseen submissions. Project 2: a measure in a log of its own.
@@ -122,7 +122,7 @@ func TestProjectActivityReadsTheFiles(t *testing.T) {
 // TestMarkFormSeenClampsFuture: a read mark far in the future must not hide
 // the submissions that arrive after it; seen_at never passes now.
 func TestMarkFormSeenClampsFuture(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := t.Context()
 	seed := newFormSeeder(t, h)
 	seed.add("contact", "s1", map[string]string{"email": "a@x.io"}, nil)
@@ -150,7 +150,7 @@ func deref(s *string) string {
 // TestProjectActivityJSONNull: a project with no data answers
 // "last_event_day": null, not a missing key or an empty string.
 func TestProjectActivityJSONNull(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	if _, err := h.ops.CreateProject(t.Context(), "test", manage.ProjectSpec{Name: "empty"}); err != nil {
 		t.Fatal(err)
 	}
@@ -233,7 +233,7 @@ func settleActivity(h *host) {
 // scans again, and a project whose scan fails reads its newest file's day
 // without failing the endpoint.
 func TestProjectActivityScansLiveProjectsOnceInTheTTL(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := t.Context()
 	if err := h.ops.ArchiveProject(ctx, "test", 2); err != nil {
 		t.Fatal(err)
@@ -303,7 +303,7 @@ func TestProjectActivityScansLiveProjectsOnceInTheTTL(t *testing.T) {
 // the last days at once, and however many there are one refresh runs, on a
 // context of its own.
 func TestProjectActivityReadsDoNotWaitForARefresh(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	n := &scanNative{Engine: h.native.(*native.Engine)}
 	h.native = n
 	clock := time.Now()
@@ -340,7 +340,7 @@ func TestProjectActivityReadsDoNotWaitForARefresh(t *testing.T) {
 // waits, but no longer than its own context, and leaves the scan running for
 // the reads after it, which share it.
 func TestProjectActivityFirstReadHonoursItsContext(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	n := &scanNative{Engine: h.native.(*native.Engine), entered: make(chan context.Context, 8), release: make(chan struct{})}
 	h.native = n
 	ctx, cancel := context.WithCancel(t.Context())
@@ -378,7 +378,7 @@ func TestProjectActivityFirstReadHonoursItsContext(t *testing.T) {
 // TestProjectActivityListingFailure: files that cannot be listed leave the last
 // days answering, or with none fail the read, and are not listed again for 30 s.
 func TestProjectActivityListingFailure(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := t.Context()
 	var logs bytes.Buffer
 	h.logger = slog.New(slog.NewTextHandler(&logs, nil))
@@ -424,7 +424,7 @@ func TestProjectActivityListingFailure(t *testing.T) {
 // TestProjectActivityCacheHitReadsNoFiles: within the TTL an answer costs
 // the mutex, not a walk of the event files' directories.
 func TestProjectActivityCacheHitReadsNoFiles(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := t.Context()
 	if _, err := h.projectActivity(ctx, struct{}{}); err != nil {
 		t.Fatal(err)
@@ -443,7 +443,7 @@ func TestProjectActivityCacheHitReadsNoFiles(t *testing.T) {
 // last day, which can lie ahead; a day read from the file names stops at
 // today, with and without an engine.
 func TestProjectActivityFallbackDayIsNeverFuture(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := t.Context()
 	latest, err := archive.LatestDays(h.eventsDir)
 	if err != nil {
@@ -475,7 +475,7 @@ func TestProjectActivityFallbackDayIsNeverFuture(t *testing.T) {
 // already ended fails without logging and starts nothing, so the next read
 // scans.
 func TestProjectActivityCancelledReadCachesNothing(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	n := &scanNative{Engine: h.native.(*native.Engine)}
 	h.native = n
 	var logs bytes.Buffer
@@ -501,7 +501,7 @@ func TestProjectActivityCancelledReadCachesNothing(t *testing.T) {
 // A project whose real events are far older than its newest file (a
 // monitored, quiet site) still reads its last real day, not null.
 func TestProjectActivityStepsBackToAnOldEvent(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ms := 120.0
 	writeHostEvents(t, h, store.Event{Family: store.FamilyChecks, ProjectID: 1, EventName: "uptime", Value: &ms,
 		Measure: store.MeasureTime, TS: time.Date(2027, 3, 3, 9, 0, 0, 0, time.UTC), Attributes: map[string]string{"up": "1"}})
@@ -514,7 +514,7 @@ func TestProjectActivityStepsBackToAnOldEvent(t *testing.T) {
 // Within the TTL a project that has files but no day is looked at again,
 // its newest file's month only, at most every 30 s.
 func TestProjectActivityRechecksAProjectWithNoDay(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := t.Context()
 	n := &scanNative{Engine: h.native.(*native.Engine)}
 	h.native = n

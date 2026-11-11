@@ -43,7 +43,7 @@ type openAPIDoc struct {
 // the rest of its input from the query and nothing else does, and every
 // $ref resolves inside the document.
 func TestOpenAPIDescribesEveryRoute(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	specs := newTestRegistrar(t, h).specs
 	raw, err := openAPI(specs)
 	if err != nil {
@@ -116,7 +116,7 @@ func TestOpenAPIDescribesEveryRoute(t *testing.T) {
 // A PATCH's body carries its fields, not the path's, and a field named by
 // a wildcard is never read from the body.
 func TestOpenAPISplitsPathFromBody(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	raw, err := openAPI(newTestRegistrar(t, h).specs)
 	if err != nil {
 		t.Fatal(err)
@@ -142,7 +142,7 @@ func TestOpenAPISplitsPathFromBody(t *testing.T) {
 }
 
 func TestOpenAPIRefusesUndeclaredWildcard(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	specs := newTestRegistrar(t, h).specs
 	for i := range specs {
 		if specs[i].Path == "/api/projects/{project_id}/retention" {
@@ -194,7 +194,7 @@ func TestSummaryOf(t *testing.T) {
 // The share upload is described as the multipart body it is, with its two
 // images as files.
 func TestOpenAPIDescribesTheShareUpload(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	raw, err := openAPI(newTestRegistrar(t, h).specs)
 	if err != nil {
 		t.Fatal(err)
