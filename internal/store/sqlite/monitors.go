@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"reflect"
 	"slices"
 	"strings"
 	"time"
@@ -14,16 +16,58 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-const monitorCols = `project_id, origin, enabled, contains, redirect_to, cert_expires_at, cert_issuer,
+const monitorCols = `project_id, origin, enabled, expect, cert_expires_at, cert_issuer,
 	cert_valid, cert_error, cert_checked_at, redirects,
 	check_requested_at, check_finished_at, last_checked_at, last_up, last_status, last_reason, last_error, last_ms`
 
 func scanMonitor(s rowScanner) (store.Monitor, error) {
 	var m store.Monitor
-	err := s.Scan(&m.ProjectID, &m.Origin, &m.Enabled, &m.Contains, &m.RedirectTo, &m.CertExpiresAt, &m.CertIssuer,
+	var expect string
+	err := s.Scan(&m.ProjectID, &m.Origin, &m.Enabled, &expect, &m.CertExpiresAt, &m.CertIssuer,
 		&m.CertValid, &m.CertError, &m.CertCheckedAt, &m.Redirects,
 		&m.CheckRequestedAt, &m.CheckFinishedAt, &m.Last.CheckedAt, &m.Last.Up, &m.Last.Status, &m.Last.Reason, &m.Last.Error, &m.Last.MS)
+	if err == nil {
+		if err = json.Unmarshal([]byte(expect), &m.Expect); err != nil {
+			err = fmt.Errorf("monitor %s: expect: %w", m.Origin, err)
+		}
+	}
 	return m, err
+}
+
+// expectChanges names the expectations that differ between a and b, by
+// their JSON keys in order, so the audit says what an edit changed whatever
+// the expectations are.
+func expectChanges(a, b store.MonitorExpect) []string {
+	ma, mb := expectMap(a), expectMap(b)
+	keys := slices.Collect(maps.Keys(ma))
+	for k := range mb {
+		if _, ok := ma[k]; !ok {
+			keys = append(keys, k)
+		}
+	}
+	slices.Sort(keys)
+	var out []string
+	for _, k := range keys {
+		if !reflect.DeepEqual(ma[k], mb[k]) {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// expectJSON is e as stored. MonitorExpect holds only JSON-safe values, so
+// marshalling it cannot fail.
+func expectJSON(e store.MonitorExpect) string {
+	raw, _ := json.Marshal(e)
+	return string(raw)
+}
+
+// expectMap is e as its JSON object: the expectations set, by key. It reads
+// back what expectJSON wrote, which cannot fail.
+func expectMap(e store.MonitorExpect) map[string]any {
+	var m map[string]any
+	_ = json.Unmarshal([]byte(expectJSON(e)), &m)
+	return m
 }
 
 func scanMonitors(rows *sql.Rows) ([]store.Monitor, error) {
@@ -86,26 +130,18 @@ func (d *DB) SetMonitor(ctx context.Context, projectID int64, origin string, s s
 		if !exists {
 			cur = store.Monitor{ProjectID: projectID, Origin: origin}
 		}
-		next := store.MonitorSettings{Enabled: &cur.Enabled, Contains: &cur.Contains, RedirectTo: &cur.RedirectTo}
+		enabled, expect := cur.Enabled, cur.Expect
 		if s.Enabled != nil {
-			next.Enabled = s.Enabled
+			enabled = *s.Enabled
 		}
-		if s.Contains != nil {
-			next.Contains = s.Contains
-		}
-		if s.RedirectTo != nil {
-			next.RedirectTo = s.RedirectTo
+		if s.Expect != nil {
+			expect = s.Expect(cur.Expect)
 		}
 		changed := []string{"origin=" + origin}
-		if *next.Enabled != cur.Enabled {
-			changed = append(changed, fmt.Sprintf("enabled=%t", *next.Enabled))
+		if enabled != cur.Enabled {
+			changed = append(changed, fmt.Sprintf("enabled=%t", enabled))
 		}
-		if *next.Contains != cur.Contains {
-			changed = append(changed, "contains")
-		}
-		if *next.RedirectTo != cur.RedirectTo {
-			changed = append(changed, "redirect_to="+*next.RedirectTo)
-		}
+		changed = append(changed, expectChanges(cur.Expect, expect)...)
 		if len(changed) == 1 {
 			m = cur
 			return nil
@@ -114,7 +150,7 @@ func (d *DB) SetMonitor(ctx context.Context, projectID int64, origin string, s s
 		// origins edit may have committed since the caller looked, and the
 		// upsert would bring back the row it deleted. Turning off a monitor
 		// that has a row stays allowed.
-		if *next.Enabled || !exists {
+		if enabled || !exists {
 			var raw string
 			if err := tx.QueryRowContext(ctx, `SELECT allowed_origins FROM projects WHERE id=?`, projectID).Scan(&raw); err != nil {
 				return err
@@ -127,16 +163,16 @@ func (d *DB) SetMonitor(ctx context.Context, projectID int64, origin string, s s
 				return store.Refuse(store.ErrInvalid, "%s is not an origin a monitor of project %d may use", origin, projectID)
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO monitors (project_id, origin, enabled, contains, redirect_to)
-			VALUES (?,?,?,?,?)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO monitors (project_id, origin, enabled, expect)
+			VALUES (?,?,?,?)
 			ON CONFLICT (project_id, origin) DO UPDATE SET
 			  cert_checked_at = CASE WHEN enabled = 1 OR excluded.enabled = 0 THEN cert_checked_at ELSE '' END,
-			  enabled = excluded.enabled, contains = excluded.contains, redirect_to = excluded.redirect_to,
+			  enabled = excluded.enabled, expect = excluded.expect,
 			  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')`,
-			projectID, origin, *next.Enabled, *next.Contains, *next.RedirectTo); err != nil {
+			projectID, origin, enabled, expectJSON(expect)); err != nil {
 			return err
 		}
-		if !*next.Enabled {
+		if !enabled {
 			if err := finishPendingChecks(ctx, tx, projectID, origin); err != nil {
 				return err
 			}
@@ -169,7 +205,7 @@ func finishPendingChecks(ctx context.Context, tx *sql.Tx, projectID int64, origi
 // ListEnabledMonitors lists the enabled monitors of live (not archived)
 // projects, by project id and then origin.
 func (d *DB) ListEnabledMonitors(ctx context.Context) ([]store.Monitor, error) {
-	rows, err := d.db.QueryContext(ctx, `SELECT m.project_id, m.origin, m.enabled, m.contains, m.redirect_to,
+	rows, err := d.db.QueryContext(ctx, `SELECT m.project_id, m.origin, m.enabled, m.expect,
 		m.cert_expires_at, m.cert_issuer, m.cert_valid, m.cert_error, m.cert_checked_at, m.redirects,
 		m.check_requested_at, m.check_finished_at, m.last_checked_at, m.last_up, m.last_status, m.last_reason, m.last_error, m.last_ms
 		FROM monitors m JOIN projects p ON p.id = m.project_id

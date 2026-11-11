@@ -711,7 +711,7 @@ func (r *Runner) lockRead(ctx context.Context, k readKey) (unlock func(), ok boo
 func (r *Runner) availability(ctx context.Context, m store.Monitor) store.Event {
 	start := r.now().UTC()
 	cctx, cancel := context.WithTimeout(ctx, r.timeout)
-	res := Check(cctx, r.client, m.Origin, Want{Contains: m.Contains, RedirectTo: m.RedirectTo}, func(target string) bool {
+	res := Check(cctx, r.client, m.Origin, m.Expect, func(target string) bool {
 		return r.origins.RedirectAllowed(m.ProjectID, target, m.Origin)
 	})
 	cancel()

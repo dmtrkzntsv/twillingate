@@ -85,7 +85,7 @@ func (h *host) monitorsOut(l manage.MonitorList) monitorsOut {
 		if m.Enabled {
 			checkEvery = every
 		}
-		out.Monitors = append(out.Monitors, monitorOut{Origin: m.Origin, Enabled: m.Enabled, CheckEvery: checkEvery, Contains: m.Contains, RedirectTo: m.RedirectTo, Redirects: m.Redirects,
+		out.Monitors = append(out.Monitors, monitorOut{Origin: m.Origin, Enabled: m.Enabled, CheckEvery: checkEvery, Contains: m.Expect.Contains, RedirectTo: m.Expect.RedirectTo, Redirects: m.Redirects,
 			Cert: monitorCertOut{ExpiresAt: m.CertExpiresAt, Issuer: m.CertIssuer, Valid: m.CertValid,
 				Error: m.CertError, CheckedAt: m.CertCheckedAt},
 			Last: monitorLastOut{CheckedAt: m.Last.CheckedAt, Up: m.Last.Up, Status: m.Last.Status,
@@ -108,7 +108,7 @@ func (h *host) listMonitors(ctx context.Context, in idIn) (monitorsOut, error) {
 
 func (h *host) updateMonitor(ctx context.Context, in updateMonitorIn) (monitorsOut, error) {
 	l, err := h.ops.SetMonitor(ctx, actorFrom(ctx), in.ProjectID, in.Origin,
-		manage.MonitorSpec{Enabled: in.Enabled, Contains: in.Contains, RedirectTo: in.RedirectTo})
+		manage.MonitorSpec{Enabled: in.Enabled, Expect: manage.ExpectSpec{Contains: in.Contains, RedirectTo: in.RedirectTo}})
 	if err != nil {
 		return monitorsOut{}, h.projectErr(ctx, in.ProjectID, err)
 	}

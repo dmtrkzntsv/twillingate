@@ -113,10 +113,19 @@ func asciiOrigin(origin string) string {
 
 // MonitorSpec is a change to a monitor: a nil field keeps the current value.
 type MonitorSpec struct {
-	Enabled  *bool
+	Enabled *bool
+	Expect  ExpectSpec
+}
+
+// ExpectSpec is a change to a monitor's expectations (store.MonitorExpect),
+// one field each: nil keeps it, "" clears it. A new expectation is a field
+// here and its case in expectEdit.
+type ExpectSpec struct {
+	// Contains is text the page must contain, at most maxMonitorContains
+	// characters.
 	Contains *string
 	// RedirectTo is the origin the check must end up at: another of the
-	// project's monitor origins, "" for none.
+	// project's monitor origins.
 	RedirectTo *string
 }
 
@@ -251,28 +260,46 @@ func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, ori
 	if err != nil {
 		return MonitorList{}, err
 	}
-	next := store.MonitorSettings{Enabled: spec.Enabled}
-	if spec.Contains != nil {
-		c := strings.TrimSpace(*spec.Contains)
-		if utf8.RuneCountInString(c) > maxMonitorContains {
-			return MonitorList{}, fmt.Errorf("%w: contains is longer than %d characters", ErrInvalid, maxMonitorContains)
-		}
-		next.Contains = &c
+	edit, err := o.expectEdit(ctx, projectID, origin, spec.Expect)
+	if err != nil {
+		return MonitorList{}, err
 	}
-	if spec.RedirectTo != nil {
-		to, err := o.monitorRedirectTo(ctx, projectID, origin, *spec.RedirectTo)
-		if err != nil {
-			return MonitorList{}, err
-		}
-		next.RedirectTo = &to
-	}
-	// The store merges next over the row inside its transaction, builds the
+	// The store applies the edit to the row inside its transaction, builds the
 	// audit detail from what changed and writes nothing when nothing does.
-	if _, err := o.St.SetMonitor(ctx, projectID, origin, next, MonitorOrigins, store.AuditEntry{
+	if _, err := o.St.SetMonitor(ctx, projectID, origin, store.MonitorSettings{Enabled: spec.Enabled, Expect: edit}, MonitorOrigins, store.AuditEntry{
 		Actor: actor, Action: "monitor.update", Subject: idSubject(projectID)}); err != nil {
 		return MonitorList{}, err
 	}
 	return o.ListMonitors(ctx, projectID)
+}
+
+// expectEdit checks each expectation spec gives, in its normalized form, and
+// returns the edit that sets them; nil when spec gives none.
+func (o *Ops) expectEdit(ctx context.Context, projectID int64, origin string, spec ExpectSpec) (func(store.MonitorExpect) store.MonitorExpect, error) {
+	var sets []func(*store.MonitorExpect)
+	if spec.Contains != nil {
+		c := strings.TrimSpace(*spec.Contains)
+		if utf8.RuneCountInString(c) > maxMonitorContains {
+			return nil, fmt.Errorf("%w: contains is longer than %d characters", ErrInvalid, maxMonitorContains)
+		}
+		sets = append(sets, func(e *store.MonitorExpect) { e.Contains = c })
+	}
+	if spec.RedirectTo != nil {
+		to, err := o.monitorRedirectTo(ctx, projectID, origin, *spec.RedirectTo)
+		if err != nil {
+			return nil, err
+		}
+		sets = append(sets, func(e *store.MonitorExpect) { e.RedirectTo = to })
+	}
+	if len(sets) == 0 {
+		return nil, nil
+	}
+	return func(e store.MonitorExpect) store.MonitorExpect {
+		for _, set := range sets {
+			set(&e)
+		}
+		return e
+	}, nil
 }
 
 // monitorRedirectTo is to in its normalized form, "" for none, refused unless

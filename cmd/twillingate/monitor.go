@@ -88,10 +88,10 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 			spec.Enabled = &on
 		}
 		if given["contains"] {
-			spec.Contains = contains
+			spec.Expect.Contains = contains
 		}
 		if given["redirect-to"] {
-			spec.RedirectTo = redirectTo
+			spec.Expect.RedirectTo = redirectTo
 		}
 	}
 	ops, cfg, closeStore, err := openOps(envFile)
@@ -194,11 +194,11 @@ func printMonitor(w io.Writer, m store.Monitor, every time.Duration) {
 	if m.Enabled && every > 0 {
 		fmt.Fprintf(w, "  checked every\t%d seconds\n", int(every/time.Second))
 	}
-	if m.Contains != "" {
-		fmt.Fprintf(w, "  contains\t%s\n", m.Contains)
+	if m.Expect.Contains != "" {
+		fmt.Fprintf(w, "  contains\t%s\n", m.Expect.Contains)
 	}
-	if m.RedirectTo != "" {
-		fmt.Fprintf(w, "  redirect to\t%s\n", m.RedirectTo)
+	if m.Expect.RedirectTo != "" {
+		fmt.Fprintf(w, "  redirect to\t%s\n", m.Expect.RedirectTo)
 	}
 	if !strings.HasPrefix(m.Origin, "http://") && (m.CertCheckedAt != "" || m.CertError != "") {
 		fmt.Fprintf(w, "  certificate\texpires %s, issuer %s, valid %t, checked %s", orUnknown(m.CertExpiresAt), orUnknown(m.CertIssuer), m.CertValid, orUnknown(m.CertCheckedAt))

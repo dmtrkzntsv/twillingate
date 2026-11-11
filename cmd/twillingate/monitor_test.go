@@ -67,7 +67,7 @@ func TestMonitorRoundTrip(t *testing.T) {
 	if !strings.Contains(got, "redirect to\t"+shopOrigin+"\n") {
 		t.Errorf("set = %q, missing the redirect", got)
 	}
-	if m := storedMonitor(t, blogOrigin); m.RedirectTo != shopOrigin {
+	if m := storedMonitor(t, blogOrigin); m.Expect.RedirectTo != shopOrigin {
 		t.Errorf("stored = %+v", m)
 	}
 	runMonitor(t, 1, "set", "-project-id", "1", "-origin", blogOrigin, "-redirect-to", blogOrigin) // itself
@@ -83,7 +83,7 @@ func TestMonitorRoundTrip(t *testing.T) {
 	if got := runMonitor(t, 0, "set", "-project-id", "1", "-origin", shopOrigin, "-disable", "-contains", ""); !strings.Contains(got, shopOrigin+" disabled") || strings.Contains(got, "Welcome") {
 		t.Errorf("disable = %q, want disabled with the text cleared", got)
 	}
-	if m := storedMonitor(t, shopOrigin); m.Enabled || m.Contains != "" {
+	if m := storedMonitor(t, shopOrigin); m.Enabled || m.Expect.Contains != "" {
 		t.Errorf("stored = %+v", m)
 	}
 	if m := storedMonitor(t, blogOrigin); !m.Enabled {

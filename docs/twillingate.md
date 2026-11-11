@@ -319,9 +319,9 @@ end up at, such as `https://example.com` on the monitor of
 only when its redirects end at that origin and it answers there; one that
 answers on its own origin, or ends elsewhere, is down with `reason` `redirect`.
 `contains` then applies to the page at the end. An origin removed from
-`allowed_origins` stays the `redirect_to` of the monitors naming it, whose
-checks then fail with `redirect`, since the hop to it is off the project's
-origins. `list_monitors` reads every eligible origin, one with no settings as off.
+`allowed_origins` stays the `redirect_to` of the monitors naming it; their
+checks fail with `redirect` unless another entry, a wildcard included, still
+covers it, since the hop to it is then off the project's origins. `list_monitors` reads every eligible origin, one with no settings as off.
 Removing an origin from `allowed_origins` removes its monitor (audited
 `monitor.remove`), and the domain reading no other monitor uses.
 
