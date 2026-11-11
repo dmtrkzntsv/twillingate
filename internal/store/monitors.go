@@ -25,7 +25,7 @@ type Monitor struct {
 }
 
 // MonitorExpect is what an availability check expects of the site beyond a
-// 2xx answer (migration 048 keeps it as one JSON object). Each field is one
+// 2xx answer (migration 049 keeps it as one JSON object). Each field is one
 // expectation, its zero value none: a new one is a field here, its
 // validation in manage and its step in monitor's check, with no migration.
 type MonitorExpect struct {
