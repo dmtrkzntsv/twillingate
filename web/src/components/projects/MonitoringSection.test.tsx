@@ -409,24 +409,40 @@ describe('MonitoringSection', () => {
       await user.click(await screen.findByRole('menuitem', { name: REDIRECT }))
       const select = a.getByLabelText(FIELD)
       await waitFor(() => expect(select).toHaveFocus())
-      // The other origins, on or off, and none; never the row's own.
+      // A prompt, then the other origins, on or off; never the row's own.
       expect(within(select).getAllByRole('option').map((o) => o.getAttribute('value'))).toEqual(['', B, C])
+      expect(select).toHaveValue('')
       expect(a.queryByRole('button', { name: 'Save' })).not.toBeInTheDocument()
       await user.selectOptions(select, B)
       await user.click(a.getByRole('button', { name: 'Save' }))
       expect(onSave).toHaveBeenCalledWith({ origin: A, redirect_to: B })
     })
 
-    it('shows a saved redirect under the origin, which opens the field; choosing none clears it', async () => {
+    it('shows a saved redirect under the origin, which opens the field with the origins alone', async () => {
       const user = userEvent.setup()
-      const { onSave } = show(list([on(A, { redirect_to: B }), on(B)]))
+      const { onSave } = show(list([on(A, { redirect_to: B }), on(B), on(C)]))
       const a = await row(A)
       await user.click(a.getByRole('button', { name: `must redirect to ${B}` }))
       const select = a.getByLabelText(FIELD)
       expect(select).toHaveValue(B)
-      await user.selectOptions(select, '')
+      expect(within(select).getAllByRole('option').map((o) => o.getAttribute('value'))).toEqual([B, C])
+      await user.selectOptions(select, C)
       await user.click(a.getByRole('button', { name: 'Save' }))
+      expect(onSave).toHaveBeenCalledWith({ origin: A, redirect_to: C })
+    })
+
+    it('the X removes a saved redirect at once, and focus goes to the row menu', async () => {
+      const user = userEvent.setup()
+      const { onSave, read, client } = show(list([on(A, { redirect_to: B }), on(B)]))
+      const a = await row(A)
+      expect(a.queryByRole('button', { name: `Remove the redirect to ${A}` })).not.toBeInTheDocument()
+      read.mockResolvedValue(list([on(A), on(B)]))
+      await user.click(a.getByRole('button', { name: `Remove the redirect to ${B}` }))
       expect(onSave).toHaveBeenCalledWith({ origin: A, redirect_to: '' })
+      await client.invalidateQueries({ queryKey: ['monitor'] })
+      await waitFor(() => expect(a.queryByText(/must redirect/)).not.toBeInTheDocument())
+      expect(a.getByRole('button', { name: `More for ${A}` })).toHaveFocus()
+      expect(a.queryByLabelText(FIELD)).not.toBeInTheDocument()
     })
 
     it('Cancel and Escape close the field without saving, focusing what opened it', async () => {
@@ -434,7 +450,6 @@ describe('MonitoringSection', () => {
       const { onSave } = show(list([on(A, { redirect_to: B }), on(B)]))
       const a = await row(A)
       await user.click(a.getByRole('button', { name: `must redirect to ${B}` }))
-      await user.selectOptions(a.getByLabelText(FIELD), '')
       await user.click(a.getByRole('button', { name: 'Cancel' }))
       expect(a.queryByLabelText(FIELD)).not.toBeInTheDocument()
       const saved = a.getByRole('button', { name: `must redirect to ${B}` })

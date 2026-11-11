@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type FormEvent } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { MoreHorizontalIcon, RefreshCwIcon } from 'lucide-react'
+import { MoreHorizontalIcon, RefreshCwIcon, XIcon } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
 import LoadError from '@/components/projects/LoadError'
 import { Button } from '@/components/ui/button'
@@ -197,6 +197,12 @@ function MonitorRow({ m, others, now, pending, gaveUp, onGiveUp, onSave, onCheck
       }
     })
   }
+  // The X on the saved redirect: removed at once, focus to the row's menu.
+  const removeRedirect = () => {
+    void onSave({ origin: m.origin, redirect_to: '' }).then((saved) => {
+      if (saved) menuRef.current?.focus()
+    })
+  }
   const cancelRedirect = () => {
     closingRedirect.current = true
     setRedirectTo(m.redirect_to)
@@ -249,15 +255,25 @@ function MonitorRow({ m, others, now, pending, gaveUp, onGiveUp, onSave, onCheck
           </button>
         )}
         {m.enabled && m.redirect_to !== '' && !editingRedirect && (
-          <button
-            type="button"
-            ref={redirectSavedRef}
-            className="w-fit max-w-full text-left text-sm break-all text-muted-foreground underline-offset-2 hover:underline"
-            disabled={pending}
-            onClick={() => setEditingRedirect(true)}
-          >
-            {`must redirect to ${m.redirect_to}`}
-          </button>
+          <div className="flex min-w-0 items-center gap-1">
+            <button
+              type="button"
+              ref={redirectSavedRef}
+              className="w-fit min-w-0 text-left text-sm break-all text-muted-foreground underline-offset-2 hover:underline"
+              disabled={pending}
+              onClick={() => setEditingRedirect(true)}
+            >
+              {`must redirect to ${m.redirect_to}`}
+            </button>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button type="button" size="icon-xs" variant="ghost" className="shrink-0 text-muted-foreground" aria-label={`Remove the redirect to ${m.redirect_to}`} disabled={pending} onClick={removeRedirect}>
+                  <XIcon />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>Remove the redirect</TooltipContent>
+            </Tooltip>
+          </div>
         )}
         {m.enabled && <StatusLine m={m} now={now} checking={checking} paused={paused} />}
       </div>
@@ -358,7 +374,8 @@ function MonitorRow({ m, others, now, pending, gaveUp, onGiveUp, onSave, onCheck
                         cancelRedirect()
                       }}
                     >
-                      <NativeSelectOption value="">No redirect: the site answers itself</NativeSelectOption>
+                      {/* Removing is the X on the saved redirect; a new one starts from a choice to make. */}
+                      {m.redirect_to === '' && <NativeSelectOption value="" disabled>Choose an origin</NativeSelectOption>}
                       {choices.map((o) => <NativeSelectOption key={o} value={o}>{o}</NativeSelectOption>)}
                     </NativeSelect>
                   </div>
