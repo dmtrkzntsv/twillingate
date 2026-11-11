@@ -125,7 +125,7 @@ func TestListAttributesReadsTheFiles(t *testing.T) {
 // key), plus every key a rule names with its own counts, and keys_total
 // counts them all.
 func TestListAttributesCapsTheKeys(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := context.Background()
 	defer func(n int) { attributeKeysLimit = n }(attributeKeysLimit)
 	attributeKeysLimit = 2
@@ -203,7 +203,7 @@ func TestListAttributesCoversAYear(t *testing.T) {
 // More rule-named keys than one query keeps are asked in turns, each key
 // listed once with its own counts.
 func TestListAttributesKeepsEveryRuleNamedKey(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := context.Background()
 	defer func(n int) { attributeKeysLimit = n }(attributeKeysLimit)
 	attributeKeysLimit = 1

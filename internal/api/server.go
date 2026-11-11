@@ -64,7 +64,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 		h.events.warm()
 	}
 	srv := mcp.NewServer(&mcp.Implementation{Name: "twillingate", Version: "1.0.0"},
-		&mcp.ServerOptions{Instructions: serverInstructions})
+		&mcp.ServerOptions{Instructions: serverInstructions, SchemaCache: mcpSchemas})
 	rest := http.NewServeMux()
 	r := &registrar{mcp: srv, rest: rest, logger: logger}
 	h.register(r)

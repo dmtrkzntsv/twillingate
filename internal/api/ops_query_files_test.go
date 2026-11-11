@@ -197,10 +197,10 @@ func TestQueryReadsTheFiles(t *testing.T) {
 // offer it, so an agent is never offered SQL it would be refused; with
 // one it has both.
 func TestQueryToolOffersSQLOnlyWithAnEngine(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	querySpec := func() spec {
 		t.Helper()
-		r := &registrar{mcp: mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, nil), logger: h.logger}
+		r := &registrar{mcp: mcp.NewServer(&mcp.Implementation{Name: "t", Version: "0"}, &mcp.ServerOptions{SchemaCache: mcpSchemas}), logger: h.logger}
 		h.register(r)
 		for _, s := range r.specs {
 			if s.Name == "query" {

@@ -232,7 +232,7 @@ func writeAttributeEdges(t *testing.T, h *host) {
 // allowed is named where it is checked: identities reads an id whose
 // name is the id itself as unnamed.
 func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	writeAttributeEdges(t, h)
 	ctx := context.Background()
 	old := func(in rangeIn, q string, vals map[string]sqlbind.Value, got tableOut) tableOut {
@@ -387,7 +387,7 @@ func TestAttributeToolsMatchTheirOldSQL(t *testing.T) {
 // cut, as the old SQL did; identities only when its own limit is past the
 // cap.
 func TestAttributeToolsUnderTheRowCap(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	setGuards(t, h, h.queryTimeout, 1)
 	ctx := context.Background()
 	blog := rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}

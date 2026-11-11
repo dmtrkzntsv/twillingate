@@ -297,7 +297,7 @@ func sameNumbers(t *testing.T, name string, got, want tableOut, tol float64) {
 // it is checked: views_overview without kind counts visitors per day, not
 // per day and kind (G15).
 func TestToolsMatchTheirOldSQL(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	writeParityEdges(t, h)
 	ctx := context.Background()
 	old := func(in rangeIn, q string, vals map[string]sqlbind.Value, got tableOut) tableOut {
@@ -459,7 +459,7 @@ func TestToolsMatchTheirOldSQL(t *testing.T) {
 // Under a row cap below their answers the tools say the table is cut, as
 // the old SQL did, and event_names refuses a partial list.
 func TestNativeToolsUnderTheRowCap(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	setGuards(t, h, h.queryTimeout, 2)
 	ctx := context.Background()
 	blog := rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}
@@ -509,7 +509,7 @@ func TestMarkPartialNamesTheEstimates(t *testing.T) {
 
 // Without the native engine the tools refuse.
 func TestNativeToolsWithoutTheEngine(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	h.native = nil
 	blog := rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}
 	if _, err := h.viewsOverview(context.Background(), overviewIn{rangeIn: blog}); err == nil {
@@ -526,7 +526,7 @@ func TestNativeToolsWithoutTheEngine(t *testing.T) {
 // CONSOLE_QUERY_ROWS_MAX at 0 (or below) is no cap: the tools answer in
 // full, within the engine's 1,000.
 func TestNativeToolsWithoutARowCap(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	ctx := context.Background()
 	blog := rangeIn{ProjectID: 1, From: "2026-08-01", To: "2026-08-31"}
 	for _, cap := range []int{0, -1} {

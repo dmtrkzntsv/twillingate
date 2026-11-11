@@ -506,7 +506,7 @@ func TestArchiveSubmissionsSelectors(t *testing.T) {
 }
 
 func TestExportSubmissionsCSV(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	seed := newFormSeeder(t, h)
 	seed.add("contact", "s1", map[string]string{"email": "a@x.io", "note": "line one\nline, two"}, nil)
 	seed.add("contact", "s2", map[string]string{"email": "b@x.io"}, nil)
@@ -700,7 +700,7 @@ func TestListFormsSeenFields(t *testing.T) {
 }
 
 func TestMarkFormSeenRefusals(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	r := newTestRegistrar(t, h)
 	newFormSeeder(t, h).add("contact", "s1", map[string]string{"email": "a@x.io"}, nil)
 	for _, c := range []struct {

@@ -156,7 +156,7 @@ func TestWidgetSchemaLeavesRESTToTheServer(t *testing.T) {
 // TestOpenAPICarriesTheWidgetContract: /api/doc's add_widget body has the
 // component enum and the per-component rules.
 func TestOpenAPICarriesTheWidgetContract(t *testing.T) {
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	raw, err := openAPI(newTestRegistrar(t, h).specs)
 	if err != nil {
 		t.Fatal(err)

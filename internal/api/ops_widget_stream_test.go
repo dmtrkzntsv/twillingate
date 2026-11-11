@@ -60,7 +60,7 @@ func streamServer(t *testing.T, every time.Duration) (*host, *httptest.Server, *
 // mk makes of the host's engine.
 func streamServerWith(t *testing.T, every time.Duration, mk func(*native.Engine) reporting.Native) (*host, *httptest.Server) {
 	t.Helper()
-	h, _ := newTestHost(t)
+	h := newBareHost(t)
 	st, err := store.Open("sqlite://" + testDBPaths[h])
 	if err != nil {
 		t.Fatal(err)

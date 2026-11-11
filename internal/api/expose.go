@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"reflect"
+	"sync"
 
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/google/jsonschema-go/jsonschema"
@@ -81,14 +82,46 @@ var (
 // and mounts h on its route when s has one and REST is registered. It
 // returns s as recorded.
 func (r *registrar) add(s spec, in, out *jsonschema.Schema, h http.HandlerFunc) spec {
-	s.in, s.out = in, out
 	if s.constrain != nil {
-		s.constrain(s.in)
+		s.constrain(in)
 	}
+	s.in, s.out = intern(s.Name+" in", in), intern(s.Name+" out", out)
 	r.specs = append(r.specs, s)
 	if s.Method != "" && r.rest != nil {
 		r.rest.HandleFunc(s.Method+" "+s.Path, h)
 	}
+	return s
+}
+
+// mcpSchemas is the MCP SDK's cache of resolved tool schemas, shared by every
+// server this process builds. The SDK finds a schema in it by pointer, which
+// intern keeps stable: resolving a schema is the costly part of adding a tool
+// (about 1.4 s for the whole set under -race, for each test that builds a host).
+var mcpSchemas = mcp.NewSchemaCache()
+
+// interned holds each tool's schemas built so far, by tool and side.
+var interned = struct {
+	sync.Mutex
+	m map[string][]*jsonschema.Schema
+}{m: map[string][]*jsonschema.Schema{}}
+
+// intern returns a schema equal to s built earlier under key, so that the
+// same schema is the same pointer however many servers are built, or s,
+// remembered, when none is. Equal is compared in full, so a schema that
+// depends on the host (query's, with or without an SQL engine) is its own.
+// The schemas are read-only once registered.
+func intern(key string, s *jsonschema.Schema) *jsonschema.Schema {
+	if s == nil {
+		return nil
+	}
+	interned.Lock()
+	defer interned.Unlock()
+	for _, seen := range interned.m[key] {
+		if reflect.DeepEqual(seen, s) {
+			return seen
+		}
+	}
+	interned.m[key] = append(interned.m[key], s)
 	return s
 }
 
