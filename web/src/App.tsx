@@ -1,6 +1,7 @@
 import { useEffect, type ReactNode } from 'react'
 import { WifiOffIcon } from 'lucide-react'
 import { BrowserRouter, Navigate, Route, Routes, useNavigate } from 'react-router'
+import ScrollToTop from '@/components/ScrollToTop'
 import StatusCard from '@/components/StatusCard'
 import { Toaster } from '@/components/ui/sonner'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -48,6 +49,7 @@ function App() {
   return (
     <BrowserRouter basename="/app">
       <LoginOnUnauthorized />
+      <ScrollToTop />
       <TooltipProvider>
         {/* Archive and refusal toasts for the page's write layer (D12). */}
         <Toaster richColors={false} position="bottom-right" />

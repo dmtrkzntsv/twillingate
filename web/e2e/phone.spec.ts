@@ -591,3 +591,30 @@ test('a project with no dashboard tabs fits its Settings row on a phone', async 
     await request.post(`/api/projects/${id}/archive`, { headers: authHeaders() })
   }
 })
+
+test('a page opened from far down another opens at its top', async ({ page, request }) => {
+  const created = await request.post('/api/projects', { headers: authHeaders(), data: { name: `top-${Date.now()}` } })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { project_id: other } = (await created.json()) as { project_id: number }
+  try {
+    await page.goto('/app/projects/1')
+    await page.waitForURL(/\/oauth\/authorize\?/)
+    await page.getByLabel('Password').fill(PASSWORD)
+    await page.getByRole('button', { name: 'Connect' }).click()
+    await page.waitForURL(/\/app\/projects\/1$/)
+    await page.waitForLoadState('networkidle')
+
+    // A project's dashboard is taller than a phone: read it to the bottom,
+    // then open the other project from the sidebar. Its dashboard is as tall,
+    // so a kept position would show.
+    await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight))
+    expect(await page.evaluate(() => window.scrollY)).toBeGreaterThan(500)
+    await page.getByRole('button', { name: 'Toggle Sidebar' }).first().click()
+    await page.locator(`[data-mobile="true"] a[href^="/app/projects/${other}"]`).click()
+    await page.waitForURL(new RegExp(`/app/projects/${other}`))
+    await page.waitForLoadState('networkidle')
+    expect(await page.evaluate(() => window.scrollY)).toBe(0)
+  } finally {
+    await request.post(`/api/projects/${other}/archive`, { headers: authHeaders() })
+  }
+})
