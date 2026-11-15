@@ -25,7 +25,7 @@ internal/geo/        MaxMind lookup
 internal/wire/       the ingest wire format's fixed limits, shared by server and api
 internal/native/     structured queries (stat, trend, breakdown) answered in Go over the event files
 internal/archive/    raw events as files under data/: the per-day NDJSON log, the dump to Parquet, the month merge, retention by file, the derived sessions, identities and aliases, and the table spec the external SQL engine reads
-internal/shared/     small generic leaf packages: civil (calendar dates), golden (tests' expected answers under testdata/), maindomain (a host's registrable domain), notify (sending to a channel by URL), readsql, sortkey, version
+internal/shared/     small generic leaf packages: civil (calendar dates), clientip (the address a request came from, behind trusted proxies), golden (tests' expected answers under testdata/), maindomain (a host's registrable domain), notify (sending to a channel by URL), readsql, sortkey, version
 internal/shared/hll/ distinct counts, exact up to 1,024 ids then a HyperLogLog sketch (about ±2%), for internal/native
 internal/sqlcheck/   tests only: prepares every SQL string the code hands database/sql against a migrated database
 sqlengine/           public protocol and client for an external SQL engine over a Unix socket; stdlib only, importable by other modules
@@ -126,6 +126,15 @@ committed, since the Go server validates widgets against it: after changing a
 widget contract, commit the regenerated file, or CI's `web` job (typecheck,
 tests, build, then the drift check on that file) fails. Its `e2e` job runs
 the Playwright suite against a built binary (`cd web && npm run e2e`).
+
+`make vuln` checks for known vulnerabilities, as `.github/workflows/vuln.yml`
+does on every pull request and weekly: `govulncheck` over the Go code (what
+the code can reach, the standard library of the Go release in `go.mod`
+included, so a finding there means bumping `go.mod` and the Dockerfile's
+`golang:` tag together), and `npm audit` over what `web/` and `sdk/` ship
+(`scripts/npm-audit.mjs`: high and critical fail unless the directory's
+`audit-allow.json` accepts the advisory with its reason; development tools
+are reported only).
 
 `internal/sqlcheck` (tests only) reads every SQL string the code under
 `internal/` passes to `database/sql`'s `…Context` methods or to a wrapper

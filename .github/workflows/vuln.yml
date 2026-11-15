@@ -1,0 +1,39 @@
+name: vuln
+# Known vulnerabilities in what the binary links and what the web app and
+# the SDK bundle. On every pull request, since a change can reach a
+# vulnerable function without touching a lockfile, and weekly, since an
+# advisory can be published against code that has not changed.
+on:
+  pull_request:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+concurrency:
+  group: vuln-${{ github.ref }}
+  cancel-in-progress: true
+permissions:
+  contents: read
+jobs:
+  # govulncheck reports a vulnerability only when the code can reach the
+  # vulnerable symbol, in a dependency or in the standard library of the
+  # Go release go.mod names; it reads source, so it needs no dashboards
+  # build. Same command as `make vuln`.
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version-file: go.mod, cache: false }
+      - run: make vuln-go
+
+  # npm audit of the dashboards app and the SDK: high and critical
+  # advisories in what ships fail, unless <dir>/audit-allow.json accepts
+  # one with its reason; development tools are reported, not failed on
+  # (scripts/npm-audit.mjs).
+  npm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: make vuln-npm

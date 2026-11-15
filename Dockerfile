@@ -19,7 +19,7 @@ RUN npm run build
 # without bumping this tag fails the build rather than silently degrading.
 # It runs on the build platform and cross-compiles to the target (no cgo),
 # so a multi-platform build compiles natively for every architecture.
-FROM --platform=$BUILDPLATFORM golang:1.25-bookworm AS go-build
+FROM --platform=$BUILDPLATFORM golang:1.27.4-bookworm AS go-build
 ARG TARGETOS
 ARG TARGETARCH
 WORKDIR /src

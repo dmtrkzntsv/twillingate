@@ -137,7 +137,12 @@ func TestCertInternationalizedHost(t *testing.T) {
 	_, port, _ := net.SplitHostPort(srv.Listener.Addr().String())
 	g := &guard{resolver: fakeResolver{"xn--bcher-kva.de": {"127.0.0.1"}}, allowLoopback: true}
 	ctx := context.Background()
-	st := checkCert(ctx, g, nil, "https://bücher.de:"+port, time.Now())
+	// The test certificate is trusted here, so the one thing wrong with it
+	// is its name: crypto/x509 reports an unknown authority before a name
+	// mismatch (since Go 1.26), which would hide the name being checked.
+	pool := x509.NewCertPool()
+	pool.AddCert(srv.Certificate())
+	st := checkCert(ctx, g, pool, "https://bücher.de:"+port, time.Now())
 	if st.ExpiresAt == "" {
 		t.Fatalf("got %+v, want the certificate read", st)
 	}

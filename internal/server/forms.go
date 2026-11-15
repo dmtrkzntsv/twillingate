@@ -371,7 +371,7 @@ func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	received := time.Now().UTC()
-	ip := clientIP(r)
+	ip := s.clientIP(r)
 	actor, actorKind, user, _ := resolveIdentity(resolved{UserID: fc.UserID, InstallID: fc.InstallID},
 		salt, ip, r.UserAgent(), strconv.FormatInt(p.ID, 10))
 	// The actor a view sent without an id gets, whatever this one is: the
@@ -395,7 +395,7 @@ func (s *Server) handleForm(w http.ResponseWriter, r *http.Request) {
 	ev.ID, ev.ProjectID, ev.Family, ev.EventName = id, p.ID, store.FamilyProduct, store.FormSubmitEvent
 	ev.TS, ev.ReceivedAt = received, received
 	ev.ActorID, ev.ActorKind, ev.UserID, ev.InstallID = actor, actorKind, user, fc.InstallID
-	ev.Host, ev.Path, ev.Country = host, path, s.geo.Country(r, ip)
+	ev.Host, ev.Path, ev.Country = host, path, s.country(r, ip)
 	ev.Attributes = map[string]string{"form": name}
 	form, inserted, err := s.forms.WriteSubmission(ctx, store.NewSubmission{
 		Submission: store.Submission{

@@ -7,7 +7,7 @@ import (
 	"html/template"
 	"net/http"
 	"net/url"
-	"sync"
+	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
@@ -82,9 +82,15 @@ func (s *loginServer) trustedRedirect(w http.ResponseWriter, clientID, redirectU
 func (s *loginServer) authorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	setPageHeaders(w)
 	r.Body = http.MaxBytesReader(w, r.Body, maxOAuthBody)
-	if !s.limiter.allow(s.now()) {
-		s.logger.Warn("mcp login: too many failed password attempts")
-		s.render(w, http.StatusTooManyRequests, pageData{Error: "Too many attempts. Wait a minute, then start again from your client."})
+	source, known := s.loginSource(r), s.knownDevice(r)
+	if wait := s.limiter.retryAfter(s.now(), source, known); wait > 0 {
+		s.logger.Warn("mcp login: too many failed password attempts", "source", source, "known_device", known)
+		w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
+		msg := "Too many attempts. Wait a minute, then start again from your client."
+		if wait > time.Minute {
+			msg = "Too many attempts from your network. Wait an hour, then start again from your client."
+		}
+		s.render(w, http.StatusTooManyRequests, pageData{Error: msg})
 		return
 	}
 	request := r.PostFormValue("request")
@@ -94,12 +100,14 @@ func (s *loginServer) authorizeSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(r.PostFormValue("password")), s.password) != 1 {
-		s.limiter.fail(s.now())
-		s.logger.Warn("mcp login: wrong password", "remote_addr", r.RemoteAddr)
+		s.limiter.fail(s.now(), source, known)
+		s.logger.Warn("mcp login: wrong password", "source", source)
 		s.render(w, http.StatusUnauthorized, pageData{ClientName: f.ClientName, RedirectHost: hostOf(f.RedirectURI),
 			Request: request, Error: "Password not recognised."})
 		return
 	}
+	s.limiter.succeeded(source)
+	s.rememberDevice(w, r)
 	code := s.keys.sign(kindCode, codeClaims{ClientID: f.ClientID, RedirectURI: f.RedirectURI, CodeChallenge: f.CodeChallenge,
 		RegisteredClaims: jwt.RegisteredClaims{ID: rand.Text(), ExpiresAt: jwt.NewNumericDate(s.now().Add(codeTTL))}})
 	s.logger.Info("mcp login: client authorized", "client_name", f.ClientName, "redirect_host", hostOf(f.RedirectURI))
@@ -141,32 +149,4 @@ func withParams(base string, params url.Values) string {
 func hostOf(raw string) string {
 	u, _ := url.Parse(raw)
 	return u.Host
-}
-
-// failureLimiter counts wrong passwords in fixed one-minute windows shared
-// by every caller; per-IP limits fall to rotating addresses (login spec §10).
-type failureLimiter struct {
-	mu     sync.Mutex
-	window time.Time
-	count  int
-}
-
-func (l *failureLimiter) allow(now time.Time) bool {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.roll(now)
-	return l.count < maxFailuresPerMinute
-}
-
-func (l *failureLimiter) fail(now time.Time) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.roll(now)
-	l.count++
-}
-
-func (l *failureLimiter) roll(now time.Time) {
-	if w := now.Truncate(time.Minute); !w.Equal(l.window) {
-		l.window, l.count = w, 0
-	}
 }

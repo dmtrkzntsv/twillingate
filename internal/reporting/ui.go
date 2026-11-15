@@ -47,26 +47,53 @@ func Manifest() []byte {
 // on every load, against an ETag of their content, so an unchanged one
 // costs a 304. components.json is Manifest's input, not the app's, and a
 // missing asset is a 404 rather than the shell served as a script. No
-// response may be framed by another page or sniffed into another type.
+// response may be framed by another page or sniffed into another type,
+// and every one carries uiCSP.
 // A binary built without the app (go build before make ui) answers 503
 // with how to build it, rather than panicking on every request.
 // The shell carries the running version (see versioned), which the app
 // shows in its footer.
 // api-docs.html is a page of the build but not of the app: APIDocs serves it.
-func UI() http.Handler {
-	return uiHandler(versioned{uiFS, version.Version}, "")
+//
+// connect lists the origins beyond the console's own that the app may
+// send requests to (see uiCSP).
+func UI(connect ...string) http.Handler {
+	return uiHandler(versioned{uiFS, version.Version}, "", connect...)
 }
 
 // APIDocs serves the build's other page, api-docs.html (Swagger UI over
 // the REST API's OpenAPI document), at whatever path it is mounted on:
 // /api/docs. Its scripts and styles load from /app/assets/, and it is
 // cached and guarded the way the app's shell is.
-func APIDocs() http.Handler {
-	return uiHandler(uiFS, "api-docs.html")
+func APIDocs(connect ...string) http.Handler {
+	return uiHandler(uiFS, "api-docs.html", connect...)
+}
+
+// uiCSP is the Content-Security-Policy of the app and the API docs page.
+// The build has no inline script, so scripts load from this origin only
+// and nothing injected into a page runs: not an inline script, not an
+// event handler attribute, not eval, not a script from elsewhere. The
+// rest keeps what could still be injected from reaching out: requests,
+// images, fonts, workers and forms stay on this origin, plugins and
+// <base> are refused, and no page may frame the app.
+//
+// What it leaves open, and why: inline styles ('unsafe-inline' in
+// style-src), which the charts, the editor and Swagger UI set; data: and
+// blob: images, which is how a widget is drawn into a share's picture;
+// and connect, the extra origins the app must reach: none when the
+// console is its own login server, and the identity provider's with
+// oauth://, whose endpoints the app learns only at run time.
+func uiCSP(connect []string) string {
+	return "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; " +
+		"img-src 'self' data: blob:; font-src 'self' data:; " +
+		strings.Join(append([]string{"connect-src 'self'"}, connect...), " ") + "; " +
+		"worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; " +
+		"form-action 'self'; frame-ancestors 'none'"
 }
 
 // uiHandler serves page for every request, or with page "" the /app/ tree.
-func uiHandler(files fs.ReadFileFS, page string) http.Handler {
+func uiHandler(files fs.ReadFileFS, page string, connect ...string) http.Handler {
+	csp := uiCSP(connect)
 	if _, err := fs.Stat(files, "ui/index.html"); err != nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "this binary was built without the dashboard app: build it with `make build`", http.StatusServiceUnavailable)
@@ -84,8 +111,9 @@ func uiHandler(files fs.ReadFileFS, page string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Frame-Options", "DENY")
-		h.Set("Content-Security-Policy", "frame-ancestors 'none'")
+		h.Set("Content-Security-Policy", csp)
 		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("Referrer-Policy", "same-origin")
 		name, b := page, []byte(nil)
 		if page == "" {
 			var ok bool

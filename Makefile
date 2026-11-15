@@ -2,7 +2,7 @@ BIN := twillingate
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/dmtrkzntsv/twillingate/internal/shared/version.Version=$(VERSION)
 
-.PHONY: build ui test check vet dist ship-dist ship-publish docker run smoke test-install test-compose seed-demo clean
+.PHONY: build ui test check vet vuln vuln-go vuln-npm dist ship-dist ship-publish docker run smoke test-install test-compose seed-demo clean
 
 # The dashboards app (web/) builds into internal/reporting/ui, which the
 # binary embeds. Only its components.json is committed, so every Go build
@@ -51,6 +51,20 @@ vet:
 check: vet $(UI)
 	./scripts/coverage.sh
 	go test -race $(RACE_PKGS)
+
+# Known vulnerabilities, as .github/workflows/vuln.yml checks them:
+# govulncheck over the Go code (only what the code can reach, the standard
+# library of the running toolchain included), and npm audit over what the
+# dashboards app and the SDK ship (scripts/npm-audit.mjs). Both need the
+# network. The pinned govulncheck is bumped by hand.
+GOVULNCHECK := golang.org/x/vuln/cmd/govulncheck@v1.9.0
+vuln: vuln-go vuln-npm
+
+vuln-go:
+	go run $(GOVULNCHECK) $(GOPKGS)
+
+vuln-npm:
+	node scripts/npm-audit.mjs web sdk
 
 # The release tarballs, one per architecture: binary + deploy/ (installer,
 # units, configs). release.yml writes the SHA256SUMS the installer verifies

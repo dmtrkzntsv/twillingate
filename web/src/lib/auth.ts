@@ -3,14 +3,13 @@
 // PKCE flow. See internal/api/oauth*.go for the server side.
 
 import { sha256 } from '@noble/hashes/sha2.js'
+import { credential, PASTED_TOKEN_KEY, REFRESH_TOKEN_KEY, setCredential } from './credentials'
 
 const METADATA_PATH = '/.well-known/oauth-protected-resource'
 const CALLBACK_PATH = '/app/callback'
 const CLIENT_NAME = 'Twillingate Analytics'
 
 const CLIENT_ID_KEY = 'twillingate.client_id'
-const REFRESH_TOKEN_KEY = 'twillingate.refresh_token'
-const PASTED_TOKEN_KEY = 'twillingate.token'
 const TOKEN_ENDPOINT_KEY = 'twillingate.token_endpoint'
 const RESOURCE_KEY = 'twillingate.resource'
 const VERIFIER_KEY = 'twillingate.oauth_verifier'
@@ -42,7 +41,9 @@ interface OAuthErrorBody {
 }
 
 // The access token lives only in memory; a page reload falls back to the
-// refresh token (oauth) or the pasted token (paste), both in localStorage.
+// refresh token (oauth) or the pasted token (paste), which lib/credentials
+// keeps for the browser session only. What stays in localStorage (the
+// client id, the endpoints) signs nothing.
 let accessToken: string | null = null
 
 /**
@@ -90,13 +91,13 @@ export function onUnauthorized(handler: () => void): void {
 
 /** The current Authorization header value, if any. */
 export function getAuthHeader(): string | undefined {
-  const token = accessToken ?? localStorage.getItem(PASTED_TOKEN_KEY)
+  const token = accessToken ?? credential(PASTED_TOKEN_KEY)
   return token ? `Bearer ${token}` : undefined
 }
 
 export function currentAuthState(): AuthState {
-  if (accessToken || localStorage.getItem(REFRESH_TOKEN_KEY)) return { kind: 'oauth' }
-  if (localStorage.getItem(PASTED_TOKEN_KEY)) return { kind: 'token' }
+  if (accessToken || credential(REFRESH_TOKEN_KEY)) return { kind: 'oauth' }
+  if (credential(PASTED_TOKEN_KEY)) return { kind: 'token' }
   return { kind: 'none' }
 }
 
@@ -298,7 +299,7 @@ async function exchangeCode(search: string): Promise<string> {
   if (!res.ok) throw new Error('token exchange failed')
   const token = (await res.json()) as TokenResponse
   accessToken = token.access_token
-  if (token.refresh_token) localStorage.setItem(REFRESH_TOKEN_KEY, token.refresh_token)
+  if (token.refresh_token) setCredential(REFRESH_TOKEN_KEY, token.refresh_token)
   return returnTo
 }
 
@@ -319,7 +320,7 @@ export function completeLogin(search: string): Promise<string> {
 
 /** A bare bearer token pasted in by hand (the "paste" path). */
 export function setPastedToken(t: string): void {
-  localStorage.setItem(PASTED_TOKEN_KEY, t)
+  setCredential(PASTED_TOKEN_KEY, t)
 }
 
 // A rotated signing key (or a stale/foreign client id) turns every refresh
@@ -335,13 +336,13 @@ async function clearOnRejection(res: Response): Promise<void> {
   }
   if (code === 'invalid_client' || code === 'invalid_grant') {
     accessToken = null
-    localStorage.removeItem(REFRESH_TOKEN_KEY)
+    setCredential(REFRESH_TOKEN_KEY, null)
     localStorage.removeItem(CLIENT_ID_KEY)
   }
 }
 
 async function exchangeRefresh(): Promise<boolean> {
-  const refreshToken = localStorage.getItem(REFRESH_TOKEN_KEY)
+  const refreshToken = credential(REFRESH_TOKEN_KEY)
   const tokenEndpoint = localStorage.getItem(TOKEN_ENDPOINT_KEY)
   const resource = localStorage.getItem(RESOURCE_KEY)
   const clientId = localStorage.getItem(CLIENT_ID_KEY)
@@ -371,7 +372,7 @@ async function exchangeRefresh(): Promise<boolean> {
     return false
   }
   accessToken = token.access_token
-  if (token.refresh_token) localStorage.setItem(REFRESH_TOKEN_KEY, token.refresh_token)
+  if (token.refresh_token) setCredential(REFRESH_TOKEN_KEY, token.refresh_token)
   return true
 }
 
@@ -395,13 +396,16 @@ export function refreshAccess(): Promise<boolean> {
 }
 
 /**
- * Forgets every credential this app holds: the in-memory access token and
- * every `twillingate.*` key in localStorage (refresh token, pasted token,
- * client id, endpoints). The identity provider's own session, if any, is
- * its to end.
+ * Forgets every credential this app holds, in this tab and the others:
+ * the in-memory access token, the session's refresh and pasted tokens,
+ * and every `twillingate.*` key in localStorage (client id, endpoints,
+ * and what the app remembers of the last visit). The identity provider's
+ * own session, if any, is its to end.
  */
 export function logout(): void {
   accessToken = null
+  setCredential(REFRESH_TOKEN_KEY, null)
+  setCredential(PASTED_TOKEN_KEY, null)
   const keys: string[] = []
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i)

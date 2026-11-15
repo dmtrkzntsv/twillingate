@@ -1,6 +1,8 @@
 package config
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1007,5 +1009,40 @@ func TestNotifyConfig(t *testing.T) {
 	_, err = load(t, map[string]string{"NOTIFY_REMIND_HOURS": "169"})
 	if err == nil || !strings.Contains(err.Error(), "config: NOTIFY_REMIND_HOURS must be between 1 and 168: 169") {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// TRUSTED_PROXIES defaults to the local ranges, takes a list or "none",
+// and refuses the boot on anything else rather than trust the wrong peers.
+func TestTrustedProxies(t *testing.T) {
+	peer := func(addr string) *http.Request {
+		r := httptest.NewRequest("GET", "/", nil)
+		r.RemoteAddr = addr
+		return r
+	}
+	for value, want := range map[string]map[string]bool{
+		"":                   {"127.0.0.1:1": true, "172.18.0.2:1": true, "203.0.113.1:1": false},
+		"none":               {"127.0.0.1:1": false},
+		"203.0.113.0/24":     {"203.0.113.1:1": true, "127.0.0.1:1": false},
+		"local, 203.0.113.1": {"203.0.113.1:1": true, "127.0.0.1:1": true, "203.0.113.2:1": false},
+	} {
+		c, err := load(t, map[string]string{"TRUSTED_PROXIES": value})
+		if err != nil {
+			t.Errorf("TRUSTED_PROXIES=%q: %v", value, err)
+			continue
+		}
+		for addr, trusted := range want {
+			if got := c.TrustedProxies.TrustsPeer(peer(addr)); got != trusted {
+				t.Errorf("TRUSTED_PROXIES=%q: trusts %s = %v, want %v", value, addr, got, trusted)
+			}
+			if got := c.Console.TrustedProxies.TrustsPeer(peer(addr)); got != trusted {
+				t.Errorf("TRUSTED_PROXIES=%q: the console trusts %s = %v, want %v", value, addr, got, trusted)
+			}
+		}
+	}
+	for _, v := range []string{"proxy.example.com", "10.0.0.0/40", "10.0.0.1,,10.0.0.2"} {
+		if _, err := load(t, map[string]string{"TRUSTED_PROXIES": v}); err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXIES") {
+			t.Errorf("TRUSTED_PROXIES=%q: err = %v, want a refusal naming the variable", v, err)
+		}
 	}
 }

@@ -45,7 +45,7 @@ func TestSharePage(t *testing.T) {
 	}
 	for k, want := range map[string]string{
 		"Content-Type":            "text/html; charset=utf-8",
-		"Cache-Control":           "public, max-age=300",
+		"Cache-Control":           "no-cache, must-revalidate",
 		"Content-Security-Policy": "default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
 		"X-Content-Type-Options":  "nosniff",
 	} {
@@ -161,7 +161,8 @@ func TestShareImages(t *testing.T) {
 		}
 		for k, v := range map[string]string{
 			"Content-Type":  "image/png",
-			"Cache-Control": "public, max-age=3600",
+			"Cache-Control": "no-cache, must-revalidate",
+			"ETag":          `"` + sh.ID + map[bool]string{false: "-1x", true: "-2x"}[strings.Contains(file, "@2x")] + `"`,
 			"X-Robots-Tag":  "noindex",
 		} {
 			if got := rec.Header().Get(k); got != v {

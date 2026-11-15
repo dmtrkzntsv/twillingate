@@ -5,10 +5,8 @@ package server
 import (
 	"context"
 	"log/slog"
-	"net"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
@@ -175,16 +173,22 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func clientIP(r *http.Request) string {
-	if ip := r.Header.Get("CF-Connecting-IP"); ip != "" {
-		return ip
+// clientIP is the address the request came from: the connection's own,
+// unless it comes from a trusted proxy (TRUSTED_PROXIES), whose forwarding
+// headers then name it (clientip.Proxies.From). Anyone else's
+// X-Forwarded-For or CF-Connecting-IP is a claim, not read: believing it
+// would let a client pick its visitor hash and its country.
+func (s *Server) clientIP(r *http.Request) string {
+	return s.cfg.TrustedProxies.From(r)
+}
+
+// country is the request's country. The cloudflare:// provider reads
+// CF-IPCountry, which is believed like any forwarding header: only from a
+// trusted proxy.
+func (s *Server) country(r *http.Request, ip string) string {
+	if r.Header.Get("CF-IPCountry") != "" && !s.cfg.TrustedProxies.TrustsPeer(r) {
+		r = r.Clone(r.Context())
+		r.Header.Del("CF-IPCountry")
 	}
-	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		return strings.TrimSpace(strings.SplitN(xff, ",", 2)[0])
-	}
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		return r.RemoteAddr
-	}
-	return host
+	return s.geo.Country(r, ip)
 }

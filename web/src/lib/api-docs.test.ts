@@ -4,6 +4,7 @@ import { _resetForTests, setPastedToken } from './auth'
 
 afterEach(() => {
   localStorage.clear()
+  sessionStorage.clear()
   _resetForTests()
   vi.restoreAllMocks()
 })

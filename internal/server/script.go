@@ -32,8 +32,8 @@ var vitalsScript []byte
 // each site a copy that posts back to the hostname that site used. A
 // bundle that keeps the origin placeholder (someone bundled the module)
 // warns and stays dormant in the browser. The forwarded scheme is
-// trusted the same way clientIP trusts X-Forwarded-For: a reverse proxy
-// in front of the collector is assumed to set it. Absent a forwarded
+// trusted the same way clientIP trusts X-Forwarded-For: only from a
+// trusted proxy (TRUSTED_PROXIES), which is assumed to set it. Absent a forwarded
 // scheme, a TLS connection settles it; absent that too, the scheme falls
 // back to INGEST_URL's, then to plain http. Vary keeps a shared cache
 // that forwards a client-supplied X-Forwarded-Proto unchanged from
@@ -59,7 +59,10 @@ func (s *Server) requestOrigin(r *http.Request) string {
 	if !originHost.MatchString(r.Host) {
 		return ""
 	}
-	scheme := r.Header.Get("X-Forwarded-Proto")
+	scheme := ""
+	if s.cfg.TrustedProxies.TrustsPeer(r) {
+		scheme = r.Header.Get("X-Forwarded-Proto")
+	}
 	switch {
 	case scheme == "https" || scheme == "http":
 		// use as-is

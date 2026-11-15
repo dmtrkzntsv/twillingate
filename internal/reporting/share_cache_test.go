@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -109,10 +110,10 @@ func TestShareCacheExpires(t *testing.T) {
 	e, cs, h := countedShareEnv(t)
 	sh := e.create(t, "")
 	wantStatus(t, h, sh.ID, 200)
-	*e.now = e.now.Add(59 * time.Second)
+	*e.now = e.now.Add(shareRowAge - 2*time.Second)
 	wantStatus(t, h, sh.ID, 200)
 	if n := cs.rows.Load(); n != 1 {
-		t.Fatalf("row reads within the minute = %d, want 1", n)
+		t.Fatalf("row reads within shareRowAge = %d, want 1", n)
 	}
 	// Archived behind the Service's back, as another process would.
 	if _, err := e.st.SetWidgetShareArchived(context.Background(), sh.ID, true, "",
@@ -120,7 +121,7 @@ func TestShareCacheExpires(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantStatus(t, h, sh.ID, 200) // still the cached row
-	*e.now = e.now.Add(2 * time.Second)
+	*e.now = e.now.Add(3 * time.Second)
 	wantStatus(t, h, sh.ID, 404)
 	if n := cs.rows.Load(); n != 2 {
 		t.Errorf("row reads after expiry = %d, want 2", n)
@@ -201,4 +202,79 @@ func TestShareStoreFailureAnswers503(t *testing.T) {
 	cs.fail = nil
 	wantStatus(t, h, uncached.ID, 200)
 	wantStatus(t, h, cached.ID+".png", 200)
+}
+
+// Archiving a share takes it back from every cache on the way to a
+// reader: nothing a live share is served with may be reused without
+// asking (no max-age), a cache that asks gets 304 only while the share is
+// live, and the archive answers 404, to a conditional request too, and
+// frees the picture.
+func TestArchivedShareIsRevokedFromCaches(t *testing.T) {
+	e, _, h := countedShareEnv(t)
+	sh := e.create(t, "")
+	conditional := func(file string) *httptest.ResponseRecorder {
+		etag := getShare(h, file).Header().Get("ETag")
+		req := httptest.NewRequest(http.MethodGet, "/share/"+file, nil)
+		req.Header.Set("If-None-Match", etag)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	files := []string{sh.ID, sh.ID + ".png", sh.ID + "@2x.png"}
+	for _, f := range files {
+		rec := getShare(h, f)
+		if cc := rec.Header().Get("Cache-Control"); rec.Code != 200 || cc != "no-cache, must-revalidate" {
+			t.Errorf("/share/%s: %d, Cache-Control %q; want 200 revalidation: a stale copy outlives an archive", f, rec.Code, cc)
+		}
+	}
+	for _, f := range files[1:] {
+		if rec := conditional(f); rec.Code != http.StatusNotModified || rec.Body.Len() != 0 {
+			t.Errorf("/share/%s revalidated while live: %d with %d bytes, want 304 and none", f, rec.Code, rec.Body.Len())
+		}
+	}
+	if e.svc.shares.imgBytes == 0 {
+		t.Fatal("the images are not cached while live")
+	}
+
+	etags := map[string]string{}
+	for _, f := range files[1:] {
+		etags[f] = getShare(h, f).Header().Get("ETag")
+	}
+	if _, err := e.svc.ArchiveWidgetShare(context.Background(), "test", sh.ID); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		req := httptest.NewRequest(http.MethodGet, "/share/"+f, nil)
+		if etags[f] != "" {
+			req.Header.Set("If-None-Match", etags[f])
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if cc := rec.Header().Get("Cache-Control"); rec.Code != http.StatusNotFound || cc != "no-store" || rec.Header().Get("ETag") != "" {
+			t.Errorf("/share/%s after the archive: %d, Cache-Control %q, ETag %q; want 404 no-store and no ETag",
+				f, rec.Code, cc, rec.Header().Get("ETag"))
+		}
+	}
+	if n := e.svc.shares.imgBytes; n != 0 || len(e.svc.shares.imgs) != 0 || e.svc.shares.lru.Len() != 0 {
+		t.Errorf("%d bytes of the archived share's images are still cached", n)
+	}
+}
+
+// A share deleted behind the Service's back (the CLI's project delete in
+// another process, the daily pass) is gone within shareRowAge, which is
+// seconds: the bound on how long a revoked share can still be answered.
+func TestDeletedShareGoesWithinTheRowAge(t *testing.T) {
+	if shareRowAge > 10*time.Second {
+		t.Fatalf("shareRowAge = %v: a share deleted from elsewhere stays up that long", shareRowAge)
+	}
+	e, _, h := countedShareEnv(t)
+	sh := e.create(t, "")
+	wantStatus(t, h, sh.ID, 200)
+	wantStatus(t, h, sh.ID+".png", 200)
+	if err := e.st.DeleteProjectData(context.Background(), e.projectID, store.AuditEntry{Actor: "cli", Action: "project.delete"}); err != nil {
+		t.Fatal(err)
+	}
+	*e.now = e.now.Add(shareRowAge)
+	wantStatus(t, h, sh.ID, 404)
+	wantStatus(t, h, sh.ID+".png", 404)
 }

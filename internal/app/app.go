@@ -331,11 +331,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	srvs := make([]*http.Server, len(surfaces))
 	errCh := make(chan error, len(surfaces))
 	for i, s := range surfaces {
-		sv := &http.Server{
-			Addr:              s.addr,
-			Handler:           s.handler,
-			ReadHeaderTimeout: 5 * time.Second,
-		}
+		sv := newHTTPServer(s.addr, s.handler)
 		srvs[i] = sv
 		go func(sv *http.Server, ln net.Listener) { errCh <- sv.Serve(ln) }(sv, listeners[i])
 		logger.Info("serving", "addr", s.addr, "surfaces", s.label, "projects", len(reg.Snapshot(ctx).Projects()))

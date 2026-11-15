@@ -189,7 +189,7 @@ jobs:
       # pair restores that mount from the previous release before the build
       # and saves it back afterwards (post steps run in reverse, so the dance
       # extracts before actions/cache uploads). Not the test job's Go
-      # cache: setup-go and golang:1.25-bookworm resolve different patch
+      # cache: setup-go and the golang image can resolve different patch
       # toolchains, so none of its entries would match. Keyed on the sha like
       # the Go caches, so every release saves and restores the newest; one
       # cache holds both architectures' objects.

@@ -122,6 +122,7 @@ func TestTwillingateSDKCarriesRequestOrigin(t *testing.T) {
 	_, h := testServer(t)
 	serve := func(host, proto string) string {
 		r := httptest.NewRequest("GET", "/js/twillingate.js", nil)
+		r.RemoteAddr = "127.0.0.1:1234" // a trusted proxy: its forwarded scheme is believed
 		r.Host = host
 		if proto != "" {
 			r.Header.Set("X-Forwarded-Proto", proto)
@@ -173,5 +174,29 @@ func TestLegacyScriptRemoved(t *testing.T) {
 	h.ServeHTTP(w, r)
 	if w.Code != 404 {
 		t.Fatalf("code = %d, want 404", w.Code)
+	}
+}
+
+// X-Forwarded-Proto from a peer that is no trusted proxy is not read: a
+// direct client cannot make the script name another scheme.
+func TestForwardedSchemeNeedsATrustedProxy(t *testing.T) {
+	_, h := testServer(t)
+	serve := func(remote, proto string) string {
+		r := httptest.NewRequest("GET", "/js/twillingate.js", nil)
+		r.RemoteAddr = remote
+		r.Host = "collector.example"
+		if proto != "" {
+			r.Header.Set("X-Forwarded-Proto", proto)
+		}
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		return w.Body.String()
+	}
+	const direct, proxy = "203.0.113.9:4000", "127.0.0.1:4000"
+	if serve(direct, "https") != serve(direct, "") || serve(direct, "http") != serve(direct, "") {
+		t.Error("a direct client's X-Forwarded-Proto changed the script")
+	}
+	if serve(proxy, "https") == serve(proxy, "http") {
+		t.Error("a trusted proxy's X-Forwarded-Proto did not change the script")
 	}
 }

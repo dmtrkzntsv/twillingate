@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -134,7 +135,7 @@ func TestUIRevalidatesWithETags(t *testing.T) {
 func TestUIRefusesFramingAndSniffing(t *testing.T) {
 	for _, target := range []string{"/app/", "/app/dashboards/3", "/app/assets/" + builtAsset(t), "/app/sw.js", "/app/components.json"} {
 		h := serveUI(t, target).Header()
-		if h.Get("X-Frame-Options") != "DENY" || h.Get("Content-Security-Policy") != "frame-ancestors 'none'" {
+		if h.Get("X-Frame-Options") != "DENY" || h.Get("Content-Security-Policy") != uiCSP(nil) {
 			t.Errorf("GET %s: X-Frame-Options %q, Content-Security-Policy %q", target,
 				h.Get("X-Frame-Options"), h.Get("Content-Security-Policy"))
 		}
@@ -240,5 +241,71 @@ func TestUIStampsTheVersion(t *testing.T) {
 	}
 	if release.Header().Get("ETag") == odd.Header().Get("ETag") {
 		t.Error("shells of two versions share an ETag")
+	}
+}
+
+// The app's policy runs scripts from its own origin only: an injected
+// inline script, handler attribute or eval does not run, and what a page
+// can reach stays on this origin unless the console logs in elsewhere.
+func TestUIContentSecurityPolicy(t *testing.T) {
+	directives := func(csp string) map[string]string {
+		out := map[string]string{}
+		for _, d := range strings.Split(csp, ";") {
+			name, value, _ := strings.Cut(strings.TrimSpace(d), " ")
+			out[name] = value
+		}
+		return out
+	}
+	own := directives(uiCSP(nil))
+	for name, want := range map[string]string{
+		"default-src":     "'self'",
+		"script-src":      "'self'",
+		"connect-src":     "'self'",
+		"worker-src":      "'self'",
+		"object-src":      "'none'",
+		"base-uri":        "'none'",
+		"form-action":     "'self'",
+		"frame-ancestors": "'none'",
+	} {
+		if own[name] != want {
+			t.Errorf("%s = %q, want %q", name, own[name], want)
+		}
+	}
+	for name, value := range own {
+		if strings.Contains(value, "unsafe-eval") || strings.Contains(value, "*") ||
+			(name != "style-src" && strings.Contains(value, "unsafe-inline")) {
+			t.Errorf("%s %s: too wide", name, value)
+		}
+	}
+	if got := directives(uiCSP([]string{"https:"}))["connect-src"]; got != "'self' https:" {
+		t.Errorf("connect-src with an identity provider = %q", got)
+	}
+
+	// The shell the policy guards has no inline script to allow.
+	if _, err := uiFS.ReadFile("ui/index.html"); err != nil {
+		t.Skip("built without the app")
+	}
+	for _, page := range []string{"index.html", "api-docs.html"} {
+		b := string(mustRead(uiFS, "ui/"+page))
+		for _, m := range regexp.MustCompile(`(?is)<script\b[^>]*>`).FindAllString(b, -1) {
+			if !strings.Contains(m, "src=") {
+				t.Errorf("%s has an inline script, which script-src 'self' refuses: %s", page, m)
+			}
+		}
+		if regexp.MustCompile(`(?i)\son[a-z]+\s*=`).MatchString(b) {
+			t.Errorf("%s has an inline event handler, which script-src 'self' refuses", page)
+		}
+	}
+	for _, target := range []string{"/app/", "/app/sw.js"} {
+		rec := httptest.NewRecorder()
+		UI().ServeHTTP(rec, httptest.NewRequest("GET", target, nil))
+		if got := rec.Header().Get("Content-Security-Policy"); got != uiCSP(nil) {
+			t.Errorf("GET %s: Content-Security-Policy %q", target, got)
+		}
+	}
+	rec := httptest.NewRecorder()
+	APIDocs("https:").ServeHTTP(rec, httptest.NewRequest("GET", "/api/docs", nil))
+	if got := rec.Header().Get("Content-Security-Policy"); got != uiCSP([]string{"https:"}) {
+		t.Errorf("GET /api/docs: Content-Security-Policy %q", got)
 	}
 }

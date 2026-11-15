@@ -18,18 +18,22 @@ import (
 // /share/ answers anyone: without it, a hot or hammered link queues behind
 // ingest and waits out every long transaction.
 //
-// Rows are kept shareRowAge, and an unknown id shareMissAge, so a flood
-// of made-up ids reaches the store once per id per 10 s. Liveness is not
-// cached: it is worked out from the cached row against the clock on every
-// request, so a share whose archive_at passes goes down on time. This
-// Service's own writes (archive, restore, update) drop the row at once.
-// Writes from elsewhere, another process (the CLI's project delete) or
-// the daily pass deleting a project, are seen when the row expires: for
-// up to shareRowAge a deleted share may still be served.
+// Rows are kept shareRowAge, and an unknown id shareMissAge, so a hot
+// link or a flood of made-up ids reaches the store once per id per 10 s.
+// Liveness is not cached: it is worked out from the cached row against
+// the clock on every request, so a share whose archive_at passes goes
+// down on time. This Service's own writes (archive, restore, update) drop
+// the row and its images at once, so a share archived here answers 404 on
+// the next request. Writes from elsewhere, another process (the CLI's
+// project delete) or the daily pass deleting a project, are seen when the
+// row expires: for up to shareRowAge a deleted share may still be served.
+// That bound is the whole delay, since nothing downstream may reuse an
+// answer without asking again (SharePages sends no-cache).
 //
-// Images never change for an id and size, so they are kept until evicted:
-// least recently used first, once they hold more than shareImageBytes.
-// One whose share has gone is never served, since the row is read first.
+// Images never change for an id and size, so they are kept until evicted
+// or their share is written: least recently used first, once they hold
+// more than shareImageBytes. One whose share has gone is never served,
+// since the row is read first.
 type shareCache struct {
 	now func() time.Time
 
@@ -47,7 +51,7 @@ type shareCache struct {
 }
 
 const (
-	shareRowAge     = 60 * time.Second
+	shareRowAge     = 10 * time.Second
 	shareMissAge    = 10 * time.Second
 	shareImageBytes = 64 << 20
 )
@@ -184,10 +188,19 @@ func (c *shareCache) putImage(k shareImageKey, b []byte) {
 	}
 }
 
-// invalidate drops id's row, so the next request reads the store.
+// invalidate drops id's row, so the next request reads the store, and its
+// images, so an archived share's picture is not kept in memory.
 func (c *shareCache) invalidate(id string) {
 	c.mu.Lock()
 	delete(c.rows, id)
 	c.gen++
+	for _, twoX := range []bool{false, true} {
+		k := shareImageKey{id, twoX}
+		if el, ok := c.imgs[k]; ok {
+			c.imgBytes -= len(el.Value.(*shareImageEntry).b)
+			c.lru.Remove(el)
+			delete(c.imgs, k)
+		}
+	}
 	c.mu.Unlock()
 }

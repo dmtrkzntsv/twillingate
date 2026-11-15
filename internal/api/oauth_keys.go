@@ -25,6 +25,7 @@ const (
 	kindCode    kind = "code"
 	kindAccess  kind = "access"
 	kindRefresh kind = "refresh"
+	kindDevice  kind = "device" // the login page's device cookie (oauth_limiter.go)
 )
 
 // loginKeys holds one key per kind, so a value of one kind never verifies
@@ -38,7 +39,7 @@ func deriveLoginKeys(token, password string) loginKeys {
 	secret = binary.BigEndian.AppendUint32(secret, uint32(len(password)))
 	secret = append(secret, password...)
 	keys := loginKeys{}
-	for _, kd := range []kind{kindClient, kindForm, kindCode, kindAccess, kindRefresh} {
+	for _, kd := range []kind{kindClient, kindForm, kindCode, kindAccess, kindRefresh, kindDevice} {
 		key, err := hkdf.Key(sha256.New, secret, nil, "twillingate mcp "+string(kd), 32)
 		if err != nil {
 			panic(err) // only for key lengths beyond 255 hash blocks

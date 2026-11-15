@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/shared/clientip"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/notify"
 )
 
@@ -126,6 +127,10 @@ type ConsoleConfig struct {
 	QueryTimeout  time.Duration // CONSOLE_QUERY_TIMEOUT, default 30s
 	QueryMaxRows  int           // CONSOLE_QUERY_ROWS_MAX, default 1000
 
+	// TrustedProxies is Config.TrustedProxies, which the login page's
+	// password limiter tells its callers apart with.
+	TrustedProxies clientip.Proxies
+
 	// Insecure is token:// insecure=1: the console origin (resource) may
 	// be plain http on any host, for a network that encrypts the link
 	// itself (a tailnet, a VPN). The password and tokens cross it as sent.
@@ -166,6 +171,12 @@ const DefaultFormAttributionDays = 7
 
 type Config struct {
 	IngestAddr string
+	// TrustedProxies (TRUSTED_PROXIES) are the reverse proxies whose
+	// forwarding headers (X-Forwarded-For, CF-Connecting-IP, CF-IPCountry,
+	// X-Forwarded-Proto) are believed; from any other peer the client is
+	// the connection itself. Unset, clientip.Local: loopback and the
+	// private ranges.
+	TrustedProxies clientip.Proxies
 	// IngestDisabled (INGEST_DISABLED) refuses every ingest route.
 	IngestDisabled bool
 	// IngestLateDays (INGEST_LATE_DAYS) is how far back a client timestamp
@@ -215,6 +226,19 @@ func (e *env) str(key, def string) string {
 		return v
 	}
 	return def
+}
+
+// proxies reads a clientip list; unset or empty is clientip.Local.
+func (e *env) proxies(key string) clientip.Proxies {
+	v, ok := e.lookup(key)
+	if !ok || strings.TrimSpace(v) == "" {
+		return clientip.Local()
+	}
+	p, err := clientip.Parse(v)
+	if err != nil && e.err == nil {
+		e.err = fmt.Errorf("config: %s: %w (a comma-separated list of IP addresses and CIDR prefixes, \"local\", or \"none\")", key, err)
+	}
+	return p
 }
 
 func (e *env) num(key string, def int) int {
@@ -274,7 +298,8 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 	e := &env{lookup: lookup}
 	retentionDays := e.num("RETENTION_DAYS", DefaultRetentionDays)
 	c := &Config{
-		IngestAddr: e.str("INGEST_ADDR", "127.0.0.1:8080"),
+		IngestAddr:     e.str("INGEST_ADDR", "127.0.0.1:8080"),
+		TrustedProxies: e.proxies("TRUSTED_PROXIES"),
 		// A complete stop of ingest: every route that takes events or
 		// form submissions refuses with 429; the console is unaffected.
 		IngestDisabled: e.bool("INGEST_DISABLED", false),
@@ -318,7 +343,8 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		},
 	}
 	c.Console = ConsoleConfig{
-		Addr: e.str("CONSOLE_ADDR", c.IngestAddr),
+		Addr:           e.str("CONSOLE_ADDR", c.IngestAddr),
+		TrustedProxies: c.TrustedProxies,
 		// The console's public address, when it has a hostname of its own
 		// (https://console.example.com beside an ingest-only INGEST_URL). The
 		// login's resource, issuer and dashboards callback follow it, so the

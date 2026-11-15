@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import './index.css'
 import App from './App.tsx'
+import { adoptCredentials } from './lib/credentials.ts'
 import { shouldRetry } from './lib/retry.ts'
 import { followSystemTheme } from './lib/theme.ts'
 import { trackWindowFocus } from './lib/window-focus.ts'
@@ -20,13 +21,17 @@ const queryClient = new QueryClient({
   },
 })
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <QueryClientProvider client={queryClient}>
-      <App />
-    </QueryClientProvider>
-  </StrictMode>,
-)
+// Before the first render, so the app does not show its login to a tab
+// that another, logged-in tab is about to hand its credentials.
+void adoptCredentials().then(() => {
+  createRoot(document.getElementById('root')!).render(
+    <StrictMode>
+      <QueryClientProvider client={queryClient}>
+        <App />
+      </QueryClientProvider>
+    </StrictMode>,
+  )
+})
 
 // The shell is only worth caching offline once it's a real build; in dev
 // it would just serve stale assets over Vite's own dev server.

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/config"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/clientip"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/modelcontextprotocol/go-sdk/auth"
 )
@@ -21,11 +22,10 @@ import (
 // send the token as a header (docs/superpowers/specs/2026-09-12-mcp-token-login-design.md).
 
 const (
-	formTTL              = 10 * time.Minute
-	codeTTL              = time.Minute
-	refreshTokenTTL      = 30 * 24 * time.Hour
-	maxFailuresPerMinute = 5
-	maxOAuthBody         = 16 << 10
+	formTTL         = 10 * time.Minute
+	codeTTL         = time.Minute
+	refreshTokenTTL = 30 * 24 * time.Hour
+	maxOAuthBody    = 16 << 10
 )
 
 // accessTokenTTL is a var so the end-to-end test can shrink it below the
@@ -42,7 +42,8 @@ type loginServer struct {
 	accessTTL time.Duration
 	logger    *slog.Logger
 	now       func() time.Time
-	limiter   failureLimiter
+	proxies   clientip.Proxies // whose forwarding headers name the client
+	limiter   loginLimiter
 	used      usedCodes
 }
 
@@ -53,6 +54,7 @@ func newLoginServer(m config.ConsoleConfig, logger *slog.Logger) *loginServer {
 		password:  []byte(m.Password),
 		hosts:     m.RedirectHosts,
 		resource:  m.ResourceURL,
+		proxies:   m.TrustedProxies,
 		issuer:    originOf(m.ResourceURL), // equal to the resource, which config keeps an origin
 		accessTTL: accessTokenTTL,
 		logger:    logger,
