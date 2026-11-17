@@ -391,8 +391,10 @@ describe('logout', () => {
 
     expect(getAuthHeader()).toBeUndefined()
     expect(currentAuthState()).toEqual({ kind: 'none' })
-    expect(localStorage.length).toBe(1)
+    // What remains: the other key, and the logout epoch, which signs nothing.
+    expect(localStorage.length).toBe(2)
     expect(localStorage.getItem('other.key')).toBe('kept')
+    expect(localStorage.getItem('twillingate.logout_epoch')).not.toBeNull()
   })
 })
 

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   _resetCredentialsForTests,
+  LOGOUT_EPOCH_KEY,
   adoptCredentials,
   credential,
   PASTED_TOKEN_KEY,
@@ -59,7 +60,7 @@ describe('credentials', () => {
   it('a new tab adopts the credentials of a tab that is logged in', async () => {
     other.addEventListener('message', (e) => {
       if (e.data?.type === 'hello') {
-        other.postMessage({ type: 'offer', values: { [REFRESH_TOKEN_KEY]: 'theirs', 'not.a.credential': 'x' } })
+        other.postMessage({ type: 'offer', epoch: '0', values: { [REFRESH_TOKEN_KEY]: 'theirs', 'not.a.credential': 'x' } })
       }
     })
     await adoptCredentials()
@@ -74,13 +75,13 @@ describe('credentials', () => {
     await adoptCredentials(() => late++)
     expect(currentAuthState()).toEqual({ kind: 'none' })
 
-    other.postMessage({ type: 'offer', values: { [REFRESH_TOKEN_KEY]: 'late' } })
+    other.postMessage({ type: 'offer', epoch: '0', values: { [REFRESH_TOKEN_KEY]: 'late' } })
     await tick()
     expect(credential(REFRESH_TOKEN_KEY)).toBe('late')
     expect(late).toBe(1)
 
     // Only the first answer counts.
-    other.postMessage({ type: 'offer', values: { [REFRESH_TOKEN_KEY]: 'later' } })
+    other.postMessage({ type: 'offer', epoch: '0', values: { [REFRESH_TOKEN_KEY]: 'later' } })
     await tick()
     expect(credential(REFRESH_TOKEN_KEY)).toBe('late')
     expect(late).toBe(1)
@@ -90,7 +91,7 @@ describe('credentials', () => {
     let late = 0
     await adoptCredentials(() => late++)
     setCredential(REFRESH_TOKEN_KEY, 'mine')
-    other.postMessage({ type: 'offer', values: { [REFRESH_TOKEN_KEY]: 'theirs' } })
+    other.postMessage({ type: 'offer', epoch: '0', values: { [REFRESH_TOKEN_KEY]: 'theirs' } })
     await tick()
     expect(credential(REFRESH_TOKEN_KEY)).toBe('mine')
     expect(late).toBe(0)
@@ -109,7 +110,7 @@ describe('credentials', () => {
 
     other.postMessage({ type: 'hello' })
     await tick()
-    expect(heard).toContainEqual({ type: 'offer', values: { [PASTED_TOKEN_KEY]: 'mine' } })
+    expect(heard).toContainEqual({ type: 'offer', epoch: '0', values: { [PASTED_TOKEN_KEY]: 'mine' } })
   })
 
   it('a tab without credentials answers no one', async () => {
@@ -123,12 +124,12 @@ describe('credentials', () => {
     setCredential(REFRESH_TOKEN_KEY, 'refresh-1')
     await adoptCredentials()
 
-    other.postMessage({ type: 'set', key: REFRESH_TOKEN_KEY, value: 'refresh-2' })
+    other.postMessage({ type: 'set', epoch: '0', key: REFRESH_TOKEN_KEY, value: 'refresh-2' })
     await tick()
     expect(credential(REFRESH_TOKEN_KEY)).toBe('refresh-2')
 
-    other.postMessage({ type: 'set', key: 'twillingate.last_dashboard', value: 'x' })
-    other.postMessage({ type: 'set', key: REFRESH_TOKEN_KEY, value: null })
+    other.postMessage({ type: 'set', epoch: '0', key: 'twillingate.last_dashboard', value: 'x' })
+    other.postMessage({ type: 'set', epoch: '0', key: REFRESH_TOKEN_KEY, value: null })
     await tick()
     expect(credential(REFRESH_TOKEN_KEY)).toBeNull()
     expect(sessionStorage.getItem('twillingate.last_dashboard')).toBeNull()
@@ -144,7 +145,7 @@ describe('credentials', () => {
       expect(await refreshAccess()).toBe(true)
       expect(getAuthHeader()).toBe('Bearer access-1')
 
-      other.postMessage({ type: 'set', key: REFRESH_TOKEN_KEY, value: null })
+      other.postMessage({ type: 'set', epoch: '0', key: REFRESH_TOKEN_KEY, value: null })
       await tick()
       expect(getAuthHeader()).toBeUndefined()
       expect(currentAuthState()).toEqual({ kind: 'none' })
@@ -178,6 +179,56 @@ describe('credentials', () => {
     }
   })
 
+  // A logout must hold against what is already on its way from other tabs.
+  describe('after a logout', () => {
+    it('a refresh token another tab sent before it is refused', async () => {
+      setCredential(REFRESH_TOKEN_KEY, 'refresh-1')
+      const before = localStorage.getItem(LOGOUT_EPOCH_KEY) ?? '0'
+      logout()
+      other.postMessage({ type: 'set', epoch: before, key: REFRESH_TOKEN_KEY, value: 'refresh-2' })
+      await tick()
+      expect(credential(REFRESH_TOKEN_KEY)).toBeNull()
+      expect(currentAuthState()).toEqual({ kind: 'none' })
+    })
+
+    it('a late answer to an earlier hello is refused', async () => {
+      let late = 0
+      await adoptCredentials(() => late++)
+      const before = localStorage.getItem(LOGOUT_EPOCH_KEY) ?? '0'
+      logout()
+      other.postMessage({ type: 'offer', epoch: before, values: { [REFRESH_TOKEN_KEY]: 'stale' } })
+      await tick()
+      expect(credential(REFRESH_TOKEN_KEY)).toBeNull()
+      expect(late).toBe(0)
+    })
+
+    it('in another tab, what this tab holds stops counting before its message arrives', async () => {
+      setCredential(REFRESH_TOKEN_KEY, 'refresh-1')
+      localStorage.setItem('twillingate.token_endpoint', 'https://api.example/oauth/token')
+      localStorage.setItem('twillingate.resource', 'https://api.example')
+      localStorage.setItem('twillingate.client_id', 'client-1')
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ access_token: 'access-1' }), { status: 200 })))
+      try {
+        expect(await refreshAccess()).toBe(true)
+        // The other tab's logout, as localStorage shows it at once.
+        localStorage.setItem(LOGOUT_EPOCH_KEY, 'theirs')
+        expect(getAuthHeader()).toBeUndefined()
+        expect(credential(REFRESH_TOKEN_KEY)).toBeNull()
+        expect(currentAuthState()).toEqual({ kind: 'none' })
+      } finally {
+        vi.unstubAllGlobals()
+      }
+    })
+
+    it('a credential sent under the new epoch is taken: the next login', async () => {
+      logout()
+      const now = localStorage.getItem(LOGOUT_EPOCH_KEY)!
+      other.postMessage({ type: 'set', epoch: now, key: REFRESH_TOKEN_KEY, value: 'fresh' })
+      await tick()
+      expect(credential(REFRESH_TOKEN_KEY)).toBe('fresh')
+    })
+  })
+
   it('logout forgets the credentials here and tells the other tabs', async () => {
     setCredential(REFRESH_TOKEN_KEY, 'refresh-1')
     setPastedToken('secret')
@@ -190,7 +241,7 @@ describe('credentials', () => {
     expect(sessionStorage.length).toBe(0)
     expect(localStorage.getItem('twillingate.client_id')).toBeNull()
     expect(currentAuthState()).toEqual({ kind: 'none' })
-    expect(heard).toContainEqual({ type: 'set', key: REFRESH_TOKEN_KEY, value: null })
-    expect(heard).toContainEqual({ type: 'set', key: PASTED_TOKEN_KEY, value: null })
+    expect(heard).toContainEqual(expect.objectContaining({ type: 'set', key: REFRESH_TOKEN_KEY, value: null }))
+    expect(heard).toContainEqual(expect.objectContaining({ type: 'set', key: PASTED_TOKEN_KEY, value: null }))
   })
 })
