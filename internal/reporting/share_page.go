@@ -101,6 +101,14 @@ type sharePageData struct {
 	Icon                     template.HTML
 }
 
+// shareCacheControl is what a live share's page and images are served
+// with: a browser or a CDN may keep them, but must ask before every reuse.
+// Archiving a share is how its owner takes it back, so the answer has to
+// come from here each time: a max-age would leave every cache between the
+// server and a reader serving it for that long after. What a link preview
+// (a chat app's unfurl) copied when the link was posted is beyond recall.
+const shareCacheControl = "no-cache, must-revalidate"
+
 // SharePages serves a live share's page and images, and 404 for anything
 // else: a malformed path, an unknown, archived or due share. A page's 404
 // is shareMissing; an image's is plain text, which no one reads.
@@ -131,9 +139,12 @@ func (s *Service) SharePages() http.Handler {
 				return
 			}
 			w.Header().Set("Content-Type", "image/png")
-			w.Header().Set("Cache-Control", "public, max-age=3600")
+			w.Header().Set("Cache-Control", shareCacheControl)
+			// The bytes never change for an id and size, so the name is
+			// the validator: a revalidation of a live share costs a 304.
+			w.Header().Set("ETag", `"`+id+`-`+kind+`"`)
 			w.Header().Set("X-Robots-Tag", "noindex")
-			_, _ = w.Write(b)
+			http.ServeContent(w, r, "", time.Time{}, bytes.NewReader(b))
 			return
 		}
 		// The captions name only what the widget follows (NewShare): a
@@ -154,7 +165,7 @@ func (s *Service) SharePages() http.Handler {
 			taken, takenInWords = sh.CreatedAt, t.Format("Jan 2, 2006")
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Cache-Control", "public, max-age=300")
+		w.Header().Set("Cache-Control", shareCacheControl)
 		w.Header().Set("Content-Security-Policy", shareCSP)
 		_ = sharePage.Execute(w, sharePageData{
 			Title: sh.Title, ProjectName: project, Meta: strings.Join(caption, " · "),

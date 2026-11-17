@@ -23,6 +23,7 @@ function renderSidebar(dashboards: DashboardInfo[] = [], currentId = 0) {
 
 beforeEach(() => {
   localStorage.clear()
+  sessionStorage.clear()
   _resetForTests()
 })
 
@@ -32,7 +33,7 @@ afterEach(() => {
 
 describe('AppSidebar log out', () => {
   it('forgets the credentials and goes to the login page', async () => {
-    localStorage.setItem('twillingate.token', 'pasted')
+    sessionStorage.setItem('twillingate.token', 'pasted')
     localStorage.setItem('twillingate.last_dashboard', '3')
     const assign = vi.fn()
     vi.stubGlobal('location', { ...window.location, assign })
@@ -400,7 +401,7 @@ describe('Dashboards group', () => {
 
 describe('AppSidebar footer', () => {
   it('holds Shares, Gallery, then Archive, above Log out', () => {
-    localStorage.setItem('twillingate.token', 'pasted')
+    sessionStorage.setItem('twillingate.token', 'pasted')
     renderSidebar([{ dashboard_id: 1, title: 'Views', owner: 'system', group_id: 1, widgets: 1, sidebar: true, project_tab: false }])
     const footer = document.querySelector('[data-sidebar="footer"]') as HTMLElement
     const entries = [

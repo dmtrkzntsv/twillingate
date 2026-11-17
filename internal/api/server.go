@@ -94,7 +94,7 @@ func Build(ctx context.Context, cfg *config.Config, reg *manage.Registry, ops *m
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(doc)
 	})
-	protected.Handle("GET "+docsPath, reporting.APIDocs())
+	protected.Handle("GET "+docsPath, reporting.APIDocs(uiConnect(cfg.Console)...))
 	// Shared widgets are public by design: unlisted frozen images
 	// (docs/superpowers/specs/2026-10-05-widget-shares-design.md, D2).
 	// "GET /share/" catches what {file} does not match (/share/ itself,
@@ -186,7 +186,7 @@ func RegisterOn(mux *http.ServeMux, protected http.Handler, cfg *config.Config, 
 	mux.Handle("/mcp", protected)
 	mux.Handle("/api/", protected)
 	mux.Handle("GET /share/", protected)
-	mux.Handle("GET /app/", reporting.UI())
+	mux.Handle("GET /app/", reporting.UI(uiConnect(cfg.Console)...))
 	mux.Handle("GET /app", http.RedirectHandler("/app/", http.StatusMovedPermanently))
 	// 302, not 301: browsers cache a permanent redirect of the root forever,
 	// and the root may serve something of its own one day.
@@ -273,4 +273,23 @@ func originOf(raw string) string {
 		return raw
 	}
 	return u.Scheme + "://" + u.Host
+}
+
+// uiConnect is what the dashboards app may send requests to beyond the
+// console's own origin (reporting.UI's connect-src). With token:// the
+// console is its own login server, so nothing. With oauth:// the app logs
+// in at the identity provider, fetching its metadata from the issuer and
+// then whatever registration and token endpoints that names, on hosts
+// known only at run time: any https origin.
+func uiConnect(m config.ConsoleConfig) []string {
+	if m.AuthMode != "oauth" {
+		return nil
+	}
+	connect := []string{"https:"}
+	// oauth+insecure:// names a plain-http issuer (a test, a private
+	// network): that one origin, not every http one.
+	if strings.HasPrefix(m.Issuer, "http://") {
+		connect = append(connect, originOf(m.Issuer))
+	}
+	return connect
 }

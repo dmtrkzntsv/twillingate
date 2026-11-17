@@ -313,7 +313,7 @@ describe('completeLogin', () => {
 
     expect(returnTo).toBe('/dashboards/9')
     expect(getAuthHeader()).toBe('Bearer access-1')
-    expect(localStorage.getItem('twillingate.refresh_token')).toBe('refresh-1')
+    expect(sessionStorage.getItem('twillingate.refresh_token')).toBe('refresh-1')
   })
 
   it('sends code_verifier, redirect_uri, client_id and resource in the token request', async () => {
@@ -376,11 +376,11 @@ describe('setPastedToken', () => {
 
 describe('logout', () => {
   it('forgets the in-memory access token and every twillingate.* key, nothing else', async () => {
-    localStorage.setItem('twillingate.refresh_token', 'refresh-1')
+    sessionStorage.setItem('twillingate.refresh_token', 'refresh-1')
     localStorage.setItem('twillingate.token_endpoint', 'https://api.example/oauth/token')
     localStorage.setItem('twillingate.resource', 'https://api.example')
     localStorage.setItem('twillingate.client_id', 'client-1')
-    localStorage.setItem('twillingate.token', 'pasted')
+    sessionStorage.setItem('twillingate.token', 'pasted')
     localStorage.setItem('twillingate.last_dashboard', '3')
     localStorage.setItem('other.key', 'kept')
     vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ access_token: 'access-2' }))
@@ -391,14 +391,16 @@ describe('logout', () => {
 
     expect(getAuthHeader()).toBeUndefined()
     expect(currentAuthState()).toEqual({ kind: 'none' })
-    expect(localStorage.length).toBe(1)
+    // What remains: the other key, and the logout epoch, which signs nothing.
+    expect(localStorage.length).toBe(2)
     expect(localStorage.getItem('other.key')).toBe('kept')
+    expect(localStorage.getItem('twillingate.logout_epoch')).not.toBeNull()
   })
 })
 
 describe('refreshAccess', () => {
   function storeRefreshCredentials() {
-    localStorage.setItem('twillingate.refresh_token', 'refresh-1')
+    sessionStorage.setItem('twillingate.refresh_token', 'refresh-1')
     localStorage.setItem('twillingate.token_endpoint', 'https://api.example/oauth/token')
     localStorage.setItem('twillingate.resource', 'https://api.example')
     localStorage.setItem('twillingate.client_id', 'client-1')
@@ -425,7 +427,7 @@ describe('refreshAccess', () => {
     expect(body.get('client_id')).toBe('client-1')
     expect(body.get('resource')).toBe('https://api.example')
     expect(getAuthHeader()).toBe('Bearer access-2')
-    expect(localStorage.getItem('twillingate.refresh_token')).toBe('refresh-2')
+    expect(sessionStorage.getItem('twillingate.refresh_token')).toBe('refresh-2')
   })
 
   it('is single-flight: concurrent callers share one request', async () => {
@@ -447,7 +449,7 @@ describe('refreshAccess', () => {
 
     expect(await refreshAccess()).toBe(false)
 
-    expect(localStorage.getItem('twillingate.refresh_token')).toBeNull()
+    expect(sessionStorage.getItem('twillingate.refresh_token')).toBeNull()
     expect(localStorage.getItem('twillingate.client_id')).toBeNull()
     expect(getAuthHeader()).toBeUndefined()
   })
@@ -458,7 +460,7 @@ describe('refreshAccess', () => {
 
     expect(await refreshAccess()).toBe(false)
 
-    expect(localStorage.getItem('twillingate.refresh_token')).toBeNull()
+    expect(sessionStorage.getItem('twillingate.refresh_token')).toBeNull()
     expect(localStorage.getItem('twillingate.client_id')).toBeNull()
   })
 
@@ -468,7 +470,7 @@ describe('refreshAccess', () => {
 
     expect(await refreshAccess()).toBe(false)
 
-    expect(localStorage.getItem('twillingate.refresh_token')).toBe('refresh-1')
+    expect(sessionStorage.getItem('twillingate.refresh_token')).toBe('refresh-1')
     expect(localStorage.getItem('twillingate.client_id')).toBe('client-1')
   })
 
@@ -479,7 +481,7 @@ describe('refreshAccess', () => {
     await expect(refreshAccess()).resolves.toBe(false)
 
     expect(getAuthHeader()).toBeUndefined()
-    expect(localStorage.getItem('twillingate.refresh_token')).toBe('refresh-1')
+    expect(sessionStorage.getItem('twillingate.refresh_token')).toBe('refresh-1')
     expect(localStorage.getItem('twillingate.client_id')).toBe('client-1')
   })
 })

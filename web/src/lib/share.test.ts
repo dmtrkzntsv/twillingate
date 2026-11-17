@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { Widget, WidgetShare } from './api'
-import { archiveLabel, embedCode, pinnedProject, rangeInWords, shareCaption, type ShareContext } from './share'
+import { archiveLabel, embedCode, pinnedProject, rangeInWords, shareCaption, thumbnailSrc, type ShareContext } from './share'
 
 function share(over: Partial<WidgetShare> = {}): WidgetShare {
   return {
@@ -120,5 +120,12 @@ describe('pinnedProject', () => {
     ['a project id that is not a number', [q({ project_id: '9' })]],
   ])('is undefined with %s', (_, widgets) => {
     expect(pinnedProject(widgets)).toBeUndefined()
+  })
+})
+
+describe('thumbnailSrc', () => {
+  it('is the path of image_url, so the console loads it from its own origin', () => {
+    expect(thumbnailSrc({ image_url: 'https://t.example.com/share/abc.png' } as WidgetShare)).toBe('/share/abc.png')
+    expect(thumbnailSrc({ image_url: '/share/abc.png' } as WidgetShare)).toBe('/share/abc.png')
   })
 })

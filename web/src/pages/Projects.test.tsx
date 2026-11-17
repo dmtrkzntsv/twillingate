@@ -216,6 +216,7 @@ describe('Projects', () => {
       vi.spyOn(endpoints, 'keys').mockResolvedValue({ keys: [] })
       vi.spyOn(endpoints, 'usage').mockResolvedValue({ from: '2026-09-03', to: '2026-10-02', database_bytes: 0, database_series: [], projects: [] })
       localStorage.clear()
+      sessionStorage.clear()
     })
 
     it('guides connecting an agent to the MCP address on CONSOLE_URL', async () => {
@@ -234,7 +235,7 @@ describe('Projects', () => {
     })
 
     it('replaces the sign-in steps with a note when this browser pasted a token', async () => {
-      localStorage.setItem('twillingate.token', 'ar_x')
+      sessionStorage.setItem('twillingate.token', 'ar_x')
       renderPage()
       const guide = await screen.findByRole('region', { name: 'Connect your AI agent' })
       expect(within(guide).getByText(/signed in here with a token/)).toBeInTheDocument()

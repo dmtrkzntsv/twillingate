@@ -64,10 +64,10 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip, ua := clientIP(r), r.Header.Get("User-Agent")
+	ip, ua := s.clientIP(r), r.Header.Get("User-Agent")
 	b := &batch{
 		snap: snap, projectID: p.ID, hashKey: strconv.FormatInt(p.ID, 10), attributes: env.Attributes,
-		salt: salt, ip: ip, ua: ua, received: time.Now().UTC(), country: s.geo.Country(r, ip),
+		salt: salt, ip: ip, ua: ua, received: time.Now().UTC(), country: s.country(r, ip),
 		// Bot filtering is a web concern, keyed on kind, not name: it applies
 		// to the web kind only. Applying it to app traffic would drop every
 		// client whose HTTP library sends a non-browser User-Agent.

@@ -157,7 +157,7 @@ describe('api', () => {
     // Exercises the real refreshAccess, not a mock, since the single-flight
     // guarantee lives there.
     vi.spyOn(auth, 'getAuthHeader').mockReturnValue('Bearer stale')
-    localStorage.setItem('twillingate.refresh_token', 'refresh-1')
+    sessionStorage.setItem('twillingate.refresh_token', 'refresh-1')
     localStorage.setItem('twillingate.token_endpoint', 'https://api.example/oauth/token')
     localStorage.setItem('twillingate.resource', 'https://api.example')
     localStorage.setItem('twillingate.client_id', 'client-1')

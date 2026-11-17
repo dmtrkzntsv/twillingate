@@ -112,3 +112,16 @@ function escapeAttr(s: string): string {
 export function embedCode(share: WidgetShare): string {
   return `<a href="${share.url}"><img src="${share.image_url}" srcset="${share.image_2x_url} 2x" alt="${escapeAttr(share.title)}" width="600" height="315"></a>`
 }
+
+/**
+ * A share's image as this console serves it: the path of image_url, which
+ * names CONSOLE_URL's origin. The console may be open on another of its
+ * hostnames, and its policy loads images from its own origin only.
+ */
+export function thumbnailSrc(share: WidgetShare): string {
+  try {
+    return new URL(share.image_url).pathname
+  } catch {
+    return share.image_url
+  }
+}

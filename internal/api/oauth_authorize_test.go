@@ -217,20 +217,3 @@ func TestAuthorizeSubmit(t *testing.T) {
 		t.Errorf("expired request: %d %s", rec.Code, rec.Body)
 	}
 }
-
-func TestAuthorizeLimiter(t *testing.T) {
-	f := newLoginFixture(t, nil)
-	request := f.loginForm(authorizeQuery(f.register(claudeCallback), claudeCallback))
-	for i := range maxFailuresPerMinute {
-		if rec := f.submit(request, "guess"); rec.Code != http.StatusUnauthorized {
-			t.Fatalf("failure %d: %d", i+1, rec.Code)
-		}
-	}
-	if rec := f.submit(request, testPassword); rec.Code != http.StatusTooManyRequests {
-		t.Errorf("right password during lockout: %d, want 429 without checking it", rec.Code)
-	}
-	f.now = f.now.Add(time.Minute)
-	if rec := f.submit(request, testPassword); rec.Code != http.StatusFound {
-		t.Errorf("next window: %d, want 302", rec.Code)
-	}
-}

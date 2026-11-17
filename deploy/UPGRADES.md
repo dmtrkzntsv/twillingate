@@ -1605,3 +1605,49 @@ not know are ignored. It cannot delete a project that has rows in them
 (their `project_id` references the project): delete those rows first, for
 example `DELETE FROM notifications WHERE project_id = <id>;` and the same
 for `notify_states` and `form_bursts`.
+
+### Upgrading to trusted proxies and session logins (no migration)
+
+No schema change. Three things behave differently on the day.
+
+- **Forwarding headers are believed only from `TRUSTED_PROXIES`.** Until
+  this release `CF-Connecting-IP` and `X-Forwarded-For` were read from any
+  request, so a client could choose the address its visitor hash and
+  country came from. `CF-Connecting-IP` is no longer read at all: the
+  address is the right-most `X-Forwarded-For` entry a trusted proxy did
+  not add, which Cloudflare also sets, directly and through `cloudflared`.
+  The default, `local`, trusts loopback, the private ranges and
+  link-local: a reverse proxy on the same host, in the same
+  compose network or on the same LAN, and a `cloudflared` tunnel, need
+  nothing. **Check before upgrading:** if a proxy reaches twillingate from
+  a public address (Cloudflare or another CDN pointed straight at the
+  server's port), list its ranges in `TRUSTED_PROXIES`, or every visitor
+  is counted as the proxy: one visitor per User-Agent, one country.
+  **nginx:** add `proxy_set_header X-Forwarded-For
+  $proxy_add_x_forwarded_for;` if it is missing, or a client can type the
+  address nginx hands on.
+  Conversely, `local` trusts every private address: if clients reach
+  twillingate from one with no proxy in between (rootless Docker or
+  Podman port forwarding, a LAN), set `TRUSTED_PROXIES` to the proxy's
+  own address, or `none`.
+  `CF-IPCountry` and `X-Forwarded-Proto` follow the same rule. To see the
+  address the server takes a request from, type a wrong password on the
+  login page: the warning it logs names its `source`.
+- **The dashboards keep a login for the browser session.** The refresh
+  token and a pasted token moved from localStorage to sessionStorage; a
+  value found in localStorage is moved on the first load, so nobody is
+  logged out by the upgrade. Open tabs share the login, and a new tab
+  takes it from them; once every tab is closed, the next visit logs in
+  again (unless the browser restores its last session, tabs and
+  sessionStorage with them). A logout in one tab ends the login in all. MCP clients are unaffected.
+- **A shared widget is no longer cached downstream.** Its page and images
+  are served `Cache-Control: no-cache, must-revalidate` (they were `max-age` 5 minutes and
+  an hour), so an archived share is gone on the next request, from a
+  browser's or a CDN's copy too; a revalidation of a live one costs a 304.
+
+The login page now limits wrong passwords per client address rather than
+for everyone at once (`docs/deployment.md`, `password`), and sets a
+`twillingate_login_device` cookie after a successful login.
+
+Rollback: install the previous release. Browsers that loaded this one log
+in again, since the previous one reads localStorage.

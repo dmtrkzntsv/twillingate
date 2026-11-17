@@ -145,6 +145,10 @@ func post(h http.Handler, body string, headers map[string]string) *httptest.Resp
 	r := httptest.NewRequest("POST", "/ingest/events", strings.NewReader(body))
 	r.Header.Set("User-Agent", chromeUA)
 	r.Header.Set("CF-IPCountry", "DE")
+	// As a reverse proxy on this host hands it on: forwarding headers are
+	// believed only from a trusted peer (TRUSTED_PROXIES).
+	r.RemoteAddr = "127.0.0.1:1234"
+	r.Header.Set("X-Forwarded-For", "192.0.2.1")
 	for k, v := range headers {
 		r.Header.Set(k, v)
 	}
@@ -215,8 +219,8 @@ func TestHashInputIsTheProjectId(t *testing.T) {
 	if len(q.views) != 1 {
 		t.Fatalf("views = %d, want 1", len(q.views))
 	}
-	// httptest.NewRequest sets RemoteAddr to 192.0.2.1:1234 and post adds
-	// no forwarding header, so clientIP resolves to 192.0.2.1.
+	// post sends the request as a local proxy forwarding 192.0.2.1, so
+	// clientIP resolves to 192.0.2.1.
 	want := identity.VisitorHash("test-salt", "192.0.2.1", chromeUA, "1")
 	if q.views[0].ProjectID != 1 || q.views[0].ActorID != want {
 		t.Fatalf("view = project %d actor %q, want project 1 actor %q", q.views[0].ProjectID, q.views[0].ActorID, want)
@@ -1641,5 +1645,46 @@ func TestIngestRefusesChecksFamily(t *testing.T) {
 		if e.Reason != `family "checks" is written by the server only` {
 			t.Errorf("reason %q", e.Reason)
 		}
+	}
+}
+
+// A client that connects directly cannot choose who it is: its
+// X-Forwarded-For, CF-Connecting-IP and CF-IPCountry are claims, and the
+// visitor hash and country come from the connection. From a trusted proxy
+// X-Forwarded-For and CF-IPCountry are believed; CF-Connecting-IP never is,
+// since a local proxy hands on whatever the client typed.
+func TestForwardingHeadersNeedATrustedProxy(t *testing.T) {
+	send := func(remote string) store.Event {
+		t.Helper()
+		q, h := testServer(t)
+		r := httptest.NewRequest("POST", "/ingest/events",
+			strings.NewReader(`{"events":[{"name":"$page_view","attributes":{"$path":"/"}}]}`))
+		r.RemoteAddr = remote
+		for k, v := range map[string]string{
+			"User-Agent": chromeUA, "Origin": testOrigin, "X-Analytics-Key": testKey,
+			"X-Forwarded-For": "198.51.100.7", "CF-Connecting-IP": "198.51.100.8", "CF-IPCountry": "FR",
+		} {
+			r.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, r)
+		if rec.Code != 202 || len(q.views) != 1 {
+			t.Fatalf("%s: code %d, %d views", remote, rec.Code, len(q.views))
+		}
+		return q.views[0]
+	}
+	direct := send("203.0.113.9:4000")
+	if want := identity.VisitorHash("test-salt", "203.0.113.9", chromeUA, "1"); direct.ActorID != want {
+		t.Errorf("direct client: the actor is not hashed from the connection's address")
+	}
+	if direct.Country == "FR" {
+		t.Errorf("direct client: country %q taken from its own CF-IPCountry", direct.Country)
+	}
+	proxied := send("127.0.0.1:4000")
+	if want := identity.VisitorHash("test-salt", "198.51.100.7", chromeUA, "1"); proxied.ActorID != want {
+		t.Errorf("trusted proxy: the actor is not hashed from X-Forwarded-For")
+	}
+	if proxied.Country != "FR" {
+		t.Errorf("trusted proxy: country %q, want FR", proxied.Country)
 	}
 }

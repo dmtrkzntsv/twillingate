@@ -6,16 +6,25 @@ import 'swagger-ui-dist/index.css'
 import 'swagger-ui-dist/swagger-ui.css'
 import { OPENAPI_URL, withAppAuth } from '@/lib/api-docs'
 import { refreshAccess } from '@/lib/auth'
+import { adoptCredentials } from '@/lib/credentials'
 
-SwaggerUI({
-  domNode: document.getElementById('swagger-ui')!,
-  url: OPENAPI_URL,
-  deepLinking: true,
-  requestInterceptor: withAppAuth,
-  // A 401 is most likely an expired access token: refresh it so the next
-  // try is signed with a fresh one.
-  responseInterceptor: async (res) => {
-    if (res.status === 401) await refreshAccess()
-    return res
-  },
+// The page usually opens in a tab of its own, which starts without the
+// app's credentials: ask the app's tabs for them first.
+// A late answer from a logged-in tab: start again with its credentials.
+void adoptCredentials(() => location.reload()).then(() => {
+  SwaggerUI({
+    domNode: document.getElementById('swagger-ui')!,
+    url: OPENAPI_URL,
+    deepLinking: true,
+    // No validator badge: it would send the document's address to
+    // validator.swagger.io, which the page's policy refuses anyway.
+    validatorUrl: null,
+    requestInterceptor: withAppAuth,
+    // A 401 is most likely an expired access token: refresh it so the next
+    // try is signed with a fresh one.
+    responseInterceptor: async (res) => {
+      if (res.status === 401) await refreshAccess()
+      return res
+    },
+  })
 })

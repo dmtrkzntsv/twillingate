@@ -251,6 +251,10 @@ func postForm(h http.Handler, name, query, contentType string, body io.Reader, h
 	r := httptest.NewRequest("POST", "/ingest/forms/"+name+query, body)
 	r.Header.Set("User-Agent", chromeUA)
 	r.Header.Set("CF-IPCountry", "DE")
+	// As a reverse proxy on this host hands it on: forwarding headers are
+	// believed only from a trusted peer (TRUSTED_PROXIES).
+	r.RemoteAddr = "127.0.0.1:1234"
+	r.Header.Set("X-Forwarded-For", "192.0.2.1")
 	if contentType != "" {
 		r.Header.Set("Content-Type", contentType)
 	}
