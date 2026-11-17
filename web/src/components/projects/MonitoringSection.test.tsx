@@ -504,6 +504,18 @@ describe('MonitoringSection', () => {
       expect(onSave).toHaveBeenCalledWith({ origin: A, path: '/healthz' })
     })
 
+    it('takes / for the home page: nothing to save on a monitor that checks it', async () => {
+      const user = userEvent.setup()
+      const { onSave } = show(list([on(A, { path: '/healthz' })]))
+      const a = await row(A)
+      await user.click(a.getByRole('button', { name: 'checks /healthz' }))
+      const input = a.getByLabelText(FIELD)
+      await user.clear(input)
+      await user.type(input, ' / ')
+      await user.click(a.getByRole('button', { name: 'Save' }))
+      expect(onSave).toHaveBeenCalledWith({ origin: A, path: '' })
+    })
+
     it('shows a saved path under the origin, and its X goes back to the home page', async () => {
       const user = userEvent.setup()
       const { onSave } = show(list([on(A, { path: '/api/health?deep=1' })]))

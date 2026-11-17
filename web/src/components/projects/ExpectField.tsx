@@ -27,7 +27,8 @@ export interface ExpectOption {
   /** The name of the X that removes it. */
   removeLabel: string
   editor:
-    | { kind: 'text'; maxLength: number; placeholder?: string }
+    /** normalize maps a trimmed value to what the server stores, so one it stores as another reads as saved. */
+    | { kind: 'text'; maxLength: number; placeholder?: string; normalize?: (value: string) => string }
     /** One of the choices, which the row gives; none offered means no menu item. */
     | { kind: 'choice'; prompt: string; choices: (row: { others: string[] }) => string[] }
 }
@@ -39,7 +40,7 @@ export const EXPECT_OPTIONS: readonly ExpectOption[] = [
     label: 'Page to check',
     savedText: (v) => `checks ${v}`,
     removeLabel: 'Check the home page again',
-    editor: { kind: 'text', maxLength: 500, placeholder: '/healthz' },
+    editor: { kind: 'text', maxLength: 500, placeholder: '/healthz', normalize: (v) => (v === '/' ? '' : v) },
   },
   {
     key: 'contains',
@@ -114,8 +115,7 @@ export default function ExpectField({ option, saved, choices, pending, onSave, m
     setValue((v) => (v === was ? saved : v))
   }, [saved])
 
-  const text = option.editor.kind === 'text'
-  const next = text ? value.trim() : value
+  const next = option.editor.kind === 'text' ? (option.editor.normalize ?? String)(value.trim()) : value
   const edited = next !== saved
   const showField = editing || value !== saved
 
