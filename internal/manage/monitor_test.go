@@ -533,6 +533,35 @@ func TestSetMonitorRedirectTo(t *testing.T) {
 	}
 }
 
+func TestSetMonitorPath(t *testing.T) {
+	ops, _, _ := newOps(t)
+	ctx := context.Background()
+	p, _ := ops.CreateProject(ctx, "cli", ProjectSpec{Name: "A", AllowedOrigins: []string{monA}})
+	path := func(l MonitorList) string { m, _ := l.Monitor(monA); return m.Expect.Path }
+	l, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Enabled: boolp(true), Expect: ExpectSpec{Path: strp(" /api/health?deep=1 ")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := path(l); got != "/api/health?deep=1" {
+		t.Fatalf("path = %q, want it trimmed", got)
+	}
+	// Leaving it out keeps it; "" and "/" both mean the root.
+	if l, _ = ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Expect: ExpectSpec{Contains: strp("ok")}}); path(l) != "/api/health?deep=1" {
+		t.Fatalf("omitted path changed: %+v", l.Monitors)
+	}
+	for _, root := range []string{"/", ""} {
+		ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Expect: ExpectSpec{Path: strp("/x")}})
+		if l, _ = ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Expect: ExpectSpec{Path: strp(root)}}); path(l) != "" {
+			t.Errorf("path %q stored as %q, want empty", root, path(l))
+		}
+	}
+	for _, bad := range []string{"healthz", "//evil.example/x", "https://evil.example/", "/a#frag", "/a b", "/a\\b", "/a\tb", "/" + strings.Repeat("a", maxMonitorPath)} {
+		if _, err := ops.SetMonitor(ctx, "cli", p.ID, monA, MonitorSpec{Expect: ExpectSpec{Path: strp(bad)}}); !errors.Is(err, ErrInvalid) {
+			t.Errorf("path %q: err = %v, want ErrInvalid", bad, err)
+		}
+	}
+}
+
 func TestSetMonitorRedirectToIDN(t *testing.T) {
 	ops, _, _ := newOps(t)
 	ctx := context.Background()

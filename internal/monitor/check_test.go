@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -139,6 +140,31 @@ func TestReasonHTTP(t *testing.T) {
 		if res.Up || res.Status != tc.status || res.Reason != tc.reason || res.Error == "" {
 			t.Errorf("status %d: got %+v, want %s", tc.status, res, tc.reason)
 		}
+	}
+}
+
+func TestCheckRequestsThePath(t *testing.T) {
+	var got []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = append(got, r.URL.RequestURI())
+		if r.URL.Path != "/healthz" {
+			http.NotFound(w, r)
+			return
+		}
+		fmt.Fprint(w, `{"status":"ok"}`)
+	}))
+	defer srv.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	c := loopbackClient(t)
+	if res := Check(ctx, c, srv.URL, store.MonitorExpect{}, anyOrigin); res.Up || res.Reason != ReasonHTTP4xx {
+		t.Errorf("root: got %+v, want http_4xx", res)
+	}
+	if res := Check(ctx, c, srv.URL+"/", store.MonitorExpect{Path: "/healthz?deep=1", Contains: `"ok"`}, anyOrigin); !res.Up {
+		t.Errorf("path: got %+v, want up", res)
+	}
+	if want := []string{"/", "/healthz?deep=1"}; !slices.Equal(got, want) {
+		t.Errorf("requested %q, want %q", got, want)
 	}
 }
 

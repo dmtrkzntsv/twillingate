@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	"golang.org/x/net/idna"
@@ -19,6 +20,8 @@ import (
 const (
 	// maxMonitorContains caps the text a monitored page must contain.
 	maxMonitorContains = 200
+	// maxMonitorPath caps the path a monitor requests, its query included.
+	maxMonitorPath = 500
 	// monitorCheckCooldown is the least time between manual checks of a
 	// monitor, whatever the interval: it protects the site and the RDAP
 	// registries, so it applies to everyone.
@@ -121,6 +124,10 @@ type MonitorSpec struct {
 // one field each: nil keeps it, "" clears it. A new expectation is a field
 // here and its case in expectEdit.
 type ExpectSpec struct {
+	// Path is the page the check requests on the origin, at most
+	// maxMonitorPath characters: "/healthz", "/api/status?deep=1". "" and
+	// "/" both mean the origin's root.
+	Path *string
 	// Contains is text the page must contain, at most maxMonitorContains
 	// characters.
 	Contains *string
@@ -277,6 +284,13 @@ func (o *Ops) SetMonitor(ctx context.Context, actor string, projectID int64, ori
 // returns the edit that sets them; nil when spec gives none.
 func (o *Ops) expectEdit(ctx context.Context, projectID int64, origin string, spec ExpectSpec) (func(store.MonitorExpect) store.MonitorExpect, error) {
 	var sets []func(*store.MonitorExpect)
+	if spec.Path != nil {
+		p, err := monitorPath(*spec.Path)
+		if err != nil {
+			return nil, err
+		}
+		sets = append(sets, func(e *store.MonitorExpect) { e.Path = p })
+	}
 	if spec.Contains != nil {
 		c := strings.TrimSpace(*spec.Contains)
 		if utf8.RuneCountInString(c) > maxMonitorContains {
@@ -300,6 +314,31 @@ func (o *Ops) expectEdit(ctx context.Context, projectID int64, origin string, sp
 		}
 		return e
 	}, nil
+}
+
+// monitorPath is p as stored, "" for the root, refused unless it is a path on
+// the origin: it starts with one "/" (not "//", which names another host),
+// may carry a query, and has no fragment, which a request never sends, no
+// space or control character and no backslash, which some servers read as
+// a "/".
+func monitorPath(p string) (string, error) {
+	p = strings.TrimSpace(p)
+	if p == "" || p == "/" {
+		return "", nil
+	}
+	if utf8.RuneCountInString(p) > maxMonitorPath {
+		return "", fmt.Errorf("%w: path is longer than %d characters", ErrInvalid, maxMonitorPath)
+	}
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") {
+		return "", fmt.Errorf("%w: path %q must start with a single /, such as /healthz", ErrInvalid, p)
+	}
+	if strings.ContainsAny(p, "#\\") || strings.ContainsFunc(p, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return "", fmt.Errorf("%w: path %q has a #, a backslash, a space or a control character", ErrInvalid, p)
+	}
+	if u, err := url.Parse(p); err != nil || u.Scheme != "" || u.Host != "" || u.Opaque != "" {
+		return "", fmt.Errorf("%w: path %q is not a path on the origin", ErrInvalid, p)
+	}
+	return p, nil
 }
 
 // monitorRedirectTo is to in its normalized form, "" for none, refused unless

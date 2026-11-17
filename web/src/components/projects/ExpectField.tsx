@@ -7,8 +7,8 @@ import { NativeSelect, NativeSelectOption } from '@/components/ui/native-select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { Monitor } from '@/lib/api'
 
-/** The expectations a monitor can have beyond a 2xx answer: its fields that hold one. */
-export type ExpectKey = 'contains' | 'redirect_to'
+/** What a check asks of a monitor's site beyond a 2xx answer at its root: its fields that hold one. */
+export type ExpectKey = 'path' | 'contains' | 'redirect_to'
 
 /**
  * One expectation as Settings offers it: an item in the row's menu that opens
@@ -27,12 +27,20 @@ export interface ExpectOption {
   /** The name of the X that removes it. */
   removeLabel: string
   editor:
-    | { kind: 'text'; maxLength: number }
+    | { kind: 'text'; maxLength: number; placeholder?: string }
     /** One of the choices, which the row gives; none offered means no menu item. */
     | { kind: 'choice'; prompt: string; choices: (row: { others: string[] }) => string[] }
 }
 
 export const EXPECT_OPTIONS: readonly ExpectOption[] = [
+  {
+    key: 'path',
+    menuLabel: 'Check another page',
+    label: 'Page to check',
+    savedText: (v) => `checks ${v}`,
+    removeLabel: 'Check the home page again',
+    editor: { kind: 'text', maxLength: 500, placeholder: '/healthz' },
+  },
   {
     key: 'contains',
     menuLabel: 'Look for text on the page',
@@ -184,6 +192,7 @@ export default function ExpectField({ option, saved, choices, pending, onSave, m
             value={value}
             disabled={pending}
             maxLength={option.editor.maxLength}
+            placeholder={option.editor.placeholder}
             autoFocus={autoFocus}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={escape}
