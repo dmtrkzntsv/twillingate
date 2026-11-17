@@ -176,7 +176,7 @@ func (s *Server) handlePreflight(w http.ResponseWriter, r *http.Request) {
 // clientIP is the address the request came from: the connection's own,
 // unless it comes from a trusted proxy (TRUSTED_PROXIES), whose forwarding
 // headers then name it (clientip.Proxies.From). Anyone else's
-// X-Forwarded-For or CF-Connecting-IP is a claim, not read: believing it
+// X-Forwarded-For is a claim, not read (CF-Connecting-IP never is): believing it
 // would let a client pick its visitor hash and its country.
 func (s *Server) clientIP(r *http.Request) string {
 	return s.cfg.TrustedProxies.From(r)

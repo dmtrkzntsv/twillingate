@@ -1613,7 +1613,9 @@ No schema change. Three things behave differently on the day.
 - **Forwarding headers are believed only from `TRUSTED_PROXIES`.** Until
   this release `CF-Connecting-IP` and `X-Forwarded-For` were read from any
   request, so a client could choose the address its visitor hash and
-  country came from. The default, `local`, trusts loopback, the private
+  country came from. `CF-Connecting-IP` is no longer read at all: the
+  address is the right-most `X-Forwarded-For` entry a trusted proxy did
+  not add, which Cloudflare also sets, directly and through `cloudflared`. The default, `local`, trusts loopback, the private
   ranges and link-local: a reverse proxy on the same host, in the same
   compose network or on the same LAN, and a `cloudflared` tunnel, need
   nothing. **Check before upgrading:** if a proxy reaches twillingate from
@@ -1628,7 +1630,8 @@ No schema change. Three things behave differently on the day.
   value found in localStorage is moved on the first load, so nobody is
   logged out by the upgrade. Open tabs share the login, and a new tab
   takes it from them; once every tab is closed, the next visit logs in
-  again. MCP clients are unaffected.
+  again (unless the browser restores its last session, tabs and
+  sessionStorage with them). A logout in one tab ends the login in all. MCP clients are unaffected.
 - **A shared widget is no longer cached downstream.** Its page and images
   are served `Cache-Control: no-cache, must-revalidate` (they were `max-age` 5 minutes and
   an hour), so an archived share is gone on the next request, from a

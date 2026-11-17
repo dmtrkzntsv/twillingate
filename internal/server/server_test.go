@@ -1650,8 +1650,9 @@ func TestIngestRefusesChecksFamily(t *testing.T) {
 
 // A client that connects directly cannot choose who it is: its
 // X-Forwarded-For, CF-Connecting-IP and CF-IPCountry are claims, and the
-// visitor hash and country come from the connection. The same headers
-// from a trusted proxy are believed.
+// visitor hash and country come from the connection. From a trusted proxy
+// X-Forwarded-For and CF-IPCountry are believed; CF-Connecting-IP never is,
+// since a local proxy hands on whatever the client typed.
 func TestForwardingHeadersNeedATrustedProxy(t *testing.T) {
 	send := func(remote string) store.Event {
 		t.Helper()
@@ -1680,8 +1681,8 @@ func TestForwardingHeadersNeedATrustedProxy(t *testing.T) {
 		t.Errorf("direct client: country %q taken from its own CF-IPCountry", direct.Country)
 	}
 	proxied := send("127.0.0.1:4000")
-	if want := identity.VisitorHash("test-salt", "198.51.100.8", chromeUA, "1"); proxied.ActorID != want {
-		t.Errorf("trusted proxy: the actor is not hashed from CF-Connecting-IP")
+	if want := identity.VisitorHash("test-salt", "198.51.100.7", chromeUA, "1"); proxied.ActorID != want {
+		t.Errorf("trusted proxy: the actor is not hashed from X-Forwarded-For")
 	}
 	if proxied.Country != "FR" {
 		t.Errorf("trusted proxy: country %q, want FR", proxied.Country)

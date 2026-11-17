@@ -93,14 +93,18 @@ func (p Proxies) TrustsPeer(r *http.Request) bool {
 // From is the address the request came from, as text.
 //
 // A connection from anyone but a trusted proxy is its own address, and its
-// headers are not read. From a trusted proxy: CF-Connecting-IP when it
-// holds an address (Cloudflare overwrites whatever the client sent, so it
-// is sound as long as the proxy is reachable only through Cloudflare; a
-// proxy that is not must strip it), else the right-most X-Forwarded-For
-// address that is not itself a trusted proxy, which is the one address in
-// that header a client cannot choose, since each proxy appends the peer
-// it saw. Entries that are not addresses are skipped; with nothing
-// usable, the connection's address.
+// headers are not read. From a trusted proxy: the right-most
+// X-Forwarded-For address that is not itself a trusted proxy, which is the
+// one address in that header a client cannot choose, since each proxy
+// appends the peer it saw. Entries that are not addresses are skipped;
+// with nothing usable, the connection's address.
+//
+// CF-Connecting-IP is never read. A proxy passes on headers it does not
+// know, so behind a Caddy or nginx that the internet reaches directly a
+// client could type one and pick its address, its visitor hash and its
+// login budget, the owner's included. Cloudflare appends the visitor to
+// X-Forwarded-For as well, whether it connects straight here or through
+// cloudflared, so that header alone already names the client.
 func (p Proxies) From(r *http.Request) string {
 	peer, ok := peerAddr(r)
 	if !ok {
@@ -108,9 +112,6 @@ func (p Proxies) From(r *http.Request) string {
 	}
 	if !p.Trusts(peer) {
 		return peer.String()
-	}
-	if a, err := netip.ParseAddr(strings.TrimSpace(r.Header.Get("CF-Connecting-IP"))); err == nil {
-		return a.Unmap().String()
 	}
 	// Several X-Forwarded-For lines are one list, in order.
 	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")

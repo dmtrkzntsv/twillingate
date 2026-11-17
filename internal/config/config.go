@@ -172,7 +172,7 @@ const DefaultFormAttributionDays = 7
 type Config struct {
 	IngestAddr string
 	// TrustedProxies (TRUSTED_PROXIES) are the reverse proxies whose
-	// forwarding headers (X-Forwarded-For, CF-Connecting-IP, CF-IPCountry,
+	// forwarding headers (X-Forwarded-For, CF-IPCountry,
 	// X-Forwarded-Proto) are believed; from any other peer the client is
 	// the connection itself. Unset, clientip.Local: loopback and the
 	// private ranges.

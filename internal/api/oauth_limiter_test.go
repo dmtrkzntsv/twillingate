@@ -224,3 +224,26 @@ func TestLoginLimiterBounded(t *testing.T) {
 		t.Errorf("%d entries after the hour, want 1", len(l.sources))
 	}
 }
+
+// Behind a local proxy that hands on what the client typed, a guesser
+// cannot spend the owner's budget by naming the owner's address in
+// CF-Connecting-IP: the source is the X-Forwarded-For entry the proxy
+// added, the guesser's own.
+func TestLoginSourceIgnoresCFConnectingIP(t *testing.T) {
+	f := newLoginFixture(t, func(m *config.ConsoleConfig) { m.TrustedProxies = clientip.Local() })
+	request := f.request()
+	const owner, guesser = "198.51.100.50", "203.0.113.66"
+	cookies := f.submitFrom("127.0.0.1", request, testPassword, nil, "X-Forwarded-For", owner).Result().Cookies()
+	for i := range sourceFailuresPerMinute {
+		rec := f.submitFrom("127.0.0.1", request, "guess", nil, "X-Forwarded-For", guesser, "CF-Connecting-IP", owner)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("failure %d: %d", i+1, rec.Code)
+		}
+	}
+	if rec := f.submitFrom("127.0.0.1", request, testPassword, cookies, "X-Forwarded-For", owner); rec.Code != http.StatusFound {
+		t.Errorf("owner after a guesser named its address: %d, want 302", rec.Code)
+	}
+	if rec := f.submitFrom("127.0.0.1", request, testPassword, nil, "X-Forwarded-For", guesser, "CF-Connecting-IP", "192.0.2.9"); rec.Code != http.StatusTooManyRequests {
+		t.Errorf("guesser with a new CF-Connecting-IP: %d, want 429", rec.Code)
+	}
+}
