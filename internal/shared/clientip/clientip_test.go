@@ -55,6 +55,10 @@ func TestFrom(t *testing.T) {
 			[]string{"X-Forwarded-For", "10.0.0.5, 10.0.0.2"}, "10.0.0.5"},
 		{"garbage entries are skipped", local, "127.0.0.1:4000",
 			[]string{"X-Forwarded-For", "198.51.100.7, unknown, <script>"}, "198.51.100.7"},
+		{"entries with a port, as some proxies send them", local, "127.0.0.1:4000",
+			[]string{"X-Forwarded-For", "1.2.3.4, 198.51.100.7:4321"}, "198.51.100.7"},
+		{"IPv6 entries in brackets, with or without a port", local, "127.0.0.1:4000",
+			[]string{"X-Forwarded-For", "[2001:db8::7]:443, [10.0.0.2]"}, "2001:db8::7"},
 		{"nothing usable: the peer", local, "127.0.0.1:4000",
 			[]string{"X-Forwarded-For", "unknown"}, "127.0.0.1"},
 		// A local Caddy passes on a header the client typed: believing it

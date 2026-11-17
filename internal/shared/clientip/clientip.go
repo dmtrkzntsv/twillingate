@@ -96,8 +96,8 @@ func (p Proxies) TrustsPeer(r *http.Request) bool {
 // headers are not read. From a trusted proxy: the right-most
 // X-Forwarded-For address that is not itself a trusted proxy, which is the
 // one address in that header a client cannot choose, since each proxy
-// appends the peer it saw. Entries that are not addresses are skipped;
-// with nothing usable, the connection's address.
+// appends the peer it saw. An entry may carry a port; one that is no
+// address is skipped; with nothing usable, the connection's address.
 //
 // CF-Connecting-IP is never read. A proxy passes on headers it does not
 // know, so behind a Caddy or nginx that the internet reaches directly a
@@ -117,8 +117,8 @@ func (p Proxies) From(r *http.Request) string {
 	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
 	var outermost netip.Addr
 	for i := len(hops) - 1; i >= 0; i-- {
-		a, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
-		if err != nil {
+		a, ok := hopAddr(hops[i])
+		if !ok {
 			continue
 		}
 		a = a.Unmap().WithZone("")
@@ -133,6 +133,22 @@ func (p Proxies) From(r *http.Request) string {
 		return outermost.String()
 	}
 	return peer.String()
+}
+
+// hopAddr reads one X-Forwarded-For entry: an address, or one with a port
+// ("203.0.113.5:4321", "[2001:db8::1]:443"), which some proxies append.
+func hopAddr(hop string) (netip.Addr, bool) {
+	hop = strings.TrimSpace(hop)
+	if a, err := netip.ParseAddr(hop); err == nil {
+		return a, true
+	}
+	if ap, err := netip.ParseAddrPort(hop); err == nil {
+		return ap.Addr(), true
+	}
+	if a, err := netip.ParseAddr(strings.TrimSuffix(strings.TrimPrefix(hop, "["), "]")); err == nil {
+		return a, true
+	}
+	return netip.Addr{}, false
 }
 
 // peerAddr is the address of the connection itself.
