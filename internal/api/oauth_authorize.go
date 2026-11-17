@@ -83,11 +83,11 @@ func (s *loginServer) authorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	setPageHeaders(w)
 	r.Body = http.MaxBytesReader(w, r.Body, maxOAuthBody)
 	source, known := s.loginSource(r), s.knownDevice(r)
-	if wait := s.limiter.admit(s.now(), source, known); wait > 0 {
+	if wait, hourly := s.limiter.admit(s.now(), source, known); wait > 0 {
 		s.logger.Warn("mcp login: too many failed password attempts", "source", source, "known_device", known)
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
 		msg := "Too many attempts. Wait a minute, then start again from your client."
-		if wait > time.Minute {
+		if hourly {
 			msg = "Too many attempts from your network. Wait an hour, then start again from your client."
 		}
 		s.render(w, http.StatusTooManyRequests, pageData{Error: msg})

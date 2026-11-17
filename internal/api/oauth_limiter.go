@@ -91,15 +91,16 @@ type loginLimiter struct {
 // and counting apart would let a burst of concurrent guesses all pass the
 // check before any is counted. A right password takes the count back
 // (succeeded), as does a submission that never reaches the comparison
-// (refund). A refused caller gets how long to wait; 0 admits.
-func (l *loginLimiter) admit(now time.Time, source string, known bool) time.Duration {
+// (refund). A refused caller gets how long to wait, and whether its
+// source's hour is what is spent; 0 admits.
+func (l *loginLimiter) admit(now time.Time, source string, known bool) (wait time.Duration, hourly bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if wait := l.wait(now, source, known); wait > 0 {
-		return wait
+	if wait, hourly := l.wait(now, source, known); wait > 0 {
+		return wait, hourly
 	}
 	l.record(now, source, known)
-	return 0
+	return 0, false
 }
 
 // refund takes back the failure admit counted, for a submission that
@@ -121,7 +122,15 @@ func (l *loginLimiter) refund(now time.Time, source string, known bool) {
 func (l *loginLimiter) succeeded(now time.Time, source string, known bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	delete(l.sources, source)
+	if k := l.key(source, known); k != source {
+		// Counted in the shared overflow entry, which others still count in.
+		if s := l.sources[k]; s != nil {
+			s.minute.take(now, time.Minute)
+			s.hour.take(now, time.Hour)
+		}
+	} else {
+		delete(l.sources, source)
+	}
 	if !known {
 		l.strangers.take(now, time.Minute)
 	}
@@ -132,7 +141,8 @@ func (l *loginLimiter) succeeded(now time.Time, source string, known bool) {
 func (l *loginLimiter) retryAfter(now time.Time, source string, known bool) time.Duration {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	return l.wait(now, source, known)
+	wait, _ := l.wait(now, source, known)
+	return wait
 }
 
 // fail counts one wrong password.
@@ -142,20 +152,21 @@ func (l *loginLimiter) fail(now time.Time, source string, known bool) {
 	l.record(now, source, known)
 }
 
-// wait is retryAfter with mu held.
-func (l *loginLimiter) wait(now time.Time, source string, known bool) time.Duration {
+// wait is retryAfter with mu held, and reports whether the source's hour
+// is the budget spent.
+func (l *loginLimiter) wait(now time.Time, source string, known bool) (time.Duration, bool) {
 	if s := l.sources[l.key(source, known)]; s != nil {
 		if s.hour.count(now, time.Hour) >= sourceFailuresPerHour {
-			return now.Truncate(time.Hour).Add(time.Hour).Sub(now)
+			return now.Truncate(time.Hour).Add(time.Hour).Sub(now), true
 		}
 		if s.minute.count(now, time.Minute) >= sourceFailuresPerMinute {
-			return now.Truncate(time.Minute).Add(time.Minute).Sub(now)
+			return now.Truncate(time.Minute).Add(time.Minute).Sub(now), false
 		}
 	}
 	if !known && l.strangers.count(now, time.Minute) >= strangerFailuresPerMinute {
-		return now.Truncate(time.Minute).Add(time.Minute).Sub(now)
+		return now.Truncate(time.Minute).Add(time.Minute).Sub(now), false
 	}
-	return 0
+	return 0, false
 }
 
 // record is fail with mu held.

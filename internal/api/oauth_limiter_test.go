@@ -74,6 +74,43 @@ func TestLoginLimiterPerSource(t *testing.T) {
 	f.fails("203.0.113.1", request, sourceFailuresPerMinute)
 }
 
+// The page names the budget that is spent, not the time left: an hour's
+// budget spent in its last minute still says to wait for the hour.
+func TestLoginLimiterNamesTheSpentBudget(t *testing.T) {
+	f := newLoginFixture(t, nil)
+	const rounds = sourceFailuresPerHour / sourceFailuresPerMinute
+	// The last round of failures 50 s before the hour ends.
+	f.now = f.now.Truncate(time.Hour).Add(time.Hour - (rounds-1)*time.Minute - 50*time.Second)
+	request := f.request()
+	for i := range rounds {
+		if i > 0 {
+			f.now = f.now.Add(time.Minute)
+		}
+		f.fails("203.0.113.1", request, sourceFailuresPerMinute)
+	}
+	f.now = f.now.Add(20 * time.Second) // 30 s before the hour ends
+	rec := f.submitFrom("203.0.113.1", request, testPassword, nil)
+	if rec.Code != http.StatusTooManyRequests || !strings.Contains(rec.Body.String(), "an hour") {
+		t.Errorf("hour spent in its last minute: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// A right password counted in the shared overflow entry is taken back from
+// it: every new source counts there.
+func TestLoginLimiterSucceededInOverflow(t *testing.T) {
+	var l loginLimiter
+	now := loginEpoch
+	for i := range maxLimiterSources {
+		l.fail(now, fmt.Sprintf("s%d", i), true)
+	}
+	for range 2 * sourceFailuresPerMinute {
+		if wait, _ := l.admit(now, "new", false); wait != 0 {
+			t.Fatal("a right password in the overflow entry still counts")
+		}
+		l.succeeded(now, "new", false)
+	}
+}
+
 // A patient guesser is held to sourceFailuresPerHour.
 func TestLoginLimiterPerSourceHour(t *testing.T) {
 	f := newLoginFixture(t, nil)
@@ -246,7 +283,7 @@ func TestLoginLimiterAdmitIsAtomic(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if l.admit(now, "203.0.113.1", false) == 0 {
+			if wait, _ := l.admit(now, "203.0.113.1", false); wait == 0 {
 				admitted.Add(1)
 			}
 		}()
@@ -263,14 +300,14 @@ func TestLoginLimiterRefunds(t *testing.T) {
 	var l loginLimiter
 	now := loginEpoch
 	for range 2 * sourceFailuresPerMinute {
-		if l.admit(now, "a", false) != 0 {
+		if wait, _ := l.admit(now, "a", false); wait != 0 {
 			t.Fatal("a refunded attempt still counts")
 		}
 		l.refund(now, "a", false)
 	}
 	for i := range strangerFailuresPerMinute {
 		src := fmt.Sprintf("s%d", i)
-		if l.admit(now, src, false) != 0 {
+		if wait, _ := l.admit(now, src, false); wait != 0 {
 			t.Fatal("a right password still spends the strangers' budget")
 		}
 		l.succeeded(now, src, false)
