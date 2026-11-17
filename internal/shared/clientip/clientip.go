@@ -96,8 +96,10 @@ func (p Proxies) TrustsPeer(r *http.Request) bool {
 // headers are not read. From a trusted proxy: the right-most
 // X-Forwarded-For address that is not itself a trusted proxy, which is the
 // one address in that header a client cannot choose, since each proxy
-// appends the peer it saw. An entry may carry a port; one that is no
-// address is skipped; with nothing usable, the connection's address.
+// appends the peer it saw. An entry may carry a port. One that is no
+// address (a proxy that writes "unknown") ends the walk, since every entry
+// left of it is the client's to type: the address is then the outermost
+// trusted hop seen, or the connection's.
 //
 // CF-Connecting-IP is never read. A proxy passes on headers it does not
 // know, so behind a Caddy or nginx that the internet reaches directly a
@@ -119,7 +121,10 @@ func (p Proxies) From(r *http.Request) string {
 	for i := len(hops) - 1; i >= 0; i-- {
 		a, ok := hopAddr(hops[i])
 		if !ok {
-			continue
+			// No header, or a trusted proxy wrote something that is no
+			// address (Squid's "unknown"): what is left of it is the
+			// client's to type.
+			break
 		}
 		a = a.Unmap().WithZone("")
 		if !p.Trusts(a) {
@@ -127,8 +132,8 @@ func (p Proxies) From(r *http.Request) string {
 		}
 		outermost = a
 	}
-	// Every hop is a trusted proxy (a request from inside the network):
-	// the first of them is where it began.
+	// Every hop read is a trusted proxy (a request from inside the
+	// network): the outermost of them is where it began.
 	if outermost.IsValid() {
 		return outermost.String()
 	}
