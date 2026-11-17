@@ -3,7 +3,7 @@
 // PKCE flow. See internal/api/oauth*.go for the server side.
 
 import { sha256 } from '@noble/hashes/sha2.js'
-import { credential, PASTED_TOKEN_KEY, REFRESH_TOKEN_KEY, setCredential } from './credentials'
+import { credential, onForgottenElsewhere, PASTED_TOKEN_KEY, REFRESH_TOKEN_KEY, setCredential } from './credentials'
 
 const METADATA_PATH = '/.well-known/oauth-protected-resource'
 const CALLBACK_PATH = '/app/callback'
@@ -45,6 +45,12 @@ interface OAuthErrorBody {
 // keeps for the browser session only. What stays in localStorage (the
 // client id, the endpoints) signs nothing.
 let accessToken: string | null = null
+
+// Another tab logging out, or losing its refresh token to a rejection,
+// ends the login here too: the access token in memory came from it.
+onForgottenElsewhere((key) => {
+  if (key === REFRESH_TOKEN_KEY) accessToken = null
+})
 
 /**
  * The host of the authorization server discovered by the last `detectAuth`

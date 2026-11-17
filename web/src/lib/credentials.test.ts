@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   _resetCredentialsForTests,
   adoptCredentials,
@@ -7,7 +7,7 @@ import {
   REFRESH_TOKEN_KEY,
   setCredential,
 } from './credentials'
-import { _resetForTests, currentAuthState, getAuthHeader, logout, setPastedToken } from './auth'
+import { _resetForTests, currentAuthState, refreshAccess, getAuthHeader, logout, setPastedToken } from './auth'
 
 // Another tab of the same origin: its own end of the channel.
 let other: BroadcastChannel
@@ -105,6 +105,25 @@ describe('credentials', () => {
     await tick()
     expect(credential(REFRESH_TOKEN_KEY)).toBeNull()
     expect(sessionStorage.getItem('twillingate.last_dashboard')).toBeNull()
+  })
+
+  it('a logout in another tab drops the access token held in memory here', async () => {
+    setCredential(REFRESH_TOKEN_KEY, 'refresh-1')
+    localStorage.setItem('twillingate.token_endpoint', 'https://api.example/oauth/token')
+    localStorage.setItem('twillingate.resource', 'https://api.example')
+    localStorage.setItem('twillingate.client_id', 'client-1')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ access_token: 'access-1' }), { status: 200 })))
+    try {
+      expect(await refreshAccess()).toBe(true)
+      expect(getAuthHeader()).toBe('Bearer access-1')
+
+      other.postMessage({ type: 'set', key: REFRESH_TOKEN_KEY, value: null })
+      await tick()
+      expect(getAuthHeader()).toBeUndefined()
+      expect(currentAuthState()).toEqual({ kind: 'none' })
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('logout forgets the credentials here and tells the other tabs', async () => {

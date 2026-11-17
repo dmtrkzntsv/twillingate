@@ -1,8 +1,8 @@
 // Where the app keeps what signs its requests: the refresh token of a
 // login and a token pasted by hand. Both live in sessionStorage, so they
-// last as long as the browser session and no longer: nothing that can sign
-// a request is left on disk for whoever opens the browser, or its profile
-// directory, next. (They used to live in localStorage, which is kept until
+// last as long as the browser session: closing the browser forgets them,
+// unless it restores its last session, which brings sessionStorage back
+// with the tabs. (They used to live in localStorage, which is kept until
 // someone clears it; `credential` moves a value found there.)
 //
 // sessionStorage is per tab, so the tabs of one browser hand the values to
@@ -27,6 +27,16 @@ const CHANNEL = 'twillingate.credentials'
 const ADOPT_WAIT_MS = 150
 
 let channel: BroadcastChannel | null | undefined
+const forgotten = new Set<(key: Key) => void>()
+
+/**
+ * Calls fn when another tab forgets a credential (a logout, a rejected
+ * refresh token), so this tab can drop what it derived from it: the
+ * access token it holds in memory.
+ */
+export function onForgottenElsewhere(fn: (key: Key) => void): void {
+  forgotten.add(fn)
+}
 
 function isKey(k: unknown): k is Key {
   return (KEYS as readonly unknown[]).includes(k)
@@ -54,7 +64,9 @@ function onMessage(e: MessageEvent<Message>): void {
     const values = held()
     if (Object.keys(values).length > 0) channel?.postMessage({ type: 'offer', values } satisfies Message)
   } else if (m?.type === 'set' && isKey(m.key)) {
-    store(m.key, typeof m.value === 'string' ? m.value : null)
+    const value = typeof m.value === 'string' ? m.value : null
+    store(m.key, value)
+    if (value === null) for (const fn of forgotten) fn(m.key)
   }
 }
 

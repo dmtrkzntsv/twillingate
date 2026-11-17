@@ -104,7 +104,7 @@ describe('Shares', () => {
     renderShares()
     const r = await row('Visitors')
     const img = within(r).getByRole('img')
-    expect(img).toHaveAttribute('src', older.image_url)
+    expect(img).toHaveAttribute('src', `/share/${older.id}.png`)
     expect(img).toHaveAttribute('loading', 'lazy')
     const thumb = img.closest('a')!
     expect(thumb).toHaveAttribute('href', older.url)

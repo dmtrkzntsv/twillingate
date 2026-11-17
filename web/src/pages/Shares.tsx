@@ -14,7 +14,7 @@ import { useCopy } from '@/hooks/use-copy'
 import { useWidgetShareActions } from '@/hooks/use-widget-share-actions'
 import type { WidgetShare } from '@/lib/api'
 import { dashboardsQuery, widgetSharesQuery } from '@/lib/queries'
-import { archiveLabel, embedCode, rangeInWords } from '@/lib/share'
+import { archiveLabel, embedCode, rangeInWords, thumbnailSrc } from '@/lib/share'
 
 /** The day a share was made, "Oct 5, 2026", in UTC like the archive date beside it. */
 function createdOn(share: WidgetShare): string {
@@ -60,7 +60,7 @@ export default function Shares() {
       <TableRow key={s.id}>
         <TableCell className="w-24 sm:w-28">
           <a href={s.url} target="_blank" rel="noopener" className="block">
-            <img src={s.image_url} alt={`Shared image of ${s.title}`} loading="lazy" className="aspect-[1200/630] w-20 rounded border object-cover sm:w-24" />
+            <img src={thumbnailSrc(s)} alt={`Shared image of ${s.title}`} loading="lazy" className="aspect-[1200/630] w-20 rounded border object-cover sm:w-24" />
           </a>
         </TableCell>
         <TableCell className="min-w-0">
