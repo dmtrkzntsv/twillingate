@@ -86,6 +86,15 @@ type loginLimiter struct {
 	swept     time.Time // the hour sweep last ran in
 }
 
+// admission is what admit counted: the entry the failure went to, the
+// source's own or the shared overflow one, and whether it also went to
+// the strangers' budget. refund and succeeded take back exactly that,
+// rather than work the entry out again after the table has changed.
+type admission struct {
+	entry string
+	known bool
+}
+
 // admit decides whether a submission may go on to the password check,
 // and if so counts it as a failure at once, under the same lock: checking
 // and counting apart would let a burst of concurrent guesses all pass the
@@ -93,45 +102,42 @@ type loginLimiter struct {
 // (succeeded), as does a submission that never reaches the comparison
 // (refund). A refused caller gets how long to wait, and whether its
 // source's hour is what is spent; 0 admits.
-func (l *loginLimiter) admit(now time.Time, source string, known bool) (wait time.Duration, hourly bool) {
+func (l *loginLimiter) admit(now time.Time, source string, known bool) (a admission, wait time.Duration, hourly bool) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if wait, hourly := l.wait(now, source, known); wait > 0 {
-		return wait, hourly
+		return admission{}, wait, hourly
 	}
-	l.record(now, source, known)
-	return 0, false
+	return admission{entry: l.record(now, source, known), known: known}, 0, false
 }
 
 // refund takes back the failure admit counted, for a submission that
 // never reached the password check.
-func (l *loginLimiter) refund(now time.Time, source string, known bool) {
+func (l *loginLimiter) refund(now time.Time, a admission) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if s := l.sources[l.key(source, known)]; s != nil {
-		s.minute.take(now, time.Minute)
-		s.hour.take(now, time.Hour)
-	}
-	if !known {
-		l.strangers.take(now, time.Minute)
-	}
+	l.takeBack(now, a)
 }
 
 // succeeded takes back the failure admit counted and forgets the source's
-// others: whoever typed the password right is not guessing it.
-func (l *loginLimiter) succeeded(now time.Time, source string, known bool) {
+// others: whoever typed the password right is not guessing it. The shared
+// overflow entry is not the source's to forget.
+func (l *loginLimiter) succeeded(now time.Time, source string, a admission) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if k := l.key(source, known); k != source {
-		// Counted in the shared overflow entry, which others still count in.
-		if s := l.sources[k]; s != nil {
-			s.minute.take(now, time.Minute)
-			s.hour.take(now, time.Hour)
-		}
-	} else {
+	l.takeBack(now, a)
+	if a.entry == source {
 		delete(l.sources, source)
 	}
-	if !known {
+}
+
+// takeBack undoes what admit counted. Called with mu held.
+func (l *loginLimiter) takeBack(now time.Time, a admission) {
+	if s := l.sources[a.entry]; s != nil {
+		s.minute.take(now, time.Minute)
+		s.hour.take(now, time.Hour)
+	}
+	if !a.known {
 		l.strangers.take(now, time.Minute)
 	}
 }
@@ -169,8 +175,8 @@ func (l *loginLimiter) wait(now time.Time, source string, known bool) (time.Dura
 	return 0, false
 }
 
-// record is fail with mu held.
-func (l *loginLimiter) record(now time.Time, source string, known bool) {
+// record is fail with mu held, and returns the entry it counted in.
+func (l *loginLimiter) record(now time.Time, source string, known bool) string {
 	if l.sources == nil {
 		l.sources = map[string]*sourceFailures{}
 	}
@@ -188,6 +194,7 @@ func (l *loginLimiter) record(now time.Time, source string, known bool) {
 	if !known {
 		l.strangers.add(now, time.Minute)
 	}
+	return k
 }
 
 // key is the entry a source counts in: its own, or the shared overflow

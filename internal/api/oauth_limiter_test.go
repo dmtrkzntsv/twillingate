@@ -104,10 +104,15 @@ func TestLoginLimiterSucceededInOverflow(t *testing.T) {
 		l.fail(now, fmt.Sprintf("s%d", i), true)
 	}
 	for range 2 * sourceFailuresPerMinute {
-		if wait, _ := l.admit(now, "new", false); wait != 0 {
+		a, wait, _ := l.admit(now, "new", false)
+		if wait != 0 {
 			t.Fatal("a right password in the overflow entry still counts")
 		}
-		l.succeeded(now, "new", false)
+		// The table shrinks meanwhile: the count is still taken back from
+		// the entry it went to.
+		delete(l.sources, "s0")
+		l.succeeded(now, "new", a)
+		l.sources["s0"] = &sourceFailures{}
 	}
 }
 
@@ -283,7 +288,7 @@ func TestLoginLimiterAdmitIsAtomic(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			if wait, _ := l.admit(now, "203.0.113.1", false); wait == 0 {
+			if _, wait, _ := l.admit(now, "203.0.113.1", false); wait == 0 {
 				admitted.Add(1)
 			}
 		}()
@@ -300,17 +305,19 @@ func TestLoginLimiterRefunds(t *testing.T) {
 	var l loginLimiter
 	now := loginEpoch
 	for range 2 * sourceFailuresPerMinute {
-		if wait, _ := l.admit(now, "a", false); wait != 0 {
+		a, wait, _ := l.admit(now, "a", false)
+		if wait != 0 {
 			t.Fatal("a refunded attempt still counts")
 		}
-		l.refund(now, "a", false)
+		l.refund(now, a)
 	}
 	for i := range strangerFailuresPerMinute {
 		src := fmt.Sprintf("s%d", i)
-		if wait, _ := l.admit(now, src, false); wait != 0 {
+		a, wait, _ := l.admit(now, src, false)
+		if wait != 0 {
 			t.Fatal("a right password still spends the strangers' budget")
 		}
-		l.succeeded(now, src, false)
+		l.succeeded(now, src, a)
 	}
 	if n := l.strangers.n; n != 0 {
 		t.Errorf("strangers' count %d after refunds, want 0", n)
