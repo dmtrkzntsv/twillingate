@@ -10,7 +10,8 @@ import { adoptCredentials } from '@/lib/credentials'
 
 // The page usually opens in a tab of its own, which starts without the
 // app's credentials: ask the app's tabs for them first.
-void adoptCredentials().then(() => {
+// A late answer from a logged-in tab: start again with its credentials.
+void adoptCredentials(() => location.reload()).then(() => {
   SwaggerUI({
     domNode: document.getElementById('swagger-ui')!,
     url: OPENAPI_URL,

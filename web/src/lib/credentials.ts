@@ -25,6 +25,8 @@ type Message =
 const CHANNEL = 'twillingate.credentials'
 /** How long a new tab waits for another to answer before showing the login. */
 const ADOPT_WAIT_MS = 150
+/** How long a late answer is still taken (adoptCredentials' onLate). */
+const ADOPT_LATE_MS = 5000
 
 let channel: BroadcastChannel | null | undefined
 const forgotten = new Set<(key: Key) => void>()
@@ -99,24 +101,36 @@ export function setCredential(key: Key, value: string | null): void {
  * holds no credential asks the others for theirs, waiting briefly for an
  * answer. Resolves either way; with no other tab logged in, the app shows
  * its login.
+ *
+ * A tab that answers late (busy, or throttled in the background) is still
+ * heard for ADOPT_LATE_MS: if this tab still holds nothing, it takes the
+ * credentials and calls onLate, so the page can start again logged in.
  */
-export function adoptCredentials(): Promise<void> {
+export function adoptCredentials(onLate?: () => void): Promise<void> {
   const ch = open()
   if (!ch || Object.keys(held()).length > 0) return Promise.resolve()
   return new Promise((resolve) => {
-    const done = () => {
+    let resolved = false
+    const stop = () => {
       ch.removeEventListener('message', onOffer)
-      clearTimeout(timer)
-      resolve()
+      clearTimeout(lateTimer)
     }
     const onOffer = (e: MessageEvent<Message>) => {
       if (e.data?.type !== 'offer') return
+      stop()
+      clearTimeout(timer)
+      if (resolved && Object.keys(held()).length > 0) return
       for (const [k, v] of Object.entries(e.data.values ?? {})) {
         if (isKey(k) && typeof v === 'string') store(k, v)
       }
-      done()
+      if (resolved) onLate?.()
+      else resolve()
     }
-    const timer = setTimeout(done, ADOPT_WAIT_MS)
+    const timer = setTimeout(() => {
+      resolved = true
+      resolve()
+    }, ADOPT_WAIT_MS)
+    const lateTimer = setTimeout(stop, ADOPT_LATE_MS)
     ch.addEventListener('message', onOffer)
     ch.postMessage({ type: 'hello' } satisfies Message)
   })

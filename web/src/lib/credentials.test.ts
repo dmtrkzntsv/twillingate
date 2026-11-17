@@ -69,6 +69,33 @@ describe('credentials', () => {
     expect(currentAuthState()).toEqual({ kind: 'oauth' })
   })
 
+  it('takes a late answer after the login has shown, and says so', async () => {
+    let late = 0
+    await adoptCredentials(() => late++)
+    expect(currentAuthState()).toEqual({ kind: 'none' })
+
+    other.postMessage({ type: 'offer', values: { [REFRESH_TOKEN_KEY]: 'late' } })
+    await tick()
+    expect(credential(REFRESH_TOKEN_KEY)).toBe('late')
+    expect(late).toBe(1)
+
+    // Only the first answer counts.
+    other.postMessage({ type: 'offer', values: { [REFRESH_TOKEN_KEY]: 'later' } })
+    await tick()
+    expect(credential(REFRESH_TOKEN_KEY)).toBe('late')
+    expect(late).toBe(1)
+  })
+
+  it('ignores a late answer once this tab has logged in by itself', async () => {
+    let late = 0
+    await adoptCredentials(() => late++)
+    setCredential(REFRESH_TOKEN_KEY, 'mine')
+    other.postMessage({ type: 'offer', values: { [REFRESH_TOKEN_KEY]: 'theirs' } })
+    await tick()
+    expect(credential(REFRESH_TOKEN_KEY)).toBe('mine')
+    expect(late).toBe(0)
+  })
+
   it('a new tab with no one to ask goes on without credentials', async () => {
     await adoptCredentials()
     expect(currentAuthState()).toEqual({ kind: 'none' })
