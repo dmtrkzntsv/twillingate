@@ -49,8 +49,16 @@ let accessToken: string | null = null
 // Another tab logging out, or losing its refresh token to a rejection,
 // ends the login here too: the access token in memory came from it.
 onForgottenElsewhere((key) => {
-  if (key === REFRESH_TOKEN_KEY) accessToken = null
+  if (key === REFRESH_TOKEN_KEY) {
+    accessToken = null
+    generation++
+  }
 })
+
+// Counts logouts, here and in other tabs. A refresh started before one
+// discards its answer, rather than store a token the logout took away and
+// hand it to every tab.
+let generation = 0
 
 /**
  * The host of the authorization server discovered by the last `detectAuth`
@@ -348,6 +356,7 @@ async function clearOnRejection(res: Response): Promise<void> {
 }
 
 async function exchangeRefresh(): Promise<boolean> {
+  const started = generation
   const refreshToken = credential(REFRESH_TOKEN_KEY)
   const tokenEndpoint = localStorage.getItem(TOKEN_ENDPOINT_KEY)
   const resource = localStorage.getItem(RESOURCE_KEY)
@@ -377,6 +386,7 @@ async function exchangeRefresh(): Promise<boolean> {
     // treat it as a failed refresh rather than let the SyntaxError escape.
     return false
   }
+  if (generation !== started) return false // logged out meanwhile
   accessToken = token.access_token
   if (token.refresh_token) setCredential(REFRESH_TOKEN_KEY, token.refresh_token)
   return true
@@ -409,6 +419,7 @@ export function refreshAccess(): Promise<boolean> {
  * own session, if any, is its to end.
  */
 export function logout(): void {
+  generation++
   accessToken = null
   setCredential(REFRESH_TOKEN_KEY, null)
   setCredential(PASTED_TOKEN_KEY, null)

@@ -153,6 +153,31 @@ describe('credentials', () => {
     }
   })
 
+  it('a refresh answered after a logout stores nothing', async () => {
+    setCredential(REFRESH_TOKEN_KEY, 'refresh-1')
+    localStorage.setItem('twillingate.token_endpoint', 'https://api.example/oauth/token')
+    localStorage.setItem('twillingate.resource', 'https://api.example')
+    localStorage.setItem('twillingate.client_id', 'client-1')
+    let answer: (r: Response) => void = () => {}
+    vi.stubGlobal('fetch', vi.fn(() => new Promise<Response>((r) => (answer = r))))
+    try {
+      const refreshed = refreshAccess()
+      await tick()
+      logout()
+      await tick() // the logout's own messages
+      heard.length = 0
+      answer(new Response(JSON.stringify({ access_token: 'access-2', refresh_token: 'refresh-2' }), { status: 200 }))
+      expect(await refreshed).toBe(false)
+      await tick()
+
+      expect(getAuthHeader()).toBeUndefined()
+      expect(credential(REFRESH_TOKEN_KEY)).toBeNull()
+      expect(heard).toHaveLength(0)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('logout forgets the credentials here and tells the other tabs', async () => {
     setCredential(REFRESH_TOKEN_KEY, 'refresh-1')
     setPastedToken('secret')
