@@ -69,6 +69,14 @@ func (w *failureWindow) add(now time.Time, size time.Duration) {
 	w.n++
 }
 
+// take undoes one add of the current window; one from a window gone by
+// has been forgotten already.
+func (w *failureWindow) take(now time.Time, size time.Duration) {
+	if w.count(now, size) > 0 {
+		w.n--
+	}
+}
+
 type sourceFailures struct{ minute, hour failureWindow }
 
 type loginLimiter struct {
@@ -78,12 +86,65 @@ type loginLimiter struct {
 	swept     time.Time // the hour sweep last ran in
 }
 
+// admit decides whether a submission may go on to the password check,
+// and if so counts it as a failure at once, under the same lock: checking
+// and counting apart would let a burst of concurrent guesses all pass the
+// check before any is counted. A right password takes the count back
+// (succeeded), as does a submission that never reaches the comparison
+// (refund). A refused caller gets how long to wait; 0 admits.
+func (l *loginLimiter) admit(now time.Time, source string, known bool) time.Duration {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if wait := l.wait(now, source, known); wait > 0 {
+		return wait
+	}
+	l.record(now, source, known)
+	return 0
+}
+
+// refund takes back the failure admit counted, for a submission that
+// never reached the password check.
+func (l *loginLimiter) refund(now time.Time, source string, known bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if s := l.sources[l.key(source, known)]; s != nil {
+		s.minute.take(now, time.Minute)
+		s.hour.take(now, time.Hour)
+	}
+	if !known {
+		l.strangers.take(now, time.Minute)
+	}
+}
+
+// succeeded takes back the failure admit counted and forgets the source's
+// others: whoever typed the password right is not guessing it.
+func (l *loginLimiter) succeeded(now time.Time, source string, known bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	delete(l.sources, source)
+	if !known {
+		l.strangers.take(now, time.Minute)
+	}
+}
+
 // retryAfter is how long a refused caller should wait: 0 means the
-// submission may go on to the password check.
+// submission may go on to the password check. It counts nothing (admit).
 func (l *loginLimiter) retryAfter(now time.Time, source string, known bool) time.Duration {
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if s := l.sources[l.key(source)]; s != nil {
+	return l.wait(now, source, known)
+}
+
+// fail counts one wrong password.
+func (l *loginLimiter) fail(now time.Time, source string, known bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.record(now, source, known)
+}
+
+// wait is retryAfter with mu held.
+func (l *loginLimiter) wait(now time.Time, source string, known bool) time.Duration {
+	if s := l.sources[l.key(source, known)]; s != nil {
 		if s.hour.count(now, time.Hour) >= sourceFailuresPerHour {
 			return now.Truncate(time.Hour).Add(time.Hour).Sub(now)
 		}
@@ -97,26 +158,19 @@ func (l *loginLimiter) retryAfter(now time.Time, source string, known bool) time
 	return 0
 }
 
-// fail counts one wrong password.
-func (l *loginLimiter) fail(now time.Time, source string, known bool) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
+// record is fail with mu held.
+func (l *loginLimiter) record(now time.Time, source string, known bool) {
 	if l.sources == nil {
 		l.sources = map[string]*sourceFailures{}
 	}
-	s := l.sources[source]
+	if _, ok := l.sources[source]; !ok && len(l.sources) >= maxLimiterSources {
+		l.sweep(now)
+	}
+	k := l.key(source, known)
+	s := l.sources[k]
 	if s == nil {
-		k := source
-		if len(l.sources) >= maxLimiterSources {
-			l.sweep(now)
-		}
-		if len(l.sources) >= maxLimiterSources {
-			k = ""
-		}
-		if s = l.sources[k]; s == nil {
-			s = &sourceFailures{}
-			l.sources[k] = s
-		}
+		s = &sourceFailures{}
+		l.sources[k] = s
 	}
 	s.minute.add(now, time.Minute)
 	s.hour.add(now, time.Hour)
@@ -125,18 +179,13 @@ func (l *loginLimiter) fail(now time.Time, source string, known bool) {
 	}
 }
 
-// succeeded forgets a source's failures: whoever typed the password right
-// is not guessing it.
-func (l *loginLimiter) succeeded(source string) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	delete(l.sources, source)
-}
-
 // key is the entry a source counts in: its own, or the shared overflow
-// entry once the table is full and it has none. Called with mu held.
-func (l *loginLimiter) key(source string) string {
-	if _, ok := l.sources[source]; !ok && len(l.sources) >= maxLimiterSources {
+// entry once the table is full and it has none. A browser with a device
+// cookie always gets its own, so a flood that fills the table cannot hold
+// the owner to the overflow entry's budget; only the owner has one, so
+// it adds few entries. Called with mu held.
+func (l *loginLimiter) key(source string, known bool) string {
+	if _, ok := l.sources[source]; !ok && !known && len(l.sources) >= maxLimiterSources {
 		return ""
 	}
 	return source

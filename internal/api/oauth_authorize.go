@@ -83,7 +83,7 @@ func (s *loginServer) authorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	setPageHeaders(w)
 	r.Body = http.MaxBytesReader(w, r.Body, maxOAuthBody)
 	source, known := s.loginSource(r), s.knownDevice(r)
-	if wait := s.limiter.retryAfter(s.now(), source, known); wait > 0 {
+	if wait := s.limiter.admit(s.now(), source, known); wait > 0 {
 		s.logger.Warn("mcp login: too many failed password attempts", "source", source, "known_device", known)
 		w.Header().Set("Retry-After", strconv.Itoa(int(wait/time.Second)+1))
 		msg := "Too many attempts. Wait a minute, then start again from your client."
@@ -96,17 +96,18 @@ func (s *loginServer) authorizeSubmit(w http.ResponseWriter, r *http.Request) {
 	request := r.PostFormValue("request")
 	var f formClaims
 	if err := s.keys.parse(kindForm, request, &f, s.now, jwt.WithExpirationRequired()); err != nil {
+		s.limiter.refund(s.now(), source, known) // no password was checked
 		s.render(w, http.StatusBadRequest, pageData{Error: "This login request has expired. Start again from your client."})
 		return
 	}
 	if subtle.ConstantTimeCompare([]byte(r.PostFormValue("password")), s.password) != 1 {
-		s.limiter.fail(s.now(), source, known)
+		// admit has counted it already.
 		s.logger.Warn("mcp login: wrong password", "source", source)
 		s.render(w, http.StatusUnauthorized, pageData{ClientName: f.ClientName, RedirectHost: hostOf(f.RedirectURI),
 			Request: request, Error: "Password not recognised."})
 		return
 	}
-	s.limiter.succeeded(source)
+	s.limiter.succeeded(s.now(), source, known)
 	s.rememberDevice(w, r)
 	code := s.keys.sign(kindCode, codeClaims{ClientID: f.ClientID, RedirectURI: f.RedirectURI, CodeChallenge: f.CodeChallenge,
 		RegisteredClaims: jwt.RegisteredClaims{ID: rand.Text(), ExpiresAt: jwt.NewNumericDate(s.now().Add(codeTTL))}})

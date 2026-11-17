@@ -1623,6 +1623,9 @@ No schema change. Three things behave differently on the day.
   a public address (Cloudflare or another CDN pointed straight at the
   server's port), list its ranges in `TRUSTED_PROXIES`, or every visitor
   is counted as the proxy: one visitor per User-Agent, one country.
+  **nginx:** add `proxy_set_header X-Forwarded-For
+  $proxy_add_x_forwarded_for;` if it is missing, or a client can type the
+  address nginx hands on.
   Conversely, `local` trusts every private address: if clients reach
   twillingate from one with no proxy in between (rootless Docker or
   Podman port forwarding, a LAN), set `TRUSTED_PROXIES` to the proxy's

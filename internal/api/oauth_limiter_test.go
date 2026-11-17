@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -202,26 +204,79 @@ func TestLoginSource(t *testing.T) {
 }
 
 // A flood of addresses cannot grow the table without bound: past
-// maxLimiterSources new ones share an entry, until the hour's expire.
+// maxLimiterSources new ones share an entry, until the hour's expire. A
+// browser with a device cookie is never held to that entry.
 func TestLoginLimiterBounded(t *testing.T) {
 	var l loginLimiter
 	now := loginEpoch.Truncate(time.Hour)
 	for i := range maxLimiterSources + 50 {
-		l.fail(now, fmt.Sprintf("s%d", i), true)
+		l.fail(now, fmt.Sprintf("s%d", i), false)
 	}
 	if len(l.sources) != maxLimiterSources+1 {
 		t.Fatalf("%d entries, want %d and the shared one", len(l.sources), maxLimiterSources)
 	}
-	if l.retryAfter(now, "never seen", true) == 0 {
+	// The flood spent the strangers' budget too; set it aside to see the
+	// entries' own.
+	l.strangers = failureWindow{}
+	if l.retryAfter(now, "never seen", false) == 0 {
 		t.Error("a new source past the bound is not held to the shared entry")
 	}
-	if l.retryAfter(now, "s0", true) != 0 {
+	if l.retryAfter(now, "s0", false) != 0 {
 		t.Error("a source with an entry of its own is held to the shared one")
 	}
+	if l.retryAfter(now, "owner", true) != 0 {
+		t.Error("a known device past the bound is held to the shared entry")
+	}
 	now = now.Add(time.Hour)
-	l.fail(now, "next hour", true)
+	l.fail(now, "next hour", false)
 	if len(l.sources) != 1 {
 		t.Errorf("%d entries after the hour, want 1", len(l.sources))
+	}
+}
+
+// Checking and counting are one step: a burst of concurrent guesses from
+// one source gets sourceFailuresPerMinute through, not every one that was
+// checked before the first was counted.
+func TestLoginLimiterAdmitIsAtomic(t *testing.T) {
+	var l loginLimiter
+	now := loginEpoch
+	var admitted atomic.Int32
+	var wg sync.WaitGroup
+	for range 100 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if l.admit(now, "203.0.113.1", false) == 0 {
+				admitted.Add(1)
+			}
+		}()
+	}
+	wg.Wait()
+	if n := admitted.Load(); n != sourceFailuresPerMinute {
+		t.Errorf("%d of 100 concurrent guesses admitted, want %d", n, sourceFailuresPerMinute)
+	}
+}
+
+// What admit counted is taken back when no password was compared, and
+// when the right one was: neither is a guess.
+func TestLoginLimiterRefunds(t *testing.T) {
+	var l loginLimiter
+	now := loginEpoch
+	for range 2 * sourceFailuresPerMinute {
+		if l.admit(now, "a", false) != 0 {
+			t.Fatal("a refunded attempt still counts")
+		}
+		l.refund(now, "a", false)
+	}
+	for i := range strangerFailuresPerMinute {
+		src := fmt.Sprintf("s%d", i)
+		if l.admit(now, src, false) != 0 {
+			t.Fatal("a right password still spends the strangers' budget")
+		}
+		l.succeeded(now, src, false)
+	}
+	if n := l.strangers.n; n != 0 {
+		t.Errorf("strangers' count %d after refunds, want 0", n)
 	}
 }
 
