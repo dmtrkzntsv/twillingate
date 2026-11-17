@@ -220,6 +220,24 @@ describe('credentials', () => {
       }
     })
 
+    it('a forgetting sent before it does not end the login made since', async () => {
+      const before = localStorage.getItem(LOGOUT_EPOCH_KEY) ?? '0'
+      logout()
+      setCredential(REFRESH_TOKEN_KEY, 'next-login')
+      other.postMessage({ type: 'set', epoch: before, key: REFRESH_TOKEN_KEY, value: null })
+      await tick()
+      expect(credential(REFRESH_TOKEN_KEY)).toBe('next-login')
+    })
+
+    it('a tab that missed it does not revive its stale credential by storing another', () => {
+      setCredential(REFRESH_TOKEN_KEY, 'stale')
+      // Another tab logs out; this one never hears of it.
+      localStorage.setItem(LOGOUT_EPOCH_KEY, 'theirs')
+      setPastedToken('pasted')
+      expect(credential(PASTED_TOKEN_KEY)).toBe('pasted')
+      expect(credential(REFRESH_TOKEN_KEY)).toBeNull()
+    })
+
     it('a credential sent under the new epoch is taken: the next login', async () => {
       logout()
       const now = localStorage.getItem(LOGOUT_EPOCH_KEY)!

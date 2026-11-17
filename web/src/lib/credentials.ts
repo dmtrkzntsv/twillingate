@@ -64,23 +64,38 @@ export function logoutEpoch(): string {
 
 /** Starts a new logout epoch: every credential stored before it, in any tab, stops counting. */
 export function markLoggedOut(): void {
-  localStorage.setItem(LOGOUT_EPOCH_KEY, `${Date.now()}.${Math.random().toString(36).slice(2)}`)
+  try {
+    localStorage.setItem(LOGOUT_EPOCH_KEY, `${Date.now()}.${Math.random().toString(36).slice(2)}`)
+  } catch {
+    // Storage refused (full, or blocked): the logout still clears this
+    // tab and tells the others; only the guard against late messages is lost.
+  }
 }
 
-// Stores value as of epoch at; a value from an epoch a logout has ended
-// is refused. Reports whether it was stored.
+// Stores value (null forgets it) as of epoch at. Anything from an epoch a
+// logout has ended is refused, a forgetting included: a late one must not
+// end a login made since. Reports whether it was applied.
 function store(key: Key, value: string | null, at: string = logoutEpoch()): boolean {
   // Never both: a value in localStorage would outlive the session.
   localStorage.removeItem(key)
+  if (at !== logoutEpoch()) return false
+  dropStale()
   if (value === null) {
     sessionStorage.removeItem(key)
     if (KEYS.every((k) => sessionStorage.getItem(k) === null)) sessionStorage.removeItem(STORED_EPOCH_KEY)
     return true
   }
-  if (at !== logoutEpoch()) return false
   sessionStorage.setItem(key, value)
   sessionStorage.setItem(STORED_EPOCH_KEY, at)
   return true
+}
+
+// Forgets every credential this tab stored before the latest logout, so
+// storing one under the new epoch cannot revive the other.
+function dropStale(): void {
+  if ((sessionStorage.getItem(STORED_EPOCH_KEY) ?? '0') === logoutEpoch()) return
+  for (const k of KEYS) sessionStorage.removeItem(k)
+  sessionStorage.removeItem(STORED_EPOCH_KEY)
 }
 
 function held(): Partial<Record<Key, string>> {
@@ -95,14 +110,14 @@ function held(): Partial<Record<Key, string>> {
 function onMessage(e: MessageEvent<Message>): void {
   const m = e.data
   if (m?.type === 'hello') {
+    const epoch = logoutEpoch()
     const values = held()
-    if (Object.keys(values).length > 0) {
-      channel?.postMessage({ type: 'offer', epoch: logoutEpoch(), values } satisfies Message)
+    if (Object.keys(values).length > 0 && logoutEpoch() === epoch) {
+      channel?.postMessage({ type: 'offer', epoch, values } satisfies Message)
     }
   } else if (m?.type === 'set' && isKey(m.key)) {
     const value = typeof m.value === 'string' ? m.value : null
-    store(m.key, value, String(m.epoch))
-    if (value === null) for (const fn of forgotten) fn(m.key)
+    if (store(m.key, value, String(m.epoch)) && value === null) for (const fn of forgotten) fn(m.key)
   }
 }
 
@@ -125,11 +140,7 @@ export function credential(key: Key): string | null {
     if (sessionStorage.getItem(key) === null) store(key, legacy)
     localStorage.removeItem(key)
   }
-  if ((sessionStorage.getItem(STORED_EPOCH_KEY) ?? '0') !== logoutEpoch()) {
-    for (const k of KEYS) sessionStorage.removeItem(k)
-    sessionStorage.removeItem(STORED_EPOCH_KEY)
-    return null
-  }
+  dropStale()
   return sessionStorage.getItem(key)
 }
 
@@ -139,8 +150,8 @@ export function credential(key: Key): string | null {
  * caller checks logoutEpoch() is still the one it started under.
  */
 export function setCredential(key: Key, value: string | null): void {
-  store(key, value)
-  open()?.postMessage({ type: 'set', epoch: logoutEpoch(), key, value } satisfies Message)
+  const epoch = logoutEpoch()
+  if (store(key, value, epoch)) open()?.postMessage({ type: 'set', epoch, key, value } satisfies Message)
 }
 
 /**
