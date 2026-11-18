@@ -1,4 +1,4 @@
-// Package notify sends one plain-text message to one channel named by a URL.
+// Package notify sends one text message to one channel named by a URL.
 // The URL formats are shoutrrr's: telegram, ntfy, slack, discord, generic
 // (a JSON webhook) and smtp. Errors never contain the URL or any part of it
 // that is a secret; they name the service, the host and the status only.

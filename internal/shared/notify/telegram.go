@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"fmt"
+	"html"
 	"net/http"
 	"net/url"
 	"strings"
@@ -38,7 +39,17 @@ func parseTelegram(u *url.URL, c *http.Client) (Sender, error) {
 
 func (t *telegram) Service() string { return "telegram" }
 
-// Send posts the text to every chat. A partial failure is reported as
+// telegramText is m in Telegram's HTML: the title bold, everything escaped,
+// so the rest arrives as written.
+func telegramText(m Message) string {
+	esc := Message{Title: html.EscapeString(m.Title), Body: html.EscapeString(m.Body), Link: html.EscapeString(m.Link)}
+	if esc.Title != "" {
+		esc.Title = "<b>" + esc.Title + "</b>"
+	}
+	return esc.Text()
+}
+
+// Send posts the text to every chat, its title bold. A partial failure is reported as
 // success: once one chat has accepted, a retry would send it there again, so
 // the notification counts as sent. Only when every chat failed is the first
 // failure returned.
@@ -54,7 +65,8 @@ func (t *telegram) Send(ctx context.Context, m Message) error {
 		}
 		err := postJSON(ctx, t.c, "telegram", t.base+"/bot"+t.token+"/sendMessage", map[string]any{
 			"chat_id":                  chat,
-			"text":                     m.Text(),
+			"text":                     telegramText(m),
+			"parse_mode":               "HTML",
 			"disable_web_page_preview": true,
 		})
 		if err == nil {

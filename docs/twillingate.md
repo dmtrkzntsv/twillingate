@@ -1091,7 +1091,10 @@ certificate or a domain about to expire, a new form waiting for approval or
 a draft dropped unapproved, and submissions to a form. Each is one item in
 the inbox (the console's, and `list_notifications`) and, with `NOTIFY_URL`
 set, the same title, body and link (the console page, `<CONSOLE_URL>/app/…`)
-sent to one channel: Telegram, ntfy, Slack, Discord, a JSON webhook or
+sent to one channel, the title led there by an emoji (🔥 failing or
+expired, ✅ recovered, ⏳ expiring, 🆕, 🗑️ and 📝 for forms) and the project:
+`🔥 Blog · https://blog.example is down`, then `Down since 2026-11-07 08:00
+UTC (HTTP 503).`; channels: Telegram, ntfy, Slack, Discord, a JSON webhook or
 email, set up as in
 [deployment.md](deployment.md#notifications) (`docs://deployment`). Form
 field values are never in a notification.

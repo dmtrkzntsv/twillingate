@@ -47,7 +47,8 @@ func retryAfter(n int) time.Duration {
 }
 
 // Dispatcher sends pending notifications to the one channel in NOTIFY_URL.
-// The message is the one the inbox shows, its link absolute.
+// The message is Outgoing's: the inbox's, its title led by an emoji and the
+// project, its link absolute.
 type Dispatcher struct {
 	st         DeliveryStore
 	sender     notify.Sender
@@ -126,7 +127,7 @@ func (d *Dispatcher) deliver(ctx context.Context, now time.Time, n store.Notific
 		return
 	}
 	sctx, cancel := context.WithTimeout(ctx, sendTimeout)
-	err := d.sender.Send(sctx, Absolute(Render(n), d.consoleURL))
+	err := d.sender.Send(sctx, Outgoing(n, d.consoleURL))
 	cancel()
 	attempts := n.Attempts + 1
 	switch {
