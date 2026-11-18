@@ -272,11 +272,14 @@ func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 		r.finishPending(ctx, ms)
 		return
 	}
+	// manual holds the monitors whose manual check this tick started: each is
+	// its slot's check too, even if it has finished by the time the slot comes.
+	manual := map[monitorKey]bool{}
 	for _, m := range ms {
 		// A busy monitor's request waits, however old: it may be that request
 		// which is running.
-		if m.CheckPending() && !wasBusy[keyOf(m)] && ctx.Err() == nil {
-			r.startManual(ctx, m, now)
+		if m.CheckPending() && !wasBusy[keyOf(m)] && ctx.Err() == nil && r.startManual(ctx, m, now) {
+			manual[keyOf(m)] = true
 		}
 	}
 	for _, m := range ms {
@@ -290,7 +293,9 @@ func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 			end++
 		}
 		if due(prev, now, r.interval, offset(ms[start].ProjectID, "", r.interval)) {
-			r.startSlot(ctx, turnOf(ms[start:end], now, r.interval))
+			if m := turnOf(ms[start:end], now, r.interval); !manual[keyOf(m)] {
+				r.startSlot(ctx, m)
+			}
 		}
 	}
 }
@@ -337,12 +342,13 @@ func (r *Runner) finishPending(ctx context.Context, ms []store.Monitor) {
 	}
 }
 
-// startManual starts m's manual check, unless it is too old to be worth serving.
-// While it runs, m's slot is skipped: it is the check.
-func (r *Runner) startManual(ctx context.Context, m store.Monitor, now time.Time) {
+// startManual starts m's manual check, unless it is too old to be worth serving,
+// and reports whether it started. While it runs, m's slot is skipped: it is the
+// check.
+func (r *Runner) startManual(ctx context.Context, m store.Monitor, now time.Time) bool {
 	if tooOld(m.CheckRequestedAt, now) {
 		r.finishCheck(ctx, m)
-		return
+		return false
 	}
 	k := keyOf(m)
 	r.mu.Lock()
@@ -355,6 +361,7 @@ func (r *Runner) startManual(ctx context.Context, m store.Monitor, now time.Time
 		r.wg.Add(1)
 		go r.dispatchManual(ctx, m)
 	}
+	return !busy
 }
 
 // startSlot starts m's slot check. It is skipped while m's last check or manual
