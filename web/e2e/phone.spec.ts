@@ -142,6 +142,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     data: {
       enabled: true,
       origin: MONITORED,
+      path: '/api/a-health-check-endpoint-whose-path-is-longer-than-a-phone-is-wide?deep=1',
       contains: 'a text the page must hold that is longer than a phone is wide on one line',
       redirect_to: 'https://www.a-long-subdomain.example.com',
     },

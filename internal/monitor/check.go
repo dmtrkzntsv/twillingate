@@ -2,6 +2,7 @@ package monitor
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -64,7 +65,7 @@ type redirectError struct{ msg string }
 
 func (e *redirectError) Error() string { return e.msg }
 
-// Check GETs origin + "/" with c, following a redirect only when
+// Check GETs origin + want.Path ("/" when empty) with c, following a redirect only when
 // allowed(target) says its target is one of the project's own origins,
 // and at most maxHops of them. Up means the final answer passes every
 // assertion: a 2xx, and what want expects. Elapsed runs to the end of the
@@ -107,7 +108,7 @@ func check(ctx context.Context, c *http.Client, origin string, want store.Monito
 			t.tlsFailed.Store(true)
 		}
 	}}
-	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, strings.TrimSuffix(origin, "/")+"/", nil)
+	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, strings.TrimSuffix(origin, "/")+cmp.Or(want.Path, "/"), nil)
 	if err != nil {
 		return Result{Reason: ReasonConnect, Error: err.Error()}
 	}

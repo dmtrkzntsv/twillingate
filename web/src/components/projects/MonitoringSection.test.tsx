@@ -31,6 +31,7 @@ function monitor(origin: string, over: Partial<Monitor> = {}): Monitor {
     origin,
     enabled: false,
     check_every_seconds: 0,
+    path: '',
     contains: '',
     redirect_to: '',
     redirects: 0,
@@ -481,6 +482,47 @@ describe('MonitoringSection', () => {
       await user.click(await screen.findByRole('button', { name: `More for ${A}` }))
       await screen.findByRole('menuitem', { name: ITEM })
       expect(screen.queryByRole('menuitem', { name: REDIRECT })).not.toBeInTheDocument()
+    })
+  })
+
+  describe('the page', () => {
+    const PAGE = 'Check another page'
+    const FIELD = 'Page to check'
+
+    it('opens from the menu, suggests a path and saves it trimmed', async () => {
+      const user = userEvent.setup()
+      const { onSave } = show(list([on(A)]))
+      const a = await row(A)
+      expect(a.queryByLabelText(FIELD)).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: `More for ${A}` }))
+      await user.click(await screen.findByRole('menuitem', { name: PAGE }))
+      const input = a.getByLabelText(FIELD)
+      await waitFor(() => expect(input).toHaveFocus())
+      expect(input).toHaveAttribute('placeholder', '/healthz')
+      await user.type(input, ' /healthz ')
+      await user.click(a.getByRole('button', { name: 'Save' }))
+      expect(onSave).toHaveBeenCalledWith({ origin: A, path: '/healthz' })
+    })
+
+    it('takes / for the home page: nothing to save on a monitor that checks it', async () => {
+      const user = userEvent.setup()
+      const { onSave } = show(list([on(A, { path: '/healthz' })]))
+      const a = await row(A)
+      await user.click(a.getByRole('button', { name: 'checks /healthz' }))
+      const input = a.getByLabelText(FIELD)
+      await user.clear(input)
+      await user.type(input, ' / ')
+      await user.click(a.getByRole('button', { name: 'Save' }))
+      expect(onSave).toHaveBeenCalledWith({ origin: A, path: '' })
+    })
+
+    it('shows a saved path under the origin, and its X goes back to the home page', async () => {
+      const user = userEvent.setup()
+      const { onSave } = show(list([on(A, { path: '/api/health?deep=1' })]))
+      const a = await row(A)
+      expect(a.getByRole('button', { name: 'checks /api/health?deep=1' })).toBeInTheDocument()
+      await user.click(a.getByRole('button', { name: 'Check the home page again' }))
+      expect(onSave).toHaveBeenCalledWith({ origin: A, path: '' })
     })
   })
 

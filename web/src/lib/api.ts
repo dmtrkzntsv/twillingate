@@ -277,6 +277,8 @@ export interface Monitor {
   enabled: boolean
   /** How often it is actually checked: the project's one check per interval goes round its enabled monitors. 0 when off. */
   check_every_seconds: number
+  /** The page the check requests on the origin; empty for the root. */
+  path: string
   contains: string
   /** Another of the project's origins the check must be redirected to; empty when the origin may answer itself. */
   redirect_to: string
@@ -311,6 +313,7 @@ export interface Monitors {
 export interface MonitorBody {
   origin: string
   enabled?: boolean
+  path?: string
   contains?: string
   redirect_to?: string
 }

@@ -71,6 +71,13 @@ func TestMonitorRoundTrip(t *testing.T) {
 		t.Errorf("stored = %+v", m)
 	}
 	runMonitor(t, 1, "set", "-project-id", "1", "-origin", blogOrigin, "-redirect-to", blogOrigin) // itself
+	if got = runMonitor(t, 0, "set", "-project-id", "1", "-origin", blogOrigin, "-path", "/healthz"); !strings.Contains(got, "  path\t/healthz\n") {
+		t.Errorf("set -path = %q, missing the path", got)
+	}
+	runMonitor(t, 1, "set", "-project-id", "1", "-origin", blogOrigin, "-path", "healthz") // no leading /
+	if got = runMonitor(t, 0, "set", "-project-id", "1", "-origin", blogOrigin, "-path", ""); strings.Contains(got, "path\t") {
+		t.Errorf("cleared = %q, still a path", got)
+	}
 	got = runMonitor(t, 0, "set", "-project-id", "1", "-origin", blogOrigin, "-redirect-to", "")
 	if strings.Contains(got, "redirect to") {
 		t.Errorf("cleared = %q, still a redirect", got)

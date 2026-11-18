@@ -56,10 +56,11 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 		origin = sf.String("origin", "", "the monitor's origin, one of the project's exact http(s) origins (required)")
 	}
 	var enable, disable *bool
-	var contains, redirectTo *string
+	var path, contains, redirectTo *string
 	if sub == "set" {
 		enable = sf.Bool("enable", false, "turn the monitor on")
 		disable = sf.Bool("disable", false, "turn the monitor off")
+		path = sf.String("path", "", "the page the check requests, such as /healthz; empty or / checks the origin's root")
 		contains = sf.String("contains", "", "text the page must contain; empty clears it")
 		redirectTo = sf.String("redirect-to", "", "another of the project's origins the check must be redirected to; empty clears it")
 	}
@@ -68,12 +69,12 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 	}
 	if *project == 0 || (origin != nil && *origin == "") {
 		fmt.Fprintln(stdout, "usage: twillingate monitor "+sub+" -project-id <id>"+
-			map[string]string{"list": "", "set": " -origin URL [-enable|-disable] [-contains TEXT] [-redirect-to URL]", "check": " -origin URL"}[sub])
+			map[string]string{"list": "", "set": " -origin URL [-enable|-disable] [-path PATH] [-contains TEXT] [-redirect-to URL]", "check": " -origin URL"}[sub])
 		return 2
 	}
 	var spec manage.MonitorSpec
 	if sub == "set" {
-		// A flag left out keeps the value; an empty -contains or -redirect-to clears it.
+		// A flag left out keeps the value; an empty -path, -contains or -redirect-to clears it.
 		given := map[string]bool{}
 		sf.Visit(func(f *flag.Flag) { given[f.Name] = true })
 		if given["enable"] && given["disable"] {
@@ -86,6 +87,9 @@ func cmdMonitor(args []string, stdout io.Writer) int {
 		if given["disable"] {
 			on := !*disable
 			spec.Enabled = &on
+		}
+		if given["path"] {
+			spec.Expect.Path = path
 		}
 		if given["contains"] {
 			spec.Expect.Contains = contains
@@ -193,6 +197,9 @@ func printMonitor(w io.Writer, m store.Monitor, every time.Duration) {
 	fmt.Fprintf(w, "%s %s\n", m.Origin, state)
 	if m.Enabled && every > 0 {
 		fmt.Fprintf(w, "  checked every\t%d seconds\n", int(every/time.Second))
+	}
+	if m.Expect.Path != "" {
+		fmt.Fprintf(w, "  path\t%s\n", m.Expect.Path)
 	}
 	if m.Expect.Contains != "" {
 		fmt.Fprintf(w, "  contains\t%s\n", m.Expect.Contains)

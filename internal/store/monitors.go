@@ -24,11 +24,15 @@ type Monitor struct {
 	Last MonitorResult
 }
 
-// MonitorExpect is what an availability check expects of the site beyond a
-// 2xx answer (migration 049 keeps it as one JSON object). Each field is one
-// expectation, its zero value none: a new one is a field here, its
-// validation in manage and its step in monitor's check, with no migration.
+// MonitorExpect is what an availability check asks of the site: the page it
+// requests and what it expects of the answer beyond a 2xx (migration 049
+// keeps it as one JSON object). Each field is one setting, its zero value
+// the default: a new one is a field here, its validation in manage and its
+// step in monitor's check, with no migration.
 type MonitorExpect struct {
+	// Path is the page the check requests on the origin, "/" when empty: a
+	// path starting with "/", with an optional query, such as "/healthz".
+	Path string `json:"path,omitempty"`
 	// Contains is text the page must contain (case-sensitive).
 	Contains string `json:"contains,omitempty"`
 	// RedirectTo is the origin the redirects must end at, one of the

@@ -94,6 +94,19 @@ func TestMonitorToolsAndRoutesAgree(t *testing.T) {
 	if m := decodeMonitors(t, []byte(textOf(res))).Monitors[0]; m.RedirectTo != monShop {
 		t.Errorf("MCP redirect_to = %+v, want %s", m, monShop)
 	}
+	res = callTool(t, cs, "update_monitor", map[string]any{"project_id": 1, "origin": monBlog, "path": "/healthz"})
+	if res.IsError {
+		t.Fatalf("update_monitor path: %s", textOf(res))
+	}
+	if m := decodeMonitors(t, []byte(textOf(res))).Monitors[0]; m.Path != "/healthz" || m.RedirectTo != monShop {
+		t.Errorf("MCP path = %+v, want /healthz, redirect_to kept", m)
+	}
+	if rec := serveREST(t, r, "PATCH", "/api/projects/1/monitors", `{"origin":"`+monBlog+`","path":"//elsewhere.example/"}`); rec.Code != http.StatusBadRequest {
+		t.Errorf("path to another host = %d, want 400", rec.Code)
+	}
+	if rec := serveREST(t, r, "PATCH", "/api/projects/1/monitors", `{"origin":"`+monBlog+`","path":""}`); rec.Code != http.StatusOK || decodeMonitors(t, rec.Body.Bytes()).Monitors[0].Path != "" {
+		t.Errorf("clear path = %d %s", rec.Code, rec.Body)
+	}
 	if rec := serveREST(t, r, "PATCH", "/api/projects/1/monitors", `{"origin":"`+monBlog+`","redirect_to":"`+monBlog+`"}`); rec.Code != http.StatusBadRequest {
 		t.Errorf("redirect_to itself = %d, want 400", rec.Code)
 	}
@@ -104,8 +117,8 @@ func TestMonitorToolsAndRoutesAgree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out.Rows) != 4 || out.Rows[0][0] == "mcp" || out.Rows[1][0] != "mcp" || out.Rows[2][0] != "mcp" || out.Rows[3][0] == "mcp" {
-		t.Errorf("audit actors = %v, want REST's, mcp's twice, then REST's", out.Rows)
+	if len(out.Rows) != 6 || out.Rows[0][0] == "mcp" || out.Rows[1][0] != "mcp" || out.Rows[2][0] != "mcp" || out.Rows[3][0] != "mcp" || out.Rows[4][0] == "mcp" || out.Rows[5][0] == "mcp" {
+		t.Errorf("audit actors = %v, want REST's, mcp's three times, then REST's twice", out.Rows)
 	}
 
 	// Two more on: the project's one check per interval goes round all three,
