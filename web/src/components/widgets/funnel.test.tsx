@@ -1,6 +1,7 @@
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { CardMode } from '@/components/share/card-mode'
 import type { SqlData, WidgetProps } from './types'
 import Funnel, { contract } from './funnel'
 
@@ -107,6 +108,64 @@ describe('funnel', () => {
     await user.unhover(signup)
     await user.hover(screen.getByText('visit'))
     expect(screen.getByRole('tooltip')).not.toHaveTextContent('step before')
+  })
+
+  describe('on a share card', () => {
+    afterEach(() => vi.restoreAllMocks())
+
+    const sixSteps: SqlData = {
+      columns: ['step', 'value'],
+      rows: [
+        ['visit', '200'],
+        ['signup', '50'],
+        ['onboarded', '40'],
+        ['activated', '30'],
+        ['paid', '20'],
+        ['renewed', '10'],
+      ],
+      truncated: false,
+    }
+
+    function renderCard() {
+      return render(
+        <CardMode.Provider value={true}>
+          <Funnel data={sixSteps} props={{}} />
+        </CardMode.Provider>
+      )
+    }
+
+    // jsdom lays nothing out: the list's height is what the stub says it is.
+    function listHeight(height: (el: HTMLElement) => number) {
+      vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockReturnValue(360)
+      vi.spyOn(HTMLElement.prototype, 'scrollHeight', 'get').mockImplementation(function (this: HTMLElement) {
+        return this.tagName === 'OL' ? height(this) : 0
+      })
+    }
+
+    it('keeps the roomy layout, a note in every neck, while the steps fit', () => {
+      listHeight(() => 360)
+      const { container } = renderCard()
+      expect(container.querySelector('ol')).toHaveClass('justify-center-safe')
+      expect(within(container).getByText('25% converted')).toBeInTheDocument()
+      expect(container.querySelector('[data-funnel-step] .flex-col')).not.toBeNull()
+    })
+
+    it('puts each label on one line before dropping the neck notes', () => {
+      // Too tall only in the roomy layout, with its two-line labels.
+      listHeight((ol) => (ol.querySelector('[data-funnel-step] .flex-col') ? 420 : 360))
+      const { container } = renderCard()
+      expect(container.querySelector('[data-funnel-step] .flex-col')).toBeNull()
+      expect(within(container).getByText('25% converted')).toBeInTheDocument()
+    })
+
+    it('drops the neck notes and shrinks the names when the steps still do not fit', () => {
+      listHeight(() => 500)
+      const { container } = renderCard()
+      expect(within(container).queryByText(/converted/)).toBeNull()
+      expect(within(container).getByText('visit').parentElement).toHaveClass('text-[length:var(--card-type)]')
+      // Still every step, in order: denser, never fewer.
+      expect(container.querySelectorAll('[data-funnel-step]')).toHaveLength(6)
+    })
   })
 
   it('exposes its contract', () => {
