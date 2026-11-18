@@ -272,14 +272,19 @@ func (r *Runner) tick(ctx context.Context, prev, now time.Time) {
 		r.finishPending(ctx, ms)
 		return
 	}
-	// manual holds the monitors whose manual check this tick started: each is
-	// its slot's check too, even if it has finished by the time the slot comes.
+	// manual holds the monitors whose manual check is running or this tick
+	// started it: each is its slot's check too, even if it has finished by the
+	// time the slot comes.
 	manual := map[monitorKey]bool{}
 	for _, m := range ms {
+		if !m.CheckPending() {
+			continue
+		}
+		k := keyOf(m)
 		// A busy monitor's request waits, however old: it may be that request
 		// which is running.
-		if m.CheckPending() && !wasBusy[keyOf(m)] && ctx.Err() == nil && r.startManual(ctx, m, now) {
-			manual[keyOf(m)] = true
+		if wasBusy[k] || (ctx.Err() == nil && r.startManual(ctx, m, now)) {
+			manual[k] = true
 		}
 	}
 	for _, m := range ms {
