@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef, useState } from 'react'
 import { HoverCard, useHover, type HoverRow } from '@/components/chart-parts'
 import { approx, approximate, formatExact, formatValue, type Format } from '@/lib/format'
 import { toRecords } from '@/lib/records'
@@ -46,12 +47,42 @@ export const examples: Example[] = [
   },
 ]
 
+/** The densest card layout: one-line labels, necks with no note, step names at the card's small type. */
+const DENSEST = 3
+
+/**
+ * How tightly a card packs the steps, 0 (two-line labels, a note in every
+ * neck) to DENSEST: each pass before paint that finds the list taller than
+ * its room takes one step denser, so a long funnel fits the card instead
+ * of spilling over its title. Off a card, and in jsdom (which measures
+ * nothing), always 0.
+ */
+function useCardDensity(card: boolean, steps: number) {
+  const ref = useRef<HTMLOListElement>(null)
+  const [density, setDensity] = useState(0)
+  const [of, setOf] = useState(steps)
+  if (of !== steps) {
+    setOf(steps)
+    setDensity(0)
+  }
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!card || !el || density >= DENSEST) return
+    if (el.scrollHeight > el.clientHeight + 1) setDensity(density + 1)
+  })
+  return { ref, density: card ? density : 0 }
+}
+
 export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
   const { hovered, bind } = useHover<number>()
   const card = useCardMode()
   const records = toRecords(data as SqlData, contract)
   const estimated = approximate(data as SqlData, 'value')
+  const { ref, density } = useCardDensity(card, records.length)
   if (records.length === 0) return null
+  const oneLine = density >= 1
+  const noted = density < 2
+  const small = density >= 3
 
   const format = props.format ?? 'number'
   const values = records.map((r) => Number(r.value ?? 0))
@@ -77,7 +108,8 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
 
   return (
     <>
-      <ol className="flex h-full flex-col justify-center px-1.5 py-1">
+      {/* Centred while it fits; a list still too tall runs off the bottom, never up over the card's title. */}
+      <ol ref={ref} className={`flex h-full flex-col justify-center-safe px-1.5 py-1 ${card ? 'overflow-hidden' : ''}`}>
         {records.map((r, i) => {
           const value = values[i]
           const share = value / first
@@ -91,11 +123,13 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
             >
               {i > 0 && (
                 // The neck from the step before: it narrows by what dropped off.
-                <div className={`grid min-h-3 flex-[0.5] grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-3 ${card ? 'min-h-5' : ''}`}>
+                <div
+                  className={`grid flex-[0.5] grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-3 ${card ? (noted ? 'min-h-5' : 'min-h-2') : 'min-h-3'}`}
+                >
                   <span
                     className={`self-center truncate text-muted-foreground tabular-nums ${card ? 'text-[length:var(--card-type)]' : 'text-[11px]'}`}
                   >
-                    {fromPrevious !== null && `${formatValue(fromPrevious, 'percent')} converted`}
+                    {noted && fromPrevious !== null && `${formatValue(fromPrevious, 'percent')} converted`}
                   </span>
                   <div
                     data-funnel-neck
@@ -106,10 +140,16 @@ export default function Funnel({ data, props }: WidgetProps<FunnelProps>) {
                   />
                 </div>
               )}
-              <div className={`grid flex-1 grid-cols-[minmax(0,2fr)_minmax(0,3fr)] items-center gap-3 ${card ? 'min-h-14' : 'min-h-9'}`}>
-                <div className={`flex min-w-0 flex-col leading-tight ${card ? 'text-[22px]' : 'text-sm'}`}>
+              <div
+                className={`grid flex-1 grid-cols-[minmax(0,2fr)_minmax(0,3fr)] items-center gap-3 ${card ? (small ? 'min-h-6' : oneLine ? 'min-h-8' : 'min-h-14') : 'min-h-9'}`}
+              >
+                <div
+                  className={`flex min-w-0 leading-tight ${oneLine ? 'items-baseline gap-2' : 'flex-col'} ${card ? (small ? 'text-[length:var(--card-type)]' : 'text-[22px]') : 'text-sm'}`}
+                >
                   <span className="truncate font-medium">{String(r.step)}</span>
-                  <span className={`truncate tabular-nums text-muted-foreground ${card ? 'text-[length:var(--card-type)]' : 'text-xs'}`}>
+                  <span
+                    className={`truncate tabular-nums text-muted-foreground ${oneLine ? 'shrink-0' : ''} ${card ? 'text-[length:var(--card-type)]' : 'text-xs'}`}
+                  >
                     {approx(formatValue(value, format), estimated)}
                     {' · '}
                     <span className="font-medium text-foreground">{formatValue(share, 'percent')}</span>
