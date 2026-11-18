@@ -60,8 +60,8 @@ func sample(typ string) store.Notification {
 }
 
 type rendered struct {
-	Relative notify.Message
-	Absolute notify.Message
+	Inbox    notify.Message
+	Outgoing notify.Message
 }
 
 func TestRenderGolden(t *testing.T) {
@@ -87,8 +87,7 @@ func TestRenderGolden(t *testing.T) {
 	cases["uptime_still_down_2d3h"] = long
 
 	for key, n := range cases {
-		m := inbox.Render(n)
-		got := rendered{Relative: m, Absolute: inbox.Absolute(m, "https://c.example")}
+		got := rendered{Inbox: inbox.Render(n), Outgoing: inbox.Outgoing(n, "https://c.example")}
 		want := golden.Get(t, set, key, got)
 		if d := golden.Diff(got, want); d != "" {
 			t.Errorf("%s: differs from its golden at %s", key, d)
@@ -115,6 +114,20 @@ func TestRenderUnknownType(t *testing.T) {
 	}
 	if p := inbox.Path(store.Notification{Type: "mystery"}); p != "/inbox" {
 		t.Errorf("path %q", p)
+	}
+}
+
+func TestOutgoingLeadsWithEmojiAndProject(t *testing.T) {
+	n := sample(store.NotifyUptimeDown)
+	if got := inbox.Outgoing(n, "").Title; got != "🔥 "+projectName+" · https://blog.example is down" {
+		t.Errorf("title %q", got)
+	}
+	delete(n.Fields, "project")
+	if got := inbox.Outgoing(n, "").Title; got != "🔥 https://blog.example is down" {
+		t.Errorf("projectless title %q", got)
+	}
+	if got := inbox.Outgoing(store.Notification{Type: "mystery"}, "").Title; got != "🔔 mystery" {
+		t.Errorf("unknown type title %q", got)
 	}
 }
 

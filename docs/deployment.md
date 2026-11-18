@@ -189,7 +189,8 @@ The process that ingests notices a site that goes down and comes back, a
 certificate or domain that fails or recovers, a certificate or domain
 about to expire, and form drafts and submissions. Each becomes one item in
 the console's inbox and, with `NOTIFY_URL` set, the same message in one
-channel, its link the console page under `CONSOLE_URL` (`<CONSOLE_URL>/app/…`). This runs also under
+channel, its title led by an emoji and the project
+(`🔥 Blog · https://blog.example is down`), its link the console page under `CONSOLE_URL` (`<CONSOLE_URL>/app/…`). This runs also under
 `MONITOR_DISABLED` (forms still notify), but a paused install sends no
 monitor reminders: a state failing when monitoring was paused stays as it
 is, without reminders, until a run with monitoring on continues it. Form field values are never sent.
@@ -212,9 +213,10 @@ The inbox shows each item's delivery: sent, failed (with the reason),
 skipped, or none when no channel is set. Failures are logged with the
 service and host, never the URL.
 
-The channel shows the inbox's text verbatim: Slack gets it escaped with
-formatting off, Discord with its Markdown escaped and no mentions, so a
-`*name*` or an `@everyone` in a form's name neither formats nor pings.
+The channel shows the inbox's text verbatim, apart from that title: Telegram
+and Discord show the title bold and escape the rest, Slack gets it escaped
+with formatting off, Discord without mentions, so a `*name*` or an
+`@everyone` in a form's name neither formats nor pings.
 With several Telegram chats, a send that one chat accepted counts as sent
 and is not retried, so no chat gets it twice.
 

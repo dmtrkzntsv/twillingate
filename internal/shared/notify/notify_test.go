@@ -135,7 +135,7 @@ func TestText(t *testing.T) {
 	}
 }
 
-func TestTelegramPlainText(t *testing.T) {
+func TestTelegramHTML(t *testing.T) {
 	srv, rec := newServer(t, 200)
 	s := mustParse(t, "telegram://TOK@telegram?chats=11,22", srv)
 	err := s.Send(context.Background(), Message{Title: "a_b *c*", Body: "<x> & y", Link: "https://c/x"})
@@ -155,11 +155,11 @@ func TestTelegramPlainText(t *testing.T) {
 		if err := json.Unmarshal([]byte(r.body), &got); err != nil {
 			t.Fatal(err)
 		}
-		if got["text"] != "a_b *c*\n<x> & y\nhttps://c/x" {
+		if got["text"] != "<b>a_b *c*</b>\n&lt;x&gt; &amp; y\nhttps://c/x" {
 			t.Errorf("text = %q", got["text"])
 		}
-		if _, ok := got["parse_mode"]; ok {
-			t.Error("parse_mode must not be set")
+		if got["parse_mode"] != "HTML" {
+			t.Errorf("parse_mode = %v, want HTML", got["parse_mode"])
 		}
 		if got["chat_id"] != chat || got["disable_web_page_preview"] != true {
 			t.Errorf("body = %v", got)
@@ -320,7 +320,7 @@ func TestSlackAndDiscordBodies(t *testing.T) {
 	if reqs[0].path != "/services/aa/bb/cc" || reqs[0].body != `{"text":"T\nB\nL","mrkdwn":false}` {
 		t.Errorf("slack %+v", reqs[0])
 	}
-	if reqs[1].path != "/api/webhooks/123/tok" || reqs[1].body != `{"content":"T\nB\nL","allowed_mentions":{"parse":[]}}` {
+	if reqs[1].path != "/api/webhooks/123/tok" || reqs[1].body != `{"content":"**T**\nB\nL","allowed_mentions":{"parse":[]}}` {
 		t.Errorf("discord %+v", reqs[1])
 	}
 }
@@ -347,7 +347,7 @@ func TestDiscordVerbatim(t *testing.T) {
 	if err := mustParse(t, "discord://tok@123", srv).Send(context.Background(), m); err != nil {
 		t.Fatal(err)
 	}
-	want := `{"content":"\\*shop\\* @everyone\na\\_b \\~c\\~ \\` + "`" + `d\\` + "`" + ` \\|e\\| \\\u003e f \\\\ g\nhttps://x/a_b","allowed_mentions":{"parse":[]}}`
+	want := `{"content":"**\\*shop\\* @everyone**\na\\_b \\~c\\~ \\` + "`" + `d\\` + "`" + ` \\|e\\| \\\u003e f \\\\ g\nhttps://x/a_b","allowed_mentions":{"parse":[]}}`
 	if got := rec.all()[0].body; got != want {
 		t.Errorf("body = %s\nwant   %s", got, want)
 	}

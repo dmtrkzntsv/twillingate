@@ -1,5 +1,5 @@
-// Package inbox turns a stored notification into the one message the
-// inbox shows and every channel sends.
+// Package inbox turns a stored notification into the message the inbox
+// shows and, led by an emoji and the project, the one a channel sends.
 package inbox
 
 import (
@@ -15,66 +15,106 @@ import (
 
 const timeLayout = "2006-01-02 15:04 UTC"
 
-// Render is n as its message: the same words in the inbox and in a
-// channel. Link is a console path; Absolute makes it a URL. It never
-// reads form field values: a form is only ever named.
+// Render is n as the inbox shows it: the title, and the details under it
+// as a sentence. The project is not in it (the inbox shows it beside the
+// item; Outgoing puts it in the title). Link is a console path; Absolute
+// makes it a URL. It never reads form field values: a form is only ever
+// named.
 func Render(n store.Notification) notify.Message {
 	m := notify.Message{Link: Path(n)}
-	p := n.Fields["project"]
 	since := stamp(n.Fields["since"])
 	origin, domain, form := subject(n, "origin"), subject(n, "domain"), subject(n, "form")
 	errText := n.Fields["error"]
+	lasted := span(n.Fields["since"], n.Fields["until"])
+	sofar := elapsed(n.Fields["since"], n.CreatedAt)
 
 	switch n.Type {
 	case store.NotifyUptimeDown:
 		m.Title = origin + " is down"
-		m.Body = lead(p, "down since "+since+" ("+n.Fields["reason"]+")")
+		m.Body = "Down since " + since + " (" + n.Fields["reason"] + ")."
 	case store.NotifyUptimeStillDown:
 		m.Title = origin + " is still down"
-		m.Body = lead(p, "down since "+since+", "+elapsed(n.Fields["since"], n.CreatedAt))
+		m.Body = "Down for " + sofar + ", since " + since + "."
 	case store.NotifyUptimeUp:
 		m.Title = origin + " is up"
-		m.Body = lead(p, "was down since "+since+" ("+span(n.Fields["since"], n.Fields["until"])+")")
+		m.Body = "Was down for " + lasted + ", since " + since + "."
 	case store.NotifyCertFailing:
 		m.Title = "Certificate problem on " + origin
-		m.Body = lead(p, errText+" (since "+since+")")
+		m.Body = "Failing since " + since + ": " + errText + "."
 	case store.NotifyCertStillFailing:
 		m.Title = "Certificate still failing on " + origin
-		m.Body = lead(p, errText+", since "+since+", "+elapsed(n.Fields["since"], n.CreatedAt))
+		m.Body = "Failing for " + sofar + ", since " + since + ": " + errText + "."
 	case store.NotifyCertRecovered:
 		m.Title = "Certificate fixed on " + origin
-		m.Body = lead(p, "failing since "+since+" ("+span(n.Fields["since"], n.Fields["until"])+")")
+		m.Body = "Was failing for " + lasted + ", since " + since + "."
 	case store.NotifyDomainFailing:
 		m.Title = "Domain lookup failing for " + domain
-		m.Body = lead(p, errText+" (since "+since+")")
+		m.Body = "Failing since " + since + ": " + errText + "."
 	case store.NotifyDomainStillFailing:
 		m.Title = "Domain lookup still failing for " + domain
-		m.Body = lead(p, "since "+since+", "+elapsed(n.Fields["since"], n.CreatedAt))
+		m.Body = "Failing for " + sofar + ", since " + since + "."
 	case store.NotifyDomainRecovered:
 		m.Title = "Domain lookup works again for " + domain
-		m.Body = lead(p, "failing since "+since+" ("+span(n.Fields["since"], n.Fields["until"])+")")
+		m.Body = "Was failing for " + lasted + ", since " + since + "."
 	case store.NotifyCertExpiring:
 		m.Title = "Certificate for " + origin + expiresIn(n)
-		m.Body = lead(p, expiry(n))
+		m.Body = expiry(n)
 	case store.NotifyDomainExpiring:
 		m.Title = "Domain " + domain + expiresIn(n)
-		m.Body = lead(p, expiry(n))
+		m.Body = expiry(n)
 	case store.NotifyFormDraftCreated:
 		m.Title = "New form " + form + " is waiting for approval"
-		m.Body = p
 	case store.NotifyFormDraftDiscarded:
 		m.Title = "Form " + form + " was discarded unapproved"
-		m.Body = p
 	case store.NotifyFormSubmission:
 		if c, err := strconv.Atoi(n.Fields["count"]); err == nil && c > 1 {
-			m.Title = fmt.Sprintf("%d new form submissions in %s / %s", c, p, form)
+			m.Title = fmt.Sprintf("%d new submissions to %s", c, form)
 		} else {
-			m.Title = "A new form submission in " + p + " / " + form
+			m.Title = "New submission to " + form
 		}
 	default:
 		m.Title = n.Type
 	}
 	return m
+}
+
+// Outgoing is n as a channel gets it: Render's title led by the type's
+// emoji and the project ("🔥 Blog · https://blog.example is down"), the
+// same body, and the link a URL under consoleURL.
+func Outgoing(n store.Notification, consoleURL string) notify.Message {
+	m := Absolute(Render(n), consoleURL)
+	lead := Emoji(n)
+	if p := n.Fields["project"]; p != "" {
+		lead += " " + p + " ·"
+	}
+	m.Title = lead + " " + m.Title
+	return m
+}
+
+// Emoji is the sign a channel message about n starts with: 🔥 for
+// something failing or expired, ✅ for its recovery, ⏳ for an expiry
+// ahead, 🆕, 🗑️ and 📝 for forms, 🔔 for anything else.
+func Emoji(n store.Notification) string {
+	switch n.Type {
+	case store.NotifyUptimeDown, store.NotifyUptimeStillDown,
+		store.NotifyCertFailing, store.NotifyCertStillFailing,
+		store.NotifyDomainFailing, store.NotifyDomainStillFailing:
+		return "🔥"
+	case store.NotifyUptimeUp, store.NotifyCertRecovered, store.NotifyDomainRecovered:
+		return "✅"
+	case store.NotifyCertExpiring, store.NotifyDomainExpiring:
+		if days, err := strconv.Atoi(n.Fields["days"]); err == nil && days < 0 {
+			return "🔥"
+		}
+		return "⏳"
+	case store.NotifyFormDraftCreated:
+		return "🆕"
+	case store.NotifyFormDraftDiscarded:
+		return "🗑️"
+	case store.NotifyFormSubmission:
+		return "📝"
+	}
+	return "🔔"
 }
 
 // Absolute is m with its Link made a URL of the console page: the web app
@@ -113,14 +153,6 @@ func subject(n store.Notification, field string) string {
 		return n.Subject
 	}
 	return n.Fields[field]
-}
-
-// lead puts the project name before the rest of a body.
-func lead(project, rest string) string {
-	if project == "" {
-		return rest
-	}
-	return project + ": " + rest
 }
 
 // stamp renders an RFC 3339 field as "2006-01-02 15:04 UTC"; a value that
@@ -187,14 +219,14 @@ func expiresIn(n store.Notification) string {
 	return fmt.Sprintf(" expires in %d days", days)
 }
 
-// expiry is an expiry notification's body after the project.
+// expiry is an expiry notification's body.
 func expiry(n store.Notification) string {
 	days, err := strconv.Atoi(n.Fields["days"])
 	switch {
 	case err == nil && days < 0:
-		return "expired"
+		return "Expired " + stamp(n.Fields["expires"]) + "."
 	case err == nil && days == 0:
-		return "expires today"
+		return "Expires today, " + stamp(n.Fields["expires"]) + "."
 	}
-	return "expires " + stamp(n.Fields["expires"])
+	return "Expires " + stamp(n.Fields["expires"]) + "."
 }

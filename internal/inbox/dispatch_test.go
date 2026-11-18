@@ -94,7 +94,7 @@ func TestDispatcherSends(t *testing.T) {
 	s := &fakeSender{}
 	inbox.NewDispatcher(st, s, "https://console.example.com/", quiet()).Deliver(context.Background(), dispNow)
 
-	want := inbox.Absolute(inbox.Render(n), "https://console.example.com/")
+	want := inbox.Outgoing(n, "https://console.example.com/")
 	if len(s.sent) != 1 || s.sent[0] != want {
 		t.Fatalf("sent %+v, want [%+v]", s.sent, want)
 	}

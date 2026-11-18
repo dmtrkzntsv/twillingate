@@ -31,11 +31,14 @@ var discordEscaper = strings.NewReplacer(
 	`\`, `\\`, "*", `\*`, "_", `\_`, "~", `\~`, "`", "\\`", "|", `\|`, ">", `\>`,
 )
 
-// Send posts the text verbatim: Markdown escaped in the title and body (the
-// link is left as is, so it stays a working link) and no mentions parsed, so
-// @everyone or <@id> in a form field pings nobody.
+// Send posts the text verbatim, its title bold: Markdown escaped in the
+// title and body (the link is left as is, so it stays a working link) and no
+// mentions parsed, so @everyone or <@id> in a form field pings nobody.
 func (d *discord) Send(ctx context.Context, m Message) error {
 	esc := Message{Title: discordEscaper.Replace(m.Title), Body: discordEscaper.Replace(m.Body), Link: m.Link}
+	if esc.Title != "" {
+		esc.Title = "**" + esc.Title + "**"
+	}
 	type mentions struct {
 		Parse []string `json:"parse"`
 	}

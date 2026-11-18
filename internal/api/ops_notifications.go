@@ -10,7 +10,8 @@ import (
 )
 
 // The inbox (spec 2026-11-07-notifications-design): every notification,
-// rendered as the channel gets it. Console state: archiving and restoring
+// rendered as the inbox shows it (the channel's title adds an emoji and the
+// project, inbox.Outgoing). Console state: archiving and restoring
 // are not audited.
 
 type listNotificationsIn struct {
@@ -26,7 +27,7 @@ type notificationOut struct {
 	ProjectID     int64             `json:"project_id,omitempty" jsonschema:"absent when the notification belongs to no project"`
 	Project       string            `json:"project,omitempty" jsonschema:"the project's name when the notification was created"`
 	Subject       string            `json:"subject" jsonschema:"what it is about: an origin, a domain or a form"`
-	Title         string            `json:"title" jsonschema:"the message's title, as the channel got it"`
+	Title         string            `json:"title" jsonschema:"the message's title; the channel got it led by an emoji and the project"`
 	Body          string            `json:"body" jsonschema:"the message's body, as the channel got it"`
 	Path          string            `json:"path" jsonschema:"the console page it leads to"`
 	Fields        map[string]string `json:"fields" jsonschema:"the facts the message was rendered from; never a form field value"`
@@ -111,7 +112,7 @@ func (h *host) restoreNotifications(ctx context.Context, in restoreNotifications
 
 func (h *host) registerNotifications(r *registrar) {
 	expose(r, spec{Name: "list_notifications", Annotations: ro, Method: "GET", Path: "/api/notifications",
-		Description: "The inbox: every notification twillingate raised, newest first, the active ones (archived: true lists the archived ones instead), of every project or of project_id. Each has id, type (uptime_down, uptime_still_down, uptime_up, cert_failing, cert_still_failing, cert_recovered, domain_failing, domain_still_failing, domain_recovered, cert_expiring, domain_expiring, form_draft_created, form_draft_discarded, form_submission), project_id and project (absent for none), subject (the origin, domain or form), title and body (the message exactly as the NOTIFY_URL channel got it), path (the console page it leads to), fields (the facts it was rendered from; never a form field value), created_at, archived_at, and delivery (pending, sent, failed, none when no NOTIFY_URL is configured, or skipped) with delivery_error after a failed send. active counts the active ones across every project. Pages of limit (default 50, at most 200); pass next_cursor back as cursor. Reading never archives anything."},
+		Description: "The inbox: every notification twillingate raised, newest first, the active ones (archived: true lists the archived ones instead), of every project or of project_id. Each has id, type (uptime_down, uptime_still_down, uptime_up, cert_failing, cert_still_failing, cert_recovered, domain_failing, domain_still_failing, domain_recovered, cert_expiring, domain_expiring, form_draft_created, form_draft_discarded, form_submission), project_id and project (absent for none), subject (the origin, domain or form), title and body (the message the NOTIFY_URL channel got, its title there led by an emoji and the project: '🔥 Blog · https://blog.example is down'), path (the console page it leads to), fields (the facts it was rendered from; never a form field value), created_at, archived_at, and delivery (pending, sent, failed, none when no NOTIFY_URL is configured, or skipped) with delivery_error after a failed send. active counts the active ones across every project. Pages of limit (default 50, at most 200); pass next_cursor back as cursor. Reading never archives anything."},
 		h.listNotifications)
 	expose(r, spec{Name: "archive_notifications", Annotations: idem, Method: "POST", Path: "/api/notifications/archive",
 		Description: "Archive notifications chosen by exactly one of: ids (from list_notifications), or all: true (every active one). An archived notification leaves the inbox and its active count, is reversible with restore_notifications, and is purged for good RETENTION_ARCHIVED_DAYS (default 30) after archiving. Archiving never stops a failure from notifying again: a site still down reminds after NOTIFY_REMIND_HOURS. Console state, not audited. Returns how many were archived."},

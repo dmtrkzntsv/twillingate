@@ -655,7 +655,7 @@ export type NotificationType =
 /** How the send to NOTIFY_URL went: `none` with no NOTIFY_URL configured. */
 export type Delivery = 'pending' | 'sent' | 'failed' | 'none' | 'skipped'
 
-/** One inbox item as list_notifications answers it: the message exactly as the channel got it. */
+/** One inbox item as list_notifications answers it: the message the channel got, whose title there also starts with an emoji and the project. */
 export interface Notification {
   id: number
   type: NotificationType
