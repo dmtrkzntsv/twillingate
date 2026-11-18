@@ -286,8 +286,11 @@ func TestServeSharedListenerServesBothSurfaces(t *testing.T) {
 				if err != nil {
 					t.Fatalf("serve: %v", err)
 				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("serve did not shut down within 5s of ctx cancel")
+			// Serve gives HTTP shutdown 5s, and net/http counts a connection
+			// that has sent no request yet (a client's spare dial) as busy
+			// until it is 5s old, so a clean shutdown can take all of that.
+			case <-time.After(15 * time.Second):
+				t.Fatal("serve did not shut down within 15s of ctx cancel")
 			}
 		})
 
