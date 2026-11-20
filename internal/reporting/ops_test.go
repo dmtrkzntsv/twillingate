@@ -233,23 +233,6 @@ func TestCreateDashboardAllOrNothing(t *testing.T) {
 	}
 }
 
-func TestCreateDashboardRange(t *testing.T) {
-	svc := newTestService(t)
-	ctx := context.Background()
-	d := mustCreate(t, svc, "DD")
-	if d.Range != "7d" {
-		t.Errorf("range = %q, want 7d", d.Range)
-	}
-	d2, err := svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "EE", Range: "90d"})
-	if err != nil || d2.Range != "90d" {
-		t.Errorf("range = %q, %v; want 90d", d2.Range, err)
-	}
-	_, err = svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "FF", Range: "14d"})
-	wantRefusal(t, err, store.ErrInvalid, "range must be one of today, yesterday, 7d, 30d, 90d, custom")
-	_, err = svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "GG", Range: "custom"})
-	wantRefusal(t, err, store.ErrInvalid, "create with a preset; the viewer picks custom dates")
-}
-
 func TestCreateDashboardWidgetNames(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -367,7 +350,7 @@ func TestDuplicateDashboard(t *testing.T) {
 	if err := svc.ArchiveWidget(ctx, "test", src.Widgets[2].ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := svc.st.SetDashboardView(ctx, store.Dashboard{ID: src.ID, LastProjectID: 7, LastRange: "custom", LastFrom: "2026-08-01", LastTo: "2026-08-31"}); err != nil {
+	if err := svc.st.SetDashboardView(ctx, store.Dashboard{ID: src.ID, LastProjectID: 7}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -378,8 +361,8 @@ func TestDuplicateDashboard(t *testing.T) {
 	if cp.Title != "Src (copy)" || cp.Owner != store.OwnerUser {
 		t.Errorf("copy = %q owned by %q", cp.Title, cp.Owner)
 	}
-	if cp.ProjectID != 7 || cp.Range != "custom" || cp.From != "2026-08-01" || cp.To != "2026-08-31" {
-		t.Errorf("selection = %d %s %s %s, want the source's", cp.ProjectID, cp.Range, cp.From, cp.To)
+	if cp.ProjectID != 7 {
+		t.Errorf("project = %d, want the source's", cp.ProjectID)
 	}
 	if len(cp.Widgets) != 2 {
 		t.Fatalf("widgets = %d, want the 2 live ones", len(cp.Widgets))
@@ -444,7 +427,7 @@ func TestDuplicateDashboard(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sys.Owner != store.OwnerUser || sys.Title != "Users (copy)" || len(sys.Widgets) != 1 || sys.Range != "7d" {
+	if sys.Owner != store.OwnerUser || sys.Title != "Users (copy)" || len(sys.Widgets) != 1 {
 		t.Errorf("system copy = %+v", sys)
 	}
 	list, _ := svc.Dashboards(ctx)
@@ -941,82 +924,30 @@ func switcherDashboard(t *testing.T, svc *Service, project, rng bool) DashboardD
 	return mustCreate(t, svc, "DD", specs...)
 }
 
-func TestSetViewSwitchersRequiredAndRefused(t *testing.T) {
+func TestSetViewStoresTheProject(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	both := switcherDashboard(t, svc, true, true)
 	if !both.FollowsProject || !both.FollowsRange {
 		t.Fatalf("follows = %v %v, want both", both.FollowsProject, both.FollowsRange)
 	}
-	id := itoa(both.ID)
-	wantRefusal(t, svc.SetView(ctx, View{DashboardID: both.ID, Range: "7d"}),
-		store.ErrInvalid, "project_id is required: dashboard "+id+" has a project switcher")
-	wantRefusal(t, svc.SetView(ctx, View{DashboardID: both.ID, ProjectID: 7}),
-		store.ErrInvalid, "range is required: dashboard "+id+" has a range switcher")
-	wantRefusal(t, svc.SetView(ctx, View{DashboardID: both.ID, ProjectID: 7, Range: "14d"}),
-		store.ErrInvalid, "range must be one of today, yesterday, 7d, 30d, 90d, custom")
-	if err := svc.SetView(ctx, View{DashboardID: both.ID, ProjectID: 7, Range: "30d"}); err != nil {
-		t.Fatal(err)
-	}
-	got, _ := svc.Dashboard(ctx, both.ID)
-	if got.ProjectID != 7 || got.Range != "30d" {
-		t.Errorf("stored = %d %s", got.ProjectID, got.Range)
-	}
-
-	neither := switcherDashboard(t, svc, false, false)
-	nid := itoa(neither.ID)
-	wantRefusal(t, svc.SetView(ctx, View{DashboardID: neither.ID, ProjectID: 7}),
-		store.ErrInvalid, "dashboard "+nid+" has no project switcher; omit project_id")
-	wantRefusal(t, svc.SetView(ctx, View{DashboardID: neither.ID, Range: "7d"}),
-		store.ErrInvalid, "dashboard "+nid+" has no range switcher; omit range, from and to")
-	if err := svc.SetView(ctx, View{DashboardID: neither.ID}); err != nil {
-		t.Errorf("empty view on a fixed dashboard: %v", err)
-	}
-	if got, _ := svc.Dashboard(ctx, neither.ID); got.Range != "7d" {
-		t.Errorf("range = %q, want the stored 7d kept", got.Range)
-	}
-}
-
-func TestSetViewCustomDates(t *testing.T) {
-	svc := newTestService(t)
-	ctx := context.Background()
-	d := switcherDashboard(t, svc, false, true)
-	for _, c := range []struct {
-		v   View
-		msg string
-	}{
-		{View{Range: "7d", From: "2026-08-01", To: "2026-08-02"}, "from and to go only with range custom"},
-		{View{Range: "custom", From: "2026-08-01"}, "from and to are days, YYYY-MM-DD"},
-		{View{Range: "custom", From: "2026-08-01", To: "31/08/2026"}, "from and to are days, YYYY-MM-DD"},
-		{View{Range: "custom", From: "2026-08-02", To: "2026-08-01"}, "from 2026-08-02 is after to 2026-08-01"},
-		{View{Range: "custom", From: "2025-01-01", To: "2026-01-02"}, "from 2025-01-01 to 2026-01-02 spans more than 365 days"},
-	} {
-		c.v.DashboardID = d.ID
-		wantRefusal(t, svc.SetView(ctx, c.v), store.ErrInvalid, c.msg)
-	}
-	if err := svc.SetView(ctx, View{DashboardID: d.ID, Range: "custom", From: "2025-01-01", To: "2026-01-01"}); err != nil {
-		t.Fatalf("365 days: %v", err)
-	}
-	got, _ := svc.Dashboard(ctx, d.ID)
-	if got.Range != "custom" || got.From != "2025-01-01" || got.To != "2026-01-01" {
-		t.Errorf("stored = %s %s %s", got.Range, got.From, got.To)
-	}
-}
-
-func TestSetViewSystemDashboardNoAudit(t *testing.T) {
-	svc := newTestService(t)
-	syncReporting(t, svc, nil, systemDashboard())
-	if err := svc.SetView(context.Background(), View{DashboardID: 3}); err != nil {
-		t.Fatal(err)
-	}
-	d := switcherDashboard(t, svc, false, true)
+	wantRefusal(t, svc.SetView(ctx, View{DashboardID: both.ID}),
+		store.ErrInvalid, "project_id must be a positive id")
 	before := len(auditRows(t, svc))
-	if err := svc.SetView(context.Background(), View{DashboardID: d.ID, Range: "today"}); err != nil {
+	if err := svc.SetView(ctx, View{DashboardID: both.ID, ProjectID: 7}); err != nil {
 		t.Fatal(err)
+	}
+	if got, _ := svc.Dashboard(ctx, both.ID); got.ProjectID != 7 {
+		t.Errorf("stored project = %d, want 7", got.ProjectID)
 	}
 	if got := len(auditRows(t, svc)); got != before {
 		t.Errorf("audit rows %d -> %d, want none written", before, got)
 	}
+
+	// A dashboard that follows only the range has nothing to store.
+	rng := switcherDashboard(t, svc, false, true)
+	wantRefusal(t, svc.SetView(ctx, View{DashboardID: rng.ID, ProjectID: 7}),
+		store.ErrInvalid, "dashboard "+itoa(rng.ID)+" has no project switcher")
 }
 
 // --- Widgets filter ---

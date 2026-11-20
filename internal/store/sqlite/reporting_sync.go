@@ -127,9 +127,8 @@ func syncComponents(ctx context.Context, tx *sql.Tx, components []store.Componen
 }
 
 // syncDashboards upserts every system dashboard by id (title, sort_key,
-// group_id and project_tab; last_range and sidebar are written on insert
-// alone, so a viewer's later SetDashboardView and a user's Hide survive a
-// resync), then deletes any system dashboard not named in the list. The
+// group_id and project_tab; sidebar is written on insert alone, so a
+// user's Hide survives a resync), then deletes any system dashboard not named in the list. The
 // update also makes an archived system row live again, out of the
 // sidebar: only an older binary, after a rollback, archives one (its
 // Hide), and this version has no way back from that. A manifest id that
@@ -174,15 +173,15 @@ func syncDashboards(ctx context.Context, tx *sql.Tx, dashboards []store.SystemDa
 		if groupID == 0 {
 			groupID = dash.ID
 		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO dashboards (id, owner, title, sort_key, group_id, last_range, sidebar, project_tab)
-			VALUES (?,?,?,?,?,?,?,?)
+		if _, err := tx.ExecContext(ctx, `INSERT INTO dashboards (id, owner, title, sort_key, group_id, sidebar, project_tab)
+			VALUES (?,?,?,?,?,?,?)
 			ON CONFLICT(id) DO UPDATE SET title=excluded.title, sort_key=excluded.sort_key,
 				group_id=excluded.group_id, project_tab=excluded.project_tab,
 				sidebar=CASE WHEN dashboards.archived_at IS NULL THEN dashboards.sidebar ELSE 0 END,
 				archived_at=NULL,
 				updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now')
 			WHERE dashboards.owner=?`,
-			dash.ID, store.OwnerSystem, dash.Title, dash.SortKey, groupID, dash.Range,
+			dash.ID, store.OwnerSystem, dash.Title, dash.SortKey, groupID,
 			dash.Sidebar, dash.ProjectTab, store.OwnerSystem,
 		); err != nil {
 			return 0, 0, fmt.Errorf("reporting sync: system dashboard %d: %w", dash.ID, err)

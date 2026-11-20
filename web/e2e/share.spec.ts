@@ -124,7 +124,6 @@ test('a 120-character title is cut to two lines on a cold page, in the card and 
     headers: authHeaders(),
     data: {
       title: 'Share title fit',
-      range: '7d',
       widgets: [
         {
           component: 'stat',
@@ -196,7 +195,6 @@ test('a dashboard with no project switcher shares under the project its queries 
     headers: authHeaders(),
     data: {
       title: 'Share pinned project',
-      range: '7d',
       widgets: [
         { component: 'stat', title: 'pinned', source: { type: 'query', content: JSON.stringify(query) }, width: 6, height: 4 },
         { component: 'markdown', title: 'notes', source: { type: 'md', content: 'Pinned **notes**' }, width: 6, height: 4 },
@@ -230,7 +228,6 @@ test('a dashboard with no project shares with none, archiving never if asked', a
     headers: authHeaders(),
     data: {
       title: 'Share no project',
-      range: '7d',
       widgets: [{ component: 'markdown', title: 'notes', source: { type: 'md', content: 'No **project** here' }, width: 6, height: 4 }],
     },
   })

@@ -98,7 +98,7 @@ test('tabs carry the selection across to the next report', async ({ page }) => {
 test('a lone user dashboard shows a tab bar of its one tab', async ({ page, request }) => {
   const created = await request.post('/api/dashboards', {
     headers: authHeaders(),
-    data: { title: 'Standalone check', range: '7d' },
+    data: { title: 'Standalone check' },
   })
   expect(created.ok(), await created.text()).toBeTruthy()
   const { dashboard_id: id } = (await created.json()) as { dashboard_id: number }
@@ -114,14 +114,14 @@ test('a lone user dashboard shows a tab bar of its one tab', async ({ page, requ
 test('an agent-made group shows its tab bar', async ({ page, request }) => {
   const first = await request.post('/api/dashboards', {
     headers: authHeaders(),
-    data: { title: 'Growth', range: '7d' },
+    data: { title: 'Growth' },
   })
   expect(first.ok(), await first.text()).toBeTruthy()
   const { dashboard_id: firstId, group_id: groupId } = (await first.json()) as { dashboard_id: number; group_id: number }
 
   const second = await request.post('/api/dashboards', {
     headers: authHeaders(),
-    data: { title: 'Retention (beta)', range: '7d', group_id: groupId },
+    data: { title: 'Retention (beta)', group_id: groupId },
   })
   expect(second.ok(), await second.text()).toBeTruthy()
 
@@ -174,7 +174,6 @@ test('a 6x6 widget and four 3x3 widgets lay out as a 2x2 block beside it', async
     headers: authHeaders(),
     data: {
       title: 'Layout check',
-      range: '7d',
       widgets: [
         widget('Main', 6, 6),
         widget('Q1', 3, 3),
@@ -215,7 +214,6 @@ test('a table sorts by its header and remembers the sort across a reload', async
     headers: authHeaders(),
     data: {
       title: 'Sort check',
-      range: '30d',
       widgets: [
         {
           component: 'table',
@@ -238,7 +236,7 @@ test('a table sorts by its header and remembers the sort across a reload', async
   expect(dev, 'no seeded dev project').toBeDefined()
 
   await login(page)
-  await page.goto(`/app/dashboards/${id}?project=${dev!.project_id}`)
+  await page.goto(`/app/dashboards/${id}?project=${dev!.project_id}&range=30d`)
   const names = page.locator('tbody tr td:first-child')
   await expect(names.first()).toBeVisible()
   const byCount = await names.allTextContents()

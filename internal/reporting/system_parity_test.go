@@ -480,7 +480,7 @@ func within(want, got string, frac float64) bool {
 // views/count, a stat of the views in the range answered by the native
 // engine.
 var fakeSystem = mapFS(map[string]string{
-	"views/dashboard.json": `{"id": 1, "title": "Views", "group_title": "Reports", "range": "7d", "sidebar": true, "project_tab": true, "layout": [{"widget": "count"}]}`,
+	"views/dashboard.json": `{"id": 1, "title": "Views", "group_title": "Reports", "sidebar": true, "project_tab": true, "layout": [{"widget": "count"}]}`,
 	"views/count.json":     `{"component": "stat", "title": "Views", "props": {"format": "number"}}`,
 	"views/count.query":    `{"query":{"kind":"stat","table":"views","metrics":[{"op":"count","as":"value"}]}}`,
 })
@@ -488,7 +488,7 @@ var fakeSystem = mapFS(map[string]string{
 // fakeTrendSystem is a Views dashboard of one trend, views/devices: views
 // per day and device, rows within a day by device.
 var fakeTrendSystem = mapFS(map[string]string{
-	"views/dashboard.json": `{"id": 1, "title": "Views", "group_title": "Reports", "range": "7d", "sidebar": true, "project_tab": true, "layout": [{"widget": "devices"}]}`,
+	"views/dashboard.json": `{"id": 1, "title": "Views", "group_title": "Reports", "sidebar": true, "project_tab": true, "layout": [{"widget": "devices"}]}`,
 	"views/devices.json":   `{"component": "line", "title": "Devices", "props": {"format": "number"}}`,
 	"views/devices.query":  `{"query":{"kind":"trend","table":"views","series":"device","where":[{"column":"device","op":"is_set"}],"metrics":[{"op":"count","as":"y"}]},"rename":{"day":"x"}}`,
 })

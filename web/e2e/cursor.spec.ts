@@ -208,7 +208,7 @@ test('every link and button shows the pointer', async ({ page, request }) => {
   // tab; one of our own, so the picker is never empty. Then that
   // dashboard's widget editor, and the visualizations its select offers.
   const title = `E2E cursor ${Date.now()}`
-  const created = await request.post('/api/dashboards', { headers, data: { title, range: '7d' } })
+  const created = await request.post('/api/dashboards', { headers, data: { title } })
   expect(created.ok(), await created.text()).toBeTruthy()
   const { dashboard_id: id } = (await created.json()) as { dashboard_id: number }
   try {

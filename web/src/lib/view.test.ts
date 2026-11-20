@@ -15,16 +15,11 @@ describe('view helpers', () => {
     )
   })
 
-  it('saves only the parts a dashboard has switchers for', () => {
+  it('saves only the project, and only on a dashboard with a project switcher', () => {
     const sel = { projectId: 7, range: 'custom' as const, from: '2026-08-01', to: '2026-08-31' }
-    expect(viewBody(sel, { project: true, range: true })).toEqual({
-      project_id: 7,
-      range: 'custom',
-      from: '2026-08-01',
-      to: '2026-08-31',
-    })
-    expect(viewBody(sel, { project: false, range: true })).toEqual({ range: 'custom', from: '2026-08-01', to: '2026-08-31' })
-    expect(viewBody({ projectId: 7, range: '7d' }, { project: true, range: false })).toEqual({ project_id: 7 })
+    expect(viewBody(sel, { project: true, range: true })).toEqual({ project_id: 7 })
+    expect(viewBody(sel, { project: false, range: true })).toBeNull()
+    expect(viewBody({ range: '7d' }, { project: true, range: false })).toBeNull()
   })
 
   it('asks a widget only for what it follows', () => {
@@ -35,9 +30,8 @@ describe('view helpers', () => {
     expect(widgetParams(widget(false, false), { projectId: 7 }, range)).toEqual({})
   })
 
-  it('applies a saved view to a cached dashboard, dropping stale custom dates', () => {
-    const d = { dashboard_id: 1, project_id: 7, range: 'custom', from: '2026-08-01', to: '2026-08-31' } as DashboardDetail
-    expect(withSavedView(d, { range: '7d' })).toMatchObject({ project_id: 7, range: '7d', from: undefined, to: undefined })
-    expect(withSavedView(d, { project_id: 1 })).toMatchObject({ project_id: 1, range: 'custom', from: '2026-08-01' })
+  it('applies a saved view to a cached dashboard', () => {
+    const d = { dashboard_id: 1, project_id: 7 } as DashboardDetail
+    expect(withSavedView(d, { project_id: 1 })).toMatchObject({ dashboard_id: 1, project_id: 1 })
   })
 })

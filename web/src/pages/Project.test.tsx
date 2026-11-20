@@ -731,6 +731,23 @@ describe('Project tabs', () => {
     expect(location()).toBe('/projects/7/settings?range=30d')
   })
 
+  it('opens on the range a dashboard page stored, and changes it only in the URL', async () => {
+    const user = userEvent.setup()
+    localStorage.setItem('twillingate.range', JSON.stringify({ range: '90d' }))
+    renderAt('/projects/7/dashboards/1')
+    await user.click(await screen.findByRole('button', { name: 'Range: Last 90 days' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'Last week' }))
+    expect(location()).toBe('/projects/7/dashboards/1?range=7d')
+    expect(JSON.parse(localStorage.getItem('twillingate.range')!)).toEqual({ range: '90d' })
+    expect(endpoints.saveView).not.toHaveBeenCalled()
+  })
+
+  it('opens Settings on the stored range too, in place of its own default', async () => {
+    localStorage.setItem('twillingate.range', JSON.stringify({ range: 'yesterday' }))
+    renderAt('/projects/4/settings')
+    expect(await screen.findByRole('button', { name: 'Range: Yesterday' })).toBeInTheDocument()
+  })
+
   it("says a dashboard isn't a tab of the project, and adds it", async () => {
     const user = userEvent.setup()
     const add = vi.spyOn(endpoints, 'addProjectTab').mockResolvedValue({

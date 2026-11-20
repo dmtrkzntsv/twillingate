@@ -45,7 +45,7 @@ func TestInsertDashboardRoundTripsEveryField(t *testing.T) {
 	}
 	dash := store.Dashboard{
 		Owner: store.OwnerUser, Title: "Marketing", SortKey: "a", Sidebar: true,
-		LastProjectID: 7, LastRange: "30d", LastFrom: "2026-08-01", LastTo: "2026-08-31",
+		LastProjectID: 7,
 	}
 	ws := []store.Widget{{
 		Component: "chart", SortKey: "a", Width: 4, Height: 3,
@@ -61,8 +61,7 @@ func TestInsertDashboardRoundTripsEveryField(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Owner != dash.Owner || got.Title != dash.Title || got.SortKey != dash.SortKey ||
-		got.LastProjectID != dash.LastProjectID || got.LastRange != dash.LastRange ||
-		got.LastFrom != dash.LastFrom || got.LastTo != dash.LastTo || got.Sidebar != dash.Sidebar {
+		got.LastProjectID != dash.LastProjectID || got.Sidebar != dash.Sidebar {
 		t.Fatalf("GetDashboard round-trip = %+v, want fields matching %+v", got, dash)
 	}
 	if got.CreatedAt == "" || got.UpdatedAt == "" {
@@ -380,7 +379,7 @@ func TestSetDashboardViewWritesOnlyLastFieldsNoAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := db.SetDashboardView(ctx, store.Dashboard{
-		ID: id, LastProjectID: 3, LastRange: "7d", LastFrom: "2026-09-01", LastTo: "2026-09-07",
+		ID: id, LastProjectID: 3,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +394,7 @@ func TestSetDashboardViewWritesOnlyLastFieldsNoAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.LastProjectID != 3 || got.LastRange != "7d" || got.LastFrom != "2026-09-01" || got.LastTo != "2026-09-07" {
+	if got.LastProjectID != 3 {
 		t.Errorf("GetDashboard after SetDashboardView = %+v", got)
 	}
 	if got.Title != "D" || got.SortKey != "a" {

@@ -436,11 +436,11 @@ is older than `REPORTING_CACHE_MAX_AGE`:
 | --- | --- | --- |
 | `reporting_guide` | none | markdown: the running version and its release notes, the source types and components, the built-in widgets (each one's id, dashboard, title, component and what it reads), the event files' tables, the active projects and the dashboards, and this document's [Workflow](#workflow) and [Rules](#rules). MCP only |
 | `list_components` | none | `source_types` and `components`: each one's `description`, `accepts`, `inputs`, `props` schema, `default_width` and `default_height` |
-| `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, `group_title` (the group's name; absent when it has none, and the first live tab's title stands in), stored `project_id` and `range`, live `widgets` count, `archived_at`, `sidebar` (its group is in the sidebar; only a system group is ever out of it) and `project_tab` (a system dashboard that projects created from now on get as a tab; always false on your own); plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and `auto_refresh_seconds`, how often the page reloads a dashboard with auto-refresh on (absent: never), and `console_url`, the server's `CONSOLE_URL` (absent when it is not set) |
+| `list_dashboards` | none | `timezone` and `dashboards` in sidebar order (system, then user), archived ones included: `dashboard_id`, `title`, `owner`, `group_id`, `group_title` (the group's name; absent when it has none, and the first live tab's title stands in), stored `project_id` (the project its viewer last chose), live `widgets` count, `archived_at`, `sidebar` (its group is in the sidebar; only a system group is ever out of it) and `project_tab` (a system dashboard that projects created from now on get as a tab; always false on your own); plus `purge_after_days`, how long an archived user dashboard is kept before it is deleted (absent: kept forever), and `auto_refresh_seconds`, how often the page reloads a dashboard with auto-refresh on (absent: never), and `console_url`, the server's `CONSOLE_URL` (absent when it is not set) |
 | `get_dashboard` | `dashboard_id` | the dashboard, its `group_id` and `group_title` (the group's name; absent when it has none), its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), and its live `widgets` in order |
 | `list_widgets` | `dashboard_id`, `component` (both optional; they combine) | `widgets`, archived ones included, each with its `dashboard` and 1-based `position` there |
 | `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh`; for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` | the envelope above |
-| `create_dashboard` | `title` (at least 2 characters), `range` (default `7d`), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
+| `create_dashboard` | `title` (at least 2 characters), `group_id`, `after`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget creates nothing |
 | `update_dashboard` | `dashboard_id`, `title`, `whole_group`, `group_id`, `after`; or, in a call of its own, `sidebar` | the dashboard, as `list_dashboards` lists it. `sidebar` (system dashboards only) puts the whole group in or out of the sidebar, and is refused on your own, which are always in it. See [Project tabs and the sidebar](#project-tabs-and-the-sidebar) |
 | `duplicate_dashboard` | `dashboard_id`, `whole_group`, `group_id`, `where`, `project_id` | a user copy with copies of its live widgets: a new dashboard last in the sidebar, or with `group_id` a tab of that user group (right after the source when it is the source's own group, last otherwise). A system dashboard is copied too, also one out of the sidebar. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no `group_id`. The copy is in the sidebar, on no project's page, with `project_tab` false. Duplicating never hides the source: to replace a system group, `update_dashboard` it with `sidebar: false`. `where` (filters, as a structured query's) and `project_id` narrow every copied `query` widget: its query's rows must also pass `where`, before its own filters, and it reads `project_id` whatever the switcher shows; Markdown is copied as it is, and a `sql` widget among the copies, or a filter one of the queries cannot take (a column its table lacks), refuses the whole copy |
 | `archive_dashboard` | `dashboard_id`, `whole_group` | archives a user dashboard (`whole_group`: every live member of its group): out of the sidebar and off every project page; see [Archiving and the purge](#archiving-and-the-purge). A system dashboard is refused |
@@ -495,7 +495,7 @@ public `/share/<id>.png` stops at archiving
 | `GET` | `/api/dashboards/{dashboard_id}` | `get_dashboard` | — |
 | `GET` | `/api/widgets` | `list_widgets` | query: `dashboard_id`, `component` |
 | `GET` | `/api/widgets/{widget_id}/data` | `widget_data` | query: `project_id`, `from`, `to`, `fresh`, and for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` |
-| `POST` | `/api/dashboards` | `create_dashboard` | body: `title`, `range`, `group_id`, `after`, `widgets` → 201 |
+| `POST` | `/api/dashboards` | `create_dashboard` | body: `title`, `group_id`, `after`, `widgets` → 201 |
 | `PATCH` | `/api/dashboards/{dashboard_id}` | `update_dashboard` | body: `title`, `whole_group`, `group_id`, `after`; or `sidebar` |
 | `POST` | `/api/dashboards/{dashboard_id}/duplicate` | `duplicate_dashboard` | optional body `{whole_group}` or `{group_id}` → 201 |
 | `POST` | `/api/dashboards/{dashboard_id}/archive` | `archive_dashboard` | body: `whole_group` (optional) |
@@ -509,7 +509,7 @@ public `/share/<id>.png` stops at archiving
 | `POST` | `/api/widgets/{widget_id}/copy` | `copy_widget` | body: `dashboard_id`, `after` → 201 |
 | `POST` | `/api/widgets/{widget_id}/archive` | `archive_widget` | — |
 | `POST` | `/api/widgets/{widget_id}/restore` | `restore_widget` | — |
-| `PUT` | `/api/dashboards/{dashboard_id}/view` | `view`, REST only: no MCP tool | body: `project_id`, `range`, and `from`/`to` for `custom` → `{"status":"saved"}` |
+| `PUT` | `/api/dashboards/{dashboard_id}/view` | `view`, REST only: no MCP tool | body: `project_id` → `{"status":"saved"}` |
 | `POST` | `/api/widgets/stream` | `widget_stream`, REST only: no MCP tool | body: `{"widgets":[{"widget_id","project_id","from","to","fresh"}]}`, at most 64 → `text/event-stream`: one `widget` event per widget, `{"widget_id","data"}` or `{"widget_id","error":{"code","message"}}`, then `done` |
 | `POST` | `/api/widgets/preview` | `preview_widget`, REST only: no MCP tool | body: `component`, `props`, `source`, `project_id`, `from`, `to` → `{columns, rows, truncated, approximate, problem, elapsed_ms}` |
 | `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id` (optional), `from`, `to`, `archive_after`, `caption_project`, `caption_range`, `image`, `image_2x` → 201 |
@@ -560,10 +560,9 @@ data: {}
   taken for a dead one, and **`done`** ends the stream.
 
 
-The view route takes `project_id` exactly when the dashboard has a project
-switcher and `range` exactly when it has a range switcher, and refuses either
-when the dashboard has none. It stores the preset, not its dates, so "Last
-week" stays rolling.
+The view route stores the project the viewer chose on a dashboard with a
+project switcher, and refuses one without. The range is not stored on the
+server: the page keeps one for every dashboard, in the browser.
 
 ```bash
 curl -H "Authorization: Bearer $TOKEN" \
@@ -1526,9 +1525,10 @@ A project's page has no project switcher: a tab there gives every widget
 that follows `:project` that project. A widget that does not follow it shows
 the same data on every project page.
 
-The page offers these range presets; a dashboard remembers the viewer's last
-choice, starting from the `range` it was created with. The multi-day presets
-are whole days and leave out today, which is still filling:
+The page offers these range presets. It keeps one range for every dashboard
+and project page, in the browser: the last one picked on a dashboard page, else
+`7d`; a project page's switcher changes only its own address. The multi-day
+presets are whole days and leave out today, which is still filling:
 
 | Id | Label | `:from` → `:to` |
 | --- | --- | --- |
@@ -1539,8 +1539,7 @@ are whole days and leave out today, which is still filling:
 | `90d` | Last 90 days | today − 90 → yesterday |
 | `custom` | Custom… | the dates the viewer picks |
 
-`create_dashboard` takes any preset but `custom`. The API itself never takes a
-preset for data: `widget_data` takes `from` and `to`, required for a widget
+The API never takes a preset: `widget_data` takes `from` and `to`, required for a widget
 that follows the range and ignored otherwise, with `from` ≤ `to`, at most 365
 days apart, and `from` not after today; a `to` after today is clamped to
 today. Days are the instance's days, which are UTC (`timezone` on
@@ -1915,7 +1914,6 @@ widget's name (`widget visitors: …`), and nothing is created.
 | preview runs sql and query only; markdown is drawn as it is typed | `preview_widget` takes a `sql` or `query` source; a `md` widget needs no query to preview. |
 | widget 42 follows the project switcher; pass project_id | Pass `project_id` to `widget_data`. For the range: widget 42 follows the date range; pass from and to. |
 | from 2026-09-10 is after to 2026-09-01; from 2026-01-01 to 2027-02-01 spans more than 365 days; from 2026-10-01 is after today | Pass `from` ≤ `to`, at most 365 days apart, `from` no later than today. |
-| range must be one of today, yesterday, 7d, 30d, 90d, custom | Use a preset id. `create_dashboard` refuses `custom`: create with a preset; the viewer picks custom dates. |
 | nothing to update; give title, after or group_id | Give a title, or something to change. |
 | title must have at least 2 characters; group title must have at least 2 characters | Dashboard titles and group names need two characters or more (trimmed). A `whole_group` update needs a `title`. |
 | whole_group renames the group; it takes no after or group_id | Send `whole_group` with `title` alone; move the dashboard in another call. |

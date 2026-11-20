@@ -35,7 +35,7 @@ async function createDashboard(
 ): Promise<{ id: number; groupId: number }> {
   const res = await request.post('/api/dashboards', {
     headers: authHeaders(),
-    data: { title, range: '7d', ...(groupId ? { group_id: groupId } : {}) },
+    data: { title, ...(groupId ? { group_id: groupId } : {}) },
   })
   expect(res.ok(), await res.text()).toBeTruthy()
   const body = (await res.json()) as { dashboard_id: number; group_id: number }
@@ -402,7 +402,7 @@ async function createWidgetDashboard(
   }))
   const res = await request.post('/api/dashboards', {
     headers: authHeaders(),
-    data: { title, range: '7d', widgets },
+    data: { title, widgets },
   })
   expect(res.ok(), await res.text()).toBeTruthy()
   return ((await res.json()) as { dashboard_id: number }).dashboard_id

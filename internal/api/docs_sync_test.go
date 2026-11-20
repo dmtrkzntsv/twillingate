@@ -527,18 +527,6 @@ func TestReportingExamplesWork(t *testing.T) {
 	}
 }
 
-// TestReportingDocumentNamesEveryPreset: the range vocabulary the stored
-// selection is validated against is spelled out, id by id, where an agent
-// choosing create_dashboard's range reads it.
-func TestReportingDocumentNamesEveryPreset(t *testing.T) {
-	section := docSection(t, docs.Reporting, "## Parameters and ranges")
-	for _, p := range reporting.Presets {
-		if !strings.Contains(section, "| `"+p+"` |") {
-			t.Errorf("range preset %s has no row in docs/reporting.md's range table", p)
-		}
-	}
-}
-
 // TestDocumentMatchesVocabularies binds the two prose copies of the closed
 // vocabularies to enrich's own lists. Both documents spell every value out
 // — the environment table in docs/twillingate.md and the migration-015

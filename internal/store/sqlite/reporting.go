@@ -30,7 +30,6 @@ func audit(ctx context.Context, tx *sql.Tx, a store.AuditEntry) error {
 type rowScanner interface{ Scan(dest ...any) error }
 
 const dashboardCols = `d.id, d.owner, d.title, d.sort_key, d.group_id, COALESCE(d.last_project_id,0),
-	COALESCE(d.last_range,''), COALESCE(d.last_from,''), COALESCE(d.last_to,''),
 	d.created_at, d.updated_at, COALESCE(d.archived_at,''),
 	(SELECT COUNT(*) FROM widgets w WHERE w.dashboard_id=d.id AND w.archived_at IS NULL),
 	COALESCE((SELECT g.title FROM dashboard_groups g WHERE g.group_id=d.group_id),''),
@@ -39,7 +38,7 @@ const dashboardCols = `d.id, d.owner, d.title, d.sort_key, d.group_id, COALESCE(
 func scanDashboard(s rowScanner) (store.Dashboard, error) {
 	var d store.Dashboard
 	err := s.Scan(&d.ID, &d.Owner, &d.Title, &d.SortKey, &d.GroupID, &d.LastProjectID,
-		&d.LastRange, &d.LastFrom, &d.LastTo, &d.CreatedAt, &d.UpdatedAt,
+		&d.CreatedAt, &d.UpdatedAt,
 		&d.ArchivedAt, &d.LiveWidgets, &d.GroupTitle, &d.Sidebar, &d.ProjectTab)
 	return d, err
 }
@@ -177,16 +176,16 @@ func insertDashboardRow(ctx context.Context, tx *sql.Tx, dash store.Dashboard) (
 	var err error
 	if dash.ID != 0 {
 		res, err = tx.ExecContext(ctx, `INSERT INTO dashboards
-			(id, owner, title, sort_key, group_id, last_project_id, last_range, last_from, last_to, sidebar, project_tab)
-			VALUES (?,?,?,?,?,NULLIF(?,0),?,?,?,?,?)`,
+			(id, owner, title, sort_key, group_id, last_project_id, sidebar, project_tab)
+			VALUES (?,?,?,?,?,NULLIF(?,0),?,?)`,
 			dash.ID, dash.Owner, dash.Title, dash.SortKey, dash.GroupID, dash.LastProjectID,
-			dash.LastRange, dash.LastFrom, dash.LastTo, dash.Sidebar, dash.ProjectTab)
+			dash.Sidebar, dash.ProjectTab)
 	} else {
 		res, err = tx.ExecContext(ctx, `INSERT INTO dashboards
-			(owner, title, sort_key, group_id, last_project_id, last_range, last_from, last_to, sidebar, project_tab)
-			VALUES (?,?,?,?,NULLIF(?,0),?,?,?,?,?)`,
+			(owner, title, sort_key, group_id, last_project_id, sidebar, project_tab)
+			VALUES (?,?,?,?,NULLIF(?,0),?,?)`,
 			dash.Owner, dash.Title, dash.SortKey, dash.GroupID, dash.LastProjectID,
-			dash.LastRange, dash.LastFrom, dash.LastTo, dash.Sidebar, dash.ProjectTab)
+			dash.Sidebar, dash.ProjectTab)
 	}
 	if err != nil {
 		return 0, mapDashboardConflict(dash, err)
@@ -239,15 +238,14 @@ func (d *DB) UpdateDashboard(ctx context.Context, dash store.Dashboard, a store.
 	})
 }
 
-// SetDashboardView stores the viewer's last-selection columns. It writes
-// no audit row: a viewer switching project or date range is not an
-// auditable configuration change.
+// SetDashboardView stores the viewer's last project. It writes no audit
+// row: a viewer switching project is not an auditable configuration change.
 func (d *DB) SetDashboardView(ctx context.Context, dash store.Dashboard) error {
 	return d.tx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx,
-			`UPDATE dashboards SET last_project_id=NULLIF(?,0), last_range=?, last_from=?, last_to=?,
+			`UPDATE dashboards SET last_project_id=NULLIF(?,0),
 			 updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id=?`,
-			dash.LastProjectID, dash.LastRange, dash.LastFrom, dash.LastTo, dash.ID)
+			dash.LastProjectID, dash.ID)
 		if err != nil {
 			return err
 		}
