@@ -279,7 +279,7 @@ describe('Dashboard', () => {
 
     await waitFor(() => expect(location()).toBe('/dashboards/2?project=7&range=30d'))
     expect(JSON.parse(localStorage.getItem('twillingate.range')!)).toEqual({ range: '30d' })
-    expect(endpoints.saveView).toHaveBeenCalledWith(2, { project_id: 7 })
+    expect(endpoints.saveView).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Range: Last month' })).toBeInTheDocument()
     const days = (call: unknown[]) => {
       const q = call[1] as { from: string; to: string }
@@ -342,6 +342,17 @@ describe('Dashboard', () => {
 
     await waitFor(() => expect(location()).toBe('/dashboards/2?project=1&range=7d'))
     expect(JSON.parse(localStorage.getItem('twillingate.range')!)).toEqual({ range: '90d' })
+  })
+
+  it('stores a range picked in the switcher even when the URL already shows it', async () => {
+    localStorage.setItem('twillingate.range', JSON.stringify({ range: '90d' }))
+    mockApi()
+    renderAt('/dashboards/2?project=7&range=30d')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Range: Last month' }))
+    await userEvent.click(await screen.findByRole('menuitemradio', { name: 'Last month' }))
+
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('twillingate.range')!)).toEqual({ range: '30d' }))
   })
 
   it('opens on the range stored for every page when the URL names none', async () => {

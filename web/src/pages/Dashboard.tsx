@@ -89,7 +89,7 @@ function PageNotice({ text, children }: { text: string; children: ReactNode }) {
 function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const projects = useQuery({ ...projectsQuery, enabled: dashboard.follows_project })
   const all = projects.data?.projects ?? []
-  const { sel, switchers, range, paramsFor, change, openTab } = useDashboardSelection(dashboard, all, list.timezone, frozen)
+  const { sel, switchers, range, paramsFor, change, changeRange, openTab } = useDashboardSelection(dashboard, all, list.timezone, frozen)
 
   const waiting = switchers.project && !projects.data
   const noProjects = switchers.project && projects.data !== undefined && all.every((p) => p.archived)
@@ -219,7 +219,7 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
               <RangeSwitcher
                 value={{ range: sel.range, from: sel.from, to: sel.to }}
                 timezone={list.timezone}
-                onChange={(r) => change({ ...sel, range: r.range, from: r.from, to: r.to })}
+                onChange={changeRange}
               />
             )}
           </DashboardHeader>

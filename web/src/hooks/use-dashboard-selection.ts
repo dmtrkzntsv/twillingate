@@ -5,7 +5,7 @@ import { endpoints, type DashboardDetail, type Project, type SaveViewBody, type 
 import { dashboardQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import { chooseSelection, type Selection } from '@/lib/selection'
-import { readStoredRange, writeStoredRange } from '@/lib/stored-range'
+import { readStoredRange, writeStoredRange, type StoredRange } from '@/lib/stored-range'
 import { selectionParams, viewBody, widgetParams, withSavedView, type Switchers } from '@/lib/view'
 
 interface DashboardSelection {
@@ -20,8 +20,10 @@ interface DashboardSelection {
   range: { from: string; to: string }
   /** What each widget is asked for under the current selection; stable while it holds. */
   paramsFor: (w: Widget) => WidgetDataQuery
-  /** Switches the project or range: into the URL, the project saved as the dashboard's view (D35), the range as every page's (stored-range.ts). */
+  /** Switches the project: into the URL, and saved as the dashboard's view (D35). */
   change: (next: Selection) => void
+  /** Switches the range: into the URL, and stored for every page in this browser (stored-range.ts). */
+  changeRange: (r: StoredRange) => void
   /** Opens another tab of the group, carrying the selection there and saving it on that tab (D35). */
   openTab: (id: number) => void
 }
@@ -76,12 +78,16 @@ export function useDashboardSelection(
   const change = (next: Selection) => {
     if (frozen) return
     setURL(selectionParams(next))
-    // The range is one for every page, kept in this browser, and only a pick
-    // stores it: switching the project keeps a range that came from the URL
-    // out of it. The project is the dashboard's.
-    const picked = next.range !== sel.range || next.from !== sel.from || next.to !== sel.to
-    if (switchers.range && next.range && picked) writeStoredRange({ range: next.range, from: next.from, to: next.to })
     void save(dashboard.dashboard_id, viewBody(next, switchers))
+  }
+
+  // The range is one for every page, kept in this browser: only a pick in
+  // the range switcher stores it, so switching the project never stores a
+  // range that came from the URL.
+  const changeRange = (r: StoredRange) => {
+    if (frozen) return
+    setURL(selectionParams({ ...sel, range: r.range, from: r.from, to: r.to }))
+    writeStoredRange(r)
   }
 
   // The project is saved on the target tab when it has a project switcher.
@@ -94,5 +100,5 @@ export function useDashboardSelection(
       .catch(() => {})
   }
 
-  return { sel, switchers, range, paramsFor, change, openTab }
+  return { sel, switchers, range, paramsFor, change, changeRange, openTab }
 }
