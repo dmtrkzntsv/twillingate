@@ -18,9 +18,6 @@ type View struct {
 // SetView stores a viewer's project. Viewer state, not definition: allowed
 // on system dashboards, and not audited.
 func (s *Service) SetView(ctx context.Context, in View) error {
-	if in.ProjectID <= 0 {
-		return store.Refuse(store.ErrInvalid, "project_id must be a positive id")
-	}
 	d, err := s.st.GetDashboard(ctx, in.DashboardID)
 	if err != nil {
 		return err
@@ -38,6 +35,9 @@ func (s *Service) SetView(ctx context.Context, in View) error {
 	}
 	if !hasProject {
 		return store.Refuse(store.ErrInvalid, "dashboard %d has no project switcher", d.ID)
+	}
+	if in.ProjectID <= 0 {
+		return store.Refuse(store.ErrInvalid, "project_id must be a positive id")
 	}
 	d.LastProjectID = in.ProjectID
 	return s.st.SetDashboardView(ctx, d)

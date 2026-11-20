@@ -49,7 +49,7 @@ set +a
 python3 - "$db" <<'PY'
 import sqlite3, sys
 con = sqlite3.connect(sys.argv[1])
-cur = con.execute("INSERT INTO dashboards (owner, title, sort_key, last_range) VALUES ('user', 'No SQL engine', 'a0', '7d')")
+cur = con.execute("INSERT INTO dashboards (owner, title, sort_key) VALUES ('user', 'No SQL engine', 'a0')")
 dashboard = cur.lastrowid
 con.executemany(
     "INSERT INTO widgets (dashboard_id, component, sort_key, width, height, name, title, props, source_type, source)"

@@ -332,9 +332,8 @@ func TestSystemDashboardAllowsDuplicateCopyAndView(t *testing.T) {
 	if _, err := svc.CopyWidget(ctx, "test", CopyWidget{ID: widgetRows(t, svc, 3)[0].ID, DashboardID: d.ID}); err != nil {
 		t.Errorf("copy from: %v", err)
 	}
-	if err := svc.SetView(ctx, View{DashboardID: 3}); err != nil {
-		t.Errorf("set view: %v", err)
-	}
+	// Not refused for being a system dashboard: this one simply has no project switcher.
+	wantRefusal(t, svc.SetView(ctx, View{DashboardID: 3, ProjectID: 7}), store.ErrInvalid, "dashboard 3 has no project switcher")
 }
 
 // --- Duplicate ---

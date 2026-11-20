@@ -332,6 +332,18 @@ describe('Dashboard', () => {
     expect(vi.mocked(endpoints.dashboard).mock.calls.filter(([id]) => id === 3)).toHaveLength(1)
   })
 
+  it('keeps the stored range when only the project changes', async () => {
+    localStorage.setItem('twillingate.range', JSON.stringify({ range: '90d' }))
+    mockApi()
+    renderAt('/dashboards/2?project=7&range=7d')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Project: shop' }))
+    await userEvent.click(await screen.findByRole('menuitemradio', { name: 'blog' }))
+
+    await waitFor(() => expect(location()).toBe('/dashboards/2?project=1&range=7d'))
+    expect(JSON.parse(localStorage.getItem('twillingate.range')!)).toEqual({ range: '90d' })
+  })
+
   it('opens on the range stored for every page when the URL names none', async () => {
     localStorage.setItem('twillingate.range', JSON.stringify({ range: '90d' }))
     mockApi()

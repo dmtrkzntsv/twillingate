@@ -76,8 +76,11 @@ export function useDashboardSelection(
   const change = (next: Selection) => {
     if (frozen) return
     setURL(selectionParams(next))
-    // The range is one for every page, kept in this browser; the project is the dashboard's.
-    if (switchers.range && next.range) writeStoredRange({ range: next.range, from: next.from, to: next.to })
+    // The range is one for every page, kept in this browser, and only a pick
+    // stores it: switching the project keeps a range that came from the URL
+    // out of it. The project is the dashboard's.
+    const picked = next.range !== sel.range || next.from !== sel.from || next.to !== sel.to
+    if (switchers.range && next.range && picked) writeStoredRange({ range: next.range, from: next.from, to: next.to })
     void save(dashboard.dashboard_id, viewBody(next, switchers))
   }
 
