@@ -10,18 +10,15 @@ import (
 )
 
 // DashboardInfo is one dashboard as list_dashboards returns it: the row,
-// its stored selection and its live widget count, without the widgets.
+// its stored project and its live widget count, without the widgets.
 type DashboardInfo struct {
 	ID         int64  `json:"dashboard_id"`
 	Title      string `json:"title"`
 	Owner      string `json:"owner"`
 	GroupID    int64  `json:"group_id"`              // the group it is a tab of: its first dashboard's id, or a number reserved for one that left a group
 	GroupTitle string `json:"group_title,omitempty"` // the group's name; omitted when it has none and the first live tab's title stands in
-	ProjectID  int64  `json:"project_id,omitempty"`  // stored selection
-	Range      string `json:"range,omitempty"`
-	From       string `json:"from,omitempty"`
-	To         string `json:"to,omitempty"`
-	Widgets    int    `json:"widgets"` // live widgets
+	ProjectID  int64  `json:"project_id,omitempty"`  // the viewer's last project
+	Widgets    int    `json:"widgets"`               // live widgets
 	ArchivedAt string `json:"archived_at,omitempty"`
 	Sidebar    bool   `json:"sidebar"`     // its group is in the sidebar (spec 2026-10-05 D3)
 	ProjectTab bool   `json:"project_tab"` // a new project gets it as a tab; built-ins only, from the release
@@ -258,8 +255,8 @@ func (s *Service) Widgets(ctx context.Context, dashboardID int64, component stri
 func dashboardInfo(d store.Dashboard) DashboardInfo {
 	return DashboardInfo{
 		ID: d.ID, Title: d.Title, Owner: d.Owner, GroupID: d.GroupID, GroupTitle: d.GroupTitle,
-		ProjectID: d.LastProjectID, Range: d.LastRange, From: d.LastFrom, To: d.LastTo,
-		Widgets: d.LiveWidgets, ArchivedAt: d.ArchivedAt, Sidebar: d.Sidebar, ProjectTab: d.ProjectTab,
+		ProjectID: d.LastProjectID,
+		Widgets:   d.LiveWidgets, ArchivedAt: d.ArchivedAt, Sidebar: d.Sidebar, ProjectTab: d.ProjectTab,
 	}
 }
 

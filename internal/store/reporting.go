@@ -18,22 +18,21 @@ type Component struct {
 	DefaultHeight          int
 }
 
-// Dashboard is a row of dashboards. The Last* fields are the viewer's
-// stored selection; zero values mean none stored. GroupID is the group
+// Dashboard is a row of dashboards. LastProjectID is the viewer's stored
+// project; 0 means none stored. GroupID is the group
 // this dashboard is a tab of (migration 022); on insert, 0 means "a new
 // group: its own id".
 type Dashboard struct {
-	ID                          int64
-	Owner, Title, SortKey       string
-	GroupID                     int64
-	GroupTitle                  string // the group's name (migration 031); "" = none, the first live tab's title stands in
-	LastProjectID               int64
-	LastRange, LastFrom, LastTo string
-	CreatedAt, UpdatedAt        string
-	ArchivedAt                  string // "" = live
-	LiveWidgets                 int    // filled by reads: widgets not archived
-	Sidebar                     bool   // in the sidebar (migration 032); a built-in's Hide sets it false. A user row inserted or set with it false is archived by 032's trigger
-	ProjectTab                  bool   // a new project gets this dashboard as a tab (032 D3); built-ins only, from the release
+	ID                    int64
+	Owner, Title, SortKey string
+	GroupID               int64
+	GroupTitle            string // the group's name (migration 031); "" = none, the first live tab's title stands in
+	LastProjectID         int64
+	CreatedAt, UpdatedAt  string
+	ArchivedAt            string // "" = live
+	LiveWidgets           int    // filled by reads: widgets not archived
+	Sidebar               bool   // in the sidebar (migration 032); a built-in's Hide sets it false. A user row inserted or set with it false is archived by 032's trigger
+	ProjectTab            bool   // a new project gets this dashboard as a tab (032 D3); built-ins only, from the release
 }
 
 // DashboardKey is one dashboard row's place: which group it belongs to
@@ -138,15 +137,11 @@ type PurgeResult struct {
 
 // SystemDashboard is one system dashboard a release migrates in. GroupID
 // is the group it is a tab of; 0 means its own id, same as Dashboard.
-// Range is the starting selection: SyncReporting writes it only when the
-// dashboard is first inserted, so a viewer's later SetDashboardView
-// survives a resync.
 type SystemDashboard struct {
 	ID             int64
 	Title, SortKey string
 	GroupID        int64
 	GroupTitle     string   // the group's name from the founding dashboard's fixture; "" = none
-	Range          string   // the starting selection; written on insert only
 	Widgets        []Widget // Name identifies the row; SortKey, sizes and content as in the files
 	Sidebar        bool     // the fixture's "sidebar": written on insert only, then the install's (D6)
 	ProjectTab     bool     // the fixture's "project_tab": the release's, re-synced every time (D6)

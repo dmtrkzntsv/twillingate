@@ -18,7 +18,7 @@ func tabsProject(t *testing.T) (*Service, store.Store, int64) {
 	svc, st := newTestServiceOpts(t, Options{}, 1000)
 	builtin := func(id int64, title, key string) store.SystemDashboard {
 		return store.SystemDashboard{
-			ID: id, Title: title, SortKey: key, Range: "7d", Sidebar: true, ProjectTab: true,
+			ID: id, Title: title, SortKey: key, Sidebar: true, ProjectTab: true,
 			Widgets: []store.Widget{{
 				Name: "note", Component: "markdown", SortKey: "a0", Width: 12, Height: 2,
 				Props: "{}", SourceType: "md", Source: "system text",

@@ -2,29 +2,22 @@ package reporting
 
 import (
 	"context"
-	"slices"
-	"strings"
 	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// View is a viewer's selection on a dashboard: each part only when the
-// dashboard has that switcher, From and To only with Range "custom".
+// View is a viewer's selection on a dashboard: the project, which only a
+// dashboard with a project switcher stores. The range is the web app's
+// alone, kept in the browser for every dashboard at once.
 type View struct {
 	DashboardID, ProjectID int64
-	Range, From, To        string
 }
 
-// SetView stores a viewer's selection. Which parts it takes follows from
-// the dashboard's switchers, i.e. what its live widgets read; the parts
-// it has no switcher for keep their stored values. Viewer state, not
-// definition: allowed on system dashboards, and not audited.
+// SetView stores a viewer's project. Viewer state, not definition: allowed
+// on system dashboards, and not audited.
 func (s *Service) SetView(ctx context.Context, in View) error {
-	if in.ProjectID < 0 {
-		return store.Refuse(store.ErrInvalid, "project_id must be a positive id")
-	}
 	d, err := s.st.GetDashboard(ctx, in.DashboardID)
 	if err != nil {
 		return err
@@ -33,48 +26,21 @@ func (s *Service) SetView(ctx context.Context, in View) error {
 	if err != nil {
 		return err
 	}
-	var hasProject, hasRange bool
+	hasProject := false
 	for _, w := range ws {
 		if w.ArchivedAt == "" {
-			p, r := s.follows(w)
-			hasProject, hasRange = hasProject || p, hasRange || r
+			p, _ := s.follows(w)
+			hasProject = hasProject || p
 		}
 	}
-	switch {
-	case hasProject && in.ProjectID == 0:
-		return store.Refuse(store.ErrInvalid, "project_id is required: dashboard %d has a project switcher", d.ID)
-	case !hasProject && in.ProjectID != 0:
-		return store.Refuse(store.ErrInvalid, "dashboard %d has no project switcher; omit project_id", d.ID)
-	case hasProject:
-		d.LastProjectID = in.ProjectID
+	if !hasProject {
+		return store.Refuse(store.ErrInvalid, "dashboard %d has no project switcher", d.ID)
 	}
-	switch {
-	case hasRange && in.Range == "":
-		return store.Refuse(store.ErrInvalid, "range is required: dashboard %d has a range switcher", d.ID)
-	case !hasRange && (in.Range != "" || in.From != "" || in.To != ""):
-		return store.Refuse(store.ErrInvalid, "dashboard %d has no range switcher; omit range, from and to", d.ID)
-	case hasRange:
-		if err := checkPreset(in.Range); err != nil {
-			return err
-		}
-		if in.Range == "custom" {
-			if _, _, err := checkDates(in.From, in.To); err != nil {
-				return err
-			}
-		} else if in.From != "" || in.To != "" {
-			return store.Refuse(store.ErrInvalid, "from and to go only with range custom")
-		}
-		d.LastRange, d.LastFrom, d.LastTo = in.Range, in.From, in.To
+	if in.ProjectID <= 0 {
+		return store.Refuse(store.ErrInvalid, "project_id must be a positive id")
 	}
+	d.LastProjectID = in.ProjectID
 	return s.st.SetDashboardView(ctx, d)
-}
-
-// checkPreset refuses a range outside Presets.
-func checkPreset(r string) error {
-	if !slices.Contains(Presets, r) {
-		return store.Refuse(store.ErrInvalid, "range must be one of %s", strings.Join(Presets, ", "))
-	}
-	return nil
 }
 
 // checkDates refuses a custom range that is not two days, from ≤ to, at

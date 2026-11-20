@@ -205,7 +205,6 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     headers: authHeaders(),
     data: {
       title: 'Phone shares',
-      range: '7d',
       widgets: [{ component: 'stat', title: 'short', source: { type: 'query', content: JSON.stringify({ query: { kind: 'stat', table: 'views', metrics: [{ op: 'count' }] }, rename: { count: 'value' } }) }, width: 6, height: 4 }],
     },
   })
@@ -233,7 +232,7 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
   // tab of that project: the tab select fits the phone however long its value.
   const long = await request.post('/api/dashboards', {
     headers: authHeaders(),
-    data: { title: 'A dashboard of our own whose title is longer than a phone is wide', range: '7d' },
+    data: { title: 'A dashboard of our own whose title is longer than a phone is wide' },
   })
   expect(long.ok(), await long.text()).toBeTruthy()
   const { dashboard_id: longId } = (await long.json()) as { dashboard_id: number }
@@ -486,7 +485,6 @@ test('no page scrolls sideways on a phone', async ({ page, request }) => {
     headers: authHeaders(),
     data: {
       title: 'Phone editor',
-      range: '7d',
       widgets: [
         {
           component: 'table',

@@ -73,10 +73,8 @@ export interface DashboardInfo {
   group_id: number
   /** The group's name, on every member of a named group; absent otherwise (group names D2). */
   group_title?: string
+  /** The project its viewer last chose; the range is the browser's (stored-range.ts). */
   project_id?: number
-  range?: string
-  from?: string
-  to?: string
   widgets: number
   /** The dashboard's group is in the sidebar; the same on every member. */
   sidebar: boolean
@@ -198,10 +196,7 @@ export interface WidgetStreamItem {
 }
 
 export interface SaveViewBody {
-  project_id?: number
-  range?: string
-  from?: string
-  to?: string
+  project_id: number
 }
 
 /**

@@ -19,18 +19,13 @@ export function selectionParams(sel: Selection): URLSearchParams {
   return params
 }
 
-/** The body of `PUT …/view`: only the parts the dashboard has switchers for. */
-export function viewBody(sel: Selection, switchers: Switchers): SaveViewBody {
-  const body: SaveViewBody = {}
-  if (switchers.project && sel.projectId !== undefined) body.project_id = sel.projectId
-  if (switchers.range && sel.range) {
-    body.range = sel.range
-    if (sel.range === 'custom') {
-      body.from = sel.from
-      body.to = sel.to
-    }
-  }
-  return body
+/**
+ * The body of `PUT …/view`: the project, which only a dashboard with a
+ * project switcher stores; null when there is nothing to store. The range
+ * is never stored on the server (stored-range.ts).
+ */
+export function viewBody(sel: Selection, switchers: Switchers): SaveViewBody | null {
+  return switchers.project && sel.projectId !== undefined ? { project_id: sel.projectId } : null
 }
 
 /** What a widget is asked for: the project and dates only when it follows them. */
@@ -50,12 +45,5 @@ export function widgetParams(
 
 /** A dashboard as it reads once `body` is saved as its view: what the server now stores. */
 export function withSavedView(dashboard: DashboardDetail, body: SaveViewBody): DashboardDetail {
-  const next = { ...dashboard }
-  if (body.project_id !== undefined) next.project_id = body.project_id
-  if (body.range !== undefined) {
-    next.range = body.range
-    next.from = body.from
-    next.to = body.to
-  }
-  return next
+  return { ...dashboard, project_id: body.project_id }
 }

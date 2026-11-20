@@ -32,7 +32,7 @@ func baseSync(hash string) store.ReportingSync {
 		Components: []store.Component{chartComponent(), tableComponent()},
 		Dashboards: []store.SystemDashboard{
 			{
-				ID: 1, Title: "Overview", SortKey: "a", Range: "30d",
+				ID: 1, Title: "Overview", SortKey: "a",
 				Widgets: []store.Widget{
 					{Component: "chart", SortKey: "a", Width: 4, Height: 3,
 						Name: "w1", Title: "Views", SourceType: "events", Source: "views"},
@@ -41,7 +41,7 @@ func baseSync(hash string) store.ReportingSync {
 				},
 			},
 			{
-				ID: 2, Title: "Retention", SortKey: "b", Range: "7d",
+				ID: 2, Title: "Retention", SortKey: "b",
 				Widgets: []store.Widget{
 					{Component: "table", SortKey: "a", Width: 6, Height: 4,
 						Name: "w1", Title: "Cohorts", SourceType: "events", Source: "retention"},
@@ -80,12 +80,6 @@ func TestSyncReportingFirstSyncInserts(t *testing.T) {
 	}
 	if len(system) != 2 {
 		t.Fatalf("system dashboards = %d, want 2", len(system))
-	}
-	for _, d := range system {
-		want := map[int64]string{1: "30d", 2: "7d"}[d.ID]
-		if d.LastRange != want {
-			t.Errorf("dashboard %d LastRange = %q, want %q", d.ID, d.LastRange, want)
-		}
 	}
 
 	ws1, err := db.ListWidgets(ctx, 1)
@@ -165,10 +159,8 @@ func TestSyncReportingSecondSyncEditsPreservesIDsAndView(t *testing.T) {
 		t.Fatal("widget w1 not found after first sync")
 	}
 
-	// A viewer picks a project/range in between syncs.
-	if err := db.SetDashboardView(ctx, store.Dashboard{
-		ID: 1, LastProjectID: 5, LastRange: "7d", LastFrom: "2026-09-01", LastTo: "2026-09-07",
-	}); err != nil {
+	// A viewer picks a project in between syncs.
+	if err := db.SetDashboardView(ctx, store.Dashboard{ID: 1, LastProjectID: 5}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -177,7 +169,7 @@ func TestSyncReportingSecondSyncEditsPreservesIDsAndView(t *testing.T) {
 		Components: []store.Component{chartComponent(), tableComponent()},
 		Dashboards: []store.SystemDashboard{
 			{
-				ID: 1, Title: "Overview v2", SortKey: "a", Range: "90d", // Range ignored: not first insert
+				ID: 1, Title: "Overview v2", SortKey: "a",
 				Widgets: []store.Widget{
 					// w1 kept (re-ordered to sort_key "b"); w2 removed; w3 added.
 					{Component: "chart", SortKey: "b", Width: 4, Height: 3,
@@ -187,7 +179,7 @@ func TestSyncReportingSecondSyncEditsPreservesIDsAndView(t *testing.T) {
 				},
 			},
 			{
-				ID: 2, Title: "Retention", SortKey: "b", Range: "7d",
+				ID: 2, Title: "Retention", SortKey: "b",
 				Widgets: []store.Widget{
 					{Component: "table", SortKey: "a", Width: 6, Height: 4,
 						Name: "w1", Title: "Cohorts", SourceType: "events", Source: "retention"},
@@ -206,7 +198,7 @@ func TestSyncReportingSecondSyncEditsPreservesIDsAndView(t *testing.T) {
 	if got.Title != "Overview v2" {
 		t.Errorf("Title = %q, want %q", got.Title, "Overview v2")
 	}
-	if got.LastRange != "7d" || got.LastProjectID != 5 || got.LastFrom != "2026-09-01" || got.LastTo != "2026-09-07" {
+	if got.LastProjectID != 5 {
 		t.Errorf("SetDashboardView fields did not survive resync: %+v", got)
 	}
 
@@ -647,7 +639,7 @@ func TestSyncKeepsHiddenSystemGroup(t *testing.T) {
 				g = 10
 			}
 			out[i] = store.SystemDashboard{ID: int64(10 + i), Title: fmt.Sprintf("T%d", i),
-				SortKey: fmt.Sprintf("a%d", i), GroupID: g, Range: "7d", Sidebar: true}
+				SortKey: fmt.Sprintf("a%d", i), GroupID: g, Sidebar: true}
 		}
 		return out
 	}
@@ -669,7 +661,7 @@ func TestSyncKeepsHiddenSystemGroup(t *testing.T) {
 		}
 	}
 	hideDashboards(t, db, 10, 11)
-	sync("h2", append(group(3), store.SystemDashboard{ID: 20, Title: "Alone", SortKey: "b0", Range: "7d", Sidebar: true}))
+	sync("h2", append(group(3), store.SystemDashboard{ID: 20, Title: "Alone", SortKey: "b0", Sidebar: true}))
 	for _, id := range []int64{10, 11, 12} {
 		d, err := db.GetDashboard(ctx, id)
 		if err != nil {
@@ -700,12 +692,12 @@ func TestSyncHidesDashboardRegroupedOntoHiddenGroup(t *testing.T) {
 		}
 	}
 	sync("h1", []store.SystemDashboard{
-		{ID: 15, Title: "M", SortKey: "a0", Range: "7d", Sidebar: true},
+		{ID: 15, Title: "M", SortKey: "a0", Sidebar: true},
 	})
 	hideDashboards(t, db, 15)
 	sync("h2", []store.SystemDashboard{
-		{ID: 10, Title: "L", SortKey: "a0", Range: "7d", Sidebar: true},
-		{ID: 15, Title: "M", SortKey: "a1", GroupID: 10, Range: "7d", Sidebar: true},
+		{ID: 10, Title: "L", SortKey: "a0", Sidebar: true},
+		{ID: 15, Title: "M", SortKey: "a1", GroupID: 10, Sidebar: true},
 	})
 	for _, id := range []int64{10, 15} {
 		d, err := db.GetDashboard(ctx, id)
@@ -726,8 +718,8 @@ func TestSyncEntirelyNewGroupKeepsFixtureSidebar(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	if err := db.SyncReporting(ctx, store.ReportingSync{Hash: "h1", Version: "test", Dashboards: []store.SystemDashboard{
-		{ID: 30, Title: "Leader", SortKey: "a0", Range: "7d", Sidebar: true},
-		{ID: 31, Title: "Tab", SortKey: "a1", GroupID: 30, Range: "7d", Sidebar: true},
+		{ID: 30, Title: "Leader", SortKey: "a0", Sidebar: true},
+		{ID: 31, Title: "Tab", SortKey: "a1", GroupID: 30, Sidebar: true},
 	}}); err != nil {
 		t.Fatal(err)
 	}
@@ -750,7 +742,7 @@ func TestSyncReportingSidebarOnInsertOnly(t *testing.T) {
 	sync := func(hash string, sidebar bool) {
 		t.Helper()
 		if err := db.SyncReporting(ctx, store.ReportingSync{Hash: hash, Version: "test", Dashboards: []store.SystemDashboard{
-			{ID: 40, Title: "D", SortKey: "a0", Range: "7d", Sidebar: sidebar, ProjectTab: true},
+			{ID: 40, Title: "D", SortKey: "a0", Sidebar: sidebar, ProjectTab: true},
 		}}); err != nil {
 			t.Fatal(err)
 		}
@@ -775,8 +767,8 @@ func TestSyncReportingUnarchivesSystemRows(t *testing.T) {
 	sync := func(hash string) {
 		t.Helper()
 		if err := db.SyncReporting(ctx, store.ReportingSync{Hash: hash, Version: "test", Dashboards: []store.SystemDashboard{
-			{ID: 42, Title: "Archived", SortKey: "a0", Range: "7d", Sidebar: true},
-			{ID: 43, Title: "Live", SortKey: "a1", Range: "7d", Sidebar: true},
+			{ID: 42, Title: "Archived", SortKey: "a0", Sidebar: true},
+			{ID: 43, Title: "Live", SortKey: "a1", Sidebar: true},
 		}}); err != nil {
 			t.Fatal(err)
 		}
@@ -801,7 +793,7 @@ func TestSyncReportingProjectTabResyncs(t *testing.T) {
 	sync := func(hash string, tab bool) {
 		t.Helper()
 		if err := db.SyncReporting(ctx, store.ReportingSync{Hash: hash, Version: "test", Dashboards: []store.SystemDashboard{
-			{ID: 41, Title: "D", SortKey: "a0", Range: "7d", Sidebar: true, ProjectTab: tab},
+			{ID: 41, Title: "D", SortKey: "a0", Sidebar: true, ProjectTab: tab},
 		}}); err != nil {
 			t.Fatal(err)
 		}
@@ -828,7 +820,7 @@ func TestSyncReportingNewBuiltinSeedsProjectsOnce(t *testing.T) {
 	sync := func(hash string) {
 		t.Helper()
 		if err := db.SyncReporting(ctx, store.ReportingSync{Hash: hash, Version: "test", Dashboards: []store.SystemDashboard{
-			{ID: 42, Title: "D", SortKey: "a0", Range: "7d", Sidebar: true, ProjectTab: true},
+			{ID: 42, Title: "D", SortKey: "a0", Sidebar: true, ProjectTab: true},
 		}}); err != nil {
 			t.Fatal(err)
 		}

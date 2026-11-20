@@ -15,7 +15,7 @@ export function dashboardsList(over: Partial<DashboardsResponse> = {}): Dashboar
   return {
     timezone: 'UTC',
     dashboards: [
-      info(1, 'Views', 'system', 17, { group_id: 1, group_title: 'Reports', project_id: 7, range: '7d' }),
+      info(1, 'Views', 'system', 17, { group_id: 1, group_title: 'Reports', project_id: 7 }),
       info(2, 'Product', 'system', 2, { group_id: 1, group_title: 'Reports' }),
       info(3, 'Users', 'system', 1, { group_id: 1, group_title: 'Reports' }),
       info(4, 'Groups', 'system', 1, { group_id: 1, group_title: 'Reports' }),

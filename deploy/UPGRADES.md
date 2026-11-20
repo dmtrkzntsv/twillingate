@@ -1651,3 +1651,32 @@ for everyone at once (`docs/deployment.md`, `password`), and sets a
 
 Rollback: install the previous release. Browsers that loaded this one log
 in again, since the previous one reads localStorage.
+
+### Upgrading to one date range for every page (migration 050)
+
+Nothing to check before the upgrade: the migration drops the `last_range`,
+`last_from` and `last_to` columns of `dashboards`.
+
+- **On the day:** the date range is no longer stored per dashboard. The web
+  app keeps one range for every dashboard and project page, in the browser:
+  each page opens on the range last picked on a dashboard page (a project
+  page's switcher changes only its own URL), and on 7 days until one is
+  picked (30 on a project's Overview). A dashboard still remembers its
+  project. The built-in Retention and Web Vitals no longer open on 90 and
+  30 days of their own.
+- **For agents and scripts:** `create_dashboard` (`POST /api/dashboards`)
+  no longer takes `range`, and refuses it; `list_dashboards` and
+  `get_dashboard` no longer answer `range`, `from` or `to`; `PUT
+  /api/dashboards/{id}/view` takes `project_id` alone, and only on a
+  dashboard with a project switcher.
+
+Rollback: before installing the previous release, add the columns back,
+which it reads:
+
+```sql
+ALTER TABLE dashboards ADD COLUMN last_range TEXT;
+ALTER TABLE dashboards ADD COLUMN last_from TEXT;
+ALTER TABLE dashboards ADD COLUMN last_to TEXT;
+```
+
+Every dashboard then opens on 7 days there until a range is picked on it.

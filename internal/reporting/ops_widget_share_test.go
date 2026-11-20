@@ -302,7 +302,7 @@ func TestCreateWidgetShareToday(t *testing.T) {
 func TestCreateWidgetShareSystemWidget(t *testing.T) {
 	e := newShareEnv(t)
 	syncReporting(t, e.svc, nil, store.SystemDashboard{
-		ID: 1, Title: "Overview", SortKey: "a0", Range: "7d",
+		ID: 1, Title: "Overview", SortKey: "a0",
 		Widgets: []store.Widget{{
 			Name: "note", Component: "markdown", SortKey: "a0", Width: 12, Height: 2,
 			Props: "{}", SourceType: "md", Source: "system text",

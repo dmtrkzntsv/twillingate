@@ -270,15 +270,16 @@ describe('Dashboard', () => {
 
   // The switcher tests use the small Product report: the Views one renders
   // every chart kind, which is slow to re-render on each interaction.
-  it('saves a new range and puts it in the URL', async () => {
+  it('stores a new range for every page, in the browser, and puts it in the URL', async () => {
     const widgetData = mockApi()
     renderAt('/dashboards/2?project=7&range=7d')
 
     await userEvent.click(await screen.findByRole('button', { name: 'Range: Last week' }))
     await userEvent.click(await screen.findByRole('menuitemradio', { name: 'Last month' }))
 
-    await waitFor(() => expect(endpoints.saveView).toHaveBeenCalledWith(2, { project_id: 7, range: '30d' }))
-    expect(location()).toBe('/dashboards/2?project=7&range=30d')
+    await waitFor(() => expect(location()).toBe('/dashboards/2?project=7&range=30d'))
+    expect(JSON.parse(localStorage.getItem('twillingate.range')!)).toEqual({ range: '30d' })
+    expect(endpoints.saveView).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: 'Range: Last month' })).toBeInTheDocument()
     const days = (call: unknown[]) => {
       const q = call[1] as { from: string; to: string }
@@ -294,11 +295,11 @@ describe('Dashboard', () => {
     await userEvent.click(await screen.findByRole('button', { name: 'Project: shop' }))
     await userEvent.click(await screen.findByRole('menuitemradio', { name: 'blog' }))
 
-    await waitFor(() => expect(endpoints.saveView).toHaveBeenCalledWith(2, { project_id: 1, range: '7d' }))
+    await waitFor(() => expect(endpoints.saveView).toHaveBeenCalledWith(2, { project_id: 1 }))
     expect(location()).toBe('/dashboards/2?project=1&range=7d')
   })
 
-  it('saves a custom range picked on the calendar', async () => {
+  it('stores a custom range picked on the calendar', async () => {
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-09-26T12:00:00Z'))
     mockApi()
@@ -311,15 +312,8 @@ describe('Dashboard', () => {
     await userEvent.click(within(picker).getByRole('button', { name: /September 20(th)?, 2026/ }))
     await userEvent.click(within(picker).getByRole('button', { name: 'Apply' }))
 
-    await waitFor(() =>
-      expect(endpoints.saveView).toHaveBeenCalledWith(2, {
-        project_id: 7,
-        range: 'custom',
-        from: '2026-09-10',
-        to: '2026-09-20',
-      })
-    )
-    expect(location()).toBe('/dashboards/2?project=7&range=custom&from=2026-09-10&to=2026-09-20')
+    await waitFor(() => expect(location()).toBe('/dashboards/2?project=7&range=custom&from=2026-09-10&to=2026-09-20'))
+    expect(JSON.parse(localStorage.getItem('twillingate.range')!)).toEqual({ range: 'custom', from: '2026-09-10', to: '2026-09-20' })
     vi.useRealTimers()
   })
 
@@ -330,12 +324,43 @@ describe('Dashboard', () => {
     await userEvent.click(await screen.findByRole('tab', { name: 'Users' }))
 
     await waitFor(() => expect(location()).toBe('/dashboards/3?project=1&range=30d'))
-    await waitFor(() => expect(endpoints.saveView).toHaveBeenCalledWith(3, { project_id: 1, range: '30d' }))
+    await waitFor(() => expect(endpoints.saveView).toHaveBeenCalledWith(3, { project_id: 1 }))
     expect(await screen.findByRole('heading', { level: 1, name: 'Users' })).toBeInTheDocument()
     expect(screen.getByRole('tab', { name: 'Users' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByRole('button', { name: 'Range: Last month' })).toBeInTheDocument()
     // One GET for the tab it lands on: the saved view goes into the cache.
     expect(vi.mocked(endpoints.dashboard).mock.calls.filter(([id]) => id === 3)).toHaveLength(1)
+  })
+
+  it('keeps the stored range when only the project changes', async () => {
+    localStorage.setItem('twillingate.range', JSON.stringify({ range: '90d' }))
+    mockApi()
+    renderAt('/dashboards/2?project=7&range=7d')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Project: shop' }))
+    await userEvent.click(await screen.findByRole('menuitemradio', { name: 'blog' }))
+
+    await waitFor(() => expect(location()).toBe('/dashboards/2?project=1&range=7d'))
+    expect(JSON.parse(localStorage.getItem('twillingate.range')!)).toEqual({ range: '90d' })
+  })
+
+  it('stores a range picked in the switcher even when the URL already shows it', async () => {
+    localStorage.setItem('twillingate.range', JSON.stringify({ range: '90d' }))
+    mockApi()
+    renderAt('/dashboards/2?project=7&range=30d')
+
+    await userEvent.click(await screen.findByRole('button', { name: 'Range: Last month' }))
+    await userEvent.click(await screen.findByRole('menuitemradio', { name: 'Last month' }))
+
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('twillingate.range')!)).toEqual({ range: '30d' }))
+  })
+
+  it('opens on the range stored for every page when the URL names none', async () => {
+    localStorage.setItem('twillingate.range', JSON.stringify({ range: '90d' }))
+    mockApi()
+    renderAt('/dashboards/2?project=7')
+
+    expect(await screen.findByRole('button', { name: 'Range: Last 90 days' })).toBeInTheDocument()
   })
 
   it('moves focus, not the page, when arrowing across the report tabs', async () => {

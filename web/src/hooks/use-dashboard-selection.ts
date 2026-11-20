@@ -5,6 +5,7 @@ import { endpoints, type DashboardDetail, type Project, type SaveViewBody, type 
 import { dashboardQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import { chooseSelection, type Selection } from '@/lib/selection'
+import { readStoredRange, writeStoredRange, type StoredRange } from '@/lib/stored-range'
 import { selectionParams, viewBody, widgetParams, withSavedView, type Switchers } from '@/lib/view'
 
 interface DashboardSelection {
@@ -19,17 +20,19 @@ interface DashboardSelection {
   range: { from: string; to: string }
   /** What each widget is asked for under the current selection; stable while it holds. */
   paramsFor: (w: Widget) => WidgetDataQuery
-  /** Switches the project or range: into the URL, and saved as the dashboard's view (D35). */
+  /** Switches the project: into the URL, and saved as the dashboard's view (D35). */
   change: (next: Selection) => void
+  /** Switches the range: into the URL, and stored for every page in this browser (stored-range.ts). */
+  changeRange: (r: StoredRange) => void
   /** Opens another tab of the group, carrying the selection there and saving it on that tab (D35). */
   openTab: (id: number) => void
 }
 
 /**
  * The project and range a dashboard shows (D34, D35): from the URL, else
- * its stored view, else the defaults. While `frozen` (the page is about to
- * show another dashboard) changes are ignored, so nothing is saved on the
- * dashboard that is leaving.
+ * its stored project and the range stored for every page, else the
+ * defaults. While `frozen` (the page is about to show another dashboard)
+ * changes are ignored, so nothing is saved on the dashboard that is leaving.
  */
 export function useDashboardSelection(
   dashboard: DashboardDetail,
@@ -44,7 +47,7 @@ export function useDashboardSelection(
   const switchers: Switchers = { project: dashboard.follows_project, range: dashboard.follows_range }
   const active = projects.filter((p) => !p.archived).map((p) => p.project_id)
   const archived = projects.filter((p) => p.archived).map((p) => p.project_id)
-  const sel = chooseSelection(url, dashboard, active, switchers, archived)
+  const sel = chooseSelection(url, { project_id: dashboard.project_id, ...readStoredRange() }, active, switchers, archived)
   const range = resolve(
     sel.range ?? '7d',
     timezone,
@@ -62,13 +65,15 @@ export function useDashboardSelection(
   )
 
   // The saved view goes straight into the cached dashboard rather than
-  // refetching it. A failed save only loses the stored selection: the URL
+  // refetching it. A failed save only loses the stored project: the URL
   // still carries it.
-  const save = (id: number, body: SaveViewBody) =>
-    endpoints
-      .saveView(id, body)
-      .then(() => client.setQueryData<DashboardDetail>(dashboardQuery(id).queryKey, (d) => d && withSavedView(d, body)))
-      .catch(() => {})
+  const save = (id: number, body: SaveViewBody | null) =>
+    body
+      ? endpoints
+          .saveView(id, body)
+          .then(() => client.setQueryData<DashboardDetail>(dashboardQuery(id).queryKey, (d) => d && withSavedView(d, body)))
+          .catch(() => {})
+      : Promise.resolve()
 
   const change = (next: Selection) => {
     if (frozen) return
@@ -76,7 +81,16 @@ export function useDashboardSelection(
     void save(dashboard.dashboard_id, viewBody(next, switchers))
   }
 
-  // Saved with only the parts the target tab has switchers for.
+  // The range is one for every page, kept in this browser: only a pick in
+  // the range switcher stores it, so switching the project never stores a
+  // range that came from the URL.
+  const changeRange = (r: StoredRange) => {
+    if (frozen) return
+    setURL(selectionParams({ ...sel, range: r.range, from: r.from, to: r.to }))
+    writeStoredRange(r)
+  }
+
+  // The project is saved on the target tab when it has a project switcher.
   const openTab = (id: number) => {
     if (frozen) return
     navigate({ pathname: `/dashboards/${id}`, search: selectionParams(sel).toString() })
@@ -86,5 +100,5 @@ export function useDashboardSelection(
       .catch(() => {})
   }
 
-  return { sel, switchers, range, paramsFor, change, openTab }
+  return { sel, switchers, range, paramsFor, change, changeRange, openTab }
 }

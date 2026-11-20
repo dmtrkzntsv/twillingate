@@ -30,7 +30,7 @@ function isValidCustomRange(from?: string | null, to?: string | null): boolean {
   return days >= 0 && days <= 365
 }
 
-function isValidRange(range: string | null | undefined, from?: string | null, to?: string | null): range is Preset {
+export function isValidRange(range: string | null | undefined, from?: string | null, to?: string | null): range is Preset {
   if (!range || !PRESET_IDS.has(range)) return false
   return range !== 'custom' || isValidCustomRange(from, to)
 }
@@ -43,8 +43,9 @@ function parseProjectId(v: string | null): number | undefined {
 
 /**
  * Picks the project and/or range a dashboard shows (D34): the URL wins,
- * then the stored selection (if its project is still active), then the
- * first active project with the 7-day range. A part is left out entirely
+ * then the stored selection (the dashboard's project, if still active, and
+ * the range stored in this browser for every page), then the first active
+ * project with the 7-day range. A part is left out entirely
  * when the dashboard has no switcher for it. The URL may also name an
  * archived project, since the project switcher offers those too.
  */

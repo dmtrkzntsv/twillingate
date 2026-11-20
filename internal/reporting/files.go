@@ -1,6 +1,6 @@
 // The system directory format a release ships (D20): one directory per
-// dashboard, holding dashboard.json (its title, starting range,
-// placement flags and widget layout) plus one $name.json/$name.(sql|md|query)
+// dashboard, holding dashboard.json (its title, placement flags and
+// widget layout) plus one $name.json/$name.(sql|md|query)
 // pair per widget the layout places. loadDashboard reads one such
 // directory; loadDashboards reads every one under a filesystem root and
 // orders them by id, for migrate.go to hash and sync.
@@ -52,7 +52,6 @@ func (fd fileDashboard) groupID() int64 {
 type fileDashboardDoc struct {
 	ID         int64            `json:"id"`
 	Title      string           `json:"title"`
-	Range      string           `json:"range"`
 	Group      int64            `json:"group"`
 	GroupTitle string           `json:"group_title"`
 	Sidebar    *bool            `json:"sidebar"`     // required: nil is a file that left it out
@@ -205,7 +204,7 @@ func loadDashboard(fsys fs.FS, dir string) (fileDashboard, error) {
 	}
 
 	return fileDashboard{
-		ID: doc.ID, Title: doc.Title, Range: doc.Range, Group: doc.Group, GroupTitle: doc.GroupTitle,
+		ID: doc.ID, Title: doc.Title, Group: doc.Group, GroupTitle: doc.GroupTitle,
 		Sidebar: *doc.Sidebar, ProjectTab: *doc.ProjectTab, Widgets: widgets,
 	}, nil
 }

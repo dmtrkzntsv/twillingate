@@ -8,11 +8,6 @@
 // hands the result to store.SyncReporting in one transaction. A check
 // that could not run for want of time or memory syncs all the same, and
 // the next run checks again (ErrUnchecked).
-//
-// Unlike create_dashboard (which defaults an omitted range to "7d"), a
-// system dashboard.json must give one explicitly: the release is
-// choosing the starting selection for every install, not leaving it to a
-// runtime default that could silently change underneath it.
 package reporting
 
 import (
@@ -127,16 +122,6 @@ func migrateFrom(ctx context.Context, st Store, sql SQL, opt Options, system fs.
 			return fmt.Errorf("reporting: %w", err)
 		}
 		for i, fd := range fds {
-			if fd.Range == "" {
-				return fmt.Errorf("reporting: system dashboard %d: dashboard.json needs range", fd.ID)
-			}
-			if err := checkPreset(fd.Range); err != nil {
-				return fmt.Errorf("reporting: system dashboard %d: %w", fd.ID, err)
-			}
-			if fd.Range == "custom" {
-				return fmt.Errorf("reporting: system dashboard %d: range must be a fixed preset, not custom", fd.ID)
-			}
-
 			widgetKeys, err := sortkey.Spread("", "", len(fd.Widgets))
 			if err != nil {
 				return fmt.Errorf("reporting: system dashboard %d: %w", fd.ID, err)
@@ -165,7 +150,7 @@ func migrateFrom(ctx context.Context, st Store, sql SQL, opt Options, system fs.
 				widgets = append(widgets, w)
 			}
 			dashboards = append(dashboards, store.SystemDashboard{
-				ID: fd.ID, Title: fd.Title, SortKey: dashKeys[i], Range: fd.Range,
+				ID: fd.ID, Title: fd.Title, SortKey: dashKeys[i],
 				GroupID: fd.Group, GroupTitle: fd.GroupTitle, Sidebar: fd.Sidebar, ProjectTab: fd.ProjectTab,
 				Widgets: widgets,
 			})

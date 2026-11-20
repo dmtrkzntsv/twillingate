@@ -209,10 +209,8 @@ func TestMigrateFromChangedWidgetKeepsIDBumpsCountKeepsView(t *testing.T) {
 		t.Fatal("widget users not found after first run")
 	}
 
-	// A viewer picks a project/range in between runs.
-	if err := st.SetDashboardView(ctx, store.Dashboard{
-		ID: 1, LastProjectID: 7, LastRange: "custom", LastFrom: "2026-01-01", LastTo: "2026-01-02",
-	}); err != nil {
+	// A viewer picks a project in between runs.
+	if err := st.SetDashboardView(ctx, store.Dashboard{ID: 1, LastProjectID: 7}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -249,8 +247,7 @@ func TestMigrateFromChangedWidgetKeepsIDBumpsCountKeepsView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if dash.LastProjectID != 7 || dash.LastRange != "custom" ||
-		dash.LastFrom != "2026-01-01" || dash.LastTo != "2026-01-02" {
+	if dash.LastProjectID != 7 {
 		t.Errorf("view not preserved across resync: %+v", dash)
 	}
 }
@@ -498,7 +495,7 @@ func addSystemWidget(t *testing.T, dir, name, sql string) {
 	for file, body := range map[string]string{
 		name + ".json":   `{"component": "stat", "title": "Visits", "props": {"format": "number"}}`,
 		name + ".sql":    sql,
-		"dashboard.json": `{"id": 1, "title": "Retention", "range": "30d", "sidebar": true, "project_tab": true, "layout": [{"widget": "users"}, {"widget": "` + name + `"}]}`,
+		"dashboard.json": `{"id": 1, "title": "Retention", "sidebar": true, "project_tab": true, "layout": [{"widget": "users"}, {"widget": "` + name + `"}]}`,
 	} {
 		if err := os.WriteFile(filepath.Join(ret, file), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -596,7 +593,7 @@ func TestMigrateFromGroupNamingMissingIDFails(t *testing.T) {
 	system, dir := systemFSCopy(t)
 
 	if err := os.WriteFile(filepath.Join(dir, "retention", "dashboard.json"),
-		[]byte(`{"id":1,"title":"Retention","range":"30d","sidebar":true,"project_tab":true,"group":99,"layout":[{"widget":"users"}]}`), 0o644); err != nil {
+		[]byte(`{"id":1,"title":"Retention","sidebar":true,"project_tab":true,"group":99,"layout":[{"widget":"users"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -619,13 +616,13 @@ func TestMigrateFromGroupNamingATabFails(t *testing.T) {
 
 	// overview (id 2) joins retention's group (id 1)...
 	if err := os.WriteFile(filepath.Join(dir, "overview", "dashboard.json"),
-		[]byte(`{"id":2,"title":"Overview","range":"7d","sidebar":true,"project_tab":true,"group":1,"layout":[{"widget":"note"}]}`), 0o644); err != nil {
+		[]byte(`{"id":2,"title":"Overview","sidebar":true,"project_tab":true,"group":1,"layout":[{"widget":"note"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	// ...and retention (id 1) tries to join overview's group instead of
 	// naming its own: retention is no longer a valid group name.
 	if err := os.WriteFile(filepath.Join(dir, "retention", "dashboard.json"),
-		[]byte(`{"id":1,"title":"Retention","range":"30d","sidebar":true,"project_tab":true,"group":2,"layout":[{"widget":"users"}]}`), 0o644); err != nil {
+		[]byte(`{"id":1,"title":"Retention","sidebar":true,"project_tab":true,"group":2,"layout":[{"widget":"users"}]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -656,7 +653,7 @@ func TestMigrateFromNonContiguousGroupFails(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(third, "dashboard.json"),
-		[]byte(`{"id":3,"title":"Third","range":"7d","sidebar":true,"project_tab":true,"group":1,"layout":[]}`), 0o644); err != nil {
+		[]byte(`{"id":3,"title":"Third","sidebar":true,"project_tab":true,"group":1,"layout":[]}`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -666,29 +663,6 @@ func TestMigrateFromNonContiguousGroupFails(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "group 1 is not contiguous") {
 		t.Errorf("error = %q, want it to say group 1 is not contiguous", err)
-	}
-}
-
-// TestMigrateFromRefusesEmptyRange is the fix for a review finding: a
-// system dashboard.json must give range explicitly (no default, unlike
-// create_dashboard's "7d"), and the refusal should name the problem
-// plainly rather than reuse checkPreset's "range must be one of ...".
-func TestMigrateFromRefusesEmptyRange(t *testing.T) {
-	st, files := newTestStoreAndFiles(t, 1000)
-	ctx := context.Background()
-	system, dir := systemFSCopy(t)
-
-	if err := os.WriteFile(filepath.Join(dir, "retention", "dashboard.json"),
-		[]byte(`{"id":1,"title":"Retention","sidebar":true,"project_tab":true,"layout":[{"widget":"users"}]}`), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := migrateFrom(ctx, st, files, files.options(Options{}), system, testManifest(t))
-	if err == nil {
-		t.Fatal("want error: dashboard.json with no range")
-	}
-	if !strings.Contains(err.Error(), "dashboard.json needs range") {
-		t.Errorf("error = %q, want it to say dashboard.json needs range", err)
 	}
 }
 

@@ -18,6 +18,7 @@ import { rangeParams, SETTINGS_SECTIONS, settingsPath, type SettingsSection } fr
 import { keysQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import { chooseSelection } from '@/lib/selection'
+import { readStoredRange } from '@/lib/stored-range'
 import { selectionParams } from '@/lib/view'
 
 interface Props {
@@ -32,7 +33,7 @@ interface Props {
 /** The tabs whose figures cover a range, and so show the range switcher. */
 const RANGED: ReadonlySet<SettingsSection> = new Set(['overview', 'events', 'attributes'])
 
-/** The range a tab opens on when the URL names none: a month of usage on Overview, a week elsewhere. */
+/** The range a tab opens on when neither the URL nor this browser names one: a month of usage on Overview, a week elsewhere. */
 const defaultRange = (section: SettingsSection) => (section === 'overview' ? '30d' : '7d')
 
 /**
@@ -44,14 +45,15 @@ const defaultRange = (section: SettingsSection) => (section === 'overview' ? '30
  * project, which takes nothing and refuses every change, has no install or
  * keys on Overview, no Danger tab and only its origins under Domains, and
  * Restore in the header instead. The range is the URL's, which every tab
- * of the project shares (D8), else 30 days on Overview and 7 elsewhere;
+ * of the project shares (D8), else the one stored for every page (which
+ * only a dashboard page sets), else 30 days on Overview and 7 elsewhere;
  * only the tabs that count something over it show the switcher.
  */
 export default function SetupTab({ project, dash, actions, section }: Props) {
   const id = project.project_id
   const keysQ = useQuery({ ...keysQuery(id), enabled: section === 'overview' && !project.archived })
   const [url, setURL] = useSearchParams()
-  const sel = chooseSelection(url, { range: defaultRange(section) }, [], { project: false, range: true })
+  const sel = chooseSelection(url, readStoredRange() ?? { range: defaultRange(section) }, [], { project: false, range: true })
   const tz = dash?.timezone ?? 'UTC'
   const range = resolve(sel.range!, tz, new Date(), sel.from && sel.to ? { from: sel.from, to: sel.to } : undefined)
   const title = SETTINGS_SECTIONS.find((s) => s.id === section)!.title

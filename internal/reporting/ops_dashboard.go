@@ -8,10 +8,6 @@ import (
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
-// Presets is the closed vocabulary of a dashboard's stored range (D18).
-// The UI resolves each to dates; Go knows them only to validate.
-var Presets = []string{"today", "yesterday", "7d", "30d", "90d", "custom"}
-
 // After, in CreateDashboard, UpdateDashboard, AddWidget and CopyWidget,
 // places an item: nil last, 0 first, an id right after that item
 // (Deviation 1; keyAfter in place.go for widgets, order.go for
@@ -21,10 +17,10 @@ var Presets = []string{"today", "yesterday", "7d", "30d", "90d", "custom"}
 // After in the sidebar; otherwise a tab of group GroupID, placed by After
 // among its tabs (After must then be a member).
 type CreateDashboard struct {
-	Title, Range string
-	GroupID      int64
-	After        *int64
-	Widgets      []WidgetSpec
+	Title   string
+	GroupID int64
+	After   *int64
+	Widgets []WidgetSpec
 }
 
 // UpdateDashboard changes the title when Title is not "", and moves the
@@ -51,16 +47,6 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 		return DashboardDetail{}, err
 	}
 	in.Title = title
-	rng := in.Range
-	if rng == "" {
-		rng = "7d"
-	}
-	if err := checkPreset(rng); err != nil {
-		return DashboardDetail{}, err
-	}
-	if rng == "custom" {
-		return DashboardDetail{}, store.Refuse(store.ErrInvalid, "create with a preset; the viewer picks custom dates")
-	}
 	comps, err := s.components(ctx)
 	if err != nil {
 		return DashboardDetail{}, err
@@ -100,7 +86,7 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 			}
 		}
 		id, err = s.st.InsertDashboard(ctx,
-			store.Dashboard{Owner: store.OwnerUser, Title: in.Title, SortKey: key, GroupID: in.GroupID, LastRange: rng, Sidebar: true},
+			store.Dashboard{Owner: store.OwnerUser, Title: in.Title, SortKey: key, GroupID: in.GroupID, Sidebar: true},
 			ws, store.AuditEntry{Actor: actor, Action: "dashboard.create"})
 		return err
 	})

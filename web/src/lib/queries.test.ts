@@ -26,7 +26,6 @@ function detail(widgets: Widget[]): DashboardDetail {
     title: 'Mine',
     owner: 'user',
     group_id: 7,
-    range: '7d',
     sidebar: true,
     project_tab: false,
     follows_project: true,

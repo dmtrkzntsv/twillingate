@@ -21,7 +21,7 @@ type DuplicateDashboard struct {
 
 // DuplicateDashboard makes a user copy of a dashboard, system ones
 // included. Its live widgets are copied in order with fresh keys and
-// the same content, and the same stored selection. The widgets are
+// the same content, and the same stored project. The widgets are
 // copied as they are, not re-checked, so the copy is faithful: a widget
 // whose component was removed is copied too and still shows "component
 // removed" there, until update_widget switches it. D15's no-copy rule is
@@ -191,11 +191,11 @@ func (s *Service) duplicateGroup(ctx context.Context, actor string, src store.Da
 }
 
 // copyRow is the user row a copy of d starts from: titled title, in the
-// sidebar, with d's stored selection.
+// sidebar, with d's stored project.
 func copyRow(d store.Dashboard, title string) store.Dashboard {
 	return store.Dashboard{
 		Owner: store.OwnerUser, Title: title, Sidebar: true,
-		LastProjectID: d.LastProjectID, LastRange: d.LastRange, LastFrom: d.LastFrom, LastTo: d.LastTo,
+		LastProjectID: d.LastProjectID,
 	}
 }
 

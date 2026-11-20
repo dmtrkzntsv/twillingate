@@ -19,6 +19,7 @@ import { dashboardQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import type { ShareContext } from '@/lib/share'
 import { chooseSelection } from '@/lib/selection'
+import { readStoredRange } from '@/lib/stored-range'
 import { selectionParams, widgetParams } from '@/lib/view'
 import ProjectTabMenu from './ProjectTabMenu'
 
@@ -35,9 +36,9 @@ interface Props {
 /**
  * One of a project's dashboard tabs (project tabs D8): the dashboard with
  * the project pinned, so there is no project switcher, and the range from
- * the URL, else the dashboard's own. Nothing here saves the dashboard's
- * view. A dashboard that isn't one of the project's tabs says so and offers
- * to add it.
+ * the URL, else the one stored for every page. Nothing here saves the
+ * dashboard's view or the stored range. A dashboard that isn't one of the
+ * project's tabs says so and offers to add it.
  */
 export default function ProjectDashboardTab({ project, dashId, tabs, list, actions }: Props) {
   const detail = useQuery(dashboardQuery(dashId))
@@ -70,7 +71,7 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
   const projectId = project.project_id
   // Opening the project later lands here (project landing D3).
   useEffect(() => writeLastTab(projectId, tab.dashboard_id), [projectId, tab.dashboard_id])
-  const sel = chooseSelection(url, { range: dashboard.range, from: dashboard.from, to: dashboard.to }, [projectId], {
+  const sel = chooseSelection(url, readStoredRange() ?? {}, [projectId], {
     project: false,
     range: dashboard.follows_range,
   })
@@ -137,7 +138,7 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
           <RangeSwitcher
             value={{ range: sel.range, from: sel.from, to: sel.to }}
             timezone={list.timezone}
-            // The URL only: viewing a project never saves a dashboard's view (D8).
+            // The URL only: viewing a project never saves a dashboard's view (D8) or the stored range.
             onChange={(r) => setURL(selectionParams(r))}
           />
         )}

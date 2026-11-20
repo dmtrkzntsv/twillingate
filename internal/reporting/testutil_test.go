@@ -64,7 +64,7 @@ func syncReporting(t *testing.T, svc *Service, drop []string, sys ...store.Syste
 // in the sidebar and a project tab, as the release ships its own.
 func systemDashboard() store.SystemDashboard {
 	return store.SystemDashboard{
-		ID: 3, Title: "Users", SortKey: "a0", Range: "7d", Sidebar: true, ProjectTab: true,
+		ID: 3, Title: "Users", SortKey: "a0", Sidebar: true, ProjectTab: true,
 		Widgets: []store.Widget{{
 			Name: "note", Component: "markdown", SortKey: "a0", Width: 12, Height: 2,
 			Props: "{}", SourceType: "md", Source: "system text",
@@ -87,7 +87,7 @@ func systemGroup() []store.SystemDashboard {
 			group = 10 // Views' id: the rest join its group
 		}
 		out[i] = store.SystemDashboard{
-			ID: int64(10 + i), Title: name, SortKey: keys[i], GroupID: group, Range: "7d",
+			ID: int64(10 + i), Title: name, SortKey: keys[i], GroupID: group,
 			Sidebar: true, ProjectTab: true,
 			Widgets: []store.Widget{{
 				Name: "note", Component: "markdown", SortKey: "a0", Width: 12, Height: 2,

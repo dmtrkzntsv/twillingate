@@ -1,7 +1,6 @@
 {
   "id": 8,
   "title": "Availability",
-  "range": "7d",
   "sidebar": true,
   "project_tab": true,
   "group": 1,

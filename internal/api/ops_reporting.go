@@ -71,7 +71,6 @@ type widgetDataIn struct {
 
 type createDashboardIn struct {
 	Title   string                 `json:"title" jsonschema:"the dashboard's title, at least 2 characters (required)"`
-	Range   string                 `json:"range,omitempty" jsonschema:"starting range: today, yesterday, 7d, 30d or 90d; default 7d"`
 	GroupID int64                  `json:"group_id,omitempty" jsonschema:"add it as a tab of this group (a group_id from list_dashboards); after then names a tab of that group, 0 first; omit for a dashboard of its own"`
 	After   *int64                 `json:"after,omitempty" jsonschema:"where the new dashboard goes. Without group_id: after the named dashboard's whole group in the sidebar, 0 first. With group_id: after that tab, 0 the first tab. Omit to put it last"`
 	Widgets []reporting.WidgetSpec `json:"widgets,omitempty" jsonschema:"widgets in order; all are validated, and one refusal creates nothing"`
@@ -140,11 +139,8 @@ type copyWidgetIn struct {
 }
 
 type viewIn struct {
-	DashboardID int64  `json:"dashboard_id"`
-	ProjectID   int64  `json:"project_id,omitempty"`
-	Range       string `json:"range,omitempty"`
-	From        string `json:"from,omitempty"`
-	To          string `json:"to,omitempty"`
+	DashboardID int64 `json:"dashboard_id"`
+	ProjectID   int64 `json:"project_id"`
 }
 
 type previewWidgetIn struct {
@@ -182,7 +178,7 @@ func (h *host) widgetData(ctx context.Context, in widgetDataIn) (reporting.Widge
 
 func (h *host) createDashboard(ctx context.Context, in createDashboardIn) (reporting.DashboardDetail, error) {
 	return h.rep.CreateDashboard(ctx, actorFrom(ctx), reporting.CreateDashboard{
-		Title: in.Title, Range: in.Range, GroupID: in.GroupID, After: in.After, Widgets: in.Widgets})
+		Title: in.Title, GroupID: in.GroupID, After: in.After, Widgets: in.Widgets})
 }
 
 func (h *host) updateDashboard(ctx context.Context, in updateDashboardIn) (reporting.DashboardInfo, error) {
@@ -252,11 +248,11 @@ func (h *host) restoreWidget(ctx context.Context, in widgetIn) (okOut, error) {
 	return okWith("restored", h.rep.RestoreWidget(ctx, actorFrom(ctx), in.WidgetID))
 }
 
-// setView stores the viewer's selection. Viewer state, not definition:
+// setView stores the viewer's project. Viewer state, not definition:
 // allowed on system dashboards and not audited (D30).
 func (h *host) setView(ctx context.Context, in viewIn) (okOut, error) {
 	return okWith("saved", h.rep.SetView(ctx, reporting.View{
-		DashboardID: in.DashboardID, ProjectID: in.ProjectID, Range: in.Range, From: in.From, To: in.To}))
+		DashboardID: in.DashboardID, ProjectID: in.ProjectID}))
 }
 
 func (h *host) previewWidget(ctx context.Context, in previewWidgetIn) (reporting.Preview, error) {
@@ -297,7 +293,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "The source types (query, sql, md) and the components a widget can use: each one's description, the source types it accepts, the columns its query must return (inputs), its props schema and its default width and height."},
 		h.listComponents)
 	expose(r, spec{Name: "list_dashboards", Annotations: ro, Method: "GET", Path: "/api/dashboards",
-		Description: "Every dashboard in sidebar order (system first, then user), archived ones included: id, title, owner (system or user), group_id (the group it is a tab of; it changes when the dashboard whose id it is leaves the group, so read it here before using it), stored project and range, live widget count, archived_at, sidebar (its group is in the sidebar; only a built-in group is ever out of it) and project_tab (a built-in that projects created from now on get as a tab; always false for your own); plus the timezone days are grouped in, purge_after_days, how long an archived user dashboard is kept before it is deleted (absent: kept forever), auto_refresh_seconds, how often the page reloads a dashboard whose viewer turned auto-refresh on (absent: never), and console_url, CONSOLE_URL, where /mcp is (absent when it is not set)."},
+		Description: "Every dashboard in sidebar order (system first, then user), archived ones included: id, title, owner (system or user), group_id (the group it is a tab of; it changes when the dashboard whose id it is leaves the group, so read it here before using it), the project its viewer last chose (project_id), live widget count, archived_at, sidebar (its group is in the sidebar; only a built-in group is ever out of it) and project_tab (a built-in that projects created from now on get as a tab; always false for your own); plus the timezone days are grouped in, purge_after_days, how long an archived user dashboard is kept before it is deleted (absent: kept forever), auto_refresh_seconds, how often the page reloads a dashboard whose viewer turned auto-refresh on (absent: never), and console_url, CONSOLE_URL, where /mcp is (absent when it is not set)."},
 		h.listDashboards)
 	expose(r, spec{Name: "get_dashboard", Annotations: ro, Method: "GET", Path: d,
 		Description: "One dashboard with its group's tabs and its live widgets in order: tabs (the group's live dashboards, this one included, in tab order) and each widget's id, name, component, title, width, height, props, source, and whether it follows the project and range switchers."},
@@ -310,7 +306,7 @@ func (h *host) registerReporting(r *registrar) {
 		h.widgetData)
 
 	expose(r, spec{Name: "create_dashboard", Annotations: write, Method: "POST", Path: "/api/dashboards", Status: http.StatusCreated, constrain: widget(items),
-		Description: "Call reporting_guide first. Create a user dashboard: title (at least 2 characters), optional starting range (default 7d), optional group_id to add it as a tab of that group, optional after (a dashboard id; 0 first), and optional widgets in order, each as add_widget takes it (prefer query sources over sql). All or nothing: one invalid widget creates nothing."},
+		Description: "Call reporting_guide first. Create a user dashboard: title (at least 2 characters), optional group_id to add it as a tab of that group, optional after (a dashboard id; 0 first), and optional widgets in order, each as add_widget takes it (prefer query sources over sql). All or nothing: one invalid widget creates nothing."},
 		h.createDashboard)
 	expose(r, spec{Name: "update_dashboard", Annotations: write, Method: "PATCH", Path: d,
 		Description: "Rename a user dashboard (title, at least 2 characters) and/or move it with group_id (join a group as a tab, or 0 to leave one) and/or after (a dashboard id; 0 first). whole_group with title renames its group instead: the sidebar name, which otherwise is the first tab's title; a group name can be replaced, never cleared. A group of one live tab has one name: naming it retitles that tab, and retitling that tab renames the group with it. sidebar, in a call of its own and for built-in dashboards only, puts the whole group in or out of the sidebar; your own dashboards are always in the sidebar, so it is refused on one (archive_dashboard takes one away). Your own dashboards are added to projects one at a time with add_project_tab. Otherwise system dashboards are read-only."},
@@ -354,7 +350,7 @@ func (h *host) registerReporting(r *registrar) {
 		h.restoreWidget)
 
 	restOnly(r, spec{Name: "view", Method: "PUT", Path: d + "/view",
-		Description: "Store the viewer's project and range selection for a dashboard."},
+		Description: "Store the project the viewer chose on a dashboard with a project switcher. The range is not stored: the web app keeps one for every dashboard, in the browser."},
 		h.setView)
 	restOnly(r, spec{Name: "preview_widget", Method: "POST", Path: "/api/widgets/preview",
 		Description: "The console editor's Run query: run an unsaved widget's sql with the given project and range, uncached and saving nothing. Answers the rows and, in problem, the first way they do not fit the component; agents call add_widget, which validates."},

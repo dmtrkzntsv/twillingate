@@ -1,1 +1,1 @@
-{"id": 1, "title": "Retention", "range": "30d", "sidebar": true, "project_tab": true, "layout": [{"widget": "users"}]}
+{"id": 1, "title": "Retention", "sidebar": true, "project_tab": true, "layout": [{"widget": "users"}]}

@@ -157,7 +157,7 @@ test('duplicates a widget and copies a built-in one onto a dashboard of its own'
   const note = `Note ${stamp}`
   const res = await request.post('/api/dashboards', {
     headers: authHeaders(),
-    data: { title, range: '7d', widgets: [{ component: 'markdown', title: note, source: { type: 'md', content: 'Hello' }, width: 6, height: 3 }] },
+    data: { title, widgets: [{ component: 'markdown', title: note, source: { type: 'md', content: 'Hello' }, width: 6, height: 3 }] },
   })
   expect(res.ok(), await res.text()).toBeTruthy()
   const id = ((await res.json()) as { dashboard_id: number }).dashboard_id
@@ -205,7 +205,7 @@ test('adds a stat whose source is a structured query', async ({ page, request })
   const title = `Query ${stamp}`
   const res = await request.post('/api/dashboards', {
     headers: authHeaders(),
-    data: { title, range: '30d', widgets: [{ component: 'markdown', title: `Note ${stamp}`, source: { type: 'md', content: 'Hello' }, width: 6, height: 3 }] },
+    data: { title, widgets: [{ component: 'markdown', title: `Note ${stamp}`, source: { type: 'md', content: 'Hello' }, width: 6, height: 3 }] },
   })
   expect(res.ok(), await res.text()).toBeTruthy()
   const id = ((await res.json()) as { dashboard_id: number }).dashboard_id

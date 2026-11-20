@@ -43,11 +43,10 @@ func TestReportingRoundTrip(t *testing.T) {
 		ID     int64  `json:"dashboard_id"`
 		Title  string `json:"title"`
 		Owner  string `json:"owner"`
-		Range  string `json:"range"`
 		Widget []any  `json:"widgets"`
 	}
 	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Traffic"}, &d)
-	if d.ID < 1000 || d.Owner != "user" || d.Range != "7d" {
+	if d.ID < 1000 || d.Owner != "user" {
 		t.Fatalf("create_dashboard = %+v", d)
 	}
 	toolJSON(t, cs, "get_dashboard", map[string]any{"dashboard_id": d.ID}, &d)
@@ -163,7 +162,7 @@ func TestReportingRESTStatuses(t *testing.T) {
 		}
 		return out
 	}
-	d := must("POST", "/api/dashboards", `{"title":"Traffic","range":"30d"}`, http.StatusCreated)
+	d := must("POST", "/api/dashboards", `{"title":"Traffic"}`, http.StatusCreated)
 	id := int64(d["dashboard_id"].(float64))
 	w := must("POST", fmt.Sprintf("/api/dashboards/%d/widgets", id),
 		`{"component":"markdown","source":{"type":"md","content":"Read me."}}`, http.StatusCreated)
@@ -219,7 +218,7 @@ func TestReportingRefusals(t *testing.T) {
 	}
 }
 
-// TestViewRouteIsRESTOnly: the viewer's selection is stored through PUT
+// TestViewRouteIsRESTOnly: the viewer's project is stored through PUT
 // and read back on the dashboard; no MCP tool writes it.
 func TestViewRouteIsRESTOnly(t *testing.T) {
 	h, cs := newTestHost(t)
@@ -231,17 +230,16 @@ func TestViewRouteIsRESTOnly(t *testing.T) {
 		"component": "stat", "title": "Visitors", "source": map[string]any{"type": "sql", "content": visitorsSQL},
 	}}}, &d)
 
-	rec := serveREST(t, r, "PUT", fmt.Sprintf("/api/dashboards/%d/view", d.ID), `{"project_id":2,"range":"30d"}`)
+	rec := serveREST(t, r, "PUT", fmt.Sprintf("/api/dashboards/%d/view", d.ID), `{"project_id":2}`)
 	if rec.Code != http.StatusOK || strings.TrimSpace(rec.Body.String()) != `{"status":"saved"}` {
 		t.Fatalf("PUT view = %d %s", rec.Code, rec.Body.String())
 	}
 	var got struct {
-		ProjectID int64  `json:"project_id"`
-		Range     string `json:"range"`
+		ProjectID int64 `json:"project_id"`
 	}
 	toolJSON(t, cs, "get_dashboard", map[string]any{"dashboard_id": d.ID}, &got)
-	if got.ProjectID != 2 || got.Range != "30d" {
-		t.Errorf("selection after PUT = %+v, want project 2, 30d", got)
+	if got.ProjectID != 2 {
+		t.Errorf("selection after PUT = %+v, want project 2", got)
 	}
 
 	tools, err := cs.ListTools(context.Background(), nil)
@@ -661,9 +659,9 @@ func TestDuplicateSystemDashboardRESTLeavesItLive(t *testing.T) {
 	}
 }
 
-// TestViewRouteRefusals: each part is required when the dashboard has
-// that switcher and refused when it has none; presets are a closed list;
-// an unknown dashboard is a 404.
+// TestViewRouteRefusals: the project is required, and refused on a
+// dashboard with no project switcher; the range is no longer stored, so
+// the body refuses it; an unknown dashboard is a 404.
 func TestViewRouteRefusals(t *testing.T) {
 	h, cs := newTestHost(t)
 	r := newTestRegistrar(t, h)
@@ -681,16 +679,11 @@ func TestViewRouteRefusals(t *testing.T) {
 		body string
 		want int
 	}{
-		{both.ID, `{"range":"7d"}`, http.StatusBadRequest},                  // no project_id
-		{both.ID, `{"project_id":1}`, http.StatusBadRequest},                // no range
-		{both.ID, `{"project_id":1,"range":"week"}`, http.StatusBadRequest}, // not a preset
-		{both.ID, `{"project_id":1,"range":"7d","from":"2026-08-01","to":"2026-08-02"}`, http.StatusBadRequest},
-		{both.ID, `{"project_id":1,"range":"custom","from":"2026-08-02","to":"2026-08-01"}`, http.StatusBadRequest},
-		{none.ID, `{"project_id":1}`, http.StatusBadRequest}, // no project switcher
-		{none.ID, `{"range":"7d"}`, http.StatusBadRequest},   // no range switcher
-		{none.ID, `{}`, http.StatusOK},
-		{both.ID, `{"project_id":1,"range":"custom","from":"2026-08-01","to":"2026-08-31"}`, http.StatusOK},
-		{99999, `{"project_id":1,"range":"7d"}`, http.StatusNotFound},
+		{both.ID, `{}`, http.StatusBadRequest},                            // no project_id
+		{both.ID, `{"project_id":1,"range":"7d"}`, http.StatusBadRequest}, // the range is not stored
+		{none.ID, `{"project_id":1}`, http.StatusBadRequest},              // no project switcher
+		{both.ID, `{"project_id":1}`, http.StatusOK},
+		{99999, `{"project_id":1}`, http.StatusNotFound},
 	} {
 		rec := serveREST(t, r, "PUT", fmt.Sprintf("/api/dashboards/%d/view", c.id), c.body)
 		if rec.Code != c.want {

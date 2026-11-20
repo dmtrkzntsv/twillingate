@@ -70,10 +70,10 @@ func TestSystemDashboards(t *testing.T) {
 	var titles []string
 	for _, d := range ds.Dashboards {
 		if d.Owner == store.OwnerSystem {
-			titles = append(titles, fmt.Sprintf("%d %s %s", d.ID, d.Title, d.Range))
+			titles = append(titles, fmt.Sprintf("%d %s", d.ID, d.Title))
 		}
 	}
-	want := "1 Views 7d, 2 Product 7d, 3 Users 7d, 4 Groups 7d, 5 Retention 90d, 6 Web Vitals 30d, 7 Measures 7d, 8 Availability 7d"
+	want := "1 Views, 2 Product, 3 Users, 4 Groups, 5 Retention, 6 Web Vitals, 7 Measures, 8 Availability"
 	if got := strings.Join(titles, ", "); got != want {
 		t.Fatalf("system dashboards = %s, want %s", got, want)
 	}
