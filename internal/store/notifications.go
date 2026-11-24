@@ -8,6 +8,7 @@ const (
 	NotifyUptimeDown         = "uptime_down"
 	NotifyUptimeStillDown    = "uptime_still_down"
 	NotifyUptimeUp           = "uptime_up"
+	NotifyUptimeBlip         = "uptime_blip"
 	NotifyCertFailing        = "cert_failing"
 	NotifyCertStillFailing   = "cert_still_failing"
 	NotifyCertRecovered      = "cert_recovered"
@@ -23,7 +24,7 @@ const (
 
 // NotificationTypes is every notification type, in the order above.
 var NotificationTypes = []string{
-	NotifyUptimeDown, NotifyUptimeStillDown, NotifyUptimeUp,
+	NotifyUptimeDown, NotifyUptimeStillDown, NotifyUptimeUp, NotifyUptimeBlip,
 	NotifyCertFailing, NotifyCertStillFailing, NotifyCertRecovered,
 	NotifyDomainFailing, NotifyDomainStillFailing, NotifyDomainRecovered,
 	NotifyCertExpiring, NotifyDomainExpiring,

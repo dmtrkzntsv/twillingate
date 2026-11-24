@@ -100,6 +100,7 @@ type entry struct {
 type Tracker struct {
 	st     TrackerStore
 	remind time.Duration
+	brief  time.Duration
 	logger *slog.Logger
 
 	mu     sync.Mutex
@@ -118,6 +119,18 @@ func NewTracker(st TrackerStore, remind time.Duration, logger *slog.Logger) *Tra
 	return &Tracker{st: st, remind: remind, logger: logger, states: map[key]entry{}, lastUp: map[key]time.Time{}}
 }
 
+// HoldDown makes an outage shorter than brief, from its first failed check
+// to the good one, one uptime_blip instead of uptime_down and uptime_up:
+// the down is held until brief after the first failure, and a recovery
+// before it is announced is the blip. <= 0 (the default) holds nothing.
+// Checks spaced brief or more apart are not delayed: the second failure
+// already comes after it. Call it before Run.
+func (t *Tracker) HoldDown(brief time.Duration) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.brief = brief
+}
+
 // PauseMonitoring makes Tick leave the monitor states alone, for an
 // install whose monitoring is paused: no observation comes to end them, so
 // it neither reminds of a failing one nor prunes any. They stay as they
@@ -131,7 +144,9 @@ func (t *Tracker) PauseMonitoring() {
 
 // Uptime records one availability check of origin: down after two
 // failures in a row (reason from the check's closed vocabulary), up
-// again after one success. errText, the check's error, is kept in the
+// again after one success. With HoldDown, a down is held until the brief
+// window after the first failure has passed (here or in Tick), and a
+// success while it is held sends one uptime_blip instead. errText, the check's error, is kept in the
 // state only. Overlapping checks (a manual one beside a slot) can report
 // out of order: a success dated before the state's latest observation is
 // stale and ignored, so a recovery never ends before its outage began, and
@@ -156,6 +171,18 @@ func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up
 		}
 		if !ok {
 			return
+		}
+		if held(e) {
+			if at.Sub(e.Since) < t.brief {
+				t.blip(ctx, k, e, at)
+				return
+			}
+			// Past the window before a tick released it: the outage was not
+			// brief, so it is told as one, down and then up.
+			if !t.announce(ctx, k, e, store.NotifyUptimeDown, at, map[string]string{"reason": e.Reason}) {
+				return
+			}
+			e = t.states[k]
 		}
 		t.recover(ctx, k, e, store.NotifyUptimeUp, at)
 		// The outage kept the certificate's reminders back; its next one
@@ -184,11 +211,34 @@ func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up
 	e = t.streak(k, at, max(uptimeGap, 3*every))
 	e.Fails++
 	e.Reason, e.Error = reason, errText
-	if e.Fails < downAfter {
+	if e.Fails < downAfter || at.Sub(e.Since) < t.brief {
 		t.put(ctx, k, e, nil)
 		return
 	}
 	t.announce(ctx, k, e, store.NotifyUptimeDown, at, map[string]string{"reason": reason})
+}
+
+// held reports whether e is an origin down but not yet announced: failed
+// often enough, within the brief window (HoldDown).
+func held(e entry) bool {
+	return e.Fails >= downAfter && !e.Failing && !e.Since.IsZero()
+}
+
+// blip ends the held outage e of k with one uptime_blip, as recover ends a
+// failing one: the message goes with a row marked ended, then the row is
+// deleted. When the write fails (the blip is then lost, logged) the
+// outage still ends: the site is up, so neither a release, a restart nor
+// the next failure may carry it on. The row is deleted at once, and if that
+// fails too it stays in memory as ended, for the next Tick's prune.
+func (t *Tracker) blip(ctx context.Context, k key, e entry, at time.Time) {
+	n := t.note(k, store.NotifyUptimeBlip, map[string]string{
+		"since": stampRFC(e.Since), "until": stampRFC(at), "reason": e.Reason}, at)
+	if !t.put(ctx, k, entry{Ended: at}, n) {
+		t.states[k] = entry{Ended: at}
+		t.del(ctx, k)
+		return
+	}
+	t.del(ctx, k)
 }
 
 // Cert records one certificate reading of origin. While the origin is
@@ -248,7 +298,8 @@ func (t *Tracker) Domain(ctx context.Context, projectID int64, domain string, ok
 }
 
 // Tick drops the states no enabled monitor has any more, and ended ones
-// (without a message), reminds of every failing state not reminded of for the
+// (without a message), announces the held downs whose brief window has
+// passed (HoldDown), reminds of every failing state not reminded of for the
 // remind interval (a certificate not while its origin is down), and
 // sends the form submission bursts whose window has ended. After
 // PauseMonitoring it only sends the bursts.
@@ -281,6 +332,7 @@ func (t *Tracker) tick(ctx context.Context, now time.Time) {
 		return
 	}
 	t.prune(ctx)
+	t.release(ctx, now)
 	if t.remind <= 0 {
 		return
 	}
@@ -290,9 +342,7 @@ func (t *Tracker) tick(ctx context.Context, now time.Time) {
 			keys = append(keys, k)
 		}
 	}
-	slices.SortFunc(keys, func(a, b key) int {
-		return cmp.Or(cmp.Compare(a.projectID, b.projectID), cmp.Compare(a.kind, b.kind), cmp.Compare(a.subject, b.subject))
-	})
+	sortKeys(keys)
 	for _, k := range keys {
 		if k.kind == kindCert && t.down(k.projectID, k.subject) {
 			continue
@@ -309,6 +359,29 @@ func (t *Tracker) tick(ctx context.Context, now time.Time) {
 		}
 		t.put(ctx, k, e, t.note(k, typ, fields, now))
 	}
+}
+
+// release announces every held down whose brief window has passed by now,
+// so an outage whose next check is late (a long rotation, a skipped slot, a
+// restart) is not kept back.
+func (t *Tracker) release(ctx context.Context, now time.Time) {
+	var keys []key
+	for k, e := range t.states {
+		if k.kind == kindUptime && held(e) && now.Sub(e.Since) >= t.brief {
+			keys = append(keys, k)
+		}
+	}
+	sortKeys(keys)
+	for _, k := range keys {
+		e := t.states[k]
+		t.announce(ctx, k, e, store.NotifyUptimeDown, now, map[string]string{"reason": e.Reason})
+	}
+}
+
+func sortKeys(keys []key) {
+	slices.SortFunc(keys, func(a, b key) int {
+		return cmp.Or(cmp.Compare(a.projectID, b.projectID), cmp.Compare(a.kind, b.kind), cmp.Compare(a.subject, b.subject))
+	})
 }
 
 // prune deletes the states whose origin, or main domain, no enabled
@@ -394,7 +467,7 @@ func (t *Tracker) streak(k key, at time.Time, gap time.Duration) entry {
 // later (a certificate or a lookup failing for a day), that multiple can
 // be minutes after the announcement, so the first reminder comes a whole
 // interval after it instead. Either way it never comes at once.
-func (t *Tracker) announce(ctx context.Context, k key, e entry, typ string, at time.Time, fields map[string]string) {
+func (t *Tracker) announce(ctx context.Context, k key, e entry, typ string, at time.Time, fields map[string]string) bool {
 	e.Failing = true
 	e.RemindedAt = at
 	if t.remind > 0 {
@@ -403,7 +476,7 @@ func (t *Tracker) announce(ctx context.Context, k key, e entry, typ string, at t
 		}
 	}
 	fields["since"] = stampRFC(e.Since)
-	t.put(ctx, k, e, t.note(k, typ, fields, at))
+	return t.put(ctx, k, e, t.note(k, typ, fields, at))
 }
 
 // recover ends the state of k: with typ when it was failing, silently
@@ -486,9 +559,11 @@ func latest(e entry) time.Time {
 	return l
 }
 
-// down reports whether origin's availability is failing in projectID.
+// down reports whether origin's availability is failing in projectID, or
+// down and held (HoldDown): either way its certificate waits.
 func (t *Tracker) down(projectID int64, origin string) bool {
-	return t.states[key{projectID, kindUptime, origin}].Failing
+	e := t.states[key{projectID, kindUptime, origin}]
+	return e.Failing || held(e)
 }
 
 func (t *Tracker) note(k key, typ string, fields map[string]string, at time.Time) *store.NewNotification {

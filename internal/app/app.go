@@ -220,6 +220,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	monDone := make(chan struct{})
 	if archiveLog != nil {
 		tracker := inbox.NewTracker(st, cfg.Notify.Remind, logger)
+		tracker.HoldDown(cfg.Notify.Brief)
 		disp := inbox.NewDispatcher(st, sender, cfg.Console.URL, logger)
 		if sender != nil {
 			logger.Info("notifications are sent to a channel", "service", sender.Service())

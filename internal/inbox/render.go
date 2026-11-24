@@ -38,6 +38,9 @@ func Render(n store.Notification) notify.Message {
 	case store.NotifyUptimeUp:
 		m.Title = origin + " is up"
 		m.Body = "Was down for " + lasted + ", since " + since + "."
+	case store.NotifyUptimeBlip:
+		m.Title = origin + " was down for " + lasted
+		m.Body = "Went down at " + since + " (" + n.Fields["reason"] + ") and came back up."
 	case store.NotifyCertFailing:
 		m.Title = "Certificate problem on " + origin
 		m.Body = "Failing since " + since + ": " + errText + "."
@@ -92,8 +95,8 @@ func Outgoing(n store.Notification, consoleURL string) notify.Message {
 }
 
 // Emoji is the sign a channel message about n starts with: 🔥 for
-// something failing or expired, ✅ for its recovery, ⏳ for an expiry
-// ahead, 🆕, 🗑️ and 📝 for forms, 🔔 for anything else.
+// something failing or expired, ✅ for its recovery, ⚠️ for an outage
+// over by the time it was told, ⏳ for an expiry ahead, 🆕, 🗑️ and 📝 for forms, 🔔 for anything else.
 func Emoji(n store.Notification) string {
 	switch n.Type {
 	case store.NotifyUptimeDown, store.NotifyUptimeStillDown,
@@ -102,6 +105,8 @@ func Emoji(n store.Notification) string {
 		return "🔥"
 	case store.NotifyUptimeUp, store.NotifyCertRecovered, store.NotifyDomainRecovered:
 		return "✅"
+	case store.NotifyUptimeBlip:
+		return "⚠️"
 	case store.NotifyCertExpiring, store.NotifyDomainExpiring:
 		if days, err := strconv.Atoi(n.Fields["days"]); err == nil && days < 0 {
 			return "🔥"
@@ -132,7 +137,7 @@ func Absolute(m notify.Message, consoleURL string) notify.Message {
 // notification, its form for a form one, the inbox otherwise.
 func Path(n store.Notification) string {
 	switch n.Type {
-	case store.NotifyUptimeDown, store.NotifyUptimeStillDown, store.NotifyUptimeUp,
+	case store.NotifyUptimeDown, store.NotifyUptimeStillDown, store.NotifyUptimeUp, store.NotifyUptimeBlip,
 		store.NotifyCertFailing, store.NotifyCertStillFailing, store.NotifyCertRecovered,
 		store.NotifyDomainFailing, store.NotifyDomainStillFailing, store.NotifyDomainRecovered,
 		store.NotifyCertExpiring, store.NotifyDomainExpiring:
@@ -184,14 +189,16 @@ func span(from, to string) string {
 	return duration(b.Sub(a))
 }
 
-// duration is d as "35m", "4h 12m" or "2d 3h": the two largest units
-// that apply, none for a negative one.
+// duration is d as "45s", "35m", "4h 12m" or "2d 3h": seconds under a
+// minute, else the two largest units that apply; none for a negative one.
 func duration(d time.Duration) string {
 	if d < 0 {
 		d = 0
 	}
 	mins := int(d / time.Minute)
 	switch {
+	case mins == 0:
+		return fmt.Sprintf("%ds", int(d/time.Second))
 	case mins < 60:
 		return fmt.Sprintf("%dm", mins)
 	case mins < 24*60:
