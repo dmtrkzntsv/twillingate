@@ -85,6 +85,10 @@ type NotifyConfig struct {
 	// Remind (NOTIFY_REMIND_HOURS, whole hours) is how often a state still
 	// failing is reminded of: 1 to 168, 4 unset.
 	Remind time.Duration
+	// Brief (NOTIFY_BRIEF_OUTAGE_SECONDS, whole seconds) is the outage, from
+	// the first failed check, short enough for one message instead of down
+	// and up: the down waits that long. 0 to 3600, 60 unset; 0 waits never.
+	Brief time.Duration
 }
 
 // retired are settings twillingate no longer reads, each with why. One
@@ -340,6 +344,7 @@ func FromEnv(lookup func(string) (string, bool)) (*Config, error) {
 		Notify: NotifyConfig{
 			URL:    e.str("NOTIFY_URL", ""),
 			Remind: time.Duration(e.num("NOTIFY_REMIND_HOURS", 4)) * time.Hour,
+			Brief:  time.Duration(e.num("NOTIFY_BRIEF_OUTAGE_SECONDS", 60)) * time.Second,
 		},
 	}
 	c.Console = ConsoleConfig{
@@ -505,6 +510,9 @@ func (c *Config) validate() error {
 	}
 	if c.Notify.Remind < time.Hour || c.Notify.Remind > 168*time.Hour {
 		return fmt.Errorf("config: NOTIFY_REMIND_HOURS must be between 1 and 168: %d", int(c.Notify.Remind/time.Hour))
+	}
+	if c.Notify.Brief < 0 || c.Notify.Brief > time.Hour {
+		return fmt.Errorf("config: NOTIFY_BRIEF_OUTAGE_SECONDS must be between 0 and 3600: %d", int(c.Notify.Brief/time.Second))
 	}
 	if c.Monitor.Timeout >= c.Monitor.Interval {
 		return fmt.Errorf("config: MONITOR_TIMEOUT (%d seconds) must be below MONITOR_INTERVAL (%d seconds)",

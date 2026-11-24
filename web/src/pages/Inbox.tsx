@@ -13,6 +13,7 @@ import {
   ServerCrashIcon,
   ShieldAlertIcon,
   ShieldCheckIcon,
+  ZapIcon,
   type LucideIcon,
 } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
@@ -33,11 +34,12 @@ const RECOVERED = 'text-emerald-600 dark:text-emerald-400'
 const EXPIRING = 'text-amber-600 dark:text-amber-400'
 const NEUTRAL = 'text-muted-foreground'
 
-/** Each type's icon and tone: failing red, recovered green, expiring amber, forms neutral. */
+/** Each type's icon and tone: failing red, recovered green, expiring and brief outages amber, forms neutral. */
 const LOOK: Record<NotificationType, { icon: LucideIcon; tone: string }> = {
   uptime_down: { icon: ServerCrashIcon, tone: FAILING },
   uptime_still_down: { icon: ServerCrashIcon, tone: FAILING },
   uptime_up: { icon: CircleCheckIcon, tone: RECOVERED },
+  uptime_blip: { icon: ZapIcon, tone: EXPIRING },
   cert_failing: { icon: ShieldAlertIcon, tone: FAILING },
   cert_still_failing: { icon: ShieldAlertIcon, tone: FAILING },
   cert_recovered: { icon: ShieldCheckIcon, tone: RECOVERED },

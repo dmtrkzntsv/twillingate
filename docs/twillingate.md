@@ -1092,7 +1092,7 @@ a draft dropped unapproved, and submissions to a form. Each is one item in
 the inbox (the console's, and `list_notifications`) and, with `NOTIFY_URL`
 set, the same title, body and link (the console page, `<CONSOLE_URL>/app/…`)
 sent to one channel, the title led there by an emoji (🔥 failing or
-expired, ✅ recovered, ⏳ expiring, 🆕, 🗑️ and 📝 for forms) and the project:
+expired, ✅ recovered, ⚠️ a brief outage already over, ⏳ expiring, 🆕, 🗑️ and 📝 for forms) and the project:
 `🔥 Blog · https://blog.example is down`, then `Down since 2026-11-07 08:00
 UTC (HTTP 503).`; channels: Telegram, ntfy, Slack, Discord, a JSON webhook or
 email, set up as in
@@ -1100,7 +1100,9 @@ email, set up as in
 field values are never in a notification.
 
 - **Failing states page once.** A site is down after 2 failed checks in a
-  row and up after 1 good one. A certificate fails when one was read and does
+  row and up after 1 good one. An outage over within
+  `NOTIFY_BRIEF_OUTAGE_SECONDS` (default 60) of its first failed check is
+  one `uptime_blip` instead: the down waits that long before it is sent. A certificate fails when one was read and does
   not verify, or none could be read for 24 hours; a domain lookup fails after
   24 hours of failed RDAP lookups. While a state fails, a reminder goes every
   `NOTIFY_REMIND_HOURS` (default 4), and the recovery says how long it lasted.
@@ -1140,9 +1142,10 @@ its own way. The examples are titles.
 
 | Type | Raised when |
 | --- | --- |
-| `uptime_down` | a site fails 2 checks in a row: `https://example.com is down` |
+| `uptime_down` | a site fails 2 checks in a row, and is still down `NOTIFY_BRIEF_OUTAGE_SECONDS` after the first: `https://example.com is down` |
 | `uptime_still_down` | a reminder, every `NOTIFY_REMIND_HOURS`, while it stays down |
 | `uptime_up` | it answers again: `https://example.com is up`, with how long it was down |
+| `uptime_blip` | it answered again within `NOTIFY_BRIEF_OUTAGE_SECONDS` of its first failed check, so no `uptime_down` went: `https://example.com was down for 45s` |
 | `cert_failing` | its certificate does not verify, or none could be read for 24 hours |
 | `cert_still_failing` | a reminder while the certificate keeps failing |
 | `cert_recovered` | a certificate reads without error again |
