@@ -173,8 +173,16 @@ func (t *Tracker) Uptime(ctx context.Context, projectID int64, origin string, up
 			return
 		}
 		if held(e) {
-			t.blip(ctx, k, e, at)
-			return
+			if at.Sub(e.Since) < t.brief {
+				t.blip(ctx, k, e, at)
+				return
+			}
+			// Past the window before a tick released it: the outage was not
+			// brief, so it is told as one, down and then up.
+			if !t.announce(ctx, k, e, store.NotifyUptimeDown, at, map[string]string{"reason": e.Reason}) {
+				return
+			}
+			e = t.states[k]
 		}
 		t.recover(ctx, k, e, store.NotifyUptimeUp, at)
 		// The outage kept the certificate's reminders back; its next one
@@ -218,13 +226,18 @@ func held(e entry) bool {
 
 // blip ends the held outage e of k with one uptime_blip, as recover ends a
 // failing one: the message goes with a row marked ended, then the row is
-// deleted.
+// deleted. When the write fails the outage is forgotten in memory all the
+// same, as recover forgets a pending streak: the site is up, so neither a
+// tick nor the next failure may carry it on. (A restart reads the row back;
+// its next good check ends it again.)
 func (t *Tracker) blip(ctx context.Context, k key, e entry, at time.Time) {
 	n := t.note(k, store.NotifyUptimeBlip, map[string]string{
 		"since": stampRFC(e.Since), "until": stampRFC(at), "reason": e.Reason}, at)
-	if t.put(ctx, k, entry{Ended: at}, n) {
-		t.del(ctx, k)
+	if !t.put(ctx, k, entry{Ended: at}, n) {
+		delete(t.states, k)
+		return
 	}
+	t.del(ctx, k)
 }
 
 // Cert records one certificate reading of origin. While the origin is
@@ -453,7 +466,7 @@ func (t *Tracker) streak(k key, at time.Time, gap time.Duration) entry {
 // later (a certificate or a lookup failing for a day), that multiple can
 // be minutes after the announcement, so the first reminder comes a whole
 // interval after it instead. Either way it never comes at once.
-func (t *Tracker) announce(ctx context.Context, k key, e entry, typ string, at time.Time, fields map[string]string) {
+func (t *Tracker) announce(ctx context.Context, k key, e entry, typ string, at time.Time, fields map[string]string) bool {
 	e.Failing = true
 	e.RemindedAt = at
 	if t.remind > 0 {
@@ -462,7 +475,7 @@ func (t *Tracker) announce(ctx context.Context, k key, e entry, typ string, at t
 		}
 	}
 	fields["since"] = stampRFC(e.Since)
-	t.put(ctx, k, e, t.note(k, typ, fields, at))
+	return t.put(ctx, k, e, t.note(k, typ, fields, at))
 }
 
 // recover ends the state of k: with typ when it was failing, silently
@@ -545,9 +558,11 @@ func latest(e entry) time.Time {
 	return l
 }
 
-// down reports whether origin's availability is failing in projectID.
+// down reports whether origin's availability is failing in projectID, or
+// down and held (HoldDown): either way its certificate waits.
 func (t *Tracker) down(projectID int64, origin string) bool {
-	return t.states[key{projectID, kindUptime, origin}].Failing
+	e := t.states[key{projectID, kindUptime, origin}]
+	return e.Failing || held(e)
 }
 
 func (t *Tracker) note(k key, typ string, fields map[string]string, at time.Time) *store.NewNotification {

@@ -108,3 +108,48 @@ func TestUptimeSingleFailureSilentWithWindow(t *testing.T) {
 	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(3*time.Minute), 0)
 	none(t, f)
 }
+
+// A good check past the window, before a tick released the held down, is
+// not a blip: the outage is told as down, then up.
+func TestUptimeRecoveryPastWindowBeforeTick(t *testing.T) {
+	f := newFake(monitor)
+	tr := briefTracker(f, time.Minute)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0, 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(40*time.Second), 0)
+	none(t, f)
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(90*time.Second), 0)
+	got := f.take()
+	if len(got) != 2 || got[0].Type != store.NotifyUptimeDown || got[1].Type != store.NotifyUptimeUp ||
+		got[1].Fields["since"] != rfc(t0) || got[1].Fields["until"] != rfc(t0.Add(90*time.Second)) {
+		t.Fatalf("sent %+v, want uptime_down then uptime_up", got)
+	}
+	if f.has(1, "uptime", origin) {
+		t.Fatal("state kept after recovery")
+	}
+}
+
+// A blip whose write fails is still the end of that outage: no tick and no
+// later single failure turns it into a down.
+func TestUptimeFailedBlipWriteForgetsOutage(t *testing.T) {
+	f := newFake(monitor)
+	tr := briefTracker(f, time.Minute)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0, 0)
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(10*time.Second), 0)
+	f.failPut = true
+	tr.Uptime(ctx, 1, origin, true, "", "", t0.Add(20*time.Second), 0)
+	f.failPut = false
+	none(t, f)
+	tr.Tick(ctx, t0.Add(2*time.Minute))
+	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(3*time.Minute), 0)
+	none(t, f)
+}
+
+// While a down is held its certificate waits, as it does while down.
+func TestCertWaitsWhileDownHeld(t *testing.T) {
+	f := newFake(monitor)
+	tr := briefTracker(f, time.Minute)
+	tr.Uptime(ctx, 1, origin, false, "tls", "", t0, 0)
+	tr.Uptime(ctx, 1, origin, false, "tls", "", t0.Add(10*time.Second), 0)
+	tr.Cert(ctx, 1, origin, inbox.CertReading{Read: true, Error: "x509: unknown authority"}, t0.Add(15*time.Second))
+	none(t, f)
+}
