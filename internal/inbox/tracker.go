@@ -226,15 +226,15 @@ func held(e entry) bool {
 
 // blip ends the held outage e of k with one uptime_blip, as recover ends a
 // failing one: the message goes with a row marked ended, then the row is
-// deleted. When the write fails the outage is forgotten in memory all the
-// same, as recover forgets a pending streak: the site is up, so neither a
-// tick nor the next failure may carry it on. (A restart reads the row back;
-// its next good check ends it again.)
+// deleted. When the write fails the outage ends in memory all the same,
+// as an ended row: the site is up, so neither a release nor the next
+// failure may carry it on, and the next Tick's prune deletes the stored
+// row before a restart can read it back as held.
 func (t *Tracker) blip(ctx context.Context, k key, e entry, at time.Time) {
 	n := t.note(k, store.NotifyUptimeBlip, map[string]string{
 		"since": stampRFC(e.Since), "until": stampRFC(at), "reason": e.Reason}, at)
 	if !t.put(ctx, k, entry{Ended: at}, n) {
-		delete(t.states, k)
+		t.states[k] = entry{Ended: at}
 		return
 	}
 	t.del(ctx, k)

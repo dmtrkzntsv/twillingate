@@ -140,6 +140,9 @@ func TestUptimeFailedBlipWriteForgetsOutage(t *testing.T) {
 	f.failPut = false
 	none(t, f)
 	tr.Tick(ctx, t0.Add(2*time.Minute))
+	if f.has(1, "uptime", origin) {
+		t.Fatal("the held row outlived the tick: a restart would read it back")
+	}
 	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(3*time.Minute), 0)
 	none(t, f)
 }
