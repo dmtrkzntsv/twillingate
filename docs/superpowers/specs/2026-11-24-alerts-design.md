@@ -41,13 +41,19 @@ Creating one by hand goes through a wizard with predefined templates.
 - "Different from normal" (anomaly against a seasonal baseline, standard
   deviations). A later stage; the change condition against the window a week
   earlier covers weekly patterns for now.
-- Alerts on trends, breakdowns, retention, paths or `sql` sources.
+- Alerts on trends, breakdowns ("any country's conversion drops"),
+  retention, paths or `sql` sources.
 - Editing an agent-made query in the console. The owner edits the name,
   condition, minimum volume, pause and archive; the query is read-only unless a
   template made it. A different query means asking an agent.
 - A cross-project list of alerts. Firings land in the global Inbox, which
   already shows every project.
 - Per-alert channels, recipients, quiet hours or severity.
+
+Compared with PostHog and Amplitude (2026-11-25), the owner kept the scope
+simple: anomaly detection, breakdown alerts, SQL alerts and per-alert
+destinations, which both products offer in some form, stay out of this
+version.
 - A weekly digest of metrics that moved.
 - Intraday evaluation of metric alerts (today's partial day). Only silence is
   checked within the day.
