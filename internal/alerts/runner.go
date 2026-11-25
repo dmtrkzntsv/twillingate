@@ -1,0 +1,234 @@
+package alerts
+
+import (
+	"context"
+	"log/slog"
+	"strconv"
+	"sync"
+	"time"
+
+	"github.com/dmtrkzntsv/twillingate/internal/inbox"
+	"github.com/dmtrkzntsv/twillingate/internal/shared/civil"
+	"github.com/dmtrkzntsv/twillingate/internal/store"
+)
+
+// The loop's timing: an alert is broken after maxFails failed tries in a
+// row, a failed metric evaluation is tried again retryEvery, and a
+// silence alert is evaluated every silenceEvery. A metric alert waits for
+// the day's pass when it signals at or after passHour, and runs without
+// it from fallbackHour.
+const (
+	maxFails     = 3
+	retryEvery   = time.Hour
+	silenceEvery = time.Hour
+	passHour     = 3
+	fallbackHour = 4
+)
+
+// RunnerStore is the slice of the store the loop uses.
+type RunnerStore interface {
+	ListEvaluableAlerts(ctx context.Context) ([]store.Alert, error)
+	RecordAlertEvaluation(ctx context.Context, r store.AlertResult) (bool, error)
+	ResetAlertsOfArchivedProjects(ctx context.Context) (int, error)
+}
+
+// Notifier is what the loop tells of each evaluation: *inbox.Tracker.
+type Notifier interface {
+	Alert(ctx context.Context, o inbox.AlertObservation)
+	KeepAlerts(ctx context.Context, live map[inbox.AlertKey]int64)
+}
+
+// Runner is the loop that evaluates alerts: a metric alert once a day
+// after the daily pass (one catch-up for yesterday after downtime), a
+// silence alert hourly, a check request within a minute, and a failed
+// evaluation again an hour later until it is broken. Each tick it also
+// tells the notifier which alerts are live, so it ends the states of the
+// others.
+type Runner struct {
+	st     RunnerStore
+	n      Notifier
+	logger *slog.Logger
+
+	evaluate func(context.Context, store.Alert, time.Time) Outcome
+	now      func() time.Time
+	step     time.Duration // between ticks
+
+	mu     sync.Mutex
+	passOn civil.Date // the day of the last pass signalled
+	passAt time.Time  // when it was signalled
+}
+
+// NewRunner returns the loop over st, evaluating with ev and telling n.
+func NewRunner(st RunnerStore, ev *Evaluator, n Notifier, logger *slog.Logger) *Runner {
+	return &Runner{st: st, n: n, logger: logger, evaluate: ev.Evaluate, now: time.Now, step: time.Minute}
+}
+
+// PassDone records that the daily pass of day ended, now. It never
+// blocks, so a pass ending after Run has stopped is harmless.
+func (r *Runner) PassDone(day civil.Date) {
+	at := r.now()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.passOn, r.passAt = day, at
+}
+
+// afterPass reports whether today's days are settled at now: today's
+// pass signalled at or after passHour, or it is fallbackHour or later. A
+// pass at boot, before passHour, does not count.
+func (r *Runner) afterPass(now time.Time) bool {
+	day := civil.DateOf(now)
+	if now.Hour() >= fallbackHour {
+		return true
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.passOn == day && !r.passAt.Before(day.Time().Add(passHour*time.Hour))
+}
+
+// Run ticks every minute until ctx ends.
+func (r *Runner) Run(ctx context.Context) {
+	t := time.NewTicker(r.step)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			r.Tick(ctx, r.now())
+		}
+	}
+}
+
+// Tick returns the alerts of archived projects to pending, tells the
+// notifier which alerts are live, and evaluates the ones due at now. A
+// failed list ends the tick before the notifier hears of it, which would
+// otherwise end every state.
+func (r *Runner) Tick(ctx context.Context, now time.Time) {
+	now = now.UTC()
+	if _, err := r.st.ResetAlertsOfArchivedProjects(ctx); err != nil {
+		r.logger.Error("alerts: reset the alerts of archived projects", "error", err)
+	}
+	list, err := r.st.ListEvaluableAlerts(ctx)
+	if err != nil {
+		r.logger.Error("alerts: list", "error", err)
+		return
+	}
+	stamp := stampOf(now)
+	afterPass := r.afterPass(now)
+	live := map[inbox.AlertKey]int64{}
+	var due []store.Alert
+	for _, a := range list {
+		if a.Paused || a.SnoozedUntil > stamp {
+			continue
+		}
+		live[inbox.AlertKey{ProjectID: a.ProjectID, ID: a.ID}] = a.Revision
+		if a.CheckPending() || scheduled(a, now, afterPass) || silenceDue(a, now) {
+			due = append(due, a)
+		}
+	}
+	r.n.KeepAlerts(ctx, live)
+	for _, a := range due {
+		if ctx.Err() != nil {
+			return
+		}
+		r.evaluateOne(ctx, a, now, scheduled(a, now, afterPass))
+	}
+}
+
+// scheduled reports whether metric alert a is due at now by its schedule:
+// not yet evaluated through yesterday, not waiting to retry, and the days
+// settled (afterPass).
+func scheduled(a store.Alert, now time.Time, afterPass bool) bool {
+	return a.Def.Condition.Type != condSilence && afterPass &&
+		a.LastDay < civil.DateOf(now).AddDays(-1).String() &&
+		(a.RetryAt == "" || a.RetryAt <= stampOf(now))
+}
+
+// silenceDue reports whether silence alert a is due at now: never
+// evaluated, or last evaluated silenceEvery ago or more.
+func silenceDue(a store.Alert, now time.Time) bool {
+	if a.Def.Condition.Type != condSilence {
+		return false
+	}
+	if a.LastEvaluatedAt == "" {
+		return true
+	}
+	last, err := time.Parse(time.RFC3339, a.LastEvaluatedAt)
+	return err != nil || !now.Before(last.Add(silenceEvery))
+}
+
+// evaluateOne evaluates a at now, records it and, when the record applied, tells
+// the notifier. onSchedule is whether this is a's scheduled evaluation
+// of its days, which then counts as done (last_day).
+func (r *Runner) evaluateOne(ctx context.Context, a store.Alert, now time.Time, onSchedule bool) {
+	o := r.evaluate(ctx, a, now)
+	if ctx.Err() != nil {
+		return
+	}
+	if o.At.IsZero() {
+		o.At = now
+	}
+	stamp := stampOf(now)
+	res := store.AlertResult{
+		AlertID:  a.ID,
+		Revision: a.Revision,
+		Eval: store.AlertEvaluation{AlertID: a.ID, At: stamp, From: dayOf(o.From), To: dayOf(o.To),
+			Value: o.Value, Compare: o.Compare, Volume: o.Volume, Outcome: o.Outcome},
+	}
+	if o.Outcome != store.AlertOK && o.Outcome != store.AlertBreached {
+		res.Eval.Error = o.Reason
+	}
+	if onSchedule {
+		res.LastDay = dayOf(o.To)
+	}
+	outcome := o.Outcome
+	if o.Outcome == store.AlertError {
+		res.Fails = a.Fails + 1
+		res.RetryAt = stampOf(now.Add(retryEvery))
+		if res.Fails < maxFails {
+			res.LastDay = "" // the day is tried again at RetryAt
+		} else {
+			outcome = store.AlertBroken
+			res.State = store.AlertBroken
+			res.Reason = sentence("failed " + strconv.Itoa(res.Fails) + " times: " + o.Reason)
+		}
+	} else {
+		res.State, res.Reason = o.Outcome, o.Reason
+	}
+	applied, err := r.st.RecordAlertEvaluation(ctx, res)
+	if err != nil {
+		r.logger.Error("alerts: record an evaluation", "alert", a.ID, "error", err)
+		return
+	}
+	if !applied || res.State == "" {
+		return
+	}
+	obs := inbox.AlertObservation{
+		Key:      inbox.AlertKey{ProjectID: a.ProjectID, ID: a.ID},
+		Revision: a.Revision,
+		Name:     a.Name,
+		Daily:    a.Def.Condition.Type != condSilence,
+		Day:      dayOf(o.To),
+		Outcome:  outcome,
+		At:       now,
+	}
+	if outcome == store.AlertBroken {
+		obs.Fields = map[string]string{"reason": res.Reason}
+	} else if p, err := Parse(a.Def); err == nil {
+		value, detail := message(p, o)
+		obs.Fields = map[string]string{"value": value, "detail": detail}
+	}
+	r.n.Alert(ctx, obs)
+}
+
+// stampOf is t as the store keeps times: RFC 3339 in UTC, whole seconds,
+// so that strings compare as times.
+func stampOf(t time.Time) string { return t.UTC().Format(time.RFC3339) }
+
+// dayOf is d as YYYY-MM-DD, "" for the zero date (silence).
+func dayOf(d civil.Date) string {
+	if d == (civil.Date{}) {
+		return ""
+	}
+	return d.String()
+}
