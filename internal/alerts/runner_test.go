@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"maps"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -519,12 +520,20 @@ func TestRunnerSkipsPausedAndSnoozed(t *testing.T) {
 }
 
 // TestRunnerPassDoneFromAnotherGoroutine: the pass signals from the jobs
-// goroutine while the loop ticks (run under -race).
+// goroutine while the loop ticks (run under -race), and the metric alert
+// it settles is evaluated once, by whichever tick first sees the signal.
 func TestRunnerPassDoneFromAnotherGoroutine(t *testing.T) {
+	ctx := context.Background()
 	h := newRunHarness(t)
-	h.clock = runAt(3, 30)
+	h.clock = runAt(0, 0)
+	a := h.metric(t, "signups")
+	h.clearChecks(t)
+	var evaluated atomic.Int32
 	r := NewRunner(h.st, nil, h.n, slog.New(slog.DiscardHandler))
-	r.evaluate = func(context.Context, store.Alert, time.Time) Outcome { return Outcome{Outcome: store.AlertOK} }
+	r.evaluate = func(_ context.Context, a store.Alert, now time.Time) Outcome {
+		evaluated.Add(1)
+		return outcomeAt(a, now, store.AlertOK, "")
+	}
 	r.now = func() time.Time { return runAt(3, 30) }
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -535,9 +544,16 @@ func TestRunnerPassDoneFromAnotherGoroutine(t *testing.T) {
 		}
 	}()
 	for range 20 {
-		r.Tick(context.Background(), runAt(3, 31))
+		r.Tick(ctx, runAt(3, 31))
 	}
 	wg.Wait()
+	r.Tick(ctx, runAt(3, 31)) // the pass has surely signalled by now
+	if n := evaluated.Load(); n != 1 {
+		t.Fatalf("evaluated %d times, want once", n)
+	}
+	if got := h.get(t, a); got.LastDay != yesterday.String() {
+		t.Fatalf("last day %q, want %s", got.LastDay, yesterday)
+	}
 }
 
 func TestRunnerRunTicksUntilCancelled(t *testing.T) {
