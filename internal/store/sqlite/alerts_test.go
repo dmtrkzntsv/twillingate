@@ -234,6 +234,36 @@ func TestPausingEndsTheCheckRequest(t *testing.T) {
 	}
 }
 
+// TestClearingAnExpiredSnoozeChangesNothing: a snooze at or before now
+// is none, so clearing it writes nothing (no reset, no new revision, no
+// audit), while a new snooze over it is a change.
+func TestClearingAnExpiredSnoozeChangesNothing(t *testing.T) {
+	db := newTestDB(t)
+	p := monitorProject(t, db, "p")
+	a := newAlert(t, db, p, "x")
+	until := alertNow.Add(time.Hour)
+	updAlert(t, db, p, a.ID, store.AlertEdit{SnoozedUntil: ptr(alertTime(until))}, alertNow)
+	execAll(t, db, `UPDATE alerts SET state='breached', last_value=3 WHERE id=`+strconv.FormatInt(a.ID, 10))
+	snoozed, err := db.GetAlert(context.Background(), p, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := len(auditRows(t, db, "alert.update"))
+
+	for _, at := range []time.Time{until, until.Add(time.Hour)} {
+		r := updAlert(t, db, p, a.ID, store.AlertEdit{SnoozedUntil: ptr("")}, at)
+		if !reflect.DeepEqual(r, snoozed) || len(auditRows(t, db, "alert.update")) != n {
+			t.Errorf("clearing a snooze over at %s wrote: %+v, audits %d -> %d", alertTime(at), r, n, len(auditRows(t, db, "alert.update")))
+		}
+	}
+
+	later := until.Add(time.Hour)
+	r := updAlert(t, db, p, a.ID, store.AlertEdit{SnoozedUntil: ptr(alertTime(later.Add(time.Hour)))}, later)
+	if r.Revision != snoozed.Revision+1 || r.State != store.AlertPending || len(auditRows(t, db, "alert.update")) != n+1 {
+		t.Errorf("a new snooze over an expired one: %+v", r)
+	}
+}
+
 func TestArchiveRestoreAlert(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()

@@ -1263,7 +1263,7 @@ archived project is not evaluated, and restoring the project resumes it from
 
 **Pause, snooze, edit.** `paused: true` stops an alert until `paused: false`;
 `snoozed_until`, a time ahead, stops it until then, and it resumes on its own
-(`null` wakes it at once). Neither evaluates nor notifies, and both end a
+(`null` wakes it at once, and changes nothing once the snooze is over). Neither evaluates nor notifies, and both end a
 breach without a recovery, as archiving does. Changing the query, read,
 condition, window or minimum volume ends the state without a notification,
 sets it `pending` and requests a check, so the next firing is about the new

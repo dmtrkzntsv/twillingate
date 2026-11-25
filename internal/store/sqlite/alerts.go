@@ -189,7 +189,8 @@ const updateAlertRow = `UPDATE alerts SET name=?, definition=?, paused=?, snooze
 
 // UpdateAlert merges the edit into the alert and audits what changed. A
 // change to the definition, pause or snooze resets the alert to pending and
-// bumps its revision; a rename alone does neither.
+// bumps its revision; a rename alone does neither. A snooze already over
+// counts as none, so clearing it is no change.
 func (d *DB) UpdateAlert(ctx context.Context, projectID, id int64, e store.AlertEdit, now time.Time, au store.AuditEntry) (store.Alert, error) {
 	var out store.Alert
 	at := alertTime(now)
@@ -230,7 +231,13 @@ func (d *DB) UpdateAlert(ctx context.Context, projectID, id int64, e store.Alert
 			request = request || !next.Paused
 			changed = append(changed, fmt.Sprintf("paused=%t", next.Paused))
 		}
-		if e.SnoozedUntil != nil && *e.SnoozedUntil != cur.SnoozedUntil {
+		// A snooze at or before now is over (alertEvaluable): clearing it
+		// changes nothing.
+		snoozed := cur.SnoozedUntil
+		if snoozed != "" && snoozed <= at {
+			snoozed = ""
+		}
+		if e.SnoozedUntil != nil && *e.SnoozedUntil != snoozed {
 			next.SnoozedUntil, reset = *e.SnoozedUntil, true
 			request = request || next.SnoozedUntil == ""
 			changed = append(changed, "snoozed_until="+next.SnoozedUntil)
