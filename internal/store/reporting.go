@@ -132,6 +132,7 @@ type PurgeResult struct {
 	Projects, Dashboards, Widgets []int64
 	WidgetShares                  []string
 	Forms                         []string
+	Alerts                        []int64
 	Submissions                   int // archived submissions purged on their own
 }
 

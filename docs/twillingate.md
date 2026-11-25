@@ -79,8 +79,8 @@ but a collector can answer on several hostnames; ask which one this site uses
 and change the snippet's `src`. The SDK posts to the origin it was loaded from.
 There is no rename (`project update -name` is one) and no delete over the API —
 deletion needs the CLI. Archiving is reversible with `restore_project`, but not
-forever: the daily pass deletes an archived project, dashboard, widget, form
-or form submission (and, for a project, all its data) once it has been archived longer than
+forever: the daily pass deletes an archived project, dashboard, widget, form,
+form submission or alert (and, for a project, all its data; for an alert, its evaluations) once it has been archived longer than
 `RETENTION_ARCHIVED_DAYS` (default 30; 0 keeps archived items forever).
 
 ```bash

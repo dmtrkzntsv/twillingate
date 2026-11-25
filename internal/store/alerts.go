@@ -84,3 +84,25 @@ type AlertEdit struct {
 	Paused       *bool
 	SnoozedUntil *string // "" clears
 }
+
+// AlertEvaluation is one evaluation in an alert's history. From and To are
+// the days it read ("" for silence); Value, Compare and Volume are nil where
+// the evaluation had none.
+type AlertEvaluation struct {
+	ID, AlertID            int64
+	At                     string
+	From, To               string
+	Value, Compare, Volume *float64
+	Outcome, Error         string
+}
+
+// AlertResult is one evaluation and what it does to the alert's row.
+type AlertResult struct {
+	AlertID, Revision int64           // written only while the alert is live at this revision
+	Eval              AlertEvaluation // stored in the history; Eval.At becomes last_evaluated_at
+	State             string          // the new state; "" keeps it (a failed try not yet broken)
+	Reason            string          // written with State
+	LastDay           string          // "" keeps last_day
+	Fails             int
+	RetryAt           string
+}

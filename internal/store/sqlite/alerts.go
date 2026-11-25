@@ -359,3 +359,149 @@ func (d *DB) RequestAlertCheck(ctx context.Context, projectID, id int64, now tim
 	})
 	return out, requested, err
 }
+
+// RecordAlertEvaluation stores the evaluation and writes its outcome to the
+// alert's row, in one transaction. A State of "" leaves the state, reason and
+// last value alone, and a LastDay of "" leaves last_day. It reports false,
+// writing nothing, when the alert was edited (another revision), archived or
+// is of an archived project since the evaluation began.
+func (d *DB) RecordAlertEvaluation(ctx context.Context, r store.AlertResult) (bool, error) {
+	var ok bool
+	err := d.tx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `UPDATE alerts SET
+			state = CASE WHEN ?1 <> '' THEN ?1 ELSE state END,
+			reason = CASE WHEN ?1 <> '' THEN ?2 ELSE reason END,
+			last_value = CASE WHEN ?1 <> '' THEN ?3 ELSE last_value END,
+			last_evaluated_at = ?4,
+			last_day = CASE WHEN ?5 <> '' THEN ?5 ELSE last_day END,
+			fails = ?6, retry_at = ?7
+			WHERE id = ?8 AND revision = ?9 AND archived_at IS NULL
+			AND project_id IN (SELECT id FROM projects WHERE archived_at IS NULL)`,
+			r.State, r.Reason, r.Eval.Value, r.Eval.At, r.LastDay, r.Fails, r.RetryAt, r.AlertID, r.Revision)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil || n == 0 {
+			return err
+		}
+		e := r.Eval
+		if _, err := tx.ExecContext(ctx, `INSERT INTO alert_evaluations (alert_id, at, day_from, day_to, value, compare, volume, outcome, error)
+			VALUES (?,?,?,?,?,?,?,?,?)`, r.AlertID, e.At, e.From, e.To, e.Value, e.Compare, e.Volume, e.Outcome, e.Error); err != nil {
+			return err
+		}
+		ok = true
+		return nil
+	})
+	return ok, err
+}
+
+const evalCols = `id, alert_id, at, day_from, day_to, value, compare, volume, outcome, error`
+
+func scanEvaluation(s rowScanner) (store.AlertEvaluation, error) {
+	var e store.AlertEvaluation
+	var v, c, vol sql.NullFloat64
+	if err := s.Scan(&e.ID, &e.AlertID, &e.At, &e.From, &e.To, &v, &c, &vol, &e.Outcome, &e.Error); err != nil {
+		return e, err
+	}
+	for _, p := range []struct {
+		n   sql.NullFloat64
+		dst **float64
+	}{{v, &e.Value}, {c, &e.Compare}, {vol, &e.Volume}} {
+		if p.n.Valid {
+			f := p.n.Float64
+			*p.dst = &f
+		}
+	}
+	return e, nil
+}
+
+func scanEvaluations(rows *sql.Rows) ([]store.AlertEvaluation, error) {
+	defer rows.Close()
+	var out []store.AlertEvaluation
+	for rows.Next() {
+		e, err := scanEvaluation(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// ListAlertEvaluations lists the alert's evaluations newest first, at most
+// limit, those with an id below before when it is > 0.
+func (d *DB) ListAlertEvaluations(ctx context.Context, alertID int64, limit int, before int64) ([]store.AlertEvaluation, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT `+evalCols+` FROM alert_evaluations
+		WHERE alert_id=? AND (?<=0 OR id<?) ORDER BY id DESC LIMIT ?`, alertID, before, before, limit)
+	if err != nil {
+		return nil, err
+	}
+	return scanEvaluations(rows)
+}
+
+// RecentAlertEvaluations maps each of the alerts to its n newest
+// evaluations, newest first. An alert with none is absent.
+func (d *DB) RecentAlertEvaluations(ctx context.Context, ids []int64, n int) (map[int64][]store.AlertEvaluation, error) {
+	out := map[int64][]store.AlertEvaluation{}
+	if len(ids) == 0 {
+		return out, nil
+	}
+	args := append(toArgs(ids), n)
+	rows, err := d.db.QueryContext(ctx, `SELECT `+evalCols+` FROM (
+		SELECT `+evalCols+`, ROW_NUMBER() OVER (PARTITION BY alert_id ORDER BY id DESC) AS rn
+		FROM alert_evaluations WHERE alert_id IN (`+placeholders(len(ids))+`))
+		WHERE rn <= ? ORDER BY alert_id, id DESC`, args...)
+	if err != nil {
+		return nil, err
+	}
+	list, err := scanEvaluations(rows)
+	for _, e := range list {
+		out[e.AlertID] = append(out[e.AlertID], e)
+	}
+	return out, err
+}
+
+// ListEvaluableAlerts lists the live alerts of live projects, paused and
+// snoozed ones included: the runner decides what to do with those.
+func (d *DB) ListEvaluableAlerts(ctx context.Context) ([]store.Alert, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT `+alertCols+` FROM alerts WHERE archived_at IS NULL
+		AND project_id IN (SELECT id FROM projects WHERE archived_at IS NULL) ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []store.Alert
+	for rows.Next() {
+		a, err := scanAlert(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ResetAlertsOfArchivedProjects returns every alert of an archived project
+// that is not pending to pending, as an edit does, so a restored project
+// starts clean. Unaudited, like the runner's other writes.
+func (d *DB) ResetAlertsOfArchivedProjects(ctx context.Context) (int, error) {
+	res, err := d.db.ExecContext(ctx, `UPDATE alerts SET state='pending', reason='', last_value=NULL, last_day='', fails=0, retry_at=''
+		WHERE archived_at IS NULL AND state != 'pending'
+		AND project_id IN (SELECT id FROM projects WHERE archived_at IS NOT NULL)`)
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}
+
+// PruneAlertEvaluations deletes the evaluations made before the given time.
+func (d *DB) PruneAlertEvaluations(ctx context.Context, before time.Time) (int, error) {
+	res, err := d.db.ExecContext(ctx, `DELETE FROM alert_evaluations WHERE at < ?`, alertTime(before))
+	if err != nil {
+		return 0, err
+	}
+	n, err := res.RowsAffected()
+	return int(n), err
+}

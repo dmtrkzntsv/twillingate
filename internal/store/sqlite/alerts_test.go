@@ -337,3 +337,224 @@ func TestArchivingProjectEndsAlertChecks(t *testing.T) {
 		t.Errorf("other project's request was cleared")
 	}
 }
+
+func evalOf(a store.Alert, at string, v float64) store.AlertEvaluation {
+	return store.AlertEvaluation{AlertID: a.ID, At: at, From: "2026-11-24", To: "2026-11-24", Value: &v, Outcome: store.AlertBreached}
+}
+
+func alertRow(t *testing.T, db *DB, p, id int64) store.Alert {
+	t.Helper()
+	a, err := db.GetAlert(context.Background(), p, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
+}
+
+func TestRecordAlertEvaluation(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	p := monitorProject(t, db, "p")
+	a := newAlert(t, db, p, "x")
+	at := "2026-11-25T10:05:00Z"
+	ok, err := db.RecordAlertEvaluation(ctx, store.AlertResult{AlertID: a.ID, Revision: a.Revision, Eval: evalOf(a, at, 9),
+		State: store.AlertBreached, Reason: "9 > 5", LastDay: "2026-11-24", Fails: 0, RetryAt: ""})
+	if err != nil || !ok {
+		t.Fatalf("record = %v, %v", ok, err)
+	}
+	got := alertRow(t, db, p, a.ID)
+	if got.State != store.AlertBreached || got.Reason != "9 > 5" || got.LastValue == nil || *got.LastValue != 9 ||
+		got.LastEvaluatedAt != at || got.LastDay != "2026-11-24" || got.Fails != 0 || got.RetryAt != "" {
+		t.Fatalf("row = %+v", got)
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM alert_evaluations WHERE alert_id=?`, a.ID); n != 1 {
+		t.Fatalf("history rows = %d", n)
+	}
+
+	// State "" keeps state, reason, last_value and last_day, writes the rest.
+	at2 := "2026-11-25T11:05:00Z"
+	failed := store.AlertEvaluation{AlertID: a.ID, At: at2, Outcome: store.AlertError, Error: "boom"}
+	ok, err = db.RecordAlertEvaluation(ctx, store.AlertResult{AlertID: a.ID, Revision: a.Revision, Eval: failed,
+		Fails: 1, RetryAt: "2026-11-25T12:05:00Z"})
+	if err != nil || !ok {
+		t.Fatalf("record failed try = %v, %v", ok, err)
+	}
+	got = alertRow(t, db, p, a.ID)
+	if got.State != store.AlertBreached || got.LastValue == nil || *got.LastValue != 9 || got.LastDay != "2026-11-24" ||
+		got.Fails != 1 || got.RetryAt != "2026-11-25T12:05:00Z" || got.LastEvaluatedAt != at2 {
+		t.Fatalf("row after failed try = %+v", got)
+	}
+	ev, err := db.ListAlertEvaluations(ctx, a.ID, 10, 0)
+	if err != nil || len(ev) != 2 || ev[0].Error != "boom" || ev[0].Value != nil || ev[1].Value == nil || *ev[1].Value != 9 {
+		t.Fatalf("history = %+v, %v", ev, err)
+	}
+}
+
+func TestRecordAlertEvaluationRefusals(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	p := monitorProject(t, db, "p")
+	stale := newAlert(t, db, p, "stale")
+	updAlert(t, db, p, stale.ID, store.AlertEdit{Def: ptr(alertDef(3))}, alertNow)
+	archived := newAlert(t, db, p, "archived")
+	if _, err := db.SetAlertArchived(ctx, p, archived.ID, true, 50, alertNow, alertAudit("alert.archive")); err != nil {
+		t.Fatal(err)
+	}
+	q := monitorProject(t, db, "q")
+	inArchivedProject := newAlert(t, db, q, "y")
+	if err := db.SetProjectArchived(ctx, q, true, alertAudit("project.archive")); err != nil {
+		t.Fatal(err)
+	}
+	for name, a := range map[string]store.Alert{"stale revision": stale, "archived alert": archived, "archived project": inArchivedProject} {
+		rev := a.Revision
+		ok, err := db.RecordAlertEvaluation(ctx, store.AlertResult{AlertID: a.ID, Revision: rev, Eval: evalOf(a, alertAt, 1), State: store.AlertOK})
+		if err != nil || ok {
+			t.Errorf("%s: record = %v, %v; want false", name, ok, err)
+		}
+		if n := countRows(t, db, `SELECT COUNT(*) FROM alert_evaluations WHERE alert_id=?`, a.ID); n != 0 {
+			t.Errorf("%s: %d history rows written", name, n)
+		}
+	}
+}
+
+func TestListAlertEvaluationsPages(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	p := monitorProject(t, db, "p")
+	a := newAlert(t, db, p, "x")
+	for i := range 5 {
+		if ok, err := db.RecordAlertEvaluation(ctx, store.AlertResult{AlertID: a.ID, Revision: a.Revision,
+			Eval: evalOf(a, "2026-11-25T10:0"+strconv.Itoa(i)+":00Z", float64(i))}); err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+	}
+	ids := func(es []store.AlertEvaluation) []int64 {
+		var out []int64
+		for _, e := range es {
+			out = append(out, e.ID)
+		}
+		return out
+	}
+	first, err := db.ListAlertEvaluations(ctx, a.ID, 2, 0)
+	if err != nil || !reflect.DeepEqual(ids(first), []int64{5, 4}) {
+		t.Fatalf("first page = %v, %v", ids(first), err)
+	}
+	next, err := db.ListAlertEvaluations(ctx, a.ID, 2, 4)
+	if err != nil || !reflect.DeepEqual(ids(next), []int64{3, 2}) {
+		t.Fatalf("second page = %v, %v", ids(next), err)
+	}
+}
+
+func TestRecentAlertEvaluations(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	p := monitorProject(t, db, "p")
+	var as []store.Alert
+	for _, n := range []string{"a", "b", "c"} {
+		as = append(as, newAlert(t, db, p, n))
+	}
+	for i := range 3 {
+		for _, a := range as[:2] {
+			if ok, err := db.RecordAlertEvaluation(ctx, store.AlertResult{AlertID: a.ID, Revision: a.Revision,
+				Eval: evalOf(a, "2026-11-25T10:0"+strconv.Itoa(i)+":00Z", float64(i))}); err != nil || !ok {
+				t.Fatal(ok, err)
+			}
+		}
+	}
+	got, err := db.RecentAlertEvaluations(ctx, []int64{as[0].ID, as[1].ID, as[2].ID}, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, has := got[as[2].ID]; has || len(got) != 2 {
+		t.Fatalf("alert without evaluations is present: %v", got)
+	}
+	for _, a := range as[:2] {
+		es := got[a.ID]
+		if len(es) != 2 || *es[0].Value != 2 || *es[1].Value != 1 {
+			t.Errorf("alert %d: %+v", a.ID, es)
+		}
+	}
+	if none, err := db.RecentAlertEvaluations(ctx, nil, 2); err != nil || len(none) != 0 {
+		t.Errorf("no ids = %v, %v", none, err)
+	}
+}
+
+func TestListEvaluableAlerts(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	p := monitorProject(t, db, "p")
+	keep := newAlert(t, db, p, "keep")
+	paused := newAlert(t, db, p, "paused")
+	updAlert(t, db, p, paused.ID, store.AlertEdit{Paused: ptr(true)}, alertNow)
+	snoozed := newAlert(t, db, p, "snoozed")
+	updAlert(t, db, p, snoozed.ID, store.AlertEdit{SnoozedUntil: ptr("2026-12-01T00:00:00Z")}, alertNow)
+	gone := newAlert(t, db, p, "gone")
+	if _, err := db.SetAlertArchived(ctx, p, gone.ID, true, 50, alertNow, alertAudit("alert.archive")); err != nil {
+		t.Fatal(err)
+	}
+	q := monitorProject(t, db, "q")
+	newAlert(t, db, q, "of archived project")
+	if err := db.SetProjectArchived(ctx, q, true, alertAudit("project.archive")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.ListEvaluableAlerts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, a := range got {
+		names = append(names, a.Name)
+	}
+	if !reflect.DeepEqual(names, []string{"keep", "paused", "snoozed"}) || got[0].ID != keep.ID {
+		t.Fatalf("evaluable = %v", names)
+	}
+}
+
+func TestResetAlertsOfArchivedProjects(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	p := monitorProject(t, db, "p")
+	q := monitorProject(t, db, "q")
+	mine, other := newAlert(t, db, p, "x"), newAlert(t, db, q, "y")
+	for _, a := range []store.Alert{mine, other} {
+		if ok, err := db.RecordAlertEvaluation(ctx, store.AlertResult{AlertID: a.ID, Revision: a.Revision, Eval: evalOf(a, alertAt, 9),
+			State: store.AlertBreached, Reason: "r", LastDay: "2026-11-24", Fails: 1, RetryAt: "x"}); err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+	}
+	if err := db.SetProjectArchived(ctx, p, true, alertAudit("project.archive")); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := db.ResetAlertsOfArchivedProjects(ctx); err != nil || n != 1 {
+		t.Fatalf("reset = %d, %v; want 1", n, err)
+	}
+	got := alertRow(t, db, p, mine.ID)
+	if got.State != store.AlertPending || got.LastDay != "" || got.Reason != "" || got.LastValue != nil || got.Fails != 0 || got.RetryAt != "" {
+		t.Errorf("archived project's alert = %+v", got)
+	}
+	if o := alertRow(t, db, q, other.ID); o.State != store.AlertBreached || o.LastDay == "" {
+		t.Errorf("live project's alert touched: %+v", o)
+	}
+	if n, err := db.ResetAlertsOfArchivedProjects(ctx); err != nil || n != 0 {
+		t.Errorf("second reset = %d, %v; want 0", n, err)
+	}
+}
+
+func TestPruneAlertEvaluations(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	p := monitorProject(t, db, "p")
+	a := newAlert(t, db, p, "x")
+	for _, at := range []string{"2026-01-01T00:00:00Z", "2026-01-02T00:00:00Z", "2026-03-01T00:00:00Z"} {
+		if ok, err := db.RecordAlertEvaluation(ctx, store.AlertResult{AlertID: a.ID, Revision: a.Revision, Eval: evalOf(a, at, 1)}); err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+	}
+	n, err := db.PruneAlertEvaluations(ctx, time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC))
+	if err != nil || n != 2 {
+		t.Fatalf("pruned = %d, %v; want 2", n, err)
+	}
+	if left := countRows(t, db, `SELECT COUNT(*) FROM alert_evaluations`); left != 1 {
+		t.Errorf("left = %d", left)
+	}
+}
