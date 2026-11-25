@@ -553,6 +553,23 @@ func TestEvaluateAttributeRuleIsBroken(t *testing.T) {
 	}
 }
 
+// TestEvaluateAttributeRuleOnViewsIsNotBroken: attribute rules cover
+// the product and measures rows only, so one on a key an alert over views
+// or checks names leaves it alone.
+func TestEvaluateAttributeRuleOnViewsIsNotBroken(t *testing.T) {
+	for _, table := range []string{"views", "checks"} {
+		h := newEvalHarness()
+		h.projects.attrRenames = map[string]string{"plan": "tier"}
+		h.projects.attrBlocked = map[string]bool{"plan": true}
+		h.presence.sent["attr_plan"] = true
+		a := alertOf(t, Input{Condition: below5, Query: &native.Query{Kind: "stat", Table: table,
+			Metrics: []native.Metric{{Op: "count"}},
+			Where:   []native.Filter{{Column: "attr_plan", Op: "eq", Values: []string{"pro"}}}}})
+		h.eng.answer("stat", yesterday, yesterday, statResult("count", "9"))
+		wantOutcome(t, h.evaluate(a), store.AlertOK, "")
+	}
+}
+
 func TestEvaluateInvalidQueryIsBroken(t *testing.T) {
 	h := newEvalHarness()
 	h.eng.err = fmt.Errorf("%w: where[0].values: \"x\" is not a day.", native.ErrInvalid)

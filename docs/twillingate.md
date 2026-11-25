@@ -1250,8 +1250,9 @@ so an alert can be set up before a launch. What only a `never` filter names
 need not have been sent (no one having done it is what the filter asks), so
 it neither warns nor reads `no_data`; event and attribute rules apply to it
 as to the rest. An event an event rule renames,
-merges or blocks, or an `attr_<key>` an attribute rule does, is refused at
-save, naming its new name, and turns a saved alert `broken`, as does a query
+merges or blocks, or an `attr_<key>` an attribute rule does (over
+`product`, `measures` or `events`; the rules never cover `views` or
+`checks`), is refused at save, naming its new name, and turns a saved alert `broken`, as does a query
 the engine no longer accepts; a runtime failure (a timeout, a busy engine, a
 file gone mid-read, a failed check of what the project has sent) is tried
 again an hour later, and is `broken` after 3 failed tries in a row.

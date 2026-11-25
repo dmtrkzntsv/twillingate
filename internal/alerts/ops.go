@@ -361,9 +361,11 @@ func (o *Ops) refuseRuleHit(ctx context.Context, projectID int64, p Parsed) erro
 	return invalid("`%s` is blocked by an %s rule, so none is stored; remove the rule or alert on another %s", h.name, h.kind(), h.kind())
 }
 
-// ruleFamilies are the families whose event rules apply to an event a
-// query reads from family f: its own for product and measures, both for
-// the events table (""), none for views and checks, which have no rules.
+// ruleFamilies are the families whose rules apply to what a query reads
+// from family f: its own for product and measures, both for the events
+// table (""), none for views and checks, which have no rules. Attribute
+// rules, which cover product and measures rows whatever the family,
+// apply wherever this is not empty.
 func ruleFamilies(f store.Family) []store.Family {
 	switch f {
 	case store.FamilyProduct, store.FamilyMeasures:
@@ -392,11 +394,14 @@ func (h hit) kind() string {
 
 // ruleHit is the first event p's query names that an event rule renames
 // or blocks, or attribute an attribute rule does; ok is false when none
-// is. $ events take no rules. Saving refuses such an alert; evaluating
-// reports it broken.
+// is. $ events take no rules, nor does anything views or checks hold.
+// Saving refuses such an alert; evaluating reports it broken.
 func ruleHit(ctx context.Context, projects Projects, projectID int64, p Parsed) (h hit, ok bool) {
 	for _, r := range p.References() {
 		if r.Attr != "" {
+			if len(ruleFamilies(r.Family)) == 0 {
+				continue
+			}
 			if to, blocked := projects.ResolveAttribute(ctx, projectID, r.Attr); to != r.Attr || blocked {
 				return hit{name: "attr_" + r.Attr, to: "attr_" + to, blocked: blocked, attr: true}, true
 			}

@@ -223,6 +223,32 @@ func TestCreateAlertRefusesRenamedAttribute(t *testing.T) {
 	mustInvalid(t, err, "`signup` is now `sign_up` (an event rule)")
 }
 
+// TestAttributeRulesOnlyWhereTheyApply: attribute rules cover the
+// product and measures rows only, so an alert over views or checks
+// naming a key a rule renames or blocks is saved and previewed, while one
+// over product, measures or every family (events) is refused.
+func TestAttributeRulesOnlyWhereTheyApply(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.presence.sent["attr_plan"] = true
+	h.projects.attrRenames = map[string]string{"plan": "tier"}
+	h.projects.attrBlocked = map[string]bool{"tier": true}
+	on := func(table string) Input {
+		return Input{Name: "on " + table, Condition: below5, Query: &native.Query{Kind: "stat", Table: table,
+			Metrics: []native.Metric{{Op: "count"}},
+			Where:   []native.Filter{{Column: "attr_plan", Op: "eq", Values: []string{"pro"}}}}}
+	}
+	for _, table := range []string{"views", "checks"} {
+		if _, err := h.o.Create(ctx, "tester", h.live, on(table)); err != nil {
+			t.Errorf("%s: %v, want it saved", table, err)
+		}
+	}
+	for _, table := range []string{"product", "measures", "events"} {
+		_, err := h.o.Create(ctx, "tester", h.live, on(table))
+		mustInvalid(t, err, "`attr_plan` is now `attr_tier` (an attribute rule)")
+	}
+}
+
 // TestUpdateAlertAcrossSilence: a condition crossing into or out of
 // silence drops window_days and min_volume, which the other kind takes
 // and silence refuses, unless the patch sets them.
