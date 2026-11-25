@@ -290,15 +290,35 @@ func (s *Snapshot) ResolveEvent(projectID int64, family store.Family, name strin
 	return name, ok && r.Action == store.EventRuleBlock
 }
 
-// ResolveAttribute is the key the project stores the attribute key under
-// after its attribute rules (a rename or merge's target), and whether that
-// key is blocked: the attribute as MapAttributes keeps it.
+// ResolveAttribute is the key the project's attribute rules put the
+// attribute key under (a rename or merge's target), and whether that key
+// is blocked, as the event files read the column attr_<key>: a rule's key
+// matches in any case, as the engine's columns do (an exact match first,
+// else the first rule in key order). A key no rule matches is answered as
+// given, as is one a rename only changes the case of (one column
+// already).
 func (s *Snapshot) ResolveAttribute(projectID int64, key string) (string, bool) {
-	rs := s.attrRules[projectID]
-	if to, ok := rs.Renamed[key]; ok {
-		key = to
+	if r, ok := s.attrRuleOn(projectID, store.EventRuleRename, key); ok && !strings.EqualFold(r.To, key) {
+		key = r.To
 	}
-	return key, rs.Blocked[key]
+	_, blocked := s.attrRuleOn(projectID, store.EventRuleBlock, key)
+	return key, blocked
+}
+
+// attrRuleOn is the project's attribute rule of action on key, matched as
+// ResolveAttribute matches it.
+func (s *Snapshot) attrRuleOn(projectID int64, action, key string) (store.AttributeRule, bool) {
+	folded, found := store.AttributeRule{}, false
+	for _, r := range s.attrRuleList[projectID] {
+		switch {
+		case r.Action != action:
+		case r.Key == key:
+			return r, true
+		case !found && strings.ToLower(r.Key) == strings.ToLower(key):
+			folded, found = r, true
+		}
+	}
+	return folded, found
 }
 
 // AttributeRules is the project's attribute rules as the write path applies

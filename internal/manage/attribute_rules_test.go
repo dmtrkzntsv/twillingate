@@ -136,10 +136,20 @@ func TestAttributeRulesReachSnapshot(t *testing.T) {
 	for _, tc := range []struct {
 		key, to string
 		blocked bool
-	}{{"old", "new", false}, {"junk", "junk", true}, {"plain", "plain", false}} {
+	}{{"old", "new", false}, {"junk", "junk", true}, {"plain", "plain", false},
+		// As the event files read attr_<key>: any case matches, and a
+		// key no rule matches is answered as given.
+		{"OLD", "new", false}, {"Junk", "Junk", true}, {"Plain", "Plain", false}} {
 		if to, blocked := snap.ResolveAttribute(p, tc.key); to != tc.to || blocked != tc.blocked {
 			t.Errorf("ResolveAttribute(%s) = %q, %v; want %q, %v", tc.key, to, blocked, tc.to, tc.blocked)
 		}
+	}
+	// A rename that only changes the case leaves the column as it is.
+	if _, err := ops.RenameAttribute(ctx, "t", other.ID, "Mode", "mode"); err != nil {
+		t.Fatal(err)
+	}
+	if to, blocked := reg.Snapshot(ctx).ResolveAttribute(other.ID, "MODE"); to != "MODE" || blocked {
+		t.Errorf("ResolveAttribute(MODE) over a rename of Mode to mode = %q, %v; want MODE, false", to, blocked)
 	}
 	if to, blocked := snap.ResolveAttribute(other.ID, "old"); to != "old" || blocked {
 		t.Errorf("another project's ResolveAttribute(old) = %q, %v", to, blocked)
