@@ -500,6 +500,29 @@ func TestEvaluateBlockedIsBroken(t *testing.T) {
 	wantOutcome(t, h2.evaluate(alertOf(t, funnelIn(store.AlertRead{Step: "signup"}))), store.AlertBreached, "")
 }
 
+// TestEvaluateAttributeRuleIsBroken: an attribute an attribute rule
+// renames, merges or blocks breaks the alert, even one presence already
+// saw (which is never asked again).
+func TestEvaluateAttributeRuleIsBroken(t *testing.T) {
+	h := newEvalHarness()
+	in := statIn(store.AlertRead{}, below5, native.Metric{Op: "count"})
+	in.Query.Where = append(in.Query.Where, native.Filter{Column: "attr_plan", Op: "eq", Values: []string{"pro"}})
+	a := alertOf(t, in)
+	h.presence.sent["attr_plan"] = true
+	h.eng.answer("stat", yesterday, yesterday, statResult("count", "0"))
+	wantOutcome(t, h.evaluate(a), store.AlertBreached, "")
+
+	h.projects.attrRenames = map[string]string{"plan": "tier"}
+	wantOutcome(t, h.evaluate(a), store.AlertBroken, "Renamed to attr_tier: attr_plan")
+
+	h.projects.attrRenames = nil
+	h.projects.attrBlocked = map[string]bool{"plan": true}
+	wantOutcome(t, h.evaluate(a), store.AlertBroken, "Blocked: attr_plan")
+	if n := len(h.eng.reqs); n != 1 {
+		t.Errorf("%d requests, want only the first evaluation's", n)
+	}
+}
+
 func TestEvaluateInvalidQueryIsBroken(t *testing.T) {
 	h := newEvalHarness()
 	h.eng.err = fmt.Errorf("%w: where[0].values: \"x\" is not a day.", native.ErrInvalid)

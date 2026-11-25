@@ -133,6 +133,17 @@ func TestAttributeRulesReachSnapshot(t *testing.T) {
 	if got := snap.AttributeRules(other.ID); !got.Empty() {
 		t.Errorf("another project's set = %+v, want empty", got)
 	}
+	for _, tc := range []struct {
+		key, to string
+		blocked bool
+	}{{"old", "new", false}, {"junk", "junk", true}, {"plain", "plain", false}} {
+		if to, blocked := snap.ResolveAttribute(p, tc.key); to != tc.to || blocked != tc.blocked {
+			t.Errorf("ResolveAttribute(%s) = %q, %v; want %q, %v", tc.key, to, blocked, tc.to, tc.blocked)
+		}
+	}
+	if to, blocked := snap.ResolveAttribute(other.ID, "old"); to != "old" || blocked {
+		t.Errorf("another project's ResolveAttribute(old) = %q, %v", to, blocked)
+	}
 	list := snap.AttributeRuleList(p)
 	if len(list) != 2 || list[0].Key != "junk" || list[1].Key != "old" {
 		t.Errorf("list = %v, want junk then old", list)

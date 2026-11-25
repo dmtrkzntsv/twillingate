@@ -38,6 +38,10 @@ func TestAlertProjectsReadsTheRegistry(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if _, err := ops.RenameAttribute(ctx, "test", live.ID, "plan", "tier"); err != nil {
+		t.Fatal(err)
+	}
+
 	p := alertProjects{reg}
 	if name, archived, ok := p.Project(ctx, live.ID); name != "App" || archived || !ok {
 		t.Errorf("Project(live) = %q, %v, %v; want App, false, true", name, archived, ok)
@@ -50,6 +54,9 @@ func TestAlertProjectsReadsTheRegistry(t *testing.T) {
 	}
 	if to, blocked := p.ResolveEvent(ctx, live.ID, store.FamilyProduct, "signup"); to != "sign_up" || blocked {
 		t.Errorf("ResolveEvent(signup) = %q, %v; want sign_up, false", to, blocked)
+	}
+	if to, blocked := p.ResolveAttribute(ctx, live.ID, "plan"); to != "tier" || blocked {
+		t.Errorf("ResolveAttribute(plan) = %q, %v; want tier, false", to, blocked)
 	}
 	rules := p.Rules(ctx).Events
 	if len(rules) != 1 || rules[0].ProjectID != live.ID || rules[0].Name != "signup" || rules[0].To != "sign_up" {

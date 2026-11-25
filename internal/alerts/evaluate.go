@@ -190,17 +190,18 @@ func comparison(p Parsed, from, to civil.Date) (civil.Date, civil.Date) {
 	return from.AddDays(-days), to.AddDays(-days)
 }
 
-// ruleBreak is why an event p's query names is broken by an event rule
-// (renamed, merged or blocked), "" when none is: ruleHit, which
-// Ops.checkEvents refuses at save.
+// ruleBreak is why an event p's query names is broken by an event rule,
+// or an attribute by an attribute rule (renamed, merged or blocked), ""
+// when none is: ruleHit, which Ops.checkEvents refuses at save.
 func (e *Evaluator) ruleBreak(ctx context.Context, projectID int64, p Parsed) string {
-	switch event, to, blocked := ruleHit(ctx, e.projects, projectID, p); {
-	case to != event:
-		return "renamed to " + to + ": " + event
-	case blocked:
-		return "blocked: " + event
+	h, ok := ruleHit(ctx, e.projects, projectID, p)
+	switch {
+	case !ok:
+		return ""
+	case h.to != h.name:
+		return "renamed to " + h.to + ": " + h.name
 	}
-	return ""
+	return "blocked: " + h.name
 }
 
 // neverSent is the first event or attribute p's query names that the

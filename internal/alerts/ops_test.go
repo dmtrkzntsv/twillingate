@@ -22,9 +22,11 @@ import (
 // fakeProjects is the project registry as a map. Its ids are real rows
 // of the store, which checks the project again.
 type fakeProjects struct {
-	archived map[int64]bool // every project; true when archived
-	renames  map[string]string
-	blocked  map[string]bool
+	archived    map[int64]bool // every project; true when archived
+	renames     map[string]string
+	blocked     map[string]bool
+	attrRenames map[string]string // attribute rules, by bare key
+	attrBlocked map[string]bool
 }
 
 func ruleKey(f store.Family, name string) string { return string(f) + "/" + name }
@@ -39,6 +41,13 @@ func (f *fakeProjects) ResolveEvent(_ context.Context, _ int64, family store.Fam
 		name = to
 	}
 	return name, f.blocked[ruleKey(family, name)]
+}
+
+func (f *fakeProjects) ResolveAttribute(_ context.Context, _ int64, key string) (string, bool) {
+	if to, ok := f.attrRenames[key]; ok {
+		key = to
+	}
+	return key, f.attrBlocked[key]
 }
 
 func (f *fakeProjects) Rules(context.Context) archive.Rules { return archive.Rules{} }
@@ -174,6 +183,44 @@ func TestCreateAlertRefusesRenamedEvent(t *testing.T) {
 	if err != nil || len(list) != 3 {
 		t.Fatalf("List = %d alerts, %v; want 3", len(list), err)
 	}
+}
+
+func TestCreateAlertRefusesRenamedAttribute(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	in := countIn("pro signups")
+	in.Query.Where = append(in.Query.Where, native.Filter{Column: "attr_plan", Op: "eq", Values: []string{"pro"}})
+	h.presence.sent["attr_plan"] = true
+
+	h.projects.attrRenames = map[string]string{"plan": "tier"}
+	_, err := h.o.Create(ctx, "tester", h.live, in)
+	mustInvalid(t, err, "`attr_plan` is now `attr_tier` (an attribute rule)", "alert on `attr_tier`")
+
+	h.projects.attrRenames = nil
+	h.projects.attrBlocked = map[string]bool{"plan": true}
+	_, err = h.o.Create(ctx, "tester", h.live, in)
+	mustInvalid(t, err, "`attr_plan` is blocked by an attribute rule")
+
+	// An attribute a metric's own where names is resolved too.
+	h.projects.attrBlocked = nil
+	h.projects.attrRenames = map[string]string{"price": "amount"}
+	priced := Input{Name: "priced", Condition: below5, Query: &native.Query{Kind: "stat", Table: "events",
+		Metrics: []native.Metric{{Op: "count", Where: []native.Filter{{Column: "attr_price", Op: "is_set"}}}},
+		Where:   []native.Filter{evt("paid")}}}
+	_, err = h.o.Create(ctx, "tester", h.live, priced)
+	mustInvalid(t, err, "`attr_price` is now `attr_amount`")
+
+	// An edit of the definition is checked as a create is; the event rule
+	// wording stays the events'.
+	h.projects.attrRenames = nil
+	v := h.create(t, in)
+	h.projects.attrRenames = map[string]string{"plan": "tier"}
+	_, err = h.o.Update(ctx, "tester", h.live, v.ID, Patch{WindowDays: ptr(3)})
+	mustInvalid(t, err, "(an attribute rule)")
+	h.projects.attrRenames = nil
+	h.projects.renames[ruleKey(store.FamilyProduct, "signup")] = "sign_up"
+	_, err = h.o.Update(ctx, "tester", h.live, v.ID, Patch{WindowDays: ptr(3)})
+	mustInvalid(t, err, "`signup` is now `sign_up` (an event rule)")
 }
 
 func TestCreateAlertWarnsNeverSent(t *testing.T) {

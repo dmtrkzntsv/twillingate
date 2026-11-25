@@ -25,6 +25,9 @@ type Projects interface {
 	// ResolveEvent is manage.Snapshot.ResolveEvent: the name the event is
 	// stored under, and whether it is blocked.
 	ResolveEvent(ctx context.Context, projectID int64, family store.Family, name string) (to string, blocked bool)
+	// ResolveAttribute is manage.Snapshot.ResolveAttribute: the key (bare,
+	// no attr_) the attribute is stored under, and whether it is blocked.
+	ResolveAttribute(ctx context.Context, projectID int64, key string) (to string, blocked bool)
 	// Rules are the event rules a query applies.
 	Rules(ctx context.Context) archive.Rules
 }

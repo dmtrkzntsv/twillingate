@@ -30,6 +30,10 @@ func (p alertProjects) ResolveEvent(ctx context.Context, projectID int64, family
 	return p.reg.Snapshot(ctx).ResolveEvent(projectID, family, name)
 }
 
+func (p alertProjects) ResolveAttribute(ctx context.Context, projectID int64, key string) (string, bool) {
+	return p.reg.Snapshot(ctx).ResolveAttribute(projectID, key)
+}
+
 func (p alertProjects) Rules(ctx context.Context) archive.Rules {
 	return p.reg.Snapshot(ctx).Rules()
 }

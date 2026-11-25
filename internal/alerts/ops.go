@@ -112,7 +112,8 @@ func (o *Ops) List(ctx context.Context, projectID int64, archived bool) ([]View,
 
 // Create validates in and saves it as a new alert of a live project,
 // which asks for a check at once. An event an event rule renames or
-// blocks is refused; one never sent is a warning.
+// blocks is refused, as is an attribute an attribute rule does; one
+// never sent is a warning.
 func (o *Ops) Create(ctx context.Context, actor string, projectID int64, in Input) (View, error) {
 	archived, err := o.project(ctx, projectID)
 	if err != nil {
@@ -304,7 +305,7 @@ func (o *Ops) History(ctx context.Context, projectID, id int64, limit int, curso
 }
 
 // checkEvents refuses def when an event rule renames or blocks an event
-// it names, and, with presence, warns of each event or attribute the
+// it names, or an attribute rule an attribute, and, with presence, warns of each event or attribute the
 // project has never sent. A presence failure is a warning too.
 func (o *Ops) checkEvents(ctx context.Context, projectID int64, def store.AlertDef) ([]string, error) {
 	p, err := Parse(def)
@@ -331,15 +332,17 @@ func (o *Ops) checkEvents(ctx context.Context, projectID int64, def store.AlertD
 }
 
 // refuseRuleHit refuses p when an event rule renames or blocks an event
-// its query names (ruleHit), as saving and previewing do.
+// its query names, or an attribute rule an attribute (ruleHit), as
+// saving and previewing do.
 func (o *Ops) refuseRuleHit(ctx context.Context, projectID int64, p Parsed) error {
-	switch event, to, blocked := ruleHit(ctx, o.projects, projectID, p); {
-	case to != event:
-		return invalid("`%s` is now `%s` (an event rule); alert on `%s`", event, to, to)
-	case blocked:
-		return invalid("`%s` is blocked by an event rule, so none is stored; remove the rule or alert on another event", event)
+	h, ok := ruleHit(ctx, o.projects, projectID, p)
+	switch {
+	case !ok:
+		return nil
+	case h.to != h.name:
+		return invalid("`%s` is now `%s` (an %s rule); alert on `%s`", h.name, h.to, h.kind(), h.to)
 	}
-	return nil
+	return invalid("`%s` is blocked by an %s rule, so none is stored; remove the rule or alert on another %s", h.name, h.kind(), h.kind())
 }
 
 // ruleFamilies are the families whose event rules apply to an event a
@@ -355,22 +358,44 @@ func ruleFamilies(f store.Family) []store.Family {
 	return nil
 }
 
+// hit is a reference a rule renames (to is its new name) or blocks: an
+// event, or an attribute named attr_<key>.
+type hit struct {
+	name, to string
+	blocked  bool
+	attr     bool
+}
+
+// kind is the kind of rule h is: event or attribute.
+func (h hit) kind() string {
+	if h.attr {
+		return "attribute"
+	}
+	return "event"
+}
+
 // ruleHit is the first event p's query names that an event rule renames
-// (to is its new name) or blocks; event == to and !blocked when none is.
-// $ events take no rules. Saving refuses such an alert; evaluating
+// or blocks, or attribute an attribute rule does; ok is false when none
+// is. $ events take no rules. Saving refuses such an alert; evaluating
 // reports it broken.
-func ruleHit(ctx context.Context, projects Projects, projectID int64, p Parsed) (event, to string, blocked bool) {
+func ruleHit(ctx context.Context, projects Projects, projectID int64, p Parsed) (h hit, ok bool) {
 	for _, r := range p.References() {
-		if r.Event == "" || strings.HasPrefix(r.Event, "$") {
+		if r.Attr != "" {
+			if to, blocked := projects.ResolveAttribute(ctx, projectID, r.Attr); to != r.Attr || blocked {
+				return hit{name: "attr_" + r.Attr, to: "attr_" + to, blocked: blocked, attr: true}, true
+			}
+			continue
+		}
+		if strings.HasPrefix(r.Event, "$") {
 			continue
 		}
 		for _, f := range ruleFamilies(r.Family) {
 			if to, blocked := projects.ResolveEvent(ctx, projectID, f, r.Event); to != r.Event || blocked {
-				return r.Event, to, blocked
+				return hit{name: r.Event, to: to, blocked: blocked}, true
 			}
 		}
 	}
-	return "", "", false
+	return hit{}, false
 }
 
 // askPresence asks presence whether the project ever sent r, and names

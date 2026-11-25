@@ -1241,8 +1241,8 @@ whose first step is 0), a window under `min_volume` or a change against 0 is
 the query names that the project has never sent is `no_data` too, with
 `reason` `never sent: <name>`: saving one is allowed, with a `warnings` entry,
 so an alert can be set up before a launch. An event an event rule renames,
-merges or blocks is refused at save, naming its new name, and turns a saved
-alert `broken`, as does a query the engine no longer accepts; a runtime
+merges or blocks, or an `attr_<key>` an attribute rule does, is refused at
+save, naming its new name, and turns a saved alert `broken`, as does a query the engine no longer accepts; a runtime
 failure (a timeout, a busy engine, a file gone mid-read) is tried again an
 hour later, and is `broken` after 3 failed tries in a row. `alert_broken` is
 raised once; a later good evaluation clears it silently. An alert of an
@@ -1308,7 +1308,7 @@ broken (the `alert_*` [types](#notification-types)).
 | `ok` | the last evaluation was inside the line |
 | `breached` | the last evaluation crossed the line |
 | `no_data` | the last evaluation had nothing to judge (`reason` says why: under `min_volume`, no value, a change against 0, or `never sent: <name>`); the ok or breached state before it is kept for notifications |
-| `broken` | the alert cannot be evaluated: its query no longer holds, an event rule renamed or blocked an event it names, or 3 tries in a row failed; `reason` says why |
+| `broken` | the alert cannot be evaluated: its query no longer holds, an event rule renamed or blocked an event it names (an attribute rule an attribute), or 3 tries in a row failed; `reason` says why |
 | `paused` | `paused` is on: not evaluated |
 | `snoozed` | `snoozed_until` is ahead: not evaluated until then |
 

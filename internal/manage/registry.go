@@ -290,6 +290,17 @@ func (s *Snapshot) ResolveEvent(projectID int64, family store.Family, name strin
 	return name, ok && r.Action == store.EventRuleBlock
 }
 
+// ResolveAttribute is the key the project stores the attribute key under
+// after its attribute rules (a rename or merge's target), and whether that
+// key is blocked: the attribute as MapAttributes keeps it.
+func (s *Snapshot) ResolveAttribute(projectID int64, key string) (string, bool) {
+	rs := s.attrRules[projectID]
+	if to, ok := rs.Renamed[key]; ok {
+		key = to
+	}
+	return key, rs.Blocked[key]
+}
+
 // AttributeRules is the project's attribute rules as the write path applies
 // them; the zero value (maps nothing) when it has none. The maps are the
 // snapshot's own, shared by every reader: callers must not modify them.
