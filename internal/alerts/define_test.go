@@ -583,3 +583,22 @@ func TestCheckName(t *testing.T) {
 		}
 	}
 }
+
+// TestBuildRefusesValuesTheEngineWould: a filter value its column cannot
+// hold, which Validate lets through and the engine refuses, is refused
+// at save rather than breaking the alert at its first evaluation.
+func TestBuildRefusesValuesTheEngineWould(t *testing.T) {
+	wide := native.Filter{Column: "display_width", Op: "eq", Values: []string{"wide"}}
+	in := statIn(store.AlertRead{}, below5, native.Metric{Op: "count"})
+	in.Query.Where = append(in.Query.Where, wide)
+	_, err := Build(in)
+	mustInvalid(t, err, `query: where[1].values: "wide" is not an integer`)
+
+	_, err = Build(Input{Where: []native.Filter{wide}, WhereSet: true, Condition: silent6})
+	mustInvalid(t, err, `query: where[0].values: "wide" is not an integer`)
+
+	f := funnelIn(store.AlertRead{Step: "paid"})
+	f.Query.Steps[1].Where = append(f.Query.Steps[1].Where, wide)
+	_, err = Build(f)
+	mustInvalid(t, err, `query: steps[1].where[1].values: "wide" is not an integer`)
+}

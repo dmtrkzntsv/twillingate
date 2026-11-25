@@ -270,9 +270,11 @@ func parse(def store.AlertDef, q native.Query) (Parsed, error) {
 	return p, nil
 }
 
-// validate is q.Validate, its refusal worded as a store refusal.
+// validate is q.Check (Validate and the engine's compile of filter
+// values, so save refuses what evaluation would), its refusal worded as
+// a store refusal.
 func validate(q native.Query) error {
-	err := q.Validate()
+	err := q.Check()
 	if errors.Is(err, native.ErrInvalid) {
 		return invalid("query: %s", strings.TrimPrefix(err.Error(), native.ErrInvalid.Error()+": "))
 	}
