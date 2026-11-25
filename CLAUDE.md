@@ -15,6 +15,7 @@ internal/monitor/    availability checks, certificate and domain expiry, written
 internal/pipeline/   write buffer between ingest and the store
 internal/inbox/      notifications: the type vocabulary's rendering, failing-state tracking for the monitor, delivery to NOTIFY_URL
 internal/manage/     project registry snapshot and its audited operations
+internal/alerts/     metric alerts: definitions and templates, audited operations, evaluation, backtest and the loop
 internal/reporting/  dashboards, widgets and components: validation, operations, system dashboards, cache; embeds the web app
 internal/reporting/sqlbind/ the :name parameters of SQL sent to the external SQL engine, and the advice that follows its failures
 internal/store/      Store interface and row types; store/sqlite owns every migration (no events: they live in the event files)
@@ -36,8 +37,8 @@ deploy/              installer, systemd unit, compose file, UPGRADES.md; ship/ h
 ```
 
 `app` imports the surfaces (`server`, `api`, `jobs`, `monitor`, `pipeline`);
-surfaces import `manage`, `reporting` and the leaves, never each other; `manage` and the
-leaves import only leaves. A surface that needs another's behaviour takes an
+surfaces import `manage`, `reporting`, `alerts` and the leaves, never each other; `manage`,
+`alerts` and the leaves import only leaves. A surface that needs another's behaviour takes an
 interface and `app` passes the implementation (`server.Enqueuer` is
 `pipeline.Buffer`). Each consumer declares the slice of the store it uses
 (`jobs.Store`, `manage.Store`) rather than `store.Store`. A new package goes
