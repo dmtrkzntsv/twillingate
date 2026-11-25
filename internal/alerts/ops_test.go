@@ -613,11 +613,16 @@ func TestCheckAlert(t *testing.T) {
 	_, err = h.o.Check(ctx, "tester", h.live, v.ID)
 	mustInvalid(t, err, "archived")
 	def := v.Def
-	old, err := h.st.CreateAlert(ctx, store.Alert{ProjectID: h.archived, Name: "old", Def: def}, MaxLive, h.at, store.AuditEntry{Actor: "test", Action: "alert.create"})
+	gone := h.project(t, "gone")
+	old, err := h.st.CreateAlert(ctx, store.Alert{ProjectID: gone, Name: "old", Def: def}, MaxLive, h.at, store.AuditEntry{Actor: "test", Action: "alert.create"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = h.o.Check(ctx, "tester", h.archived, old.ID)
+	if err := h.st.SetProjectArchived(ctx, gone, true, store.AuditEntry{Actor: "test", Action: "project.archive"}); err != nil {
+		t.Fatal(err)
+	}
+	h.projects.archived[gone] = true
+	_, err = h.o.Check(ctx, "tester", gone, old.ID)
 	mustInvalid(t, err)
 }
 

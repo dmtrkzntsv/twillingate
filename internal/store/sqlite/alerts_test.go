@@ -705,3 +705,19 @@ func TestPruneAlertEvaluations(t *testing.T) {
 		t.Errorf("left = %d", left)
 	}
 }
+
+func TestCreateAlertRefusesArchivedProject(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	p := monitorProject(t, db, "p")
+	if _, err := db.db.ExecContext(ctx, `UPDATE projects SET archived_at='2026-09-01 12:30:00' WHERE id=?`, p); err != nil {
+		t.Fatal(err)
+	}
+	_, err := db.CreateAlert(ctx, store.Alert{ProjectID: p, Name: "late", Def: alertDef(7)}, 5, alertNow, alertAudit("alert.create"))
+	if !errors.Is(err, store.ErrInvalid) {
+		t.Fatalf("CreateAlert on an archived project: %v, want ErrInvalid", err)
+	}
+	if n := countRows(t, db, `SELECT COUNT(*) FROM alerts WHERE project_id=?`, p); n != 0 {
+		t.Errorf("%d alerts inserted, want 0", n)
+	}
+}

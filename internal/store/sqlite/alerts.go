@@ -114,6 +114,9 @@ func (d *DB) CreateAlert(ctx context.Context, a store.Alert, max int, now time.T
 		if err != nil {
 			return err
 		}
+		if !live {
+			return store.Refuse(store.ErrInvalid, "project %d is archived; restore the project first", a.ProjectID)
+		}
 		if err := checkAlertRoom(ctx, tx, a.ProjectID, 0, a.Name, max, true); err != nil {
 			return err
 		}
