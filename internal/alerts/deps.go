@@ -7,6 +7,7 @@ package alerts
 
 import (
 	"context"
+	"time"
 
 	"github.com/dmtrkzntsv/twillingate/internal/archive"
 	"github.com/dmtrkzntsv/twillingate/internal/native"
@@ -39,4 +40,17 @@ type Presence interface {
 // (native.Engine).
 type Engine interface {
 	AnswerAll(ctx context.Context, reqs []native.Request) []native.Answered
+}
+
+// Store is the slice of store.Store the operations use (store.Store's
+// alert methods).
+type Store interface {
+	CreateAlert(ctx context.Context, a store.Alert, max int, now time.Time, au store.AuditEntry) (store.Alert, error)
+	GetAlert(ctx context.Context, projectID, id int64) (store.Alert, error)
+	ListAlerts(ctx context.Context, projectID int64, archived bool) ([]store.Alert, error)
+	UpdateAlert(ctx context.Context, projectID, id int64, e store.AlertEdit, now time.Time, au store.AuditEntry) (store.Alert, error)
+	SetAlertArchived(ctx context.Context, projectID, id int64, archived bool, max int, now time.Time, au store.AuditEntry) (store.Alert, error)
+	RequestAlertCheck(ctx context.Context, projectID, id int64, now time.Time, au store.AuditEntry) (store.Alert, bool, error)
+	ListAlertEvaluations(ctx context.Context, alertID int64, limit int, before int64) ([]store.AlertEvaluation, error)
+	RecentAlertEvaluations(ctx context.Context, ids []int64, n int) (map[int64][]store.AlertEvaluation, error)
 }
