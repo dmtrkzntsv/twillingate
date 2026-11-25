@@ -311,6 +311,25 @@ func TestRunnerServesChecksRequestedMidTick(t *testing.T) {
 	wantCalls(t, "04:01", h.tick(runAt(4, 1)))
 }
 
+// TestRunnerStampsAListedCheckWhenServed: a check requested after the
+// tick began but before its list was read is evaluated at the time it is
+// served, so the evaluation is not older than the request and the check
+// is not pending at the next tick.
+func TestRunnerStampsAListedCheckWhenServed(t *testing.T) {
+	h := newRunHarness(t)
+	h.clock = runAt(0, 0)
+	a := h.metric(t, "signups")
+	now := runAt(10, 0)
+	h.exec(t, `UPDATE alerts SET last_day=?, check_requested_at=?`, yesterday.String(), now.Add(20*time.Second).Format(time.RFC3339))
+	h.clock = now.Add(30 * time.Second) // the list is read after the request
+	h.r.Tick(context.Background(), now)
+	wantCalls(t, "10:00", h.calls, a.ID)
+	if got := h.get(t, a); got.CheckPending() {
+		t.Fatalf("check still pending: evaluated %q, requested %q", got.LastEvaluatedAt, got.CheckRequestedAt)
+	}
+	wantCalls(t, "10:01", h.tick(runAt(10, 1)))
+}
+
 func TestRunnerCheckBeforeThePassKeepsLastDay(t *testing.T) {
 	h := newRunHarness(t)
 	h.clock = runAt(1, 0)

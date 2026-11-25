@@ -150,7 +150,14 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) {
 			continue
 		}
 		done[a.ID] = true
-		r.evaluateOne(ctx, a, now, daysDue(a, now, afterPass))
+		at := now
+		if a.CheckPending() {
+			// Stamped when served, not at the tick's start: the request
+			// may have come after it, and an older evaluation would leave
+			// the check pending for the next tick.
+			at = r.now().UTC()
+		}
+		r.evaluateOne(ctx, a, at, daysDue(a, at, afterPass))
 	}
 }
 
