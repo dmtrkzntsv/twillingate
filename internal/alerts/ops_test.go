@@ -223,6 +223,44 @@ func TestCreateAlertRefusesRenamedAttribute(t *testing.T) {
 	mustInvalid(t, err, "`signup` is now `sign_up` (an event rule)")
 }
 
+// TestUpdateAlertAcrossSilence: a condition crossing into or out of
+// silence drops window_days and min_volume, which the other kind takes
+// and silence refuses, unless the patch sets them.
+func TestUpdateAlertAcrossSilence(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	in := countIn("signups")
+	in.Condition, in.WindowDays, in.MinVolume = drop30, 7, 10
+	v := h.create(t, in)
+
+	where := []native.Filter{evt("signup")}
+	s := h.update(t, v.ID, Patch{Condition: &silent6, Where: &where})
+	if s.Def.Condition.Type != "silence" || s.Def.WindowDays != 1 || s.Def.MinVolume != 0 {
+		t.Fatalf("into silence: %+v", s.Def)
+	}
+	// Set in the patch, they are still checked.
+	_, err := h.o.Update(ctx, "tester", h.live, v.ID, Patch{Condition: &drop30, Query: in.Query, WindowDays: ptr(40)})
+	mustInvalid(t, err, "window_days")
+
+	// Out of silence the template's default window applies, not silence's 1.
+	m := h.update(t, v.ID, Patch{Condition: &drop30, Template: ptr("conversion"),
+		Fields: map[string]string{"from_event": "signup", "to_event": "paid"}})
+	if m.Def.Condition.Type != "change" || m.Def.WindowDays != conversionWindowDays || m.Def.MinVolume != 0 {
+		t.Fatalf("out of silence: %+v", m.Def)
+	}
+	// A patch's own window and volume are kept.
+	s = h.update(t, v.ID, Patch{Condition: &silent6, Where: &where})
+	m = h.update(t, v.ID, Patch{Condition: &drop30, Query: in.Query, WindowDays: ptr(3), MinVolume: ptr(20.0)})
+	if m.Def.WindowDays != 3 || m.Def.MinVolume != 20 {
+		t.Fatalf("out of silence with its own window: %+v", m.Def)
+	}
+	// A condition staying on its side keeps them.
+	m = h.update(t, v.ID, Patch{Condition: &store.AlertCondition{Type: "change", Direction: "rise", Percent: 50, Against: "previous"}})
+	if m.Def.WindowDays != 3 || m.Def.MinVolume != 20 {
+		t.Fatalf("change to change: %+v", m.Def)
+	}
+}
+
 func TestCreateAlertWarnsNeverSent(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

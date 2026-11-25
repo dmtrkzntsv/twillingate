@@ -396,7 +396,7 @@ func (h *host) registerAlerts(r *registrar) {
 	expose(r, spec{Name: "update_alert", Annotations: write, Method: "PATCH", Path: p + "/{id}", constrain: constrainAlert,
 		Description: "Change an alert: name, condition (whole), window_days, min_volume, paused, snoozed_until (an RFC 3339 time ahead; null wakes it), or the source: query (with read, or none), where, or template (with fields, or none) replaces the old one whole; read alone keeps the query, fields alone keep the template. " +
 			alertReadRule + " " + alertConditionRule + " " + alertTemplateRule +
-			" Fields you omit are left unchanged. A new definition is checked as at create (warnings again). A new definition, a pause or a snooze ends the state without a notification (a breach without a recovery) and sets it pending; a new definition, resuming and waking request a check. A rename does neither. An archived alert is refused. Returns the alert."},
+			" Fields you omit are left unchanged, except that a condition switching into or out of silence resets window_days and min_volume to their defaults unless given. A new definition is checked as at create (warnings again). A new definition, a pause or a snooze ends the state without a notification (a breach without a recovery) and sets it pending; a new definition, resuming and waking request a check. A rename does neither. An archived alert is refused. Returns the alert."},
 		h.updateAlert)
 	expose(r, spec{Name: "archive_alert", Annotations: idem, Method: "POST", Path: p + "/{id}/archive",
 		Description: "Archive an alert: it stops, ends its state without a notification, and frees its name. Reversible with restore_alert; purged with its evaluations RETENTION_ARCHIVED_DAYS (default 30) after archiving. Returns the alert."},

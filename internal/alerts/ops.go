@@ -195,13 +195,20 @@ func (o *Ops) Update(ctx context.Context, actor string, projectID, id int64, p P
 }
 
 // merged is the definition cur becomes with p's definition fields over
-// it, built and validated.
+// it, built and validated. A condition crossing into or out of silence
+// resets window_days and min_volume to their defaults, unless p sets
+// them.
 func merged(cur store.AlertDef, p Patch) (store.AlertDef, error) {
 	in, err := InputOf(cur)
 	if err != nil {
 		return store.AlertDef{}, err
 	}
 	if p.Condition != nil {
+		if (in.Condition.Type == condSilence) != (p.Condition.Type == condSilence) {
+			// Silence takes neither, the others their own: drop the old
+			// kind's, so the new one's defaults apply unless p sets them.
+			in.WindowDays, in.MinVolume = 0, 0
+		}
 		in.Condition = *p.Condition
 	}
 	if p.WindowDays != nil {
