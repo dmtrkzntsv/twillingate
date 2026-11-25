@@ -34,6 +34,7 @@ type fakeEngine struct {
 	answers map[answerKey]native.Result
 	err     error // every request's, when set
 	block   bool  // wait for the request's context to end
+	slow    bool  // wait for the request's context to end, then answer
 	reqs    []native.Request
 }
 
@@ -45,6 +46,9 @@ func (f *fakeEngine) AnswerAll(ctx context.Context, reqs []native.Request) []nat
 			<-ctx.Done()
 			out[i].Err = ctx.Err()
 			continue
+		}
+		if f.slow {
+			<-ctx.Done()
 		}
 		if f.err != nil {
 			out[i].Err = f.err
@@ -104,11 +108,17 @@ type countingPresence struct {
 
 func (c *countingPresence) HasEvents(ctx context.Context, p int64, f store.Family, name string) (bool, error) {
 	c.calls++
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	return c.fakePresence.HasEvents(ctx, p, f, name)
 }
 
 func (c *countingPresence) HasAttribute(ctx context.Context, p int64, key string) (bool, error) {
 	c.calls++
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	return c.fakePresence.HasAttribute(ctx, p, key)
 }
 
@@ -215,9 +225,39 @@ func TestEvaluateNeverSentIsNoData(t *testing.T) {
 	h.presence.sent["signup"] = true
 	wantOutcome(t, h.evaluate(alertOf(t, in)), store.AlertNoData, "never sent: attr_plan")
 
-	// A presence failure counts as sent: it never decides.
+}
+
+// TestEvaluatePresenceFailureIsError: a value of 0 or none whose
+// presence question fails is an error (retried, then broken), never
+// judged: an event never sent must not read as a breach.
+func TestEvaluatePresenceFailureIsError(t *testing.T) {
+	const reason = "could not check whether signup was ever sent: disk on fire"
+	h := newEvalHarness()
 	h.presence.err = errors.New("disk on fire")
-	wantOutcome(t, h.evaluate(alertOf(t, in)), store.AlertBreached, "")
+	h.eng.answer("stat", yesterday, yesterday, statResult("count", "0"))
+	o := h.evaluate(countAlert(t, below5, 1))
+	wantOutcome(t, o, store.AlertError, reason)
+	wantValue(t, "Value", o.Value, 0)
+
+	h.eng.answer("stat", yesterday, today, silenceResult(time.Time{}))
+	wantOutcome(t, h.evaluate(silenceAlert(t, 6)), store.AlertError, reason)
+
+	// A value above 0 asks nothing, so a failing presence does not matter.
+	h.eng.answer("stat", yesterday, yesterday, statResult("count", "3"))
+	wantOutcome(t, h.evaluate(countAlert(t, below5, 1)), store.AlertBreached, "")
+}
+
+// TestEvaluatePresenceHasItsOwnTimeout: queries that use up the timeout
+// leave presence its own, as long.
+func TestEvaluatePresenceHasItsOwnTimeout(t *testing.T) {
+	h := newEvalHarness()
+	h.e = NewEvaluator(h.eng, h.projects, h.presence, 20*time.Millisecond)
+	h.eng.slow = true
+	h.eng.answer("stat", yesterday, yesterday, statResult("count", "0"))
+	wantOutcome(t, h.evaluate(countAlert(t, below5, 1)), store.AlertBreached, "")
+	if h.presence.calls != 1 {
+		t.Errorf("presence asked %d times, want 1", h.presence.calls)
+	}
 }
 
 func TestEvaluateStartsOnceSent(t *testing.T) {

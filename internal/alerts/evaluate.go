@@ -60,7 +60,9 @@ func NewEvaluator(eng Engine, projects Projects, presence Presence, timeout time
 // event rule renames or blocks, or a query the engine refuses, is
 // broken; any other failure of the engine is AlertError. A value of 0
 // or none, while an event or attribute it names was never sent, is
-// no_data; otherwise judge decides.
+// no_data, and one whose presence question fails is AlertError (asked
+// under its own timeout, as long as the queries'); otherwise judge
+// decides.
 func (e *Evaluator) Evaluate(ctx context.Context, a store.Alert, now time.Time) Outcome {
 	now = now.UTC()
 	o := Outcome{At: now}
@@ -88,12 +90,9 @@ func (e *Evaluator) Evaluate(ctx context.Context, a store.Alert, now time.Time) 
 	} else if p.Def.Condition.Type == condChange {
 		reqs = append(reqs, request(comparison(p, o.From, o.To)))
 	}
-	if e.timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, e.timeout)
-		defer cancel()
-	}
-	answers := e.eng.AnswerAll(ctx, reqs)
+	qctx, cancel := e.bounded(ctx)
+	answers := e.eng.AnswerAll(qctx, reqs)
+	cancel()
 	if len(answers) != len(reqs) {
 		return o.failed(fmt.Errorf("the engine gave %d answers to %d queries", len(answers), len(reqs)))
 	}
@@ -123,13 +122,28 @@ func (e *Evaluator) Evaluate(ctx context.Context, a store.Alert, now time.Time) 
 	o.Volume = volumeOf(p, r.volume, o.Compare)
 
 	if o.Value == nil || (!silence && *o.Value == 0) {
-		if name := e.neverSent(ctx, a.ProjectID, p); name != "" {
+		// Presence has its own timeout: the queries may have used theirs.
+		pctx, cancel := e.bounded(ctx)
+		name, err := e.neverSent(pctx, a.ProjectID, p)
+		cancel()
+		switch {
+		case err != nil:
+			return o.failed(err)
+		case name != "":
 			o.Outcome, o.Reason = store.AlertNoData, "never sent: "+name
 			return o
 		}
 	}
 	o.Outcome, o.Reason = judge(p, o.Value, o.Compare, o.Volume)
 	return o
+}
+
+// bounded is ctx bounded by the evaluator's timeout, when it has one.
+func (e *Evaluator) bounded(ctx context.Context) (context.Context, context.CancelFunc) {
+	if e.timeout > 0 {
+		return context.WithTimeout(ctx, e.timeout)
+	}
+	return ctx, func() {}
 }
 
 // broken is o broken for reason, worded to end the alert_broken
@@ -191,12 +205,13 @@ func (e *Evaluator) ruleBreak(ctx context.Context, projectID int64, p Parsed) st
 
 // neverSent is the first event or attribute p's query names that the
 // project has never sent (an attribute as attr_<key>), "" when every one
-// was sent. A failed question counts as sent, so presence never decides
-// an outcome on its own; a sent reference is remembered, never asked
-// again.
-func (e *Evaluator) neverSent(ctx context.Context, projectID int64, p Parsed) string {
+// was sent. A failed question is an error, which the caller retries
+// rather than judge a value that may only mean "never sent"; a sent
+// reference is remembered, never asked again (a rule renaming or
+// blocking it later breaks the alert before presence is asked).
+func (e *Evaluator) neverSent(ctx context.Context, projectID int64, p Parsed) (string, error) {
 	if e.presence == nil {
-		return ""
+		return "", nil
 	}
 	for _, r := range p.References() {
 		k := seenKey{projectID, r}
@@ -209,15 +224,15 @@ func (e *Evaluator) neverSent(ctx context.Context, projectID int64, p Parsed) st
 		name, sent, err := askPresence(ctx, e.presence, projectID, r)
 		switch {
 		case err != nil:
+			return "", fmt.Errorf("could not check whether %s was ever sent: %w", name, err)
 		case !sent:
-			return name
-		default:
-			e.mu.Lock()
-			e.seen[k] = true
-			e.mu.Unlock()
+			return name, nil
 		}
+		e.mu.Lock()
+		e.seen[k] = true
+		e.mu.Unlock()
 	}
-	return ""
+	return "", nil
 }
 
 // reading is the number an answer gives an alert.
