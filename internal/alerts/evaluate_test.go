@@ -505,6 +505,7 @@ func TestEvaluateRuntimeErrorIsError(t *testing.T) {
 		"not a number":  statResult("count", "many"),
 		"short funnel":  funnelResult(10),
 		"bad timestamp": statResult("max_received_at", "yesterday"),
+		"short silence": {Columns: []string{"max_received_at"}, Rows: [][]string{{}}},
 	} {
 		h := newEvalHarness()
 		a := countAlert(t, below5, 1)
@@ -512,7 +513,7 @@ func TestEvaluateRuntimeErrorIsError(t *testing.T) {
 		case "short funnel":
 			a = alertOf(t, funnelIn(store.AlertRead{Step: "signup"}))
 			h.eng.answer("funnel", yesterday, yesterday, res)
-		case "bad timestamp":
+		case "bad timestamp", "short silence":
 			a = silenceAlert(t, 6)
 			h.eng.answer("stat", yesterday, today, res)
 		default:

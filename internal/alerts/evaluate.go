@@ -171,22 +171,14 @@ func comparison(p Parsed, from, to civil.Date) (civil.Date, civil.Date) {
 }
 
 // ruleBreak is why an event p's query names is broken by an event rule
-// (renamed, merged or blocked), "" when none is; as Ops.checkEvents
-// refuses at save.
+// (renamed, merged or blocked), "" when none is: ruleHit, which
+// Ops.checkEvents refuses at save.
 func (e *Evaluator) ruleBreak(ctx context.Context, projectID int64, p Parsed) string {
-	for _, r := range p.References() {
-		if r.Event == "" || strings.HasPrefix(r.Event, "$") {
-			continue
-		}
-		for _, f := range ruleFamilies(r.Family) {
-			to, blocked := e.projects.ResolveEvent(ctx, projectID, f, r.Event)
-			switch {
-			case to != r.Event:
-				return "renamed to " + to + ": " + r.Event
-			case blocked:
-				return "blocked: " + r.Event
-			}
-		}
+	switch event, to, blocked := ruleHit(ctx, e.projects, projectID, p); {
+	case to != event:
+		return "renamed to " + to + ": " + event
+	case blocked:
+		return "blocked: " + event
 	}
 	return ""
 }
@@ -208,15 +200,7 @@ func (e *Evaluator) neverSent(ctx context.Context, projectID int64, p Parsed) st
 		if seen {
 			continue
 		}
-		var sent bool
-		var err error
-		name := r.Event
-		if r.Event != "" {
-			sent, err = e.presence.HasEvents(ctx, projectID, r.Family, r.Event)
-		} else {
-			name = "attr_" + r.Attr
-			sent, err = e.presence.HasAttribute(ctx, projectID, r.Attr)
-		}
+		name, sent, err := askPresence(ctx, e.presence, projectID, r)
 		switch {
 		case err != nil:
 		case !sent:
@@ -274,7 +258,10 @@ func read(p Parsed, res native.Result, now time.Time) (reading, error) {
 		return r, err
 	}
 	if p.Kind == condSilence {
-		if c >= len(res.Rows[0]) || res.Rows[0][c] == "" {
+		if c >= len(res.Rows[0]) {
+			return r, fmt.Errorf("the answer's row has %d values, not %d", len(res.Rows[0]), c+1)
+		}
+		if res.Rows[0][c] == "" {
 			return r, nil
 		}
 		last, err := time.Parse(time.RFC3339Nano, res.Rows[0][c])

@@ -311,34 +311,18 @@ func (o *Ops) checkEvents(ctx context.Context, projectID int64, def store.AlertD
 	if err != nil {
 		return nil, err
 	}
-	refs := p.References()
-	for _, r := range refs {
-		if r.Event == "" || strings.HasPrefix(r.Event, "$") {
-			continue
-		}
-		for _, f := range ruleFamilies(r.Family) {
-			to, blocked := o.projects.ResolveEvent(ctx, projectID, f, r.Event)
-			switch {
-			case to != r.Event:
-				return nil, invalid("`%s` is now `%s` (an event rule); alert on `%s`", r.Event, to, to)
-			case blocked:
-				return nil, invalid("`%s` is blocked by an event rule, so none is stored; remove the rule or alert on another event", r.Event)
-			}
-		}
+	switch event, to, blocked := ruleHit(ctx, o.projects, projectID, p); {
+	case to != event:
+		return nil, invalid("`%s` is now `%s` (an event rule); alert on `%s`", event, to, to)
+	case blocked:
+		return nil, invalid("`%s` is blocked by an event rule, so none is stored; remove the rule or alert on another event", event)
 	}
 	if o.presence == nil {
 		return nil, nil
 	}
 	var warnings []string
-	for _, r := range refs {
-		name := r.Event
-		var sent bool
-		if r.Event != "" {
-			sent, err = o.presence.HasEvents(ctx, projectID, r.Family, r.Event)
-		} else {
-			name = "attr_" + r.Attr
-			sent, err = o.presence.HasAttribute(ctx, projectID, r.Attr)
-		}
+	for _, r := range p.References() {
+		name, sent, err := askPresence(ctx, o.presence, projectID, r)
 		switch {
 		case err != nil:
 			warnings = append(warnings, fmt.Sprintf("could not check whether `%s` was sent: %v", name, err))
@@ -360,6 +344,35 @@ func ruleFamilies(f store.Family) []store.Family {
 		return []store.Family{store.FamilyProduct, store.FamilyMeasures}
 	}
 	return nil
+}
+
+// ruleHit is the first event p's query names that an event rule renames
+// (to is its new name) or blocks; event == to and !blocked when none is.
+// $ events take no rules. Saving refuses such an alert; evaluating
+// reports it broken.
+func ruleHit(ctx context.Context, projects Projects, projectID int64, p Parsed) (event, to string, blocked bool) {
+	for _, r := range p.References() {
+		if r.Event == "" || strings.HasPrefix(r.Event, "$") {
+			continue
+		}
+		for _, f := range ruleFamilies(r.Family) {
+			if to, blocked := projects.ResolveEvent(ctx, projectID, f, r.Event); to != r.Event || blocked {
+				return r.Event, to, blocked
+			}
+		}
+	}
+	return "", "", false
+}
+
+// askPresence asks presence whether the project ever sent r, and names
+// r as the answer words it: the event, or attr_<key> for an attribute.
+func askPresence(ctx context.Context, presence Presence, projectID int64, r Reference) (name string, sent bool, err error) {
+	if r.Event != "" {
+		sent, err = presence.HasEvents(ctx, projectID, r.Family, r.Event)
+		return r.Event, sent, err
+	}
+	sent, err = presence.HasAttribute(ctx, projectID, r.Attr)
+	return "attr_" + r.Attr, sent, err
 }
 
 // checkedName is name trimmed, refused by CheckName.
