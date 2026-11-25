@@ -133,6 +133,9 @@ func message(p Parsed, o Outcome) (value, detail string) {
 func silenceMessage(p Parsed, o Outcome) (value, detail string) {
 	alertAt := " (alert at " + strconv.Itoa(p.Def.Condition.Hours) + "h)."
 	if o.Last.IsZero() {
+		// The window read reaches LateDays further back, for events filed
+		// before they were received; what it shows is that nothing was
+		// received since the start of the day the last hours began on.
 		start := civil.DateOf(o.At).AddDays(-silenceDays(p.Def.Condition.Hours)).Time()
 		hours := strconv.Itoa(int(max(o.At.Sub(start).Hours(), 0)))
 		value = "no event in " + hours + "h"

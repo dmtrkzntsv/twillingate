@@ -212,7 +212,7 @@ func TestEvaluateNeverSentIsNoData(t *testing.T) {
 	h.eng.answer("stat", yesterday, yesterday, statResult("count", "0"))
 	wantOutcome(t, h.evaluate(countAlert(t, below5, 1)), store.AlertNoData, "never sent: signup")
 
-	h.eng.answer("stat", yesterday, today, silenceResult(time.Time{}))
+	h.eng.answer("stat", today.AddDays(-2), today, silenceResult(time.Time{}))
 	o := h.evaluate(silenceAlert(t, 6))
 	wantOutcome(t, o, store.AlertNoData, "never sent: signup")
 	if o.Value != nil || !o.Last.IsZero() {
@@ -239,7 +239,7 @@ func TestEvaluatePresenceFailureIsError(t *testing.T) {
 	wantOutcome(t, o, store.AlertError, reason)
 	wantValue(t, "Value", o.Value, 0)
 
-	h.eng.answer("stat", yesterday, today, silenceResult(time.Time{}))
+	h.eng.answer("stat", today.AddDays(-2), today, silenceResult(time.Time{}))
 	wantOutcome(t, h.evaluate(silenceAlert(t, 6)), store.AlertError, reason)
 
 	// A value above 0 asks nothing, so a failing presence does not matter.
@@ -439,7 +439,7 @@ func TestEvaluateFunnelFromPrevious(t *testing.T) {
 
 func TestEvaluateSilenceNoneInWindowIsBreached(t *testing.T) {
 	h := newEvalHarness()
-	h.eng.answer("stat", yesterday, today, silenceResult(time.Time{}))
+	h.eng.answer("stat", today.AddDays(-2), today, silenceResult(time.Time{}))
 	o := h.evaluate(silenceAlert(t, 6))
 	wantOutcome(t, o, store.AlertBreached, "")
 	if o.Value != nil || !o.Last.IsZero() {
@@ -453,26 +453,40 @@ func TestEvaluateSilenceNoneInWindowIsBreached(t *testing.T) {
 func TestEvaluateSilence(t *testing.T) {
 	h := newEvalHarness()
 	last := evalNow.Add(-7 * time.Hour)
-	h.eng.answer("stat", yesterday, today, silenceResult(last))
+	h.eng.answer("stat", today.AddDays(-2), today, silenceResult(last))
 	o := h.evaluate(silenceAlert(t, 6))
 	wantOutcome(t, o, store.AlertBreached, "")
 	wantValue(t, "Value", o.Value, 7)
 	if !o.Last.Equal(last) {
 		t.Errorf("Last = %v, want %v", o.Last, last)
 	}
-	if p := h.eng.reqs[0].Params; p.From != yesterday || p.To != today {
-		t.Errorf("window %s…%s, want the 2 days %s…%s", p.From, p.To, yesterday, today)
+	// ceil(6/24) days and INGEST_LATE_DAYS (1) before today, and today: an
+	// event received in the last 6h may be filed up to a day earlier.
+	if p := h.eng.reqs[0].Params; p.From != today.AddDays(-2) || p.To != today {
+		t.Errorf("window %s…%s, want the 3 days %s…%s", p.From, p.To, today.AddDays(-2), today)
 	}
 
-	h.eng.answer("stat", yesterday, today, silenceResult(evalNow.Add(-2*time.Hour)))
+	h.eng.answer("stat", today.AddDays(-2), today, silenceResult(evalNow.Add(-2*time.Hour)))
 	wantOutcome(t, h.evaluate(silenceAlert(t, 6)), store.AlertOK, "")
 	if h.presence.calls != 0 {
 		t.Errorf("presence asked %d times, want 0", h.presence.calls)
 	}
 
-	// 30 hours read ceil(30/24) + 1 = 3 days.
-	h.eng.answer("stat", today.AddDays(-2), today, silenceResult(evalNow.Add(-29*time.Hour)))
+	// 30 hours read ceil(30/24) + 1 + 1 = 4 days.
+	h.eng.answer("stat", today.AddDays(-3), today, silenceResult(evalNow.Add(-29*time.Hour)))
 	wantOutcome(t, h.evaluate(silenceAlert(t, 30)), store.AlertOK, "")
+}
+
+// TestEvaluateSilenceLateDays: the window reaches back INGEST_LATE_DAYS
+// more days, where an event received in the last hours can be filed.
+func TestEvaluateSilenceLateDays(t *testing.T) {
+	h := newEvalHarness()
+	h.e.LateDays = 2
+	h.eng.answer("stat", today.AddDays(-3), today, silenceResult(evalNow.Add(-2*time.Hour)))
+	wantOutcome(t, h.evaluate(silenceAlert(t, 6)), store.AlertOK, "")
+	if p := h.eng.reqs[0].Params; p.From != today.AddDays(-3) || p.To != today {
+		t.Errorf("window %s…%s, want %s…%s", p.From, p.To, today.AddDays(-3), today)
+	}
 }
 
 func TestEvaluateRenamedIsBroken(t *testing.T) {
@@ -578,7 +592,7 @@ func TestEvaluateRuntimeErrorIsError(t *testing.T) {
 			h.eng.answer("funnel", yesterday, yesterday, res)
 		case "bad timestamp", "short silence":
 			a = silenceAlert(t, 6)
-			h.eng.answer("stat", yesterday, today, res)
+			h.eng.answer("stat", today.AddDays(-2), today, res)
 		default:
 			h.eng.answer("stat", yesterday, yesterday, res)
 		}

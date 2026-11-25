@@ -32,6 +32,11 @@ type Outcome struct {
 
 // Evaluator evaluates alerts over the event files.
 type Evaluator struct {
+	// LateDays is INGEST_LATE_DAYS: how many days before it was received
+	// an event can be filed (its clamped ts), which a silence alert's
+	// window reaches back too. Below 1 is 1, the default.
+	LateDays int
+
 	eng      Engine
 	projects Projects
 	presence Presence      // nil: every event counts as sent
@@ -55,8 +60,9 @@ func NewEvaluator(eng Engine, projects Projects, presence Presence, timeout time
 
 // Evaluate evaluates a at now: a metric alert over its window_days
 // complete days ending yesterday (UTC), and with change over its
-// comparison window too; a silence alert over the last ceil(hours/24)
-// + 1 days. A definition that no longer parses, or names an event an
+// comparison window too; a silence alert over the ceil(hours/24) +
+// LateDays days before today and today, which hold every event received
+// in its last hours. A definition that no longer parses, or names an event an
 // event rule renames or blocks, or a query the engine refuses, is
 // broken; any other failure of the engine is AlertError. A value of 0
 // or none, while an event or attribute it names was never sent, is
@@ -86,7 +92,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, a store.Alert, now time.Time) 
 	}
 	reqs := []native.Request{request(o.From, o.To)}
 	if silence {
-		reqs[0] = request(today.AddDays(-silenceDays(p.Def.Condition.Hours)), today)
+		reqs[0] = request(today.AddDays(-(silenceDays(p.Def.Condition.Hours) + max(e.LateDays, 1))), today)
 	} else if p.Def.Condition.Type == condChange {
 		reqs = append(reqs, request(comparison(p, o.From, o.To)))
 	}
@@ -169,8 +175,10 @@ func sentence(s string) string {
 	return string(unicode.ToUpper(r)) + s[n:]
 }
 
-// silenceDays is how many days before today a silence alert of hours
-// reads from: ceil(hours/24), so it reads that many days and today.
+// silenceDays is how many days before today the last hours began on:
+// ceil(hours/24). A silence alert reads LateDays days more, since an
+// event received then can be filed (by its clamped ts) that much
+// earlier.
 func silenceDays(hours int) int { return (hours + 23) / 24 }
 
 // windowFrom is the first day of def's window ending to: its window_days

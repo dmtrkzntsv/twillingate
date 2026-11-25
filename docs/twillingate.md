@@ -1228,8 +1228,10 @@ the 03:00 UTC daily pass (or from 04:00 without it), over the complete days
 through yesterday; after downtime it catches up once, for yesterday only. An
 app's offline batch can still land for yesterday up to `INGEST_LATE_DAYS`
 later, so on an app-heavy project yesterday may read a little short. A
-silence alert is evaluated hourly, on the newest matching event received over
-the last `ceil(hours / 24) + 1` days. Creating an alert, changing its
+silence alert is evaluated hourly, on the newest matching event in today's
+file and the `ceil(hours / 24) + INGEST_LATE_DAYS` days before it (an event
+received in the last `hours` can be filed by its timestamp up to
+`INGEST_LATE_DAYS` earlier). Creating an alert, changing its
 definition, resuming or waking it and `check_alert` request a check, which the server
 serves within a minute; a check is an evaluation like any other and can
 notify. Evaluations run in the process that writes the event files, and are

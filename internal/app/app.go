@@ -211,6 +211,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	if archiveLog != nil {
 		tracker = inbox.NewTracker(st, cfg.Notify.Remind, logger)
 		ev := alerts.NewEvaluator(nat, alertProjects{reg}, ops.Presence, cfg.Console.QueryTimeout)
+		ev.LateDays = cfg.IngestLateDays
 		alertRunner = alerts.NewRunner(st, ev, tracker, logger)
 	}
 

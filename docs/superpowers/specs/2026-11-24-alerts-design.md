@@ -173,7 +173,8 @@ one is refused, so "bounce rate above 70%" over three sessions cannot page.
   clamped to at most `INGEST_LATE_DAYS`, 1 day by default, before
   `received_at`, so the days window below always holds the events received in
   the last `hours`.) The alert reads the newest matching
-  event over the last `ceil(hours / 24) + 1` days and is breached when it is
+  event over today and the `ceil(hours / 24) + INGEST_LATE_DAYS` days before
+  it and is breached when it is
   older than `hours`, or when there is none in that window (an event the
   project has never sent is `no_data`, not breached; see
   [Broken](#broken)). `window_days` does not apply.
