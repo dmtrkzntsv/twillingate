@@ -1088,11 +1088,13 @@ submissions.
 twillingate tells you when something needs a look: a site that goes down
 and comes back, a certificate or a domain lookup that fails and recovers, a
 certificate or a domain about to expire, a new form waiting for approval or
-a draft dropped unapproved, and submissions to a form. Each is one item in
+a draft dropped unapproved, submissions to a form, and a metric alert that is
+breached, recovered or broken. Each is one item in
 the inbox (the console's, and `list_notifications`) and, with `NOTIFY_URL`
 set, the same title, body and link (the console page, `<CONSOLE_URL>/app/…`)
 sent to one channel, the title led there by an emoji (🔥 failing or
-expired, ✅ recovered, ⏳ expiring, 🆕, 🗑️ and 📝 for forms) and the project:
+expired or breached, ✅ recovered, ⏳ expiring, ⚠️ a broken alert, 🆕, 🗑️ and 📝
+for forms) and the project:
 `🔥 Blog · https://blog.example is down`, then `Down since 2026-11-07 08:00
 UTC (HTTP 503).`; channels: Telegram, ntfy, Slack, Discord, a JSON webhook or
 email, set up as in
@@ -1129,7 +1131,7 @@ field values are never in a notification.
 
 | Operation | CLI | MCP tool | Tool arguments |
 | --- | --- | --- | --- |
-| Read the inbox | — | `list_notifications` | `{archived, project_id, limit, cursor}`, all optional; newest first, the active ones (`archived: true` the archived ones), of every project or of `project_id`; returns `notifications`, each with `id`, `type` (below), `project_id` and `project` (the name when it was created; both absent for none), `subject` (the origin, domain or form), `title`, `body`, `path` (the console page it leads to), `fields` (what it was rendered from), `created_at`, `archived_at` (absent while active), `delivery` (below) and `delivery_error` (after a failed send); `active`, the active items across every project; and `next_cursor`. Pages of `limit` (default 50, at most 200) |
+| Read the inbox | — | `list_notifications` | `{archived, project_id, limit, cursor}`, all optional; newest first, the active ones (`archived: true` the archived ones), of every project or of `project_id`; returns `notifications`, each with `id`, `type` (below), `project_id` and `project` (the name when it was created; both absent for none), `subject` (the origin, domain, form or alert name), `title`, `body`, `path` (the console page it leads to), `fields` (what it was rendered from), `created_at`, `archived_at` (absent while active), `delivery` (below) and `delivery_error` (after a failed send); `active`, the active items across every project; and `next_cursor`. Pages of `limit` (default 50, at most 200) |
 | Archive | — | `archive_notifications` | exactly one of `{ids}` or `{all: true}` (every active item); returns `archived` |
 | Restore | — | `restore_notifications` | `{ids}`; returns `restored` |
 
@@ -1154,6 +1156,10 @@ its own way. The examples are titles.
 | `form_draft_created` | the first submission to an unknown form created a draft waiting for approval |
 | `form_draft_discarded` | a draft passed `RETENTION_FORMS_DRAFT_DAYS` without approval and was archived |
 | `form_submission` | a submission to an approved form with `notify_submissions` on; a burst follow-up has `fields.count` |
+| `alert_breached` | an alert's evaluation breaches its condition: `Signup conversion: 2.1%`, with the detail as the body; `subject` is the alert's name, `fields.alert_id` its id, `fields.since` when it breached |
+| `alert_still_breached` | a reminder while it stays breached: `Signup conversion: still 2.1%`; a metric alert reminds once for each later day its window ends on, a silence alert every `NOTIFY_REMIND_HOURS` |
+| `alert_recovered` | an evaluation no longer breaches: `Signup conversion: back to 3.4%`, with how long it was breached (`fields.since`, `fields.until`) |
+| `alert_broken` | the alert cannot be evaluated (for instance the funnel's first step no longer exists): `Signup conversion is broken`, once; `fields.reason` says why. The breach under it is kept, so a later breach does not announce again; a good evaluation clears it silently |
 
 ### Delivery
 

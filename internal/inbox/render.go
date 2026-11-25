@@ -72,6 +72,18 @@ func Render(n store.Notification) notify.Message {
 		} else {
 			m.Title = "New submission to " + form
 		}
+	case store.NotifyAlertBreached:
+		m.Title = n.Subject + ": " + n.Fields["value"]
+		m.Body = n.Fields["detail"]
+	case store.NotifyAlertStillBreached:
+		m.Title = n.Subject + ": still " + n.Fields["value"]
+		m.Body = sentences(n.Fields["detail"], "Breached for "+sofar+", since "+since+".")
+	case store.NotifyAlertRecovered:
+		m.Title = n.Subject + ": back to " + n.Fields["value"]
+		m.Body = sentences(n.Fields["detail"], "Was breached for "+lasted+", since "+since+".")
+	case store.NotifyAlertBroken:
+		m.Title = n.Subject + " is broken"
+		m.Body = n.Fields["reason"] + "."
 	default:
 		m.Title = n.Type
 	}
@@ -92,16 +104,21 @@ func Outgoing(n store.Notification, consoleURL string) notify.Message {
 }
 
 // Emoji is the sign a channel message about n starts with: 🔥 for
-// something failing or expired, ✅ for its recovery, ⏳ for an expiry
-// ahead, 🆕, 🗑️ and 📝 for forms, 🔔 for anything else.
+// something failing, breached or expired, ✅ for its recovery, ⏳ for an
+// expiry ahead, ⚠️ for a broken alert, 🆕, 🗑️ and 📝 for forms, 🔔 for
+// anything else.
 func Emoji(n store.Notification) string {
 	switch n.Type {
 	case store.NotifyUptimeDown, store.NotifyUptimeStillDown,
 		store.NotifyCertFailing, store.NotifyCertStillFailing,
-		store.NotifyDomainFailing, store.NotifyDomainStillFailing:
+		store.NotifyDomainFailing, store.NotifyDomainStillFailing,
+		store.NotifyAlertBreached, store.NotifyAlertStillBreached:
 		return "🔥"
-	case store.NotifyUptimeUp, store.NotifyCertRecovered, store.NotifyDomainRecovered:
+	case store.NotifyUptimeUp, store.NotifyCertRecovered, store.NotifyDomainRecovered,
+		store.NotifyAlertRecovered:
 		return "✅"
+	case store.NotifyAlertBroken:
+		return "⚠️"
 	case store.NotifyCertExpiring, store.NotifyDomainExpiring:
 		if days, err := strconv.Atoi(n.Fields["days"]); err == nil && days < 0 {
 			return "🔥"
@@ -129,7 +146,8 @@ func Absolute(m notify.Message, consoleURL string) notify.Message {
 }
 
 // Path is the console page n leads to: the project's domains for a monitor
-// notification, its form for a form one, the inbox otherwise.
+// notification, its form for a form one, its alert for an alert one, the
+// inbox otherwise.
 func Path(n store.Notification) string {
 	switch n.Type {
 	case store.NotifyUptimeDown, store.NotifyUptimeStillDown, store.NotifyUptimeUp,
@@ -143,8 +161,23 @@ func Path(n store.Notification) string {
 		if n.ProjectID != 0 {
 			return fmt.Sprintf("/projects/%d/forms/%s", n.ProjectID, url.PathEscape(subject(n, "form")))
 		}
+	case store.NotifyAlertBreached, store.NotifyAlertStillBreached, store.NotifyAlertRecovered, store.NotifyAlertBroken:
+		if id := n.Fields["alert_id"]; n.ProjectID != 0 && id != "" {
+			return fmt.Sprintf("/projects/%d/alerts/%s", n.ProjectID, url.PathEscape(id))
+		}
 	}
 	return "/inbox"
+}
+
+// sentences joins the non-empty parts with a space.
+func sentences(parts ...string) string {
+	var kept []string
+	for _, p := range parts {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, " ")
 }
 
 // subject is what n is about: its Subject, else the named field.

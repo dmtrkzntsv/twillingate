@@ -798,3 +798,211 @@ func TestFailedDeleteEndsPendingStreak(t *testing.T) {
 	tr.Uptime(ctx, 1, origin, false, "timeout", "", t0.Add(20*time.Second), 0)
 	none(t, f)
 }
+
+// alertObs is an observation of alert 12 of project 1, revision 1.
+func alertObs(outcome string, at time.Time) inbox.AlertObservation {
+	o := inbox.AlertObservation{Key: inbox.AlertKey{ProjectID: 1, ID: 12}, Revision: 1, Name: "Signup conversion",
+		Daily: true, Day: at.Format(time.DateOnly), Outcome: outcome, At: at,
+		Fields: map[string]string{"value": "2.1%", "detail": "Below 3%."}}
+	if outcome == store.AlertBroken {
+		o.Fields = map[string]string{"reason": "the step is gone"}
+	}
+	return o
+}
+
+func TestAlertBreachedThenRecovered(t *testing.T) {
+	f := newFake()
+	tr := newTracker(f)
+	tr.Alert(ctx, alertObs(store.AlertBreached, t0))
+	n := one(t, f, store.NotifyAlertBreached)
+	if n.Subject != "Signup conversion" || n.ProjectID != 1 || n.Fields["alert_id"] != "12" ||
+		n.Fields["since"] != rfc(t0) || n.Fields["value"] != "2.1%" {
+		t.Fatalf("alert_breached = %+v", n)
+	}
+	tr.Alert(ctx, alertObs(store.AlertBreached, t0.Add(time.Hour)))
+	none(t, f)
+	tr.Alert(ctx, alertObs(store.AlertOK, t0.Add(2*time.Hour)))
+	n = one(t, f, store.NotifyAlertRecovered)
+	if n.Fields["since"] != rfc(t0) || n.Fields["until"] != rfc(t0.Add(2*time.Hour)) || n.Fields["alert_id"] != "12" {
+		t.Fatalf("alert_recovered = %+v", n)
+	}
+	if f.has(1, "alert", "12") {
+		t.Fatal("state kept after recovery")
+	}
+}
+
+func TestAlertDailyRemindsOncePerDay(t *testing.T) {
+	f := newFake()
+	tr := newTracker(f)
+	d := time.Date(2026, 11, 7, 6, 0, 0, 0, time.UTC)
+	tr.Alert(ctx, alertObs(store.AlertBreached, d))
+	one(t, f, store.NotifyAlertBreached)
+	o := alertObs(store.AlertBreached, d.Add(time.Hour)) // a check request, same Day
+	o.Day = d.Format(time.DateOnly)
+	tr.Alert(ctx, o)
+	none(t, f)
+	o = alertObs(store.AlertBreached, d.Add(24*time.Hour))
+	tr.Alert(ctx, o)
+	n := one(t, f, store.NotifyAlertStillBreached)
+	if n.Fields["since"] != rfc(d) {
+		t.Fatalf("still_breached = %+v", n)
+	}
+	tr.Alert(ctx, o)
+	none(t, f)
+}
+
+func TestAlertSilenceRemindsEveryInterval(t *testing.T) {
+	f := newFake()
+	tr := newTracker(f)
+	var got []int
+	for h := 0; h <= 9; h++ {
+		o := alertObs(store.AlertBreached, t0.Add(time.Duration(h)*time.Hour))
+		o.Daily, o.Day = false, ""
+		tr.Alert(ctx, o)
+		for _, n := range f.take() {
+			if h == 0 && n.Type == store.NotifyAlertBreached {
+				continue
+			}
+			if n.Type != store.NotifyAlertStillBreached {
+				t.Fatalf("sent %+v", n)
+			}
+			got = append(got, h)
+		}
+	}
+	if len(got) != 2 || got[0] != 4 || got[1] != 8 {
+		t.Fatalf("reminders at hours %v, want [4 8]", got)
+	}
+}
+
+func TestAlertBrokenOnceAndSilentRecovery(t *testing.T) {
+	f := newFake()
+	tr := newTracker(f)
+	tr.Alert(ctx, alertObs(store.AlertBroken, t0))
+	n := one(t, f, store.NotifyAlertBroken)
+	if n.Fields["reason"] != "the step is gone" || n.Subject != "Signup conversion" {
+		t.Fatalf("alert_broken = %+v", n)
+	}
+	tr.Alert(ctx, alertObs(store.AlertBroken, t0.Add(time.Hour)))
+	none(t, f)
+	tr.Alert(ctx, alertObs(store.AlertOK, t0.Add(2*time.Hour)))
+	none(t, f)
+	if f.has(1, "alert", "12") {
+		t.Fatal("state kept after a silent recovery")
+	}
+
+	// Breached, broken, breached: tracking resumes from before the break.
+	tr.Alert(ctx, alertObs(store.AlertBreached, t0.Add(3*time.Hour)))
+	one(t, f, store.NotifyAlertBreached)
+	tr.Alert(ctx, alertObs(store.AlertBroken, t0.Add(4*time.Hour)))
+	one(t, f, store.NotifyAlertBroken)
+	tr.Alert(ctx, alertObs(store.AlertBreached, t0.Add(5*time.Hour)))
+	none(t, f)
+
+	// Breached, broken, ok: the breach ended.
+	tr.Alert(ctx, alertObs(store.AlertBroken, t0.Add(6*time.Hour)))
+	one(t, f, store.NotifyAlertBroken)
+	tr.Alert(ctx, alertObs(store.AlertOK, t0.Add(7*time.Hour)))
+	n = one(t, f, store.NotifyAlertRecovered)
+	if n.Fields["since"] != rfc(t0.Add(3*time.Hour)) {
+		t.Fatalf("recovery since %q", n.Fields["since"])
+	}
+}
+
+func TestAlertNoDataClearsBroken(t *testing.T) {
+	f := newFake()
+	tr := newTracker(f)
+	tr.Alert(ctx, alertObs(store.AlertBroken, t0))
+	one(t, f, store.NotifyAlertBroken)
+	tr.Alert(ctx, alertObs(store.AlertNoData, t0.Add(time.Hour)))
+	none(t, f)
+	tr.Alert(ctx, alertObs(store.AlertBroken, t0.Add(2*time.Hour)))
+	one(t, f, store.NotifyAlertBroken)
+
+	// No data while breached keeps the breach, silently.
+	f = newFake()
+	tr = newTracker(f)
+	tr.Alert(ctx, alertObs(store.AlertBreached, t0))
+	one(t, f, store.NotifyAlertBreached)
+	tr.Alert(ctx, alertObs(store.AlertNoData, t0.Add(time.Hour)))
+	none(t, f)
+	if !f.has(1, "alert", "12") {
+		t.Fatal("breach dropped by no_data")
+	}
+	tr.Alert(ctx, alertObs(store.AlertBreached, t0.Add(2*time.Hour)))
+	none(t, f)
+
+	// A breach, broken, then no_data: the breach is still there.
+	tr.Alert(ctx, alertObs(store.AlertBroken, t0.Add(3*time.Hour)))
+	one(t, f, store.NotifyAlertBroken)
+	tr.Alert(ctx, alertObs(store.AlertNoData, t0.Add(4*time.Hour)))
+	tr.Alert(ctx, alertObs(store.AlertOK, t0.Add(5*time.Hour)))
+	one(t, f, store.NotifyAlertRecovered)
+}
+
+func TestAlertRevisionStartsOver(t *testing.T) {
+	f := newFake()
+	tr := newTracker(f)
+	tr.Alert(ctx, alertObs(store.AlertBreached, t0))
+	one(t, f, store.NotifyAlertBreached)
+	o := alertObs(store.AlertBreached, t0.Add(time.Hour))
+	o.Revision = 2
+	tr.Alert(ctx, o)
+	one(t, f, store.NotifyAlertBreached)
+}
+
+func TestKeepAlertsEndsWithoutRecovery(t *testing.T) {
+	f := newFake()
+	tr := newTracker(f)
+	key := inbox.AlertKey{ProjectID: 1, ID: 12}
+	tr.Alert(ctx, alertObs(store.AlertBreached, t0))
+	one(t, f, store.NotifyAlertBreached)
+
+	tr.KeepAlerts(ctx, map[inbox.AlertKey]int64{key: 1})
+	if !f.has(1, "alert", "12") {
+		t.Fatal("a live alert at its revision was dropped")
+	}
+	tr.KeepAlerts(ctx, map[inbox.AlertKey]int64{key: 2})
+	if f.has(1, "alert", "12") {
+		t.Fatal("an alert at another revision was kept")
+	}
+	tr.Alert(ctx, alertObs(store.AlertBreached, t0.Add(time.Hour)))
+	one(t, f, store.NotifyAlertBreached)
+	tr.KeepAlerts(ctx, map[inbox.AlertKey]int64{})
+	if f.has(1, "alert", "12") {
+		t.Fatal("a gone alert was kept")
+	}
+	none(t, f)
+}
+
+func TestTickLeavesAlertStates(t *testing.T) {
+	for _, paused := range []bool{false, true} {
+		f := newFake()
+		tr := newTracker(f)
+		if paused {
+			tr.PauseMonitoring()
+		}
+		o := alertObs(store.AlertBreached, t0)
+		o.Daily, o.Day = false, ""
+		tr.Alert(ctx, o)
+		one(t, f, store.NotifyAlertBreached)
+		tr.Tick(ctx, t0.Add(5*time.Hour))
+		none(t, f)
+		if !f.has(1, "alert", "12") {
+			t.Fatalf("paused=%v: Tick dropped the alert state", paused)
+		}
+		// Alert's own reminders go on, paused or not.
+		o.At = t0.Add(5 * time.Hour)
+		tr.Alert(ctx, o)
+		one(t, f, store.NotifyAlertStillBreached)
+	}
+}
+
+func TestAlertStateSurvivesRestart(t *testing.T) {
+	f := newFake()
+	tr := newTracker(f)
+	tr.Alert(ctx, alertObs(store.AlertBreached, t0))
+	one(t, f, store.NotifyAlertBreached)
+	tr = newTracker(f)
+	tr.Alert(ctx, alertObs(store.AlertBreached, t0.Add(time.Hour)))
+	none(t, f)
+}

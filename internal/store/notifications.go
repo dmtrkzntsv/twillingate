@@ -19,6 +19,10 @@ const (
 	NotifyFormDraftCreated   = "form_draft_created"
 	NotifyFormDraftDiscarded = "form_draft_discarded"
 	NotifyFormSubmission     = "form_submission"
+	NotifyAlertBreached      = "alert_breached"
+	NotifyAlertStillBreached = "alert_still_breached"
+	NotifyAlertRecovered     = "alert_recovered"
+	NotifyAlertBroken        = "alert_broken"
 )
 
 // NotificationTypes is every notification type, in the order above.
@@ -28,6 +32,7 @@ var NotificationTypes = []string{
 	NotifyDomainFailing, NotifyDomainStillFailing, NotifyDomainRecovered,
 	NotifyCertExpiring, NotifyDomainExpiring,
 	NotifyFormDraftCreated, NotifyFormDraftDiscarded, NotifyFormSubmission,
+	NotifyAlertBreached, NotifyAlertStillBreached, NotifyAlertRecovered, NotifyAlertBroken,
 }
 
 // Delivery outcomes of a notification on the channel: pending until the

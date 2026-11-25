@@ -170,7 +170,7 @@ The stream sends a keepalive every 15 seconds, well inside Cloudflare's
 | `MONITOR_TIMEOUT` | Seconds a site has to answer before the check counts as down; default 5, 1 to 60, below `MONITOR_INTERVAL`. Also the limit of the daily certificate read; the domain lookup keeps its own. |
 | `MONITOR_DISABLED` | `true` stops all monitoring: no check runs, no row is written, and a check on demand is refused (`list_monitors` says `paused`). Monitors can still be edited, and a manual check left pending is ended as one that did not run. Default `false`. |
 | `NOTIFY_URL` | The one channel [notifications](#notifications) are sent to, as a URL in one of the formats below. Unset, they stay in the console's inbox only. A URL that does not parse refuses the boot; the error names the problem, never the URL. It holds secrets: keep it in `twillingate.env`, not in a unit file or a shell history. Default empty. |
-| `NOTIFY_REMIND_HOURS` | Hours between the reminders of a site still down, or a certificate or domain still failing; whole hours, 1 to 168, default 4. |
+| `NOTIFY_REMIND_HOURS` | Hours between the reminders of a site still down, a certificate or domain still failing, or a silence alert still breached; whole hours, 1 to 168, default 4. |
 
 Day counts end in `_DAYS` and take a whole number; every other time
 (`BUFFER_FLUSH_INTERVAL`, `CONSOLE_QUERY_TIMEOUT`, `REPORTING_*_MAX_AGE`)
