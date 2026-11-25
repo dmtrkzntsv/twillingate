@@ -167,6 +167,9 @@ func TestBacktestSilenceGaps(t *testing.T) {
 	from := last.AddDays(-29)
 	res := bucketRows(func(h int) bool { return h >= 6 && h <= 13 })
 	h.eng.answer("breakdown", from, last, res)
+	// The day before the window, where an event received in it can be
+	// filed (INGEST_LATE_DAYS, 1 by default): nothing.
+	h.eng.answer("breakdown", from.AddDays(-1), from.AddDays(-1), native.Result{Columns: res.Columns})
 
 	bt := h.backtest(t, mustParse(t, Input{Where: []native.Filter{evt("signup")}, WhereSet: true,
 		Condition: store.AlertCondition{Type: "silence", Hours: 6}}), silenceNow)
@@ -178,6 +181,9 @@ func TestBacktestSilenceGaps(t *testing.T) {
 	gapTo := last.Time().Add(14*time.Hour + 15*time.Minute)
 	if !g.From.Equal(gapFrom) || !g.To.Equal(gapTo) || math.Abs(g.Hours-8.5) > 1e-9 {
 		t.Errorf("gap %+v, want %v…%v, 8.5 hours", g, gapFrom, gapTo)
+	}
+	if len(h.eng.reqs) != 2 {
+		t.Fatalf("%d requests, want the window's and the day before it", len(h.eng.reqs))
 	}
 	r := h.eng.reqs[0]
 	if err := r.Query.Validate(); err != nil {
@@ -231,6 +237,76 @@ func TestBacktestSilenceGaps(t *testing.T) {
 	}
 }
 
+// TestBacktestSilenceLateFiled: the backtest also reads the
+// INGEST_LATE_DAYS days before its window, in requests of their own, so
+// an event received inside the window but filed (its clamped ts) on a day
+// before it closes the window's leading gap, which is still measured from
+// the window's start.
+func TestBacktestSilenceLateFiled(t *testing.T) {
+	h := newEvalHarness()
+	h.e.LateDays = 2
+	last := civil.DateOf(silenceNow)
+	from := last.AddDays(-29)
+	// The window's first day has no bucket before 10h.
+	res := bucketRows(func(int) bool { return false })
+	rows := res.Rows[:0]
+	for _, row := range res.Rows {
+		if row[0] == from.String() && row[1] < "10" {
+			continue
+		}
+		rows = append(rows, row)
+	}
+	res.Rows = rows
+	h.eng.answer("breakdown", from, last, res)
+	silence := mustParse(t, Input{Where: []native.Filter{evt("signup")}, WhereSet: true,
+		Condition: store.AlertCondition{Type: "silence", Hours: 6}})
+
+	// Nothing filed before the window: a gap from its start to 10:15.
+	empty := native.Result{Columns: res.Columns}
+	h.eng.answer("breakdown", from.AddDays(-2), from.AddDays(-1), empty)
+	bt := h.backtest(t, silence, silenceNow)
+	if len(bt.Gaps) != 1 || !bt.Gaps[0].From.Equal(from.Time()) || !bt.Gaps[0].To.Equal(from.Time().Add(10*time.Hour+15*time.Minute)) {
+		t.Fatalf("nothing late: gaps %+v, want one from the window's start to 10:15", bt.Gaps)
+	}
+	pre := h.eng.reqs[len(h.eng.reqs)-1]
+	if pre.Params.From != from.AddDays(-2) || pre.Params.To != from.AddDays(-1) || pre.Query.Kind != "breakdown" || pre.Query.Limit != silenceBuckets {
+		t.Errorf("the days before the window: %+v over %s…%s", pre.Query, pre.Params.From, pre.Params.To)
+	}
+
+	// An event filed on the day before the window, received at its 5h,
+	// closes the gap; one received before the window starts none.
+	h.eng.answer("breakdown", from.AddDays(-2), from.AddDays(-1), native.Result{Columns: res.Columns, Rows: [][]string{
+		{from.AddDays(-2).String(), "03", from.AddDays(-2).Time().Add(3 * time.Hour).Format(time.RFC3339Nano), from.AddDays(-2).Time().Add(3 * time.Hour).Format(time.RFC3339Nano)},
+		{from.AddDays(-1).String(), "23", from.AddDays(-1).Time().Add(23 * time.Hour).Format(time.RFC3339Nano), from.Time().Add(5 * time.Hour).Format(time.RFC3339Nano)},
+	}})
+	if bt := h.backtest(t, silence, silenceNow); len(bt.Gaps) != 0 || bt.Fired != 0 {
+		t.Errorf("filed the day before: gaps %+v, want none", bt.Gaps)
+	}
+
+	// Late days past what one breakdown holds are asked in several.
+	h.e.LateDays = 50
+	h.eng.reqs = nil
+	h.eng.answer("breakdown", from.AddDays(-50), from.AddDays(-10), empty)
+	h.eng.answer("breakdown", from.AddDays(-9), from.AddDays(-1), empty)
+	h.backtest(t, silence, silenceNow)
+	if len(h.eng.reqs) != 3 {
+		t.Errorf("%d requests, want the window's and two before it", len(h.eng.reqs))
+	}
+
+	// A preview reads them too.
+	oh := newHarness(t)
+	eng := &fakeEngine{answers: h.eng.answers}
+	oh.o.eng, oh.o.LateDays = eng, 2
+	in := Input{Where: []native.Filter{evt("signup")}, WhereSet: true, Condition: store.AlertCondition{Type: "silence", Hours: 6}}
+	oh.at = silenceNow
+	if _, err := oh.o.Preview(context.Background(), oh.live, &in, 0); err != nil {
+		t.Fatal(err)
+	}
+	if len(eng.reqs) != 2 || eng.reqs[1].Params.From != from.AddDays(-2) {
+		t.Errorf("preview requests %+v, want the window's and the 2 days before it", eng.reqs)
+	}
+}
+
 // shortEngine answers no request.
 type shortEngine struct{}
 
@@ -273,6 +349,7 @@ func TestBacktestFailures(t *testing.T) {
 	}
 
 	last := civil.DateOf(evalNow)
+	h.eng.answer("breakdown", last.AddDays(-30), last.AddDays(-30), native.Result{Columns: []string{"day", "hour", "min_received_at", "max_received_at"}})
 	h.eng.answer("breakdown", last.AddDays(-29), last, native.Result{Columns: []string{"day", "hour", "min_received_at", "max_received_at"},
 		Rows: [][]string{{last.String(), "01", "yesterday", "today"}}})
 	if _, err := h.e.Backtest(ctx, 7, silence(t), evalNow); err == nil {

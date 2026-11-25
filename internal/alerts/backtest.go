@@ -15,13 +15,15 @@ import (
 
 // The days a backtest covers: a stat's and a funnel's, ending yesterday
 // (a funnel answers each day alone, so fewer), and a silence alert's,
-// ending today. silenceBuckets bounds the silence breakdown, an hour a
-// row: 30 days of hours fit.
+// ending today. silenceBuckets bounds a silence breakdown, an hour a
+// row (native's most): 30 days of hours fit in one, and the late days
+// before them are asked silenceChunkDays at a time.
 const (
 	backtestStatDays    = 90
 	backtestFunnelDays  = 30
 	backtestSilenceDays = 30
 	silenceBuckets      = 1000
+	silenceChunkDays    = silenceBuckets / 24
 )
 
 // BacktestDay is how an alert would have evaluated the window ending
@@ -145,11 +147,13 @@ func firings(days []BacktestDay) int {
 }
 
 // backtestSilence finds the gaps longer than p's hours over the 30 days
-// ending today: one breakdown by day and hour reads each bucket's
-// first and last received_at, and the gaps are the stretches between
-// them, from the window's start and to now. Events received late put a
-// bucket's span out of time order, so the spans are sorted, and a gap
-// is measured from the latest end yet.
+// ending today: a breakdown by day and hour reads each bucket's first
+// and last received_at, and the gaps are the stretches between them,
+// from the window's start and to now. The LateDays days before the
+// window are read too, in breakdowns of their own, since an event
+// received in it can be filed (by its clamped ts) that much earlier.
+// Events received late put a bucket's span out of time order, so the
+// spans are sorted, and a gap is measured from the latest end yet.
 func (e *Evaluator) backtestSilence(ctx context.Context, projectID int64, p Parsed, now time.Time) (Backtest, error) {
 	today := civil.DateOf(now)
 	from := today.AddDays(-(backtestSilenceDays - 1))
@@ -159,13 +163,29 @@ func (e *Evaluator) backtestSilence(ctx context.Context, projectID int64, p Pars
 		Metrics:    []native.Metric{{Op: "min", Column: "received_at"}, {Op: "max", Column: "received_at"}},
 		Limit:      silenceBuckets,
 	}
-	results, err := e.answer(ctx, []native.Request{{Query: q, Params: native.Params{Project: projectID, From: from, To: today}, Rules: e.projects.Rules(ctx)}})
+	rules := e.projects.Rules(ctx)
+	request := func(from, to civil.Date) native.Request {
+		return native.Request{Query: q, Params: native.Params{Project: projectID, From: from, To: to}, Rules: rules}
+	}
+	reqs := []native.Request{request(from, today)}
+	for d := from.AddDays(-max(e.LateDays, 1)); d.Before(from); d = d.AddDays(silenceChunkDays) {
+		to := d.AddDays(silenceChunkDays - 1)
+		if !to.Before(from) {
+			to = from.AddDays(-1)
+		}
+		reqs = append(reqs, request(d, to))
+	}
+	results, err := e.answer(ctx, reqs)
 	if err != nil {
 		return Backtest{}, err
 	}
-	spans, err := receivedSpans(q, results[0])
-	if err != nil {
-		return Backtest{}, err
+	var spans [][2]time.Time
+	for _, res := range results {
+		s, err := receivedSpans(q, res)
+		if err != nil {
+			return Backtest{}, err
+		}
+		spans = append(spans, s...)
 	}
 	slices.SortFunc(spans, func(a, b [2]time.Time) int { return a[0].Compare(b[0]) })
 
@@ -276,5 +296,7 @@ func (o *Ops) Preview(ctx context.Context, projectID int64, in *Input, id int64)
 	if err := o.refuseRuleHit(ctx, projectID, p); err != nil {
 		return Backtest{}, err
 	}
-	return NewEvaluator(o.eng, o.projects, nil, o.Timeout).Backtest(ctx, projectID, p, o.now())
+	ev := NewEvaluator(o.eng, o.projects, nil, o.Timeout)
+	ev.LateDays = o.LateDays
+	return ev.Backtest(ctx, projectID, p, o.now())
 }

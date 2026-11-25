@@ -162,6 +162,7 @@ func Serve(ctx context.Context, cfg *config.Config, logger *slog.Logger, runInge
 	// console; a preview's queries are bounded as the query tool's are.
 	al := alerts.NewOps(st, alertProjects{reg}, nat, ops.Presence)
 	al.Timeout = cfg.Console.QueryTimeout
+	al.LateDays = cfg.IngestLateDays
 	if len(reg.Snapshot(ctx).Projects()) == 0 {
 		logger.Warn("no projects configured; create one with `twillingate project create` or an API management operation")
 	}

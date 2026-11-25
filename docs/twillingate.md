@@ -1274,8 +1274,9 @@ past, reading only: a stat's 90 days ending yesterday and a funnel's 30, each
 day's window judged as an evaluation would judge it (without asking whether
 its events were ever sent), and `fired`, the runs of breached days. A silence
 alert's backtest lists the gaps longer than its hours over the 30 days ending
-now, from the hours of the events' own timestamps, counting a gap from the
-window's start, while the live check runs hourly on `received_at`: its
+now, from the hours of the events' own timestamps (those of the
+`INGEST_LATE_DAYS` days before the window too, where an event received in
+it can be filed), counting a gap from the window's start, while the live check runs hourly on `received_at`: its
 "would have fired N times" is an estimate. A backtest reads settled days, so
 on an app-heavy project it may look calmer than live firings.
 

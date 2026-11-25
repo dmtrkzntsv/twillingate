@@ -25,6 +25,9 @@ const (
 type Ops struct {
 	// Timeout bounds a preview's queries (CONSOLE_QUERY_TIMEOUT).
 	Timeout time.Duration
+	// LateDays is INGEST_LATE_DAYS, as Evaluator's: how far before its
+	// window a silence preview reads.
+	LateDays int
 
 	st       Store
 	projects Projects
