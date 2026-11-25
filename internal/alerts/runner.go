@@ -124,7 +124,7 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) {
 			continue
 		}
 		live[inbox.AlertKey{ProjectID: a.ProjectID, ID: a.ID}] = a.Revision
-		if a.CheckPending() || scheduled(a, now, afterPass) || silenceDue(a, now) {
+		if a.CheckPending() || scheduled(a, now, afterPass) || retryDue(a, now) || silenceDue(a, now) {
 			due = append(due, a)
 		}
 	}
@@ -144,17 +144,31 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) {
 		if ctx.Err() != nil {
 			return
 		}
-		r.evaluateOne(ctx, a, now, scheduled(a, now, afterPass))
+		r.evaluateOne(ctx, a, now, daysDue(a, now, afterPass))
 	}
 }
 
-// scheduled reports whether metric alert a is due at now by its schedule:
-// not yet evaluated through yesterday, not waiting to retry, and the days
-// settled (afterPass).
-func scheduled(a store.Alert, now time.Time, afterPass bool) bool {
+// daysDue reports whether metric alert a's days are due at now: not yet
+// evaluated through yesterday, and the days settled (afterPass). Any
+// evaluation of a then is its scheduled one, which writes last_day, a
+// check served while a retry waits included.
+func daysDue(a store.Alert, now time.Time, afterPass bool) bool {
 	return a.Def.Condition.Type != condSilence && afterPass &&
-		a.LastDay < civil.DateOf(now).AddDays(-1).String() &&
-		(a.RetryAt == "" || a.RetryAt <= stampOf(now))
+		a.LastDay < civil.DateOf(now).AddDays(-1).String()
+}
+
+// scheduled reports whether metric alert a is due at now by its schedule:
+// its days due and not waiting to retry.
+func scheduled(a store.Alert, now time.Time, afterPass bool) bool {
+	return daysDue(a, now, afterPass) && (a.RetryAt == "" || a.RetryAt <= stampOf(now))
+}
+
+// retryDue reports whether metric alert a failed fewer than maxFails times
+// in a row and its retry is due at now, however far its days are
+// evaluated: a failed check is tried again too.
+func retryDue(a store.Alert, now time.Time) bool {
+	return a.Def.Condition.Type != condSilence && a.Fails > 0 && a.Fails < maxFails &&
+		a.RetryAt != "" && a.RetryAt <= stampOf(now)
 }
 
 // silenceDue reports whether silence alert a is due at now: not evaluated
@@ -200,7 +214,7 @@ func (r *Runner) evaluateOne(ctx context.Context, a store.Alert, now time.Time, 
 		res.Fails = a.Fails + 1
 		res.RetryAt = stampOf(now.Add(retryEvery))
 		if res.Fails < maxFails {
-			res.LastDay = "" // the day is tried again at RetryAt
+			res.LastDay = "" // last_day kept: the evaluation is tried again at RetryAt
 		} else {
 			outcome = store.AlertBroken
 			res.State = store.AlertBroken

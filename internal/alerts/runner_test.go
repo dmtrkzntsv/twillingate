@@ -377,6 +377,66 @@ func TestRunnerRetriesThenBroken(t *testing.T) {
 	wantCalls(t, "07:00", h.tick(runAt(7, 0)))
 }
 
+// TestRunnerRetriesAFailedCheck: a check that fails on an alert already
+// evaluated through yesterday is tried again hourly, and is broken on the
+// third failure, its last day kept.
+func TestRunnerRetriesAFailedCheck(t *testing.T) {
+	h := newRunHarness(t)
+	h.clock = runAt(0, 0)
+	a := h.metric(t, "signups")
+	h.clearChecks(t)
+	wantCalls(t, "04:00", h.tick(runAt(4, 0)), a.ID)
+	if got := h.get(t, a); got.LastDay != yesterday.String() || got.State != store.AlertOK {
+		t.Fatalf("scheduled: %+v", got)
+	}
+
+	h.exec(t, `UPDATE alerts SET check_requested_at=?`, runAt(10, 0).Format(time.RFC3339))
+	h.next = func(a store.Alert, now time.Time) Outcome { return outcomeAt(a, now, store.AlertError, "engine busy.") }
+	wantCalls(t, "10:00", h.tick(runAt(10, 0)), a.ID)
+	got := h.get(t, a)
+	if got.Fails != 1 || got.RetryAt != "2026-11-25T11:00:00Z" || got.LastDay != yesterday.String() || got.CheckPending() {
+		t.Fatalf("failed check: %+v", got)
+	}
+	wantCalls(t, "10:30", h.tick(runAt(10, 30)))
+	wantCalls(t, "11:00", h.tick(runAt(11, 0)), a.ID)
+	if got = h.get(t, a); got.Fails != 2 || got.State != store.AlertOK || got.LastDay != yesterday.String() {
+		t.Fatalf("second failure: %+v", got)
+	}
+	wantCalls(t, "12:00", h.tick(runAt(12, 0)), a.ID)
+	if got = h.get(t, a); got.Fails != 3 || got.State != store.AlertBroken || got.LastDay != yesterday.String() {
+		t.Fatalf("third failure: %+v", got)
+	}
+	wantCalls(t, "13:00", h.tick(runAt(13, 0)))
+}
+
+// TestRunnerCheckDuringARetryCountsAsScheduled: a check served while a
+// failed scheduled evaluation waits to retry evaluates the same days, so
+// it writes last_day and the retry does not evaluate them again.
+func TestRunnerCheckDuringARetryCountsAsScheduled(t *testing.T) {
+	h := newRunHarness(t)
+	h.clock = runAt(0, 0)
+	a := h.metric(t, "signups")
+	h.clearChecks(t)
+
+	h.next = func(a store.Alert, now time.Time) Outcome { return outcomeAt(a, now, store.AlertError, "engine busy.") }
+	wantCalls(t, "04:00", h.tick(runAt(4, 0)), a.ID)
+	if got := h.get(t, a); got.Fails != 1 || got.RetryAt != "2026-11-25T05:00:00Z" || got.LastDay != "" {
+		t.Fatalf("failure: %+v", got)
+	}
+
+	h.next = nil
+	h.exec(t, `UPDATE alerts SET check_requested_at=?`, runAt(4, 30).Format(time.RFC3339))
+	wantCalls(t, "04:30", h.tick(runAt(4, 30)), a.ID)
+	if got := h.get(t, a); got.LastDay != yesterday.String() || got.Fails != 0 || got.RetryAt != "" {
+		t.Fatalf("after the check: %+v", got)
+	}
+	wantCalls(t, "05:00", h.tick(runAt(5, 0)))
+	ev, err := h.st.ListAlertEvaluations(context.Background(), a.ID, 10, 0)
+	if err != nil || len(ev) != 2 {
+		t.Fatalf("evaluations %+v, %v; want the failure and the check", ev, err)
+	}
+}
+
 func TestRunnerPassesNoData(t *testing.T) {
 	h := newRunHarness(t)
 	h.clock = runAt(0, 0)
