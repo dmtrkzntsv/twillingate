@@ -46,6 +46,7 @@ func fromTemplate(name string, f map[string]string) (native.Query, store.AlertRe
 		sort.Strings(names)
 		return fail(invalid("template: %q is not one of %s", name, strings.Join(names, ", ")))
 	}
+	f = cleanFields(f)
 	keys := make([]string, 0, len(f))
 	for k := range f {
 		keys = append(keys, k)

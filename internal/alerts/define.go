@@ -87,6 +87,7 @@ func invalid(format string, args ...any) error {
 // metric of a one-metric stat, a funnel's from, the window), and a stat's
 // compare and shape cleared. Every refusal wraps store.ErrInvalid.
 func Build(in Input) (store.AlertDef, error) {
+	in.Fields = cleanFields(in.Fields) // an empty field is an absent one
 	if err := checkCondition(in.Condition); err != nil {
 		return store.AlertDef{}, err
 	}
@@ -107,7 +108,7 @@ func Build(in Input) (store.AlertDef, error) {
 		MinVolume:  in.MinVolume,
 	}
 	if in.Template != "" {
-		def.Template, def.Fields = in.Template, cleanFields(in.Fields)
+		def.Template, def.Fields = in.Template, in.Fields
 	}
 	if def.WindowDays == 0 {
 		def.WindowDays = 1

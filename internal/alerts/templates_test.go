@@ -136,6 +136,18 @@ func TestTemplatesBuild(t *testing.T) {
 	if def.Fields != nil {
 		t.Errorf("empty fields stored as %#v", def.Fields)
 	}
+
+	// An empty field is an absent one, even one the template does not take.
+	def = mustBuild(t, Input{Template: "event_count", Fields: map[string]string{"event": "signup", "who": "", "path": ""}, Condition: below5})
+	if !reflect.DeepEqual(def.Fields, map[string]string{"event": "signup"}) {
+		t.Errorf("fields with empty ones stored as %#v", def.Fields)
+	}
+	// So are fields left empty beside a query.
+	in := countIn("x")
+	in.Fields = map[string]string{"event": ""}
+	if _, err := Build(in); err != nil {
+		t.Errorf("empty fields beside a query: %v", err)
+	}
 }
 
 func TestTemplatesRefuse(t *testing.T) {
