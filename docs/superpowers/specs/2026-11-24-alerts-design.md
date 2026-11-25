@@ -120,7 +120,7 @@ plus a **read** that names the one number:
 | Query kind | Read | The number |
 | --- | --- | --- |
 | `stat` | `{"metric": "<name>"}` | that metric's value; required only when the stat has several metrics |
-| `funnel` | `{"step": "<label>"}` | that step's value divided by the first step's (a conversion, 0–1); the step is required and must not be the first |
+| `funnel` | `{"step": "<label>", "from": "start" \| "previous"}` | that step's value divided by the first step's (`start`, the default) or by the step just before it (`previous`): a conversion, 0–1; the step is required and must not be the first |
 
 Any other kind is refused when the alert is saved, as `invalid`, with a message
 saying an alert reads a `stat` (one metric) or a `funnel` (one step over the
@@ -146,6 +146,12 @@ one is refused, so "bounce rate above 70%" over three sessions cannot page.
 
 - **window_days** (1–30, default 1) applies to threshold and change: the
   alert reads the last `window_days` complete days, ending yesterday (UTC).
+  A funnel counts only the steps taken inside the window, so a conversion
+  that takes longer than the window reads low (a trial that pays a week later
+  is not in a one-day window). The Conversion template defaults to 7 days and
+  says so; Amplitude handles this by waiting for the conversion window to
+  close, which our day windows make unnecessary as long as the window is long
+  enough.
 - **change** compares that window with the one just before it (`previous`)
   or with the same days a week earlier (`week_ago`, which matches weekdays;
   with `window_days` ≥ 7 it overlaps or equals `previous`, and is still
@@ -180,8 +186,17 @@ one is refused, so "bounce rate above 70%" over three sessions cannot page.
 An alert is in one of: `pending` (never evaluated), `ok`, `breached`,
 `no_data` (the last evaluation fell under `min_volume`, or a change had a
 zero comparison; the previous ok/breached state is kept for notifications),
-`broken` (below), `paused`. The page shows these; notifications follow only
-ok ↔ breached and broken.
+`broken` (below), `paused`, `snoozed`. The page shows these; notifications
+follow only ok ↔ breached and broken.
+
+- **Pause** stops an alert until it is resumed. **Snooze** (`snoozed_until`, a
+  time) stops it until then: no evaluation, no notification; it resumes on its
+  own, from `pending`. A known outage or a launch day is a snooze, not a
+  pause. Both end a breached state without a recovery.
+- **Editing** the query, read, condition, window or minimum volume ends the
+  state without a notification, sets it `pending` and requests a check, so the
+  page shows the new definition's outcome within a minute and the next
+  firing is about the new line. Renaming does not.
 
 ### Broken
 
@@ -296,7 +311,7 @@ days with the breached ones marked, and says "would have fired N times".
 | --- | --- | --- |
 | `list_alerts` | `{project_id, archived}` | the alerts, each with its definition, state, last value and last evaluated time |
 | `create_alert` | `{project_id, name, condition, window_days, min_volume}` plus one of: `{query, read}`; `{where}` for a silence condition; `{template, fields}` | the alert, and `warnings` (an event or attribute never sent) |
-| `update_alert` | `{id, …}`: `name`, `condition`, `window_days`, `min_volume`, `paused`; `query`/`read`, `where` or `template`/`fields` | the alert |
+| `update_alert` | `{id, …}`: `name`, `condition`, `window_days`, `min_volume`, `paused`, `snoozed_until`; `query`/`read`, `where` or `template`/`fields` | the alert |
 | `archive_alert`, `restore_alert` | `{id}` | the alert |
 | `check_alert` | `{id}` | the alert with `check_requested_at`; poll `list_alerts` or `alert_history` for the evaluation |
 | `preview_alert` | an alert definition (as `create_alert`, without saving) or `{id}` | the backtest |
@@ -305,6 +320,8 @@ days with the breached ones marked, and says "would have fired N times".
 REST mirrors them under `/api/projects/{id}/alerts…`, as the forms routes do.
 Archived alerts are purged `RETENTION_ARCHIVED_DAYS` after archiving, with
 their evaluations. Names are unique among a project's live alerts (`conflict`).
+A project holds at most 100 live alerts (`ALERTS_MAX` style limit, reported
+by `limits`), so a runaway agent cannot make the daily run unbounded.
 
 ### The Alerts tab
 
