@@ -543,6 +543,9 @@ func TestViewState(t *testing.T) {
 	if list[0].State != store.AlertPending || list[0].Warnings != nil {
 		t.Errorf("snooze over: state %q, warnings %q", list[0].State, list[0].Warnings)
 	}
+	if list[0].SnoozedUntil != "" {
+		t.Errorf("snooze over: snoozed_until %q, want empty", list[0].SnoozedUntil)
+	}
 }
 
 // auditRows reads the audit rows of action through a second handle.

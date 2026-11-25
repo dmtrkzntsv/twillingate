@@ -467,6 +467,9 @@ func (o *Ops) views(ctx context.Context, as []store.Alert) ([]View, error) {
 		case a.SnoozedUntil > now:
 			state = store.AlertSnoozed
 		}
+		if a.SnoozedUntil <= now {
+			a.SnoozedUntil = "" // over: the view says not snoozed; the row keeps it
+		}
 		out[i] = View{Alert: a, Parsed: p, State: state, ValueText: formatValue(p, a.LastValue), Recent: recent[a.ID]}
 	}
 	return out, nil
