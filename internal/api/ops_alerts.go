@@ -86,7 +86,7 @@ type createAlertIn struct {
 	alertSourceIn
 	Condition  alertConditionIO `json:"condition" jsonschema:"the line: {type: threshold, op, value}, {type: change, direction, percent, against} or {type: silence, hours}"`
 	WindowDays int              `json:"window_days,omitempty" jsonschema:"threshold and change: the complete days read, ending yesterday (UTC), 1 to 30; default 1, and 7 for the conversion template; a silence alert takes none"`
-	MinVolume  float64          `json:"min_volume,omitempty" jsonschema:"1 or more: under it an evaluation is no_data, never a breach; 0 or absent for none. Measures a funnel's first step, a rate's volume metric, a change's comparison; a threshold on a count takes none"`
+	MinVolume  float64          `json:"min_volume,omitempty" jsonschema:"1 or more: under it an evaluation is no_data, never a breach; 0 or absent for none. Measures a funnel's denominator step (the first, or with read.from previous the step before the one read), a rate's volume metric, a change's comparison; a threshold on a count takes none"`
 }
 
 type updateAlertIn struct {
@@ -384,7 +384,7 @@ func (h *host) registerAlerts(r *registrar) {
 		Description: "A project's live alerts by name (archived: true lists the archived ones instead), and max_live, how many live alerts a project may have. Each has id, name, kind (stat, funnel or silence), query, read, where (silence), condition, window_days, min_volume, template and fields (when made from one), paused, snoozed_until, state (pending, ok, breached, no_data, broken, paused, snoozed), reason (why broken or no_data), last_value and last_value_text, last_evaluated_at, last_day (the last day its window ended on), check_requested_at and check_pending, recent (the newest 14 evaluations: at, value, outcome), created_at, updated_at and archived_at. Empty strings are none."},
 		h.listAlerts)
 	expose(r, spec{Name: "create_alert", Annotations: write, Method: "POST", Path: p, Status: http.StatusCreated, constrain: constrainAlert,
-		Description: "Create a metric alert, which notifies (the inbox and NOTIFY_URL) when its number breaches a line: name, condition, and exactly one source: query (a stat or a funnel) with read, where (a silence alert's events) or template with fields. " +
+		Description: "Create an alert, which notifies (the inbox and NOTIFY_URL) when its number breaches a line: name, condition, and exactly one source: query (a stat or a funnel) with read, where (a silence alert's events) or template with fields. " +
 			alertReadRule + " " + alertConditionRule + " window_days defaults to 1, and to 7 for conversion. " + alertTemplateRule +
 			" min_volume (1 or more) makes a window under it no_data instead of a breach. An event an event rule renames or blocks is refused, as is an attribute an attribute rule renames or blocks; one the project has never sent is allowed, named in warnings (it reads no_data until sent). It starts pending, with a check requested: poll list_alerts until check_pending is false. Run preview_alert first to see how often it would have fired. At most max_live live alerts a project; names unique among them. Returns the alert."},
 		h.createAlert)

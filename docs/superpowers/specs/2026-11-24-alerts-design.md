@@ -180,12 +180,13 @@ one is refused, so "bounce rate above 70%" over three sessions cannot page.
   [Broken](#broken)). `window_days` does not apply.
 - **min_volume** (optional, ≥ 1): below it, the evaluation is "not enough
   data" and leaves the state as it was. What it measures:
-  - a funnel: the first step's value (the denominator);
+  - a funnel: the denominator step's value (the first step, or with
+    `from: previous` the step before the one read);
   - a stat with a rate or average read: its volume metric (required, above);
   - a change on a count: the comparison value (so 1 → 4 is not "+300%");
   - a threshold on a count: not allowed (the value itself is what is watched).
-- **An empty value** (a rate or average over no rows, a funnel whose first
-  step is 0) is "not enough data", never a breach. A count's 0 is a real
+- **An empty value** (a rate or average over no rows, a funnel whose
+  denominator step is 0) is "not enough data", never a breach. A count's 0 is a real
   value.
 
 ### States

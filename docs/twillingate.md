@@ -1090,7 +1090,7 @@ submissions.
 twillingate tells you when something needs a look: a site that goes down
 and comes back, a certificate or a domain lookup that fails and recovers, a
 certificate or a domain about to expire, a new form waiting for approval or
-a draft dropped unapproved, submissions to a form, and a metric alert that is
+a draft dropped unapproved, submissions to a form, and an alert that is
 breached, recovered or broken. Each is one item in
 the inbox (the console's, and `list_notifications`) and, with `NOTIFY_URL`
 set, the same title, body and link (the console page, `<CONSOLE_URL>/app/…`)
@@ -1161,7 +1161,7 @@ its own way. The examples are titles.
 | `alert_breached` | an alert's evaluation breaches its condition: `Signup conversion: 2.1%`, with the detail as the body; `subject` is the alert's name, `fields.alert_id` its id, `fields.since` when it breached |
 | `alert_still_breached` | a reminder while it stays breached: `Signup conversion: still 2.1%`; a metric alert reminds once for each later day its window ends on, a silence alert every `NOTIFY_REMIND_HOURS` |
 | `alert_recovered` | an evaluation no longer breaches: `Signup conversion: back to 3.4%`, with how long it was breached (`fields.since`, `fields.until`) |
-| `alert_broken` | the alert cannot be evaluated (for instance the funnel's first step no longer exists): `Signup conversion is broken`, once; `fields.reason` says why. The breach under it is kept, so a later breach does not announce again; a good evaluation clears it silently |
+| `alert_broken` | the alert cannot be evaluated (for instance an event it names was renamed): `Signup conversion is broken`, once; `fields.reason` says why. An evaluation that is ok or has no data clears the break silently. A breach under it is kept, so a later breach does not announce again, and an ok then recovers it as usual (`alert_recovered`) |
 
 ### Delivery
 
@@ -1218,9 +1218,10 @@ decides the days. Instead of `query` and `read`, an alert can come from a
 complete days a threshold or change reads, ending yesterday (UTC). A funnel
 counts only the steps taken inside the window, so a conversion slower than
 the window reads low. `min_volume` (1 or more, 0 for none) makes a window
-under it `no_data` instead of a breach; it measures a funnel's first step, a
-rate's volume metric, or a change's comparison value (so 1 → 4 is not
-"+300%"); a threshold on a count takes none (its value is what is watched),
+under it `no_data` instead of a breach; it measures a funnel's denominator
+step (the first, or with `read.from` `previous` the step before the one
+read), a rate's volume metric, or a change's comparison value (so 1 → 4 is
+not "+300%"); a threshold on a count takes none (its value is what is watched),
 and a silence alert takes neither.
 
 **When it runs.** A threshold or change alert is evaluated once a day, after
@@ -1238,16 +1239,19 @@ notify. Evaluations run in the process that writes the event files, and are
 kept 400 days (`alert_history`).
 
 **No data and broken.** A value of nothing (a rate over no rows, a funnel
-whose first step is 0), a window under `min_volume` or a change against 0 is
+whose denominator step is 0), a window under `min_volume` or a change against 0 is
 `no_data`, never a breach; a count's 0 is a real value. An event or attribute
 the query names that the project has never sent is `no_data` too, with
 `reason` `never sent: <name>`: saving one is allowed, with a `warnings` entry,
 so an alert can be set up before a launch. An event an event rule renames,
 merges or blocks, or an `attr_<key>` an attribute rule does, is refused at
-save, naming its new name, and turns a saved alert `broken`, as does a query the engine no longer accepts; a runtime
-failure (a timeout, a busy engine, a file gone mid-read) is tried again an
-hour later, and is `broken` after 3 failed tries in a row. `alert_broken` is
-raised once; a later good evaluation clears it silently. An alert of an
+save, naming its new name, and turns a saved alert `broken`, as does a query
+the engine no longer accepts; a runtime failure (a timeout, a busy engine, a
+file gone mid-read, a failed check of what the project has sent) is tried
+again an hour later, and is `broken` after 3 failed tries in a row.
+`alert_broken` is raised once; a later evaluation that is ok or has no data
+clears it silently, and a breach under it carries on (no new
+`alert_breached`; an ok recovers it as usual). An alert of an
 archived project is not evaluated, and restoring the project resumes it from
 `pending`.
 
