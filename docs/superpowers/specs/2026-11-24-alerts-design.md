@@ -216,7 +216,7 @@ and before every evaluation:
 | --- | --- | --- |
 | The query fails validation (`native` refuses a column, metric or kind) | refused, `invalid` | broken |
 | An `event_name` the query filters on is renamed, merged or blocked by an event rule (`Snapshot.ResolveEvent`) | refused, `invalid`, naming the new name | broken, "renamed to X" / "blocked" |
-| An `event_name` or `attr_<key>` the query filters on has never been sent by the project (`Presence.HasEvents` / `HasAttribute`, over the files the project holds) | allowed, with a warning in the answer (an agent may set an alert up before a launch) | `no_data`, "never sent": not broken, not breached; it starts evaluating once the event is seen |
+| An `event_name` or `attr_<key>` the query filters on, other than under a `never` filter, has never been sent by the project (`Presence.HasEvents` / `HasAttribute`, over the files the project holds) | allowed, with a warning in the answer (an agent may set an alert up before a launch) | `no_data`, "never sent": not broken, not breached; it starts evaluating once the event is seen |
 | A runtime error (timeout, too large, busy, a file gone mid-read) | — | retried; broken after 3 failed tries in a row (a daily alert retries hourly that day; a silence alert at its next hourly run) |
 
 An alert of an archived project is not evaluated, and its state ends without

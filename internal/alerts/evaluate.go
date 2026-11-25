@@ -214,7 +214,7 @@ func (e *Evaluator) ruleBreak(ctx context.Context, projectID int64, p Parsed) st
 
 // neverSent is the first event or attribute p's query names that the
 // project has never sent (an attribute as attr_<key>), "" when every one
-// was sent. A failed question is an error, which the caller retries
+// was sent; what only a never filter names is not asked. A failed question is an error, which the caller retries
 // rather than judge a value that may only mean "never sent"; a sent
 // reference is remembered, never asked again (a rule renaming or
 // blocking it later breaks the alert before presence is asked).
@@ -223,6 +223,9 @@ func (e *Evaluator) neverSent(ctx context.Context, projectID int64, p Parsed) (s
 		return "", nil
 	}
 	for _, r := range p.References() {
+		if r.Never {
+			continue
+		}
 		k := seenKey{projectID, r}
 		e.mu.Lock()
 		seen := e.seen[k]

@@ -227,6 +227,22 @@ func TestEvaluateNeverSentIsNoData(t *testing.T) {
 
 }
 
+// TestEvaluateNeverFilterNeedsNoPresence: an event or attribute named
+// only under a never filter need not have been sent, so a 0 is judged,
+// not no_data; a rule on it still breaks the alert.
+func TestEvaluateNeverFilterNeedsNoPresence(t *testing.T) {
+	h := newEvalHarness()
+	in := statIn(store.AlertRead{}, below5, native.Metric{Op: "count"})
+	in.Query.Where = append(in.Query.Where, native.Filter{Op: "never", Where: []native.Filter{
+		evt("refund"), {Column: "attr_coupon", Op: "is_set"}}})
+	a := alertOf(t, in)
+	h.eng.answer("stat", yesterday, yesterday, statResult("count", "0"))
+	wantOutcome(t, h.evaluate(a), store.AlertBreached, "")
+
+	h.projects.renames[ruleKey(store.FamilyProduct, "refund")] = "refunded"
+	wantOutcome(t, h.evaluate(a), store.AlertBroken, "Renamed to refunded: refund")
+}
+
 // TestEvaluatePresenceFailureIsError: a value of 0 or none whose
 // presence question fails is an error (retried, then broken), never
 // judged: an event never sent must not read as a breach.

@@ -313,7 +313,8 @@ func (o *Ops) History(ctx context.Context, projectID, id int64, limit int, curso
 
 // checkEvents refuses def when an event rule renames or blocks an event
 // it names, or an attribute rule an attribute, and, with presence, warns of each event or attribute the
-// project has never sent. A presence failure is a warning too.
+// project has never sent, but for what only a never filter names. A
+// presence failure is a warning too.
 func (o *Ops) checkEvents(ctx context.Context, projectID int64, def store.AlertDef) ([]string, error) {
 	p, err := Parse(def)
 	if err != nil {
@@ -327,6 +328,9 @@ func (o *Ops) checkEvents(ctx context.Context, projectID int64, def store.AlertD
 	}
 	var warnings []string
 	for _, r := range p.References() {
+		if r.Never {
+			continue
+		}
 		name, sent, err := askPresence(ctx, o.presence, projectID, r)
 		switch {
 		case err != nil:

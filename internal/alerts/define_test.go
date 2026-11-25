@@ -569,6 +569,25 @@ func TestReferences(t *testing.T) {
 	if got := (Parsed{Query: vf}).References(); len(got) != 1 || got[0].Family != store.FamilyViews {
 		t.Errorf("views funnel: %+v", got)
 	}
+
+	// What a never filter names is marked Never, and only there: an event
+	// named outside it as well is a reference of each kind.
+	nq := native.Query{Kind: "stat", Table: "product", Where: []native.Filter{
+		evt("signup"),
+		{Op: "never", Where: []native.Filter{evt("refund"), {Column: "attr_coupon", Op: "is_set"},
+			{Op: "any_of", Any: []native.Filter{evt("signup")}}}},
+		{Op: "ever", Where: []native.Filter{evt("paid")}},
+	}}
+	wantN := []Reference{
+		{Family: P, Event: "signup"},
+		{Family: F, Event: "refund", Never: true},
+		{Family: F, Attr: "coupon", Never: true},
+		{Family: F, Event: "signup", Never: true},
+		{Family: F, Event: "paid"},
+	}
+	if got := (Parsed{Query: nq}).References(); !reflect.DeepEqual(got, wantN) {
+		t.Errorf("never References =\n%+v\nwant\n%+v", got, wantN)
+	}
 }
 
 func TestCheckName(t *testing.T) {

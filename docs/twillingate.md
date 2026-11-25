@@ -1246,7 +1246,10 @@ whose denominator step is 0), a window under `min_volume` or a change against 0 
 `no_data`, never a breach; a count's 0 is a real value. An event or attribute
 the query names that the project has never sent is `no_data` too, with
 `reason` `never sent: <name>`: saving one is allowed, with a `warnings` entry,
-so an alert can be set up before a launch. An event an event rule renames,
+so an alert can be set up before a launch. What only a `never` filter names
+need not have been sent (no one having done it is what the filter asks), so
+it neither warns nor reads `no_data`; event and attribute rules apply to it
+as to the rest. An event an event rule renames,
 merges or blocks, or an `attr_<key>` an attribute rule does, is refused at
 save, naming its new name, and turns a saved alert `broken`, as does a query
 the engine no longer accepts; a runtime failure (a timeout, a busy engine, a

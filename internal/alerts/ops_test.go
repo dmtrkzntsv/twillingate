@@ -261,6 +261,26 @@ func TestUpdateAlertAcrossSilence(t *testing.T) {
 	}
 }
 
+// TestCreateAlertNeverFilterWarnsNothing: what a never filter names need
+// not have been sent, so it is not warned of; a rule on it is still
+// refused.
+func TestCreateAlertNeverFilterWarnsNothing(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.presence.sent["signup"] = true
+	in := countIn("no refunds")
+	in.Query.Where = append(in.Query.Where, native.Filter{Op: "never", Where: []native.Filter{
+		evt("refund"), {Column: "attr_coupon", Op: "is_set"}}})
+	if v := h.create(t, in); len(v.Warnings) != 0 {
+		t.Errorf("Warnings = %q, want none", v.Warnings)
+	}
+
+	h.projects.renames[ruleKey(store.FamilyProduct, "refund")] = "refunded"
+	in.Name = "second"
+	_, err := h.o.Create(ctx, "tester", h.live, in)
+	mustInvalid(t, err, "`refund` is now `refunded`")
+}
+
 func TestCreateAlertWarnsNeverSent(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

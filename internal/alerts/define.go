@@ -444,31 +444,35 @@ func checkCondition(c store.AlertCondition) error {
 
 // Reference is an event or an attribute a query names: one of Event and
 // Attr is set. Family is the family the query reads it from, "" for
-// every one (the events table).
+// every one (the events table). Never marks one named under a never
+// filter, which the project need not have sent: an actor who never did
+// it is what the filter asks for.
 type Reference struct {
 	Family store.Family
 	Event  string
 	Attr   string
+	Never  bool
 }
 
 // References are the events (event_name's eq and in values, $ names
 // included) and attributes (attr_<key> columns) p's query names, in the
-// order it names them, each once.
+// order it names them, each once (once more, marked Never, when a never
+// filter names it too).
 func (p Parsed) References() []Reference {
 	var r refs
 	q := p.Query
 	fam := tableFamily(q.Table)
-	r.filters(fam, q.Where)
+	r.filters(fam, q.Where, false)
 	for _, d := range q.Define {
 		for _, c := range d.Cases {
-			r.filters(fam, c.Where)
+			r.filters(fam, c.Where, false)
 		}
 	}
 	for _, m := range q.Metrics {
 		r.metric(fam, m)
 	}
 	for _, s := range q.Steps {
-		r.filters(fam, s.Where)
+		r.filters(fam, s.Where, false)
 	}
 	return r.out
 }
@@ -506,15 +510,15 @@ func (r *refs) add(ref Reference) {
 	r.out = append(r.out, ref)
 }
 
-func (r *refs) column(fam store.Family, column string) {
+func (r *refs) column(fam store.Family, column string, never bool) {
 	if key, ok := strings.CutPrefix(column, "attr_"); ok && key != "" {
-		r.add(Reference{Family: fam, Attr: key})
+		r.add(Reference{Family: fam, Attr: key, Never: never})
 	}
 }
 
 func (r *refs) metric(fam store.Family, m native.Metric) {
-	r.column(fam, m.Column)
-	r.filters(fam, m.Where)
+	r.column(fam, m.Column, false)
+	r.filters(fam, m.Where, false)
 	for _, side := range []*native.Metric{m.Num, m.Den} {
 		if side != nil {
 			r.metric(fam, *side)
@@ -522,23 +526,24 @@ func (r *refs) metric(fam store.Family, m native.Metric) {
 	}
 }
 
-func (r *refs) filters(fam store.Family, fs []native.Filter) {
+// filters collects what fs names, marked Never under a never filter.
+func (r *refs) filters(fam store.Family, fs []native.Filter, never bool) {
 	for _, f := range fs {
 		switch f.Op {
 		case "ever", "never": // over the project's events, whatever the table
-			r.filters("", f.Where)
+			r.filters("", f.Where, never || f.Op == "never")
 			continue
 		case "any_of":
-			r.filters(fam, f.Any)
+			r.filters(fam, f.Any, never)
 			continue
 		}
-		r.column(fam, f.Column)
+		r.column(fam, f.Column, never)
 		for _, c := range f.Columns {
-			r.column(fam, c)
+			r.column(fam, c, never)
 		}
 		if f.Column == "event_name" && (f.Op == "eq" || f.Op == "in") {
 			for _, v := range f.Values {
-				r.add(Reference{Family: fam, Event: v})
+				r.add(Reference{Family: fam, Event: v, Never: never})
 			}
 		}
 	}
