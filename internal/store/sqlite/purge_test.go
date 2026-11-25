@@ -671,3 +671,23 @@ func TestPurgeArchivedTakesAlerts(t *testing.T) {
 		t.Errorf("audit = %+v", rows)
 	}
 }
+
+// TestPurgedAlertIDIsNeverReused: a purged alert's id is not issued
+// again, even when it was the highest, so an old notification's alert_id
+// or link never names a new alert.
+func TestPurgedAlertIDIsNeverReused(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	p := createPurgeableProject(t, db, "app")
+	newAlert(t, db, p, "kept")
+	last := newAlert(t, db, p, "last")
+	if _, err := db.ExecForTest(`UPDATE alerts SET archived_at = strftime('%Y-%m-%dT%H:%M:%SZ','now','-40 days') WHERE id=?`, last.ID); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := db.PurgeArchived(ctx, 30); err != nil || !reflect.DeepEqual(res.Alerts, []int64{last.ID}) {
+		t.Fatalf("purge = %+v, %v", res.Alerts, err)
+	}
+	if next := newAlert(t, db, p, "next"); next.ID <= last.ID {
+		t.Fatalf("new alert id %d, want above the purged %d", next.ID, last.ID)
+	}
+}

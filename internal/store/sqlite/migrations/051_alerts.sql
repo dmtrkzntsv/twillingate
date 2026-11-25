@@ -3,9 +3,11 @@
 -- snoozed, the revision that counts its resets, the state the last evaluation
 -- left and what it read, and the manual check a request asks the runner for.
 -- The second table keeps each alert's evaluations, newest last by id, and goes
--- with its alert. Plain new tables.
+-- with its alert. Plain new tables. AUTOINCREMENT so a purged alert's id is
+-- never reissued: an old notification's alert_id and link must not name a
+-- new alert.
 CREATE TABLE alerts (
-    id                 INTEGER PRIMARY KEY,
+    id                 INTEGER PRIMARY KEY AUTOINCREMENT,
     project_id         INTEGER NOT NULL REFERENCES projects(id),
     name               TEXT    NOT NULL,
     definition         TEXT    NOT NULL,
