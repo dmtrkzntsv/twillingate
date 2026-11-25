@@ -127,7 +127,13 @@ saying an alert reads a `stat` (one metric) or a `funnel` (one step over the
 first). The query's own `from` and `to` are not stored: the alert decides the
 dates (below). `compare` on a stat is ignored for the same reason. A stat
 metric whose value is not a number (a `latest` of a text column, a `min` of a
-day) is refused, except `max` of `ts` for silence.
+day) is refused, except `max` of `received_at` for silence.
+
+A stat whose read is a rate or an average (`ratio`, `share`, `bounce_rate`,
+`avg`, `mean`, `percentile`) carries a **volume metric**: a second metric of
+the same stat, a count (`count`, `actors`, `users`, `groups`, `weight`) over
+the same `where`, which `min_volume` measures. An alert on such a read without
+one is refused, so "bounce rate above 70%" over three sessions cannot page.
 
 ### Conditions
 
@@ -146,9 +152,15 @@ day) is refused, except `max` of `ts` for silence.
   allowed). The percentage is relative: from 4.0% to 2.8% is a 30% drop.
   A comparison value of 0 or empty makes the evaluation "not enough data",
   never a breach.
-- **silence** applies to a stat whose metric is `{"op": "max", "column": "ts"}`
-  (the wizard and the MCP tool build it from an event filter: callers pass the
-  `where`, the tool supplies the metric). The alert reads the newest matching
+- **silence** applies to a stat whose metric is
+  `{"op": "max", "column": "received_at"}`: the server's clock, so an offline
+  batch arriving now counts as now, and a device clock running fast cannot
+  hide a real silence. Callers do not write that stat: `create_alert` and
+  `update_alert` take a silence alert as `{"where": […]}` in place of
+  `query`/`read` (the event filter), and the tool builds the stat. (`ts` is
+  clamped to at most `INGEST_LATE_DAYS`, 1 day by default, before
+  `received_at`, so the days window below always holds the events received in
+  the last `hours`.) The alert reads the newest matching
   event over the last `ceil(hours / 24) + 1` days and is breached when it is
   older than `hours`, or when there is none in that window (an event the
   project has never sent is `no_data`, not breached; see
@@ -156,8 +168,12 @@ day) is refused, except `max` of `ts` for silence.
 - **min_volume** (optional, ≥ 1): below it, the evaluation is "not enough
   data" and leaves the state as it was. What it measures:
   - a funnel: the first step's value (the denominator);
-  - a change on a stat: the comparison value (so 1 → 4 is not "+300%");
-  - a threshold on a stat: not allowed (the value itself is what is watched).
+  - a stat with a rate or average read: its volume metric (required, above);
+  - a change on a count: the comparison value (so 1 → 4 is not "+300%");
+  - a threshold on a count: not allowed (the value itself is what is watched).
+- **An empty value** (a rate or average over no rows, a funnel whose first
+  step is 0) is "not enough data", never a breach. A count's 0 is a real
+  value.
 
 ### States
 
@@ -191,7 +207,12 @@ the state before it broke. The page and `list_alerts` show the reason.
 ## Evaluation
 
 - **Metric alerts** (threshold, change) are evaluated once a day, after the
-  daily pass (03:00 UTC), over complete days, so late events have landed. One
+  daily pass (03:00 UTC), over the days ending yesterday. A web SDK's events
+  have landed by then; an app's offline batch can still land for yesterday up
+  to `INGEST_LATE_DAYS` (1 day) later, so on an app-heavy project yesterday
+  may read slightly short against a full comparison window, a bias towards
+  "drop" and "below". Accepted for timeliness; the backtest, which reads
+  settled days, will look calmer than live firings on such a project. One
   evaluation per alert per day; a missed day (process down) is caught up once,
   for yesterday only.
 - **Silence alerts** are evaluated hourly.
@@ -227,6 +248,12 @@ was compared with and the dates, e.g. title `Signup conversion is 2.1%`, body
 `Below 3% on 2026-11-23 (1,240 visitors at the first step). Was 3.4% the day
 before.` The link is the alert on the project's Alerts tab.
 
+An alert fires on the first breached evaluation and recovers on the first ok
+one; there is no "two bad periods in a row" and no margin, so an alert whose
+value sits on its line can alternate 🔥 and ✅ day to day. Daily evaluation of
+whole days already smooths most noise; a debounce can come later if this
+proves noisy.
+
 The failing-state logic reuses the inbox tracker's pattern (a `notify_states`
 row per `(project, "alert", alert id)`), with its own reminder rule: a daily
 alert reminds at most once per evaluation (so once a day) while breached; a
@@ -247,7 +274,7 @@ reopen a template-made alert with every field editable.
 | Event count | event (name, from the project's events), optional page path for `$page_view` | stat, `count`, `where` on `event_name` (and `path`) | threshold, change |
 | Unique people | event (optional: all events), who: visitors (`actors`) or signed-in users (`users`) | stat, `actors` or `users` | threshold, change |
 | Conversion | from: event (and path), to: event (and path), people (`actor`/`user`) | funnel of two steps, not sequential, read the second step | threshold (as a %), change |
-| No events | event (and path), hours | stat, `max` of `ts` | silence |
+| No events | event (and path), hours | stat, `max` of `received_at` | silence |
 
 The event pickers read the project's event names (as `product_events` and the
 views do), so a template never offers an event the project does not send.
@@ -268,8 +295,8 @@ days with the breached ones marked, and says "would have fired N times".
 | Tool | Arguments | Returns |
 | --- | --- | --- |
 | `list_alerts` | `{project_id, archived}` | the alerts, each with its definition, state, last value and last evaluated time |
-| `create_alert` | `{project_id, name, query, read, condition, window_days, min_volume}` or `{project_id, name, template, fields, condition, …}` | the alert |
-| `update_alert` | `{id, …}`: `name`, `condition`, `window_days`, `min_volume`, `paused`; `query`/`read` or `template`/`fields` | the alert |
+| `create_alert` | `{project_id, name, condition, window_days, min_volume}` plus one of: `{query, read}`; `{where}` for a silence condition; `{template, fields}` | the alert, and `warnings` (an event or attribute never sent) |
+| `update_alert` | `{id, …}`: `name`, `condition`, `window_days`, `min_volume`, `paused`; `query`/`read`, `where` or `template`/`fields` | the alert |
 | `archive_alert`, `restore_alert` | `{id}` | the alert |
 | `check_alert` | `{id}` | the alert with `check_requested_at`; poll `list_alerts` or `alert_history` for the evaluation |
 | `preview_alert` | an alert definition (as `create_alert`, without saving) or `{id}` | the backtest |
