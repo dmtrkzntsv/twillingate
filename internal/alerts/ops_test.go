@@ -351,6 +351,56 @@ func TestCreateOnUnknownOrArchivedProject(t *testing.T) {
 	}
 }
 
+// racingStore runs race once, after GetAlert reads, as a concurrent edit
+// landing between Update's read and its write.
+type racingStore struct {
+	Store
+	race func()
+}
+
+func (r *racingStore) GetAlert(ctx context.Context, projectID, id int64) (store.Alert, error) {
+	a, err := r.Store.GetAlert(ctx, projectID, id)
+	if r.race != nil {
+		race := r.race
+		r.race = nil
+		race()
+	}
+	return a, err
+}
+
+// TestUpdateRefusesALostUpdate: an edit merged over an alert that changed
+// since Update read it is refused (store.ErrConflict), and the other edit
+// stands.
+func TestUpdateRefusesALostUpdate(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t)
+	v := h.create(t, countIn("signups"))
+	other := countIn("signups")
+	other.WindowDays = 5
+	h.o.st = &racingStore{Store: h.st, race: func() {
+		if _, err := h.st.UpdateAlert(ctx, h.live, v.ID, store.AlertEdit{Def: ptr(mustBuild(t, other))}, h.at, auditOf("other", "update", v.ID)); err != nil {
+			t.Fatal(err)
+		}
+	}}
+	above5 := store.AlertCondition{Type: "threshold", Op: "above", Value: ptr(5.0)}
+	_, err := h.o.Update(ctx, "tester", h.live, v.ID, Patch{Name: ptr("renamed"), Condition: &above5})
+	if !errors.Is(err, store.ErrConflict) || !strings.Contains(err.Error(), "read it again") {
+		t.Fatalf("err = %v, want ErrConflict asking to read it again", err)
+	}
+	got, err := h.st.GetAlert(ctx, h.live, v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Name != "signups" || got.Def.WindowDays != 5 || got.Def.Condition.Op != below5.Op {
+		t.Errorf("stored %q, window %d, op %q; want the other edit alone", got.Name, got.Def.WindowDays, got.Def.Condition.Op)
+	}
+	// Read again, it applies over the other edit.
+	u, err := h.o.Update(ctx, "tester", h.live, v.ID, Patch{Name: ptr("renamed"), Condition: &above5})
+	if err != nil || u.Name != "renamed" || u.Def.WindowDays != 5 || u.Def.Condition.Op != above5.Op {
+		t.Errorf("the edit again = %q, window %d, op %q, %v", u.Name, u.Def.WindowDays, u.Def.Condition.Op, err)
+	}
+}
+
 func TestUpdateMergesPatch(t *testing.T) {
 	h := newHarness(t)
 	ctx := context.Background()

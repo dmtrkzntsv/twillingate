@@ -234,6 +234,31 @@ func TestPausingEndsTheCheckRequest(t *testing.T) {
 	}
 }
 
+// TestUpdateAlertExpectRevision: an edit expecting another revision than
+// the row's is ErrConflict and writes nothing; 0 expects none.
+func TestUpdateAlertExpectRevision(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	p := monitorProject(t, db, "p")
+	a := newAlert(t, db, p, "x")
+	moved := updAlert(t, db, p, a.ID, store.AlertEdit{Def: ptr(alertDef(14))}, alertNow)
+	n := len(auditRows(t, db, "alert.update"))
+
+	_, err := db.UpdateAlert(ctx, p, a.ID, store.AlertEdit{Def: ptr(alertDef(3)), ExpectRevision: a.Revision}, alertNow, alertAudit("alert.update"))
+	if !errors.Is(err, store.ErrConflict) {
+		t.Fatalf("a stale edit: %v, want ErrConflict", err)
+	}
+	if got, _ := db.GetAlert(ctx, p, a.ID); !reflect.DeepEqual(got, moved) || len(auditRows(t, db, "alert.update")) != n {
+		t.Errorf("a stale edit wrote: %+v", got)
+	}
+	if r := updAlert(t, db, p, a.ID, store.AlertEdit{Def: ptr(alertDef(3)), ExpectRevision: moved.Revision}, alertNow); r.Def.WindowDays != 3 {
+		t.Errorf("a current edit: %+v", r)
+	}
+	if r := updAlert(t, db, p, a.ID, store.AlertEdit{Name: ptr("y")}, alertNow); r.Name != "y" {
+		t.Errorf("an edit expecting none: %+v", r)
+	}
+}
+
 // TestClearingAnExpiredSnoozeChangesNothing: a snooze at or before now
 // is none, so clearing it writes nothing (no reset, no new revision, no
 // audit), while a new snooze over it is a change.

@@ -146,7 +146,9 @@ func (o *Ops) Create(ctx context.Context, actor string, projectID int64, in Inpu
 
 // Update merges p over the alert. Its events are checked again, as at
 // create, only when the definition changes; a pause, a snooze or a
-// rename alone is saved whatever its events have become.
+// rename alone is saved whatever its events have become. An alert whose
+// revision moved since it was read here (another edit, an archive) is
+// store.ErrConflict, so no edit is lost under the merge.
 func (o *Ops) Update(ctx context.Context, actor string, projectID, id int64, p Patch) (View, error) {
 	if _, err := o.project(ctx, projectID); err != nil {
 		return View{}, err
@@ -158,7 +160,7 @@ func (o *Ops) Update(ctx context.Context, actor string, projectID, id int64, p P
 	if cur.ArchivedAt != "" {
 		return View{}, invalid("alert %d is archived; restore it to edit it", id)
 	}
-	e := store.AlertEdit{Paused: p.Paused}
+	e := store.AlertEdit{Paused: p.Paused, ExpectRevision: cur.Revision}
 	if p.Name != nil {
 		name, err := checkedName(*p.Name)
 		if err != nil {

@@ -78,11 +78,14 @@ func (a Alert) CheckPending() bool {
 }
 
 // AlertEdit is a partial edit of an alert: a nil field is left alone.
+// ExpectRevision, when not 0, is the revision the edit was made over: a
+// row at another is ErrConflict (revisions start at 1).
 type AlertEdit struct {
-	Name         *string
-	Def          *AlertDef
-	Paused       *bool
-	SnoozedUntil *string // "" clears
+	Name           *string
+	Def            *AlertDef
+	Paused         *bool
+	SnoozedUntil   *string // "" clears
+	ExpectRevision int64
 }
 
 // AlertEvaluation is one evaluation in an alert's history. From and To are
