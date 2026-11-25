@@ -100,6 +100,27 @@ describe('Inbox', () => {
     expect(endpoints.listNotifications).toHaveBeenCalledWith(expect.not.objectContaining({ archived: true }))
   })
 
+  it('marks each alert notification with its own icon and tone', async () => {
+    const alert = (id: number, type: Notification['type'], title: string) =>
+      note(id, { type, subject: 'Signups', title, body: '', path: '/projects/3/alerts/7', fields: { alert_id: '7' } })
+    active = [
+      alert(10, 'alert_breached', 'Signups: 3'),
+      alert(11, 'alert_still_breached', 'Signups: still 3'),
+      alert(12, 'alert_recovered', 'Signups: back to 9'),
+      alert(13, 'alert_broken', 'Signups is broken'),
+    ]
+    renderInbox()
+    const icon = async (title: string) => (await item(title)).querySelector('svg')
+    for (const [title, glyph, tone] of [
+      ['Signups: 3', 'lucide-bell-ring', 'text-destructive'],
+      ['Signups: still 3', 'lucide-bell-ring', 'text-destructive'],
+      ['Signups: back to 9', 'lucide-circle-check', 'text-emerald-600'],
+      ['Signups is broken', 'lucide-triangle-alert', 'text-amber-600'],
+    ]) {
+      expect(await icon(title), title).toHaveClass(glyph, tone)
+    }
+  })
+
   it('says why an item never reached the channel', async () => {
     renderInbox()
     expect(within(await item(draft.title)).getByText('Not delivered: telegram: 401 Unauthorized')).toBeInTheDocument()

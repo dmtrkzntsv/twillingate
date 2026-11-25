@@ -354,7 +354,7 @@ export interface WidgetShare {
 
 /** A limit in force: a setting (with its environment variable and default) or one of the wire format's fixed limits. */
 interface Limit {
-  group: 'retention' | 'ingest'
+  group: 'retention' | 'ingest' | 'alerts'
   name: string
   /** Absent for a fixed limit. */
   setting?: string
@@ -646,6 +646,10 @@ export type NotificationType =
   | 'form_draft_created'
   | 'form_draft_discarded'
   | 'form_submission'
+  | 'alert_breached'
+  | 'alert_still_breached'
+  | 'alert_recovered'
+  | 'alert_broken'
 
 /** How the send to NOTIFY_URL went: `none` with no NOTIFY_URL configured. */
 export type Delivery = 'pending' | 'sent' | 'failed' | 'none' | 'skipped'

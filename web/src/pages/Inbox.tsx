@@ -4,6 +4,7 @@ import {
   ArchiveIcon,
   ArchiveRestoreIcon,
   BellIcon,
+  BellRingIcon,
   CircleCheckIcon,
   ClockAlertIcon,
   FilePlusIcon,
@@ -13,6 +14,7 @@ import {
   ServerCrashIcon,
   ShieldAlertIcon,
   ShieldCheckIcon,
+  TriangleAlertIcon,
   type LucideIcon,
 } from 'lucide-react'
 import { Link, useSearchParams } from 'react-router'
@@ -33,7 +35,7 @@ const RECOVERED = 'text-emerald-600 dark:text-emerald-400'
 const EXPIRING = 'text-amber-600 dark:text-amber-400'
 const NEUTRAL = 'text-muted-foreground'
 
-/** Each type's icon and tone: failing red, recovered green, expiring amber, forms neutral. */
+/** Each type's icon and tone: failing or breached red, recovered green, expiring or a broken alert amber, forms neutral. */
 const LOOK: Record<NotificationType, { icon: LucideIcon; tone: string }> = {
   uptime_down: { icon: ServerCrashIcon, tone: FAILING },
   uptime_still_down: { icon: ServerCrashIcon, tone: FAILING },
@@ -49,6 +51,10 @@ const LOOK: Record<NotificationType, { icon: LucideIcon; tone: string }> = {
   form_draft_created: { icon: FilePlusIcon, tone: NEUTRAL },
   form_draft_discarded: { icon: FileXIcon, tone: NEUTRAL },
   form_submission: { icon: FileTextIcon, tone: NEUTRAL },
+  alert_breached: { icon: BellRingIcon, tone: FAILING },
+  alert_still_breached: { icon: BellRingIcon, tone: FAILING },
+  alert_recovered: { icon: CircleCheckIcon, tone: RECOVERED },
+  alert_broken: { icon: TriangleAlertIcon, tone: EXPIRING },
 }
 
 /** A type this console does not know yet (a newer server's) still shows, plainly. */
