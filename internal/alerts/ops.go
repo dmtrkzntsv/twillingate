@@ -311,11 +311,8 @@ func (o *Ops) checkEvents(ctx context.Context, projectID int64, def store.AlertD
 	if err != nil {
 		return nil, err
 	}
-	switch event, to, blocked := ruleHit(ctx, o.projects, projectID, p); {
-	case to != event:
-		return nil, invalid("`%s` is now `%s` (an event rule); alert on `%s`", event, to, to)
-	case blocked:
-		return nil, invalid("`%s` is blocked by an event rule, so none is stored; remove the rule or alert on another event", event)
+	if err := o.refuseRuleHit(ctx, projectID, p); err != nil {
+		return nil, err
 	}
 	if o.presence == nil {
 		return nil, nil
@@ -331,6 +328,18 @@ func (o *Ops) checkEvents(ctx context.Context, projectID int64, def store.AlertD
 		}
 	}
 	return warnings, nil
+}
+
+// refuseRuleHit refuses p when an event rule renames or blocks an event
+// its query names (ruleHit), as saving and previewing do.
+func (o *Ops) refuseRuleHit(ctx context.Context, projectID int64, p Parsed) error {
+	switch event, to, blocked := ruleHit(ctx, o.projects, projectID, p); {
+	case to != event:
+		return invalid("`%s` is now `%s` (an event rule); alert on `%s`", event, to, to)
+	case blocked:
+		return invalid("`%s` is blocked by an event rule, so none is stored; remove the rule or alert on another event", event)
+	}
+	return nil
 }
 
 // ruleFamilies are the families whose event rules apply to an event a

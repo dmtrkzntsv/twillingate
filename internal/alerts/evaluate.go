@@ -68,7 +68,7 @@ func (e *Evaluator) Evaluate(ctx context.Context, a store.Alert, now time.Time) 
 	silence := a.Def.Condition.Type == condSilence
 	if !silence {
 		o.To = today.AddDays(-1)
-		o.From = o.To.AddDays(-(max(a.Def.WindowDays, 1) - 1))
+		o.From = windowFrom(a.Def, o.To)
 	}
 	p, err := Parse(a.Def)
 	if err != nil {
@@ -158,6 +158,12 @@ func sentence(s string) string {
 // silenceDays is how many days before today a silence alert of hours
 // reads from: ceil(hours/24), so it reads that many days and today.
 func silenceDays(hours int) int { return (hours + 23) / 24 }
+
+// windowFrom is the first day of def's window ending to: its window_days
+// complete days.
+func windowFrom(def store.AlertDef, to civil.Date) civil.Date {
+	return to.AddDays(-(max(def.WindowDays, 1) - 1))
+}
 
 // comparison is the window a change compares from…to with: the as many
 // days just before it (previous), or the same days a week earlier
