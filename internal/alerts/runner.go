@@ -3,6 +3,7 @@ package alerts
 import (
 	"context"
 	"log/slog"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -100,7 +101,8 @@ func (r *Runner) Run(ctx context.Context) {
 }
 
 // Tick returns the alerts of archived projects to pending, tells the
-// notifier which alerts are live, and evaluates the ones due at now. A
+// notifier which alerts are live, and evaluates the ones due at now,
+// those with a check request first. A
 // failed list ends the tick before the notifier hears of it, which would
 // otherwise end every state.
 func (r *Runner) Tick(ctx context.Context, now time.Time) {
@@ -127,6 +129,17 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) {
 		}
 	}
 	r.n.KeepAlerts(ctx, live)
+	// Check requests first: one is promised within a minute, while the
+	// scheduled and silence evaluations can wait for the next tick.
+	slices.SortStableFunc(due, func(a, b store.Alert) int {
+		switch ac, bc := a.CheckPending(), b.CheckPending(); {
+		case ac == bc:
+			return 0
+		case ac:
+			return -1
+		}
+		return 1
+	})
 	for _, a := range due {
 		if ctx.Err() != nil {
 			return

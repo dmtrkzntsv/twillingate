@@ -246,6 +246,29 @@ func TestRunnerServesCheckRequest(t *testing.T) {
 	wantCalls(t, "10:01", h.tick(runAt(10, 1)))
 }
 
+// TestRunnerServesChecksFirst: a tick serves its check requests before
+// the scheduled and silence evaluations, so a check is answered within
+// the minute however many alerts the pass made due.
+func TestRunnerServesChecksFirst(t *testing.T) {
+	h := newRunHarness(t)
+	h.clock = runAt(0, 0)
+	scheduled := h.metric(t, "scheduled")
+	quiet := h.silence(t, "quiet")
+	checked := h.metric(t, "checked")
+	h.clearChecks(t)
+	now := runAt(4, 0)
+	h.exec(t, `UPDATE alerts SET last_day=?, check_requested_at=? WHERE id=?`,
+		yesterday.String(), now.Add(-10*time.Second).Format(time.RFC3339), checked.ID)
+
+	wantCalls(t, "04:00", h.tick(now), checked.ID, scheduled.ID, quiet.ID)
+	if got := h.get(t, checked); got.CheckPending() || got.LastDay != yesterday.String() {
+		t.Fatalf("checked: %+v", got)
+	}
+	if got := h.get(t, scheduled); got.LastDay != yesterday.String() {
+		t.Fatalf("scheduled: last day %q", got.LastDay)
+	}
+}
+
 func TestRunnerCheckBeforeThePassKeepsLastDay(t *testing.T) {
 	h := newRunHarness(t)
 	h.clock = runAt(1, 0)
