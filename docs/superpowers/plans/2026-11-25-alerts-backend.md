@@ -39,14 +39,14 @@
 - **Placement.** The operations, evaluation, backtest and loop live in `internal/alerts` (rank 1), as proposed. Event rules and presence come through interfaces (`alerts.Projects`, `alerts.Presence`). `app/alerts.go` implements `Projects` over `manage.Registry`. `Presence` has exactly `manage.Presence`'s method set, so `app`'s `filePresence` serves both. Audit rows are written by the store in the write's transaction, as forms do. `alerts` builds the `store.AuditEntry`.
 - **Every tool takes `project_id` and `id`.** REST path wildcards must be input fields (`decodeRequest`), and routes live under `/api/projects/{project_id}/alerts/{id}`, as forms do. An id of another project is `not_found`. The design's tables show `{id}` alone.
 - **Revision.** Changing the definition, pausing, snoozing, archiving or restoring bumps `alerts.revision` and sets the state to `pending`. Renaming does not. The tracker stores the revision in its entry. The loop calls `Tracker.KeepAlerts` every minute with the evaluable alerts' revisions, which ends stale or no-longer-evaluable states without a message. This is how "ends the state without a recovery" works across processes.
-- **"After the daily pass".** `jobs.Runner.OnPassDone(fn)` is called at the end of every `RunDailyPass`, including the catch-up at boot. A metric alert is due when `last_day < yesterday` and either the pass has signalled today's date with the hour ≥ 3 UTC, or the hour is ≥ 4 UTC (a fallback). `last_day` is persisted, so a restart never evaluates a day twice. Only yesterday is caught up.
+- **"After the daily pass".** `jobs.Runner.OnPassDone(fn)` is called at the end of every `RunDailyPass`, including the catch-up at boot. A metric alert is due when `last_day < yesterday` and either a pass signal arrived today at or after 03:00 UTC (a boot pass before 03:00 does not count), or the hour is ≥ 4 UTC (a fallback). `last_day` is persisted, so a restart never evaluates a day twice. Only yesterday is caught up.
 - **Create requests a check**, as an edit does, so the new alert shows an outcome within a minute.
 - **Volume metric.** `read.volume` names a second metric of the stat. Its op is `count`, `actors`, `users`, `groups` or `weight`. Its own `where` must deep-equal the read metric's `where`, or for a `ratio` read its `den`'s `where`. A rate or average read (`ratio`, `bounce_rate`, `avg`, `mean`, `percentile`) requires one. Any other read may carry one. `share` is left out because native refuses it in a stat, so the design's list overstates.
 - **min_volume on a funnel** measures the denominator actually used: the first step for `from: start`, the step before for `from: previous`. The design says "the first step's value (the denominator)", and the intent is the denominator.
 - **ResolveEvent families.** Event names starting with `$` are skipped. For the rest: table `product` → product. `measures` → measures. `events` or empty → product and measures. Other tables → none. Presence families: product → `FamilyProduct`, measures → `FamilyMeasures`, views → `FamilyViews`, checks → `FamilyChecks`, events/empty → `""` (every family).
 - **Presence is checked only when the value reads 0 or empty**, or a silence finds no event. A miss scans the whole history. Positive answers are remembered per process.
 - **Restore** refuses with `conflict` when the name is taken by a live alert or the project is at the cap. Create on an archived project is `invalid` ("restore the project first").
-- **Cap in `limits`.** A new group `alerts` holds one fixed limit, "Live alerts per project", 100. There is no environment variable, so `deployment.md` is untouched. `TestLimitsHasNoCaps` and `TestLimitsReportsTheLimitsInForce` change, and so does the docs sentence "Nothing is capped". `web/src/lib/api.ts`'s `Limit.group` union gains `'alerts'` in PR 2. Today only `ingest_disabled` is read there.
+- **Cap in `limits`.** A new group `alerts` holds one fixed limit, "Live alerts per project", 100. There is no environment variable for it. (`deployment.md` still changes, for `RETENTION_ARCHIVED_DAYS` and `NOTIFY_REMIND_HOURS`: Tasks 2 and 3.) `TestLimitsHasNoCaps` and `TestLimitsReportsTheLimitsInForce` change, and so does the docs sentence "Nothing is capped". `web/src/lib/api.ts`'s `Limit.group` union gains `'alerts'` in PR 2. Today only `ingest_disabled` is read there.
 - **Funnel conversion template labels** are `from` and `to`, so two steps on the same event with different paths still differ.
 - **Silence backtest** reads a breakdown by `day` and `hour` with `min`/`max` of `received_at`. `hour` comes from `ts`, so a late batch can mask a gap inside one bucket. The tool description and the docs say this is an approximation.
 - **Funnel batching.** Funnels are answered `alone()` by `AnswerMany`, so the funnel backtest issues one funnel per distinct window through `AnswerAll`, with no shared scan. Stats share scans.
@@ -64,7 +64,7 @@
 | File | Responsibility |
 | --- | --- |
 | `internal/store/alerts.go` (new) | `Alert`, `AlertDef`, `AlertRead`, `AlertCondition`, `AlertEdit`, `AlertEvaluation`, `AlertResult`, state and outcome vocabularies |
-| `internal/store/store.go` | Store interface gains the alert methods; `PurgeResult.Alerts` |
+| `internal/store/store.go`, `internal/store/reporting.go` | Store interface gains the alert methods; `PurgeResult.Alerts` (in `reporting.go`) |
 | `internal/store/sqlite/migrations/051_alerts.sql` (new) | `alerts`, `alert_evaluations` |
 | `internal/store/sqlite/alerts.go` (new) | CRUD, check requests, evaluation records, history, prune |
 | `internal/store/sqlite/{registry,purge}.go` | `projectTables`, project archive ends checks, purge |
@@ -73,7 +73,7 @@
 | `internal/alerts/deps.go` | `Projects`, `Presence`, `Engine`, `Store` interfaces, `MaxLive` |
 | `internal/alerts/define.go`, `templates.go` | `Input` → `store.AlertDef` (validation), `Parse`, references |
 | `internal/alerts/ops.go` | audited operations, `View` |
-| `internal/alerts/evaluate.go`, `format.go` | one evaluation, `judge`, value and message text |
+| `internal/alerts/evaluate.go`, `format.go` | one evaluation, `judge` (Task 6); value, line (Task 5) and message text (Task 6) |
 | `internal/alerts/backtest.go` | `Backtest`, `Ops.Preview` |
 | `internal/alerts/runner.go` | the loop |
 | `internal/api/ops_alerts.go` (new), `ops_limits.go`, `ops_read.go`, `server.go`, `seed_test.go` | tools, routes, cap, host field |
@@ -135,7 +135,7 @@ type AlertEdit struct {
 - Produces the store methods (on `store.Store` and `*sqlite.DB`):
 
 ```go
-CreateAlert(ctx context.Context, a Alert, max int, au AuditEntry) (Alert, error)
+CreateAlert(ctx context.Context, a Alert, max int, now time.Time, au AuditEntry) (Alert, error) // created_at, updated_at, check_requested_at = now
 GetAlert(ctx context.Context, projectID, id int64) (Alert, error)
 ListAlerts(ctx context.Context, projectID int64, archived bool) ([]Alert, error) // by name
 UpdateAlert(ctx context.Context, projectID, id int64, e AlertEdit, now time.Time, au AuditEntry) (Alert, error)
@@ -146,13 +146,13 @@ RequestAlertCheck(ctx context.Context, projectID, id int64, now time.Time, au Au
 - [ ] **Step 1: Write the migration test and the CRUD tests.** The names and key assertions:
   - `TestMigration051CreatesAlertTables`: `newTestDBAt(t, 50)`, then `migrateThrough(ctx, 51)`. The `alerts` and `alert_evaluations` tables and the indexes `alerts_live_name` and `alert_evaluations_alert` exist (`sqlite_master`).
   - `TestCreateAlertAuditsAndReadsBack`: the created alert has `ID > 0`, `State == "pending"`, `Revision == 1` and `CheckRequestedAt == CreatedAt`. `GetAlert` returns it equal, `Def` included. `auditRows(t, db, "alert.create")` has subject `alert/<id>` and detail `<name>`.
-  - `TestCreateAlertRefusesTakenNameAndCap`: a live duplicate name gives `errors.Is(err, store.ErrConflict)`. After archiving, the same name succeeds. With `max = 2`, the third live alert is `ErrConflict`. An unknown project is `ErrNotFound`.
+  - `TestCreateAlertRefusesTakenNameAndCap`: a live duplicate name gives `errors.Is(err, store.ErrConflict)`. After archiving, the same name succeeds. With `max = 2`, the third live alert is `ErrConflict`. An unknown project is `ErrNotFound`, checked in the transaction with `projectExists` (`monitors.go`), not left to the foreign key.
   - `TestUpdateAlertResetsOnDefinition`:
     - A rename alone keeps `Revision` and `State`, and its audit detail is `name`.
     - A new `Def` gives `Revision+1`, `State "pending"`, `LastValue == nil`, `LastDay == ""`, `Fails == 0`, `Reason == ""` and `CheckRequestedAt == now`.
     - An edit equal to the row writes nothing (no audit row).
     - An archived alert is `ErrInvalid`. An id of another project is `ErrNotFound`.
-  - `TestPausingEndsTheCheckRequest`: a pause gives `Revision+1`, `State "pending"`, `CheckRequestedAt == ""` and `CheckPending() == false`. An unpause gives `CheckRequestedAt == now`. A snooze set clears the request. A snooze cleared requests a check.
+  - `TestPausingEndsTheCheckRequest`: a pause gives `Revision+1`, `State "pending"`, `CheckRequestedAt == ""` and `CheckPending() == false`. An unpause gives `CheckRequestedAt == now`. A snooze set clears the request. A snooze cleared requests a check. No request is left that nothing serves: a definition edit while paused, an unpause while snoozed (`SnoozedUntil` in the future) and a definition edit on an alert of an archived project all give `CheckRequestedAt == ""`.
   - `TestArchiveRestoreAlert`:
     - Archive sets `ArchivedAt`, clears the request and bumps `Revision`. Archiving again writes no audit row.
     - Restore refuses with `ErrConflict` when a live alert has the name, and when `max` live exist.
@@ -212,7 +212,7 @@ CREATE INDEX alert_evaluations_at ON alert_evaluations(at);
   - Name and cap checks run inside the transaction and refuse with `store.Refuse(store.ErrConflict, "project %d already has a live alert named %q", …)` and `store.Refuse(store.ErrConflict, "project %d holds %d live alerts, the most it may; archive one first", …)`. The unique index is the backstop.
   - `UpdateAlert` reads the row in the transaction, merges the edit in Go and writes every column with one constant `UPDATE`.
     - A changed `Def`, `Paused` or `SnoozedUntil` (compare `Def` by its JSON) resets: `state='pending', reason='', last_value=NULL, last_day='', fails=0, retry_at=''`, and `revision+1`.
-    - `check_requested_at = now` when `Def` changed, `Paused` went false, or the snooze was cleared. It is `''` when it went paused or snoozed.
+    - `check_requested_at = now` when `Def` changed, `Paused` went false, or the snooze was cleared, and only if the result is evaluable: not paused, `snoozed_until` empty or not after `now`, and the project live (read in the transaction). Otherwise it is `''`.
     - The audit detail is the changed keys, space-separated: `name`, `definition`, `paused=true`, `snoozed_until=<v>`.
   - Times are `now.UTC().Format(time.RFC3339)`.
   - Append `"alerts"` to `projectTables`. `alert_evaluations` has no `project_id` and goes by cascade.
@@ -227,7 +227,7 @@ Expected: PASS.
 
 ```bash
 git add internal/store
-git commit -m "feat(store): add alerts with audited create, edit, archive and check requests"
+git commit -m "feat(store): add alerts with audited create, edit, archive and check requests" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -235,7 +235,7 @@ git commit -m "feat(store): add alerts with audited create, edit, archive and ch
 ### Task 2: Evaluation records, history, prune and purge; the daily pass
 
 **Files:**
-- Modify: `internal/store/alerts.go`, `internal/store/store.go` (`PurgeResult.Alerts []int64`), `internal/store/sqlite/alerts.go`, `internal/store/sqlite/purge.go`, `internal/jobs/jobs.go`
+- Modify: `internal/store/alerts.go`, `internal/store/store.go` (the six methods below join `store.Store`, which `jobs.New`, `alerts.NewOps` and `alerts.NewRunner` receive), `internal/store/reporting.go` (`PurgeResult.Alerts []int64`), `internal/store/sqlite/alerts.go`, `internal/store/sqlite/purge.go`, `internal/jobs/jobs.go`, `internal/api/ops_limits.go` (the "Archived items" description), `docs/deployment.md` (the `RETENTION_ARCHIVED_DAYS` row and the daily-pass paragraph), `docs/twillingate.md` (the `RETENTION_ARCHIVED_DAYS` sentence near the top)
 - Test: `internal/store/sqlite/alerts_test.go`, `internal/store/sqlite/purge_test.go`, `internal/jobs/jobs_test.go` (and `passOnlyStore`)
 
 **Interfaces:**
@@ -271,7 +271,7 @@ func (r *Runner) OnPassDone(fn func(day civil.Date)) *Runner
   - `TestRecordAlertEvaluation`:
     - At the current revision it returns `true`. One history row is stored, and the row's `state`, `reason`, `last_value` (`= Eval.Value`), `last_evaluated_at`, `last_day`, `fails` and `retry_at` are written.
     - `State: ""` keeps the state and `last_value` but writes `fails`, `retry_at` and `last_evaluated_at`.
-    - A stale revision, or an archived alert, returns `false` and writes nothing: no history row.
+    - A stale revision, an archived alert, or an alert whose project is archived returns `false` and writes nothing: no history row.
   - `TestListAlertEvaluationsPages`: five rows. `limit 2` gives ids 5 and 4. `before 4` gives 3 and 2.
   - `TestRecentAlertEvaluations`: three alerts and `n = 2`. Each maps to its two newest. An alert with none is absent.
   - `TestListEvaluableAlerts`: it leaves out archived alerts and alerts of an archived project. It keeps paused and snoozed ones.
@@ -287,22 +287,24 @@ Run: `go test ./internal/store/... ./internal/jobs/... -run 'AlertEvaluation|Eva
 Expected: FAIL (undefined methods).
 
 - [ ] **Step 3: Implement.**
-  - `RecordAlertEvaluation` does one transaction: an `UPDATE … WHERE id=? AND revision=? AND archived_at IS NULL` (when `RowsAffected` is 0, return `false` with no insert), then the `INSERT` into `alert_evaluations`.
+  - `RecordAlertEvaluation` does one transaction: an `UPDATE … WHERE id=? AND revision=? AND archived_at IS NULL AND project_id IN (SELECT id FROM projects WHERE archived_at IS NULL)` (when `RowsAffected` is 0, return `false` with no insert), then the `INSERT` into `alert_evaluations`.
   - `RecentAlertEvaluations` uses `ROW_NUMBER() OVER (PARTITION BY alert_id ORDER BY id DESC)` over `alert_id IN (`+placeholders(len(ids))+`)`.
   - `ResetAlertsOfArchivedProjects` is one `UPDATE … WHERE archived_at IS NULL AND state != 'pending' AND project_id IN (SELECT id FROM projects WHERE archived_at IS NOT NULL)`. It sets `state='pending', reason='', last_value=NULL, last_day='', fails=0, retry_at=''`. It is unaudited, like the runner's other writes.
   - `PurgeArchived` gains an alerts block after the forms block, in `purgeEach`'s style.
   - In `jobs`: add `PruneAlertEvaluations` to `jobs.Store`. Call it in `RunDailyPass` every pass, whatever `RETENTION_ARCHIVED_DAYS` is. Log failures and `"alert_evaluations", n`. Add `"alerts", len(purged.Alerts)` to the purge log. `OnPassDone` stores `fn`, and `RunDailyPass` calls it last.
 
+  - Docs, in this commit: the `RETENTION_ARCHIVED_DAYS` row of `docs/deployment.md` and `docs/twillingate.md`'s sentence about it name an archived alert (with its evaluations). The daily-pass paragraph of `deployment.md` adds that it prunes alert evaluations older than 400 days. `limitsFrom`'s "Archived items" description adds "alert".
+
 - [ ] **Step 4: Run the tests**
 
-Run: `go test ./internal/store/... ./internal/jobs/...`
+Run: `go test ./internal/store/... ./internal/jobs/... && go test ./internal/api/ -run 'Limits|TestDeployment'`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add internal/store internal/jobs
-git commit -m "feat(store): record alert evaluations, prune them after 400 days and purge archived alerts"
+git add internal/store internal/jobs internal/api/ops_limits.go docs/deployment.md docs/twillingate.md
+git commit -m "feat(store): record alert evaluations, prune them after 400 days and purge archived alerts" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -310,7 +312,7 @@ git commit -m "feat(store): record alert evaluations, prune them after 400 days 
 ### Task 3: Notification types, rendering and the tracker's alert rule
 
 **Files:**
-- Modify: `internal/store/notifications.go`, `internal/inbox/render.go`, `internal/inbox/tracker.go`, `internal/api/ops_notifications.go` (the description's type list), `docs/twillingate.md` (the Notifications intro, `### Notification types`)
+- Modify: `internal/store/notifications.go`, `internal/inbox/render.go`, `internal/inbox/tracker.go`, `internal/api/ops_notifications.go` (the description's type list and "subject"), `docs/twillingate.md` (the Notifications intro, the `list_notifications` row, `### Notification types`), `docs/deployment.md` (the `NOTIFY_REMIND_HOURS` row)
 - Test: `internal/inbox/render_test.go` (+ regenerated `testdata/TestRenderGolden.golden.json`), `internal/inbox/tracker_test.go`
 
 **Interfaces:**
@@ -378,16 +380,16 @@ Expected: FAIL.
 Run: `go test ./internal/inbox/ -run TestRenderGolden -update-golden && go test ./internal/inbox/...`
 Expected: PASS. Read the golden diff: four new entries, the rest unchanged.
 
-- [ ] **Step 5: Update the docs and the `list_notifications` description.** Add four rows to `### Notification types` in `store.NotificationTypes` order (example titles as in the table above). The intro's emoji list gains ⚠️ for a broken alert and mentions alerts. In `ops_notifications.go`, the type list in the description gains the four.
+- [ ] **Step 5: Update the docs and the `list_notifications` description.** Add four rows to `### Notification types` in `store.NotificationTypes` order (example titles as in the table above). The intro's emoji list gains ⚠️ for a broken alert and mentions alerts. In `ops_notifications.go`, the type list in the description gains the four, and "subject (the origin, domain or form)" becomes "subject (the origin, domain, form or alert name)", here and in `docs/twillingate.md`'s `list_notifications` row. `docs/deployment.md`'s `NOTIFY_REMIND_HOURS` row adds the reminders of a silence alert still breached.
 
-Run: `go test ./internal/api/ -run 'TestDocumentMatchesNotificationVocabularies'`
+Run: `go test ./internal/api/ -run 'TestDocumentMatchesNotificationVocabularies|TestDeployment'`
 Expected: PASS.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add internal/store/notifications.go internal/inbox internal/api/ops_notifications.go docs/twillingate.md
-git commit -m "feat(inbox): render alert notifications and track breached alerts with their own reminder rule"
+git add internal/store/notifications.go internal/inbox internal/api/ops_notifications.go docs/twillingate.md docs/deployment.md
+git commit -m "feat(inbox): render alert notifications and track breached alerts with their own reminder rule" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -405,7 +407,8 @@ git commit -m "feat(inbox): render alert notifications and track breached alerts
 const MaxLive = 100
 type Projects interface {
 	Project(ctx context.Context, id int64) (name string, archived, ok bool)
-	ResolveEvent(ctx context.Context, projectID int64, family store.Family, name string) (string, bool)
+	// ResolveEvent is manage.Snapshot.ResolveEvent: the name the event is stored under, and whether it is blocked.
+	ResolveEvent(ctx context.Context, projectID int64, family store.Family, name string) (to string, blocked bool)
 	Rules(ctx context.Context) archive.Rules
 }
 type Presence interface { // manage.Presence's method set
@@ -413,6 +416,7 @@ type Presence interface { // manage.Presence's method set
 	HasAttribute(ctx context.Context, projectID int64, key string) (bool, error)
 }
 type Engine interface { AnswerAll(ctx context.Context, reqs []native.Request) []native.Answered }
+// Store (the operations' slice of store.Store) is declared here too, in Task 5.
 ```
 
 - Produces, in `define.go`:
@@ -436,7 +440,7 @@ type Parsed struct {
 	Step, Base int    // funnel: indexes into Query.Steps; Base is the denominator
 }
 type Reference struct { Family store.Family; Event string; Attr string } // one of Event, Attr
-func (p Parsed) References() []Reference // event_name eq/in values and attr_<key> columns, deduplicated
+func (p Parsed) References() []Reference // event_name eq/in values ($ names included) and attr_<key> columns, deduplicated
 func CheckName(name string) error // 1–100 characters, no control characters
 ```
 
@@ -462,7 +466,7 @@ func CheckName(name string) error // 1–100 characters, no control characters
   - threshold: `op` is `below` or `above`, and `value` is set and finite.
   - change: `direction` is `drop`, `rise` or `either`; `percent` is > 0 and ≤ 1000; `against` is `previous` or `week_ago`.
   - silence: `hours` is 1 to 720.
-- `window_days`: 0 means 1. 1–30 are taken. Silence takes 0 or 1 only.
+- `window_days`: 0 means 1, except the `conversion` template, where 0 means 7. 1–30 are taken. Silence takes 0 or 1 only.
 - `min_volume`: 0 means none. Otherwise it is ≥ 1. It is refused on silence. A threshold on a count or number read without a volume metric refuses it.
 - A silence query is `{kind: stat, table: events, metrics: [{op: max, column: received_at}], where}`.
 
@@ -473,12 +477,12 @@ func CheckName(name string) error // 1–100 characters, no control characters
   - `TestBuildFunnelRead`: no step, the first step, and an unknown label are invalid. `from: previous` is OK, with `Parsed.Base == Step-1`.
   - `TestBuildConditions`: a table of eight invalid conditions (each bound above), and one valid of each type.
   - `TestBuildMinVolume`: a threshold on a count without volume is invalid. A change on a count is OK. A silence with `min_volume` is invalid. `0.5` is invalid.
-  - `TestBuildWindowDays`: 0 is stored as 1. 31 is invalid. Silence with 7 is invalid.
+  - `TestBuildWindowDays`: 0 is stored as 1, but as 7 for the `conversion` template (an explicit 1 stays 1). 31 is invalid. Silence with 7 is invalid.
   - `TestBuildStripsCompareAndShape`: the stored `Query` JSON has no `compare` or `shape`.
   - `TestBuildSilenceFromWhere`: the stored query equals the silence stat above. An empty `where` (set) is OK. `query` together with `where` is invalid.
-  - `TestTemplates`: each template's built `native.Query` and `AlertRead` equal an expected literal. `event_count` with a change condition is OK, and with silence it is invalid. `conversion` with no `to_event` is invalid. `path` on `event_count` for a non-`$page_view` event is invalid.
+  - `TestTemplates`: each template's built `native.Query` and `AlertRead` equal an expected literal. `event_count` with a change condition is OK, and with silence it is invalid. `conversion` with no `to_event` is invalid. `conversion` without `window_days` stores 7. `path` on `event_count` for a non-`$page_view` event is invalid.
   - `TestParseRoundTrip`: `Parse(Build(in))` gives the same kind, read and indexes. `InputOf` gives back the template (or where, or query and read).
-  - `TestReferences`: events from `where`, a metric's `where`, ratio `num`/`den`, funnel steps, `any_of` and `ever`, with families by table. `in` contributes each value. `ne` contributes none. `$page_view` is not resolved. `attr_plan` in a filter or metric column gives `Attr "plan"`.
+  - `TestReferences`: events from `where`, a metric's `where`, ratio `num`/`den`, funnel steps, `any_of` and `ever`, with families by table. `in` contributes each value. `ne` contributes none. `$page_view` is returned (presence applies to it); only the `ResolveEvent` call skips `$` names. `attr_plan` in a filter or metric column gives `Attr "plan"`.
   - `TestCheckName`: empty, 101 characters and a control character are invalid.
 
 - [ ] **Step 2: Run them to see them fail**
@@ -497,7 +501,7 @@ Expected: PASS.
 
 ```bash
 git add internal/alerts internal/archtest CLAUDE.md
-git commit -m "feat(alerts): validate alert definitions and build the four templates' queries"
+git commit -m "feat(alerts): validate alert definitions and build the four templates' queries" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 ---
@@ -505,15 +509,17 @@ git commit -m "feat(alerts): validate alert definitions and build the four templ
 ### Task 5: Audited operations
 
 **Files:**
-- Create: `internal/alerts/ops.go`, `internal/alerts/ops_test.go` (a real store via `storetest.Open`; fake `Projects` and `Presence`)
+- Create: `internal/alerts/ops.go`, `internal/alerts/ops_test.go` (a real store via `storetest.Open`; fake `Projects` and `Presence`), `internal/alerts/format.go` (`formatValue`, `formatLine`), `internal/alerts/format_test.go`
+- Modify: `internal/alerts/deps.go` (`Store`)
 
 **Interfaces:**
 - Consumes: Task 1/2 store methods, Task 4's `Build`/`Parse`/`InputOf`/`References`.
 - Produces:
 
 ```go
+// in deps.go
 type Store interface { CreateAlert; GetAlert; ListAlerts; UpdateAlert; SetAlertArchived; RequestAlertCheck;
-	ListAlertEvaluations; RecentAlertEvaluations } // the Task 1/2 signatures
+	ListAlertEvaluations; RecentAlertEvaluations } // the Task 1/2 signatures; Create passes o.now() as CreateAlert's now
 type Ops struct { Timeout time.Duration /* CONSOLE_QUERY_TIMEOUT for Preview */ ; /* unexported: st, projects, eng, presence, now */ }
 func NewOps(st Store, projects Projects, eng Engine, presence Presence) *Ops // eng and presence may be nil
 type View struct {
@@ -533,6 +539,7 @@ func (o *Ops) Restore(ctx context.Context, actor string, projectID, id int64) (V
 func (o *Ops) Check(ctx context.Context, actor string, projectID, id int64) (View, error)
 func (o *Ops) History(ctx context.Context, projectID, id int64, limit int, cursor string) ([]store.AlertEvaluation, string, error)
 func formatValue(p Parsed, v *float64) string // in format.go; View.ValueText and the messages use it
+func formatLine(p Parsed, v float64) string    // a threshold's value in the read's unit, trailing zeros trimmed
 ```
 
 **Rules:**
@@ -559,27 +566,28 @@ func formatValue(p Parsed, v *float64) string // in format.go; View.ValueText an
   - `TestCheckAlert`: paused is `ErrInvalid`. The first call has `CheckRequestedAt` set and an `alert.check` audit row. A second returns the same `CheckRequestedAt`.
   - `TestHistoryOfAnotherProjectIsNotFound`, `TestHistoryCursor` (pages, a bad cursor gives `ErrInvalid`).
   - `TestListRecent`: 20 evaluations give `len(View.Recent) == 14`, newest first.
-  - `TestFormatValue` (`format_test.go`): `1240` count gives `1,240`. `0.0213` fraction gives `2.1%`. `1234.567` number gives `1,234.57`. `12.5` gives `12.5`. Nil gives `—`. The silence forms are in Task 6.
+  - `TestFormatValue` (`format_test.go`): `1240` count gives `1,240`. `0.0213` fraction gives `2.1%`, `0.41` gives `41.0%`. `1234.567` number gives `1,234.57`. `12.5` gives `12.5`. Nil gives `—`. `formatLine`: fraction `0.03` gives `3%`, `0.025` gives `2.5%`; count `1000` gives `1,000`. The silence forms are in Task 6.
 
 - [ ] **Step 2: Run them to see them fail**
 
 Run: `go test ./internal/alerts/... -run 'Create|Update|ViewState|CheckAlert|History|ListRecent'`
 Expected: FAIL.
 
-- [ ] **Step 3: Implement `ops.go` and `formatValue` in `format.go`.** Audit entries are `store.AuditEntry{Actor: actor, Action: "alert.<op>", Subject: "alert/<id>"}`. Create's subject is filled by the store after the insert. The formatting rules are listed under Task 6.
+- [ ] **Step 3: Implement `ops.go`, and `formatValue` and `formatLine` in `format.go`.** Audit entries are `store.AuditEntry{Actor: actor, Action: "alert.<op>", Subject: "alert/<id>"}`. Create's subject is filled by the store after the insert. The formatting rules are listed under Task 6.
 - [ ] **Step 4: Run the tests**
 
 Run: `go test ./internal/alerts/...`
 Expected: PASS.
 
-- [ ] **Step 5: Commit** — `git commit -m "feat(alerts): audited alert operations with event checks at save"`
+- [ ] **Step 5: Commit** — `git add internal/alerts && git commit -m "feat(alerts): audited alert operations with event checks at save" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"`
 
 ---
 
 ### Task 6: Evaluating one alert, and its message
 
 **Files:**
-- Create: `internal/alerts/evaluate.go`, `internal/alerts/format.go`, `internal/alerts/evaluate_test.go`, `internal/alerts/format_test.go`
+- Create: `internal/alerts/evaluate.go`, `internal/alerts/evaluate_test.go`
+- Modify: `internal/alerts/format.go` (`message`), `internal/alerts/format_test.go` (`TestMessage`); both created in Task 5
 
 **Interfaces:**
 - Consumes: `Parsed`, `Engine`, `Projects`, `Presence`.
@@ -591,12 +599,14 @@ type Outcome struct {
 	From, To civil.Date // the window; zero for silence
 	Value, Compare, Volume *float64 // silence: Value is the newest matching event's age in hours
 	Reason   string     // no_data or broken reason; the error text for AlertError
+	Last     time.Time  // silence: the newest matching received_at; zero when none
+	At       time.Time  // when it was evaluated (now)
 }
 type Evaluator struct { /* eng, projects, presence, timeout, seen (positive presence memo, mutex) */ }
 func NewEvaluator(eng Engine, projects Projects, presence Presence, timeout time.Duration) *Evaluator
 func (e *Evaluator) Evaluate(ctx context.Context, a store.Alert, now time.Time) Outcome
 func judge(p Parsed, value, compare, volume *float64) (outcome, reason string) // shared with the backtest
-func message(p Parsed, o Outcome) (value, detail string)
+func message(p Parsed, o Outcome) (value, detail string) // silence reads o.Last and o.At
 ```
 
 **Evaluation rules:**
@@ -606,12 +616,12 @@ func message(p Parsed, o Outcome) (value, detail string)
   2. Answer the current window and the comparison together through `AnswerAll` under `timeout`, with `projects.Rules`. `native.ErrInvalid` gives broken with `query: …`. Any other error (deadline, `ErrTooLarge`, busy, a vanished file) gives `AlertError` with the error text.
   3. Read the number. A stat gives the read metric's column. A funnel gives step / base, empty when the base is 0. Silence gives `(now - max received_at)` in hours, or nil.
   4. When the value is 0 or nil (silence: nil), ask presence for each reference not yet seen. Never sent gives `no_data` with reason `never sent: <name>`. A presence error is treated as "sent", so the presence check never decides breached or broken.
-  5. `judge`:
+  5. `judge`, in this order:
+     - silence first: nil (no event in the window), or `age > hours`, is breached; otherwise ok. Only step 4's presence check turns a nil into `no_data`.
      - An empty value gives `no_data` ("no value").
      - `min_volume` above the volume gives `no_data` ("below min_volume"). The volume is the volume metric, the funnel base, or for a change on a count or number read without one, the comparison.
      - change: a comparison of 0 or empty gives `no_data`. `pct = (v-c)/c*100`. `drop` breaches when `pct <= -percent`, `rise` when `pct >= percent`, `either` when `|pct| >= percent`.
      - threshold: `below` is `v < value`, `above` is `v > value`.
-     - silence: nil, or `age > hours`, is breached.
      - Otherwise ok.
 
 **Message examples** (pinned in `TestMessage`):
@@ -626,7 +636,7 @@ func message(p Parsed, o Outcome) (value, detail string)
 | silence 6h, breached | `last event 7h ago` | `No matching event since 2026-11-24 06:10 UTC (alert at 6h).` |
 | silence, none in window | `no event in 30h` | `No matching event in the last 30h (alert at 6h).` |
 
-`formatValue` (written in Task 5): a count is an integer with thousands separators. A fraction (funnel or `bounce_rate`) is a percent with one decimal. A number has at most two decimals, trailing zeros trimmed, with separators. Nil is `—`.
+The value text is `formatValue` and the line (`Below 3%`, `Below 1,000`) is `formatLine`, both written in Task 5. `formatValue`: a count is an integer with thousands separators. A fraction (funnel or `bounce_rate`) is a percent with one decimal. A number has at most two decimals, trailing zeros trimmed, with separators. Nil is `—`.
 
 - [ ] **Step 1: Write the tests.** The fake engine answers canned `native.Result`s keyed by `(kind, From, To)` and records requests.
   - `TestEvaluateThresholdBelow`: a count of 3 below 5 gives breached with `Value 3`, `From == To == yesterday`.
@@ -638,7 +648,8 @@ func message(p Parsed, o Outcome) (value, detail string)
   - `TestEvaluateChangeWeekAgo`: the second request's window is `From-7 … To-7`. 0.040 → 0.028 with `drop 30` is breached (exactly 30%). With `percent 31` it is ok.
   - `TestEvaluateChangeZeroComparisonIsNoData`.
   - `TestEvaluateFunnelFromPrevious`: value = step / previous step.
-  - `TestEvaluateSilence`: `hours 6`, newest 7h ago gives breached with `Value ≈ 7`. Newest 2h ago gives ok. A request covers `ceil(6/24)+1 = 2` days.
+  - `TestEvaluateSilenceNoneInWindowIsBreached`: nothing in the window and presence true gives breached, `Value == nil`, `Last.IsZero()`.
+  - `TestEvaluateSilence`: `hours 6`, newest 7h ago gives breached with `Value ≈ 7` and `Last` that event's `received_at`. Newest 2h ago gives ok. A request covers `ceil(6/24)+1 = 2` days.
   - `TestEvaluateRenamedIsBroken`, `TestEvaluateBlockedIsBroken`, `TestEvaluateInvalidQueryIsBroken` (the engine returns a `native.ErrInvalid`-wrapped error).
   - `TestEvaluateRuntimeErrorIsError` (`context.DeadlineExceeded`, `native.ErrTooLarge`).
   - `TestMessage` (the table above).
@@ -654,7 +665,7 @@ Expected: FAIL.
 Run: `go test ./internal/alerts/...`
 Expected: PASS.
 
-- [ ] **Step 5: Commit** — `git commit -m "feat(alerts): evaluate an alert over complete days, with broken and no-data rules"`
+- [ ] **Step 5: Commit** — `git add internal/alerts && git commit -m "feat(alerts): evaluate an alert over complete days, with broken and no-data rules" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"`
 
 ---
 
@@ -688,13 +699,13 @@ func (o *Ops) Preview(ctx context.Context, projectID int64, in *Input, id int64)
   - `TestBacktestStatDays`: `len(Days) == 90`, the last `Day == yesterday`. With `change previous, w = 7`, the requests number `90 + 7`, with no duplicate window.
   - `TestBacktestFiredCountsRuns`: outcomes `ok, breached, breached, no_data, breached, ok, breached` give `Fired == 2`.
   - `TestBacktestFunnel30Days`: `len(Days) == 30`.
-  - `TestBacktestSilenceGaps`: buckets with events at 00–05h and 14–23h of one day, and `hours 6`, give one gap of about 8–9h. With `hours 12` there are none.
+  - `TestBacktestSilenceGaps`: the fixture fills every hour of the 30 days, except that the last day has events only at 00–05h and 14–23h, and `now` is just after its 23h bucket. `hours 6` gives one gap of about 8–9h. `hours 12` gives none. With no events at all, one gap covers the whole window.
   - `TestPreviewByDefinitionAndById`: both answer. An invalid definition is `ErrInvalid`. A renamed event is `ErrInvalid`. A nil engine is `ErrInvalid`. Another project's id is `ErrNotFound`.
 
 - [ ] **Step 2: Run them to see them fail** — `go test ./internal/alerts/... -run 'Backtest|Preview'`. Expected: FAIL.
 - [ ] **Step 3: Implement `backtest.go`.**
 - [ ] **Step 4: Run the tests** — `go test ./internal/alerts/...`. Expected: PASS.
-- [ ] **Step 5: Commit** — `git commit -m "feat(alerts): backtest an alert over past days, and silence gaps"`
+- [ ] **Step 5: Commit** — `git add internal/alerts && git commit -m "feat(alerts): backtest an alert over past days, and silence gaps" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"`
 
 ---
 
@@ -718,7 +729,7 @@ type Notifier interface { // *inbox.Tracker
 	KeepAlerts(ctx context.Context, live map[inbox.AlertKey]int64)
 }
 func NewRunner(st RunnerStore, ev *Evaluator, n Notifier, logger *slog.Logger) *Runner
-func (r *Runner) PassDone(day civil.Date) // safe from another goroutine
+func (r *Runner) PassDone(day civil.Date) // records the day and the time it arrived (r.now()) under a mutex; never blocks, so a pass ending after Run has stopped is harmless
 func (r *Runner) Tick(ctx context.Context, now time.Time)
 func (r *Runner) Run(ctx context.Context) // Tick every minute until ctx ends
 ```
@@ -732,10 +743,10 @@ func (r *Runner) Run(ctx context.Context) // Tick every minute until ctx ends
 4. Each evaluable alert is due when:
    - a check is pending (`CheckPending()`), or
    - it is silence, and `LastEvaluatedAt` is empty or ≥ `silenceEvery` old, or
-   - it is a metric alert, `LastDay < yesterday`, `RetryAt` is empty or ≤ now, and `(passDay == today && hour >= 3) || hour >= 4`.
+   - it is a metric alert, `LastDay < yesterday`, `RetryAt` is empty or ≤ now, and either a `PassDone` for today arrived at or after 03:00 UTC today, or `hour >= 4`.
 5. Evaluate each due alert in turn and build the `store.AlertResult`:
    - Success (ok, breached, no_data, broken): `State = outcome`, `Reason`, `Fails 0`, `RetryAt ""`. A metric alert gets `LastDay = To` only when the schedule rule (the third bullet of step 4) holds. A check request served before the pass leaves `LastDay` alone, so the after-pass evaluation still runs; the tracker's once-per-`Day` rule absorbs the repeat.
-   - `AlertError`: `Fails+1` and `RetryAt = now+1h`. When `Fails >= maxFails`, `State = broken` and `Reason = "failed 3 times: <err>"`. Otherwise `State ""`.
+   - `AlertError`: `Fails+1` and `RetryAt = now+1h`. When `Fails >= maxFails`, `State = broken`, `Reason = "failed 3 times: <err>"`, and for a metric alert `LastDay = To` when the schedule rule holds, so the next try is the next day's evaluation after the pass (a check request still tries at once). Otherwise `State ""`.
 6. Only when the record applied (`true`) and the outcome is ok, breached, broken or no_data, call `Notifier.Alert` (no_data only clears a broken mark):
    - `Daily = kind != silence`, `Day = To` (or `""`).
    - Fields: `value` and `detail` from `message`, or `reason` for broken.
@@ -743,18 +754,19 @@ func (r *Runner) Run(ctx context.Context) // Tick every minute until ctx ends
 
 Log a store or list failure and go on.
 
-- [ ] **Step 1: Write the tests** (fake clock values, `storetest.Open`, a project created through the store):
-  - `TestRunnerMetricWaitsForThePass`: at 02:30 with `PassDone(today)`, nothing is evaluated. At 03:05 one alert is evaluated with `LastDay == yesterday`. The next tick at 03:06 evaluates nothing.
+- [ ] **Step 1: Write the tests** (fake clock values, `storetest.Open`, a project created through the store). Every alert is created with `CreateAlert`'s `now` at the test's fake time, so its creation check is pending. Except in `TestRunnerCheckBeforeThePassKeepsLastDay`, which asserts that check, clear it before the asserted schedule (`UPDATE alerts SET check_requested_at=''` with `execAll`-style raw SQL through `ExecForTest`, or one tick that serves it).
+  - `TestRunnerMetricWaitsForThePass`: at 02:30 with `PassDone(today)`, nothing is evaluated. `PassDone(today)` at 03:04, then a tick at 03:05, evaluates one alert with `LastDay == yesterday`. The next tick at 03:06 evaluates nothing.
   - `TestRunnerFallbackAtFour`: without `PassDone`, 03:30 evaluates nothing and 04:00 evaluates once.
-  - `TestRunnerCatchesUpOnceAfterDowntime`: `LastDay` is three days ago. Boot at 02:00 with `PassDone(today)` runs nothing. 03:10 runs exactly one evaluation with `To == yesterday`. Another `PassDone(today)` at 03:25 followed by a tick runs none.
+  - `TestRunnerCatchesUpOnceAfterDowntime`: `LastDay` is two days old. Boot at 02:00 with `PassDone(today)` runs nothing, and neither does a tick at 03:10 (the boot signal came before 03:00). `PassDone(today)` at 03:20 followed by a tick runs exactly one evaluation with `To == yesterday`. Another `PassDone(today)` at 03:25 followed by a tick runs none.
   - `TestRunnerServesCheckRequest`: a metric alert already through yesterday, with `CheckRequestedAt = now-30s`, is evaluated at the next tick, after which `CheckPending() == false`.
-  - `TestRunnerCheckBeforeThePassKeepsLastDay`: an alert created at 01:00 is evaluated at 01:01 (its check), with `LastDay` still `""`. It is evaluated again at 03:05 after `PassDone(today)`, which sets `LastDay = yesterday`.
+  - `TestRunnerCheckBeforeThePassKeepsLastDay`: an alert created at 01:00 is evaluated at 01:01 (its check), with `LastDay` still `""`. It is evaluated again at 03:05 after a `PassDone(today)` at 03:04, which sets `LastDay = yesterday`.
   - `TestRunnerKeepsStatesWhenTheListFails`: a store wrapper whose `ListEvaluableAlerts` fails makes the tick call neither `KeepAlerts` nor `Alert`.
   - `TestRunnerSilenceHourly`: evaluated at t0, not at t0+59m, again at t0+60m.
   - `TestRunnerRetriesThenBroken`:
     - Three `AlertError`s an hour apart give `Fails` 1 and 2 with the state kept, then `broken` on the third.
     - The notifier gets exactly one observation, broken, on the third.
     - A tick at +30m after the first failure evaluates nothing.
+    - After the third failure `LastDay == yesterday`, and a tick at +1h evaluates nothing (no hourly retries past that day).
   - `TestRunnerPassesNoData`: `no_data` stores the state and calls `Alert` with `Outcome no_data`. `AlertError` below `maxFails` calls nothing.
   - `TestRunnerEndsStatesOfEditedAlerts`:
     - After an alert is breached and notified at rev 1, `UpdateAlert` with a new `Def` (rev 2, pending) makes the next tick's `KeepAlerts` carry rev 2.
@@ -766,7 +778,7 @@ Log a store or list failure and go on.
 - [ ] **Step 2: Run them to see them fail** — `go test ./internal/alerts/... -run Runner`. Expected: FAIL.
 - [ ] **Step 3: Implement `runner.go`.**
 - [ ] **Step 4: Run the tests** — `go test ./internal/alerts/...` (and once `go test -race ./internal/alerts/... -run Runner`). Expected: PASS.
-- [ ] **Step 5: Commit** — `git commit -m "feat(alerts): evaluate alerts daily after the pass and silence hourly, serving check requests"`
+- [ ] **Step 5: Commit** — `git add internal/alerts && git commit -m "feat(alerts): evaluate alerts daily after the pass and silence hourly, serving check requests" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"`
 
 ---
 
@@ -777,8 +789,9 @@ Log a store or list failure and go on.
 - Modify:
   - `internal/api/ops_read.go`: `host.alerts *alerts.Ops`; `h.registerAlerts(r)` after `registerNotifications`.
   - `internal/api/server.go`: `Build` and `NewHandler` gain a trailing `al *alerts.Ops`.
-  - `internal/api/seed_test.go`: both test hosts set `alerts: alerts.NewOps(st, testProjects{reg}, nat, presence)`. `testProjects` is a small `_test.go` adapter over `*manage.Registry`.
-  - `internal/api/server_test.go` and `oauth_e2e_test.go`: three `NewHandler` calls get a trailing `nil`.
+  - `internal/api/seed_test.go`: `newBareHost`, the one host constructor, sets `alerts: alerts.NewOps(st, testProjects{reg}, nat, hostPresence{files, nat})`. `testProjects` is a small `_test.go` adapter over `*manage.Registry` (it repeats `app`'s, which `api` cannot import).
+  - `internal/api/server_test.go` and `oauth_e2e_test.go`: all six test calls get a trailing `nil`: `NewHandler` at `server_test.go:52`, `:216` and `oauth_e2e_test.go:269`; `Build` at `server_test.go:331`, `:386` and `oauth_e2e_test.go:276`.
+  - `internal/api/ops_forms.go`: `optionalTime`'s two messages name no field ("must be an RFC 3339 time or null", "%q is not an RFC 3339 time such as 2026-10-09T17:00:00Z"), so `snoozed_until` reuses it. No test pins the old text (checked).
   - `internal/api/ops_limits.go` (+ `_test.go`), `internal/api/expose_test.go` (73 → 81), `internal/api/docs_sync_test.go`, `internal/app/app.go` (two call sites pass `nil` for now; Task 10 passes the real one), `docs/twillingate.md`.
 
 **Interfaces:**
@@ -799,15 +812,15 @@ Log a store or list failure and go on.
 - Inputs:
   - The input fields are the `alertOut` names in "REST shapes" above. `query` is `*native.Query`, and `where` is `*[]native.Filter`.
   - `read` and `condition` are api-side structs with `jsonschema` tags, converted to the store types.
-  - `snoozed_until` uses a new `optionalStamp` type: absent, `null` (clears) or RFC 3339. `optionalTime`'s message names `closes_at`.
-  - The `constrain` of `create_alert`, `update_alert` and `preview_alert` applies `queryEnums` to `query`, as `query` does. The descriptions say the read and condition rules in a sentence each, and name the four templates with their fields.
+  - `snoozed_until` is an `optionalTime`: absent keeps, `null` clears, an RFC 3339 time snoozes.
+  - The `constrain` of `create_alert`, `update_alert` and `preview_alert` applies `queryEnums` to `query`, as `query` does. The descriptions say the read and condition rules in a sentence each, and name the four templates with their fields. `create_alert`'s also says `window_days` defaults to 1, and to 7 for `conversion`.
 - Limits: `groupAlerts = "alerts"`. `limitsFrom` appends `limitOut{Group: groupAlerts, Name: "Live alerts per project", Value: alerts.MaxLive, Description: "create_alert and restore_alert refuse past it (conflict); archive one first"}`. The `Group` jsonschema text becomes "retention, ingest or alerts".
 
 - [ ] **Step 1: Write the tests.**
   - `TestAlertToolsOverMCP`:
     - `create_alert` `{project_id: 1, name: "Signups", template: "event_count", fields: {event: "signup"}, condition: {type: "threshold", op: "below", value: 5}}` returns `state "pending"`, `kind "stat"`, `check_pending true` and `warnings` naming `signup`.
     - `list_alerts` has it with `max_live 100`.
-    - `update_alert` `{name: "Signups/day"}` keeps the revision state.
+    - `update_alert` `{name: "Signups/day"}` returns the new name and `check_pending` still true (a rename requests nothing).
     - `check_alert` keeps `check_requested_at`.
     - `archive_alert` makes `list_alerts` empty; `archived: true` lists it; `restore_alert` makes it live again.
     - `alert_history` returns `evaluations: []`.
@@ -841,7 +854,7 @@ Expected: FAIL.
     - the four templates with their fields;
     - the backtest (silence gaps by sent hour, an approximation);
     - the cap of 100 live alerts, unique live names, and the purge after `RETENTION_ARCHIVED_DAYS`.
-  - Put every table whose first cell is backticked (templates, states, outcomes) under its own `###` heading. `section()` ends `### Delivery` only at the next `### `, so such a table placed before the first `###` of `## Alerts` would join the delivery table and fail `TestDocumentMatchesNotificationVocabularies`. Use `### Templates`, `### Alert states` and `### Evaluation outcomes`.
+  - Put every table whose first cell is backticked (templates, states, outcomes) under its own `###` heading. `section()` ends `### Delivery` only at the next `### `, so such a table placed before the first `###` of `## Alerts` would join the delivery table and fail `TestDocumentMatchesNotificationVocabularies`. Use `### Templates` (its `conversion` row says the window defaults to 7 days), `### Alert states` and `### Evaluation outcomes`.
   - The section also has a tools table in the Notifications section's shape (Operation | CLI | MCP tool | Tool arguments) with all eight tools, `### Alert states` (`| \`pending\` | … |` rows in `store.AlertStates` order) and `### Evaluation outcomes`.
   - The count sentence becomes "eighty-one tools: the thirty-four below, the twelve in [Collect form submissions], the three in [Notifications], the eight in [Alerts](#alerts), and twenty-four …".
   - Add eight rows to `### HTTP API` (`| \`GET\` | \`/api/projects/{project_id}/alerts\` | \`list_alerts\` |` …).
@@ -853,7 +866,7 @@ Expected: FAIL.
 Run: `go test ./internal/api/... && go build ./...`
 Expected: PASS.
 
-- [ ] **Step 6: Commit** — `git commit -m "feat(api): alert tools and routes, and the live-alert cap in limits"`
+- [ ] **Step 6: Commit** — `git add internal/api internal/app/app.go docs/twillingate.md && git commit -m "feat(api): alert tools and routes, and the live-alert cap in limits" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"`
 
 ---
 
@@ -872,10 +885,10 @@ Expected: PASS.
 
 **Wiring in `Serve`:**
 - After `ops.Presence` is set: `al := alerts.NewOps(st, alertProjects{reg}, nat, ops.Presence)` with `al.Timeout = cfg.Console.QueryTimeout`. Pass `al` to both `api.Build` and `api.NewHandler`, replacing Task 9's `nil`s.
-- Inside an `if archiveLog != nil` block placed before `jobs.New`:
+- Declare `var tracker *inbox.Tracker` and `var alertRunner *alerts.Runner`. In an `if archiveLog != nil` block placed before `jobs.New`:
   - Create the `tracker` (moved up from the monitor block, which reuses it).
-  - Create `alertRunner := alerts.NewRunner(st, alerts.NewEvaluator(nat, alertProjects{reg}, ops.Presence, cfg.Console.QueryTimeout), tracker, logger)`.
-  - Call `runner.OnPassDone(alertRunner.PassDone)`. This is the jobs runner, before `go runner.Run`, so the boot pass signals it.
+  - Create `alertRunner = alerts.NewRunner(st, alerts.NewEvaluator(nat, alertProjects{reg}, ops.Presence, cfg.Console.QueryTimeout), tracker, logger)`.
+- In the existing `if archiveLog != nil { runner.WithArchive(…); runner.WithAttribution(…) }` block after `jobs.New` (`app.go:202`), add `runner.OnPassDone(alertRunner.PassDone)`. It runs before `go runner.Run`, so the boot pass signals it. At shutdown `stopMonitor` stops the alert runner before `stopJobs`; `PassDone` never blocks, so a pass ending then is harmless.
 - In the monitor block add `wg.Go(func() { alertRunner.Run(monCtx) })`, so the runner stops before the archive log closes, as the monitor does.
 - A console-only process builds `al` and no runner.
 
@@ -885,7 +898,7 @@ Expected: PASS.
 - [ ] **Step 2: Run them to see them fail** — `go test ./internal/app/ -run AlertProjects`. Expected: FAIL.
 - [ ] **Step 3: Implement the adapter and the wiring.**
 - [ ] **Step 4: Run** `go test ./internal/app/... ./internal/archtest/... && go build ./...`. Expected: PASS.
-- [ ] **Step 5: Commit** — `git commit -m "feat: run alerts in the process that writes the event files"`
+- [ ] **Step 5: Commit** — `git add internal/app && git commit -m "feat: run alerts in the process that writes the event files" -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"`
 
 ---
 
