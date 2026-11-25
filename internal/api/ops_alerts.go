@@ -169,7 +169,7 @@ type alertOut struct {
 	Reason           string            `json:"reason" jsonschema:"why it is broken or no_data; empty otherwise"`
 	LastValue        *float64          `json:"last_value" jsonschema:"the last evaluation's value (a silence alert's: hours since the newest matching event); null before the first, or when it had none"`
 	LastValueText    string            `json:"last_value_text" jsonschema:"last_value as the read words it (3.4%, 1,240, last event 7h ago); — for none"`
-	LastEvaluatedAt  string            `json:"last_evaluated_at" jsonschema:"RFC 3339 UTC; empty before the first evaluation"`
+	LastEvaluatedAt  string            `json:"last_evaluated_at" jsonschema:"RFC 3339 UTC; empty before the first evaluation, and again after a reset to pending (a new definition, a pause or snooze, a restore, an archived project)"`
 	LastDay          string            `json:"last_day" jsonschema:"the last day a metric alert's window ended on, YYYY-MM-DD; empty for silence and before the first"`
 	CheckRequestedAt string            `json:"check_requested_at" jsonschema:"when the last check was asked for (create, a new definition, check_alert), RFC 3339 UTC"`
 	CheckPending     bool              `json:"check_pending" jsonschema:"true until an evaluation at or after check_requested_at"`

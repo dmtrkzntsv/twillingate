@@ -47,11 +47,9 @@ func TestAlertEndToEnd(t *testing.T) {
 		t.Fatalf("notifications after the breach: %+v", ns)
 	}
 
-	// Edited, a minute later (an edit in the very second of an evaluation
-	// leaves its check not pending: last_evaluated_at is not before it):
-	// a new revision, pending with a check; the tick drops the breach
-	// before it evaluates, so the ok it reads recovers nothing.
-	h.at = h.at.Add(time.Minute)
+	// Edited in the same second: a new revision, pending with a check; the
+	// tick drops the breach before it evaluates, so the ok it reads
+	// recovers nothing.
 	e := h.update(t, v.ID, Patch{WindowDays: ptr(3)})
 	if e.Revision != a.Revision+1 || e.State != store.AlertPending || !e.CheckPending() {
 		t.Fatalf("edited: %+v", e.Alert)

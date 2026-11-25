@@ -510,6 +510,40 @@ func TestListEvaluableAlerts(t *testing.T) {
 	}
 }
 
+// TestResetInTheSecondOfAnEvaluationLeavesTheCheckPending: a reset to
+// pending clears last_evaluated_at, so a check it requests is pending even
+// when it lands in the very second the last evaluation was recorded (both
+// are whole seconds); a restore does the same.
+func TestResetInTheSecondOfAnEvaluationLeavesTheCheckPending(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	p := monitorProject(t, db, "p")
+	a := newAlert(t, db, p, "x")
+	evaluate := func(a store.Alert) {
+		t.Helper()
+		if ok, err := db.RecordAlertEvaluation(ctx, store.AlertResult{AlertID: a.ID, Revision: a.Revision,
+			Eval: evalOf(a, alertAt, 9), State: store.AlertBreached}); err != nil || !ok {
+			t.Fatal(ok, err)
+		}
+	}
+	evaluate(a)
+	def := alertDef(3)
+	e := updAlert(t, db, p, a.ID, store.AlertEdit{Def: &def}, alertNow)
+	if e.CheckRequestedAt != alertAt || e.LastEvaluatedAt != "" || !e.CheckPending() {
+		t.Fatalf("edited in the evaluation's second: requested %q, last evaluated %q, pending %t",
+			e.CheckRequestedAt, e.LastEvaluatedAt, e.CheckPending())
+	}
+
+	evaluate(e)
+	if _, err := db.SetAlertArchived(ctx, p, a.ID, true, 5, alertNow, alertAudit("alert.archive")); err != nil {
+		t.Fatal(err)
+	}
+	r, err := db.SetAlertArchived(ctx, p, a.ID, false, 5, alertNow, alertAudit("alert.restore"))
+	if err != nil || r.LastEvaluatedAt != "" || !r.CheckPending() {
+		t.Fatalf("restored in the evaluation's second: %+v, %v", r, err)
+	}
+}
+
 func TestResetAlertsOfArchivedProjects(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
@@ -529,7 +563,8 @@ func TestResetAlertsOfArchivedProjects(t *testing.T) {
 		t.Fatalf("reset = %d, %v; want 1", n, err)
 	}
 	got := alertRow(t, db, p, mine.ID)
-	if got.State != store.AlertPending || got.LastDay != "" || got.Reason != "" || got.LastValue != nil || got.Fails != 0 || got.RetryAt != "" {
+	if got.State != store.AlertPending || got.LastDay != "" || got.Reason != "" || got.LastValue != nil || got.Fails != 0 || got.RetryAt != "" ||
+		got.LastEvaluatedAt != "" {
 		t.Errorf("archived project's alert = %+v", got)
 	}
 	if o := alertRow(t, db, q, other.ID); o.State != store.AlertBreached || o.LastDay == "" {

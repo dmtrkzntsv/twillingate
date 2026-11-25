@@ -157,8 +157,9 @@ func scheduled(a store.Alert, now time.Time, afterPass bool) bool {
 		(a.RetryAt == "" || a.RetryAt <= stampOf(now))
 }
 
-// silenceDue reports whether silence alert a is due at now: never
-// evaluated, or last evaluated silenceEvery ago or more.
+// silenceDue reports whether silence alert a is due at now: not evaluated
+// since it was created or reset to pending (last_evaluated_at empty), or
+// last evaluated silenceEvery ago or more.
 func silenceDue(a store.Alert, now time.Time) bool {
 	if a.Def.Condition.Type != condSilence {
 		return false

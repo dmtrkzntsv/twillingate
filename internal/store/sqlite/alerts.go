@@ -172,13 +172,16 @@ func (d *DB) ListAlerts(ctx context.Context, projectID int64, archived bool) ([]
 }
 
 // updateAlertRow writes every column an edit or a restore touches, resetting
-// what the evaluations left when reset is set.
+// what the evaluations left when reset is set: last_evaluated_at too, so a
+// check requested in the very second of the last evaluation is pending
+// (CheckPending compares whole seconds).
 const updateAlertRow = `UPDATE alerts SET name=?, definition=?, paused=?, snoozed_until=?,
 	revision = revision + ?,
 	state = CASE WHEN ? THEN 'pending' ELSE state END,
 	reason = CASE WHEN ? THEN '' ELSE reason END,
 	last_value = CASE WHEN ? THEN NULL ELSE last_value END,
 	last_day = CASE WHEN ? THEN '' ELSE last_day END,
+	last_evaluated_at = CASE WHEN ? THEN '' ELSE last_evaluated_at END,
 	fails = CASE WHEN ? THEN 0 ELSE fails END,
 	retry_at = CASE WHEN ? THEN '' ELSE retry_at END,
 	check_requested_at=?, updated_at=?, archived_at=?
@@ -256,7 +259,7 @@ func (d *DB) UpdateAlert(ctx context.Context, projectID, id int64, e store.Alert
 			bump = 1
 		}
 		if _, err := tx.ExecContext(ctx, updateAlertRow, next.Name, nextDef, next.Paused, next.SnoozedUntil,
-			bump, reset, reset, reset, reset, reset, reset, requested, at, nil, id, projectID); err != nil {
+			bump, reset, reset, reset, reset, reset, reset, reset, requested, at, nil, id, projectID); err != nil {
 			return err
 		}
 		au.Subject, au.Detail = alertSubject(id), strings.Join(changed, " ")
@@ -306,7 +309,7 @@ func (d *DB) SetAlertArchived(ctx context.Context, projectID, id int64, archived
 			}
 		}
 		if _, err := tx.ExecContext(ctx, updateAlertRow, cur.Name, def, cur.Paused, cur.SnoozedUntil,
-			1, true, true, true, true, true, true, requested, at, archivedAt, id, projectID); err != nil {
+			1, true, true, true, true, true, true, true, requested, at, archivedAt, id, projectID); err != nil {
 			return err
 		}
 		au.Subject, au.Detail = alertSubject(id), cur.Name
@@ -486,7 +489,7 @@ func (d *DB) ListEvaluableAlerts(ctx context.Context) ([]store.Alert, error) {
 // that is not pending to pending, as an edit does, so a restored project
 // starts clean. Unaudited, like the runner's other writes.
 func (d *DB) ResetAlertsOfArchivedProjects(ctx context.Context) (int, error) {
-	res, err := d.db.ExecContext(ctx, `UPDATE alerts SET state='pending', reason='', last_value=NULL, last_day='', fails=0, retry_at=''
+	res, err := d.db.ExecContext(ctx, `UPDATE alerts SET state='pending', reason='', last_value=NULL, last_day='', last_evaluated_at='', fails=0, retry_at=''
 		WHERE archived_at IS NULL AND state != 'pending'
 		AND project_id IN (SELECT id FROM projects WHERE archived_at IS NOT NULL)`)
 	if err != nil {
