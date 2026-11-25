@@ -304,6 +304,14 @@ func TestRequestAlertCheck(t *testing.T) {
 	if _, ok, err = db.RequestAlertCheck(ctx, p, a.ID, later.Add(time.Minute), alertAudit("alert.check")); err != nil || !ok {
 		t.Errorf("request after the evaluation: %t %v", ok, err)
 	}
+	// A request in the very second of the last evaluation is pending too:
+	// it clears last_evaluated_at, since both are whole seconds.
+	evaluated := later.Add(2 * time.Minute)
+	execAll(t, db, `UPDATE alerts SET last_evaluated_at='`+alertTime(evaluated)+`'`)
+	r, ok, err = db.RequestAlertCheck(ctx, p, a.ID, evaluated.Add(500*time.Millisecond), alertAudit("alert.check"))
+	if err != nil || !ok || r.LastEvaluatedAt != "" || !r.CheckPending() {
+		t.Errorf("request in the evaluation's second: %+v %t %v", r, ok, err)
+	}
 
 	// An alert nothing would evaluate is refused.
 	updAlert(t, db, p, a.ID, store.AlertEdit{Paused: ptr(true)}, later)

@@ -246,7 +246,8 @@ the state before it broke. The page and `list_alerts` show the reason.
 - "Check now" from the page or `check_alert` is a request, as `check_monitor`
   is: it records `check_requested_at` on the alert and returns at once; the
   loop serves it within a minute, as a scheduled evaluation (it can fire), and
-  the client polls `last_evaluated_at` until it passes the request. A request
+  the client polls until `check_pending` is false (the request clears
+  `last_evaluated_at`, which the check then sets again). A request
   while one is pending is a no-op, not an error.
 - The backtest (`preview_alert`) is different: it runs in whichever process
   answers the API, reads only, and never touches notification state.

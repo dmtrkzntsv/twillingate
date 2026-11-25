@@ -322,7 +322,9 @@ func (d *DB) SetAlertArchived(ctx context.Context, projectID, id int64, archived
 	return out, err
 }
 
-// RequestAlertCheck asks for a check of the alert at now and audits it. It
+// RequestAlertCheck asks for a check of the alert at now and audits it,
+// clearing last_evaluated_at so that a request in the very second of the
+// last evaluation is pending (CheckPending compares whole seconds). It
 // reports false, writing nothing, when a request is already pending. An alert
 // the runner would not evaluate (archived, paused, snoozed, of an archived
 // project) is ErrInvalid: the request would never be served.
@@ -349,7 +351,7 @@ func (d *DB) RequestAlertCheck(ctx context.Context, projectID, id int64, now tim
 		if cur.CheckPending() {
 			return nil
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE alerts SET check_requested_at=? WHERE id=?`, at, id); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE alerts SET check_requested_at=?, last_evaluated_at='' WHERE id=?`, at, id); err != nil {
 			return err
 		}
 		au.Subject, au.Detail = alertSubject(id), cur.Name
