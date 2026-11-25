@@ -544,7 +544,11 @@ func TestResetInTheSecondOfAnEvaluationLeavesTheCheckPending(t *testing.T) {
 	}
 }
 
-func TestResetAlertsOfArchivedProjects(t *testing.T) {
+// TestArchivingProjectResetsAlerts: archiving a project returns its live
+// alerts to pending with a new revision at once, so a restore before the
+// runner's next tick resumes them from pending and the tracker sees the
+// revision change. Archiving it again writes nothing.
+func TestArchivingProjectResetsAlerts(t *testing.T) {
 	db := newTestDB(t)
 	ctx := context.Background()
 	p := monitorProject(t, db, "p")
@@ -559,19 +563,19 @@ func TestResetAlertsOfArchivedProjects(t *testing.T) {
 	if err := db.SetProjectArchived(ctx, p, true, alertAudit("project.archive")); err != nil {
 		t.Fatal(err)
 	}
-	if n, err := db.ResetAlertsOfArchivedProjects(ctx); err != nil || n != 1 {
-		t.Fatalf("reset = %d, %v; want 1", n, err)
+	if err := db.SetProjectArchived(ctx, p, true, alertAudit("project.archive")); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.SetProjectArchived(ctx, p, false, alertAudit("project.restore")); err != nil {
+		t.Fatal(err)
 	}
 	got := alertRow(t, db, p, mine.ID)
-	if got.State != store.AlertPending || got.LastDay != "" || got.Reason != "" || got.LastValue != nil || got.Fails != 0 || got.RetryAt != "" ||
-		got.LastEvaluatedAt != "" {
-		t.Errorf("archived project's alert = %+v", got)
+	if got.State != store.AlertPending || got.Revision != mine.Revision+1 || got.LastDay != "" || got.Reason != "" ||
+		got.LastValue != nil || got.Fails != 0 || got.RetryAt != "" || got.LastEvaluatedAt != "" || got.CheckRequestedAt != "" {
+		t.Errorf("restored project's alert = %+v", got)
 	}
-	if o := alertRow(t, db, q, other.ID); o.State != store.AlertBreached || o.LastDay == "" {
+	if o := alertRow(t, db, q, other.ID); o.State != store.AlertBreached || o.LastDay == "" || o.Revision != other.Revision {
 		t.Errorf("live project's alert touched: %+v", o)
-	}
-	if n, err := db.ResetAlertsOfArchivedProjects(ctx); err != nil || n != 0 {
-		t.Errorf("second reset = %d, %v; want 0", n, err)
 	}
 }
 

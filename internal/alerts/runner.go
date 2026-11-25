@@ -30,7 +30,6 @@ const (
 type RunnerStore interface {
 	ListEvaluableAlerts(ctx context.Context) ([]store.Alert, error)
 	RecordAlertEvaluation(ctx context.Context, r store.AlertResult) (bool, error)
-	ResetAlertsOfArchivedProjects(ctx context.Context) (int, error)
 }
 
 // Notifier is what the loop tells of each evaluation: *inbox.Tracker.
@@ -100,16 +99,12 @@ func (r *Runner) Run(ctx context.Context) {
 	}
 }
 
-// Tick returns the alerts of archived projects to pending, tells the
-// notifier which alerts are live, and evaluates the ones due at now,
-// those with a check request first. A
-// failed list ends the tick before the notifier hears of it, which would
-// otherwise end every state.
+// Tick tells the notifier which alerts are live and evaluates the ones
+// due at now, those with a check request first. A failed list ends the
+// tick before the notifier hears of it, which would otherwise end every
+// state.
 func (r *Runner) Tick(ctx context.Context, now time.Time) {
 	now = now.UTC()
-	if _, err := r.st.ResetAlertsOfArchivedProjects(ctx); err != nil {
-		r.logger.Error("alerts: reset the alerts of archived projects", "error", err)
-	}
 	list, err := r.st.ListEvaluableAlerts(ctx)
 	if err != nil {
 		r.logger.Error("alerts: list", "error", err)

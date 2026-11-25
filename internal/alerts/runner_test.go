@@ -527,7 +527,11 @@ func TestRunnerEndsStatesOfEditedAlerts(t *testing.T) {
 	}
 }
 
-func TestRunnerResetsArchivedProjectAlerts(t *testing.T) {
+// TestRunnerArchivedProjectAlerts: an archived project's alerts are not
+// evaluated, and archiving and restoring the project between two ticks
+// still ends their states: the restored alert is pending at a new
+// revision, which the tracker is told.
+func TestRunnerArchivedProjectAlerts(t *testing.T) {
 	ctx := context.Background()
 	h := newRunHarness(t)
 	h.clock = runAt(0, 0)
@@ -535,17 +539,38 @@ func TestRunnerResetsArchivedProjectAlerts(t *testing.T) {
 	a := h.create(t, old, "signups", mustBuild(t, countIn("signups")), false)
 	live := h.metric(t, "live")
 	h.clearChecks(t)
-	h.exec(t, `UPDATE alerts SET state='breached'`)
+	h.next = func(a store.Alert, now time.Time) Outcome { return outcomeAt(a, now, store.AlertBreached, "") }
+	wantCalls(t, "04:00", h.tick(runAt(4, 0)), a.ID, live.ID)
+	key := inbox.AlertKey{ProjectID: old, ID: a.ID}
+	if keep := h.n.lastKeep(t); keep[key] != a.Revision {
+		t.Fatalf("keep %v", keep)
+	}
+
 	if err := h.st.SetProjectArchived(ctx, old, true, store.AuditEntry{Actor: "test", Action: "project.archive"}); err != nil {
 		t.Fatal(err)
 	}
-
-	wantCalls(t, "04:00", h.tick(runAt(4, 0)), live.ID)
-	if got := h.get(t, a); got.State != store.AlertPending {
-		t.Fatalf("archived project's alert: state %q", got.State)
-	}
+	wantCalls(t, "archived", h.tick(runAt(4, 1)))
 	if keep := h.n.lastKeep(t); len(keep) != 1 || keep[inbox.AlertKey{ProjectID: h.project, ID: live.ID}] != live.Revision {
-		t.Fatalf("keep %v", keep)
+		t.Fatalf("keep while archived %v", keep)
+	}
+
+	// Archived and restored between two ticks.
+	if err := h.st.SetProjectArchived(ctx, old, false, store.AuditEntry{Actor: "test", Action: "project.restore"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.st.SetProjectArchived(ctx, old, true, store.AuditEntry{Actor: "test", Action: "project.archive"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.st.SetProjectArchived(ctx, old, false, store.AuditEntry{Actor: "test", Action: "project.restore"}); err != nil {
+		t.Fatal(err)
+	}
+	got := h.get(t, a)
+	if got.State != store.AlertPending || got.Revision <= a.Revision || got.LastDay != "" {
+		t.Fatalf("restored project's alert: %+v", got)
+	}
+	h.tick(runAt(4, 2))
+	if keep := h.n.lastKeep(t); keep[key] != got.Revision {
+		t.Fatalf("keep after the restore %v, want revision %d", keep, got.Revision)
 	}
 }
 

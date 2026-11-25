@@ -485,18 +485,15 @@ func (d *DB) ListEvaluableAlerts(ctx context.Context) ([]store.Alert, error) {
 	return out, rows.Err()
 }
 
-// ResetAlertsOfArchivedProjects returns every alert of an archived project
-// that is not pending to pending, as an edit does, so a restored project
-// starts clean. Unaudited, like the runner's other writes.
-func (d *DB) ResetAlertsOfArchivedProjects(ctx context.Context) (int, error) {
-	res, err := d.db.ExecContext(ctx, `UPDATE alerts SET state='pending', reason='', last_value=NULL, last_day='', last_evaluated_at='', fails=0, retry_at=''
-		WHERE archived_at IS NULL AND state != 'pending'
-		AND project_id IN (SELECT id FROM projects WHERE archived_at IS NOT NULL)`)
-	if err != nil {
-		return 0, err
-	}
-	n, err := res.RowsAffected()
-	return int(n), err
+// resetProjectAlerts returns every live alert of the project to pending
+// at a new revision, as an edit does, and ends its check request:
+// archiving the project does, so a restore starts clean and a running
+// evaluation is not recorded. Unaudited: the project's archive is.
+func resetProjectAlerts(ctx context.Context, tx *sql.Tx, projectID int64) error {
+	_, err := tx.ExecContext(ctx, `UPDATE alerts SET revision = revision + 1, state='pending', reason='', last_value=NULL,
+		last_day='', last_evaluated_at='', fails=0, retry_at='', check_requested_at=''
+		WHERE project_id=? AND archived_at IS NULL`, projectID)
+	return err
 }
 
 // PruneAlertEvaluations deletes the evaluations made before the given time.

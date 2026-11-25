@@ -422,14 +422,12 @@ type Store interface {
 	// an id below before when it is > 0. RecentAlertEvaluations maps each
 	// alert to its n newest (none: absent). ListEvaluableAlerts lists the
 	// live alerts of live projects, paused and snoozed included.
-	// ResetAlertsOfArchivedProjects returns the alerts of archived projects
-	// to pending, unaudited, and counts them. PruneAlertEvaluations deletes
+	// PruneAlertEvaluations deletes
 	// the evaluations made before the given time and counts them.
 	RecordAlertEvaluation(ctx context.Context, r AlertResult) (bool, error)
 	ListAlertEvaluations(ctx context.Context, alertID int64, limit int, before int64) ([]AlertEvaluation, error)
 	RecentAlertEvaluations(ctx context.Context, ids []int64, n int) (map[int64][]AlertEvaluation, error)
 	ListEvaluableAlerts(ctx context.Context) ([]Alert, error)
-	ResetAlertsOfArchivedProjects(ctx context.Context) (int, error)
 	PruneAlertEvaluations(ctx context.Context, before time.Time) (int, error)
 	// SetSubmissionsArchived archives (archived true) or restores the
 	// project's submissions with these ids and returns how many changed:
