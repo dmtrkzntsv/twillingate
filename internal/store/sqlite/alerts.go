@@ -475,6 +475,23 @@ func (d *DB) ListEvaluableAlerts(ctx context.Context) ([]store.Alert, error) {
 	if err != nil {
 		return nil, err
 	}
+	return scanAlerts(rows)
+}
+
+// ListCheckPendingAlerts lists the live alerts of live projects whose
+// check is pending (store.Alert.CheckPending), by id: what the runner
+// reads again between the evaluations of a long tick.
+func (d *DB) ListCheckPendingAlerts(ctx context.Context) ([]store.Alert, error) {
+	rows, err := d.db.QueryContext(ctx, `SELECT `+alertCols+` FROM alerts WHERE archived_at IS NULL
+		AND check_requested_at <> '' AND (last_evaluated_at = '' OR last_evaluated_at < check_requested_at)
+		AND project_id IN (SELECT id FROM projects WHERE archived_at IS NULL) ORDER BY id`)
+	if err != nil {
+		return nil, err
+	}
+	return scanAlerts(rows)
+}
+
+func scanAlerts(rows *sql.Rows) ([]store.Alert, error) {
 	defer rows.Close()
 	var out []store.Alert
 	for rows.Next() {

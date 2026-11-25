@@ -270,6 +270,47 @@ func TestRunnerServesChecksFirst(t *testing.T) {
 	}
 }
 
+// TestRunnerServesChecksRequestedMidTick: a check requested while a tick
+// drains its scheduled evaluations is served before the rest of them, on
+// an alert not due as on one further down the list, each once, and
+// stamped when served, so it is not pending at the next tick.
+func TestRunnerServesChecksRequestedMidTick(t *testing.T) {
+	ctx := context.Background()
+	h := newRunHarness(t)
+	h.clock = runAt(0, 0)
+	first := h.metric(t, "first")
+	second := h.metric(t, "second")
+	third := h.metric(t, "third")
+	idle := h.metric(t, "idle")
+	h.clearChecks(t)
+	h.exec(t, `UPDATE alerts SET last_day=? WHERE id=?`, yesterday.String(), idle.ID)
+	now := runAt(4, 0)
+	asked := false
+	h.next = func(a store.Alert, at time.Time) Outcome {
+		if a.ID == first.ID && !asked {
+			asked = true
+			h.clock = now.Add(20 * time.Second)
+			for _, id := range []int64{idle.ID, third.ID} {
+				if _, _, err := h.st.RequestAlertCheck(ctx, h.project, id, h.clock, store.AuditEntry{Actor: "test", Action: "alert.check"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+		}
+		return outcomeAt(a, at, store.AlertOK, "")
+	}
+
+	wantCalls(t, "04:00", h.tick(now), first.ID, third.ID, idle.ID, second.ID)
+	for _, a := range []store.Alert{idle, third} {
+		if got := h.get(t, a); got.CheckPending() || got.LastEvaluatedAt != "2026-11-25T04:00:20Z" {
+			t.Errorf("%s: pending %t, last evaluated %q", a.Name, got.CheckPending(), got.LastEvaluatedAt)
+		}
+	}
+	if got := h.get(t, third); got.LastDay != yesterday.String() {
+		t.Errorf("third: last day %q, want its scheduled days done", got.LastDay)
+	}
+	wantCalls(t, "04:01", h.tick(runAt(4, 1)))
+}
+
 func TestRunnerCheckBeforeThePassKeepsLastDay(t *testing.T) {
 	h := newRunHarness(t)
 	h.clock = runAt(1, 0)

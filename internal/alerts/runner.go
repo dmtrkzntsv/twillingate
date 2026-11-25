@@ -29,6 +29,7 @@ const (
 // RunnerStore is the slice of the store the loop uses.
 type RunnerStore interface {
 	ListEvaluableAlerts(ctx context.Context) ([]store.Alert, error)
+	ListCheckPendingAlerts(ctx context.Context) ([]store.Alert, error)
 	RecordAlertEvaluation(ctx context.Context, r store.AlertResult) (bool, error)
 }
 
@@ -100,9 +101,11 @@ func (r *Runner) Run(ctx context.Context) {
 }
 
 // Tick tells the notifier which alerts are live and evaluates the ones
-// due at now, those with a check request first. A failed list ends the
-// tick before the notifier hears of it, which would otherwise end every
-// state.
+// due at now, those with a check request first, and before each
+// scheduled or silence evaluation the checks requested since: a long
+// drain must not hold one up. An alert is evaluated at most once a tick.
+// A failed list ends the tick before the notifier hears of it, which
+// would otherwise end every state.
 func (r *Runner) Tick(ctx context.Context, now time.Time) {
 	now = now.UTC()
 	list, err := r.st.ListEvaluableAlerts(ctx)
@@ -135,10 +138,44 @@ func (r *Runner) Tick(ctx context.Context, now time.Time) {
 		}
 		return 1
 	})
+	done := map[int64]bool{} // the alerts evaluated this tick
 	for _, a := range due {
+		if !a.CheckPending() {
+			r.serveChecks(ctx, afterPass, done)
+		}
 		if ctx.Err() != nil {
 			return
 		}
+		if done[a.ID] {
+			continue
+		}
+		done[a.ID] = true
+		r.evaluateOne(ctx, a, now, daysDue(a, now, afterPass))
+	}
+}
+
+// serveChecks evaluates the alerts whose check is pending now, but those
+// done this tick (whose request waits for the next) or paused or snoozed,
+// each at the time it is served, so the evaluation is not older than the
+// request. A failed read is logged and leaves them to the next tick.
+func (r *Runner) serveChecks(ctx context.Context, afterPass bool, done map[int64]bool) {
+	if ctx.Err() != nil {
+		return
+	}
+	list, err := r.st.ListCheckPendingAlerts(ctx)
+	if err != nil {
+		r.logger.Error("alerts: list check requests", "error", err)
+		return
+	}
+	for _, a := range list {
+		now := r.now().UTC()
+		if ctx.Err() != nil {
+			return
+		}
+		if done[a.ID] || a.Paused || a.SnoozedUntil > stampOf(now) {
+			continue
+		}
+		done[a.ID] = true
 		r.evaluateOne(ctx, a, now, daysDue(a, now, afterPass))
 	}
 }

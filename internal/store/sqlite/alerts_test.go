@@ -518,6 +518,51 @@ func TestListEvaluableAlerts(t *testing.T) {
 	}
 }
 
+// TestListCheckPendingAlerts lists the live alerts of live projects whose
+// check is pending, as CheckPending reads it, by id.
+func TestListCheckPendingAlerts(t *testing.T) {
+	db := newTestDB(t)
+	ctx := context.Background()
+	p := monitorProject(t, db, "p")
+	asked := newAlert(t, db, p, "asked") // its creation check
+	served := newAlert(t, db, p, "served")
+	if _, err := db.RecordAlertEvaluation(ctx, store.AlertResult{AlertID: served.ID, Revision: served.Revision,
+		Eval: store.AlertEvaluation{AlertID: served.ID, At: alertAt, Outcome: store.AlertOK}, State: store.AlertOK}); err != nil {
+		t.Fatal(err)
+	}
+	gone := newAlert(t, db, p, "gone")
+	if _, err := db.SetAlertArchived(ctx, p, gone.ID, true, 50, alertNow, alertAudit("alert.archive")); err != nil {
+		t.Fatal(err)
+	}
+	q := monitorProject(t, db, "q")
+	newAlert(t, db, q, "of archived project")
+	if err := db.SetProjectArchived(ctx, q, true, alertAudit("project.archive")); err != nil {
+		t.Fatal(err)
+	}
+	again := newAlert(t, db, p, "again")
+	if _, err := db.RecordAlertEvaluation(ctx, store.AlertResult{AlertID: again.ID, Revision: again.Revision,
+		Eval: store.AlertEvaluation{AlertID: again.ID, At: alertAt, Outcome: store.AlertOK}, State: store.AlertOK}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := db.RequestAlertCheck(ctx, p, again.ID, alertNow.Add(time.Minute), alertAudit("alert.check")); err != nil {
+		t.Fatal(err)
+	}
+	got, err := db.ListCheckPendingAlerts(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var ids []int64
+	for _, a := range got {
+		if !a.CheckPending() {
+			t.Errorf("%s listed, not pending: %+v", a.Name, a)
+		}
+		ids = append(ids, a.ID)
+	}
+	if !reflect.DeepEqual(ids, []int64{asked.ID, again.ID}) {
+		t.Fatalf("pending = %v, want %v", ids, []int64{asked.ID, again.ID})
+	}
+}
+
 // TestResetInTheSecondOfAnEvaluationLeavesTheCheckPending: a reset to
 // pending clears last_evaluated_at, so a check it requests is pending even
 // when it lands in the very second the last evaluation was recorded (both
