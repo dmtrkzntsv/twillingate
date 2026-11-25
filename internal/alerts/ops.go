@@ -231,7 +231,7 @@ func merged(cur store.AlertDef, p Patch) (store.AlertDef, error) {
 			in.Read = p.Read // Build refuses it beside a where or a template
 		}
 		if p.Fields != nil {
-			in.Fields = p.Fields // Build refuses them beside a query or a where
+			in.Fields = p.Fields // Build refuses a non-empty one beside a query or a where
 		}
 	}
 	return Build(in)
