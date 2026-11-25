@@ -626,6 +626,28 @@ func TestDocumentMatchesNotificationVocabularies(t *testing.T) {
 	}
 }
 
+// TestDocumentMatchesAlertVocabularies binds the alert state and
+// evaluation outcome tables in docs/twillingate.md to the store's closed
+// vocabularies, in order: list_alerts and alert_history return them.
+func TestDocumentMatchesAlertVocabularies(t *testing.T) {
+	row := regexp.MustCompile("^\\| `([a-z_]+)` \\|")
+	firstCells := func(heading string) []string {
+		var out []string
+		for _, line := range strings.Split(docSection(t, docs.Twillingate, heading), "\n") {
+			if m := row.FindStringSubmatch(line); m != nil {
+				out = append(out, m[1])
+			}
+		}
+		return out
+	}
+	if got := firstCells("### Alert states"); !slices.Equal(got, store.AlertStates) {
+		t.Errorf("the alert states table lists\n%v\nstore.AlertStates is\n%v", got, store.AlertStates)
+	}
+	if got := firstCells("### Evaluation outcomes"); !slices.Equal(got, store.AlertOutcomes) {
+		t.Errorf("the evaluation outcomes table lists\n%v\nstore.AlertOutcomes is\n%v", got, store.AlertOutcomes)
+	}
+}
+
 // docSection returns the text under a heading, up to the next one at the
 // same level, failing the test when the heading is missing.
 func docSection(t *testing.T, doc, heading string) string {

@@ -52,8 +52,8 @@ func TestEveryToolChoosesATransport(t *testing.T) {
 		}
 		seen[key] = s.Name
 	}
-	if tools != 73 {
-		t.Errorf("registered %d tools, want 73", tools)
+	if tools != 81 {
+		t.Errorf("registered %d tools, want 81", tools)
 	}
 	listed, err := cs.ListTools(context.Background(), nil)
 	if err != nil {

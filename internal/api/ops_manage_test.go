@@ -176,6 +176,7 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 		"create_form": true, "approve_form": true, "update_form": true, "archive_form": true, "restore_form": true,
 		"move_form": true, "archive_submissions": true, "restore_submissions": true,
 		"archive_notifications": true, "restore_notifications": true,
+		"create_alert": true, "update_alert": true, "archive_alert": true, "restore_alert": true, "check_alert": true,
 		"rename_event": true, "merge_event": true, "block_event": true, "remove_event_rule": true,
 		"rename_attribute": true, "merge_attribute": true, "block_attribute": true, "remove_attribute_rule": true}
 	idempotent := map[string]bool{"archive_project": true, "restore_project": true, "move_project": true,
@@ -186,6 +187,7 @@ func TestManagementToolsAnnotatedNonReadOnly(t *testing.T) {
 		"archive_form": true, "restore_form": true, "move_form": true,
 		"archive_submissions": true, "restore_submissions": true,
 		"archive_notifications": true, "restore_notifications": true,
+		"archive_alert": true, "restore_alert": true,
 		"block_event": true, "remove_event_rule": true,
 		"block_attribute": true, "remove_attribute_rule": true}
 	for _, tool := range tools.Tools {
