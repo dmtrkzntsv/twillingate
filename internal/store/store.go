@@ -398,6 +398,23 @@ type Store interface {
 	// ends it unless the monitor is gone or its request is no longer the one at requestedAt; not audited.
 	RequestMonitorCheck(ctx context.Context, projectID int64, origin, at string, cooldown time.Duration, a AuditEntry) error
 	FinishMonitorCheck(ctx context.Context, projectID int64, origin, requestedAt, finishedAt string) error
+	// Alerts (migration 051), every mutation audited in its transaction.
+	// CreateAlert refuses a taken live name and a project already holding max
+	// live alerts with ErrConflict, an unknown project with ErrNotFound; the new
+	// alert asks for a check at now. UpdateAlert changes the alert's name,
+	// definition, pause or snooze: a change to the last three resets what the
+	// evaluations left and bumps the revision; an edit that changes nothing
+	// writes nothing; an archived alert is ErrInvalid. SetAlertArchived
+	// archives or restores (a restore refuses like CreateAlert). Neither leaves
+	// a check request that nothing would serve. RequestAlertCheck asks for a
+	// check at now: false, and nothing written, while one is pending; ErrInvalid
+	// for an alert the runner would not evaluate.
+	CreateAlert(ctx context.Context, a Alert, max int, now time.Time, au AuditEntry) (Alert, error)
+	GetAlert(ctx context.Context, projectID, id int64) (Alert, error)
+	ListAlerts(ctx context.Context, projectID int64, archived bool) ([]Alert, error)
+	UpdateAlert(ctx context.Context, projectID, id int64, e AlertEdit, now time.Time, au AuditEntry) (Alert, error)
+	SetAlertArchived(ctx context.Context, projectID, id int64, archived bool, max int, now time.Time, au AuditEntry) (Alert, error)
+	RequestAlertCheck(ctx context.Context, projectID, id int64, now time.Time, au AuditEntry) (Alert, bool, error)
 	// SetSubmissionsArchived archives (archived true) or restores the
 	// project's submissions with these ids and returns how many changed:
 	// ids that match nothing, an archived one being archived and an active

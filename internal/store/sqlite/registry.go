@@ -206,6 +206,9 @@ func (d *DB) SetProjectArchived(ctx context.Context, id int64, archived bool, a 
 			if err := finishPendingChecks(ctx, tx, id, ""); err != nil {
 				return err
 			}
+			if _, err := tx.ExecContext(ctx, `UPDATE alerts SET check_requested_at='' WHERE project_id=?`, id); err != nil {
+				return err
+			}
 		}
 		return auditAndBump(ctx, tx, a)
 	})
@@ -277,7 +280,7 @@ func (d *DB) SetIngestKeyDisabled(ctx context.Context, projectID int64, label st
 // instead of silently orphaning rows on DeleteProjectData.
 var projectTables = []string{
 	"ingest_keys", "rules", "usage_history", "project_tabs", "widget_shares", "forms", "submissions", "monitors", "monitor_domains",
-	"notifications", "notify_states", "form_bursts",
+	"notifications", "notify_states", "form_bursts", "alerts",
 }
 
 // DeleteProjectData hard-deletes every row keyed by the project's id, then
