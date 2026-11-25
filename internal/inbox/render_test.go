@@ -39,6 +39,8 @@ func sample(typ string) store.Notification {
 		set("https://blog.example", "since", since, "reason", "HTTP 503")
 	case store.NotifyUptimeStillDown, store.NotifyUptimeUp:
 		set("https://blog.example", "since", since, "until", created.Format(time.RFC3339))
+	case store.NotifyUptimeBlip:
+		set("https://blog.example", "since", since, "until", "2026-11-07T08:00:45Z", "reason", "timeout")
 	case store.NotifyCertFailing:
 		set("https://blog.example", "since", since, "error", "x509: certificate has expired")
 	case store.NotifyCertStillFailing:

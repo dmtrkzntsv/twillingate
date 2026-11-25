@@ -1012,6 +1012,33 @@ func TestNotifyConfig(t *testing.T) {
 	}
 }
 
+// TestNotifyBriefOutage: NOTIFY_BRIEF_OUTAGE_SECONDS is whole seconds, 0
+// (off) to 3600, 60 unset.
+func TestNotifyBriefOutage(t *testing.T) {
+	c, err := load(t, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Notify.Brief != time.Minute {
+		t.Errorf("default Brief = %v, want 1m", c.Notify.Brief)
+	}
+	for v, want := range map[string]time.Duration{"0": 0, "3600": time.Hour, "300": 5 * time.Minute} {
+		c, err := load(t, map[string]string{"NOTIFY_BRIEF_OUTAGE_SECONDS": v})
+		if err != nil || c.Notify.Brief != want {
+			t.Errorf("NOTIFY_BRIEF_OUTAGE_SECONDS=%s: %v, %v; want %v", v, c.Notify.Brief, err, want)
+		}
+	}
+	for _, v := range []string{"-1", "3601", "abc"} {
+		if _, err := load(t, map[string]string{"NOTIFY_BRIEF_OUTAGE_SECONDS": v}); err == nil {
+			t.Errorf("NOTIFY_BRIEF_OUTAGE_SECONDS=%s accepted", v)
+		}
+	}
+	_, err = load(t, map[string]string{"NOTIFY_BRIEF_OUTAGE_SECONDS": "3601"})
+	if err == nil || !strings.Contains(err.Error(), "config: NOTIFY_BRIEF_OUTAGE_SECONDS must be between 0 and 3600: 3601") {
+		t.Errorf("err = %v", err)
+	}
+}
+
 // TRUSTED_PROXIES defaults to the local ranges, takes a list or "none",
 // and refuses the boot on anything else rather than trust the wrong peers.
 func TestTrustedProxies(t *testing.T) {

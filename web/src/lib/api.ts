@@ -635,6 +635,7 @@ export type NotificationType =
   | 'uptime_down'
   | 'uptime_still_down'
   | 'uptime_up'
+  | 'uptime_blip'
   | 'cert_failing'
   | 'cert_still_failing'
   | 'cert_recovered'

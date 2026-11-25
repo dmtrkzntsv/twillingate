@@ -215,6 +215,18 @@
       "Title": "📝 Blog <&> · 7 new submissions to contact us"
     }
   },
+  "uptime_blip": {
+    "Inbox": {
+      "Body": "Went down at 2026-11-07 08:00 UTC (timeout) and came back up.",
+      "Link": "/projects/3/settings/domains",
+      "Title": "https://blog.example was down for 45s"
+    },
+    "Outgoing": {
+      "Body": "Went down at 2026-11-07 08:00 UTC (timeout) and came back up.",
+      "Link": "https://c.example/app/projects/3/settings/domains",
+      "Title": "⚠️ Blog <&> · https://blog.example was down for 45s"
+    }
+  },
   "uptime_down": {
     "Inbox": {
       "Body": "Down since 2026-11-07 08:00 UTC (HTTP 503).",
