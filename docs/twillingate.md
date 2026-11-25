@@ -1274,8 +1274,8 @@ line; a rename does not.
 past, reading only: a stat's 90 days ending yesterday and a funnel's 30, each
 day's window judged as an evaluation would judge it (without asking whether
 its events were ever sent), and `fired`, the runs of breached days. A silence
-alert's backtest lists the gaps longer than its hours over the 30 days ending
-now, from the hours of the events' own timestamps (those of the
+alert's backtest lists the gaps longer than its hours from the start of the
+day 30 days back to now (at least 720 hours, the most an alert may name), from the hours of the events' own timestamps (those of the
 `INGEST_LATE_DAYS` days before the window too, where an event received in
 it can be filed), counting a gap from the window's start, while the live check runs hourly on `received_at`: its
 "would have fired N times" is an estimate. A backtest reads settled days, so

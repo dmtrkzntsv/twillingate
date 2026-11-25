@@ -201,7 +201,7 @@ type alertGapOut struct {
 
 type alertPreviewOut struct {
 	Days  []alertDayOut `json:"days" jsonschema:"a metric alert's days, oldest first: 90 for a stat, 30 for a funnel, ending yesterday"`
-	Gaps  []alertGapOut `json:"gaps" jsonschema:"a silence alert's gaps longer than its hours over the 30 days ending now, oldest first"`
+	Gaps  []alertGapOut `json:"gaps" jsonschema:"a silence alert's gaps longer than its hours from the start of the day 30 days back to now, oldest first"`
 	Fired int           `json:"fired" jsonschema:"how often it would have fired: the runs of breached days, or the gaps"`
 }
 
@@ -391,7 +391,7 @@ func (h *host) registerAlerts(r *registrar) {
 	expose(r, spec{Name: "preview_alert", Annotations: ro, Method: "POST", Path: p + "/preview", constrain: constrainAlert,
 		Description: "Backtest an alert without saving it: a definition as create_alert takes it (name ignored), or the id of a saved one. " +
 			alertReadRule + " " + alertConditionRule + " " + alertTemplateRule +
-			" Returns days, each window's day, value, compare, volume and outcome (ok, breached, no_data): the 90 days ending yesterday for a stat, 30 for a funnel; or a silence alert's gaps (from, to, hours) longer than its hours over the 30 days ending now, an estimate (the live check runs hourly, and a gap is counted from the window's start); and fired, how often it would have fired (the runs of breached days, or the gaps). Reads only; bounded by CONSOLE_QUERY_TIMEOUT."},
+			" Returns days, each window's day, value, compare, volume and outcome (ok, breached, no_data): the 90 days ending yesterday for a stat, 30 for a funnel; or a silence alert's gaps (from, to, hours) longer than its hours from the start of the day 30 days back to now, an estimate (the live check runs hourly, and a gap is counted from the window's start); and fired, how often it would have fired (the runs of breached days, or the gaps). Reads only; bounded by CONSOLE_QUERY_TIMEOUT."},
 		h.previewAlert)
 	expose(r, spec{Name: "update_alert", Annotations: write, Method: "PATCH", Path: p + "/{id}", constrain: constrainAlert,
 		Description: "Change an alert: name, condition (whole), window_days, min_volume, paused, snoozed_until (an RFC 3339 time ahead; null wakes it), or the source: query (with read, or none), where, or template (with fields, or none) replaces the old one whole; read alone keeps the query, fields alone keep the template. " +

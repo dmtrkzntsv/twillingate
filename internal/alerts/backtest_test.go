@@ -142,12 +142,12 @@ func TestBacktestFunnel30Days(t *testing.T) {
 var silenceNow = time.Date(2026, 11, 25, 23, 50, 0, 0, time.UTC)
 
 // bucketRows are the silence breakdown's rows, newest first: every hour
-// of the 30 days ending silenceNow's, its events received from :15 to
+// of the 31 days ending silenceNow's, its events received from :15 to
 // :45, but the last day's hours skip.
 func bucketRows(skip func(h int) bool) native.Result {
 	res := native.Result{Columns: []string{"day", "hour", "min_received_at", "max_received_at"}}
 	last := civil.DateOf(silenceNow)
-	for i := range 30 {
+	for i := range 31 {
 		d := last.AddDays(-i)
 		for h := 23; h >= 0; h-- {
 			if i == 0 && skip(h) {
@@ -164,7 +164,7 @@ func bucketRows(skip func(h int) bool) native.Result {
 func TestBacktestSilenceGaps(t *testing.T) {
 	h := newEvalHarness()
 	last := civil.DateOf(silenceNow)
-	from := last.AddDays(-29)
+	from := last.AddDays(-30)
 	res := bucketRows(func(h int) bool { return h >= 6 && h <= 13 })
 	h.eng.answer("breakdown", from, last, res)
 	// The day before the window, where an event received in it can be
@@ -246,7 +246,7 @@ func TestBacktestSilenceLateFiled(t *testing.T) {
 	h := newEvalHarness()
 	h.e.LateDays = 2
 	last := civil.DateOf(silenceNow)
-	from := last.AddDays(-29)
+	from := last.AddDays(-30)
 	// The window's first day has no bucket before 10h.
 	res := bucketRows(func(int) bool { return false })
 	rows := res.Rows[:0]
@@ -350,16 +350,16 @@ func TestBacktestFailures(t *testing.T) {
 
 	last := civil.DateOf(evalNow)
 	h.eng.answer("breakdown", last.AddDays(-30), last.AddDays(-30), native.Result{Columns: []string{"day", "hour", "min_received_at", "max_received_at"}})
-	h.eng.answer("breakdown", last.AddDays(-29), last, native.Result{Columns: []string{"day", "hour", "min_received_at", "max_received_at"},
+	h.eng.answer("breakdown", last.AddDays(-30), last, native.Result{Columns: []string{"day", "hour", "min_received_at", "max_received_at"},
 		Rows: [][]string{{last.String(), "01", "yesterday", "today"}}})
 	if _, err := h.e.Backtest(ctx, 7, silence(t), evalNow); err == nil {
 		t.Error("a received_at that is not a time: no error")
 	}
-	h.eng.answer("breakdown", last.AddDays(-29), last, native.Result{Columns: []string{"day", "hour"}})
+	h.eng.answer("breakdown", last.AddDays(-30), last, native.Result{Columns: []string{"day", "hour"}})
 	if _, err := h.e.Backtest(ctx, 7, silence(t), evalNow); err == nil {
 		t.Error("no received_at columns: no error")
 	}
-	h.eng.answer("breakdown", last.AddDays(-29), last, native.Result{Columns: []string{"day", "hour", "min_received_at", "max_received_at"}, Truncated: true})
+	h.eng.answer("breakdown", last.AddDays(-30), last, native.Result{Columns: []string{"day", "hour", "min_received_at", "max_received_at"}, Truncated: true})
 	if _, err := h.e.Backtest(ctx, 7, silence(t), evalNow); err == nil {
 		t.Error("a truncated breakdown: no error")
 	}
@@ -417,4 +417,23 @@ func TestPreviewByDefinitionAndById(t *testing.T) {
 	h.o.eng = nil
 	_, err = h.o.Preview(ctx, h.live, &in, 0)
 	mustInvalid(t, err, "the event files cannot be queried by this process")
+}
+
+// TestBacktestSilenceMaxHours: the window spans at least 720 hours at any
+// time of day, so a gap at the most hours an alert may name can show.
+func TestBacktestSilenceMaxHours(t *testing.T) {
+	h := newEvalHarness()
+	last := civil.DateOf(silenceNow)
+	from := last.AddDays(-30)
+	cols := []string{"day", "hour", "min_received_at", "max_received_at"}
+	h.eng.answer("breakdown", from, last, native.Result{Columns: cols})
+	h.eng.answer("breakdown", from.AddDays(-1), from.AddDays(-1), native.Result{Columns: cols})
+	bt := h.backtest(t, mustParse(t, Input{Where: []native.Filter{evt("signup")}, WhereSet: true,
+		Condition: store.AlertCondition{Type: "silence", Hours: 720}}), silenceNow)
+	if len(bt.Gaps) != 1 || bt.Fired != 1 {
+		t.Fatalf("hours 720, no events: gaps %+v, fired %d, want one", bt.Gaps, bt.Fired)
+	}
+	if got := bt.Gaps[0].Hours; got < 720 {
+		t.Errorf("gap of %v hours, want at least 720", got)
+	}
 }

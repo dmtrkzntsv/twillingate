@@ -16,7 +16,7 @@ import (
 // The days a backtest covers: a stat's and a funnel's, ending yesterday
 // (a funnel answers each day alone, so fewer), and a silence alert's,
 // ending today. silenceBuckets bounds a silence breakdown, an hour a
-// row (native's most): 30 days of hours fit in one, and the late days
+// row (native's most): 31 days of hours fit in one, and the late days
 // before them are asked silenceChunkDays at a time.
 const (
 	backtestStatDays    = 90
@@ -53,7 +53,7 @@ type Backtest struct {
 // Backtest runs p over past days at now, reading only: a stat over the
 // 90 days ending yesterday, a funnel over 30, each day judged as
 // Evaluate judges it but without asking whether its events were ever
-// sent; a silence alert's gaps over the 30 days ending today. A query the
+// sent; a silence alert's gaps from the start of the day 30 days back to now. A query the
 // engine refuses is store.ErrInvalid, one past the time limit
 // store.ErrTimeout.
 func (e *Evaluator) Backtest(ctx context.Context, projectID int64, p Parsed, now time.Time) (Backtest, error) {
@@ -146,17 +146,18 @@ func firings(days []BacktestDay) int {
 	return n
 }
 
-// backtestSilence finds the gaps longer than p's hours over the 30 days
-// ending today: a breakdown by day and hour reads each bucket's first
-// and last received_at, and the gaps are the stretches between them,
-// from the window's start and to now. The LateDays days before the
+// backtestSilence finds the gaps longer than p's hours from the start of
+// the day 30 days back to now (so at least 720 hours, the most an alert
+// may name): a breakdown by day and hour reads each bucket's first and
+// last received_at, and the gaps are the stretches between them, from the
+// window's start and to now. The LateDays days before the
 // window are read too, in breakdowns of their own, since an event
 // received in it can be filed (by its clamped ts) that much earlier.
 // Events received late put a bucket's span out of time order, so the
 // spans are sorted, and a gap is measured from the latest end yet.
 func (e *Evaluator) backtestSilence(ctx context.Context, projectID int64, p Parsed, now time.Time) (Backtest, error) {
 	today := civil.DateOf(now)
-	from := today.AddDays(-(backtestSilenceDays - 1))
+	from := today.AddDays(-backtestSilenceDays) // a whole day back, so the span is over 720 hours at any hour
 	q := native.Query{
 		Kind: "breakdown", Table: p.Query.Table, Where: p.Query.Where,
 		Dimensions: []string{"day", "hour"},
