@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
 
@@ -121,4 +123,41 @@ func TestPreviewClampsAFutureTo(t *testing.T) {
 	if err != nil || got.Rows[0][0] != "2026-09-14" {
 		t.Errorf("preview = %+v, %v; want to clamped to today", got, err)
 	}
+}
+
+// TestPreviewWithDashboardSelectors: with dashboard_id, a draft may read
+// that dashboard's selectors, bound to the values given (the empty list
+// for All); without it, only :project, :from and :to, as before.
+func TestPreviewWithDashboardSelectors(t *testing.T) {
+	svc := selectorService(t, &captureNative{})
+	fake := filesOf(t, svc).sqle
+	d := mustCreateWith(t, svc, "DD", []Selector{deploymentSel})
+	in := sqlPreview("stat", readsDeployment("x").Source.Content)
+	_, err := svc.Preview(context.Background(), in)
+	wantRefusal(t, err, store.ErrInvalid, "sql uses :deployment; widgets get only :project, :from and :to")
+	in.Selectors = map[string][]string{"deployment": {"cloud"}}
+	_, err = svc.Preview(context.Background(), in)
+	wantRefusal(t, err, store.ErrInvalid, "selectors: pass the dashboard_id whose selectors they are")
+
+	in.DashboardID = d.ID
+	for _, c := range []struct {
+		sel  map[string][]string
+		want string
+	}{{map[string][]string{"deployment": {"cloud"}}, sqlbind.ListText([]string{"cloud"})}, {nil, sqlbind.ListText(nil)}} {
+		in.Selectors = c.sel
+		got, err := svc.Preview(context.Background(), in)
+		if err != nil {
+			t.Fatalf("%v: %v", c.sel, err)
+		}
+		if got.Problem != "" {
+			t.Errorf("%v: problem %q", c.sel, got.Problem)
+		}
+		reqs := fake.Requests()
+		if last := reqs[len(reqs)-1]; last.Args["tw_deployment"] != c.want {
+			t.Errorf("%v: bound %v, want %q", c.sel, last.Args, c.want)
+		}
+	}
+	in.Selectors = map[string][]string{"campaign": {"a"}}
+	_, err = svc.Preview(context.Background(), in)
+	wantRefusal(t, err, store.ErrInvalid, fmt.Sprintf("dashboard %d has no selector campaign", d.ID))
 }

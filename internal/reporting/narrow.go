@@ -41,7 +41,7 @@ func narrowed(w store.Widget, n Narrow) (store.Widget, error) {
 		return store.Widget{}, err
 	}
 	qc := pq.qc
-	qc.Query.Where = slices.Concat(n.Where, qc.Query.Where)
+	qc.Query = withWhere(qc.Query, n.Where)
 	if n.ProjectID > 0 {
 		qc.Project = n.ProjectID
 	}
@@ -54,4 +54,12 @@ func narrowed(w store.Widget, n Narrow) (store.Widget, error) {
 	}
 	w.Source = string(b)
 	return w, nil
+}
+
+// withWhere is q with filters ahead of its own, in a new slice: how a
+// copy is narrowed (narrowed) and how a load narrows a query widget by
+// its dashboard's selectors (querySource.plan).
+func withWhere(q native.Query, filters []native.Filter) native.Query {
+	q.Where = slices.Concat(filters, q.Where)
+	return q
 }

@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -982,5 +984,104 @@ func TestNarrowSchemaListsTheFilterOps(t *testing.T) {
 		if !slices.Contains(ops, any("ever")) || !slices.Contains(ops, any("any_of")) {
 			t.Errorf("%s: where's op enum = %v", name, ops)
 		}
+	}
+}
+
+// TestWidgetDataSelectors: the picked values reach a query widget from
+// widget_data's selectors text, the GET query string, a stream item's
+// object and a preview's dashboard_id and selectors; a name the
+// dashboard lacks and selectors that are no JSON object are a 400.
+func TestWidgetDataSelectors(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	const content = `{"query":{"kind":"stat","table":"views","metrics":[{"op":"count","as":"value"}]}}`
+	var d struct {
+		ID      int64 `json:"dashboard_id"`
+		Widgets []struct {
+			ID int64 `json:"widget_id"`
+		} `json:"widgets"`
+	}
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Hosts",
+		"selectors": []map[string]any{{"name": "site", "column": "host"}},
+		"widgets":   []any{map[string]any{"component": "stat", "source": map[string]any{"type": "query", "content": content}}},
+	}, &d)
+	id := d.Widgets[0].ID
+	type envelope struct {
+		Data struct {
+			Rows [][]string `json:"rows"`
+		} `json:"data"`
+	}
+	value := func(e envelope) string {
+		t.Helper()
+		if len(e.Data.Rows) != 1 || len(e.Data.Rows[0]) != 1 {
+			t.Fatalf("rows %v, want one value", e.Data.Rows)
+		}
+		return e.Data.Rows[0][0]
+	}
+	args := func(selectors string) map[string]any {
+		return map[string]any{"widget_id": id, "project_id": 1, "from": "2026-08-20", "to": "2026-08-21", "selectors": selectors}
+	}
+	var all, none envelope
+	toolJSON(t, cs, "widget_data", args(""), &all)
+	toolJSON(t, cs, "widget_data", args(`{"site":["no.such.host"]}`), &none)
+	if value(all) == "0" || value(none) != "0" {
+		t.Errorf("All = %s, a host nobody visited = %s; want views, then 0", value(all), value(none))
+	}
+	for sel, msg := range map[string]string{
+		`{"campaign":["a"]}`:   fmt.Sprintf("dashboard %d has no selector campaign", d.ID),
+		`["no.such.host"]`:     "selectors: not a JSON object",
+		`{"site":"one"}`:       "selectors: not a JSON object",
+		`{"site":["a"]} extra`: "selectors: not a JSON object",
+	} {
+		res := callTool(t, cs, "widget_data", args(sel))
+		if !res.IsError || !strings.Contains(textOf(res), msg) {
+			t.Errorf("selectors %s = %s, want a refusal naming %q", sel, textOf(res), msg)
+		}
+		target := fmt.Sprintf("/api/widgets/%d/data?project_id=1&from=2026-08-20&to=2026-08-21&selectors=%s", id, url.QueryEscape(sel))
+		if rec := serveREST(t, r, "GET", target, ""); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), msg) {
+			t.Errorf("GET selectors %s = %d %s, want 400", sel, rec.Code, rec.Body.String())
+		}
+	}
+
+	target := fmt.Sprintf("/api/widgets/%d/data?project_id=1&from=2026-08-20&to=2026-08-21&selectors=%s", id, url.QueryEscape(`{"site":["no.such.host"]}`))
+	rec := serveREST(t, r, "GET", target, "")
+	var got envelope
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &got) != nil || value(got) != "0" {
+		t.Errorf("GET %s = %d %s, want 0", target, rec.Code, rec.Body.String())
+	}
+
+	body := fmt.Sprintf(`{"widgets":[{"widget_id":%d,"project_id":1,"from":"2026-08-20","to":"2026-08-21","selectors":{"site":["no.such.host"]}},`+
+		`{"widget_id":%d,"project_id":1,"from":"2026-08-20","to":"2026-08-21","selectors":{"campaign":["a"]}}]}`, id, id)
+	rec = serveREST(t, r, "POST", "/api/widgets/stream", body)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"rows":[["0"]]`) ||
+		!strings.Contains(rec.Body.String(), fmt.Sprintf("dashboard %d has no selector campaign", d.ID)) {
+		t.Errorf("stream = %d %s, want the first narrowed to 0 and the second refused", rec.Code, rec.Body.String())
+	}
+
+	preview := func(extra string) *http.Response {
+		t.Helper()
+		rec := serveREST(t, r, "POST", "/api/widgets/preview", `{"component":"stat","source":{"type":"query","content":`+
+			strconv.Quote(content)+`},"project_id":1,"from":"2026-08-20","to":"2026-08-21"`+extra+`}`)
+		return rec.Result()
+	}
+	readValue := func(resp *http.Response) string {
+		t.Helper()
+		var p struct {
+			Rows [][]string `json:"rows"`
+		}
+		b, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode != http.StatusOK || json.Unmarshal(b, &p) != nil || len(p.Rows) != 1 {
+			t.Fatalf("preview = %d %s", resp.StatusCode, b)
+		}
+		return p.Rows[0][0]
+	}
+	if v := readValue(preview(fmt.Sprintf(`,"dashboard_id":%d,"selectors":{"site":["no.such.host"]}`, d.ID))); v != "0" {
+		t.Errorf("preview narrowed = %s, want 0", v)
+	}
+	if v := readValue(preview(fmt.Sprintf(`,"dashboard_id":%d`, d.ID))); v != value(all) {
+		t.Errorf("preview at All = %s, want %s", v, value(all))
+	}
+	if resp := preview(`,"selectors":{"site":["a"]}`); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("preview selectors without dashboard_id = %d, want 400", resp.StatusCode)
 	}
 }

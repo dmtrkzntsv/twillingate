@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/dmtrkzntsv/twillingate/internal/native"
 	"github.com/dmtrkzntsv/twillingate/internal/reporting"
@@ -62,6 +63,7 @@ type widgetDataIn struct {
 	From      string `json:"from,omitempty" jsonschema:"YYYY-MM-DD; with to, required when the widget follows the range switcher (its SQL uses :from or :to); ignored otherwise"`
 	To        string `json:"to,omitempty" jsonschema:"YYYY-MM-DD, at most 365 days after from; a day after today is clamped to today"`
 	Fresh     bool   `json:"fresh,omitempty" jsonschema:"true reuses a cached result only up to REPORTING_REFRESH_MAX_AGE old instead of REPORTING_CACHE_MAX_AGE"`
+	Selectors string `json:"selectors,omitempty" jsonschema:"the values picked per selector of the widget's dashboard, as a JSON object of name to a list of values: {\"deployment\":[\"cloud\"]}. An absent name or an empty list is All; a name the dashboard does not declare is refused; a selector the widget does not follow is ignored"`
 	Filters   string `json:"filters,omitempty" jsonschema:"remote tables only (props.mode \"remote\"): a JSON list of {column, op, value}; op is =, !=, <, >, in or not in; in/not in take a list. See docs://reporting, Filtering and paging a table"`
 	Sort      string `json:"sort,omitempty" jsonschema:"remote tables only: <column>:asc or <column>:desc; the whole result is sorted, not the page"`
 	Distinct  string `json:"distinct,omitempty" jsonschema:"remote tables only: return [value, rows] for this column among rows matching the other filters, most frequent first"`
@@ -152,6 +154,10 @@ type previewWidgetIn struct {
 	ProjectID int64            `json:"project_id,omitempty" jsonschema:"bound to :project; required when the sql uses it"`
 	From      string           `json:"from,omitempty" jsonschema:"YYYY-MM-DD, bound to :from; with to, required when the sql uses :from or :to"`
 	To        string           `json:"to,omitempty" jsonschema:"YYYY-MM-DD, bound to :to; a day after today is clamped to today"`
+	// DashboardID and Selectors: the dashboard the draft is for, whose
+	// selectors its sql may read, and the values picked.
+	DashboardID int64               `json:"dashboard_id,omitempty" jsonschema:"the dashboard the draft is for: its sql may then read that dashboard's selectors, and a query narrows by the ones it follows; omit for :project, :from and :to only"`
+	Selectors   map[string][]string `json:"selectors,omitempty" jsonschema:"with dashboard_id: the values picked per selector, name to a list of values; an absent name or an empty list is All (the empty list)"`
 }
 
 func (h *host) listComponents(ctx context.Context, _ struct{}) (listComponentsOut, error) {
@@ -173,9 +179,27 @@ func (h *host) listWidgets(ctx context.Context, in listWidgetsIn) (listWidgetsOu
 }
 
 func (h *host) widgetData(ctx context.Context, in widgetDataIn) (reporting.WidgetData, error) {
+	sels, err := parseSelection(in.Selectors)
+	if err != nil {
+		return reporting.WidgetData{}, err
+	}
 	return h.rep.WidgetData(ctx, reporting.DataRequest{
-		WidgetID: in.WidgetID, ProjectID: in.ProjectID, From: in.From, To: in.To, Fresh: in.Fresh,
+		WidgetID: in.WidgetID, ProjectID: in.ProjectID, From: in.From, To: in.To, Fresh: in.Fresh, Selectors: sels,
 		Filters: in.Filters, Sort: in.Sort, Distinct: in.Distinct, Offset: in.Offset, Limit: in.Limit})
+}
+
+// parseSelection reads widget_data's selectors, JSON text since the GET
+// route takes it in the query string: an object of selector name to a
+// list of strings. "" (and null) is none.
+func parseSelection(raw string) (map[string][]string, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var out map[string][]string
+	if err := json.Unmarshal([]byte(raw), &out); err != nil {
+		return nil, invalidf(`selectors: not a JSON object of selector names to lists of values, as {"deployment":["cloud"]}: %s`, err)
+	}
+	return out, nil
 }
 
 func (h *host) createDashboard(ctx context.Context, in createDashboardIn) (reporting.DashboardDetail, error) {
@@ -261,6 +285,7 @@ func (h *host) previewWidget(ctx context.Context, in previewWidgetIn) (reporting
 	return h.rep.Preview(ctx, reporting.PreviewIn{
 		Component: in.Component, Props: in.Props, Source: in.Source,
 		ProjectID: in.ProjectID, From: in.From, To: in.To,
+		DashboardID: in.DashboardID, Selectors: in.Selectors,
 	})
 }
 
@@ -304,7 +329,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Widgets, archived ones included, each with its dashboard and its 1-based position there. Filter by dashboard_id and/or component; use it to find an archived widget to restore, or every widget on a component."},
 		h.listWidgets)
 	expose(r, spec{Name: "widget_data", Annotations: ro, Method: "GET", Path: w + "/data",
-		Description: "Load one widget's content, as its card draws it. project_id is required when the widget's SQL uses :project, and from/to (YYYY-MM-DD, at most 365 days) when it uses :from or :to; each is ignored otherwise, and the answer echoes the values applied. fresh=true reuses a cached result only up to REPORTING_REFRESH_MAX_AGE old. A query that no longer runs, or rows that no longer fit the component, is refused with the reason; removed=true means the widget's component left the code. A table with props.mode \"remote\" also takes filters, sort, distinct, offset and limit, applied in SQL over its whole result; the answer's page block echoes them with matched and total counts (docs://reporting, Filtering and paging a table)."},
+		Description: "Load one widget's content, as its card draws it. project_id is required when the widget's SQL uses :project, and from/to (YYYY-MM-DD, at most 365 days) when it uses :from or :to; each is ignored otherwise, and the answer echoes the values applied. selectors, JSON text such as {\"deployment\":[\"cloud\"]}, is the values picked per selector of its dashboard: a query widget narrows to them where its table takes the column, a sql widget reads them as :name (the empty list for All). fresh=true reuses a cached result only up to REPORTING_REFRESH_MAX_AGE old. A query that no longer runs, or rows that no longer fit the component, is refused with the reason; removed=true means the widget's component left the code. A table with props.mode \"remote\" also takes filters, sort, distinct, offset and limit, applied in SQL over its whole result; the answer's page block echoes them with matched and total counts (docs://reporting, Filtering and paging a table)."},
 		h.widgetData)
 
 	expose(r, spec{Name: "create_dashboard", Annotations: write, Method: "POST", Path: "/api/dashboards", Status: http.StatusCreated, constrain: widget(items),
@@ -355,7 +380,7 @@ func (h *host) registerReporting(r *registrar) {
 		Description: "Store the project the viewer chose on a dashboard with a project switcher. The range is not stored: the web app keeps one for every dashboard, in the browser."},
 		h.setView)
 	restOnly(r, spec{Name: "preview_widget", Method: "POST", Path: "/api/widgets/preview",
-		Description: "The console editor's Run query: run an unsaved widget's sql with the given project and range, uncached and saving nothing. Answers the rows and, in problem, the first way they do not fit the component; agents call add_widget, which validates."},
+		Description: "The console editor's Run query: run an unsaved widget's sql with the given project and range (and, with dashboard_id, that dashboard's selectors, bound to selectors), uncached and saving nothing. Answers the rows and, in problem, the first way they do not fit the component; agents call add_widget, which validates."},
 		h.previewWidget)
 	h.registerWidgetStream(r)
 	h.registerWidgetShares(r)

@@ -20,6 +20,11 @@ type PreviewIn struct {
 	Source    Source
 	ProjectID int64
 	From, To  string
+	// DashboardID is the dashboard the draft is for (0: none): with it,
+	// sql may read that dashboard's selectors, bound to Selectors (as
+	// DataRequest's), and a query narrows by the ones it follows.
+	DashboardID int64
+	Selectors   map[string][]string
 }
 
 // Preview is the run's answer: the rows as widget_data returns them, and
@@ -78,8 +83,20 @@ func (s *Service) Preview(ctx context.Context, in PreviewIn) (Preview, error) {
 
 // previewRows runs in's source with the values in gives: sql binding the
 // parameters it uses, a query over the range and the project (its own,
-// when its content names one).
+// when its content names one). With a dashboard, its selectors are bound
+// to in's Selectors as a load binds them; without one, Selectors are
+// refused.
 func (s *Service) previewRows(ctx context.Context, in PreviewIn) (readsql.Result, error) {
+	var bound []BoundSelector
+	switch {
+	case in.DashboardID != 0:
+		var err error
+		if _, bound, err = s.selection(ctx, in.DashboardID, in.Selectors); err != nil {
+			return readsql.Result{}, err
+		}
+	case len(in.Selectors) > 0:
+		return readsql.Result{}, store.Refuse(store.ErrInvalid, "selectors: pass the dashboard_id whose selectors they are")
+	}
 	if in.Source.Type == "query" {
 		qs, ok := s.sources["query"].(*querySource)
 		if !ok {
@@ -93,9 +110,10 @@ func (s *Service) previewRows(ctx context.Context, in PreviewIn) (readsql.Result
 		if err != nil {
 			return readsql.Result{}, err
 		}
+		p.Selectors = bound
 		return qs.load(ctx, in.Source.Content, p)
 	}
-	params, err := checkSQLParams(in.Source.Content, nil)
+	params, err := checkSQLParams(in.Source.Content, boundNames(bound))
 	if err != nil {
 		return readsql.Result{}, err
 	}
@@ -103,6 +121,7 @@ func (s *Service) previewRows(ctx context.Context, in PreviewIn) (readsql.Result
 	if err != nil {
 		return readsql.Result{}, err
 	}
+	p.Selectors = bound
 	return loadRows(ctx, s.sql, in.Source.Content, params, p)
 }
 

@@ -1,7 +1,9 @@
 package reporting
 
 import (
+	"context"
 	"encoding/json"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -181,6 +183,75 @@ func queryFollows(q native.Query, column string) bool {
 	if q.Table == "identities" || (q.Table == "sessions" && !sessionSelectorColumns[column]) {
 		return false
 	}
-	q.Where = append([]native.Filter{{Column: column, Op: "in", Values: []string{"x"}}}, q.Where...)
-	return q.Validate() == nil
+	return withWhere(q, []native.Filter{{Column: column, Op: "in", Values: []string{"x"}}}).Validate() == nil
+}
+
+// selection reads dashboard dashboardID's selectors and binds picked to
+// them (bindSelection): the selectors, and every one of them bound.
+func (s *Service) selection(ctx context.Context, dashboardID int64, picked map[string][]string) ([]Selector, []BoundSelector, error) {
+	d, err := s.st.GetDashboard(ctx, dashboardID)
+	if err != nil {
+		return nil, nil, err
+	}
+	sels := storedSelectors(d.Selectors)
+	bound, err := bindSelection(dashboardID, sels, picked)
+	if err != nil {
+		return nil, nil, err
+	}
+	return sels, bound, nil
+}
+
+// bindSelection is every one of sels, dashboard dashboardID's, in order,
+// bound to its values in picked (nil, All, when picked has none or an
+// empty list), refusing a name in picked that sels lack: the first of
+// them in sorted order, so the refusal is always the same.
+func bindSelection(dashboardID int64, sels []Selector, picked map[string][]string) ([]BoundSelector, error) {
+	for _, n := range slices.Sorted(maps.Keys(picked)) {
+		if !slices.ContainsFunc(sels, func(s Selector) bool { return s.Name == n }) {
+			return nil, store.Refuse(store.ErrInvalid, "dashboard %d has no selector %s", dashboardID, n)
+		}
+	}
+	out := make([]BoundSelector, len(sels))
+	for i, s := range sels {
+		out[i] = BoundSelector{Name: s.Name, Column: s.Column}
+		if v := picked[s.Name]; len(v) > 0 {
+			out[i].Values = v
+		}
+	}
+	return out, nil
+}
+
+// selectorFilters is an in filter for each of bound with values whose
+// column q takes (queryFollows), in bound's order: what a query widget's
+// load puts ahead of its own where.
+func selectorFilters(q native.Query, bound []BoundSelector) []native.Filter {
+	var out []native.Filter
+	for _, b := range bound {
+		if len(b.Values) > 0 && queryFollows(q, b.Column) {
+			out = append(out, native.Filter{Column: b.Column, Op: "in", Values: b.Values})
+		}
+	}
+	return out
+}
+
+// selectionKey is the part of a widget's cache key its selection makes:
+// for each of bound that the widget follows (followed) and that has
+// values, in bound's order, ":s.<name>=" and the values sorted, as JSON.
+// "" when there is none, so a widget at All keys as it did before
+// selectors. The "s." cannot read as the project's or range's part, a
+// selector's name having no dot.
+func selectionKey(followed []string, bound []BoundSelector) string {
+	var b strings.Builder
+	for _, s := range bound {
+		if len(s.Values) == 0 || !slices.Contains(followed, s.Name) {
+			continue
+		}
+		vals, err := json.Marshal(slices.Sorted(slices.Values(s.Values)))
+		if err != nil { // strings always marshal
+			panic(err)
+		}
+		b.WriteString(":s." + s.Name + "=")
+		b.Write(vals)
+	}
+	return b.String()
 }
