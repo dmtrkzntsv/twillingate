@@ -246,8 +246,10 @@ func queryErr(err error) error {
 
 // Validate checks content and that its columns, renamed and picked, fit c: their
 // names, and their types against the ones c declares. It reads no data:
-// the columns and their types come from the query alone.
-func (*querySource) Validate(_ context.Context, content string, c Component) error {
+// the columns and their types come from the query alone. A query follows
+// the dashboard's selectors its table takes (followedSelectors), so they
+// need no check here.
+func (*querySource) Validate(_ context.Context, content string, c Component, _ []string) error {
 	pq, err := parseQuery(content)
 	if err != nil {
 		return err

@@ -3,7 +3,10 @@ package reporting
 import (
 	"context"
 	"fmt"
+	"slices"
+	"strings"
 
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/sortkey"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -17,14 +20,16 @@ import (
 // After in the sidebar; otherwise a tab of group GroupID, placed by After
 // among its tabs (After must then be a member).
 type CreateDashboard struct {
-	Title   string
-	GroupID int64
-	After   *int64
-	Widgets []WidgetSpec
+	Title     string
+	GroupID   int64
+	After     *int64
+	Selectors []Selector // checked by checkSelectors; its widgets' sql may read their names
+	Widgets   []WidgetSpec
 }
 
-// UpdateDashboard changes the title when Title is not "", and moves the
-// dashboard when After or GroupID is not nil. GroupID nil keeps its
+// UpdateDashboard changes the title when Title is not "", replaces the
+// selectors when Selectors is not nil (an empty list clears them), and
+// moves the dashboard when After or GroupID is not nil. GroupID nil keeps its
 // group; 0 takes it out as a group of one (its own id; one already alone
 // keeps the id it has); G makes it a tab of G. Sidebar sets a built-in
 // group's placement instead, in a call of its own (setPlacement).
@@ -33,8 +38,10 @@ type UpdateDashboard struct {
 	Title   string
 	GroupID *int64
 	After   *int64
+	// Selectors is the whole new list; nil keeps the ones it has.
+	Selectors *[]Selector
 	// WholeGroup renames ID's group with Title instead of the dashboard
-	// (D5); it takes no After or GroupID.
+	// (D5); it takes no After, GroupID or Selectors.
 	WholeGroup bool
 	Sidebar    *bool // the whole group in or out of the sidebar; built-in dashboards only, refused on your own (spec 2026-10-05 D5, D7)
 }
@@ -47,6 +54,10 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 		return DashboardDetail{}, err
 	}
 	in.Title = title
+	sels, err := checkSelectors(in.Selectors)
+	if err != nil {
+		return DashboardDetail{}, err
+	}
 	comps, err := s.components(ctx)
 	if err != nil {
 		return DashboardDetail{}, err
@@ -60,7 +71,7 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 		return DashboardDetail{}, err
 	}
 	for i := range ws {
-		if err := s.validateWidget(ctx, comps, ws[i]); err != nil {
+		if err := s.validateWidget(ctx, comps, ws[i], selectorNames(sels)); err != nil {
 			return DashboardDetail{}, inWidget(ws[i].Name, err)
 		}
 		ws[i].SortKey = keys[i]
@@ -86,7 +97,8 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 			}
 		}
 		id, err = s.st.InsertDashboard(ctx,
-			store.Dashboard{Owner: store.OwnerUser, Title: in.Title, SortKey: key, GroupID: in.GroupID, Sidebar: true},
+			store.Dashboard{Owner: store.OwnerUser, Title: in.Title, SortKey: key, GroupID: in.GroupID, Sidebar: true,
+				Selectors: selectorsText(sels)},
 			ws, store.AuditEntry{Actor: actor, Action: "dashboard.create"})
 		return err
 	})
@@ -96,10 +108,11 @@ func (s *Service) CreateDashboard(ctx context.Context, actor string, in CreateDa
 	return s.Dashboard(ctx, id)
 }
 
-// UpdateDashboard retitles and/or moves a user dashboard: among its
-// group's tabs, with its whole group in the sidebar, into another group,
-// or out of its group (spec decisions 6 and 7). Sidebar puts a built-in
-// group in or out of the sidebar instead (setPlacement).
+// UpdateDashboard retitles, replaces the selectors of and/or moves a user
+// dashboard: among its group's tabs, with its whole group in the sidebar,
+// into another group, or out of its group (spec decisions 6 and 7).
+// Sidebar puts a built-in group in or out of the sidebar instead
+// (setPlacement).
 func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDashboard) (DashboardInfo, error) {
 	if in.Sidebar != nil {
 		return s.setPlacement(ctx, actor, in)
@@ -111,8 +124,8 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 	if err != nil {
 		return DashboardInfo{}, err
 	}
-	if in.Title == "" && in.After == nil && in.GroupID == nil {
-		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "nothing to update; give title, after or group_id")
+	if in.Title == "" && in.After == nil && in.GroupID == nil && in.Selectors == nil {
+		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "nothing to update; give title, after, group_id or selectors")
 	}
 	if in.Title != "" {
 		t, err := checkName("title", in.Title)
@@ -120,6 +133,18 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 			return DashboardInfo{}, err
 		}
 		in.Title = t
+	}
+	if in.Selectors != nil {
+		sels, err := checkSelectors(*in.Selectors)
+		if err != nil {
+			return DashboardInfo{}, err
+		}
+		// Checked before the placement, which retries a conflict as a
+		// lost race for a key.
+		if err := s.refuseDroppedSelectors(ctx, d.ID, sels); err != nil {
+			return DashboardInfo{}, err
+		}
+		in.Selectors = &sels
 	}
 	a := store.AuditEntry{Actor: actor, Action: "dashboard.update"}
 	err = s.placeRow(ctx, d.ID, func(o order, row store.Dashboard) error {
@@ -147,6 +172,9 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 		if in.Title != "" {
 			row.Title = in.Title
 		}
+		if in.Selectors != nil {
+			row.Selectors = selectorsText(*in.Selectors)
+		}
 		if err := s.placeDashboard(ctx, o, row, in, a); err != nil {
 			return err
 		}
@@ -160,6 +188,52 @@ func (s *Service) UpdateDashboard(ctx context.Context, actor string, in UpdateDa
 		return DashboardInfo{}, err
 	}
 	return s.readInfo(ctx, d.ID)
+}
+
+// refuseDroppedSelectors refuses selectors as dashboard id's new list
+// when a live sql widget there reads a name it lacks (one removed or
+// renamed), naming the widgets: a change of label or column keeps every
+// widget working, and a query widget follows whatever selectors there
+// are. A widget added between this check and the write is not seen; its
+// load then refuses the name, as it refuses any it is not given.
+func (s *Service) refuseDroppedSelectors(ctx context.Context, id int64, sels []Selector) error {
+	ws, err := s.st.ListWidgets(ctx, id)
+	if err != nil {
+		return err
+	}
+	names := selectorNames(sels)
+	var readers, dropped []string
+	for _, w := range ws {
+		if w.ArchivedAt != "" || w.SourceType != "sql" {
+			continue
+		}
+		params, err := sqlbind.Params(w.Source)
+		if err != nil {
+			continue // it reads nothing a load would bind
+		}
+		reads := false
+		for _, p := range params {
+			if allowedParams[p] || slices.Contains(names, strings.TrimPrefix(p, ":")) {
+				continue
+			}
+			reads = true
+			if !slices.Contains(dropped, p) {
+				dropped = append(dropped, p)
+			}
+		}
+		if reads {
+			readers = append(readers, fmt.Sprintf("%s (%d)", w.Name, w.ID))
+		}
+	}
+	if len(readers) == 0 {
+		return nil
+	}
+	if len(readers) == 1 {
+		return store.Refuse(store.ErrConflict,
+			"widget %s reads %s, which these selectors no longer have; change its sql or archive it first", readers[0], joinAnd(dropped))
+	}
+	return store.Refuse(store.ErrConflict,
+		"widgets %s read %s, which these selectors no longer have; change their sql or archive them first", joinAnd(readers), joinAnd(dropped))
 }
 
 // placeRow runs place under placeDashboards with the user order read for
@@ -193,8 +267,8 @@ func (s *Service) readInfo(ctx context.Context, id int64) (DashboardInfo, error)
 // A built-in group's membership changes only with a release, so no lock
 // is needed between the read and the write.
 func (s *Service) setPlacement(ctx context.Context, actor string, in UpdateDashboard) (DashboardInfo, error) {
-	if in.Title != "" || in.After != nil || in.GroupID != nil {
-		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "sidebar goes on its own; give title, after or group_id in another call")
+	if in.Title != "" || in.After != nil || in.GroupID != nil || in.Selectors != nil {
+		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "sidebar goes on its own; give title, after, group_id or selectors in another call")
 	}
 	d, err := s.st.GetDashboard(ctx, in.ID)
 	if err != nil {
@@ -231,8 +305,8 @@ func (s *Service) setPlacement(ctx context.Context, actor string, in UpdateDashb
 // inside the placement mutex, so a handover running beside it can't
 // leave the name on the group's old number.
 func (s *Service) renameGroup(ctx context.Context, actor string, in UpdateDashboard) (DashboardInfo, error) {
-	if in.After != nil || in.GroupID != nil {
-		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "whole_group renames the group; it takes no after or group_id")
+	if in.After != nil || in.GroupID != nil || in.Selectors != nil {
+		return DashboardInfo{}, store.Refuse(store.ErrInvalid, "whole_group renames the group; it takes no after, group_id or selectors")
 	}
 	title, err := checkName("group title", in.Title)
 	if err != nil {

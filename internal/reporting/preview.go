@@ -95,7 +95,7 @@ func (s *Service) previewRows(ctx context.Context, in PreviewIn) (readsql.Result
 		}
 		return qs.load(ctx, in.Source.Content, p)
 	}
-	params, err := checkSQLParams(in.Source.Content)
+	params, err := checkSQLParams(in.Source.Content, nil)
 	if err != nil {
 		return readsql.Result{}, err
 	}

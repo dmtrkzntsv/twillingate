@@ -129,7 +129,7 @@ func migrateFrom(ctx context.Context, st Store, sql SQL, opt Options, system fs.
 			widgets := make([]store.Widget, 0, len(fd.Widgets))
 			for j, fw := range fd.Widgets {
 				w := storeWidget(fw, widgetKeys[j], compsByName)
-				if err := svc.validateWidget(ctx, compsByName, w); err != nil {
+				if err := svc.validateWidget(ctx, compsByName, w, nil); err != nil { // a system dashboard has no selectors
 					cause := resourceCause(err)
 					if cause == nil {
 						return fmt.Errorf("reporting: system dashboard %d widget %s: %w", fd.ID, fw.Name, err)
@@ -179,8 +179,8 @@ func migrateFrom(ctx context.Context, st Store, sql SQL, opt Options, system fs.
 // which still refuses what the scanner refuses.
 type paramsOnly struct{ SourceType }
 
-func (paramsOnly) Validate(_ context.Context, content string, _ Component) error {
-	_, err := checkSQLParams(content)
+func (paramsOnly) Validate(_ context.Context, content string, _ Component, selectors []string) error {
+	_, err := checkSQLParams(content, selectors)
 	return err
 }
 

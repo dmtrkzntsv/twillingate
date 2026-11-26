@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/dmtrkzntsv/twillingate/internal/archive/archivetest"
+	"github.com/dmtrkzntsv/twillingate/internal/reporting/sqlbind"
 	"github.com/dmtrkzntsv/twillingate/internal/shared/sortkey"
 	"github.com/dmtrkzntsv/twillingate/internal/store"
 )
@@ -1109,7 +1111,7 @@ func TestUpdateDashboardNothingToUpdate(t *testing.T) {
 	d := mustCreate(t, svc, "DD")
 	before := len(auditRows(t, svc))
 	_, err := svc.UpdateDashboard(context.Background(), "test", UpdateDashboard{ID: d.ID})
-	wantRefusal(t, err, store.ErrInvalid, "nothing to update; give title, after or group_id")
+	wantRefusal(t, err, store.ErrInvalid, "nothing to update; give title, after, group_id or selectors")
 	if got := len(auditRows(t, svc)); got != before {
 		t.Errorf("audit rows %d -> %d, want none written", before, got)
 	}
@@ -2235,7 +2237,7 @@ func TestUpdateDashboardPlacementTakesNoTitle(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
 	a := mustCreate(t, svc, "AA")
-	const alone = "sidebar goes on its own; give title, after or group_id in another call"
+	const alone = "sidebar goes on its own; give title, after, group_id or selectors in another call"
 	for _, in := range []UpdateDashboard{
 		{ID: a.ID, Sidebar: ptr(true), Title: "x"},
 		{ID: a.ID, Sidebar: ptr(false), After: ptr[int64](0)},
@@ -2296,5 +2298,268 @@ func TestDuplicateIsInSidebar(t *testing.T) {
 		if tab.Owner != store.OwnerSystem {
 			t.Errorf("project tab %+v, want built-ins only: a copy is no project's tab", tab)
 		}
+	}
+}
+
+// --- Selectors ---
+
+// deploymentSel and campaignSel are the selectors the tests below declare.
+var (
+	deploymentSel = Selector{Name: "deployment", Label: "Deployment", Column: "attr_deployment"}
+	campaignSel   = Selector{Name: "campaign", Label: "Campaign", Column: "utm_campaign"}
+)
+
+// readsDeployment is a sql stat widget that reads :deployment.
+func readsDeployment(title string) WidgetSpec {
+	return WidgetSpec{Component: "stat", Title: title, Source: Source{Type: "sql",
+		Content: "SELECT count(*) AS value FROM events WHERE len(:deployment) = 0 OR list_contains(:deployment, attr_deployment)"}}
+}
+
+// answerSQL makes svc's engine answer every query with a value column
+// and no rows, which any stat widget's check passes.
+func answerSQL(t *testing.T, svc *Service) *archivetest.FakeSQL {
+	t.Helper()
+	return filesOf(t, svc).sqle.On(archivetest.Any, archivetest.Shape("value"))
+}
+
+// mustCreateWith creates a user dashboard titled title with sels and specs.
+func mustCreateWith(t *testing.T, svc *Service, title string, sels []Selector, specs ...WidgetSpec) DashboardDetail {
+	t.Helper()
+	d, err := svc.CreateDashboard(context.Background(), "test", CreateDashboard{Title: title, Selectors: sels, Widgets: specs})
+	if err != nil {
+		t.Fatalf("CreateDashboard(%q): %v", title, err)
+	}
+	return d
+}
+
+func TestCreateDashboardSelectors(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	d := mustCreateWith(t, svc, "DD", []Selector{{Name: "deployment", Column: "attr_deployment"}, campaignSel}, note("A"))
+	want := []Selector{{Name: "deployment", Label: "deployment", Column: "attr_deployment"}, campaignSel}
+	if !reflect.DeepEqual(d.Selectors, want) {
+		t.Errorf("created selectors = %+v, want %+v", d.Selectors, want)
+	}
+	got, err := svc.Dashboard(ctx, d.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got.Selectors, want) {
+		t.Errorf("read back = %+v, want %+v", got.Selectors, want)
+	}
+	if fs := got.Widgets[0].FollowsSelectors; fs == nil || len(fs) != 0 {
+		t.Errorf("a markdown widget follows %#v, want an empty list", fs)
+	}
+	list, err := svc.Dashboards(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(list.Dashboards[0].Selectors, want) {
+		t.Errorf("listed = %+v, want %+v", list.Dashboards[0].Selectors, want)
+	}
+
+	plain := mustCreate(t, svc, "Plain")
+	if plain.Selectors == nil || len(plain.Selectors) != 0 {
+		t.Errorf("no selectors: %#v, want an empty list", plain.Selectors)
+	}
+	_, err = svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "Bad", Selectors: []Selector{{Name: "x", Column: "day"}}})
+	wantRefusal(t, err, store.ErrInvalid, "selectors[0].column: day is a day column; a selector picks text values")
+}
+
+// TestSQLWidgetReadsSelector: sql may read the names of its dashboard's
+// selectors, checked with each bound to the empty list (All); a name the
+// dashboard does not declare is refused, naming the ones it does.
+func TestSQLWidgetReadsSelector(t *testing.T) {
+	svc := newTestService(t)
+	fake := answerSQL(t, svc)
+	ctx := context.Background()
+	with := mustCreateWith(t, svc, "With", []Selector{deploymentSel})
+	w := mustAdd(t, svc, with.ID, nil, readsDeployment("Count"))
+	if !reflect.DeepEqual(w.FollowsSelectors, []string{"deployment"}) {
+		t.Errorf("follows_selectors = %v, want [deployment]", w.FollowsSelectors)
+	}
+	var bound bool
+	for _, r := range fake.Requests() {
+		if strings.Contains(r.SQL, "CAST($tw_deployment AS VARCHAR[])") && r.Args["tw_deployment"] == sqlbind.ListText(nil) {
+			bound = true
+		}
+	}
+	if !bound {
+		t.Errorf("no request bound :deployment to the empty list: %+v", fake.Requests())
+	}
+
+	other := mustCreateWith(t, svc, "Other", []Selector{campaignSel})
+	_, err := svc.AddWidget(ctx, "test", AddWidget{DashboardID: other.ID, WidgetSpec: readsDeployment("Count")})
+	wantRefusal(t, err, store.ErrInvalid, "sql uses :deployment; widgets get only :project, :from and :to, and this dashboard's selector :campaign")
+	plain := mustCreate(t, svc, "Plain")
+	_, err = svc.AddWidget(ctx, "test", AddWidget{DashboardID: plain.ID, WidgetSpec: readsDeployment("Count")})
+	wantRefusal(t, err, store.ErrInvalid, "sql uses :deployment; widgets get only :project, :from and :to")
+
+	_, err = svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "New", Selectors: []Selector{deploymentSel}, Widgets: []WidgetSpec{readsDeployment("Count")}})
+	if err != nil {
+		t.Errorf("create_dashboard with a widget reading its own selector: %v", err)
+	}
+}
+
+// TestUpdateSelectorsRefusesUsedName: a selector a live sql widget reads
+// can change its label and column, but not be removed or renamed.
+func TestUpdateSelectorsRefusesUsedName(t *testing.T) {
+	svc := newTestService(t)
+	answerSQL(t, svc)
+	ctx := context.Background()
+	d := mustCreateWith(t, svc, "DD", []Selector{deploymentSel, campaignSel}, readsDeployment("Count"), note("A"))
+	wid := d.Widgets[0].ID
+	const conflict = "widget count (%d) reads :deployment, which these selectors no longer have; change its sql or archive it first"
+	for name, sels := range map[string][]Selector{
+		"removed": {campaignSel},
+		"renamed": {{Name: "deploy", Column: "attr_deployment"}, campaignSel},
+		"cleared": {},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: d.ID, Selectors: &sels})
+			wantRefusal(t, err, store.ErrConflict, fmt.Sprintf(conflict, wid))
+		})
+	}
+	two := mustCreateWith(t, svc, "Two", []Selector{deploymentSel}, readsDeployment("A"), readsDeployment("B"))
+	_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: two.ID, Selectors: &[]Selector{}})
+	wantRefusal(t, err, store.ErrConflict, fmt.Sprintf(
+		"widgets a (%d) and b (%d) read :deployment, which these selectors no longer have; change their sql or archive them first",
+		two.Widgets[0].ID, two.Widgets[1].ID))
+	changed := []Selector{{Name: "deployment", Label: "Where", Column: "attr_hosting"}}
+	info, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: d.ID, Selectors: &changed})
+	if err != nil {
+		t.Fatalf("label and column: %v", err)
+	}
+	if !reflect.DeepEqual(info.Selectors, changed) {
+		t.Errorf("updated = %+v, want %+v", info.Selectors, changed)
+	}
+	// An archived widget does not hold a name.
+	if err := svc.ArchiveWidget(ctx, "test", wid); err != nil {
+		t.Fatal(err)
+	}
+	none := []Selector{}
+	if info, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: d.ID, Selectors: &none}); err != nil || len(info.Selectors) != 0 {
+		t.Errorf("clearing once archived = %+v, %v", info.Selectors, err)
+	}
+	// A title alone keeps the selectors; selectors alone keep the title.
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: d.ID, Selectors: &changed}); err != nil {
+		t.Fatal(err)
+	}
+	if info, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: d.ID, Title: "Renamed"}); err != nil || !reflect.DeepEqual(info.Selectors, changed) {
+		t.Errorf("after a title change = %+v, %v; want %+v", info.Selectors, err, changed)
+	}
+	// With a move of the whole group and no title.
+	other := mustCreate(t, svc, "Other")
+	if info, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: d.ID, After: &other.ID, Selectors: &none}); err != nil || len(info.Selectors) != 0 || info.Title != "Renamed" {
+		t.Errorf("move with selectors = %+v, %v", info, err)
+	}
+	bad := []Selector{{Name: "x", Column: "nope"}}
+	_, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: d.ID, Selectors: &bad})
+	wantRefusal(t, err, store.ErrInvalid, `selectors[0].column: "nope" is not a filter column of events`)
+	_, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: d.ID, WholeGroup: true, Title: "Group", Selectors: &none})
+	wantRefusal(t, err, store.ErrInvalid, "whole_group renames the group; it takes no after, group_id or selectors")
+	_, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: d.ID})
+	wantRefusal(t, err, store.ErrInvalid, "nothing to update; give title, after, group_id or selectors")
+}
+
+func TestCopyWidgetMissingSelector(t *testing.T) {
+	svc := newTestService(t)
+	answerSQL(t, svc)
+	ctx := context.Background()
+	src := mustCreateWith(t, svc, "Src", []Selector{deploymentSel}, readsDeployment("Count"))
+	dst := mustCreate(t, svc, "Dst")
+	_, err := svc.CopyWidget(ctx, "test", CopyWidget{ID: src.Widgets[0].ID, DashboardID: dst.ID})
+	wantRefusal(t, err, store.ErrInvalid, "sql uses :deployment; widgets get only :project, :from and :to")
+	ok := mustCreateWith(t, svc, "Ok", []Selector{{Name: "deployment", Column: "attr_hosting"}})
+	if _, err := svc.CopyWidget(ctx, "test", CopyWidget{ID: src.Widgets[0].ID, DashboardID: ok.ID}); err != nil {
+		t.Errorf("copy to a dashboard with the selector: %v", err)
+	}
+}
+
+func TestRestoreWidgetMissingSelector(t *testing.T) {
+	svc := newTestService(t)
+	answerSQL(t, svc)
+	ctx := context.Background()
+	d := mustCreateWith(t, svc, "DD", []Selector{deploymentSel, campaignSel}, readsDeployment("Count"))
+	wid := d.Widgets[0].ID
+	if err := svc.ArchiveWidget(ctx, "test", wid); err != nil {
+		t.Fatal(err)
+	}
+	only := []Selector{campaignSel}
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: d.ID, Selectors: &only}); err != nil {
+		t.Fatal(err)
+	}
+	wantRefusal(t, svc.RestoreWidget(ctx, "test", wid), store.ErrInvalid,
+		"sql uses :deployment; widgets get only :project, :from and :to, and this dashboard's selector :campaign")
+	both := []Selector{campaignSel, deploymentSel}
+	if _, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: d.ID, Selectors: &both}); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.RestoreWidget(ctx, "test", wid); err != nil {
+		t.Errorf("restore once the selector is back: %v", err)
+	}
+}
+
+func TestDuplicateCopiesSelectors(t *testing.T) {
+	svc := newTestService(t)
+	answerSQL(t, svc)
+	ctx := context.Background()
+	first := mustCreateWith(t, svc, "First", []Selector{deploymentSel}, readsDeployment("Count"))
+	second, err := svc.CreateDashboard(ctx, "test", CreateDashboard{Title: "Second", GroupID: first.GroupID, Selectors: []Selector{campaignSel}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	one, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: first.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(one.Selectors, []Selector{deploymentSel}) || !reflect.DeepEqual(one.Widgets[0].FollowsSelectors, []string{"deployment"}) {
+		t.Errorf("copy = %+v, widget follows %v", one.Selectors, one.Widgets[0].FollowsSelectors)
+	}
+	group, err := svc.DuplicateDashboard(ctx, "test", DuplicateDashboard{ID: second.ID, WholeGroup: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(group.Selectors, []Selector{campaignSel}) {
+		t.Errorf("whole_group copy of Second = %+v, want campaign", group.Selectors)
+	}
+	firstCopy, err := svc.Dashboard(ctx, group.Tabs[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(firstCopy.Selectors, []Selector{deploymentSel}) {
+		t.Errorf("whole_group copy of First = %+v, want deployment", firstCopy.Selectors)
+	}
+}
+
+func TestSystemDashboardRefusesSelectors(t *testing.T) {
+	svc := newTestService(t)
+	syncReporting(t, svc, nil, systemDashboard())
+	ctx := context.Background()
+	sels := []Selector{deploymentSel}
+	_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: 3, Selectors: &sels})
+	wantRefusal(t, err, store.ErrInvalid, systemRefusal)
+	_, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: 3, Sidebar: ptr(false), Selectors: &sels})
+	wantRefusal(t, err, store.ErrInvalid, "sidebar goes on its own; give title, after, group_id or selectors in another call")
+	d, err := svc.Dashboard(ctx, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Selectors == nil || len(d.Selectors) != 0 {
+		t.Errorf("system dashboard selectors = %#v, want an empty list", d.Selectors)
+	}
+}
+
+// TestCheckUserWidgetsReadsSelectors: the check at start gives a sql
+// widget its dashboard's selectors, so one reading :deployment there is
+// no failure.
+func TestCheckUserWidgetsReadsSelectors(t *testing.T) {
+	svc := newTestService(t)
+	answerSQL(t, svc)
+	mustCreateWith(t, svc, "DD", []Selector{deploymentSel}, readsDeployment("Count"))
+	f := filesOf(t, svc)
+	failed, err := CheckUserWidgets(context.Background(), svc.st, f, f.options(Options{}))
+	if err != nil || len(failed) != 0 {
+		t.Errorf("CheckUserWidgets = %+v, %v; want no failure", failed, err)
 	}
 }

@@ -317,10 +317,10 @@ type stubSQLSource struct {
 	once    sync.Once
 }
 
-func (s *stubSQLSource) Name() string                                      { return "sql" }
-func (s *stubSQLSource) Cacheable() bool                                   { return true }
-func (s *stubSQLSource) Follows(string) (project, rng bool)                { return false, false }
-func (s *stubSQLSource) Validate(context.Context, string, Component) error { return nil }
+func (s *stubSQLSource) Name() string                                                { return "sql" }
+func (s *stubSQLSource) Cacheable() bool                                             { return true }
+func (s *stubSQLSource) Follows(string) (project, rng bool)                          { return false, false }
+func (s *stubSQLSource) Validate(context.Context, string, Component, []string) error { return nil }
 func (s *stubSQLSource) Load(ctx context.Context, content string, p Params) (any, error) {
 	s.once.Do(func() { close(s.started) })
 	<-s.unblock
