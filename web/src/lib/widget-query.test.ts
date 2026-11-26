@@ -68,6 +68,18 @@ describe('viewQuery', () => {
     expect(paged).not.toEqual(first)
     expect(paged.slice(0, 5)).toEqual(first.slice(0, 5))
   })
+
+  it('keys a selector pick by its column, so a changed column does not show the old filter', () => {
+    const base = { project_id: 7, from: '2026-09-20', to: '2026-09-26' }
+    const pick = { ...base, selectors: { env: ['prod'] } }
+    const onA = widgetQuery(remote, { ...pick, selector_columns: { env: 'a' } }).queryKey
+    const onB = widgetQuery(remote, { ...pick, selector_columns: { env: 'b' } }).queryKey
+    expect(onB).not.toEqual(onA)
+    expect(widgetQuery(remote, { ...pick, selector_columns: { env: 'a' } }).queryKey).toEqual(onA)
+    // All: no selectors, so no selector part, whatever columns are known.
+    expect(widgetQuery(remote, base).queryKey).toEqual(widgetQuery(remote, { ...base, selector_columns: {} }).queryKey)
+    expect(widgetQuery(remote, base).queryKey[5]).toBeUndefined()
+  })
 })
 
 describe('shownViews', () => {

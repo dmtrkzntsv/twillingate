@@ -197,6 +197,8 @@ export interface WidgetDataQuery {
   fresh?: boolean
   /** The values picked of the selectors the widget follows; sent to the GET route as JSON text. */
   selectors?: Record<string, string[]>
+  /** Client only, never sent: the column of each selector in `selectors`, so a cached answer is keyed by the filter it ran, not only its name. */
+  selector_columns?: Record<string, string>
   // A remote table's view (filters as JSON, sort as `column:asc|desc`); other widgets refuse them.
   filters?: string
   sort?: string
@@ -758,7 +760,7 @@ function formPath(projectId: number, name: string): string {
 export const endpoints = {
   dashboards: () => api<DashboardsResponse>('/api/dashboards'),
   dashboard: (id: number) => api<DashboardDetail>(`/api/dashboards/${id}`),
-  widgetData: (id: number, { selectors, ...q }: WidgetDataQuery) =>
+  widgetData: (id: number, { selectors, selector_columns: _columns, ...q }: WidgetDataQuery) =>
     api<WidgetData>(`/api/widgets/${id}/data${toQuery({ ...q, selectors: selectors && JSON.stringify(selectors) })}`),
   /** What a dashboard's selector offers: its column's values, the busiest first, at most 100, then the picked ones the range lacks. */
   selectorValues: (dashboardId: number, name: string, q: SelectorValuesQuery) =>

@@ -5,7 +5,7 @@ import { readSelection, writeSelection, type Selection } from '@/lib/selectors'
 
 export interface SelectorSelection {
   /** The values picked of each selector, from the URL, and the dashboard's selector names in order; stable while they hold. */
-  picked: { selection: Selection; order: string[] }
+  picked: { selection: Selection; order: string[]; columns: Record<string, string> }
   /** Picks `values` of selector `name` (none is All): into the URL only, never stored (a forgotten filter looks plausible). */
   pick: (name: string, values: string[]) => void
 }
@@ -19,10 +19,15 @@ export interface SelectorSelection {
 export function useSelectorSelection(selectors: Selector[], frozen = false): SelectorSelection {
   const [url, setURL] = useSearchParams()
   const order = useMemo(() => selectors.map((s) => s.name), [selectors])
+  // Each selector's column, which a widget's cached answer is keyed by: a rename of the column under the same name is another filter.
+  const columnsText = JSON.stringify(Object.fromEntries(selectors.map((s) => [s.name, s.column])))
   // Kept by its text, so the object, and every paramsFor built on it, holds
   // across renders until the selection itself changes.
   const text = JSON.stringify(readSelection(url, order))
-  const picked = useMemo(() => ({ selection: JSON.parse(text) as Selection, order }), [text, order])
+  const picked = useMemo(
+    () => ({ selection: JSON.parse(text) as Selection, order, columns: JSON.parse(columnsText) as Record<string, string> }),
+    [text, order, columnsText]
+  )
   const pick = useCallback(
     (name: string, values: string[]) => {
       if (frozen) return

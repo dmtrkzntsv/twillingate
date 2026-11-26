@@ -28,6 +28,13 @@ describe('view helpers', () => {
     expect(widgetParams(widget(false, true), { projectId: 7 }, range)).toEqual(range)
     expect(widgetParams(widget(true, false), { projectId: 7 }, range)).toEqual({ project_id: 7 })
     expect(widgetParams(widget(false, false), { projectId: 7 }, range)).toEqual({})
+    const follower = { ...widget(false, false), follows_selectors: ['env'] }
+    const picked = { selection: { env: ['prod'] }, order: ['env'], columns: { env: 'a' } }
+    expect(widgetParams(follower, { projectId: 7 }, range, picked)).toEqual({
+      selectors: { env: ['prod'] },
+      selector_columns: { env: 'a' },
+    })
+    expect(widgetParams(follower, { projectId: 7 }, range, { ...picked, selection: {} })).toEqual({})
   })
 
   it('applies a saved view to a cached dashboard', () => {

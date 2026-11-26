@@ -38,7 +38,7 @@ export function widgetParams(
   widget: Widget,
   sel: Selection,
   range: { from: string; to: string } | undefined,
-  picked?: { selection: Picked; order: string[] }
+  picked?: { selection: Picked; order: string[]; columns?: Record<string, string> }
 ): WidgetDataQuery {
   const params: WidgetDataQuery = {}
   if (widget.follows_project && sel.projectId !== undefined) params.project_id = sel.projectId
@@ -47,7 +47,12 @@ export function widgetParams(
     params.to = range.to
   }
   const selectors = picked && widgetSelectors(widget, picked.selection, picked.order)
-  if (selectors) params.selectors = selectors
+  if (selectors) {
+    params.selectors = selectors
+    if (picked?.columns) {
+      params.selector_columns = Object.fromEntries(Object.keys(selectors).map((n) => [n, picked.columns?.[n] ?? '']))
+    }
+  }
   return params
 }
 
