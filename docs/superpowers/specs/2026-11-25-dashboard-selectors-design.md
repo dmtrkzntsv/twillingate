@@ -286,11 +286,11 @@ Settled by me, as the designer, and open to the owner's correction:
    menu could gain "Selectors…" later.
 3. **Shares capture what is on screen**, captioned with the selection,
    following the existing project and range captions.
-5. **The stream and preview take `selectors` per request item**, and
+4. **The stream and preview take `selectors` per request item**, and
    preview takes `dashboard_id`.
-6. **`identities` follows no selector, and `sessions` follows only the
+5. **`identities` follows no selector, and `sessions` follows only the
    UTM and referrer columns.**
-4. **Five selectors, 100 values**, as limits.
+6. **Five selectors, 100 values**, as limits.
 
 Left to the builder:
 
