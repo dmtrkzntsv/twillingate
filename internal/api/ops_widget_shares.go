@@ -29,6 +29,7 @@ type createWidgetShareIn struct {
 	// Strings, as multipart fields are: 1, 0, true or false.
 	CaptionProject string `json:"caption_project,omitempty" jsonschema:"whether the share page names the project: 1 (default) or 0; 0 when the widget does not follow the dashboard's project"`
 	CaptionRange   string `json:"caption_range,omitempty" jsonschema:"whether the share page names the range: 1 (default) or 0; 0 when the widget does not follow the dashboard's range"`
+	Selection      string `json:"selection,omitempty" jsonschema:"the values picked when the picture was taken, a JSON object of selector name to a list of values, as {\"deployment\":[\"cloud\"]}; the share keeps those of the selectors its widget follows and its page captions them (Deployment: cloud). Absent, empty or {}: All, nothing captioned"`
 }
 
 type widgetSharesIn struct {
@@ -63,7 +64,7 @@ type widgetShareRestoreIn struct {
 // refuses an unknown field.
 var (
 	shareTextParts = map[string]bool{"widget_id": true, "project_id": true, "from": true, "to": true, "archive_after": true,
-		"caption_project": true, "caption_range": true}
+		"caption_project": true, "caption_range": true, "selection": true}
 	shareFileParts = map[string]bool{"image": true, "image_2x": true}
 )
 
@@ -131,6 +132,13 @@ func readShareUpload(w http.ResponseWriter, r *http.Request) (reporting.NewShare
 		}
 		*dst = &b
 	}
+	if v, ok := form.Value["selection"]; ok {
+		sel, err := parseSelection(v[0])
+		if err != nil {
+			return reporting.NewShare{}, err
+		}
+		in.Selection = sel
+	}
 	for name, dst := range map[string]*[]byte{"image": &in.Image, "image_2x": &in.Image2x} {
 		f, _, err := r.FormFile(name)
 		if err != nil {
@@ -183,7 +191,7 @@ func (h *host) registerWidgetShares(r *registrar) {
 	const p = "/api/widget-shares"
 
 	restRaw[createWidgetShareIn, reporting.WidgetShareOut](r, spec{Name: "create_widget_share", Method: "POST", Path: p, Status: http.StatusCreated,
-		Description: "Share a widget: store the two PNGs the web app captured of it (image 1200×630, image_2x 2400×1260, each at most 5 MB) as a public, frozen picture at /share/<id>, with the widget's title, the project and the range they show. multipart/form-data. project_id is optional: omit it for a widget shared from a dashboard with no project, and the share then names none and is never deleted with a project. caption_project and caption_range (1 or 0, default 1) say whether the page names the project and the range; the web sends 0 for what the widget does not follow. archive_after (7d, 30d, 90d, 365d, project or never; default 30d) sets when the share archives itself; project (a share with a project) and never (one without) give it no date. Needs CONSOLE_URL (or INGEST_URL) for its links. REST only: an agent has no browser to capture with."},
+		Description: "Share a widget: store the two PNGs the web app captured of it (image 1200×630, image_2x 2400×1260, each at most 5 MB) as a public, frozen picture at /share/<id>, with the widget's title, the project and the range they show. multipart/form-data. project_id is optional: omit it for a widget shared from a dashboard with no project, and the share then names none and is never deleted with a project. caption_project and caption_range (1 or 0, default 1) say whether the page names the project and the range; the web sends 0 for what the widget does not follow. selection (JSON text, {\"deployment\":[\"cloud\"]}) is what the dashboard's selectors were set to: the share keeps the selectors its widget follows that have values, and its page names them (\"Deployment: cloud\"); a name the dashboard lacks is refused. archive_after (7d, 30d, 90d, 365d, project or never; default 30d) sets when the share archives itself; project (a share with a project) and never (one without) give it no date. Needs CONSOLE_URL (or INGEST_URL) for its links. REST only: an agent has no browser to capture with."},
 		h.createWidgetShare)
 	expose(r, spec{Name: "list_widget_shares", Annotations: ro, Method: "GET", Path: p,
 		Description: "Widget shares, live ones newest first, archived ones most recently archived first: each one's id, its public page url (/share/<id>) and image URLs, the widget and dashboard it came from (null once the widget is gone), the project (null: none), range and title it shows, created_at, archive_at (when it archives itself; null: no date, so it lives as long as its project, or until archived by hand with none) and archived_at (null: live). Filter by widget_id, and by state: live, or archived (which includes a share whose archive_at has passed and that the daily pass has not yet archived)."},

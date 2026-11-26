@@ -73,8 +73,22 @@ func decodeRequest(req *http.Request, dst any) error {
 		}
 		for name, vals := range query {
 			f, ok := fields[name]
+			list := ok && repeatable[name]
 			if !ok {
-				return invalidf("unknown query parameter %q; valid: %s", name, fieldNames(fields))
+				// A list is repeated under its singular name: project_id=1&project_id=2
+				// for project_ids.
+				if f, ok = fields[name+"s"]; !ok || !repeatable[name+"s"] {
+					return invalidf("unknown query parameter %q; valid: %s", name, fieldNames(fields))
+				}
+				list = true
+			}
+			if list {
+				for _, v := range vals {
+					if err := appendField(f, name, v); err != nil {
+						return err
+					}
+				}
+				continue
 			}
 			if len(vals) > 1 {
 				return invalidf("query parameter %q given %d times; give it once", name, len(vals))
@@ -177,6 +191,21 @@ func setField(f reflect.Value, name, raw string) error {
 	default:
 		return invalidf("%s cannot be set from the URL; send it in a JSON body", name)
 	}
+	return nil
+}
+
+// repeatable names the list fields a GET takes from the URL, one value
+// per repeat of the parameter (the singular of a name ending in _ids).
+// Any other list is refused there and sent in a JSON body.
+var repeatable = map[string]bool{"project_ids": true, "picked": true}
+
+// appendField parses raw as an element of the list f and appends it.
+func appendField(f reflect.Value, name, raw string) error {
+	elem := reflect.New(f.Type().Elem()).Elem()
+	if err := setField(elem, name, raw); err != nil {
+		return err
+	}
+	f.Set(reflect.Append(f, elem))
 	return nil
 }
 

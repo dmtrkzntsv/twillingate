@@ -150,7 +150,12 @@ func operation(s spec) (map[string]any, error) {
 			params = append(params, parameter(name, "path", true, prop))
 			delete(inPath, name)
 		case s.Method == http.MethodGet:
-			params = append(params, parameter(name, "query", slices.Contains(in.Required, name), prop))
+			// A list is repeated under its singular name (decodeRequest).
+			qname := name
+			if repeatable[name] && strings.HasSuffix(name, "_ids") {
+				qname = strings.TrimSuffix(name, "s")
+			}
+			params = append(params, parameter(qname, "query", slices.Contains(in.Required, name), prop))
 		default:
 			body.Properties[name] = prop
 			if slices.Contains(in.Required, name) {

@@ -463,3 +463,44 @@ func TestSharePagesArePublic(t *testing.T) {
 		}
 	}
 }
+
+// TestCreateWidgetShareRESTSelection: selection is JSON text; the share
+// keeps the picked values of the selectors its widget follows, and a name
+// the dashboard lacks or text that is no object is a 400.
+func TestCreateWidgetShareRESTSelection(t *testing.T) {
+	h, _ := shareFixture(t)
+	rec := call(h, "POST", "/api/dashboards", strings.NewReader(
+		`{"title":"Hosts","selectors":[{"name":"site","column":"host"}],"widgets":[{"component":"stat","title":"Views",`+
+			`"source":{"type":"query","content":"{\"query\":{\"kind\":\"stat\",\"table\":\"views\",\"metrics\":[{\"op\":\"count\",\"as\":\"value\"}]}}"}}]}`),
+		"application/json", true)
+	var d struct {
+		ID      int64 `json:"dashboard_id"`
+		Widgets []struct {
+			ID int64 `json:"widget_id"`
+		} `json:"widgets"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &d); rec.Code != http.StatusCreated || err != nil {
+		t.Fatalf("create dashboard = %d %s", rec.Code, rec.Body.String())
+	}
+	post := func(selection string) *httptest.ResponseRecorder {
+		f := shareFields(d.Widgets[0].ID)
+		f["selection"] = selection
+		body, ct := shareForm(t, f, shareFiles(t))
+		return call(h, "POST", "/api/widget-shares", body, ct, true)
+	}
+	rec = post(`{"site":["a.example","b.example"]}`)
+	if rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"selection":{"site":["a.example","b.example"]}`) {
+		t.Errorf("selection = %d %s, want it kept", rec.Code, rec.Body.String())
+	}
+	if rec = post(``); rec.Code != http.StatusCreated || !strings.Contains(rec.Body.String(), `"selection":{}`) {
+		t.Errorf("no selection = %d %s, want {}", rec.Code, rec.Body.String())
+	}
+	for sel, msg := range map[string]string{
+		`{"nope":["a"]}`: fmt.Sprintf("dashboard %d has no selector nope", d.ID),
+		`["a"]`:          "selectors: not a JSON object",
+	} {
+		if rec = post(sel); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), msg) {
+			t.Errorf("selection %s = %d %s, want 400 naming %q", sel, rec.Code, rec.Body.String(), msg)
+		}
+	}
+}

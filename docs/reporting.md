@@ -156,6 +156,16 @@ one whose column its table takes as a filter, on `sessions` only
 reads cannot be removed or renamed (`409 conflict`, naming the widgets);
 its `label` and `column` can change.
 
+`selector_values` lists what a viewer can pick: a selector's column over
+`project_ids` (1 to 10, merged; the page sends the project the switcher shows
+and every project a query widget fixes) and `from`/`to`, as `{value, count}` by
+event count, the busiest first, at most 100. `search` keeps the values that
+contain it, in any case, and `picked` values stay in the list with a count of 0
+when the range has none of them, so a viewer can untick them. It reads the
+column through the native engine, as a widget does. An empty value is not
+listed; a name the dashboard does not declare is a `404 not_found`, and no
+project or more than 10 a `400 invalid`.
+
 **Every write validates the whole result** and refuses with a message that says
 what to change: the component exists and accepts the source type; the SQL uses
 only the three parameters and the dashboard's selectors, runs, and returns the
@@ -474,6 +484,7 @@ is older than `REPORTING_CACHE_MAX_AGE`:
 | `get_dashboard` | `dashboard_id` | the dashboard, its `group_id` and `group_title` (the group's name; absent when it has none), its `selectors`, its `follows_project` and `follows_range`, its `tabs` (the group's live dashboards, this one included, in tab order), and its live `widgets` in order, each with `follows_project`, `follows_range` and `follows_selectors` |
 | `list_widgets` | `dashboard_id`, `component` (both optional; they combine) | `widgets`, archived ones included, each with its `dashboard` and 1-based `position` there |
 | `widget_data` | `widget_id`, `project_id`, `from`, `to`, `fresh`, `selectors` (JSON text, `{"deployment":["cloud"]}`; see [Selector parameters](#selector-parameters)); for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` | the envelope above |
+| `selector_values` | `dashboard_id`, `name`, `project_ids`, `from`, `to`, `search`?, `picked`? | `values`: the selector's column's values over those projects and that range, each `{value, count}`, the busiest first, at most 100, then the `picked` ones the range lacks with `count` 0 |
 | `create_dashboard` | `title` (at least 2 characters), `group_id`, `after`, `selectors`, `widgets` | the new dashboard, as `get_dashboard` returns it; one invalid widget or selector creates nothing |
 | `update_dashboard` | `dashboard_id`, `title`, `whole_group`, `group_id`, `after`, `selectors`; or, in a call of its own, `sidebar` | the dashboard, as `list_dashboards` lists it. `selectors` replaces the whole list (`[]` clears it, absent keeps it); a name a live `sql` widget reads cannot be removed or renamed. `whole_group` takes `title` alone. `sidebar` (system dashboards only) puts the whole group in or out of the sidebar, and is refused on your own, which are always in it. See [Project tabs and the sidebar](#project-tabs-and-the-sidebar) |
 | `duplicate_dashboard` | `dashboard_id`, `whole_group`, `group_id`, `where`, `project_id` | a user copy with copies of its live widgets: a new dashboard last in the sidebar, or with `group_id` a tab of that user group (right after the source when it is the source's own group, last otherwise). A system dashboard is copied too, also one out of the sidebar. An archived user dashboard is refused (restore it first). `whole_group` copies the group as a new dashboard with the same tabs: a system group whole, a user group's live tabs; it takes no `group_id`. The copy is in the sidebar, on no project's page, with `project_tab` false. Duplicating never hides the source: to replace a system group, `update_dashboard` it with `sidebar: false`. `where` (filters, as a structured query's) and `project_id` narrow every copied `query` widget: its query's rows must also pass `where`, before its own filters, and it reads `project_id` whatever the switcher shows; Markdown is copied as it is, and a `sql` widget among the copies, or a filter one of the queries cannot take (a column its table lacks), refuses the whole copy |
@@ -532,6 +543,7 @@ public `/share/<id>.png` stops at archiving
 | `GET` | `/api/dashboards/{dashboard_id}` | `get_dashboard` | — |
 | `GET` | `/api/widgets` | `list_widgets` | query: `dashboard_id`, `component` |
 | `GET` | `/api/widgets/{widget_id}/data` | `widget_data` | query: `project_id`, `from`, `to`, `fresh`, `selectors` (JSON text, URL-encoded), and for a remote table `filters`, `sort`, `distinct`, `offset`, `limit` |
+| `GET` | `/api/dashboards/{dashboard_id}/selectors/{name}/values` | `selector_values` | query: `project_id` (repeat it, 1 to 10 times), `from`, `to`, `search`, `picked` (repeat it) |
 | `POST` | `/api/dashboards` | `create_dashboard` | body: `title`, `group_id`, `after`, `selectors`, `widgets` → 201 |
 | `PATCH` | `/api/dashboards/{dashboard_id}` | `update_dashboard` | body: `title`, `whole_group`, `group_id`, `after`, `selectors`; or `sidebar` |
 | `POST` | `/api/dashboards/{dashboard_id}/duplicate` | `duplicate_dashboard` | optional body `{whole_group}` or `{group_id}` → 201 |
@@ -549,7 +561,7 @@ public `/share/<id>.png` stops at archiving
 | `PUT` | `/api/dashboards/{dashboard_id}/view` | `view`, REST only: no MCP tool | body: `project_id` → `{"status":"saved"}` |
 | `POST` | `/api/widgets/stream` | `widget_stream`, REST only: no MCP tool | body: `{"widgets":[{"widget_id","project_id","from","to","fresh","selectors"}]}`, at most 64, `selectors` a JSON object → `text/event-stream`: one `widget` event per widget, `{"widget_id","data"}` or `{"widget_id","error":{"code","message"}}`, then `done` |
 | `POST` | `/api/widgets/preview` | `preview_widget`, REST only: no MCP tool | body: `component`, `props`, `source`, `project_id`, `from`, `to`, `dashboard_id`, `selectors` → `{columns, rows, truncated, approximate, problem, elapsed_ms}` |
-| `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id` (optional), `from`, `to`, `archive_after`, `caption_project`, `caption_range`, `image`, `image_2x` → 201 |
+| `POST` | `/api/widget-shares` | `create_widget_share`, REST only: no MCP tool | multipart: `widget_id`, `project_id` (optional), `from`, `to`, `archive_after`, `caption_project`, `caption_range`, `selection` (JSON text, `{"deployment":["cloud"]}`), `image`, `image_2x` → 201 |
 | `GET` | `/api/widget-shares` | `list_widget_shares` | query: `widget_id`, `state` |
 | `PATCH` | `/api/widget-shares/{id}` | `update_widget_share` | body: `archive_after` |
 | `POST` | `/api/widget-shares/{id}/archive` | `archive_widget_share` | — |
@@ -1745,7 +1757,11 @@ and the chart below. The captions name only what the widget follows: a
 widget pinned to its own project (`follows_project: false`) or range
 (`follows_range: false`, or a dashboard without a range switcher) is
 captioned without it, on the card and on the page; with neither, there is
-no caption line. The chart is drawn at the card's size with larger type and fewer
+no caption line. A share made under a dashboard's selectors names them too, as
+`Deployment: cloud` (the selector's label, then its values joined by `, `),
+after the range, on the page and in its link preview; only the selectors the
+widget follows and that had values are kept (`selection` in the share's JSON,
+`{}` at All), and a share made at All names none. The chart is drawn at the card's size with larger type and fewer
 ticks than on the dashboard, and without tooltips, menus, filters,
 pagination or scrollbars. A table shows the rows that fit and "and N more"
 ("and N+ more", or "and more", when its answer was cut short at the row cap);

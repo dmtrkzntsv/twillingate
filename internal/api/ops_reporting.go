@@ -71,6 +71,26 @@ type widgetDataIn struct {
 	Limit     int    `json:"limit,omitempty" jsonschema:"remote tables only: page size, 1 to CONSOLE_QUERY_ROWS_MAX (the default)"`
 }
 
+type selectorValuesIn struct {
+	DashboardID int64    `json:"dashboard_id" jsonschema:"the dashboard that declares the selector"`
+	Name        string   `json:"name" jsonschema:"the selector's name, as get_dashboard lists it"`
+	ProjectIDs  []int64  `json:"project_ids" jsonschema:"1 to 10 projects whose events are read; the values are merged across them. On the REST route repeat project_id"`
+	From        string   `json:"from" jsonschema:"YYYY-MM-DD"`
+	To          string   `json:"to" jsonschema:"YYYY-MM-DD, at most 365 days after from"`
+	Search      string   `json:"search,omitempty" jsonschema:"keep the values that contain this text, in any case"`
+	Picked      []string `json:"picked,omitempty" jsonschema:"values already picked, kept in the answer with a count of 0 when the range has none of them. On the REST route repeat picked"`
+}
+
+type selectorValuesOut struct {
+	Values []reporting.SelectorValue `json:"values"`
+}
+
+func (h *host) selectorValues(ctx context.Context, in selectorValuesIn) (selectorValuesOut, error) {
+	vs, err := h.rep.SelectorValues(ctx, reporting.SelectorValuesIn{DashboardID: in.DashboardID, Name: in.Name,
+		ProjectIDs: in.ProjectIDs, From: in.From, To: in.To, Search: in.Search, Picked: in.Picked})
+	return selectorValuesOut{Values: vs}, err
+}
+
 type createDashboardIn struct {
 	Title     string                 `json:"title" jsonschema:"the dashboard's title, at least 2 characters (required)"`
 	GroupID   int64                  `json:"group_id,omitempty" jsonschema:"add it as a tab of this group (a group_id from list_dashboards); after then names a tab of that group, 0 first; omit for a dashboard of its own"`
@@ -331,6 +351,10 @@ func (h *host) registerReporting(r *registrar) {
 	expose(r, spec{Name: "widget_data", Annotations: ro, Method: "GET", Path: w + "/data",
 		Description: "Load one widget's content, as its card draws it. project_id is required when the widget's SQL uses :project, and from/to (YYYY-MM-DD, at most 365 days) when it uses :from or :to; each is ignored otherwise, and the answer echoes the values applied. selectors, JSON text such as {\"deployment\":[\"cloud\"]}, is the values picked per selector of its dashboard: a query widget narrows to them where its table takes the column, a sql widget reads them as :name (the empty list for All). fresh=true reuses a cached result only up to REPORTING_REFRESH_MAX_AGE old. A query that no longer runs, or rows that no longer fit the component, is refused with the reason; removed=true means the widget's component left the code. A table with props.mode \"remote\" also takes filters, sort, distinct, offset and limit, applied in SQL over its whole result; the answer's page block echoes them with matched and total counts (docs://reporting, Filtering and paging a table)."},
 		h.widgetData)
+
+	expose(r, spec{Name: "selector_values", Annotations: ro, Method: "GET", Path: d + "/selectors/{name}/values",
+		Description: "The values a dashboard's selector can take: its column's values over project_ids (1 to 10, merged) and from/to, by event count, the busiest first, at most 100, as {value, count}. search keeps the values that contain it, in any case. picked values stay in the list with a count of 0 when the range has none of them. Read through the native engine, so it costs what a widget does. Use it to find what to pass in widget_data's selectors."},
+		h.selectorValues)
 
 	expose(r, spec{Name: "create_dashboard", Annotations: write, Method: "POST", Path: "/api/dashboards", Status: http.StatusCreated, constrain: widget(items),
 		Description: "Call reporting_guide first. Create a user dashboard: title (at least 2 characters), optional group_id to add it as a tab of that group, optional after (a dashboard id; 0 first), optional selectors (up to 5 pickers above the widgets, each {name, label, column}; a query widget follows each one its table takes, a sql widget each one whose :name it reads), and optional widgets in order, each as add_widget takes it (prefer query sources over sql). All or nothing: one invalid widget creates nothing."},

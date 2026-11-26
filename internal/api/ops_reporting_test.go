@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -1083,5 +1084,61 @@ func TestWidgetDataSelectors(t *testing.T) {
 	}
 	if resp := preview(`,"selectors":{"site":["a"]}`); resp.StatusCode != http.StatusBadRequest {
 		t.Errorf("preview selectors without dashboard_id = %d, want 400", resp.StatusCode)
+	}
+}
+
+// TestSelectorValues: the tool and the route answer the same, the REST
+// route reading project_id and picked repeated; a picked value the range
+// lacks stays with 0; an unknown selector is a 404 and too many projects
+// a 400.
+func TestSelectorValues(t *testing.T) {
+	h, cs := newTestHost(t)
+	r := newTestRegistrar(t, h)
+	const content = `{"query":{"kind":"stat","table":"views","metrics":[{"op":"count","as":"value"}]}}`
+	var d struct {
+		ID int64 `json:"dashboard_id"`
+	}
+	toolJSON(t, cs, "create_dashboard", map[string]any{"title": "Hosts",
+		"selectors": []map[string]any{{"name": "site", "column": "host"}},
+		"widgets":   []any{map[string]any{"component": "stat", "source": map[string]any{"type": "query", "content": content}}},
+	}, &d)
+	type values struct {
+		Values []struct {
+			Value string `json:"value"`
+			Count int64  `json:"count"`
+		} `json:"values"`
+	}
+	var viaMCP, viaREST values
+	toolJSON(t, cs, "selector_values", map[string]any{"dashboard_id": d.ID, "name": "site", "project_ids": []int64{1},
+		"from": "2026-08-20", "to": "2026-08-21", "picked": []string{"no.such.host"}}, &viaMCP)
+	n := len(viaMCP.Values)
+	if n < 2 || viaMCP.Values[n-1].Value != "no.such.host" || viaMCP.Values[n-1].Count != 0 || viaMCP.Values[0].Count <= 0 {
+		t.Fatalf("values = %+v, want the seeded hosts, then no.such.host at 0", viaMCP.Values)
+	}
+	target := fmt.Sprintf("/api/dashboards/%d/selectors/site/values?project_id=1&from=2026-08-20&to=2026-08-21&picked=no.such.host", d.ID)
+	rec := serveREST(t, r, "GET", target, "")
+	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &viaREST) != nil || !reflect.DeepEqual(viaMCP, viaREST) {
+		t.Errorf("GET %s = %d %s, want the tool's answer %+v", target, rec.Code, rec.Body.String(), viaMCP)
+	}
+	rec = serveREST(t, r, "GET", target+"&project_id=1&search="+url.QueryEscape(viaMCP.Values[0].Value), "")
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), viaMCP.Values[0].Value) {
+		t.Errorf("a project twice, with a search = %d %s", rec.Code, rec.Body.String())
+	}
+
+	rec = serveREST(t, r, "GET", fmt.Sprintf("/api/dashboards/%d/selectors/nope/values?project_id=1&from=2026-08-20&to=2026-08-21", d.ID), "")
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown selector = %d %s, want 404", rec.Code, rec.Body.String())
+	}
+	many := ""
+	for i := 1; i <= 11; i++ {
+		many += fmt.Sprintf("&project_id=%d", i)
+	}
+	rec = serveREST(t, r, "GET", fmt.Sprintf("/api/dashboards/%d/selectors/site/values?from=2026-08-20&to=2026-08-21%s", d.ID, many), "")
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "at most 10") {
+		t.Errorf("11 projects = %d %s, want 400", rec.Code, rec.Body.String())
+	}
+	rec = serveREST(t, r, "GET", fmt.Sprintf("/api/dashboards/%d/selectors/site/values?project_id=x&from=2026-08-20&to=2026-08-21", d.ID), "")
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("project_id=x = %d, want 400", rec.Code)
 	}
 }
