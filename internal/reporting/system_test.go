@@ -133,8 +133,8 @@ func TestSystemDashboards(t *testing.T) {
 	}
 
 	// A second pass: every Views widget loads under a host pick the
-	// fixture's events have, and the sessions and views widgets say they
-	// follow the host selector.
+	// fixture's events have, and every query widget says it follows all
+	// four selectors.
 	views, err := svc.Dashboard(ctx, 1)
 	if err != nil {
 		t.Fatal(err)
@@ -147,8 +147,13 @@ func TestSystemDashboards(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if slices.Contains([]string{"avg-session", "avg-session-length", "bounce-rate", "views"}, w.Name) && !slices.Contains(w.FollowsSelectors, "host") {
-				t.Errorf("follows_selectors = %v, want it to contain host", w.FollowsSelectors)
+			if w.Source.Type != "query" {
+				return
+			}
+			for _, name := range []string{"host", "source", "medium", "campaign"} {
+				if !slices.Contains(w.FollowsSelectors, name) {
+					t.Errorf("follows_selectors = %v, want it to contain %s", w.FollowsSelectors, name)
+				}
 			}
 		})
 	}

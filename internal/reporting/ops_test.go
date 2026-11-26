@@ -2534,7 +2534,10 @@ func TestDuplicateCopiesSelectors(t *testing.T) {
 
 func TestSystemDashboardRefusesSelectors(t *testing.T) {
 	svc := newTestService(t)
-	syncReporting(t, svc, nil, systemDashboard())
+	views := systemDashboard()
+	views.ID, views.Title, views.SortKey = 1, "Views", "a1"
+	views.Selectors = `[{"name":"host","label":"Host","column":"host"}]`
+	syncReporting(t, svc, nil, views, systemDashboard())
 	ctx := context.Background()
 	sels := []Selector{deploymentSel}
 	_, err := svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: 3, Selectors: &sels})
@@ -2547,6 +2550,21 @@ func TestSystemDashboardRefusesSelectors(t *testing.T) {
 	}
 	if d.Selectors == nil || len(d.Selectors) != 0 {
 		t.Errorf("system dashboard selectors = %#v, want an empty list", d.Selectors)
+	}
+	// Views ships its own selectors; clearing them is refused too.
+	before, err := svc.Dashboard(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	none := []Selector{}
+	_, err = svc.UpdateDashboard(ctx, "test", UpdateDashboard{ID: 1, Selectors: &none})
+	wantRefusal(t, err, store.ErrInvalid, strings.Replace(systemRefusal, "dashboard 3", "dashboard 1", 1))
+	after, err := svc.Dashboard(ctx, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(before.Selectors) != 1 || !reflect.DeepEqual(before.Selectors, after.Selectors) {
+		t.Errorf("Views selectors = %#v after a refused clear, want %#v", after.Selectors, before.Selectors)
 	}
 }
 

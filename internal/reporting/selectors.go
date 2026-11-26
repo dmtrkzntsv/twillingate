@@ -166,8 +166,9 @@ func selectorNames(sels []Selector) []string {
 
 // followedSelectors is the names, in sels' order, of the selectors w
 // follows: a query widget each one whose filter its query takes (on
-// sessions only sessionSelectorColumns, on identities none; selectorColumnOn), a sql
-// widget each one whose :name it reads, anything else none. Never nil.
+// sessions only sessionSelectorColumns, on identities none;
+// selectorColumnOn), a sql widget each one whose :name it reads, anything
+// else none. Never nil.
 func followedSelectors(w store.Widget, sels []Selector) []string {
 	out := []string{}
 	switch w.SourceType {

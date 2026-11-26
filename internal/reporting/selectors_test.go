@@ -85,8 +85,8 @@ func TestParseSelectors(t *testing.T) {
 
 // TestFollowedSelectors: a query widget follows a selector when its
 // table takes the filter (sessions only the UTM and referrer columns and
-// host, through entry_host; identities none), a sql widget the selectors whose :name it reads, md
-// none.
+// host, through entry_host; identities none), a sql widget the selectors
+// whose :name it reads, md none.
 func TestFollowedSelectors(t *testing.T) {
 	sels := []Selector{
 		{Name: "deployment", Label: "Deployment", Column: "attr_deployment"},
