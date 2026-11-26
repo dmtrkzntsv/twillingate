@@ -67,6 +67,9 @@ export function selectionLabel(label: string, values: string[] | undefined): str
 /** The most projects one selector values request reads (the route refuses more). */
 export const VALUE_PROJECTS_MAX = 10
 
+/** The most values the server takes picked for one selector. */
+export const PICKS_MAX = 100
+
 /**
  * The projects a selector's values are read from: the project the page
  * shows (the switcher's, or a project page's), then each project a query

@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { ListFilterIcon } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -9,7 +9,7 @@ import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '
 import { PHONE, useMediaQuery } from '@/hooks/use-media-query'
 import { endpoints, type Selector } from '@/lib/api'
 import { formatValue } from '@/lib/format'
-import { selectionLabel, valueLabel } from '@/lib/selectors'
+import { PICKS_MAX, selectionLabel, valueLabel } from '@/lib/selectors'
 import SwitcherButton from './SwitcherButton'
 
 interface Props {
@@ -90,6 +90,9 @@ function Checklist({ dashboardId, selector, value, projectIds, from, to, onChang
   const id = useId()
   const [search, setSearch] = useState('')
   const settled = useSettled(search.trim(), SEARCH_DELAY_MS)
+  // The picks go with the request so their rows have counts, but not into its key: a tick must not refetch.
+  const picks = useRef(value)
+  picks.current = value
   const values = useQuery({
     queryKey: ['selector-values', dashboardId, selector.name, projectIds, from, to, settled],
     queryFn: () =>
@@ -97,6 +100,7 @@ function Checklist({ dashboardId, selector, value, projectIds, from, to, onChang
         project_id: projectIds,
         from,
         to,
+        ...(picks.current.length > 0 ? { picked: picks.current } : {}),
         ...(settled ? { search: settled } : {}),
       }),
     enabled: projectIds.length > 0,
@@ -111,6 +115,7 @@ function Checklist({ dashboardId, selector, value, projectIds, from, to, onChang
   // A value picked but not in the answer (still loading, or failed) stays listed, so it can be unticked.
   const listed: { value: string; count?: number }[] = values.data?.values ?? []
   const rows: { value: string; count?: number }[] = [...listed, ...value.filter((v) => !listed.some((l) => l.value === v)).map((v) => ({ value: v }))]
+  const full = value.length >= PICKS_MAX
   const toggle = (v: string, on: boolean) => onChange(on ? [...value.filter((x) => x !== v), v] : value.filter((x) => x !== v))
 
   return (
@@ -144,6 +149,7 @@ function Checklist({ dashboardId, selector, value, projectIds, from, to, onChang
                   id={`${id}-${i}`}
                   aria-labelledby={`${id}-${i}-value`}
                   checked={value.includes(row.value)}
+                  disabled={full && !value.includes(row.value)}
                   onCheckedChange={(c) => toggle(row.value, c === true)}
                 />
                 <span id={`${id}-${i}-value`} className="min-w-0 flex-1 truncate text-sm" title={row.value}>
@@ -157,6 +163,7 @@ function Checklist({ dashboardId, selector, value, projectIds, from, to, onChang
           ))}
         </ul>
       )}
+      {full && <p className="px-3 py-2 text-xs text-muted-foreground">At most {PICKS_MAX} values</p>}
       {(rows.length === 0 || values.isError) && (
         <p className="px-3 py-2 text-sm text-muted-foreground">
           {projectIds.length === 0

@@ -390,6 +390,17 @@ describe('WidgetCard with a remote table', () => {
     expect(screen.queryByText('iOS')).not.toBeInTheDocument()
   })
 
+  it("shows the skeleton, not the last selectors' rows, while another selection loads or fails", async () => {
+    vi.spyOn(endpoints, 'widgetData').mockImplementation(async (_, q) => {
+      if (q.selectors) throw new ApiError(504, 'too slow', 'timeout')
+      return remoteAnswer(q)
+    })
+    const { client, rerender } = renderCard(remoteWidget())
+    await screen.findByText('iOS')
+    rerender(cardIn(client, remoteWidget(), { ...params, selectors: { deployment: ['cloud'] } }))
+    await waitFor(() => expect(screen.queryByText('iOS')).not.toBeInTheDocument())
+  })
+
   it('refreshes with the filters, sort and page on screen', async () => {
     const user = userEvent.setup()
     storeView([PLAN], { column: 'Count', dir: 'desc' })

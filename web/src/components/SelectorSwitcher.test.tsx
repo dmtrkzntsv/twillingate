@@ -96,4 +96,31 @@ describe('SelectorSwitcher', () => {
     expect(screen.getByRole('checkbox', { name: 'v11' })).toBeInTheDocument()
     expect(screen.getByRole('searchbox', { name: 'Search Deployment' })).toBeInTheDocument()
   })
+
+  it('sends the picks with the load, and ticking still loads once', async () => {
+    const user = userEvent.setup()
+    const load = vi.spyOn(endpoints, 'selectorValues').mockResolvedValue({ values: [{ value: 'cloud', count: 4 }, { value: 'edge', count: 2 }] })
+    renderWithProviders(<Harness initial={['gone']} />)
+    await user.click(screen.getByRole('button', { name: 'Deployment: gone' }))
+    await screen.findByRole('checkbox', { name: 'edge' })
+    expect(load).toHaveBeenCalledWith(12, 'deployment', { project_id: [7, 1], from: '2026-09-20', to: '2026-09-26', picked: ['gone'] })
+    await user.click(screen.getByRole('checkbox', { name: 'edge' }))
+    expect(load).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables the rest at 100 picked and says why', async () => {
+    const user = userEvent.setup()
+    const picked = Array.from({ length: 100 }, (_v, i) => `p${i}`)
+    vi.spyOn(endpoints, 'selectorValues').mockResolvedValue({ values: [{ value: 'extra', count: 1 }, { value: 'p0', count: 2 }] })
+    renderWithProviders(<Harness initial={picked} />)
+    await user.click(screen.getByRole('button', { name: 'Deployment: 100 selected' }))
+    expect(await screen.findByRole('checkbox', { name: 'extra' })).toBeDisabled()
+    expect(screen.getByText('At most 100 values')).toBeInTheDocument()
+    // A picked value can still be unticked.
+    const p0 = screen.getByRole('checkbox', { name: 'p0' })
+    expect(p0).toBeEnabled()
+    await user.click(p0)
+    expect(screen.getByRole('checkbox', { name: 'extra' })).toBeEnabled()
+    expect(screen.queryByText('At most 100 values')).not.toBeInTheDocument()
+  })
 })

@@ -69,7 +69,7 @@ type WidgetKey = [string, number, number?, string?, string?, string?, string?, s
  * The selectors' values a widget is sent, as one string for its key, so
  * keys compare part by part with `===`; undefined when it is sent none.
  */
-function selectorsKey(params: WidgetDataQuery): string | undefined {
+export function selectorsKey(params: WidgetDataQuery): string | undefined {
   // The column joins the name and values, as the server's cache key has it:
   // update_dashboard may point a selector at another column under its name.
   return params.selectors && JSON.stringify(params.selector_columns ? [params.selectors, params.selector_columns] : params.selectors)
