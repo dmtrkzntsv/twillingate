@@ -6,10 +6,12 @@ import DashboardHeader from '@/components/DashboardHeader'
 import { AddWidgetButton, WidgetEditingProvider } from '@/components/editor/WidgetEditing'
 import { GridSkeleton, Notice, NoWidgets, PageError } from '@/components/PageStates'
 import RangeSwitcher from '@/components/RangeSwitcher'
+import SelectorSwitcher from '@/components/SelectorSwitcher'
 import { Button } from '@/components/ui/button'
 import WidgetGrid from '@/components/WidgetGrid'
 import { useDashboardRefresh } from '@/hooks/use-dashboard-refresh'
 import { useFreshness } from '@/hooks/use-freshness'
+import { useSelectorSelection } from '@/hooks/use-selector-selection'
 import type { ProjectTabActions } from '@/hooks/use-project-tab-actions'
 import { useWidgetActions } from '@/hooks/use-widget-actions'
 import type { DashboardDetail, DashboardsResponse, Project, ProjectTab, Widget } from '@/lib/api'
@@ -19,6 +21,7 @@ import { dashboardQuery } from '@/lib/queries'
 import { resolve } from '@/lib/ranges'
 import type { ShareContext } from '@/lib/share'
 import { chooseSelection } from '@/lib/selection'
+import { selectorProjects, writeSelection } from '@/lib/selectors'
 import { readStoredRange } from '@/lib/stored-range'
 import { selectionParams, widgetParams } from '@/lib/view'
 import ProjectTabMenu from './ProjectTabMenu'
@@ -36,7 +39,8 @@ interface Props {
 /**
  * One of a project's dashboard tabs (project tabs D8): the dashboard with
  * the project pinned, so there is no project switcher, and the range from
- * the URL, else the one stored for every page. Nothing here saves the
+ * the URL, else the one stored for every page, and the dashboard's
+ * selectors, from the URL alone. Nothing here saves the
  * dashboard's view or the stored range. A dashboard that isn't one of the
  * project's tabs says so and offers to add it.
  */
@@ -80,9 +84,10 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
     : undefined
   const from = range?.from
   const to = range?.to
+  const { picked, pick } = useSelectorSelection(dashboard.selectors)
   const paramsFor = useCallback(
-    (w: Widget) => widgetParams(w, { projectId }, from && to ? { from, to } : undefined),
-    [projectId, from, to]
+    (w: Widget) => widgetParams(w, { projectId }, from && to ? { from, to } : undefined, picked),
+    [projectId, from, to, picked]
   )
 
   // What a card needs to be shared or downloaded: the pinned project and
@@ -98,6 +103,8 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
     }),
     [projectId, project.name, shareRange.from, shareRange.to, rangeShown]
   )
+  // A selector's values come from the project pinned here and each project a query widget fixes.
+  const valueProjects = useMemo(() => selectorProjects(dashboard.widgets, projectId, []), [dashboard.widgets, projectId])
 
   // The user's own dashboard is arranged and edited here as on its own
   // page; a project page shows only live dashboards.
@@ -139,9 +146,21 @@ function TabView({ project, dashboard, tab, tabs, list, actions }: ViewProps) {
             value={{ range: sel.range, from: sel.from, to: sel.to }}
             timezone={list.timezone}
             // The URL only: viewing a project never saves a dashboard's view (D8) or the stored range.
-            onChange={(r) => setURL(selectionParams(r))}
+            onChange={(r) => setURL(writeSelection(selectionParams(r), picked.selection))}
           />
         )}
+        {dashboard.selectors.map((s) => (
+          <SelectorSwitcher
+            key={s.name}
+            dashboardId={dashboard.dashboard_id}
+            selector={s}
+            value={picked.selection[s.name] ?? []}
+            projectIds={valueProjects}
+            from={shareRange.from}
+            to={shareRange.to}
+            onChange={(values) => pick(s.name, values)}
+          />
+        ))}
       </DashboardHeader>
       {showGrid ? (
         <WidgetGrid widgets={dashboard.widgets} paramsFor={paramsFor} share={share} arrange={arrange} />

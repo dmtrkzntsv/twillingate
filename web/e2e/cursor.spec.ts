@@ -230,3 +230,23 @@ test('every link and button shows the pointer', async ({ page, request }) => {
     await request.post(`/api/projects/${attrs.id}/archive`, { headers })
   }
 })
+
+test("a dashboard's selector and its checklist show the pointer", async ({ page, request }) => {
+  const headers = { Authorization: `Bearer ${TOKEN}` }
+  const created = await request.post('/api/dashboards', {
+    headers,
+    data: { title: `cursor-selectors-${Date.now()}`, selectors: [{ name: 'deployment', label: 'Deployment', column: 'browser' }] },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { dashboard_id: id } = (await created.json()) as { dashboard_id: number }
+  try {
+    await login(page)
+    // Every live project's values, since no widget fixes or shows one: a picked value keeps the list from being empty.
+    await page.goto(`/app/dashboards/${id}?s.deployment=picked`)
+    await page.getByRole('button', { name: 'Deployment: picked' }).click()
+    await expect(page.getByRole('checkbox', { name: 'picked' })).toBeVisible()
+    expect(await withoutPointer(page), 'selector checklist').toEqual([])
+  } finally {
+    await request.post(`/api/dashboards/${id}/archive`, { headers, data: {} })
+  }
+})

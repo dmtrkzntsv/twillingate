@@ -7,7 +7,7 @@ import { plural } from '@/lib/format'
 
 interface Props {
   title: string
-  /** The project and range switchers, whichever the dashboard has. */
+  /** The project and range switchers, whichever the dashboard has, and a button per selector. */
   children?: ReactNode
   /** The oldest `cached_at` on screen. */
   asOf?: Date
@@ -65,7 +65,8 @@ export default function DashboardHeader({ title, children, asOf, refreshable = 0
           )}
         </div>
       </div>
-      {hasSwitchers && <div className="grid min-w-0 auto-cols-fr grid-flow-col gap-2 sm:flex">{children}</div>}
+      {/* The switchers share a row, wrapping onto more when the selectors do not fit (a phone's 360px). */}
+      {hasSwitchers && <div className="flex min-w-0 flex-wrap gap-2 *:min-w-0 *:max-w-full *:flex-1 sm:justify-end sm:*:flex-none">{children}</div>}
     </div>
   )
 }

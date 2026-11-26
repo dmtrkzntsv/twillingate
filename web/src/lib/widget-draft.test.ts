@@ -50,7 +50,7 @@ function typesOf(q: Q): string[] {
 const line: Widget = {
   widget_id: 7, dashboard_id: 3, name: 'visits', component: 'line', title: 'Visits', width: 6, height: 8,
   props: { curve: 'step' }, source: { type: 'sql', content: 'SELECT day AS x, views AS y FROM v' },
-  follows_project: false, follows_range: false,
+  follows_project: false, follows_range: false, follows_selectors: [],
 }
 
 describe('draft', () => {

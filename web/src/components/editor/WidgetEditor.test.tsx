@@ -44,6 +44,7 @@ const line: Widget = {
   source: { type: 'sql', content: 'SELECT day AS x, views AS y FROM v WHERE project_id=:project' },
   follows_project: true,
   follows_range: false,
+  follows_selectors: [],
 }
 
 // jsdom lacks the pointer-capture and scrolling calls Radix Select makes when it opens.

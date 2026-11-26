@@ -22,7 +22,8 @@ export function viewQuery(widget: Widget, view: TableView, columns: string[] | u
 
 /**
  * One widget's data as a TanStack query (D38), keyed by what changes the
- * answer: the widget, the project, the range and a remote table's view.
+ * answer: the widget, the project, the range, the selectors' values it is
+ * sent and a remote table's view.
  * `fresh` is not part of the key: a refresh replaces the cached answer
  * under the same key.
  */
@@ -35,6 +36,7 @@ export function widgetQuery(widget: Widget, params: WidgetDataQuery, idle = fals
       params.project_id,
       params.from,
       params.to,
+      selectorsKey(params),
       view.filters,
       view.sort,
       view.offset,
@@ -61,11 +63,19 @@ export function widgetQuery(widget: Widget, params: WidgetDataQuery, idle = fals
   })
 }
 
-type WidgetKey = [string, number, number?, string?, string?, string?, string?, number?]
+type WidgetKey = [string, number, number?, string?, string?, string?, string?, string?, number?]
+
+/**
+ * The selectors' values a widget is sent, as one string for its key, so
+ * keys compare part by part with `===`; undefined when it is sent none.
+ */
+function selectorsKey(params: WidgetDataQuery): string | undefined {
+  return params.selectors && JSON.stringify(params.selectors)
+}
 
 /** The start of a widget's query keys that names the widget and its selection, before any view. */
 function selectionKey(widget: Widget, params: WidgetDataQuery) {
-  return ['widget', widget.widget_id, params.project_id, params.from, params.to] as const
+  return ['widget', widget.widget_id, params.project_id, params.from, params.to, selectorsKey(params)] as const
 }
 
 function sameKeyStart(key: QueryKey, start: readonly unknown[]): boolean {
@@ -102,7 +112,7 @@ export function shownQueries(client: QueryClient, widget: Widget, params: Widget
  */
 export function shownViews(client: QueryClient, widget: Widget, params: WidgetDataQuery): Partial<WidgetDataQuery>[] {
   return shownQueries(client, widget, params).map(({ queryKey }) => {
-    const [, , , , , filters, sort, offset] = queryKey as WidgetKey
+    const [, , , , , , filters, sort, offset] = queryKey as WidgetKey
     return { filters, sort, offset }
   })
 }

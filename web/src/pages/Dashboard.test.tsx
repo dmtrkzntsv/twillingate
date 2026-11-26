@@ -818,3 +818,69 @@ describe.each([
     expect(widgetData).toHaveBeenCalledTimes(views.widgets.length)
   }, 20_000)
 })
+
+describe('Dashboard selectors', () => {
+  const deployment = { name: 'deployment', label: 'Deployment', column: 'attr_deployment' }
+  const campaign = { name: 'campaign', label: 'Campaign', column: 'utm_campaign' }
+  const stat = (id: number, title: string, follows: string[]): Widget => ({
+    widget_id: id,
+    dashboard_id: 13,
+    name: title.toLowerCase(),
+    component: 'stat',
+    title,
+    width: 3,
+    height: 3,
+    props: {},
+    source: { type: 'sql', content: '…' },
+    follows_project: true,
+    follows_range: true,
+    follows_selectors: follows,
+  })
+  const widgets = [stat(901, 'By deployment', ['deployment']), stat(902, 'By campaign', ['campaign']), stat(903, 'Everything', [])]
+  const withSelectors = { ...details[13], follows_project: true, follows_range: true, selectors: [deployment, campaign], widgets }
+
+  function mockSelectors() {
+    mockApi()
+    vi.spyOn(endpoints, 'dashboard').mockResolvedValue(withSelectors)
+    vi.spyOn(endpoints, 'selectorValues').mockResolvedValue({ values: [{ value: 'cloud', count: 9 }, { value: 'edge', count: 3 }] })
+    return vi.mocked(endpoints.widgetData).mockImplementation(async (id) => answerFor(widgets.find((w) => w.widget_id === id)!))
+  }
+
+  it('re-requests only the widgets that follow the selector changed, with the values picked', async () => {
+    const user = userEvent.setup()
+    const widgetData = mockSelectors()
+    renderAt('/dashboards/13?project=7&range=7d')
+
+    await waitFor(() => expect(widgetData).toHaveBeenCalledTimes(3))
+    for (const call of widgetData.mock.calls) expect(call[1]).not.toHaveProperty('selectors')
+    widgetData.mockClear()
+
+    await user.click(await screen.findByRole('button', { name: 'Deployment: All' }))
+    await user.click(await screen.findByRole('checkbox', { name: 'cloud' }))
+
+    await waitFor(() => expect(location()).toBe('/dashboards/13?project=7&range=7d&s.deployment=cloud'))
+    await waitFor(() => expect(widgetData).toHaveBeenCalled())
+    await act(async () => {})
+    expect(widgetData.mock.calls.map((c) => c[0])).toEqual([901])
+    expect(widgetData.mock.calls[0][1]).toMatchObject({ project_id: 7, selectors: { deployment: ['cloud'] } })
+    expect(screen.getByRole('button', { name: 'Deployment: cloud' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Campaign: All' })).toBeInTheDocument()
+    // The values are read from the project shown, over the range shown.
+    expect(endpoints.selectorValues).toHaveBeenCalledWith(13, 'deployment', expect.objectContaining({ project_id: [7] }))
+  })
+
+  it('keeps the selection in the URL when the range or the project changes', async () => {
+    const user = userEvent.setup()
+    mockSelectors()
+    renderAt('/dashboards/13?project=7&range=7d&s.deployment=cloud&s.deployment=edge')
+
+    expect(await screen.findByRole('button', { name: 'Deployment: 2 selected' })).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'Range: Last week' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'Last month' }))
+    await waitFor(() => expect(location()).toBe('/dashboards/13?project=7&range=30d&s.deployment=cloud&s.deployment=edge'))
+
+    await user.click(screen.getByRole('button', { name: 'Project: shop' }))
+    await user.click(await screen.findByRole('menuitemradio', { name: 'blog' }))
+    await waitFor(() => expect(location()).toBe('/dashboards/13?project=1&range=30d&s.deployment=cloud&s.deployment=edge'))
+  })
+})

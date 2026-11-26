@@ -617,3 +617,49 @@ test('a page opened from far down another opens at its top', async ({ page, requ
     await request.post(`/api/projects/${other}/archive`, { headers: authHeaders() })
   }
 })
+
+test("a dashboard's selectors fit a phone, their checklist a full-width sheet", async ({ page, request }) => {
+  // Two selectors whose labels, and the value picked of each, are longer than a phone is wide.
+  const longLabel = 'A selector label far longer than a phone is wide on one line'
+  const longValue = 'a-picked-value-that-is-far-longer-than-a-phone-is-wide-on-one-line'
+  const stat = JSON.stringify({ query: { kind: 'stat', table: 'views', metrics: [{ op: 'count' }] }, rename: { count: 'value' } })
+  const created = await request.post('/api/dashboards', {
+    headers: authHeaders(),
+    data: {
+      title: `Phone selectors ${Date.now()}`,
+      selectors: [
+        { name: 'first', label: longLabel, column: 'browser' },
+        { name: 'second', label: `${longLabel}, again`, column: 'country' },
+      ],
+      widgets: [{ component: 'stat', title: 'Views', source: { type: 'query', content: stat }, width: 6, height: 4 }],
+    },
+  })
+  expect(created.ok(), await created.text()).toBeTruthy()
+  const { dashboard_id: id } = (await created.json()) as { dashboard_id: number }
+  try {
+    await page.goto('/app/')
+    await page.waitForURL(/\/oauth\/authorize\?/)
+    await page.getByLabel('Password').fill(PASSWORD)
+    await page.getByRole('button', { name: 'Connect' }).click()
+    await page.waitForURL(/\/app\/projects$/)
+
+    // The picked value goes to the values route as `picked`, which lists it with a count of 0.
+    const picked = encodeURIComponent(longValue)
+    await check(page, `/app/dashboards/${id}?project=1&s.first=${picked}&s.second=${picked}`)
+    const first = page.getByRole('button', { name: `${longLabel}: ${longValue}` })
+    const second = page.getByRole('button', { name: `${longLabel}, again: ${longValue}` })
+    // Each button truncates its text on the phone's width.
+    await expect(first).toBeInViewport({ ratio: 1 })
+    await expect(second).toBeInViewport({ ratio: 1 })
+
+    await first.click()
+    const sheet = page.getByRole('dialog', { name: longLabel })
+    await expect(sheet.getByRole('checkbox', { name: longValue })).toBeChecked()
+    const box = (await sheet.boundingBox())!
+    expect(box.width, 'the checklist is as wide as the phone').toBeGreaterThanOrEqual(PHONE.width - 1)
+    expect(await sidewaysScroll(page), 'selector checklist').toEqual([])
+    expect(await dialogOverflow(page), 'selector checklist').toEqual([])
+  } finally {
+    await request.post(`/api/dashboards/${id}/archive`, { headers: authHeaders(), data: {} })
+  }
+})

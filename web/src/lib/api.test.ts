@@ -222,3 +222,36 @@ describe('project endpoints', () => {
     expect(vi.mocked(fetch).mock.calls[0][0]).toBe('/api/usage?project_id=4&from=2026-09-01&to=2026-09-30')
   })
 })
+
+describe('selectors on the wire', () => {
+  it('sends a widget GET its selectors as JSON text', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ widget_id: 4 }))
+
+    await endpoints.widgetData(4, { project_id: 7, selectors: { deployment: ['a,b', 'c&d'] } })
+
+    const url = new URL(urlOf(vi.mocked(fetch).mock.calls[0][0]), 'http://x')
+    expect(url.pathname).toBe('/api/widgets/4/data')
+    expect(url.searchParams.get('project_id')).toBe('7')
+    expect(JSON.parse(url.searchParams.get('selectors')!)).toEqual({ deployment: ['a,b', 'c&d'] })
+  })
+
+  it('asks for a selector\'s values with project_id and picked repeated', async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(jsonResponse({ values: [{ value: 'cloud', count: 3 }] }))
+
+    const out = await endpoints.selectorValues(12, 'deployment', {
+      project_id: [7, 1],
+      from: '2026-09-01',
+      to: '2026-09-07',
+      search: 'cl',
+      picked: ['a b', 'x,y'],
+    })
+
+    const url = new URL(urlOf(vi.mocked(fetch).mock.calls[0][0]), 'http://x')
+    expect(url.pathname).toBe('/api/dashboards/12/selectors/deployment/values')
+    expect(url.searchParams.getAll('project_id')).toEqual(['7', '1'])
+    expect(url.searchParams.getAll('picked')).toEqual(['a b', 'x,y'])
+    expect(url.searchParams.get('search')).toBe('cl')
+    expect(url.searchParams.get('from')).toBe('2026-09-01')
+    expect(out.values).toEqual([{ value: 'cloud', count: 3 }])
+  })
+})

@@ -118,12 +118,29 @@ export interface Widget {
   source: WidgetSource
   follows_project: boolean
   follows_range: boolean
+  /** The names of the dashboard's selectors this widget narrows by; always an array. */
+  follows_selectors: string[]
   archived_at?: string
+}
+
+/** A picker the dashboard's page shows beside the switchers: values of `column` a viewer narrows the widgets to. */
+export interface Selector {
+  name: string
+  label: string
+  column: string
+}
+
+/** One value a selector offers, with its event count over the projects and range asked for (0 for a picked value they lack). */
+export interface SelectorValue {
+  value: string
+  count: number
 }
 
 export interface DashboardDetail extends Omit<DashboardInfo, 'widgets'> {
   follows_project: boolean
   follows_range: boolean
+  /** The pickers the page shows, in order; always an array. */
+  selectors: Selector[]
   widgets: Widget[]
   /** The group's live members, in order, this dashboard included; always an array (tabs D18). */
   tabs: DashboardTab[]
@@ -178,6 +195,8 @@ export interface WidgetDataQuery {
   from?: string
   to?: string
   fresh?: boolean
+  /** The values picked of the selectors the widget follows; sent to the GET route as JSON text. */
+  selectors?: Record<string, string[]>
   // A remote table's view (filters as JSON, sort as `column:asc|desc`); other widgets refuse them.
   filters?: string
   sort?: string
@@ -193,6 +212,7 @@ export interface WidgetStreamItem {
   from?: string
   to?: string
   fresh?: boolean
+  selectors?: Record<string, string[]>
 }
 
 export interface SaveViewBody {
@@ -243,6 +263,9 @@ interface PreviewBody {
   project_id?: number
   from?: string
   to?: string
+  /** The dashboard whose selectors `selectors` names; `selectors` is refused without it. */
+  dashboard_id?: number
+  selectors?: Record<string, string[]>
 }
 
 /** What a preview answers: the rows, or the problem that kept them (the widget's own, not the request's). */
@@ -704,6 +727,26 @@ function toQuery(q: object): string {
   return s ? `?${s}` : ''
 }
 
+/** What `selectorValues` reads: 1 to 10 projects, the range, and optionally a search and the values already picked. */
+export interface SelectorValuesQuery {
+  project_id: number[]
+  from: string
+  to: string
+  search?: string
+  picked?: string[]
+}
+
+/** A selector values query as URL parameters: `project_id` and `picked` repeated, once per value. */
+function selectorValuesQuery(q: SelectorValuesQuery): string {
+  const params = new URLSearchParams()
+  for (const id of q.project_id) params.append('project_id', String(id))
+  params.set('from', q.from)
+  params.set('to', q.to)
+  if (q.search) params.set('search', q.search)
+  for (const v of q.picked ?? []) params.append('picked', v)
+  return `?${params}`
+}
+
 function json(method: string, body: unknown): RequestInit {
   return { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }
 }
@@ -715,7 +758,13 @@ function formPath(projectId: number, name: string): string {
 export const endpoints = {
   dashboards: () => api<DashboardsResponse>('/api/dashboards'),
   dashboard: (id: number) => api<DashboardDetail>(`/api/dashboards/${id}`),
-  widgetData: (id: number, q: WidgetDataQuery) => api<WidgetData>(`/api/widgets/${id}/data${toQuery(q)}`),
+  widgetData: (id: number, { selectors, ...q }: WidgetDataQuery) =>
+    api<WidgetData>(`/api/widgets/${id}/data${toQuery({ ...q, selectors: selectors && JSON.stringify(selectors) })}`),
+  /** What a dashboard's selector offers: its column's values, the busiest first, at most 100, then the picked ones the range lacks. */
+  selectorValues: (dashboardId: number, name: string, q: SelectorValuesQuery) =>
+    api<{ values: SelectorValue[] }>(
+      `/api/dashboards/${dashboardId}/selectors/${encodeURIComponent(name)}/values${selectorValuesQuery(q)}`
+    ),
   /**
    * Opens the stream of several widgets' answers (`POST /api/widgets/stream`):
    * the response, whose body is read as Server-Sent Events (widget-stream.ts).

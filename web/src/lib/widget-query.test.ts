@@ -16,6 +16,7 @@ function widget(component: string | null, props: Record<string, unknown> = {}): 
     source: { type: 'sql', content: 'SELECT 1' },
     follows_project: true,
     follows_range: true,
+    follows_selectors: [],
   }
 }
 

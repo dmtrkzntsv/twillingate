@@ -9,6 +9,7 @@ import { GridSkeleton, NoProjects, NoWidgets, PageError, PageLoading } from '@/c
 import ProjectSwitcher from '@/components/ProjectSwitcher'
 import RangeSwitcher from '@/components/RangeSwitcher'
 import ReportTabs, { dashboardTabs } from '@/components/ReportTabs'
+import SelectorSwitcher from '@/components/SelectorSwitcher'
 import { Button } from '@/components/ui/button'
 import WidgetGrid from '@/components/WidgetGrid'
 import { useDashboardActions } from '@/hooks/use-dashboard-actions'
@@ -20,6 +21,7 @@ import type { DashboardDetail, DashboardInfo, DashboardsResponse, DashboardTab }
 import { moveTabBody } from '@/lib/arrange'
 import { rememberDashboard } from '@/lib/last-dashboard'
 import { dashboardQuery, dashboardsQuery, projectsQuery } from '@/lib/queries'
+import { selectorProjects } from '@/lib/selectors'
 import { pinnedProject, type ShareContext } from '@/lib/share'
 
 /** `/dashboards/:id`: one dashboard in the app shell, as a report tab or a page of its own (D36). */
@@ -87,9 +89,16 @@ function PageNotice({ text, children }: { text: string; children: ReactNode }) {
 }
 
 function DashboardView({ list, dashboard, frozen }: ViewProps) {
-  const projects = useQuery({ ...projectsQuery, enabled: dashboard.follows_project })
+  // The projects list is needed for the project switcher, and for the
+  // selectors' values when no project is shown or fixed (selectorProjects).
+  const projects = useQuery({ ...projectsQuery, enabled: dashboard.follows_project || dashboard.selectors.length > 0 })
   const all = projects.data?.projects ?? []
-  const { sel, switchers, range, paramsFor, change, changeRange, openTab } = useDashboardSelection(dashboard, all, list.timezone, frozen)
+  const { sel, switchers, range, paramsFor, change, changeRange, openTab, picked, pick } = useDashboardSelection(
+    dashboard,
+    all,
+    list.timezone,
+    frozen
+  )
 
   const waiting = switchers.project && !projects.data
   const noProjects = switchers.project && projects.data !== undefined && all.every((p) => p.archived)
@@ -111,6 +120,11 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
   const projectName = switchers.project ? shown?.name : ''
   const { from, to } = range
   const rangeShown = sel.range !== undefined
+  const live = useMemo(() => all.filter((p) => !p.archived).map((p) => p.project_id), [all])
+  const valueProjects = useMemo(
+    () => selectorProjects(dashboard.widgets, switchers.project ? shown?.project_id : undefined, live),
+    [dashboard.widgets, switchers.project, shown?.project_id, live]
+  )
   const share = useMemo<ShareContext>(
     () => ({
       project: projectId !== undefined && projectName !== undefined ? { id: projectId, name: projectName } : undefined,
@@ -222,6 +236,19 @@ function DashboardView({ list, dashboard, frozen }: ViewProps) {
                 onChange={changeRange}
               />
             )}
+            {!noProjects &&
+              dashboard.selectors.map((s) => (
+                <SelectorSwitcher
+                  key={s.name}
+                  dashboardId={dashboard.dashboard_id}
+                  selector={s}
+                  value={picked.selection[s.name] ?? []}
+                  projectIds={valueProjects}
+                  from={from}
+                  to={to}
+                  onChange={(values) => pick(s.name, values)}
+                />
+              ))}
           </DashboardHeader>
           {waiting ? (
             projects.error ? (

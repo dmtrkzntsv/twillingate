@@ -27,6 +27,7 @@ const widget: Widget = {
   source: { type: 'sql', content: 'SELECT 1' },
   follows_project: true,
   follows_range: true,
+  follows_selectors: [],
 }
 const share: ShareContext = {
   project: { id: 7, name: 'blog' },

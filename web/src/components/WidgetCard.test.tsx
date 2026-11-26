@@ -30,6 +30,7 @@ function statWidget(over: Partial<Widget> = {}): Widget {
     source: { type: 'sql', content: 'SELECT 1 AS value' },
     follows_project: true,
     follows_range: true,
+    follows_selectors: [],
     ...over,
   }
 }

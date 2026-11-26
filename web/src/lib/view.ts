@@ -1,5 +1,6 @@
 import type { DashboardDetail, SaveViewBody, Widget, WidgetDataQuery } from './api'
 import type { Selection } from './selection'
+import { widgetSelectors, type Selection as Picked } from './selectors'
 
 /** Which switchers a dashboard has (D5): the parts of a selection it takes. */
 export interface Switchers {
@@ -28,11 +29,16 @@ export function viewBody(sel: Selection, switchers: Switchers): SaveViewBody | n
   return switchers.project && sel.projectId !== undefined ? { project_id: sel.projectId } : null
 }
 
-/** What a widget is asked for: the project and dates only when it follows them. */
+/**
+ * What a widget is asked for: the project and dates only when it follows
+ * them, and the values picked of the selectors it follows (`picked`, with
+ * `order` the dashboard's selector names) only when there are any.
+ */
 export function widgetParams(
   widget: Widget,
   sel: Selection,
-  range: { from: string; to: string } | undefined
+  range: { from: string; to: string } | undefined,
+  picked?: { selection: Picked; order: string[] }
 ): WidgetDataQuery {
   const params: WidgetDataQuery = {}
   if (widget.follows_project && sel.projectId !== undefined) params.project_id = sel.projectId
@@ -40,6 +46,8 @@ export function widgetParams(
     params.from = range.from
     params.to = range.to
   }
+  const selectors = picked && widgetSelectors(widget, picked.selection, picked.order)
+  if (selectors) params.selectors = selectors
   return params
 }
 
