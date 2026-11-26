@@ -137,18 +137,23 @@ function Checklist({ dashboardId, selector, value, projectIds, from, to, onChang
       {rows.length > 0 && (
         <ul className="max-h-72 min-w-0 overflow-y-auto p-1">
           {rows.map((row, i) => (
-            <li key={row.value} className="flex min-w-0 items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent">
-              <Checkbox
-                id={`${id}-${i}`}
-                checked={value.includes(row.value)}
-                onCheckedChange={(c) => toggle(row.value, c === true)}
-              />
-              <label htmlFor={`${id}-${i}`} className="min-w-0 flex-1 truncate text-sm" title={row.value}>
-                {valueLabel(row.value)}
+            <li key={row.value} className="min-w-0">
+              {/* The whole row is the checkbox's label, so all of it that highlights also ticks; the
+                  checkbox is named by the value alone, not the count beside it. */}
+              <label htmlFor={`${id}-${i}`} className="flex min-w-0 items-center gap-2 rounded-sm px-2 py-1.5 hover:bg-accent">
+                <Checkbox
+                  id={`${id}-${i}`}
+                  aria-labelledby={`${id}-${i}-value`}
+                  checked={value.includes(row.value)}
+                  onCheckedChange={(c) => toggle(row.value, c === true)}
+                />
+                <span id={`${id}-${i}-value`} className="min-w-0 flex-1 truncate text-sm" title={row.value}>
+                  {valueLabel(row.value)}
+                </span>
+                {row.count !== undefined && (
+                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatValue(row.count)}</span>
+                )}
               </label>
-              {row.count !== undefined && (
-                <span className="shrink-0 text-xs tabular-nums text-muted-foreground">{formatValue(row.count)}</span>
-              )}
             </li>
           ))}
         </ul>

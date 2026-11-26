@@ -65,8 +65,13 @@ export default function DashboardHeader({ title, children, asOf, refreshable = 0
           )}
         </div>
       </div>
-      {/* The switchers share a row, wrapping onto more when the selectors do not fit (a phone's 360px). */}
-      {hasSwitchers && <div className="flex min-w-0 flex-wrap gap-2 *:min-w-0 *:max-w-full *:flex-1 sm:justify-end sm:*:flex-none">{children}</div>}
+      {/* The switchers share a row, wrapping onto more when they do not fit (a phone's 360px). On a phone each
+          starts at 9rem and grows to fill its line, so a line holds two and the rest wrap rather than squeeze. */}
+      {hasSwitchers && (
+        <div className="flex min-w-0 flex-wrap gap-2 *:min-w-0 *:max-w-full *:flex-[1_1_9rem] sm:justify-end sm:*:flex-none">
+          {children}
+        </div>
+      )}
     </div>
   )
 }

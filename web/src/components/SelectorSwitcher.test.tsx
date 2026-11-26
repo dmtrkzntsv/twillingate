@@ -54,8 +54,10 @@ describe('SelectorSwitcher', () => {
 
     await user.click(within(dialog).getByRole('checkbox', { name: 'cloud' }))
     expect(screen.getByRole('button', { name: 'Deployment: cloud' })).toBeInTheDocument()
-    await user.click(within(dialog).getByRole('checkbox', { name: 'self-hosted' }))
+    // The whole row ticks: its count as well as its box.
+    await user.click(within(dialog).getByText('12'))
     expect(screen.getByRole('button', { name: 'Deployment: 2 selected' })).toBeInTheDocument()
+    expect(within(dialog).getByRole('checkbox', { name: 'self-hosted' })).toBeChecked()
     // The values picked go back as `picked`, so they stay listed.
     await waitFor(() => expect(load).toHaveBeenLastCalledWith(12, 'deployment', expect.objectContaining({ picked: ['cloud', 'self-hosted'] })))
   })

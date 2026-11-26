@@ -651,6 +651,12 @@ test("a dashboard's selectors fit a phone, their checklist a full-width sheet", 
     // Each button truncates its text on the phone's width.
     await expect(first).toBeInViewport({ ratio: 1 })
     await expect(second).toBeInViewport({ ratio: 1 })
+    // The row wraps rather than squeezing four switchers onto one line: each
+    // keeps a readable width, and they take more than one line.
+    const switchers = [page.getByRole('button', { name: /^Project: / }), page.getByRole('button', { name: /^Range: / }), first, second]
+    const boxes = await Promise.all(switchers.map(async (s) => (await s.boundingBox())!))
+    for (const [i, b] of boxes.entries()) expect(b.width, `switcher ${i} width`).toBeGreaterThanOrEqual(140)
+    expect(new Set(boxes.map((b) => Math.round(b.y))).size, 'switcher lines').toBeGreaterThan(1)
 
     await first.click()
     const sheet = page.getByRole('dialog', { name: longLabel })

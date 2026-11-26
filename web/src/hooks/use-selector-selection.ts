@@ -26,7 +26,8 @@ export function useSelectorSelection(selectors: Selector[], frozen = false): Sel
   const pick = useCallback(
     (name: string, values: string[]) => {
       if (frozen) return
-      setURL((prev) => writeSelection(prev, { ...readSelection(prev, order), [name]: values }))
+      // Replacing the entry, so each tick of a checklist is not a step of Back.
+      setURL((prev) => writeSelection(prev, { ...readSelection(prev, order), [name]: values }), { replace: true })
     },
     [frozen, order, setURL]
   )
