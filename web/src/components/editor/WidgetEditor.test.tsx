@@ -105,11 +105,11 @@ describe('WidgetEditor', () => {
     expect(preview.mock.calls[0][0]).toMatchObject({ dashboard_id: 5, selectors: { deployment: ['cloud'], plan: [] } })
   })
 
-  it('sends no dashboard or selectors with nothing picked', async () => {
+  it('sends the dashboard but no selectors with nothing picked', async () => {
     const preview = vi.spyOn(endpoints, 'previewWidget').mockResolvedValue({ columns: [], rows: [], truncated: false, elapsed_ms: 1 })
     open({ widget: line, dashboardId: 5, defaults: { ...defaults, selection: { plan: [] } } })
     await waitFor(() => expect(preview).toHaveBeenCalled())
-    expect(preview.mock.calls[0][0]).not.toHaveProperty('dashboard_id')
+    expect(preview.mock.calls[0][0]).toMatchObject({ dashboard_id: 5 })
     expect(preview.mock.calls[0][0]).not.toHaveProperty('selectors')
   })
 

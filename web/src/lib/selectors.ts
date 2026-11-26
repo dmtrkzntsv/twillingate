@@ -71,7 +71,7 @@ export const VALUE_PROJECTS_MAX = 10
  * The projects a selector's values are read from: the project the page
  * shows (the switcher's, or a project page's), then each project a query
  * widget fixes as its `project_id`; or, when that leaves none, every live
- * project. At most VALUE_PROJECTS_MAX, each once.
+ * project, the newest first (ids ascend with creation). At most VALUE_PROJECTS_MAX, each once.
  */
 export function selectorProjects(widgets: readonly Pick<Widget, 'source'>[], shown: number | undefined, live: number[]): number[] {
   const ids = new Set<number>()
@@ -85,5 +85,5 @@ export function selectorProjects(widgets: readonly Pick<Widget, 'source'>[], sho
       // A query that does not parse fixes no project.
     }
   }
-  return [...(ids.size > 0 ? ids : live)].slice(0, VALUE_PROJECTS_MAX)
+  return [...(ids.size > 0 ? ids : [...live].sort((a, b) => b - a))].slice(0, VALUE_PROJECTS_MAX)
 }

@@ -91,17 +91,16 @@ function Checklist({ dashboardId, selector, value, projectIds, from, to, onChang
   const [search, setSearch] = useState('')
   const settled = useSettled(search.trim(), SEARCH_DELAY_MS)
   const values = useQuery({
-    queryKey: ['selector-values', dashboardId, selector.name, projectIds, from, to, settled, value],
+    queryKey: ['selector-values', dashboardId, selector.name, projectIds, from, to, settled],
     queryFn: () =>
       endpoints.selectorValues(dashboardId, selector.name, {
         project_id: projectIds,
         from,
         to,
         ...(settled ? { search: settled } : {}),
-        picked: value,
       }),
     enabled: projectIds.length > 0,
-    // The list stays on screen while a search or a pick reloads it.
+    // The list stays on screen while a search reloads it; a pick does not (picks are listed below).
     placeholderData: keepPreviousData,
   })
   // Once the box shows it stays, so a search that narrows the list to a

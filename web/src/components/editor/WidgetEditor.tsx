@@ -73,7 +73,7 @@ const SURFACE_MIN_PX = 160
 const SPLIT_MIN = 25
 const SPLIT_KEY = 'twillingate.editor.split'
 
-/** Whether any selector has a value picked: the preview then names the dashboard and its selection. */
+/** Whether any selector has a value picked: the preview then sends that selection. */
 function hasPicks(selection: Selection | undefined): selection is Selection {
   return selection !== undefined && Object.values(selection).some((v) => v.length > 0)
 }
@@ -219,8 +219,9 @@ function Editor({ open, onOpenChange, widget, defaults, dashboardId, onSave }: W
         source: { type: codeType, content: code },
         ...(uses.project && projectId !== undefined ? { project_id: projectId } : {}),
         ...(uses.range ? span : {}),
-        // The dashboard's picks, which the server applies only to the selectors the draft reads or follows.
-        ...(dashboardId !== undefined && hasPicks(defaults.selection) ? { dashboard_id: dashboardId, selectors: defaults.selection } : {}),
+        // The dashboard, so a draft may read its selectors even at All; its picks go too, which the server applies only to the selectors the draft reads or follows.
+        ...(dashboardId !== undefined ? { dashboard_id: dashboardId } : {}),
+        ...(dashboardId !== undefined && hasPicks(defaults.selection) ? { selectors: defaults.selection } : {}),
       })
       if (n === latest.current) setRun({ kind: 'done', result, component, props })
     } catch (err) {

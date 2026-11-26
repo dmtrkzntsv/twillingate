@@ -50,7 +50,7 @@ describe('SelectorSwitcher', () => {
     const dialog = await screen.findByRole('dialog')
     // The counts from selector_values, beside each value.
     expect(await within(dialog).findByText('40')).toBeInTheDocument()
-    expect(load).toHaveBeenCalledWith(12, 'deployment', { project_id: [7, 1], from: '2026-09-20', to: '2026-09-26', picked: [] })
+    expect(load).toHaveBeenCalledWith(12, 'deployment', { project_id: [7, 1], from: '2026-09-20', to: '2026-09-26' })
 
     await user.click(within(dialog).getByRole('checkbox', { name: 'cloud' }))
     expect(screen.getByRole('button', { name: 'Deployment: cloud' })).toBeInTheDocument()
@@ -58,8 +58,8 @@ describe('SelectorSwitcher', () => {
     await user.click(within(dialog).getByText('12'))
     expect(screen.getByRole('button', { name: 'Deployment: 2 selected' })).toBeInTheDocument()
     expect(within(dialog).getByRole('checkbox', { name: 'self-hosted' })).toBeChecked()
-    // The values picked go back as `picked`, so they stay listed.
-    await waitFor(() => expect(load).toHaveBeenLastCalledWith(12, 'deployment', expect.objectContaining({ picked: ['cloud', 'self-hosted'] })))
+    // Ticking does not ask again: the picked values stay listed on their own.
+    expect(load).toHaveBeenCalledTimes(1)
   })
 
   it('clears the list with Clear', async () => {

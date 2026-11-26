@@ -97,8 +97,8 @@ describe('selectorProjects', () => {
     expect(selectorProjects([query(4), query(9), query(4), widget({})], 7, live)).toEqual([7, 4, 9])
   })
 
-  it('is every live project, up to 10, when none is shown or fixed', () => {
-    expect(selectorProjects([query(), widget({})], undefined, live)).toEqual(live.slice(0, 10))
+  it('is the newest live projects, up to 10, when none is shown or fixed', () => {
+    expect(selectorProjects([query(), widget({})], undefined, live)).toEqual([12, 11, 10, 9, 8, 7, 6, 5, 4, 3])
   })
 
   it('passes over a query it cannot read', () => {
